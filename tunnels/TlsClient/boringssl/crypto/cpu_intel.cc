@@ -31,9 +31,11 @@
 #include "internal.h"
 
 
-// OPENSSL_cpuid runs the cpuid instruction. |leaf| is passed in as EAX and ECX
-// is set to zero. It writes EAX, EBX, ECX, and EDX to |*out_eax| through
-// |*out_edx|.
+using namespace bssl;
+
+// OPENSSL_cpuid runs the cpuid instruction. `leaf` is passed in as EAX and ECX
+// is set to zero. It writes EAX, EBX, ECX, and EDX to `*out_eax` through
+// `*out_edx`.
 static void OPENSSL_cpuid(uint32_t *out_eax, uint32_t *out_ebx,
                           uint32_t *out_ecx, uint32_t *out_edx, uint32_t leaf) {
 #if defined(_MSC_VER)
@@ -63,7 +65,7 @@ static void OPENSSL_cpuid(uint32_t *out_eax, uint32_t *out_ebx,
 }
 
 // OPENSSL_xgetbv returns the value of an Intel Extended Control Register (XCR).
-// Currently only XCR0 is defined by Intel so |xcr| should always be zero.
+// Currently only XCR0 is defined by Intel so `xcr` should always be zero.
 static uint64_t OPENSSL_xgetbv(uint32_t xcr) {
 #if defined(_MSC_VER)
   return (uint64_t)_xgetbv(xcr);
@@ -90,9 +92,9 @@ static bool os_supports_avx512(uint64_t xcr0) {
 #endif
 }
 
-// handle_cpu_env applies the value from |in| to the CPUID values in |out[0]|
-// and |out[1]|. See the comment in |OPENSSL_cpuid_setup| about this. The
-// |is_last| argument specifies whether the value is at the end of the string.
+// handle_cpu_env applies the value from `in` to the CPUID values in `out[0]`
+// and `out[1]`. See the comment in `OPENSSL_cpuid_setup` about this. The
+// `is_last` argument specifies whether the value is at the end of the string.
 // Otherwise it may be followed by a colon.
 static void handle_cpu_env(uint32_t out[2], const char *in, bool is_last) {
   const int invert_op = in[0] == '~';
@@ -125,7 +127,7 @@ static void handle_cpu_env(uint32_t out[2], const char *in, bool is_last) {
   }
 }
 
-void OPENSSL_adjust_ia32cap(uint32_t cap[4], const char *env) {
+void bssl::OPENSSL_adjust_ia32cap(uint32_t cap[4], const char *env) {
   // OPENSSL_ia32cap can contain zero, one or two values, separated with a ':'.
   // Each value is a 64-bit, unsigned value which may start with "0x" to
   // indicate a hex value. Prior to the 64-bit value, a '~' or '|' may be given.
@@ -146,7 +148,7 @@ void OPENSSL_adjust_ia32cap(uint32_t cap[4], const char *env) {
   }
 }
 
-void OPENSSL_cpuid_setup(void) {
+void bssl::OPENSSL_cpuid_setup() {
   // Determine the vendor and maximum input value.
   uint32_t eax, ebx, ecx, edx;
   OPENSSL_cpuid(&eax, &ebx, &ecx, &edx, 0);

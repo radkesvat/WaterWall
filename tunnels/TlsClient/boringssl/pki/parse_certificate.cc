@@ -84,7 +84,7 @@ DEFINE_CERT_ERROR_ID(kSerialNumberLengthOver20,
 DEFINE_CERT_ERROR_ID(kSerialNumberNotValidInteger,
                      "Serial number is not a valid INTEGER");
 
-// Returns true if |input| is a SEQUENCE and nothing else.
+// Returns true if `input` is a SEQUENCE and nothing else.
 [[nodiscard]] bool IsSequenceTLV(der::Input input) {
   der::Parser parser(input);
   der::Parser unused_sequence_parser;
@@ -95,8 +95,8 @@ DEFINE_CERT_ERROR_ID(kSerialNumberNotValidInteger,
   return !parser.HasMore();
 }
 
-// Reads a SEQUENCE from |parser| and writes the full tag-length-value into
-// |out|. On failure |parser| may or may not have been advanced.
+// Reads a SEQUENCE from `parser` and writes the full tag-length-value into
+// `out`. On failure `parser` may or may not have been advanced.
 [[nodiscard]] bool ReadSequenceTLV(der::Parser *parser, der::Input *out) {
   return parser->ReadRawTLV(out) && IsSequenceTLV(*out);
 }
@@ -139,7 +139,7 @@ DEFINE_CERT_ERROR_ID(kSerialNumberNotValidInteger,
   return !parser.HasMore();
 }
 
-// Returns true if every bit in |bits| is zero (including empty).
+// Returns true if every bit in `bits` is zero (including empty).
 [[nodiscard]] bool BitStringIsAllZeros(const der::BitString &bits) {
   // Note that it is OK to read from the unused bits, since BitString parsing
   // guarantees they are all zero.
@@ -262,8 +262,12 @@ ParsedTbsCertificate::~ParsedTbsCertificate() = default;
 
 bool VerifySerialNumber(der::Input value, bool warnings_only,
                         CertErrors *errors) {
-  // If |warnings_only| was set to true, the exact same errors will be logged,
+  // If `warnings_only` was set to true, the exact same errors will be logged,
   // only they will be logged with a lower severity (warning rather than error).
+  //
+  // TODO(crbug.com/533048005): Remove this option. It now only controls serials
+  // that aren't even valid integers. Historically, people needed to set it to
+  // tolerate length over 20, but this is now always enabled.
   CertError::Severity error_severity =
       warnings_only ? CertError::SEVERITY_WARNING : CertError::SEVERITY_HIGH;
 
@@ -290,10 +294,13 @@ bool VerifySerialNumber(der::Input value, bool warnings_only,
   //    Certificate users MUST be able to handle serialNumber values up to 20
   //    octets. Conforming CAs MUST NOT use serialNumber values longer than 20
   //    octets.
+  //
+  // We do not attempt to enforce this as an error. In practice, it is common
+  // for serials to be off, e.g. with 21 octets due to the extra byte needed to
+  // keep values positive.
   if (value.size() > 20) {
-    errors->Add(error_severity, kSerialNumberLengthOver20,
-                CreateCertErrorParams1SizeT("length", value.size()));
-    return false;
+    errors->AddWarning(kSerialNumberLengthOver20,
+                       CreateCertErrorParams1SizeT("length", value.size()));
   }
 
   return true;
@@ -362,7 +369,7 @@ bool ParseCertificate(der::Input certificate_tlv,
                       der::Input *out_signature_algorithm_tlv,
                       der::BitString *out_signature_value,
                       CertErrors *out_errors) {
-  // |out_errors| is optional. But ensure it is non-null for the remainder of
+  // `out_errors` is optional. But ensure it is non-null for the remainder of
   // this function.
   CertErrors unused_errors;
   if (!out_errors) {
@@ -435,13 +442,13 @@ bool ParseCertificate(der::Input certificate_tlv,
 bool ParseTbsCertificate(der::Input tbs_tlv,
                          const ParseCertificateOptions &options,
                          ParsedTbsCertificate *out, CertErrors *errors) {
-  // The rest of this function assumes that |errors| is non-null.
+  // The rest of this function assumes that `errors` is non-null.
   CertErrors unused_errors;
   if (!errors) {
     errors = &unused_errors;
   }
 
-  // TODO(crbug.com/634443): Add useful error information to |errors|.
+  // TODO(crbug.com/634443): Add useful error information to `errors`.
 
   der::Parser parser(tbs_tlv);
 
@@ -501,12 +508,11 @@ bool ParseTbsCertificate(der::Input tbs_tlv,
   }
 
   //        validity             Validity,
-  der::Input validity_tlv;
-  if (!tbs_parser.ReadRawTLV(&validity_tlv)) {
+  if (!tbs_parser.ReadRawTLV(&out->validity_tlv)) {
     errors->AddError(kFailedReadingValidity);
     return false;
   }
-  if (!ParseValidity(validity_tlv, &out->validity_not_before,
+  if (!ParseValidity(out->validity_tlv, &out->validity_not_before,
                      &out->validity_not_after)) {
     errors->AddError(kFailedParsingValidity);
     return false;
@@ -523,6 +529,8 @@ bool ParseTbsCertificate(der::Input tbs_tlv,
     errors->AddError(kFailedReadingSpki);
     return false;
   }
+
+  out->bytes_after_spki = tbs_parser.RemainingBytes();
 
   //        issuerUniqueID  [1]  IMPLICIT UniqueIdentifier OPTIONAL,
   //                             -- If present, version MUST be v2 or v3
@@ -589,7 +597,7 @@ bool ParseTbsCertificate(der::Input tbs_tlv,
 
   // Note that there IS an extension point at the end of TBSCertificate
   // (according to RFC 5912), so from that interpretation, unconsumed data would
-  // be allowed in |tbs_parser|.
+  // be allowed in `tbs_parser`.
   //
   // However because only v1, v2, and v3 certificates are supported by the
   // parsing, there shouldn't be any subsequent data in those versions, so

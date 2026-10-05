@@ -18,12 +18,28 @@
 #include <openssl/base.h>
 #include <openssl/poly1305.h>
 
-#if defined(__cplusplus)
-extern "C" {
-#endif
+
+BSSL_NAMESPACE_BEGIN
 
 #if defined(OPENSSL_ARM) && !defined(OPENSSL_NO_ASM) && !defined(OPENSSL_APPLE)
 #define OPENSSL_POLY1305_NEON
+
+struct alignas(16) fe1305x2 {
+  uint32_t v[12];  // for alignment; only using 10
+};
+
+extern "C" {
+// openssl_poly1305_neon2_addmulmod computes (x * y) + c and writes the result
+// to `r`.
+void openssl_poly1305_neon2_addmulmod(fe1305x2 *r, const fe1305x2 *x,
+                                      const fe1305x2 *y, const fe1305x2 *c);
+
+// openssl_poly1305_neon2_blocks processes `inlen` bytes from `in` and updates
+// the hash state in `h` using the precomputed powers in `precomp`. It returns
+// the number of bytes that were not processed (i.e. the remainder < 32 bytes).
+int openssl_poly1305_neon2_blocks(fe1305x2 *h, const fe1305x2 precomp[2],
+                                  const uint8_t *in, size_t inlen);
+}
 
 void CRYPTO_poly1305_init_neon(poly1305_state *state, const uint8_t key[32]);
 
@@ -33,9 +49,6 @@ void CRYPTO_poly1305_update_neon(poly1305_state *state, const uint8_t *in,
 void CRYPTO_poly1305_finish_neon(poly1305_state *state, uint8_t mac[16]);
 #endif
 
-
-#if defined(__cplusplus)
-}  // extern C
-#endif
+BSSL_NAMESPACE_END
 
 #endif  // OPENSSL_HEADER_CRYPTO_POLY1305_INTERNAL_H

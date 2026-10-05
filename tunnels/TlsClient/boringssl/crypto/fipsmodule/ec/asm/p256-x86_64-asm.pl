@@ -58,7 +58,7 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 ( $xlate="${dir}../../../perlasm/x86_64-xlate.pl" and -f $xlate) or
 die "can't locate x86_64-xlate.pl";
 
-open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\"";
+open OUT, "|-", $^X, $xlate, $flavour, $output;
 *STDOUT=*OUT;
 
 $avx = 2;
@@ -70,6 +70,7 @@ $code.=<<___;
 # The polynomial
 .section .rodata
 .align 64
+p256_constants:
 .Lpoly:
 .quad 0xffffffffffffffff, 0x00000000ffffffff, 0x0000000000000000, 0xffffffff00000001
 
@@ -959,7 +960,7 @@ ecp_nistz256_ord_mul_mont_adx:
 
 	################################# reduction
 	mulx	8*0+128(%r14), $t0, $t1
-	adcx	$t0, $acc3		# guranteed to be zero
+	adcx	$t0, $acc3		# guaranteed to be zero
 	adox	$t1, $acc4
 
 	mulx	8*1+128(%r14), $t0, $t1

@@ -26,8 +26,10 @@
 #include "internal.h"
 
 
+using namespace bssl;
+
 int BN_rand(BIGNUM *rnd, int bits, int top, int bottom) {
-  if (rnd == NULL) {
+  if (rnd == nullptr) {
     return 0;
   }
 
@@ -92,7 +94,7 @@ int BN_pseudo_rand(BIGNUM *rnd, int bits, int top, int bottom) {
 }
 
 // bn_less_than_word_mask returns a mask of all ones if the number represented
-// by |len| words at |a| is less than |b| and zero otherwise. It performs this
+// by `len` words at |a| is less than |b| and zero otherwise. It performs this
 // computation in time independent of the value of |a|. |b| is assumed public.
 static crypto_word_t bn_less_than_word_mask(const BN_ULONG *a, size_t len,
                                             BN_ULONG b) {
@@ -110,14 +112,14 @@ static crypto_word_t bn_less_than_word_mask(const BN_ULONG *a, size_t len,
   for (size_t i = 1; i < len; i++) {
     mask |= a[i];
   }
-  // |mask| is now zero iff a[1..len-1] are all zero.
+  // `mask` is now zero iff a[1..len-1] are all zero.
   mask = constant_time_is_zero_w(mask);
   mask &= constant_time_lt_w(a[0], b);
   return mask;
 }
 
-int bn_in_range_words(const BN_ULONG *a, BN_ULONG min_inclusive,
-                      const BN_ULONG *max_exclusive, size_t len) {
+int bssl::bn_in_range_words(const BN_ULONG *a, BN_ULONG min_inclusive,
+                            const BN_ULONG *max_exclusive, size_t len) {
   crypto_word_t mask = ~bn_less_than_word_mask(a, len, min_inclusive);
   return mask & bn_less_than_words(a, max_exclusive, len);
 }
@@ -125,7 +127,7 @@ int bn_in_range_words(const BN_ULONG *a, BN_ULONG min_inclusive,
 static int bn_range_to_mask(size_t *out_words, BN_ULONG *out_mask,
                             size_t min_inclusive, const BN_ULONG *max_exclusive,
                             size_t len) {
-  // The magnitude of |max_exclusive| is assumed public.
+  // The magnitude of `max_exclusive` is assumed public.
   size_t words = len;
   while (words > 0 && max_exclusive[words - 1] == 0) {
     words--;
@@ -135,7 +137,7 @@ static int bn_range_to_mask(size_t *out_words, BN_ULONG *out_mask,
     return 0;
   }
   BN_ULONG mask = max_exclusive[words - 1];
-  // This sets all bits in |mask| below the most significant bit.
+  // This sets all bits in `mask` below the most significant bit.
   mask |= mask >> 1;
   mask |= mask >> 2;
   mask |= mask >> 4;
@@ -150,15 +152,15 @@ static int bn_range_to_mask(size_t *out_words, BN_ULONG *out_mask,
   return 1;
 }
 
-int bn_rand_range_words(BN_ULONG *out, BN_ULONG min_inclusive,
-                        const BN_ULONG *max_exclusive, size_t len,
-                        const uint8_t additional_data[32]) {
-  // This function implements the equivalent of steps 4 through 7 of FIPS 186-4
-  // appendices B.4.2 and B.5.2. When called in those contexts, |max_exclusive|
-  // is n and |min_inclusive| is one.
+int bssl::bn_rand_range_words(BN_ULONG *out, BN_ULONG min_inclusive,
+                              const BN_ULONG *max_exclusive, size_t len,
+                              const uint8_t additional_data[32]) {
+  // This function implements the equivalent of steps 1 through 4 of FIPS 186-5
+  // appendices A.2.2 and A.3.2, repeating the process on failure. When called
+  // in those contexts, `max_exclusive` is n and `min_inclusive` is one.
 
-  // Compute the bit length of |max_exclusive| (step 1), in terms of a number of
-  // |words| worth of entropy to fill and a mask of bits to clear in the top
+  // Compute the bit length of `max_exclusive` (step 1), in terms of a number of
+  // `words` worth of entropy to fill and a mask of bits to clear in the top
   // word.
   size_t words;
   BN_ULONG mask;
@@ -176,21 +178,19 @@ int bn_rand_range_words(BN_ULONG *out, BN_ULONG min_inclusive,
       return 0;
     }
 
-    // Steps 4 and 5. Use |words| and |mask| together to obtain a string of N
-    // bits, where N is the bit length of |max_exclusive|.
+    // Use `words` and `mask` together to obtain a string of N bits, where N is
+    // the bit length of `max_exclusive`.
     FIPS_service_indicator_lock_state();
     BCM_rand_bytes_with_additional_data(
         (uint8_t *)out, words * sizeof(BN_ULONG), additional_data);
     FIPS_service_indicator_unlock_state();
     out[words - 1] &= mask;
 
-    // If out >= max_exclusive or out < min_inclusive, retry. This implements
-    // the equivalent of steps 6 and 7 without leaking the value of |out|. The
-    // result of this comparison may be treated as public. It only reveals how
-    // many attempts were needed before we found a value in range. This is
-    // independent of the final secret output, and has a distribution that
-    // depends only on |min_inclusive| and |max_exclusive|, both of which are
-    // public.
+    // If out >= max_exclusive or out < min_inclusive, retry. The result of this
+    // comparison may be treated as public. It only reveals how many attempts
+    // were needed before we found a value in range. This is independent of the
+    // final secret output, and has a distribution that depends only on
+    // `min_inclusive` and `max_exclusive`, both of which are public.
   } while (!constant_time_declassify_int(
       bn_in_range_words(out, min_inclusive, max_exclusive, words)));
   return 1;
@@ -210,8 +210,9 @@ int BN_rand_range_ex(BIGNUM *r, BN_ULONG min_inclusive,
   return 1;
 }
 
-int bn_rand_secret_range(BIGNUM *r, int *out_is_uniform, BN_ULONG min_inclusive,
-                         const BIGNUM *max_exclusive) {
+int bssl::bn_rand_secret_range(BIGNUM *r, int *out_is_uniform,
+                               BN_ULONG min_inclusive,
+                               const BIGNUM *max_exclusive) {
   size_t words;
   BN_ULONG mask;
   if (!bn_range_to_mask(&words, &mask, min_inclusive, max_exclusive->d,

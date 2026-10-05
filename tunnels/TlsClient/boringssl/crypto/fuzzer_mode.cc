@@ -17,14 +17,14 @@
 #include "internal.h"
 
 
-#if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
-static CRYPTO_atomic_u32 fuzzer_mode_enabled = 0;
+using namespace bssl;
 
-int CRYPTO_fuzzer_mode_enabled(void) {
-  return CRYPTO_atomic_load_u32(&fuzzer_mode_enabled);
-}
+#if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
+static bssl::Atomic<uint32_t> fuzzer_mode_enabled = 0;
+
+int bssl::CRYPTO_fuzzer_mode_enabled() { return fuzzer_mode_enabled.load(); }
 
 void CRYPTO_set_fuzzer_mode(int enabled) {
-  CRYPTO_atomic_store_u32(&fuzzer_mode_enabled, !!enabled);
+  fuzzer_mode_enabled.store(!!enabled);
 }
 #endif  // FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION

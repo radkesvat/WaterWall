@@ -1,4 +1,36 @@
 ================================================================================
+CURRENT BORINGSSL PIN AND PREFIX MAINTENANCE
+================================================================================
+
+Chromium reference: 154.0.8037.97
+BoringSSL revision: ac39ea6853833c1f18fd23614091d11855e71752
+
+The vendor tree includes upstream's checked-in prefix headers. Set
+BORINGSSL_PREFIX=WW_BSSL for the library and every BoringSSL consumer. Normal
+builds need neither Go nor Python to generate prefix headers.
+
+After restoring all local public SSL declarations, apply
+RadkesvatPatches/prefix_symbols.patch. If the declarations change, the public
+header can also be regenerated from the vendor root:
+
+    go run ./util/pregenerate include/openssl/prefix_symbols.h
+
+This optional regeneration requires the Go version in go.mod and Clang. Normal
+patch application needs neither. Keep the header and its saved patch consistent;
+both must map all four custom entry points:
+
+    SSL_set1_ech_grease_override_name
+    SSL_set1_ech_grease_override_payload
+    SSL_set_tls13_record_padding_callback
+    SSL_set_record_write_buffer_callbacks
+
+Keep upstream's internal C, GNU-assembler and Windows NASM prefix headers too;
+a native archive scan cannot discover symbols specific to other architectures.
+The old symbol-list and Go/Python build-time generation scheme is not used.
+Upstream's Fiat P-256 guards already exclude SysV-only assembly on Windows.
+Retain the local MSVC C4714 exception: SecureZeroMemory may not inline under LTO.
+
+================================================================================
 DIRECT RECORD OUTPUT / BORINGSSL UPDATE CHECKLIST (added 2026-09-28)
 ================================================================================
 
@@ -63,9 +95,9 @@ Required API and behavior to preserve:
 
 WaterWall-side integration outside the vendored patch:
 
-- Keep `SSL_set_record_write_buffer_callbacks` in `boringssl_symbols.txt` so
+- Maintain `include/openssl/prefix_symbols.h` after porting the public API so
   the build exports/calls `WW_BSSL_SSL_set_record_write_buffer_callbacks`.
-  Regenerate the prefix headers through the normal CMake build.
+  This is a maintenance step; normal CMake builds use the checked-in header.
 - Keep `tlsbufferbioEnableDirectWrite()` installed per SSL object in
   `common/line_state.c`. Its write BIO must come from `tlsbufferbioNew()`.
 - The BoringSSL-specific reserve/finish implementation is in
@@ -95,10 +127,9 @@ The complete BoringSSL-side diff is saved here:
 
     RadkesvatPatches/tls13_record_padding_callback.patch
 
-The patch was first recorded against the vendored BoringSSL snapshot identified
-later in this file as upstream commit:
+The saved patch is maintained against the pinned upstream revision:
 
-    4b3285002397da82681bebaacea9b4f231c9dbfc
+    ac39ea6853833c1f18fd23614091d11855e71752
 
 The patch is rooted at the BoringSSL source directory and currently changes
 exactly these four upstream files:
@@ -160,11 +191,9 @@ Required BoringSSL API and behavior:
 
 WaterWall-side pieces that must remain compatible with this patch:
 
-- `boringssl_symbols.txt` must contain
-  `SSL_set_tls13_record_padding_callback`. This is outside the BoringSSL source
-  directory and therefore is intentionally not part of the patch above. Do not
-  remove it during an update; otherwise symbol-prefixed builds will fail or call
-  the wrong TLS library.
+- `include/openssl/prefix_symbols.h` must include
+  `SSL_set_tls13_record_padding_callback`. Apply its saved patch after all public
+  API patches; do not restore a hand-maintained external symbol list.
 - `TlsClient/CMakeLists.txt` links `TlsRecordShapingCommon` and keeps the bundled
   BoringSSL symbol-prefix configuration.
 - `TlsClient/common/line_state.c` installs the callback per SSL object and clears
@@ -206,9 +235,9 @@ Patch maintenance:
   diff from that clean revision rather than editing hunk offsets by hand.
 - Keep the callback API narrow. Do not turn it into generic cover traffic,
   plaintext scheduling, or a receive-side hook.
-- Add any newly exported public/assembly symbol that can collide with OpenSSL to
-  `boringssl_symbols.txt`; see the architecture-specific prefix notes near the
-  end of this file.
+- Update public prefix mappings after changing exported APIs, and retain
+  upstream internal and architecture-specific assembly prefix headers. Check
+  the resulting archives and final dual-library link for unprefixed symbols.
 
 Required verification after every BoringSSL update (both record patches):
 
@@ -239,16 +268,22 @@ reservations, partial-write retries, KeyUpdate ordering, encryption-failure
 cleanup and ordinary close-notify output. Rebenchmark after porting; removing a
 copy does not establish a throughput gain on a newer library.
 
-The record-shaping and output-buffer patches are in addition to the older local
-BoringSSL changes already recorded below and in `RadkesvatPatches/`:
+The record-shaping and output-buffer patches are in addition to these local
+BoringSSL changes maintained in `RadkesvatPatches/`:
 
-- `CMakeLists.txt.patch` (embedded build/tool and prefix-header behavior)
-- `handshake_client.cc.patch` (Chrome-like cipher ordering)
-- `p256_64.h.patch` (Windows fiat assembly guard)
+- `CMakeLists.txt.patch` (embedded build/tool controls and MSVC warning handling)
+- `handshake_client.cc.patch` (fixed cipher ordering)
+- `ech_grease_overrides.patch` (ECH GREASE override APIs)
+- `prefix_symbols.patch` (public prefix mappings for the custom APIs)
 
-Rebase and revalidate both record patches and all older patch sets when replacing
-the vendored tree.
+Rebase and revalidate these patches when replacing the vendored tree. Apply the
+prefix patch after all API patches; no separate Windows Fiat patch is needed.
 
+================================================================================
+HISTORICAL CAPTURE AND INTEGRATION NOTES
+The material below records earlier snapshots and experiments. It is not the
+current prefix-generation or patch-application procedure; use the checklist above.
+================================================================================
 
 First , there is a full caputred client hello from my just updated chrome Version 138.0.7204.184 (Official Build) (64-bit)
 

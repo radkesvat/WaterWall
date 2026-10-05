@@ -23,6 +23,8 @@
 #include "../../internal.h"
 
 
+using namespace bssl;
+
 int HKDF(uint8_t *out_key, size_t out_len, const EVP_MD *digest,
          const uint8_t *secret, size_t secret_len, const uint8_t *salt,
          size_t salt_len, const uint8_t *info, size_t info_len) {
@@ -47,7 +49,8 @@ int HKDF_extract(uint8_t *out_key, size_t *out_len, const EVP_MD *digest,
   // If salt is not given, HashLength zeros are used. However, HMAC does that
   // internally already so we can ignore it.
   unsigned len;
-  if (HMAC(digest, salt, salt_len, secret, secret_len, out_key, &len) == NULL) {
+  if (HMAC(digest, salt, salt_len, secret, secret_len, out_key, &len) ==
+      nullptr) {
     OPENSSL_PUT_ERROR(HKDF, ERR_R_HMAC_LIB);
     return 0;
   }
@@ -75,7 +78,7 @@ int HKDF_expand(uint8_t *out_key, size_t out_len, const EVP_MD *digest,
   }
 
   HMAC_CTX_init(&hmac);
-  if (!HMAC_Init_ex(&hmac, prk, prk_len, digest, NULL)) {
+  if (!HMAC_Init_ex(&hmac, prk, prk_len, digest, nullptr)) {
     goto out;
   }
 
@@ -83,13 +86,12 @@ int HKDF_expand(uint8_t *out_key, size_t out_len, const EVP_MD *digest,
     uint8_t ctr = i + 1;
     size_t todo;
 
-    if (i != 0 && (!HMAC_Init_ex(&hmac, NULL, 0, NULL, NULL) ||
+    if (i != 0 && (!HMAC_Init_ex(&hmac, nullptr, 0, nullptr, nullptr) ||
                    !HMAC_Update(&hmac, previous, digest_len))) {
       goto out;
     }
-    if (!HMAC_Update(&hmac, info, info_len) ||
-        !HMAC_Update(&hmac, &ctr, 1) ||
-        !HMAC_Final(&hmac, previous, NULL)) {
+    if (!HMAC_Update(&hmac, info, info_len) || !HMAC_Update(&hmac, &ctr, 1) ||
+        !HMAC_Final(&hmac, previous, nullptr)) {
       goto out;
     }
 

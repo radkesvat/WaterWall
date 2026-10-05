@@ -14,7 +14,7 @@
 # limitations under the License.
 
 """Certificate chain where the intermediate has a policies extension (not
-marked as critical) which contains an unknown policy qualifer (1.2.3.4)."""
+marked as critical) which contains an unknown policy qualifier (1.2.3.4)."""
 
 import sys
 sys.path += ['../..']
@@ -25,7 +25,7 @@ import gencerts
 root = gencerts.create_self_signed_root_certificate('Root')
 
 # Intermediate that has a non-critical policies extension containing an unknown
-# policy qualifer.
+# policy qualifier.
 intermediate = gencerts.create_intermediate_certificate('Intermediate', root)
 intermediate.get_extensions().add_property(
     '2.5.29.32', ('DER:30:13:30:11:06:02:2a:03:30:0b:30:09:06:03:'

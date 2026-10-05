@@ -1,10 +1,10 @@
 /*
- * Covers: tlsclient hostname verification; the explicit inputs, callbacks and expected results below
- * define this suite.
+ * Covers: TlsClient hostname and certificate-chain verification in TLS 1.2 and TLS 1.3, including the
+ * explicit verify=false opt-out.
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
  * Cases: testMatchingHostnameSucceeds, testMismatchedHostnameFails,
- * testVerificationDisabledAllowsMismatch
+ * testVerificationDisabledAllowsMismatch, testUntrustedCertificateFails
  * Checks: Assertion labels include: TlsClient rejected a trusted certificate with a matching DNS SAN;
  * matching TlsClient certificate verification did not return X509_V_OK; TlsClient accepted a trusted
  * certificate for an unrelated hostname; TlsClient hostname mismatch did not return
@@ -86,7 +86,7 @@ static bool driveHandshake(SSL *client, SSL *server)
     return false;
 }
 
-static long runHandshake(const char *hostname, bool verify, bool *completed)
+static long runHandshake(uint16_t version, const char *hostname, bool verify, bool trust_certificate, bool *completed)
 {
     SSL_CTX *client_context = SSL_CTX_new(TLS_client_method());
     SSL_CTX *server_context = SSL_CTX_new(TLS_server_method());
@@ -94,11 +94,12 @@ static long runHandshake(const char *hostname, bool verify, bool *completed)
     require(client_context != NULL && server_context != NULL, "failed to create hostname-verification TLS contexts");
 
     SSL_CTX_set_verify(client_context, verify ? SSL_VERIFY_PEER : SSL_VERIFY_NONE, NULL);
-    require(SSL_CTX_set_min_proto_version(client_context, TLS1_2_VERSION) == 1 &&
-                SSL_CTX_set_max_proto_version(client_context, TLS1_2_VERSION) == 1 &&
-                SSL_CTX_set_min_proto_version(server_context, TLS1_2_VERSION) == 1 &&
-                SSL_CTX_set_max_proto_version(server_context, TLS1_2_VERSION) == 1 &&
-                SSL_CTX_load_verify_locations(client_context, TLSCLIENT_TEST_CERT_FILE, NULL) == 1 &&
+    require(SSL_CTX_set_min_proto_version(client_context, version) == 1 &&
+                SSL_CTX_set_max_proto_version(client_context, version) == 1 &&
+                SSL_CTX_set_min_proto_version(server_context, version) == 1 &&
+                SSL_CTX_set_max_proto_version(server_context, version) == 1 &&
+                (! trust_certificate ||
+                 SSL_CTX_load_verify_locations(client_context, TLSCLIENT_TEST_CERT_FILE, NULL) == 1) &&
                 SSL_CTX_use_certificate_chain_file(server_context, TLSCLIENT_TEST_CERT_FILE) == 1 &&
                 SSL_CTX_use_PrivateKey_file(server_context, TLSCLIENT_TEST_KEY_FILE, SSL_FILETYPE_PEM) == 1 &&
                 SSL_CTX_check_private_key(server_context) == 1,
@@ -127,6 +128,11 @@ static long runHandshake(const char *hostname, bool verify, bool *completed)
 
     *completed         = driveHandshake(client, server);
     long verify_result = SSL_get_verify_result(client);
+    if (*completed)
+    {
+        require(SSL_version(client) == version && SSL_version(server) == version,
+                "hostname-verification fixture negotiated the wrong TLS version");
+    }
 
     SSL_free(client);
     SSL_free(server);
@@ -136,39 +142,61 @@ static long runHandshake(const char *hostname, bool verify, bool *completed)
     return verify_result;
 }
 
-static void testMatchingHostnameSucceeds(void)
+static void testMatchingHostnameSucceeds(uint16_t version)
 {
     bool completed = false;
-    long result    = runHandshake("tls.integration.test", true, &completed);
+    long result    = runHandshake(version, "tls.integration.test", true, true, &completed);
 
     require(completed, "TlsClient rejected a trusted certificate with a matching DNS SAN");
     require(result == X509_V_OK, "matching TlsClient certificate verification did not return X509_V_OK");
 }
 
-static void testMismatchedHostnameFails(void)
+static void testMismatchedHostnameFails(uint16_t version)
 {
     bool completed = false;
-    long result    = runHandshake("unrelated.integration.test", true, &completed);
+    long result    = runHandshake(version, "unrelated.integration.test", true, true, &completed);
 
     require(! completed, "TlsClient accepted a trusted certificate for an unrelated hostname");
     require(result == X509_V_ERR_HOSTNAME_MISMATCH,
             "TlsClient hostname mismatch did not return X509_V_ERR_HOSTNAME_MISMATCH");
 }
 
-static void testVerificationDisabledAllowsMismatch(void)
+static void testVerificationDisabledAllowsMismatch(uint16_t version)
 {
     bool completed = false;
-    long result    = runHandshake("unrelated.integration.test", false, &completed);
+    long result    = runHandshake(version, "unrelated.integration.test", false, true, &completed);
 
     require(completed, "TlsClient applied fatal hostname verification when verify was disabled");
     require(result == X509_V_OK, "verify=false unexpectedly configured hostname verification");
 }
 
+static void testUntrustedCertificateFails(uint16_t version)
+{
+    bool completed = false;
+    long result    = runHandshake(version, "tls.integration.test", true, false, &completed);
+
+    require(! completed, "TlsClient accepted an untrusted certificate with a matching hostname");
+    require(result == X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT,
+            "TlsClient did not reject the fixture's untrusted self-signed certificate chain");
+}
+
 int main(void)
 {
-    testCaseSet("tlsclient_hostname_verification_test");
-    testMatchingHostnameSucceeds();
-    testMismatchedHostnameFails();
-    testVerificationDisabledAllowsMismatch();
+    static const struct
+    {
+        uint16_t    version;
+        const char *name;
+    } cases[] = {
+        {TLS1_2_VERSION, "tlsclient_hostname_verification_tls12"},
+        {TLS1_3_VERSION, "tlsclient_hostname_verification_tls13"},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        testCaseSet(cases[i].name);
+        testMatchingHostnameSucceeds(cases[i].version);
+        testMismatchedHostnameFails(cases[i].version);
+        testVerificationDisabledAllowsMismatch(cases[i].version);
+        testUntrustedCertificateFails(cases[i].version);
+    }
     return 0;
 }

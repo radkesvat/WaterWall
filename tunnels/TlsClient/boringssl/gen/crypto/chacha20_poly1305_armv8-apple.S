@@ -7,6 +7,7 @@
 .section	__TEXT,__const
 
 .align	7
+chacha20_poly1305_constants:
 Lchacha20_consts:
 .byte	'e','x','p','a','n','d',' ','3','2','-','b','y','t','e',' ','k'
 Linc:
@@ -20,6 +21,7 @@ Lclamp:
 
 
 .align	6
+chacha20_poly1305_helpers:
 Lpoly_hash_ad_internal:
 .cfi_startproc
 	cbnz	x4, Lpoly_hash_intro
@@ -118,6 +120,7 @@ Lpoly_hash_ad_ret:
 .private_extern	_chacha20_poly1305_seal
 
 .align	6
+.alt_entry _chacha20_poly1305_seal
 _chacha20_poly1305_seal:
 	AARCH64_SIGN_LINK_REGISTER
 .cfi_startproc
@@ -1199,7 +1202,7 @@ Lseal_hash_extra_load:
 	subs	x4, x4, #1
 	b.gt	Lseal_hash_extra_load
 
-    // Hash in the final padded extra_in blcok
+    // Hash in the final padded extra_in block
 	mov	x11, v20.d[0]
 	mov	x12, v20.d[1]
 	adds	x8, x8, x11
@@ -1474,6 +1477,7 @@ Lseal_128_rounds:
 .private_extern	_chacha20_poly1305_open
 
 .align	6
+.alt_entry _chacha20_poly1305_open
 _chacha20_poly1305_open:
 	AARCH64_SIGN_LINK_REGISTER
 .cfi_startproc
@@ -1576,7 +1580,6 @@ Lopen_init_rounds:
 
 	bl	Lpoly_hash_ad_internal
 
-Lopen_ad_done:
 	mov	x3, x1
 
 // Each iteration of the loop hash 320 bytes, and prepare stream for 320 bytes
@@ -1612,7 +1615,6 @@ Lopen_main_loop:
 	sub	x4, x4, #10
 
 	mov	x7, #10
-	subs	x6, x7, x4
 	subs	x6, x7, x4 // itr1 can be negative if we have more than 320 bytes to hash
 	csel	x7, x7, x4, le // if itr1 is zero or less, itr2 should be 10 to indicate all 10 rounds are full
 

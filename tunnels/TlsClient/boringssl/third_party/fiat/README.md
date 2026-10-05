@@ -25,13 +25,13 @@ conventions are validated using unit tests.
 # Bedrock
 
 Routines for which assembly-level optimization is not necessary are written in
-[Bedrock2](https://github.com/mit-plv/bedrock2) and tranlated to C. The file
+[Bedrock2](https://github.com/mit-plv/bedrock2) and translated to C. The file
 `bedrock_unverified_platform.c.inc` provides the platform functionality code
 thus translated expects.
 
 The P256 point doubling and addition are implemented in this manner in
 p256_coord.br.c.inc. This code originates from Fiat Cryptogaphy commit
-b8890d810b812180fb224356e0f0b932afade414 file src/Bedrock/P256.v
+6e22d333861d51c7f6baa0826648a2215d0c333f file src/Bedrock/P256.v
 Field arithmetic operations are dispatched in p256_field.c.inc to
 platform-specific code including assembly, fiat-crypto-generated C, and
 Bedrock-generated C.

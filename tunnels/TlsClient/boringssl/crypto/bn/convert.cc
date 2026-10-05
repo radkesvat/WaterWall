@@ -29,6 +29,8 @@
 #include "../fipsmodule/bn/internal.h"
 
 
+using namespace bssl;
+
 int BN_bn2cbb_padded(CBB *out, size_t len, const BIGNUM *in) {
   uint8_t *ptr;
   return CBB_add_space(out, &ptr, len) && BN_bn2bin_padded(ptr, len, in);
@@ -41,8 +43,8 @@ char *BN_bn2hex(const BIGNUM *bn) {
   char *buf = reinterpret_cast<char *>(
       OPENSSL_malloc(1 /* leading '-' */ + 1 /* zero is non-empty */ +
                      width * BN_BYTES * 2 + 1 /* trailing NUL */));
-  if (buf == NULL) {
-    return NULL;
+  if (buf == nullptr) {
+    return nullptr;
   }
 
   char *p = buf;
@@ -71,20 +73,20 @@ char *BN_bn2hex(const BIGNUM *bn) {
   return buf;
 }
 
-// decode_hex decodes |in_len| bytes of hex data from |in| and updates |bn|.
+// decode_hex decodes `in_len` bytes of hex data from `in` and updates `bn`.
 static int decode_hex(BIGNUM *bn, const char *in, int in_len) {
   if (in_len > INT_MAX / 4) {
     OPENSSL_PUT_ERROR(BN, BN_R_BIGNUM_TOO_LONG);
     return 0;
   }
-  // |in_len| is the number of hex digits.
+  // `in_len` is the number of hex digits.
   if (!bn_expand(bn, in_len * 4)) {
     return 0;
   }
 
   int i = 0;
   while (in_len > 0) {
-    // Decode one |BN_ULONG| at a time.
+    // Decode one `BN_ULONG` at a time.
     int todo = BN_BYTES * 2;
     if (todo > in_len) {
       todo = in_len;
@@ -95,7 +97,7 @@ static int decode_hex(BIGNUM *bn, const char *in, int in_len) {
     for (j = todo; j > 0; j--) {
       uint8_t hex = 0;
       if (!OPENSSL_fromxdigit(&hex, in[in_len - j])) {
-        // This shouldn't happen. The caller checks |OPENSSL_isxdigit|.
+        // This shouldn't happen. The caller checks `OPENSSL_isxdigit`.
         assert(0);
       }
       word = (word << 4) | hex;
@@ -109,12 +111,12 @@ static int decode_hex(BIGNUM *bn, const char *in, int in_len) {
   return 1;
 }
 
-// decode_dec decodes |in_len| bytes of decimal data from |in| and updates |bn|.
+// decode_dec decodes `in_len` bytes of decimal data from `in` and updates `bn`.
 static int decode_dec(BIGNUM *bn, const char *in, int in_len) {
   int i, j;
   BN_ULONG l = 0;
 
-  // Decode |BN_DEC_NUM| digits at a time.
+  // Decode `BN_DEC_NUM` digits at a time.
   j = BN_DEC_NUM - (in_len % BN_DEC_NUM);
   if (j == BN_DEC_NUM) {
     j = 0;
@@ -139,11 +141,11 @@ typedef int (*char_test_func)(int c);
 
 static int bn_x2bn(BIGNUM **outp, const char *in, decode_func decode,
                    char_test_func want_char) {
-  BIGNUM *ret = NULL;
+  BIGNUM *ret = nullptr;
   int neg = 0, i;
   int num;
 
-  if (in == NULL || *in == 0) {
+  if (in == nullptr || *in == 0) {
     return 0;
   }
 
@@ -156,14 +158,14 @@ static int bn_x2bn(BIGNUM **outp, const char *in, decode_func decode,
   }
 
   num = i + neg;
-  if (outp == NULL) {
+  if (outp == nullptr) {
     return num;
   }
 
   // in is the start of the hex digits, and it is 'i' long
-  if (*outp == NULL) {
+  if (*outp == nullptr) {
     ret = BN_new();
-    if (ret == NULL) {
+    if (ret == nullptr) {
       return 0;
     }
   } else {
@@ -184,7 +186,7 @@ static int bn_x2bn(BIGNUM **outp, const char *in, decode_func decode,
   return num;
 
 err:
-  if (*outp == NULL) {
+  if (*outp == nullptr) {
     BN_free(ret);
   }
 
@@ -198,7 +200,7 @@ int BN_hex2bn(BIGNUM **outp, const char *in) {
 char *BN_bn2dec(const BIGNUM *a) {
   // It is easier to print strings little-endian, so we assemble it in reverse
   // and fix at the end.
-  bssl::ScopedCBB cbb;
+  ScopedCBB cbb;
   if (!CBB_init(cbb.get(), 16) || //
       !CBB_add_u8(cbb.get(), 0 /* trailing NUL */)) {
     return nullptr;
@@ -209,7 +211,7 @@ char *BN_bn2dec(const BIGNUM *a) {
       return nullptr;
     }
   } else {
-    bssl::UniquePtr<BIGNUM> copy(BN_dup(a));
+    UniquePtr<BIGNUM> copy(BN_dup(a));
     if (copy == nullptr) {
       return nullptr;
     }
@@ -300,7 +302,7 @@ int BN_print(BIO *bp, const BIGNUM *a) {
 
 int BN_print_fp(FILE *fp, const BIGNUM *a) {
   BIO *b = BIO_new_fp(fp, BIO_NOCLOSE);
-  if (b == NULL) {
+  if (b == nullptr) {
     return 0;
   }
 
@@ -330,7 +332,7 @@ size_t BN_bn2mpi(const BIGNUM *in, uint8_t *out) {
     return 4;
   }
 
-  if (out == NULL) {
+  if (out == nullptr) {
     return 4 + len;
   }
 
@@ -351,7 +353,7 @@ size_t BN_bn2mpi(const BIGNUM *in, uint8_t *out) {
 BIGNUM *BN_mpi2bn(const uint8_t *in, size_t len, BIGNUM *out) {
   if (len < 4) {
     OPENSSL_PUT_ERROR(BN, BN_R_BAD_ENCODING);
-    return NULL;
+    return nullptr;
   }
   const size_t in_len = ((size_t)in[0] << 24) | //
                         ((size_t)in[1] << 16) | //
@@ -359,14 +361,14 @@ BIGNUM *BN_mpi2bn(const uint8_t *in, size_t len, BIGNUM *out) {
                         ((size_t)in[3]);
   if (in_len != len - 4) {
     OPENSSL_PUT_ERROR(BN, BN_R_BAD_ENCODING);
-    return NULL;
+    return nullptr;
   }
 
   int out_is_alloced = 0;
-  if (out == NULL) {
+  if (out == nullptr) {
     out = BN_new();
-    if (out == NULL) {
-      return NULL;
+    if (out == nullptr) {
+      return nullptr;
     }
     out_is_alloced = 1;
   }
@@ -377,11 +379,11 @@ BIGNUM *BN_mpi2bn(const uint8_t *in, size_t len, BIGNUM *out) {
   }
 
   in += 4;
-  if (BN_bin2bn(in, in_len, out) == NULL) {
+  if (BN_bin2bn(in, in_len, out) == nullptr) {
     if (out_is_alloced) {
       BN_free(out);
     }
-    return NULL;
+    return nullptr;
   }
   out->neg = ((*in) & 0x80) != 0;
   if (out->neg) {

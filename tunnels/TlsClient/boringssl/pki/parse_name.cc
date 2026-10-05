@@ -26,7 +26,7 @@ BSSL_NAMESPACE_BEGIN
 
 namespace {
 
-// Returns a string containing the dotted numeric form of |oid|, or an empty
+// Returns a string containing the dotted numeric form of `oid`, or an empty
 // string on error.
 std::string OidToString(der::Input oid) {
   CBS cbs;
@@ -125,7 +125,7 @@ bool X509NameAttribute::AsRFC2253String(std::string *out) const {
     }
 
     bool nonprintable = false;
-    for (unsigned int i = 0; i < unescaped.length(); ++i) {
+    for (size_t i = 0; i < unescaped.length(); ++i) {
       uint8_t c = static_cast<uint8_t>(unescaped[i]);
       if (i == 0 && c == '#') {
         value_string += "\\#";

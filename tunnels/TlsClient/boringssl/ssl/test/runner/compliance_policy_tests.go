@@ -15,6 +15,17 @@
 package runner
 
 func addCompliancePolicyTests() {
+	// When testing curves and signature algorithms, we need to exclude RSA key
+	// exchange ciphers, otherwise the server will just fall back to those. One
+	// of the compliance policies still allows these, despite the issues being
+	// known since 1998.
+	var ecdheAndSignCiphers []uint16
+	for _, suite := range testCipherSuites {
+		if !isPSKSuite(suite.name) && !isRSAKeyExchange(suite.name) {
+			ecdheAndSignCiphers = append(ecdheAndSignCiphers, suite.id)
+		}
+	}
+
 	for _, protocol := range []protocol{tls, quic} {
 		for _, suite := range testCipherSuites {
 			var isFIPSCipherSuite bool
@@ -29,11 +40,21 @@ func addCompliancePolicyTests() {
 			}
 
 			var isWPACipherSuite bool
+			var isCNSA1CipherSuite bool
 			switch suite.id {
 			case TLS_AES_256_GCM_SHA384,
 				TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 				TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
 				isWPACipherSuite = true
+				isCNSA1CipherSuite = true
+			case TLS_RSA_WITH_AES_256_GCM_SHA384:
+				isCNSA1CipherSuite = true
+			}
+
+			var isCNSA2CipherSuite bool
+			switch suite.id {
+			case TLS_AES_256_GCM_SHA384:
+				isCNSA2CipherSuite = true
 			}
 
 			var cert Credential
@@ -57,9 +78,17 @@ func addCompliancePolicyTests() {
 			}{
 				{"-fips-202205", isFIPSCipherSuite},
 				{"-wpa-202304", isWPACipherSuite},
+				{"-cnsa1-202603", isCNSA1CipherSuite},
+				{"-cnsa2-202603", isCNSA2CipherSuite},
 			}
 
 			for _, policy := range policies {
+				shouldFail := !policy.cipherSuiteOk
+				// The CNSA2 policy requires TLS 1.3.
+				if policy.flag == "-cnsa2-202603" && maxVersion == VersionTLS12 {
+					shouldFail = true
+				}
+
 				testCases = append(testCases, testCase{
 					testType: serverTest,
 					protocol: protocol,
@@ -73,7 +102,7 @@ func addCompliancePolicyTests() {
 					flags: []string{
 						policy.flag,
 					},
-					shouldFail: !policy.cipherSuiteOk,
+					shouldFail: shouldFail,
 				})
 
 				testCases = append(testCases, testCase{
@@ -89,7 +118,7 @@ func addCompliancePolicyTests() {
 					flags: []string{
 						policy.flag,
 					},
-					shouldFail: !policy.cipherSuiteOk,
+					shouldFail: shouldFail,
 				})
 			}
 		}
@@ -127,12 +156,26 @@ func addCompliancePolicyTests() {
 				isWPACurve = true
 			}
 
+			var isCNSA1Curve bool
+			switch curve.id {
+			case CurveP384, CurveMLKEM1024:
+				isCNSA1Curve = true
+			}
+
+			var isCNSA2Curve bool
+			switch curve.id {
+			case CurveMLKEM1024:
+				isCNSA2Curve = true
+			}
+
 			policies := []struct {
 				flag    string
 				curveOk bool
 			}{
 				{"-fips-202205", isFIPSCurve},
 				{"-wpa-202304", isWPACurve},
+				{"-cnsa1-202603", isCNSA1Curve},
+				{"-cnsa2-202603", isCNSA2Curve},
 			}
 
 			for _, policy := range policies {
@@ -143,6 +186,7 @@ func addCompliancePolicyTests() {
 					config: Config{
 						MinVersion:       VersionTLS12,
 						MaxVersion:       VersionTLS13,
+						CipherSuites:     ecdheAndSignCiphers,
 						CurvePreferences: []CurveID{curve.id},
 					},
 					flags: []string{
@@ -158,6 +202,7 @@ func addCompliancePolicyTests() {
 					config: Config{
 						MinVersion:       VersionTLS12,
 						MaxVersion:       VersionTLS13,
+						CipherSuites:     ecdheAndSignCiphers,
 						CurvePreferences: []CurveID{curve.id},
 					},
 					flags: []string{
@@ -167,6 +212,27 @@ func addCompliancePolicyTests() {
 				})
 			}
 		}
+
+		// For CNSA1 as a server, if the client supports ML-KEM-1024 (even if not
+		// the first choice, or the first shared choice), the server will select
+		// ML-KEM-1024, even if the client provides key shares for other groups.
+		testCases = append(testCases, testCase{
+			testType: serverTest,
+			protocol: protocol,
+			name:     "Compliance-cnsa1-202603-" + protocol.String() + "-PrefersMLKEM1024",
+			config: Config{
+				MinVersion:       VersionTLS13,
+				MaxVersion:       VersionTLS13,
+				CurvePreferences: []CurveID{CurveP256, CurveP384, CurveMLKEM1024},
+				DefaultCurves:    []CurveID{CurveP256, CurveP384},
+			},
+			flags: []string{
+				"-cnsa1-202603",
+			},
+			expectations: connectionExpectations{
+				curveID: CurveMLKEM1024,
+			},
+		})
 
 		for _, sigalg := range testSignatureAlgorithms {
 			// The TLS 1.0 and TLS 1.1 default signature algorithm does not
@@ -198,6 +264,14 @@ func addCompliancePolicyTests() {
 				isWPASigAlg = true
 			}
 
+			var isCNSASigAlg bool
+			switch sigalg.id {
+			case signatureRSAPKCS1WithSHA384,
+				signatureECDSAWithP384AndSHA384,
+				signatureRSAPSSWithSHA384:
+				isCNSASigAlg = true
+			}
+
 			maxVersion := uint16(VersionTLS13)
 			if hasComponent(sigalg.name, "PKCS1") {
 				if protocol == quic {
@@ -212,10 +286,17 @@ func addCompliancePolicyTests() {
 			}{
 				{"-fips-202205", isFIPSSigAlg},
 				{"-wpa-202304", isWPASigAlg},
+				{"-cnsa1-202603", isCNSASigAlg},
+				{"-cnsa2-202603", isCNSASigAlg},
 			}
 
 			cert := sigalg.baseCert.WithSignatureAlgorithms(sigalg.id)
 			for _, policy := range policies {
+				shouldFail := !policy.sigAlgOk
+				// The CNSA2 policy requires TLS 1.3.
+				if policy.flag == "-cnsa2-202603" && maxVersion == VersionTLS12 {
+					shouldFail = true
+				}
 				testCases = append(testCases, testCase{
 					testType: serverTest,
 					protocol: protocol,
@@ -223,13 +304,14 @@ func addCompliancePolicyTests() {
 					config: Config{
 						MinVersion:                VersionTLS12,
 						MaxVersion:                maxVersion,
+						CipherSuites:              ecdheAndSignCiphers,
 						VerifySignatureAlgorithms: []signatureAlgorithm{sigalg.id},
 					},
 					// Use the base certificate. We wish to pick up the signature algorithm
 					// preferences from the FIPS policy.
 					shimCertificate: sigalg.baseCert,
 					flags:           []string{policy.flag},
-					shouldFail:      !policy.sigAlgOk,
+					shouldFail:      shouldFail,
 				})
 
 				testCases = append(testCases, testCase{
@@ -237,14 +319,15 @@ func addCompliancePolicyTests() {
 					protocol: protocol,
 					name:     "Compliance" + policy.flag + "-" + protocol.String() + "-Client-" + sigalg.name,
 					config: Config{
-						MinVersion: VersionTLS12,
-						MaxVersion: maxVersion,
-						Credential: cert,
+						MinVersion:   VersionTLS12,
+						MaxVersion:   maxVersion,
+						CipherSuites: ecdheAndSignCiphers,
+						Credential:   cert,
 					},
 					flags: []string{
 						policy.flag,
 					},
-					shouldFail: !policy.sigAlgOk,
+					shouldFail: shouldFail,
 				})
 			}
 		}

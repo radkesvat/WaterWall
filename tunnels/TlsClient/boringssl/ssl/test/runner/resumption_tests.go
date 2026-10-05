@@ -15,7 +15,9 @@
 package runner
 
 import (
+	"crypto"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -297,20 +299,25 @@ func addResumptionVersionTests() {
 		name:          "Resume-Server-CipherNotPreferred",
 		resumeSession: true,
 		config: Config{
-			MaxVersion: VersionTLS12,
-			Bugs: ProtocolBugs{
-				ExpectNewTicket: true,
-				FilterTicket: func(in []byte) ([]byte, error) {
-					return SetShimTicketCipherSuite(in, TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA)
-				},
-			},
+			MaxVersion:   VersionTLS12,
+			CipherSuites: []uint16{TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
 		},
-		flags: []string{
-			"-ticket-key",
-			base64FlagValue(TestShimTicketKey),
+		resumeConfig: &Config{
+			MaxVersion:   VersionTLS12,
+			CipherSuites: []uint16{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
 		},
-		shouldFail:           false,
+		// The first connection should establish a session with a CBC cipher.
+		expectations: connectionExpectations{
+			cipher: TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+		},
+		// The second connection will offer GCM (preferred) and CBC, and a
+		// CBC-based session. The shim can either resume with CBC or do a full
+		// handshake with GCM. (It cannot resume a CBC session with GCM.) GCM
+		// should take precedence.
 		expectResumeRejected: true,
+		resumeExpectations: &connectionExpectations{
+			cipher: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		},
 	})
 
 	// TLS 1.3 allows sessions to be resumed at a different cipher if their
@@ -321,22 +328,24 @@ func addResumptionVersionTests() {
 		resumeSession: true,
 		config: Config{
 			MaxVersion:   VersionTLS13,
-			CipherSuites: []uint16{TLS_CHACHA20_POLY1305_SHA256, TLS_AES_128_GCM_SHA256},
-			Bugs: ProtocolBugs{
-				FilterTicket: func(in []byte) ([]byte, error) {
-					// If the client (runner) offers ChaCha20-Poly1305 first, the
-					// server (shim) always prefers it. Switch it to AES-GCM.
-					return SetShimTicketCipherSuite(in, TLS_AES_128_GCM_SHA256)
-				},
-			},
+			CipherSuites: []uint16{TLS_AES_256_GCM_SHA384},
 		},
-		flags: []string{
-			"-ticket-key",
-			base64FlagValue(TestShimTicketKey),
+		resumeConfig: &Config{
+			MaxVersion:   VersionTLS13,
+			CipherSuites: []uint16{TLS_CHACHA20_POLY1305_SHA256, TLS_AES_256_GCM_SHA384},
 		},
-		shouldFail:           false,
+		// The first connection should establish a session with AES.
+		expectations: connectionExpectations{
+			cipher: TLS_AES_256_GCM_SHA384,
+		},
+		// The second connection will offer ChaCha and AES. ChaCha is listed
+		// first, so the server should, a priori, pick ChaCha. Although the
+		// second connection also offers an AES-based session, the cipher choice
+		// should take predecence.
 		expectResumeRejected: true,
-	})
+		resumeExpectations: &connectionExpectations{
+			cipher: TLS_CHACHA20_POLY1305_SHA256,
+		}})
 
 	// Sessions may not be resumed if they contain another version's cipher.
 	testCases = append(testCases, testCase{
@@ -568,18 +577,18 @@ func addResumptionVersionTests() {
 
 	testCases = append(testCases, testCase{
 		testType:      serverTest,
-		name:          "Resume-Server-OmitPSKsOnSecondClientHello",
+		name:          "Resume-Server-OmitAllPSKsOnSecondClientHello",
 		resumeSession: true,
 		config: Config{
 			MaxVersion:    VersionTLS13,
 			DefaultCurves: []CurveID{},
 			Bugs: ProtocolBugs{
-				OmitPSKsOnSecondClientHello: true,
+				OmitAllPSKsOnSecondClientHello: true,
 			},
 		},
 		shouldFail:         true,
-		expectedLocalError: "remote error: illegal parameter",
-		expectedError:      ":INCONSISTENT_CLIENT_HELLO:",
+		expectedLocalError: "remote error: missing extension",
+		expectedError:      ":MISSING_EXTENSION:",
 	})
 }
 
@@ -1061,7 +1070,7 @@ func addSessionTicketTests() {
 					MinVersion: ver.version,
 					MaxVersion: ver.version,
 					Bugs: ProtocolBugs{
-						ExpectResumptionAcrossNames: ptrTo(false),
+						ExpectResumptionAcrossNames: new(false),
 					},
 				},
 			})
@@ -1072,11 +1081,224 @@ func addSessionTicketTests() {
 					MinVersion: ver.version,
 					MaxVersion: ver.version,
 					Bugs: ProtocolBugs{
-						ExpectResumptionAcrossNames: ptrTo(true),
+						ExpectResumptionAcrossNames: new(true),
 					},
 				},
 				flags: []string{"-resumption-across-names-enabled"},
 			})
 		}
+	}
+}
+
+func addCredentialSessionIDContextTests() {
+	context1 := []byte("session_id_context_1")
+	context2 := []byte("session_id_context_2")
+	context3 := []byte("session_id_context_3")
+
+	for _, ver := range tlsVersions {
+		// A session ID context configured on the credential partitions resumption.
+		testCases = append(testCases, testCase{
+			testType: serverTest,
+			name:     "CredentialSessionIDContext-Match-" + ver.name,
+			config: Config{
+				MinVersion: ver.version,
+				MaxVersion: ver.version,
+			},
+			shimCredentials:       []*Credential{rsaCertificate.WithSessionIDContext(context1)},
+			resumeShimCredentials: []*Credential{rsaCertificate.WithSessionIDContext(context1)},
+			resumeSession:         true,
+		})
+		testCases = append(testCases, testCase{
+			testType: serverTest,
+			name:     "CredentialSessionIDContext-Mismatch-" + ver.name,
+			config: Config{
+				MinVersion: ver.version,
+				MaxVersion: ver.version,
+			},
+			shimCredentials:       []*Credential{rsaCertificate.WithSessionIDContext(context1)},
+			resumeShimCredentials: []*Credential{rsaCertificate.WithSessionIDContext(context2)},
+			resumeSession:         true,
+			expectResumeRejected:  true,
+		})
+
+		// The credential's session ID context overrides the SSL_CTX-level default.
+		testCases = append(testCases, testCase{
+			testType: serverTest,
+			name:     "CredentialSessionIDContext-OverrideCTX-Match-" + ver.name,
+			config: Config{
+				MinVersion: ver.version,
+				MaxVersion: ver.version,
+			},
+			flags: []string{
+				"-on-initial-session-id-context", base64FlagValue(context1),
+				"-on-resume-session-id-context", base64FlagValue(context2),
+			},
+			shimCredentials:       []*Credential{rsaCertificate.WithSessionIDContext(context3)},
+			resumeShimCredentials: []*Credential{rsaCertificate.WithSessionIDContext(context3)},
+			resumeSession:         true,
+		})
+		testCases = append(testCases, testCase{
+			testType: serverTest,
+			name:     "CredentialSessionIDContext-OverrideCTX-Mismatch-" + ver.name,
+			config: Config{
+				MinVersion: ver.version,
+				MaxVersion: ver.version,
+			},
+			flags: []string{
+				"-session-id-context", base64FlagValue(context1),
+			},
+			shimCredentials:       []*Credential{rsaCertificate.WithSessionIDContext(context2)},
+			resumeShimCredentials: []*Credential{rsaCertificate.WithSessionIDContext(context3)},
+			resumeSession:         true,
+			expectResumeRejected:  true,
+		})
+
+		// When the credential's session ID context is unset, it falls back to the SSL_CTX-level default.
+		testCases = append(testCases, testCase{
+			testType: serverTest,
+			name:     "CredentialSessionIDContext-FallbackToCTX-Match-" + ver.name,
+			config: Config{
+				MinVersion: ver.version,
+				MaxVersion: ver.version,
+			},
+			flags: []string{
+				"-on-initial-session-id-context", base64FlagValue(context1),
+			},
+			shimCredentials:       []*Credential{&rsaCertificate},
+			resumeShimCredentials: []*Credential{rsaCertificate.WithSessionIDContext(context1)},
+			resumeSession:         true,
+		})
+		testCases = append(testCases, testCase{
+			testType: serverTest,
+			name:     "CredentialSessionIDContext-FallbackToCTX-Mismatch-" + ver.name,
+			config: Config{
+				MinVersion: ver.version,
+				MaxVersion: ver.version,
+			},
+			flags: []string{
+				"-on-initial-session-id-context", base64FlagValue(context1),
+				"-on-resume-session-id-context", base64FlagValue(context2),
+			},
+			shimCredentials:       []*Credential{&rsaCertificate},
+			resumeShimCredentials: []*Credential{&rsaCertificate},
+			resumeSession:         true,
+			expectResumeRejected:  true,
+		})
+	}
+
+	// Test with stateful TLS 1.2 resumption.
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "CredentialSessionIDContext-NoTicket-Match-TLS12",
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				RequireSessionIDs: true,
+			},
+		},
+		flags:                 []string{"-no-ticket"},
+		shimCredentials:       []*Credential{rsaCertificate.WithSessionIDContext(context1)},
+		resumeShimCredentials: []*Credential{rsaCertificate.WithSessionIDContext(context1)},
+		resumeSession:         true,
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "CredentialSessionIDContext-NoTicket-Mismatch-TLS12",
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				RequireSessionIDs: true,
+			},
+		},
+		flags:                 []string{"-no-ticket"},
+		shimCredentials:       []*Credential{rsaCertificate.WithSessionIDContext(context1)},
+		resumeShimCredentials: []*Credential{rsaCertificate.WithSessionIDContext(context2)},
+		resumeSession:         true,
+		expectResumeRejected:  true,
+	})
+
+	// Test with PSK credentials.
+	pskCred := Credential{
+		Type:         CredentialTypePreSharedKey,
+		PreSharedKey: slices.Repeat([]byte{'A', 'B', 'C', 'D'}, 8),
+		PSKIdentity:  []byte("psk1"),
+		PSKContext:   []byte("context1"),
+		PSKHash:      crypto.SHA256,
+	}
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "CredentialSessionIDContext-PSK-Match-TLS13",
+		config: Config{
+			Credential: &pskCred,
+			MaxVersion: VersionTLS13,
+		},
+		shimCredentials:       []*Credential{pskCred.WithSessionIDContext(context1)},
+		resumeShimCredentials: []*Credential{pskCred.WithSessionIDContext(context1)},
+		resumeSession:         true,
+		resumeExpectations:    &connectionExpectations{},
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "CredentialSessionIDContext-PSK-Mismatch-TLS13",
+		config: Config{
+			Credential: &pskCred,
+			MaxVersion: VersionTLS13,
+		},
+		shimCredentials:       []*Credential{pskCred.WithSessionIDContext(context1)},
+		resumeShimCredentials: []*Credential{pskCred.WithSessionIDContext(context2)},
+		resumeSession:         true,
+		expectResumeRejected:  true,
+	})
+
+	// The selected credential's session ID context should apply.
+	for _, vers := range tlsVersions {
+		rsaConfig := Config{
+			MaxVersion:                vers.version,
+			VerifySignatureAlgorithms: []signatureAlgorithm{signatureRSAPSSWithSHA256},
+			CipherSuites:              []uint16{TLS_AES_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
+		}
+		p256Config := Config{
+			MaxVersion:                vers.version,
+			VerifySignatureAlgorithms: []signatureAlgorithm{signatureECDSAWithP256AndSHA256},
+			CipherSuites:              []uint16{TLS_AES_128_GCM_SHA256, TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA},
+		}
+
+		testCases = append(testCases, testCase{
+			testType:     serverTest,
+			name:         "CredentialSessionIDContext-MultipleCredentials-ResumeSame-" + vers.name,
+			config:       rsaConfig,
+			resumeConfig: new(rsaConfig),
+			shimCredentials: []*Credential{
+				rsaCertificate.WithSessionIDContext(context1),
+				ecdsaP256Certificate.WithSessionIDContext(context2),
+			},
+			resumeSession: true,
+		})
+		testCases = append(testCases, testCase{
+			testType:     serverTest,
+			name:         "CredentialSessionIDContext-MultipleCredentials-ResumeDifferent-" + vers.name,
+			config:       rsaConfig,
+			resumeConfig: new(p256Config),
+			shimCredentials: []*Credential{
+				rsaCertificate.WithSessionIDContext(context1),
+				ecdsaP256Certificate.WithSessionIDContext(context2),
+			},
+			resumeSession:        true,
+			expectResumeRejected: true,
+		})
+		testCases = append(testCases, testCase{
+			testType:     serverTest,
+			name:         "CredentialSessionIDContext-MultipleCredentials-ResumeDifferent-SamePartition-" + vers.name,
+			config:       rsaConfig,
+			resumeConfig: new(p256Config),
+			shimCredentials: []*Credential{
+				rsaCertificate.WithSessionIDContext(context1),
+				ecdsaP256Certificate.WithSessionIDContext(context1),
+			},
+			resumeSession: true,
+			// In TLS 1.2, the cipher suite changes and resumption is rejected anyway.
+			// Starting TLS 1.3, this is a useful test.
+			expectResumeRejected: vers.version <= VersionTLS12,
+		})
 	}
 }

@@ -22,6 +22,8 @@
 #include "internal.h"
 
 
+using namespace bssl;
+
 // The 32-bit hash algorithms share a common byte-order neutral collector and
 // padding function implementations that operate on unaligned data,
 // ../digest/md32_common.h. SHA-512 is the only 64-bit hash algorithm, as of
@@ -30,7 +32,7 @@
 
 static void sha512_final_impl(uint8_t *out, size_t md_len, SHA512_CTX *sha);
 
-bcm_infallible BCM_sha384_init(SHA512_CTX *sha) {
+bcm_infallible bssl::BCM_sha384_init(SHA512_CTX *sha) {
   sha->h[0] = UINT64_C(0xcbbb9d5dc1059ed8);
   sha->h[1] = UINT64_C(0x629a292a367cd507);
   sha->h[2] = UINT64_C(0x9159015a3070dd17);
@@ -43,12 +45,12 @@ bcm_infallible BCM_sha384_init(SHA512_CTX *sha) {
   sha->bytes_so_far_low = 0;
   sha->bytes_so_far_high = 0;
   sha->num = 0;
-  sha->md_len = BCM_SHA384_DIGEST_LENGTH;
+  sha->md_len = SHA384_DIGEST_LENGTH;
   return bcm_infallible::approved;
 }
 
 
-bcm_infallible BCM_sha512_init(SHA512_CTX *sha) {
+bcm_infallible bssl::BCM_sha512_init(SHA512_CTX *sha) {
   sha->h[0] = UINT64_C(0x6a09e667f3bcc908);
   sha->h[1] = UINT64_C(0xbb67ae8584caa73b);
   sha->h[2] = UINT64_C(0x3c6ef372fe94f82b);
@@ -61,11 +63,11 @@ bcm_infallible BCM_sha512_init(SHA512_CTX *sha) {
   sha->bytes_so_far_low = 0;
   sha->bytes_so_far_high = 0;
   sha->num = 0;
-  sha->md_len = BCM_SHA512_DIGEST_LENGTH;
+  sha->md_len = SHA512_DIGEST_LENGTH;
   return bcm_infallible::approved;
 }
 
-bcm_infallible BCM_sha512_256_init(SHA512_CTX *sha) {
+bcm_infallible bssl::BCM_sha512_256_init(SHA512_CTX *sha) {
   sha->h[0] = UINT64_C(0x22312194fc2bf72c);
   sha->h[1] = UINT64_C(0x9f555fa3c84c64c2);
   sha->h[2] = UINT64_C(0x2393b86b6f53b151);
@@ -78,7 +80,7 @@ bcm_infallible BCM_sha512_256_init(SHA512_CTX *sha) {
   sha->bytes_so_far_low = 0;
   sha->bytes_so_far_high = 0;
   sha->num = 0;
-  sha->md_len = BCM_SHA512_256_DIGEST_LENGTH;
+  sha->md_len = SHA512_256_DIGEST_LENGTH;
   return bcm_infallible::approved;
 }
 
@@ -88,42 +90,42 @@ static void sha512_block_data_order(uint64_t state[8], const uint8_t *in,
 #endif
 
 
-bcm_infallible BCM_sha384_final(uint8_t out[BCM_SHA384_DIGEST_LENGTH],
-                                SHA512_CTX *sha) {
-  // This function must be paired with |BCM_sha384_init|, which sets
-  // |sha->md_len| to |BCM_SHA384_DIGEST_LENGTH|.
-  assert(sha->md_len == BCM_SHA384_DIGEST_LENGTH);
-  sha512_final_impl(out, BCM_SHA384_DIGEST_LENGTH, sha);
+bcm_infallible bssl::BCM_sha384_final(uint8_t out[SHA384_DIGEST_LENGTH],
+                                      SHA512_CTX *sha) {
+  // This function must be paired with `BCM_sha384_init`, which sets
+  // `sha->md_len` to `SHA384_DIGEST_LENGTH`.
+  assert(sha->md_len == SHA384_DIGEST_LENGTH);
+  sha512_final_impl(out, SHA384_DIGEST_LENGTH, sha);
   return bcm_infallible::approved;
 }
 
-bcm_infallible BCM_sha384_update(SHA512_CTX *sha, const void *data,
-                                 size_t len) {
+bcm_infallible bssl::BCM_sha384_update(SHA512_CTX *sha, const void *data,
+                                       size_t len) {
   return BCM_sha512_update(sha, data, len);
 }
 
-bcm_infallible BCM_sha512_256_update(SHA512_CTX *sha, const void *data,
-                                     size_t len) {
+bcm_infallible bssl::BCM_sha512_256_update(SHA512_CTX *sha, const void *data,
+                                           size_t len) {
   return BCM_sha512_update(sha, data, len);
 }
 
-bcm_infallible BCM_sha512_256_final(uint8_t out[BCM_SHA512_256_DIGEST_LENGTH],
-                                    SHA512_CTX *sha) {
-  // This function must be paired with |BCM_sha512_256_init|, which sets
-  // |sha->md_len| to |BCM_SHA512_256_DIGEST_LENGTH|.
-  assert(sha->md_len == BCM_SHA512_256_DIGEST_LENGTH);
-  sha512_final_impl(out, BCM_SHA512_256_DIGEST_LENGTH, sha);
+bcm_infallible bssl::BCM_sha512_256_final(uint8_t out[SHA512_256_DIGEST_LENGTH],
+                                          SHA512_CTX *sha) {
+  // This function must be paired with `BCM_sha512_256_init`, which sets
+  // `sha->md_len` to `SHA512_256_DIGEST_LENGTH`.
+  assert(sha->md_len == SHA512_256_DIGEST_LENGTH);
+  sha512_final_impl(out, SHA512_256_DIGEST_LENGTH, sha);
   return bcm_infallible::approved;
 }
 
-bcm_infallible BCM_sha512_transform(SHA512_CTX *c,
-                                    const uint8_t block[SHA512_CBLOCK]) {
+bcm_infallible bssl::BCM_sha512_transform(SHA512_CTX *c,
+                                          const uint8_t block[SHA512_CBLOCK]) {
   sha512_block_data_order(c->h, block, 1);
   return bcm_infallible::approved;
 }
 
-bcm_infallible BCM_sha512_update(SHA512_CTX *c, const void *in_data,
-                                 size_t len) {
+bcm_infallible bssl::BCM_sha512_update(SHA512_CTX *c, const void *in_data,
+                                       size_t len) {
   uint8_t *p = c->p;
   const uint8_t *data = reinterpret_cast<const uint8_t *>(in_data);
 
@@ -166,11 +168,11 @@ bcm_infallible BCM_sha512_update(SHA512_CTX *c, const void *in_data,
   return bcm_infallible::approved;
 }
 
-bcm_infallible BCM_sha512_final(uint8_t out[BCM_SHA512_DIGEST_LENGTH],
-                                SHA512_CTX *sha) {
-  // Ideally we would assert |sha->md_len| is |BCM_SHA512_DIGEST_LENGTH| to
-  // match the size hint, but calling code often pairs |BCM_sha384_init| with
-  // |BCM_sha512_final| and expects |sha->md_len| to carry the size over.
+bcm_infallible bssl::BCM_sha512_final(uint8_t out[SHA512_DIGEST_LENGTH],
+                                      SHA512_CTX *sha) {
+  // Ideally we would assert `sha->md_len` is `SHA512_DIGEST_LENGTH` to match
+  // the size hint, but calling code often pairs `BCM_sha384_init` with
+  // `BCM_sha512_final` and expects `sha->md_len` to carry the size over.
   //
   // TODO(davidben): Add an assert and fix code to match them up.
   sha512_final_impl(out, sha->md_len, sha);

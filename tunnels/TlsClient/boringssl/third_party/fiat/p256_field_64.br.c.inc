@@ -30,7 +30,6 @@ static inline void p256_coord_add(br_word_t p_out, br_word_t p_x, br_word_t p_y)
   _br_store(p_out+8, r1);
   _br_store((p_out+8)+8, r2);
   _br_store(((p_out+8)+8)+8, r3);
-  return;
 }
 
 static inline void p256_coord_sub(br_word_t out, br_word_t x, br_word_t y) {
@@ -48,7 +47,6 @@ static inline void p256_coord_sub(br_word_t out, br_word_t x, br_word_t y) {
   _br_store(out+8, r1);
   _br_store((out+8)+8, r2);
   _br_store(((out+8)+8)+8, r3);
-  return;
 }
 
 static inline br_word_t p256_coord_nonzero(br_word_t p_x) {
@@ -71,7 +69,6 @@ static inline void u256_shr(br_word_t p_out, br_word_t p_x, br_word_t n) {
   _br_store(p_out+8, y1);
   _br_store((p_out+8)+8, y2);
   _br_store(((p_out+8)+8)+8, y3);
-  return;
 }
 
 static inline void u256_set_p256_minushalf_conditional(br_word_t p_out, br_word_t mask) {
@@ -84,5 +81,4 @@ static inline void u256_set_p256_minushalf_conditional(br_word_t p_out, br_word_
   _br_store(p_out+8, mask&mh1);
   _br_store((p_out+8)+8, mask&mh2);
   _br_store(((p_out+8)+8)+8, mask&mh3);
-  return;
 }

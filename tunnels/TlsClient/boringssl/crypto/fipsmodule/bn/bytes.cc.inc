@@ -19,10 +19,13 @@
 
 #include "internal.h"
 
-void bn_big_endian_to_words(BN_ULONG *out, size_t out_len, const uint8_t *in,
-                            size_t in_len) {
-  // The caller should have sized |out| to fit |in| without truncating. This
-  // condition ensures we do not overflow |out|, so use a runtime check.
+
+using namespace bssl;
+
+void bssl::bn_big_endian_to_words(BN_ULONG *out, size_t out_len,
+                                  const uint8_t *in, size_t in_len) {
+  // The caller should have sized `out` to fit `in` without truncating. This
+  // condition ensures we do not overflow `out`, so use a runtime check.
   BSSL_CHECK(in_len <= out_len * sizeof(BN_ULONG));
 
   // Load whole words.
@@ -49,42 +52,11 @@ void bn_big_endian_to_words(BN_ULONG *out, size_t out_len, const uint8_t *in,
 }
 
 BIGNUM *BN_bin2bn(const uint8_t *in, size_t len, BIGNUM *ret) {
-  BIGNUM *bn = NULL;
-  if (ret == NULL) {
+  BIGNUM *bn = nullptr;
+  if (ret == nullptr) {
     bn = BN_new();
-    if (bn == NULL) {
-      return NULL;
-    }
-    ret = bn;
-  }
-
-  if (len == 0) {
-    ret->width = 0;
-    return ret;
-  }
-
-  size_t num_words = ((len - 1) / BN_BYTES) + 1;
-  if (!bn_wexpand(ret, num_words)) {
-    BN_free(bn);
-    return NULL;
-  }
-
-  // |bn_wexpand| must check bounds on |num_words| to write it into
-  // |ret->dmax|.
-  assert(num_words <= INT_MAX);
-  ret->width = (int)num_words;
-  ret->neg = 0;
-
-  bn_big_endian_to_words(ret->d, ret->width, in, len);
-  return ret;
-}
-
-BIGNUM *BN_lebin2bn(const uint8_t *in, size_t len, BIGNUM *ret) {
-  BIGNUM *bn = NULL;
-  if (ret == NULL) {
-    bn = BN_new();
-    if (bn == NULL) {
-      return NULL;
+    if (bn == nullptr) {
+      return nullptr;
     }
     ret = bn;
   }
@@ -95,13 +67,46 @@ BIGNUM *BN_lebin2bn(const uint8_t *in, size_t len, BIGNUM *ret) {
     return ret;
   }
 
-  // Reserve enough space in |ret|.
   size_t num_words = ((len - 1) / BN_BYTES) + 1;
   if (!bn_wexpand(ret, num_words)) {
     BN_free(bn);
-    return NULL;
+    return nullptr;
+  }
+
+  // `bn_wexpand` must check bounds on `num_words` to write it into
+  // `ret->dmax`.
+  assert(num_words <= INT_MAX);
+  ret->width = (int)num_words;
+  ret->neg = 0;
+
+  bn_big_endian_to_words(ret->d, ret->width, in, len);
+  return ret;
+}
+
+BIGNUM *BN_lebin2bn(const uint8_t *in, size_t len, BIGNUM *ret) {
+  BIGNUM *bn = nullptr;
+  if (ret == nullptr) {
+    bn = BN_new();
+    if (bn == nullptr) {
+      return nullptr;
+    }
+    ret = bn;
+  }
+
+  if (len == 0) {
+    ret->width = 0;
+    ret->neg = 0;
+    return ret;
+  }
+
+  // Reserve enough space in `ret`.
+  size_t num_words = ((len - 1) / BN_BYTES) + 1;
+  if (!bn_wexpand(ret, num_words)) {
+    BN_free(bn);
+    return nullptr;
   }
   ret->width = (int)num_words;
+  ret->neg = 0;
 
   // Make sure the top bytes will be zeroed.
   ret->d[num_words - 1] = 0;
@@ -116,8 +121,8 @@ BIGNUM *BN_le2bn(const uint8_t *in, size_t len, BIGNUM *ret) {
   return BN_lebin2bn(in, len, ret);
 }
 
-// fits_in_bytes returns one if the |num_words| words in |words| can be
-// represented in |num_bytes| bytes.
+// fits_in_bytes returns one if the `num_words` words in `words` can be
+// represented in `num_bytes` bytes.
 static int fits_in_bytes(const BN_ULONG *words, size_t num_words,
                          size_t num_bytes) {
   const uint8_t *bytes = (const uint8_t *)words;
@@ -129,7 +134,7 @@ static int fits_in_bytes(const BN_ULONG *words, size_t num_words,
   return mask == 0;
 }
 
-void bn_assert_fits_in_bytes(const BIGNUM *bn, size_t num) {
+void bssl::bn_assert_fits_in_bytes(const BIGNUM *bn, size_t num) {
   const uint8_t *bytes = (const uint8_t *)bn->d;
   size_t tot_bytes = bn->width * sizeof(BN_ULONG);
   if (tot_bytes > num) {
@@ -141,8 +146,8 @@ void bn_assert_fits_in_bytes(const BIGNUM *bn, size_t num) {
   }
 }
 
-void bn_words_to_big_endian(uint8_t *out, size_t out_len, const BN_ULONG *in,
-                            size_t in_len) {
+void bssl::bn_words_to_big_endian(uint8_t *out, size_t out_len,
+                                  const BN_ULONG *in, size_t in_len) {
   // The caller should have selected an output length without truncation.
   declassify_assert(fits_in_bytes(in, in_len, out_len));
 

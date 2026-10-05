@@ -45,6 +45,10 @@ func sortedKeys(m map[string]any) []string {
 }
 
 func printAttribute(w io.Writer, key string, valueAny any, isInstruction bool) error {
+	if valueAny == nil {
+		// Skip keys with value null.
+		return nil
+	}
 	switch value := valueAny.(type) {
 	case float64:
 		if float64(int(value)) != value {
@@ -79,7 +83,7 @@ func printAttribute(w io.Writer, key string, valueAny any, isInstruction bool) e
 			}
 		}
 	default:
-		panic(fmt.Sprintf("Unknown type for %q: %T", key, valueAny))
+		return fmt.Errorf("Unknown type for %q: %T", key, valueAny)
 	}
 	return nil
 }
@@ -145,7 +149,7 @@ func convertWycheproof(f io.Writer, jsonPath string) error {
 			// Wycheproof files include keys in multiple formats. Skip PEM and
 			// JWK formats. We process DER more easily. PEM has newlines and
 			// JWK is a JSON object.
-			if k == "type" || k == "tests" || strings.HasSuffix(k, "Pem") || strings.HasSuffix(k, "Jwk") || k == "jwk" {
+			if k == "type" || k == "tests" || k == "source" || strings.HasSuffix(k, "Pem") || strings.HasSuffix(k, "Jwk") || k == "jwk" {
 				continue
 			}
 			if err := printAttribute(f, k, group[k], true); err != nil {
@@ -159,7 +163,7 @@ func convertWycheproof(f io.Writer, jsonPath string) error {
 			if _, err := fmt.Fprintf(f, "# tcId = %d\n", int(test["tcId"].(float64))); err != nil {
 				return err
 			}
-			if comment, ok := test["comment"]; ok && len(comment.(string)) != 0 {
+			if comment, ok := test["comment"]; ok && comment.(string) != "" {
 				if err := printComment(f, comment.(string)); err != nil {
 					return err
 				}
@@ -199,7 +203,14 @@ var defaultInputs = []string{
 	"aes_gcm_siv_test.json",
 	"aes_gcm_test.json",
 	"chacha20_poly1305_test.json",
-	"dsa_test.json",
+	"dsa_2048_224_sha224_test.json",
+	"dsa_2048_224_sha256_test.json",
+	"dsa_2048_256_sha256_test.json",
+	"dsa_3072_256_sha256_test.json",
+	"dsa_2048_224_sha224_p1363_test.json",
+	"dsa_2048_224_sha256_p1363_test.json",
+	"dsa_2048_256_sha256_p1363_test.json",
+	"dsa_3072_256_sha256_p1363_test.json",
 	"ecdh_secp224r1_test.json",
 	"ecdh_secp256r1_test.json",
 	"ecdh_secp384r1_test.json",
@@ -220,7 +231,7 @@ var defaultInputs = []string{
 	"ecdsa_secp384r1_sha512_test.json",
 	"ecdsa_secp521r1_sha512_p1363_test.json",
 	"ecdsa_secp521r1_sha512_test.json",
-	"eddsa_test.json",
+	"ed25519_test.json",
 	"hkdf_sha1_test.json",
 	"hkdf_sha256_test.json",
 	"hkdf_sha384_test.json",
@@ -230,8 +241,8 @@ var defaultInputs = []string{
 	"hmac_sha256_test.json",
 	"hmac_sha384_test.json",
 	"hmac_sha512_test.json",
-	"kw_test.json",
-	"kwp_test.json",
+	"aes_wrap_test.json",
+	"aes_kwp_test.json",
 	"primality_test.json",
 	"rsa_oaep_2048_sha1_mgf1sha1_test.json",
 	"rsa_oaep_2048_sha224_mgf1sha1_test.json",
@@ -261,7 +272,11 @@ var defaultInputs = []string{
 	"rsa_pss_4096_sha256_mgf1_32_test.json",
 	"rsa_pss_4096_sha512_mgf1_32_test.json",
 	"rsa_pss_misc_test.json",
-	"rsa_sig_gen_misc_test.json",
+	"rsa_pkcs1_1024_sig_gen_test.json",
+	"rsa_pkcs1_1536_sig_gen_test.json",
+	"rsa_pkcs1_2048_sig_gen_test.json",
+	"rsa_pkcs1_3072_sig_gen_test.json",
+	"rsa_pkcs1_4096_sig_gen_test.json",
 	"rsa_signature_2048_sha224_test.json",
 	"rsa_signature_2048_sha256_test.json",
 	"rsa_signature_2048_sha384_test.json",
@@ -269,11 +284,31 @@ var defaultInputs = []string{
 	"rsa_signature_3072_sha256_test.json",
 	"rsa_signature_3072_sha384_test.json",
 	"rsa_signature_3072_sha512_test.json",
+	"rsa_signature_4096_sha256_test.json",
 	"rsa_signature_4096_sha384_test.json",
 	"rsa_signature_4096_sha512_test.json",
-	"rsa_signature_test.json",
+	"rsa_signature_8192_sha256_test.json",
+	"rsa_signature_8192_sha384_test.json",
+	"rsa_signature_8192_sha512_test.json",
 	"x25519_test.json",
 	"xchacha20_poly1305_test.json",
+	"mldsa_44_sign_noseed_test.json",
+	"mldsa_44_sign_seed_test.json",
+	"mldsa_44_verify_test.json",
+	"mldsa_65_sign_noseed_test.json",
+	"mldsa_65_sign_seed_test.json",
+	"mldsa_65_verify_test.json",
+	"mldsa_87_sign_noseed_test.json",
+	"mldsa_87_sign_seed_test.json",
+	"mldsa_87_verify_test.json",
+	"mlkem_1024_encaps_test.json",
+	"mlkem_1024_keygen_seed_test.json",
+	"mlkem_1024_semi_expanded_decaps_test.json",
+	"mlkem_1024_test.json",
+	"mlkem_768_encaps_test.json",
+	"mlkem_768_keygen_seed_test.json",
+	"mlkem_768_semi_expanded_decaps_test.json",
+	"mlkem_768_test.json",
 }
 
 func main() {

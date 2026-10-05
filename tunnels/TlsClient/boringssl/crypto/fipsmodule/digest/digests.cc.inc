@@ -24,12 +24,14 @@
 #include "../delocate.h"
 #include "internal.h"
 
+
+using namespace bssl;
+
 #if defined(NDEBUG)
 #define CHECK(x) (void)(x)
 #else
 #define CHECK(x) assert(x)
 #endif
-
 
 static void sha1_init(EVP_MD_CTX *ctx) {
   BCM_sha1_init(reinterpret_cast<SHA_CTX *>(ctx->md_data));
@@ -45,7 +47,7 @@ static void sha1_final(EVP_MD_CTX *ctx, uint8_t *md) {
 
 DEFINE_METHOD_FUNCTION(EVP_MD, EVP_sha1) {
   out->type = NID_sha1;
-  out->md_size = BCM_SHA_DIGEST_LENGTH;
+  out->md_size = SHA_DIGEST_LENGTH;
   out->flags = 0;
   out->init = sha1_init;
   out->update = sha1_update;
@@ -71,7 +73,7 @@ static void sha224_final(EVP_MD_CTX *ctx, uint8_t *md) {
 
 DEFINE_METHOD_FUNCTION(EVP_MD, EVP_sha224) {
   out->type = NID_sha224;
-  out->md_size = BCM_SHA224_DIGEST_LENGTH;
+  out->md_size = SHA224_DIGEST_LENGTH;
   out->flags = 0;
   out->init = sha224_init;
   out->update = sha224_update;
@@ -96,7 +98,7 @@ static void sha256_final(EVP_MD_CTX *ctx, uint8_t *md) {
 
 DEFINE_METHOD_FUNCTION(EVP_MD, EVP_sha256) {
   out->type = NID_sha256;
-  out->md_size = BCM_SHA256_DIGEST_LENGTH;
+  out->md_size = SHA256_DIGEST_LENGTH;
   out->flags = 0;
   out->init = sha256_init;
   out->update = sha256_update;
@@ -120,7 +122,7 @@ static void sha384_final(EVP_MD_CTX *ctx, uint8_t *md) {
 
 DEFINE_METHOD_FUNCTION(EVP_MD, EVP_sha384) {
   out->type = NID_sha384;
-  out->md_size = BCM_SHA384_DIGEST_LENGTH;
+  out->md_size = SHA384_DIGEST_LENGTH;
   out->flags = 0;
   out->init = sha384_init;
   out->update = sha384_update;
@@ -145,7 +147,7 @@ static void sha512_final(EVP_MD_CTX *ctx, uint8_t *md) {
 
 DEFINE_METHOD_FUNCTION(EVP_MD, EVP_sha512) {
   out->type = NID_sha512;
-  out->md_size = BCM_SHA512_DIGEST_LENGTH;
+  out->md_size = SHA512_DIGEST_LENGTH;
   out->flags = 0;
   out->init = sha512_init;
   out->update = sha512_update;
@@ -170,7 +172,7 @@ static void sha512_256_final(EVP_MD_CTX *ctx, uint8_t *md) {
 
 DEFINE_METHOD_FUNCTION(EVP_MD, EVP_sha512_256) {
   out->type = NID_sha512_256;
-  out->md_size = BCM_SHA512_256_DIGEST_LENGTH;
+  out->md_size = SHA512_256_DIGEST_LENGTH;
   out->flags = 0;
   out->init = sha512_256_init;
   out->update = sha512_256_update;

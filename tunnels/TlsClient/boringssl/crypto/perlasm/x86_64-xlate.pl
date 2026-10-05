@@ -93,6 +93,7 @@ my $PTR=" PTR";
 
 my $nasmref=2.03;
 my $nasm=0;
+my %segment_had_labels;
 
 if    ($flavour eq "mingw64")	{ $gas=1; $elf=0; $win64=1;
 				  # TODO(davidben): Before supporting the
@@ -129,7 +130,7 @@ my %globals;
 		$self->{sz} = $2;
 	    } elsif ($self->{op} =~ /call|jmp|^rdrand$/) {
 		$self->{sz} = "";
-	    } elsif ($self->{op} =~ /^p/ && $' !~ /^(ush|op|insrw)/) { # SSEn
+	    } elsif ($self->{op} =~ /^p/ && $' !~ /^(ush|op|insrw|ext[ql]?$|dep[ql]?$)/) { # SSEn
 		$self->{sz} = "";
 	    } elsif ($self->{op} =~ /^[vk]/) { # VEX or k* such as kmov
 		$self->{sz} = "";
@@ -1061,27 +1062,6 @@ ____
     }
 }
 { package directive;	# pick up directives, which start with .
-    my %sections;
-    sub nasm_section {
-	my ($name, $qualifiers) = @_;
-	my $ret = "section\t$name";
-	if (exists $sections{$name}) {
-	    # Work around https://bugzilla.nasm.us/show_bug.cgi?id=3392701. Only
-	    # emit section qualifiers the first time a section is referenced.
-	    # For all subsequent references, require the qualifiers match and
-	    # omit them.
-	    #
-	    # See also https://crbug.com/1422018 and b/270643835.
-	    my $old = $sections{$name};
-	    die "Inconsistent qualifiers: $qualifiers vs $old" if ($qualifiers ne "" && $qualifiers ne $old);
-	} else {
-	    $sections{$name} = $qualifiers;
-	    if ($qualifiers ne "") {
-		$ret .= " $qualifiers";
-	    }
-	}
-	return $ret;
-    }
     sub re {
 	my	($class, $line) = @_;
 	my	$self = {};
@@ -1190,7 +1170,7 @@ ____
 	    SWITCH: for ($dir) {
 		/\.text/    && do { my $v=undef;
 				    if ($nasm) {
-					$v=nasm_section(".text", "code align=64")."\n";
+					$v="section	.text code align=64\n";
 				    } else {
 					$v="$current_segment\tENDS\n" if ($current_segment);
 					$current_segment = ".text\$";
@@ -1203,7 +1183,7 @@ ____
 				  };
 		/\.data/    && do { my $v=undef;
 				    if ($nasm) {
-					$v=nasm_section(".data", "data align=8")."\n";
+					$v="section	.data data align=8\n";
 				    } else {
 					$v="$current_segment\tENDS\n" if ($current_segment);
 					$current_segment = "_DATA";
@@ -1217,14 +1197,13 @@ ____
 				    $$line = ".CRT\$XCU" if ($$line eq ".init");
 				    $$line = ".rdata" if ($$line eq ".rodata");
 				    if ($nasm) {
-					my $qualifiers = "";
+					$v="section	$$line";
 					if ($$line=~/\.([prx])data/) {
-					    $qualifiers = "rdata align=";
-					    $qualifiers .= $1 eq "p"? 4 : 8;
+					    $v.=" rdata align=";
+					    $v.=$1 eq "p"? 4 : 8;
 					} elsif ($$line=~/\.CRT\$/i) {
-					    $qualifiers = "rdata align=8";
+					    $v.=" rdata align=8";
 					}
-					$v = nasm_section($$line, $qualifiers);
 				    } else {
 					$v="$current_segment\tENDS\n" if ($current_segment);
 					$v.="$$line\tSEGMENT";
@@ -1321,9 +1300,9 @@ ____
 
 ########################################################################
 
+my $comment = "//";
+$comment = ";" if ($masm || $nasm);
 {
-  my $comment = "//";
-  $comment = ";" if ($masm || $nasm);
   print <<___;
 $comment This file is generated from a similarly-named Perl script in the BoringSSL
 $comment source tree. Do not edit by hand.
@@ -1342,7 +1321,7 @@ default	rel
 \%define _CET_ENDBR
 
 \%ifdef BORINGSSL_PREFIX
-\%include "boringssl_prefix_symbols_nasm.inc"
+\%include "boringssl_prefix_symbols_internal_x86_64_win_asm.inc"
 \%endif
 ___
 } elsif ($masm) {
@@ -1373,33 +1352,70 @@ sub process_line {
     my $line = shift;
     $line =~ s|\R$||;           # Better chomp
 
+    my @comments = ();
+
     if ($nasm) {
 	$line =~ s|^#ifdef |%ifdef |;
 	$line =~ s|^#ifndef |%ifndef |;
 	$line =~ s|^#endif|%endif|;
-	$line =~ s|[#!].*$||;	# get rid of asm-style comments...
+	$line =~ s|[#!](.*)$||  # get rid of asm-style comments...
+	    and push @comments, $1;
     } else {
 	# Get rid of asm-style comments but not preprocessor directives. The
 	# former are identified by having a letter after the '#' and starting in
 	# the first column.
 	$line =~ s|!.*$||;
-	$line =~ s|(?<=.)#.*$||;
-	$line =~ s|^#([^a-z].*)?$||;
+	$line =~ s|(?<=.)#(.*)$||
+	    and push @comments, $1;
+	$line =~ s|^#([^a-z].*)?$||
+	    and push @comments, $1;
     }
 
-    $line =~ s|/\*.*\*/||;	# ... and C-style comments...
+    $line =~ s|/\*(.*)\*/||	# ... and C-style comments...
+	and push @comments, $1;
     $line =~ s|^\s+||;		# ... and skip white spaces in beginning
     $line =~ s|\s+$||;		# ... and at the end
 
-    if (my $label=label->re(\$line))	{ print $label->out(); }
+    my $comments = join ' ', map { s|^\s+||; s|\s+$||; $_; } @comments;
+    my $commentprefix = @comments ? "$comment " : '';
+    my $commentspace = @comments ? '  ' : '';
+
+    my $pre_line = '';
+
+    if (my $label=label->re(\$line)) {
+	if ($gas) {
+	    my $name = ($globals{$label->{value}} or $label->{value});
+	    if ($name =~ /^\Q$decor\E/) {
+		if (!$segment_had_labels{$current_segment}) {
+		    # With `.subsections_via_symbols`, an asm-local label
+		    # cannot be the first label of a section.
+		    die "Section $current_segment starts with an asm-local .Label - please add at least a file-local label at the start";
+		}
+	    } else {
+		if ($segment_had_labels{$current_segment}++ && $flavour eq "macosx") {
+		    # The macOS linker may split object files at symbol
+		    # definitions to eliminate dead code. It however is unable
+		    # to track jumps across these bounds, and also, for some
+		    # data objects it may cause layout to change. Marking every
+		    # symbol an alternate entry point is safe and should turn
+		    # the optimization into a NOP for these assembly files and
+		    # may add necessary relocations. It however is invalid to
+		    # mark the _first_ symbol of a section so, as it always is
+		    # considered an entry point.
+		    printf ".alt_entry %s\n", $name;
+		}
+	    }
+	}
+	$pre_line .= $label->out();
+    }
 
     if (my $directive=directive->re(\$line)) {
-	printf "%s",$directive->out();
+	$pre_line .= $directive->out();
     } elsif (my $opcode=opcode->re(\$line)) {
 	my $asm = eval("\$".$opcode->mnemonic());
 
 	if ((ref($asm) eq 'CODE') && scalar(my @bytes=&$asm($line))) {
-	    print $gas?".byte\t":"DB\t",join(',',@bytes),"\n";
+	    print $pre_line, $gas?".byte\t":"DB\t",join(',',@bytes),$commentspace,$commentprefix,$comment,"\n";
 	    next;
 	}
 
@@ -1427,7 +1443,7 @@ sub process_line {
 	    if ($gas) {
 		$insn = $opcode->out($#args>=1?$args[$#args]->size():$sz);
 		@args = map($_->out($sz),@args);
-		printf "\t%s\t%s",$insn,join(",",@args);
+		$pre_line .= sprintf "\t%s\t%s",$insn,join(",",@args);
 	    } else {
 		$insn = $opcode->out();
 		foreach (@args) {
@@ -1440,14 +1456,18 @@ sub process_line {
 		}
 		@args = reverse(@args);
 		undef $sz if ($nasm && $opcode->mnemonic() eq "lea");
-		printf "\t%s\t%s",$insn,join(",",map($_->out($sz),@args));
+		$pre_line .= sprintf "\t%s\t%s",$insn,join(",",map($_->out($sz),@args));
 	    }
 	} else {
-	    printf "\t%s",$opcode->out();
+	    $pre_line .= sprintf "\t%s",$opcode->out();
 	}
     }
 
-    print $line,"\n";
+    $line = $pre_line . $line;
+    $commentspace = ''
+	if $line !~ /[^\n]$/;
+
+    print $line, $commentspace, $commentprefix, $comments, "\n";
 }
 
 while(defined(my $line=<>)) {

@@ -30,11 +30,13 @@
 #include "internal.h"
 
 
-namespace {
+BSSL_NAMESPACE_BEGIN
 
 DEFINE_LHASH_OF(char)
 
-static std::unique_ptr<char[]> RandString(void) {
+namespace {
+
+static std::unique_ptr<char[]> RandString() {
   unsigned len = 1 + (rand() % 3);
   auto ret = std::make_unique<char[]>(len + 1);
 
@@ -73,10 +75,10 @@ TEST(LHashTest, Basic) {
   for (unsigned i = 0; i < 100000; i++) {
     EXPECT_EQ(dummy_lh.size(), lh_char_num_items(lh.get()));
 
-    // Check the entire contents and test |lh_*_doall_arg|. This takes O(N)
+    // Check the entire contents and test `lh_*_doall_arg`. This takes O(N)
     // time, so only do it every few iterations.
     //
-    // TODO(davidben): |lh_*_doall_arg| also supports modifying the hash in the
+    // TODO(davidben): `lh_*_doall_arg` also supports modifying the hash in the
     // callback. Test this.
     if (i % 1000 == 0) {
       using ValueList = std::vector<const char *>;
@@ -110,7 +112,7 @@ TEST(LHashTest, Basic) {
         char *value = lh_char_retrieve(lh.get(), key.get());
         EXPECT_EQ(Lookup(&dummy_lh, key.get()), value);
 
-        // Do the same lookup with |lh_char_retrieve_key|.
+        // Do the same lookup with `lh_char_retrieve_key`.
         value = lh_char_retrieve_key(
             lh.get(), &key, OPENSSL_strhash(key.get()),
             [](const void *key_ptr, const char *data) -> int {
@@ -144,3 +146,4 @@ TEST(LHashTest, Basic) {
 }
 
 }  // namespace
+BSSL_NAMESPACE_END

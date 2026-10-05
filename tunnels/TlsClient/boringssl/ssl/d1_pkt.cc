@@ -32,7 +32,7 @@
 
 BSSL_NAMESPACE_BEGIN
 
-ssl_open_record_t dtls1_process_ack(SSL *ssl, uint8_t *out_alert,
+ssl_open_record_t dtls1_process_ack(SSLImpl *ssl, uint8_t *out_alert,
                                     DTLSRecordNumber ack_record_number,
                                     Span<const uint8_t> data) {
   // As a DTLS-1.3-capable client, it is possible to receive an ACK before we
@@ -149,7 +149,7 @@ ssl_open_record_t dtls1_process_ack(SSL *ssl, uint8_t *out_alert,
     // We may still be able to drop unused write epochs.
     dtls_clear_unused_write_epochs(ssl);
 
-    // TODO(crbug.com/42290594): Schedule a retransmit. The peer will have
+    // TODO(crbug.com/383016430): Schedule a retransmit. The peer will have
     // waited before sending the ACK, so a partial ACK suggests packet loss.
   }
 
@@ -157,7 +157,7 @@ ssl_open_record_t dtls1_process_ack(SSL *ssl, uint8_t *out_alert,
   return ssl_open_record_discard;
 }
 
-ssl_open_record_t dtls1_open_app_data(SSL *ssl, Span<uint8_t> *out,
+ssl_open_record_t dtls1_open_app_data(SSLImpl *ssl, Span<uint8_t> *out,
                                       size_t *out_consumed, uint8_t *out_alert,
                                       Span<uint8_t> in) {
   assert(!SSL_in_init(ssl));
@@ -185,11 +185,11 @@ ssl_open_record_t dtls1_open_app_data(SSL *ssl, Span<uint8_t> *out,
     // post-CCS handshake record. DTLS resets handshake message numbers on each
     // handshake, so renegotiations and retransmissions are ambiguous.
     //
-    // TODO(crbug.com/42290594): Move this logic into
-    // |dtls1_process_handshake_fragments| and integrate it into DTLS 1.3
+    // TODO(crbug.com/383016430): Move this logic into
+    // `dtls1_process_handshake_fragments` and integrate it into DTLS 1.3
     // retransmit conditions.
     CBS cbs, body;
-    struct hm_header_st msg_hdr;
+    DTLSHandshakeHeader msg_hdr;
     CBS_init(&cbs, record.data(), record.size());
     if (!dtls1_parse_fragment(&cbs, &msg_hdr, &body)) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_HANDSHAKE_RECORD);
@@ -234,7 +234,7 @@ ssl_open_record_t dtls1_open_app_data(SSL *ssl, Span<uint8_t> *out,
   return ssl_open_record_success;
 }
 
-int dtls1_write_app_data(SSL *ssl, bool *out_needs_handshake,
+int dtls1_write_app_data(SSLImpl *ssl, bool *out_needs_handshake,
                          size_t *out_bytes_written, Span<const uint8_t> in) {
   assert(!SSL_in_init(ssl));
   *out_needs_handshake = false;
@@ -265,13 +265,13 @@ int dtls1_write_app_data(SSL *ssl, bool *out_needs_handshake,
   return 1;
 }
 
-int dtls1_write_record(SSL *ssl, int type, Span<const uint8_t> in,
+int dtls1_write_record(SSLImpl *ssl, int type, Span<const uint8_t> in,
                        uint16_t epoch) {
   SSLBuffer *buf = &ssl->s3->write_buffer;
   assert(in.size() <= SSL3_RT_MAX_PLAIN_LENGTH);
   // There should never be a pending write buffer in DTLS. One can't write half
   // a datagram, so the write buffer is always dropped in
-  // |ssl_write_buffer_flush|.
+  // `ssl_write_buffer_flush`.
   assert(buf->empty());
 
   if (in.size() > SSL3_RT_MAX_PLAIN_LENGTH) {
@@ -298,7 +298,7 @@ int dtls1_write_record(SSL *ssl, int type, Span<const uint8_t> in,
   return 1;
 }
 
-int dtls1_dispatch_alert(SSL *ssl) {
+int dtls1_dispatch_alert(SSLImpl *ssl) {
   int ret = dtls1_write_record(ssl, SSL3_RT_ALERT, ssl->s3->send_alert,
                                ssl->d1->write_epoch.epoch());
   if (ret <= 0) {

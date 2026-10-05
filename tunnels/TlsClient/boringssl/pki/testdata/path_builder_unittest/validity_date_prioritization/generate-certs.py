@@ -15,7 +15,7 @@
 
 """
 A chain with four possible intermediates with different notBefore and notAfter
-dates, for testing path bulding prioritization.
+dates, for testing path building prioritization.
 """
 
 import sys

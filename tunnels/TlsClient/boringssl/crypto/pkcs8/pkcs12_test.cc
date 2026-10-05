@@ -198,7 +198,7 @@ static const uint8_t kTestKey[] = {
     0x7c, 0x83, 0x48, 0xdb, 0x16, 0x1a, 0x1c, 0xf5, 0x1d, 0x7e, 0xf1, 0x94,
     0x2d, 0x4b, 0xcf, 0x72, 0x22, 0xc1};
 
-// kTestCert is a certificate for |kTestKey|.
+// kTestCert is a certificate for `kTestKey`.
 static const uint8_t kTestCert[] = {
     0x30, 0x82, 0x01, 0xcf, 0x30, 0x82, 0x01, 0x76, 0xa0, 0x03, 0x02, 0x01,
     0x02, 0x02, 0x09, 0x00, 0xd9, 0x4c, 0x04, 0xda, 0x49, 0x7d, 0xbf, 0xeb,
@@ -350,9 +350,8 @@ static void TestRoundTrip(const char *password, const char *name,
   ASSERT_TRUE(certs2);
   ASSERT_TRUE(PKCS12_get_key_and_certs(&key2, certs2.get(), &cbs, password));
   bssl::UniquePtr<EVP_PKEY> free_key2(key2);
-  // Note |EVP_PKEY_cmp| returns one for equality while |X509_cmp| returns zero.
   if (key) {
-    EXPECT_EQ(1, EVP_PKEY_cmp(key2, key.get()));
+    EXPECT_EQ(1, EVP_PKEY_eq(key2, key.get()));
   } else {
     EXPECT_FALSE(key2);
   }
@@ -369,7 +368,7 @@ static void TestRoundTrip(const char *password, const char *name,
     int actual_name_len;
     const uint8_t *actual_name =
         X509_alias_get0(sk_X509_value(certs2.get(), 0), &actual_name_len);
-    if (name == NULL) {
+    if (name == nullptr) {
       EXPECT_EQ(nullptr, actual_name);
     } else {
       EXPECT_EQ(name, bssl::BytesAsStringView(
@@ -377,7 +376,7 @@ static void TestRoundTrip(const char *password, const char *name,
     }
   }
 
-  // Check that writing to a |BIO| does the same thing.
+  // Check that writing to a `BIO` does the same thing.
   bssl::UniquePtr<BIO> bio(BIO_new(BIO_s_mem()));
   ASSERT_TRUE(bio);
   ASSERT_TRUE(i2d_PKCS12_bio(bio.get(), pkcs12.get()));
@@ -539,7 +538,7 @@ static void ExpectPKCS12Parse(bssl::Span<const uint8_t> in,
     EXPECT_FALSE(key);
   } else {
     ASSERT_TRUE(key);
-    EXPECT_EQ(1, EVP_PKEY_cmp(key, expect_key));
+    EXPECT_EQ(1, EVP_PKEY_eq(key, expect_key));
   }
 
   if (expect_cert == nullptr) {
@@ -555,7 +554,7 @@ static void ExpectPKCS12Parse(bssl::Span<const uint8_t> in,
   }
 }
 
-// Test that |PKCS12_parse| returns values in the expected order.
+// Test that `PKCS12_parse` returns values in the expected order.
 TEST(PKCS12Test, Order) {
   bssl::UniquePtr<EVP_PKEY> key1 = MakeTestKey();
   ASSERT_TRUE(key1);

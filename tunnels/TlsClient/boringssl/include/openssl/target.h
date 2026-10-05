@@ -48,8 +48,10 @@
 #elif defined(__pnacl__)
 #define OPENSSL_32_BIT
 #define OPENSSL_PNACL
-#elif defined(__wasm__)
+#elif defined(__wasm32__)
 #define OPENSSL_32_BIT
+#elif defined(__wasm64__)
+#define OPENSSL_64_BIT
 #elif defined(__asmjs__)
 #define OPENSSL_32_BIT
 #elif defined(__myriad2__)
@@ -101,6 +103,11 @@
 
 #if defined(__Fuchsia__)
 #define OPENSSL_FUCHSIA
+#endif
+
+// See go/boringssl-on-pythia.
+#if defined(__pythia__)
+#define OPENSSL_PYTHIA
 #endif
 
 // Trusty is Android's TEE target. See
@@ -159,6 +166,11 @@
 // https://www.zephyrproject.org/
 #if defined(__ZEPHYR__)
 #define OPENSSL_NO_FILESYSTEM
+#define OPENSSL_NO_POSIX_IO
+#define OPENSSL_NO_SOCK
+#endif
+
+#if defined(OPENSSL_PYTHIA)
 #define OPENSSL_NO_POSIX_IO
 #define OPENSSL_NO_SOCK
 #endif

@@ -29,8 +29,10 @@
 #include "internal.h"
 
 
-int RSA_padding_add_PKCS1_type_1(uint8_t *to, size_t to_len,
-                                 const uint8_t *from, size_t from_len) {
+using namespace bssl;
+
+int bssl::RSA_padding_add_PKCS1_type_1(uint8_t *to, size_t to_len,
+                                       const uint8_t *from, size_t from_len) {
   // See RFC 8017, section 9.2.
   if (to_len < RSA_PKCS1_PADDING_SIZE) {
     OPENSSL_PUT_ERROR(RSA, RSA_R_KEY_SIZE_TOO_SMALL);
@@ -50,9 +52,9 @@ int RSA_padding_add_PKCS1_type_1(uint8_t *to, size_t to_len,
   return 1;
 }
 
-int RSA_padding_check_PKCS1_type_1(uint8_t *out, size_t *out_len,
-                                   size_t max_out, const uint8_t *from,
-                                   size_t from_len) {
+int bssl::RSA_padding_check_PKCS1_type_1(uint8_t *out, size_t *out_len,
+                                         size_t max_out, const uint8_t *from,
+                                         size_t from_len) {
   // See RFC 8017, section 9.2. This is part of signature verification and thus
   // does not need to run in constant-time.
   if (from_len < 2) {
@@ -102,8 +104,8 @@ int RSA_padding_check_PKCS1_type_1(uint8_t *out, size_t *out_len,
   return 1;
 }
 
-int RSA_padding_add_none(uint8_t *to, size_t to_len, const uint8_t *from,
-                         size_t from_len) {
+int bssl::RSA_padding_add_none(uint8_t *to, size_t to_len, const uint8_t *from,
+                               size_t from_len) {
   if (from_len > to_len) {
     OPENSSL_PUT_ERROR(RSA, RSA_R_DATA_TOO_LARGE_FOR_KEY_SIZE);
     return 0;
@@ -118,10 +120,10 @@ int RSA_padding_add_none(uint8_t *to, size_t to_len, const uint8_t *from,
   return 1;
 }
 
-int PKCS1_MGF1(uint8_t *out, size_t len, const uint8_t *seed, size_t seed_len,
-               const EVP_MD *md) {
+int bssl::PKCS1_MGF1(uint8_t *out, size_t len, const uint8_t *seed,
+                     size_t seed_len, const EVP_MD *md) {
   int ret = 0;
-  bssl::ScopedEVP_MD_CTX ctx;
+  ScopedEVP_MD_CTX ctx;
   FIPS_service_indicator_lock_state();
 
   size_t md_len = EVP_MD_size(md);
@@ -166,14 +168,14 @@ static const uint8_t kPSSZeroes[] = {0, 0, 0, 0, 0, 0, 0, 0};
 int RSA_verify_PKCS1_PSS_mgf1(const RSA *rsa, const uint8_t *mHash,
                               const EVP_MD *Hash, const EVP_MD *mgf1Hash,
                               const uint8_t *EM, int sLen) {
-  if (mgf1Hash == NULL) {
+  if (mgf1Hash == nullptr) {
     mgf1Hash = Hash;
   }
 
   int ret = 0;
-  uint8_t *DB = NULL;
+  uint8_t *DB = nullptr;
   const uint8_t *H;
-  bssl::ScopedEVP_MD_CTX ctx;
+  ScopedEVP_MD_CTX ctx;
   unsigned MSBits;
   size_t emLen, maskedDBLen, salt_start;
   FIPS_service_indicator_lock_state();
@@ -182,7 +184,7 @@ int RSA_verify_PKCS1_PSS_mgf1(const RSA *rsa, const uint8_t *mHash,
   if (sLen == RSA_PSS_SALTLEN_DIGEST) {
     sLen = (int)hLen;
   } else if (sLen == RSA_PSS_SALTLEN_AUTO) {
-    // Leave |sLen| negative, which will trigger the logic below to recover and
+    // Leave `sLen` negative, which will trigger the logic below to recover and
     // allow any salt length.
   } else if (sLen < 0) {
     // Other negative values are reserved.
@@ -190,7 +192,7 @@ int RSA_verify_PKCS1_PSS_mgf1(const RSA *rsa, const uint8_t *mHash,
     goto err;
   }
 
-  MSBits = (BN_num_bits(rsa->n) - 1) & 0x7;
+  MSBits = (RSA_bits(rsa) - 1) & 0x7;
   emLen = RSA_size(rsa);
   if (EM[0] & (0xFF << MSBits)) {
     OPENSSL_PUT_ERROR(RSA, RSA_R_FIRST_OCTET_INVALID);
@@ -200,7 +202,7 @@ int RSA_verify_PKCS1_PSS_mgf1(const RSA *rsa, const uint8_t *mHash,
     EM++;
     emLen--;
   }
-  // |sLen| may be negative for the non-standard salt length recovery mode.
+  // `sLen` may be negative for the non-standard salt length recovery mode.
   if (emLen < hLen + 2 || (sLen >= 0 && emLen < hLen + (size_t)sLen + 2)) {
     OPENSSL_PUT_ERROR(RSA, RSA_R_DATA_TOO_LARGE);
     goto err;
@@ -242,11 +244,11 @@ int RSA_verify_PKCS1_PSS_mgf1(const RSA *rsa, const uint8_t *mHash,
     goto err;
   }
   uint8_t H_[EVP_MAX_MD_SIZE];
-  if (!EVP_DigestInit_ex(ctx.get(), Hash, NULL) ||
+  if (!EVP_DigestInit_ex(ctx.get(), Hash, nullptr) ||
       !EVP_DigestUpdate(ctx.get(), kPSSZeroes, sizeof(kPSSZeroes)) ||
       !EVP_DigestUpdate(ctx.get(), mHash, hLen) ||
       !EVP_DigestUpdate(ctx.get(), DB + salt_start, maskedDBLen - salt_start) ||
-      !EVP_DigestFinal_ex(ctx.get(), H_, NULL)) {
+      !EVP_DigestFinal_ex(ctx.get(), H_, nullptr)) {
     goto err;
   }
   if (OPENSSL_memcmp(H_, H, hLen) != 0) {
@@ -267,24 +269,25 @@ int RSA_padding_add_PKCS1_PSS_mgf1(const RSA *rsa, unsigned char *EM,
                                    const EVP_MD *Hash, const EVP_MD *mgf1Hash,
                                    int sLenRequested) {
   int ret = 0;
-  bssl::ScopedEVP_MD_CTX ctx;
+  ScopedEVP_MD_CTX ctx;
   size_t maskedDBLen, MSBits, emLen;
   size_t hLen;
-  unsigned char *H, *salt = NULL, *p;
+  unsigned char *H, *salt = nullptr, *p;
 
-  if (mgf1Hash == NULL) {
+  if (mgf1Hash == nullptr) {
     mgf1Hash = Hash;
   }
 
   FIPS_service_indicator_lock_state();
   hLen = EVP_MD_size(Hash);
 
-  if (BN_is_zero(rsa->n)) {
+  unsigned rsa_bits = RSA_bits(rsa);
+  if (rsa_bits == 0) {
     OPENSSL_PUT_ERROR(RSA, RSA_R_EMPTY_PUBLIC_KEY);
     goto err;
   }
 
-  MSBits = (BN_num_bits(rsa->n) - 1) & 0x7;
+  MSBits = (rsa_bits - 1) & 0x7;
   emLen = RSA_size(rsa);
   if (MSBits == 0) {
     assert(emLen >= 1);
@@ -326,11 +329,11 @@ int RSA_padding_add_PKCS1_PSS_mgf1(const RSA *rsa, unsigned char *EM,
   maskedDBLen = emLen - hLen - 1;
   H = EM + maskedDBLen;
 
-  if (!EVP_DigestInit_ex(ctx.get(), Hash, NULL) ||
+  if (!EVP_DigestInit_ex(ctx.get(), Hash, nullptr) ||
       !EVP_DigestUpdate(ctx.get(), kPSSZeroes, sizeof(kPSSZeroes)) ||
       !EVP_DigestUpdate(ctx.get(), mHash, hLen) ||
       !EVP_DigestUpdate(ctx.get(), salt, sLen) ||
-      !EVP_DigestFinal_ex(ctx.get(), H, NULL)) {
+      !EVP_DigestFinal_ex(ctx.get(), H, nullptr)) {
     goto err;
   }
 

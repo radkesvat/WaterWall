@@ -31,9 +31,11 @@
 #include "internal.h"
 
 
+using namespace bssl;
+
 static int pkcs12_encode_password(const char *in, size_t in_len, uint8_t **out,
                                   size_t *out_len) {
-  bssl::ScopedCBB cbb;
+  ScopedCBB cbb;
   if (!CBB_init(cbb.get(), in_len * 2)) {
     return 0;
   }
@@ -58,9 +60,9 @@ static int pkcs12_encode_password(const char *in, size_t in_len, uint8_t **out,
   return 1;
 }
 
-int pkcs12_key_gen(const char *pass, size_t pass_len, const uint8_t *salt,
-                   size_t salt_len, uint8_t id, uint32_t iterations,
-                   size_t out_len, uint8_t *out, const EVP_MD *md) {
+int bssl::pkcs12_key_gen(const char *pass, size_t pass_len, const uint8_t *salt,
+                         size_t salt_len, uint8_t id, uint32_t iterations,
+                         size_t out_len, uint8_t *out, const EVP_MD *md) {
   // See https://tools.ietf.org/html/rfc7292#appendix-B. Quoted parts of the
   // specification have errata applied and other typos fixed.
 
@@ -72,18 +74,18 @@ int pkcs12_key_gen(const char *pass, size_t pass_len, const uint8_t *salt,
   int ret = 0;
   EVP_MD_CTX ctx;
   EVP_MD_CTX_init(&ctx);
-  uint8_t *pass_raw = NULL, *I = NULL;
+  uint8_t *pass_raw = nullptr, *I = nullptr;
   size_t pass_raw_len = 0, I_len = 0;
 
   {
-    // If |pass| is NULL, we use the empty string rather than {0, 0} as the raw
+    // If `pass` is NULL, we use the empty string rather than {0, 0} as the raw
     // password.
-    if (pass != NULL &&
+    if (pass != nullptr &&
         !pkcs12_encode_password(pass, pass_len, &pass_raw, &pass_raw_len)) {
       goto err;
     }
 
-    // In the spec, |block_size| is called "v", but measured in bits.
+    // In the spec, `block_size` is called "v", but measured in bits.
     size_t block_size = EVP_MD_block_size(md);
 
     // 1. Construct a string, D (the "diversifier"), by concatenating v/8 copies
@@ -115,7 +117,7 @@ int pkcs12_key_gen(const char *pass, size_t pass_len, const uint8_t *salt,
     }
 
     I = reinterpret_cast<uint8_t *>(OPENSSL_malloc(I_len));
-    if (I_len != 0 && I == NULL) {
+    if (I_len != 0 && I == nullptr) {
       goto err;
     }
 
@@ -131,14 +133,14 @@ int pkcs12_key_gen(const char *pass, size_t pass_len, const uint8_t *salt,
       // H(H(H(... H(D||I))))
       uint8_t A[EVP_MAX_MD_SIZE];
       unsigned A_len;
-      if (!EVP_DigestInit_ex(&ctx, md, NULL) ||
+      if (!EVP_DigestInit_ex(&ctx, md, nullptr) ||
           !EVP_DigestUpdate(&ctx, D, block_size) ||
           !EVP_DigestUpdate(&ctx, I, I_len) ||
           !EVP_DigestFinal_ex(&ctx, A, &A_len)) {
         goto err;
       }
       for (uint32_t iter = 1; iter < iterations; iter++) {
-        if (!EVP_DigestInit_ex(&ctx, md, NULL) ||
+        if (!EVP_DigestInit_ex(&ctx, md, nullptr) ||
             !EVP_DigestUpdate(&ctx, A, A_len) ||
             !EVP_DigestFinal_ex(&ctx, A, &A_len)) {
           goto err;
@@ -202,7 +204,7 @@ static int pkcs12_pbe_cipher_init(const struct pbe_suite *suite,
     return 0;
   }
 
-  int ret = EVP_CipherInit_ex(ctx, cipher, NULL, key, iv, is_encrypt);
+  int ret = EVP_CipherInit_ex(ctx, cipher, nullptr, key, iv, is_encrypt);
   OPENSSL_cleanse(key, EVP_MAX_KEY_LENGTH);
   OPENSSL_cleanse(iv, EVP_MAX_IV_LENGTH);
   return ret;
@@ -231,7 +233,7 @@ static int pkcs12_pbe_decrypt_init(const struct pbe_suite *suite,
                                 0 /* decrypt */);
 }
 
-static const struct pbe_suite kBuiltinPBE[] = {
+static const struct bssl::pbe_suite kBuiltinPBE[] = {
     {
         NID_pbe_WithSHA1And40BitRC2_CBC,
         // 1.2.840.113549.1.12.1.6
@@ -264,30 +266,31 @@ static const struct pbe_suite kBuiltinPBE[] = {
         // 1.2.840.113549.1.5.13
         {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0d},
         9,
-        NULL,
-        NULL,
+        nullptr,
+        nullptr,
         PKCS5_pbe2_decrypt_init,
     },
 };
 
-static const struct pbe_suite *get_pkcs12_pbe_suite(int pbe_nid) {
-  for (unsigned i = 0; i < OPENSSL_ARRAY_SIZE(kBuiltinPBE); i++) {
-    if (kBuiltinPBE[i].pbe_nid == pbe_nid &&
-        // If |cipher_func| or |md_func| are missing, this is a PBES2 scheme.
-        kBuiltinPBE[i].cipher_func != NULL && kBuiltinPBE[i].md_func != NULL) {
-      return &kBuiltinPBE[i];
+static const struct bssl::pbe_suite *get_pkcs12_pbe_suite(int pbe_nid) {
+  for (const auto &pbe : kBuiltinPBE) {
+    if (pbe.pbe_nid == pbe_nid &&
+        // If `cipher_func` or `md_func` are missing, this is a PBES2 scheme.
+        pbe.cipher_func != nullptr && pbe.md_func != nullptr) {
+      return &pbe;
     }
   }
 
-  return NULL;
+  return nullptr;
 }
 
-int pkcs12_pbe_encrypt_init(CBB *out, EVP_CIPHER_CTX *ctx, int alg_nid,
-                            const EVP_CIPHER *alg_cipher, uint32_t iterations,
-                            const char *pass, size_t pass_len,
-                            const uint8_t *salt, size_t salt_len) {
-  // TODO(davidben): OpenSSL has since extended |pbe_nid| to control either
-  // the PBES1 scheme or the PBES2 PRF. E.g. passing |NID_hmacWithSHA256| will
+int bssl::pkcs12_pbe_encrypt_init(CBB *out, EVP_CIPHER_CTX *ctx, int alg_nid,
+                                  const EVP_CIPHER *alg_cipher,
+                                  uint32_t iterations, const char *pass,
+                                  size_t pass_len, const uint8_t *salt,
+                                  size_t salt_len) {
+  // TODO(davidben): OpenSSL has since extended `pbe_nid` to control either
+  // the PBES1 scheme or the PBES2 PRF. E.g. passing `NID_hmacWithSHA256` will
   // select PBES2 with HMAC-SHA256 as the PRF. Implement this if anything uses
   // it. See 5693a30813a031d3921a016a870420e7eb93ec90 in OpenSSL.
   if (alg_nid == -1) {
@@ -296,7 +299,7 @@ int pkcs12_pbe_encrypt_init(CBB *out, EVP_CIPHER_CTX *ctx, int alg_nid,
   }
 
   const struct pbe_suite *suite = get_pkcs12_pbe_suite(alg_nid);
-  if (suite == NULL) {
+  if (suite == nullptr) {
     OPENSSL_PUT_ERROR(PKCS8, PKCS8_R_UNKNOWN_ALGORITHM);
     return 0;
   }
@@ -319,27 +322,27 @@ int pkcs12_pbe_encrypt_init(CBB *out, EVP_CIPHER_CTX *ctx, int alg_nid,
                                 salt_len, 1 /* encrypt */);
 }
 
-int pkcs8_pbe_decrypt(uint8_t **out, size_t *out_len, CBS *algorithm,
-                      const char *pass, size_t pass_len, const uint8_t *in,
-                      size_t in_len) {
+int bssl::pkcs8_pbe_decrypt(uint8_t **out, size_t *out_len, CBS *algorithm,
+                            const char *pass, size_t pass_len,
+                            const uint8_t *in, size_t in_len) {
   int ret = 0;
-  uint8_t *buf = NULL;
-  bssl::ScopedEVP_CIPHER_CTX ctx;
+  uint8_t *buf = nullptr;
+  ScopedEVP_CIPHER_CTX ctx;
 
   CBS obj;
-  const struct pbe_suite *suite = NULL;
+  const struct pbe_suite *suite = nullptr;
   if (!CBS_get_asn1(algorithm, &obj, CBS_ASN1_OBJECT)) {
     OPENSSL_PUT_ERROR(PKCS8, PKCS8_R_DECODE_ERROR);
     goto err;
   }
 
-  for (unsigned i = 0; i < OPENSSL_ARRAY_SIZE(kBuiltinPBE); i++) {
-    if (CBS_mem_equal(&obj, kBuiltinPBE[i].oid, kBuiltinPBE[i].oid_len)) {
-      suite = &kBuiltinPBE[i];
+  for (const auto &pbe : kBuiltinPBE) {
+    if (CBS_mem_equal(&obj, pbe.oid, pbe.oid_len)) {
+      suite = &pbe;
       break;
     }
   }
-  if (suite == NULL) {
+  if (suite == nullptr) {
     OPENSSL_PUT_ERROR(PKCS8, PKCS8_R_UNKNOWN_ALGORITHM);
     goto err;
   }
@@ -350,25 +353,20 @@ int pkcs8_pbe_decrypt(uint8_t **out, size_t *out_len, CBS *algorithm,
   }
 
   buf = reinterpret_cast<uint8_t *>(OPENSSL_malloc(in_len));
-  if (buf == NULL) {
+  if (buf == nullptr) {
     goto err;
   }
 
-  if (in_len > INT_MAX) {
-    OPENSSL_PUT_ERROR(PKCS8, ERR_R_OVERFLOW);
-    goto err;
-  }
-
-  int n1, n2;
-  if (!EVP_DecryptUpdate(ctx.get(), buf, &n1, in, (int)in_len) ||
-      !EVP_DecryptFinal_ex(ctx.get(), buf + n1, &n2)) {
+  size_t n1, n2;
+  if (!EVP_DecryptUpdate_ex(ctx.get(), buf, &n1, in_len, in, in_len) ||
+      !EVP_DecryptFinal_ex2(ctx.get(), buf + n1, &n2, in_len - n1)) {
     goto err;
   }
 
   *out = buf;
   *out_len = n1 + n2;
   ret = 1;
-  buf = NULL;
+  buf = nullptr;
 
 err:
   OPENSSL_free(buf);
@@ -384,14 +382,14 @@ EVP_PKEY *PKCS8_parse_encrypted_private_key(CBS *cbs, const char *pass,
       !CBS_get_asn1(&epki, &ciphertext, CBS_ASN1_OCTETSTRING) ||
       CBS_len(&epki) != 0) {
     OPENSSL_PUT_ERROR(PKCS8, PKCS8_R_DECODE_ERROR);
-    return 0;
+    return nullptr;
   }
 
   uint8_t *out;
   size_t out_len;
   if (!pkcs8_pbe_decrypt(&out, &out_len, &algorithm, pass, pass_len,
                          CBS_data(&ciphertext), CBS_len(&ciphertext))) {
-    return 0;
+    return nullptr;
   }
 
   CBS pki;
@@ -407,19 +405,19 @@ int PKCS8_marshal_encrypted_private_key(CBB *out, int pbe_nid,
                                         const uint8_t *salt, size_t salt_len,
                                         int iterations, const EVP_PKEY *pkey) {
   int ret = 0;
-  uint8_t *plaintext = NULL, *salt_buf = NULL;
+  uint8_t *plaintext = nullptr, *salt_buf = nullptr;
   size_t plaintext_len = 0;
-  bssl::ScopedEVP_CIPHER_CTX ctx;
+  ScopedEVP_CIPHER_CTX ctx;
 
   {
     // Generate a random salt if necessary.
-    if (salt == NULL) {
+    if (salt == nullptr) {
       if (salt_len == 0) {
         salt_len = PKCS5_SALT_LEN;
       }
 
       salt_buf = reinterpret_cast<uint8_t *>(OPENSSL_malloc(salt_len));
-      if (salt_buf == NULL || !RAND_bytes(salt_buf, salt_len)) {
+      if (salt_buf == nullptr || !RAND_bytes(salt_buf, salt_len)) {
         goto err;
       }
 
@@ -455,11 +453,12 @@ int PKCS8_marshal_encrypted_private_key(CBB *out, int pbe_nid,
 
     CBB ciphertext;
     uint8_t *ptr;
-    int n1, n2;
+    size_t n1, n2;
     if (!CBB_add_asn1(&epki, &ciphertext, CBS_ASN1_OCTETSTRING) ||
         !CBB_reserve(&ciphertext, &ptr, max_out) ||
-        !EVP_CipherUpdate(ctx.get(), ptr, &n1, plaintext, plaintext_len) ||
-        !EVP_CipherFinal_ex(ctx.get(), ptr + n1, &n2) ||
+        !EVP_CipherUpdate_ex(ctx.get(), ptr, &n1, max_out, plaintext,
+                             plaintext_len) ||
+        !EVP_CipherFinal_ex2(ctx.get(), ptr + n1, &n2, max_out - n1) ||
         !CBB_did_write(&ciphertext, n1 + n2) || !CBB_flush(out)) {
       goto err;
     }

@@ -1,46 +1,10 @@
-########## NOTES
-# The Downloaded BoringSSL source code was the HEAD of the repository at the time of writing this.
-# The commit hash is 4b3285002397da82681bebaacea9b4f231c9dbfc
-# Currently only removed git folder to be able to push it
-
-# All my patches (diffs) are saved in RadkesvatPatches folder
-# WaterWall's minimal sender-side TLS 1.3 padding API is recorded in
-# RadkesvatPatches/tls13_record_padding_callback.patch. Apply it from the
-# vendored BoringSSL root with `git apply ../RadkesvatPatches/tls13_record_padding_callback.patch`.
-# It changes include/openssl/ssl.h, ssl/internal.h, ssl/ssl_lib.cc, and
-# ssl/tls_record.cc. Keep SSL_set_tls13_record_padding_callback in
-# boringssl_symbols.txt as well; that symbol-list change lives outside the
-# vendored tree and is intentionally not part of the patch. The complete porting
-# contract and post-update test checklist are at the top of `my notes.txt`.
-# The direct application-record output hook is saved separately in
-# RadkesvatPatches/record_write_buffer_callbacks.patch. Port it after the padding
-# patch on every BoringSSL update; it changes ssl/s3_pkt.cc plus the public header,
-# SSL state and API implementation. Keep SSL_set_record_write_buffer_callbacks in
-# boringssl_symbols.txt. Reapplication order and required behavior are in `my notes.txt`.
-
-# I saved original cmake file as CMakeLists.txt.original
-# and the diff of changes that I made to CMakeLists.txt is CMakeLists.txt.patch
-   
-# Description:
-    # Line 44 of bssl cmake: set INSTALL_ENABLED to zero
-    # BUILD_TOOL is forced OFF so the vendored bssl executable is not built in Waterwall
-
-# I saved the original p256_64.h file as p256_64.h.original
-# and the diff of changes that I made to p256_64.h is p256_64.h.patch
-
-# Description:
-    # There was a problem on Windows with assembly optimizations in BoringSSL, so we disable the buggy part
-    # by defining WW_BSSL_WIN_FIAT_NO_ASM, which is used in p256_64.h to conditionally switch to C code.
-    # This is done to avoid issues with assembly code that is not added to NASM build list by BoringSSL CMakeLists.txt
-    # The assembly code is only compiled on Linux, so we can safely disable it on Windows.
-    # windows still uses assmembly code main parts of boring ssl, only 2 functions are now using c code instead of assembly
-    # they are not also important functions in tls as far as i know (only used for elliptic curve operations)
-    # they are : fiat_p256_adx_sqr, fiat_p256_adx_mul
-
-# I added brotli library to the project, because it is used to decompress certificates and Chrome uses it too.
-
-# I patched the handshake_client.cc file to add TLS 1.3 ciphers like Chrome does. patch file is 
-# also saved as handshake_client.cc.patch
+# BoringSSL is pinned to Chromium 154.0.8037.97's revision:
+# ac39ea6853833c1f18fd23614091d11855e71752
+# Local patches live in RadkesvatPatches. Port record padding before direct
+# record output, then apply the public prefix patch after all custom SSL APIs
+# are present. Upstream supplies internal and assembly prefix
+# headers for each architecture. See `my notes.txt` for the porting contract and
+# validation checklist. Normal builds consume these headers without a generator.
 
 #==============================================================================
 # Build Configuration
@@ -131,8 +95,6 @@ target_include_directories(TlsClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
 
 set(WW_BORINGSSL_PREFIX WW_BSSL)
 set(BORINGSSL_PREFIX ${WW_BORINGSSL_PREFIX})
-set(BORINGSSL_PREFIX_SYMBOLS ${CMAKE_CURRENT_SOURCE_DIR}/boringssl_symbols.txt)
-set(WW_BORINGSSL_PREFIX_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/boringssl/symbol_prefix_include)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/boringssl boringssl)
 
@@ -144,7 +106,6 @@ endforeach()
 
 target_include_directories(DecompressBrotli PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/boringssl/include
-    ${WW_BORINGSSL_PREFIX_INCLUDE_DIR}
 )
 target_compile_definitions(DecompressBrotli PRIVATE BORINGSSL_PREFIX=${WW_BORINGSSL_PREFIX})
 
@@ -152,7 +113,6 @@ target_link_libraries(DecompressBrotli PRIVATE crypto ssl)
 
 target_include_directories(TlsClient PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/boringssl/include
-    ${WW_BORINGSSL_PREFIX_INCLUDE_DIR}
 )
 target_compile_definitions(TlsClient PRIVATE BORINGSSL_PREFIX=${WW_BORINGSSL_PREFIX})
 
@@ -181,20 +141,6 @@ endif()
 # overrides a later blanket -Werror regardless of command-line order.
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     target_compile_options(TlsClient PRIVATE -Wno-error=array-bounds -Wno-error=stringop-overflow)
-endif()
-
-if(WIN32)
-    # BoringSSL on Windows points to some functions in assembly that their assembly files are only compiled on Linux
-    # Adding this to switch to C version on Windows
-    # More notes are above
-    if(TARGET bssl)
-        target_compile_definitions(bssl PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
-    endif()
-    target_compile_definitions(ssl        PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
-    target_compile_definitions(crypto     PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
-    target_compile_definitions(pki        PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
-    target_compile_definitions(fipsmodule PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
-    target_compile_definitions(decrepit   PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
 endif()
 
 if(NOT MSVC)

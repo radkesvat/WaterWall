@@ -16,7 +16,10 @@
 
 #include <assert.h>
 #include <limits.h>
+#include <stdint.h>
 #include <string.h>
+
+#include <algorithm>
 
 #include <openssl/err.h>
 #include <openssl/mem.h>
@@ -25,8 +28,16 @@
 #include "../crypto/internal.h"
 #include "internal.h"
 
-
 BSSL_NAMESPACE_BEGIN
+
+namespace {
+inline uint64_t ToMicros(const OPENSSL_timeval& now) {
+  uint64_t us = now.tv_sec;
+  us *= 1000000;
+  us += now.tv_usec;
+  return us;
+}
+}  // namespace
 
 DTLS1_STATE::DTLS1_STATE()
     : has_change_cipher_spec(false),
@@ -36,6 +47,7 @@ DTLS1_STATE::DTLS1_STATE()
       handshake_read_overflow(false),
       sending_flight(false),
       sending_ack(false),
+      pending_flush(false),
       queued_key_update(QueuedKeyUpdate::kNone) {}
 
 DTLS1_STATE::~DTLS1_STATE() {}
@@ -51,7 +63,7 @@ bool DTLS1_STATE::Init() {
   return true;
 }
 
-bool dtls1_new(SSL *ssl) {
+bool dtls1_new(SSLImpl *ssl) {
   if (!tls_new(ssl)) {
     return false;
   }
@@ -65,43 +77,30 @@ bool dtls1_new(SSL *ssl) {
   return true;
 }
 
-void dtls1_free(SSL *ssl) {
+void dtls1_free(SSLImpl *ssl) {
   tls_free(ssl);
 
-  if (ssl == NULL) {
+  if (ssl == nullptr) {
     return;
   }
 
   Delete(ssl->d1);
-  ssl->d1 = NULL;
+  ssl->d1 = nullptr;
 }
 
 void DTLSTimer::StartMicroseconds(OPENSSL_timeval now, uint64_t microseconds) {
-  uint64_t seconds = microseconds / 1000000;
-  microseconds %= 1000000;
-
-  now.tv_usec += microseconds;
-  if (now.tv_usec >= 1000000) {
-    now.tv_usec -= 1000000;
-    seconds++;
-  }
-
-  if (now.tv_sec > UINT64_MAX - seconds) {
-    Stop();
-    return;
-  }
-  now.tv_sec += seconds;
-  expire_time_ = now;
+  start_time_ = ToMicros(now);
+  duration_ = microseconds;
 }
 
-void DTLSTimer::Stop() { expire_time_ = {0, 0}; }
+void DTLSTimer::Stop() { duration_ = kNever; }
 
 bool DTLSTimer::IsExpired(OPENSSL_timeval now) const {
   return MicrosecondsRemaining(now) == 0;
 }
 
 bool DTLSTimer::IsSet() const {
-  return expire_time_.tv_sec != 0 || expire_time_.tv_usec != 0;
+  return duration_ != kNever;
 }
 
 uint64_t DTLSTimer::MicrosecondsRemaining(OPENSSL_timeval now) const {
@@ -109,38 +108,23 @@ uint64_t DTLSTimer::MicrosecondsRemaining(OPENSSL_timeval now) const {
     return kNever;
   }
 
-  if (now.tv_sec > expire_time_.tv_sec ||
-      (now.tv_sec == expire_time_.tv_sec &&
-       now.tv_usec >= expire_time_.tv_usec)) {
+  uint64_t now_us = ToMicros(now);
+  uint64_t expire_us = start_time_ + duration_;
+  if (now_us > expire_us) {
     return 0;
   }
 
-  uint64_t sec = expire_time_.tv_sec - now.tv_sec;
-  uint32_t usec;
-  if (expire_time_.tv_usec >= now.tv_usec) {
-    usec = expire_time_.tv_usec - now.tv_usec;
-  } else {
-    sec--;
-    usec = expire_time_.tv_usec + 1000000 - now.tv_usec;
-  }
-
+  uint64_t remain_us = expire_us - now_us;
   // If remaining time is less than 15 ms, return 0 to prevent issues because of
   // small divergences with socket timeouts.
-  if (sec == 0 && usec < 15000) {
+  if (remain_us < 15000) {
     return 0;
   }
 
-  if (sec > UINT64_MAX / 1000000) {
-    return kNever;
-  }
-  sec *= 1000000;
-  if (sec > UINT64_MAX - usec) {
-    return kNever;
-  }
-  return sec + usec;
+  return remain_us;
 }
 
-void dtls1_stop_timer(SSL *ssl) {
+void dtls1_stop_timer(SSLImpl *ssl) {
   ssl->d1->num_timeouts = 0;
   ssl->d1->retransmit_timer.Stop();
   ssl->d1->timeout_duration_ms = ssl->initial_timeout_duration_ms;
@@ -151,19 +135,49 @@ BSSL_NAMESPACE_END
 using namespace bssl;
 
 void DTLSv1_set_initial_timeout_duration(SSL *ssl, uint32_t duration_ms) {
-  ssl->initial_timeout_duration_ms = duration_ms;
+  auto *ssl_impl = FromOpaque(ssl);
+  if (!SSL_is_dtls(ssl_impl)) {
+    return;
+  }
+
+  // Modify the initial value for next flight.
+  ssl_impl->initial_timeout_duration_ms = duration_ms;
+
+  // Retransmit timer increase by factor of 2 at each timeout.
+  uint32_t timeout_duration_ms = duration_ms << ssl_impl->d1->num_timeouts;
+  if (timeout_duration_ms < duration_ms) {
+    timeout_duration_ms = uint32_t{60000};
+  } else {
+    timeout_duration_ms = std::min(timeout_duration_ms, uint32_t{60000});
+  }
+
+  // Modify the value used for next timeout.
+  ssl_impl->d1->timeout_duration_ms = timeout_duration_ms;
+
+  // Modify retransmit timer.
+  if (ssl_impl->d1->retransmit_timer.IsSet()) {
+    ssl_impl->d1->retransmit_timer.UpdateDuration(
+        uint64_t{timeout_duration_ms} * 1000);
+  }
+
+  // Modify ack timer.
+  if (ssl_impl->d1->ack_timer.IsSet()) {
+    ssl_impl->d1->ack_timer.UpdateDuration(uint64_t{timeout_duration_ms} *
+                                           1000 / 4);
+  }
 }
 
 int DTLSv1_get_timeout(const SSL *ssl, struct timeval *out) {
-  if (!SSL_is_dtls(ssl)) {
+  const auto *ssl_impl = FromOpaque(ssl);
+  if (!SSL_is_dtls(ssl_impl)) {
     return 0;
   }
 
-  OPENSSL_timeval now = ssl_ctx_get_current_time(ssl->ctx.get());
+  OPENSSL_timeval now = ssl_ctx_get_current_time(ssl_impl->ctx.get());
   uint64_t remaining_usec =
-      ssl->d1->retransmit_timer.MicrosecondsRemaining(now);
-  remaining_usec =
-      std::min(remaining_usec, ssl->d1->ack_timer.MicrosecondsRemaining(now));
+      ssl_impl->d1->retransmit_timer.MicrosecondsRemaining(now);
+  remaining_usec = std::min(remaining_usec,
+                            ssl_impl->d1->ack_timer.MicrosecondsRemaining(now));
   if (remaining_usec == DTLSTimer::kNever) {
     return 0;  // No timeout is set.
   }
@@ -171,7 +185,7 @@ int DTLSv1_get_timeout(const SSL *ssl, struct timeval *out) {
   uint64_t remaining_sec = remaining_usec / 1000000;
   remaining_usec %= 1000000;
 
-  // |timeval| uses |time_t|, which may be 32-bit.
+  // `timeval` uses `time_t`, which may be 32-bit.
   const auto kTvSecMax = std::numeric_limits<decltype(out->tv_sec)>::max();
   if (remaining_sec > static_cast<uint64_t>(kTvSecMax)) {
     out->tv_sec = kTvSecMax;  // Saturate the output.
@@ -184,39 +198,41 @@ int DTLSv1_get_timeout(const SSL *ssl, struct timeval *out) {
 }
 
 int DTLSv1_handle_timeout(SSL *ssl) {
-  ssl_reset_error_state(ssl);
+  auto *ssl_impl = FromOpaque(ssl);
+  ssl_reset_error_state(ssl_impl);
 
-  if (!SSL_is_dtls(ssl)) {
+  if (!SSL_is_dtls(ssl_impl)) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
     return -1;
   }
 
-  if (!ssl->d1->ack_timer.IsSet() && !ssl->d1->retransmit_timer.IsSet()) {
+  if (!ssl_impl->d1->ack_timer.IsSet() &&
+      !ssl_impl->d1->retransmit_timer.IsSet()) {
     // No timers are running. Don't bother querying the clock.
     return 0;
   }
 
-  OPENSSL_timeval now = ssl_ctx_get_current_time(ssl->ctx.get());
+  OPENSSL_timeval now = ssl_ctx_get_current_time(ssl_impl->ctx.get());
   bool any_timer_expired = false;
-  if (ssl->d1->ack_timer.IsExpired(now)) {
+  if (ssl_impl->d1->ack_timer.IsExpired(now)) {
     any_timer_expired = true;
-    ssl->d1->sending_ack = true;
-    ssl->d1->ack_timer.Stop();
+    ssl_impl->d1->sending_ack = true;
+    ssl_impl->d1->ack_timer.Stop();
   }
 
-  if (ssl->d1->retransmit_timer.IsExpired(now)) {
+  if (ssl_impl->d1->retransmit_timer.IsExpired(now)) {
     any_timer_expired = true;
-    ssl->d1->sending_flight = true;
-    ssl->d1->retransmit_timer.Stop();
+    ssl_impl->d1->sending_flight = true;
+    ssl_impl->d1->retransmit_timer.Stop();
 
-    ssl->d1->num_timeouts++;
+    ssl_impl->d1->num_timeouts++;
     // Reduce MTU after 2 unsuccessful retransmissions.
-    if (ssl->d1->num_timeouts > DTLS1_MTU_TIMEOUTS &&
-        !(SSL_get_options(ssl) & SSL_OP_NO_QUERY_MTU)) {
-      long mtu = BIO_ctrl(ssl->wbio.get(), BIO_CTRL_DGRAM_GET_FALLBACK_MTU, 0,
-                          nullptr);
+    if (ssl_impl->d1->num_timeouts > DTLS1_MTU_TIMEOUTS &&
+        !(SSL_get_options(ssl_impl) & SSL_OP_NO_QUERY_MTU)) {
+      long mtu = BIO_ctrl(ssl_impl->wbio.get(), BIO_CTRL_DGRAM_GET_FALLBACK_MTU,
+                          0, nullptr);
       if (mtu >= 0 && mtu <= (1 << 30) && (unsigned)mtu >= dtls1_min_mtu()) {
-        ssl->d1->mtu = (unsigned)mtu;
+        ssl_impl->d1->mtu = (unsigned)mtu;
       }
     }
   }
@@ -225,5 +241,5 @@ int DTLSv1_handle_timeout(SSL *ssl) {
     return 0;
   }
 
-  return dtls1_flush(ssl);
+  return dtls1_flush(ssl_impl);
 }

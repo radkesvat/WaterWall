@@ -60,7 +60,7 @@ die "can't locate x86_64-xlate.pl";
 # output, so this isn't useful anyway.
 $avx = 2;
 
-open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\"";
+open OUT, "|-", $^X, $xlate, $flavour, $output;
 *STDOUT = *OUT;
 
 if ($avx>1) {{{
@@ -1752,7 +1752,9 @@ ___
 
 $code.=<<___;
 .section .rodata
+
 .align	64
+rsaz_avx2_constants:
 .Land_mask:
 	.quad	0x1fffffff,0x1fffffff,0x1fffffff,0x1fffffff
 .Lscatter_permd:

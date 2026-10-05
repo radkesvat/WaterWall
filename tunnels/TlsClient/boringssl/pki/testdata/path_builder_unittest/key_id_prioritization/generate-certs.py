@@ -15,7 +15,7 @@
 
 """
 A chain with multiple intermediates with different subjectKeyIdentifiers and
-notBefore dates, for testing path bulding prioritization.
+notBefore dates, for testing path building prioritization.
 """
 
 import sys

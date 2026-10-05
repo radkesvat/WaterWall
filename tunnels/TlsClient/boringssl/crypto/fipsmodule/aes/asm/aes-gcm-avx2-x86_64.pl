@@ -58,7 +58,7 @@ my $xlate;
   or ( $xlate = "${dir}../../../perlasm/x86_64-xlate.pl" and -f $xlate )
   or die "can't locate x86_64-xlate.pl";
 
-open OUT, "| \"$^X\" \"$xlate\" $flavour \"$output\"";
+open OUT, "|-", $^X, $xlate, $flavour, $output;
 *STDOUT = *OUT;
 
 my $g_cur_func_name;
@@ -164,7 +164,9 @@ ___
 
 my $code = <<___;
 .section .rodata
+
 .align 16
+aes_gcm_avx2_constants:
 
     # A shuffle mask that reflects the bytes of 16-byte blocks
 .Lbswap_mask:

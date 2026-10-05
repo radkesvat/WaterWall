@@ -14,6 +14,7 @@
 
 #include <openssl/asn1.h>
 
+#include <assert.h>
 #include <limits.h>
 #include <string.h>
 
@@ -22,8 +23,11 @@
 #include <openssl/mem.h>
 
 #include "../internal.h"
+#include "../mem_internal.h"
 #include "internal.h"
 
+
+using namespace bssl;
 
 // Cross-module errors from crypto/x509/i2d_pr.c.
 OPENSSL_DECLARE_ERROR_REASON(ASN1, UNSUPPORTED_PUBLIC_KEY_TYPE)
@@ -60,13 +64,13 @@ OPENSSL_DECLARE_ERROR_REASON(ASN1, UNKNOWN_FORMAT)
 OPENSSL_DECLARE_ERROR_REASON(ASN1, UNKNOWN_TAG)
 OPENSSL_DECLARE_ERROR_REASON(ASN1, UNSUPPORTED_TYPE)
 
-// Limit |ASN1_STRING|s to 64 MiB of data. Most of this module, as well as
+// Limit `ASN1_STRING`s to 64 MiB of data. Most of this module, as well as
 // downstream code, does not correctly handle overflow. We cap string fields
-// more tightly than strictly necessary to fit in |int|. This is not expected to
+// more tightly than strictly necessary to fit in `int`. This is not expected to
 // impact real world uses of this field.
 //
 // In particular, this limit is small enough that the bit count of a BIT STRING
-// comfortably fits in an |int|, with room for arithmetic.
+// comfortably fits in an `int`, with room for arithmetic.
 #define ASN1_STRING_MAX (64 * 1024 * 1024)
 
 static void asn1_put_length(unsigned char **pp, int length);
@@ -107,7 +111,7 @@ int ASN1_get_object(const unsigned char **inp, long *out_len, int *out_tag,
   return constructed;
 }
 
-// class 0 is constructed constructed == 2 for indefinite length constructed
+// class 0 is constructed, constructed == 2 for indefinite length constructed
 void ASN1_put_object(unsigned char **pp, int constructed, int length, int tag,
                      int xclass) {
   unsigned char *p = *pp;
@@ -201,8 +205,11 @@ int ASN1_object_size(int constructed, int length, int tag) {
 }
 
 int ASN1_STRING_copy(ASN1_STRING *dst, const ASN1_STRING *str) {
-  if (str == NULL) {
+  if (str == nullptr) {
     return 0;
+  }
+  if (dst == str) {
+    return 1;
   }
   if (!ASN1_STRING_set(dst, str->data, str->length)) {
     return 0;
@@ -215,15 +222,15 @@ int ASN1_STRING_copy(ASN1_STRING *dst, const ASN1_STRING *str) {
 ASN1_STRING *ASN1_STRING_dup(const ASN1_STRING *str) {
   ASN1_STRING *ret;
   if (!str) {
-    return NULL;
+    return nullptr;
   }
   ret = ASN1_STRING_new();
   if (!ret) {
-    return NULL;
+    return nullptr;
   }
   if (!ASN1_STRING_copy(ret, str)) {
     ASN1_STRING_free(ret);
-    return NULL;
+    return nullptr;
   }
   return ret;
 }
@@ -232,7 +239,7 @@ int ASN1_STRING_set(ASN1_STRING *str, const void *_data, ossl_ssize_t len_s) {
   const char *data = reinterpret_cast<const char *>(_data);
   size_t len;
   if (len_s < 0) {
-    if (data == NULL) {
+    if (data == nullptr) {
       return 0;
     }
     len = strlen(data);
@@ -246,24 +253,25 @@ int ASN1_STRING_set(ASN1_STRING *str, const void *_data, ossl_ssize_t len_s) {
     return 0;
   }
 
-  if (str->length <= (int)len || str->data == NULL) {
+  if (str->length <= (int)len || str->data == nullptr) {
     unsigned char *c = str->data;
-    if (c == NULL) {
+    if (c == nullptr) {
       str->data = reinterpret_cast<uint8_t *>(OPENSSL_malloc(len + 1));
     } else {
       str->data = reinterpret_cast<uint8_t *>(OPENSSL_realloc(c, len + 1));
     }
 
-    if (str->data == NULL) {
+    if (str->data == nullptr) {
       str->data = c;
       return 0;
     }
   }
   str->length = (int)len;
-  if (data != NULL) {
+  str->flags &= ~0x07;  // Clear unused bits if this is a BIT STRING.
+  if (data != nullptr) {
     OPENSSL_memcpy(str->data, data, len);
     // Historically, OpenSSL would NUL-terminate most (but not all)
-    // |ASN1_STRING|s, in case anyone accidentally passed |str->data| into a
+    // `ASN1_STRING`s, in case anyone accidentally passed `str->data` into a
     // function expecting a C string. We retain this behavior for compatibility,
     // but code must not rely on this. See CVE-2021-3712.
     str->data[len] = '\0';
@@ -275,49 +283,56 @@ void ASN1_STRING_set0(ASN1_STRING *str, void *data, int len) {
   OPENSSL_free(str->data);
   str->data = reinterpret_cast<uint8_t *>(data);
   str->length = len;
+  str->flags &= ~0x07;  // Clear unused bits if this is a BIT STRING.
 }
 
-ASN1_STRING *ASN1_STRING_new(void) {
+ASN1_STRING *ASN1_STRING_new() {
   return (ASN1_STRING_type_new(V_ASN1_OCTET_STRING));
 }
 
 ASN1_STRING *ASN1_STRING_type_new(int type) {
-  ASN1_STRING *ret;
-
-  ret = (ASN1_STRING *)OPENSSL_malloc(sizeof(ASN1_STRING));
-  if (ret == NULL) {
-    return NULL;
+  ASN1_STRING *ret = New<ASN1_STRING>();
+  if (ret == nullptr) {
+    return nullptr;
   }
   ret->length = 0;
   ret->type = type;
-  ret->data = NULL;
+  ret->data = nullptr;
   ret->flags = 0;
   return ret;
 }
 
+void bssl::asn1_string_init(ASN1_STRING *str, int type) {
+  OPENSSL_memset(str, 0, sizeof(ASN1_STRING));
+  str->type = type;
+}
+
+void bssl::asn1_string_cleanup(ASN1_STRING *str) {
+  OPENSSL_free(str->data);
+  str->data = nullptr;
+}
+
 void ASN1_STRING_free(ASN1_STRING *str) {
-  if (str == NULL) {
+  if (str == nullptr) {
     return;
   }
-  OPENSSL_free(str->data);
-  OPENSSL_free(str);
+  asn1_string_cleanup(str);
+  Delete(str);
 }
 
 int ASN1_STRING_cmp(const ASN1_STRING *a, const ASN1_STRING *b) {
-  // Capture padding bits and implicit truncation in BIT STRINGs.
-  int a_length = a->length, b_length = b->length;
   uint8_t a_padding = 0, b_padding = 0;
   if (a->type == V_ASN1_BIT_STRING) {
-    a_length = asn1_bit_string_length(a, &a_padding);
+    a_padding = ASN1_BIT_STRING_unused_bits(a);
   }
   if (b->type == V_ASN1_BIT_STRING) {
-    b_length = asn1_bit_string_length(b, &b_padding);
+    b_padding = ASN1_BIT_STRING_unused_bits(b);
   }
 
-  if (a_length < b_length) {
+  if (a->length < b->length) {
     return -1;
   }
-  if (a_length > b_length) {
+  if (a->length > b->length) {
     return 1;
   }
   // In a BIT STRING, the number of bits is 8 * length - padding. Invert this
@@ -329,7 +344,7 @@ int ASN1_STRING_cmp(const ASN1_STRING *a, const ASN1_STRING *b) {
     return 1;
   }
 
-  int ret = OPENSSL_memcmp(a->data, b->data, a_length);
+  int ret = OPENSSL_memcmp(a->data, b->data, a->length);
   if (ret != 0) {
     return ret;
   }
@@ -352,4 +367,87 @@ unsigned char *ASN1_STRING_data(ASN1_STRING *str) { return str->data; }
 
 const unsigned char *ASN1_STRING_get0_data(const ASN1_STRING *str) {
   return str->data;
+}
+
+int bssl::asn1_parse_string_unchecked(CBS *cbs, ASN1_STRING *out, int str_type,
+                                      CBS_ASN1_TAG tag) {
+  assert(tag != 0);
+  CBS child;
+  if (!CBS_get_asn1(cbs, &child, tag)) {
+    OPENSSL_PUT_ERROR(ASN1, ASN1_R_DECODE_ERROR);
+    return 0;
+  }
+  if (!ASN1_STRING_set(out, CBS_data(&child), CBS_len(&child))) {
+    return 0;
+  }
+  out->type = str_type;
+  return 1;
+}
+
+int bssl::asn1_parse_octet_string(CBS *cbs, ASN1_STRING *out,
+                                  CBS_ASN1_TAG tag) {
+  // Nothing to check for OCTET STRING.
+  tag = tag == 0 ? CBS_ASN1_OCTETSTRING : tag;
+  return asn1_parse_string_unchecked(cbs, out, V_ASN1_OCTET_STRING, tag);
+}
+
+int bssl::asn1_parse_t61_string(CBS *cbs, ASN1_STRING *out, CBS_ASN1_TAG tag) {
+  // Nothing to check for T61String. We parse it as Latin-1 and all byte strings
+  // are valid Latin-1.
+  tag = tag == 0 ? CBS_ASN1_T61STRING : tag;
+  return asn1_parse_string_unchecked(cbs, out, V_ASN1_T61STRING, tag);
+}
+
+int bssl::asn1_marshal_octet_string(CBB *out, const ASN1_STRING *in,
+                                    CBS_ASN1_TAG tag) {
+  tag = tag == 0 ? CBS_ASN1_OCTETSTRING : tag;
+  return CBB_add_asn1_element(out, tag, ASN1_STRING_get0_data(in),
+                              ASN1_STRING_length(in));
+}
+
+static int asn1_parse_character_string(CBS *cbs, ASN1_STRING *out,
+                                       CBS_ASN1_TAG tag, int str_type,
+                                       int (*get_char)(CBS *cbs, uint32_t *),
+                                       int bad_char_err) {
+  CBS child;
+  if (!CBS_get_asn1(cbs, &child, tag)) {
+    OPENSSL_PUT_ERROR(ASN1, ASN1_R_DECODE_ERROR);
+    return 0;
+  }
+  CBS copy = child;
+  while (CBS_len(&copy) != 0) {
+    uint32_t c;
+    if (!get_char(&copy, &c)) {
+      OPENSSL_PUT_ERROR(ASN1, bad_char_err);
+      return 0;
+    }
+  }
+  if (!ASN1_STRING_set(out, CBS_data(&child), CBS_len(&child))) {
+    return 0;
+  }
+  out->type = str_type;
+  return 1;
+}
+
+int bssl::asn1_parse_bmp_string(CBS *cbs, ASN1_BMPSTRING *out,
+                                CBS_ASN1_TAG tag) {
+  tag = tag == 0 ? CBS_ASN1_BMPSTRING : tag;
+  return asn1_parse_character_string(cbs, out, tag, V_ASN1_BMPSTRING,
+                                     &CBS_get_ucs2_be,
+                                     ASN1_R_INVALID_BMPSTRING);
+}
+
+int bssl::asn1_parse_universal_string(CBS *cbs, ASN1_UNIVERSALSTRING *out,
+                                      CBS_ASN1_TAG tag) {
+  tag = tag == 0 ? CBS_ASN1_UNIVERSALSTRING : tag;
+  return asn1_parse_character_string(cbs, out, tag, V_ASN1_UNIVERSALSTRING,
+                                     &CBS_get_utf32_be,
+                                     ASN1_R_INVALID_UNIVERSALSTRING);
+}
+
+int bssl::asn1_parse_utf8_string(CBS *cbs, ASN1_UNIVERSALSTRING *out,
+                                 CBS_ASN1_TAG tag) {
+  tag = tag == 0 ? CBS_ASN1_UTF8STRING : tag;
+  return asn1_parse_character_string(cbs, out, tag, V_ASN1_UTF8STRING,
+                                     &CBS_get_utf8, ASN1_R_INVALID_UTF8STRING);
 }

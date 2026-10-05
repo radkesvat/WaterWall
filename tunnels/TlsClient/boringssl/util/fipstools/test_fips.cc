@@ -32,11 +32,17 @@
 #include <openssl/nid.h>
 #include <openssl/rsa.h>
 #include <openssl/sha.h>
+#include <openssl/span.h>
+#include <openssl/tls_prf.h>
 
 #include "../../crypto/fipsmodule/bcm_interface.h"
 #include "../../crypto/fipsmodule/rand/internal.h"
 #include "../../crypto/fipsmodule/tls/internal.h"
 #include "../../crypto/internal.h"
+
+
+BSSL_NAMESPACE_BEGIN
+namespace {
 
 OPENSSL_MSVC_PRAGMA(warning(disable : 4295))
 
@@ -72,7 +78,7 @@ static int run_test() {
          module_version);
 
 #if !defined(BORINGSSL_FIPS)
-  // |module_version| will be zero, so the non-FIPS build will never get
+  // `module_version` will be zero, so the non-FIPS build will never get
   // this far.
   printf("Non zero module version in non-FIPS build - should not happen!\n");
   return 0;
@@ -92,6 +98,7 @@ static int run_test() {
       0xef, 0x29, 0x81, 0x22, 0x45, 0x40, 0x43, 0x70, 0xce, 0x0f};
   const uint8_t kDRBGEntropy[48] =
       "DBRG Initial Entropy                           ";
+  const uint8_t kDRBGNonce[CTR_DRBG_NONCE_LEN] = "DBRG Nonce     ";
   const uint8_t kDRBGPersonalization[19] = "BCMPersonalization";
   const uint8_t kDRBGAD[16] = "BCM DRBG AD    ";
   const uint8_t kDRBGEntropy2[48] =
@@ -354,11 +361,13 @@ static int run_test() {
   CTR_DRBG_STATE drbg;
   printf("About to seed CTR-DRBG with ");
   hexdump(kDRBGEntropy, sizeof(kDRBGEntropy));
-  if (!CTR_DRBG_init(&drbg, kDRBGEntropy, kDRBGPersonalization,
+  if (!CTR_DRBG_init(&drbg, /*df=*/true, kDRBGEntropy, sizeof(kDRBGEntropy),
+                     kDRBGNonce, kDRBGPersonalization,
                      sizeof(kDRBGPersonalization)) ||
       !CTR_DRBG_generate(&drbg, output, sizeof(output), kDRBGAD,
                          sizeof(kDRBGAD)) ||
-      !CTR_DRBG_reseed(&drbg, kDRBGEntropy2, kDRBGAD, sizeof(kDRBGAD)) ||
+      !CTR_DRBG_reseed_ex(&drbg, kDRBGEntropy2, sizeof(kDRBGEntropy2), kDRBGAD,
+                          sizeof(kDRBGAD)) ||
       !CTR_DRBG_generate(&drbg, output, sizeof(output), kDRBGAD,
                          sizeof(kDRBGAD))) {
     printf("DRBG failed\n");
@@ -380,13 +389,15 @@ static int run_test() {
   printf("  got ");
   hexdump(hkdf_output, sizeof(hkdf_output));
 
+  const char kTLSLabel[] = "foo";
+  const auto label = StringAsBytes(kTLSLabel);
   /* TLS v1.0 KDF */
   printf("About to run TLS v1.0 KDF\n");
   uint8_t tls10_output[32];
   if (!CRYPTO_tls1_prf(EVP_md5_sha1(), tls10_output, sizeof(tls10_output),
-                       kAESKey, sizeof(kAESKey), "foo", 3, kPlaintextSHA256,
-                       sizeof(kPlaintextSHA256), kPlaintextSHA256,
-                       sizeof(kPlaintextSHA256))) {
+                       kAESKey, sizeof(kAESKey), label.data(), label.size(),
+                       kPlaintextSHA256, sizeof(kPlaintextSHA256),
+                       kPlaintextSHA256, sizeof(kPlaintextSHA256))) {
     fprintf(stderr, "TLS v1.0 KDF failed.\n");
     return 0;
   }
@@ -397,9 +408,9 @@ static int run_test() {
   printf("About to run TLS v1.2 KDF\n");
   uint8_t tls12_output[32];
   if (!CRYPTO_tls1_prf(EVP_sha256(), tls12_output, sizeof(tls12_output),
-                       kAESKey, sizeof(kAESKey), "foo", 3, kPlaintextSHA256,
-                       sizeof(kPlaintextSHA256), kPlaintextSHA256,
-                       sizeof(kPlaintextSHA256))) {
+                       kAESKey, sizeof(kAESKey), label.data(), label.size(),
+                       kPlaintextSHA256, sizeof(kPlaintextSHA256),
+                       kPlaintextSHA256, sizeof(kPlaintextSHA256))) {
     fprintf(stderr, "TLS v1.2 KDF failed.\n");
     return 0;
   }
@@ -411,7 +422,7 @@ static int run_test() {
   uint8_t tls13_output[32];
   if (!CRYPTO_tls13_hkdf_expand_label(
           tls13_output, sizeof(tls13_output), EVP_sha256(), kAESKey,
-          sizeof(kAESKey), (const uint8_t *)"foo", 3, kPlaintextSHA256,
+          sizeof(kAESKey), label.data(), label.size(), kPlaintextSHA256,
           sizeof(kPlaintextSHA256))) {
     fprintf(stderr, "TLS v1.3 KDF failed.\n");
     return 0;
@@ -437,8 +448,8 @@ static int run_test() {
   /* ML-KEM */
   printf("About to generate ML-KEM key:\n");
   auto mlkem_public_key_bytes =
-      std::make_unique<uint8_t[]>(BCM_MLKEM768_PUBLIC_KEY_BYTES);
-  auto mlkem_private_key = std::make_unique<BCM_mlkem768_private_key>();
+      std::make_unique<uint8_t[]>(MLKEM768_PUBLIC_KEY_BYTES);
+  auto mlkem_private_key = std::make_unique<MLKEM768_private_key>();
   if (BCM_mlkem768_generate_key_fips(mlkem_public_key_bytes.get(), nullptr,
                                      mlkem_private_key.get()) !=
       bcm_status::approved) {
@@ -446,13 +457,13 @@ static int run_test() {
     return 0;
   }
   printf("  got ");
-  hexdump(mlkem_public_key_bytes.get(), BCM_MLKEM768_PUBLIC_KEY_BYTES);
+  hexdump(mlkem_public_key_bytes.get(), MLKEM768_PUBLIC_KEY_BYTES);
 
   printf("About to do ML-KEM encap:\n");
   auto mlkem_ciphertext =
-      std::make_unique<uint8_t[]>(BCM_MLKEM768_CIPHERTEXT_BYTES);
-  uint8_t mlkem_shared_secret[BCM_MLKEM_SHARED_SECRET_BYTES];
-  auto mlkem_public_key = std::make_unique<BCM_mlkem768_public_key>();
+      std::make_unique<uint8_t[]>(MLKEM768_CIPHERTEXT_BYTES);
+  uint8_t mlkem_shared_secret[MLKEM_SHARED_SECRET_BYTES];
+  auto mlkem_public_key = std::make_unique<MLKEM768_public_key>();
   BCM_mlkem768_public_from_private(mlkem_public_key.get(),
                                    mlkem_private_key.get());
   if (BCM_mlkem768_encap(mlkem_ciphertext.get(), mlkem_shared_secret,
@@ -465,7 +476,7 @@ static int run_test() {
 
   printf("About to do ML-KEM decap:\n");
   if (BCM_mlkem768_decap(mlkem_shared_secret, mlkem_ciphertext.get(),
-                         BCM_MLKEM768_CIPHERTEXT_BYTES,
+                         MLKEM768_CIPHERTEXT_BYTES,
                          mlkem_private_key.get()) != bcm_status::approved) {
     fprintf(stderr, "ML-KEM decap failed");
     return 0;
@@ -476,29 +487,29 @@ static int run_test() {
   /* ML-DSA */
   printf("About to generate ML-DSA key:\n");
   auto mldsa_public_key_bytes =
-      std::make_unique<uint8_t[]>(BCM_MLDSA65_PUBLIC_KEY_BYTES);
-  uint8_t mldsa_seed[BCM_MLDSA_SEED_BYTES];
-  auto mldsa_priv = std::make_unique<BCM_mldsa65_private_key>();
+      std::make_unique<uint8_t[]>(MLDSA65_PUBLIC_KEY_BYTES);
+  uint8_t mldsa_seed[MLDSA_SEED_BYTES];
+  auto mldsa_priv = std::make_unique<MLDSA65_private_key>();
   if (BCM_mldsa65_generate_key_fips(mldsa_public_key_bytes.get(), mldsa_seed,
                                     mldsa_priv.get()) != bcm_status::approved) {
     fprintf(stderr, "ML-DSA keygen failed");
     return 0;
   }
   printf("  got ");
-  hexdump(mldsa_public_key_bytes.get(), BCM_MLDSA65_PUBLIC_KEY_BYTES);
+  hexdump(mldsa_public_key_bytes.get(), MLDSA65_PUBLIC_KEY_BYTES);
 
   printf("About to ML-DSA sign:\n");
-  auto mldsa_sig = std::make_unique<uint8_t[]>(BCM_MLDSA65_SIGNATURE_BYTES);
+  auto mldsa_sig = std::make_unique<uint8_t[]>(MLDSA65_SIGNATURE_BYTES);
   if (BCM_mldsa65_sign(mldsa_sig.get(), mldsa_priv.get(), nullptr, 0, nullptr,
                        0) != bcm_status::approved) {
     fprintf(stderr, "ML-DSA sign failed");
     return 0;
   }
   printf("  got ");
-  hexdump(mldsa_sig.get(), BCM_MLDSA65_SIGNATURE_BYTES);
+  hexdump(mldsa_sig.get(), MLDSA65_SIGNATURE_BYTES);
 
   printf("About to ML-DSA verify:\n");
-  auto mldsa_pub = std::make_unique<BCM_mldsa65_public_key>();
+  auto mldsa_pub = std::make_unique<MLDSA65_public_key>();
   if (BCM_mldsa65_public_from_private(mldsa_pub.get(), mldsa_priv.get()) !=
           bcm_status::approved ||
       BCM_mldsa65_verify(mldsa_pub.get(), mldsa_sig.get(), nullptr, 0, nullptr,
@@ -541,8 +552,11 @@ static int run_test() {
 #endif  // !defined(BORINGSSL_FIPS)
 }
 
+}  // namespace
+BSSL_NAMESPACE_END
+
 int main(int argc, char **argv) {
-  if (!run_test()) {
+  if (!bssl::run_test()) {
     printf("FAIL\n");
     fflush(stdout);
     abort();

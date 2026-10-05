@@ -49,7 +49,7 @@ if ($flavour && $flavour ne "void") {
     ( $xlate="${dir}../../perlasm/arm-xlate.pl" and -f $xlate) or
     die "can't locate arm-xlate.pl";
 
-    open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\"";
+    open OUT, "|-", $^X, $xlate, $flavour, $output;
     *STDOUT=*OUT;
 } else {
     open OUT,">$output";
@@ -195,6 +195,7 @@ $code.=<<___;
 #endif
 
 .align	5
+chacha_constants:
 .Lsigma:
 .long	0x61707865,0x3320646e,0x79622d32,0x6b206574	@ endian-neutral
 .Lone:

@@ -1,4 +1,4 @@
-This test verifies behavior when a certificate has an unparseable/unsupported
+This test verifies behavior when a certificate has an unparsable/unsupported
 SPKI. It should be handled equivalently to a certificate with a failed
 signature verification: further processing should be shortcircuited.
 The certificate chain has 2 problems:

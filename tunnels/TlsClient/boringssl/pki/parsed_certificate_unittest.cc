@@ -31,7 +31,7 @@ std::string GetFilePath(const std::string &file_name) {
   return std::string("testdata/parse_certificate_unittest/") + file_name;
 }
 
-// Reads and parses a certificate from the PEM file |file_name|.
+// Reads and parses a certificate from the PEM file `file_name`.
 //
 // Returns nullptr if the certificate parsing failed, and verifies that any
 // errors match the ERRORS block in the .pem file.
@@ -55,7 +55,7 @@ std::shared_ptr<const ParsedCertificate> ParseCertificateFromFile(
                             data.size(), nullptr)),
       options, &errors);
 
-  // The errors are baselined for |!allow_invalid_serial_numbers|. So if
+  // The errors are baselined for `!allow_invalid_serial_numbers`. So if
   // requesting a non-default option skip the error checks.
   // TODO(eroman): This is ugly.
   if (!options.allow_invalid_serial_numbers) {
@@ -497,16 +497,11 @@ TEST(ParsedCertificateTest, SerialNumberZeroPadded) {
 
 // Tests a serial number where the MSB is >= 0x80, causing the encoded
 // length to be 21 bytes long. This is an error, as RFC 5280 specifies a
-// maximum of 20 bytes.
+// maximum of 20 bytes. We do not constrain the serial number length because too
+// many certificates get it wrong.
 TEST(ParsedCertificateTest, SerialNumberZeroPadded21BytesLong) {
   std::shared_ptr<const ParsedCertificate> cert =
       ParseCertificateFromFile("serial_zero_padded_21_bytes.pem", {});
-  ASSERT_FALSE(cert);
-
-  // Try again with allow_invalid_serial_numbers=true. Parsing should succeed.
-  ParseCertificateOptions options;
-  options.allow_invalid_serial_numbers = true;
-  cert = ParseCertificateFromFile("serial_zero_padded_21_bytes.pem", options);
   ASSERT_TRUE(cert);
 
   static const uint8_t expected_serial[21] = {
@@ -528,16 +523,11 @@ TEST(ParsedCertificateTest, SerialNumberNegative) {
 }
 
 // Tests a serial number which is very long. RFC 5280 specifies a maximum of 20
-// bytes.
+// bytes. We do not constrain the serial number length because too many
+// certificates get it wrong.
 TEST(ParsedCertificateTest, SerialNumber37BytesLong) {
   std::shared_ptr<const ParsedCertificate> cert =
-      ParseCertificateFromFile("serial_37_bytes.pem", {});
-  ASSERT_FALSE(cert);
-
-  // Try again with allow_invalid_serial_numbers=true. Parsing should succeed.
-  ParseCertificateOptions options;
-  options.allow_invalid_serial_numbers = true;
-  cert = ParseCertificateFromFile("serial_37_bytes.pem", options);
+        ParseCertificateFromFile("serial_37_bytes.pem", {});
   ASSERT_TRUE(cert);
 
   static const uint8_t expected_serial[37] = {
@@ -572,6 +562,16 @@ TEST(ParsedCertificateTest, SerialNotMinimal) {
   std::shared_ptr<const ParsedCertificate> cert =
       ParseCertificateFromFile("serial_not_minimal.pem", {});
   ASSERT_FALSE(cert);
+
+  // Try again with allow_invalid_serial_numbers=true. Parsing should succeed.
+  // TODO(crbug.com/533048005): Remove this option.
+  ParseCertificateOptions options;
+  options.allow_invalid_serial_numbers = true;
+  cert = ParseCertificateFromFile("serial_not_minimal.pem", options);
+  ASSERT_TRUE(cert);
+
+  static const uint8_t expected_serial[] = {0x00, 0x01};
+  EXPECT_EQ(der::Input(expected_serial), cert->tbs().serial_number);
 }
 
 // Tests parsing a certificate that has an inhibitAnyPolicy extension.
@@ -596,7 +596,7 @@ TEST(ParsedCertificateTest, SubjectKeyIdentifierNotOctetString) {
 }
 
 // Tests an authorityKeyIdentifier that is not a SEQUENCE.
-TEST(ParsedCertificateTest, AuthourityKeyIdentifierNotSequence) {
+TEST(ParsedCertificateTest, AuthorityKeyIdentifierNotSequence) {
   std::shared_ptr<const ParsedCertificate> cert =
       ParseCertificateFromFile("authority_key_identifier_not_sequence.pem", {});
   ASSERT_FALSE(cert);

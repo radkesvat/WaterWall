@@ -2,6 +2,7 @@
 .file 1 "inserted_by_delocate.c"
 .loc 1 1 0
 BORINGSSL_bcm_text_start:
+.LBORINGSSL_bcm_text_start_local_target:
 	.type foo, @function
 	.globl foo
 .Lfoo_local_target:
@@ -34,9 +35,11 @@ kBoringSSLRSASqrtTwo:
 .text
 .loc 1 2 0
 BORINGSSL_bcm_text_end:
+.LBORINGSSL_bcm_text_end_local_target:
 .type BORINGSSL_bcm_text_hash, @object
 .size BORINGSSL_bcm_text_hash, 32
 BORINGSSL_bcm_text_hash:
+.LBORINGSSL_bcm_text_hash_local_target:
 .byte 0xae
 .byte 0x2c
 .byte 0xea

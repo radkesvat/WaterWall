@@ -42,7 +42,7 @@ FileTest::FileTest(std::unique_ptr<FileTest::LineReader> reader,
 
 FileTest::~FileTest() {}
 
-// FindDelimiter returns a pointer to the first '=' or ':' in |str| or nullptr
+// FindDelimiter returns a pointer to the first '=' or ':' in `str` or nullptr
 // if there is none.
 static const char *FindDelimiter(const char *str) {
   while (*str) {
@@ -54,7 +54,7 @@ static const char *FindDelimiter(const char *str) {
   return nullptr;
 }
 
-// StripSpace returns a string containing up to |len| characters from |str| with
+// StripSpace returns a string containing up to `len` characters from `str` with
 // leading and trailing whitespace removed.
 static std::string StripSpace(const char *str, size_t len) {
   // Remove leading space.
@@ -97,7 +97,9 @@ FileTest::ReadResult FileTest::ReadNext() {
 
   ClearTest();
 
-  static const size_t kBufLen = 8192 * 4;
+  // We need a buffer that is large enough to hold SLH-DSA-SHAKE-256f
+  // test vectors.
+  static const size_t kBufLen = 8192 * 14;
   auto buf = std::make_unique<char[]>(kBufLen);
 
   bool in_instruction_block = false;
@@ -249,39 +251,38 @@ const std::string &FileTest::GetParameter() {
   return parameter_;
 }
 
-bool FileTest::HasAttribute(const std::string &key) {
+bool FileTest::HasAttribute(std::string_view key) {
   OnKeyUsed(key);
   return attributes_.count(key) > 0;
 }
 
-bool FileTest::GetAttribute(std::string *out_value, const std::string &key) {
+bool FileTest::GetAttribute(std::string *out_value, std::string_view key) {
   OnKeyUsed(key);
   auto iter = attributes_.find(key);
   if (iter == attributes_.end()) {
-    PrintLine("Missing attribute '%s'.", key.c_str());
+    PrintLine("Missing attribute '%s'.", std::string(key).c_str());
     return false;
   }
   *out_value = iter->second;
   return true;
 }
 
-const std::string &FileTest::GetAttributeOrDie(const std::string &key) {
-  if (!HasAttribute(key)) {
-    abort();
-  }
-  return attributes_[key];
+const std::string &FileTest::GetAttributeOrDie(std::string_view key) {
+  auto it = attributes_.find(key);
+  BSSL_CHECK(it != attributes_.end());
+  return it->second;
 }
 
-bool FileTest::HasInstruction(const std::string &key) {
+bool FileTest::HasInstruction(std::string_view key) {
   OnInstructionUsed(key);
   return instructions_.count(key) > 0;
 }
 
-bool FileTest::GetInstruction(std::string *out_value, const std::string &key) {
+bool FileTest::GetInstruction(std::string *out_value, std::string_view key) {
   OnInstructionUsed(key);
   auto iter = instructions_.find(key);
   if (iter == instructions_.end()) {
-    PrintLine("Missing instruction '%s'.", key.c_str());
+    PrintLine("Missing instruction '%s'.", std::string(key).c_str());
     return false;
   }
   *out_value = iter->second;
@@ -292,15 +293,14 @@ void FileTest::IgnoreAllUnusedInstructions() {
   unused_instructions_.clear();
 }
 
-const std::string &FileTest::GetInstructionOrDie(const std::string &key) {
-  if (!HasInstruction(key)) {
-    abort();
-  }
-  return instructions_[key];
+const std::string &FileTest::GetInstructionOrDie(std::string_view key) {
+  auto it = instructions_.find(key);
+  BSSL_CHECK(it != instructions_.end());
+  return it->second;
 }
 
 bool FileTest::GetInstructionBytes(std::vector<uint8_t> *out,
-                                   const std::string &key) {
+                                   std::string_view key) {
   std::string value;
   return GetInstruction(&value, key) && ConvertToBytes(out, value);
 }
@@ -309,7 +309,7 @@ const std::string &FileTest::CurrentTestToString() const {
   return current_test_;
 }
 
-bool FileTest::GetBytes(std::vector<uint8_t> *out, const std::string &key) {
+bool FileTest::GetBytes(std::vector<uint8_t> *out, std::string_view key) {
   std::string value;
   return GetAttribute(&value, key) && ConvertToBytes(out, value);
 }
@@ -330,23 +330,31 @@ void FileTest::ClearInstructions() {
   unused_attributes_.clear();
 }
 
-void FileTest::OnKeyUsed(const std::string &key) {
-  unused_attributes_.erase(key);
+void FileTest::OnKeyUsed(std::string_view key) {
+  // TODO(crbug.com/441253582): In C++23, this can just be erase(key).
+  auto it = unused_attributes_.find(key);
+  if (it != unused_attributes_.end()) {
+    unused_attributes_.erase(it);
+  }
 }
 
-void FileTest::OnInstructionUsed(const std::string &key) {
-  unused_instructions_.erase(key);
+void FileTest::OnInstructionUsed(std::string_view key) {
+  // TODO(crbug.com/441253582): In C++23, this can just be erase(key).
+  auto it = unused_instructions_.find(key);
+  if (it != unused_instructions_.end()) {
+    unused_instructions_.erase(it);
+  }
 }
 
 bool FileTest::ConvertToBytes(std::vector<uint8_t> *out,
-                              const std::string &value) {
+                              std::string_view value) {
   if (value.size() >= 2 && value[0] == '"' && value[value.size() - 1] == '"') {
     out->assign(value.begin() + 1, value.end() - 1);
     return true;
   }
 
   if (!DecodeHex(out, value)) {
-    PrintLine("Error decoding value: %s", value.c_str());
+    PrintLine("Error decoding value: %s", std::string(value).c_str());
     return false;
   }
   return true;
@@ -356,9 +364,8 @@ bool FileTest::IsAtNewInstructionBlock() const {
   return is_at_new_instruction_block_;
 }
 
-void FileTest::InjectInstruction(const std::string &key,
-                                 const std::string &value) {
-  instructions_[key] = value;
+void FileTest::InjectInstruction(std::string key, std::string value) {
+  instructions_[std::move(key)] = std::move(value);
 }
 
 class FileLineReader : public FileTest::LineReader {

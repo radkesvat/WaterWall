@@ -16,7 +16,7 @@
 """
 A chain with target using authorityKeyIdentifier:issuer and multiple
 intermediates with different serial numbers and issuer names, for testing
-path bulding prioritization.
+path building prioritization.
 """
 
 import sys

@@ -44,7 +44,10 @@
 #include "internal.h"
 
 
-// Source is an awkward expression of a union type in C++: Stdin | File filename.
+BSSL_NAMESPACE_BEGIN
+
+// Source is an awkward expression of a union type in C++: Stdin | File
+// filename.
 struct Source {
   enum Type {
     STDIN,
@@ -65,7 +68,7 @@ struct Source {
 
 static const char kStdinName[] = "standard input";
 
-// OpenFile opens the regular file named |filename| and returns a file
+// OpenFile opens the regular file named `filename` and returns a file
 // descriptor to it.
 static ScopedFD OpenFile(const std::string &filename) {
   ScopedFD fd = OpenFD(filename.c_str(), O_RDONLY | O_BINARY);
@@ -92,7 +95,7 @@ static ScopedFD OpenFile(const std::string &filename) {
   return fd;
 }
 
-// SumFile hashes the contents of |source| with |md| and sets |*out_hex| to the
+// SumFile hashes the contents of `source` with `md` and sets `*out_hex` to the
 // hex-encoded result.
 //
 // It returns true on success or prints an error to stderr and returns false on
@@ -159,7 +162,7 @@ static bool SumFile(std::string *out_hex, const EVP_MD *md,
   return true;
 }
 
-// PrintFileSum hashes |source| with |md| and prints a line to stdout in the
+// PrintFileSum hashes `source` with `md` and prints a line to stdout in the
 // format of the coreutils *sum utilities. It returns true on success or prints
 // an error to stderr and returns false on error.
 static bool PrintFileSum(const EVP_MD *md, const Source &source) {
@@ -190,11 +193,11 @@ struct CheckModeArguments {
   bool strict = false;
 };
 
-// Check reads lines from |source| where each line is in the format of the
+// Check reads lines from `source` where each line is in the format of the
 // coreutils *sum utilities. It attempts to verify each hash by reading the
 // file named in the line.
 //
-// It returns true if all files were verified and, if |args.strict|, no input
+// It returns true if all files were verified and, if `args.strict`, no input
 // lines had formatting errors. Otherwise it prints errors to stderr and
 // returns false.
 static bool Check(const CheckModeArguments &args, const EVP_MD *md,
@@ -326,7 +329,7 @@ static bool Check(const CheckModeArguments &args, const EVP_MD *md,
   return ok;
 }
 
-// DigestSum acts like the coreutils *sum utilites, with the given hash
+// DigestSum acts like the coreutils *sum utilities, with the given hash
 // function.
 static bool DigestSum(const EVP_MD *md,
                       const std::vector<std::string> &args) {
@@ -359,7 +362,7 @@ static bool DigestSum(const EVP_MD *md,
         switch (arg[i]) {
           case 'b':
           case 't':
-            // Binary/text mode – irrelevent, even on Windows.
+            // Binary/text mode – irrelevant, even on Windows.
             break;
           case 'c':
             check_mode = true;
@@ -374,7 +377,7 @@ static bool DigestSum(const EVP_MD *md,
         }
       }
     } else if (arg == "--binary" || arg == "--text") {
-      // Binary/text mode – irrelevent, even on Windows.
+      // Binary/text mode – irrelevant, even on Windows.
     } else if (arg == "--check") {
       check_mode = true;
     } else if (arg == "--quiet") {
@@ -452,3 +455,5 @@ bool SHA512Sum(const std::vector<std::string> &args) {
 bool SHA512256Sum(const std::vector<std::string> &args) {
   return DigestSum(EVP_sha512_256(), args);
 }
+
+BSSL_NAMESPACE_END

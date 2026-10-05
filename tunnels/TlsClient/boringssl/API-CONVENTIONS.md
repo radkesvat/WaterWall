@@ -153,7 +153,7 @@ Some types, such as `RSA`, are heap-allocated. All instances will be allocated
 and returned from BoringSSL's APIs. It is an error to instantiate a heap-
 allocated type on the stack or embedded within another object.
 
-Heap-allocated types may have functioned named like `RSA_new` which allocates a
+Heap-allocated types may have functions named like `RSA_new` which allocates a
 fresh blank `RSA`. Other functions may also return newly-allocated instances.
 For example, `RSA_parse_public_key` is documented to return a newly-allocated
 `RSA` object.
@@ -205,7 +205,7 @@ failure. For example:
              EVP_DigestUpdate(&ctx, "hello ", 6) &&
              EVP_DigestUpdate(&ctx, "world", 5) &&
              EVP_DigestFinal_ex(&ctx, md, &md_len);
-    EVP_MD_CTX_cleanup(&ctx);  /* Release |ctx|. */
+    EVP_MD_CTX_cleanup(&ctx);  /* Release `ctx`. */
 
 Note that `EVP_MD_CTX_cleanup` is called whether or not the `EVP_Digest*`
 operations succeeded. More complex C functions may use the `goto err` pattern:
@@ -284,7 +284,7 @@ pointer. The caller must own the object before the function call and, after
 transfer, no longer owns it. As a corollary, the caller may no longer reference
 the object without a separate guarantee on the lifetime. The function may even
 release the object before returning. Callers that wish to independently retain a
-transfered object must therefore take a reference or make a copy before
+transferred object must therefore take a reference or make a copy before
 transferring. Callers should also take note of whether the function is
 documented to transfer pointers unconditionally or only on success. Unlike C++
 and Rust, functions in BoringSSL typically only transfer on success.
@@ -322,3 +322,173 @@ it as needed. Consult the API documentation for the threading guarantees of
 particular objects. In general, stateless reference-counted objects like `RSA`
 or `EVP_PKEY` which represent keys may typically be used from multiple threads
 simultaneously, provided no thread mutates the key.
+
+
+## Callbacks and Closures
+
+Several BoringSSL APIs, particularly in libssl, allow applications to configure
+callbacks to customize behavior. Often, an application may wish to pass in some
+[closure](https://en.wikipedia.org/wiki/Closure_(computer_programming)), where
+the callback is bound to some additional state. For example, a callback for TLS
+private key offload may need a handle to the application-specific private key.
+
+BoringSSL's APIs are C-based and use C function pointers, which do not support
+bound variables. Instead, C callback APIs split the closure into a function
+pointer and some `void *` data parameter. This is sometimes called "arg",
+"callback data", "context", "data", or "user data".
+
+For example, the `SSL_CTX_set_cert_cb` function takes an `arg` parameter, which
+is passed back into the user-supplied callback, `cb`. The user would pass a
+function that casts `arg` back to the expected type and looks up bound data as
+needed:
+
+```
+OPENSSL_EXPORT void SSL_CTX_set_cert_cb(SSL_CTX *ctx,
+                                        int (*cb)(SSL *ssl, void *arg),
+                                        void *arg);
+```
+
+An application might use it with a C++ `std::function` as follows:
+
+```
+int RunCertCallback(SSL *ssl, void *arg) {
+  auto *f = static_cast<std::function<int(SSL*)>*>(arg);
+  return (*f)(ssl);
+}
+
+std::function<int(SSL*)> cert_cb = ...;
+SSL_CTX_set_cert_cb(ctx, RunCertCallback, &cert_cb);
+```
+
+Note that such an application would additionally need to ensure that `cert_cb`
+outlives `ctx`, e.g. by storing it in the `SSL_CTX`'s owning object.
+
+BoringSSL APIs, however, commonly take callbacks without an explicit data
+parameter. For example, the `SSL_set_custom_verify` takes an undecorated
+`callback` parameter:
+
+```
+OPENSSL_EXPORT void SSL_set_custom_verify(
+    SSL *ssl, int mode,
+    enum ssl_verify_result_t (*callback)(SSL *ssl, uint8_t *out_alert));
+```
+
+In such APIs, the callback is expected to look up data through the owning
+object, here the `ssl`. Many types in BoringSSL, including `SSL`, support
+`ex_data`. `ex_data` lets applications associate extra data with the object. See
+the [API documentation](https://commondatastorage.googleapis.com/chromium-boringssl-docs/ex_data.h.html)
+for more details. `ex_data` also supports registering a `free_func` callback,
+which can give the application more options to ensure callback data outlives the
+object.
+
+Often, for a callback-heavy object like `SSL`, the application will already have
+some owning object that wraps the `SSL`. The application can then register a
+single `ex_data` index, pointering back to the owning object, and store all the
+callback state there.
+
+For example, this code snippet connects `SSL` callbacks to methods on some
+wrapper `MySSLConnection` class.
+
+```
+class MySSLConnection {
+ private:
+  void Init() {
+    ssl_.reset(SSL_new(...));
+    // Save a pointer in `ssl_` back to `this`. `this` owns and thus outlives
+    // `ssl_`. (To have `ssl_` own its ex_data, use `SSL_get_ex_new_index`'s
+    // `free_func` parameter.)
+    CHECK(SSL_set_ex_data(ssl_.get(), ExDataIndex(), this));
+    // Register callbacks.
+    SSL_set_custom_verify(ssl_.get(), SSL_VERIFY_PEER,
+                          &MySSLConnection::DoVerifyCallback);
+    SSL_set_info_callback(ssl_.get(), &MySSLConnection::DoInfoCallback);
+    ...
+  }
+
+  static int ExDataIndex() {
+    static const int kIndex = [] {
+      int idx = SSL_get_ex_new_index(0, nullptr, nullptr, nullptr);
+      CHECK(idx >= 0);
+      return idx;
+    }();
+    return kIndex;
+  }
+
+  static MySSLConnection *FromSSL(const SSL *ssl) {
+    return static_cast<MySSLConnection*>(
+        SSL_get_ex_data(ssl_.get(), ExDataIndex()));
+  }
+
+  // Callback functions passed to BoringSSL:
+  static ssl_verify_result_t DoVerifyCallback(SSL *ssl, uint8_t *out_alert)) {
+    return FromSSL(ssl)->Verify(out_alert);
+  }
+  static void DoInfoCallback(const SSL *ssl, int type, int value) {
+    return FromSSL(ssl)->InfoCallback(type, value);
+  }
+
+  // The underlying methods that the callback functions forward to:
+  ssl_verify_result_t VerifyCallback(uint8_t *out_alert)) { ... }
+  void InfoCallback(int type, int value) { ... }
+
+  bssl::UniquePtr<SSL> ssl_;
+};
+```
+
+In other cases, the callback may live on a different object than is passed into
+the callback. The application can then use ex_data on either the passed-in
+object, or follow accessors to parent objects. For example, an `SSL_get_SSL_CTX`
+returns the `SSL_CTX` of an `SSL` and
+[`SSL_CTX_set_cert_verify_callback`'s documentation](https://commondatastorage.googleapis.com/chromium-boringssl-docs/ssl.h.html#SSL_CTX_set_cert_verify_callback)
+mentions that `SSL_get_ex_data_X509_STORE_CTX_idx` may be used to find the `SSL`
+corresponding to the `X509_STORE_CTX`.
+
+```
+OPENSSL_EXPORT void SSL_CTX_sess_set_new_cb(
+    SSL_CTX *ctx, int (*new_session_cb)(SSL *ssl, SSL_SESSION *session));
+
+OPENSSL_EXPORT void SSL_CTX_set_cert_verify_callback(
+    SSL_CTX *ctx, int (*callback)(X509_STORE_CTX *store_ctx, void *arg),
+    void *arg);
+```
+
+
+## Contexts
+
+Many types in BoringSSL are named like `FOO_CTX`, where `CTX` is an abbrevation
+for "context". `FOO_CTX` is some object that is related to `FOO`. Due to the
+history of API names in OpenSSL, the relationship between the two can depend on
+context.
+
+Sometimes, `FOO` is a long-lived object and `FOO_CTX` is an individual operation
+on that object. For example:
+
+* An `EVP_MD` is a hash algorithm ("Message Digest"). An `EVP_MD_CTX` for some
+  `EVP_MD` is single streaming hash operation that can accept data.
+
+* An `EVP_AEAD` is an AEAD algorithm. An `EVP_AEAD_CTX` for some `EVP_AEAD` is
+  an AEAD key that can be used to encrypt or decrypt.
+
+* An `EVP_PKEY` is a public or private key. An `EVP_PKEY_CTX` for some
+  `EVP_PKEY` is single signing, verifying, etc., operation on that key.
+
+* An `X509_STORE` carries trusted root certificates, etc., for verifying X.509
+  certificates. An `X509_STORE_CTX` is a single verification operation.
+
+In this case, the operation object may be a separate object, rather than a
+single-shot function, to allow the caller to configure extra parameters (similar
+to [builder pattern](https://en.wikipedia.org/wiki/Builder_pattern)) or perform
+a multi-step, streaming operation.
+
+In other cases, the context object is the broader-scoped one:
+
+* An `SSL_CTX` is shared configuration and state between TLS/DTLS connections.
+  An `SSL` is a single TLS/DTLS connection.
+
+* A `BIGNUM` is a big integer. A `BN_CTX` is a pool for reusing `BIGNUM`
+  allocations.
+
+* An `X509V3_CTX` contains additional parameters for the legacy string-based
+  X.509 extension API. (Do not use this API.)
+
+Consult the documentation if unsure which case a given pair of types falls into.

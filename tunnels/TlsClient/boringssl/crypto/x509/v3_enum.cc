@@ -22,6 +22,8 @@
 #include "internal.h"
 
 
+using namespace bssl;
+
 typedef BIT_STRING_BITNAME ENUMERATED_NAMES;
 
 static const ENUMERATED_NAMES crl_reasons[] = {
@@ -38,7 +40,7 @@ static const ENUMERATED_NAMES crl_reasons[] = {
     {CRL_REASON_PRIVILEGE_WITHDRAWN, "Privilege Withdrawn",
      "privilegeWithdrawn"},
     {CRL_REASON_AA_COMPROMISE, "AA Compromise", "AACompromise"},
-    {-1, NULL, NULL}};
+    {-1, nullptr, nullptr}};
 
 static char *i2s_ASN1_ENUMERATED_TABLE(const X509V3_EXT_METHOD *method,
                                        void *ext) {
@@ -54,19 +56,19 @@ static char *i2s_ASN1_ENUMERATED_TABLE(const X509V3_EXT_METHOD *method,
   return i2s_ASN1_ENUMERATED(method, e);
 }
 
-const X509V3_EXT_METHOD v3_crl_reason = {
+const X509V3_EXT_METHOD bssl::v3_crl_reason = {
     NID_crl_reason,
     0,
     ASN1_ITEM_ref(ASN1_ENUMERATED),
-    0,
-    0,
-    0,
-    0,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
     i2s_ASN1_ENUMERATED_TABLE,
-    0,
-    0,
-    0,
-    0,
-    0,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
     (void *)crl_reasons,
 };

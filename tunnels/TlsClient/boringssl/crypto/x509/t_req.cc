@@ -15,6 +15,7 @@
 #include <assert.h>
 #include <stdio.h>
 
+#include <openssl/asn1.h>
 #include <openssl/bn.h>
 #include <openssl/buffer.h>
 #include <openssl/err.h>
@@ -24,9 +25,11 @@
 #include "internal.h"
 
 
-int X509_REQ_print_fp(FILE *fp, X509_REQ *x) {
+using namespace bssl;
+
+int X509_REQ_print_fp(FILE *fp, const X509_REQ *x) {
   BIO *bio = BIO_new_fp(fp, BIO_NOCLOSE);
-  if (bio == NULL) {
+  if (bio == nullptr) {
     OPENSSL_PUT_ERROR(X509, ERR_R_BUF_LIB);
     return 0;
   }
@@ -35,7 +38,7 @@ int X509_REQ_print_fp(FILE *fp, X509_REQ *x) {
   return ret;
 }
 
-int X509_REQ_print_ex(BIO *bio, X509_REQ *x, unsigned long nmflags,
+int X509_REQ_print_ex(BIO *bio, const X509_REQ *x, unsigned long nmflags,
                       unsigned long cflag) {
   long l;
   STACK_OF(X509_ATTRIBUTE) *sk;
@@ -52,7 +55,7 @@ int X509_REQ_print_ex(BIO *bio, X509_REQ *x, unsigned long nmflags,
     nmindent = 16;
   }
 
-  X509_REQ_INFO *ri = x->req_info;
+  const X509_REQ_INFO *ri = x->req_info;
   if (!(cflag & X509_FLAG_NO_HEADER)) {
     if (BIO_write(bio, "Certificate Request:\n", 21) <= 0 ||
         BIO_write(bio, "    Data:\n", 10) <= 0) {
@@ -61,7 +64,7 @@ int X509_REQ_print_ex(BIO *bio, X509_REQ *x, unsigned long nmflags,
   }
   if (!(cflag & X509_FLAG_NO_VERSION)) {
     l = X509_REQ_get_version(x);
-    // Only zero, |X509_REQ_VERSION_1|, is valid but our parser accepts some
+    // Only zero, `X509_REQ_VERSION_1`, is valid but our parser accepts some
     // invalid values for compatibility.
     assert(0 <= l && l <= 2);
     if (BIO_printf(bio, "%8sVersion: %ld (0x%lx)\n", "", l + 1,
@@ -79,17 +82,17 @@ int X509_REQ_print_ex(BIO *bio, X509_REQ *x, unsigned long nmflags,
   if (!(cflag & X509_FLAG_NO_PUBKEY)) {
     if (BIO_write(bio, "        Subject Public Key Info:\n", 33) <= 0 ||
         BIO_printf(bio, "%12sPublic Key Algorithm: ", "") <= 0 ||
-        i2a_ASN1_OBJECT(bio, ri->pubkey->algor->algorithm) <= 0 ||
+        i2a_ASN1_OBJECT(bio, FromOpaque(ri->pubkey)->algor->algorithm) <= 0 ||
         BIO_puts(bio, "\n") <= 0) {
       goto err;
     }
 
     const EVP_PKEY *pkey = X509_REQ_get0_pubkey(x);
-    if (pkey == NULL) {
+    if (pkey == nullptr) {
       BIO_printf(bio, "%12sUnable to load Public Key\n", "");
       ERR_print_errors(bio);
     } else {
-      EVP_PKEY_print_public(bio, pkey, 16, NULL);
+      EVP_PKEY_print_public(bio, pkey, 16, nullptr);
     }
   }
 
@@ -104,10 +107,11 @@ int X509_REQ_print_ex(BIO *bio, X509_REQ *x, unsigned long nmflags,
         goto err;
       }
     } else {
-      size_t i;
-      for (i = 0; i < sk_X509_ATTRIBUTE_num(sk); i++) {
+      for (size_t i = 0; i < sk_X509_ATTRIBUTE_num(sk); i++) {
+        // TODO(crbug.com/442860745): `X509_ATTRIBUTE` accessors are not
+        // const-correct.
         X509_ATTRIBUTE *a = sk_X509_ATTRIBUTE_value(sk, i);
-        ASN1_OBJECT *aobj = X509_ATTRIBUTE_get0_object(a);
+        const ASN1_OBJECT *aobj = X509_ATTRIBUTE_get0_object(a);
 
         if (X509_REQ_extension_nid(OBJ_obj2nid(aobj))) {
           continue;
@@ -127,14 +131,8 @@ int X509_REQ_print_ex(BIO *bio, X509_REQ *x, unsigned long nmflags,
           }
         }
 
-        int j;
-        for (j = 0; j < num_attrs; j++) {
-          const ASN1_TYPE *at = X509_ATTRIBUTE_get0_type(a, j);
-          const int type = at->type;
-          ASN1_BIT_STRING *bs = at->value.asn1_string;
-
-          int k;
-          for (k = 25 - obj_str_len; k > 0; k--) {
+        for (int j = 0; j < num_attrs; j++) {
+          for (int k = 25 - obj_str_len; k > 0; k--) {
             if (BIO_write(bio, " ", 1) != 1) {
               goto err;
             }
@@ -144,9 +142,14 @@ int X509_REQ_print_ex(BIO *bio, X509_REQ *x, unsigned long nmflags,
             goto err;
           }
 
-          if (type == V_ASN1_PRINTABLESTRING || type == V_ASN1_UTF8STRING ||
-              type == V_ASN1_IA5STRING || type == V_ASN1_T61STRING) {
-            if (BIO_write(bio, (char *)bs->data, bs->length) != bs->length) {
+          const ASN1_TYPE *at = X509_ATTRIBUTE_get0_type(a, j);
+          if (at->type == V_ASN1_PRINTABLESTRING ||
+              at->type == V_ASN1_UTF8STRING || at->type == V_ASN1_IA5STRING ||
+              at->type == V_ASN1_T61STRING) {
+            const ASN1_STRING *str = at->value.asn1_string;
+            int str_len = ASN1_STRING_length(str);
+            if (BIO_write(bio, ASN1_STRING_get0_data(str), str_len) !=
+                str_len) {
               goto err;
             }
             BIO_puts(bio, "\n");
@@ -198,6 +201,6 @@ err:
   return 0;
 }
 
-int X509_REQ_print(BIO *bio, X509_REQ *req) {
+int X509_REQ_print(BIO *bio, const X509_REQ *req) {
   return X509_REQ_print_ex(bio, req, XN_FLAG_COMPAT, X509_FLAG_COMPAT);
 }

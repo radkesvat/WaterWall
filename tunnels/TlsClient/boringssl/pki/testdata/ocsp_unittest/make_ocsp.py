@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright 2017 The Chromium Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,18 +17,22 @@ files in the script's parent directory.
 
 """
 
+import base64
+import datetime
+import hashlib
+import subprocess
+import tempfile
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
+
 from pyasn1.codec.der import decoder, encoder
 from pyasn1_modules import rfc2560, rfc2459
-from pyasn1.type import univ, useful
-import hashlib, datetime
-import subprocess
-import os
+from pyasn1.type import namedtype, univ, useful
 
-from OpenSSL import crypto
-
-import base64
-
-NEXT_SERIAL = 0
+NEXT_SERIAL = 1
 
 # 1/1/2017 00:00 GMT
 CERT_DATE = datetime.datetime(2017, 1, 1, 0, 0)
@@ -40,6 +44,8 @@ REVOKE_DATE = datetime.datetime(2017, 2, 1, 0, 0)
 THIS_DATE = datetime.datetime(2017, 3, 1, 0, 0)
 # 3/2/2017 00:00 GMT
 PRODUCED_DATE = datetime.datetime(2017, 3, 2, 0, 0)
+# 3/5/2017 00:00 GMT
+VERIFY_DATE = datetime.datetime(2017, 3, 5, 0, 0)
 # 6/1/2017 00:00 GMT
 NEXT_DATE = datetime.datetime(2017, 6, 1, 0, 0)
 
@@ -52,56 +58,66 @@ sha256rsaoid = univ.ObjectIdentifier('1.2.840.113549.1.1.11')
 def SigAlgOid(sig_alg):
   if sig_alg == 'sha1':
     return sha1rsaoid
-  return sha256rsaoid
+  if sig_alg == 'sha256':
+    return sha256rsaoid
+  raise ValueError(f"Unrecognized sig_alg: {sig_alg}")
 
 
-def CreateCert(name, signer=None, ocsp=False):
+def CreateCert(name, key_path, signer=None, ocsp=False):
   global NEXT_SERIAL
-  pkey = crypto.PKey()
-  pkey.generate_key(crypto.TYPE_RSA, 1024)
-  cert = crypto.X509()
-  cert.set_version(2)
-  cert.get_subject().CN = name
-  cert.set_pubkey(pkey)
-  cert.set_serial_number(NEXT_SERIAL)
-  NEXT_SERIAL += 1
-  cert.set_notBefore(CERT_DATE.strftime('%Y%m%d%H%M%SZ'))
-  cert.set_notAfter(CERT_EXPIRE.strftime('%Y%m%d%H%M%SZ'))
-  if ocsp:
-    cert.add_extensions(
-        [crypto.X509Extension('extendedKeyUsage', False, 'OCSPSigning')])
+  with open(key_path, 'rb') as f:
+    private_key = serialization.load_pem_private_key(f.read(), password=None)
+  subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
+
   if signer:
-    cert.set_issuer(signer[1].get_subject())
-    cert.sign(signer[2], 'sha1')
+    issuer = signer[1].subject
+    issuer_key = signer[2]
   else:
-    cert.set_issuer(cert.get_subject())
-    cert.sign(pkey, 'sha1')
-  asn1cert = decoder.decode(
-      crypto.dump_certificate(crypto.FILETYPE_ASN1, cert),
-      asn1Spec=rfc2459.Certificate())[0]
-  if not signer:
-    signer = [asn1cert]
-  return (asn1cert, cert, pkey, signer[0])
+    issuer = subject
+    issuer_key = private_key
+
+  builder = x509.CertificateBuilder()
+  builder = builder.subject_name(subject)
+  builder = builder.issuer_name(issuer)
+  builder = builder.public_key(private_key.public_key())
+  builder = builder.serial_number(NEXT_SERIAL)
+  NEXT_SERIAL += 1
+  builder = builder.not_valid_before(CERT_DATE)
+  builder = builder.not_valid_after(CERT_EXPIRE)
+  if ocsp:
+    builder = builder.add_extension(
+        x509.ExtendedKeyUsage([ExtendedKeyUsageOID.OCSP_SIGNING]),
+        critical=False)
+  cert = builder.sign(issuer_key, hashes.SHA256())
+  der_cert = cert.public_bytes(serialization.Encoding.DER)
+  asn1cert = decoder.decode(der_cert, asn1Spec=rfc2459.Certificate())[0]
+
+  if signer:
+    signer_cert = signer[0]
+  else:
+    signer_cert = asn1cert
+  return (asn1cert, cert, private_key, signer_cert)
 
 
 def CreateExtension(oid='1.2.3.4', critical=False):
   ext = rfc2459.Extension()
   ext.setComponentByName('extnID', univ.ObjectIdentifier(oid))
-  ext.setComponentByName('extnValue', 'DEADBEEF')
+  ext.setComponentByName('extnValue', b'DEADBEEF')
   if critical:
-    ext.setComponentByName('critical', univ.Boolean('True'))
+    ext.setComponentByName('critical', univ.Boolean(True))
   else:
-    ext.setComponentByName('critical', univ.Boolean('False'))
+    ext.setComponentByName('critical', univ.Boolean(False))
 
   return ext
 
 
-ROOT_CA = CreateCert('Test CA', None)
-CA = CreateCert('Test Intermediate CA', ROOT_CA)
-CA_LINK = CreateCert('Test OCSP Signer', CA, True)
-CA_BADLINK = CreateCert('Test False OCSP Signer', CA, False)
-CERT = CreateCert('Test Cert', CA)
-JUNK_CERT = CreateCert('Random Cert', None)
+ROOT_CA = CreateCert('Test CA', 'root.key', None)
+CA = CreateCert('Test Intermediate CA', 'intermediate.key', ROOT_CA)
+CA_LINK = CreateCert('Test OCSP Signer', 'ocsp_signer.key', CA, True)
+CA_BADLINK = CreateCert('Test False OCSP Signer', 'bad_ocsp_signer.key', CA,
+                        False)
+CERT = CreateCert('Test Cert', 'cert.key', CA)
+JUNK_CERT = CreateCert('Random Cert', 'cert2.key', None)
 EXTENSION = CreateExtension()
 
 
@@ -120,14 +136,15 @@ def GetKeyHash(c):
   rid = rfc2560.ResponderID()
   spk = c[0].getComponentByName('tbsCertificate').getComponentByName(
       'subjectPublicKeyInfo').getComponentByName('subjectPublicKey')
-  keyHash = hashlib.sha1(encoder.encode(spk)[4:]).digest()
+  keyHash = hashlib.sha1(spk.asOctets()).digest()
   rid.setComponentByName('byKey', keyHash)
   return rid
 
 
 def CreateSingleResponse(cert=CERT,
                          status=0,
-                         next=None,
+                         this_update=THIS_DATE,
+                         next_update=None,
                          revoke_time=None,
                          reason=None,
                          extensions=[]):
@@ -139,9 +156,8 @@ def CreateSingleResponse(cert=CERT,
   name_hash = hashlib.sha1(
       encoder.encode(issuer_tbs.getComponentByName('subject'))).digest()
   key_hash = hashlib.sha1(
-      encoder.encode(
-          issuer_tbs.getComponentByName('subjectPublicKeyInfo')
-          .getComponentByName('subjectPublicKey'))[4:]).digest()
+      issuer_tbs.getComponentByName('subjectPublicKeyInfo')
+      .getComponentByName('subjectPublicKey').asOctets()).digest()
   sn = tbs.getComponentByName('serialNumber')
 
   ha = cid.setComponentByName('hashAlgorithm').getComponentByName(
@@ -172,15 +188,23 @@ def CreateSingleResponse(cert=CERT,
 
   sr.setComponentByName('thisUpdate',
                         useful.GeneralizedTime(
-                            THIS_DATE.strftime('%Y%m%d%H%M%SZ')))
-  if next:
-    sr.setComponentByName('nextUpdate', next.strftime('%Y%m%d%H%M%SZ'))
+                            this_update.strftime('%Y%m%d%H%M%SZ')))
+  if next_update:
+    sr.setComponentByName('nextUpdate', next_update.strftime('%Y%m%d%H%M%SZ'))
   if extensions:
     elist = sr.setComponentByName('singleExtensions').getComponentByName(
         'singleExtensions')
     for i in range(len(extensions)):
       elist.setComponentByPosition(i, extensions[i])
   return sr
+
+
+class BadBasicOCSPResponse(univ.Sequence):
+  componentType = namedtype.NamedTypes(
+    namedtype.NamedType('tbsResponseData', univ.Any()),
+    namedtype.NamedType('signatureAlgorithm', rfc2459.AlgorithmIdentifier()),
+    namedtype.NamedType('signature', univ.BitString()),
+  )
 
 
 def Create(signer=None,
@@ -192,37 +216,42 @@ def Create(signer=None,
            responses=None,
            extensions=None,
            certs=None,
-           sigAlg='sha1'):
+           sigAlg='sha1',
+           produced_at=PRODUCED_DATE,
+           invalid_response_data=False):
   ocsp = rfc2560.OCSPResponse()
   ocsp.setComponentByName('responseStatus', response_status)
 
   if response_status != 0:
-    return ocsp
-
-  tbs = rfc2560.ResponseData()
-  if version != 1:
-    tbs.setComponentByName('version', version)
+    return encoder.encode(ocsp)
 
   if not signer:
     signer = CA
-  if not responder:
-    responder = GetName(signer)
-  tbs.setComponentByName('responderID', responder)
-  tbs.setComponentByName('producedAt',
-                         useful.GeneralizedTime(
-                             PRODUCED_DATE.strftime('%Y%m%d%H%M%SZ')))
-  rlist = tbs.setComponentByName('responses').getComponentByName('responses')
-  if responses == None:
-    responses = [CreateSingleResponse(CERT, 0)]
-  if responses:
-    for i in range(len(responses)):
-      rlist.setComponentByPosition(i, responses[i])
 
-  if extensions:
-    elist = tbs.setComponentByName('responseExtensions').getComponentByName(
-        'responseExtensions')
-    for i in range(len(extensions)):
-      elist.setComponentByPosition(i, extensions[i])
+  if invalid_response_data:
+    tbs = univ.OctetString(b'invalid')
+  else:
+    tbs = rfc2560.ResponseData()
+    if version != 1:
+      tbs.setComponentByName('version', version)
+    if not responder:
+      responder = GetName(signer)
+    tbs.setComponentByName('responderID', responder)
+    tbs.setComponentByName('producedAt',
+                          useful.GeneralizedTime(
+                              produced_at.strftime('%Y%m%d%H%M%SZ')))
+    rlist = tbs.setComponentByName('responses').getComponentByName('responses')
+    if responses == None:
+      responses = [CreateSingleResponse(CERT, 0)]
+    if responses:
+      for i in range(len(responses)):
+        rlist.setComponentByPosition(i, responses[i])
+
+    if extensions:
+      elist = tbs.setComponentByName('responseExtensions').getComponentByName(
+          'responseExtensions')
+      for i in range(len(extensions)):
+        elist.setComponentByPosition(i, extensions[i])
 
   sa = rfc2459.AlgorithmIdentifier()
   sa.setComponentByName('algorithm', SigAlgOid(sigAlg))
@@ -232,13 +261,24 @@ def Create(signer=None,
   # type for 'parameters'. (Which is an ugly hack, but lets the script work.)
   sa.setComponentByName('parameters', univ.Null())
 
-  basic = rfc2560.BasicOCSPResponse()
+  if invalid_response_data:
+    basic = BadBasicOCSPResponse()
+  else:
+    basic = rfc2560.BasicOCSPResponse()
   basic.setComponentByName('tbsResponseData', tbs)
   basic.setComponentByName('signatureAlgorithm', sa)
   if not signature:
-    signature = crypto.sign(signer[2], encoder.encode(tbs), sigAlg)
+    if sigAlg == 'sha1':
+      hash_alg = hashes.SHA1()
+    elif sigAlg == 'sha256':
+      hash_alg = hashes.SHA256()
+    else:
+      raise ValueError(f"Unrecognized signature algorithm: {sigAlg}")
+    signature = signer[2].sign(encoder.encode(tbs), padding.PKCS1v15(),
+                               hash_alg)
+
   basic.setComponentByName('signature',
-                           univ.BitString("'%s'H" % (signature.encode('hex'))))
+                           univ.BitString(hexValue=signature.hex()))
   if certs:
     cs = basic.setComponentByName('certs').getComponentByName('certs')
     for i in range(len(certs)):
@@ -250,66 +290,54 @@ def Create(signer=None,
   rbytes.setComponentByName('response', encoder.encode(basic))
 
   ocsp.setComponentByName('responseBytes', rbytes)
-  return ocsp
+  return encoder.encode(ocsp)
 
 
 def MakePemBlock(der, name):
-  b64 = base64.b64encode(der)
-  wrapped = '\n'.join(b64[pos:pos + 64] for pos in xrange(0, len(b64), 64))
+  b64 = base64.b64encode(der).decode('ascii')
+  wrapped = '\n'.join(b64[pos:pos + 64] for pos in range(0, len(b64), 64))
   return '-----BEGIN %s-----\n%s\n-----END %s-----' % (name, wrapped, name)
-
-
-def WriteStringToFile(data, path):
-  with open(path, "w") as f:
-    f.write(data)
-
-
-def ReadFileToString(path):
-  with open(path, 'r') as f:
-    return f.read()
 
 
 def CreateOCSPRequestDer(issuer_cert_pem, cert_pem):
   '''Uses OpenSSL to generate a basic OCSPRequest for |cert_pem|.'''
 
-  issuer_path = "tmp_issuer.pem"
-  cert_path = "tmp_cert.pem"
-  request_path = "tmp_request.der"
+  with tempfile.NamedTemporaryFile(
+      delete_on_close=False, prefix="issuer_", suffix=".pem"
+  ) as issuer, tempfile.NamedTemporaryFile(
+      delete_on_close=False, prefix="cert_", suffix=".pem"
+  ) as cert, tempfile.NamedTemporaryFile(
+      delete_on_close=False, prefix="request_", suffix=".der"
+  ) as request:
+    issuer.write(issuer_cert_pem.encode('utf-8'))
+    issuer.close()
+    cert.write(cert_pem.encode('utf-8'))
+    cert.close()
+    request.close()
 
-  WriteStringToFile(issuer_cert_pem, issuer_path)
-  WriteStringToFile(cert_pem, cert_path)
+    p = subprocess.run([
+        "openssl", "ocsp", "-no_nonce", "-issuer", issuer.name, "-cert",
+        cert.name, "-reqout", request.name
+    ], capture_output=True, check=True)
 
-  p = subprocess.Popen(["openssl", "ocsp", "-no_nonce", "-issuer", issuer_path,
-                        "-cert", cert_path, "-reqout", request_path],
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE)
-  stdout_data, stderr_data = p.communicate()
-
-  os.remove(issuer_path)
-  os.remove(cert_path)
-
-  result = None
-  if p.returncode == 0:
-    result = ReadFileToString(request_path)
-
-  os.remove(request_path)
-  return result
+    with open(request.name, "rb") as f:
+      return f.read()
 
 
-def Store(fname, description, ca, data):
-  ca_cert_pem = crypto.dump_certificate(crypto.FILETYPE_PEM, ca[1])
-  cert_pem = crypto.dump_certificate(crypto.FILETYPE_PEM, CERT[1])
+def Store(fname, description, ca, data_der):
+  ca_cert_pem = ca[1].public_bytes(serialization.Encoding.PEM).decode('ascii')
+  cert_pem = CERT[1].public_bytes(serialization.Encoding.PEM).decode('ascii')
 
   ocsp_request_der = CreateOCSPRequestDer(ca_cert_pem, cert_pem)
 
   out = ('%s\n%s\n%s\n\n%s\n%s') % (
       description,
-      MakePemBlock(encoder.encode(data), "OCSP RESPONSE"),
+      MakePemBlock(data_der, "OCSP RESPONSE"),
       ca_cert_pem.replace('CERTIFICATE', 'CA CERTIFICATE'),
       cert_pem,
       MakePemBlock(ocsp_request_der, "OCSP REQUEST"))
-  open('%s.pem' % fname, 'w').write(out)
+  with open('%s.pem' % fname, 'w') as f:
+    f.write(out)
 
 
 Store(
@@ -337,7 +365,7 @@ Store(
     'bad_signature',
     'Has an invalid signature',
     CA,
-    Create(signature='\xde\xad\xbe\xef'))
+    Create(signature=b'\xde\xad\xbe\xef'))
 Store('ocsp_sign_direct', 'Signed directly by the issuer', CA,
       Create(signer=CA, certs=[]))
 Store('ocsp_sign_indirect', 'Signed indirectly through an intermediate', CA,
@@ -386,7 +414,7 @@ Store(
     'good_response_next_update',
     'Is a valid response for the cert until nextUpdate',
     CA,
-    Create(responses=[CreateSingleResponse(CERT, 0, next=NEXT_DATE)]))
+    Create(responses=[CreateSingleResponse(CERT, 0, next_update=NEXT_DATE)]))
 Store(
     'revoke_response',
     'Is a REVOKE response for the cert',
@@ -454,3 +482,55 @@ Store(
 
 Store('missing_response', 'Missing a response for the cert', CA,
       Create(response_status=0, responses=[]))
+
+Store('stale_response', 'nextUpdate is before the current time', CA,
+      Create(responses=[
+          CreateSingleResponse(
+              CERT,
+              status=0,
+              this_update=VERIFY_DATE - datetime.timedelta(days=2),
+              next_update=VERIFY_DATE - datetime.timedelta(days=1),
+          ),
+      ]))
+
+Store('future_response', 'thisUpdate is after the current time', CA,
+      Create(responses=[
+          CreateSingleResponse(
+              CERT,
+              status=0,
+              this_update=VERIFY_DATE + datetime.timedelta(days=1),
+          ),
+      ]))
+
+Store('old_response', 'thisUpdate is over a week before the current time', CA,
+      Create(responses=[
+          CreateSingleResponse(
+              CERT,
+              status=0,
+              this_update=VERIFY_DATE - datetime.timedelta(days=8),
+          ),
+      ]))
+
+Store('produced_early_response', 'producedAt is before the cert\'s notBefore',
+      CA,
+      Create(responses=[CreateSingleResponse(CERT, 0)],
+             produced_at=CERT_DATE - datetime.timedelta(days=1)))
+
+Store('produced_late_response', 'producedAt is after the cert\'s notAfter',
+      CA,
+      Create(responses=[CreateSingleResponse(CERT, 0)],
+             produced_at=CERT_EXPIRE + datetime.timedelta(days=1)))
+
+Store('invalid_response', 'OCSPResponse cannot be parsed', CA, b'invalid')
+
+Store('invalid_response_data', 'ResponseData cannot be parsed', CA,
+      Create(invalid_response_data=True))
+
+Store(
+    'multiple_response_good_revoked',
+    'Has both a good and a revoked response for the cert',
+    CA,
+    Create(responses=[
+        CreateSingleResponse(CERT, 0),
+        CreateSingleResponse(CERT, 1),
+    ]))

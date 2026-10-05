@@ -21,8 +21,11 @@
 #include <openssl/mem.h>
 
 #include "../../internal.h"
+#include "../../mem_internal.h"
 #include "internal.h"
 
+
+using namespace bssl;
 
 int EVP_MD_type(const EVP_MD *md) { return md->type; }
 
@@ -41,9 +44,8 @@ void EVP_MD_CTX_init(EVP_MD_CTX *ctx) {
   ctx->pctx_ops = nullptr;
 }
 
-EVP_MD_CTX *EVP_MD_CTX_new(void) {
-  EVP_MD_CTX *ctx =
-      reinterpret_cast<EVP_MD_CTX *>(OPENSSL_malloc(sizeof(EVP_MD_CTX)));
+EVP_MD_CTX *EVP_MD_CTX_new() {
+  EVP_MD_CTX *ctx = New<EVP_MD_CTX>();
 
   if (ctx) {
     EVP_MD_CTX_init(ctx);
@@ -52,10 +54,10 @@ EVP_MD_CTX *EVP_MD_CTX_new(void) {
   return ctx;
 }
 
-EVP_MD_CTX *EVP_MD_CTX_create(void) { return EVP_MD_CTX_new(); }
+EVP_MD_CTX *EVP_MD_CTX_create() { return EVP_MD_CTX_new(); }
 
 int EVP_MD_CTX_cleanup(EVP_MD_CTX *ctx) {
-  assert(ctx->pctx == NULL || ctx->pctx_ops != NULL);
+  assert(ctx->pctx == nullptr || ctx->pctx_ops != nullptr);
   if (ctx->pctx_ops) {
     ctx->pctx_ops->free(ctx->pctx);
   }
@@ -76,7 +78,7 @@ void EVP_MD_CTX_free(EVP_MD_CTX *ctx) {
   }
 
   EVP_MD_CTX_cleanup(ctx);
-  OPENSSL_free(ctx);
+  Delete(ctx);
 }
 
 void EVP_MD_CTX_destroy(EVP_MD_CTX *ctx) { EVP_MD_CTX_free(ctx); }
@@ -91,9 +93,9 @@ uint32_t EVP_MD_meth_get_flags(const EVP_MD *md) { return EVP_MD_flags(md); }
 void EVP_MD_CTX_set_flags(EVP_MD_CTX *ctx, int flags) {}
 
 int EVP_MD_CTX_copy_ex(EVP_MD_CTX *out, const EVP_MD_CTX *in) {
-  // |in->digest| may be NULL if this is a signing |EVP_MD_CTX| for, e.g.,
-  // Ed25519 which does not hash with |EVP_MD_CTX|.
-  if (in == NULL || (in->pctx == NULL && in->digest == NULL)) {
+  // `in->digest` may be NULL if this is a signing `EVP_MD_CTX` for, e.g.,
+  // Ed25519 which does not hash with `EVP_MD_CTX`.
+  if (in == nullptr || (in->pctx == nullptr && in->digest == nullptr)) {
     OPENSSL_PUT_ERROR(DIGEST, DIGEST_R_INPUT_NOT_INITIALIZED);
     return 0;
   }
@@ -102,8 +104,8 @@ int EVP_MD_CTX_copy_ex(EVP_MD_CTX *out, const EVP_MD_CTX *in) {
     return 0;
   }
 
-  EVP_PKEY_CTX *pctx = NULL;
-  assert(in->pctx == NULL || in->pctx_ops != NULL);
+  EVP_PKEY_CTX *pctx = nullptr;
+  assert(in->pctx == nullptr || in->pctx_ops != nullptr);
   if (in->pctx) {
     pctx = in->pctx_ops->dup(in->pctx);
     if (!pctx) {
@@ -114,21 +116,21 @@ int EVP_MD_CTX_copy_ex(EVP_MD_CTX *out, const EVP_MD_CTX *in) {
   EVP_MD_CTX_cleanup(out);
 
   out->digest = in->digest;
-  if (in->digest != NULL) {
+  if (in->digest != nullptr) {
     OPENSSL_memcpy(out->md_data, in->md_data, in->digest->ctx_size);
   }
   out->pctx = pctx;
   out->pctx_ops = in->pctx_ops;
-  assert(out->pctx == NULL || out->pctx_ops != NULL);
+  assert(out->pctx == nullptr || out->pctx_ops != nullptr);
 
   return 1;
 }
 
 void EVP_MD_CTX_move(EVP_MD_CTX *out, EVP_MD_CTX *in) {
   EVP_MD_CTX_cleanup(out);
-  // While not guaranteed, |EVP_MD_CTX| is currently safe to move with |memcpy|.
+  // While not guaranteed, `EVP_MD_CTX` is currently safe to move with `memcpy`.
   // bssl-crypto currently relies on this, however, so if we change this, we
-  // need to box the |HMAC_CTX|. (Relying on this is only fine because we assume
+  // need to box the `HMAC_CTX`. (Relying on this is only fine because we assume
   // BoringSSL and bssl-crypto will always be updated atomically. We do not
   // allow any version skew between the two.)
   OPENSSL_memcpy(out, in, sizeof(EVP_MD_CTX));
@@ -147,21 +149,19 @@ int EVP_MD_CTX_reset(EVP_MD_CTX *ctx) {
 }
 
 int EVP_DigestInit_ex(EVP_MD_CTX *ctx, const EVP_MD *type, ENGINE *engine) {
-  if (ctx->digest != type) {
-    assert(type->ctx_size != 0);
-    assert(type->ctx_size <= sizeof(ctx->md_data));
-    ctx->digest = type;
-  }
+  EVP_MD_CTX_cleanup(ctx);
 
-  assert(ctx->pctx == NULL || ctx->pctx_ops != NULL);
-
+  assert(ctx->pctx == nullptr);
+  assert(type->ctx_size != 0);
+  assert(type->ctx_size <= sizeof(ctx->md_data));
+  ctx->digest = type;
   ctx->digest->init(ctx);
   return 1;
 }
 
 int EVP_DigestInit(EVP_MD_CTX *ctx, const EVP_MD *type) {
   EVP_MD_CTX_init(ctx);
-  return EVP_DigestInit_ex(ctx, type, NULL);
+  return EVP_DigestInit_ex(ctx, type, nullptr);
 }
 
 int EVP_DigestUpdate(EVP_MD_CTX *ctx, const void *data, size_t len) {
@@ -172,7 +172,7 @@ int EVP_DigestUpdate(EVP_MD_CTX *ctx, const void *data, size_t len) {
 int EVP_DigestFinal_ex(EVP_MD_CTX *ctx, uint8_t *md_out, unsigned int *size) {
   assert(ctx->digest->md_size <= EVP_MAX_MD_SIZE);
   ctx->digest->final(ctx, md_out);
-  if (size != NULL) {
+  if (size != nullptr) {
     *size = ctx->digest->md_size;
   }
   OPENSSL_cleanse(ctx->md_data, ctx->digest->ctx_size);
@@ -187,15 +187,15 @@ int EVP_DigestFinal(EVP_MD_CTX *ctx, uint8_t *md, unsigned int *size) {
 
 int EVP_Digest(const void *data, size_t count, uint8_t *out_md,
                unsigned int *out_size, const EVP_MD *type, ENGINE *impl) {
-  bssl::ScopedEVP_MD_CTX ctx;
+  ScopedEVP_MD_CTX ctx;
   return EVP_DigestInit_ex(ctx.get(), type, impl) &&
          EVP_DigestUpdate(ctx.get(), data, count) &&
          EVP_DigestFinal_ex(ctx.get(), out_md, out_size);
 }
 
 const EVP_MD *EVP_MD_CTX_get0_md(const EVP_MD_CTX *ctx) {
-  if (ctx == NULL) {
-    return NULL;
+  if (ctx == nullptr) {
+    return nullptr;
   }
   return ctx->digest;
 }
@@ -215,5 +215,7 @@ size_t EVP_MD_CTX_block_size(const EVP_MD_CTX *ctx) {
 int EVP_MD_CTX_type(const EVP_MD_CTX *ctx) {
   return EVP_MD_type(EVP_MD_CTX_get0_md(ctx));
 }
+
+EVP_PKEY_CTX *EVP_MD_CTX_pkey_ctx(const EVP_MD_CTX *ctx) { return ctx->pctx; }
 
 int EVP_add_digest(const EVP_MD *digest) { return 1; }

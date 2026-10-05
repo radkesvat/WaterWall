@@ -24,37 +24,24 @@
 #include <stdlib.h>
 #include <string.h>
 
+
+BSSL_NAMESPACE_BEGIN
+
 static BOOL CALLBACK call_once_init(INIT_ONCE *once, void *arg, void **out) {
-  void (**init)(void) = (void (**)(void))arg;
+  void (**init)() = (void (**)())arg;
   (**init)();
   return TRUE;
 }
 
-void CRYPTO_once(CRYPTO_once_t *once, void (*init)(void)) {
-  if (!InitOnceExecuteOnce(once, call_once_init, &init, NULL)) {
-    abort();
-  }
+void CRYPTO_once(CRYPTO_once_t *once, void (*init)()) {
+  BSSL_CHECK(InitOnceExecuteOnce(once, call_once_init, &init, nullptr));
 }
 
-void CRYPTO_MUTEX_init(CRYPTO_MUTEX *lock) { InitializeSRWLock(lock); }
-
-void CRYPTO_MUTEX_lock_read(CRYPTO_MUTEX *lock) { AcquireSRWLockShared(lock); }
-
-void CRYPTO_MUTEX_lock_write(CRYPTO_MUTEX *lock) {
-  AcquireSRWLockExclusive(lock);
-}
-
-void CRYPTO_MUTEX_unlock_read(CRYPTO_MUTEX *lock) {
-  ReleaseSRWLockShared(lock);
-}
-
-void CRYPTO_MUTEX_unlock_write(CRYPTO_MUTEX *lock) {
-  ReleaseSRWLockExclusive(lock);
-}
-
-void CRYPTO_MUTEX_cleanup(CRYPTO_MUTEX *lock) {
-  // SRWLOCKs require no cleanup.
-}
+void StaticMutex::LockRead() { AcquireSRWLockShared(&lock_); }
+void StaticMutex::UnlockRead() { ReleaseSRWLockShared(&lock_); }
+void StaticMutex::LockWrite() { AcquireSRWLockExclusive(&lock_); }
+void StaticMutex::UnlockWrite() { ReleaseSRWLockExclusive(&lock_); }
+Mutex::~Mutex() { /* SRWLOCKs require no cleanup. */ }
 
 static SRWLOCK g_destructors_lock = SRWLOCK_INIT;
 static thread_local_destructor_t g_destructors[NUM_OPENSSL_THREAD_LOCALS];
@@ -63,17 +50,17 @@ static CRYPTO_once_t g_thread_local_init_once = CRYPTO_ONCE_INIT;
 static DWORD g_thread_local_key;
 static int g_thread_local_failed;
 
-static void thread_local_init(void) {
+static void thread_local_init() {
   g_thread_local_key = TlsAlloc();
   g_thread_local_failed = (g_thread_local_key == TLS_OUT_OF_INDEXES);
 }
 
 static void NTAPI thread_local_destructor(PVOID module, DWORD reason,
                                           PVOID reserved) {
-  // Only free memory on |DLL_THREAD_DETACH|, not |DLL_PROCESS_DETACH|. In
+  // Only free memory on `DLL_THREAD_DETACH`, not `DLL_PROCESS_DETACH`. In
   // VS2015's debug runtime, the C runtime has been unloaded by the time
-  // |DLL_PROCESS_DETACH| runs. See https://crbug.com/575795. This is consistent
-  // with |pthread_key_create| which does not call destructors on process exit,
+  // `DLL_PROCESS_DETACH` runs. See https://crbug.com/575795. This is consistent
+  // with `pthread_key_create` which does not call destructors on process exit,
   // only thread exit.
   if (reason != DLL_THREAD_DETACH) {
     return;
@@ -85,7 +72,7 @@ static void NTAPI thread_local_destructor(PVOID module, DWORD reason,
   }
 
   void **pointers = (void **)TlsGetValue(g_thread_local_key);
-  if (pointers == NULL) {
+  if (pointers == nullptr) {
     return;
   }
 
@@ -96,7 +83,7 @@ static void NTAPI thread_local_destructor(PVOID module, DWORD reason,
   ReleaseSRWLockExclusive(&g_destructors_lock);
 
   for (unsigned i = 0; i < NUM_OPENSSL_THREAD_LOCALS; i++) {
-    if (destructors[i] != NULL) {
+    if (destructors[i] != nullptr) {
       destructors[i](pointers[i]);
     }
   }
@@ -116,7 +103,7 @@ static void NTAPI thread_local_destructor(PVOID module, DWORD reason,
 // a reference to p_thread_callback_boringssl to prevent whole program
 // optimization from discarding the variable.
 //
-// Note, in the prefixed build, |p_thread_callback_boringssl| may be a macro.
+// Note, in the prefixed build, `p_thread_callback_boringssl` may be a macro.
 #define STRINGIFY(x) #x
 #define EXPAND_AND_STRINGIFY(x) STRINGIFY(x)
 #ifdef _WIN64
@@ -172,14 +159,14 @@ PIMAGE_TLS_CALLBACK p_thread_callback_boringssl = thread_local_destructor;
 
 #endif  // _WIN64
 
-static void **get_thread_locals(void) {
-  // |TlsGetValue| clears the last error even on success, so that callers may
+static void **get_thread_locals() {
+  // `TlsGetValue` clears the last error even on success, so that callers may
   // distinguish it successfully returning NULL or failing. It is documented to
-  // never fail if the argument is a valid index from |TlsAlloc|, so we do not
+  // never fail if the argument is a valid index from `TlsAlloc`, so we do not
   // need to handle this.
   //
   // However, this error-mangling behavior interferes with the caller's use of
-  // |GetLastError|. In particular |SSL_get_error| queries the error queue to
+  // `GetLastError`. In particular `SSL_get_error` queries the error queue to
   // determine whether the caller should look at the OS's errors. To avoid
   // destroying state, save and restore the Windows error.
   //
@@ -193,12 +180,12 @@ static void **get_thread_locals(void) {
 void *CRYPTO_get_thread_local(thread_local_data_t index) {
   CRYPTO_once(&g_thread_local_init_once, thread_local_init);
   if (g_thread_local_failed) {
-    return NULL;
+    return nullptr;
   }
 
   void **pointers = get_thread_locals();
-  if (pointers == NULL) {
-    return NULL;
+  if (pointers == nullptr) {
+    return nullptr;
   }
   return pointers[index];
 }
@@ -212,10 +199,10 @@ int CRYPTO_set_thread_local(thread_local_data_t index, void *value,
   }
 
   void **pointers = get_thread_locals();
-  if (pointers == NULL) {
+  if (pointers == nullptr) {
     pointers = reinterpret_cast<void **>(
         malloc(sizeof(void *) * NUM_OPENSSL_THREAD_LOCALS));
-    if (pointers == NULL) {
+    if (pointers == nullptr) {
       destructor(value);
       return 0;
     }
@@ -234,5 +221,7 @@ int CRYPTO_set_thread_local(thread_local_data_t index, void *value,
   pointers[index] = value;
   return 1;
 }
+
+BSSL_NAMESPACE_END
 
 #endif  // OPENSSL_WINDOWS_THREADS

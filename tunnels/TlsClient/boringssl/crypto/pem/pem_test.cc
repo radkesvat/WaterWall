@@ -139,7 +139,7 @@ wr6JtaX2G+pOmwcSPymZC4u2TncAP7KHgS8UGcMw8CE=
     }
   }
 
-  // |d2i_PKCS8PrivateKey_bio| should also be able to manage the password
+  // `d2i_PKCS8PrivateKey_bio` should also be able to manage the password
   // callback correctly.
   std::vector<uint8_t> bytes = DecodePEMBytes(kEncryptedPEM);
   ASSERT_FALSE(bytes.empty());
@@ -211,7 +211,7 @@ XjgdgSEeixwKhDOuHKFdlFGP/7sw5GHlK3jPSpqi2gI=
     }
   }
 
-  // |d2i_PKCS8PrivateKey_bio| should also be able to manage the password
+  // `d2i_PKCS8PrivateKey_bio` should also be able to manage the password
   // callback correctly.
   bytes = DecodePEMBytes(kEncryptedPEMEmpty);
   {
@@ -434,6 +434,123 @@ wr6JtaX2G+pOmwcSPymZC4u2TncAP7KHgS8UGcMw8CE=
     EXPECT_FALSE(pkey);
     EXPECT_TRUE(ErrorEquals(ERR_get_error(), t.err_lib, t.err_reason));
     ERR_clear_error();
+  }
+}
+
+TEST(PEMTest, ParsingErrorsAndSuccesses) {
+  const struct {
+    const char *name;
+    const char *pem;
+    int err_reason;
+    const char *want_name = nullptr;
+    const char *want_header = nullptr;
+    const char *want_body = nullptr;
+  } kTests[] = {
+      {"WithHeadersOK",
+       "-----BEGIN BEST-----\nX-Hdr: h\n\nYmFzZTY0\n-----END BEST-----",  //
+       0, "BEST", "X-Hdr: h\n", "base64"},
+      {"NoHeadersNoBlankLineOK",
+       "-----BEGIN FEST-----\nYmFzZTY0\n-----END FEST-----",  //
+       0, "FEST", "", "base64"},
+      {"WithHeadersWeirdLineSplitOK",
+       "-----BEGIN JEST-----\nX-Hdr: h\n\nYmF\nzZTY0\n-----END JEST-----",  //
+       0, "JEST", "X-Hdr: h\n", "base64"},
+      {"NoHeadersNoBlankLineWeirdLineSplitOK",
+       "-----BEGIN LEST-----\nYmF\nzZTY0\n-----END LEST-----",  //
+       0, "LEST", "", "base64"},
+      {"WithHeadersAndRubbishOK",
+       "a\n-----BEGIN TEST-----\nX-Hdr: h\n\nYmFzZTY0\n-----END TEST-----\nb",
+       0, "TEST", "X-Hdr: h\n", "base64"},
+      {"NoHeadersNoBlankLineButRubbishOK",
+       "a\n-----BEGIN ZEST-----\nYmFzZTY0\n-----END ZEST-----\nb",  //
+       0, "ZEST", "", "base64"},
+      {"Empty", "",  //
+       PEM_R_NO_START_LINE},
+      {"NoStart",           //
+       "Not a PEM file\n",  //
+       PEM_R_NO_START_LINE},
+      {"TruncatedBeforeStart",  //
+       "-----BEGIN ",           //
+       PEM_R_NO_START_LINE},
+      {"TruncatedAfterStart",     //
+       "-----BEGIN TEST-----\n",  //
+       PEM_R_BAD_END_LINE},
+      {"MismatchedEnd",                                //
+       "-----BEGIN TEST-----\n-----END OTHER-----\n",  //
+       PEM_R_BAD_END_LINE},
+      {"MismatchedEndLonger",                          //
+       "-----BEGIN TEST-----\n-----END TEST1-----\n",  //
+       PEM_R_BAD_END_LINE},
+      {"NoData",                                      //
+       "-----BEGIN TEST-----\n-----END TEST-----\n",  //
+       PEM_R_NO_DATA},
+      {"NoDataButHeaders",                                        //
+       "-----BEGIN TEST-----\nX-Hdr: h\n\n-----END TEST-----\n",  //
+       PEM_R_NO_DATA},
+      {"InvalidBase64",  //
+       "-----BEGIN TEST-----\n!!!!\n-----END TEST-----\n",
+       PEM_R_BAD_BASE64_DECODE},
+  };
+
+  for (const auto &t : kTests) {
+    SCOPED_TRACE(t.name);
+    bssl::UniquePtr<BIO> bio(BIO_new_mem_buf(t.pem, -1));
+    char *name, *header;
+    uint8_t *data;
+    long len;
+    if (PEM_read_bio(bio.get(), &name, &header, &data, &len)) {
+      EXPECT_EQ(t.err_reason, 0);
+      EXPECT_EQ(Bytes(name), Bytes(t.want_name));
+      EXPECT_EQ(Bytes(header), Bytes(t.want_header));
+      EXPECT_EQ(Bytes(data, len), Bytes(t.want_body));
+      OPENSSL_free(name);
+      OPENSSL_free(header);
+      OPENSSL_free(data);
+    } else {
+      EXPECT_NE(t.err_reason, 0);
+      EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_PEM, t.err_reason));
+      ERR_clear_error();
+    }
+  }
+}
+
+// The placeholder ANY PRIVATE KEY value is not a valid key type.
+TEST(PEMTest, AnyPrivateKey) {
+  {
+    static const char kInput[] = R"(
+-----BEGIN ANY PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgBw8IcnrUoEqc3VnJ
+TYlodwi1b8ldMHcO6NHJzgqLtGqhRANCAATmK2niv2Wfl74vHg2UikzVl2u3qR4N
+Rvvdqakendy6WgHn1peoChj5w8SjHlbifINI2xYaHPUdfvGULUvPciLB
+-----END ANY PRIVATE KEY-----
+)";
+    bssl::UniquePtr<BIO> bio(BIO_new_mem_buf(kInput, -1));
+    ASSERT_TRUE(bio);
+    bssl::UniquePtr<EVP_PKEY> pkey(
+        PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr));
+    EXPECT_FALSE(pkey);
+    EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_PEM, PEM_R_NO_START_LINE));
+  }
+
+  {
+    static const char kInput[] = R"(
+-----BEGIN ANY PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgBw8IcnrUoEqc3VnJ
+TYlodwi1b8ldMHcO6NHJzgqLtGqhRANCAATmK2niv2Wfl74vHg2UikzVl2u3qR4N
+Rvvdqakendy6WgHn1peoChj5w8SjHlbifINI2xYaHPUdfvGULUvPciLB
+-----END ANY PRIVATE KEY-----
+-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgBw8IcnrUoEqc3VnJ
+TYlodwi1b8ldMHcO6NHJzgqLtGqhRANCAATmK2niv2Wfl74vHg2UikzVl2u3qR4N
+Rvvdqakendy6WgHn1peoChj5w8SjHlbifINI2xYaHPUdfvGULUvPciLB
+-----END PRIVATE KEY-----
+)";
+    bssl::UniquePtr<BIO> bio(BIO_new_mem_buf(kInput, -1));
+    ASSERT_TRUE(bio);
+    bssl::UniquePtr<EVP_PKEY> pkey(
+        PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr));
+    ASSERT_TRUE(pkey);
+    EXPECT_EQ(EVP_PKEY_id(pkey.get()), EVP_PKEY_EC);
   }
 }
 

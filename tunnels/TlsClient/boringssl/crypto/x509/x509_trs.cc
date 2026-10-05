@@ -21,6 +21,8 @@
 #include "internal.h"
 
 
+using namespace bssl;
+
 typedef struct x509_trust_st X509_TRUST;
 
 struct x509_trust_st {
@@ -43,12 +45,12 @@ static const X509_TRUST trstandard[] = {
     {X509_TRUST_TSA, trust_1oidany, NID_time_stamp}};
 
 static const X509_TRUST *X509_TRUST_get0(int id) {
-  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(trstandard); i++) {
-    if (trstandard[i].trust == id) {
-      return &trstandard[i];
+  for (const auto &t : trstandard) {
+    if (t.trust == id) {
+      return &t;
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 int X509_check_trust(X509 *x, int id, int flags) {
@@ -61,10 +63,10 @@ int X509_check_trust(X509 *x, int id, int flags) {
     if (rv != X509_TRUST_UNTRUSTED) {
       return rv;
     }
-    return trust_compat(NULL, x);
+    return trust_compat(nullptr, x);
   }
   const X509_TRUST *pt = X509_TRUST_get0(id);
-  if (pt == NULL) {
+  if (pt == nullptr) {
     // Unknown trust IDs are silently reintrepreted as NIDs. This is unreachable
     // from the certificate verifier itself, but wpa_supplicant relies on it.
     // Note this relies on commonly-used NIDs and trust IDs not colliding.
@@ -73,24 +75,26 @@ int X509_check_trust(X509 *x, int id, int flags) {
   return pt->check_trust(pt, x);
 }
 
-int X509_is_valid_trust_id(int trust) {
-  return X509_TRUST_get0(trust) != NULL;
+int bssl::X509_is_valid_trust_id(int trust) {
+  return X509_TRUST_get0(trust) != nullptr;
 }
 
 static int trust_1oidany(const X509_TRUST *trust, X509 *x) {
-  if (x->aux && (x->aux->trust || x->aux->reject)) {
-    return obj_trust(trust->nid, x);
+  auto *impl = FromOpaque(x);
+  if (impl->aux && (impl->aux->trust || impl->aux->reject)) {
+    return obj_trust(trust->nid, impl);
   }
   // we don't have any trust settings: for compatibility we return trusted
   // if it is self signed
-  return trust_compat(trust, x);
+  return trust_compat(trust, impl);
 }
 
 static int trust_compat(const X509_TRUST *trust, X509 *x) {
+  auto *impl = FromOpaque(x);
   if (!x509v3_cache_extensions(x)) {
     return X509_TRUST_UNTRUSTED;
   }
-  if (x->ex_flags & EXFLAG_SS) {
+  if (impl->ex_flags & EXFLAG_SS) {
     return X509_TRUST_TRUSTED;
   } else {
     return X509_TRUST_UNTRUSTED;
@@ -98,7 +102,8 @@ static int trust_compat(const X509_TRUST *trust, X509 *x) {
 }
 
 static int obj_trust(int id, X509 *x) {
-  X509_CERT_AUX *ax = x->aux;
+  auto *impl = FromOpaque(x);
+  X509_CERT_AUX *ax = impl->aux;
   if (!ax) {
     return X509_TRUST_UNTRUSTED;
   }

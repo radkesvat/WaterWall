@@ -23,29 +23,30 @@
 #include <openssl/obj.h>
 #include <openssl/x509.h>
 
+#include "../mem_internal.h"
 #include "internal.h"
 
-DEFINE_STACK_OF(X509V3_EXT_METHOD)
 
-static STACK_OF(X509V3_EXT_METHOD) *ext_list = NULL;
+using namespace bssl;
 
-static int ext_stack_cmp(const X509V3_EXT_METHOD *const *a,
-                         const X509V3_EXT_METHOD *const *b) {
-  return ((*a)->ext_nid - (*b)->ext_nid);
-}
+// This is indirected though a pointer to avoid a global destructor. If we ever
+// add bssl::NoDestructor, we can avoid this, but this API is already
+// problematic and not thread-safe.
+static bssl::Vector<const X509V3_EXT_METHOD *> *ext_list = nullptr;
 
 int X509V3_EXT_add(X509V3_EXT_METHOD *ext) {
-  // We only support |ASN1_ITEM|-based extensions.
-  assert(ext->it != NULL);
+  // We only support `ASN1_ITEM`-based extensions.
+  assert(ext->it != nullptr);
 
-  // TODO(davidben): This should be locked. Also check for duplicates.
-  if (!ext_list && !(ext_list = sk_X509V3_EXT_METHOD_new(ext_stack_cmp))) {
+  // TODO(crbug.com/42290461): This API is not locked and doesn't check for
+  // duplicates. Remove it altogether as, even if those issues were fixed, it
+  // would not be possible to use safely anyway.
+  if (ext_list == nullptr) {
+    ext_list = bssl::New<bssl::Vector<const X509V3_EXT_METHOD *>>();
+  }
+  if (ext_list == nullptr || !ext_list->Push(ext)) {
     return 0;
   }
-  if (!sk_X509V3_EXT_METHOD_push(ext_list, ext)) {
-    return 0;
-  }
-  sk_X509V3_EXT_METHOD_sort(ext_list);
   return 1;
 }
 
@@ -119,26 +120,27 @@ const X509V3_EXT_METHOD *X509V3_EXT_get_nid(int nid) {
       return &v3_freshest_crl;
   }
 
-  X509V3_EXT_METHOD tmp;
-  tmp.ext_nid = nid;
-  size_t idx;
-  if (ext_list == nullptr || !sk_X509V3_EXT_METHOD_find(ext_list, &idx, &tmp)) {
-    return nullptr;
+  if (ext_list != nullptr) {
+    for (const X509V3_EXT_METHOD *ext : *ext_list) {
+      if (ext->ext_nid == nid) {
+        return ext;
+      }
+    }
   }
-  return sk_X509V3_EXT_METHOD_value(ext_list, idx);
+  return nullptr;
 }
 
 const X509V3_EXT_METHOD *X509V3_EXT_get(const X509_EXTENSION *ext) {
   int nid;
   if ((nid = OBJ_obj2nid(ext->object)) == NID_undef) {
-    return NULL;
+    return nullptr;
   }
   return X509V3_EXT_get_nid(nid);
 }
 
 int X509V3_EXT_free(int nid, void *ext_data) {
   const X509V3_EXT_METHOD *ext_method = X509V3_EXT_get_nid(nid);
-  if (ext_method == NULL) {
+  if (ext_method == nullptr) {
     OPENSSL_PUT_ERROR(X509V3, X509V3_R_CANNOT_FIND_FREE_FUNCTION);
     return 0;
   }
@@ -157,21 +159,20 @@ int X509V3_EXT_add_alias(int nid_to, int nid_from) {
     OPENSSL_PUT_ERROR(X509V3, X509V3_R_EXTENSION_NOT_FOUND);
     return 0;
   }
-  if (!(tmpext =
-            (X509V3_EXT_METHOD *)OPENSSL_malloc(sizeof(X509V3_EXT_METHOD)))) {
+  if (!(tmpext = New<X509V3_EXT_METHOD>())) {
     return 0;
   }
   *tmpext = *ext;
   tmpext->ext_nid = nid_to;
   if (!X509V3_EXT_add(tmpext)) {
-    OPENSSL_free(tmpext);
+    Delete(tmpext);
     return 0;
   }
   return 1;
   OPENSSL_END_ALLOW_DEPRECATED
 }
 
-int X509V3_add_standard_extensions(void) { return 1; }
+int X509V3_add_standard_extensions() { return 1; }
 
 // Return an extension internal structure
 
@@ -180,20 +181,20 @@ void *X509V3_EXT_d2i(const X509_EXTENSION *ext) {
   const unsigned char *p;
 
   if (!(method = X509V3_EXT_get(ext))) {
-    return NULL;
+    return nullptr;
   }
   p = ext->value->data;
   void *ret =
-      ASN1_item_d2i(NULL, &p, ext->value->length, ASN1_ITEM_ptr(method->it));
-  if (ret == NULL) {
-    return NULL;
+      ASN1_item_d2i(nullptr, &p, ext->value->length, ASN1_ITEM_ptr(method->it));
+  if (ret == nullptr) {
+    return nullptr;
   }
   // Check for trailing data.
   if (p != ext->value->data + ext->value->length) {
     ASN1_item_free(reinterpret_cast<ASN1_VALUE *>(ret),
                    ASN1_ITEM_ptr(method->it));
     OPENSSL_PUT_ERROR(X509V3, X509V3_R_TRAILING_DATA_IN_EXTENSION);
-    return NULL;
+    return nullptr;
   }
   return ret;
 }
@@ -201,7 +202,7 @@ void *X509V3_EXT_d2i(const X509_EXTENSION *ext) {
 void *X509V3_get_d2i(const STACK_OF(X509_EXTENSION) *extensions, int nid,
                      int *out_critical, int *out_idx) {
   int lastpos;
-  X509_EXTENSION *ex, *found_ex = NULL;
+  X509_EXTENSION *ex, *found_ex = nullptr;
   if (!extensions) {
     if (out_idx) {
       *out_idx = -1;
@@ -209,7 +210,7 @@ void *X509V3_get_d2i(const STACK_OF(X509_EXTENSION) *extensions, int nid,
     if (out_critical) {
       *out_critical = -1;
     }
-    return NULL;
+    return nullptr;
   }
   if (out_idx) {
     lastpos = *out_idx + 1;
@@ -233,7 +234,7 @@ void *X509V3_get_d2i(const STACK_OF(X509_EXTENSION) *extensions, int nid,
         if (out_critical) {
           *out_critical = -2;
         }
-        return NULL;
+        return nullptr;
       }
       found_ex = ex;
     }
@@ -253,7 +254,7 @@ void *X509V3_get_d2i(const STACK_OF(X509_EXTENSION) *extensions, int nid,
   if (out_critical) {
     *out_critical = -1;
   }
-  return NULL;
+  return nullptr;
 }
 
 // This function is a general extension append, replace and delete utility.
@@ -263,8 +264,8 @@ void *X509V3_get_d2i(const STACK_OF(X509_EXTENSION) *extensions, int nid,
 int X509V3_add1_i2d(STACK_OF(X509_EXTENSION) **x, int nid, void *value,
                     int crit, unsigned long flags) {
   int errcode, extidx = -1;
-  X509_EXTENSION *ext = NULL, *extmp;
-  STACK_OF(X509_EXTENSION) *ret = NULL;
+  X509_EXTENSION *ext = nullptr, *extmp;
+  STACK_OF(X509_EXTENSION) *ret = nullptr;
   unsigned long ext_op = flags & X509V3_ADD_OP_MASK;
 
   // If appending we don't care if it exists, otherwise look for existing
@@ -287,7 +288,7 @@ int X509V3_add1_i2d(STACK_OF(X509_EXTENSION) **x, int nid, void *value,
     // If delete, just delete it
     if (ext_op == X509V3_ADD_DELETE) {
       X509_EXTENSION *prev_ext = sk_X509_EXTENSION_delete(*x, extidx);
-      if (prev_ext == NULL) {
+      if (prev_ext == nullptr) {
         return -1;
       }
       X509_EXTENSION_free(prev_ext);
@@ -322,7 +323,8 @@ int X509V3_add1_i2d(STACK_OF(X509_EXTENSION) **x, int nid, void *value,
     return 1;
   }
 
-  if ((ret = *x) == NULL && (ret = sk_X509_EXTENSION_new_null()) == NULL) {
+  if ((ret = *x) == nullptr &&
+      (ret = sk_X509_EXTENSION_new_null()) == nullptr) {
     goto m_fail;
   }
   if (!sk_X509_EXTENSION_push(ret, ext)) {

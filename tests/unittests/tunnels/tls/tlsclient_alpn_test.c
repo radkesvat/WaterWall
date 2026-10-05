@@ -2,7 +2,8 @@
  * Covers: Verifies TlsClient's ordered `alpns` encoding, Chrome-like absent-setting default, explicit
  * empty-list disable mode, malformed-list rejection, serialized ALPS protocol offers, and in-memory
  * BoringSSL negotiations with empty client ALPS settings and peers that decline ALPS. Also verifies the
- * serialized supported groups and key shares with default, enabled, and disabled X25519MLKEM768.
+ * serialized supported groups and key shares with default, enabled, and disabled X25519MLKEM768, while
+ * retaining the configured cipher ordering and matching Chrome's GREASE/ML-DSA signature offer.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: testDefaultOrder, testConfiguredOrder, testEmptyListDisablesAlpn, testInvalidListsAreRejected,
@@ -24,6 +25,8 @@
 #include "tls_client_hello.h"
 
 #include <openssl/bytestring.h>
+#include <openssl/evp.h>
+#include <openssl/x509.h>
 
 /*
  * Fake worker table for the stubbed GSTATE below. Without it the identity
@@ -517,6 +520,122 @@ static void requireClientHelloGroups(const sbuf_t *hello, bool mlkem_enabled)
     require(CBS_len(&shares) == 0, "ClientHello advertised an unexpected additional key share");
 }
 
+static void requireClientHelloCipherAndSignatureProfile(const sbuf_t *hello)
+{
+    static const uint16_t kExpectedCiphers[] = {
+        0x1301,
+        0x1302,
+        0x1303,
+        0xc02b,
+        0xc02f,
+        0xc02c,
+        0xc030,
+        0xcca9,
+        0xcca8,
+        0xc013,
+        0xc014,
+        0x009c,
+        0x009d,
+        0x002f,
+        0x0035,
+    };
+    static const uint16_t kExpectedSignatures[] = {
+        0x0904,
+        0x0905,
+        0x0906,
+        0x0403,
+        0x0804,
+        0x0401,
+        0x0503,
+        0x0805,
+        0x0501,
+        0x0806,
+        0x0601,
+    };
+    tls_client_hello_view_t parsed = {0};
+    const uint8_t          *wire   = sbufGetRawPtr(hello);
+    require(tlsclienthelloParseRecord(wire, sbufGetLength(hello), &parsed) == kTlsClientHelloFound,
+            "cipher and signature fixture did not produce a complete ClientHello");
+
+    CBS body, session_id, ciphers;
+    CBS_init(&body, wire + parsed.handshake_body_offset, parsed.handshake_body_length);
+    require(CBS_skip(&body, 2U + SSL3_RANDOM_SIZE) && CBS_get_u8_length_prefixed(&body, &session_id) &&
+                CBS_get_u16_length_prefixed(&body, &ciphers),
+            "ClientHello contains an invalid cipher-suite list");
+    uint16_t cipher = 0;
+    require(CBS_get_u16(&ciphers, &cipher) && (cipher & 0x0f0fU) == 0x0a0aU && (cipher >> 8U) == (cipher & 0xffU),
+            "ClientHello cipher list must start with one valid GREASE value");
+    for (size_t i = 0; i < ARRAY_SIZE(kExpectedCiphers); ++i)
+    {
+        require(CBS_get_u16(&ciphers, &cipher) && cipher == kExpectedCiphers[i],
+                "ClientHello changed the configured AES-first TLS 1.3 or TLS 1.2 cipher order");
+    }
+    require(CBS_len(&ciphers) == 0, "ClientHello advertised an unexpected additional cipher suite");
+
+    CBS extensions, signatures = {0};
+    CBS_init(&extensions, wire + parsed.extensions_offset, parsed.extensions_length);
+    bool found_signatures = false;
+    while (CBS_len(&extensions) > 0)
+    {
+        uint16_t type = 0;
+        CBS      contents;
+        require(CBS_get_u16(&extensions, &type) && CBS_get_u16_length_prefixed(&extensions, &contents),
+                "ClientHello contains an invalid extension length");
+        if (type == 13)
+        {
+            require(! found_signatures && CBS_get_u16_length_prefixed(&contents, &signatures) &&
+                        CBS_len(&contents) == 0,
+                    "ClientHello contains invalid signature_algorithms");
+            found_signatures = true;
+        }
+    }
+    require(found_signatures, "ClientHello omitted signature_algorithms");
+    uint16_t signature = 0;
+    require(CBS_get_u16(&signatures, &signature) && (signature & 0x0f0fU) == 0x0a0aU &&
+                (signature >> 8U) == (signature & 0xffU),
+            "ClientHello signature algorithms must start with one valid GREASE value");
+    for (size_t i = 0; i < ARRAY_SIZE(kExpectedSignatures); ++i)
+    {
+        require(CBS_get_u16(&signatures, &signature) && signature == kExpectedSignatures[i],
+                "ClientHello signature algorithms must match Chrome's ML-DSA and classical order");
+    }
+    require(CBS_len(&signatures) == 0, "ClientHello advertised an unexpected additional signature algorithm");
+}
+
+static void requireOrdinaryClientHelloProfile(tunnel_t *tls, buffer_pool_t *pool, bool mlkem_enabled)
+{
+    tunnel_t *prev = tunnelCreate(NULL, 0, 0);
+    tunnel_t *next = tunnelCreate(NULL, 0, 0);
+    require(prev != NULL && next != NULL, "failed to allocate ordinary ClientHello profile neighbors");
+    tunnelBind(prev, tls);
+    tunnelBind(tls, next);
+    next->fnInitU    = captureOrdinaryInit;
+    next->fnPayloadU = captureOrdinaryPayload;
+
+    /* The fixture owns this scratch normal line; TlsClient only borrows it. */
+    line_t *line = memoryAllocateCacheAlignedZero(sizeof(line_t) + tls->lstate_size);
+    require(line != NULL, "failed to allocate ordinary ClientHello profile line");
+    atomic_init(&line->refc, 1);
+    line->alive          = true;
+    line->wid            = 0;
+    ordinary_init_count  = 0;
+    ordinary_init_flight = NULL;
+    tlsclientTunnelUpStreamInit(tls, line);
+    require(ordinary_init_count == 1 && ordinary_init_flight != NULL,
+            "ordinary TlsClient Init did not emit its initial flight");
+    requireClientHelloGroups(ordinary_init_flight, mlkem_enabled);
+    requireClientHelloCipherAndSignatureProfile(ordinary_init_flight);
+    bufferpoolReuseBuffer(pool, ordinary_init_flight);
+    ordinary_init_flight = NULL;
+    tlsclientLinestateDestroy(lineGetState(line, tls));
+    require(atomicLoadU32(&line->refc) == 1, "ordinary ClientHello profile leaked a line reference");
+    memoryFreeAligned(line);
+    tls->prev = NULL;
+    tls->next = NULL;
+    tunnelDestroy(prev);
+    tunnelDestroy(next);
+}
+
 static void testClientHelloGroups(void)
 {
     static const struct
@@ -549,7 +668,9 @@ static void testClientHelloGroups(void)
                     ts->threadlocal_ssl_contexts[0], ts->sni, NULL, 0, ts->alpn_wire, ts->alpn_wire_len, &hello),
                 "failed to generate the supported-group ClientHello fixture");
         requireClientHelloGroups(hello, cases[i].mlkem_setting != 0);
+        requireClientHelloCipherAndSignatureProfile(hello);
         bufferpoolReuseBuffer(env.pool, hello);
+        requireOrdinaryClientHelloProfile(tunnel, env.pool, cases[i].mlkem_setting != 0);
         tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
         cJSON_Delete(settings);
     }
@@ -577,6 +698,7 @@ static void testChromeReference(void)
     // available in the fixture for subsequent fingerprint work.
     requireClientHelloAlps(hello, kChromeAlpn, sizeof(kChromeAlpn), true);
     requireClientHelloGroups(hello, true);
+    requireClientHelloCipherAndSignatureProfile(hello);
 
     bufferpoolReuseBuffer(env.pool, hello);
     workerEnvTeardown(&env);
@@ -967,7 +1089,30 @@ static bool driveHandshake(SSL *client, SSL *server)
     return false;
 }
 
-static void testTls13AlpsNegotiation(void)
+static void installMldsaCertificate(SSL_CTX *context, const EVP_PKEY_ALG *algorithm)
+{
+    EVP_PKEY *key         = EVP_PKEY_generate_from_alg(algorithm);
+    X509     *certificate = X509_new();
+    require(key != NULL && certificate != NULL, "failed to allocate the ML-DSA certificate fixture");
+    require(X509_set_version(certificate, 2) == 1 && ASN1_INTEGER_set(X509_get_serialNumber(certificate), 1) == 1 &&
+                X509_gmtime_adj(X509_getm_notBefore(certificate), -60) != NULL &&
+                X509_gmtime_adj(X509_getm_notAfter(certificate), 3600) != NULL &&
+                X509_NAME_add_entry_by_txt(X509_get_subject_name(certificate),
+                                           "CN",
+                                           MBSTRING_ASC,
+                                           (const uint8_t *) "tls.integration.test",
+                                           -1,
+                                           -1,
+                                           0) == 1 &&
+                X509_set_issuer_name(certificate, X509_get_subject_name(certificate)) == 1 &&
+                X509_set_pubkey(certificate, key) == 1 && X509_sign(certificate, key, NULL) > 0 &&
+                SSL_CTX_use_certificate(context, certificate) == 1 && SSL_CTX_use_PrivateKey(context, key) == 1,
+            "failed to create the ML-DSA certificate fixture");
+    X509_free(certificate);
+    EVP_PKEY_free(key);
+}
+
+static void testTls13AlpsAndSignatureNegotiation(void)
 {
     static const struct
     {
@@ -976,10 +1121,15 @@ static void testTls13AlpsNegotiation(void)
         const char *selected;
         bool        server_alps;
         bool        expect_alps;
+        const EVP_PKEY_ALG *(*key_algorithm)(void);
+        uint16_t peer_signature;
     } cases[] = {
-        {"alps_negotiated_empty_settings", NULL, "h2", true, true},
-        {"alps_declined_by_server", "[\"h2\"]", "h2", false, false},
-        {"alps_http11_selected", NULL, "http/1.1", true, false},
+        {"alps_negotiated_empty_settings", NULL, "h2", true, true, NULL, 0},
+        {"alps_declined_by_server", "[\"h2\"]", "h2", false, false, NULL, 0},
+        {"alps_http11_selected", NULL, "http/1.1", true, false, NULL, 0},
+        {"mldsa44_certificate_verify", "[\"h2\"]", "h2", false, false, EVP_pkey_ml_dsa_44, SSL_SIGN_ML_DSA_44},
+        {"mldsa65_certificate_verify", "[\"h2\"]", "h2", false, false, EVP_pkey_ml_dsa_65, SSL_SIGN_ML_DSA_65},
+        {"mldsa87_certificate_verify", "[\"h2\"]", "h2", false, false, EVP_pkey_ml_dsa_87, SSL_SIGN_ML_DSA_87},
     };
     tlsclient_test_worker_env_t env;
     workerEnvSetup(&env);
@@ -989,18 +1139,27 @@ static void testTls13AlpsNegotiation(void)
         cJSON    *settings = createTlsSettingsWithAlpns(cases[i].alpns);
         node_t    node     = {0};
         tunnel_t *tunnel   = createTlsClientFromSettings(&node, settings);
-        require(tunnel != NULL, "failed to create the ALPS negotiation TlsClient");
+        require(tunnel != NULL, "failed to create the TLS 1.3 negotiation TlsClient");
         tlsclient_tstate_t *ts             = tunnelGetState(tunnel);
         SSL_CTX            *client_context = ts->threadlocal_ssl_contexts[0];
         SSL_CTX            *server_context = SSL_CTX_new(TLS_server_method());
         require(server_context != NULL && SSL_CTX_set_min_proto_version(client_context, TLS1_3_VERSION) == 1 &&
                     SSL_CTX_set_max_proto_version(client_context, TLS1_3_VERSION) == 1 &&
                     SSL_CTX_set_min_proto_version(server_context, TLS1_3_VERSION) == 1 &&
-                    SSL_CTX_set_max_proto_version(server_context, TLS1_3_VERSION) == 1 &&
-                    SSL_CTX_use_certificate_chain_file(server_context, REALITY_TEST_CERT_FILE) == 1 &&
-                    SSL_CTX_use_PrivateKey_file(server_context, REALITY_TEST_KEY_FILE, SSL_FILETYPE_PEM) == 1 &&
-                    SSL_CTX_check_private_key(server_context) == 1,
-                "failed to configure the TLS 1.3 ALPS negotiation contexts");
+                    SSL_CTX_set_max_proto_version(server_context, TLS1_3_VERSION) == 1,
+                "failed to configure the TLS 1.3 negotiation contexts");
+        if (cases[i].key_algorithm != NULL)
+        {
+            /* This fixture disables chain trust checks; TLS still verifies CertificateVerify. */
+            installMldsaCertificate(server_context, cases[i].key_algorithm());
+        }
+        else
+        {
+            require(SSL_CTX_use_certificate_chain_file(server_context, REALITY_TEST_CERT_FILE) == 1 &&
+                        SSL_CTX_use_PrivateKey_file(server_context, REALITY_TEST_KEY_FILE, SSL_FILETYPE_PEM) == 1,
+                    "failed to load the ALPS negotiation certificate");
+        }
+        require(SSL_CTX_check_private_key(server_context) == 1, "TLS 1.3 fixture certificate/key mismatch");
         SSL_CTX_set_alpn_select_cb(server_context, selectProtocol, (void *) cases[i].selected);
 
         /* Use the same line-state and SSL configuration helpers as ordinary TlsClient Init. */
@@ -1031,10 +1190,15 @@ static void testTls13AlpsNegotiation(void)
         if (! driveHandshake(client_state->ssl, server))
         {
             ERR_print_errors_fp(stderr);
-            require(false, "TLS 1.3 ALPS handshake failed");
+            require(false, "TLS 1.3 ALPS or signature handshake failed");
         }
         require(SSL_version(client_state->ssl) == TLS1_3_VERSION && SSL_version(server) == TLS1_3_VERSION,
-                "ALPS fixture did not negotiate TLS 1.3");
+                "ALPS/signature fixture did not negotiate TLS 1.3");
+        if (cases[i].peer_signature != 0)
+        {
+            require(SSL_get_peer_signature_algorithm(client_state->ssl) == cases[i].peer_signature,
+                    "TlsClient did not verify the selected ML-DSA CertificateVerify signature");
+        }
         const uint8_t *selected     = NULL;
         unsigned int   selected_len = 0;
         SSL_get0_alpn_selected(client_state->ssl, &selected, &selected_len);
@@ -1237,7 +1401,7 @@ int main(void)
     testClientHelloAlpsProtocols();
     testClientHelloGroups();
     testChromeReference();
-    testTls13AlpsNegotiation();
+    testTls13AlpsAndSignatureNegotiation();
     testTotalWireLengthBounds();
     testConfiguredSniLengthBounds();
     testConfiguredClientHelloFramingBounds();

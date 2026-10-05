@@ -48,7 +48,6 @@ static inline void u256_shr(br_word_t p_out, br_word_t p_x, br_word_t n) {
   _br_store(((((p_out+4)+4)+4)+4)+4, y5);
   _br_store((((((p_out+4)+4)+4)+4)+4)+4, y6);
   _br_store(((((((p_out+4)+4)+4)+4)+4)+4)+4, y7);
-  return;
 }
 
 static inline void u256_set_p256_minushalf_conditional(br_word_t p_out, br_word_t mask) {
@@ -69,5 +68,4 @@ static inline void u256_set_p256_minushalf_conditional(br_word_t p_out, br_word_
   _br_store(((((p_out+4)+4)+4)+4)+4, mask&mh5);
   _br_store((((((p_out+4)+4)+4)+4)+4)+4, mask&mh6);
   _br_store(((((((p_out+4)+4)+4)+4)+4)+4)+4, mask&mh7);
-  return;
 }

@@ -17,6 +17,8 @@
 #include <assert.h>
 #include <string.h>
 
+#include <iterator>
+
 #include <openssl/bytestring.h>
 #include <openssl/mem.h>
 #include <openssl/rand.h>
@@ -24,8 +26,11 @@
 
 #include "../fipsmodule/bn/internal.h"
 #include "../internal.h"
+#include "../mem_internal.h"
 #include "./internal.h"
 
+
+using namespace bssl;
 
 // The following precomputation tables are for the following
 // points used in the SPAKE2 protocol.
@@ -276,10 +281,9 @@ static const uint8_t kSpakeMSmallPrecomp[15 * 2 * 32] = {
 SPAKE2_CTX *SPAKE2_CTX_new(enum spake2_role_t my_role, const uint8_t *my_name,
                            size_t my_name_len, const uint8_t *their_name,
                            size_t their_name_len) {
-  SPAKE2_CTX *ctx =
-      reinterpret_cast<SPAKE2_CTX *>(OPENSSL_zalloc(sizeof(SPAKE2_CTX)));
-  if (ctx == NULL) {
-    return NULL;
+  SPAKE2_CTX *ctx = New<SPAKE2_CTX>();
+  if (ctx == nullptr) {
+    return nullptr;
   }
 
   ctx->my_role = my_role;
@@ -290,23 +294,23 @@ SPAKE2_CTX *SPAKE2_CTX_new(enum spake2_role_t my_role, const uint8_t *my_name,
   if (!CBS_stow(&my_name_cbs, &ctx->my_name, &ctx->my_name_len) ||
       !CBS_stow(&their_name_cbs, &ctx->their_name, &ctx->their_name_len)) {
     SPAKE2_CTX_free(ctx);
-    return NULL;
+    return nullptr;
   }
 
   return ctx;
 }
 
 void SPAKE2_CTX_free(SPAKE2_CTX *ctx) {
-  if (ctx == NULL) {
+  if (ctx == nullptr) {
     return;
   }
 
   OPENSSL_free(ctx->my_name);
   OPENSSL_free(ctx->their_name);
-  OPENSSL_free(ctx);
+  Delete(ctx);
 }
 
-// left_shift_3 sets |n| to |n|*8, where |n| is represented in little-endian
+// left_shift_3 sets `n` to `n`*8, where `n` is represented in little-endian
 // order.
 static void left_shift_3(uint8_t n[32]) {
   uint8_t carry = 0;
@@ -330,21 +334,20 @@ static const scalar kOrder = {
     {TOBN(0x5812631a, 0x5cf5d3ed), TOBN(0x14def9de, 0xa2f79cd6),
      TOBN(0x00000000, 0x00000000), TOBN(0x10000000, 0x00000000)}};
 
-// scalar_cmov copies |src| to |dest| if |mask| is all ones.
+// scalar_cmov copies `src` to `dest` if `mask` is all ones.
 static void scalar_cmov(scalar *dest, const scalar *src, crypto_word_t mask) {
   bn_select_words(dest->words, mask, src->words, dest->words,
-                  OPENSSL_ARRAY_SIZE(dest->words));
+                  std::size(dest->words));
 }
 
-// scalar_double sets |s| to |2×s|.
+// scalar_double sets `s` to `2×s`.
 static void scalar_double(scalar *s) {
-  bn_add_words(s->words, s->words, s->words, OPENSSL_ARRAY_SIZE(s->words));
+  bn_add_words(s->words, s->words, s->words, std::size(s->words));
 }
 
-// scalar_add sets |dest| to |dest| plus |src|.
+// scalar_add sets `dest` to `dest` plus `src`.
 static void scalar_add(scalar *dest, const scalar *src) {
-  bn_add_words(dest->words, dest->words, src->words,
-               OPENSSL_ARRAY_SIZE(dest->words));
+  bn_add_words(dest->words, dest->words, src->words, std::size(dest->words));
 }
 
 int SPAKE2_generate_msg(SPAKE2_CTX *ctx, uint8_t *out, size_t *out_len,
@@ -375,8 +378,8 @@ int SPAKE2_generate_msg(SPAKE2_CTX *ctx, uint8_t *out, size_t *out_len,
   OPENSSL_memcpy(ctx->password_hash, password_tmp, sizeof(ctx->password_hash));
   x25519_sc_reduce(password_tmp);
 
-  // Due to a copy-paste error, the call to |left_shift_3| was omitted after
-  // the |x25519_sc_reduce|, just above. This meant that |ctx->password_scalar|
+  // Due to a copy-paste error, the call to `left_shift_3` was omitted after
+  // the `x25519_sc_reduce`, just above. This meant that `ctx->password_scalar`
   // was not a multiple of eight to clear the cofactor and thus three bits of
   // the password hash would leak. In order to fix this in a unilateral way,
   // points of small order are added to the mask point such that it is in the
@@ -392,8 +395,8 @@ int SPAKE2_generate_msg(SPAKE2_CTX *ctx, uint8_t *out, size_t *out_len,
   scalar password_scalar;
   OPENSSL_memcpy(&password_scalar, password_tmp, sizeof(password_scalar));
 
-  // |password_scalar| is the result of |x25519_sc_reduce| and thus is, at
-  // most, $l-1$ (where $l$ is |kOrder|, the order of the prime-order subgroup
+  // `password_scalar` is the result of `x25519_sc_reduce` and thus is, at
+  // most, $l-1$ (where $l$ is `kOrder`, the order of the prime-order subgroup
   // of Ed25519). In the following, we may add $l + 2×l + 4×l$ for a max value
   // of $8×l-1$. That is < 2**256, as required.
 

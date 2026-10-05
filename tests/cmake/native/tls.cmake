@@ -51,7 +51,6 @@ if(TARGET TlsClient)
   waterwall_add_native_executable(tlsclient_record_padding_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tls/tlsclient_record_padding_test.c)
   target_include_directories(tlsclient_record_padding_test BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
-    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
   )
   target_compile_definitions(tlsclient_record_padding_test PRIVATE
     BORINGSSL_PREFIX=WW_BSSL
@@ -73,7 +72,6 @@ if(TARGET TlsClient)
   )
   target_include_directories(tlsclient_alpn_test BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
-    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
   )
   target_compile_definitions(tlsclient_alpn_test PRIVATE
     BORINGSSL_PREFIX=WW_BSSL
@@ -96,7 +94,6 @@ if(TARGET TlsClient)
   )
   target_include_directories(tlsclient_hostname_verification_test BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
-    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
   )
   target_compile_definitions(tlsclient_hostname_verification_test PRIVATE
     BORINGSSL_PREFIX=WW_BSSL
@@ -118,7 +115,6 @@ if(TARGET TlsClient)
   )
   target_include_directories(tlsclient_close_lifecycle_test BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
-    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
   )
   target_compile_definitions(tlsclient_close_lifecycle_test PRIVATE
     BORINGSSL_PREFIX=WW_BSSL
@@ -141,7 +137,6 @@ if(TARGET TlsClient)
     )
     target_include_directories(tls13_record_delay_lifecycle_test BEFORE PRIVATE
       ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
-      ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
     )
     target_compile_definitions(tls13_record_delay_lifecycle_test PRIVATE BORINGSSL_PREFIX=WW_BSSL)
     target_link_options(tls13_record_delay_lifecycle_test PRIVATE "-Wl,--wrap=WW_BSSL_SSL_version")

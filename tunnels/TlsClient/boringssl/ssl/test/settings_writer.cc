@@ -87,14 +87,6 @@ bool SettingsWriter::Commit() {
   return fwrite(settings, settings_len, 1, file.get()) == 1;
 }
 
-bool SettingsWriter::WriteHandoff(bssl::Span<const uint8_t> handoff) {
-  return WriteData(kHandoffTag, handoff);
-}
-
-bool SettingsWriter::WriteHandback(bssl::Span<const uint8_t> handback) {
-  return WriteData(kHandbackTag, handback);
-}
-
 bool SettingsWriter::WriteHints(bssl::Span<const uint8_t> hints) {
   return WriteData(kHintsTag, hints);
 }

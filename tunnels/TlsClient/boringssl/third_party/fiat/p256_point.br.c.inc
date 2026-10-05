@@ -14,7 +14,6 @@ static inline void p256_coord_halve(br_word_t y, br_word_t x) {
   u256_set_p256_minushalf_conditional(mmh, m);
   u256_shr(y, x, (br_word_t)1);
   p256_coord_sub(y, y, mmh);
-  return;
 }
 
 static inline br_word_t p256_point_iszero(br_word_t p_P) {
@@ -49,7 +48,6 @@ static inline void p256_point_double(br_word_t out, br_word_t in1) {
   p256_coord_mul(D, D, A);
   p256_coord_halve(out+32, out+32);
   p256_coord_sub(out+32, D, out+32);
-  return;
 }
 
 static inline br_word_t p256_point_add_nz_nz_neq(br_word_t p_out, br_word_t p_P, br_word_t p_Q) {
@@ -111,5 +109,4 @@ static inline void p256_point_add_vartime_if_doubling(br_word_t p_out, br_word_t
     p256_point_double(p_sel, p_P);
   }
   br_memcpy(p_out, p_sel, (br_word_t)96);
-  return;
 }

@@ -51,6 +51,7 @@
 #endif
 
 
+BSSL_NAMESPACE_BEGIN
 namespace abi_test {
 
 namespace internal {
@@ -74,7 +75,7 @@ std::string FixVAArgsString(const char *str) {
 }
 
 #if defined(SUPPORTS_ABI_TEST)
-// ForEachMismatch calls |func| for each register where |a| and |b| differ.
+// ForEachMismatch calls `func` for each register where `a` and `b` differ.
 template <typename Func>
 static void ForEachMismatch(const CallerState &a, const CallerState &b,
                             const Func &func) {
@@ -89,12 +90,12 @@ static void ForEachMismatch(const CallerState &a, const CallerState &b,
 
 #if defined(SUPPORTS_UNWIND_TEST)
 // We test unwind metadata by running the function under test with the trap flag
-// set. This results in |SIGTRAP| and |EXCEPTION_SINGLE_STEP| on Linux and
-// Windows, respectively. We hande these and verify libunwind or the Windows
+// set. This results in `SIGTRAP` and `EXCEPTION_SINGLE_STEP` on Linux and
+// Windows, respectively. We handle these and verify libunwind or the Windows
 // unwind APIs unwind successfully.
 
-// IsAncestorStackFrame returns true if |a_sp| is an ancestor stack frame of
-// |b_sp|.
+// IsAncestorStackFrame returns true if `a_sp` is an ancestor stack frame of
+// `b_sp`.
 static bool IsAncestorStackFrame(crypto_word_t a_sp, crypto_word_t b_sp) {
 #if defined(OPENSSL_X86_64)
   // The stack grows down, so ancestor stack frames have higher addresses.
@@ -104,8 +105,8 @@ static bool IsAncestorStackFrame(crypto_word_t a_sp, crypto_word_t b_sp) {
 #endif
 }
 
-// Implement some string formatting utilties. Ideally we would use |snprintf|,
-// but this is called in a signal handler and |snprintf| is not async-signal-
+// Implement some string formatting utilities. Ideally we would use `snprintf`,
+// but this is called in a signal handler and `snprintf` is not async-signal-
 // safe.
 
 #if !defined(OPENSSL_WINDOWS)
@@ -139,17 +140,17 @@ static std::array<char, sizeof(crypto_word_t) * 2 + 1> WordToHex(
   return ret;
 }
 
-static void StrCatSignalSafeImpl(bssl::Span<char> out) {}
+static void StrCatSignalSafeImpl(Span<char> out) {}
 
 template <typename... Args>
-static void StrCatSignalSafeImpl(bssl::Span<char> out, const char *str,
+static void StrCatSignalSafeImpl(Span<char> out, const char *str,
                                  Args... args) {
   OPENSSL_strlcat(out.data(), str, out.size());
   StrCatSignalSafeImpl(out, args...);
 }
 
 template <typename... Args>
-static void StrCatSignalSafe(bssl::Span<char> out, Args... args) {
+static void StrCatSignalSafe(Span<char> out, Args... args) {
   if (out.empty()) {
     return;
   }
@@ -159,7 +160,7 @@ static void StrCatSignalSafe(bssl::Span<char> out, Args... args) {
 
 template <typename... Args>
 [[noreturn]] static void FatalError(Args... args) {
-  // We cannot use |snprintf| here because it is not async-signal-safe.
+  // We cannot use `snprintf` here because it is not async-signal-safe.
   char buf[512];
   StrCatSignalSafe(buf, args..., "\n");
 #if defined(OPENSSL_WINDOWS)
@@ -360,8 +361,8 @@ class UnwindCursor {
   // ToString returns a human-readable representation of the address the cursor
   // started at, using debug information if available.
   const char *ToString() {
-    // Use a new cursor. |cursor_| has already been unwound, and
-    // |unw_get_proc_name| is slow so we do not sample it unconditionally in the
+    // Use a new cursor. `cursor_` has already been unwound, and
+    // `unw_get_proc_name` is slow so we do not sample it unconditionally in the
     // constructor.
     unw_cursor_t cursor;
     unw_word_t off;
@@ -374,7 +375,7 @@ class UnwindCursor {
     size_t len = strlen(starting_ip_buf_);
     // Print the offset in decimal, to match gdb's disassembly output and ease
     // debugging.
-    StrCatSignalSafe(bssl::Span<char>(starting_ip_buf_).subspan(len), "+",
+    StrCatSignalSafe(Span<char>(starting_ip_buf_).subspan(len), "+",
                      WordToDecimal(off).data(), " (0x",
                      WordToHex(starting_ip_).data(), ")");
     return starting_ip_buf_;
@@ -405,16 +406,16 @@ class UnwindCursor {
 };
 #endif  // OPENSSL_WINDOWS
 
-// g_in_trampoline is true if we are in an instrumented |abi_test_trampoline|
-// call, in the region that triggers |SIGTRAP|.
+// g_in_trampoline is true if we are in an instrumented `abi_test_trampoline`
+// call, in the region that triggers `SIGTRAP`.
 static bool g_in_trampoline = false;
-// g_unwind_function_done, if |g_in_trampoline| is true, is whether the function
+// g_unwind_function_done, if `g_in_trampoline` is true, is whether the function
 // under test has returned. It is undefined otherwise.
 static bool g_unwind_function_done;
 // g_trampoline_state, during an unwind-enabled ABI test, is the state the
 // function under test must preserve. It is undefined otherwise.
 static CallerState g_trampoline_state;
-// g_trampoline_sp, if |g_in_trampoline| is true, is the stack pointer of the
+// g_trampoline_sp, if `g_in_trampoline` is true, is the stack pointer of the
 // trampoline frame. It is undefined otherwise.
 static crypto_word_t g_trampoline_sp;
 
@@ -475,21 +476,21 @@ static void CheckUnwind(UnwindCursor *cursor) {
     g_trampoline_sp = sp;
   } else {
     if (sp == g_trampoline_sp || g_unwind_function_done) {
-      // |g_unwind_function_done| should imply |sp| is |g_trampoline_sp|, but
+      // `g_unwind_function_done` should imply `sp` is `g_trampoline_sp`, but
       // clearing the trap flag in x86 briefly displaces the stack pointer.
       //
-      // Also note we check both |ip| and |sp| below, in case the function under
-      // test is also |abi_test_trampoline|.
+      // Also note we check both `ip` and `sp` below, in case the function under
+      // test is also `abi_test_trampoline`.
       if (ip == kReturnAddress && sp == g_trampoline_sp) {
         g_unwind_function_done = true;
       }
       if (ip == kStopAddress && sp == g_trampoline_sp) {
-        // |SIGTRAP| is fatal again.
+        // `SIGTRAP` is fatal again.
         g_in_trampoline = false;
       }
     } else if (IsAncestorStackFrame(sp, g_trampoline_sp)) {
-      // This should never happen. We went past |g_trampoline_sp| without
-      // stopping at |kStopAddress|.
+      // This should never happen. We went past `g_trampoline_sp` without
+      // stopping at `kStopAddress`.
       AddUnwindError(cursor, "stack frame is before caller");
       g_in_trampoline = false;
     } else if (g_num_unwind_errors < kMaxUnwindErrors) {
@@ -499,7 +500,7 @@ static void CheckUnwind(UnwindCursor *cursor) {
           AddUnwindError(cursor, "error unwinding: ", step_ret.Error());
           break;
         }
-        // |Step| returns whether there was a frame to unwind.
+        // `Step` returns whether there was a frame to unwind.
         if (!step_ret.ValueOrDie()) {
           AddUnwindError(cursor, "could not unwind to starting frame");
           break;
@@ -543,7 +544,7 @@ static void CheckUnwind(UnwindCursor *cursor) {
   }
 }
 
-// ReadUnwindResult adds the results of the most recent unwind test to |out|.
+// ReadUnwindResult adds the results of the most recent unwind test to `out`.
 static void ReadUnwindResult(Result *out) {
   for (size_t i = 0; i < g_num_unwind_errors; i++) {
 #if defined(OPENSSL_WINDOWS)
@@ -596,7 +597,7 @@ static long ExceptionHandler(EXCEPTION_POINTERS *info) {
 
 static void EnableUnwindTestsImpl() {
   if (IsDebuggerPresent()) {
-    // Unwind tests drive logic via |EXCEPTION_SINGLE_STEP|, which conflicts with
+    // Unwind tests drive logic via `EXCEPTION_SINGLE_STEP`, which conflicts with
     // debuggers.
     fprintf(stderr, "Debugger detected. Disabling unwind tests.\n");
     return;
@@ -617,8 +618,8 @@ static void EnableUnwindTestsImpl() {
   g_unwind_tests_enabled = true;
 }
 #else  // !OPENSSL_WINDOWS
-// HandleEINTR runs |func| and returns the result, retrying the operation on
-// |EINTR|.
+// HandleEINTR runs `func` and returns the result, retrying the operation on
+// `EINTR`.
 template <typename Func>
 static auto HandleEINTR(const Func &func) -> decltype(func()) {
   decltype(func()) ret;
@@ -674,7 +675,7 @@ static void TrapHandler(int sig, siginfo_t *info, void *ucontext_v) {
   // async-signal-safe.
   ucontext_t *ucontext = static_cast<ucontext_t*>(ucontext_v);
 
-  // |pthread_equal| is not listed as async-signal-safe, but this is clearly an
+  // `pthread_equal` is not listed as async-signal-safe, but this is clearly an
   // oversight.
   if (!pthread_equal(g_main_thread, pthread_self())) {
     FatalError("SIGTRAP on background thread");
@@ -686,7 +687,7 @@ static void TrapHandler(int sig, siginfo_t *info, void *ucontext_v) {
 
 static void EnableUnwindTestsImpl() {
   if (IsBeingDebugged()) {
-    // Unwind tests drive logic via |SIGTRAP|, which conflicts with debuggers.
+    // Unwind tests drive logic via `SIGTRAP`, which conflicts with debuggers.
     fprintf(stderr, "Debugger detected. Disabling unwind tests.\n");
     return;
   }
@@ -698,7 +699,7 @@ static void EnableUnwindTestsImpl() {
   sigemptyset(&trap_action.sa_mask);
   trap_action.sa_flags = SA_SIGINFO;
   trap_action.sa_sigaction = TrapHandler;
-  if (sigaction(SIGTRAP, &trap_action, NULL) != 0) {
+  if (sigaction(SIGTRAP, &trap_action, nullptr) != 0) {
     perror("sigaction");
     abort();
   }
@@ -734,7 +735,7 @@ crypto_word_t RunTrampoline(Result *out, crypto_word_t func,
   crypto_word_t ret = abi_test_trampoline(func, &state2, argv, argc, unwind);
 #if defined(OPENSSL_X86_64) || defined(OPENSSL_X86)
   // Query and clear the direction flag early, so negative tests do not
-  // interfere with |malloc|.
+  // interfere with `malloc`.
   bool direction_flag = abi_test_get_and_clear_direction_flag();
 #endif  // OPENSSL_X86_64 || OPENSSL_X86
 
@@ -745,7 +746,7 @@ crypto_word_t RunTrampoline(Result *out, crypto_word_t func,
 #if defined(OPENSSL_X86_64) || defined(OPENSSL_X86)
   // Linux and Windows ABIs for x86 require the direction flag be cleared on
   // return. (Some OpenSSL assembly preserves it, which is stronger, but we only
-  // require what is specified by the ABI so |CHECK_ABI| works with C compiler
+  // require what is specified by the ABI so `CHECK_ABI` works with C compiler
   // output.)
   if (direction_flag) {
     out->errors.emplace_back("Direction flag set after return");
@@ -765,3 +766,4 @@ void EnableUnwindTests() { internal::EnableUnwindTestsImpl(); }
 bool UnwindTestsEnabled() { return internal::g_unwind_tests_enabled; }
 
 }  // namespace abi_test
+BSSL_NAMESPACE_END

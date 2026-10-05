@@ -20,8 +20,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <initializer_list>
 #include <iosfwd>
+#include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -31,8 +34,8 @@
 #include "../internal.h"
 
 
-// hexdump writes |msg| to |fp| followed by the hex encoding of |len| bytes
-// from |in|.
+// hexdump writes `msg` to `fp` followed by the hex encoding of `len` bytes
+// from `in`.
 void hexdump(FILE *fp, const char *msg, const void *in, size_t len);
 
 // Bytes is a wrapper over a byte slice which may be compared for equality. This
@@ -62,19 +65,42 @@ inline std::vector<uint8_t> Declassified(bssl::Span<const uint8_t> in) {
   return copy;
 }
 
+inline std::vector<uint8_t> SecretCopy(bssl::Span<const uint8_t> in) {
+  std::vector<uint8_t> copy(in.begin(), in.end());
+  CONSTTIME_SECRET(copy.data(), copy.size());
+  return copy;
+}
+
 std::ostream &operator<<(std::ostream &os, const Bytes &in);
 
-// DecodeHex decodes |in| from hexadecimal and writes the output to |out|. It
-// returns true on success and false if |in| is not a valid hexadecimal byte
+// DecodeHex decodes `in` from hexadecimal and writes the output to `out`. It
+// returns true on success and false if `in` is not a valid hexadecimal byte
 // string.
-bool DecodeHex(std::vector<uint8_t> *out, const std::string &in);
+bool DecodeHex(std::vector<uint8_t> *out, std::string_view in);
 
-// EncodeHex returns |in| encoded in hexadecimal.
+// EncodeHex returns `in` encoded in hexadecimal.
 std::string EncodeHex(bssl::Span<const uint8_t> in);
 
-// ErrorEquals asserts that |err| is an error with library |lib| and reason
-// |reason|.
-testing::AssertionResult ErrorEquals(uint32_t err, int lib, int reason);
+// ErrorEquals asserts that `err` is an error with library `lib` and reason
+// `reason`. Pass `std::nullopt` to either of them to not assert on it.
+testing::AssertionResult ErrorEquals(uint32_t err, std::optional<int> lib,
+                                     std::optional<int> reason);
+
+// ErrorsAreAndClear asserts that the first (i.e. least recent, and thus most
+// specific) errors on the error queue are as specified, and then clears the
+// remainder of the queue. The first entry in `libs_and_reasons` shall be the
+// error first read from `ERR_get_error`. `libs_and_reasons` is not allowed to
+// be empty; instead, to just clear and assert nothing, call `ERR_clear_error`.
+testing::AssertionResult ErrorsAreAndClear(
+    std::initializer_list<std::pair<std::optional<int>, std::optional<int>>>
+        libs_and_reasons);
+
+// HexToBignum decodes `hex` as a hexadecimal, big-endian, unsigned integer and
+// returns it as a `BIGNUM`, or nullptr on error.
+bssl::UniquePtr<BIGNUM> HexToBIGNUM(const char *hex);
+
+// BIGNUMToHex returns `bn` as a hexadecimal, big-endian, unsigned integer.
+std::string BIGNUMToHex(const BIGNUM *bn);
 
 
 #endif  // OPENSSL_HEADER_CRYPTO_TEST_TEST_UTIL_H

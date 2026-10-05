@@ -22,6 +22,8 @@
 #include "internal.h"
 
 
+using namespace bssl;
+
 int BN_lshift(BIGNUM *r, const BIGNUM *a, int n) {
   int i, nw, lb, rb;
   BN_ULONG *t, *f;
@@ -91,8 +93,8 @@ int BN_lshift1(BIGNUM *r, const BIGNUM *a) {
   return 1;
 }
 
-void bn_rshift_words(BN_ULONG *r, const BN_ULONG *a, unsigned shift,
-                     size_t num) {
+void bssl::bn_rshift_words(BN_ULONG *r, const BN_ULONG *a, unsigned shift,
+                           size_t num) {
   unsigned shift_bits = shift % BN_BITS2;
   size_t shift_words = shift / BN_BITS2;
   if (shift_words >= num) {
@@ -127,12 +129,12 @@ int BN_rshift(BIGNUM *r, const BIGNUM *a, int n) {
   return 1;
 }
 
-int bn_rshift_secret_shift(BIGNUM *r, const BIGNUM *a, unsigned n,
-                           BN_CTX *ctx) {
-  bssl::BN_CTXScope scope(ctx);
+int bssl::bn_rshift_secret_shift(BIGNUM *r, const BIGNUM *a, unsigned n,
+                                 BN_CTX *ctx) {
+  BN_CTXScope scope(ctx);
   BIGNUM *tmp = BN_CTX_get(ctx);
   unsigned max_bits;
-  if (tmp == NULL || !BN_copy(r, a) || !bn_wexpand(tmp, r->width)) {
+  if (tmp == nullptr || !BN_copy(r, a) || !bn_wexpand(tmp, r->width)) {
     return 0;
   }
 
@@ -149,7 +151,7 @@ int bn_rshift_secret_shift(BIGNUM *r, const BIGNUM *a, unsigned n,
   return 1;
 }
 
-void bn_rshift1_words(BN_ULONG *r, const BN_ULONG *a, size_t num) {
+void bssl::bn_rshift1_words(BN_ULONG *r, const BN_ULONG *a, size_t num) {
   if (num == 0) {
     return;
   }
@@ -210,7 +212,7 @@ int BN_clear_bit(BIGNUM *a, int n) {
   return 1;
 }
 
-int bn_is_bit_set_words(const BN_ULONG *a, size_t num, size_t bit) {
+int bssl::bn_is_bit_set_words(const BN_ULONG *a, size_t num, size_t bit) {
   size_t i = bit / BN_BITS2;
   size_t j = bit % BN_BITS2;
   if (i >= num) {
@@ -261,7 +263,7 @@ static int bn_count_low_zero_bits_word(BN_ULONG l) {
   int bits = 0;
 
 #if BN_BITS2 > 32
-  // Check if the lower half of |x| are all zero.
+  // Check if the lower half of `x` are all zero.
   mask = constant_time_is_zero_w(l << (BN_BITS2 - 32));
   // If the lower half is all zeros, it is included in the bit count and we
   // count the upper half. Otherwise, we count the lower half.
@@ -309,7 +311,7 @@ int BN_count_low_zero_bits(const BIGNUM *bn) {
     ret |= first_nonzero & (i * BN_BITS2 + bits);
   }
 
-  // If got to the end of |bn| and saw no non-zero words, |bn| is zero. |ret|
+  // If got to the end of `bn` and saw no non-zero words, `bn` is zero. `ret`
   // will then remain zero.
   return ret;
 }

@@ -27,7 +27,9 @@
 #include <sys/types.h>
 
 #if !defined(OPENSSL_WINDOWS)
+#include <errno.h>
 #include <netdb.h>
+#include <poll.h>
 #include <unistd.h>
 #else
 #include <winsock2.h>
@@ -37,6 +39,8 @@
 #include "internal.h"
 #include "../internal.h"
 
+
+BSSL_NAMESPACE_BEGIN
 
 int bio_ip_and_port_to_socket_and_addr(int *out_sock,
                                        struct sockaddr_storage *out_addr,
@@ -107,16 +111,58 @@ int bio_socket_nbio(int sock, int on) {
 #endif
 }
 
-void bio_clear_socket_error(void) {}
+void bio_clear_socket_error() {}
 
-int bio_sock_error(int sock) {
+int bio_socket_finish_connect(int sock) {
+  // A blocked connect signals whether it is ready based on whether it is
+  // writable. (SO_ERROR is not filled in before it is writable.)
+#if defined(OPENSSL_WINDOWS)
+  fd_set write_set, except_set;
+  FD_ZERO(&write_set);
+  FD_SET(static_cast<SOCKET>(sock), &write_set);
+  FD_ZERO(&except_set);
+  FD_SET(static_cast<SOCKET>(sock), &except_set);
+  timeval timeout = {0, 0};
+  if (select(0 /* unused on Windows */, /*readfds=*/nullptr, &write_set,
+             &except_set, &timeout) == SOCKET_ERROR) {
+    return 0;
+  }
+  if (!FD_ISSET(sock, &write_set) && !FD_ISSET(sock, &except_set)) {
+    // The connect has not completed. Set the error that |connect| would return.
+    WSASetLastError(WSAEWOULDBLOCK);
+    return 0;
+  }
+#else
+  pollfd pfd;
+  pfd.fd = sock;
+  // poll implicitly listens for POLLERR and POLLHUP.
+  pfd.events = POLLOUT;
+  pfd.revents = 0;
+  if (poll(&pfd, 1, /*timeout=*/0) < 0) {
+    return 0;
+  }
+  if (pfd.revents == 0) {
+    // The connect has not completed. Set the error that |connect| would return.
+    errno = EINPROGRESS;
+    return 0;
+  }
+#endif
+
+  // Check if the connection succeeded.
   int error;
   socklen_t error_size = sizeof(error);
-
   if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char *)&error, &error_size) < 0) {
-    return 1;
+    return 0;
   }
-  return error;
+  if (error != 0) {
+#if defined(OPENSSL_WINDOWS)
+    WSASetLastError(error);
+#else
+    errno = error;
+#endif
+    return 0;
+  }
+  return 1;
 }
 
 int bio_socket_should_retry(int return_value) {
@@ -127,5 +173,7 @@ int bio_socket_should_retry(int return_value) {
   return bio_errno_should_retry(return_value);
 #endif
 }
+
+BSSL_NAMESPACE_END
 
 #endif  // OPENSSL_NO_SOCK

@@ -12,13 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <openssl/trust_token.h>
+
+#include <iterator>
+
 #include <openssl/bytestring.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/mem.h>
 #include <openssl/sha2.h>
-#include <openssl/trust_token.h>
 
+#include "../mem_internal.h"
 #include "internal.h"
 
 
@@ -27,7 +31,9 @@
 // protocol for issuing and redeeming tokens built on top of the PMBTokens
 // construction.
 
-const TRUST_TOKEN_METHOD *TRUST_TOKEN_experiment_v1(void) {
+using namespace bssl;
+
+const TRUST_TOKEN_METHOD *TRUST_TOKEN_experiment_v1() {
   static const TRUST_TOKEN_METHOD kMethod = {
       pmbtoken_exp1_generate_key,
       pmbtoken_exp1_derive_key_from_secret,
@@ -44,7 +50,7 @@ const TRUST_TOKEN_METHOD *TRUST_TOKEN_experiment_v1(void) {
   return &kMethod;
 }
 
-const TRUST_TOKEN_METHOD *TRUST_TOKEN_experiment_v2_voprf(void) {
+const TRUST_TOKEN_METHOD *TRUST_TOKEN_experiment_v2_voprf() {
   static const TRUST_TOKEN_METHOD kMethod = {
       voprf_exp2_generate_key,
       voprf_exp2_derive_key_from_secret,
@@ -61,7 +67,7 @@ const TRUST_TOKEN_METHOD *TRUST_TOKEN_experiment_v2_voprf(void) {
   return &kMethod;
 }
 
-const TRUST_TOKEN_METHOD *TRUST_TOKEN_experiment_v2_pmb(void) {
+const TRUST_TOKEN_METHOD *TRUST_TOKEN_experiment_v2_pmb() {
   static const TRUST_TOKEN_METHOD kMethod = {
       pmbtoken_exp2_generate_key,
       pmbtoken_exp2_derive_key_from_secret,
@@ -78,7 +84,7 @@ const TRUST_TOKEN_METHOD *TRUST_TOKEN_experiment_v2_pmb(void) {
   return &kMethod;
 }
 
-const TRUST_TOKEN_METHOD *TRUST_TOKEN_pst_v1_voprf(void) {
+const TRUST_TOKEN_METHOD *TRUST_TOKEN_pst_v1_voprf() {
   static const TRUST_TOKEN_METHOD kMethod = {
       voprf_pst1_generate_key,
       voprf_pst1_derive_key_from_secret,
@@ -95,7 +101,7 @@ const TRUST_TOKEN_METHOD *TRUST_TOKEN_pst_v1_voprf(void) {
   return &kMethod;
 }
 
-const TRUST_TOKEN_METHOD *TRUST_TOKEN_pst_v1_pmb(void) {
+const TRUST_TOKEN_METHOD *TRUST_TOKEN_pst_v1_pmb() {
   static const TRUST_TOKEN_METHOD kMethod = {
       pmbtoken_pst1_generate_key,
       pmbtoken_pst1_derive_key_from_secret,
@@ -113,31 +119,30 @@ const TRUST_TOKEN_METHOD *TRUST_TOKEN_pst_v1_pmb(void) {
 }
 
 
-void TRUST_TOKEN_PRETOKEN_free(TRUST_TOKEN_PRETOKEN *pretoken) {
-  OPENSSL_free(pretoken);
+void bssl::TRUST_TOKEN_PRETOKEN_free(TRUST_TOKEN_PRETOKEN *pretoken) {
+  Delete(pretoken);
 }
 
 TRUST_TOKEN *TRUST_TOKEN_new(const uint8_t *data, size_t len) {
-  TRUST_TOKEN *ret =
-      reinterpret_cast<TRUST_TOKEN *>(OPENSSL_zalloc(sizeof(TRUST_TOKEN)));
-  if (ret == NULL) {
-    return NULL;
+  TRUST_TOKEN *ret = New<TRUST_TOKEN>();
+  if (ret == nullptr) {
+    return nullptr;
   }
   ret->data = reinterpret_cast<uint8_t *>(OPENSSL_memdup(data, len));
-  if (len != 0 && ret->data == NULL) {
-    OPENSSL_free(ret);
-    return NULL;
+  if (len != 0 && ret->data == nullptr) {
+    Delete(ret);
+    return nullptr;
   }
   ret->len = len;
   return ret;
 }
 
 void TRUST_TOKEN_free(TRUST_TOKEN *token) {
-  if (token == NULL) {
+  if (token == nullptr) {
     return;
   }
   OPENSSL_free(token->data);
-  OPENSSL_free(token);
+  Delete(token);
 }
 
 int TRUST_TOKEN_generate_key(const TRUST_TOKEN_METHOD *method,
@@ -159,8 +164,8 @@ int TRUST_TOKEN_generate_key(const TRUST_TOKEN_METHOD *method,
     return 0;
   }
 
-  if (!CBB_finish(&priv_cbb, NULL, out_priv_key_len) ||
-      !CBB_finish(&pub_cbb, NULL, out_pub_key_len)) {
+  if (!CBB_finish(&priv_cbb, nullptr, out_priv_key_len) ||
+      !CBB_finish(&pub_cbb, nullptr, out_pub_key_len)) {
     OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_BUFFER_TOO_SMALL);
     return 0;
   }
@@ -188,8 +193,8 @@ int TRUST_TOKEN_derive_key_from_secret(
     return 0;
   }
 
-  if (!CBB_finish(&priv_cbb, NULL, out_priv_key_len) ||
-      !CBB_finish(&pub_cbb, NULL, out_pub_key_len)) {
+  if (!CBB_finish(&priv_cbb, nullptr, out_priv_key_len) ||
+      !CBB_finish(&pub_cbb, nullptr, out_pub_key_len)) {
     OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_BUFFER_TOO_SMALL);
     return 0;
   }
@@ -202,13 +207,12 @@ TRUST_TOKEN_CLIENT *TRUST_TOKEN_CLIENT_new(const TRUST_TOKEN_METHOD *method,
   if (max_batchsize > 0xffff) {
     // The protocol supports only two-byte token counts.
     OPENSSL_PUT_ERROR(TRUST_TOKEN, ERR_R_OVERFLOW);
-    return NULL;
+    return nullptr;
   }
 
-  TRUST_TOKEN_CLIENT *ret = reinterpret_cast<TRUST_TOKEN_CLIENT *>(
-      OPENSSL_zalloc(sizeof(TRUST_TOKEN_CLIENT)));
-  if (ret == NULL) {
-    return NULL;
+  TRUST_TOKEN_CLIENT *ret = New<TRUST_TOKEN_CLIENT>();
+  if (ret == nullptr) {
+    return nullptr;
   }
   ret->method = method;
   ret->max_batchsize = (uint16_t)max_batchsize;
@@ -216,17 +220,44 @@ TRUST_TOKEN_CLIENT *TRUST_TOKEN_CLIENT_new(const TRUST_TOKEN_METHOD *method,
 }
 
 void TRUST_TOKEN_CLIENT_free(TRUST_TOKEN_CLIENT *ctx) {
-  if (ctx == NULL) {
+  if (ctx == nullptr) {
     return;
   }
   EVP_PKEY_free(ctx->srr_key);
   sk_TRUST_TOKEN_PRETOKEN_pop_free(ctx->pretokens, TRUST_TOKEN_PRETOKEN_free);
-  OPENSSL_free(ctx);
+  Delete(ctx);
+}
+
+static TRUST_TOKEN_PRETOKEN *dup_pretoken(const TRUST_TOKEN_PRETOKEN *in) {
+  return static_cast<TRUST_TOKEN_PRETOKEN *>(
+      OPENSSL_memdup(in, sizeof(TRUST_TOKEN_PRETOKEN)));
+}
+
+TRUST_TOKEN_CLIENT *TRUST_TOKEN_CLIENT_dup_for_testing(
+    const TRUST_TOKEN_CLIENT *ctx) {
+  bssl::UniquePtr<TRUST_TOKEN_CLIENT> ret(
+      TRUST_TOKEN_CLIENT_new(ctx->method, ctx->max_batchsize));
+  if (ret == nullptr) {
+    return nullptr;
+  }
+  for (size_t i = 0; i < std::size(ret->keys); i++) {
+    ret->keys[i] = ctx->keys[i];
+  }
+  ret->num_keys = ctx->num_keys;
+  if (ctx->pretokens != nullptr) {
+    ret->pretokens = sk_TRUST_TOKEN_PRETOKEN_deep_copy(
+        ctx->pretokens, dup_pretoken, TRUST_TOKEN_PRETOKEN_free);
+    if (ret->pretokens == nullptr) {
+      return nullptr;
+    }
+  }
+  ret->srr_key = bssl::UpRef(ctx->srr_key).release();
+  return ret.release();
 }
 
 int TRUST_TOKEN_CLIENT_add_key(TRUST_TOKEN_CLIENT *ctx, size_t *out_key_index,
                                const uint8_t *key, size_t key_len) {
-  if (ctx->num_keys == OPENSSL_ARRAY_SIZE(ctx->keys) ||
+  if (ctx->num_keys == std::size(ctx->keys) ||
       ctx->num_keys >= ctx->method->max_keys) {
     OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_TOO_MANY_KEYS);
     return 0;
@@ -267,14 +298,14 @@ static int trust_token_client_begin_issuance_impl(
 
   int ret = 0;
   CBB request;
-  STACK_OF(TRUST_TOKEN_PRETOKEN) *pretokens = NULL;
+  STACK_OF(TRUST_TOKEN_PRETOKEN) *pretokens = nullptr;
   if (!CBB_init(&request, 0) || !CBB_add_u16(&request, count)) {
     goto err;
   }
 
   pretokens =
       ctx->method->blind(&request, count, include_message, msg, msg_len);
-  if (pretokens == NULL) {
+  if (pretokens == nullptr) {
     goto err;
   }
 
@@ -284,7 +315,7 @@ static int trust_token_client_begin_issuance_impl(
 
   sk_TRUST_TOKEN_PRETOKEN_pop_free(ctx->pretokens, TRUST_TOKEN_PRETOKEN_free);
   ctx->pretokens = pretokens;
-  pretokens = NULL;
+  pretokens = nullptr;
   ret = 1;
 
 err:
@@ -296,7 +327,8 @@ err:
 int TRUST_TOKEN_CLIENT_begin_issuance(TRUST_TOKEN_CLIENT *ctx, uint8_t **out,
                                       size_t *out_len, size_t count) {
   return trust_token_client_begin_issuance_impl(ctx, out, out_len, count,
-                                                /*include_message=*/0, NULL, 0);
+                                                /*include_message=*/0, nullptr,
+                                                0);
 }
 
 int TRUST_TOKEN_CLIENT_begin_issuance_over_message(
@@ -316,11 +348,11 @@ STACK_OF(TRUST_TOKEN) *TRUST_TOKEN_CLIENT_finish_issuance(
   uint32_t key_id;
   if (!CBS_get_u16(&in, &count) || !CBS_get_u32(&in, &key_id)) {
     OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_DECODE_FAILURE);
-    return NULL;
+    return nullptr;
   }
 
   size_t key_index = 0;
-  const struct trust_token_client_key_st *key = NULL;
+  const struct trust_token_client_key_st *key = nullptr;
   for (size_t i = 0; i < ctx->num_keys; i++) {
     if (ctx->keys[i].id == key_id) {
       key_index = i;
@@ -329,30 +361,30 @@ STACK_OF(TRUST_TOKEN) *TRUST_TOKEN_CLIENT_finish_issuance(
     }
   }
 
-  if (key == NULL) {
+  if (key == nullptr) {
     OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_INVALID_KEY_ID);
-    return NULL;
+    return nullptr;
   }
 
   if (count > sk_TRUST_TOKEN_PRETOKEN_num(ctx->pretokens)) {
     OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_DECODE_FAILURE);
-    return NULL;
+    return nullptr;
   }
 
   STACK_OF(TRUST_TOKEN) *tokens =
       ctx->method->unblind(&key->key, ctx->pretokens, &in, count, key_id);
-  if (tokens == NULL) {
-    return NULL;
+  if (tokens == nullptr) {
+    return nullptr;
   }
 
   if (CBS_len(&in) != 0) {
     OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_DECODE_FAILURE);
     sk_TRUST_TOKEN_pop_free(tokens, TRUST_TOKEN_free);
-    return NULL;
+    return nullptr;
   }
 
   sk_TRUST_TOKEN_PRETOKEN_pop_free(ctx->pretokens, TRUST_TOKEN_PRETOKEN_free);
-  ctx->pretokens = NULL;
+  ctx->pretokens = nullptr;
 
   *out_key_index = key_index;
   return tokens;
@@ -389,7 +421,7 @@ int TRUST_TOKEN_CLIENT_finish_redemption(TRUST_TOKEN_CLIENT *ctx,
       return 0;
     }
 
-    *out_sig = NULL;
+    *out_sig = nullptr;
     *out_sig_len = 0;
     return 1;
   }
@@ -400,16 +432,17 @@ int TRUST_TOKEN_CLIENT_finish_redemption(TRUST_TOKEN_CLIENT *ctx,
     return 0;
   }
 
-  if (ctx->srr_key == NULL) {
+  if (ctx->srr_key == nullptr) {
     OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_NO_SRR_KEY_CONFIGURED);
     return 0;
   }
 
   EVP_MD_CTX md_ctx;
   EVP_MD_CTX_init(&md_ctx);
-  int sig_ok = EVP_DigestVerifyInit(&md_ctx, NULL, NULL, NULL, ctx->srr_key) &&
-               EVP_DigestVerify(&md_ctx, CBS_data(&sig), CBS_len(&sig),
-                                CBS_data(&srr), CBS_len(&srr));
+  int sig_ok =
+      EVP_DigestVerifyInit(&md_ctx, nullptr, nullptr, nullptr, ctx->srr_key) &&
+      EVP_DigestVerify(&md_ctx, CBS_data(&sig), CBS_len(&sig), CBS_data(&srr),
+                       CBS_len(&srr));
   EVP_MD_CTX_cleanup(&md_ctx);
 
   if (!sig_ok) {
@@ -417,7 +450,7 @@ int TRUST_TOKEN_CLIENT_finish_redemption(TRUST_TOKEN_CLIENT *ctx,
     return 0;
   }
 
-  uint8_t *srr_buf = NULL, *sig_buf = NULL;
+  uint8_t *srr_buf = nullptr, *sig_buf = nullptr;
   size_t srr_len, sig_len;
   if (!CBS_stow(&srr, &srr_buf, &srr_len) ||
       !CBS_stow(&sig, &sig_buf, &sig_len)) {
@@ -438,13 +471,12 @@ TRUST_TOKEN_ISSUER *TRUST_TOKEN_ISSUER_new(const TRUST_TOKEN_METHOD *method,
   if (max_batchsize > 0xffff) {
     // The protocol supports only two-byte token counts.
     OPENSSL_PUT_ERROR(TRUST_TOKEN, ERR_R_OVERFLOW);
-    return NULL;
+    return nullptr;
   }
 
-  TRUST_TOKEN_ISSUER *ret = reinterpret_cast<TRUST_TOKEN_ISSUER *>(
-      OPENSSL_zalloc(sizeof(TRUST_TOKEN_ISSUER)));
-  if (ret == NULL) {
-    return NULL;
+  TRUST_TOKEN_ISSUER *ret = New<TRUST_TOKEN_ISSUER>();
+  if (ret == nullptr) {
+    return nullptr;
   }
   ret->method = method;
   ret->max_batchsize = (uint16_t)max_batchsize;
@@ -452,17 +484,16 @@ TRUST_TOKEN_ISSUER *TRUST_TOKEN_ISSUER_new(const TRUST_TOKEN_METHOD *method,
 }
 
 void TRUST_TOKEN_ISSUER_free(TRUST_TOKEN_ISSUER *ctx) {
-  if (ctx == NULL) {
+  if (ctx == nullptr) {
     return;
   }
   EVP_PKEY_free(ctx->srr_key);
-  OPENSSL_free(ctx->metadata_key);
-  OPENSSL_free(ctx);
+  Delete(ctx);
 }
 
 int TRUST_TOKEN_ISSUER_add_key(TRUST_TOKEN_ISSUER *ctx, const uint8_t *key,
                                size_t key_len) {
-  if (ctx->num_keys == OPENSSL_ARRAY_SIZE(ctx->keys) ||
+  if (ctx->num_keys == std::size(ctx->keys) ||
       ctx->num_keys >= ctx->method->max_keys) {
     OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_TOO_MANY_KEYS);
     return 0;
@@ -491,29 +522,14 @@ int TRUST_TOKEN_ISSUER_set_srr_key(TRUST_TOKEN_ISSUER *ctx, EVP_PKEY *key) {
   return 1;
 }
 
-int TRUST_TOKEN_ISSUER_set_metadata_key(TRUST_TOKEN_ISSUER *ctx,
-                                        const uint8_t *key, size_t len) {
-  if (len < 32) {
-    OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_INVALID_METADATA_KEY);
-  }
-  OPENSSL_free(ctx->metadata_key);
-  ctx->metadata_key_len = 0;
-  ctx->metadata_key = reinterpret_cast<uint8_t *>(OPENSSL_memdup(key, len));
-  if (ctx->metadata_key == NULL) {
-    return 0;
-  }
-  ctx->metadata_key_len = len;
-  return 1;
-}
-
-static const struct trust_token_issuer_key_st *trust_token_issuer_get_key(
+static const struct bssl::trust_token_issuer_key_st *trust_token_issuer_get_key(
     const TRUST_TOKEN_ISSUER *ctx, uint32_t key_id) {
   for (size_t i = 0; i < ctx->num_keys; i++) {
     if (ctx->keys[i].id == key_id) {
       return &ctx->keys[i];
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 int TRUST_TOKEN_ISSUER_issue(const TRUST_TOKEN_ISSUER *ctx, uint8_t **out,
@@ -527,7 +543,7 @@ int TRUST_TOKEN_ISSUER_issue(const TRUST_TOKEN_ISSUER *ctx, uint8_t **out,
 
   const struct trust_token_issuer_key_st *key =
       trust_token_issuer_get_key(ctx, public_metadata);
-  if (key == NULL || private_metadata > 1 ||
+  if (key == nullptr || private_metadata > 1 ||
       (!ctx->method->has_private_metadata && private_metadata != 0)) {
     OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_INVALID_METADATA);
     return 0;
@@ -599,7 +615,7 @@ static int trust_token_issuer_redeem_impl(
   const struct trust_token_issuer_key_st *key =
       trust_token_issuer_get_key(ctx, public_metadata);
   uint8_t nonce[TRUST_TOKEN_NONCE_SIZE];
-  if (key == NULL ||
+  if (key == nullptr ||
       !ctx->method->read(&key->key, nonce, &private_metadata,
                          CBS_data(&token_cbs), CBS_len(&token_cbs),
                          include_message, msg, msg_len)) {
@@ -615,7 +631,7 @@ static int trust_token_issuer_redeem_impl(
     return 0;
   }
 
-  uint8_t *client_data_buf = NULL;
+  uint8_t *client_data_buf = nullptr;
   size_t client_data_len = 0;
   TRUST_TOKEN *token;
   if (!CBS_stow(&client_data, &client_data_buf, &client_data_len)) {
@@ -623,7 +639,7 @@ static int trust_token_issuer_redeem_impl(
   }
 
   token = TRUST_TOKEN_new(nonce, TRUST_TOKEN_NONCE_SIZE);
-  if (token == NULL) {
+  if (token == nullptr) {
     goto err;
   }
   *out_public = public_metadata;
@@ -648,7 +664,7 @@ int TRUST_TOKEN_ISSUER_redeem(const TRUST_TOKEN_ISSUER *ctx,
                               const uint8_t *request, size_t request_len) {
   return trust_token_issuer_redeem_impl(ctx, out_public, out_private, out_token,
                                         out_client_data, out_client_data_len,
-                                        request, request_len, 0, NULL, 0);
+                                        request, request_len, 0, nullptr, 0);
 }
 
 int TRUST_TOKEN_ISSUER_redeem_over_message(

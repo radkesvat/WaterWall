@@ -31,20 +31,9 @@ namespace {
 std::shared_ptr<const bssl::ParsedCertificate> ParseCertificateFromDer(
     bssl::Span<const uint8_t>cert, std::string *out_diagnostic) {
   bssl::ParseCertificateOptions default_options{};
-  // We follow Chromium in setting |allow_invalid_serial_numbers| in order to
-  // not choke on 21-byte serial numbers, which are common.  davidben explains
-  // why:
-  //
-  // The reason for the discrepancy is that unsigned numbers with the high bit
-  // otherwise set get an extra 0 byte in front to keep them positive. So if you
-  // do:
-  //    var num [20]byte
-  //    fillWithRandom(num[:])
-  //    serialNumber := new(big.Int).SetBytes(num[:])
-  //    encodeASN1Integer(serialNumber)
-  //
-  // Then half of your serial numbers will be encoded with 21 bytes. (And
-  // 1/512th will have 19 bytes instead of 20.)
+  // TODO(crbug.com/533048005): Remove this option. It now only controls serials
+  // that aren't even valid integers. Historically, people needed to set it to
+  // tolerate length over 20, but this is now always enabled.
   default_options.allow_invalid_serial_numbers = true;
 
   bssl::UniquePtr<CRYPTO_BUFFER> buffer(

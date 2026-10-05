@@ -16,7 +16,11 @@
 
 #include <assert.h>
 
+#include <iterator>
+
 #include "../internal.h"
+
+using namespace bssl;
 
 // https://tools.ietf.org/html/rfc7693#section-2.6
 static const uint64_t kIV[8] = {
@@ -99,7 +103,7 @@ static void blake2b_transform(BLAKE2B_CTX *b2b,
                 blake2b_load(block, s[15]));
   }
 
-  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(b2b->h); i++) {
+  for (size_t i = 0; i < std::size(b2b->h); i++) {
     b2b->h[i] ^= v[i];
     b2b->h[i] ^= v[i + 8];
   }
@@ -135,7 +139,7 @@ void BLAKE2B256_Update(BLAKE2B_CTX *b2b, const void *in_data, size_t len) {
     return;
   }
 
-  // More input remains therefore we must have filled |b2b->block|.
+  // More input remains therefore we must have filled `b2b->block`.
   assert(b2b->block_used == BLAKE2B_CBLOCK);
   blake2b_transform(b2b, b2b->block, BLAKE2B_CBLOCK,
                     /*is_final_block=*/0);

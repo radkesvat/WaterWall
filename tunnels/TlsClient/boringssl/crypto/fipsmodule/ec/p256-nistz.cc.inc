@@ -37,6 +37,9 @@
 #include "internal.h"
 #include "p256-nistz.h"
 
+
+using namespace bssl;
+
 #if !defined(OPENSSL_NO_ASM) &&                              \
     (defined(OPENSSL_X86_64) || defined(OPENSSL_AARCH64)) && \
     !defined(OPENSSL_SMALL)
@@ -54,7 +57,7 @@ static const BN_ULONG ONE_MONT[P256_LIMBS] = {
 // Precomputed tables for the default generator
 #include "p256-nistz-table.h"
 
-// Recode window to a signed digit, see |ec_GFp_nistp_recode_scalar_bits| in
+// Recode window to a signed digit, see `ec_GFp_nistp_recode_scalar_bits` in
 // util.c for details
 static crypto_word_t booth_recode_w5(crypto_word_t in) {
   crypto_word_t s, d;
@@ -78,8 +81,8 @@ static crypto_word_t booth_recode_w7(crypto_word_t in) {
   return (d << 1) + (s & 1);
 }
 
-// copy_conditional copies |src| to |dst| if |move| is one and leaves it as-is
-// if |move| is zero.
+// copy_conditional copies `src` to `dst` if `move` is one and leaves it as-is
+// if `move` is zero.
 //
 // WARNING: this breaks the usual convention of constant-time functions
 // returning masks.
@@ -212,7 +215,7 @@ static void ecp_nistz256_point_add_affine(P256_POINT *r, const P256_POINT *a,
 }
 #endif  // OPENSSL_X86_64
 
-// ecp_nistz256_from_mont sets |res| to |in|, converted from Montgomery domain
+// ecp_nistz256_from_mont sets `res` to `in`, converted from Montgomery domain
 // by multiplying with 1.
 static void ecp_nistz256_from_mont(BN_ULONG res[P256_LIMBS],
                                    const BN_ULONG in[P256_LIMBS]) {
@@ -220,8 +223,8 @@ static void ecp_nistz256_from_mont(BN_ULONG res[P256_LIMBS],
   ecp_nistz256_mul_mont(res, in, ONE);
 }
 
-// ecp_nistz256_mod_inverse_sqr_mont sets |r| to (|in| * 2^-256)^-2 * 2^256 mod
-// p. That is, |r| is the modular inverse square of |in| for input and output in
+// ecp_nistz256_mod_inverse_sqr_mont sets `r` to (`in` * 2^-256)^-2 * 2^256 mod
+// p. That is, `r` is the modular inverse square of `in` for input and output in
 // the Montgomery domain.
 static void ecp_nistz256_mod_inverse_sqr_mont(BN_ULONG r[P256_LIMBS],
                                               const BN_ULONG in[P256_LIMBS]) {
@@ -293,15 +296,15 @@ static void ecp_nistz256_mod_inverse_sqr_mont(BN_ULONG r[P256_LIMBS],
 static void ecp_nistz256_windowed_mul(const EC_GROUP *group, P256_POINT *r,
                                       const EC_JACOBIAN *p,
                                       const EC_SCALAR *p_scalar) {
-  assert(p != NULL);
-  assert(p_scalar != NULL);
+  assert(p != nullptr);
+  assert(p_scalar != nullptr);
   assert(group->field.N.width == P256_LIMBS);
 
   static const size_t kWindowSize = 5;
   static const crypto_word_t kMask = (1 << (5 /* kWindowSize */ + 1)) - 1;
 
-  // A |P256_POINT| is (3 * 32) = 96 bytes, and the 64-byte alignment should
-  // add no more than 63 bytes of overhead. Thus, |table| should require
+  // A `P256_POINT` is (3 * 32) = 96 bytes, and the 64-byte alignment should
+  // add no more than 63 bytes of overhead. Thus, `table` should require
   // ~1599 ((96 * 16) + 63) bytes of stack space.
   alignas(64) P256_POINT table[16];
   uint8_t p_str[33];
@@ -431,9 +434,9 @@ static void ecp_nistz256_point_mul_base(const EC_GROUP *group, EC_JACOBIAN *r,
   ecp_nistz256_neg(p.Z, t.Y);
   copy_conditional(t.Y, p.Z, wvalue & 1);
 
-  // Convert |t| from affine to Jacobian coordinates. We set Z to zero if |t|
-  // is infinity and |ONE_MONT| otherwise. |t| was computed from the table, so
-  // it is infinity iff |wvalue >> 1| is zero.
+  // Convert `t` from affine to Jacobian coordinates. We set Z to zero if `t`
+  // is infinity and `ONE_MONT` otherwise. `t` was computed from the table, so
+  // it is infinity iff `wvalue >> 1` is zero.
   OPENSSL_memcpy(p.X, t.X, sizeof(p.X));
   OPENSSL_memcpy(p.Y, t.Y, sizeof(p.Y));
   OPENSSL_memset(p.Z, 0, sizeof(p.Z));
@@ -448,7 +451,7 @@ static void ecp_nistz256_point_mul_base(const EC_GROUP *group, EC_JACOBIAN *r,
     ecp_nistz256_neg(neg_Y, t.Y);
     copy_conditional(t.Y, neg_Y, wvalue & 1);
 
-    // Note |ecp_nistz256_point_add_affine| does not work if |p| and |t| are the
+    // Note `ecp_nistz256_point_add_affine` does not work if `p` and `t` are the
     // same non-infinity point.
     ecp_nistz256_point_add_affine(&p, &p, &t);
   }
@@ -464,7 +467,7 @@ static void ecp_nistz256_points_mul_public(const EC_GROUP *group,
                                            const EC_SCALAR *g_scalar,
                                            const EC_JACOBIAN *p_,
                                            const EC_SCALAR *p_scalar) {
-  assert(p_ != NULL && p_scalar != NULL && g_scalar != NULL);
+  assert(p_ != nullptr && p_scalar != nullptr && g_scalar != nullptr);
 
   alignas(32) P256_POINT p;
   uint8_t p_str[33];
@@ -475,9 +478,9 @@ static void ecp_nistz256_points_mul_public(const EC_GROUP *group,
   size_t index = 0;
   size_t wvalue = calc_first_wvalue(&index, p_str);
 
-  // Convert |p| from affine to Jacobian coordinates. We set Z to zero if |p|
-  // is infinity and |ONE_MONT| otherwise. |p| was computed from the table, so
-  // it is infinity iff |wvalue >> 1| is zero.
+  // Convert `p` from affine to Jacobian coordinates. We set Z to zero if `p`
+  // is infinity and `ONE_MONT` otherwise. `p` was computed from the table, so
+  // it is infinity iff `wvalue >> 1` is zero.
   if ((wvalue >> 1) != 0) {
     OPENSSL_memcpy(p.X, &ecp_nistz256_precomputed[0][(wvalue >> 1) - 1].X,
                    sizeof(p.X));
@@ -507,9 +510,9 @@ static void ecp_nistz256_points_mul_public(const EC_GROUP *group,
       ecp_nistz256_neg(t.Y, t.Y);
     }
 
-    // Note |ecp_nistz256_point_add_affine| does not work if |p| and |t| are
+    // Note `ecp_nistz256_point_add_affine` does not work if `p` and `t` are
     // the same non-infinity point, so it is important that we compute the
-    // |g_scalar| term before the |p_scalar| term.
+    // `g_scalar` term before the `p_scalar` term.
     ecp_nistz256_point_add_affine(&p, &p, &t);
   }
 
@@ -536,11 +539,11 @@ static int ecp_nistz256_get_affine(const EC_GROUP *group,
   assert(group->field.N.width == P256_LIMBS);
   ecp_nistz256_mod_inverse_sqr_mont(z_inv2, point->Z.words);
 
-  if (x != NULL) {
+  if (x != nullptr) {
     ecp_nistz256_mul_mont(x->words, z_inv2, point->X.words);
   }
 
-  if (y != NULL) {
+  if (y != nullptr) {
     ecp_nistz256_sqr_mont(z_inv2, z_inv2);                            // z^-4
     ecp_nistz256_mul_mont(y->words, point->Y.words, point->Z.words);  // y * z
     ecp_nistz256_mul_mont(y->words, y->words, z_inv2);  // y * z^-3
@@ -578,7 +581,7 @@ static void ecp_nistz256_dbl(const EC_GROUP *group, EC_JACOBIAN *r,
 
 static void ecp_nistz256_inv0_mod_ord(const EC_GROUP *group, EC_SCALAR *out,
                                       const EC_SCALAR *in) {
-  // table[i] stores a power of |in| corresponding to the matching enum value.
+  // table[i] stores a power of `in` corresponding to the matching enum value.
   enum {
     // The following indices specify the power in binary.
     i_1 = 0,
@@ -639,7 +642,7 @@ static void ecp_nistz256_inv0_mod_ord(const EC_GROUP *group, EC_SCALAR *out,
   ecp_nistz256_ord_sqr_mont(table[i_x32], table[i_x16], 16);
   ecp_nistz256_ord_mul_mont(table[i_x32], table[i_x32], table[i_x16]);
 
-  // Compute |in| raised to the order-2.
+  // Compute `in` raised to the order-2.
   ecp_nistz256_ord_sqr_mont(out->words, table[i_x32], 64);
   ecp_nistz256_ord_mul_mont(out->words, out->words, table[i_x32]);
   static const struct {
@@ -651,9 +654,9 @@ static void ecp_nistz256_inv0_mod_ord(const EC_GROUP *group, EC_SCALAR *out,
                   {4, i_111},     {5, i_111},    {5, i_101},    {3, i_11},
                   {10, i_101111}, {2, i_11},     {5, i_11},     {5, i_11},
                   {3, i_1},       {7, i_10101},  {6, i_1111}};
-  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(kChain); i++) {
-    ecp_nistz256_ord_sqr_mont(out->words, out->words, kChain[i].p);
-    ecp_nistz256_ord_mul_mont(out->words, out->words, table[kChain[i].i]);
+  for (const auto &step : kChain) {
+    ecp_nistz256_ord_sqr_mont(out->words, out->words, step.p);
+    ecp_nistz256_ord_mul_mont(out->words, out->words, table[step.i]);
   }
 }
 
@@ -701,7 +704,7 @@ static int ecp_nistz256_cmp_x_coordinate(const EC_GROUP *group,
 
   // During signing the x coefficient is reduced modulo the group order.
   // Therefore there is a small possibility, less than 1/2^128, that group_order
-  // < p.x < P. in that case we need not only to compare against |r| but also to
+  // < p.x < P. in that case we need not only to compare against `r` but also to
   // compare against r+group_order.
   BN_ULONG carry = bn_add_words(r_Z2, r->words, group->order.N.d, P256_LIMBS);
   if (carry == 0 && bn_less_than_words(r_Z2, group->field.N.d, P256_LIMBS)) {
@@ -715,6 +718,8 @@ static int ecp_nistz256_cmp_x_coordinate(const EC_GROUP *group,
   return 0;
 }
 
+BSSL_NAMESPACE_BEGIN
+
 DEFINE_METHOD_FUNCTION(EC_METHOD, EC_GFp_nistz256_method) {
   out->point_get_affine_coordinates = ecp_nistz256_get_affine;
   out->add = ecp_nistz256_add;
@@ -722,19 +727,13 @@ DEFINE_METHOD_FUNCTION(EC_METHOD, EC_GFp_nistz256_method) {
   out->mul = ecp_nistz256_point_mul;
   out->mul_base = ecp_nistz256_point_mul_base;
   out->mul_public = ecp_nistz256_points_mul_public;
-  out->felem_mul = ec_GFp_mont_felem_mul;
-  out->felem_sqr = ec_GFp_mont_felem_sqr;
-  out->felem_to_bytes = ec_GFp_mont_felem_to_bytes;
-  out->felem_from_bytes = ec_GFp_mont_felem_from_bytes;
-  out->felem_reduce = ec_GFp_mont_felem_reduce;
-  // TODO(davidben): This should use the specialized field arithmetic
-  // implementation, rather than the generic one.
-  out->felem_exp = ec_GFp_mont_felem_exp;
   out->scalar_inv0_montgomery = ecp_nistz256_inv0_mod_ord;
   out->scalar_to_montgomery_inv_vartime =
       ecp_nistz256_scalar_to_montgomery_inv_vartime;
   out->cmp_x_coordinate = ecp_nistz256_cmp_x_coordinate;
 }
+
+BSSL_NAMESPACE_END
 
 #endif /* !defined(OPENSSL_NO_ASM) &&                              \
           (defined(OPENSSL_X86_64) || defined(OPENSSL_AARCH64)) && \

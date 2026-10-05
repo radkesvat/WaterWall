@@ -45,7 +45,7 @@ std::string GetFilePath(const std::string &file_name) {
   return std::string("testdata/parse_certificate_unittest/") + file_name;
 }
 
-// Loads certificate data and expectations from the PEM file |file_name|.
+// Loads certificate data and expectations from the PEM file `file_name`.
 // Verifies that parsing the Certificate matches expectations:
 //   * If expected to fail, emits the expected errors
 //   * If expected to succeeds, the parsed fields match expectations
@@ -111,7 +111,7 @@ TEST(ParseCertificateTest, NotSequence) {
   RunCertificateTest("cert_not_sequence.pem");
 }
 
-// Tests that uncomsumed data is not allowed after the main SEQUENCE.
+// Tests that unconsumed data is not allowed after the main SEQUENCE.
 TEST(ParseCertificateTest, DataAfterSignature) {
   RunCertificateTest("cert_data_after_signature.pem");
 }
@@ -138,11 +138,11 @@ TEST(ParseCertificateTest, AlgorithmNotSequence) {
   RunCertificateTest("cert_algorithm_not_sequence.pem");
 }
 
-// Loads tbsCertificate data and expectations from the PEM file |file_name|.
+// Loads tbsCertificate data and expectations from the PEM file `file_name`.
 // Verifies that parsing the TBSCertificate succeeds, and each parsed field
 // matches the expectations.
 //
-// TODO(eroman): Get rid of the |expected_version| parameter -- this should be
+// TODO(eroman): Get rid of the `expected_version` parameter -- this should be
 // encoded in the test expectations file.
 void RunTbsCertificateTestGivenVersion(const std::string &file_name,
                                        CertificateVersion expected_version) {
@@ -276,7 +276,7 @@ TEST(ParseTbsCertificateTest, Version2IssuerUniqueId) {
                                     CertificateVersion::V2);
 }
 
-// A version 2 certificate with both a issuer and subject unique ID field.
+// A version 2 certificate with both an issuer and subject unique ID field.
 TEST(ParseTbsCertificateTest, Version2IssuerAndSubjectUniqueId) {
   RunTbsCertificateTestGivenVersion("tbs_v2_issuer_and_subject_unique_id.pem",
                                     CertificateVersion::V2);

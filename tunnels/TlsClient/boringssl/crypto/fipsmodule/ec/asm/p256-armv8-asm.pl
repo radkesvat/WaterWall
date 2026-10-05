@@ -48,7 +48,7 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 ( $xlate="${dir}../../../perlasm/arm-xlate.pl" and -f $xlate) or
 die "can't locate arm-xlate.pl";
 
-open OUT,"| \"$^X\" $xlate $flavour $output";
+open OUT, "|-", $^X, $xlate, $flavour, $output;
 *STDOUT=*OUT;
 
 {
@@ -61,6 +61,7 @@ my ($acc6,$acc7)=($ap,$bp);	# used in __ecp_nistz256_sqr_mont
 $code.=<<___;
 .section .rodata
 .align	5
+p256_constants:
 .Lpoly:
 .quad	0xffffffffffffffff,0x00000000ffffffff,0x0000000000000000,0xffffffff00000001
 .LRR:	// 2^512 mod P precomputed for NIST P256 polynomial

@@ -28,7 +28,7 @@
 static const struct {
   int nid;
   const char *name;
-  const EVP_CIPHER *(*func)(void);
+  const EVP_CIPHER *(*func)();
 } kCiphers[] = {
     {NID_aes_128_cbc, "aes-128-cbc", EVP_aes_128_cbc},
     {NID_aes_128_ctr, "aes-128-ctr", EVP_aes_128_ctr},
@@ -55,31 +55,31 @@ static const struct {
 };
 
 const EVP_CIPHER *EVP_get_cipherbynid(int nid) {
-  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(kCiphers); i++) {
-    if (kCiphers[i].nid == nid) {
-      return kCiphers[i].func();
+  for (const auto &cipher : kCiphers) {
+    if (cipher.nid == nid) {
+      return cipher.func();
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 const EVP_CIPHER *EVP_get_cipherbyname(const char *name) {
-  if (name == NULL) {
-    return NULL;
+  if (name == nullptr) {
+    return nullptr;
   }
 
   // This is not a name used by OpenSSL, but tcpdump registers it with
-  // |EVP_add_cipher_alias|. Our |EVP_add_cipher_alias| is a no-op, so we
+  // `EVP_add_cipher_alias`. Our `EVP_add_cipher_alias` is a no-op, so we
   // support the name here.
   if (OPENSSL_strcasecmp(name, "3des") == 0) {
     name = "des-ede3-cbc";
   }
 
-  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(kCiphers); i++) {
-    if (OPENSSL_strcasecmp(kCiphers[i].name, name) == 0) {
-      return kCiphers[i].func();
+  for (const auto &cipher : kCiphers) {
+    if (OPENSSL_strcasecmp(cipher.name, name) == 0) {
+      return cipher.func();
     }
   }
 
-  return NULL;
+  return nullptr;
 }

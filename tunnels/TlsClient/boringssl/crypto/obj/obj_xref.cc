@@ -47,16 +47,19 @@ static const nid_triple kTriples[] = {
     // digest "undef" indicates the caller should handle this explicitly.
     {NID_rsassaPss, NID_undef, NID_rsaEncryption},
     {NID_ED25519, NID_undef, NID_ED25519},
+    {NID_ML_DSA_44, NID_undef, NID_ML_DSA_44},
+    {NID_ML_DSA_65, NID_undef, NID_ML_DSA_65},
+    {NID_ML_DSA_87, NID_undef, NID_ML_DSA_87},
 };
 
 int OBJ_find_sigid_algs(int sign_nid, int *out_digest_nid, int *out_pkey_nid) {
-  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(kTriples); i++) {
-    if (kTriples[i].sign_nid == sign_nid) {
-      if (out_digest_nid != NULL) {
-        *out_digest_nid = kTriples[i].digest_nid;
+  for (const auto &triple : kTriples) {
+    if (triple.sign_nid == sign_nid) {
+      if (out_digest_nid != nullptr) {
+        *out_digest_nid = triple.digest_nid;
       }
-      if (out_pkey_nid != NULL) {
-        *out_pkey_nid = kTriples[i].pkey_nid;
+      if (out_pkey_nid != nullptr) {
+        *out_pkey_nid = triple.pkey_nid;
       }
       return 1;
     }
@@ -66,11 +69,11 @@ int OBJ_find_sigid_algs(int sign_nid, int *out_digest_nid, int *out_pkey_nid) {
 }
 
 int OBJ_find_sigid_by_algs(int *out_sign_nid, int digest_nid, int pkey_nid) {
-  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(kTriples); i++) {
-    if (kTriples[i].digest_nid == digest_nid &&
-        kTriples[i].pkey_nid == pkey_nid) {
-      if (out_sign_nid != NULL) {
-        *out_sign_nid = kTriples[i].sign_nid;
+  for (const auto &triple : kTriples) {
+    if (triple.digest_nid == digest_nid &&
+        triple.pkey_nid == pkey_nid) {
+      if (out_sign_nid != nullptr) {
+        *out_sign_nid = triple.sign_nid;
       }
       return 1;
     }

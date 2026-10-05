@@ -118,14 +118,13 @@ static const uint8_t fips_sig_bad_length[] = {
 
 // fips_sig_bad_r is fips_sig with a bad r value.
 static const uint8_t fips_sig_bad_r[] = {
-    0x30, 0x2d, 0x02, 0x15, 0x00, 0x8c, 0xac, 0x1a, 0xb6, 0x64, 0x10,
-    0x43, 0x5c, 0xb7, 0x18, 0x1f, 0x95, 0xb1, 0x6a, 0xb9, 0x7c, 0x92,
-    0xb3, 0x41, 0xc0, 0x02, 0x14, 0x41, 0xe2, 0x34, 0x5f, 0x1f, 0x56,
-    0xdf, 0x24, 0x58, 0xf4, 0x26, 0xd1, 0x55, 0xb4, 0xba, 0x2d, 0xb6,
-    0xdc, 0xd8, 0xc8,
+    0x30, 0x2d, 0x02, 0x15, 0x00, 0x8c, 0xac, 0x1a, 0xb6, 0x64, 0x10, 0x43,
+    0x5c, 0xb7, 0x18, 0x1f, 0x95, 0xb1, 0x6a, 0xb9, 0x7c, 0x92, 0xb3, 0x41,
+    0xc0, 0x02, 0x14, 0x41, 0xe2, 0x34, 0x5f, 0x1f, 0x56, 0xdf, 0x24, 0x58,
+    0xf4, 0x26, 0xd1, 0x55, 0xb4, 0xba, 0x2d, 0xb6, 0xdc, 0xd8, 0xc8,
 };
 
-static bssl::UniquePtr<DSA> GetFIPSDSAGroup(void) {
+static bssl::UniquePtr<DSA> GetFIPSDSAGroup() {
   bssl::UniquePtr<DSA> dsa(DSA_new());
   if (!dsa) {
     return nullptr;
@@ -136,14 +135,14 @@ static bssl::UniquePtr<DSA> GetFIPSDSAGroup(void) {
   if (!p || !q || !g || !DSA_set0_pqg(dsa.get(), p.get(), q.get(), g.get())) {
     return nullptr;
   }
-  // |DSA_set0_pqg| takes ownership.
+  // `DSA_set0_pqg` takes ownership.
   p.release();
   q.release();
   g.release();
   return dsa;
 }
 
-static bssl::UniquePtr<DSA> GetFIPSDSA(void) {
+static bssl::UniquePtr<DSA> GetFIPSDSA() {
   bssl::UniquePtr<DSA> dsa = GetFIPSDSAGroup();
   if (!dsa) {
     return nullptr;
@@ -154,7 +153,7 @@ static bssl::UniquePtr<DSA> GetFIPSDSA(void) {
       !DSA_set0_key(dsa.get(), pub_key.get(), priv_key.get())) {
     return nullptr;
   }
-  // |DSA_set0_key| takes ownership.
+  // `DSA_set0_key` takes ownership.
   pub_key.release();
   priv_key.release();
   return dsa;
@@ -198,6 +197,7 @@ TEST(DSATest, GenerateParamsTooLarge) {
       dsa.get(), 10001, /*seed=*/nullptr, /*seed_len=*/0,
       /*out_counter=*/nullptr, /*out_h=*/nullptr,
       /*cb=*/nullptr));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_INVALID_PARAMETERS}}));
 }
 
 TEST(DSATest, GenerateKeyTooLarge) {
@@ -209,10 +209,11 @@ TEST(DSATest, GenerateKeyTooLarge) {
   ASSERT_TRUE(BN_set_bit(large_p.get(), 0));
   ASSERT_TRUE(DSA_set0_pqg(dsa.get(), /*p=*/large_p.get(), /*q=*/nullptr,
                            /*g=*/nullptr));
-  large_p.release();  // |DSA_set0_pqg| takes ownership on success.
+  large_p.release();  // `DSA_set0_pqg` takes ownership on success.
 
   // Don't generate DSA keys if the group is too large.
   EXPECT_FALSE(DSA_generate_key(dsa.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_MODULUS_TOO_LARGE}}));
 }
 
 TEST(DSATest, Verify) {
@@ -224,13 +225,60 @@ TEST(DSATest, Verify) {
   EXPECT_EQ(-1,
             DSA_verify(0, fips_digest, sizeof(fips_digest), fips_sig_negative,
                        sizeof(fips_sig_negative), dsa.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_BN, BN_R_NEGATIVE_NUMBER}}));
   EXPECT_EQ(-1, DSA_verify(0, fips_digest, sizeof(fips_digest), fips_sig_extra,
                            sizeof(fips_sig_extra), dsa.get()));
+  EXPECT_EQ(0u, ERR_peek_error());
   EXPECT_EQ(-1,
             DSA_verify(0, fips_digest, sizeof(fips_digest), fips_sig_bad_length,
                        sizeof(fips_sig_bad_length), dsa.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_DECODE_ERROR}}));
   EXPECT_EQ(0, DSA_verify(0, fips_digest, sizeof(fips_digest), fips_sig_bad_r,
                           sizeof(fips_sig_bad_r), dsa.get()));
+}
+
+TEST(DSATest, CheckSignature) {
+  bssl::UniquePtr<DSA> dsa = GetFIPSDSA();
+  ASSERT_TRUE(dsa);
+
+  int valid;
+
+  // Valid signature
+  valid = 42;
+  EXPECT_EQ(1, DSA_check_signature(&valid, fips_digest, sizeof(fips_digest),
+                                   fips_sig, sizeof(fips_sig), dsa.get()));
+  EXPECT_EQ(1, valid);
+
+  // Bad r (invalid signature, not error)
+  valid = 42;
+  EXPECT_EQ(1, DSA_check_signature(&valid, fips_digest, sizeof(fips_digest),
+                                   fips_sig_bad_r, sizeof(fips_sig_bad_r),
+                                   dsa.get()));
+  EXPECT_EQ(0, valid);
+
+  // Negative signature (error)
+  valid = 42;
+  EXPECT_EQ(0, DSA_check_signature(&valid, fips_digest, sizeof(fips_digest),
+                                   fips_sig_negative, sizeof(fips_sig_negative),
+                                   dsa.get()));
+  EXPECT_EQ(0, valid);
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_BN, BN_R_NEGATIVE_NUMBER}}));
+
+  // Extra data (error)
+  valid = 42;
+  EXPECT_EQ(0, DSA_check_signature(&valid, fips_digest, sizeof(fips_digest),
+                                   fips_sig_extra, sizeof(fips_sig_extra),
+                                   dsa.get()));
+  EXPECT_EQ(0, valid);
+  EXPECT_EQ(0u, ERR_peek_error());
+
+  // Bad length (error)
+  valid = 42;
+  EXPECT_EQ(0, DSA_check_signature(&valid, fips_digest, sizeof(fips_digest),
+                                   fips_sig_bad_length,
+                                   sizeof(fips_sig_bad_length), dsa.get()));
+  EXPECT_EQ(0, valid);
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_DECODE_ERROR}}));
 }
 
 TEST(DSATest, InvalidGroup) {
@@ -256,11 +304,13 @@ TEST(DSATest, MissingParameters) {
   ASSERT_TRUE(dsa);
   EXPECT_EQ(-1, DSA_verify(0, fips_digest, sizeof(fips_digest), fips_sig,
                            sizeof(fips_sig), dsa.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_MISSING_PARAMETERS}}));
 
   std::vector<uint8_t> sig(DSA_size(dsa.get()));
   unsigned sig_len;
   EXPECT_FALSE(DSA_sign(0, fips_digest, sizeof(fips_digest), sig.data(),
                         &sig_len, dsa.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_MISSING_PARAMETERS}}));
 }
 
 // Verifying should cleanly fail when the public key is missing.
@@ -269,6 +319,7 @@ TEST(DSATest, MissingPublic) {
   ASSERT_TRUE(dsa);
   EXPECT_EQ(-1, DSA_verify(0, fips_digest, sizeof(fips_digest), fips_sig,
                            sizeof(fips_sig), dsa.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_MISSING_PARAMETERS}}));
 }
 
 // Signing should cleanly fail when the private key is missing.
@@ -280,6 +331,7 @@ TEST(DSATest, MissingPrivate) {
   unsigned sig_len;
   EXPECT_FALSE(DSA_sign(0, fips_digest, sizeof(fips_digest), sig.data(),
                         &sig_len, dsa.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_MISSING_PARAMETERS}}));
 }
 
 // A zero private key is invalid and can cause signing to loop forever.
@@ -296,6 +348,7 @@ TEST(DSATest, ZeroPrivateKey) {
   unsigned sig_len;
   EXPECT_FALSE(DSA_sign(0, kZeroDigest, sizeof(kZeroDigest), sig.data(),
                         &sig_len, dsa.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_INVALID_PARAMETERS}}));
 }
 
 // If the "field" is actually a ring and the "generator" of the multiplicative
@@ -319,6 +372,7 @@ Epvg
   unsigned sig_len;
   EXPECT_FALSE(DSA_sign(0, fips_digest, sizeof(fips_digest), sig.data(),
                         &sig_len, dsa.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_TOO_MANY_ITERATIONS}}));
 }
 
 TEST(DSATest, Overwrite) {
@@ -367,7 +421,7 @@ s2lmkAIcLIFUDFrbC2nViaB5ATM9ARKk6F2QwnCfGCyZ6A==
   bssl::UniquePtr<BIGNUM> g(BN_bin2bn(fips_g, sizeof(fips_g), nullptr));
   ASSERT_TRUE(g);
   ASSERT_TRUE(DSA_set0_pqg(dsa.get(), p.get(), q.get(), g.get()));
-  // |DSA_set0_pqg| takes ownership on success.
+  // `DSA_set0_pqg` takes ownership on success.
   p.release();
   q.release();
   g.release();
@@ -376,7 +430,7 @@ s2lmkAIcLIFUDFrbC2nViaB5ATM9ARKk6F2QwnCfGCyZ6A==
   bssl::UniquePtr<BIGNUM> priv_key(BN_bin2bn(fips_x, sizeof(fips_x), nullptr));
   ASSERT_TRUE(priv_key);
   ASSERT_TRUE(DSA_set0_key(dsa.get(), pub_key.get(), priv_key.get()));
-  // |DSA_set0_key| takes ownership on success.
+  // `DSA_set0_key` takes ownership on success.
   pub_key.release();
   priv_key.release();
 

@@ -126,7 +126,6 @@ if(LINUX AND TARGET MuxServer AND TARGET TlsClient AND TARGET TlsRecordShapingCo
   )
   target_include_directories(muxserver_tlsclient_close_backpressure_test BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
-    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
   )
   target_compile_definitions(muxserver_tlsclient_close_backpressure_test PRIVATE
     BORINGSSL_PREFIX=WW_BSSL

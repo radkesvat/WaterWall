@@ -19,11 +19,15 @@
 #include <gtest/gtest.h>
 
 #include <openssl/bytestring.h>
+#include <openssl/span.h>
 
 #include "../../test/file_test.h"
 #include "../../test/test_util.h"
 #include "./internal.h"
 
+
+BSSL_NAMESPACE_BEGIN
+namespace {
 
 static void KeccakFileTest(FileTest *t) {
   std::vector<uint8_t> input, sha3_256_expected, sha3_512_expected,
@@ -51,6 +55,122 @@ static void KeccakFileTest(FileTest *t) {
   EXPECT_EQ(Bytes(sha3_512_expected), Bytes(sha3_512_digest));
   EXPECT_EQ(Bytes(shake128_expected), Bytes(shake128_output));
   EXPECT_EQ(Bytes(shake256_expected), Bytes(shake256_output));
+
+#if defined(HAVE_KECCAK_X2)
+  if (input.size() > 0 && input.size() < 72) {
+    uint8_t noise[72] = {static_cast<uint8_t>(~input[0]), 0};
+    const uint8_t *input_first[2] = {input.data(), noise};
+    const uint8_t *input_last[2] = {noise, input.data()};
+
+    uint8_t sha3_256_digest1[32];
+    uint8_t *sha3_256_digests[2] = {sha3_256_digest, sha3_256_digest1};
+    BORINGSSL_keccak_short_x2(sha3_256_digests, sizeof(sha3_256_digest),
+                              input_first, input.size(), boringssl_sha3_256);
+    EXPECT_EQ(Bytes(sha3_256_expected), Bytes(sha3_256_digest));
+    EXPECT_NE(Bytes(sha3_256_expected), Bytes(sha3_256_digest1));
+    BORINGSSL_keccak_short_x2(sha3_256_digests, sizeof(sha3_256_digest),
+                              input_last, input.size(), boringssl_sha3_256);
+    EXPECT_NE(Bytes(sha3_256_expected), Bytes(sha3_256_digest));
+    EXPECT_EQ(Bytes(sha3_256_expected), Bytes(sha3_256_digest1));
+
+    uint8_t sha3_512_digest1[64];
+    uint8_t *sha3_512_digests[2] = {sha3_512_digest, sha3_512_digest1};
+    BORINGSSL_keccak_short_x2(sha3_512_digests, sizeof(sha3_512_digest),
+                              input_first, input.size(), boringssl_sha3_512);
+    EXPECT_EQ(Bytes(sha3_512_expected), Bytes(sha3_512_digest));
+    EXPECT_NE(Bytes(sha3_512_expected), Bytes(sha3_512_digest1));
+    BORINGSSL_keccak_short_x2(sha3_512_digests, sizeof(sha3_512_digest),
+                              input_last, input.size(), boringssl_sha3_512);
+    EXPECT_NE(Bytes(sha3_512_expected), Bytes(sha3_512_digest));
+    EXPECT_EQ(Bytes(sha3_512_expected), Bytes(sha3_512_digest1));
+
+    uint8_t shake128_output1[512];
+    uint8_t *shake128_outputs[2] = {shake128_output, shake128_output1};
+    BORINGSSL_keccak_short_x2(shake128_outputs, sizeof(shake128_output),
+                              input_first, input.size(), boringssl_shake128);
+    EXPECT_EQ(Bytes(shake128_expected), Bytes(shake128_output));
+    EXPECT_NE(Bytes(shake128_expected), Bytes(shake128_output1));
+    BORINGSSL_keccak_short_x2(shake128_outputs, sizeof(shake128_output),
+                              input_last, input.size(), boringssl_shake128);
+    EXPECT_NE(Bytes(shake128_expected), Bytes(shake128_output));
+    EXPECT_EQ(Bytes(shake128_expected), Bytes(shake128_output1));
+
+    uint8_t shake256_output1[512];
+    uint8_t *shake256_outputs[2] = {shake256_output, shake256_output1};
+    BORINGSSL_keccak_short_x2(shake256_outputs, sizeof(shake256_output),
+                              input_first, input.size(), boringssl_shake256);
+    EXPECT_EQ(Bytes(shake256_expected), Bytes(shake256_output));
+    EXPECT_NE(Bytes(shake256_expected), Bytes(shake256_output1));
+    BORINGSSL_keccak_short_x2(shake256_outputs, sizeof(shake256_output),
+                              input_last, input.size(), boringssl_shake256);
+    EXPECT_NE(Bytes(shake256_expected), Bytes(shake256_output));
+    EXPECT_EQ(Bytes(shake256_expected), Bytes(shake256_output1));
+  }
+#endif
+
+#if defined(HAVE_KECCAK_X4) && !defined(BORINGSSL_SHARED_LIBRARY)
+  if (BORINGSSL_have_keccak_x4() && input.size() > 0 && input.size() < 72) {
+    uint8_t noise[72] = {static_cast<uint8_t>(input[0] ^ 0xFF), 0};
+    const uint8_t *input_first[4] = {input.data(), noise, noise, noise};
+    const uint8_t *input_last[4] = {noise, noise, noise, input.data()};
+
+    uint8_t sha3_256_digests_buf[4][32];
+    uint8_t *sha3_256_digests[4] = {sha3_256_digests_buf[0],
+                                    sha3_256_digests_buf[1],
+                                    sha3_256_digests_buf[2],
+                                    sha3_256_digests_buf[3]};
+    BORINGSSL_keccak_short_x4(sha3_256_digests, 32, input_first, input.size(),
+                              boringssl_sha3_256);
+    EXPECT_EQ(Bytes(sha3_256_expected), Bytes(sha3_256_digests[0], 32));
+    EXPECT_NE(Bytes(sha3_256_expected), Bytes(sha3_256_digests[3], 32));
+    BORINGSSL_keccak_short_x4(sha3_256_digests, 32, input_last, input.size(),
+                              boringssl_sha3_256);
+    EXPECT_NE(Bytes(sha3_256_expected), Bytes(sha3_256_digests[0], 32));
+    EXPECT_EQ(Bytes(sha3_256_expected), Bytes(sha3_256_digests[3], 32));
+
+    uint8_t sha3_512_digests_buf[4][64];
+    uint8_t *sha3_512_digests[4] = {sha3_512_digests_buf[0],
+                                    sha3_512_digests_buf[1],
+                                    sha3_512_digests_buf[2],
+                                    sha3_512_digests_buf[3]};
+    BORINGSSL_keccak_short_x4(sha3_512_digests, 64, input_first, input.size(),
+                              boringssl_sha3_512);
+    EXPECT_EQ(Bytes(sha3_512_expected), Bytes(sha3_512_digests[0], 64));
+    EXPECT_NE(Bytes(sha3_512_expected), Bytes(sha3_512_digests[3], 64));
+    BORINGSSL_keccak_short_x4(sha3_512_digests, 64, input_last, input.size(),
+                              boringssl_sha3_512);
+    EXPECT_NE(Bytes(sha3_512_expected), Bytes(sha3_512_digests[0], 64));
+    EXPECT_EQ(Bytes(sha3_512_expected), Bytes(sha3_512_digests[3], 64));
+
+    uint8_t shake128_outputs_buf[4][512];
+    uint8_t *shake128_outputs[4] = {shake128_outputs_buf[0],
+                                    shake128_outputs_buf[1],
+                                    shake128_outputs_buf[2],
+                                    shake128_outputs_buf[3]};
+    BORINGSSL_keccak_short_x4(shake128_outputs, 512, input_first, input.size(),
+                              boringssl_shake128);
+    EXPECT_EQ(Bytes(shake128_expected), Bytes(shake128_outputs[0], 512));
+    EXPECT_NE(Bytes(shake128_expected), Bytes(shake128_outputs[3], 512));
+    BORINGSSL_keccak_short_x4(shake128_outputs, 512, input_last, input.size(),
+                              boringssl_shake128);
+    EXPECT_NE(Bytes(shake128_expected), Bytes(shake128_outputs[0], 512));
+    EXPECT_EQ(Bytes(shake128_expected), Bytes(shake128_outputs[3], 512));
+
+    uint8_t shake256_outputs_buf[4][512];
+    uint8_t *shake256_outputs[4] = {shake256_outputs_buf[0],
+                                    shake256_outputs_buf[1],
+                                    shake256_outputs_buf[2],
+                                    shake256_outputs_buf[3]};
+    BORINGSSL_keccak_short_x4(shake256_outputs, 512, input_first, input.size(),
+                              boringssl_shake256);
+    EXPECT_EQ(Bytes(shake256_expected), Bytes(shake256_outputs[0], 512));
+    EXPECT_NE(Bytes(shake256_expected), Bytes(shake256_outputs[3], 512));
+    BORINGSSL_keccak_short_x4(shake256_outputs, 512, input_last, input.size(),
+                              boringssl_shake256);
+    EXPECT_NE(Bytes(shake256_expected), Bytes(shake256_outputs[0], 512));
+    EXPECT_EQ(Bytes(shake256_expected), Bytes(shake256_outputs[3], 512));
+  }
+#endif
 
   struct BORINGSSL_keccak_st ctx;
 
@@ -93,7 +213,122 @@ TEST(KeccakTest, KeccakTestVectors) {
   FileTestGTest("crypto/fipsmodule/keccak/keccak_tests.txt", KeccakFileTest);
 }
 
-TEST(KeccakTest, MultiPass) {
+static void ExpectKeccak(const std::vector<uint8_t> &input,
+                         enum boringssl_keccak_config_t config,
+                         const char *expected_hex) {
+  std::vector<uint8_t> expected;
+  ASSERT_TRUE(DecodeHex(&expected, expected_hex));
+  std::vector<uint8_t> out(expected.size());
+  BORINGSSL_keccak(out.data(), out.size(), input.data(), input.size(), config);
+  EXPECT_EQ(Bytes(expected), Bytes(out));
+
+  struct BORINGSSL_keccak_st ctx;
+  BORINGSSL_keccak_init(&ctx, config);
+  for (size_t i = 0; i < input.size(); i++) {
+    BORINGSSL_keccak_absorb(&ctx, &input[i], 1);
+  }
+  for (size_t i = 0; i < out.size(); i++) {
+    BORINGSSL_keccak_squeeze(&ctx, &out[i], 1);
+  }
+  EXPECT_EQ(Bytes(expected), Bytes(out));
+}
+
+TEST(KeccakTest, TurboSHAKE) {
+  // https://www.rfc-editor.org/rfc/rfc9861.html#section-5
+  const std::vector<uint8_t> empty;
+  ExpectKeccak(empty, boringssl_turboshake128,
+               "1e415f1c5983aff2169217277d17bb53"
+               "8cd945a397ddec541f1ce41af2c1b74c");
+  ExpectKeccak(empty, boringssl_turboshake256,
+               "367a329dafea871c7802ec67f905ae13"
+               "c57695dc2c6663c61035f59a18f8e7db"
+               "11edc0e12e91ea60eb6b32df06dd7f00"
+               "2fbafabb6e13ec1cc20d995547600db0");
+
+  std::vector<uint8_t> input(17 * 17);
+  for (size_t i = 0; i < input.size(); i++) {
+    input[i] = static_cast<uint8_t>(i % 251);
+  }
+  ExpectKeccak(input, boringssl_turboshake128,
+               "96c77c279e0126f7fc07c9b07f5cdae1"
+               "e0be60bdbe10620040e75d7223a624d2");
+  ExpectKeccak(input, boringssl_turboshake256,
+               "66b810db8e90780424c0847372fdc957"
+               "10882fde31c6df75beb9d4cd9305cfca"
+               "e35e7b83e8b7e6eb4b78605880116316"
+               "fe2c078a09b94ad7b8213c0a738b65c0");
+}
+
+static void ExpectCSHAKE(enum boringssl_keccak_config_t config,
+                         Span<const uint8_t> function_name,
+                         Span<const uint8_t> customization,
+                         const char *expected_hex) {
+  static const uint8_t kInput[] = {0x00, 0x01, 0x02, 0x03};
+  std::vector<uint8_t> expected;
+  ASSERT_TRUE(DecodeHex(&expected, expected_hex));
+  std::vector<uint8_t> out(expected.size());
+  BORINGSSL_cshake(out.data(), out.size(), kInput, sizeof(kInput), config,
+                   function_name.data(), function_name.size(),
+                   customization.data(), customization.size());
+  EXPECT_EQ(Bytes(expected), Bytes(out));
+}
+
+TEST(KeccakTest, CSHAKE) {
+  // These are samples #1 and #3 from NIST's cSHAKE sample vectors for
+  // SP 800-185.
+  // https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Standards-and-Guidelines/documents/examples/cSHAKE_samples.pdf
+  static const char kCustomization[] = "Email Signature";
+  ExpectCSHAKE(boringssl_cshake128, {}, StringAsBytes(kCustomization),
+               "c1c36925b6409a04f1b504fcbca9d82b"
+               "4017277cb5ed2b2065fc1d3814d5aaf5");
+  ExpectCSHAKE(boringssl_cshake256, {}, StringAsBytes(kCustomization),
+               "d008828e2b80ac9d2218ffee1d070c48"
+               "b8e4c87bff32c9699d5b6896eee0edd1"
+               "64020e2be0560858d9c00c037e34a969"
+               "37c561a74c412bb4c746469527281c8c");
+
+  static const char kFunctionName[] = "Function";
+  static const char kOtherCustomization[] = "Customization";
+  ExpectCSHAKE(boringssl_cshake128, StringAsBytes(kFunctionName),
+               StringAsBytes(kOtherCustomization),
+               "494da17e9313dc08cef4eb25f77376f7"
+               "cae34a0d865d86789d98760f40eade0b");
+
+  // cSHAKE with empty function-name and customization strings is SHAKE.
+  static const uint8_t kInput[] = {0x00, 0x01, 0x02, 0x03};
+  uint8_t shake[32], cshake[sizeof(shake)];
+  BORINGSSL_keccak(shake, sizeof(shake), kInput, sizeof(kInput),
+                   boringssl_shake128);
+  BORINGSSL_cshake(cshake, sizeof(cshake), kInput, sizeof(kInput),
+                   boringssl_cshake128, nullptr, 0, nullptr, 0);
+  EXPECT_EQ(Bytes(shake), Bytes(cshake));
+
+  std::vector<uint8_t> expected;
+  ASSERT_TRUE(DecodeHex(&expected,
+                        "c1c36925b6409a04f1b504fcbca9d82b"
+                        "4017277cb5ed2b2065fc1d3814d5aaf5"));
+  std::vector<uint8_t> out(expected.size());
+  struct BORINGSSL_keccak_st ctx;
+  BORINGSSL_cshake_init(&ctx, boringssl_cshake128, nullptr, 0,
+                        reinterpret_cast<const uint8_t *>(kCustomization),
+                        sizeof(kCustomization) - 1);
+  BORINGSSL_keccak_absorb(&ctx, kInput, 1);
+  BORINGSSL_keccak_absorb(&ctx, kInput + 1, sizeof(kInput) - 1);
+  BORINGSSL_keccak_squeeze(&ctx, out.data(), 7);
+  BORINGSSL_keccak_squeeze(&ctx, out.data() + 7, out.size() - 7);
+  EXPECT_EQ(Bytes(expected), Bytes(out));
+}
+
+// Unoptimized builds are much slower, and iterative tests run Keccak many
+// times. Disable them in unoptimized builds for now.
+// https://crbug.com/479850443
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__OPTIMIZE__)
+#define DISABLE_IF_NOT_OPTIMIZED(t) DISABLED_ ## t
+#else
+#define DISABLE_IF_NOT_OPTIMIZED(t) t
+#endif
+
+TEST(KeccakTest, DISABLE_IF_NOT_OPTIMIZED(MultiPass)) {
   // Example from keccak_tests.txt with an input long enough to be interesting.
   uint8_t input[500] = {
       0xd0, 0xee, 0x72, 0x13, 0xea, 0x0c, 0xd3, 0x4f, 0x99, 0xe8, 0x27, 0x8c,
@@ -287,3 +522,6 @@ TEST(KeccakTest, MultiPass) {
     }
   }
 }
+
+}  // namespace
+BSSL_NAMESPACE_END

@@ -16,6 +16,7 @@
 #define BSSL_PKI_VERIFY_CERTIFICATE_CHAIN_H_
 
 #include <set>
+#include <vector>
 
 #include <openssl/base.h>
 #include <openssl/evp.h>
@@ -24,6 +25,7 @@
 #include "cert_errors.h"
 #include "input.h"
 #include "parsed_certificate.h"
+#include "trust_store.h"
 
 BSSL_NAMESPACE_BEGIN
 
@@ -68,22 +70,22 @@ enum class InitialAnyPolicyInhibit {
 // chain.
 class OPENSSL_EXPORT VerifyCertificateChainDelegate {
  public:
-  // Implementations should return true if |signature_algorithm| is allowed for
+  // Implementations should return true if `signature_algorithm` is allowed for
   // certificate signing, false otherwise. When false is returned, the caller
   // will add a high severity error of kUnacceptableSignatureAlgorithm to
-  // |errors|. When returning false, implementations can optionally add warnings
-  // to errors to |errors| with details on why it was rejected.  Implementations
+  // `errors`. When returning false, implementations can optionally add warnings
+  // to errors to `errors` with details on why it was rejected.  Implementations
   // may add any further details on why the signature algorithm was deemed
-  // unacceptable by adding warnings to |errors|.
+  // unacceptable by adding warnings to `errors`.
   virtual bool IsSignatureAlgorithmAcceptable(
       SignatureAlgorithm signature_algorithm, CertErrors *errors) = 0;
 
-  // Implementations should return true if |public_key| is acceptable, false
+  // Implementations should return true if `public_key` is acceptable, false
   // otherwise. This is called for each certificate in the chain, including the
   // target certificate.  When false is returned, the caller will add a high
-  // severity error of kUnacceptablePublicKey to |errors|. When returning false,
+  // severity error of kUnacceptablePublicKey to `errors`. When returning false,
   // implementations may add any further details on why the public key was
-  // deemed unacceptable by adding warnings to |errors|.  |public_key| can be
+  // deemed unacceptable by adding warnings to `errors`.  `public_key` can be
   // assumed to be non-null.
   virtual bool IsPublicKeyAcceptable(EVP_PKEY *public_key,
                                      CertErrors *errors) = 0;
@@ -99,6 +101,37 @@ class OPENSSL_EXPORT VerifyCertificateChainDelegate {
   // validation. If this function returns true the CT precertificate poison
   // extension will not prevent the certificate from being validated.
   virtual bool AcceptPreCertificates() = 0;
+
+  // Returns a cosigner key that matches `cosigner_id`, if one exists. Will
+  // only be called for additional cosignatures, is not called for the CA
+  // cosignature (which uses the key from the MTCAnchor).
+  // The `IsCosignatureVerificationResultAcceptable` method should also be
+  // implemented to evaluate if the cosignatures meet the delegate's policy.
+  struct MTCCosigner {
+    SignatureAlgorithm signature_algorithm;
+    UniquePtr<CRYPTO_BUFFER> key;
+  };
+  virtual std::optional<MTCCosigner> GetMTCCosigner(
+      Span<const uint8_t> cosigner_id) = 0;
+
+  // Called after standalone MTC verification, the delegate should return true
+  // if the combination of `mtc_anchor` and `valid_additional_cosigners` meets
+  // the delegate's cosigner policy. Only called if the MTC had a valid
+  // CA cosignature for `mtc_anchor`. `valid_additional_cosigners` will contain
+  // the cosigner_ids of the additional valid cosigners, if any, and will not
+  // contain the `ca_id` of `mtc_anchor`.
+  virtual bool IsCosignatureVerificationResultAcceptable(
+      const MTCAnchor* mtc_anchor,
+      std::vector<std::vector<uint8_t>> valid_additional_cosigners) = 0;
+
+  // This is called during verification or path building to decide if debug
+  // logs will be sent to the delegate. No calls to DebugLog (below) will be
+  // made unless this returns true.
+  virtual bool IsDebugLogEnabled() = 0;
+
+  // This is called to send a debug log string `msg` to the delegate. These are
+  // only called if IsDebugLogEnabled (above) returns true.
+  virtual void DebugLog(std::string_view msg) = 0;
 
   virtual ~VerifyCertificateChainDelegate();
 };
@@ -136,7 +169,7 @@ class OPENSSL_EXPORT VerifyCertificateChainDelegate {
 //     A non-empty chain of DER-encoded certificates, listed in the
 //     "forward" direction. The first certificate is the target
 //     certificate to verify, and the last certificate has trustedness
-//     given by |last_cert_trust| (generally a trust anchor).
+//     given by `last_cert_trust` (generally a trust anchor).
 //
 //      * certs[0] is the target certificate to verify.
 //      * certs[i+1] holds the certificate that issued cert_chain[i].
@@ -150,17 +183,17 @@ class OPENSSL_EXPORT VerifyCertificateChainDelegate {
 //      * In RFC 5280 "certs" DOES NOT include the trust anchor
 //
 //   last_cert_trust:
-//     Trustedness of |certs.back()|. The trustedness of |certs.back()|
+//     Trustedness of `certs.back()`. The trustedness of `certs.back()`
 //     MUST BE decided by the caller -- this function takes it purely as
 //     an input. Moreover, the CertificateTrust can be used to specify
 //     trust anchor constraints.
 //
-//     This combined with |certs.back()| (the root certificate) fills a
+//     This combined with `certs.back()` (the root certificate) fills a
 //     similar role to "trust anchor information" defined in RFC 5280
 //     section 6.1.1.d.
 //
 //   delegate:
-//     |delegate| must be non-null. It is used to answer policy questions such
+//     `delegate` must be non-null. It is used to answer policy questions such
 //     as whether a signature algorithm is acceptable, or a public key is strong
 //     enough.
 //
@@ -211,7 +244,7 @@ class OPENSSL_EXPORT VerifyCertificateChainDelegate {
 // ---------
 //
 //   user_constrained_policy_set:
-//     Can be null. If non-null, |user_constrained_policy_set| will be filled
+//     Can be null. If non-null, `user_constrained_policy_set` will be filled
 //     with the matching policies (intersected with user_initial_policy_set).
 //     This is equivalent to the same named output in X.509 section 10.2.
 //     Note that it is OK for this to point to input user_initial_policy_set.
@@ -220,7 +253,7 @@ class OPENSSL_EXPORT VerifyCertificateChainDelegate {
 //     Must be non-null. The set of errors/warnings encountered while
 //     validating the path are appended to this structure. If verification
 //     failed, then there is guaranteed to be at least 1 high severity error
-//     written to |errors|.
+//     written to `errors`.
 //
 // -------------------------
 // Trust Anchor constraints
@@ -229,12 +262,12 @@ class OPENSSL_EXPORT VerifyCertificateChainDelegate {
 // Conceptually, VerifyCertificateChain() sets RFC 5937's
 // "enforceTrustAnchorConstraints" to true.
 //
-// One specifies trust anchor constraints using the |last_cert_trust|
-// parameter in conjunction with extensions appearing in |certs.back()|.
+// One specifies trust anchor constraints using the `last_cert_trust`
+// parameter in conjunction with extensions appearing in `certs.back()`.
 //
-// The trust anchor |certs.back()| is always passed as a certificate to
+// The trust anchor `certs.back()` is always passed as a certificate to
 // this function, however the manner in which that certificate is
-// interpreted depends on |last_cert_trust|:
+// interpreted depends on `last_cert_trust`:
 //
 // TRUSTED_ANCHOR:
 //
@@ -266,7 +299,7 @@ class OPENSSL_EXPORT VerifyCertificateChainDelegate {
 // The presence of any other unrecognized extension marked as critical fails
 // validation.
 OPENSSL_EXPORT void VerifyCertificateChain(
-    const ParsedCertificateList &certs, const CertificateTrust &last_cert_trust,
+    const ParsedCertificateList &certs, const TrustAnchor &last_cert_trust,
     VerifyCertificateChainDelegate *delegate, const der::GeneralizedTime &time,
     KeyPurpose required_key_purpose,
     InitialExplicitPolicy initial_explicit_policy,

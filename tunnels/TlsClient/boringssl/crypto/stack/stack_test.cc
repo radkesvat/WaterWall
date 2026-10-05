@@ -23,30 +23,31 @@
 
 #include <gtest/gtest.h>
 
+#include <openssl/err.h>
 #include <openssl/mem.h>
 #include <openssl/rand.h>
+
+#include "../mem_internal.h"
 
 
 // Define a custom stack type for testing.
 using TEST_INT = int;
-
-static void TEST_INT_free(TEST_INT *x) { OPENSSL_free(x); }
+DEFINE_STACK_OF(TEST_INT)
 
 BSSL_NAMESPACE_BEGIN
-BORINGSSL_MAKE_DELETER(TEST_INT, TEST_INT_free)
-BSSL_NAMESPACE_END
 
-static bssl::UniquePtr<TEST_INT> TEST_INT_new(int x) {
-  bssl::UniquePtr<TEST_INT> ret(
-      static_cast<TEST_INT *>(OPENSSL_malloc(sizeof(TEST_INT))));
+static void TEST_INT_free(TEST_INT *x) { Delete(x); }
+
+BORINGSSL_MAKE_DELETER(TEST_INT, TEST_INT_free)
+
+static UniquePtr<TEST_INT> TEST_INT_new(int x) {
+  UniquePtr<TEST_INT> ret(New<TEST_INT>());
   if (!ret) {
     return nullptr;
   }
   *ret = x;
   return ret;
 }
-
-DEFINE_STACK_OF(TEST_INT)
 
 namespace {
 
@@ -82,7 +83,7 @@ static void ExpectStackEquals(const STACK_OF(TEST_INT) *sk,
 }
 
 TEST(StackTest, Basic) {
-  bssl::UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new_null());
+  UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new_null());
   ASSERT_TRUE(sk);
 
   // The stack starts out empty.
@@ -97,7 +98,7 @@ TEST(StackTest, Basic) {
   for (int i = 0; i < 6; i++) {
     auto value = TEST_INT_new(i);
     ASSERT_TRUE(value);
-    ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(value)));
+    ASSERT_TRUE(PushToStack(sk.get(), std::move(value)));
   }
 
   ExpectStackEquals(sk.get(), {0, 1, 2, 3, 4, 5});
@@ -137,7 +138,7 @@ TEST(StackTest, Basic) {
   ExpectStackEquals(sk.get(), {0, 1, 2, 3, 6, 4, 5, 7, 8});
 
   // Test removing elements from various places.
-  bssl::UniquePtr<TEST_INT> removed(sk_TEST_INT_pop(sk.get()));
+  UniquePtr<TEST_INT> removed(sk_TEST_INT_pop(sk.get()));
   EXPECT_EQ(8, *removed);
   ExpectStackEquals(sk.get(), {0, 1, 2, 3, 6, 4, 5, 7});
 
@@ -164,7 +165,7 @@ TEST(StackTest, Basic) {
   ExpectStackEquals(sk.get(), {kNull, 1, 2, 4, 5, 7});
 
   // Test both deep and shallow copies.
-  bssl::UniquePtr<STACK_OF(TEST_INT)> copy(sk_TEST_INT_deep_copy(
+  UniquePtr<STACK_OF(TEST_INT)> copy(sk_TEST_INT_deep_copy(
       sk.get(),
       [](const TEST_INT *x) -> TEST_INT * {
         return x == nullptr ? nullptr : TEST_INT_new(*x).release();
@@ -197,7 +198,7 @@ TEST(StackTest, Basic) {
 }
 
 TEST(StackTest, BigStack) {
-  bssl::UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new_null());
+  UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new_null());
   ASSERT_TRUE(sk);
 
   std::vector<int> expected;
@@ -205,7 +206,7 @@ TEST(StackTest, BigStack) {
   for (int i = 0; i < kCount; i++) {
     auto value = TEST_INT_new(i);
     ASSERT_TRUE(value);
-    ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(value)));
+    ASSERT_TRUE(PushToStack(sk.get(), std::move(value)));
     expected.push_back(i);
   }
   ExpectStackEquals(sk.get(), expected);
@@ -232,12 +233,12 @@ TEST(StackTest, Sorted) {
   std::vector<int> vec_sorted = {0, 1, 2, 3, 4, 5, 6};
   std::vector<int> vec = vec_sorted;
   do {
-    bssl::UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new(compare));
+    UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new(compare));
     ASSERT_TRUE(sk);
     for (int v : vec) {
       auto value = TEST_INT_new(v);
       ASSERT_TRUE(value);
-      ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(value)));
+      ASSERT_TRUE(PushToStack(sk.get(), std::move(value)));
     }
 
     // The stack is not (known to be) sorted.
@@ -274,7 +275,7 @@ TEST(StackTest, Sorted) {
     EXPECT_EQ(3u, index);
 
     // Copies preserve comparison and sorted information.
-    bssl::UniquePtr<STACK_OF(TEST_INT)> copy(sk_TEST_INT_deep_copy(
+    UniquePtr<STACK_OF(TEST_INT)> copy(sk_TEST_INT_deep_copy(
         sk.get(),
         [](const TEST_INT *x) -> TEST_INT * {
           return TEST_INT_new(*x).release();
@@ -303,6 +304,7 @@ TEST(StackTest, Sorted) {
     EXPECT_EQ(2u, index);
 
     sk_TEST_INT_sort(sk.get());
+    EXPECT_TRUE(sk_TEST_INT_is_sorted(sk.get()));
     ExpectStackEquals(sk.get(), {6, 5, 4, 3, 2, 1});
     ASSERT_TRUE(sk_TEST_INT_find(sk.get(), &index, three.get()));
     EXPECT_EQ(3u, index);
@@ -310,7 +312,7 @@ TEST(StackTest, Sorted) {
     // Inserting a new element invalidates sortedness.
     auto tmp = TEST_INT_new(10);
     ASSERT_TRUE(tmp);
-    ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(tmp)));
+    ASSERT_TRUE(PushToStack(sk.get(), std::move(tmp)));
     EXPECT_FALSE(sk_TEST_INT_is_sorted(sk.get()));
     ASSERT_TRUE(sk_TEST_INT_find(sk.get(), &index, ten.get()));
     EXPECT_EQ(6u, index);
@@ -319,15 +321,15 @@ TEST(StackTest, Sorted) {
 
 // sk_*_find should return the first matching element in all cases.
 TEST(StackTest, FindFirst) {
-  bssl::UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new(compare));
+  UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new(compare));
   ASSERT_TRUE(sk);
   auto value = TEST_INT_new(1);
   ASSERT_TRUE(value);
-  ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(value)));
+  ASSERT_TRUE(PushToStack(sk.get(), std::move(value)));
   for (int i = 0; i < 10; i++) {
     value = TEST_INT_new(2);
     ASSERT_TRUE(value);
-    ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(value)));
+    ASSERT_TRUE(PushToStack(sk.get(), std::move(value)));
   }
 
   const TEST_INT *two = sk_TEST_INT_value(sk.get(), 1);
@@ -365,22 +367,22 @@ TEST(StackTest, BinarySearch) {
       SCOPED_TRACE(j);
       // Make a stack where [0, i) are below, [i, j) match, and [j, kCount) are
       // above.
-      bssl::UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new(compare));
+      UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new(compare));
       ASSERT_TRUE(sk);
       for (size_t k = 0; k < i; k++) {
         auto value = TEST_INT_new(-1);
         ASSERT_TRUE(value);
-        ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(value)));
+        ASSERT_TRUE(PushToStack(sk.get(), std::move(value)));
       }
       for (size_t k = i; k < j; k++) {
         auto value = TEST_INT_new(0);
         ASSERT_TRUE(value);
-        ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(value)));
+        ASSERT_TRUE(PushToStack(sk.get(), std::move(value)));
       }
       for (size_t k = j; k < kCount; k++) {
         auto value = TEST_INT_new(1);
         ASSERT_TRUE(value);
-        ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(value)));
+        ASSERT_TRUE(PushToStack(sk.get(), std::move(value)));
       }
       sk_TEST_INT_sort(sk.get());
 
@@ -400,12 +402,12 @@ TEST(StackTest, BinarySearch) {
 }
 
 TEST(StackTest, DeleteIf) {
-  bssl::UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new(compare));
+  UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new(compare));
   ASSERT_TRUE(sk);
   for (int v : {1, 9, 2, 8, 3, 7, 4, 6, 5}) {
     auto obj = TEST_INT_new(v);
     ASSERT_TRUE(obj);
-    ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(obj)));
+    ASSERT_TRUE(PushToStack(sk.get(), std::move(obj)));
   }
 
   auto keep_only_multiples = [](TEST_INT *x, void *data) {
@@ -441,8 +443,45 @@ TEST(StackTest, DeleteIf) {
   EXPECT_TRUE(sk_TEST_INT_is_sorted(sk.get()));
 }
 
+TEST(StackTest, SortAndDedup) {
+  UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new(compare));
+  ASSERT_TRUE(sk);
+  sk_TEST_INT_sort_and_dedup(sk.get(), TEST_INT_free);
+  ExpectStackEquals(sk.get(), std::vector<int>{});
+
+  for (int v : {1, 2, 3, 4, 5, 2, 2, 2, 2, 3}) {
+    auto obj = TEST_INT_new(v);
+    ASSERT_TRUE(obj);
+    ASSERT_TRUE(PushToStack(sk.get(), std::move(obj)));
+  }
+
+  sk_TEST_INT_sort_and_dedup(sk.get(), TEST_INT_free);
+  ExpectStackEquals(sk.get(), {1, 2, 3, 4, 5});
+
+  sk_TEST_INT_sort_and_dedup(sk.get(), TEST_INT_free);
+  ExpectStackEquals(sk.get(), {1, 2, 3, 4, 5});
+
+  // Repeat with non-owning pointers.
+  sk.reset(sk_TEST_INT_new(compare));
+  ASSERT_TRUE(sk);
+  for (int v : {1, 2, 3, 4, 5, 2, 2, 2, 2, 3}) {
+    auto obj = TEST_INT_new(v);
+    ASSERT_TRUE(obj);
+    ASSERT_TRUE(PushToStack(sk.get(), std::move(obj)));
+  }
+
+  // `not_owned` does not own its contents, so we cannot use bssl::UniquePtr.
+  STACK_OF(TEST_INT) *not_owned = sk_TEST_INT_dup(sk.get());
+  ASSERT_TRUE(not_owned);
+  sk_TEST_INT_sort_and_dedup(not_owned, nullptr);
+  ExpectStackEquals(not_owned, {1, 2, 3, 4, 5});
+  sk_TEST_INT_sort_and_dedup(not_owned, nullptr);
+  ExpectStackEquals(not_owned, {1, 2, 3, 4, 5});
+  sk_TEST_INT_free(not_owned);
+}
+
 TEST(StackTest, IsSorted) {
-  bssl::UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new_null());
+  UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new_null());
   ASSERT_TRUE(sk);
   EXPECT_FALSE(sk_TEST_INT_is_sorted(sk.get()));
 
@@ -453,13 +492,13 @@ TEST(StackTest, IsSorted) {
   // As are one-element lists.
   auto value = TEST_INT_new(2);
   ASSERT_TRUE(value);
-  ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(value)));
+  ASSERT_TRUE(PushToStack(sk.get(), std::move(value)));
   EXPECT_TRUE(sk_TEST_INT_is_sorted(sk.get()));
 
   // Two-element lists require an explicit sort.
   value = TEST_INT_new(1);
   ASSERT_TRUE(value);
-  ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(value)));
+  ASSERT_TRUE(PushToStack(sk.get(), std::move(value)));
   EXPECT_FALSE(sk_TEST_INT_is_sorted(sk.get()));
 
   // The list is now sorted.
@@ -473,11 +512,28 @@ TEST(StackTest, IsSorted) {
   sk_TEST_INT_sort(sk.get());
   EXPECT_TRUE(sk_TEST_INT_is_sorted(sk.get()));
 
+  // After changing one element, it is no longer sorted.
+  value = TEST_INT_new(10);
+  ASSERT_TRUE(value);
+  TEST_INT_free(sk_TEST_INT_value(sk.get(), 0));
+  sk_TEST_INT_set(sk.get(), 0, value.release());
+  EXPECT_FALSE(sk_TEST_INT_is_sorted(sk.get()));
+
+  sk_TEST_INT_sort(sk.get());
+  EXPECT_TRUE(sk_TEST_INT_is_sorted(sk.get()));
+
   // But, starting from one element, switching the comparison function preserves
   // the sorted bit.
   TEST_INT_free(sk_TEST_INT_pop(sk.get()));
   EXPECT_TRUE(sk_TEST_INT_is_sorted(sk.get()));
+
   sk_TEST_INT_set_cmp_func(sk.get(), compare);
+  EXPECT_TRUE(sk_TEST_INT_is_sorted(sk.get()));
+
+  value = TEST_INT_new(100);
+  ASSERT_TRUE(value);
+  TEST_INT_free(sk_TEST_INT_value(sk.get(), 0));
+  sk_TEST_INT_set(sk.get(), 0, value.release());
   EXPECT_TRUE(sk_TEST_INT_is_sorted(sk.get()));
 
   // Without a comparison function, the list cannot be sorted.
@@ -497,13 +553,13 @@ TEST(StackTest, Sort) {
                  sizeof(int) * vec.size());
       SCOPED_TRACE(testing::PrintToString(vec));
 
-      // Convert it to a |STACK_OF(TEST_INT)|.
-      bssl::UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new(compare));
+      // Convert it to a `STACK_OF(TEST_INT)`.
+      UniquePtr<STACK_OF(TEST_INT)> sk(sk_TEST_INT_new(compare));
       ASSERT_TRUE(sk);
       for (int v : vec) {
         auto value = TEST_INT_new(v);
         ASSERT_TRUE(value);
-        ASSERT_TRUE(bssl::PushToStack(sk.get(), std::move(value)));
+        ASSERT_TRUE(PushToStack(sk.get(), std::move(value)));
       }
 
       // Sort it with our sort implementation.
@@ -520,16 +576,55 @@ TEST(StackTest, Sort) {
   }
 }
 
+// STACK_OF(T) APIs should generally cleanly treat nullptr as the empty list.
 TEST(StackTest, NullIsEmpty) {
+  // Clear the error queue, to be sampled later.
+  ERR_clear_error();
+
   EXPECT_EQ(0u, sk_TEST_INT_num(nullptr));
 
   EXPECT_EQ(nullptr, sk_TEST_INT_value(nullptr, 0));
   EXPECT_EQ(nullptr, sk_TEST_INT_value(nullptr, 1));
 
-  bssl::UniquePtr<TEST_INT> value = TEST_INT_new(6);
+  UniquePtr<TEST_INT> value = TEST_INT_new(6);
   ASSERT_TRUE(value);
   size_t index;
   EXPECT_FALSE(sk_TEST_INT_find(nullptr, &index, value.get()));
+
+  // Deleting from an empty list is a no-op.
+  EXPECT_EQ(nullptr, sk_TEST_INT_pop(nullptr));
+  EXPECT_EQ(nullptr, sk_TEST_INT_shift(nullptr));
+  EXPECT_EQ(nullptr, sk_TEST_INT_delete(nullptr, 0));
+  EXPECT_EQ(nullptr, sk_TEST_INT_delete(nullptr, 1));
+  EXPECT_EQ(nullptr, sk_TEST_INT_delete_ptr(nullptr, value.get()));
+  sk_TEST_INT_delete_if(
+      nullptr,
+      [](TEST_INT *, void *) -> int {
+        ADD_FAILURE() << "callback should not have been called";
+        return 0;
+      },
+      nullptr);
+
+  // An empty list is always sorted.
+  EXPECT_TRUE(sk_TEST_INT_is_sorted(nullptr));
+  sk_TEST_INT_sort(nullptr);
+
+  // Copying an empty list gives an empty list.
+  EXPECT_EQ(nullptr, sk_TEST_INT_dup(nullptr));
+  EXPECT_EQ(nullptr,
+            sk_TEST_INT_deep_copy(
+                nullptr,
+                [](const TEST_INT *) -> TEST_INT * {
+                  ADD_FAILURE() << "copy callback should not have been called";
+                  return nullptr;
+                },
+                [](TEST_INT *) {
+                  ADD_FAILURE() << "free callback should not have been called";
+                }));
+
+  // None of these operations should have added to the error queue.
+  EXPECT_EQ(0u, ERR_get_error());
 }
 
 }  // namespace
+BSSL_NAMESPACE_END

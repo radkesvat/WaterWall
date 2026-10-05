@@ -18,6 +18,7 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include <cstdio>
 #include <memory>
 
 #include <openssl/bytestring.h>
@@ -48,94 +49,6 @@ ssize_t write_eintr(int fd, const void *in, size_t len) {
   return ret;
 }
 
-bool HandbackReady(SSL *ssl, int ret) {
-  return ret < 0 && SSL_get_error(ssl, ret) == SSL_ERROR_HANDBACK;
-}
-
-bool Handshaker(const TestConfig *config, int rfd, int wfd,
-                Span<const uint8_t> input, int control) {
-  UniquePtr<SSL_CTX> ctx = config->SetupCtx(/*old_ctx=*/nullptr);
-  if (!ctx) {
-    return false;
-  }
-  UniquePtr<SSL> ssl =
-      config->NewSSL(ctx.get(), /*session=*/nullptr, /*test_state=*/nullptr);
-  if (!ssl) {
-    fprintf(stderr, "Error creating SSL object in handshaker.\n");
-    ERR_print_errors_fp(stderr);
-    return false;
-  }
-
-  // Set |O_NONBLOCK| in order to break out of the loop when we hit
-  // |SSL_ERROR_WANT_READ|, so that we can send |kControlMsgWantRead| to the
-  // proxy.
-  if (fcntl(rfd, F_SETFL, O_NONBLOCK) != 0) {
-    perror("fcntl");
-    return false;
-  }
-  SSL_set_rfd(ssl.get(), rfd);
-  SSL_set_wfd(ssl.get(), wfd);
-
-  CBS cbs, handoff;
-  CBS_init(&cbs, input.data(), input.size());
-  if (!CBS_get_asn1_element(&cbs, &handoff, CBS_ASN1_SEQUENCE) ||
-      !DeserializeContextState(&cbs, ctx.get()) ||
-      !SetTestState(ssl.get(), TestState::Deserialize(&cbs, ctx.get())) ||
-      !GetTestState(ssl.get()) ||
-      !SSL_apply_handoff(ssl.get(), handoff)) {
-    fprintf(stderr, "Handoff application failed.\n");
-    return false;
-  }
-
-  int ret = 0;
-  for (;;) {
-    ret = CheckIdempotentError(
-        "SSL_do_handshake", ssl.get(),
-        [&]() -> int { return SSL_do_handshake(ssl.get()); });
-    if (SSL_get_error(ssl.get(), ret) == SSL_ERROR_WANT_READ) {
-      // Synchronize with the proxy, i.e. don't let the handshake continue until
-      // the proxy has sent more data.
-      char msg = kControlMsgWantRead;
-      if (write_eintr(control, &msg, 1) != 1 ||
-          read_eintr(control, &msg, 1) != 1 ||
-          msg != kControlMsgWriteCompleted) {
-        fprintf(stderr, "read via proxy failed\n");
-        return false;
-      }
-      continue;
-    }
-    if (!RetryAsync(ssl.get(), ret)) {
-      break;
-    }
-  }
-  if (!HandbackReady(ssl.get(), ret)) {
-    fprintf(stderr, "Handshaker: %s\n",
-            SSL_error_description(SSL_get_error(ssl.get(), ret)));
-    ERR_print_errors_fp(stderr);
-    return false;
-  }
-
-  ScopedCBB output;
-  CBB handback;
-  if (!CBB_init(output.get(), 1024) ||
-      !CBB_add_u24_length_prefixed(output.get(), &handback) ||
-      !SSL_serialize_handback(ssl.get(), &handback) ||
-      !SerializeContextState(ctx.get(), output.get()) ||
-      !GetTestState(ssl.get())->Serialize(output.get())) {
-    fprintf(stderr, "Handback serialisation failed.\n");
-    return false;
-  }
-
-  char msg = kControlMsgDone;
-  if (write_eintr(control, &msg, 1) == -1 ||
-      write_eintr(control, CBB_data(output.get()), CBB_len(output.get())) ==
-          -1) {
-    perror("write");
-    return false;
-  }
-  return true;
-}
-
 bool GenerateHandshakeHint(const TestConfig *config,
                            bssl::Span<const uint8_t> request, int control) {
   // The handshake hint contains the ClientHello and the capabilities string.
@@ -161,7 +74,7 @@ bool GenerateHandshakeHint(const TestConfig *config,
     return false;
   }
 
-  // TODO(davidben): When split handshakes is replaced, move this into |NewSSL|.
+  // TODO(davidben): When split handshakes is replaced, move this into `NewSSL`.
   assert(config->is_server);
   SSL_set_accept_state(ssl.get());
 
@@ -215,6 +128,14 @@ bool GenerateHandshakeHint(const TestConfig *config,
   return true;
 }
 
+int SignalUnimplemented() {
+  const char msg = kControlMsgUnimplemented;
+  if (write_eintr(kFdControl, &msg, 1) != 1) {
+    return 2;
+  }
+  return 1;
+}
+
 int SignalError() {
   const char msg = kControlMsgError;
   if (write_eintr(kFdControl, &msg, 1) != 1) {
@@ -226,10 +147,22 @@ int SignalError() {
 }  // namespace
 
 int main(int argc, char **argv) {
+  // Read the request before parsing the configuration. This ensures that
+  // flag-parsing errors are signaled at a reliable point in time. read() will
+  // return the entire message in one go, because it's a datagram socket.
+  constexpr size_t kBufSize = 1024 * 1024;
+  std::vector<uint8_t> request(kBufSize);
+  ssize_t len = read_eintr(kFdControl, request.data(), request.size());
+  if (len == -1) {
+    perror("read");
+    return 2;
+  }
+  request.resize(static_cast<size_t>(len));
+
   TestConfig initial_config, resume_config, retry_config;
   if (!ParseConfig(argc - 1, argv + 1, /*is_shim=*/false, &initial_config,
                    &resume_config, &retry_config)) {
-    return SignalError();
+    return SignalUnimplemented();
   }
   const TestConfig *config =
       initial_config.handshaker_resume ? &resume_config : &initial_config;
@@ -247,26 +180,13 @@ int main(int argc, char **argv) {
   }
 #endif  // FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
 
-  // read() will return the entire message in one go, because it's a datagram
-  // socket.
-  constexpr size_t kBufSize = 1024 * 1024;
-  std::vector<uint8_t> request(kBufSize);
-  ssize_t len = read_eintr(kFdControl, request.data(), request.size());
-  if (len == -1) {
-    perror("read");
-    return 2;
+  if (!config->handshake_hints) {
+    // Historically omitting -handshake-hints ran the split handshakes mode.
+    fprintf(stderr, "Handshaker missing -handshake-hints flag.");
+    return SignalError();
   }
-  request.resize(static_cast<size_t>(len));
-
-  if (config->handshake_hints) {
-    if (!GenerateHandshakeHint(config, request, kFdControl)) {
-      return SignalError();
-    }
-  } else {
-    if (!Handshaker(config, kFdProxyToHandshaker, kFdHandshakerToProxy,
-                    request, kFdControl)) {
-      return SignalError();
-    }
+  if (!GenerateHandshakeHint(config, request, kFdControl)) {
+    return SignalError();
   }
   return 0;
 }

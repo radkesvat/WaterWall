@@ -16,13 +16,12 @@
 # the revision where we bump the version.
 module(
     name = "boringssl",
-    version = "0.20250701.0",
+    version = "0.20260813.0",
     compatibility_level = 2,
 )
 
-# Periodically update the following dependencies to their latest versions
-# listed on https://registry.bazel.build/. When doing so, run
-# `bazelisk test ...` to update the hashes in MODULE.bazel.lock.
+# Periodically run util/update_bazel_deps.go to update the dependencies in this
+# file and util/bazel-example/MODULE.bazel
 
 # In principle, googletest is only needed for tests and could be a
 # dev_dependency. But it would then be impossible for downstream modules to run
@@ -30,7 +29,8 @@ module(
 # need to request they run tests when triaging issues. If
 # https://github.com/bazelbuild/bazel/issues/22187 is ever fixed, we can change
 # this.
-bazel_dep(name = "googletest", version = "1.17.0")
-bazel_dep(name = "platforms", version = "1.0.0")
-bazel_dep(name = "rules_cc", version = "0.1.2")
+bazel_dep(name = "googletest", version = "1.17.0.bcr.2")
+bazel_dep(name = "google_benchmark", version = "1.9.5")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.19")
 bazel_dep(name = "rules_license", version = "1.0.0")

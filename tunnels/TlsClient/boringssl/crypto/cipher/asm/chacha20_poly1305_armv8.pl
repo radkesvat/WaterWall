@@ -28,7 +28,7 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 ( $xlate="${dir}../../perlasm/arm-xlate.pl" and -f $xlate) or
 die "can't locate arm-xlate.pl";
 
-open OUT,"| \"$^X\" $xlate $flavour $output";
+open OUT, "|-", $^X, $xlate, $flavour, $output;
 *STDOUT=*OUT;
 
 my ($oup,$inp,$inl,$adp,$adl,$keyp,$itr1,$itr2) = ("x0","x1","x2","x3","x4","x5","x6","x7");
@@ -312,6 +312,7 @@ $code.=<<___;
 .section .rodata
 
 .align 7
+chacha20_poly1305_constants:
 .Lchacha20_consts:
 .byte 'e','x','p','a','n','d',' ','3','2','-','b','y','t','e',' ','k'
 .Linc:
@@ -325,6 +326,7 @@ $code.=<<___;
 
 .type   .Lpoly_hash_ad_internal,%function
 .align  6
+chacha20_poly1305_helpers:
 .Lpoly_hash_ad_internal:
     .cfi_startproc
     cbnz $adl, .Lpoly_hash_intro
@@ -869,7 +871,7 @@ $code.=<<___;
         subs $adl, $adl, #1
         b.gt .Lseal_hash_extra_load
 
-    // Hash in the final padded extra_in blcok
+    // Hash in the final padded extra_in block
 ___
     &poly_add_vec($T0);
     &poly_mul();
@@ -1045,7 +1047,6 @@ $code.=<<___;
 
     bl  .Lpoly_hash_ad_internal
 
-.Lopen_ad_done:
     mov $adp, $inp
 
 // Each iteration of the loop hash 320 bytes, and prepare stream for 320 bytes
@@ -1081,7 +1082,6 @@ $code.=<<___;
     sub $adl, $adl, #10
 
     mov $itr2, #10
-    subs $itr1, $itr2, $adl
     subs $itr1, $itr2, $adl // itr1 can be negative if we have more than 320 bytes to hash
     csel $itr2, $itr2, $adl, le // if itr1 is zero or less, itr2 should be 10 to indicate all 10 rounds are full
 

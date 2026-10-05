@@ -1,0 +1,60 @@
+--- a/include/openssl/prefix_symbols.h
++++ b/include/openssl/prefix_symbols.h
+@@ -2352,6 +2352,10 @@
+ #pragma redefine_extname SSL_set1_curves BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set1_curves)
+ #pragma redefine_extname SSL_set1_curves_list BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set1_curves_list)
+ #pragma redefine_extname SSL_set1_ech_config_list BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set1_ech_config_list)
++#pragma redefine_extname SSL_set1_ech_grease_override_name \
++BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set1_ech_grease_override_name)
++#pragma redefine_extname SSL_set1_ech_grease_override_payload \
++BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set1_ech_grease_override_payload)
+ #pragma redefine_extname SSL_set1_group_ids BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set1_group_ids)
+ #pragma redefine_extname SSL_set1_group_ids_with_flags BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set1_group_ids_with_flags)
+ #pragma redefine_extname SSL_set1_groups BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set1_groups)
+@@ -2405,6 +2409,8 @@
+ #pragma redefine_extname SSL_set_quic_use_legacy_codepoint BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_quic_use_legacy_codepoint)
+ #pragma redefine_extname SSL_set_quiet_shutdown BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_quiet_shutdown)
+ #pragma redefine_extname SSL_set_read_ahead BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_read_ahead)
++#pragma redefine_extname SSL_set_record_write_buffer_callbacks \
++BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_record_write_buffer_callbacks)
+ #pragma redefine_extname SSL_set_reject_unusable_ech_config BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_reject_unusable_ech_config)
+ #pragma redefine_extname SSL_set_renegotiate_mode BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_renegotiate_mode)
+ #pragma redefine_extname SSL_set_resumption_across_names_enabled BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_resumption_across_names_enabled)
+@@ -2421,6 +2427,8 @@
+ #pragma redefine_extname SSL_set_srtp_profiles BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_srtp_profiles)
+ #pragma redefine_extname SSL_set_state BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_state)
+ #pragma redefine_extname SSL_set_strict_cipher_list BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_strict_cipher_list)
++#pragma redefine_extname SSL_set_tls13_record_padding_callback \
++BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_tls13_record_padding_callback)
+ #pragma redefine_extname SSL_set_tls_channel_id_enabled BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_tls_channel_id_enabled)
+ #pragma redefine_extname SSL_set_tlsext_host_name BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_tlsext_host_name)
+ #pragma redefine_extname SSL_set_tlsext_status_ocsp_resp BORINGSSL_ADD_USER_LABEL_AND_PREFIX(SSL_set_tlsext_status_ocsp_resp)
+@@ -5493,6 +5501,10 @@
+ #define SSL_set1_curves BORINGSSL_ADD_PREFIX(SSL_set1_curves)
+ #define SSL_set1_curves_list BORINGSSL_ADD_PREFIX(SSL_set1_curves_list)
+ #define SSL_set1_ech_config_list BORINGSSL_ADD_PREFIX(SSL_set1_ech_config_list)
++#define SSL_set1_ech_grease_override_name \
++  BORINGSSL_ADD_PREFIX(SSL_set1_ech_grease_override_name)
++#define SSL_set1_ech_grease_override_payload \
++  BORINGSSL_ADD_PREFIX(SSL_set1_ech_grease_override_payload)
+ #define SSL_set1_group_ids BORINGSSL_ADD_PREFIX(SSL_set1_group_ids)
+ #define SSL_set1_group_ids_with_flags BORINGSSL_ADD_PREFIX(SSL_set1_group_ids_with_flags)
+ #define SSL_set1_groups BORINGSSL_ADD_PREFIX(SSL_set1_groups)
+@@ -5546,6 +5558,8 @@
+ #define SSL_set_quic_use_legacy_codepoint BORINGSSL_ADD_PREFIX(SSL_set_quic_use_legacy_codepoint)
+ #define SSL_set_quiet_shutdown BORINGSSL_ADD_PREFIX(SSL_set_quiet_shutdown)
+ #define SSL_set_read_ahead BORINGSSL_ADD_PREFIX(SSL_set_read_ahead)
++#define SSL_set_record_write_buffer_callbacks \
++  BORINGSSL_ADD_PREFIX(SSL_set_record_write_buffer_callbacks)
+ #define SSL_set_reject_unusable_ech_config BORINGSSL_ADD_PREFIX(SSL_set_reject_unusable_ech_config)
+ #define SSL_set_renegotiate_mode BORINGSSL_ADD_PREFIX(SSL_set_renegotiate_mode)
+ #define SSL_set_resumption_across_names_enabled BORINGSSL_ADD_PREFIX(SSL_set_resumption_across_names_enabled)
+@@ -5562,6 +5576,8 @@
+ #define SSL_set_srtp_profiles BORINGSSL_ADD_PREFIX(SSL_set_srtp_profiles)
+ #define SSL_set_state BORINGSSL_ADD_PREFIX(SSL_set_state)
+ #define SSL_set_strict_cipher_list BORINGSSL_ADD_PREFIX(SSL_set_strict_cipher_list)
++#define SSL_set_tls13_record_padding_callback \
++  BORINGSSL_ADD_PREFIX(SSL_set_tls13_record_padding_callback)
+ #define SSL_set_tls_channel_id_enabled BORINGSSL_ADD_PREFIX(SSL_set_tls_channel_id_enabled)
+ #define SSL_set_tlsext_host_name BORINGSSL_ADD_PREFIX(SSL_set_tlsext_host_name)
+ #define SSL_set_tlsext_status_ocsp_resp BORINGSSL_ADD_PREFIX(SSL_set_tlsext_status_ocsp_resp)

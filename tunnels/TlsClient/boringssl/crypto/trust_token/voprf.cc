@@ -25,9 +25,12 @@
 
 #include "../ec/internal.h"
 #include "../fipsmodule/ec/internal.h"
+#include "../mem_internal.h"
 
 #include "internal.h"
 
+
+using namespace bssl;
 
 typedef int (*hash_to_group_func_t)(const EC_GROUP *group, EC_JACOBIAN *out,
                                     const uint8_t t[TRUST_TOKEN_NONCE_SIZE]);
@@ -35,7 +38,7 @@ typedef int (*hash_to_scalar_func_t)(const EC_GROUP *group, EC_SCALAR *out,
                                      uint8_t *buf, size_t len);
 
 typedef struct {
-  const EC_GROUP *(*group_func)(void);
+  const EC_GROUP *(*group_func)();
 
   // hash_to_group implements the HashToGroup operation for VOPRFs. It returns
   // one on success and zero on error.
@@ -143,7 +146,7 @@ static int voprf_derive_key_from_secret(const VOPRF_METHOD *method,
   int ok = 0;
   CBB cbb;
   CBB_zero(&cbb);
-  uint8_t *buf = NULL;
+  uint8_t *buf = nullptr;
   size_t len;
   if (!CBB_init(&cbb, 0) ||
       !CBB_add_bytes(&cbb, kKeygenLabel, sizeof(kKeygenLabel)) ||
@@ -203,15 +206,14 @@ static STACK_OF(TRUST_TOKEN_PRETOKEN) *voprf_blind(const VOPRF_METHOD *method,
   const EC_GROUP *group = method->group_func();
   STACK_OF(TRUST_TOKEN_PRETOKEN) *pretokens =
       sk_TRUST_TOKEN_PRETOKEN_new_null();
-  if (pretokens == NULL) {
+  if (pretokens == nullptr) {
     goto err;
   }
 
   for (size_t i = 0; i < count; i++) {
-    // Insert |pretoken| into |pretokens| early to simplify error-handling.
-    TRUST_TOKEN_PRETOKEN *pretoken = reinterpret_cast<TRUST_TOKEN_PRETOKEN *>(
-        OPENSSL_malloc(sizeof(TRUST_TOKEN_PRETOKEN)));
-    if (pretoken == NULL ||
+    // Insert `pretoken` into `pretokens` early to simplify error-handling.
+    TRUST_TOKEN_PRETOKEN *pretoken = New<TRUST_TOKEN_PRETOKEN>();
+    if (pretoken == nullptr ||
         !sk_TRUST_TOKEN_PRETOKEN_push(pretokens, pretoken)) {
       TRUST_TOKEN_PRETOKEN_free(pretoken);
       goto err;
@@ -257,7 +259,7 @@ static STACK_OF(TRUST_TOKEN_PRETOKEN) *voprf_blind(const VOPRF_METHOD *method,
 
 err:
   sk_TRUST_TOKEN_PRETOKEN_pop_free(pretokens, TRUST_TOKEN_PRETOKEN_free);
-  return NULL;
+  return nullptr;
 }
 
 static int hash_to_scalar_dleq(const VOPRF_METHOD *method, EC_SCALAR *out,
@@ -270,7 +272,7 @@ static int hash_to_scalar_dleq(const VOPRF_METHOD *method, EC_SCALAR *out,
   int ok = 0;
   CBB cbb;
   CBB_zero(&cbb);
-  uint8_t *buf = NULL;
+  uint8_t *buf = nullptr;
   size_t len;
   if (!CBB_init(&cbb, 0) ||
       !CBB_add_bytes(&cbb, kDLEQLabel, sizeof(kDLEQLabel)) ||
@@ -306,7 +308,7 @@ static int hash_to_scalar_challenge(const VOPRF_METHOD *method, EC_SCALAR *out,
       !cbb_serialize_point(&cbb, group, a2) ||
       !cbb_serialize_point(&cbb, group, a3) ||
       !CBB_add_bytes(&cbb, kChallengeLabel, sizeof(kChallengeLabel) - 1) ||
-      !CBB_finish(&cbb, NULL, &len) ||
+      !CBB_finish(&cbb, nullptr, &len) ||
       !method->hash_to_scalar(group, out, transcript, len)) {
     return 0;
   }
@@ -326,7 +328,7 @@ static int hash_to_scalar_batch(const VOPRF_METHOD *method, EC_SCALAR *out,
   int ok = 0;
   CBB cbb;
   CBB_zero(&cbb);
-  uint8_t *buf = NULL;
+  uint8_t *buf = nullptr;
   size_t len;
   if (!CBB_init(&cbb, 0) ||
       !CBB_add_bytes(&cbb, kDLEQBatchLabel, sizeof(kDLEQBatchLabel)) ||
@@ -405,8 +407,8 @@ static int mul_public_2(const EC_GROUP *group, EC_JACOBIAN *out,
                         const EC_JACOBIAN *p1, const EC_SCALAR *scalar1) {
   EC_JACOBIAN points[2] = {*p0, *p1};
   EC_SCALAR scalars[2] = {*scalar0, *scalar1};
-  return ec_point_mul_scalar_public_batch(group, out, /*g_scalar=*/NULL, points,
-                                          scalars, 2);
+  return ec_point_mul_scalar_public_batch(group, out, /*g_scalar=*/nullptr,
+                                          points, scalars, 2);
 }
 
 static int dleq_verify(const VOPRF_METHOD *method, CBS *cbs,
@@ -529,10 +531,10 @@ static int voprf_sign_tt(const VOPRF_METHOD *method,
 
     EC_JACOBIAN BT_batch, Z_batch;
     if (!ec_point_mul_scalar_public_batch(group, &BT_batch,
-                                          /*g_scalar=*/NULL, BTs, es,
+                                          /*g_scalar=*/nullptr, BTs, es,
                                           num_to_issue) ||
         !ec_point_mul_scalar_public_batch(group, &Z_batch,
-                                          /*g_scalar=*/NULL, Zs, es,
+                                          /*g_scalar=*/nullptr, Zs, es,
                                           num_to_issue)) {
       goto err;
     }
@@ -555,9 +557,9 @@ static int voprf_sign_tt(const VOPRF_METHOD *method,
   }
 
 err:
-  OPENSSL_free(BTs);
-  OPENSSL_free(Zs);
-  OPENSSL_free(es);
+  Delete(BTs);
+  Delete(Zs);
+  Delete(es);
   CBB_cleanup(&batch_cbb);
   return ret;
 }
@@ -569,7 +571,7 @@ static STACK_OF(TRUST_TOKEN) *voprf_unblind_tt(
   const EC_GROUP *group = method->group_func();
   if (count > sk_TRUST_TOKEN_PRETOKEN_num(pretokens)) {
     OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_DECODE_FAILURE);
-    return NULL;
+    return nullptr;
   }
 
   int ok = 0;
@@ -582,7 +584,7 @@ static STACK_OF(TRUST_TOKEN) *voprf_unblind_tt(
       reinterpret_cast<EC_SCALAR *>(OPENSSL_calloc(count, sizeof(EC_SCALAR)));
   CBB batch_cbb;
   CBB_zero(&batch_cbb);
-  if (ret == NULL || BTs == NULL || Zs == NULL || es == NULL ||
+  if (ret == nullptr || BTs == nullptr || Zs == nullptr || es == nullptr ||
       !CBB_init(&batch_cbb, 0) ||
       !cbb_add_point(&batch_cbb, group, &key->pubs)) {
     goto err;
@@ -615,7 +617,7 @@ static STACK_OF(TRUST_TOKEN) *voprf_unblind_tt(
       goto err;
     }
 
-    // Serialize the token. Include |key_id| to avoid an extra copy in the layer
+    // Serialize the token. Include `key_id` to avoid an extra copy in the layer
     // above.
     CBB token_cbb;
     size_t point_len = ec_point_byte_len(group, POINT_CONVERSION_UNCOMPRESSED);
@@ -631,7 +633,7 @@ static STACK_OF(TRUST_TOKEN) *voprf_unblind_tt(
     TRUST_TOKEN *token =
         TRUST_TOKEN_new(CBB_data(&token_cbb), CBB_len(&token_cbb));
     CBB_cleanup(&token_cbb);
-    if (token == NULL || !sk_TRUST_TOKEN_push(ret, token)) {
+    if (token == nullptr || !sk_TRUST_TOKEN_push(ret, token)) {
       TRUST_TOKEN_free(token);
       goto err;
     }
@@ -648,9 +650,9 @@ static STACK_OF(TRUST_TOKEN) *voprf_unblind_tt(
 
   EC_JACOBIAN BT_batch, Z_batch;
   if (!ec_point_mul_scalar_public_batch(group, &BT_batch,
-                                        /*g_scalar=*/NULL, BTs, es, count) ||
+                                        /*g_scalar=*/nullptr, BTs, es, count) ||
       !ec_point_mul_scalar_public_batch(group, &Z_batch,
-                                        /*g_scalar=*/NULL, Zs, es, count)) {
+                                        /*g_scalar=*/nullptr, Zs, es, count)) {
     goto err;
   }
 
@@ -664,13 +666,13 @@ static STACK_OF(TRUST_TOKEN) *voprf_unblind_tt(
   ok = 1;
 
 err:
-  OPENSSL_free(BTs);
-  OPENSSL_free(Zs);
-  OPENSSL_free(es);
+  Delete(BTs);
+  Delete(Zs);
+  Delete(es);
   CBB_cleanup(&batch_cbb);
   if (!ok) {
     sk_TRUST_TOKEN_pop_free(ret, TRUST_TOKEN_free);
-    ret = NULL;
+    ret = nullptr;
   }
   return ret;
 }
@@ -729,7 +731,7 @@ static int compute_composite_element(const VOPRF_METHOD *method,
       !CBB_add_u16(&cbb, index) || !cbb_serialize_point(&cbb, group, C) ||
       !cbb_serialize_point(&cbb, group, D) ||
       !CBB_add_bytes(&cbb, kCompositeLabel, sizeof(kCompositeLabel) - 1) ||
-      !CBB_finish(&cbb, NULL, &len) ||
+      !CBB_finish(&cbb, nullptr, &len) ||
       !method->hash_to_scalar(group, di, transcript, len)) {
     return 0;
   }
@@ -898,7 +900,7 @@ static int voprf_sign_impl(const VOPRF_METHOD *method,
 
     EC_JACOBIAN M, Z;
     if (!ec_point_mul_scalar_public_batch(group, &M,
-                                          /*g_scalar=*/NULL, BTs, dis,
+                                          /*g_scalar=*/nullptr, BTs, dis,
                                           num_to_issue) ||
         !ec_point_mul_scalar(group, &Z, &M, &key->xs)) {
       goto err;
@@ -922,9 +924,9 @@ static int voprf_sign_impl(const VOPRF_METHOD *method,
   }
 
 err:
-  OPENSSL_free(BTs);
-  OPENSSL_free(Zs);
-  OPENSSL_free(dis);
+  Delete(BTs);
+  Delete(Zs);
+  Delete(dis);
   return ret;
 }
 
@@ -961,7 +963,7 @@ static STACK_OF(TRUST_TOKEN) *voprf_unblind(
   const EC_GROUP *group = method->group_func();
   if (count > sk_TRUST_TOKEN_PRETOKEN_num(pretokens)) {
     OPENSSL_PUT_ERROR(TRUST_TOKEN, TRUST_TOKEN_R_DECODE_FAILURE);
-    return NULL;
+    return nullptr;
   }
 
   int ok = 0;
@@ -972,7 +974,7 @@ static STACK_OF(TRUST_TOKEN) *voprf_unblind(
       OPENSSL_calloc(count, sizeof(EC_JACOBIAN)));
   EC_SCALAR *dis =
       reinterpret_cast<EC_SCALAR *>(OPENSSL_calloc(count, sizeof(EC_SCALAR)));
-  if (ret == NULL || !BTs || !Zs || !dis) {
+  if (ret == nullptr || !BTs || !Zs || !dis) {
     goto err;
   }
 
@@ -1007,7 +1009,7 @@ static STACK_OF(TRUST_TOKEN) *voprf_unblind(
       goto err;
     }
 
-    // Serialize the token. Include |key_id| to avoid an extra copy in the layer
+    // Serialize the token. Include `key_id` to avoid an extra copy in the layer
     // above.
     CBB token_cbb;
     size_t point_len = ec_point_byte_len(group, POINT_CONVERSION_UNCOMPRESSED);
@@ -1023,7 +1025,7 @@ static STACK_OF(TRUST_TOKEN) *voprf_unblind(
     TRUST_TOKEN *token =
         TRUST_TOKEN_new(CBB_data(&token_cbb), CBB_len(&token_cbb));
     CBB_cleanup(&token_cbb);
-    if (token == NULL || !sk_TRUST_TOKEN_push(ret, token)) {
+    if (token == nullptr || !sk_TRUST_TOKEN_push(ret, token)) {
       TRUST_TOKEN_free(token);
       goto err;
     }
@@ -1031,9 +1033,10 @@ static STACK_OF(TRUST_TOKEN) *voprf_unblind(
 
   EC_JACOBIAN M, Z;
   if (!ec_point_mul_scalar_public_batch(group, &M,
-                                        /*g_scalar=*/NULL, BTs, dis, count) ||
+                                        /*g_scalar=*/nullptr, BTs, dis,
+                                        count) ||
       !ec_point_mul_scalar_public_batch(group, &Z,
-                                        /*g_scalar=*/NULL, Zs, dis, count)) {
+                                        /*g_scalar=*/nullptr, Zs, dis, count)) {
     goto err;
   }
 
@@ -1046,12 +1049,12 @@ static STACK_OF(TRUST_TOKEN) *voprf_unblind(
   ok = 1;
 
 err:
-  OPENSSL_free(BTs);
-  OPENSSL_free(Zs);
-  OPENSSL_free(dis);
+  Delete(BTs);
+  Delete(Zs);
+  Delete(dis);
   if (!ok) {
     sk_TRUST_TOKEN_pop_free(ret, TRUST_TOKEN_free);
-    ret = NULL;
+    ret = nullptr;
   }
   return ret;
 }
@@ -1118,38 +1121,38 @@ static int voprf_exp2_hash_to_scalar(const EC_GROUP *group, EC_SCALAR *out,
 static VOPRF_METHOD voprf_exp2_method = {
     EC_group_p384, voprf_exp2_hash_to_group, voprf_exp2_hash_to_scalar};
 
-int voprf_exp2_generate_key(CBB *out_private, CBB *out_public) {
+int bssl::voprf_exp2_generate_key(CBB *out_private, CBB *out_public) {
   return voprf_generate_key(&voprf_exp2_method, out_private, out_public);
 }
 
-int voprf_exp2_derive_key_from_secret(CBB *out_private, CBB *out_public,
-                                      const uint8_t *secret,
-                                      size_t secret_len) {
+int bssl::voprf_exp2_derive_key_from_secret(CBB *out_private, CBB *out_public,
+                                            const uint8_t *secret,
+                                            size_t secret_len) {
   return voprf_derive_key_from_secret(&voprf_exp2_method, out_private,
                                       out_public, secret, secret_len);
 }
 
-int voprf_exp2_client_key_from_bytes(TRUST_TOKEN_CLIENT_KEY *key,
-                                     const uint8_t *in, size_t len) {
+int bssl::voprf_exp2_client_key_from_bytes(TRUST_TOKEN_CLIENT_KEY *key,
+                                           const uint8_t *in, size_t len) {
   return voprf_client_key_from_bytes(&voprf_exp2_method, key, in, len);
 }
 
-int voprf_exp2_issuer_key_from_bytes(TRUST_TOKEN_ISSUER_KEY *key,
-                                     const uint8_t *in, size_t len) {
+int bssl::voprf_exp2_issuer_key_from_bytes(TRUST_TOKEN_ISSUER_KEY *key,
+                                           const uint8_t *in, size_t len) {
   return voprf_issuer_key_from_bytes(&voprf_exp2_method, key, in, len);
 }
 
-STACK_OF(TRUST_TOKEN_PRETOKEN) *voprf_exp2_blind(CBB *cbb, size_t count,
-                                                 int include_message,
-                                                 const uint8_t *msg,
-                                                 size_t msg_len) {
+STACK_OF(TRUST_TOKEN_PRETOKEN) *bssl::voprf_exp2_blind(CBB *cbb, size_t count,
+                                                       int include_message,
+                                                       const uint8_t *msg,
+                                                       size_t msg_len) {
   return voprf_blind(&voprf_exp2_method, cbb, count, include_message, msg,
                      msg_len);
 }
 
-int voprf_exp2_sign(const TRUST_TOKEN_ISSUER_KEY *key, CBB *cbb, CBS *cbs,
-                    size_t num_requested, size_t num_to_issue,
-                    uint8_t private_metadata) {
+int bssl::voprf_exp2_sign(const TRUST_TOKEN_ISSUER_KEY *key, CBB *cbb, CBS *cbs,
+                          size_t num_requested, size_t num_to_issue,
+                          uint8_t private_metadata) {
   if (private_metadata != 0) {
     return 0;
   }
@@ -1157,7 +1160,7 @@ int voprf_exp2_sign(const TRUST_TOKEN_ISSUER_KEY *key, CBB *cbb, CBS *cbs,
                        num_to_issue);
 }
 
-STACK_OF(TRUST_TOKEN) *voprf_exp2_unblind(
+STACK_OF(TRUST_TOKEN) *bssl::voprf_exp2_unblind(
     const TRUST_TOKEN_CLIENT_KEY *key,
     const STACK_OF(TRUST_TOKEN_PRETOKEN) *pretokens, CBS *cbs, size_t count,
     uint32_t key_id) {
@@ -1165,11 +1168,11 @@ STACK_OF(TRUST_TOKEN) *voprf_exp2_unblind(
                           key_id);
 }
 
-int voprf_exp2_read(const TRUST_TOKEN_ISSUER_KEY *key,
-                    uint8_t out_nonce[TRUST_TOKEN_NONCE_SIZE],
-                    uint8_t *out_private_metadata, const uint8_t *token,
-                    size_t token_len, int include_message, const uint8_t *msg,
-                    size_t msg_len) {
+int bssl::voprf_exp2_read(const TRUST_TOKEN_ISSUER_KEY *key,
+                          uint8_t out_nonce[TRUST_TOKEN_NONCE_SIZE],
+                          uint8_t *out_private_metadata, const uint8_t *token,
+                          size_t token_len, int include_message,
+                          const uint8_t *msg, size_t msg_len) {
   return voprf_read(&voprf_exp2_method, key, out_nonce, token, token_len,
                     include_message, msg, msg_len);
 }
@@ -1194,38 +1197,38 @@ static int voprf_pst1_hash_to_scalar(const EC_GROUP *group, EC_SCALAR *out,
 static VOPRF_METHOD voprf_pst1_method = {
     EC_group_p384, voprf_pst1_hash_to_group, voprf_pst1_hash_to_scalar};
 
-int voprf_pst1_generate_key(CBB *out_private, CBB *out_public) {
+int bssl::voprf_pst1_generate_key(CBB *out_private, CBB *out_public) {
   return voprf_generate_key(&voprf_pst1_method, out_private, out_public);
 }
 
-int voprf_pst1_derive_key_from_secret(CBB *out_private, CBB *out_public,
-                                      const uint8_t *secret,
-                                      size_t secret_len) {
+int bssl::voprf_pst1_derive_key_from_secret(CBB *out_private, CBB *out_public,
+                                            const uint8_t *secret,
+                                            size_t secret_len) {
   return voprf_derive_key_from_secret(&voprf_pst1_method, out_private,
                                       out_public, secret, secret_len);
 }
 
-int voprf_pst1_client_key_from_bytes(TRUST_TOKEN_CLIENT_KEY *key,
-                                     const uint8_t *in, size_t len) {
+int bssl::voprf_pst1_client_key_from_bytes(TRUST_TOKEN_CLIENT_KEY *key,
+                                           const uint8_t *in, size_t len) {
   return voprf_client_key_from_bytes(&voprf_pst1_method, key, in, len);
 }
 
-int voprf_pst1_issuer_key_from_bytes(TRUST_TOKEN_ISSUER_KEY *key,
-                                     const uint8_t *in, size_t len) {
+int bssl::voprf_pst1_issuer_key_from_bytes(TRUST_TOKEN_ISSUER_KEY *key,
+                                           const uint8_t *in, size_t len) {
   return voprf_issuer_key_from_bytes(&voprf_pst1_method, key, in, len);
 }
 
-STACK_OF(TRUST_TOKEN_PRETOKEN) *voprf_pst1_blind(CBB *cbb, size_t count,
-                                                 int include_message,
-                                                 const uint8_t *msg,
-                                                 size_t msg_len) {
+STACK_OF(TRUST_TOKEN_PRETOKEN) *bssl::voprf_pst1_blind(CBB *cbb, size_t count,
+                                                       int include_message,
+                                                       const uint8_t *msg,
+                                                       size_t msg_len) {
   return voprf_blind(&voprf_pst1_method, cbb, count, include_message, msg,
                      msg_len);
 }
 
-int voprf_pst1_sign(const TRUST_TOKEN_ISSUER_KEY *key, CBB *cbb, CBS *cbs,
-                    size_t num_requested, size_t num_to_issue,
-                    uint8_t private_metadata) {
+int bssl::voprf_pst1_sign(const TRUST_TOKEN_ISSUER_KEY *key, CBB *cbb, CBS *cbs,
+                          size_t num_requested, size_t num_to_issue,
+                          uint8_t private_metadata) {
   if (private_metadata != 0) {
     return 0;
   }
@@ -1234,7 +1237,7 @@ int voprf_pst1_sign(const TRUST_TOKEN_ISSUER_KEY *key, CBB *cbb, CBS *cbs,
 }
 
 
-int voprf_pst1_sign_with_proof_scalar_for_testing(
+int bssl::voprf_pst1_sign_with_proof_scalar_for_testing(
     const TRUST_TOKEN_ISSUER_KEY *key, CBB *cbb, CBS *cbs, size_t num_requested,
     size_t num_to_issue, uint8_t private_metadata,
     const uint8_t *proof_scalar_buf, size_t proof_scalar_len) {
@@ -1246,18 +1249,18 @@ int voprf_pst1_sign_with_proof_scalar_for_testing(
       proof_scalar_buf, proof_scalar_len);
 }
 
-STACK_OF(TRUST_TOKEN) *voprf_pst1_unblind(
+STACK_OF(TRUST_TOKEN) *bssl::voprf_pst1_unblind(
     const TRUST_TOKEN_CLIENT_KEY *key,
     const STACK_OF(TRUST_TOKEN_PRETOKEN) *pretokens, CBS *cbs, size_t count,
     uint32_t key_id) {
   return voprf_unblind(&voprf_pst1_method, key, pretokens, cbs, count, key_id);
 }
 
-int voprf_pst1_read(const TRUST_TOKEN_ISSUER_KEY *key,
-                    uint8_t out_nonce[TRUST_TOKEN_NONCE_SIZE],
-                    uint8_t *out_private_metadata, const uint8_t *token,
-                    size_t token_len, int include_message, const uint8_t *msg,
-                    size_t msg_len) {
+int bssl::voprf_pst1_read(const TRUST_TOKEN_ISSUER_KEY *key,
+                          uint8_t out_nonce[TRUST_TOKEN_NONCE_SIZE],
+                          uint8_t *out_private_metadata, const uint8_t *token,
+                          size_t token_len, int include_message,
+                          const uint8_t *msg, size_t msg_len) {
   return voprf_read(&voprf_pst1_method, key, out_nonce, token, token_len,
                     include_message, msg, msg_len);
 }

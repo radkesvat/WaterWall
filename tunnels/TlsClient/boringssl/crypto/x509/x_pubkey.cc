@@ -16,6 +16,8 @@
 
 #include <limits.h>
 
+#include <utility>
+
 #include <openssl/asn1.h>
 #include <openssl/asn1t.h>
 #include <openssl/bytestring.h>
@@ -23,112 +25,141 @@
 #include <openssl/evp.h>
 #include <openssl/mem.h>
 #include <openssl/obj.h>
+#include <openssl/span.h>
 
+#include "../asn1/internal.h"
+#include "../bytestring/internal.h"
+#include "../evp/internal.h"
 #include "../internal.h"
+#include "../mem_internal.h"
 #include "internal.h"
 
 
-static void x509_pubkey_changed(X509_PUBKEY *pub) {
-  EVP_PKEY_free(pub->pkey);
-  pub->pkey = NULL;
+using namespace bssl;
 
-  // Re-encode the |X509_PUBKEY| to DER and parse it with EVP's APIs.
-  uint8_t *spki = NULL;
-  int spki_len = i2d_X509_PUBKEY(pub, &spki);
-  EVP_PKEY *pkey;
-  if (spki_len < 0) {
-    goto err;
+X509_PUBKEY *X509_PUBKEY_new() { return New<X509Pubkey>(); }
+
+void X509_PUBKEY_free(X509_PUBKEY *key) { Delete(FromOpaque(key)); }
+
+static void x509_pubkey_changed(X509Pubkey *pub,
+                                Span<const EVP_PKEY_ALG *const> algs) {
+  pub->pkey = nullptr;
+
+  // Re-encode the `X509_PUBKEY` to DER and parse it with EVP's APIs. If the
+  // operation fails, clear errors. An `X509_PUBKEY` whose key we cannot parse
+  // is still a valid SPKI. It just cannot be converted to an `EVP_PKEY`.
+  ScopedCBB cbb;
+  if (!CBB_init(cbb.get(), 64) || !x509_marshal_public_key(cbb.get(), pub)) {
+    ERR_clear_error();
+    return;
+  }
+  UniquePtr<EVP_PKEY> pkey(EVP_PKEY_from_subject_public_key_info(
+      CBB_data(cbb.get()), CBB_len(cbb.get()), algs.data(), algs.size()));
+  if (pkey == nullptr) {
+    ERR_clear_error();
+    return;
   }
 
-  CBS cbs;
-  CBS_init(&cbs, spki, (size_t)spki_len);
-  pkey = EVP_parse_public_key(&cbs);
-  if (pkey == NULL || CBS_len(&cbs) != 0) {
-    EVP_PKEY_free(pkey);
-    goto err;
-  }
-
-  pub->pkey = pkey;
-
-err:
-  OPENSSL_free(spki);
-  // If the operation failed, clear errors. An |X509_PUBKEY| whose key we cannot
-  // parse is still a valid SPKI. It just cannot be converted to an |EVP_PKEY|.
-  ERR_clear_error();
+  pub->pkey = std::move(pkey);
 }
 
-static int pubkey_cb(int operation, ASN1_VALUE **pval, const ASN1_ITEM *it,
-                     void *exarg) {
-  X509_PUBKEY *pubkey = (X509_PUBKEY *)*pval;
-  if (operation == ASN1_OP_FREE_POST) {
-    EVP_PKEY_free(pubkey->pkey);
-  } else if (operation == ASN1_OP_D2I_POST) {
-    x509_pubkey_changed(pubkey);
+int bssl::x509_parse_public_key(CBS *cbs, X509_PUBKEY *out,
+                                Span<const EVP_PKEY_ALG *const> algs) {
+  auto *out_impl = FromOpaque(out);
+  CBS seq;
+  if (!CBS_get_asn1(cbs, &seq, CBS_ASN1_SEQUENCE) ||
+      !x509_parse_algorithm(&seq, out_impl->algor.get()) ||
+      !asn1_parse_bit_string(&seq, out_impl->public_key.get(), /*tag=*/0) ||
+      CBS_len(&seq) != 0) {
+    OPENSSL_PUT_ERROR(ASN1, ASN1_R_DECODE_ERROR);
+    return 0;
   }
+  x509_pubkey_changed(out_impl, algs);
   return 1;
 }
 
-ASN1_SEQUENCE_cb(X509_PUBKEY, pubkey_cb) = {
-    ASN1_SIMPLE(X509_PUBKEY, algor, X509_ALGOR),
-    ASN1_SIMPLE(X509_PUBKEY, public_key, ASN1_BIT_STRING),
-} ASN1_SEQUENCE_END_cb(X509_PUBKEY, X509_PUBKEY)
+static int x509_parse_public_key_default(CBS *cbs, X509_PUBKEY *out) {
+  return x509_parse_public_key(cbs, FromOpaque(out), GetDefaultEVPAlgorithms());
+}
 
-IMPLEMENT_ASN1_FUNCTIONS_const(X509_PUBKEY)
+int bssl::x509_marshal_public_key(CBB *cbb, const X509_PUBKEY *in) {
+  auto *in_impl = FromOpaque(in);
+  CBB seq;
+  return CBB_add_asn1(cbb, &seq, CBS_ASN1_SEQUENCE) &&
+         x509_marshal_algorithm(&seq, in_impl->algor.get()) &&
+         asn1_marshal_bit_string(&seq, in_impl->public_key.get(), /*tag=*/0) &&
+         CBB_flush(cbb);
+}
 
-int X509_PUBKEY_set(X509_PUBKEY **x, EVP_PKEY *pkey) {
-  X509_PUBKEY *pk = NULL;
-  uint8_t *spki = NULL;
-  size_t spki_len;
+X509_PUBKEY *d2i_X509_PUBKEY(X509_PUBKEY **out, const uint8_t **inp, long len) {
+  return D2IFromCBS(out, inp, len, [](CBS *cbs) -> UniquePtr<X509_PUBKEY> {
+    UniquePtr<X509_PUBKEY> ret(X509_PUBKEY_new());
+    if (ret == nullptr || !x509_parse_public_key_default(cbs, ret.get())) {
+      return nullptr;
+    }
+    return ret;
+  });
+}
 
-  if (x == NULL) {
+int i2d_X509_PUBKEY(const X509_PUBKEY *key, uint8_t **outp) {
+  return I2DFromCBB(/*initial_capacity=*/32, outp, [&](CBB *cbb) -> bool {
+    return x509_marshal_public_key(cbb, FromOpaque(key));
+  });
+}
+
+BSSL_NAMESPACE_BEGIN
+
+// TODO(crbug.com/42290417): Remove this when `X509` and `X509_REQ` no longer
+// depend on the tables.
+IMPLEMENT_EXTERN_ASN1_PARSE_INTO(X509_PUBKEY, X509_PUBKEY_new, X509_PUBKEY_free,
+                                 CBS_ASN1_SEQUENCE,
+                                 x509_parse_public_key_default,
+                                 x509_marshal_public_key)
+
+BSSL_NAMESPACE_END
+
+int bssl::x509_pubkey_set1(X509_PUBKEY *key, EVP_PKEY *pkey) {
+  ScopedCBB cbb;
+  if (!CBB_init(cbb.get(), 64) || !EVP_marshal_public_key(cbb.get(), pkey)) {
+    OPENSSL_PUT_ERROR(X509, X509_R_PUBLIC_KEY_ENCODE_ERROR);
     return 0;
   }
 
-  CBB cbb;
-  const uint8_t *p;
-  if (!CBB_init(&cbb, 0) ||  //
-      !EVP_marshal_public_key(&cbb, pkey) ||
-      !CBB_finish(&cbb, &spki, &spki_len) ||  //
-      spki_len > LONG_MAX) {
-    CBB_cleanup(&cbb);
-    OPENSSL_PUT_ERROR(X509, X509_R_PUBLIC_KEY_ENCODE_ERROR);
-    goto error;
-  }
+  CBS cbs;
+  CBS_init(&cbs, CBB_data(cbb.get()), CBB_len(cbb.get()));
+  // TODO(crbug.com/42290364): Use an `EVP_PKEY_ALG` derived from `pkey`.
+  // `X509_PUBKEY_get0` does not currently work when setting, say, an
+  // `EVP_PKEY_RSA_PSS` key.
+  return x509_parse_public_key(&cbs, key, GetDefaultEVPAlgorithms());
+}
 
-  p = spki;
-  pk = d2i_X509_PUBKEY(NULL, &p, (long)spki_len);
-  if (pk == NULL || p != spki + spki_len) {
-    OPENSSL_PUT_ERROR(X509, X509_R_PUBLIC_KEY_DECODE_ERROR);
-    goto error;
+int X509_PUBKEY_set(X509_PUBKEY **x, EVP_PKEY *pkey) {
+  UniquePtr<X509_PUBKEY> new_key(X509_PUBKEY_new());
+  if (new_key == nullptr ||
+      !x509_pubkey_set1(FromOpaque(new_key.get()), pkey)) {
+    return 0;
   }
-
-  OPENSSL_free(spki);
   X509_PUBKEY_free(*x);
-  *x = pk;
-
+  *x = new_key.release();
   return 1;
-error:
-  X509_PUBKEY_free(pk);
-  OPENSSL_free(spki);
-  return 0;
 }
 
 EVP_PKEY *X509_PUBKEY_get0(const X509_PUBKEY *key) {
-  if (key == NULL) {
-    return NULL;
+  if (key == nullptr) {
+    return nullptr;
   }
 
-  if (key->pkey == NULL) {
+  if (FromOpaque(key)->pkey == nullptr) {
     OPENSSL_PUT_ERROR(X509, X509_R_PUBLIC_KEY_DECODE_ERROR);
-    return NULL;
+    return nullptr;
   }
 
-  return key->pkey;
+  return FromOpaque(key)->pkey.get();
 }
 
 EVP_PKEY *X509_PUBKEY_get(const X509_PUBKEY *key) {
   EVP_PKEY *pkey = X509_PUBKEY_get0(key);
-  if (pkey != NULL) {
+  if (pkey != nullptr) {
     EVP_PKEY_up_ref(pkey);
   }
   return pkey;
@@ -136,35 +167,33 @@ EVP_PKEY *X509_PUBKEY_get(const X509_PUBKEY *key) {
 
 int X509_PUBKEY_set0_param(X509_PUBKEY *pub, ASN1_OBJECT *obj, int param_type,
                            void *param_value, uint8_t *key, int key_len) {
-  if (!X509_ALGOR_set0(pub->algor, obj, param_type, param_value)) {
+  auto *pub_impl = FromOpaque(pub);
+  if (!X509_ALGOR_set0(pub_impl->algor.get(), obj, param_type, param_value)) {
     return 0;
   }
 
-  ASN1_STRING_set0(pub->public_key, key, key_len);
-  // Set the number of unused bits to zero.
-  pub->public_key->flags &= ~(ASN1_STRING_FLAG_BITS_LEFT | 0x07);
-  pub->public_key->flags |= ASN1_STRING_FLAG_BITS_LEFT;
-
-  x509_pubkey_changed(pub);
+  ASN1_STRING_set0(pub_impl->public_key.get(), key, key_len);
+  x509_pubkey_changed(pub_impl, GetDefaultEVPAlgorithms());
   return 1;
 }
 
 int X509_PUBKEY_get0_param(ASN1_OBJECT **out_obj, const uint8_t **out_key,
                            int *out_key_len, X509_ALGOR **out_alg,
                            X509_PUBKEY *pub) {
-  if (out_obj != NULL) {
-    *out_obj = pub->algor->algorithm;
+  auto *pub_impl = FromOpaque(pub);
+  if (out_obj != nullptr) {
+    *out_obj = pub_impl->algor->algorithm;
   }
-  if (out_key != NULL) {
-    *out_key = pub->public_key->data;
-    *out_key_len = pub->public_key->length;
+  if (out_key != nullptr) {
+    *out_key = pub_impl->public_key->data;
+    *out_key_len = pub_impl->public_key->length;
   }
-  if (out_alg != NULL) {
-    *out_alg = pub->algor;
+  if (out_alg != nullptr) {
+    *out_alg = pub_impl->algor.get();
   }
   return 1;
 }
 
 const ASN1_BIT_STRING *X509_PUBKEY_get0_public_key(const X509_PUBKEY *pub) {
-  return pub->public_key;
+  return FromOpaque(pub)->public_key.get();
 }

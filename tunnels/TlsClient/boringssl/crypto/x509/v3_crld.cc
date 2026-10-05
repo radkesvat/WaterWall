@@ -15,6 +15,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <algorithm>
+#include <iterator>
+
 #include <openssl/asn1.h>
 #include <openssl/asn1t.h>
 #include <openssl/conf.h>
@@ -23,90 +26,83 @@
 #include <openssl/obj.h>
 #include <openssl/x509.h>
 
+#include "../asn1/internal.h"
+#include "../internal.h"
 #include "internal.h"
 
+
+using namespace bssl;
 
 static void *v2i_crld(const X509V3_EXT_METHOD *method, const X509V3_CTX *ctx,
                       const STACK_OF(CONF_VALUE) *nval);
 static int i2r_crldp(const X509V3_EXT_METHOD *method, void *pcrldp, BIO *out,
                      int indent);
 
-const X509V3_EXT_METHOD v3_crld = {
+const X509V3_EXT_METHOD bssl::v3_crld = {
     NID_crl_distribution_points,
     0,
     ASN1_ITEM_ref(CRL_DIST_POINTS),
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
     v2i_crld,
     i2r_crldp,
-    0,
-    NULL,
+    nullptr,
+    nullptr,
 };
 
-const X509V3_EXT_METHOD v3_freshest_crl = {
-    NID_freshest_crl,
-    0,
-    ASN1_ITEM_ref(CRL_DIST_POINTS),
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    v2i_crld,
-    i2r_crldp,
-    0,
-    NULL,
+const X509V3_EXT_METHOD bssl::v3_freshest_crl = {
+    NID_freshest_crl, 0,        ASN1_ITEM_ref(CRL_DIST_POINTS),
+    nullptr,          nullptr,  nullptr,
+    nullptr,          nullptr,  nullptr,
+    nullptr,          v2i_crld, i2r_crldp,
+    nullptr,          nullptr,
 };
 
-static STACK_OF(GENERAL_NAME) *gnames_from_sectname(const X509V3_CTX *ctx,
-                                                    char *sect) {
+static UniquePtr<GENERAL_NAMES> gnames_from_sectname(const X509V3_CTX *ctx,
+                                                     const char *sect) {
   const STACK_OF(CONF_VALUE) *gnsect;
-  STACK_OF(CONF_VALUE) *gnsect_owned = NULL;
+  UniquePtr<STACK_OF(CONF_VALUE)> gnsect_owned;
   if (*sect == '@') {
     gnsect = X509V3_get_section(ctx, sect + 1);
   } else {
-    gnsect_owned = X509V3_parse_list(sect);
-    gnsect = gnsect_owned;
+    gnsect_owned.reset(X509V3_parse_list(sect));
+    gnsect = gnsect_owned.get();
   }
   if (!gnsect) {
     OPENSSL_PUT_ERROR(X509V3, X509V3_R_SECTION_NOT_FOUND);
-    return NULL;
+    return nullptr;
   }
-  STACK_OF(GENERAL_NAME) *gens = v2i_GENERAL_NAMES(NULL, ctx, gnsect);
-  sk_CONF_VALUE_pop_free(gnsect_owned, X509V3_conf_free);
-  return gens;
+  return UniquePtr<GENERAL_NAMES>(v2i_GENERAL_NAMES(nullptr, ctx, gnsect));
 }
 
-// set_dist_point_name decodes a DistributionPointName from |cnf| and writes the
-// result in |*pdp|. It returns 1 on success, -1 on error, and 0 if |cnf| used
+// set_dist_point_name decodes a DistributionPointName from `cnf` and writes the
+// result in `*pdp`. It returns 1 on success, -1 on error, and 0 if `cnf` used
 // an unrecognized input type. The zero return can be used by callers to support
 // additional syntax.
 static int set_dist_point_name(DIST_POINT_NAME **pdp, const X509V3_CTX *ctx,
                                const CONF_VALUE *cnf) {
-  STACK_OF(GENERAL_NAME) *fnm = NULL;
-  STACK_OF(X509_NAME_ENTRY) *rnm = NULL;
-  if (!strncmp(cnf->name, "fullname", 9)) {
-    // If |cnf| comes from |X509V3_parse_list|, which is possible for a v2i
-    // function, |cnf->value| may be NULL.
-    if (cnf->value == NULL) {
+  UniquePtr<STACK_OF(GENERAL_NAME)> fnm;
+  UniquePtr<STACK_OF(X509_NAME_ENTRY)> rnm;
+  if (!strcmp(cnf->name, "fullname")) {
+    // If `cnf` comes from `X509V3_parse_list`, which is possible for a v2i
+    // function, `cnf->value` may be NULL.
+    if (cnf->value == nullptr) {
       OPENSSL_PUT_ERROR(X509V3, X509V3_R_MISSING_VALUE);
       return -1;
     }
     fnm = gnames_from_sectname(ctx, cnf->value);
     if (!fnm) {
-      goto err;
+      return -1;
     }
   } else if (!strcmp(cnf->name, "relativename")) {
-    // If |cnf| comes from |X509V3_parse_list|, which is possible for a v2i
-    // function, |cnf->value| may be NULL.
-    if (cnf->value == NULL) {
+    // If `cnf` comes from `X509V3_parse_list`, which is possible for a v2i
+    // function, `cnf->value` may be NULL.
+    if (cnf->value == nullptr) {
       OPENSSL_PUT_ERROR(X509V3, X509V3_R_MISSING_VALUE);
       return -1;
     }
@@ -115,21 +111,20 @@ static int set_dist_point_name(DIST_POINT_NAME **pdp, const X509V3_CTX *ctx,
       OPENSSL_PUT_ERROR(X509V3, X509V3_R_SECTION_NOT_FOUND);
       return -1;
     }
-    X509_NAME *nm = X509_NAME_new();
+    UniquePtr<X509_NAME> nm(X509_NAME_new());
     if (!nm) {
       return -1;
     }
-    int ret = X509V3_NAME_from_section(nm, dnsect, MBSTRING_ASC);
-    rnm = nm->entries;
-    nm->entries = NULL;
-    X509_NAME_free(nm);
-    if (!ret || sk_X509_NAME_ENTRY_num(rnm) <= 0) {
-      goto err;
+    int ret = X509V3_NAME_from_section(nm.get(), dnsect, MBSTRING_ASC);
+    rnm = std::move(FromOpaque(nm.get())->entries);
+    if (!ret || sk_X509_NAME_ENTRY_num(rnm.get()) <= 0) {
+      return -1;
     }
     // There can only be one RDN in nameRelativeToCRLIssuer.
-    if (sk_X509_NAME_ENTRY_value(rnm, sk_X509_NAME_ENTRY_num(rnm) - 1)->set) {
+    if (X509_NAME_ENTRY_set(sk_X509_NAME_ENTRY_value(
+            rnm.get(), sk_X509_NAME_ENTRY_num(rnm.get()) - 1)) != 0) {
       OPENSSL_PUT_ERROR(X509V3, X509V3_R_INVALID_MULTIPLE_RDNS);
-      goto err;
+      return -1;
     }
   } else {
     return 0;
@@ -137,27 +132,22 @@ static int set_dist_point_name(DIST_POINT_NAME **pdp, const X509V3_CTX *ctx,
 
   if (*pdp) {
     OPENSSL_PUT_ERROR(X509V3, X509V3_R_DISTPOINT_ALREADY_SET);
-    goto err;
+    return -1;
   }
 
   *pdp = DIST_POINT_NAME_new();
   if (!*pdp) {
-    goto err;
+    return -1;
   }
   if (fnm) {
     (*pdp)->type = 0;
-    (*pdp)->name.fullname = fnm;
+    (*pdp)->name.fullname = fnm.release();
   } else {
     (*pdp)->type = 1;
-    (*pdp)->name.relativename = rnm;
+    (*pdp)->name.relativename = rnm.release();
   }
 
   return 1;
-
-err:
-  sk_GENERAL_NAME_pop_free(fnm, GENERAL_NAME_free);
-  sk_X509_NAME_ENTRY_pop_free(rnm, X509_NAME_ENTRY_free);
-  return -1;
 }
 
 static const BIT_STRING_BITNAME reason_flags[] = {
@@ -170,7 +160,7 @@ static const BIT_STRING_BITNAME reason_flags[] = {
     {6, "Certificate Hold", "certificateHold"},
     {7, "Privilege Withdrawn", "privilegeWithdrawn"},
     {8, "AA Compromise", "AACompromise"},
-    {-1, NULL, NULL}};
+};
 
 static int set_reasons(ASN1_BIT_STRING **preas, const char *value) {
   if (*preas) {
@@ -178,52 +168,41 @@ static int set_reasons(ASN1_BIT_STRING **preas, const char *value) {
     OPENSSL_PUT_ERROR(X509V3, X509V3_R_INVALID_VALUE);
     return 0;
   }
-  int ret = 0;
-  STACK_OF(CONF_VALUE) *rsk = X509V3_parse_list(value);
+  UniquePtr<STACK_OF(CONF_VALUE)> rsk(X509V3_parse_list(value));
   if (!rsk) {
     return 0;
   }
-  for (size_t i = 0; i < sk_CONF_VALUE_num(rsk); i++) {
-    const char *bnam = sk_CONF_VALUE_value(rsk, i)->name;
+  for (const CONF_VALUE *val : rsk.get()) {
     if (!*preas) {
       *preas = ASN1_BIT_STRING_new();
       if (!*preas) {
-        goto err;
+        return 0;
       }
     }
-    const BIT_STRING_BITNAME *pbn;
-    for (pbn = reason_flags; pbn->lname; pbn++) {
-      if (!strcmp(pbn->sname, bnam)) {
-        if (!ASN1_BIT_STRING_set_bit(*preas, pbn->bitnum, 1)) {
-          goto err;
-        }
-        break;
-      }
-    }
-    if (!pbn->lname) {
-      goto err;
+    auto it = std::find_if(std::begin(reason_flags), std::end(reason_flags),
+                           [&](const BIT_STRING_BITNAME &reason) {
+                             return strcmp(reason.sname, val->name) == 0;
+                           });
+    if (it == std::end(reason_flags) ||
+        !ASN1_BIT_STRING_set_bit(*preas, it->bitnum, 1)) {
+      return 0;
     }
   }
-  ret = 1;
-
-err:
-  sk_CONF_VALUE_pop_free(rsk, X509V3_conf_free);
-  return ret;
+  return 1;
 }
 
 static int print_reasons(BIO *out, const char *rname, ASN1_BIT_STRING *rflags,
                          int indent) {
-  int first = 1;
-  const BIT_STRING_BITNAME *pbn;
+  bool first = true;
   BIO_printf(out, "%*s%s:\n%*s", indent, "", rname, indent + 2, "");
-  for (pbn = reason_flags; pbn->lname; pbn++) {
-    if (ASN1_BIT_STRING_get_bit(rflags, pbn->bitnum)) {
+  for (const BIT_STRING_BITNAME &reason : reason_flags) {
+    if (ASN1_BIT_STRING_get_bit(rflags, reason.bitnum)) {
       if (first) {
-        first = 0;
+        first = false;
       } else {
         BIO_puts(out, ", ");
       }
-      BIO_puts(out, pbn->lname);
+      BIO_puts(out, reason.lname);
     }
   }
   if (first) {
@@ -234,12 +213,11 @@ static int print_reasons(BIO *out, const char *rname, ASN1_BIT_STRING *rflags,
   return 1;
 }
 
-static DIST_POINT *crldp_from_section(const X509V3_CTX *ctx,
-                                      const STACK_OF(CONF_VALUE) *nval) {
-  DIST_POINT *point = NULL;
-  point = DIST_POINT_new();
+static UniquePtr<DIST_POINT> crldp_from_section(
+    const X509V3_CTX *ctx, const STACK_OF(CONF_VALUE) *nval) {
+  UniquePtr<DIST_POINT> point(DIST_POINT_new());
   if (!point) {
-    goto err;
+    return nullptr;
   }
   for (size_t i = 0; i < sk_CONF_VALUE_num(nval); i++) {
     const CONF_VALUE *cnf = sk_CONF_VALUE_value(nval, i);
@@ -248,94 +226,73 @@ static DIST_POINT *crldp_from_section(const X509V3_CTX *ctx,
       continue;
     }
     if (ret < 0) {
-      goto err;
+      return nullptr;
     }
     if (!strcmp(cnf->name, "reasons")) {
       if (!set_reasons(&point->reasons, cnf->value)) {
-        goto err;
+        return nullptr;
       }
     } else if (!strcmp(cnf->name, "CRLissuer")) {
       GENERAL_NAMES_free(point->CRLissuer);
-      point->CRLissuer = gnames_from_sectname(ctx, cnf->value);
+      point->CRLissuer = gnames_from_sectname(ctx, cnf->value).release();
       if (!point->CRLissuer) {
-        goto err;
+        return nullptr;
       }
     }
   }
 
   return point;
-
-err:
-  DIST_POINT_free(point);
-  return NULL;
 }
 
 static void *v2i_crld(const X509V3_EXT_METHOD *method, const X509V3_CTX *ctx,
                       const STACK_OF(CONF_VALUE) *nval) {
-  STACK_OF(DIST_POINT) *crld = NULL;
-  GENERAL_NAMES *gens = NULL;
-  GENERAL_NAME *gen = NULL;
-  if (!(crld = sk_DIST_POINT_new_null())) {
-    goto err;
+  UniquePtr<STACK_OF(DIST_POINT)> crld(sk_DIST_POINT_new_null());
+  if (crld == nullptr) {
+    return nullptr;
   }
-  for (size_t i = 0; i < sk_CONF_VALUE_num(nval); i++) {
-    DIST_POINT *point;
-    const CONF_VALUE *cnf = sk_CONF_VALUE_value(nval, i);
+  for (const CONF_VALUE *cnf : nval) {
     if (!cnf->value) {
       const STACK_OF(CONF_VALUE) *dpsect = X509V3_get_section(ctx, cnf->name);
       if (!dpsect) {
-        goto err;
+        return nullptr;
       }
-      point = crldp_from_section(ctx, dpsect);
-      if (!point) {
-        goto err;
-      }
-      if (!sk_DIST_POINT_push(crld, point)) {
-        DIST_POINT_free(point);
-        goto err;
+      UniquePtr<DIST_POINT> point = crldp_from_section(ctx, dpsect);
+      if (!point || !PushToStack(crld.get(), std::move(point))) {
+        return nullptr;
       }
     } else {
-      if (!(gen = v2i_GENERAL_NAME(method, ctx, cnf))) {
-        goto err;
+      UniquePtr<GENERAL_NAME> gen(v2i_GENERAL_NAME(method, ctx, cnf));
+      if (gen == nullptr) {
+        return nullptr;
       }
-      if (!(gens = GENERAL_NAMES_new())) {
-        goto err;
+      UniquePtr<GENERAL_NAMES> gens(GENERAL_NAMES_new());
+      if (gens == nullptr || !PushToStack(gens.get(), std::move(gen))) {
+        return nullptr;
       }
-      if (!sk_GENERAL_NAME_push(gens, gen)) {
-        goto err;
-      }
-      gen = NULL;
-      if (!(point = DIST_POINT_new())) {
-        goto err;
-      }
-      if (!sk_DIST_POINT_push(crld, point)) {
-        DIST_POINT_free(point);
-        goto err;
+      UniquePtr<DIST_POINT> point(DIST_POINT_new());
+      if (point == nullptr) {
+        return nullptr;
       }
       if (!(point->distpoint = DIST_POINT_NAME_new())) {
-        goto err;
+        return nullptr;
       }
-      point->distpoint->name.fullname = gens;
+      point->distpoint->name.fullname = gens.release();
       point->distpoint->type = 0;
-      gens = NULL;
+      if (!PushToStack(crld.get(), std::move(point))) {
+        return nullptr;
+      }
     }
   }
-  return crld;
-
-err:
-  GENERAL_NAME_free(gen);
-  GENERAL_NAMES_free(gens);
-  sk_DIST_POINT_pop_free(crld, DIST_POINT_free);
-  return NULL;
+  return crld.release();
 }
 
 static int dpn_cb(int operation, ASN1_VALUE **pval, const ASN1_ITEM *it,
                   void *exarg) {
-  DIST_POINT_NAME *dpn = (DIST_POINT_NAME *)*pval;
+  DIST_POINT_NAME *dpn = asn1_load_ptr_as<DIST_POINT_NAME>(pval);
 
   switch (operation) {
     case ASN1_OP_NEW_POST:
-      dpn->dpname = NULL;
+      dpn->dpname = nullptr;
       break;
 
     case ASN1_OP_FREE_POST:
@@ -365,7 +322,7 @@ ASN1_ITEM_TEMPLATE(CRL_DIST_POINTS) = ASN1_EX_TEMPLATE_TYPE(
     ASN1_TFLG_SEQUENCE_OF, 0, CRLDistributionPoints, DIST_POINT)
 ASN1_ITEM_TEMPLATE_END(CRL_DIST_POINTS)
 
-IMPLEMENT_ASN1_FUNCTIONS(CRL_DIST_POINTS)
+IMPLEMENT_ASN1_FUNCTIONS_const(CRL_DIST_POINTS)
 
 ASN1_SEQUENCE(ISSUING_DIST_POINT) = {
     ASN1_EXP_OPT(ISSUING_DIST_POINT, distpoint, DIST_POINT_NAME, 0),
@@ -376,28 +333,28 @@ ASN1_SEQUENCE(ISSUING_DIST_POINT) = {
     ASN1_IMP_OPT(ISSUING_DIST_POINT, onlyattr, ASN1_FBOOLEAN, 5),
 } ASN1_SEQUENCE_END(ISSUING_DIST_POINT)
 
-IMPLEMENT_ASN1_FUNCTIONS(ISSUING_DIST_POINT)
+IMPLEMENT_ASN1_FUNCTIONS_const(ISSUING_DIST_POINT)
 
 static int i2r_idp(const X509V3_EXT_METHOD *method, void *pidp, BIO *out,
                    int indent);
 static void *v2i_idp(const X509V3_EXT_METHOD *method, const X509V3_CTX *ctx,
                      const STACK_OF(CONF_VALUE) *nval);
 
-const X509V3_EXT_METHOD v3_idp = {
+const X509V3_EXT_METHOD bssl::v3_idp = {
     NID_issuing_distribution_point,
     X509V3_EXT_MULTILINE,
     ASN1_ITEM_ref(ISSUING_DIST_POINT),
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
     v2i_idp,
     i2r_idp,
-    0,
-    NULL,
+    nullptr,
+    nullptr,
 };
 
 static void *v2i_idp(const X509V3_EXT_METHOD *method, const X509V3_CTX *ctx,
@@ -447,7 +404,7 @@ static void *v2i_idp(const X509V3_EXT_METHOD *method, const X509V3_CTX *ctx,
 
 err:
   ISSUING_DIST_POINT_free(idp);
-  return NULL;
+  return nullptr;
 }
 
 static int print_gens(BIO *out, STACK_OF(GENERAL_NAME) *gens, int indent) {
@@ -465,8 +422,12 @@ static int print_distpoint(BIO *out, DIST_POINT_NAME *dpn, int indent) {
     BIO_printf(out, "%*sFull Name:\n", indent, "");
     print_gens(out, dpn->name.fullname, indent);
   } else {
-    X509_NAME ntmp;
-    ntmp.entries = dpn->name.relativename;
+    X509Name ntmp;
+    ntmp.entries.reset(sk_X509_NAME_ENTRY_deep_copy(
+        dpn->name.relativename, X509_NAME_ENTRY_dup, X509_NAME_ENTRY_free));
+    if (ntmp.entries == nullptr) {
+      return 0;
+    }
     BIO_printf(out, "%*sRelative Name:\n%*s", indent, "", indent + 2, "");
     X509_NAME_print_ex(out, &ntmp, 0, XN_FLAG_ONELINE);
     BIO_puts(out, "\n");
@@ -526,7 +487,7 @@ static int i2r_crldp(const X509V3_EXT_METHOD *method, void *pcrldp, BIO *out,
   return 1;
 }
 
-int DIST_POINT_set_dpname(DIST_POINT_NAME *dpn, X509_NAME *iname) {
+int bssl::DIST_POINT_set_dpname(DIST_POINT_NAME *dpn, X509_NAME *iname) {
   size_t i;
   STACK_OF(X509_NAME_ENTRY) *frag;
   X509_NAME_ENTRY *ne;
@@ -542,14 +503,14 @@ int DIST_POINT_set_dpname(DIST_POINT_NAME *dpn, X509_NAME *iname) {
     ne = sk_X509_NAME_ENTRY_value(frag, i);
     if (!X509_NAME_add_entry(dpn->dpname, ne, -1, i ? 0 : 1)) {
       X509_NAME_free(dpn->dpname);
-      dpn->dpname = NULL;
+      dpn->dpname = nullptr;
       return 0;
     }
   }
   // generate cached encoding of name
-  if (i2d_X509_NAME(dpn->dpname, NULL) < 0) {
+  if (i2d_X509_NAME(dpn->dpname, nullptr) < 0) {
     X509_NAME_free(dpn->dpname);
-    dpn->dpname = NULL;
+    dpn->dpname = nullptr;
     return 0;
   }
   return 1;

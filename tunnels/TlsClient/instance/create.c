@@ -244,6 +244,7 @@ static SSL_CTX *setupSslContext(const uint8_t *alpn_wire, size_t alpn_wire_len, 
     }
 
     SSL_CTX_set_grease_enabled(ssl_ctx, true);
+    SSL_CTX_set_grease_sigalgs_enabled(ssl_ctx, true);
 
     SSL_CTX_set_permute_extensions(ssl_ctx, true);
 
@@ -269,9 +270,9 @@ static SSL_CTX *setupSslContext(const uint8_t *alpn_wire, size_t alpn_wire_len, 
     // Enable SCT (Signed Certificate Timestamp) extension at context level
     SSL_CTX_enable_signed_cert_timestamps(ssl_ctx);
 
-    // Configure signature algorithms to match Chrome
-    // Chrome uses these signature algorithms in this order
+    // Match Chrome 154's verification preferences; BoringSSL prepends signature GREASE.
     if (! SSL_CTX_set1_sigalgs_list(ssl_ctx,
+                                    "mldsa44:mldsa65:mldsa87:"
                                     "ecdsa_secp256r1_sha256:"
                                     "rsa_pss_rsae_sha256:"
                                     "rsa_pkcs1_sha256:"

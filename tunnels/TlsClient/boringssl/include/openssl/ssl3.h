@@ -23,77 +23,22 @@ extern "C" {
 #endif
 
 
-// These are kept to support clients that negotiates higher protocol versions
+// These are kept to support clients that negotiate higher protocol versions
 // using SSLv2 client hello records.
 #define SSL2_MT_CLIENT_HELLO 1
 #define SSL2_VERSION 0x0002
 
-// Signalling cipher suite value from RFC 5746.
+// The following constants are equal to TLS cipher suite values, OR-d with
+// 0x03000000. This is part of OpenSSL's SSL 2.0 legacy. SSL 2.0 has long since
+// been removed from BoringSSL.
+// TODO(davidben): Define these in terms of `SSL_CIPHER_*` constants. The
+// challenge is that existing code expects them to be defined in ssl3.h, so we
+// must first merge ssl3.h into ssl.h.
+#define SSL3_CK_RSA_DES_192_CBC3_SHA 0x0300000A
 #define SSL3_CK_SCSV 0x030000FF
-// Fallback signalling cipher suite value from RFC 7507.
 #define SSL3_CK_FALLBACK_SCSV 0x03005600
 
-#define SSL3_CK_RSA_NULL_MD5 0x03000001
-#define SSL3_CK_RSA_NULL_SHA 0x03000002
-#define SSL3_CK_RSA_RC4_40_MD5 0x03000003
-#define SSL3_CK_RSA_RC4_128_MD5 0x03000004
-#define SSL3_CK_RSA_RC4_128_SHA 0x03000005
-#define SSL3_CK_RSA_RC2_40_MD5 0x03000006
-#define SSL3_CK_RSA_IDEA_128_SHA 0x03000007
-#define SSL3_CK_RSA_DES_40_CBC_SHA 0x03000008
-#define SSL3_CK_RSA_DES_64_CBC_SHA 0x03000009
-#define SSL3_CK_RSA_DES_192_CBC3_SHA 0x0300000A
-
-#define SSL3_CK_DH_DSS_DES_40_CBC_SHA 0x0300000B
-#define SSL3_CK_DH_DSS_DES_64_CBC_SHA 0x0300000C
-#define SSL3_CK_DH_DSS_DES_192_CBC3_SHA 0x0300000D
-#define SSL3_CK_DH_RSA_DES_40_CBC_SHA 0x0300000E
-#define SSL3_CK_DH_RSA_DES_64_CBC_SHA 0x0300000F
-#define SSL3_CK_DH_RSA_DES_192_CBC3_SHA 0x03000010
-
-#define SSL3_CK_EDH_DSS_DES_40_CBC_SHA 0x03000011
-#define SSL3_CK_EDH_DSS_DES_64_CBC_SHA 0x03000012
-#define SSL3_CK_EDH_DSS_DES_192_CBC3_SHA 0x03000013
-#define SSL3_CK_EDH_RSA_DES_40_CBC_SHA 0x03000014
-#define SSL3_CK_EDH_RSA_DES_64_CBC_SHA 0x03000015
-#define SSL3_CK_EDH_RSA_DES_192_CBC3_SHA 0x03000016
-
-#define SSL3_CK_ADH_RC4_40_MD5 0x03000017
-#define SSL3_CK_ADH_RC4_128_MD5 0x03000018
-#define SSL3_CK_ADH_DES_40_CBC_SHA 0x03000019
-#define SSL3_CK_ADH_DES_64_CBC_SHA 0x0300001A
-#define SSL3_CK_ADH_DES_192_CBC_SHA 0x0300001B
-
-#define SSL3_TXT_RSA_NULL_MD5 "NULL-MD5"
-#define SSL3_TXT_RSA_NULL_SHA "NULL-SHA"
-#define SSL3_TXT_RSA_RC4_40_MD5 "EXP-RC4-MD5"
-#define SSL3_TXT_RSA_RC4_128_MD5 "RC4-MD5"
-#define SSL3_TXT_RSA_RC4_128_SHA "RC4-SHA"
-#define SSL3_TXT_RSA_RC2_40_MD5 "EXP-RC2-CBC-MD5"
-#define SSL3_TXT_RSA_IDEA_128_SHA "IDEA-CBC-SHA"
-#define SSL3_TXT_RSA_DES_40_CBC_SHA "EXP-DES-CBC-SHA"
-#define SSL3_TXT_RSA_DES_64_CBC_SHA "DES-CBC-SHA"
 #define SSL3_TXT_RSA_DES_192_CBC3_SHA "DES-CBC3-SHA"
-
-#define SSL3_TXT_DH_DSS_DES_40_CBC_SHA "EXP-DH-DSS-DES-CBC-SHA"
-#define SSL3_TXT_DH_DSS_DES_64_CBC_SHA "DH-DSS-DES-CBC-SHA"
-#define SSL3_TXT_DH_DSS_DES_192_CBC3_SHA "DH-DSS-DES-CBC3-SHA"
-#define SSL3_TXT_DH_RSA_DES_40_CBC_SHA "EXP-DH-RSA-DES-CBC-SHA"
-#define SSL3_TXT_DH_RSA_DES_64_CBC_SHA "DH-RSA-DES-CBC-SHA"
-#define SSL3_TXT_DH_RSA_DES_192_CBC3_SHA "DH-RSA-DES-CBC3-SHA"
-
-#define SSL3_TXT_EDH_DSS_DES_40_CBC_SHA "EXP-EDH-DSS-DES-CBC-SHA"
-#define SSL3_TXT_EDH_DSS_DES_64_CBC_SHA "EDH-DSS-DES-CBC-SHA"
-#define SSL3_TXT_EDH_DSS_DES_192_CBC3_SHA "EDH-DSS-DES-CBC3-SHA"
-#define SSL3_TXT_EDH_RSA_DES_40_CBC_SHA "EXP-EDH-RSA-DES-CBC-SHA"
-#define SSL3_TXT_EDH_RSA_DES_64_CBC_SHA "EDH-RSA-DES-CBC-SHA"
-#define SSL3_TXT_EDH_RSA_DES_192_CBC3_SHA "EDH-RSA-DES-CBC3-SHA"
-
-#define SSL3_TXT_ADH_RC4_40_MD5 "EXP-ADH-RC4-MD5"
-#define SSL3_TXT_ADH_RC4_128_MD5 "ADH-RC4-MD5"
-#define SSL3_TXT_ADH_DES_40_CBC_SHA "EXP-ADH-DES-CBC-SHA"
-#define SSL3_TXT_ADH_DES_64_CBC_SHA "ADH-DES-CBC-SHA"
-#define SSL3_TXT_ADH_DES_192_CBC_SHA "ADH-DES-CBC3-SHA"
 
 #define SSL3_SSL_SESSION_ID_LENGTH 32
 #define SSL3_MAX_SSL_SESSION_ID_LENGTH 32
@@ -139,7 +84,7 @@ extern "C" {
 // bytes (256) plus the mac size.
 //
 // TODO(davidben): This derivation doesn't take AEADs into account, or TLS 1.1
-// explicit nonces. It happens to work because |SSL3_RT_MAX_MD_SIZE| is larger
+// explicit nonces. It happens to work because `SSL3_RT_MAX_MD_SIZE` is larger
 // than necessary and no true AEAD has variable overhead in TLS 1.2.
 #define SSL3_RT_MAX_ENCRYPTED_OVERHEAD (256 + SSL3_RT_MAX_MD_SIZE)
 
@@ -150,7 +95,7 @@ extern "C" {
     (EVP_AEAD_MAX_OVERHEAD + EVP_AEAD_MAX_NONCE_LENGTH)
 
 // SSL3_RT_MAX_COMPRESSED_LENGTH is an alias for
-// |SSL3_RT_MAX_PLAIN_LENGTH|. Compression is gone, so don't include the
+// `SSL3_RT_MAX_PLAIN_LENGTH`. Compression is gone, so don't include the
 // compression overhead.
 #define SSL3_RT_MAX_COMPRESSED_LENGTH SSL3_RT_MAX_PLAIN_LENGTH
 
@@ -158,9 +103,6 @@ extern "C" {
   (SSL3_RT_MAX_ENCRYPTED_OVERHEAD + SSL3_RT_MAX_COMPRESSED_LENGTH)
 #define SSL3_RT_MAX_PACKET_SIZE \
   (SSL3_RT_MAX_ENCRYPTED_LENGTH + SSL3_RT_HEADER_LENGTH)
-
-#define SSL3_MD_CLIENT_FINISHED_CONST "\x43\x4C\x4E\x54"
-#define SSL3_MD_SERVER_FINISHED_CONST "\x53\x52\x56\x52"
 
 #define SSL3_RT_CHANGE_CIPHER_SPEC 20
 #define SSL3_RT_ALERT 21
@@ -214,7 +156,7 @@ extern "C" {
 #define DTLS1_MT_HELLO_VERIFY_REQUEST 3
 
 // The following are legacy aliases for consumers which use
-// |SSL_CTX_set_msg_callback|.
+// `SSL_CTX_set_msg_callback`.
 #define SSL3_MT_SERVER_DONE SSL3_MT_SERVER_HELLO_DONE
 #define SSL3_MT_NEWSESSION_TICKET SSL3_MT_NEW_SESSION_TICKET
 

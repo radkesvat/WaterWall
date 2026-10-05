@@ -52,7 +52,7 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 ( $xlate="${dir}../../../perlasm/arm-xlate.pl" and -f $xlate) or
 die "can't locate arm-xlate.pl";
 
-open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\"";
+open OUT, "|-", $^X, $xlate, $flavour, $output;
 *STDOUT=*OUT;
 
 $prefix="aes_hw";
@@ -84,7 +84,9 @@ my ($zero,$rcon,$mask,$in0,$in1,$tmp,$key)=
 # execute-only memory. On AArch32, put it in .text and use adr.
 $code.= ".section .rodata\n" if ($flavour =~ /64/);
 $code.=<<___;
+
 .align	5
+${prefix}_constants:
 .Lrcon:
 .long	0x01,0x01,0x01,0x01
 .long	0x0c0f0e0d,0x0c0f0e0d,0x0c0f0e0d,0x0c0f0e0d	// rotate-n-splat

@@ -134,8 +134,10 @@
   "test_scope": {
     "test": "waterwall.tlsclient_alpn_unit",
     "checked_against_waterwall": [
+      "cipher-suite order and GREASE presence",
       "supported_groups and GREASE presence",
       "initial key-share groups, order, lengths, and GREASE",
+      "signature-algorithm order, GREASE, and ML-DSA algorithms",
       "ALPN protocol list",
       "ALPS codepoint and protocol list"
     ],

@@ -2,6 +2,7 @@
 .file 1 "inserted_by_delocate.c"
 .loc 1 1 0
 BORINGSSL_bcm_text_start:
+.LBORINGSSL_bcm_text_start_local_target:
 	.text
 
         # PIC function call
@@ -41,6 +42,7 @@ BORINGSSL_bcm_text_start:
 .text
 .loc 1 2 0
 BORINGSSL_bcm_text_end:
+.LBORINGSSL_bcm_text_end_local_target:
 .Lboringssl_got_delta:
 	.quad _GLOBAL_OFFSET_TABLE_-.Lboringssl_got_delta
 .Lboringssl_got_h:
@@ -50,6 +52,7 @@ BORINGSSL_bcm_text_end:
 .type BORINGSSL_bcm_text_hash, @object
 .size BORINGSSL_bcm_text_hash, 32
 BORINGSSL_bcm_text_hash:
+.LBORINGSSL_bcm_text_hash_local_target:
 .byte 0xae
 .byte 0x2c
 .byte 0xea

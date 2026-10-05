@@ -12,17 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Suppress MSVC's STL warnings. It flags |std::copy| calls with a raw output
+// Suppress MSVC's STL warnings. It flags `std::copy` calls with a raw output
 // pointer, on grounds that MSVC cannot check them. Unfortunately, there is no
 // way to suppress the warning just on one line. The warning is flagged inside
-// the STL itself, so suppressing at the |std::copy| call does not work.
+// the STL itself, so suppressing at the `std::copy` call does not work.
 #if !defined(_SCL_SECURE_NO_WARNINGS)
 #define _SCL_SECURE_NO_WARNINGS
 #endif
 
 #include <openssl/base.h>
 
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <errno.h>
@@ -37,7 +39,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #else
@@ -57,6 +59,7 @@ OPENSSL_MSVC_PRAGMA(comment(lib, "Ws2_32.lib"))
 #endif
 
 #include <openssl/err.h>
+#include <openssl/evp.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 
@@ -64,6 +67,8 @@ OPENSSL_MSVC_PRAGMA(comment(lib, "Ws2_32.lib"))
 #include "internal.h"
 #include "transport_common.h"
 
+
+BSSL_NAMESPACE_BEGIN
 
 #if defined(OPENSSL_WINDOWS)
 using socket_result_t = int;
@@ -90,7 +95,6 @@ static void SplitHostPort(std::string *out_hostname, std::string *out_port,
                           const std::string &hostname_and_port) {
   size_t colon_offset = hostname_and_port.find_last_of(':');
   const size_t bracket_offset = hostname_and_port.find_last_of(']');
-  std::string hostname, port;
 
   // An IPv6 literal may have colons internally, guarded by square brackets.
   if (bracket_offset != std::string::npos &&
@@ -116,7 +120,8 @@ static std::string GetLastSocketErrorString() {
       reinterpret_cast<char *>(&buffer), 0, nullptr);
   if (len == 0) {
     char buf[256];
-    snprintf(buf, sizeof(buf), "unknown error (0x%x)", error);
+    snprintf(buf, sizeof(buf), "unknown error (0x%x)",
+             static_cast<unsigned>(error));
     return buf;
   }
   std::string ret(buffer, len);
@@ -128,14 +133,14 @@ static std::string GetLastSocketErrorString() {
 }
 
 static void PrintSocketError(const char *function) {
-  // On Windows, |perror| and |errno| are part of the C runtime, while sockets
+  // On Windows, `perror` and `errno` are part of the C runtime, while sockets
   // are separate, so we must print errors manually.
   std::string error = GetLastSocketErrorString();
   fprintf(stderr, "%s: %s\n", function, error.c_str());
 }
 
-// Connect sets |*out_sock| to be a socket connected to the destination given
-// in |hostname_and_port|, which should be of the form "www.example.com:123".
+// Connect sets `*out_sock` to be a socket connected to the destination given
+// in `hostname_and_port`, which should be of the form "www.example.com:123".
 // It returns true on success and false otherwise.
 bool Connect(int *out_sock, const std::string &hostname_and_port) {
   std::string hostname, port;
@@ -279,6 +284,52 @@ bool VersionFromString(uint16_t *out_version, const std::string &version) {
   return false;
 }
 
+std::optional<std::vector<uint8_t>> CertificateTypesFromString(
+    std::string_view s) {
+  std::vector<uint8_t> cert_types;
+  for (std::string_view type : SplitString(s, ",")) {
+    type = TrimSpace(type);
+    if (type == "x509") {
+      cert_types.push_back(TLSEXT_cert_type_x509);
+    } else if (type == "rpk") {
+      cert_types.push_back(TLSEXT_cert_type_rpk);
+    } else {
+      fprintf(stderr, "Invalid cert type: '%s'\n", std::string(type).c_str());
+      return std::nullopt;
+    }
+  }
+  return cert_types;
+}
+
+static std::optional<uint8_t> DecodeHexChar(char c) {
+  if ('0' <= c && c <= '9') {
+    return c - '0';
+  } else if ('a' <= c && c <= 'f') {
+    return c - 'a' + 10;
+  } else if ('A' <= c && c <= 'F') {
+    return c - 'A' + 10;
+  } else {
+    return std::nullopt;
+  }
+}
+
+std::optional<std::vector<uint8_t>> DecodeHex(std::string_view hex) {
+  if (hex.size() % 2 != 0) {
+    return std::nullopt;
+  }
+  std::vector<uint8_t> ret;
+  ret.reserve(hex.size() / 2);
+  for (size_t i = 0; i < hex.size(); i += 2) {
+    auto hi = DecodeHexChar(hex[i]);
+    auto lo = DecodeHexChar(hex[i + 1]);
+    if (!hi.has_value() || !lo.has_value()) {
+      return std::nullopt;
+    }
+    ret.push_back((*hi << 4) | *lo);
+  }
+  return ret;
+}
+
 void PrintConnectionInfo(BIO *bio, const SSL *ssl) {
   const SSL_CIPHER *cipher = SSL_get_current_cipher(ssl);
 
@@ -337,7 +388,7 @@ void PrintConnectionInfo(BIO *bio, const SSL *ssl) {
              SSL_ech_accepted(ssl) ? "yes" : "no");
 
   // Print the server cert subject and issuer names.
-  bssl::UniquePtr<X509> peer(SSL_get_peer_certificate(ssl));
+  UniquePtr<X509> peer(SSL_get_peer_certificate(ssl));
   if (peer != nullptr) {
     BIO_printf(bio, "  Cert subject: ");
     X509_NAME_print_ex(bio, X509_get_subject_name(peer.get()), 0,
@@ -346,6 +397,15 @@ void PrintConnectionInfo(BIO *bio, const SSL *ssl) {
     X509_NAME_print_ex(bio, X509_get_issuer_name(peer.get()), 0,
                        XN_FLAG_ONELINE);
     BIO_printf(bio, "\n");
+  }
+
+  // Print the peer RPK.
+  const EVP_PKEY *peer_rpk = SSL_get0_peer_rpk(ssl);
+  if (peer_rpk != nullptr) {
+    BIO_printf(bio, "  Peer RPK params: \n");
+    EVP_PKEY_print_params(bio, peer_rpk, 4, nullptr);
+    BIO_printf(bio, "  Peer RPK pubkey: \n");
+    EVP_PKEY_print_public(bio, peer_rpk, 4, nullptr);
   }
 }
 
@@ -392,41 +452,43 @@ class SocketWaiter {
   bool Init() { return true; }
 
   // Wait waits for at least on of the socket or stdin or be ready. On success,
-  // it sets |*socket_ready| and |*stdin_ready| to whether the respective
+  // it sets `*socket_ready` and `*stdin_ready` to whether the respective
   // objects are readable and returns true. On error, it returns false. stdin's
   // readiness may either be the socket being writable or stdin being readable,
-  // depending on |stdin_wait|.
+  // depending on `stdin_wait`.
   bool Wait(StdinWait stdin_wait, bool *socket_ready, bool *stdin_ready) {
-    *socket_ready = true;
+    *socket_ready = false;
     *stdin_ready = false;
 
-    fd_set read_fds, write_fds;
-    FD_ZERO(&read_fds);
-    FD_ZERO(&write_fds);
+    pollfd pfds[2] = {};
+    nfds_t num_pfds = 1;
+    pfds[0].fd = sock_;
+    pfds[0].events = POLLIN;
     if (stdin_wait == StdinWait::kSocketWrite) {
-      FD_SET(sock_, &write_fds);
+      pfds[0].events |= POLLOUT;
     } else if (stdin_open_) {
-      FD_SET(STDIN_FILENO, &read_fds);
+      num_pfds = 2;
+      pfds[1].fd = STDIN_FILENO;
+      pfds[1].events = POLLIN;
     }
-    FD_SET(sock_, &read_fds);
-    if (select(sock_ + 1, &read_fds, &write_fds, NULL, NULL) <= 0) {
-      perror("select");
+    if (poll(pfds, num_pfds, /*timeout=*/-1) <= 0) {
+      perror("poll");
       return false;
     }
 
-    if (FD_ISSET(STDIN_FILENO, &read_fds) || FD_ISSET(sock_, &write_fds)) {
-      *stdin_ready = true;
-    }
-    if (FD_ISSET(sock_, &read_fds)) {
-      *socket_ready = true;
+    *socket_ready = (pfds[0].revents & (POLLIN | POLLERR | POLLHUP)) != 0;
+    if (stdin_wait == StdinWait::kSocketWrite) {
+      *stdin_ready = (pfds[0].revents & (POLLOUT | POLLERR | POLLHUP)) != 0;
+    } else if (stdin_open_) {
+      *stdin_ready = (pfds[1].revents & (POLLIN | POLLERR | POLLHUP)) != 0;
     }
 
     return true;
   }
 
-  // ReadStdin reads at most |max_out| bytes from stdin. On success, it writes
-  // them to |out| and sets |*out_len| to the number of bytes written. On error,
-  // it returns false. This method may only be called after |Wait| returned
+  // ReadStdin reads at most `max_out` bytes from stdin. On success, it writes
+  // them to `out` and sets `*out_len` to the number of bytes written. On error,
+  // it returns false. This method may only be called after `Wait` returned
   // stdin was ready.
   bool ReadStdin(void *out, size_t *out_len, size_t max_out) {
     ssize_t n;
@@ -486,13 +548,13 @@ class ScopedWSAEVENT {
   WSAEVENT event_ = WSA_INVALID_EVENT;
 };
 
-// SocketWaiter, on Windows, is more complicated. While |WaitForMultipleObjects|
+// SocketWaiter, on Windows, is more complicated. While `WaitForMultipleObjects`
 // works for both sockets and stdin, the latter is often a line-buffered
-// console. The |HANDLE| is considered readable if there are any console events
+// console. The `HANDLE` is considered readable if there are any console events
 // available, but reading blocks until a full line is available.
 //
-// So that |Wait| reflects final stdin read, we spawn a stdin reader thread that
-// writes to an in-memory buffer and signals a |WSAEVENT| to coordinate with the
+// So that `Wait` reflects final stdin read, we spawn a stdin reader thread that
+// writes to an in-memory buffer and signals a `WSAEVENT` to coordinate with the
 // socket.
 class SocketWaiter {
  public:
@@ -547,7 +609,7 @@ class SocketWaiter {
   }
 
   bool Wait(StdinWait stdin_wait, bool *socket_ready, bool *stdin_ready) {
-    *socket_ready = true;
+    *socket_ready = false;
     *stdin_ready = false;
 
     ScopedWSAEVENT sock_read_event(WSACreateEvent());
@@ -594,7 +656,7 @@ class SocketWaiter {
     std::lock_guard<std::mutex> locked(stdin_->lock);
 
     if (stdin_->buffer.empty()) {
-      // |ReadStdin| may only be called when |Wait| signals it is ready, so
+      // `ReadStdin` may only be called when `Wait` signals it is ready, so
       // stdin must have reached EOF or error.
       assert(!stdin_->open);
       listen_stdin_ = false;
@@ -637,7 +699,7 @@ class SocketWaiter {
     ScopedWSAEVENT event;
     // lock protects the following fields.
     std::mutex lock;
-    // cond notifies the stdin thread that |buffer| is no longer full.
+    // cond notifies the stdin thread that `buffer` is no longer full.
     std::condition_variable cond;
     std::deque<uint8_t> buffer;
     bool open = true;
@@ -647,7 +709,7 @@ class SocketWaiter {
   int sock_;
   std::shared_ptr<StdinState> stdin_;
   // listen_stdin_ is set to false when we have consumed an EOF or error from
-  // |stdin_|. This is separate from |stdin_->open| because the signal may not
+  // `stdin_`. This is separate from `stdin_->open` because the signal may not
   // have been consumed yet.
   bool listen_stdin_ = true;
 };
@@ -769,7 +831,7 @@ class SocketLineReader {
   explicit SocketLineReader(int sock) : sock_(sock) {}
 
   // Next reads a '\n'- or '\r\n'-terminated line from the socket and, on
-  // success, sets |*out_line| to it and returns true. Otherwise it returns
+  // success, sets `*out_line` to it and returns true. Otherwise it returns
   // false.
   bool Next(std::string *out_line) {
     for (;;) {
@@ -810,8 +872,8 @@ class SocketLineReader {
   }
 
   // ReadSMTPReply reads one or more lines that make up an SMTP reply. On
-  // success, it sets |*out_code| to the reply's code (e.g. 250) and
-  // |*out_content| to the body of the reply (e.g. "OK") and returns true.
+  // success, it sets `*out_code` to the reply's code (e.g. 250) and
+  // `*out_content` to the body of the reply (e.g. "OK") and returns true.
   // Otherwise it returns false.
   //
   // See https://tools.ietf.org/html/rfc821#page-48
@@ -874,7 +936,7 @@ class SocketLineReader {
   size_t buf_len_ = 0;
 };
 
-// SendAll writes |data_len| bytes from |data| to |sock|. It returns true on
+// SendAll writes `data_len` bytes from `data` to `sock`. It returns true on
 // success and false otherwise.
 static bool SendAll(int sock, const char *data, size_t data_len) {
   size_t done = 0;
@@ -980,3 +1042,5 @@ bool DoHTTPTunnel(int sock, const std::string &hostname_and_port) {
     fprintf(stderr, "%s\n", line.c_str());
   }
 }
+
+BSSL_NAMESPACE_END

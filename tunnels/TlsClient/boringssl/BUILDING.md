@@ -14,7 +14,7 @@ Unless otherwise noted, build tools must at most five years old, matching
 [Abseil guidelines](https://abseil.io/about/compatibility). If in doubt, use the
 most recent stable version of each tool.
 
-  * [CMake](https://cmake.org/download/) 3.12 or later is required.
+  * [CMake](https://cmake.org/download/) 3.22 or later is required.
 
   * Building with [Ninja](https://ninja-build.org/) instead of Make is
     recommended, because it makes builds faster. On Windows, CMake's Visual
@@ -74,22 +74,27 @@ themselves automatically.
 ### Building for Android
 
 It's possible to build BoringSSL with the Android NDK using CMake. Recent
-versions of the NDK include a CMake toolchain file which works with CMake 3.6.0
-or later. This has been tested with version r16b of the NDK.
+versions of the NDK include a CMake toolchain file. This has been tested with
+version r16b of the NDK.
 
 Unpack the Android NDK somewhere and export `ANDROID_NDK` to point to the
 directory. Then run CMake like this:
 
-    cmake -DANDROID_ABI=armeabi-v7a \
-          -DANDROID_PLATFORM=android-19 \
+    cmake -DANDROID_ABI=arm64-v8a \
+          -DANDROID_PLATFORM=android-21 \
           -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK}/build/cmake/android.toolchain.cmake \
           -GNinja -B build
 
 Once you've run that, Ninja should produce Android-compatible binaries.  You
-can replace `armeabi-v7a` in the above with `arm64-v8a` and use API level 21 or
-higher to build aarch64 binaries.
+can replace `arm64-v8a` with `armeabi-v7a` in the above to build aarch64
+binaries.
 
 For other options, see the documentation in the toolchain file.
+
+To run tests, you can use the `util/run_android_tests.go` script. Individual
+binaries can also be pushed to the device with `adb`, but note that some tests
+require test data. The `-upload-only` flag to `run_android_tests.go` may be
+useful.
 
 To debug the resulting binaries on an Android device with `gdb`, run the
 commands below. Replace `ARCH` with the architecture of the target device, e.g.
@@ -119,25 +124,15 @@ supported.
 
 BoringSSL's build system has experimental support for adding a custom prefix to
 all symbols. This can be useful when linking multiple versions of BoringSSL in
-the same project to avoid symbol conflicts. Symbol prefixing requires the most
-recent stable version of [Go](https://go.dev/).
+the same project to avoid symbol conflicts.
 
 In order to build with prefixed symbols, the `BORINGSSL_PREFIX` CMake variable
-should specify the prefix to add to all symbols, and the
-`BORINGSSL_PREFIX_SYMBOLS` CMake variable should specify the path to a file
-which contains a list of symbols which should be prefixed (one per line;
-comments are supported with `#`). In other words, `cmake -B build
--DBORINGSSL_PREFIX=MY_CUSTOM_PREFIX
--DBORINGSSL_PREFIX_SYMBOLS=/path/to/symbols.txt` will configure the build to add
-the prefix `MY_CUSTOM_PREFIX` to all of the symbols listed in
-`/path/to/symbols.txt`.
+should specify the prefix to add to all symbols. In other words, `cmake -B build
+-DBORINGSSL_PREFIX=MY_CUSTOM_PREFIX` will configure the build to add
+the prefix `MY_CUSTOM_PREFIX` to all of the symbols defined by the library.
 
-It is currently the caller's responsibility to create and maintain the list of
-symbols to be prefixed. Alternatively, `util/read_symbols.go` reads the list of
-exported symbols from a `.a` file, and can be used in a build script to generate
-the symbol list on the fly (by building without prefixing, using
-`read_symbols.go` to construct a symbol list, and then building again with
-prefixing).
+Note that symbol prefixing cannot be used with the combination of FIPS and
+static libraries.
 
 This mechanism is under development and may change over time. Please contact the
 BoringSSL maintainers if making use of it.
@@ -206,16 +201,59 @@ from within `ssl/test/runner`.
 Both sets of tests may also be run with `ninja -C build run_tests`, but CMake
 3.2 or later is required to avoid Ninja's output buffering.
 
+# Running Benchmarks
+
+To invoke the benchmarks, execute the `bssl_bench` binary.
+You have the option to enumerate all of the benchmarks first by passing in
+`--benchmark_list_tests`.
+To run specific benchmarks, you may pass in `--benchmark_filter=$regex` where
+`$regex` is an [ECMAScript regular expression].
+
+You can specify a set of input sizes in bytes for relevant cipher suites
+with the repeatable flag `-i` or `--input-size`.
+You can let the benchmark run with a set of various thread counts with the
+repeatable flag `-t` or `--threads`.
+For more benchmark configuration options, you may read the manual by passing in
+`--help` flag on launch.
+For more information on `--benchmark_*` flags, we refer you to the
+[benchmark user guide].
+
+There are also [additional tools] at your disposal to interpret the benchmark
+results.
+
+[ECMAScript regular expression]: https://cppreference.com/w/cpp/regex/ecmascript.html
+[benchmark user guide]: https://google.github.io/benchmark/user_guide.html
+[additional tools]: https://google.github.io/benchmark/tools.html
+
 # Pre-generated Files
 
-If modifying perlasm files, or `util/pregenerate/build.json`, you will need to
-run `go run ./util/pregenerate` to refresh some pre-generated files. To do this,
-you will need a recent version of Perl.
+If modifying perlasm files, `util/pregenerate/build.json`, or adding new public
+symbols, you will need to run `go run ./util/pregenerate` to refresh some
+pre-generated files. To do this, you will need:
 
-On Windows, [Active State Perl](http://www.activestate.com/activeperl/) has been
-reported to work, as has MSYS Perl.
-[Strawberry Perl](http://strawberryperl.com/) also works but it adds GCC
-to `PATH`, which can confuse some build tools when identifying the compiler
-(removing `C:\Strawberry\c\bin` from `PATH` should resolve any problems).
+- The most recent stable version of [Go](https://go.dev/)
 
-See (gen/README.md)[./gen/README.md] for more details.
+- A recent version of [Perl](https://www.perl.org/)
+
+- A recent version of [Clang](https://clang.llvm.org/)
+
+If not available in `PATH`, the `-perl=path/to/perl` and `-clang=path/to/clang`
+flags can be used to specify where Perl and Clang can be found, respectively.
+Passing an empty string (`-perl=` and `-clang=`) will skip these dependencies,
+but not all files will be regenerated. If any skipped files need to be updated,
+some of your changes may not be applied to your build, and your change may fail
+tests on our CI.
+
+On non-Windows systems, Perl and Clang are either installed by default or
+readily available from package managers or Xcode.
+
+On Windows, Clang can be installed from Visual Studio. Perl can be installed
+from [Strawberry Perl](https://strawberryperl.com/). Prefer to use the
+"Portable zip" version. The MSI installer will
+[add GCC to `PATH`](https://github.com/StrawberryPerl/Perl-Dist-Strawberry/issues/11),
+which can confuse some build tools when identifying the compiler. If this has
+happened, removing `C:\Strawberry\c\bin` from `PATH` should resolve any
+problems. [`CMAKE_IGNORE_PATH`](https://cmake.org/cmake/help/latest/variable/CMAKE_IGNORE_PATH.html)
+may also be useful.
+
+See [gen/README.md](./gen/README.md) for more details.

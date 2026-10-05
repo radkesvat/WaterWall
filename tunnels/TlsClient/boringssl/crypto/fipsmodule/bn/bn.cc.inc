@@ -21,20 +21,23 @@
 #include <openssl/err.h>
 #include <openssl/mem.h>
 
+#include "../../mem_internal.h"
 #include "../delocate.h"
 #include "internal.h"
 
 
-// BN_MAX_WORDS is the maximum number of words allowed in a |BIGNUM|. It is
-// sized so byte and bit counts of a |BIGNUM| always fit in |int|, with room to
+using namespace bssl;
+
+// BN_MAX_WORDS is the maximum number of words allowed in a `BIGNUM`. It is
+// sized so byte and bit counts of a `BIGNUM` always fit in `int`, with room to
 // spare.
 #define BN_MAX_WORDS (INT_MAX / (4 * BN_BITS2))
 
-BIGNUM *BN_new(void) {
-  BIGNUM *bn = reinterpret_cast<BIGNUM *>(OPENSSL_malloc(sizeof(BIGNUM)));
+BIGNUM *BN_new() {
+  BIGNUM *bn = New<BIGNUM>();
 
-  if (bn == NULL) {
-    return NULL;
+  if (bn == nullptr) {
+    return nullptr;
   }
 
   OPENSSL_memset(bn, 0, sizeof(BIGNUM));
@@ -43,12 +46,12 @@ BIGNUM *BN_new(void) {
   return bn;
 }
 
-BIGNUM *BN_secure_new(void) { return BN_new(); }
+BIGNUM *BN_secure_new() { return BN_new(); }
 
 void BN_init(BIGNUM *bn) { OPENSSL_memset(bn, 0, sizeof(BIGNUM)); }
 
 void BN_free(BIGNUM *bn) {
-  if (bn == NULL) {
+  if (bn == nullptr) {
     return;
   }
 
@@ -57,9 +60,9 @@ void BN_free(BIGNUM *bn) {
   }
 
   if (bn->flags & BN_FLG_MALLOCED) {
-    OPENSSL_free(bn);
+    Delete(bn);
   } else {
-    bn->d = NULL;
+    bn->d = nullptr;
   }
 }
 
@@ -68,18 +71,18 @@ void BN_clear_free(BIGNUM *bn) { BN_free(bn); }
 BIGNUM *BN_dup(const BIGNUM *src) {
   BIGNUM *copy;
 
-  if (src == NULL) {
-    return NULL;
+  if (src == nullptr) {
+    return nullptr;
   }
 
   copy = BN_new();
-  if (copy == NULL) {
-    return NULL;
+  if (copy == nullptr) {
+    return nullptr;
   }
 
   if (!BN_copy(copy, src)) {
     BN_free(copy);
-    return NULL;
+    return nullptr;
   }
 
   return copy;
@@ -91,7 +94,7 @@ BIGNUM *BN_copy(BIGNUM *dest, const BIGNUM *src) {
   }
 
   if (!bn_wexpand(dest, src->width)) {
-    return NULL;
+    return nullptr;
   }
 
   OPENSSL_memcpy(dest->d, src->d, sizeof(src->d[0]) * src->width);
@@ -102,7 +105,7 @@ BIGNUM *BN_copy(BIGNUM *dest, const BIGNUM *src) {
 }
 
 void BN_clear(BIGNUM *bn) {
-  if (bn->d != NULL) {
+  if (bn->d != nullptr) {
     OPENSSL_memset(bn->d, 0, bn->dmax * sizeof(bn->d[0]));
   }
 
@@ -120,25 +123,25 @@ DEFINE_METHOD_FUNCTION(BIGNUM, BN_value_one) {
 }
 
 // BN_num_bits_word returns the minimum number of bits needed to represent the
-// value in |l|.
+// value in `l`.
 unsigned BN_num_bits_word(BN_ULONG l) {
-  // |BN_num_bits| is often called on RSA prime factors. These have public bit
+  // `BN_num_bits` is often called on RSA prime factors. These have public bit
   // lengths, but all bits beyond the high bit are secret, so count bits in
   // constant time.
   BN_ULONG x, mask;
   int bits = (l != 0);
 
 #if BN_BITS2 > 32
-  // Look at the upper half of |x|. |x| is at most 64 bits long.
+  // Look at the upper half of `x`. `x` is at most 64 bits long.
   x = l >> 32;
-  // Set |mask| to all ones if |x| (the top 32 bits of |l|) is non-zero and all
+  // Set `mask` to all ones if `x` (the top 32 bits of `l`) is non-zero and all
   // all zeros otherwise.
   mask = 0u - x;
   mask = (0u - (mask >> (BN_BITS2 - 1)));
-  // If |x| is non-zero, the lower half is included in the bit count in full,
+  // If `x` is non-zero, the lower half is included in the bit count in full,
   // and we count the upper half. Otherwise, we count the lower half.
   bits += 32 & mask;
-  l ^= (x ^ l) & mask;  // |l| is |x| if |mask| and remains |l| otherwise.
+  l ^= (x ^ l) & mask;  // `l` is `x` if `mask` and remains `l` otherwise.
 #endif
 
   // The remaining blocks are analogous iterations at lower powers of two.
@@ -227,18 +230,18 @@ int BN_set_u64(BIGNUM *bn, uint64_t value) {
 #endif
 }
 
-int bn_set_words(BIGNUM *bn, const BN_ULONG *words, size_t num) {
+int bssl::bn_set_words(BIGNUM *bn, const BN_ULONG *words, size_t num) {
   if (!bn_wexpand(bn, num)) {
     return 0;
   }
   OPENSSL_memmove(bn->d, words, num * sizeof(BN_ULONG));
-  // |bn_wexpand| verified that |num| isn't too large.
+  // `bn_wexpand` verified that `num` isn't too large.
   bn->width = (int)num;
   bn->neg = 0;
   return 1;
 }
 
-void bn_set_static_words(BIGNUM *bn, const BN_ULONG *words, size_t num) {
+void bssl::bn_set_static_words(BIGNUM *bn, const BN_ULONG *words, size_t num) {
   if ((bn->flags & BN_FLG_STATIC_DATA) == 0) {
     OPENSSL_free(bn->d);
   }
@@ -251,8 +254,8 @@ void bn_set_static_words(BIGNUM *bn, const BN_ULONG *words, size_t num) {
   bn->flags |= BN_FLG_STATIC_DATA;
 }
 
-int bn_fits_in_words(const BIGNUM *bn, size_t num) {
-  // All words beyond |num| must be zero.
+int bssl::bn_fits_in_words(const BIGNUM *bn, size_t num) {
+  // All words beyond `num` must be zero.
   BN_ULONG mask = 0;
   for (size_t i = num; i < (size_t)bn->width; i++) {
     mask |= bn->d[i];
@@ -260,7 +263,7 @@ int bn_fits_in_words(const BIGNUM *bn, size_t num) {
   return mask == 0;
 }
 
-int bn_copy_words(BN_ULONG *out, size_t num, const BIGNUM *bn) {
+int bssl::bn_copy_words(BN_ULONG *out, size_t num, const BIGNUM *bn) {
   if (bn->neg) {
     OPENSSL_PUT_ERROR(BN, BN_R_NEGATIVE_NUMBER);
     return 0;
@@ -290,7 +293,7 @@ void BN_set_negative(BIGNUM *bn, int sign) {
   }
 }
 
-int bn_wexpand(BIGNUM *bn, size_t words) {
+int bssl::bn_wexpand(BIGNUM *bn, size_t words) {
   BN_ULONG *a;
 
   if (words <= (size_t)bn->dmax) {
@@ -308,7 +311,7 @@ int bn_wexpand(BIGNUM *bn, size_t words) {
   }
 
   a = reinterpret_cast<BN_ULONG *>(OPENSSL_calloc(words, sizeof(BN_ULONG)));
-  if (a == NULL) {
+  if (a == nullptr) {
     return 0;
   }
 
@@ -321,7 +324,7 @@ int bn_wexpand(BIGNUM *bn, size_t words) {
   return 1;
 }
 
-int bn_expand(BIGNUM *bn, size_t bits) {
+int bssl::bn_expand(BIGNUM *bn, size_t bits) {
   if (bits + BN_BITS2 - 1 < bits) {
     OPENSSL_PUT_ERROR(BN, BN_R_BIGNUM_TOO_LONG);
     return 0;
@@ -329,7 +332,7 @@ int bn_expand(BIGNUM *bn, size_t bits) {
   return bn_wexpand(bn, (bits + BN_BITS2 - 1) / BN_BITS2);
 }
 
-int bn_resize_words(BIGNUM *bn, size_t words) {
+int bssl::bn_resize_words(BIGNUM *bn, size_t words) {
   if ((size_t)bn->width <= words) {
     if (!bn_wexpand(bn, words)) {
       return 0;
@@ -349,8 +352,8 @@ int bn_resize_words(BIGNUM *bn, size_t words) {
   return 1;
 }
 
-void bn_select_words(BN_ULONG *r, BN_ULONG mask, const BN_ULONG *a,
-                     const BN_ULONG *b, size_t num) {
+void bssl::bn_select_words(BN_ULONG *r, BN_ULONG mask, const BN_ULONG *a,
+                           const BN_ULONG *b, size_t num) {
   for (size_t i = 0; i < num; i++) {
     static_assert(sizeof(BN_ULONG) <= sizeof(crypto_word_t),
                   "crypto_word_t is too small");
@@ -358,7 +361,7 @@ void bn_select_words(BN_ULONG *r, BN_ULONG mask, const BN_ULONG *a,
   }
 }
 
-int bn_minimal_width(const BIGNUM *bn) {
+int bssl::bn_minimal_width(const BIGNUM *bn) {
   int ret = bn->width;
   while (ret > 0 && bn->d[ret - 1] == 0) {
     ret--;
@@ -366,7 +369,7 @@ int bn_minimal_width(const BIGNUM *bn) {
   return ret;
 }
 
-void bn_set_minimal_width(BIGNUM *bn) {
+void bssl::bn_set_minimal_width(BIGNUM *bn) {
   bn->width = bn_minimal_width(bn);
   if (bn->width == 0) {
     bn->neg = 0;

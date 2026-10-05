@@ -30,10 +30,10 @@ class CertErrors;
 // SimplePathBuilderDelegate is an implementation of CertPathBuilderDelegate
 // that uses some default policies:
 //
-//   * RSA public keys must be >= |min_rsa_modulus_length_bits|.
+//   * RSA public keys must be >= `min_rsa_modulus_length_bits`.
 //   * Signature algorithm can be RSA PKCS#1, RSASSA-PSS or ECDSA
 //   * Digest algorithm can be SHA256, SHA348 or SHA512.
-//       * If the |digest_policy| was set to kAllowSha1, then SHA1 is
+//       * If the `digest_policy` was set to kAllowSha1, then SHA1 is
 //         additionally accepted.
 //   * EC named curve can be P-256, P-384, P-521.
 class OPENSSL_EXPORT SimplePathBuilderDelegate
@@ -61,7 +61,7 @@ class OPENSSL_EXPORT SimplePathBuilderDelegate
   bool IsSignatureAlgorithmAcceptable(SignatureAlgorithm signature_algorithm,
                                       CertErrors *errors) override;
 
-  // Requires RSA keys be >= |min_rsa_modulus_length_bits_|.
+  // Requires RSA keys be >= `min_rsa_modulus_length_bits_`.
   bool IsPublicKeyAcceptable(EVP_PKEY *public_key, CertErrors *errors) override;
 
   // No-op implementation.
@@ -82,6 +82,15 @@ class OPENSSL_EXPORT SimplePathBuilderDelegate
 
   // No-op implementation.
   bool AcceptPreCertificates() override;
+
+  // No-op implementation.
+  std::optional<MTCCosigner> GetMTCCosigner(
+      Span<const uint8_t> cosigner_id) override;
+
+  // No-op implementation (does not require any valid additional cosigners).
+  bool IsCosignatureVerificationResultAcceptable(
+      const MTCAnchor* mtc_anchor,
+      std::vector<std::vector<uint8_t>> valid_additional_cosigners) override;
 
  private:
   const size_t min_rsa_modulus_length_bits_;

@@ -24,11 +24,11 @@
 
 
 static int maybe_write(BIO *out, const void *buf, int len) {
-  // If |out| is NULL, ignore the output but report the length.
-  return out == NULL || BIO_write(out, buf, len) == len;
+  // If `out` is NULL, ignore the output but report the length.
+  return out == nullptr || BIO_write(out, buf, len) == len;
 }
 
-// do_indent prints |indent| spaces to |out|.
+// do_indent prints `indent` spaces to `out`.
 static int do_indent(BIO *out, int indent) {
   for (int i = 0; i < indent; i++) {
     if (!maybe_write(out, " ", 1)) {
@@ -44,8 +44,6 @@ static int do_indent(BIO *out, int indent) {
 static int do_name_ex(BIO *out, const X509_NAME *n, int indent,
                       unsigned long flags) {
   int prev = -1, orflags;
-  char objtmp[80];
-  const char *objbuf;
   int outlen, len;
   const char *sep_dn, *sep_mv, *sep_eq;
   int sep_dn_len, sep_mv_len, sep_eq_len;
@@ -129,12 +127,16 @@ static int do_name_ex(BIO *out, const X509_NAME *n, int indent,
     const ASN1_OBJECT *fn = X509_NAME_ENTRY_get_object(ent);
     const ASN1_STRING *val = X509_NAME_ENTRY_get_data(ent);
     assert((flags & XN_FLAG_FN_MASK) == XN_FLAG_FN_SN);
+    // Print the short name if available, otherwise serialize the OID.
+    char objtmp[80];
+    const char *objbuf = nullptr;
     int fn_nid = OBJ_obj2nid(fn);
-    if (fn_nid == NID_undef) {
-      OBJ_obj2txt(objtmp, sizeof(objtmp), fn, 1);
-      objbuf = objtmp;
-    } else {
+    if (fn_nid != NID_undef) {
       objbuf = OBJ_nid2sn(fn_nid);
+    }
+    if (objbuf == nullptr) {
+      OBJ_obj2txt(objtmp, sizeof(objtmp), fn, /*always_return_oid=*/1);
+      objbuf = objtmp;
     }
     int objlen = strlen(objbuf);
     if (!maybe_write(out, objbuf, objlen) ||
@@ -170,12 +172,12 @@ int X509_NAME_print_ex(BIO *out, const X509_NAME *nm, int indent,
 
 int X509_NAME_print_ex_fp(FILE *fp, const X509_NAME *nm, int indent,
                           unsigned long flags) {
-  BIO *bio = NULL;
-  if (fp != NULL) {
-    // If |fp| is NULL, this function returns the number of bytes without
+  BIO *bio = nullptr;
+  if (fp != nullptr) {
+    // If `fp` is NULL, this function returns the number of bytes without
     // writing.
     bio = BIO_new_fp(fp, BIO_NOCLOSE);
-    if (bio == NULL) {
+    if (bio == nullptr) {
       return -1;
     }
   }

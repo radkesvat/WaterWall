@@ -20,23 +20,29 @@
 #include "internal.h"
 
 
+using namespace bssl;
+
+BSSL_NAMESPACE_BEGIN
+
 ASN1_SEQUENCE(X509_ATTRIBUTE) = {
     ASN1_SIMPLE(X509_ATTRIBUTE, object, ASN1_OBJECT),
     ASN1_SET_OF(X509_ATTRIBUTE, set, ASN1_ANY),
 } ASN1_SEQUENCE_END(X509_ATTRIBUTE)
+
+BSSL_NAMESPACE_END
 
 IMPLEMENT_ASN1_FUNCTIONS_const(X509_ATTRIBUTE)
 IMPLEMENT_ASN1_DUP_FUNCTION_const(X509_ATTRIBUTE)
 
 X509_ATTRIBUTE *X509_ATTRIBUTE_create(int nid, int attrtype, void *value) {
   ASN1_OBJECT *obj = OBJ_nid2obj(nid);
-  if (obj == NULL) {
-    return NULL;
+  if (obj == nullptr) {
+    return nullptr;
   }
 
   X509_ATTRIBUTE *ret = X509_ATTRIBUTE_new();
   ASN1_TYPE *val = ASN1_TYPE_new();
-  if (ret == NULL || val == NULL) {
+  if (ret == nullptr || val == nullptr) {
     goto err;
   }
 
@@ -51,5 +57,5 @@ X509_ATTRIBUTE *X509_ATTRIBUTE_create(int nid, int attrtype, void *value) {
 err:
   X509_ATTRIBUTE_free(ret);
   ASN1_TYPE_free(val);
-  return NULL;
+  return nullptr;
 }

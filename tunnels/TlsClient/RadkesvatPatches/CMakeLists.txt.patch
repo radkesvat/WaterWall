@@ -1,76 +1,42 @@
---- CMakeLists.txt.original	2026-04-02 19:04:57.009392034 +0000
-+++ CMakeLists.txt	2026-04-16 15:38:56.609136789 +0000
-@@ -41,7 +41,11 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -34,7 +34,13 @@
  include(CTest)
  include(GNUInstallDirs)
  
 -set(INSTALL_ENABLED 1)
-+set(INSTALL_ENABLED 0)
++if(NOT DEFINED INSTALL_ENABLED)
++  set(INSTALL_ENABLED 1)
++endif()
 +
 +if(NOT DEFINED BUILD_TOOL)
 +  set(BUILD_TOOL ON)
 +endif()
  
- if(CMAKE_VERSION VERSION_LESS 3.21 AND
-    CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-@@ -82,12 +86,22 @@
- endforeach()
- 
- if(BORINGSSL_PREFIX AND BORINGSSL_PREFIX_SYMBOLS)
--  require_go()
-   add_definitions(-DBORINGSSL_PREFIX=${BORINGSSL_PREFIX})
-   # CMake automatically connects include_directories to the NASM command-line,
-   # but not add_definitions.
-   set(CMAKE_ASM_NASM_FLAGS "${CMAKE_ASM_NASM_FLAGS} -DBORINGSSL_PREFIX=${BORINGSSL_PREFIX}")
- 
-+  if(GO_EXECUTABLE)
-+    set(BORINGSSL_MAKE_PREFIX_HEADERS_COMMAND
-+        ${GO_EXECUTABLE} run ${CMAKE_CURRENT_SOURCE_DIR}/util/make_prefix_headers.go -out ${CMAKE_CURRENT_BINARY_DIR}/symbol_prefix_include ${BORINGSSL_PREFIX_SYMBOLS})
-+    set(BORINGSSL_MAKE_PREFIX_HEADERS_DEPENDS util/make_prefix_headers.go)
-+  else()
-+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
-+    set(BORINGSSL_MAKE_PREFIX_HEADERS_COMMAND
-+        ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/util/make_prefix_headers.py --out ${CMAKE_CURRENT_BINARY_DIR}/symbol_prefix_include ${BORINGSSL_PREFIX_SYMBOLS})
-+    set(BORINGSSL_MAKE_PREFIX_HEADERS_DEPENDS util/make_prefix_headers.py)
-+  endif()
-+
-   # Use "symbol_prefix_include" to store generated header files
-   include_directories(${CMAKE_CURRENT_BINARY_DIR}/symbol_prefix_include)
-   add_custom_command(
-@@ -95,8 +109,8 @@
-            symbol_prefix_include/boringssl_prefix_symbols_asm.h
-            symbol_prefix_include/boringssl_prefix_symbols_nasm.inc
-     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/symbol_prefix_include
--    COMMAND ${GO_EXECUTABLE} run ${CMAKE_CURRENT_SOURCE_DIR}/util/make_prefix_headers.go -out ${CMAKE_CURRENT_BINARY_DIR}/symbol_prefix_include ${BORINGSSL_PREFIX_SYMBOLS}
--    DEPENDS util/make_prefix_headers.go
-+    COMMAND ${BORINGSSL_MAKE_PREFIX_HEADERS_COMMAND}
-+    DEPENDS ${BORINGSSL_MAKE_PREFIX_HEADERS_DEPENDS}
-             ${BORINGSSL_PREFIX_SYMBOLS})
- 
-   # add_dependencies needs a target, not a file, so we add an intermediate
-@@ -133,7 +147,7 @@
-   else()
-     if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-       # emscripten's emcc/clang does not accept the "-ggdb" flag.
--      set(C_CXX_FLAGS "${C_CXX_FLAGS} -g")
-+      set(C_CXX_FLAGS "${C_CXX_FLAGS}- -g")
-     else()
-       set(C_CXX_FLAGS "${C_CXX_FLAGS} -ggdb")
-     endif()
-@@ -720,8 +734,10 @@
-   target_link_libraries(modulewrapper crypto)
+ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
+    BUILD_TESTING)
+@@ -519,6 +525,7 @@
+       "-wd4702" # unreachable code; MSVC's warning is too aggressive. See
+                 # https://crbug.com/385161043
+       "-wd4706" # assignment within conditional expression
++      "-wd4714" # SecureZeroMemory may not be inlined during link-time code generation
+       )
+   add_compile_options(
+     "$<$<COMPILE_LANGUAGE:C,CXX>:-W4;-WX;${MSVC_DISABLED_WARNINGS_LIST}>")
+@@ -761,8 +768,10 @@
+   target_link_libraries(entropy_modulewrapper crypto)
  endif()
  
 -add_executable(bssl ${BSSL_SOURCES})
 -target_link_libraries(bssl ssl crypto)
-+if(BUILD_TOOL AND NOT APPLE)
++if(BUILD_TOOL)
 +  add_executable(bssl ${BSSL_SOURCES})
 +  target_link_libraries(bssl ssl crypto)
 +endif()
  
- if(FUZZ)
-   if(LIBFUZZER_FROM_DEPS)
-@@ -812,7 +828,9 @@
+ if(BUILD_TESTING)
+   add_executable(generate_mldsa_certs pki/testdata/verify_unittest/generate_mldsa_certs.cc)
+@@ -883,7 +892,9 @@
  
  if(INSTALL_ENABLED)
    install(TARGETS crypto ssl EXPORT OpenSSLTargets)

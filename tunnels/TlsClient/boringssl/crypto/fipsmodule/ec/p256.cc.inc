@@ -26,12 +26,17 @@
 #include <assert.h>
 #include <string.h>
 
+#include <iterator>
+
 #include "../../internal.h"
 #include "../delocate.h"
 #include "./internal.h"
 
 #include "../../../third_party/fiat/p256_field.c.inc"
 #include "../../../third_party/fiat/p256_point.br.c.inc"
+
+
+using namespace bssl;
 
 // utility functions, handwritten
 
@@ -66,9 +71,9 @@ static void fiat_p256_cmovznz(fiat_p256_limb_t out[FIAT_P256_NLIMBS],
 
 static void fiat_p256_from_words(fiat_p256_felem out,
                                  const BN_ULONG in[32 / sizeof(BN_ULONG)]) {
-  // Typically, |BN_ULONG| and |fiat_p256_limb_t| will be the same type, but on
-  // 64-bit platforms without |uint128_t|, they are different. However, on
-  // little-endian systems, |uint64_t[4]| and |uint32_t[8]| have the same
+  // Typically, `BN_ULONG` and `fiat_p256_limb_t` will be the same type, but on
+  // 64-bit platforms without `uint128_t`, they are different. However, on
+  // little-endian systems, `uint64_t[4]` and `uint32_t[8]` have the same
   // layout.
   OPENSSL_memcpy(out, in, 32);
 }
@@ -78,11 +83,11 @@ static void fiat_p256_from_generic(fiat_p256_felem out, const EC_FELEM *in) {
 }
 
 static void fiat_p256_to_generic(EC_FELEM *out, const fiat_p256_felem in) {
-  // See |fiat_p256_from_words|.
+  // See `fiat_p256_from_words`.
   OPENSSL_memcpy(out->words, in, 32);
 }
 
-// fiat_p256_inv_square calculates |out| = |in|^{-2}
+// fiat_p256_inv_square calculates `out` = `in`^{-2}
 //
 // Based on Fermat's Little Theorem:
 //   a^p = a (mod p)
@@ -199,8 +204,8 @@ static void fiat_p256_point_add(fiat_p256_felem x3, fiat_p256_felem y3,
 }
 #include "./p256_table.h"
 
-// fiat_p256_select_point_affine selects the |idx-1|th point from a
-// precomputation table and copies it to out. If |idx| is zero, the output is
+// fiat_p256_select_point_affine selects the `idx-1`th point from a
+// precomputation table and copies it to out. If `idx` is zero, the output is
 // the point at infinity.
 static void fiat_p256_select_point_affine(
     const fiat_p256_limb_t idx, size_t size,
@@ -214,7 +219,7 @@ static void fiat_p256_select_point_affine(
   fiat_p256_cmovznz(out[2], idx, out[2], fiat_p256_one);
 }
 
-// fiat_p256_select_point selects the |idx|th point from a precomputation table
+// fiat_p256_select_point selects the `idx`th point from a precomputation table
 // and copies it to out.
 static void fiat_p256_select_point(const fiat_p256_limb_t idx, size_t size,
                                    const fiat_p256_felem pre_comp[/*size*/][3],
@@ -228,7 +233,7 @@ static void fiat_p256_select_point(const fiat_p256_limb_t idx, size_t size,
   }
 }
 
-// fiat_p256_get_bit returns the |i|th bit in |in|.
+// fiat_p256_get_bit returns the `i`th bit in `in`.
 static crypto_word_t fiat_p256_get_bit(const EC_SCALAR *in, int i) {
   if (i < 0 || i >= 256) {
     return 0;
@@ -259,14 +264,14 @@ static int ec_GFp_nistp256_point_get_affine_coordinates(
   fiat_p256_from_generic(z1, &point->Z);
   fiat_p256_inv_square(z2, z1);
 
-  if (x_out != NULL) {
+  if (x_out != nullptr) {
     fiat_p256_felem x;
     fiat_p256_from_generic(x, &point->X);
     fiat_p256_mul(x, x, z2);
     fiat_p256_to_generic(x_out, x);
   }
 
-  if (y_out != NULL) {
+  if (y_out != nullptr) {
     fiat_p256_felem y;
     fiat_p256_from_generic(y, &point->Y);
     fiat_p256_square(z2, z2);  // z^-4
@@ -330,7 +335,7 @@ static void ec_GFp_nistp256_point_mul(const EC_GROUP *group, EC_JACOBIAN *r,
   // Set nq to the point at infinity.
   fiat_p256_felem nq[3] = {{0}, {0}, {0}}, ftmp, tmp[3];
 
-  // Loop over |scalar| msb-to-lsb, incorporating |p_pre_comp| every 5th round.
+  // Loop over `scalar` msb-to-lsb, incorporating `p_pre_comp` every 5th round.
   int skip = 1;  // Save two point operations in the first round.
   for (size_t i = 255; i < 256; i--) {
     // double
@@ -426,7 +431,7 @@ static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
                                              const EC_JACOBIAN *p,
                                              const EC_SCALAR *p_scalar) {
 #define P256_WSIZE_PUBLIC 4
-  // Precompute multiples of |p|. p_pre_comp[i] is (2*i+1) * |p|.
+  // Precompute multiples of `p`. p_pre_comp[i] is (2*i+1) * `p`.
   fiat_p256_felem p_pre_comp[1 << (P256_WSIZE_PUBLIC - 1)][3];
   fiat_p256_from_generic(p_pre_comp[0][0], &p->X);
   fiat_p256_from_generic(p_pre_comp[0][1], &p->Y);
@@ -434,17 +439,17 @@ static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
   fiat_p256_felem p2[3];
   fiat_p256_point_double(p2[0], p2[1], p2[2], p_pre_comp[0][0],
                          p_pre_comp[0][1], p_pre_comp[0][2]);
-  for (size_t i = 1; i < OPENSSL_ARRAY_SIZE(p_pre_comp); i++) {
+  for (size_t i = 1; i < std::size(p_pre_comp); i++) {
     fiat_p256_point_add(p_pre_comp[i][0], p_pre_comp[i][1], p_pre_comp[i][2],
                         p_pre_comp[i - 1][0], p_pre_comp[i - 1][1],
                         p_pre_comp[i - 1][2], p2[0], p2[1], p2[2]);
   }
 
-  // Set up the coefficients for |p_scalar|.
+  // Set up the coefficients for `p_scalar`.
   int8_t p_wNAF[257];
   ec_compute_wNAF(group, p_wNAF, p_scalar, 256, P256_WSIZE_PUBLIC);
 
-  // Set |ret| to the point at infinity.
+  // Set `ret` to the point at infinity.
   int skip = 1;  // Save some point operations.
   fiat_p256_felem ret[3] = {{0}, {0}, {0}};
   for (int i = 256; i >= 0; i--) {
@@ -452,7 +457,7 @@ static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
       fiat_p256_point_double(ret[0], ret[1], ret[2], ret[0], ret[1], ret[2]);
     }
 
-    // For the |g_scalar|, we use the precomputed table without the
+    // For the `g_scalar`, we use the precomputed table without the
     // constant-time lookup.
     if (i <= 31) {
       // First, look 32 bits upwards.
@@ -536,7 +541,7 @@ static int ec_GFp_nistp256_cmp_x_coordinate(const EC_GROUP *group,
 
   // During signing the x coefficient is reduced modulo the group order.
   // Therefore there is a small possibility, less than 1/2^128, that group_order
-  // < p.x < P. in that case we need not only to compare against |r| but also to
+  // < p.x < P. in that case we need not only to compare against `r` but also to
   // compare against r+group_order.
   assert(group->field.N.width == group->order.N.width);
   EC_FELEM tmp;
@@ -554,6 +559,8 @@ static int ec_GFp_nistp256_cmp_x_coordinate(const EC_GROUP *group,
   return 0;
 }
 
+BSSL_NAMESPACE_BEGIN
+
 DEFINE_METHOD_FUNCTION(EC_METHOD, EC_GFp_nistp256_method) {
   out->point_get_affine_coordinates =
       ec_GFp_nistp256_point_get_affine_coordinates;
@@ -562,16 +569,10 @@ DEFINE_METHOD_FUNCTION(EC_METHOD, EC_GFp_nistp256_method) {
   out->mul = ec_GFp_nistp256_point_mul;
   out->mul_base = ec_GFp_nistp256_point_mul_base;
   out->mul_public = ec_GFp_nistp256_point_mul_public;
-  out->felem_mul = ec_GFp_mont_felem_mul;
-  out->felem_sqr = ec_GFp_mont_felem_sqr;
-  out->felem_to_bytes = ec_GFp_mont_felem_to_bytes;
-  out->felem_from_bytes = ec_GFp_mont_felem_from_bytes;
-  out->felem_reduce = ec_GFp_mont_felem_reduce;
-  // TODO(davidben): This should use the specialized field arithmetic
-  // implementation, rather than the generic one.
-  out->felem_exp = ec_GFp_mont_felem_exp;
   out->scalar_inv0_montgomery = ec_simple_scalar_inv0_montgomery;
   out->scalar_to_montgomery_inv_vartime =
       ec_simple_scalar_to_montgomery_inv_vartime;
   out->cmp_x_coordinate = ec_GFp_nistp256_cmp_x_coordinate;
 }
+
+BSSL_NAMESPACE_END

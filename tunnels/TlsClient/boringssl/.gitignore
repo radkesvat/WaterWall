@@ -13,7 +13,6 @@
 /user.bazelrc
 
 /util/bazel-example/bazel-*
-/util/bazel-example/MODULE.bazel.lock
 
 /util/bot/android_ndk
 /util/bot/android_sdk/public
@@ -35,3 +34,8 @@
 /util/bot/sde-win32.tar.xz
 /util/bot/tools
 /util/bot/windows_sdk
+
+# Local data for developer tooling
+/.vscode/
+/.cache/
+/dist/

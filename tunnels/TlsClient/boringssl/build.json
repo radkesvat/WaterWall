@@ -62,7 +62,6 @@
             "crypto/fipsmodule/ec/ec_montgomery.cc.inc",
             "crypto/fipsmodule/ec/felem.cc.inc",
             "crypto/fipsmodule/ec/oct.cc.inc",
-            "crypto/fipsmodule/ec/p224-64.cc.inc",
             "crypto/fipsmodule/ec/p256-nistz.cc.inc",
             "crypto/fipsmodule/ec/p256.cc.inc",
             "crypto/fipsmodule/ec/scalar.cc.inc",
@@ -72,6 +71,8 @@
             "crypto/fipsmodule/ec/wnaf.cc.inc",
             "crypto/fipsmodule/ecdh/ecdh.cc.inc",
             "crypto/fipsmodule/ecdsa/ecdsa.cc.inc",
+            "crypto/fipsmodule/entropy/jitter.cc.inc",
+            "crypto/fipsmodule/entropy/sha512.cc.inc",
             "crypto/fipsmodule/hkdf/hkdf.cc.inc",
             "crypto/fipsmodule/hmac/hmac.cc.inc",
             "crypto/fipsmodule/keccak/keccak.cc.inc",
@@ -79,9 +80,9 @@
             "crypto/fipsmodule/mldsa/mldsa.cc.inc",
             "crypto/fipsmodule/mlkem/fips_known_values.inc",
             "crypto/fipsmodule/mlkem/mlkem.cc.inc",
+            "crypto/fipsmodule/rand/android_entropy_client.cc.inc",
             "crypto/fipsmodule/rand/ctrdrbg.cc.inc",
             "crypto/fipsmodule/rand/rand.cc.inc",
-            "crypto/fipsmodule/rsa/blinding.cc.inc",
             "crypto/fipsmodule/rsa/padding.cc.inc",
             "crypto/fipsmodule/rsa/rsa.cc.inc",
             "crypto/fipsmodule/rsa/rsa_impl.cc.inc",
@@ -258,18 +259,17 @@
             "crypto/evp/evp.cc",
             "crypto/evp/evp_asn1.cc",
             "crypto/evp/evp_ctx.cc",
+            "crypto/evp/evp_kem.cc",
             "crypto/evp/p_dh.cc",
-            "crypto/evp/p_dh_asn1.cc",
-            "crypto/evp/p_dsa_asn1.cc",
+            "crypto/evp/p_dsa.cc",
             "crypto/evp/p_ec.cc",
-            "crypto/evp/p_ec_asn1.cc",
             "crypto/evp/p_ed25519.cc",
-            "crypto/evp/p_ed25519_asn1.cc",
             "crypto/evp/p_hkdf.cc",
+            "crypto/evp/p_mldsa.cc",
+            "crypto/evp/p_mlkem.cc",
             "crypto/evp/p_rsa.cc",
-            "crypto/evp/p_rsa_asn1.cc",
             "crypto/evp/p_x25519.cc",
-            "crypto/evp/p_x25519_asn1.cc",
+            "crypto/evp/p_xwing.cc",
             "crypto/evp/pbkdf.cc",
             "crypto/evp/print.cc",
             "crypto/evp/scrypt.cc",
@@ -279,7 +279,6 @@
             "crypto/fuzzer_mode.cc",
             "crypto/hpke/hpke.cc",
             "crypto/hrss/hrss.cc",
-            "crypto/kyber/kyber.cc",
             "crypto/lhash/lhash.cc",
             "crypto/md4/md4.cc",
             "crypto/md5/md5.cc",
@@ -310,7 +309,6 @@
             "crypto/rand/forkunsafe.cc",
             "crypto/rand/getentropy.cc",
             "crypto/rand/ios.cc",
-            "crypto/rand/passive.cc",
             "crypto/rand/rand.cc",
             "crypto/rand/trusty.cc",
             "crypto/rand/urandom.cc",
@@ -380,6 +378,7 @@
             "crypto/x509/x509_def.cc",
             "crypto/x509/x509_ext.cc",
             "crypto/x509/x509_lu.cc",
+            "crypto/x509/x509_mtc.cc",
             "crypto/x509/x509_obj.cc",
             "crypto/x509/x509_req.cc",
             "crypto/x509/x509_set.cc",
@@ -402,11 +401,11 @@
             "crypto/x509/x_req.cc",
             "crypto/x509/x_sig.cc",
             "crypto/x509/x_spki.cc",
-            "crypto/x509/x_val.cc",
             "crypto/x509/x_x509.cc",
             "crypto/x509/x_x509a.cc",
             "crypto/xwing/xwing.cc"
         ],
+        "prefix_symbols": true,
         "hdrs": [
             "include/openssl/aead.h",
             "include/openssl/aes.h",
@@ -417,7 +416,6 @@
             "include/openssl/asn1t.h",
             "include/openssl/base.h",
             "include/openssl/base64.h",
-            "include/openssl/bcm_public.h",
             "include/openssl/bio.h",
             "include/openssl/blake2.h",
             "include/openssl/blowfish.h",
@@ -431,6 +429,7 @@
             "include/openssl/cmac.h",
             "include/openssl/cms.h",
             "include/openssl/conf.h",
+            "include/openssl/configuration.h",
             "include/openssl/cpu.h",
             "include/openssl/crypto.h",
             "include/openssl/ctrdrbg.h",
@@ -449,7 +448,6 @@
             "include/openssl/evp.h",
             "include/openssl/evp_errors.h",
             "include/openssl/ex_data.h",
-            "include/openssl/experimental/kyber.h",
             "include/openssl/hkdf.h",
             "include/openssl/hmac.h",
             "include/openssl/hpke.h",
@@ -469,6 +467,7 @@
             "include/openssl/opensslconf.h",
             "include/openssl/opensslv.h",
             "include/openssl/ossl_typ.h",
+            "include/openssl/params.h",
             "include/openssl/pem.h",
             "include/openssl/pkcs12.h",
             "include/openssl/pkcs7.h",
@@ -491,8 +490,10 @@
             "include/openssl/target.h",
             "include/openssl/thread.h",
             "include/openssl/time.h",
+            "include/openssl/tls_prf.h",
             "include/openssl/trust_token.h",
             "include/openssl/type_check.h",
+            "include/openssl/types.h",
             "include/openssl/x509.h",
             "include/openssl/x509_vfy.h",
             "include/openssl/x509v3.h",
@@ -500,6 +501,7 @@
             "include/openssl/xwing.h"
         ],
         "internal_hdrs": [
+            "crypto/armv8_feature_parsing.h",
             "crypto/asn1/internal.h",
             "crypto/bio/internal.h",
             "crypto/bytestring/internal.h",
@@ -529,6 +531,7 @@
             "crypto/fipsmodule/ec/p256-nistz.h",
             "crypto/fipsmodule/ec/p256_table.h",
             "crypto/fipsmodule/ecdsa/internal.h",
+            "crypto/fipsmodule/entropy/internal.h",
             "crypto/fipsmodule/keccak/internal.h",
             "crypto/fipsmodule/rand/internal.h",
             "crypto/fipsmodule/rsa/internal.h",
@@ -544,17 +547,16 @@
             "crypto/hrss/internal.h",
             "crypto/bcm_support.h",
             "crypto/internal.h",
-            "crypto/kyber/internal.h",
             "crypto/lhash/internal.h",
             "crypto/md5/internal.h",
             "crypto/mem_internal.h",
             "crypto/obj/obj_dat.h",
+            "crypto/params_internal.h",
             "crypto/pem/internal.h",
             "crypto/pkcs7/internal.h",
             "crypto/pkcs8/internal.h",
             "crypto/poly1305/internal.h",
             "crypto/pool/internal.h",
-            "crypto/rand/getrandom_fillin.h",
             "crypto/rand/internal.h",
             "crypto/rsa/internal.h",
             "crypto/spake2plus/internal.h",
@@ -617,6 +619,7 @@
             "pki/general_names.cc",
             "pki/input.cc",
             "pki/ip_util.cc",
+            "pki/merkle_tree.cc",
             "pki/name_constraints.cc",
             "pki/ocsp.cc",
             "pki/parse_certificate.cc",
@@ -662,6 +665,7 @@
             "pki/general_names.h",
             "pki/input.h",
             "pki/ip_util.h",
+            "pki/merkle_tree.h",
             "pki/mock_signature_verify_cache.h",
             "pki/name_constraints.h",
             "pki/nist_pkits_unittest.h",
@@ -732,6 +736,7 @@
             "ssl/tls_method.cc",
             "ssl/tls_record.cc"
         ],
+        "prefix_symbols": true,
         "hdrs": [
             "include/openssl/dtls1.h",
             "include/openssl/srtp.h",
@@ -771,6 +776,7 @@
     "test_support": {
         "srcs": [
             "crypto/test/abi_test.cc",
+            "crypto/test/der_trailing_data.cc",
             "crypto/test/file_test.cc",
             "crypto/test/file_test_gtest.cc",
             "crypto/test/file_util.cc",
@@ -780,6 +786,7 @@
         ],
         "internal_hdrs": [
             "crypto/test/abi_test.h",
+            "crypto/test/der_trailing_data.h",
             "crypto/test/file_test.h",
             "crypto/test/file_util.h",
             "crypto/test/gtest_main.h",
@@ -851,6 +858,7 @@
             "crypto/fipsmodule/ec/p256-nistz_test.cc",
             "crypto/fipsmodule/ec/p256_test.cc",
             "crypto/fipsmodule/ecdsa/ecdsa_test.cc",
+            "crypto/fipsmodule/entropy/jitter_test.cc",
             "crypto/fipsmodule/hkdf/hkdf_test.cc",
             "crypto/fipsmodule/keccak/keccak_test.cc",
             "crypto/fipsmodule/rand/ctrdrbg_test.cc",
@@ -860,7 +868,6 @@
             "crypto/hpke/hpke_test.cc",
             "crypto/hrss/hrss_test.cc",
             "crypto/impl_dispatch_test.cc",
-            "crypto/kyber/kyber_test.cc",
             "crypto/lhash/lhash_test.cc",
             "crypto/md5/md5_test.cc",
             "crypto/mlkem/mlkem_test.cc",
@@ -886,11 +893,11 @@
             "crypto/test/gtest_main.cc",
             "crypto/thread_test.cc",
             "crypto/trust_token/trust_token_test.cc",
+            "crypto/x509/x509_extension_test.cc",
             "crypto/x509/x509_test.cc",
             "crypto/x509/x509_time_test.cc",
             "crypto/xwing/xwing_test.cc",
-            "third_party/fiat/bedrock_platform_test.cc",
-            "third_party/fiat/bedrock_polyfill_platform.c.inc"
+            "third_party/fiat/bedrock_platform_test.cc"
         ],
         "data": [
             "crypto/blake2/blake2b256_tests.txt",
@@ -898,8 +905,7 @@
             "crypto/cipher/test/nist_cavp/*.txt",
             "crypto/curve25519/ed25519_tests.txt",
             "crypto/ecdh/ecdh_tests.txt",
-            "crypto/evp/evp_tests.txt",
-            "crypto/evp/scrypt_tests.txt",
+            "crypto/evp/test/*.txt",
             "crypto/fipsmodule/aes/aes_tests.txt",
             "crypto/fipsmodule/bn/test/*.txt",
             "crypto/fipsmodule/cmac/cavp_3des_cmac_tests.txt",
@@ -912,9 +918,9 @@
             "crypto/fipsmodule/ecdsa/ecdsa_verify_tests.txt",
             "crypto/fipsmodule/keccak/keccak_tests.txt",
             "crypto/fipsmodule/rand/ctrdrbg_vectors.txt",
+            "crypto/fipsmodule/rand/ctrdrbg_df_vectors.txt",
             "crypto/hmac/hmac_tests.txt",
-            "crypto/hpke/hpke_test_vectors.txt",
-            "crypto/kyber/kyber_tests.txt",
+            "crypto/hpke/*.txt",
             "crypto/mldsa/mldsa_nist_keygen_44_tests.txt",
             "crypto/mldsa/mldsa_nist_keygen_65_tests.txt",
             "crypto/mldsa/mldsa_nist_keygen_87_tests.txt",
@@ -938,12 +944,20 @@
             "crypto/poly1305/poly1305_tests.txt",
             "crypto/rsa/test/*.pem",
             "crypto/siphash/siphash_tests.txt",
-            "crypto/slhdsa/slhdsa_keygen.txt",
-            "crypto/slhdsa/slhdsa_prehash.txt",
-            "crypto/slhdsa/slhdsa_siggen.txt",
-            "crypto/slhdsa/slhdsa_sigver.txt",
+            "crypto/slhdsa/slhdsa_sha2_128s_keygen.txt",
+            "crypto/slhdsa/slhdsa_shake_256f_keygen.txt",
+            "crypto/slhdsa/slhdsa_sha2_128s_prehash.txt",
+            "crypto/slhdsa/slhdsa_sha2_128s_siggen.txt",
+            "crypto/slhdsa/slhdsa_shake_256f_siggen.txt",
+            "crypto/slhdsa/slhdsa_sha2_128s_sigver.txt",
+            "crypto/slhdsa/slhdsa_shake_256f_sigver.txt",
             "crypto/x509/test/*.pem",
+            "crypto/x509/test/*.pk8",
+            "crypto/x509/test/mtc/*.pem",
             "third_party/wycheproof_testvectors/*.txt"
+        ],
+        "internal_hdrs": [
+            "third_party/fiat/bedrock_polyfill_platform.c.inc"
         ]
     },
     "urandom_test": {
@@ -963,6 +977,7 @@
             "pki/general_names_unittest.cc",
             "pki/input_unittest.cc",
             "pki/ip_util_unittest.cc",
+            "pki/merkle_tree_unittest.cc",
             "pki/mock_signature_verify_cache.cc",
             "pki/name_constraints_unittest.cc",
             "pki/nist_pkits_unittest.cc",
@@ -1006,7 +1021,7 @@
             "pki/testdata/verify_name_match_unittest/names/*.pem",
             "pki/testdata/verify_signed_data_unittest/*.pem",
             "pki/testdata/verify_unittest/*.der",
-            "pki/testdata/verify_unittest/self-issued.pem"
+            "pki/testdata/verify_unittest/*.pem"
         ]
     },
     "ssl_test": {
@@ -1046,7 +1061,6 @@
             "tool/rand.cc",
             "tool/server.cc",
             "tool/sign.cc",
-            "tool/speed.cc",
             "tool/tool.cc",
             "tool/transport_common.cc"
         ],
@@ -1063,6 +1077,35 @@
             "fuzz/*.cc"
         ]
     },
+    "bench": {
+        "internal_hdrs": [
+            "bench/internal.h"
+        ],
+        "srcs": [
+            "bench/aead.cc",
+            "bench/aes.cc",
+            "bench/base64.cc",
+            "bench/curve25519.cc",
+            "bench/ecdh.cc",
+            "bench/ecdsa.cc",
+            "bench/hash.cc",
+            "bench/hash_to_curve.cc",
+            "bench/hrss.cc",
+            "bench/main.cc",
+            "bench/mldsa.cc",
+            "bench/mlkem.cc",
+            "bench/rand.cc",
+            "bench/rsa.cc",
+            "bench/rsakeygen.cc",
+            "bench/scrypt.cc",
+            "bench/selftest.cc",
+            "bench/siphash.cc",
+            "bench/slhdsa.cc",
+            "bench/spake2.cc",
+            "bench/trust_token.cc",
+            "bench/x509.cc"
+        ]
+    },
     "rust_bssl_sys": {
         "srcs": [
             "rust/bssl-sys/src/*.rs"
@@ -1074,10 +1117,37 @@
             "rust/bssl-crypto/src/*/*.rs"
         ]
     },
+    "rust_bssl_macros": {
+        "srcs": [
+            "rust/bssl-macros/src/*.rs"
+        ]
+    },
+    "rust_bssl_x509": {
+        "srcs": [
+            "rust/bssl-x509/src/*.rs"
+        ]
+    },
+    "rust_bssl_tls_tokio": {
+        "srcs": [
+            "rust/bssl-tls-tokio/src/*.rs",
+            "rust/bssl-tls-tokio/src/*/*.rs"
+        ]
+    },
     "modulewrapper": {
         "srcs": [
             "util/fipstools/acvp/modulewrapper/main.cc",
-            "util/fipstools/acvp/modulewrapper/modulewrapper.cc"
+            "util/fipstools/acvp/modulewrapper/modulewrapper.cc",
+            "util/fipstools/acvp/modulewrapper/proto.cc"
+        ],
+        "internal_hdrs": [
+            "util/fipstools/acvp/modulewrapper/modulewrapper.h"
+        ]
+    },
+    "entropy_modulewrapper": {
+        "srcs": [
+            "util/fipstools/acvp/entropy_modulewrapper/main.cc",
+            "util/fipstools/acvp/entropy_modulewrapper/modulewrapper.cc",
+            "util/fipstools/acvp/modulewrapper/proto.cc"
         ],
         "internal_hdrs": [
             "util/fipstools/acvp/modulewrapper/modulewrapper.h"

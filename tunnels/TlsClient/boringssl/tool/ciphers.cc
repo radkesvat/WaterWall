@@ -23,6 +23,8 @@
 #include "internal.h"
 
 
+BSSL_NAMESPACE_BEGIN
+
 bool Ciphers(const std::vector<std::string> &args) {
   bool openssl_name = false;
   if (args.size() == 2 && args[0] == "-openssl-name") {
@@ -42,7 +44,7 @@ bool Ciphers(const std::vector<std::string> &args) {
     return false;
   }
 
-  STACK_OF(SSL_CIPHER) *ciphers = SSL_CTX_get_ciphers(ctx.get());
+  const STACK_OF(SSL_CIPHER) *ciphers = SSL_CTX_get_ciphers(ctx.get());
 
   bool last_in_group = false;
   for (size_t i = 0; i < sk_SSL_CIPHER_num(ciphers); i++) {
@@ -66,3 +68,5 @@ bool Ciphers(const std::vector<std::string> &args) {
 
   return true;
 }
+
+BSSL_NAMESPACE_END

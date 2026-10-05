@@ -20,6 +20,9 @@
 
 #include "internal.h"
 
+
+using namespace bssl;
+
 // OCSP extensions and a couple of CRL entry extensions
 
 static int i2r_ocsp_acutoff(const X509V3_EXT_METHOD *method, void *nonce,
@@ -30,38 +33,38 @@ static int i2r_ocsp_nocheck(const X509V3_EXT_METHOD *method, void *nocheck,
 static void *s2i_ocsp_nocheck(const X509V3_EXT_METHOD *method,
                               const X509V3_CTX *ctx, const char *str);
 
-const X509V3_EXT_METHOD v3_crl_invdate = {
+const X509V3_EXT_METHOD bssl::v3_crl_invdate = {
     NID_invalidity_date,
     0,
     ASN1_ITEM_ref(ASN1_GENERALIZEDTIME),
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
     i2r_ocsp_acutoff,
-    0,
-    NULL,
+    nullptr,
+    nullptr,
 };
 
-const X509V3_EXT_METHOD v3_ocsp_nocheck = {
+const X509V3_EXT_METHOD bssl::v3_ocsp_nocheck = {
     NID_id_pkix_OCSP_noCheck,
     0,
     ASN1_ITEM_ref(ASN1_NULL),
-    0,
-    0,
-    0,
-    0,
-    0,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
     s2i_ocsp_nocheck,
-    0,
-    0,
+    nullptr,
+    nullptr,
     i2r_ocsp_nocheck,
-    0,
-    NULL,
+    nullptr,
+    nullptr,
 };
 
 static int i2r_ocsp_acutoff(const X509V3_EXT_METHOD *method, void *cutoff,

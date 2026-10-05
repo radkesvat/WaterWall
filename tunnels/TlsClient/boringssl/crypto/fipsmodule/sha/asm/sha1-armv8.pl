@@ -45,7 +45,7 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 ( $xlate="${dir}../../../perlasm/arm-xlate.pl" and -f $xlate) or
 die "can't locate arm-xlate.pl";
 
-open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\"";
+open OUT, "|-", $^X, $xlate, $flavour, $output;
 *STDOUT=*OUT;
 
 ($ctx,$inp,$num)=("x0","x1","x2");
@@ -313,7 +313,9 @@ $code.=<<___;
 	ret
 .size	sha1_block_data_order_hw,.-sha1_block_data_order_hw
 .section .rodata
+
 .align	6
+sha1_constants:
 .Lconst:
 .long	0x5a827999,0x5a827999,0x5a827999,0x5a827999	//K_00_19
 .long	0x6ed9eba1,0x6ed9eba1,0x6ed9eba1,0x6ed9eba1	//K_20_39

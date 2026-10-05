@@ -17,6 +17,9 @@
 #include <openssl/bytestring.h>
 #include <openssl/err.h>
 
+#include <algorithm>
+#include <optional>
+
 #include "../crypto/internal.h"
 #include "internal.h"
 
@@ -40,7 +43,7 @@ enum early_data_t {
 };
 
 // serialize_features adds a description of features supported by this binary to
-// |out|.  Returns true on success and false on error.
+// `out`.  Returns true on success and false on error.
 static bool serialize_features(CBB *out) {
   CBB ciphers;
   if (!CBB_add_asn1(out, &ciphers, CBS_ASN1_OCTETSTRING)) {
@@ -48,7 +51,7 @@ static bool serialize_features(CBB *out) {
   }
   Span<const SSL_CIPHER> all_ciphers = AllCiphers();
   for (const SSL_CIPHER &cipher : all_ciphers) {
-    if (!CBB_add_u16(&ciphers, static_cast<uint16_t>(cipher.id))) {
+    if (!CBB_add_u16(&ciphers, cipher.protocol_id)) {
       return false;
     }
   }
@@ -77,8 +80,9 @@ static bool serialize_features(CBB *out) {
 
 bool SSL_serialize_handoff(const SSL *ssl, CBB *out,
                            SSL_CLIENT_HELLO *out_hello) {
-  const SSL3_STATE *const s3 = ssl->s3;
-  if (!ssl->server ||       //
+  const auto *ssl_impl = FromOpaque(ssl);
+  const SSL3_STATE *const s3 = ssl_impl->s3;
+  if (!ssl_impl->server ||  //
       s3->hs == nullptr ||  //
       s3->rwstate != SSL_ERROR_HANDOFF) {
     return false;
@@ -95,8 +99,8 @@ bool SSL_serialize_handoff(const SSL *ssl, CBB *out,
                                  reinterpret_cast<uint8_t *>(s3->hs_buf->data),
                                  s3->hs_buf->length) ||
       !serialize_features(&seq) || !CBB_flush(out) ||
-      !ssl->method->get_message(ssl, &msg) ||
-      !SSL_parse_client_hello(ssl, out_hello, CBS_data(&msg.body),
+      !ssl_impl->method->get_message(ssl_impl, &msg) ||
+      !SSL_parse_client_hello(ssl_impl, out_hello, CBS_data(&msg.body),
                               CBS_len(&msg.body))) {
     return false;
   }
@@ -105,8 +109,10 @@ bool SSL_serialize_handoff(const SSL *ssl, CBB *out,
 }
 
 bool SSL_decline_handoff(SSL *ssl) {
-  const SSL3_STATE *const s3 = ssl->s3;
-  if (!ssl->server || s3->hs == nullptr || s3->rwstate != SSL_ERROR_HANDOFF) {
+  auto *ssl_impl = FromOpaque(ssl);
+  const SSL3_STATE *const s3 = ssl_impl->s3;
+  if (!ssl_impl->server || s3->hs == nullptr ||
+      s3->rwstate != SSL_ERROR_HANDOFF) {
     return false;
   }
 
@@ -114,11 +120,11 @@ bool SSL_decline_handoff(SSL *ssl) {
   return true;
 }
 
-// apply_remote_features reads a list of supported features from |in| and
-// (possibly) reconfigures |ssl| to disallow the negotation of features whose
-// support has not been indicated.  (This prevents the the handshake from
+// apply_remote_features reads a list of supported features from `in` and
+// (possibly) reconfigures `ssl` to disallow the negotiation of features whose
+// support has not been indicated.  (This prevents the handshake from
 // committing to features that are not supported on the handoff/handback side.)
-static bool apply_remote_features(SSL *ssl, CBS *in) {
+static bool apply_remote_features(SSLImpl *ssl, CBS *in) {
   CBS ciphers;
   if (!CBS_get_asn1(in, &ciphers, CBS_ASN1_OCTETSTRING)) {
     return false;
@@ -140,9 +146,9 @@ static bool apply_remote_features(SSL *ssl, CBS *in) {
       return false;
     }
   }
-  STACK_OF(SSL_CIPHER) *configured =
-      ssl->config->cipher_list ? ssl->config->cipher_list->ciphers.get()
-                               : ssl->ctx->cipher_list->ciphers.get();
+  const STACK_OF(SSL_CIPHER) *configured =
+      ssl->config->cipher_list ? ssl->config->cipher_list->ciphers()
+                               : ssl->ctx->cipher_list->ciphers();
   bssl::UniquePtr<STACK_OF(SSL_CIPHER)> unsupported(sk_SSL_CIPHER_new_null());
   if (!unsupported) {
     return false;
@@ -158,7 +164,7 @@ static bool apply_remote_features(SSL *ssl, CBS *in) {
   if (sk_SSL_CIPHER_num(unsupported.get()) && !ssl->config->cipher_list) {
     ssl->config->cipher_list = bssl::MakeUnique<SSLCipherPreferenceList>();
     if (!ssl->config->cipher_list ||
-        !ssl->config->cipher_list->Init(*ssl->ctx->cipher_list)) {
+        !ssl->config->cipher_list->CopyFrom(*ssl->ctx->cipher_list)) {
       return false;
     }
   }
@@ -186,29 +192,52 @@ static bool apply_remote_features(SSL *ssl, CBS *in) {
     supported_groups[idx++] = group;
   }
   Span<const uint16_t> configured_groups =
-      tls1_get_grouplist(ssl->s3->hs.get());
+      ssl->s3->hs->config->supported_group_list;
+  Span<const uint32_t> configured_groups_flags =
+      ssl->s3->hs->config->supported_group_list_flags;
   Array<uint16_t> new_configured_groups;
-  if (!new_configured_groups.InitForOverwrite(configured_groups.size())) {
+  // Temporary scratch space to keep track of consecutive runs of groups of
+  // equal preference, so they can be relabeled after filtering for groups
+  // present in the remote features and copying to the new configuration.
+  Array<size_t> new_groups_preference_ranks;
+  Array<uint32_t> new_groups_flags;
+  if (!new_configured_groups.InitForOverwrite(configured_groups.size()) ||
+      !new_groups_preference_ranks.Init(configured_groups.size()) ||
+      !new_groups_flags.Init(configured_groups.size())) {
     return false;
   }
+  // Populate temporary array containing "preference rank" of each group.
+  for (size_t i = 1; i < configured_groups.size(); ++i) {
+    new_groups_preference_ranks[i] = new_groups_preference_ranks[i - 1];
+    if ((configured_groups_flags[i - 1] &
+         SSL_GROUP_FLAG_EQUAL_PREFERENCE_WITH_NEXT) == 0) {
+      ++new_groups_preference_ranks[i];
+    }
+  }
   idx = 0;
-  for (uint16_t configured_group : configured_groups) {
-    bool ok = false;
-    for (uint16_t supported_group : supported_groups) {
-      if (supported_group == configured_group) {
-        ok = true;
-        break;
-      }
+  std::optional<size_t> last_rank;
+  for (size_t i = 0u; i < configured_groups.size(); ++i) {
+    uint16_t configured_group = configured_groups[i];
+    if (std::find(supported_groups.begin(), supported_groups.end(),
+                  configured_group) == supported_groups.end()) {
+      continue;
     }
-    if (ok) {
-      new_configured_groups[idx++] = configured_group;
+    new_configured_groups[idx] = configured_group;
+    // Set the "equal preference with next" flag on the previous group, if
+    // appropriate.
+    if (last_rank.has_value() && new_groups_preference_ranks[i] == *last_rank) {
+      new_groups_flags[idx - 1] |= SSL_GROUP_FLAG_EQUAL_PREFERENCE_WITH_NEXT;
     }
+    last_rank = new_groups_preference_ranks[i];
+    ++idx;
   }
   if (idx == 0) {
     return false;
   }
   new_configured_groups.Shrink(idx);
+  new_groups_flags.Shrink(idx);
   ssl->config->supported_group_list = std::move(new_configured_groups);
+  ssl->config->supported_group_list_flags = std::move(new_groups_flags);
 
   CBS alps;
   CBS_init(&alps, nullptr, 0);
@@ -239,15 +268,16 @@ static bool apply_remote_features(SSL *ssl, CBS *in) {
   return true;
 }
 
-// uses_disallowed_feature returns true iff |ssl| enables a feature that
+// uses_disallowed_feature returns true iff `ssl` enables a feature that
 // disqualifies it for split handshakes.
-static bool uses_disallowed_feature(const SSL *ssl) {
+static bool uses_disallowed_feature(const SSLImpl *ssl) {
   return ssl->method->is_dtls || !ssl->config->cert->credentials.empty() ||
          ssl->config->quic_transport_params.size() > 0 || ssl->ctx->ech_keys;
 }
 
 bool SSL_apply_handoff(SSL *ssl, Span<const uint8_t> handoff) {
-  if (uses_disallowed_feature(ssl)) {
+  auto *ssl_impl = FromOpaque(ssl);
+  if (uses_disallowed_feature(ssl_impl)) {
     return false;
   }
 
@@ -262,13 +292,13 @@ bool SSL_apply_handoff(SSL *ssl, Span<const uint8_t> handoff) {
   CBS transcript, hs_buf;
   if (!CBS_get_asn1(&seq, &transcript, CBS_ASN1_OCTETSTRING) ||
       !CBS_get_asn1(&seq, &hs_buf, CBS_ASN1_OCTETSTRING) ||
-      !apply_remote_features(ssl, &seq)) {
+      !apply_remote_features(ssl_impl, &seq)) {
     return false;
   }
 
-  SSL_set_accept_state(ssl);
+  SSL_set_accept_state(ssl_impl);
 
-  SSL3_STATE *const s3 = ssl->s3;
+  SSL3_STATE *const s3 = ssl_impl->s3;
   s3->v2_hello_done = true;
   s3->has_message = true;
 
@@ -288,10 +318,11 @@ bool SSL_apply_handoff(SSL *ssl, Span<const uint8_t> handoff) {
 }
 
 bool SSL_serialize_handback(const SSL *ssl, CBB *out) {
-  if (!ssl->server || uses_disallowed_feature(ssl)) {
+  const auto *ssl_impl = FromOpaque(ssl);
+  if (!ssl_impl->server || uses_disallowed_feature(ssl_impl)) {
     return false;
   }
-  const SSL3_STATE *const s3 = ssl->s3;
+  const SSL3_STATE *const s3 = ssl_impl->s3;
   SSL_HANDSHAKE *const hs = s3->hs.get();
   handback_t type;
   switch (hs->state) {
@@ -327,7 +358,7 @@ bool SSL_serialize_handback(const SSL *ssl, CBB *out) {
   const uint8_t *write_iv = nullptr;
   if ((type == handback_after_session_resumption ||
        type == handback_after_handshake) &&
-      ssl->s3->version == TLS1_VERSION &&
+      ssl_impl->s3->version == TLS1_VERSION &&
       SSL_CIPHER_is_block_cipher(s3->aead_write_ctx->cipher()) &&
       !s3->aead_write_ctx->GetIV(&write_iv, &write_iv_len)) {
     return false;
@@ -335,7 +366,7 @@ bool SSL_serialize_handback(const SSL *ssl, CBB *out) {
   size_t read_iv_len = 0;
   const uint8_t *read_iv = nullptr;
   if (type == handback_after_handshake &&                         //
-      ssl->s3->version == TLS1_VERSION &&                         //
+      ssl_impl->s3->version == TLS1_VERSION &&                    //
       SSL_CIPHER_is_block_cipher(s3->aead_read_ctx->cipher()) &&  //
       !s3->aead_read_ctx->GetIV(&read_iv, &read_iv_len)) {
     return false;
@@ -347,7 +378,8 @@ bool SSL_serialize_handback(const SSL *ssl, CBB *out) {
   if (type == handback_tls13) {
     session = hs->new_session.get();
   } else {
-    session = s3->session_reused ? ssl->session.get() : hs->new_session.get();
+    session =
+        s3->session_reused ? ssl_impl->session.get() : hs->new_session.get();
   }
   uint8_t read_sequence[8], write_sequence[8];
   CRYPTO_store_u64_be(read_sequence, s3->read_sequence);
@@ -377,8 +409,8 @@ bool SSL_serialize_handback(const SSL *ssl, CBB *out) {
           hostname_len) ||
       !CBB_add_asn1_octet_string(&seq, kUnusedChannelID,
                                  sizeof(kUnusedChannelID)) ||
-      // These two fields were historically |token_binding_negotiated| and
-      // |negotiated_token_binding_param|.
+      // These two fields were historically `token_binding_negotiated` and
+      // `negotiated_token_binding_param`.
       !CBB_add_asn1_bool(&seq, 0) ||  //
       !CBB_add_asn1_uint64(&seq, 0) ||
       !CBB_add_asn1_bool(&seq, s3->hs->next_proto_neg_seen) ||
@@ -402,7 +434,7 @@ bool SSL_serialize_handback(const SSL *ssl, CBB *out) {
   if (type == handback_tls13) {
     early_data_t early_data;
     // Check early data invariants.
-    if (ssl->enable_early_data ==
+    if (ssl_impl->enable_early_data ==
         (s3->early_data_reason == ssl_early_data_disabled)) {
       return false;
     }
@@ -468,12 +500,13 @@ static bool CopyExact(Span<uint8_t> out, const CBS *in) {
 }
 
 bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback) {
-  if (ssl->do_handshake != nullptr ||  //
-      ssl->method->is_dtls) {
+  auto *ssl_impl = FromOpaque(ssl);
+  if (ssl_impl->do_handshake != nullptr ||  //
+      ssl_impl->method->is_dtls) {
     return false;
   }
 
-  SSL3_STATE *const s3 = ssl->s3;
+  SSL3_STATE *const s3 = ssl_impl->s3;
   uint64_t handback_version, unused_token_binding_param, cipher, type_u64,
       alps_codepoint;
 
@@ -513,19 +546,25 @@ bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback) {
     return false;
   }
 
-  s3->hs = ssl_handshake_new(ssl);
+  s3->hs = ssl_handshake_new(ssl_impl);
   if (!s3->hs) {
     return false;
   }
   SSL_HANDSHAKE *const hs = s3->hs.get();
   if (!session_reused || type == handback_tls13) {
-    hs->new_session =
-        SSL_SESSION_parse(&seq, ssl->ctx->x509_method, ssl->ctx->pool);
+    hs->new_session = SSL_SESSION_parse(&seq, ssl_impl->ctx->x509_method,
+                                        ssl_impl->ctx->pool.get());
     session = hs->new_session.get();
   } else {
-    ssl->session =
-        SSL_SESSION_parse(&seq, ssl->ctx->x509_method, ssl->ctx->pool);
-    session = ssl->session.get();
+    ssl_impl->session = SSL_SESSION_parse(&seq, ssl_impl->ctx->x509_method,
+                                          ssl_impl->ctx->pool.get());
+    session = ssl_impl->session.get();
+  }
+
+  // Split handshakes only support X.509 certificates.
+  if (session != nullptr && session->peer_cert_type != kDefaultCertType) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_UNSUPPORTED_CERTIFICATE);
+    return false;
   }
 
   if (!session || !CBS_get_asn1(&seq, &next_proto, CBS_ASN1_OCTETSTRING) ||
@@ -607,7 +646,8 @@ bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback) {
 
     s3->early_data_reason =
         static_cast<ssl_early_data_reason_t>(early_data_reason);
-    ssl->enable_early_data = s3->early_data_reason != ssl_early_data_disabled;
+    ssl_impl->enable_early_data =
+        s3->early_data_reason != ssl_early_data_disabled;
     s3->skip_early_data = false;
     s3->early_data_accepted = false;
     hs->early_data_offered = false;
@@ -635,15 +675,17 @@ bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback) {
     s3->early_data_reason = ssl_early_data_protocol_version;
   }
 
-  ssl->s3->version = session->ssl_version;
-  if (!ssl_method_supports_version(ssl->method, ssl->s3->version) ||
+  ssl_impl->s3->version = session->ssl_version;
+  if (!ssl_method_supports_version(ssl_impl->method, ssl_impl->s3->version) ||
       session->cipher != hs->new_cipher ||
-      ssl_protocol_version(ssl) < SSL_CIPHER_get_min_version(session->cipher) ||
-      SSL_CIPHER_get_max_version(session->cipher) < ssl_protocol_version(ssl)) {
+      ssl_protocol_version(ssl_impl) <
+          SSL_CIPHER_get_min_version(session->cipher) ||
+      SSL_CIPHER_get_max_version(session->cipher) <
+          ssl_protocol_version(ssl_impl)) {
     return false;
   }
-  ssl->do_handshake = ssl_server_handshake;
-  ssl->server = true;
+  ssl_impl->do_handshake = ssl_server_handshake;
+  ssl_impl->server = true;
   switch (type) {
     case handback_after_session_resumption:
       hs->state = state12_read_change_cipher_spec;
@@ -693,7 +735,8 @@ bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback) {
 
   if (type != handback_after_handshake &&
       (!hs->transcript.Init() ||
-       !hs->transcript.InitHash(ssl_protocol_version(ssl), hs->new_cipher) ||
+       !hs->transcript.InitHash(ssl_protocol_version(ssl_impl),
+                                hs->new_cipher) ||
        !hs->transcript.Update(transcript))) {
     return false;
   }
@@ -717,7 +760,7 @@ bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback) {
     case handback_after_session_resumption:
       // The write keys are installed after server Finished, but the client
       // keys must wait for ChangeCipherSpec.
-      if (!tls1_configure_aead(ssl, evp_aead_seal, &key_block, session,
+      if (!tls1_configure_aead(ssl_impl, evp_aead_seal, &key_block, session,
                                write_iv)) {
         return false;
       }
@@ -727,9 +770,9 @@ bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback) {
       break;
     case handback_after_handshake:
       // The handshake is complete, so both keys are installed.
-      if (!tls1_configure_aead(ssl, evp_aead_seal, &key_block, session,
+      if (!tls1_configure_aead(ssl_impl, evp_aead_seal, &key_block, session,
                                write_iv) ||
-          !tls1_configure_aead(ssl, evp_aead_open, &key_block, session,
+          !tls1_configure_aead(ssl_impl, evp_aead_open, &key_block, session,
                                read_iv)) {
         return false;
       }
@@ -738,8 +781,8 @@ bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback) {
       // After server Finished, the application write keys are installed, but
       // none of the read keys. The read keys are installed in the state machine
       // immediately after processing handback.
-      if (!tls13_set_traffic_key(ssl, ssl_encryption_application, evp_aead_seal,
-                                 hs->new_session.get(),
+      if (!tls13_set_traffic_key(ssl_impl, ssl_encryption_application,
+                                 evp_aead_seal, hs->new_session.get(),
                                  hs->server_traffic_secret_0)) {
         return false;
       }
@@ -760,9 +803,10 @@ bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback) {
         !CBS_get_asn1(&key_share, &private_key, CBS_ASN1_OCTETSTRING)) {
       return false;
     }
-    hs->key_shares[0] = SSLKeyShare::Create(group_id);
-    if (!hs->key_shares[0] ||
-        !hs->key_shares[0]->DeserializePrivateKey(&private_key)) {
+    UniquePtr<SSLKeyShare> ssl_key_share = SSLKeyShare::Create(group_id);
+    if (ssl_key_share == nullptr ||
+        !ssl_key_share->DeserializePrivateKey(&private_key) ||
+        !hs->key_shares.TryPushBack(std::move(ssl_key_share))) {
       return false;
     }
   }
@@ -788,32 +832,35 @@ int SSL_request_handshake_hints(SSL *ssl, const uint8_t *client_hello,
                                 size_t client_hello_len,
                                 const uint8_t *capabilities,
                                 size_t capabilities_len) {
-  if (SSL_is_dtls(ssl)) {
+  auto *ssl_impl = FromOpaque(ssl);
+  if (SSL_is_dtls(ssl_impl) || ssl_impl->s3->hs == nullptr) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
     return 0;
   }
 
   CBS cbs, seq;
   CBS_init(&cbs, capabilities, capabilities_len);
-  UniquePtr<SSL_HANDSHAKE_HINTS> hints = MakeUnique<SSL_HANDSHAKE_HINTS>();
-  if (hints == nullptr ||                              //
-      !CBS_get_asn1(&cbs, &seq, CBS_ASN1_SEQUENCE) ||  //
-      !apply_remote_features(ssl, &seq)) {
+  UniquePtr<SSL_HANDSHAKE_HINTS> pending_hints =
+      MakeUnique<SSL_HANDSHAKE_HINTS>();
+  if (pending_hints == nullptr ||
+      !CBS_get_asn1(&cbs, &seq, CBS_ASN1_SEQUENCE) ||
+      !apply_remote_features(ssl_impl, &seq)) {
     return 0;
   }
 
-  SSL3_STATE *const s3 = ssl->s3;
+  SSL3_STATE *const s3 = ssl_impl->s3;
   s3->v2_hello_done = true;
   s3->has_message = true;
 
   Array<uint8_t> client_hello_msg;
   ScopedCBB client_hello_cbb;
   CBB client_hello_body;
-  if (!ssl->method->init_message(ssl, client_hello_cbb.get(),
-                                 &client_hello_body, SSL3_MT_CLIENT_HELLO) ||
+  if (!ssl_impl->method->init_message(ssl_impl, client_hello_cbb.get(),
+                                      &client_hello_body,
+                                      SSL3_MT_CLIENT_HELLO) ||
       !CBB_add_bytes(&client_hello_body, client_hello, client_hello_len) ||
-      !ssl->method->finish_message(ssl, client_hello_cbb.get(),
-                                   &client_hello_msg)) {
+      !ssl_impl->method->finish_message(ssl_impl, client_hello_cbb.get(),
+                                        &client_hello_msg)) {
     return 0;
   }
 
@@ -823,12 +870,11 @@ int SSL_request_handshake_hints(SSL *ssl, const uint8_t *client_hello,
     return 0;
   }
 
-  s3->hs->hints_requested = true;
-  s3->hs->hints = std::move(hints);
+  s3->hs->pending_hints = std::move(pending_hints);
   return 1;
 }
 
-// |SSL_HANDSHAKE_HINTS| is serialized as the following ASN.1 structure. We use
+// `SSL_HANDSHAKE_HINTS` is serialized as the following ASN.1 structure. We use
 // implicit tagging to make it a little more compact.
 //
 // HandshakeHints ::= SEQUENCE {
@@ -841,18 +887,24 @@ int SSL_request_handshake_hints(SSL *ssl, const uint8_t *client_hello,
 //     -- hint to the wrong field.
 //     decryptedPSKHint        [3] IMPLICIT OCTET STRING OPTIONAL,
 //     ignorePSKHint           [4] IMPLICIT NULL OPTIONAL,
-//     compressCertificateHint [5] IMPLICIT CompressCertificateHint OPTIONAL,
+//     -- Due to a historical typo, compressCertificateHint's tag is primitive
+//     -- instead of constructed.
+//     compressCertificateHint [5 PRIMITIVE] IMPLICIT CompressCertificateHint
+//                                 OPTIONAL,
 //     -- TLS 1.2 and 1.3 use different server random hints because one contains
 //     -- a timestamp while the other doesn't. If the hint was generated
 //     -- assuming TLS 1.3 but we actually negotiate TLS 1.2, mixing the two
 //     -- will break this.
 //     serverRandomTLS12       [6] IMPLICIT OCTET STRING OPTIONAL,
-//     ecdheHint               [7] IMPLICIT ECDHEHint OPTIONAL
+//     -- Due to a historical typo, ecdheHint tag has universal class instead of
+//     -- context-specific.
+//     ecdheHint               [UNIVERSAL 7] IMPLICIT ECDHEHint OPTIONAL
 //     -- At most one of decryptedTicketHint or ignoreTicketHint may be present.
 //     -- renewTicketHint requires decryptedTicketHint.
 //     decryptedTicketHint     [8] IMPLICIT OCTET STRING OPTIONAL,
 //     renewTicketHint         [9] IMPLICIT NULL OPTIONAL,
 //     ignoreTicketHint       [10] IMPLICIT NULL OPTIONAL,
+//     -- Unlike a usual ASN.1 structure, trailing data is ignored.
 // }
 //
 // KeyShareHint ::= SEQUENCE {
@@ -897,13 +949,14 @@ static const CBS_ASN1_TAG kRenewTicketTag = CBS_ASN1_CONTEXT_SPECIFIC | 9;
 static const CBS_ASN1_TAG kIgnoreTicketTag = CBS_ASN1_CONTEXT_SPECIFIC | 10;
 
 int SSL_serialize_handshake_hints(const SSL *ssl, CBB *out) {
-  const SSL_HANDSHAKE *hs = ssl->s3->hs.get();
-  if (!ssl->server || !hs->hints_requested) {
+  const auto *ssl_impl = FromOpaque(ssl);
+  const SSL_HANDSHAKE *hs = ssl_impl->s3->hs.get();
+  if (!ssl_impl->server || hs == nullptr || hs->pending_hints == nullptr) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
     return 0;
   }
 
-  const SSL_HANDSHAKE_HINTS *hints = hs->hints.get();
+  const SSL_HANDSHAKE_HINTS *const hints = hs->pending_hints.get();
   CBB seq, child;
   if (!CBB_add_asn1(out, &seq, CBS_ASN1_SEQUENCE)) {
     return 0;
@@ -1025,7 +1078,8 @@ static bool get_optional_implicit_null(CBS *cbs, bool *out_present,
 }
 
 int SSL_set_handshake_hints(SSL *ssl, const uint8_t *hints, size_t hints_len) {
-  if (SSL_is_dtls(ssl)) {
+  auto *ssl_impl = FromOpaque(ssl);
+  if (SSL_is_dtls(ssl_impl) || ssl_impl->s3->hs == nullptr) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
     return 0;
   }
@@ -1156,6 +1210,6 @@ int SSL_set_handshake_hints(SSL *ssl, const uint8_t *hints, size_t hints_len) {
     return 0;
   }
 
-  ssl->s3->hs->hints = std::move(hints_obj);
+  ssl_impl->s3->hs->provided_hints = std::move(hints_obj);
   return 1;
 }

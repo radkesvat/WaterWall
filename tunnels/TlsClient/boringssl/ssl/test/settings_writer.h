@@ -26,15 +26,13 @@ struct SettingsWriter {
  public:
   SettingsWriter();
 
-  // Init initializes the writer for a new connection, given by |i|.  Each
+  // Init initializes the writer for a new connection, given by `i`.  Each
   // connection gets a unique output file.
   bool Init(int i, const TestConfig *config, SSL_SESSION *session);
 
   // Commit writes the buffered data to disk.
   bool Commit();
 
-  bool WriteHandoff(bssl::Span<const uint8_t> handoff);
-  bool WriteHandback(bssl::Span<const uint8_t> handback);
   bool WriteHints(bssl::Span<const uint8_t> hints);
 
  private:

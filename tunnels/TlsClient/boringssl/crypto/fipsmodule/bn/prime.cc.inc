@@ -14,12 +14,17 @@
 
 #include <openssl/bn.h>
 
+#include <iterator>
+
 #include <openssl/err.h>
 #include <openssl/mem.h>
 
 #include "../../internal.h"
+#include "../../mem_internal.h"
 #include "internal.h"
 
+
+using namespace bssl;
 
 // kPrimes contains the first 1024 primes.
 static const uint16_t kPrimes[] = {
@@ -115,9 +120,9 @@ static const uint16_t kPrimes[] = {
 // necessary for generating a 'bits'-bit candidate prime.
 //
 //
-// This table is generated using the algorithm of FIPS PUB 186-4
-// Digital Signature Standard (DSS), section F.1, page 117.
-// (https://doi.org/10.6028/NIST.FIPS.186-4)
+// This table is generated using the algorithm of FIPS PUB 186-5
+// Digital Signature Standard (DSS), section C.1, page 72.
+// (https://doi.org/10.6028/NIST.FIPS.186-5).
 // The following magma script was used to generate the output:
 // securitybits:=125;
 // k:=1024;
@@ -193,15 +198,15 @@ static int BN_prime_checks_for_size(int bits) {
 // of excluding a candidate with trial division is larger.
 static size_t num_trial_division_primes(const BIGNUM *n) {
   if (n->width * BN_BITS2 > 1024) {
-    return OPENSSL_ARRAY_SIZE(kPrimes);
+    return std::size(kPrimes);
   }
-  return OPENSSL_ARRAY_SIZE(kPrimes) / 2;
+  return std::size(kPrimes) / 2;
 }
 
 // BN_PRIME_CHECKS_BLINDED is the iteration count for blinding the constant-time
-// primality test. See |BN_primality_test| for details. This number is selected
-// so that, for a candidate N-bit RSA prime, picking |BN_PRIME_CHECKS_BLINDED|
-// random N-bit numbers will have at least |BN_prime_checks_for_size(N)| values
+// primality test. See `BN_primality_test` for details. This number is selected
+// so that, for a candidate N-bit RSA prime, picking `BN_PRIME_CHECKS_BLINDED`
+// random N-bit numbers will have at least `BN_prime_checks_for_size(N)` values
 // in range with high probability.
 //
 // The following Python script computes the blinding factor needed for the
@@ -226,8 +231,8 @@ def choose(a, b):
   return r
 
 def failure_rate(min_uniform, iterations):
-  """ Returns the probability that, for |iterations| candidate witnesses, fewer
-      than |min_uniform| of them will be uniform. """
+  """ Returns the probability that, for `iterations` candidate witnesses, fewer
+      than `min_uniform` of them will be uniform. """
   prob = 0.0
   for i in xrange(min_uniform):
     prob += (choose(iterations, i) *
@@ -265,11 +270,9 @@ static int probable_prime_dh(BIGNUM *rnd, int bits, const BIGNUM *add,
 static int probable_prime_dh_safe(BIGNUM *rnd, int bits, const BIGNUM *add,
                                   const BIGNUM *rem, BN_CTX *ctx);
 
-BN_GENCB *BN_GENCB_new(void) {
-  return reinterpret_cast<BN_GENCB *>(OPENSSL_zalloc(sizeof(BN_GENCB)));
-}
+BN_GENCB *BN_GENCB_new() { return New<BN_GENCB>(); }
 
-void BN_GENCB_free(BN_GENCB *callback) { OPENSSL_free(callback); }
+void BN_GENCB_free(BN_GENCB *callback) { Delete(callback); }
 
 void BN_GENCB_set(BN_GENCB *callback,
                   int (*f)(int event, int n, struct bn_gencb_st *), void *arg) {
@@ -303,11 +306,11 @@ int BN_generate_prime_ex(BIGNUM *ret, int bits, int safe, const BIGNUM *add,
     return 0;
   }
 
-  bssl::UniquePtr<BN_CTX> ctx(BN_CTX_new());
+  UniquePtr<BN_CTX> ctx(BN_CTX_new());
   if (ctx == nullptr) {
     return 0;
   }
-  bssl::BN_CTXScope scope(ctx.get());
+  BN_CTXScope scope(ctx.get());
   t = BN_CTX_get(ctx.get());
   if (!t) {
     return 0;
@@ -315,7 +318,7 @@ int BN_generate_prime_ex(BIGNUM *ret, int bits, int safe, const BIGNUM *add,
 
 loop:
   // make a random number and set the top and bottom bits
-  if (add == NULL) {
+  if (add == nullptr) {
     if (!probable_prime(ret, bits)) {
       return 0;
     }
@@ -350,20 +353,20 @@ loop:
       return 0;
     }
 
-    // Interleave |ret| and |t|'s primality tests to avoid paying the full
-    // iteration count on |ret| only to quickly discover |t| is composite.
+    // Interleave `ret` and `t`'s primality tests to avoid paying the full
+    // iteration count on `ret` only to quickly discover `t` is composite.
     //
     // TODO(davidben): This doesn't quite work because an iteration count of 1
     // still runs the blinding mechanism.
     for (i = 0; i < checks; i++) {
-      j = BN_is_prime_fasttest_ex(ret, 1, ctx.get(), 0, NULL);
+      j = BN_is_prime_fasttest_ex(ret, 1, ctx.get(), 0, nullptr);
       if (j == -1) {
         return 0;
       } else if (j == 0) {
         goto loop;
       }
 
-      j = BN_is_prime_fasttest_ex(t, 1, ctx.get(), 0, NULL);
+      j = BN_is_prime_fasttest_ex(t, 1, ctx.get(), 0, nullptr);
       if (j == -1) {
         return 0;
       } else if (j == 0) {
@@ -384,7 +387,7 @@ loop:
 static int bn_trial_division(uint16_t *out, const BIGNUM *bn) {
   const size_t num_primes = num_trial_division_primes(bn);
   for (size_t i = 1; i < num_primes; i++) {
-    // During RSA key generation, |bn| may be secret, but only if |bn| was
+    // During RSA key generation, `bn` may be secret, but only if `bn` was
     // prime, so it is safe to leak failed trial divisions.
     if (constant_time_declassify_int(bn_mod_u16_consttime(bn, kPrimes[i]) ==
                                      0)) {
@@ -395,29 +398,29 @@ static int bn_trial_division(uint16_t *out, const BIGNUM *bn) {
   return 0;
 }
 
-int bn_odd_number_is_obviously_composite(const BIGNUM *bn) {
+int bssl::bn_odd_number_is_obviously_composite(const BIGNUM *bn) {
   uint16_t prime;
   return bn_trial_division(&prime, bn) && !BN_is_word(bn, prime);
 }
 
-int bn_miller_rabin_init(BN_MILLER_RABIN *miller_rabin, const BN_MONT_CTX *mont,
-                         BN_CTX *ctx) {
-  // This function corresponds to steps 1 through 3 of FIPS 186-4, C.3.1.
+int bssl::bn_miller_rabin_init(BN_MILLER_RABIN *miller_rabin,
+                               const BN_MONT_CTX *mont, BN_CTX *ctx) {
+  // This function corresponds to steps 1 through 3 of FIPS 186-5, B.3.1.
   const BIGNUM *w = &mont->N;
-  // Note we do not call |BN_CTX_start| in this function. We intentionally
+  // Note we do not call `BN_CTX_start` in this function. We intentionally
   // allocate values in the containing scope so they outlive this function.
   miller_rabin->w1 = BN_CTX_get(ctx);
   miller_rabin->m = BN_CTX_get(ctx);
   miller_rabin->one_mont = BN_CTX_get(ctx);
   miller_rabin->w1_mont = BN_CTX_get(ctx);
-  if (miller_rabin->w1 == NULL ||        //
-      miller_rabin->m == NULL ||         //
-      miller_rabin->one_mont == NULL ||  //
-      miller_rabin->w1_mont == NULL) {
+  if (miller_rabin->w1 == nullptr ||        //
+      miller_rabin->m == nullptr ||         //
+      miller_rabin->one_mont == nullptr ||  //
+      miller_rabin->w1_mont == nullptr) {
     return 0;
   }
 
-  // See FIPS 186-4, C.3.1, steps 1 through 3.
+  // See FIPS 186-5, B.3.1, steps 1 through 3.
   if (!bn_usub_consttime(miller_rabin->w1, w, BN_value_one())) {
     return 0;
   }
@@ -431,7 +434,7 @@ int bn_miller_rabin_init(BN_MILLER_RABIN *miller_rabin, const BN_MONT_CTX *mont,
   // Precompute some values in Montgomery form.
   if (!bn_one_to_montgomery(miller_rabin->one_mont, mont, ctx) ||
       // w - 1 is -1 mod w, so we can compute it in the Montgomery domain, -R,
-      // with a subtraction. (|one_mont| cannot be zero.)
+      // with a subtraction. (`one_mont` cannot be zero.)
       !bn_usub_consttime(miller_rabin->w1_mont, w, miller_rabin->one_mont)) {
     return 0;
   }
@@ -439,25 +442,25 @@ int bn_miller_rabin_init(BN_MILLER_RABIN *miller_rabin, const BN_MONT_CTX *mont,
   return 1;
 }
 
-int bn_miller_rabin_iteration(const BN_MILLER_RABIN *miller_rabin,
-                              int *out_is_possibly_prime, const BIGNUM *b,
-                              const BN_MONT_CTX *mont, BN_CTX *ctx) {
-  // This function corresponds to steps 4.3 through 4.5 of FIPS 186-4, C.3.1.
-  bssl::BN_CTXScope scope(ctx);
+int bssl::bn_miller_rabin_iteration(const BN_MILLER_RABIN *miller_rabin,
+                                    int *out_is_possibly_prime, const BIGNUM *b,
+                                    const BN_MONT_CTX *mont, BN_CTX *ctx) {
+  // This function corresponds to steps 4.3 through 4.5 of FIPS 186-5, B.3.1.
+  BN_CTXScope scope(ctx);
 
   // Step 4.3. We use Montgomery-encoding for better performance and to avoid
   // timing leaks.
   const BIGNUM *w = &mont->N;
   BIGNUM *z = BN_CTX_get(ctx);
   crypto_word_t is_possibly_prime;
-  if (z == NULL ||
+  if (z == nullptr ||
       !BN_mod_exp_mont_consttime(z, b, miller_rabin->m, w, ctx, mont) ||
       !BN_to_montgomery(z, z, mont, ctx)) {
     return 0;
   }
 
-  // is_possibly_prime is all ones if we have determined |b| is not a composite
-  // witness for |w|. This is equivalent to going to step 4.7 in the original
+  // is_possibly_prime is all ones if we have determined `b` is not a composite
+  // witness for `w`. This is equivalent to going to step 4.7 in the original
   // algorithm. To avoid timing leaks, we run the algorithm to the end for prime
   // inputs.
   is_possibly_prime = 0;
@@ -470,8 +473,8 @@ int bn_miller_rabin_iteration(const BN_MILLER_RABIN *miller_rabin,
 
   // Step 4.5.
   //
-  // To avoid leaking |a|, we run the loop to |w_bits| and mask off all
-  // iterations once |j| = |a|.
+  // To avoid leaking `a`, we run the loop to `w_bits` and mask off all
+  // iterations once `j` = `a`.
   for (int j = 1; j < miller_rabin->w_bits; j++) {
     if (constant_time_declassify_w(constant_time_eq_int(j, miller_rabin->a) &
                                    ~is_possibly_prime)) {
@@ -489,7 +492,7 @@ int bn_miller_rabin_iteration(const BN_MILLER_RABIN *miller_rabin,
     // witness.
     crypto_word_t z_is_w1_mont = BN_equal_consttime(z, miller_rabin->w1_mont);
     z_is_w1_mont = 0 - z_is_w1_mont;    // Make it all zeros or all ones.
-    is_possibly_prime |= z_is_w1_mont;  // Go to step 4.7 if |z_is_w1_mont|.
+    is_possibly_prime |= z_is_w1_mont;  // Go to step 4.7 if `z_is_w1_mont`.
 
     // Step 4.5.3. If z = 1 and the loop is not done, the previous value of z
     // was not -1. There are no non-trivial square roots of 1 modulo a prime, so
@@ -511,35 +514,35 @@ int BN_primality_test(int *out_is_probably_prime, const BIGNUM *w, int checks,
   // generation. We generate RSA keys by selecting two large, secret primes with
   // rejection sampling.
   //
-  // We thus treat |w| as secret if turns out to be a large prime. However, if
-  // |w| is composite, we treat this and |w| itself as public. (Conversely, if
-  // |w| is prime, that it is prime is public. Only the value is secret.) This
+  // We thus treat `w` as secret if turns out to be a large prime. However, if
+  // `w` is composite, we treat this and `w` itself as public. (Conversely, if
+  // `w` is prime, that it is prime is public. Only the value is secret.) This
   // is fine for RSA key generation, but note it is important that we use
   // rejection sampling, with each candidate prime chosen independently. This
   // would not work for, e.g., an algorithm which looked for primes in
   // consecutive integers. These assumptions allow us to discard composites
-  // quickly. We additionally treat |w| as public when it is a small prime to
+  // quickly. We additionally treat `w` as public when it is a small prime to
   // simplify trial decryption and some edge cases.
   //
   // One RSA key generation will call this function on exactly two primes and
   // many more composites. The overall cost is a combination of several factors:
   //
-  // 1. Checking if |w| is divisible by a small prime is much faster than
+  // 1. Checking if `w` is divisible by a small prime is much faster than
   //    learning it is composite by Miller-Rabin (see below for details on that
   //    cost). Trial division by p saves 1/p of Miller-Rabin calls, so this is
   //    worthwhile until p exceeds the ratio of the two costs.
   //
   // 2. For a random (i.e. non-adversarial) candidate large prime and candidate
   //    witness, the probability of false witness is very low. (This is why FIPS
-  //    186-4 only requires a few iterations.) Thus composites not discarded by
+  //    186-5 only requires a few iterations.) Thus composites not discarded by
   //    trial decryption, in practice, cost one Miller-Rabin iteration. Only the
   //    two actual primes cost the full iteration count.
   //
-  // 3. A Miller-Rabin iteration is a modular exponentiation plus |a| additional
-  //    modular squares, where |a| is the number of factors of two in |w-1|. |a|
+  // 3. A Miller-Rabin iteration is a modular exponentiation plus `a` additional
+  //    modular squares, where `a` is the number of factors of two in `w-1`. `a`
   //    is likely small (the distribution falls exponentially), but it is also
-  //    potentially secret, so we loop up to its log(w) upper bound when |w| is
-  //    prime. When |w| is composite, we break early, so only two calls pay this
+  //    potentially secret, so we loop up to its log(w) upper bound when `w` is
+  //    prime. When `w` is composite, we break early, so only two calls pay this
   //    cost. (Note that all calls pay the modular exponentiation which is,
   //    itself, log(w) modular multiplications and squares.)
   //
@@ -583,7 +586,7 @@ int BN_primality_test(int *out_is_probably_prime, const BIGNUM *w, int checks,
     checks = BN_prime_checks_for_size(BN_num_bits(w));
   }
 
-  bssl::UniquePtr<BN_CTX> new_ctx;
+  UniquePtr<BN_CTX> new_ctx;
   if (ctx == nullptr) {
     new_ctx.reset(BN_CTX_new());
     if (new_ctx == nullptr) {
@@ -592,10 +595,10 @@ int BN_primality_test(int *out_is_probably_prime, const BIGNUM *w, int checks,
     ctx = new_ctx.get();
   }
 
-  // See C.3.1 from FIPS 186-4.
-  bssl::BN_CTXScope scope(ctx);
+  // See B.3.1 from FIPS 186-5.
+  BN_CTXScope scope(ctx);
   BIGNUM *b = BN_CTX_get(ctx);
-  bssl::UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_consttime(w, ctx));
+  UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_consttime(w, ctx));
   BN_MILLER_RABIN miller_rabin;
   crypto_word_t uniform_iterations = 0;
   if (b == nullptr || mont == nullptr ||
@@ -607,32 +610,32 @@ int BN_primality_test(int *out_is_probably_prime, const BIGNUM *w, int checks,
   // The following loop performs in inner iteration of the Miller-Rabin
   // Primality test (Step 4).
   //
-  // The algorithm as specified in FIPS 186-4 leaks information on |w|, the RSA
+  // The algorithm as specified in FIPS 186-5 leaks information on `w`, the RSA
   // private key. Instead, we run through each iteration unconditionally,
   // performing modular multiplications, masking off any effects to behave
   // equivalently to the specified algorithm.
   //
-  // We also blind the number of values of |b| we try. Steps 4.1–4.2 say to
-  // discard out-of-range values. To avoid leaking information on |w|, we use
-  // |bn_rand_secret_range| which, rather than discarding bad values, adjusts
+  // We also blind the number of values of `b` we try. Steps 4.1–4.2 say to
+  // discard out-of-range values. To avoid leaking information on `w`, we use
+  // `bn_rand_secret_range` which, rather than discarding bad values, adjusts
   // them to be in range. Though not uniformly selected, these adjusted values
   // are still usable as Miller-Rabin checks.
   //
   // Miller-Rabin is already probabilistic, so we could reach the desired
   // confidence levels by just suitably increasing the iteration count. However,
-  // to align with FIPS 186-4, we use a more pessimal analysis: we do not count
+  // to align with FIPS 186-5, we use a more pessimal analysis: we do not count
   // the non-uniform values towards the iteration count. As a result, this
   // function is more complex and has more timing risk than necessary.
   //
   // We count both total iterations and uniform ones and iterate until we've
-  // reached at least |BN_PRIME_CHECKS_BLINDED| and |iterations|, respectively.
+  // reached at least `BN_PRIME_CHECKS_BLINDED` and `iterations`, respectively.
   // If the latter is large enough, it will be the limiting factor with high
   // probability and we won't leak information.
   //
   // Note this blinding does not impact most calls when picking primes because
   // composites are rejected early. Only the two secret primes see extra work.
 
-  // Using |constant_time_lt_w| seems to prevent the compiler from optimizing
+  // Using `constant_time_lt_w` seems to prevent the compiler from optimizing
   // this into two jumps.
   for (int i = 1; constant_time_declassify_w(
            (i <= BN_PRIME_CHECKS_BLINDED) |
@@ -697,7 +700,7 @@ int BN_enhanced_miller_rabin_primality_test(
     checks = BN_prime_checks_for_size(BN_num_bits(w));
   }
 
-  bssl::BN_CTXScope scope(ctx);
+  BN_CTXScope scope(ctx);
   BIGNUM *w1 = BN_CTX_get(ctx);
   if (w1 == nullptr || !BN_copy(w1, w) || !BN_sub_word(w1, 1)) {
     return 0;
@@ -724,7 +727,7 @@ int BN_enhanced_miller_rabin_primality_test(
   }
 
   // Montgomery setup for computations mod w
-  bssl::UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_for_modulus(w, ctx));
+  UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_for_modulus(w, ctx));
   if (mont == nullptr) {
     return 0;
   }
@@ -814,7 +817,7 @@ static int probable_prime(BIGNUM *rnd, int bits) {
 
 static int probable_prime_dh(BIGNUM *rnd, int bits, const BIGNUM *add,
                              const BIGNUM *rem, BN_CTX *ctx) {
-  bssl::BN_CTXScope scope(ctx);
+  BN_CTXScope scope(ctx);
   BIGNUM *t1;
   if ((t1 = BN_CTX_get(ctx)) == nullptr) {
     return 0;
@@ -860,11 +863,11 @@ loop:
 static int probable_prime_dh_safe(BIGNUM *p, int bits, const BIGNUM *padd,
                                   const BIGNUM *rem, BN_CTX *ctx) {
   bits--;
-  bssl::BN_CTXScope scope(ctx);
+  BN_CTXScope scope(ctx);
   BIGNUM *t1 = BN_CTX_get(ctx);
   BIGNUM *q = BN_CTX_get(ctx);
   BIGNUM *qadd = BN_CTX_get(ctx);
-  if (qadd == NULL) {
+  if (qadd == nullptr) {
     return 0;
   }
 
@@ -885,7 +888,7 @@ static int probable_prime_dh_safe(BIGNUM *p, int bits, const BIGNUM *padd,
     return 0;
   }
 
-  if (rem == NULL) {
+  if (rem == nullptr) {
     if (!BN_add_word(q, 1)) {
       return 0;
     }

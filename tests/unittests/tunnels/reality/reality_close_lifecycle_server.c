@@ -634,7 +634,7 @@ static void serverPeerFatal(tunnel_t *t, line_t *l)
 static sbuf_t *serverBufferFromBytes(server_lifecycle_fixture_t *fixture, const uint8_t *data, uint32_t len)
 {
     sbuf_t *buf = bufferpoolGetSmallBuffer(fixture->pool);
-    requireServer(len <= sbufGetMaximumWriteableSize(buf), "server parser fixture buffer is too small");
+    /* Real ClientHellos can exceed the small-buffer tier, especially with hybrid key shares. */
     buf = sbufReserveSpace(buf, len);
     sbufSetLength(buf, len);
     memoryCopy(sbufGetMutablePtr(buf), data, len);

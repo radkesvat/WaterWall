@@ -11,8 +11,7 @@ foreach(tls_target IN ITEMS TlsClient TlsServer)
       TLS_BIO_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key")
     if(tls_target STREQUAL "TlsClient")
       target_include_directories(${bio_test} BEFORE PRIVATE
-        ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
-        ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include)
+        ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include)
       target_compile_definitions(${bio_test} PRIVATE BORINGSSL_PREFIX=WW_BSSL)
       target_link_libraries(${bio_test} PRIVATE ssl crypto)
       target_link_options(${bio_test} PRIVATE "-Wl,--wrap=WW_BSSL_EVP_AEAD_CTX_seal_scatter")

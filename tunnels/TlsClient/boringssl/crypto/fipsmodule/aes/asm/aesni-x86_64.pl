@@ -64,7 +64,7 @@
 # nothing one can do and the result appears optimal. CCM result is
 # identical to CBC, because CBC-MAC is essentially CBC encrypt without
 # saving output. CCM CTR "stays invisible," because it's neatly
-# interleaved wih CBC-MAC. This provides ~30% improvement over
+# interleaved with CBC-MAC. This provides ~30% improvement over
 # "straightforward" CCM implementation with CTR and CBC-MAC performed
 # disjointly. Parallelizable modes practically achieve the theoretical
 # limit.
@@ -208,7 +208,7 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 ( $xlate="${dir}../../../perlasm/x86_64-xlate.pl" and -f $xlate) or
 die "can't locate x86_64-xlate.pl";
 
-open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\"";
+open OUT, "|-", $^X, $xlate, $flavour, $output;
 *STDOUT=*OUT;
 
 $movkey = $PREFIX eq "aes_hw" ? "movups" : "movups";
@@ -2262,7 +2262,7 @@ $code.=<<___;
 	movdqu	`16*0`($inp),$inout0		# load input
 	movdqa	$rndkey0,$twmask
 	movdqu	`16*1`($inp),$inout1
-	pxor	@tweak[0],$inout0		# intput^=tweak^round[0]
+	pxor	@tweak[0],$inout0		# input^=tweak^round[0]
 	movdqu	`16*2`($inp),$inout2
 	pxor	@tweak[1],$inout1
 	 aesdec		$rndkey1,$inout0
@@ -3387,7 +3387,8 @@ ${PREFIX}_set_encrypt_key_base:
 	ret
 .cfi_endproc
 .seh_endproc
-
+.size	${PREFIX}_set_encrypt_key_base,.-${PREFIX}_set_encrypt_key_base
+
 .align	16
 .Lkey_expansion_128:
 .cfi_startproc
@@ -3466,7 +3467,6 @@ ${PREFIX}_set_encrypt_key_base:
 	xorps	%xmm1,%xmm2
 	ret
 .cfi_endproc
-.size	${PREFIX}_set_encrypt_key_base,.-${PREFIX}_set_encrypt_key_base
 
 .globl	${PREFIX}_set_encrypt_key_alt
 .type	${PREFIX}_set_encrypt_key_alt,\@abi-omnipotent
@@ -3679,7 +3679,9 @@ ___
 
 $code.=<<___;
 .section .rodata
+
 .align	64
+aesni_constants:
 .Lbswap_mask:
 	.byte	15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0
 .Lincrement32:
@@ -3778,7 +3780,7 @@ ctr_xts_se_handler:
 	mov	56($disp),%r11		# disp->HandlerData
 
 	mov	0(%r11),%r10d		# HandlerData[0]
-	lea	(%rsi,%r10),%r10	# prologue lable
+	lea	(%rsi,%r10),%r10	# prologue label
 	cmp	%r10,%rbx		# context->Rip<prologue label
 	jb	.Lcommon_seh_tail
 
@@ -3825,7 +3827,7 @@ ocb_se_handler:
 	mov	56($disp),%r11		# disp->HandlerData
 
 	mov	0(%r11),%r10d		# HandlerData[0]
-	lea	(%rsi,%r10),%r10	# prologue lable
+	lea	(%rsi,%r10),%r10	# prologue label
 	cmp	%r10,%rbx		# context->Rip<prologue label
 	jb	.Lcommon_seh_tail
 

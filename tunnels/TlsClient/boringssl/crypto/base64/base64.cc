@@ -19,22 +19,24 @@
 #include <string.h>
 
 #include "../internal.h"
+#include "../mem_internal.h"
 
 
-// constant_time_lt_args_8 behaves like |constant_time_lt_8| but takes |uint8_t|
+using namespace bssl;
+
+// constant_time_lt_args_8 behaves like `constant_time_lt_8` but takes `uint8_t`
 // arguments for a slightly simpler implementation.
-static inline uint8_t constant_time_lt_args_8(uint8_t a, uint8_t b) {
+static uint8_t constant_time_lt_args_8(uint8_t a, uint8_t b) {
   crypto_word_t aw = a;
   crypto_word_t bw = b;
-  // |crypto_word_t| is larger than |uint8_t|, so |aw| and |bw| have the same
-  // MSB. |aw| < |bw| iff MSB(|aw| - |bw|) is 1.
+  // `crypto_word_t` is larger than `uint8_t`, so `aw` and `bw` have the same
+  // MSB. `aw` < `bw` iff MSB(`aw` - `bw`) is 1.
   return constant_time_msb_w(aw - bw);
 }
 
-// constant_time_in_range_8 returns |CONSTTIME_TRUE_8| if |min| <= |a| <= |max|
-// and |CONSTTIME_FALSE_8| otherwise.
-static inline uint8_t constant_time_in_range_8(uint8_t a, uint8_t min,
-                                               uint8_t max) {
+// constant_time_in_range_8 returns `CONSTTIME_TRUE_8` if `min` <= `a` <= `max`
+// and `CONSTTIME_FALSE_8` otherwise.
+static uint8_t constant_time_in_range_8(uint8_t a, uint8_t min, uint8_t max) {
   a -= min;
   return constant_time_lt_args_8(a, max - min + 1);
 }
@@ -54,7 +56,7 @@ static uint8_t conv_bin2ascii(uint8_t a) {
   return ret;
 }
 
-static_assert(sizeof(((EVP_ENCODE_CTX *)(NULL))->data) % 3 == 0,
+static_assert(sizeof(((EVP_ENCODE_CTX *)nullptr)->data) % 3 == 0,
               "data length must be a multiple of base64 chunk size");
 
 int EVP_EncodedLength(size_t *out_len, size_t len) {
@@ -78,12 +80,9 @@ int EVP_EncodedLength(size_t *out_len, size_t len) {
   return 1;
 }
 
-EVP_ENCODE_CTX *EVP_ENCODE_CTX_new(void) {
-  return reinterpret_cast<EVP_ENCODE_CTX *>(
-      OPENSSL_zalloc(sizeof(EVP_ENCODE_CTX)));
-}
+EVP_ENCODE_CTX *EVP_ENCODE_CTX_new() { return New<EVP_ENCODE_CTX>(); }
 
-void EVP_ENCODE_CTX_free(EVP_ENCODE_CTX *ctx) { OPENSSL_free(ctx); }
+void EVP_ENCODE_CTX_free(EVP_ENCODE_CTX *ctx) { Delete(ctx); }
 
 void EVP_EncodeInit(EVP_ENCODE_CTX *ctx) {
   OPENSSL_memset(ctx, 0, sizeof(EVP_ENCODE_CTX));
@@ -243,7 +242,7 @@ static uint8_t base64_ascii_to_bin(uint8_t a) {
 }
 
 // base64_decode_quad decodes a single “quad” (i.e. four characters) of base64
-// data and writes up to three bytes to |out|. It sets |*out_num_bytes| to the
+// data and writes up to three bytes to `out`. It sets `*out_num_bytes` to the
 // number of bytes written, which will be less than three if the quad ended
 // with padding.  It returns one on success or zero on error.
 static int base64_decode_quad(uint8_t *out, size_t *out_num_bytes,

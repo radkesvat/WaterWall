@@ -25,6 +25,8 @@
 #include "internal.h"
 
 
+using namespace bssl;
+
 static STACK_OF(CONF_VALUE) *i2v_POLICY_CONSTRAINTS(
     const X509V3_EXT_METHOD *method, void *bcons,
     STACK_OF(CONF_VALUE) *extlist);
@@ -32,21 +34,21 @@ static void *v2i_POLICY_CONSTRAINTS(const X509V3_EXT_METHOD *method,
                                     const X509V3_CTX *ctx,
                                     const STACK_OF(CONF_VALUE) *values);
 
-const X509V3_EXT_METHOD v3_policy_constraints = {
+const X509V3_EXT_METHOD bssl::v3_policy_constraints = {
     NID_policy_constraints,
     0,
     ASN1_ITEM_ref(POLICY_CONSTRAINTS),
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
     i2v_POLICY_CONSTRAINTS,
     v2i_POLICY_CONSTRAINTS,
-    NULL,
-    NULL,
-    NULL};
+    nullptr,
+    nullptr,
+    nullptr};
 
 ASN1_SEQUENCE(POLICY_CONSTRAINTS) = {
     ASN1_IMP_OPT(POLICY_CONSTRAINTS, requireExplicitPolicy, ASN1_INTEGER, 0),
@@ -68,9 +70,9 @@ static STACK_OF(CONF_VALUE) *i2v_POLICY_CONSTRAINTS(
 static void *v2i_POLICY_CONSTRAINTS(const X509V3_EXT_METHOD *method,
                                     const X509V3_CTX *ctx,
                                     const STACK_OF(CONF_VALUE) *values) {
-  POLICY_CONSTRAINTS *pcons = NULL;
+  POLICY_CONSTRAINTS *pcons = nullptr;
   if (!(pcons = POLICY_CONSTRAINTS_new())) {
-    return NULL;
+    return nullptr;
   }
   for (size_t i = 0; i < sk_CONF_VALUE_num(values); i++) {
     const CONF_VALUE *val = sk_CONF_VALUE_value(values, i);
@@ -96,5 +98,5 @@ static void *v2i_POLICY_CONSTRAINTS(const X509V3_EXT_METHOD *method,
   return pcons;
 err:
   POLICY_CONSTRAINTS_free(pcons);
-  return NULL;
+  return nullptr;
 }

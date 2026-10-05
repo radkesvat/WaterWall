@@ -21,7 +21,6 @@ if(TARGET RealityServer AND TARGET TlsClient)
   )
   target_include_directories(reality_tls_binding_interop_test BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
-    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
   )
   target_compile_definitions(reality_tls_binding_interop_test PRIVATE
     BORINGSSL_PREFIX=WW_BSSL
@@ -52,7 +51,6 @@ if(TARGET RealityClient AND TARGET RealityServer AND TARGET TlsClient)
   )
   target_include_directories(reality_close_lifecycle_test BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
-    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
   )
   target_compile_definitions(reality_close_lifecycle_test PRIVATE
     BORINGSSL_PREFIX=WW_BSSL

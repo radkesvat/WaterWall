@@ -19,11 +19,11 @@
 #include "../crypto/bio/internal.h"
 
 
-static SSL *get_ssl(BIO *bio) { return reinterpret_cast<SSL *>(bio->ptr); }
+static SSL *get_ssl(BIO *bio) { return reinterpret_cast<SSL *>(BIO_get_data(bio)); }
 
 static int ssl_read(BIO *bio, char *out, int outl) {
   SSL *ssl = get_ssl(bio);
-  if (ssl == NULL) {
+  if (ssl == nullptr) {
     return 0;
   }
 
@@ -63,7 +63,7 @@ static int ssl_read(BIO *bio, char *out, int outl) {
 
 static int ssl_write(BIO *bio, const char *out, int outl) {
   SSL *ssl = get_ssl(bio);
-  if (ssl == NULL) {
+  if (ssl == nullptr) {
     return 0;
   }
 
@@ -97,13 +97,13 @@ static int ssl_write(BIO *bio, const char *out, int outl) {
 
 static long ssl_ctrl(BIO *bio, int cmd, long num, void *ptr) {
   SSL *ssl = get_ssl(bio);
-  if (ssl == NULL && cmd != BIO_C_SET_SSL) {
+  if (ssl == nullptr && cmd != BIO_C_SET_SSL) {
     return 0;
   }
 
   switch (cmd) {
     case BIO_C_SET_SSL:
-      if (ssl != NULL) {
+      if (ssl != nullptr) {
         // OpenSSL allows reusing an SSL BIO with a different SSL object. We do
         // not support this.
         OPENSSL_PUT_ERROR(SSL, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
@@ -111,19 +111,19 @@ static long ssl_ctrl(BIO *bio, int cmd, long num, void *ptr) {
       }
 
       // Note this differs from upstream OpenSSL, which synchronizes
-      // |bio->next_bio| with |ssl|'s rbio here, and on |BIO_CTRL_PUSH|. We call
-      // into the corresponding |BIO| directly. (We can implement the upstream
+      // `BIO_next(bio)` with `ssl`'s rbio here, and on `BIO_CTRL_PUSH`. We call
+      // into the corresponding `BIO` directly. (We can implement the upstream
       // behavior if it ends up necessary.)
-      bio->shutdown = static_cast<int>(num);
-      bio->ptr = ptr;
-      bio->init = 1;
+      BIO_set_shutdown(bio, static_cast<int>(num));
+      BIO_set_data(bio, ptr);
+      BIO_set_init(bio, 1);
       return 1;
 
     case BIO_CTRL_GET_CLOSE:
-      return bio->shutdown;
+      return BIO_get_shutdown(bio);
 
     case BIO_CTRL_SET_CLOSE:
-      bio->shutdown = static_cast<int>(num);
+      BIO_set_shutdown(bio, static_cast<int>(num));
       return 1;
 
     case BIO_CTRL_WPENDING:
@@ -156,12 +156,12 @@ static int ssl_new(BIO *bio) { return 1; }
 static int ssl_free(BIO *bio) {
   SSL *ssl = get_ssl(bio);
 
-  if (ssl == NULL) {
+  if (ssl == nullptr) {
     return 1;
   }
 
   SSL_shutdown(ssl);
-  if (bio->shutdown) {
+  if (BIO_get_shutdown(bio)) {
     SSL_free(ssl);
   }
 
@@ -170,7 +170,7 @@ static int ssl_free(BIO *bio) {
 
 static long ssl_callback_ctrl(BIO *bio, int cmd, BIO_info_cb *fp) {
   SSL *ssl = get_ssl(bio);
-  if (ssl == NULL) {
+  if (ssl == nullptr) {
     return 0;
   }
 
@@ -184,11 +184,14 @@ static long ssl_callback_ctrl(BIO *bio, int cmd, BIO_info_cb *fp) {
 }
 
 static const BIO_METHOD ssl_method = {
-    BIO_TYPE_SSL, "SSL",   ssl_write, ssl_read,          /*bgets=*/nullptr,
-    ssl_ctrl,     ssl_new, ssl_free,  ssl_callback_ctrl,
+    BIO_TYPE_SSL, "SSL",
+    ssl_write,    /*bwrite_ex=*/nullptr,
+    ssl_read,     /*bgets=*/nullptr,
+    ssl_ctrl,     ssl_new,
+    ssl_free,     ssl_callback_ctrl,
 };
 
-const BIO_METHOD *BIO_f_ssl(void) { return &ssl_method; }
+const BIO_METHOD *BIO_f_ssl() { return &ssl_method; }
 
 long BIO_set_ssl(BIO *bio, SSL *ssl, int take_owership) {
   return BIO_ctrl(bio, BIO_C_SET_SSL, take_owership, ssl);

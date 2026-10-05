@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <iterator>
 #include <memory>
 #include <vector>
 
@@ -36,13 +37,14 @@
 #include "../test/test_util.h"
 
 
+BSSL_NAMESPACE_BEGIN
 namespace {
 
 struct MD {
   // name is the name of the digest.
   const char *name;
   // md_func is the digest to test.
-  const EVP_MD *(*func)(void);
+  const EVP_MD *(*func)();
   // one_shot_func is the convenience one-shot version of the
   // digest.
   uint8_t *(*one_shot_func)(const uint8_t *, size_t, uint8_t *);
@@ -157,11 +159,11 @@ static const DigestTestVector kTestVectors[] = {
 
 static void CompareDigest(const DigestTestVector *test, const uint8_t *digest,
                           size_t digest_len) {
-  EXPECT_EQ(test->expected_hex, EncodeHex(bssl::Span(digest, digest_len)));
+  EXPECT_EQ(test->expected_hex, EncodeHex(Span(digest, digest_len)));
 }
 
 static void TestDigest(const DigestTestVector *test) {
-  bssl::ScopedEVP_MD_CTX ctx;
+  ScopedEVP_MD_CTX ctx;
 
   // Test the input provided.
   ASSERT_TRUE(EVP_DigestInit_ex(ctx.get(), test->md.func(), nullptr));
@@ -201,7 +203,7 @@ static void TestDigest(const DigestTestVector *test) {
 
   // Make a copy of the digest in the initial state.
   ASSERT_TRUE(EVP_DigestInit_ex(ctx.get(), test->md.func(), nullptr));
-  bssl::ScopedEVP_MD_CTX copy;
+  ScopedEVP_MD_CTX copy;
   ASSERT_TRUE(EVP_MD_CTX_copy_ex(copy.get(), ctx.get()));
   for (size_t i = 0; i < test->repeat; i++) {
     ASSERT_TRUE(EVP_DigestUpdate(copy.get(), test->input, strlen(test->input)));
@@ -253,7 +255,7 @@ static void TestDigest(const DigestTestVector *test) {
 }
 
 TEST(DigestTest, TestVectors) {
-  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(kTestVectors); i++) {
+  for (size_t i = 0; i < std::size(kTestVectors); i++) {
     SCOPED_TRACE(i);
     TestDigest(&kTestVectors[i]);
   }
@@ -270,7 +272,7 @@ TEST(DigestTest, Getters) {
   EXPECT_EQ(nullptr, EVP_get_digestbynid(NID_sha512WithRSAEncryption));
   EXPECT_EQ(nullptr, EVP_get_digestbynid(NID_undef));
 
-  bssl::UniquePtr<ASN1_OBJECT> obj(OBJ_txt2obj("1.3.14.3.2.26", 0));
+  UniquePtr<ASN1_OBJECT> obj(OBJ_txt2obj("1.3.14.3.2.26", 0));
   ASSERT_TRUE(obj);
   EXPECT_EQ(EVP_sha1(), EVP_get_digestbyobj(obj.get()));
   EXPECT_EQ(EVP_md5_sha1(), EVP_get_digestbyobj(OBJ_nid2obj(NID_md5_sha1)));
@@ -278,9 +280,10 @@ TEST(DigestTest, Getters) {
 }
 
 TEST(DigestTest, ASN1) {
-  bssl::ScopedCBB cbb;
+  ScopedCBB cbb;
   ASSERT_TRUE(CBB_init(cbb.get(), 0));
   EXPECT_FALSE(EVP_marshal_digest_algorithm(cbb.get(), EVP_md5_sha1()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DIGEST, DIGEST_R_UNKNOWN_HASH}}));
 
   static const uint8_t kSHA256NullParam[] = {0x30, 0x0d, 0x06, 0x09, 0x60,
                                              0x86, 0x48, 0x01, 0x65, 0x03,
@@ -317,6 +320,7 @@ TEST(DigestTest, ASN1) {
   // Garbage parameters are not.
   CBS_init(&cbs, kSHA256GarbageParam, sizeof(kSHA256GarbageParam));
   EXPECT_FALSE(EVP_parse_digest_algorithm(&cbs));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DIGEST, DIGEST_R_DECODE_ERROR}}));
 }
 
 TEST(DigestTest, TransformBlocks) {
@@ -332,8 +336,30 @@ TEST(DigestTest, TransformBlocks) {
   SHA256_CTX ctx2;
   SHA256_Init(&ctx2);
   SHA256_TransformBlocks(ctx2.h, blocks, sizeof(blocks) / SHA256_CBLOCK);
+  SHA256_TransformBlocks(ctx2.h, nullptr, 0);
 
   EXPECT_TRUE(0 == OPENSSL_memcmp(ctx1.h, ctx2.h, sizeof(ctx1.h)));
 }
 
+// |EVP_MD_CTX| is a caller-allocatable C struct. Some APIs are required to work
+// when the struct is uninitialized.
+TEST(DigestTest, Uninitialized) {
+  // |EVP_MD_CTX_init| initializes its input from an arbitrary state.
+  {
+    EVP_MD_CTX ctx;
+    EVP_MD_CTX_init(&ctx);
+    EVP_DigestInit_ex(&ctx, EVP_sha256(), nullptr);
+    EVP_MD_CTX_cleanup(&ctx);
+  }
+
+  // |EVP_DigestInit| internally calls |EVP_MD_CTX_init| and thus initializes it
+  // from an arbitrary state.
+  {
+    EVP_MD_CTX ctx;
+    EVP_DigestInit(&ctx, EVP_sha256());
+    EVP_MD_CTX_cleanup(&ctx);
+  }
+}
+
 }  // namespace
+BSSL_NAMESPACE_END

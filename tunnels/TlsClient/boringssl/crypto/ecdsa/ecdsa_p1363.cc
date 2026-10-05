@@ -24,6 +24,8 @@
 #include "../fipsmodule/ecdsa/internal.h"
 
 
+using namespace bssl;
+
 int ECDSA_sign_p1363(const uint8_t *digest, size_t digest_len, uint8_t *sig,
                      size_t *out_sig_len, size_t max_sig_len,
                      const EC_KEY *eckey) {
@@ -38,12 +40,12 @@ int ECDSA_verify_p1363(const uint8_t *digest, size_t digest_len,
 }
 
 size_t ECDSA_size_p1363(const EC_KEY *key) {
-  if (key == NULL) {
+  if (key == nullptr) {
     return 0;
   }
 
   const EC_GROUP *group = EC_KEY_get0_group(key);
-  if (group == NULL) {
+  if (group == nullptr) {
     return 0;
   }
 

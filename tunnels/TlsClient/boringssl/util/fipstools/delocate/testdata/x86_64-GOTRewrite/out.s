@@ -2,6 +2,7 @@
 .file 1 "inserted_by_delocate.c"
 .loc 1 1 0
 BORINGSSL_bcm_text_start:
+.LBORINGSSL_bcm_text_start_local_target:
 	.text
 .Lfoo_local_target:
 foo:
@@ -104,7 +105,11 @@ bar:
 
 	# Synthesized symbols do not use the GOT.
 # WAS movq BORINGSSL_bcm_text_start@GOTPCREL(%rip), %r11
-	leaq	BORINGSSL_bcm_text_start(%rip), %r11
+	leaq	.LBORINGSSL_bcm_text_start_local_target(%rip), %r11
+# WAS movq BORINGSSL_bcm_text_end@GOTPCREL(%rip), %r11
+	leaq	.LBORINGSSL_bcm_text_end_local_target(%rip), %r11
+# WAS movq BORINGSSL_bcm_text_hash@GOTPCREL(%rip), %r11
+	leaq	.LBORINGSSL_bcm_text_hash_local_target(%rip), %r11
 # WAS movq foobar_bss_get@GOTPCREL(%rip), %r11
 	leaq	foobar_bss_get(%rip), %r11
 
@@ -233,6 +238,7 @@ bar:
 .text
 .loc 1 2 0
 BORINGSSL_bcm_text_end:
+.LBORINGSSL_bcm_text_end_local_target:
 .type foobar_bss_get, @function
 foobar_bss_get:
 	leaq	foobar(%rip), %rax
@@ -257,6 +263,7 @@ stderr_GOTPCREL_external:
 .type BORINGSSL_bcm_text_hash, @object
 .size BORINGSSL_bcm_text_hash, 32
 BORINGSSL_bcm_text_hash:
+.LBORINGSSL_bcm_text_hash_local_target:
 .byte 0xae
 .byte 0x2c
 .byte 0xea

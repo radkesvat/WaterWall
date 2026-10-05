@@ -33,6 +33,7 @@
 #include <openssl/rand.h>  // TODO(bbe): only for RAND_bytes call below, replace with BCM call
 #include <openssl/rsa.h>
 #include <openssl/sha.h>
+#include <openssl/tls_prf.h>
 
 #include "../../test/abi_test.h"
 #include "../../test/test_util.h"
@@ -43,11 +44,12 @@
 #include "internal.h"
 
 
+BSSL_NAMESPACE_BEGIN
 namespace {
 
-// CALL_SERVICE_AND_CHECK_APPROVED runs |func| and sets |approved| to one of the
-// |FIPSStatus*| values, above, depending on whether |func| invoked an
-// approved service. The result of |func| becomes the result of this macro.
+// CALL_SERVICE_AND_CHECK_APPROVED runs `func` and sets `approved` to one of the
+// `FIPSStatus*` values, above, depending on whether `func` invoked an
+// approved service. The result of `func` becomes the result of this macro.
 #define CALL_SERVICE_AND_CHECK_APPROVED(approved, func)   \
   [&] {                                                   \
     FIPSIndicatorHelper fips_indicator_helper(&approved); \
@@ -95,7 +97,7 @@ static const uint8_t kPlaintext[64] = {
 
 #if defined(BORINGSSL_FIPS)
 
-// kEVPKeyGenShouldCallFIPSFunctions determines whether |EVP_PKEY_keygen_*|
+// kEVPKeyGenShouldCallFIPSFunctions determines whether `EVP_PKEY_keygen_*`
 // functions should call the FIPS versions of the key-generation functions.
 static const bool kEVPKeyGenShouldCallFIPSFunctions = false;
 
@@ -139,22 +141,21 @@ static bssl::UniquePtr<DH> GetDH() {
       0x01, 0x91, 0x17, 0x3f, 0x2a, 0x05, 0x70, 0x18, 0x7e, 0xc4,
       0x22, 0xee, 0xb7, 0x0a, 0x15, 0x2f, 0x39, 0x64, 0x58, 0xf3,
       0xb8, 0x18, 0x7b, 0xe3, 0x6b, 0xd3, 0x8a, 0x4f, 0xa1};
-  bssl::UniquePtr<BIGNUM> priv(
+  UniquePtr<BIGNUM> priv(
       BN_bin2bn(kFFDHE2048PrivateKey, sizeof(kFFDHE2048PrivateKey), nullptr));
   if (!priv) {
     return nullptr;
   }
-  bssl::UniquePtr<DH> dh(DH_get_rfc7919_2048());
+  UniquePtr<DH> dh(DH_get_rfc7919_2048());
   if (!dh || !DH_set0_key(dh.get(), nullptr, priv.get())) {
     return nullptr;
   }
-  priv.release();  // |DH_set0_key| takes ownership on success.
+  priv.release();  // `DH_set0_key` takes ownership on success.
   return dh;
 }
 
 static void DoCipherFinal(EVP_CIPHER_CTX *ctx, std::vector<uint8_t> *out,
-                          bssl::Span<const uint8_t> in,
-                          FIPSStatus expect_approved) {
+                          Span<const uint8_t> in, FIPSStatus expect_approved) {
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
   size_t max_out = in.size();
   if (EVP_CIPHER_CTX_encrypting(ctx)) {
@@ -167,7 +168,7 @@ static void DoCipherFinal(EVP_CIPHER_CTX *ctx, std::vector<uint8_t> *out,
   int len;
   ASSERT_TRUE(EVP_CipherUpdate(ctx, out->data(), &len, in.data(), in.size()));
   total += static_cast<size_t>(len);
-  // Check if the overall service is approved by checking |EVP_CipherFinal_ex|,
+  // Check if the overall service is approved by checking `EVP_CipherFinal_ex`,
   // which should be the last part of the service.
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EVP_CipherFinal_ex(ctx, out->data() + total, &len)));
@@ -411,11 +412,13 @@ static const uint8_t kHMACOutput_sha512_256[SHA512_256_DIGEST_LENGTH] = {
     0x26, 0xba, 0x75, 0x90, 0xd0, 0xb9, 0xd4, 0x09, 0xf5, 0x22, 0xd6,
     0xb6, 0xab, 0xa8, 0xb9, 0xae, 0x01, 0x06, 0x37, 0x8f, 0xd1};
 
-static const uint8_t kDRBGEntropy[48] = {
-    'B', 'C', 'M', ' ', 'K', 'n', 'o', 'w', 'n', ' ', 'A', 'n',
-    's', 'w', 'e', 'r', ' ', 'T', 'e', 's', 't', ' ', 'D', 'B',
-    'R', 'G', ' ', 'I', 'n', 'i', 't', 'i', 'a', 'l', ' ', 'E',
-    'n', 't', 'r', 'o', 'p', 'y', ' ', ' ', ' ', ' ', ' ', ' '};
+static const uint8_t kDRBGEntropy[CTR_DRBG_MIN_ENTROPY_LEN] = {
+    'B', 'C', 'M', ' ', 'K', 'n', 'o', 'w', 'n', ' ', 'A',
+    'n', 's', 'w', 'e', 'r', ' ', 'T', 'e', 's', 't', ' ',
+    'D', 'B', 'R', 'G', ' ', 'I', 'n', 'i', 't', 'i'};
+static const uint8_t kDRBGNonce[CTR_DRBG_NONCE_LEN] = {
+    'a', 'l', ' ', 'E', 'n', 't', 'r', 'o',
+    'p', 'y', ' ', ' ', ' ', ' ', ' ', ' '};
 
 static const uint8_t kDRBGPersonalization[18] = {'B', 'C', 'M', 'P', 'e', 'r',
                                                  's', 'o', 'n', 'a', 'l', 'i',
@@ -425,12 +428,13 @@ static const uint8_t kDRBGAD[16] = {'B', 'C', 'M', ' ', 'D', 'R', 'B', 'G',
                                     ' ', 'K', 'A', 'T', ' ', 'A', 'D', ' '};
 
 const uint8_t kDRBGOutput[64] = {
-    0x1d, 0x63, 0xdf, 0x05, 0x51, 0x49, 0x22, 0x46, 0xcd, 0x9b, 0xc5,
-    0xbb, 0xf1, 0x5d, 0x44, 0xae, 0x13, 0x78, 0xb1, 0xe4, 0x7c, 0xf1,
-    0x96, 0x33, 0x3d, 0x60, 0xb6, 0x29, 0xd4, 0xbb, 0x6b, 0x44, 0xf9,
-    0xef, 0xd9, 0xf4, 0xa2, 0xba, 0x48, 0xea, 0x39, 0x75, 0x59, 0x32,
-    0xf7, 0x31, 0x2c, 0x98, 0x14, 0x2b, 0x49, 0xdf, 0x02, 0xb6, 0x5d,
-    0x71, 0x09, 0x50, 0xdb, 0x23, 0xdb, 0xe5, 0x22, 0x95};
+    0x34, 0xa6, 0xa1, 0x4a, 0xc2, 0x42, 0xb4, 0x9a, 0xac, 0x50, 0xf3,
+    0x2c, 0xfb, 0x2d, 0x93, 0x25, 0x85, 0x31, 0xc2, 0xe7, 0xd1, 0xa6,
+    0x2c, 0xe4, 0xa1, 0xd2, 0x13, 0xc0, 0x91, 0xf8, 0xdf, 0x59, 0x2a,
+    0x01, 0xaf, 0x3a, 0x5b, 0xd0, 0x95, 0xfe, 0x1e, 0xf6, 0xfa, 0x60,
+    0x03, 0xf4, 0x70, 0xf5, 0x52, 0x9b, 0x58, 0x11, 0xdb, 0xae, 0x22,
+    0xe2, 0x3b, 0x7d, 0x52, 0x40, 0xad, 0xda, 0x7e, 0x40,
+};
 
 static const uint8_t kDRBGEntropy2[48] = {
     'B', 'C', 'M', ' ', 'K', 'n', 'o', 'w', 'n', ' ', 'A', 'n',
@@ -439,12 +443,12 @@ static const uint8_t kDRBGEntropy2[48] = {
     't', 'r', 'o', 'p', 'y', ' ', ' ', ' ', ' ', ' ', ' ', ' '};
 
 static const uint8_t kDRBGReseedOutput[64] = {
-    0xa4, 0x77, 0x05, 0xdb, 0x14, 0x11, 0x76, 0x71, 0x42, 0x5b, 0xd8,
-    0xd7, 0xa5, 0x4f, 0x8b, 0x39, 0xf2, 0x10, 0x4a, 0x50, 0x5b, 0xa2,
-    0xc8, 0xf0, 0xbb, 0x3e, 0xa1, 0xa5, 0x90, 0x7d, 0x54, 0xd9, 0xc6,
-    0xb0, 0x96, 0xc0, 0x2b, 0x7e, 0x9b, 0xc9, 0xa1, 0xdd, 0x78, 0x2e,
-    0xd5, 0xa8, 0x66, 0x16, 0xbd, 0x18, 0x3c, 0xf2, 0xaa, 0x7a, 0x2b,
-    0x37, 0xf9, 0xab, 0x35, 0x64, 0x15, 0x01, 0x3f, 0xc4,
+    0x1c, 0x8d, 0xc4, 0x6e, 0xb0, 0x2d, 0xb7, 0x9a, 0x7c, 0x75, 0xa6,
+    0x83, 0xd2, 0xf9, 0x9d, 0x1c, 0x78, 0x00, 0x64, 0x0f, 0x20, 0x68,
+    0x15, 0x89, 0x51, 0x73, 0xca, 0x74, 0x02, 0xb7, 0x23, 0x87, 0x1b,
+    0x9d, 0x86, 0x29, 0x1b, 0x38, 0x76, 0xfa, 0x6c, 0x81, 0xe2, 0xb7,
+    0xa0, 0xe0, 0xb9, 0x06, 0x67, 0x99, 0xf9, 0xf9, 0x47, 0x82, 0xb3,
+    0xe2, 0x15, 0x3c, 0xe7, 0xce, 0x54, 0x37, 0xda, 0x52,
 };
 
 static const uint8_t kTLSSecret[32] = {
@@ -452,7 +456,7 @@ static const uint8_t kTLSSecret[32] = {
     0xd6, 0x89, 0x99, 0x2a, 0xd6, 0xf7, 0x65, 0x66, 0x07, 0x4b, 0x55,
     0x5f, 0x64, 0x55, 0xcd, 0xd5, 0x77, 0xa4, 0xc7, 0x09, 0x61,
 };
-static const char kTLSLabel[] = "FIPS self test";
+static const uint8_t kTLSLabel[] = "FIPS self test";
 static const uint8_t kTLSSeed1[16] = {
     0x8f, 0x0d, 0xe8, 0xb6, 0x90, 0x8f, 0xb1, 0xd2,
     0x6d, 0x51, 0xf4, 0x79, 0x18, 0x63, 0x51, 0x65,
@@ -650,15 +654,15 @@ TEST_P(AEADServiceIndicatorTest, EVP_AEAD) {
 
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
 
-  bssl::ScopedEVP_AEAD_CTX aead_ctx;
+  ScopedEVP_AEAD_CTX aead_ctx;
   std::vector<uint8_t> nonce(EVP_AEAD_nonce_length(test.aead), 0);
   std::vector<uint8_t> encrypt_output(256);
   std::vector<uint8_t> decrypt_output(256);
   size_t out_len;
 
   // Test running the EVP_AEAD_CTX interfaces one by one directly, and check
-  // |EVP_AEAD_CTX_seal| and |EVP_AEAD_CTX_open| for approval at the end.
-  // |EVP_AEAD_CTX_init| should not be approved because the function does not
+  // `EVP_AEAD_CTX_seal` and `EVP_AEAD_CTX_open` for approval at the end.
+  // `EVP_AEAD_CTX_init` should not be approved because the function does not
   // indicate that a service has been fully completed yet.
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EVP_AEAD_CTX_init(aead_ctx.get(), test.aead, test.key,
@@ -689,7 +693,7 @@ TEST_P(AEADServiceIndicatorTest, EVP_AEAD) {
   EXPECT_EQ(Bytes(kPlaintext), Bytes(decrypt_output));
 
   // Second call when encrypting using the same nonce for AES-GCM TLS specific
-  // functions should fail and return |FIPSStatus::NOT_APPROVED|.
+  // functions should fail and return `FIPSStatus::NOT_APPROVED`.
   if (test.test_repeat_nonce) {
     ASSERT_FALSE(CALL_SERVICE_AND_CHECK_APPROVED(
         approved,
@@ -824,12 +828,12 @@ static const struct CipherTestVector {
 class EVPServiceIndicatorTest : public TestWithNoErrors<CipherTestVector> {};
 
 static void TestOperation(const EVP_CIPHER *cipher, bool encrypt,
-                          const bssl::Span<const uint8_t> key,
-                          const bssl::Span<const uint8_t> plaintext,
-                          const bssl::Span<const uint8_t> ciphertext,
+                          const Span<const uint8_t> key,
+                          const Span<const uint8_t> plaintext,
+                          const Span<const uint8_t> ciphertext,
                           FIPSStatus expect_approved) {
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
-  bssl::Span<const uint8_t> in, out;
+  Span<const uint8_t> in, out;
   if (encrypt) {
     in = plaintext;
     out = ciphertext;
@@ -838,9 +842,9 @@ static void TestOperation(const EVP_CIPHER *cipher, bool encrypt,
     out = plaintext;
   }
 
-  bssl::ScopedEVP_CIPHER_CTX ctx;
+  ScopedEVP_CIPHER_CTX ctx;
   // Test running the EVP_Cipher interfaces one by one directly, and check
-  // |EVP_EncryptFinal_ex| and |EVP_DecryptFinal_ex| for approval at the end.
+  // `EVP_EncryptFinal_ex` and `EVP_DecryptFinal_ex` for approval at the end.
   ASSERT_TRUE(EVP_CipherInit_ex(ctx.get(), cipher, nullptr, nullptr, nullptr,
                                 encrypt ? 1 : 0));
   ASSERT_LE(EVP_CIPHER_CTX_iv_length(ctx.get()), sizeof(kAESIV));
@@ -853,8 +857,8 @@ static void TestOperation(const EVP_CIPHER *cipher, bool encrypt,
   DoCipherFinal(ctx.get(), &encrypt_result, in, expect_approved);
   EXPECT_EQ(Bytes(out), Bytes(encrypt_result));
 
-  // Test using the one-shot |EVP_Cipher| function for approval.
-  bssl::ScopedEVP_CIPHER_CTX ctx2;
+  // Test using the one-shot `EVP_Cipher` function for approval.
+  ScopedEVP_CIPHER_CTX ctx2;
   uint8_t output[256];
   ASSERT_TRUE(EVP_CipherInit_ex(ctx2.get(), cipher, nullptr, key.data(), kAESIV,
                                 encrypt ? 1 : 0));
@@ -973,13 +977,13 @@ TEST_P(EVPMDServiceIndicatorTest, EVP_Digests) {
   SCOPED_TRACE(test.name);
 
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
-  bssl::ScopedEVP_MD_CTX ctx;
+  ScopedEVP_MD_CTX ctx;
   std::vector<uint8_t> digest(test.length);
   unsigned digest_len;
 
   // Test running the EVP_Digest interfaces one by one directly, and check
-  // |EVP_DigestFinal_ex| for approval at the end. |EVP_DigestInit_ex| and
-  // |EVP_DigestUpdate| should not be approved, because the functions do not
+  // `EVP_DigestFinal_ex` for approval at the end. `EVP_DigestInit_ex` and
+  // `EVP_DigestUpdate` should not be approved, because the functions do not
   // indicate that a service has been fully completed yet.
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EVP_DigestInit_ex(ctx.get(), test.func(), nullptr)));
@@ -992,7 +996,7 @@ TEST_P(EVPMDServiceIndicatorTest, EVP_Digests) {
   EXPECT_EQ(approved, test.expect_approved);
   EXPECT_EQ(Bytes(test.expected_digest, digest_len), Bytes(digest));
 
-  // Test using the one-shot |EVP_Digest| function for approval.
+  // Test using the one-shot `EVP_Digest` function for approval.
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EVP_Digest(kPlaintext, sizeof(kPlaintext), digest.data(),
                            &digest_len, test.func(), nullptr)));
@@ -1009,7 +1013,7 @@ TEST_P(EVPMDServiceIndicatorTest, EVP_Digests) {
 
 static const struct HMACTestVector {
   // func is the hash function for HMAC to test.
-  const EVP_MD *(*func)(void);
+  const EVP_MD *(*func)();
   // expected_digest is the expected digest.
   const uint8_t *expected_digest;
   // expected to be approved or not.
@@ -1034,18 +1038,18 @@ TEST_P(HMACServiceIndicatorTest, HMACTest) {
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
   // The key is deliberately long in order to trigger digesting it down to a
   // block size. This tests that doing so does not cause the indicator to be
-  // mistakenly set in |HMAC_Init_ex|.
+  // mistakenly set in `HMAC_Init_ex`.
   const uint8_t kHMACKey[512] = {0};
   const EVP_MD *const digest = test.func();
   const unsigned expected_mac_len = EVP_MD_size(digest);
   std::vector<uint8_t> mac(expected_mac_len);
 
   // Test running the HMAC interfaces one by one directly, and check
-  // |HMAC_Final| for approval at the end. |HMAC_Init_ex| and |HMAC_Update|
+  // `HMAC_Final` for approval at the end. `HMAC_Init_ex` and `HMAC_Update`
   // should not be approved, because the functions do not indicate that a
   // service has been fully completed yet.
   unsigned mac_len;
-  bssl::ScopedHMAC_CTX ctx;
+  ScopedHMAC_CTX ctx;
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved,
       HMAC_Init_ex(ctx.get(), kHMACKey, sizeof(kHMACKey), digest, nullptr)));
@@ -1068,14 +1072,14 @@ TEST_P(HMACServiceIndicatorTest, HMACTest) {
             Bytes(mac.data(), mac_len));
 }
 
-// RSA tests are not parameterized with the |kRSATestVectors| as key
+// RSA tests are not parameterized with the `kRSATestVectors` as key
 // generation for RSA is time consuming.
 TEST(ServiceIndicatorTest, RSAKeyGen) {
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
-  bssl::UniquePtr<RSA> rsa(RSA_new());
+  UniquePtr<RSA> rsa(RSA_new());
   ASSERT_TRUE(rsa);
 
-  // |RSA_generate_key_fips| may only be used for 2048-, 3072-, and 4096-bit
+  // `RSA_generate_key_fips` may only be used for 2048-, 3072-, and 4096-bit
   // keys.
   for (const size_t bits : {512, 1024, 3071, 4095}) {
     SCOPED_TRACE(bits);
@@ -1098,12 +1102,12 @@ TEST(ServiceIndicatorTest, RSAKeyGen) {
   }
 
   // Test running the EVP_PKEY_keygen interfaces one by one directly, and check
-  // |EVP_PKEY_keygen| for approval at the end. |EVP_PKEY_keygen_init| should
+  // `EVP_PKEY_keygen` for approval at the end. `EVP_PKEY_keygen_init` should
   // not be approved because it does not indicate an entire service has been
   // completed.
-  bssl::UniquePtr<EVP_PKEY_CTX> ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr));
+  UniquePtr<EVP_PKEY_CTX> ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr));
   EVP_PKEY *raw = nullptr;
-  bssl::UniquePtr<EVP_PKEY> pkey(raw);
+  UniquePtr<EVP_PKEY> pkey(raw);
   ASSERT_TRUE(ctx);
 
   if (kEVPKeyGenShouldCallFIPSFunctions) {
@@ -1223,7 +1227,7 @@ INSTANTIATE_TEST_SUITE_P(All, RSAServiceIndicatorTest,
                          testing::ValuesIn(kRSATestVectors));
 
 static std::map<unsigned, bssl::UniquePtr<RSA>> &CachedRSAKeys() {
-  static std::map<unsigned, bssl::UniquePtr<RSA>> keys;
+  static std::map<unsigned, UniquePtr<RSA>> keys;
   return keys;
 }
 
@@ -1233,12 +1237,12 @@ static RSA *GetRSAKey(unsigned bits) {
     return it->second.get();
   }
 
-  bssl::UniquePtr<BIGNUM> e(BN_new());
+  UniquePtr<BIGNUM> e(BN_new());
   if (!e || !BN_set_word(e.get(), RSA_F4)) {
     abort();
   }
 
-  bssl::UniquePtr<RSA> key(RSA_new());
+  UniquePtr<RSA> key(RSA_new());
   if (!key || !RSA_generate_key_ex(key.get(), bits, e.get(), nullptr)) {
     abort();
   }
@@ -1253,18 +1257,18 @@ TEST_P(RSAServiceIndicatorTest, RSASigGen) {
   const RSATestVector &test = GetParam();
   SCOPED_TRACE(test.key_size);
 
-  bssl::UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
+  UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
   ASSERT_TRUE(pkey);
 
   RSA *const rsa = GetRSAKey(test.key_size);
   ASSERT_TRUE(EVP_PKEY_set1_RSA(pkey.get(), rsa));
 
   // Test running the EVP_DigestSign interfaces one by one directly, and check
-  // |EVP_DigestSignFinal| for approval at the end. |EVP_DigestSignInit|, and
-  // |EVP_DigestSignUpdate| should not be approved because they do not indicate
+  // `EVP_DigestSignFinal` for approval at the end. `EVP_DigestSignInit`, and
+  // `EVP_DigestSignUpdate` should not be approved because they do not indicate
   // an entire service has been completed.
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
-  bssl::ScopedEVP_MD_CTX md_ctx;
+  ScopedEVP_MD_CTX md_ctx;
   EVP_PKEY_CTX *pctx = nullptr;
   size_t sig_len;
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
@@ -1285,8 +1289,8 @@ TEST_P(RSAServiceIndicatorTest, RSASigGen) {
       EVP_DigestSignUpdate(md_ctx.get(), kPlaintext, sizeof(kPlaintext))));
   EXPECT_EQ(approved, FIPSStatus::NOT_APPROVED);
   // Determine the size of the signature. The first call of
-  // |EVP_DigestSignFinal| should not return an approval check because no crypto
-  // is being done when |nullptr| is inputted in the |*out_sig| field.
+  // `EVP_DigestSignFinal` should not return an approval check because no crypto
+  // is being done when `nullptr` is inputted in the `*out_sig` field.
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EVP_DigestSignFinal(md_ctx.get(), nullptr, &sig_len)));
   EXPECT_EQ(approved, FIPSStatus::NOT_APPROVED);
@@ -1296,7 +1300,7 @@ TEST_P(RSAServiceIndicatorTest, RSASigGen) {
       approved, EVP_DigestSignFinal(md_ctx.get(), signature.data(), &sig_len)));
   EXPECT_EQ(approved, test.sig_gen_expect_approved);
 
-  // Test using the one-shot |EVP_DigestSign| function for approval.
+  // Test using the one-shot `EVP_DigestSign` function for approval.
   md_ctx.Reset();
   std::vector<uint8_t> oneshot_output(sig_len);
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
@@ -1335,7 +1339,7 @@ TEST_P(RSAServiceIndicatorTest, RSASigGen) {
 TEST_P(RSAServiceIndicatorTest, RSASigVer) {
   const RSATestVector &test = GetParam();
 
-  bssl::UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
+  UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
   RSA *const rsa = GetRSAKey(test.key_size);
 
   ASSERT_TRUE(pkey);
@@ -1343,7 +1347,7 @@ TEST_P(RSAServiceIndicatorTest, RSASigVer) {
 
   std::vector<uint8_t> signature;
   size_t sig_len;
-  bssl::ScopedEVP_MD_CTX md_ctx;
+  ScopedEVP_MD_CTX md_ctx;
   EVP_PKEY_CTX *pctx = nullptr;
   ASSERT_TRUE(EVP_DigestSignInit(md_ctx.get(), &pctx, test.func(), nullptr,
                                  pkey.get()));
@@ -1360,8 +1364,8 @@ TEST_P(RSAServiceIndicatorTest, RSASigVer) {
   // Service Indicator approval checks for RSA signature verification.
 
   // Test running the EVP_DigestVerify interfaces one by one directly, and check
-  // |EVP_DigestVerifyFinal| for approval at the end. |EVP_DigestVerifyInit|,
-  // |EVP_DigestVerifyUpdate| should not be approved because they do not
+  // `EVP_DigestVerifyFinal` for approval at the end. `EVP_DigestVerifyInit`,
+  // `EVP_DigestVerifyUpdate` should not be approved because they do not
   // indicate an entire service has been done.
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
   md_ctx.Reset();
@@ -1384,7 +1388,7 @@ TEST_P(RSAServiceIndicatorTest, RSASigVer) {
       EVP_DigestVerifyFinal(md_ctx.get(), signature.data(), signature.size())));
   EXPECT_EQ(approved, test.sig_ver_expect_approved);
 
-  // Test using the one-shot |EVP_DigestVerify| function for approval.
+  // Test using the one-shot `EVP_DigestVerify` function for approval.
   md_ctx.Reset();
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EVP_DigestVerifyInit(md_ctx.get(), &pctx, test.func(), nullptr,
@@ -1417,9 +1421,9 @@ struct ECDSATestVector {
 };
 
 static const struct ECDSATestVector kECDSATestVectors[] = {
-    // Only the following NIDs for |EC_GROUP| are creatable with
-    // |EC_GROUP_new_by_curve_name|, and |NID_secp256k1| will only work if
-    // |kCurveSecp256k1Supported| is true.
+    // Only the following NIDs for `EC_GROUP` are creatable with
+    // `EC_GROUP_new_by_curve_name`, and `NID_secp256k1` will only work if
+    // `kCurveSecp256k1Supported` is true.
     {NID_secp224r1, &EVP_sha1, FIPSStatus::APPROVED, FIPSStatus::NOT_APPROVED,
      FIPSStatus::NOT_APPROVED},
     {NID_secp224r1, &EVP_sha224, FIPSStatus::APPROVED, FIPSStatus::APPROVED,
@@ -1489,9 +1493,9 @@ TEST_P(ECDSAServiceIndicatorTest, ECDSAKeyCheck) {
 
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
 
-  // Test service indicator approval for |EC_KEY_generate_key_fips| and
-  // |EC_KEY_check_fips|.
-  bssl::UniquePtr<EC_KEY> key(EC_KEY_new_by_curve_name(test.nid));
+  // Test service indicator approval for `EC_KEY_generate_key_fips` and
+  // `EC_KEY_check_fips`.
+  UniquePtr<EC_KEY> key(EC_KEY_new_by_curve_name(test.nid));
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EC_KEY_generate_key_fips(key.get())));
   EXPECT_EQ(approved, test.key_check_expect_approved);
@@ -1499,9 +1503,9 @@ TEST_P(ECDSAServiceIndicatorTest, ECDSAKeyCheck) {
       CALL_SERVICE_AND_CHECK_APPROVED(approved, EC_KEY_check_fips(key.get())));
   EXPECT_EQ(approved, test.key_check_expect_approved);
 
-  // See if |EC_KEY_check_fips| still returns approval with only the public
+  // See if `EC_KEY_check_fips` still returns approval with only the public
   // component.
-  bssl::UniquePtr<EC_KEY> key_only_public(EC_KEY_new_by_curve_name(test.nid));
+  UniquePtr<EC_KEY> key_only_public(EC_KEY_new_by_curve_name(test.nid));
   ASSERT_TRUE(EC_KEY_set_public_key(key_only_public.get(),
                                     EC_KEY_get0_public_key(key.get())));
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
@@ -1510,11 +1514,10 @@ TEST_P(ECDSAServiceIndicatorTest, ECDSAKeyCheck) {
 
   if (kEVPKeyGenShouldCallFIPSFunctions) {
     // Test running the EVP_PKEY_keygen interfaces one by one directly, and
-    // check |EVP_PKEY_keygen| for approval at the end. |EVP_PKEY_keygen_init|
+    // check `EVP_PKEY_keygen` for approval at the end. `EVP_PKEY_keygen_init`
     // should not be approved because it does not indicate that an entire
     // service has been completed.
-    bssl::UniquePtr<EVP_PKEY_CTX> ctx(
-        EVP_PKEY_CTX_new_id(EVP_PKEY_EC, nullptr));
+    UniquePtr<EVP_PKEY_CTX> ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_EC, nullptr));
     EVP_PKEY *raw = nullptr;
     ASSERT_TRUE(ctx);
     ASSERT_TRUE(EVP_PKEY_keygen_init(ctx.get()));
@@ -1536,9 +1539,9 @@ TEST_P(ECDSAServiceIndicatorTest, ECDSASigGen) {
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
 
   const EC_GROUP *group = EC_GROUP_new_by_curve_name(test.nid);
-  bssl::UniquePtr<EC_KEY> eckey(EC_KEY_new());
-  bssl::UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
-  bssl::ScopedEVP_MD_CTX md_ctx;
+  UniquePtr<EC_KEY> eckey(EC_KEY_new());
+  UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
+  ScopedEVP_MD_CTX md_ctx;
   ASSERT_TRUE(eckey);
   ASSERT_TRUE(EC_KEY_set_group(eckey.get(), group));
 
@@ -1547,8 +1550,8 @@ TEST_P(ECDSAServiceIndicatorTest, ECDSASigGen) {
   ASSERT_TRUE(EVP_PKEY_set1_EC_KEY(pkey.get(), eckey.get()));
 
   // Test running the EVP_DigestSign interfaces one by one directly, and check
-  // |EVP_DigestSignFinal| for approval at the end. |EVP_DigestSignInit|,
-  // |EVP_DigestSignUpdate| should not be approved because they do not indicate
+  // `EVP_DigestSignFinal` for approval at the end. `EVP_DigestSignInit`,
+  // `EVP_DigestSignUpdate` should not be approved because they do not indicate
   // an entire service has been done.
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EVP_DigestSignInit(md_ctx.get(), nullptr, test.func(), nullptr,
@@ -1559,8 +1562,8 @@ TEST_P(ECDSAServiceIndicatorTest, ECDSASigGen) {
       EVP_DigestSignUpdate(md_ctx.get(), kPlaintext, sizeof(kPlaintext))));
   EXPECT_EQ(approved, FIPSStatus::NOT_APPROVED);
   // Determine the size of the signature. The first call of
-  // |EVP_DigestSignFinal| should not return an approval check because no crypto
-  // is being done when |nullptr| is given as the |out_sig| field.
+  // `EVP_DigestSignFinal` should not return an approval check because no crypto
+  // is being done when `nullptr` is given as the `out_sig` field.
   size_t max_sig_len;
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EVP_DigestSignFinal(md_ctx.get(), nullptr, &max_sig_len)));
@@ -1573,7 +1576,7 @@ TEST_P(ECDSAServiceIndicatorTest, ECDSASigGen) {
   ASSERT_LE(sig_len, signature.size());
   EXPECT_EQ(approved, test.sig_gen_expect_approved);
 
-  // Test using the one-shot |EVP_DigestSign| function for approval.
+  // Test using the one-shot `EVP_DigestSign` function for approval.
   md_ctx.Reset();
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EVP_DigestSignInit(md_ctx.get(), nullptr, test.func(), nullptr,
@@ -1596,9 +1599,9 @@ TEST_P(ECDSAServiceIndicatorTest, ECDSASigVer) {
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
 
   const EC_GROUP *group = EC_GROUP_new_by_curve_name(test.nid);
-  bssl::UniquePtr<EC_KEY> eckey(EC_KEY_new());
-  bssl::UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
-  bssl::ScopedEVP_MD_CTX md_ctx;
+  UniquePtr<EC_KEY> eckey(EC_KEY_new());
+  UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
+  ScopedEVP_MD_CTX md_ctx;
   ASSERT_TRUE(eckey);
   ASSERT_TRUE(EC_KEY_set_group(eckey.get(), group));
 
@@ -1618,8 +1621,8 @@ TEST_P(ECDSAServiceIndicatorTest, ECDSASigVer) {
   // Service Indicator approval checks for ECDSA signature verification.
 
   // Test running the EVP_DigestVerify interfaces one by one directly, and check
-  // |EVP_DigestVerifyFinal| for approval at the end. |EVP_DigestVerifyInit|,
-  // |EVP_DigestVerifyUpdate| should not be approved because they do not
+  // `EVP_DigestVerifyFinal` for approval at the end. `EVP_DigestVerifyInit`,
+  // `EVP_DigestVerifyUpdate` should not be approved because they do not
   // indicate an entire service has been done.
   md_ctx.Reset();
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
@@ -1635,7 +1638,7 @@ TEST_P(ECDSAServiceIndicatorTest, ECDSASigVer) {
       EVP_DigestVerifyFinal(md_ctx.get(), signature.data(), signature.size())));
   EXPECT_EQ(approved, test.sig_ver_expect_approved);
 
-  // Test using the one-shot |EVP_DigestVerify| function for approval.
+  // Test using the one-shot `EVP_DigestVerify` function for approval.
   md_ctx.Reset();
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EVP_DigestVerifyInit(md_ctx.get(), nullptr, test.func(),
@@ -1650,21 +1653,21 @@ TEST_P(ECDSAServiceIndicatorTest, ECDSASigVer) {
 
 #if defined(AWSLC_FIPS)
 
-// Test that |EVP_DigestSignFinal| and |EVP_DigestSignVerify| are approved with
+// Test that `EVP_DigestSignFinal` and `EVP_DigestSignVerify` are approved with
 // manually constructing using the context setting functions.
 TEST_P(ECDSAServiceIndicatorTest, ManualECDSASignVerify) {
   const ECDSATestVector &test = GetParam();
 
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
 
-  bssl::ScopedEVP_MD_CTX ctx;
+  ScopedEVP_MD_CTX ctx;
   ASSERT_TRUE(EVP_DigestInit(ctx.get(), test.func()));
   ASSERT_TRUE(EVP_DigestUpdate(ctx.get(), kPlaintext, sizeof(kPlaintext)));
 
   const EC_GROUP *group = EC_GROUP_new_by_curve_name(test.nid);
-  bssl::UniquePtr<EC_KEY> eckey(EC_KEY_new());
-  bssl::UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
-  bssl::ScopedEVP_MD_CTX md_ctx;
+  UniquePtr<EC_KEY> eckey(EC_KEY_new());
+  UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
+  ScopedEVP_MD_CTX md_ctx;
   ASSERT_TRUE(eckey);
   ASSERT_TRUE(EC_KEY_set_group(eckey.get(), group));
 
@@ -1673,7 +1676,7 @@ TEST_P(ECDSAServiceIndicatorTest, ManualECDSASignVerify) {
   ASSERT_TRUE(EVP_PKEY_set1_EC_KEY(pkey.get(), eckey.get()));
 
   // Manual construction for signing.
-  bssl::UniquePtr<EVP_PKEY_CTX> pctx(EVP_PKEY_CTX_new(pkey.get(), nullptr));
+  UniquePtr<EVP_PKEY_CTX> pctx(EVP_PKEY_CTX_new(pkey.get(), nullptr));
   ASSERT_TRUE(EVP_PKEY_sign_init(pctx.get()));
   ASSERT_TRUE(EVP_PKEY_CTX_set_signature_md(pctx.get(), test.func()));
   EVP_MD_CTX_set_pkey_ctx(ctx.get(), pctx.get());
@@ -1714,9 +1717,9 @@ struct ECDHTestVector {
 };
 
 static const struct ECDHTestVector kECDHTestVectors[] = {
-    // Only the following NIDs for |EC_GROUP| are creatable with
-    // |EC_GROUP_new_by_curve_name|.
-    // |ECDH_compute_key_fips| fails directly when an invalid hash length is
+    // Only the following NIDs for `EC_GROUP` are creatable with
+    // `EC_GROUP_new_by_curve_name`.
+    // `ECDH_compute_key_fips` fails directly when an invalid hash length is
     // inputted.
     {NID_secp224r1, SHA224_DIGEST_LENGTH, FIPSStatus::APPROVED},
     {NID_secp224r1, SHA256_DIGEST_LENGTH, FIPSStatus::APPROVED},
@@ -1758,9 +1761,9 @@ TEST_P(ECDH_ServiceIndicatorTest, ECDH) {
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
 
   const EC_GROUP *group = EC_GROUP_new_by_curve_name(test.nid);
-  bssl::UniquePtr<EC_KEY> our_key(EC_KEY_new());
-  bssl::UniquePtr<EC_KEY> peer_key(EC_KEY_new());
-  bssl::ScopedEVP_MD_CTX md_ctx;
+  UniquePtr<EC_KEY> our_key(EC_KEY_new());
+  UniquePtr<EC_KEY> peer_key(EC_KEY_new());
+  ScopedEVP_MD_CTX md_ctx;
   ASSERT_TRUE(our_key);
   ASSERT_TRUE(peer_key);
 
@@ -1773,7 +1776,7 @@ TEST_P(ECDH_ServiceIndicatorTest, ECDH) {
   ASSERT_TRUE(EC_KEY_generate_key(peer_key.get()));
   ASSERT_TRUE(EC_KEY_check_key(peer_key.get()));
 
-  // Test that |ECDH_compute_key_fips| has service indicator approval as
+  // Test that `ECDH_compute_key_fips` has service indicator approval as
   // expected.
   std::vector<uint8_t> digest(test.digest_length);
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
@@ -1783,14 +1786,13 @@ TEST_P(ECDH_ServiceIndicatorTest, ECDH) {
   EXPECT_EQ(approved, test.expect_approved);
 
   // Test running the EVP_PKEY_derive interfaces one by one directly, and check
-  // |EVP_PKEY_derive| for approval at the end. |EVP_PKEY_derive_init| and
-  // |EVP_PKEY_derive_set_peer| should not be approved because they do not
+  // `EVP_PKEY_derive` for approval at the end. `EVP_PKEY_derive_init` and
+  // `EVP_PKEY_derive_set_peer` should not be approved because they do not
   // indicate an entire service has been done.
-  bssl::UniquePtr<EVP_PKEY> our_pkey(EVP_PKEY_new());
+  UniquePtr<EVP_PKEY> our_pkey(EVP_PKEY_new());
   ASSERT_TRUE(EVP_PKEY_set1_EC_KEY(our_pkey.get(), our_key.get()));
-  bssl::UniquePtr<EVP_PKEY_CTX> our_ctx(
-      EVP_PKEY_CTX_new(our_pkey.get(), nullptr));
-  bssl::UniquePtr<EVP_PKEY> peer_pkey(EVP_PKEY_new());
+  UniquePtr<EVP_PKEY_CTX> our_ctx(EVP_PKEY_CTX_new(our_pkey.get(), nullptr));
+  UniquePtr<EVP_PKEY> peer_pkey(EVP_PKEY_new());
   ASSERT_TRUE(EVP_PKEY_set1_EC_KEY(peer_pkey.get(), peer_key.get()));
 
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
@@ -1799,9 +1801,9 @@ TEST_P(ECDH_ServiceIndicatorTest, ECDH) {
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EVP_PKEY_derive_set_peer(our_ctx.get(), peer_pkey.get())));
   EXPECT_EQ(approved, FIPSStatus::NOT_APPROVED);
-  // Determine the size of the output key. The first call of |EVP_PKEY_derive|
+  // Determine the size of the output key. The first call of `EVP_PKEY_derive`
   // should not return an approval check because no crypto is being done when
-  // |nullptr| is inputted in the |*key| field
+  // `nullptr` is inputted in the `*key` field
   size_t out_len = 0;
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, EVP_PKEY_derive(our_ctx.get(), nullptr, &out_len)));
@@ -1868,11 +1870,11 @@ TEST_P(KDF_ServiceIndicatorTest, TLS13KDF) {
 TEST(ServiceIndicatorTest, CMAC) {
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
 
-  bssl::UniquePtr<CMAC_CTX> ctx(CMAC_CTX_new());
+  UniquePtr<CMAC_CTX> ctx(CMAC_CTX_new());
   ASSERT_TRUE(ctx);
 
   // Test running the CMAC interfaces one by one directly, and check
-  // |CMAC_Final| for approval at the end. |CMAC_Init| and |CMAC_Update|
+  // `CMAC_Final` for approval at the end. `CMAC_Init` and `CMAC_Update`
   // should not be approved, because the functions do not indicate that a
   // service has been fully completed yet.
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
@@ -1901,7 +1903,7 @@ TEST(ServiceIndicatorTest, CMAC) {
 TEST(ServiceIndicatorTest, BasicTest) {
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
 
-  bssl::ScopedEVP_AEAD_CTX aead_ctx;
+  ScopedEVP_AEAD_CTX aead_ctx;
   ASSERT_TRUE(EVP_AEAD_CTX_init(aead_ctx.get(),
                                 EVP_aead_aes_128_gcm_randnonce(), kAESKey,
                                 sizeof(kAESKey), 0, nullptr));
@@ -1942,7 +1944,7 @@ TEST(ServiceIndicatorTest, BasicTest) {
   EXPECT_EQ(approved, FIPSStatus::NOT_APPROVED);
 }
 
-// Test the SHA interfaces one by one and check that only |*_Final| does the
+// Test the SHA interfaces one by one and check that only `*_Final` does the
 // approval at the end.
 TEST(ServiceIndicatorTest, SHA) {
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
@@ -2380,8 +2382,8 @@ TEST(ServiceIndicatorTest, AESKWP) {
 TEST(ServiceIndicatorTest, FFDH) {
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
 
-  // |DH_compute_key_padded| should be a non-approved service.
-  bssl::UniquePtr<DH> dh(GetDH());
+  // `DH_compute_key_padded` should be a non-approved service.
+  UniquePtr<DH> dh(GetDH());
   uint8_t dh_out[sizeof(kDHOutput)];
   ASSERT_EQ(DH_size(dh.get()), static_cast<int>(sizeof(dh_out)));
   ASSERT_EQ(CALL_SERVICE_AND_CHECK_APPROVED(
@@ -2397,13 +2399,15 @@ TEST(ServiceIndicatorTest, DRBG) {
   CTR_DRBG_STATE drbg;
   uint8_t output[sizeof(kDRBGOutput)];
 
-  // Test running the DRBG interfaces and check |CTR_DRBG_generate| for approval
-  // at the end since it indicates a service is being done. |CTR_DRBG_init| and
-  // |CTR_DRBG_reseed| should not be approved, because the functions do not
+  // Test running the DRBG interfaces and check `CTR_DRBG_generate` for approval
+  // at the end since it indicates a service is being done. `CTR_DRBG_init` and
+  // `CTR_DRBG_reseed` should not be approved, because the functions do not
   // indicate that a service has been fully completed yet.
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
-      approved, CTR_DRBG_init(&drbg, kDRBGEntropy, kDRBGPersonalization,
-                              sizeof(kDRBGPersonalization))));
+      approved,
+      CTR_DRBG_init(&drbg, /*df=*/true, kDRBGEntropy, sizeof(kDRBGEntropy),
+                    kDRBGNonce, kDRBGPersonalization,
+                    sizeof(kDRBGPersonalization))));
   EXPECT_EQ(approved, FIPSStatus::NOT_APPROVED);
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, CTR_DRBG_generate(&drbg, output, sizeof(kDRBGOutput), kDRBGAD,
@@ -2412,8 +2416,8 @@ TEST(ServiceIndicatorTest, DRBG) {
   EXPECT_EQ(Bytes(kDRBGOutput), Bytes(output));
 
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
-      approved,
-      CTR_DRBG_reseed(&drbg, kDRBGEntropy2, kDRBGAD, sizeof(kDRBGAD))));
+      approved, CTR_DRBG_reseed_ex(&drbg, kDRBGEntropy2, sizeof(kDRBGEntropy2),
+                                   kDRBGAD, sizeof(kDRBGAD))));
   EXPECT_EQ(approved, FIPSStatus::NOT_APPROVED);
   ASSERT_TRUE(CALL_SERVICE_AND_CHECK_APPROVED(
       approved, CTR_DRBG_generate(&drbg, output, sizeof(kDRBGReseedOutput),
@@ -2429,9 +2433,9 @@ TEST(ServiceIndicatorTest, DRBG) {
 #else  // !BORINGSSL_FIPS
 
 // Service indicator calls should not be used in non-FIPS builds. However, if
-// used, the macro |CALL_SERVICE_AND_CHECK_APPROVED| will return
-// |FIPSStatus::APPROVED|, but the direct calls to
-// |FIPS_service_indicator_xxx| will not indicate an approved state.
+// used, the macro `CALL_SERVICE_AND_CHECK_APPROVED` will return
+// `FIPSStatus::APPROVED`, but the direct calls to
+// `FIPS_service_indicator_xxx` will not indicate an approved state.
 TEST(ServiceIndicatorTest, BasicTest) {
   // Reset and check the initial state and counter.
   FIPSStatus approved = FIPSStatus::NOT_APPROVED;
@@ -2439,7 +2443,7 @@ TEST(ServiceIndicatorTest, BasicTest) {
   ASSERT_EQ(before, (uint64_t)0);
 
   // Call an approved service.
-  bssl::ScopedEVP_AEAD_CTX aead_ctx;
+  ScopedEVP_AEAD_CTX aead_ctx;
   uint8_t nonce[EVP_AEAD_MAX_NONCE_LENGTH] = {0};
   uint8_t output[256];
   size_t out_len;
@@ -2467,3 +2471,4 @@ TEST(ServiceIndicatorTest, BasicTest) {
 #endif  // BORINGSSL_FIPS
 
 }  // namespace
+BSSL_NAMESPACE_END

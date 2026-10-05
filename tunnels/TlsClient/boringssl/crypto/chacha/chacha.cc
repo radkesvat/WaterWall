@@ -24,6 +24,8 @@
 
 
 // sigma contains the ChaCha constants, which happen to be an ASCII string.
+using namespace bssl;
+
 static const uint8_t sigma[16] = { 'e', 'x', 'p', 'a', 'n', 'd', ' ', '3',
                                    '2', '-', 'b', 'y', 't', 'e', ' ', 'k' };
 
@@ -38,8 +40,8 @@ static const uint8_t sigma[16] = { 'e', 'x', 'p', 'a', 'n', 'd', ' ', '3',
   x[c] += x[d];                            \
   x[b] = CRYPTO_rotl_u32(x[b] ^ x[c], 7);
 
-void CRYPTO_hchacha20(uint8_t out[32], const uint8_t key[32],
-                      const uint8_t nonce[16]) {
+void bssl::CRYPTO_hchacha20(uint8_t out[32], const uint8_t key[32],
+                            const uint8_t nonce[16]) {
   uint32_t x[16];
   OPENSSL_memcpy(x, sigma, sizeof(sigma));
   OPENSSL_memcpy(&x[4], key, 32);
@@ -148,7 +150,7 @@ void CRYPTO_chacha_20(uint8_t *out, const uint8_t *in, size_t in_len,
 #else
 
 // chacha_core performs 20 rounds of ChaCha on the input words in
-// |input| and writes the 64 output bytes to |output|.
+// `input` and writes the 64 output bytes to `output`.
 static void chacha_core(uint8_t output[64], const uint32_t input[16]) {
   uint32_t x[16];
   int i;

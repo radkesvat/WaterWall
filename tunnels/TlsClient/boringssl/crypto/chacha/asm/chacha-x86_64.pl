@@ -72,7 +72,7 @@ die "can't locate x86_64-xlate.pl";
 
 $avx = 2;
 
-open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\"";
+open OUT, "|-", $^X, $xlate, $flavour, $output;
 *STDOUT=*OUT;
 
 # input parameter block
@@ -82,7 +82,9 @@ $code.=<<___;
 .text
 
 .section .rodata
+
 .align	64
+chacha_constants:
 .Lzero:
 .long	0,0,0,0
 .Lone:

@@ -17,25 +17,27 @@
 #include <openssl/bn.h>
 #include <openssl/err.h>
 #include <openssl/mem.h>
+#include <openssl/span.h>
 
 #include "../fipsmodule/bn/internal.h"
 #include "../fipsmodule/dh/internal.h"
 
 
-static BIGNUM *get_params(BIGNUM *ret, const BN_ULONG *words,
-                          size_t num_words) {
-  BIGNUM *alloc = NULL;
-  if (ret == NULL) {
+using namespace bssl;
+
+static BIGNUM *get_params(BIGNUM *ret, Span<const BN_ULONG> words) {
+  BIGNUM *alloc = nullptr;
+  if (ret == nullptr) {
     alloc = BN_new();
-    if (alloc == NULL) {
-      return NULL;
+    if (alloc == nullptr) {
+      return nullptr;
     }
     ret = alloc;
   }
 
-  if (!bn_set_words(ret, words, num_words)) {
+  if (!bn_set_words(ret, words.data(), words.size())) {
     BN_free(alloc);
-    return NULL;
+    return nullptr;
   }
 
   return ret;
@@ -56,7 +58,7 @@ BIGNUM *BN_get_rfc3526_prime_1536(BIGNUM *ret) {
       TOBN(0x29024e08, 0x8a67cc74), TOBN(0xc4c6628b, 0x80dc1cd1),
       TOBN(0xc90fdaa2, 0x2168c234), TOBN(0xffffffff, 0xffffffff),
   };
-  return get_params(ret, kWords, OPENSSL_ARRAY_SIZE(kWords));
+  return get_params(ret, kWords);
 }
 
 BIGNUM *BN_get_rfc3526_prime_2048(BIGNUM *ret) {
@@ -78,7 +80,7 @@ BIGNUM *BN_get_rfc3526_prime_2048(BIGNUM *ret) {
       TOBN(0x29024e08, 0x8a67cc74), TOBN(0xc4c6628b, 0x80dc1cd1),
       TOBN(0xc90fdaa2, 0x2168c234), TOBN(0xffffffff, 0xffffffff),
   };
-  return get_params(ret, kWords, OPENSSL_ARRAY_SIZE(kWords));
+  return get_params(ret, kWords);
 }
 
 BIGNUM *BN_get_rfc3526_prime_3072(BIGNUM *ret) {
@@ -108,7 +110,7 @@ BIGNUM *BN_get_rfc3526_prime_3072(BIGNUM *ret) {
       TOBN(0x29024e08, 0x8a67cc74), TOBN(0xc4c6628b, 0x80dc1cd1),
       TOBN(0xc90fdaa2, 0x2168c234), TOBN(0xffffffff, 0xffffffff),
   };
-  return get_params(ret, kWords, OPENSSL_ARRAY_SIZE(kWords));
+  return get_params(ret, kWords);
 }
 
 BIGNUM *BN_get_rfc3526_prime_4096(BIGNUM *ret) {
@@ -146,7 +148,7 @@ BIGNUM *BN_get_rfc3526_prime_4096(BIGNUM *ret) {
       TOBN(0x29024e08, 0x8a67cc74), TOBN(0xc4c6628b, 0x80dc1cd1),
       TOBN(0xc90fdaa2, 0x2168c234), TOBN(0xffffffff, 0xffffffff),
   };
-  return get_params(ret, kWords, OPENSSL_ARRAY_SIZE(kWords));
+  return get_params(ret, kWords);
 }
 
 BIGNUM *BN_get_rfc3526_prime_6144(BIGNUM *ret) {
@@ -200,7 +202,7 @@ BIGNUM *BN_get_rfc3526_prime_6144(BIGNUM *ret) {
       TOBN(0x29024e08, 0x8a67cc74), TOBN(0xc4c6628b, 0x80dc1cd1),
       TOBN(0xc90fdaa2, 0x2168c234), TOBN(0xffffffff, 0xffffffff),
   };
-  return get_params(ret, kWords, OPENSSL_ARRAY_SIZE(kWords));
+  return get_params(ret, kWords);
 }
 
 BIGNUM *BN_get_rfc3526_prime_8192(BIGNUM *ret) {
@@ -270,7 +272,7 @@ BIGNUM *BN_get_rfc3526_prime_8192(BIGNUM *ret) {
       TOBN(0x29024e08, 0x8a67cc74), TOBN(0xc4c6628b, 0x80dc1cd1),
       TOBN(0xc90fdaa2, 0x2168c234), TOBN(0xffffffff, 0xffffffff),
   };
-  return get_params(ret, kWords, OPENSSL_ARRAY_SIZE(kWords));
+  return get_params(ret, kWords);
 }
 
 int DH_generate_parameters_ex(DH *dh, int prime_bits, int generator,
@@ -294,7 +296,7 @@ int DH_generate_parameters_ex(DH *dh, int prime_bits, int generator,
   //
   // I've implemented the second simple method :-).
   // Since DH should be using a safe prime (both p and q are prime),
-  // this generator function can take a very very long time to run.
+  // this generator function can take a very, very long time to run.
 
   // Actually there is no reason to insist that 'generator' be a generator.
   // It's just as OK (and in some sense better) to use a generator of the
@@ -305,17 +307,18 @@ int DH_generate_parameters_ex(DH *dh, int prime_bits, int generator,
     return 0;
   }
 
-  // Make sure |dh| has the necessary elements
-  if (dh->p == NULL) {
-    dh->p = BN_new();
-    if (dh->p == NULL) {
+  // Make sure `dh` has the necessary elements
+  auto *impl = FromOpaque(dh);
+  if (impl->p == nullptr) {
+    impl->p.reset(BN_new());
+    if (impl->p == nullptr) {
       OPENSSL_PUT_ERROR(DH, ERR_R_BN_LIB);
       return 0;
     }
   }
-  if (dh->g == NULL) {
-    dh->g = BN_new();
-    if (dh->g == NULL) {
+  if (impl->g == nullptr) {
+    impl->g.reset(BN_new());
+    if (impl->g == nullptr) {
       OPENSSL_PUT_ERROR(DH, ERR_R_BN_LIB);
       return 0;
     }
@@ -343,14 +346,14 @@ int DH_generate_parameters_ex(DH *dh, int prime_bits, int generator,
     g = generator;
   }
 
-  bssl::UniquePtr<BIGNUM> t1_bn(BN_new()), t2_bn(BN_new());
+  UniquePtr<BIGNUM> t1_bn(BN_new()), t2_bn(BN_new());
   if (t1_bn == nullptr || t2_bn == nullptr ||
       !BN_set_word(t1_bn.get(), t1) ||  //
       !BN_set_word(t2_bn.get(), t2) ||  //
-      !BN_generate_prime_ex(dh->p, prime_bits, 1, t1_bn.get(), t2_bn.get(),
-                            cb) ||
+      !BN_generate_prime_ex(impl->p.get(), prime_bits, 1, t1_bn.get(),
+                            t2_bn.get(), cb) ||
       !BN_GENCB_call(cb, 3, 0) ||  //
-      !BN_set_word(dh->g, g)) {
+      !BN_set_word(impl->g.get(), g)) {
     OPENSSL_PUT_ERROR(DH, ERR_R_BN_LIB);
     return 0;
   }
@@ -358,27 +361,27 @@ int DH_generate_parameters_ex(DH *dh, int prime_bits, int generator,
   return 1;
 }
 
-static int int_dh_bn_cpy(BIGNUM **dst, const BIGNUM *src) {
-  BIGNUM *a = NULL;
-
+static bool copy_bn(UniquePtr<BIGNUM> *dst, const BIGNUM *src) {
+  UniquePtr<BIGNUM> copy;
   if (src) {
-    a = BN_dup(src);
-    if (!a) {
-      return 0;
+    copy.reset(BN_dup(src));
+    if (!copy) {
+      return false;
     }
   }
-
-  BN_free(*dst);
-  *dst = a;
-  return 1;
+  *dst = std::move(copy);
+  return true;
 }
 
 static int int_dh_param_copy(DH *to, const DH *from, int is_x942) {
+  auto *to_impl = FromOpaque(to);
+  const auto *from_impl = FromOpaque(from);
+
   if (is_x942 == -1) {
-    is_x942 = !!from->q;
+    is_x942 = !!from_impl->q;
   }
-  if (!int_dh_bn_cpy(&to->p, from->p) ||
-      !int_dh_bn_cpy(&to->g, from->g)) {
+  if (!copy_bn(&to_impl->p, from_impl->p.get()) ||
+      !copy_bn(&to_impl->g, from_impl->g.get())) {
     return 0;
   }
 
@@ -386,7 +389,7 @@ static int int_dh_param_copy(DH *to, const DH *from, int is_x942) {
     return 1;
   }
 
-  if (!int_dh_bn_cpy(&to->q, from->q)) {
+  if (!copy_bn(&to_impl->q, from_impl->q.get())) {
     return 0;
   }
 
@@ -396,12 +399,12 @@ static int int_dh_param_copy(DH *to, const DH *from, int is_x942) {
 DH *DHparams_dup(const DH *dh) {
   DH *ret = DH_new();
   if (!ret) {
-    return NULL;
+    return nullptr;
   }
 
   if (!int_dh_param_copy(ret, dh, -1)) {
     DH_free(ret);
-    return NULL;
+    return nullptr;
   }
 
   return ret;

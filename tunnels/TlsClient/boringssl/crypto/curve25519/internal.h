@@ -19,37 +19,35 @@
 
 #include "../internal.h"
 
-#if defined(__cplusplus)
-extern "C" {
-#endif
+BSSL_NAMESPACE_BEGIN
 
 #if defined(OPENSSL_ARM) && !defined(OPENSSL_NO_ASM) && !defined(OPENSSL_APPLE)
 #define BORINGSSL_X25519_NEON
 
 // x25519_NEON is defined in asm/x25519-arm.S.
-void x25519_NEON(uint8_t out[32], const uint8_t scalar[32],
-                 const uint8_t point[32]);
+extern "C" void x25519_NEON(uint8_t out[32], const uint8_t scalar[32],
+                            const uint8_t point[32]);
 #endif
 
 #if !defined(OPENSSL_NO_ASM) && !defined(OPENSSL_SMALL) && \
-    defined(__GNUC__) && defined(__x86_64__) && !defined(OPENSSL_WINDOWS)
+    (defined(__APPLE__) || defined(__ELF__)) && defined(OPENSSL_X86_64)
 #define BORINGSSL_FE25519_ADX
 
 // fiat_curve25519_adx_mul is defined in
 // third_party/fiat/asm/fiat_curve25519_adx_mul.S
-void __attribute__((sysv_abi))
-fiat_curve25519_adx_mul(uint64_t out[4], const uint64_t in1[4],
-                        const uint64_t in2[4]);
+extern "C" void __attribute__((sysv_abi)) fiat_curve25519_adx_mul(
+    uint64_t out[4], const uint64_t in1[4], const uint64_t in2[4]);
 
 // fiat_curve25519_adx_square is defined in
 // third_party/fiat/asm/fiat_curve25519_adx_square.S
-void __attribute__((sysv_abi))
-fiat_curve25519_adx_square(uint64_t out[4], const uint64_t in[4]);
+extern "C" void __attribute__((sysv_abi)) fiat_curve25519_adx_square(
+    uint64_t out[4], const uint64_t in[4]);
 
 // x25519_scalar_mult_adx is defined in third_party/fiat/curve25519_64_adx.h
 void x25519_scalar_mult_adx(uint8_t out[32], const uint8_t scalar[32],
                             const uint8_t point[32]);
 void x25519_ge_scalarmult_base_adx(uint8_t h[4][32], const uint8_t a[32]);
+
 #endif
 
 #if defined(OPENSSL_64_BIT)
@@ -58,22 +56,30 @@ void x25519_ge_scalarmult_base_adx(uint8_t h[4][32], const uint8_t a[32]);
 // t[3]+2^204 t[4].
 // fe limbs are bounded by 1.125*2^51.
 // Multiplication and carrying produce fe from fe_loose.
-typedef struct fe { uint64_t v[5]; } fe;
+typedef struct fe {
+  uint64_t v[5];
+} fe;
 
 // fe_loose limbs are bounded by 3.375*2^51.
 // Addition and subtraction produce fe_loose from (fe, fe).
-typedef struct fe_loose { uint64_t v[5]; } fe_loose;
+typedef struct fe_loose {
+  uint64_t v[5];
+} fe_loose;
 #else
 // fe means field element. Here the field is \Z/(2^255-19). An element t,
 // entries t[0]...t[9], represents the integer t[0]+2^26 t[1]+2^51 t[2]+2^77
 // t[3]+2^102 t[4]+...+2^230 t[9].
 // fe limbs are bounded by 1.125*2^26,1.125*2^25,1.125*2^26,1.125*2^25,etc.
 // Multiplication and carrying produce fe from fe_loose.
-typedef struct fe { uint32_t v[10]; } fe;
+typedef struct fe {
+  uint32_t v[10];
+} fe;
 
-// fe_loose limbs are bounded by 3.375*2^26,3.375*2^25,3.375*2^26,3.375*2^25,etc.
-// Addition and subtraction produce fe_loose from (fe, fe).
-typedef struct fe_loose { uint32_t v[10]; } fe_loose;
+// fe_loose limbs are bounded by 3.375*2^26, 3.375*2^25, 3.375*2^26, 3.375*2^25,
+// etc. Addition and subtraction produce fe_loose from (fe, fe).
+typedef struct fe_loose {
+  uint32_t v[10];
+} fe_loose;
 #endif
 
 // ge means group element.
@@ -140,6 +146,8 @@ enum spake2_state_t {
   spake2_state_key_generated,
 };
 
+BSSL_NAMESPACE_END
+
 struct spake2_ctx_st {
   uint8_t private_key[32];
   uint8_t my_msg[32];
@@ -150,15 +158,14 @@ struct spake2_ctx_st {
   uint8_t *their_name;
   size_t their_name_len;
   enum spake2_role_t my_role;
-  enum spake2_state_t state;
+  enum bssl::spake2_state_t state;
   char disable_password_scalar_hack;
 };
 
+BSSL_NAMESPACE_BEGIN
 
 extern const uint8_t k25519Precomp[32][8][3][32];
 
-#if defined(__cplusplus)
-}  // extern C
-#endif
+BSSL_NAMESPACE_END
 
 #endif  // OPENSSL_HEADER_CRYPTO_CURVE25519_INTERNAL_H

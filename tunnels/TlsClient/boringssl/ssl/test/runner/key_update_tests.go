@@ -14,7 +14,9 @@
 
 package runner
 
-import "slices"
+import (
+	"slices"
+)
 
 func addKeyUpdateTests() {
 	// TLS tests.
@@ -232,7 +234,7 @@ func addKeyUpdateTests() {
 					// an ACK. (If it sent KeyUpdate, ReadAppData would report
 					// an unexpected record.)
 					msg := []byte("test")
-					for i := 0; i < 10; i++ {
+					for range 10 {
 						c.WriteAppData(c.OutEpoch(), msg)
 						c.ReadAppData(c.InEpoch(), expectedReply(msg))
 					}
@@ -241,7 +243,7 @@ func addKeyUpdateTests() {
 					c.WriteACK(c.OutEpoch(), records[:1])
 
 					// The shim continues to defer KeyUpdate.
-					for i := 0; i < 10; i++ {
+					for range 10 {
 						c.WriteAppData(c.OutEpoch(), msg)
 						c.ReadAppData(c.InEpoch(), expectedReply(msg))
 					}
@@ -266,7 +268,6 @@ func addKeyUpdateTests() {
 		config: Config{
 			MaxVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				MaxPacketLength: 512,
 				ACKFlightDTLS: func(c *DTLSController, prev, received []DTLSMessage, records []DTLSRecordNumberInfo) {
 					if received[0].Type != typeKeyUpdate {
 						c.WriteACK(c.OutEpoch(), records)
@@ -279,7 +280,7 @@ func addKeyUpdateTests() {
 					// try to KeyUpdate again. These calls will be suppressed
 					// because there is still an outstanding KeyUpdate.
 					msg := []byte("test")
-					for i := 0; i < 10; i++ {
+					for range 10 {
 						c.WriteAppData(c.OutEpoch(), msg)
 						c.ReadAppData(c.InEpoch()-1, expectedReply(msg))
 					}

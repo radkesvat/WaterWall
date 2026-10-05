@@ -35,8 +35,7 @@
 //! ```
 
 use crate::{
-    cbb_to_buffer, parse_with_cbs, scoped, with_output_array, Buffer, FfiMutSlice, FfiSlice,
-    InvalidSignatureError,
+    cbb_to_buffer, scoped, with_output_array, Buffer, FfiMutSlice, FfiSlice, InvalidSignatureError,
 };
 
 /// The length in bytes of an Ed25519 public key.
@@ -55,6 +54,7 @@ pub const SIGNATURE_LEN: usize = bssl_sys::ED25519_SIGNATURE_LEN as usize;
 const KEYPAIR_LEN: usize = bssl_sys::ED25519_PRIVATE_KEY_LEN as usize;
 
 /// An Ed25519 private key.
+#[derive(Clone)]
 pub struct PrivateKey([u8; KEYPAIR_LEN]);
 
 /// An Ed25519 public key used to verify a signature + message.
@@ -139,6 +139,24 @@ impl PrivateKey {
                 .expect("The slice is always the correct size for a public key"),
         )
     }
+
+    // Safety: caller must make sure that the key type is ED25519
+    pub(crate) unsafe fn from_evp_pkey(mut pkey: scoped::EvpPkey) -> Self {
+        let mut seed = [0; SEED_LEN];
+        let len = &mut { SEED_LEN };
+        // Safety: pkey is now owned and len is set
+        let ret = unsafe {
+            bssl_sys::EVP_PKEY_get_raw_private_key(
+                pkey.as_ffi_ptr(),
+                seed.as_mut_ptr(),
+                len as *mut _,
+            )
+        };
+        // Sanity check, in case the seed is not as long as expected.
+        assert_eq!(ret, 1);
+        assert_eq!(*len, SEED_LEN);
+        Self::from_seed(&seed)
+    }
 }
 
 impl PublicKey {
@@ -154,39 +172,20 @@ impl PublicKey {
 
     /// Parse a public key in SubjectPublicKeyInfo format.
     pub fn from_der_subject_public_key_info(spki: &[u8]) -> Option<Self> {
-        let mut pkey = scoped::EvpPkey::from_ptr(parse_with_cbs(
-            spki,
-            // Safety: `pkey` is a non-null result from `EVP_parse_public_key` here.
-            |pkey| unsafe { bssl_sys::EVP_PKEY_free(pkey) },
-            // Safety: cbs is valid per `parse_with_cbs`.
-            |cbs| unsafe { bssl_sys::EVP_parse_public_key(cbs) },
-        )?);
-
-        let mut out_len = 0;
-        // When the out buffer is null, `out_len` is set to the size of the raw public key.
-        // Safety: the arguments are valid.
-        let result = unsafe {
-            bssl_sys::EVP_PKEY_get_raw_public_key(
-                pkey.as_ffi_ptr(),
-                core::ptr::null_mut(),
-                &mut out_len,
-            )
-        };
-        if result != 1 {
-            return None;
-        }
-        if out_len != PUBLIC_KEY_LEN {
-            return None;
-        }
-
-        // When the out buffer is not null, the raw public key is written into it.
-        // Safety: the arguments are valid.
+        // Safety: `EVP_pkey_ed25519` is always safe to call.
+        let alg = unsafe { bssl_sys::EVP_pkey_ed25519() };
+        let mut pkey =
+            scoped::EvpPkey::from_der_subject_public_key_info(spki, core::slice::from_ref(&alg))?;
         let raw_pkey: [u8; PUBLIC_KEY_LEN] = unsafe {
-            with_output_array(|out, _| {
+            with_output_array(|out, mut out_len| {
+                // We only passed one key type, so `pkey` must be an Ed25519
+                // key. The raw public key then must be available, and must be
+                // `PUBLIC_KEY_LEN` bytes.
                 assert_eq!(
                     1,
                     bssl_sys::EVP_PKEY_get_raw_public_key(pkey.as_ffi_ptr(), out, &mut out_len)
                 );
+                assert_eq!(out_len, PUBLIC_KEY_LEN);
             })
         };
         Some(PublicKey(raw_pkey))
@@ -196,13 +195,13 @@ impl PublicKey {
     pub fn to_der_subject_public_key_info(&self) -> Buffer {
         // Safety: this only copies from the `self.0` buffer.
         let mut pkey = scoped::EvpPkey::from_ptr(unsafe {
-            bssl_sys::EVP_PKEY_new_raw_public_key(
-                bssl_sys::EVP_PKEY_ED25519,
-                /*unused=*/ core::ptr::null_mut(),
+            bssl_sys::EVP_PKEY_from_raw_public_key(
+                bssl_sys::EVP_pkey_ed25519(),
                 self.0.as_ffi_ptr(),
                 PUBLIC_KEY_LEN,
             )
         });
+        // Safety: we are only testing pointer nullness, we do not mutate the data
         assert!(!pkey.as_ffi_ptr().is_null());
 
         cbb_to_buffer(PUBLIC_KEY_LEN + 32, |cbb| unsafe {
@@ -266,6 +265,14 @@ mod test {
         .is_none());
 
         assert!(PublicKey::from_der_subject_public_key_info(b"").is_none());
+    }
+
+    #[test]
+    fn der_subject_public_key_info_wrong_type() {
+        // This is an X25519 key, not an Ed25519 key.
+        let spki = test_helpers::decode_hex_into_vec("302a300506032b656e032100e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c");
+        // `from_der_subject_public_key_info` should reject it.
+        assert!(PublicKey::from_der_subject_public_key_info(&spki).is_none());
     }
 
     #[test]

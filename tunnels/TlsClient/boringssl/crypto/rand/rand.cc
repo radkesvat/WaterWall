@@ -20,6 +20,8 @@
 #include "../fipsmodule/bcm_interface.h"
 
 
+using namespace bssl;
+
 int RAND_bytes(uint8_t *buf, size_t len) {
   BCM_rand_bytes(buf, len);
   return 1;
@@ -28,7 +30,7 @@ int RAND_bytes(uint8_t *buf, size_t len) {
 int RAND_pseudo_bytes(uint8_t *buf, size_t len) { return RAND_bytes(buf, len); }
 
 void RAND_seed(const void *buf, int num) {
-  // OpenSSH calls |RAND_seed| before jailing on the assumption that any needed
+  // OpenSSH calls `RAND_seed` before jailing on the assumption that any needed
   // file descriptors etc will be opened.
   uint8_t unused;
   RAND_bytes(&unused, sizeof(unused));
@@ -44,34 +46,34 @@ int RAND_load_file(const char *path, long num) {
   }
 }
 
-const char *RAND_file_name(char *buf, size_t num) { return NULL; }
+const char *RAND_file_name(char *buf, size_t num) { return nullptr; }
 
 void RAND_add(const void *buf, int num, double entropy) {}
 
 int RAND_egd(const char *path) { return 255; }
 
-int RAND_poll(void) { return 1; }
+int RAND_poll() { return 1; }
 
-int RAND_status(void) { return 1; }
+int RAND_status() { return 1; }
 
 static const struct rand_meth_st kSSLeayMethod = {
     RAND_seed, RAND_bytes,        RAND_cleanup,
     RAND_add,  RAND_pseudo_bytes, RAND_status,
 };
 
-RAND_METHOD *RAND_SSLeay(void) { return (RAND_METHOD *)&kSSLeayMethod; }
+RAND_METHOD *RAND_SSLeay() { return (RAND_METHOD *)&kSSLeayMethod; }
 
-RAND_METHOD *RAND_OpenSSL(void) { return RAND_SSLeay(); }
+RAND_METHOD *RAND_OpenSSL() { return RAND_SSLeay(); }
 
-const RAND_METHOD *RAND_get_rand_method(void) { return RAND_SSLeay(); }
+const RAND_METHOD *RAND_get_rand_method() { return RAND_SSLeay(); }
 
 int RAND_set_rand_method(const RAND_METHOD *method) { return 1; }
 
-void RAND_cleanup(void) {}
+void RAND_cleanup() {}
 
 void RAND_get_system_entropy_for_custom_prng(uint8_t *buf, size_t len) {
   if (len > 256) {
     abort();
   }
-  CRYPTO_sysrand_for_seed(buf, len);
+  CRYPTO_sysrand(buf, len);
 }

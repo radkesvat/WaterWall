@@ -23,42 +23,27 @@
 #include <stdlib.h>
 #include <string.h>
 
-void CRYPTO_MUTEX_init(CRYPTO_MUTEX *lock) {
-  if (pthread_rwlock_init(lock, NULL) != 0) {
-    abort();
-  }
+
+BSSL_NAMESPACE_BEGIN
+
+void StaticMutex::LockRead() { BSSL_CHECK(pthread_rwlock_rdlock(&lock_) == 0); }
+
+void StaticMutex::UnlockRead() {
+  BSSL_CHECK(pthread_rwlock_unlock(&lock_) == 0);
 }
 
-void CRYPTO_MUTEX_lock_read(CRYPTO_MUTEX *lock) {
-  if (pthread_rwlock_rdlock(lock) != 0) {
-    abort();
-  }
+void StaticMutex::LockWrite() {
+  BSSL_CHECK(pthread_rwlock_wrlock(&lock_) == 0);
 }
 
-void CRYPTO_MUTEX_lock_write(CRYPTO_MUTEX *lock) {
-  if (pthread_rwlock_wrlock(lock) != 0) {
-    abort();
-  }
+void StaticMutex::UnlockWrite() {
+  BSSL_CHECK(pthread_rwlock_unlock(&lock_) == 0);
 }
 
-void CRYPTO_MUTEX_unlock_read(CRYPTO_MUTEX *lock) {
-  if (pthread_rwlock_unlock(lock) != 0) {
-    abort();
-  }
-}
+Mutex::~Mutex() { pthread_rwlock_destroy(&lock_); }
 
-void CRYPTO_MUTEX_unlock_write(CRYPTO_MUTEX *lock) {
-  if (pthread_rwlock_unlock(lock) != 0) {
-    abort();
-  }
-}
-
-void CRYPTO_MUTEX_cleanup(CRYPTO_MUTEX *lock) { pthread_rwlock_destroy(lock); }
-
-void CRYPTO_once(CRYPTO_once_t *once, void (*init)(void)) {
-  if (pthread_once(once, init) != 0) {
-    abort();
-  }
+void CRYPTO_once(CRYPTO_once_t *once, void (*init)()) {
+  BSSL_CHECK(pthread_once(once, init) == 0);
 }
 
 static pthread_mutex_t g_destructors_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -67,7 +52,7 @@ static thread_local_destructor_t g_destructors[NUM_OPENSSL_THREAD_LOCALS];
 // thread_local_destructor is called when a thread exits. It releases thread
 // local data for that thread only.
 static void thread_local_destructor(void *arg) {
-  if (arg == NULL) {
+  if (arg == nullptr) {
     return;
   }
 
@@ -81,7 +66,7 @@ static void thread_local_destructor(void *arg) {
   unsigned i;
   void **pointers = reinterpret_cast<void **>(arg);
   for (i = 0; i < NUM_OPENSSL_THREAD_LOCALS; i++) {
-    if (destructors[i] != NULL) {
+    if (destructors[i] != nullptr) {
       destructors[i](pointers[i]);
     }
   }
@@ -93,7 +78,7 @@ static pthread_once_t g_thread_local_init_once = PTHREAD_ONCE_INIT;
 static pthread_key_t g_thread_local_key;
 static int g_thread_local_key_created = 0;
 
-static void thread_local_init(void) {
+static void thread_local_init() {
   g_thread_local_key_created =
       pthread_key_create(&g_thread_local_key, thread_local_destructor) == 0;
 }
@@ -101,13 +86,13 @@ static void thread_local_init(void) {
 void *CRYPTO_get_thread_local(thread_local_data_t index) {
   CRYPTO_once(&g_thread_local_init_once, thread_local_init);
   if (!g_thread_local_key_created) {
-    return NULL;
+    return nullptr;
   }
 
   void **pointers =
       reinterpret_cast<void **>(pthread_getspecific(g_thread_local_key));
-  if (pointers == NULL) {
-    return NULL;
+  if (pointers == nullptr) {
+    return nullptr;
   }
   return pointers[index];
 }
@@ -122,10 +107,10 @@ int CRYPTO_set_thread_local(thread_local_data_t index, void *value,
 
   void **pointers =
       reinterpret_cast<void **>(pthread_getspecific(g_thread_local_key));
-  if (pointers == NULL) {
+  if (pointers == nullptr) {
     pointers = reinterpret_cast<void **>(
         malloc(sizeof(void *) * NUM_OPENSSL_THREAD_LOCALS));
-    if (pointers == NULL) {
+    if (pointers == nullptr) {
       destructor(value);
       return 0;
     }
@@ -147,5 +132,7 @@ int CRYPTO_set_thread_local(thread_local_data_t index, void *value,
   pointers[index] = value;
   return 1;
 }
+
+BSSL_NAMESPACE_END
 
 #endif  // OPENSSL_PTHREADS

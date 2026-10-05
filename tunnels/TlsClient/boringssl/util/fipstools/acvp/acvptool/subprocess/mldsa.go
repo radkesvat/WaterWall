@@ -56,18 +56,23 @@ type mldsaSigGenTestVectorSet struct {
 }
 
 type mldsaSigGenTestGroup struct {
-	ID            uint64            `json:"tgId"`
-	TestType      string            `json:"testType"`
-	ParameterSet  string            `json:"parameterSet"`
-	Deterministic bool              `json:"deterministic"`
-	Tests         []mldsaSigGenTest `json:"tests"`
+	ID                 uint64            `json:"tgId"`
+	TestType           string            `json:"testType"`
+	ParameterSet       string            `json:"parameterSet"`
+	KeyFormat          string            `json:"keyFormat"`
+	Deterministic      bool              `json:"deterministic"`
+	SignatureInterface string            `json:"signatureInterface"`
+	Tests              []mldsaSigGenTest `json:"tests"`
 }
 
 type mldsaSigGenTest struct {
 	ID         uint64 `json:"tcId"`
 	Message    string `json:"message"`
 	PrivateKey string `json:"sk"`
+	Seed       string `json:"seed"`
 	Randomizer string `json:"rnd"`
+	Context    string `json:"context"`
+	Mu         string `json:"mu"`
 }
 
 type mldsaSigGenTestGroupResponse struct {
@@ -89,10 +94,11 @@ type mldsaSigVerTestVectorSet struct {
 }
 
 type mldsaSigVerTestGroup struct {
-	ID           uint64            `json:"tgId"`
-	TestType     string            `json:"testType"`
-	ParameterSet string            `json:"parameterSet"`
-	Tests        []mldsaSigVerTest `json:"tests"`
+	ID                 uint64            `json:"tgId"`
+	TestType           string            `json:"testType"`
+	ParameterSet       string            `json:"parameterSet"`
+	SignatureInterface string            `json:"signatureInterface"`
+	Tests              []mldsaSigVerTest `json:"tests"`
 }
 
 type mldsaSigVerTest struct {
@@ -100,6 +106,8 @@ type mldsaSigVerTest struct {
 	PublicKey string `json:"pk"`
 	Message   string `json:"message"`
 	Signature string `json:"signature"`
+	Context   string `json:"context"`
+	Mu        string `json:"mu"`
 }
 
 type mldsaSigVerTestGroupResponse struct {
@@ -194,12 +202,25 @@ func (m *mldsa) processSigGen(vectorSet []byte, t Transactable) (any, error) {
 			return nil, fmt.Errorf("invalid parameter set: %s", group.ParameterSet)
 		}
 		cmdName := group.ParameterSet + "/sigGen"
+		if group.KeyFormat == "seed" {
+			cmdName = group.ParameterSet + "/sigGen/seed"
+		}
 
 		for _, test := range group.Tests {
-			sk, err := hex.DecodeString(test.PrivateKey)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode private key in test case %d/%d: %s",
-					group.ID, test.ID, err)
+			var sk []byte
+			var err error
+			if group.KeyFormat == "seed" {
+				sk, err = hex.DecodeString(test.Seed)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decode seed in test case %d/%d: %s",
+						group.ID, test.ID, err)
+				}
+			} else {
+				sk, err = hex.DecodeString(test.PrivateKey)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decode private key in test case %d/%d: %s",
+						group.ID, test.ID, err)
+				}
 			}
 
 			msg, err := hex.DecodeString(test.Message)
@@ -218,7 +239,32 @@ func (m *mldsa) processSigGen(vectorSet []byte, t Transactable) (any, error) {
 				}
 			}
 
-			result, err := t.Transact(cmdName, 1, sk, msg, randomizer)
+			var context []byte
+			context, err = hex.DecodeString(test.Context)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode context in test case %d/%d: %s",
+					group.ID, test.ID, err)
+			}
+			if group.SignatureInterface != "external" && len(context) > 0 {
+				return nil, fmt.Errorf("unexpected context for internal interface test case %d/%d: %s",
+					group.ID, test.ID, err)
+			}
+
+			var mu []byte
+			mu, err = hex.DecodeString(test.Mu)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode mu in test case %d/%d: %s",
+					group.ID, test.ID, err)
+			}
+			if group.SignatureInterface != "internal" && len(mu) > 0 {
+				return nil, fmt.Errorf("unexpected mu for external interface test case %d/%d: %s",
+					group.ID, test.ID, err)
+			} else if len(mu) > 0 && len(msg) > 0 {
+				return nil, fmt.Errorf("unexpected message for internal interface test case with mu %d/%d",
+					group.ID, test.ID)
+			}
+
+			result, err := t.Transact(cmdName, 1, sk, msg, randomizer, context, mu)
 			if err != nil {
 				return nil, fmt.Errorf("signature generation failed for test case %d/%d: %s",
 					group.ID, test.ID, err)
@@ -273,7 +319,32 @@ func (m *mldsa) processSigVer(vectorSet []byte, t Transactable) (any, error) {
 					group.ID, test.ID, err)
 			}
 
-			result, err := t.Transact(cmdName, 1, pk, msg, sig)
+			var context []byte
+			context, err = hex.DecodeString(test.Context)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode context in test case %d/%d: %s",
+					group.ID, test.ID, err)
+			}
+			if group.SignatureInterface != "external" && len(context) > 0 {
+				return nil, fmt.Errorf("unexpected context for internal interface test case %d/%d: %s",
+					group.ID, test.ID, err)
+			}
+
+			var mu []byte
+			mu, err = hex.DecodeString(test.Mu)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode mu in test case %d/%d: %s",
+					group.ID, test.ID, err)
+			}
+			if group.SignatureInterface != "internal" && len(mu) > 0 {
+				return nil, fmt.Errorf("unexpected mu for external interface test case %d/%d: %s",
+					group.ID, test.ID, err)
+			} else if len(mu) > 0 && len(msg) > 0 {
+				return nil, fmt.Errorf("unexpected message for internal interface test case with mu %d/%d",
+					group.ID, test.ID)
+			}
+
+			result, err := t.Transact(cmdName, 1, pk, msg, sig, context, mu)
 			if err != nil {
 				return nil, fmt.Errorf("signature verification failed for test case %d/%d: %s",
 					group.ID, test.ID, err)

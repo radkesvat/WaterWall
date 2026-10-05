@@ -362,7 +362,6 @@ if(TARGET TlsClient)
   waterwall_line_failure_test_use_tunnel(tlsclient_line_failure_test TlsClient)
   target_include_directories(tlsclient_line_failure_test BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
-    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
   )
   target_compile_definitions(tlsclient_line_failure_test PRIVATE BORINGSSL_PREFIX=WW_BSSL)
   target_link_options(tlsclient_line_failure_test PRIVATE
@@ -383,8 +382,7 @@ if(TARGET TlsClient)
     waterwall_add_native_executable(tlsclient_fragment_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tls/tlsclient_fragment_test.c)
     waterwall_line_failure_test_use_tunnel(tlsclient_fragment_test TlsClient)
     target_include_directories(tlsclient_fragment_test BEFORE PRIVATE
-      ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
-      ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include)
+      ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include)
     target_link_options(tlsclient_fragment_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
       "-Wl,--wrap=nodemanagerGetConfigNodeByHash" "-Wl,--wrap=nodemanagerCreateTunnelInstance"
       "-Wl,--wrap=WW_BSSL_SSL_CTX_new")

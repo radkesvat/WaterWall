@@ -28,7 +28,7 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 ( $xlate="${dir}../../perlasm/x86_64-xlate.pl" and -f $xlate) or
 die "can't locate x86_64-xlate.pl";
 
-open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\"";
+open OUT, "|-", $^X, $xlate, $flavour, $output;
 *STDOUT=*OUT;
 
 $code.=<<___;
@@ -273,7 +273,7 @@ aesgcmsiv_htable_polyval:
     jnz .Lhtable_polyval_prefix_loop
     jmp .Lhtable_polyval_prefix_complete
 
-    # hash remaining prefix bocks (up to 7 total prefix blocks)
+    # hash remaining prefix blocks (up to 7 total prefix blocks)
 .align 64
 .Lhtable_polyval_prefix_loop:
     sub \$16, $hlp0
@@ -307,7 +307,7 @@ aesgcmsiv_htable_polyval:
 .Lhtable_polyval_no_prefix:
     # At this point we know the number of blocks is a multiple of 8. However,
     # the reduction in the main loop includes a multiplication by x^(-128). In
-    # order to counter this, the existing tag needs to be multipled by x^128.
+    # order to counter this, the existing tag needs to be multiplied by x^128.
     # In practice, this just means that it is loaded into $Xhi, not $T.
     vpxor $T, $T, $T
     vmovdqa ($Tp), $Xhi

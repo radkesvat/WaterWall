@@ -45,7 +45,9 @@ import (
 	"time"
 
 	"boringssl.googlesource.com/boringssl.git/util/testresult"
+	"filippo.io/mldsa"
 	"golang.org/x/crypto/cryptobyte"
+	"golang.org/x/term"
 )
 
 var (
@@ -58,7 +60,7 @@ var (
 	mallocTest         = flag.Int64("malloc-test", -1, "If non-negative, run each test with each malloc in turn failing from the given number onwards.")
 	mallocTestDebug    = flag.Bool("malloc-test-debug", false, "If true, ask bssl_shim to abort rather than fail a malloc. This can be used with a specific value for --malloc-test to identity the malloc failing that is causing problems.")
 	jsonOutput         = flag.String("json-output", "", "The file to output JSON results to.")
-	pipe               = flag.Bool("pipe", false, "If true, print status output suitable for piping into another program.")
+	pipe               = flag.Bool("pipe", !term.IsTerminal(int(os.Stdout.Fd())), "If true, print status output suitable for piping into another program.")
 	testToRun          = flag.String("test", "", "Semicolon-separated patterns of tests to run, or empty to run all tests")
 	skipTest           = flag.String("skip", "", "Semicolon-separated patterns of tests to skip")
 	allowHintMismatch  = flag.String("allow-hint-mismatch", "", "Semicolon-separated patterns of tests where hints may mismatch")
@@ -96,11 +98,6 @@ type ShimConfiguration struct {
 	// HalfRTTTickets is the number of half-RTT tickets the client should
 	// expect before half-RTT data when testing 0-RTT.
 	HalfRTTTickets int
-
-	// AllCurves is the list of all curve code points supported by the shim.
-	// This is currently used to control tests that enable all curves but may
-	// automatically disable tests in the future.
-	AllCurves []int
 
 	// MaxACKBuffer is the maximum number of received records the shim is
 	// expected to retain when ACKing.
@@ -143,6 +140,10 @@ var (
 	ecdsaP521Key ecdsa.PrivateKey
 
 	ed25519Key ed25519.PrivateKey
+
+	mldsa44Key *mldsa.PrivateKey
+	mldsa65Key *mldsa.PrivateKey
+	mldsa87Key *mldsa.PrivateKey
 
 	channelIDKey ecdsa.PrivateKey
 )
@@ -192,6 +193,21 @@ func initKeys() {
 	}
 	ed25519Key = k.(ed25519.PrivateKey)
 
+	for _, k := range []struct {
+		params *mldsa.Parameters
+		key    **mldsa.PrivateKey
+	}{
+		{mldsa.MLDSA44(), &mldsa44Key},
+		{mldsa.MLDSA65(), &mldsa65Key},
+		{mldsa.MLDSA87(), &mldsa87Key},
+	} {
+		key, err := mldsa.GenerateKey(k.params)
+		if err != nil {
+			panic(fmt.Sprintf("Failed to generate ML-DSA test key: %s", err))
+		}
+		*k.key = key
+	}
+
 	channelIDKeyPath = writeTempKeyFile(&channelIDKey)
 }
 
@@ -205,8 +221,8 @@ var (
 )
 
 var (
-	testOCSPExtension = append([]byte{byte(extensionStatusRequest) >> 8, byte(extensionStatusRequest), 0, 8, statusTypeOCSP, 0, 0, 4}, testOCSPResponse...)
-	testSCTExtension  = append([]byte{byte(extensionSignedCertificateTimestamp) >> 8, byte(extensionSignedCertificateTimestamp), 0, byte(len(testSCTList))}, testSCTList...)
+	testOCSPExtension = append([]byte{byte(extensionStatusRequest >> 8), byte(extensionStatusRequest), 0, 8, statusTypeOCSP, 0, 0, 4}, testOCSPResponse...)
+	testSCTExtension  = append([]byte{byte(extensionSignedCertificateTimestamp >> 8), byte(extensionSignedCertificateTimestamp), 0, byte(len(testSCTList))}, testSCTList...)
 )
 
 var (
@@ -219,6 +235,9 @@ var (
 	ecdsaP384Certificate Credential
 	ecdsaP521Certificate Credential
 	ed25519Certificate   Credential
+	mldsa44Certificate   Credential
+	mldsa65Certificate   Credential
+	mldsa87Certificate   Credential
 	garbageCertificate   Credential
 	pssCertificate       Credential
 )
@@ -235,6 +254,9 @@ func initCertificates() {
 		{"ECDSA P-384", &ecdsaP384Key, &ecdsaP384Certificate},
 		{"ECDSA P-521", &ecdsaP521Key, &ecdsaP521Certificate},
 		{"Ed25519", ed25519Key, &ed25519Certificate},
+		{"ML-DSA 44", mldsa44Key, &mldsa44Certificate},
+		{"ML-DSA 65", mldsa65Key, &mldsa65Certificate},
+		{"ML-DSA 87", mldsa87Key, &mldsa87Certificate},
 	} {
 		// For each test key, make a self-signed root that issues a leaf, using
 		// the same algorithm.
@@ -286,10 +308,79 @@ func initCertificates() {
 	}).ToCredential()
 }
 
+var (
+	p256DC          *Credential
+	p256DCFromECDSA *Credential
+)
+
+func initDelegatedCredentials() {
+	p256DC = createDelegatedCredential(&rsaCertificate, delegatedCredentialConfig{
+		dcAlgo: signatureECDSAWithP256AndSHA256,
+		algo:   signatureRSAPSSWithSHA256,
+	})
+	p256DCFromECDSA = createDelegatedCredential(&ecdsaP256Certificate, delegatedCredentialConfig{
+		dcAlgo: signatureECDSAWithP256AndSHA256,
+		algo:   signatureECDSAWithP256AndSHA256,
+	})
+}
+
+var (
+	rpkEcdsaP256 Credential
+	rpkEcdsaP384 Credential
+	rpkRsa       Credential
+)
+
+func initRawPublicKeyCredentials() {
+	for _, def := range []struct {
+		key crypto.Signer
+		out *Credential
+	}{
+		{&ecdsaP256Key, &rpkEcdsaP256},
+		{&ecdsaP384Key, &rpkEcdsaP384},
+		{&rsa2048Key, &rpkRsa},
+	} {
+		var publicKey crypto.PublicKey
+		switch def.key.(type) {
+		case *rsa.PrivateKey:
+			publicKey = def.key.(*rsa.PrivateKey).Public()
+		case *ecdsa.PrivateKey:
+			publicKey = def.key.(*ecdsa.PrivateKey).Public()
+		default:
+			panic("credential has unsupported key type")
+		}
+		rpkData, err := x509.MarshalPKIXPublicKey(publicKey)
+		if err != nil {
+			panic(err)
+		}
+		*def.out = Credential{
+			Type:        CredentialTypeRawPublicKey,
+			PrivateKey:  def.key,
+			KeyPath:     writeTempKeyFile(def.key),
+			Certificate: [][]byte{rpkData},
+		}
+	}
+}
+
 func flagInts(flagName string, vals []int) []string {
 	ret := make([]string, 0, 2*len(vals))
 	for _, val := range vals {
 		ret = append(ret, flagName, strconv.Itoa(val))
+	}
+	return ret
+}
+
+func flagCurves(flagName string, vals []CurveID) []string {
+	ret := make([]string, 0, 2*len(vals))
+	for _, val := range vals {
+		ret = append(ret, flagName, strconv.Itoa(int(val)))
+	}
+	return ret
+}
+
+func flagCertTypes(flagName string, vals []CertificateType) []string {
+	ret := make([]string, 0, 2*len(vals))
+	for _, val := range vals {
+		ret = append(ret, flagName, strconv.Itoa(int(val)))
 	}
 	return ret
 }
@@ -342,15 +433,15 @@ func recordVersionToWire(vers uint16, protocol protocol) uint16 {
 
 // encodeDERValues encodes a series of bytestrings in comma-separated-hex form.
 func encodeDERValues(values [][]byte) string {
-	var ret string
+	var ret strings.Builder
 	for i, v := range values {
 		if i > 0 {
-			ret += ","
+			ret.WriteString(",")
 		}
-		ret += hex.EncodeToString(v)
+		ret.WriteString(hex.EncodeToString(v))
 	}
 
-	return ret
+	return ret.String()
 }
 
 func decodeHexOrPanic(in string) []byte {
@@ -450,6 +541,9 @@ type connectionExpectations struct {
 	// serverNameAck, if not nil, is whether the server should have acknowledged
 	// the server name. This field is only checked in full handshakes.
 	serverNameAck *bool
+	// selectedPSK, if not nil, is the PSK credential that should have been
+	// negotiated.
+	selectedPSK *Credential
 }
 
 type testCase struct {
@@ -539,9 +633,11 @@ type testCase struct {
 	testTLSUnique bool
 	// sendEmptyRecords is the number of consecutive empty records to send
 	// before each test message.
+	// If both this and `sendWarningAlerts` are set, they alternate at the end.
 	sendEmptyRecords int
 	// sendWarningAlerts is the number of consecutive warning alerts to send
 	// before each test message.
+	// If both this and `sendWarningAlerts` are set, they alternate at the end.
 	sendWarningAlerts int
 	// sendUserCanceledAlerts is the number of consecutive user_canceled alerts to
 	// send before each test message.
@@ -591,9 +687,6 @@ type testCase struct {
 	// should retry for early rejection. In a server test, this is whether the
 	// test expects the shim to reject early data.
 	expectEarlyDataRejected bool
-	// skipSplitHandshake, if true, will skip the generation of a split
-	// handshake copy of the test.
-	skipSplitHandshake bool
 	// skipHints, if true, will skip the generation of a handshake hints copy of
 	// the test.
 	skipHints bool
@@ -609,7 +702,9 @@ type testCase struct {
 	// shimCredentials is a list of credentials which should be configured at
 	// the shim. It differs from shimCertificate only in whether the old or
 	// new APIs are used.
-	shimCredentials       []*Credential
+	shimCredentials []*Credential
+	// resumeShimCredentials, if set, overrides shimCredentials for resumption
+	// connections.
 	resumeShimCredentials []*Credential
 }
 
@@ -720,9 +815,9 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, tr
 		}
 		conn = connDebug
 		if *flagDebug {
-			defer connDebug.WriteTo(os.Stdout)
+			defer connDebug.WriteFlowsTo(os.Stdout)
 		}
-		if len(*transcriptDir) != 0 {
+		if *transcriptDir != "" {
 			defer func() {
 				if num == len(*transcripts) {
 					*transcripts = append(*transcripts, connDebug.Transcript())
@@ -882,13 +977,17 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, tr
 	}
 
 	if expected := expectations.peerCertificate; expected != nil {
-		if len(connState.PeerCertificates) != len(expected.Certificate) {
-			return fmt.Errorf("expected peer to send %d certificates, but got %d", len(connState.PeerCertificates), len(expected.Certificate))
-		}
-		for i, cert := range connState.PeerCertificates {
-			if !bytes.Equal(cert.Raw, expected.Certificate[i]) {
-				return fmt.Errorf("peer certificate %d did not match", i+1)
+		var peerCerts [][]byte
+		switch expected.Type.CertificateType() {
+		case certTypeX509:
+			for _, cert := range connState.PeerCertificates {
+				peerCerts = append(peerCerts, cert.Raw)
 			}
+		case certTypeRawPublicKey:
+			peerCerts = [][]byte{connState.PeerRawPublicKey}
+		}
+		if !slices.EqualFunc(peerCerts, expected.Certificate, slices.Equal) {
+			return fmt.Errorf("peer certificate did not match expectations (got %v, expected %v)", peerCerts, expected.Certificate)
 		}
 
 		if !bytes.Equal(connState.OCSPResponse, expected.OCSPStaple) {
@@ -908,6 +1007,30 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, tr
 			}
 		} else if connState.PeerDelegatedCredential != nil {
 			return fmt.Errorf("peer unexpectedly used delegated credentials")
+		}
+		if expected.Type == CredentialTypeRawPublicKey {
+			if len(connState.PeerRawPublicKey) == 0 {
+				return fmt.Errorf("peer unexpectedly did not send a raw public key")
+			}
+			var expectedPublic crypto.PublicKey
+			switch expected.PrivateKey.(type) {
+			case *rsa.PrivateKey:
+				expectedPublic = expected.PrivateKey.(*rsa.PrivateKey).Public()
+			case *ecdsa.PrivateKey:
+				expectedPublic = expected.PrivateKey.(*ecdsa.PrivateKey).Public()
+			default:
+				panic("expected credential has unsupported key type")
+			}
+			expectedSpki, err := x509.MarshalPKIXPublicKey(expectedPublic)
+			if err != nil {
+				panic(fmt.Sprintf("error serializing public key of expected credential: %s", err))
+			}
+			if !slices.Equal(expectedSpki, connState.PeerRawPublicKey) {
+				return fmt.Errorf("peer raw public key did not match expected credential")
+			}
+		}
+		if expected.Type != CredentialTypeRawPublicKey && len(connState.PeerRawPublicKey) > 0 {
+			return fmt.Errorf("peer unexpectedly sent a raw public key")
 		}
 	}
 
@@ -940,6 +1063,13 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, tr
 		if connState.ECHAccepted {
 			return errors.New("tls: server unexpectedly accepted ECH")
 		}
+	}
+
+	if expectations.selectedPSK != nil && expectations.selectedPSK != connState.SelectedPSK {
+		if connState.SelectedPSK == nil {
+			return errors.New("tls: expected a PSK, but none was selected")
+		}
+		return errors.New("tls: connection selected a different PSK from what was expected")
 	}
 
 	if test.exportKeyingMaterial > 0 {
@@ -1065,15 +1195,17 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, tr
 			}
 		}
 
-		for i := 0; i < test.sendEmptyRecords; i++ {
-			if _, err := tlsConn.Write(nil); err != nil {
-				return err
+		// Count _down_, so that in case of differing values for the two counters, the alternating takes place at the _end_.
+		for i := max(test.sendEmptyRecords, test.sendWarningAlerts); i > 0; i-- {
+			if i <= test.sendEmptyRecords {
+				if _, err := tlsConn.Write(nil); err != nil {
+					return err
+				}
 			}
-		}
-
-		for i := 0; i < test.sendWarningAlerts; i++ {
-			if err := tlsConn.SendAlert(alertLevelWarning, alertUnexpectedMessage); err != nil {
-				return err
+			if i <= test.sendWarningAlerts {
+				if err := tlsConn.SendAlert(alertLevelWarning, alertUnexpectedMessage); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -1207,12 +1339,12 @@ func rrOf(path string, args ...string) *exec.Cmd {
 }
 
 func removeFirstLineIfSuffix(s, suffix string) string {
-	idx := strings.IndexByte(s, '\n')
-	if idx < 0 {
+	before, after, ok := strings.Cut(s, "\n")
+	if !ok {
 		return s
 	}
-	if strings.HasSuffix(s[:idx], suffix) {
-		return s[idx+1:]
+	if strings.HasSuffix(before, suffix) {
+		return after
 	}
 	return s
 }
@@ -1233,7 +1365,7 @@ type shimProcess struct {
 }
 
 // newShimProcess starts a new shim with the specified executable, flags, and
-// environment. It internally creates a TCP listener and adds the the -port
+// environment. It internally creates a TCP listener and adds the -port
 // flag.
 func newShimProcess(dispatcher *shimDispatcher, shimPath string, flags []string, env []string) (*shimProcess, error) {
 	listener, err := dispatcher.NewShim()
@@ -1321,6 +1453,12 @@ func doExchanges(test *testCase, shim *shimProcess, resumeCount int, transcripts
 		config.Rand = &deterministicRand{}
 	}
 
+	var ticketKey [32]byte
+	if _, err := io.ReadFull(config.rand(), ticketKey[:]); err != nil {
+		return err
+	}
+	config.SessionTicketKey = &ticketKey
+
 	conn, err := shim.accept()
 	if err != nil {
 		return err
@@ -1331,8 +1469,7 @@ func doExchanges(test *testCase, shim *shimProcess, resumeCount int, transcripts
 		return err
 	}
 
-	nextTicketKey := config.SessionTicketKey
-	for i := 0; i < resumeCount; i++ {
+	for i := range resumeCount {
 		var resumeConfig Config
 		if test.resumeConfig != nil {
 			resumeConfig = *test.resumeConfig
@@ -1347,20 +1484,21 @@ func doExchanges(test *testCase, shim *shimProcess, resumeCount int, transcripts
 		if test.newSessionsOnResume {
 			resumeConfig.ClientSessionCache = nil
 			resumeConfig.ServerSessionCache = nil
-			if _, err := resumeConfig.rand().Read(resumeConfig.SessionTicketKey[:]); err != nil {
+			if _, err := io.ReadFull(resumeConfig.rand(), ticketKey[:]); err != nil {
 				return err
 			}
+			resumeConfig.SessionTicketKey = &ticketKey
 		} else {
 			resumeConfig.ClientSessionCache = config.ClientSessionCache
 			resumeConfig.ServerSessionCache = config.ServerSessionCache
 			// Rotate the ticket keys between each connection, with each connection
 			// encrypting with next connection's keys. This ensures that we test
 			// the renewed sessions.
-			resumeConfig.SessionTicketKey = nextTicketKey
-			if _, err := resumeConfig.rand().Read(nextTicketKey[:]); err != nil {
+			resumeConfig.SessionTicketKey = new(ticketKey)
+			if _, err := io.ReadFull(resumeConfig.rand(), ticketKey[:]); err != nil {
 				return err
 			}
-			resumeConfig.Bugs.EncryptSessionTicketKey = &nextTicketKey
+			resumeConfig.Bugs.EncryptSessionTicketKey = &ticketKey
 		}
 
 		var connResume net.Conn
@@ -1386,7 +1524,7 @@ func translateExpectedError(canonical string) []string {
 	}
 
 	// not specifying a canonical error will have the same effect as -loose-errors being true
-	// since the emptry string with match all error substrings.
+	// since the empty string with match all error substrings.
 	return []string{canonical}
 }
 
@@ -1429,6 +1567,10 @@ func appendCredentialFlags(flags []string, cred *Credential, prefix string, newC
 			flags = append(flags, prefix+"-new-delegated-credential")
 		case CredentialTypeSPAKE2PlusV1:
 			flags = append(flags, prefix+"-new-spake2plusv1-credential")
+		case CredentialTypePreSharedKey:
+			flags = append(flags, prefix+"-new-psk-credential")
+		case CredentialTypeRawPublicKey:
+			flags = append(flags, prefix+"-new-rpk-credential")
 		default:
 			panic(fmt.Errorf("unknown credential type %d", cred.Type))
 		}
@@ -1442,10 +1584,10 @@ func appendCredentialFlags(flags []string, cred *Credential, prefix string, newC
 		}
 	}
 
-	if len(cred.ChainPath) != 0 {
+	if cred.ChainPath != "" {
 		flags = append(flags, prefix+"-cert-file", cred.ChainPath)
 	}
-	if len(cred.KeyPath) != 0 {
+	if cred.KeyPath != "" {
 		flags = append(flags, prefix+"-key-file", cred.KeyPath)
 	}
 	handleBase64Field("ocsp-response", cred.OCSPStaple)
@@ -1464,7 +1606,23 @@ func appendCredentialFlags(flags []string, cred *Credential, prefix string, newC
 	if cred.WrongPAKERole {
 		flags = append(flags, prefix+"-wrong-pake-role")
 	}
-	handleBase64Field("trust-anchor-id", cred.TrustAnchorID)
+	handleBase64Field("psk-importer-key", cred.PreSharedKey)
+	handleBase64Field("psk-importer-identity", cred.PSKIdentity)
+	handleBase64Field("psk-importer-context", cred.PSKContext)
+	switch cred.PSKHash {
+	case 0:
+		break
+	case crypto.SHA256:
+		flags = append(flags, prefix+"-psk-importer-sha256")
+	case crypto.SHA384:
+		flags = append(flags, prefix+"-psk-importer-sha384")
+	default:
+		panic(fmt.Sprintf("unknown PSK hash %s", cred.PSKHash))
+	}
+	if !cred.Properties.Empty() {
+		handleBase64Field("cert-properties", cred.Properties.Marshal())
+	}
+	handleBase64Field("session-id-context", cred.SessionIDContext)
 	return flags
 }
 
@@ -1477,6 +1635,15 @@ func runTest(dispatcher *shimDispatcher, statusChan chan statusMsg, test *testCa
 		}
 	}()
 
+	// Make a copy of the testCase before modifying it in-place.
+	test = new(*test)
+	if test.resumeConfig != nil {
+		test.resumeConfig = new(*test.resumeConfig)
+	}
+	if test.resumeExpectations != nil {
+		test.resumeExpectations = new(*test.resumeExpectations)
+	}
+
 	var flags []string
 	if len(*shimExtraFlags) > 0 {
 		flags = strings.Split(*shimExtraFlags, ";")
@@ -1487,6 +1654,10 @@ func runTest(dispatcher *shimDispatcher, statusChan chan statusMsg, test *testCa
 	if test.testType == serverTest {
 		flags = append(flags, "-server")
 	}
+
+	// Credential flags trigger state in the command-line parser, so append these
+	// flags first.
+	flags = append(flags, test.flags...)
 
 	// Configure the default credential.
 	shimCertificate := test.shimCertificate
@@ -1505,8 +1676,12 @@ func runTest(dispatcher *shimDispatcher, statusChan chan statusMsg, test *testCa
 	}
 
 	// Configure any additional credentials.
+	var initialPrefix string
+	if len(test.resumeShimCredentials) > 0 {
+		initialPrefix = "-on-initial"
+	}
 	for _, cred := range test.shimCredentials {
-		flags = appendCredentialFlags(flags, cred, "", true)
+		flags = appendCredentialFlags(flags, cred, initialPrefix, true)
 	}
 	for _, cred := range test.resumeShimCredentials {
 		flags = appendCredentialFlags(flags, cred, "-on-resume", true)
@@ -1668,7 +1843,7 @@ func runTest(dispatcher *shimDispatcher, statusChan chan statusMsg, test *testCa
 
 	var transcriptPrefix string
 	var transcripts [][]byte
-	if len(*transcriptDir) != 0 {
+	if *transcriptDir != "" {
 		protocol := "tls"
 		if test.protocol == dtls {
 			protocol = "dtls"
@@ -1695,8 +1870,6 @@ func runTest(dispatcher *shimDispatcher, statusChan chan statusMsg, test *testCa
 	if test.config.Credential != nil {
 		flags = append(flags, "-trust-cert", test.config.Credential.RootPath)
 	}
-
-	flags = append(flags, test.flags...)
 
 	var env []string
 	if mallocNumToFail >= 0 {
@@ -1772,7 +1945,7 @@ func runTest(dispatcher *shimDispatcher, statusChan chan statusMsg, test *testCa
 	if localErr != nil {
 		localErrString = localErr.Error()
 	}
-	if len(test.expectedLocalError) != 0 {
+	if test.expectedLocalError != "" {
 		correctFailure = correctFailure && strings.Contains(localErrString, test.expectedLocalError)
 	}
 
@@ -1908,7 +2081,7 @@ func allVersions(protocol protocol) []tlsVersion {
 	return ret
 }
 
-func convertToSplitHandshakeTests(tests []testCase) (splitHandshakeTests []testCase, err error) {
+func convertToHandshakeHintTests(tests []testCase) (handshakeHintTests []testCase, err error) {
 	var stdout bytes.Buffer
 	var flags []string
 	if len(*shimExtraFlags) > 0 {
@@ -1921,7 +2094,7 @@ func convertToSplitHandshakeTests(tests []testCase) (splitHandshakeTests []testC
 		return nil, err
 	}
 
-	switch strings.TrimSpace(string(stdout.Bytes())) {
+	switch strings.TrimSpace(stdout.String()) {
 	case "No":
 		return
 	case "Yes":
@@ -1933,32 +2106,6 @@ func convertToSplitHandshakeTests(tests []testCase) (splitHandshakeTests []testC
 	var allowHintMismatchPattern []string
 	if len(*allowHintMismatch) > 0 {
 		allowHintMismatchPattern = strings.Split(*allowHintMismatch, ";")
-	}
-
-NextTest:
-	for _, test := range tests {
-		if test.protocol != tls ||
-			test.testType != serverTest ||
-			len(test.shimCredentials) != 0 ||
-			len(test.resumeShimCredentials) != 0 ||
-			strings.Contains(test.name, "ECH-Server") ||
-			test.skipSplitHandshake {
-			continue
-		}
-
-		for _, flag := range test.flags {
-			if flag == "-implicit-handshake" {
-				continue NextTest
-			}
-		}
-
-		shTest := test
-		shTest.name += "-Split"
-		shTest.flags = make([]string, len(test.flags), len(test.flags)+3)
-		copy(shTest.flags, test.flags)
-		shTest.flags = append(shTest.flags, "-handoff", "-handshaker-path", *handshakerPath)
-
-		splitHandshakeTests = append(splitHandshakeTests, shTest)
 	}
 
 	for _, test := range tests {
@@ -1976,19 +2123,19 @@ NextTest:
 			}
 		}
 
-		shTest := test
-		shTest.name += "-Hints"
-		shTest.flags = make([]string, len(test.flags), len(test.flags)+3)
-		copy(shTest.flags, test.flags)
-		shTest.flags = append(shTest.flags, "-handshake-hints", "-handshaker-path", *handshakerPath)
+		hintTest := test
+		hintTest.name += "-Hints"
+		hintTest.flags = make([]string, len(test.flags), len(test.flags)+3)
+		copy(hintTest.flags, test.flags)
+		hintTest.flags = append(hintTest.flags, "-handshake-hints", "-handshaker-path", *handshakerPath)
 		if matched {
-			shTest.flags = append(shTest.flags, "-allow-hint-mismatch")
+			hintTest.flags = append(hintTest.flags, "-allow-hint-mismatch")
 		}
 
-		splitHandshakeTests = append(splitHandshakeTests, shTest)
+		handshakeHintTests = append(handshakeHintTests, hintTest)
 	}
 
-	return splitHandshakeTests, nil
+	return handshakeHintTests, nil
 }
 
 func worker(dispatcher *shimDispatcher, statusChan chan statusMsg, c chan *testCase, shimPath string, wg *sync.WaitGroup) {
@@ -2042,11 +2189,11 @@ func statusPrinter(doneChan chan *testresult.Results, statusChan chan statusMsg,
 	for msg := range statusChan {
 		if !*pipe {
 			// Erase the previous status line.
-			var erase string
-			for i := 0; i < lineLen; i++ {
-				erase += "\b \b"
+			var erase strings.Builder
+			for range lineLen {
+				erase.WriteString("\b \b")
 			}
-			fmt.Print(erase)
+			fmt.Print(erase.String())
 		}
 
 		if msg.statusType == statusStarted {
@@ -2064,6 +2211,7 @@ func statusPrinter(doneChan chan *testresult.Results, statusChan chan statusMsg,
 					if *allowUnimplemented {
 						testOutput.AddSkip(msg.test.name)
 					} else {
+						fmt.Printf("UNIMPLEMENTED (%s)\n%s\n", msg.test.name, msg.err)
 						testOutput.AddResult(msg.test.name, "SKIP", nil)
 					}
 				} else {
@@ -2145,12 +2293,7 @@ func checkTests() {
 					found = found || test.resumeExpectations.version == ver.version
 				}
 				shimFlag := ver.shimFlag(test.protocol)
-				for _, flag := range test.flags {
-					if flag == shimFlag {
-						found = true
-						break
-					}
-				}
+				found = found || slices.Contains(test.flags, shimFlag)
 				if !found {
 					panic(fmt.Sprintf("The name of test %q suggests that it's version specific, but the test does not reference %s", test.name, ver.name))
 				}
@@ -2177,23 +2320,18 @@ func main() {
 	}
 	initKeys()
 	initCertificates()
+	initDelegatedCredentials()
+	initRawPublicKeyCredentials()
 
-	if len(*shimConfigFile) != 0 {
+	if *shimConfigFile != "" {
 		encoded, err := os.ReadFile(*shimConfigFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Couldn't read config file %q: %s\n", *shimConfigFile, err)
 			os.Exit(1)
 		}
-
 		if err := json.Unmarshal(encoded, &shimConfig); err != nil {
 			fmt.Fprintf(os.Stderr, "Couldn't decode config file %q: %s\n", *shimConfigFile, err)
 			os.Exit(1)
-		}
-	}
-
-	if shimConfig.AllCurves == nil {
-		for _, curve := range testCurves {
-			shimConfig.AllCurves = append(shimConfig.AllCurves, int(curve.id))
 		}
 	}
 
@@ -2208,12 +2346,14 @@ func main() {
 	addMinimumVersionTests()
 	addExtensionTests()
 	addResumptionVersionTests()
+	addCredentialSessionIDContextTests()
 	addExtendedMasterSecretTests()
 	addRenegotiationTests()
 	addDTLSReplayTests()
 	addSignatureAlgorithmTests()
 	addDTLSRetransmitTests()
 	addDTLSReorderTests()
+	addDTLSFragmentWindowTests()
 	addExportKeyingMaterialTests()
 	addExportTrafficSecretsTests()
 	addTLSUniqueTests()
@@ -2237,6 +2377,7 @@ func main() {
 	addRSAKeyUsageTests()
 	addExtraHandshakeTests()
 	addOmitExtensionsTests()
+	addExtensionTrailingDataTests()
 	addCertCompressionTests()
 	addJDK11WorkaroundTests()
 	addDelegatedCredentialTests()
@@ -2247,10 +2388,13 @@ func main() {
 	addKeyUpdateTests()
 	addPAKETests()
 	addTrustAnchorTests()
+	addPSKTests()
+	addRawPublicKeyTests()
+	addServerPaddingTests()
 
-	toAppend, err := convertToSplitHandshakeTests(testCases)
+	toAppend, err := convertToHandshakeHintTests(testCases)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error making split handshake tests: %s", err)
+		fmt.Fprintf(os.Stderr, "Error making handshake hint tests: %s", err)
 		os.Exit(1)
 	}
 	testCases = append(testCases, toAppend...)

@@ -43,17 +43,18 @@
 #include "./rsaz_exp.h"
 
 
+BSSL_NAMESPACE_BEGIN
 namespace {
 
-static int HexToBIGNUM(bssl::UniquePtr<BIGNUM> *out, const char *in) {
-  BIGNUM *raw = NULL;
+static int HexToBIGNUMWithReturn(UniquePtr<BIGNUM> *out, const char *in) {
+  BIGNUM *raw = nullptr;
   int ret = BN_hex2bn(&raw, in);
   out->reset(raw);
   return ret;
 }
 
-// A BIGNUMFileTest wraps a FileTest to give |BIGNUM| values and also allows
-// injecting oversized |BIGNUM|s.
+// A BIGNUMFileTest wraps a FileTest to give `BIGNUM` values and also allows
+// injecting oversized `BIGNUM`s.
 class BIGNUMFileTest {
  public:
   BIGNUMFileTest(FileTest *t, unsigned large_mask)
@@ -61,13 +62,12 @@ class BIGNUMFileTest {
 
   unsigned num_bignums() const { return num_bignums_; }
 
-  bssl::UniquePtr<BIGNUM> GetBIGNUM(const char *attribute) {
+  UniquePtr<BIGNUM> GetBIGNUM(const char *attribute) {
     return GetBIGNUMImpl(attribute, true /* resize */);
   }
 
   bool GetInt(int *out, const char *attribute) {
-    bssl::UniquePtr<BIGNUM> ret =
-        GetBIGNUMImpl(attribute, false /* don't resize */);
+    UniquePtr<BIGNUM> ret = GetBIGNUMImpl(attribute, false /* don't resize */);
     if (!ret) {
       return false;
     }
@@ -82,19 +82,20 @@ class BIGNUMFileTest {
   }
 
  private:
-  bssl::UniquePtr<BIGNUM> GetBIGNUMImpl(const char *attribute, bool resize) {
+  UniquePtr<BIGNUM> GetBIGNUMImpl(const char *attribute, bool resize) {
     std::string hex;
     if (!t_->GetAttribute(&hex, attribute)) {
       return nullptr;
     }
 
-    bssl::UniquePtr<BIGNUM> ret;
-    if (HexToBIGNUM(&ret, hex.c_str()) != static_cast<int>(hex.size())) {
+    UniquePtr<BIGNUM> ret;
+    if (HexToBIGNUMWithReturn(&ret, hex.c_str()) !=
+        static_cast<int>(hex.size())) {
       t_->PrintLine("Could not decode '%s'.", hex.c_str());
       return nullptr;
     }
     if (resize) {
-      // Test with an oversized |BIGNUM| if necessary.
+      // Test with an oversized `BIGNUM` if necessary.
       if ((large_mask_ & (1 << num_bignums_)) &&
           !bn_resize_words(ret.get(), ret->width * 2 + 1)) {
         return nullptr;
@@ -119,8 +120,8 @@ static testing::AssertionResult AssertBIGNUMSEqual(const char *operation_expr,
     return testing::AssertionSuccess();
   }
 
-  bssl::UniquePtr<char> expected_str(BN_bn2hex(expected));
-  bssl::UniquePtr<char> actual_str(BN_bn2hex(actual));
+  UniquePtr<char> expected_str(BN_bn2hex(expected));
+  UniquePtr<char> actual_str(BN_bn2hex(actual));
   if (!expected_str || !actual_str) {
     return testing::AssertionFailure() << "Error converting BIGNUMs to hex";
   }
@@ -136,14 +137,14 @@ static testing::AssertionResult AssertBIGNUMSEqual(const char *operation_expr,
   EXPECT_PRED_FORMAT3(AssertBIGNUMSEqual, op, a, b)
 
 static void TestSum(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> b = t->GetBIGNUM("B");
-  bssl::UniquePtr<BIGNUM> sum = t->GetBIGNUM("Sum");
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> b = t->GetBIGNUM("B");
+  UniquePtr<BIGNUM> sum = t->GetBIGNUM("Sum");
   ASSERT_TRUE(a);
   ASSERT_TRUE(b);
   ASSERT_TRUE(sum);
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(BN_add(ret.get(), a.get(), b.get()));
   EXPECT_BIGNUMS_EQUAL("A + B", sum.get(), ret.get());
@@ -154,9 +155,9 @@ static void TestSum(BIGNUMFileTest *t, BN_CTX *ctx) {
   ASSERT_TRUE(BN_sub(ret.get(), sum.get(), b.get()));
   EXPECT_BIGNUMS_EQUAL("Sum - B", a.get(), ret.get());
 
-  // Test that the functions work when |r| and |a| point to the same |BIGNUM|,
-  // or when |r| and |b| point to the same |BIGNUM|. TODO: Test the case where
-  // all of |r|, |a|, and |b| point to the same |BIGNUM|.
+  // Test that the functions work when `r` and `a` point to the same `BIGNUM`,
+  // or when `r` and `b` point to the same `BIGNUM`. TODO: Test the case where
+  // all of `r`, `a`, and `b` point to the same `BIGNUM`.
   ASSERT_TRUE(BN_copy(ret.get(), a.get()));
   ASSERT_TRUE(BN_add(ret.get(), ret.get(), b.get()));
   EXPECT_BIGNUMS_EQUAL("A + B (r is a)", sum.get(), ret.get());
@@ -181,7 +182,7 @@ static void TestSum(BIGNUMFileTest *t, BN_CTX *ctx) {
   ASSERT_TRUE(BN_sub(ret.get(), sum.get(), ret.get()));
   EXPECT_BIGNUMS_EQUAL("Sum - B (r is b)", a.get(), ret.get());
 
-  // Test |BN_uadd| and |BN_usub| with the prerequisites they are documented as
+  // Test `BN_uadd` and `BN_usub` with the prerequisites they are documented as
   // having. Note that these functions are frequently used when the
   // prerequisites don't hold. In those cases, they are supposed to work as if
   // the prerequisite hold, but we don't test that yet. TODO: test that.
@@ -195,9 +196,9 @@ static void TestSum(BIGNUMFileTest *t, BN_CTX *ctx) {
     ASSERT_TRUE(BN_usub(ret.get(), sum.get(), b.get()));
     EXPECT_BIGNUMS_EQUAL("Sum -u B", a.get(), ret.get());
 
-    // Test that the functions work when |r| and |a| point to the same |BIGNUM|,
-    // or when |r| and |b| point to the same |BIGNUM|. TODO: Test the case where
-    // all of |r|, |a|, and |b| point to the same |BIGNUM|.
+    // Test that the functions work when `r` and `a` point to the same `BIGNUM`,
+    // or when `r` and `b` point to the same `BIGNUM`. TODO: Test the case where
+    // all of `r`, `a`, and `b` point to the same `BIGNUM`.
     ASSERT_TRUE(BN_copy(ret.get(), a.get()));
     ASSERT_TRUE(BN_uadd(ret.get(), ret.get(), b.get()));
     EXPECT_BIGNUMS_EQUAL("A +u B (r is a)", sum.get(), ret.get());
@@ -222,6 +223,8 @@ static void TestSum(BIGNUMFileTest *t, BN_CTX *ctx) {
     ASSERT_TRUE(BN_usub(ret.get(), sum.get(), ret.get()));
     EXPECT_BIGNUMS_EQUAL("Sum -u B (r is b)", a.get(), ret.get());
 
+    // bn_abs_sub_consttime should overwrite the output sign.
+    BN_set_negative(ret.get(), 1);
     ASSERT_TRUE(bn_abs_sub_consttime(ret.get(), sum.get(), a.get(), ctx));
     EXPECT_BIGNUMS_EQUAL("|Sum - A|", b.get(), ret.get());
     ASSERT_TRUE(bn_abs_sub_consttime(ret.get(), a.get(), sum.get(), ctx));
@@ -233,7 +236,7 @@ static void TestSum(BIGNUMFileTest *t, BN_CTX *ctx) {
     EXPECT_BIGNUMS_EQUAL("|B - Sum|", a.get(), ret.get());
   }
 
-  // Test with |BN_add_word| and |BN_sub_word| if |b| is small enough.
+  // Test with `BN_add_word` and `BN_sub_word` if `b` is small enough.
   BN_ULONG b_word = BN_get_word(b.get());
   if (!BN_is_negative(b.get()) && b_word != (BN_ULONG)-1) {
     ASSERT_TRUE(BN_copy(ret.get(), a.get()));
@@ -247,16 +250,16 @@ static void TestSum(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestLShift1(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> lshift1 = t->GetBIGNUM("LShift1");
-  bssl::UniquePtr<BIGNUM> zero(BN_new());
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> lshift1 = t->GetBIGNUM("LShift1");
+  UniquePtr<BIGNUM> zero(BN_new());
   ASSERT_TRUE(a);
   ASSERT_TRUE(lshift1);
   ASSERT_TRUE(zero);
 
   BN_zero(zero.get());
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new()), two(BN_new()), remainder(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new()), two(BN_new()), remainder(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(two);
   ASSERT_TRUE(remainder);
@@ -306,14 +309,14 @@ static void TestLShift1(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestLShift(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> lshift = t->GetBIGNUM("LShift");
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> lshift = t->GetBIGNUM("LShift");
   ASSERT_TRUE(a);
   ASSERT_TRUE(lshift);
   int n = 0;
   ASSERT_TRUE(t->GetInt(&n, "N"));
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(BN_lshift(ret.get(), a.get(), n));
   EXPECT_BIGNUMS_EQUAL("A << N", lshift.get(), ret.get());
@@ -330,14 +333,14 @@ static void TestLShift(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestRShift(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> rshift = t->GetBIGNUM("RShift");
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> rshift = t->GetBIGNUM("RShift");
   ASSERT_TRUE(a);
   ASSERT_TRUE(rshift);
   int n = 0;
   ASSERT_TRUE(t->GetInt(&n, "N"));
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(BN_rshift(ret.get(), a.get(), n));
   EXPECT_BIGNUMS_EQUAL("A >> N", rshift.get(), ret.get());
@@ -356,16 +359,16 @@ static void TestRShift(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestSquare(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> square = t->GetBIGNUM("Square");
-  bssl::UniquePtr<BIGNUM> zero(BN_new());
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> square = t->GetBIGNUM("Square");
+  UniquePtr<BIGNUM> zero(BN_new());
   ASSERT_TRUE(a);
   ASSERT_TRUE(square);
   ASSERT_TRUE(zero);
 
   BN_zero(zero.get());
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new()), remainder(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new()), remainder(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(remainder);
   ASSERT_TRUE(BN_sqr(ret.get(), a.get(), ctx));
@@ -386,7 +389,7 @@ static void TestSquare(BIGNUMFileTest *t, BN_CTX *ctx) {
 
   // BN_sqrt should fail on non-squares and negative numbers.
   if (!BN_is_zero(square.get())) {
-    bssl::UniquePtr<BIGNUM> tmp(BN_new());
+    UniquePtr<BIGNUM> tmp(BN_new());
     ASSERT_TRUE(tmp);
     ASSERT_TRUE(BN_copy(tmp.get(), square.get()));
     BN_set_negative(tmp.get(), 1);
@@ -429,10 +432,10 @@ static void TestSquare(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestProduct(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> b = t->GetBIGNUM("B");
-  bssl::UniquePtr<BIGNUM> product = t->GetBIGNUM("Product");
-  bssl::UniquePtr<BIGNUM> zero(BN_new());
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> b = t->GetBIGNUM("B");
+  UniquePtr<BIGNUM> product = t->GetBIGNUM("Product");
+  UniquePtr<BIGNUM> zero(BN_new());
   ASSERT_TRUE(a);
   ASSERT_TRUE(b);
   ASSERT_TRUE(product);
@@ -440,7 +443,7 @@ static void TestProduct(BIGNUMFileTest *t, BN_CTX *ctx) {
 
   BN_zero(zero.get());
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new()), remainder(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new()), remainder(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(remainder);
   ASSERT_TRUE(BN_mul(ret.get(), a.get(), b.get(), ctx));
@@ -493,16 +496,16 @@ static void TestProduct(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestQuotient(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> b = t->GetBIGNUM("B");
-  bssl::UniquePtr<BIGNUM> quotient = t->GetBIGNUM("Quotient");
-  bssl::UniquePtr<BIGNUM> remainder = t->GetBIGNUM("Remainder");
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> b = t->GetBIGNUM("B");
+  UniquePtr<BIGNUM> quotient = t->GetBIGNUM("Quotient");
+  UniquePtr<BIGNUM> remainder = t->GetBIGNUM("Remainder");
   ASSERT_TRUE(a);
   ASSERT_TRUE(b);
   ASSERT_TRUE(quotient);
   ASSERT_TRUE(remainder);
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new()), ret2(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new()), ret2(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(ret2);
   ASSERT_TRUE(BN_div(ret.get(), ret2.get(), a.get(), b.get(), ctx));
@@ -532,7 +535,7 @@ static void TestQuotient(BIGNUMFileTest *t, BN_CTX *ctx) {
     BN_set_negative(quotient.get(), !BN_is_negative(quotient.get()));
   }
 
-  bssl::UniquePtr<BIGNUM> nnmod(BN_new());
+  UniquePtr<BIGNUM> nnmod(BN_new());
   ASSERT_TRUE(nnmod);
   ASSERT_TRUE(BN_copy(nnmod.get(), remainder.get()));
   if (BN_is_negative(nnmod.get())) {
@@ -548,7 +551,7 @@ static void TestQuotient(BIGNUMFileTest *t, BN_CTX *ctx) {
     BN_set_negative(remainder.get(), 0);
   }
 
-  // Test with |BN_mod_word| and |BN_div_word| if the divisor is small enough.
+  // Test with `BN_mod_word` and `BN_div_word` if the divisor is small enough.
   BN_ULONG b_word = BN_get_word(b.get());
   if (b_word != (BN_ULONG)-1) {
     BN_ULONG remainder_word = BN_get_word(remainder.get());
@@ -580,35 +583,34 @@ static void TestQuotient(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestModMul(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> b = t->GetBIGNUM("B");
-  bssl::UniquePtr<BIGNUM> m = t->GetBIGNUM("M");
-  bssl::UniquePtr<BIGNUM> mod_mul = t->GetBIGNUM("ModMul");
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> b = t->GetBIGNUM("B");
+  UniquePtr<BIGNUM> m = t->GetBIGNUM("M");
+  UniquePtr<BIGNUM> mod_mul = t->GetBIGNUM("ModMul");
   ASSERT_TRUE(a);
   ASSERT_TRUE(b);
   ASSERT_TRUE(m);
   ASSERT_TRUE(mod_mul);
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(BN_mod_mul(ret.get(), a.get(), b.get(), m.get(), ctx));
   EXPECT_BIGNUMS_EQUAL("A * B (mod M)", mod_mul.get(), ret.get());
 
   if (BN_is_odd(m.get())) {
-    // Reduce |a| and |b| and test the Montgomery version.
-    bssl::UniquePtr<BN_MONT_CTX> mont(
-        BN_MONT_CTX_new_for_modulus(m.get(), ctx));
+    // Reduce `a` and `b` and test the Montgomery version.
+    UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_for_modulus(m.get(), ctx));
     ASSERT_TRUE(mont);
 
     // Sanity-check that the constant-time version computes the same n0 and RR.
-    bssl::UniquePtr<BN_MONT_CTX> mont2(BN_MONT_CTX_new_consttime(m.get(), ctx));
+    UniquePtr<BN_MONT_CTX> mont2(BN_MONT_CTX_new_consttime(m.get(), ctx));
     ASSERT_TRUE(mont2);
     EXPECT_BIGNUMS_EQUAL("RR (mod M) (constant-time)", &mont->RR, &mont2->RR);
     for (size_t i = 0; i < std::size(mont->n0); i++) {
       EXPECT_EQ(mont->n0[i], mont2->n0[i]);
     }
 
-    bssl::UniquePtr<BIGNUM> a_tmp(BN_new()), b_tmp(BN_new());
+    UniquePtr<BIGNUM> a_tmp(BN_new()), b_tmp(BN_new());
     ASSERT_TRUE(a_tmp);
     ASSERT_TRUE(b_tmp);
     ASSERT_TRUE(BN_nnmod(a.get(), a.get(), m.get(), ctx));
@@ -633,16 +635,16 @@ static void TestModMul(BIGNUMFileTest *t, BN_CTX *ctx) {
       bn_to_montgomery_small(b_words.get(), b_words.get(), m_width, mont.get());
       bn_mod_mul_montgomery_small(r_words.get(), a_words.get(), b_words.get(),
                                   m_width, mont.get());
-      // Use the second half of |tmp| so ASan will catch out-of-bounds writes.
+      // Use the second half of `tmp` so ASan will catch out-of-bounds writes.
       bn_from_montgomery_small(r_words.get(), m_width, r_words.get(), m_width,
                                mont.get());
       ASSERT_TRUE(bn_set_words(ret.get(), r_words.get(), m_width));
       EXPECT_BIGNUMS_EQUAL("A * B (mod M) (Montgomery, words)", mod_mul.get(),
                            ret.get());
 
-      // |bn_from_montgomery_small| must additionally work on double-width
-      // inputs. Test this by running |bn_from_montgomery_small| on the result
-      // of a product. Note |a_words| * |b_words| has an extra factor of R^2, so
+      // `bn_from_montgomery_small` must additionally work on double-width
+      // inputs. Test this by running `bn_from_montgomery_small` on the result
+      // of a product. Note `a_words` * `b_words` has an extra factor of R^2, so
       // we must reduce twice.
       auto prod_words = std::make_unique<BN_ULONG[]>(m_width * 2);
       bn_mul_small(prod_words.get(), m_width * 2, a_words.get(), m_width,
@@ -660,30 +662,29 @@ static void TestModMul(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestModSquare(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> m = t->GetBIGNUM("M");
-  bssl::UniquePtr<BIGNUM> mod_square = t->GetBIGNUM("ModSquare");
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> m = t->GetBIGNUM("M");
+  UniquePtr<BIGNUM> mod_square = t->GetBIGNUM("ModSquare");
   ASSERT_TRUE(a);
   ASSERT_TRUE(m);
   ASSERT_TRUE(mod_square);
 
-  bssl::UniquePtr<BIGNUM> a_copy(BN_new());
-  bssl::UniquePtr<BIGNUM> ret(BN_new());
+  UniquePtr<BIGNUM> a_copy(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(a_copy);
   ASSERT_TRUE(BN_mod_mul(ret.get(), a.get(), a.get(), m.get(), ctx));
   EXPECT_BIGNUMS_EQUAL("A * A (mod M)", mod_square.get(), ret.get());
 
-  // Repeat the operation with |a_copy|.
+  // Repeat the operation with `a_copy`.
   ASSERT_TRUE(BN_copy(a_copy.get(), a.get()));
   ASSERT_TRUE(BN_mod_mul(ret.get(), a.get(), a_copy.get(), m.get(), ctx));
   EXPECT_BIGNUMS_EQUAL("A * A_copy (mod M)", mod_square.get(), ret.get());
 
   if (BN_is_odd(m.get())) {
-    // Reduce |a| and test the Montgomery version.
-    bssl::UniquePtr<BN_MONT_CTX> mont(
-        BN_MONT_CTX_new_for_modulus(m.get(), ctx));
-    bssl::UniquePtr<BIGNUM> a_tmp(BN_new());
+    // Reduce `a` and test the Montgomery version.
+    UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_for_modulus(m.get(), ctx));
+    UniquePtr<BIGNUM> a_tmp(BN_new());
     ASSERT_TRUE(mont);
     ASSERT_TRUE(a_tmp);
     ASSERT_TRUE(BN_nnmod(a.get(), a.get(), m.get(), ctx));
@@ -694,7 +695,7 @@ static void TestModSquare(BIGNUMFileTest *t, BN_CTX *ctx) {
     EXPECT_BIGNUMS_EQUAL("A * A (mod M) (Montgomery)", mod_square.get(),
                          ret.get());
 
-    // Repeat the operation with |a_copy|.
+    // Repeat the operation with `a_copy`.
     ASSERT_TRUE(BN_copy(a_copy.get(), a_tmp.get()));
     ASSERT_TRUE(BN_mod_mul_montgomery(ret.get(), a_tmp.get(), a_copy.get(),
                                       mont.get(), ctx));
@@ -718,12 +719,12 @@ static void TestModSquare(BIGNUMFileTest *t, BN_CTX *ctx) {
       EXPECT_BIGNUMS_EQUAL("A * A (mod M) (Montgomery, words)",
                            mod_square.get(), ret.get());
 
-      // Repeat the operation with |a_copy_words|.
+      // Repeat the operation with `a_copy_words`.
       OPENSSL_memcpy(a_copy_words.get(), a_words.get(),
                      m_width * sizeof(BN_ULONG));
       bn_mod_mul_montgomery_small(r_words.get(), a_words.get(),
                                   a_copy_words.get(), m_width, mont.get());
-      // Use the second half of |tmp| so ASan will catch out-of-bounds writes.
+      // Use the second half of `tmp` so ASan will catch out-of-bounds writes.
       bn_from_montgomery_small(r_words.get(), m_width, r_words.get(), m_width,
                                mont.get());
       ASSERT_TRUE(bn_set_words(ret.get(), r_words.get(), m_width));
@@ -735,16 +736,16 @@ static void TestModSquare(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestModExp(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> e = t->GetBIGNUM("E");
-  bssl::UniquePtr<BIGNUM> m = t->GetBIGNUM("M");
-  bssl::UniquePtr<BIGNUM> mod_exp = t->GetBIGNUM("ModExp");
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> e = t->GetBIGNUM("E");
+  UniquePtr<BIGNUM> m = t->GetBIGNUM("M");
+  UniquePtr<BIGNUM> mod_exp = t->GetBIGNUM("ModExp");
   ASSERT_TRUE(a);
   ASSERT_TRUE(e);
   ASSERT_TRUE(m);
   ASSERT_TRUE(mod_exp);
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(BN_mod_exp(ret.get(), a.get(), e.get(), m.get(), ctx));
   EXPECT_BIGNUMS_EQUAL("A ^ E (mod M)", mod_exp.get(), ret.get());
@@ -754,20 +755,19 @@ static void TestModExp(BIGNUMFileTest *t, BN_CTX *ctx) {
 
   if (BN_is_odd(m.get())) {
     ASSERT_TRUE(
-        BN_mod_exp_mont(ret.get(), a.get(), e.get(), m.get(), ctx, NULL));
+        BN_mod_exp_mont(ret.get(), a.get(), e.get(), m.get(), ctx, nullptr));
     EXPECT_BIGNUMS_EQUAL("A ^ E (mod M) (Montgomery)", mod_exp.get(),
                          ret.get());
 
     ASSERT_TRUE(BN_mod_exp_mont_consttime(ret.get(), a.get(), e.get(), m.get(),
-                                          ctx, NULL));
+                                          ctx, nullptr));
     EXPECT_BIGNUMS_EQUAL("A ^ E (mod M) (constant-time)", mod_exp.get(),
                          ret.get());
 
 #if !defined(BORINGSSL_SHARED_LIBRARY)
     size_t m_width = static_cast<size_t>(bn_minimal_width(m.get()));
     if (m_width <= BN_SMALL_MAX_WORDS) {
-      bssl::UniquePtr<BN_MONT_CTX> mont(
-          BN_MONT_CTX_new_for_modulus(m.get(), ctx));
+      UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_for_modulus(m.get(), ctx));
       ASSERT_TRUE(mont.get());
       auto r_words = std::make_unique<BN_ULONG[]>(m_width);
       auto a_words = std::make_unique<BN_ULONG[]>(m_width);
@@ -786,24 +786,24 @@ static void TestModExp(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestExp(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> e = t->GetBIGNUM("E");
-  bssl::UniquePtr<BIGNUM> exp = t->GetBIGNUM("Exp");
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> e = t->GetBIGNUM("E");
+  UniquePtr<BIGNUM> exp = t->GetBIGNUM("Exp");
   ASSERT_TRUE(a);
   ASSERT_TRUE(e);
   ASSERT_TRUE(exp);
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(BN_exp(ret.get(), a.get(), e.get(), ctx));
   EXPECT_BIGNUMS_EQUAL("A ^ E", exp.get(), ret.get());
 }
 
 static void TestModSqrt(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> p = t->GetBIGNUM("P");
-  bssl::UniquePtr<BIGNUM> mod_sqrt = t->GetBIGNUM("ModSqrt");
-  bssl::UniquePtr<BIGNUM> mod_sqrt2(BN_new());
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> p = t->GetBIGNUM("P");
+  UniquePtr<BIGNUM> mod_sqrt = t->GetBIGNUM("ModSqrt");
+  UniquePtr<BIGNUM> mod_sqrt2(BN_new());
   ASSERT_TRUE(a);
   ASSERT_TRUE(p);
   ASSERT_TRUE(mod_sqrt);
@@ -816,7 +816,7 @@ static void TestModSqrt(BIGNUMFileTest *t, BN_CTX *ctx) {
     BN_zero(mod_sqrt2.get());
   }
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(BN_mod_sqrt(ret.get(), a.get(), p.get(), ctx));
   if (BN_cmp(ret.get(), mod_sqrt2.get()) != 0) {
@@ -825,9 +825,9 @@ static void TestModSqrt(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestNotModSquare(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> not_mod_square = t->GetBIGNUM("NotModSquare");
-  bssl::UniquePtr<BIGNUM> p = t->GetBIGNUM("P");
-  bssl::UniquePtr<BIGNUM> ret(BN_new());
+  UniquePtr<BIGNUM> not_mod_square = t->GetBIGNUM("NotModSquare");
+  UniquePtr<BIGNUM> p = t->GetBIGNUM("P");
+  UniquePtr<BIGNUM> ret(BN_new());
   ASSERT_TRUE(not_mod_square);
   ASSERT_TRUE(p);
   ASSERT_TRUE(ret);
@@ -840,14 +840,14 @@ static void TestNotModSquare(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestModInv(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> m = t->GetBIGNUM("M");
-  bssl::UniquePtr<BIGNUM> mod_inv = t->GetBIGNUM("ModInv");
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> m = t->GetBIGNUM("M");
+  UniquePtr<BIGNUM> mod_inv = t->GetBIGNUM("ModInv");
   ASSERT_TRUE(a);
   ASSERT_TRUE(m);
   ASSERT_TRUE(mod_inv);
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(BN_mod_inverse(ret.get(), a.get(), m.get(), ctx));
   EXPECT_BIGNUMS_EQUAL("inv(A) (mod M)", mod_inv.get(), ret.get());
@@ -872,16 +872,16 @@ static void TestModInv(BIGNUMFileTest *t, BN_CTX *ctx) {
 }
 
 static void TestGCD(BIGNUMFileTest *t, BN_CTX *ctx) {
-  bssl::UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
-  bssl::UniquePtr<BIGNUM> b = t->GetBIGNUM("B");
-  bssl::UniquePtr<BIGNUM> gcd = t->GetBIGNUM("GCD");
-  bssl::UniquePtr<BIGNUM> lcm = t->GetBIGNUM("LCM");
+  UniquePtr<BIGNUM> a = t->GetBIGNUM("A");
+  UniquePtr<BIGNUM> b = t->GetBIGNUM("B");
+  UniquePtr<BIGNUM> gcd = t->GetBIGNUM("GCD");
+  UniquePtr<BIGNUM> lcm = t->GetBIGNUM("LCM");
   ASSERT_TRUE(a);
   ASSERT_TRUE(b);
   ASSERT_TRUE(gcd);
   ASSERT_TRUE(lcm);
 
-  bssl::UniquePtr<BIGNUM> ret(BN_new());
+  UniquePtr<BIGNUM> ret(BN_new());
   ASSERT_TRUE(ret);
   ASSERT_TRUE(BN_gcd(ret.get(), a.get(), b.get(), ctx));
   EXPECT_BIGNUMS_EQUAL("GCD(A, B)", gcd.get(), ret.get());
@@ -889,11 +889,13 @@ static void TestGCD(BIGNUMFileTest *t, BN_CTX *ctx) {
   if (!BN_is_one(gcd.get())) {
     EXPECT_FALSE(BN_mod_inverse(ret.get(), a.get(), b.get(), ctx))
         << "A^-1 (mod B) computed, but it does not exist";
+    EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_BN, std::nullopt}}));
     EXPECT_FALSE(BN_mod_inverse(ret.get(), b.get(), a.get(), ctx))
         << "B^-1 (mod A) computed, but it does not exist";
+    EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_BN, std::nullopt}}));
 
     if (!BN_is_zero(b.get())) {
-      bssl::UniquePtr<BIGNUM> a_reduced(BN_new());
+      UniquePtr<BIGNUM> a_reduced(BN_new());
       ASSERT_TRUE(a_reduced);
       ASSERT_TRUE(BN_nnmod(a_reduced.get(), a.get(), b.get(), ctx));
       int no_inverse;
@@ -901,10 +903,11 @@ static void TestGCD(BIGNUMFileTest *t, BN_CTX *ctx) {
                                             a_reduced.get(), b.get(), ctx))
           << "A^-1 (mod B) computed, but it does not exist";
       EXPECT_TRUE(no_inverse);
+      EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_BN, std::nullopt}}));
     }
 
     if (!BN_is_zero(a.get())) {
-      bssl::UniquePtr<BIGNUM> b_reduced(BN_new());
+      UniquePtr<BIGNUM> b_reduced(BN_new());
       ASSERT_TRUE(b_reduced);
       ASSERT_TRUE(BN_nnmod(b_reduced.get(), b.get(), a.get(), ctx));
       int no_inverse;
@@ -912,6 +915,7 @@ static void TestGCD(BIGNUMFileTest *t, BN_CTX *ctx) {
                                             b_reduced.get(), a.get(), ctx))
           << "B^-1 (mod A) computed, but it does not exist";
       EXPECT_TRUE(no_inverse);
+      EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_BN, std::nullopt}}));
     }
   }
 
@@ -936,7 +940,7 @@ class BNTest : public testing::Test {
   BN_CTX *ctx() { return ctx_.get(); }
 
  private:
-  bssl::UniquePtr<BN_CTX> ctx_;
+  UniquePtr<BN_CTX> ctx_;
 };
 
 static void RunBNFileTest(FileTest *t, BN_CTX *ctx) {
@@ -972,14 +976,14 @@ static void RunBNFileTest(FileTest *t, BN_CTX *ctx) {
     return;
   }
 
-  // Run the test with normalize-sized |BIGNUM|s.
+  // Run the test with normalize-sized `BIGNUM`s.
   BIGNUMFileTest bn_test(t, 0);
   BN_CTX_start(ctx);
   func(&bn_test, ctx);
   BN_CTX_end(ctx);
   unsigned num_bignums = bn_test.num_bignums();
 
-  // Repeat the test with all combinations of large and small |BIGNUM|s.
+  // Repeat the test with all combinations of large and small `BIGNUM`s.
   for (unsigned large_mask = 1; large_mask < (1u << num_bignums);
        large_mask++) {
     SCOPED_TRACE(large_mask);
@@ -1041,18 +1045,29 @@ TEST_F(BNTest, SumTestVectors) {
 }
 
 TEST_F(BNTest, BN2BinPadded) {
-  uint8_t zeros[256], out[256], reference[128];
+  auto test_decode = [&](Span<const uint8_t> in, const BIGNUM *expected) {
+    UniquePtr<BIGNUM> decoded(BN_new());
+    // `BN_lebin2bn` should correctly override an existing value.
+    ASSERT_TRUE(BN_rand(decoded.get(), /*bits=*/128, BN_RAND_TOP_ANY,
+                        BN_RAND_BOTTOM_ANY));
+    BN_set_negative(decoded.get(), 1);
+    ASSERT_TRUE(BN_bin2bn(in.data(), in.size(), decoded.get()));
+    EXPECT_BIGNUMS_EQUAL("BN_bin2bn round-trip", expected, decoded.get());
+  };
 
+  uint8_t zeros[256], out[256], reference[128];
   OPENSSL_memset(zeros, 0, sizeof(zeros));
 
   // Test edge case at 0.
-  bssl::UniquePtr<BIGNUM> n(BN_new());
+  UniquePtr<BIGNUM> n(BN_new());
   ASSERT_TRUE(n);
-  ASSERT_TRUE(BN_bn2bin_padded(NULL, 0, n.get()));
+  ASSERT_TRUE(BN_bn2bin_padded(nullptr, 0, n.get()));
+  test_decode({}, n.get());
 
   OPENSSL_memset(out, -1, sizeof(out));
   ASSERT_TRUE(BN_bn2bin_padded(out, sizeof(out), n.get()));
   EXPECT_EQ(Bytes(zeros), Bytes(out));
+  test_decode(out, n.get());
 
   // Test a random numbers at various byte lengths.
   for (size_t bytes = 128 - 7; bytes <= 128; bytes++) {
@@ -1062,7 +1077,7 @@ TEST_F(BNTest, BN2BinPadded) {
     ASSERT_EQ(bytes, BN_bn2bin(n.get(), reference));
 
     // Empty buffer should fail.
-    EXPECT_FALSE(BN_bn2bin_padded(NULL, 0, n.get()));
+    EXPECT_FALSE(BN_bn2bin_padded(nullptr, 0, n.get()));
 
     // One byte short should fail.
     EXPECT_FALSE(BN_bn2bin_padded(out, bytes - 1, n.get()));
@@ -1070,19 +1085,22 @@ TEST_F(BNTest, BN2BinPadded) {
     // Exactly right size should encode.
     ASSERT_TRUE(BN_bn2bin_padded(out, bytes, n.get()));
     EXPECT_EQ(Bytes(reference, bytes), Bytes(out, bytes));
+    test_decode(Span(out, bytes), n.get());
 
     // Pad up one byte extra.
     ASSERT_TRUE(BN_bn2bin_padded(out, bytes + 1, n.get()));
     EXPECT_EQ(0u, out[0]);
     EXPECT_EQ(Bytes(reference, bytes), Bytes(out + 1, bytes));
+    test_decode(Span(out, bytes + 1), n.get());
 
     // Pad up to 256.
     ASSERT_TRUE(BN_bn2bin_padded(out, sizeof(out), n.get()));
     EXPECT_EQ(Bytes(zeros, sizeof(out) - bytes),
               Bytes(out, sizeof(out) - bytes));
     EXPECT_EQ(Bytes(reference, bytes), Bytes(out + sizeof(out) - bytes, bytes));
+    test_decode(out, n.get());
 
-    // Repeat some tests with a non-minimal |BIGNUM|.
+    // Repeat some tests with a non-minimal `BIGNUM`.
     EXPECT_TRUE(bn_resize_words(n.get(), 32));
 
     EXPECT_FALSE(BN_bn2bin_padded(out, bytes - 1, n.get()));
@@ -1094,28 +1112,35 @@ TEST_F(BNTest, BN2BinPadded) {
 }
 
 TEST_F(BNTest, LittleEndian) {
-  bssl::UniquePtr<BIGNUM> x(BN_new());
-  bssl::UniquePtr<BIGNUM> y(BN_new());
-  ASSERT_TRUE(x);
-  ASSERT_TRUE(y);
+  auto test_decode = [&](Span<const uint8_t> in, const BIGNUM *expected) {
+    UniquePtr<BIGNUM> decoded(BN_new());
+    // `BN_lebin2bn` should correctly override an existing value.
+    ASSERT_TRUE(BN_rand(decoded.get(), /*bits=*/128, BN_RAND_TOP_ANY,
+                        BN_RAND_BOTTOM_ANY));
+    BN_set_negative(decoded.get(), 1);
+    ASSERT_TRUE(BN_lebin2bn(in.data(), in.size(), decoded.get()));
+    EXPECT_BIGNUMS_EQUAL("BN_lebin2bn round-trip", expected, decoded.get());
+  };
 
-  // Test edge case at 0. Fill |out| with garbage to ensure |BN_bn2le_padded|
+  UniquePtr<BIGNUM> x(BN_new());
+  ASSERT_TRUE(x);
+  test_decode({}, x.get());
+
+  // Test edge case at 0. Fill `out` with garbage to ensure `BN_bn2le_padded`
   // wrote the result.
   uint8_t out[256], zeros[256];
   OPENSSL_memset(out, -1, sizeof(out));
   OPENSSL_memset(zeros, 0, sizeof(zeros));
   ASSERT_TRUE(BN_bn2le_padded(out, sizeof(out), x.get()));
   EXPECT_EQ(Bytes(zeros), Bytes(out));
-
-  ASSERT_TRUE(BN_lebin2bn(out, sizeof(out), y.get()));
-  EXPECT_BIGNUMS_EQUAL("BN_lebin2bn round-trip", x.get(), y.get());
+  test_decode(out, x.get());
 
   // Test random numbers at various byte lengths.
   for (size_t bytes = 128 - 7; bytes <= 128; bytes++) {
     ASSERT_TRUE(
         BN_rand(x.get(), bytes * 8, BN_RAND_TOP_ONE, BN_RAND_BOTTOM_ANY));
 
-    // Fill |out| with garbage to ensure |BN_bn2le_padded| wrote the result.
+    // Fill `out` with garbage to ensure `BN_bn2le_padded` wrote the result.
     OPENSSL_memset(out, -1, sizeof(out));
     ASSERT_TRUE(BN_bn2le_padded(out, sizeof(out), x.get()));
 
@@ -1131,20 +1156,19 @@ TEST_F(BNTest, LittleEndian) {
     EXPECT_EQ(Bytes(out), Bytes(expected));
 
     // Make sure the decoding produces the same BIGNUM.
-    ASSERT_TRUE(BN_lebin2bn(out, bytes, y.get()));
-    EXPECT_BIGNUMS_EQUAL("BN_lebin2bn round-trip", x.get(), y.get());
+    test_decode(Span(out, bytes), x.get());
   }
 }
 
-static int DecimalToBIGNUM(bssl::UniquePtr<BIGNUM> *out, const char *in) {
-  BIGNUM *raw = NULL;
+static int DecimalToBIGNUM(UniquePtr<BIGNUM> *out, const char *in) {
+  BIGNUM *raw = nullptr;
   int ret = BN_dec2bn(&raw, in);
   out->reset(raw);
   return ret;
 }
 
 TEST_F(BNTest, Dec2BN) {
-  bssl::UniquePtr<BIGNUM> bn;
+  UniquePtr<BIGNUM> bn;
   int ret = DecimalToBIGNUM(&bn, "0");
   ASSERT_EQ(1, ret);
   EXPECT_TRUE(BN_is_zero(bn.get()));
@@ -1172,43 +1196,43 @@ TEST_F(BNTest, Dec2BN) {
 }
 
 TEST_F(BNTest, Hex2BN) {
-  bssl::UniquePtr<BIGNUM> bn;
-  int ret = HexToBIGNUM(&bn, "0");
+  UniquePtr<BIGNUM> bn;
+  int ret = HexToBIGNUMWithReturn(&bn, "0");
   ASSERT_EQ(1, ret);
   EXPECT_TRUE(BN_is_zero(bn.get()));
   EXPECT_FALSE(BN_is_negative(bn.get()));
 
-  ret = HexToBIGNUM(&bn, "256");
+  ret = HexToBIGNUMWithReturn(&bn, "256");
   ASSERT_EQ(3, ret);
   EXPECT_TRUE(BN_is_word(bn.get(), 0x256));
   EXPECT_FALSE(BN_is_negative(bn.get()));
 
-  ret = HexToBIGNUM(&bn, "-42");
+  ret = HexToBIGNUMWithReturn(&bn, "-42");
   ASSERT_EQ(3, ret);
   EXPECT_TRUE(BN_abs_is_word(bn.get(), 0x42));
   EXPECT_TRUE(BN_is_negative(bn.get()));
 
-  ret = HexToBIGNUM(&bn, "-0");
+  ret = HexToBIGNUMWithReturn(&bn, "-0");
   ASSERT_EQ(2, ret);
   EXPECT_TRUE(BN_is_zero(bn.get()));
   EXPECT_FALSE(BN_is_negative(bn.get()));
 
-  ret = HexToBIGNUM(&bn, "abctrailing garbage is ignored");
+  ret = HexToBIGNUMWithReturn(&bn, "abctrailing garbage is ignored");
   ASSERT_EQ(3, ret);
   EXPECT_TRUE(BN_is_word(bn.get(), 0xabc));
   EXPECT_FALSE(BN_is_negative(bn.get()));
 }
 
 static bssl::UniquePtr<BIGNUM> ASCIIToBIGNUM(const char *in) {
-  BIGNUM *raw = NULL;
+  BIGNUM *raw = nullptr;
   if (!BN_asc2bn(&raw, in)) {
     return nullptr;
   }
-  return bssl::UniquePtr<BIGNUM>(raw);
+  return UniquePtr<BIGNUM>(raw);
 }
 
 TEST_F(BNTest, ASC2BN) {
-  bssl::UniquePtr<BIGNUM> bn = ASCIIToBIGNUM("0");
+  UniquePtr<BIGNUM> bn = ASCIIToBIGNUM("0");
   ASSERT_TRUE(bn);
   EXPECT_TRUE(BN_is_zero(bn.get()));
   EXPECT_FALSE(BN_is_negative(bn.get()));
@@ -1269,24 +1293,24 @@ TEST_F(BNTest, MPI) {
 
   for (const auto &test : kMPITests) {
     SCOPED_TRACE(test.base10);
-    bssl::UniquePtr<BIGNUM> bn(ASCIIToBIGNUM(test.base10));
+    UniquePtr<BIGNUM> bn(ASCIIToBIGNUM(test.base10));
     ASSERT_TRUE(bn);
 
-    const size_t mpi_len = BN_bn2mpi(bn.get(), NULL);
+    const size_t mpi_len = BN_bn2mpi(bn.get(), nullptr);
     ASSERT_LE(mpi_len, sizeof(scratch)) << "MPI size is too large to test";
 
     const size_t mpi_len2 = BN_bn2mpi(bn.get(), scratch);
     EXPECT_EQ(mpi_len, mpi_len2);
     EXPECT_EQ(Bytes(test.mpi, test.mpi_len), Bytes(scratch, mpi_len));
 
-    bssl::UniquePtr<BIGNUM> bn2(BN_mpi2bn(scratch, mpi_len, NULL));
+    UniquePtr<BIGNUM> bn2(BN_mpi2bn(scratch, mpi_len, nullptr));
     ASSERT_TRUE(bn2) << "failed to parse";
     EXPECT_BIGNUMS_EQUAL("BN_mpi2bn", bn.get(), bn2.get());
   }
 }
 
 TEST_F(BNTest, Rand) {
-  bssl::UniquePtr<BIGNUM> bn(BN_new());
+  UniquePtr<BIGNUM> bn(BN_new());
   ASSERT_TRUE(bn);
 
   static const int kTop[] = {BN_RAND_TOP_ANY, BN_RAND_TOP_ONE, BN_RAND_TOP_TWO};
@@ -1333,7 +1357,7 @@ TEST_F(BNTest, Rand) {
         }
 
         if (bits == 0) {
-          // Nothing additional to check. The |BN_num_bits| check ensures we
+          // Nothing additional to check. The `BN_num_bits` check ensures we
           // always got zero.
         } else if (bits == 1) {
           // Bit zero is bit n-1.
@@ -1355,7 +1379,7 @@ TEST_F(BNTest, Rand) {
 }
 
 TEST_F(BNTest, RandRange) {
-  bssl::UniquePtr<BIGNUM> bn(BN_new()), six(BN_new());
+  UniquePtr<BIGNUM> bn(BN_new()), six(BN_new());
   ASSERT_TRUE(bn);
   ASSERT_TRUE(six);
   ASSERT_TRUE(BN_set_word(six.get(), 6));
@@ -1423,11 +1447,11 @@ static const ASN1InvalidTest kASN1InvalidTests[] = {
 TEST_F(BNTest, ASN1) {
   for (const ASN1Test &test : kASN1Tests) {
     SCOPED_TRACE(test.value_ascii);
-    bssl::UniquePtr<BIGNUM> bn = ASCIIToBIGNUM(test.value_ascii);
+    UniquePtr<BIGNUM> bn = ASCIIToBIGNUM(test.value_ascii);
     ASSERT_TRUE(bn);
 
     // Test that the input is correctly parsed.
-    bssl::UniquePtr<BIGNUM> bn2(BN_new());
+    UniquePtr<BIGNUM> bn2(BN_new());
     ASSERT_TRUE(bn2);
     CBS cbs;
     CBS_init(&cbs, reinterpret_cast<const uint8_t *>(test.der), test.der_len);
@@ -1436,19 +1460,19 @@ TEST_F(BNTest, ASN1) {
     EXPECT_BIGNUMS_EQUAL("decode ASN.1", bn.get(), bn2.get());
 
     // Test the value serializes correctly.
-    bssl::ScopedCBB cbb;
+    ScopedCBB cbb;
     uint8_t *der;
     size_t der_len;
     ASSERT_TRUE(CBB_init(cbb.get(), 0));
     ASSERT_TRUE(BN_marshal_asn1(cbb.get(), bn.get()));
     ASSERT_TRUE(CBB_finish(cbb.get(), &der, &der_len));
-    bssl::UniquePtr<uint8_t> delete_der(der);
+    UniquePtr<uint8_t> delete_der(der);
     EXPECT_EQ(Bytes(test.der, test.der_len), Bytes(der, der_len));
   }
 
   for (const ASN1InvalidTest &test : kASN1InvalidTests) {
     SCOPED_TRACE(Bytes(test.der, test.der_len));
-    bssl::UniquePtr<BIGNUM> bn(BN_new());
+    UniquePtr<BIGNUM> bn(BN_new());
     ASSERT_TRUE(bn);
     CBS cbs;
     CBS_init(&cbs, reinterpret_cast<const uint8_t *>(test.der), test.der_len);
@@ -1458,9 +1482,9 @@ TEST_F(BNTest, ASN1) {
   }
 
   // Serializing negative numbers is not supported.
-  bssl::UniquePtr<BIGNUM> bn = ASCIIToBIGNUM("-1");
+  UniquePtr<BIGNUM> bn = ASCIIToBIGNUM("-1");
   ASSERT_TRUE(bn);
-  bssl::ScopedCBB cbb;
+  ScopedCBB cbb;
   ASSERT_TRUE(CBB_init(cbb.get(), 0));
   EXPECT_FALSE(BN_marshal_asn1(cbb.get(), bn.get()))
       << "Serialized negative number.";
@@ -1468,9 +1492,9 @@ TEST_F(BNTest, ASN1) {
 }
 
 TEST_F(BNTest, NegativeZero) {
-  bssl::UniquePtr<BIGNUM> a(BN_new());
-  bssl::UniquePtr<BIGNUM> b(BN_new());
-  bssl::UniquePtr<BIGNUM> c(BN_new());
+  UniquePtr<BIGNUM> a(BN_new());
+  UniquePtr<BIGNUM> b(BN_new());
+  UniquePtr<BIGNUM> c(BN_new());
   ASSERT_TRUE(a);
   ASSERT_TRUE(b);
   ASSERT_TRUE(c);
@@ -1483,7 +1507,7 @@ TEST_F(BNTest, NegativeZero) {
   EXPECT_TRUE(BN_is_zero(c.get()));
   EXPECT_FALSE(BN_is_negative(c.get()));
 
-  bssl::UniquePtr<BIGNUM> numerator(BN_new()), denominator(BN_new());
+  UniquePtr<BIGNUM> numerator(BN_new()), denominator(BN_new());
   ASSERT_TRUE(numerator);
   ASSERT_TRUE(denominator);
 
@@ -1508,17 +1532,17 @@ TEST_F(BNTest, NegativeZero) {
   BN_set_negative(a.get(), 1);
   EXPECT_FALSE(BN_is_negative(a.get()));
 
-  // Test that forcibly creating a negative zero does not break |BN_bn2hex| or
-  // |BN_bn2dec|.
+  // Test that forcibly creating a negative zero does not break `BN_bn2hex` or
+  // `BN_bn2dec`.
   a->neg = 1;
-  bssl::UniquePtr<char> dec(BN_bn2dec(a.get()));
-  bssl::UniquePtr<char> hex(BN_bn2hex(a.get()));
+  UniquePtr<char> dec(BN_bn2dec(a.get()));
+  UniquePtr<char> hex(BN_bn2hex(a.get()));
   ASSERT_TRUE(dec);
   ASSERT_TRUE(hex);
   EXPECT_STREQ("-0", dec.get());
   EXPECT_STREQ("-0", hex.get());
 
-  // Test that |BN_rshift| and |BN_rshift1| will not produce a negative zero.
+  // Test that `BN_rshift` and `BN_rshift1` will not produce a negative zero.
   ASSERT_TRUE(BN_set_word(a.get(), 1));
   BN_set_negative(a.get(), 1);
 
@@ -1530,16 +1554,16 @@ TEST_F(BNTest, NegativeZero) {
   EXPECT_TRUE(BN_is_zero(c.get()));
   EXPECT_FALSE(BN_is_negative(c.get()));
 
-  // Test that |BN_div_word| will not produce a negative zero.
+  // Test that `BN_div_word` will not produce a negative zero.
   ASSERT_NE((BN_ULONG)-1, BN_div_word(a.get(), 2));
   EXPECT_TRUE(BN_is_zero(a.get()));
   EXPECT_FALSE(BN_is_negative(a.get()));
 }
 
 TEST_F(BNTest, BadModulus) {
-  bssl::UniquePtr<BIGNUM> a(BN_new());
-  bssl::UniquePtr<BIGNUM> b(BN_new());
-  bssl::UniquePtr<BIGNUM> zero(BN_new());
+  UniquePtr<BIGNUM> a(BN_new());
+  UniquePtr<BIGNUM> b(BN_new());
+  UniquePtr<BIGNUM> zero(BN_new());
   ASSERT_TRUE(a);
   ASSERT_TRUE(b);
   ASSERT_TRUE(zero);
@@ -1558,15 +1582,14 @@ TEST_F(BNTest, BadModulus) {
   ERR_clear_error();
 
   EXPECT_FALSE(BN_mod_exp_mont(a.get(), BN_value_one(), BN_value_one(),
-                               zero.get(), ctx(), NULL));
+                               zero.get(), ctx(), nullptr));
   ERR_clear_error();
 
   EXPECT_FALSE(BN_mod_exp_mont_consttime(
       a.get(), BN_value_one(), BN_value_one(), zero.get(), ctx(), nullptr));
   ERR_clear_error();
 
-  bssl::UniquePtr<BN_MONT_CTX> mont(
-      BN_MONT_CTX_new_for_modulus(zero.get(), ctx()));
+  UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_for_modulus(zero.get(), ctx()));
   EXPECT_FALSE(mont);
   ERR_clear_error();
 
@@ -1586,7 +1609,7 @@ TEST_F(BNTest, BadModulus) {
   ERR_clear_error();
 
   EXPECT_FALSE(BN_mod_exp_mont(a.get(), BN_value_one(), BN_value_one(), b.get(),
-                               ctx(), NULL));
+                               ctx(), nullptr));
   ERR_clear_error();
 
   EXPECT_FALSE(BN_mod_exp_mont_consttime(
@@ -1596,7 +1619,7 @@ TEST_F(BNTest, BadModulus) {
 
 // Test that a**0 mod 1 == 0.
 TEST_F(BNTest, ExpZeroModOne) {
-  bssl::UniquePtr<BIGNUM> zero(BN_new()), a(BN_new()), r(BN_new()),
+  UniquePtr<BIGNUM> zero(BN_new()), a(BN_new()), r(BN_new()),
       minus_one(BN_new());
   ASSERT_TRUE(zero);
   ASSERT_TRUE(a);
@@ -1620,7 +1643,7 @@ TEST_F(BNTest, ExpZeroModOne) {
                                    ctx(), nullptr));
   EXPECT_TRUE(BN_is_zero(r.get()));
 
-  // |BN_mod_exp_mont| and |BN_mod_exp_mont_consttime| require fully-reduced
+  // `BN_mod_exp_mont` and `BN_mod_exp_mont_consttime` require fully-reduced
   // inputs, so a**0 mod 1 is not a valid call. 0**0 mod 1 is valid, however.
   ASSERT_TRUE(BN_mod_exp_mont(r.get(), zero.get(), zero.get(), BN_value_one(),
                               ctx(), nullptr));
@@ -1634,17 +1657,17 @@ TEST_F(BNTest, ExpZeroModOne) {
 TEST_F(BNTest, SmallPrime) {
   static const unsigned kBits = 10;
 
-  bssl::UniquePtr<BIGNUM> r(BN_new());
+  UniquePtr<BIGNUM> r(BN_new());
   ASSERT_TRUE(r);
-  ASSERT_TRUE(BN_generate_prime_ex(r.get(), static_cast<int>(kBits), 0, NULL,
-                                   NULL, NULL));
+  ASSERT_TRUE(BN_generate_prime_ex(r.get(), static_cast<int>(kBits), 0, nullptr,
+                                   nullptr, nullptr));
   EXPECT_EQ(kBits, BN_num_bits(r.get()));
 }
 
 TEST_F(BNTest, CmpWord) {
   static const BN_ULONG kMaxWord = (BN_ULONG)-1;
 
-  bssl::UniquePtr<BIGNUM> r(BN_new());
+  UniquePtr<BIGNUM> r(BN_new());
   ASSERT_TRUE(r);
   ASSERT_TRUE(BN_set_word(r.get(), 0));
 
@@ -1698,11 +1721,11 @@ TEST_F(BNTest, BN2Dec) {
 
   for (const char *test : kBN2DecTests) {
     SCOPED_TRACE(test);
-    bssl::UniquePtr<BIGNUM> bn;
+    UniquePtr<BIGNUM> bn;
     int ret = DecimalToBIGNUM(&bn, test);
     ASSERT_NE(0, ret);
 
-    bssl::UniquePtr<char> dec(BN_bn2dec(bn.get()));
+    UniquePtr<char> dec(BN_bn2dec(bn.get()));
     ASSERT_TRUE(dec);
     EXPECT_STREQ(test, dec.get());
   }
@@ -1722,10 +1745,10 @@ TEST_F(BNTest, SetGetU64) {
 
   for (const auto &test : kU64Tests) {
     SCOPED_TRACE(test.hex);
-    bssl::UniquePtr<BIGNUM> bn(BN_new()), expected;
+    UniquePtr<BIGNUM> bn(BN_new()), expected;
     ASSERT_TRUE(bn);
     ASSERT_TRUE(BN_set_u64(bn.get(), test.value));
-    ASSERT_TRUE(HexToBIGNUM(&expected, test.hex));
+    ASSERT_TRUE(HexToBIGNUMWithReturn(&expected, test.hex));
     EXPECT_BIGNUMS_EQUAL("BN_set_u64", expected.get(), bn.get());
 
     uint64_t tmp;
@@ -1739,7 +1762,7 @@ TEST_F(BNTest, SetGetU64) {
   }
 
   // Test that BN_get_u64 fails on large numbers.
-  bssl::UniquePtr<BIGNUM> bn(BN_new());
+  UniquePtr<BIGNUM> bn(BN_new());
   ASSERT_TRUE(bn);
   ASSERT_TRUE(BN_lshift(bn.get(), BN_value_one(), 64));
 
@@ -1751,7 +1774,7 @@ TEST_F(BNTest, SetGetU64) {
 }
 
 TEST_F(BNTest, Pow2) {
-  bssl::UniquePtr<BIGNUM> power_of_two(BN_new()), random(BN_new()),
+  UniquePtr<BIGNUM> power_of_two(BN_new()), random(BN_new()),
       expected(BN_new()), actual(BN_new());
   ASSERT_TRUE(power_of_two);
   ASSERT_TRUE(random);
@@ -1774,24 +1797,24 @@ TEST_F(BNTest, Pow2) {
       ASSERT_TRUE(
           BN_rand(random.get(), len, BN_RAND_TOP_TWO, BN_RAND_BOTTOM_ANY));
 
-      // Test BN_is_pow2 on |r|.
+      // Test BN_is_pow2 on `r`.
       EXPECT_FALSE(BN_is_pow2(random.get()));
 
-      // Test BN_mod_pow2 on |r|.
+      // Test BN_mod_pow2 on `r`.
       ASSERT_TRUE(
           BN_mod(expected.get(), random.get(), power_of_two.get(), ctx()));
       ASSERT_TRUE(BN_mod_pow2(actual.get(), random.get(), e));
       EXPECT_BIGNUMS_EQUAL("random (mod power_of_two)", expected.get(),
                            actual.get());
 
-      // Test BN_nnmod_pow2 on |r|.
+      // Test BN_nnmod_pow2 on `r`.
       ASSERT_TRUE(
           BN_nnmod(expected.get(), random.get(), power_of_two.get(), ctx()));
       ASSERT_TRUE(BN_nnmod_pow2(actual.get(), random.get(), e));
       EXPECT_BIGNUMS_EQUAL("random (mod power_of_two), non-negative",
                            expected.get(), actual.get());
 
-      // Test BN_nnmod_pow2 on -|r|.
+      // Test BN_nnmod_pow2 on -`r`.
       BN_set_negative(random.get(), 1);
       ASSERT_TRUE(
           BN_nnmod(expected.get(), random.get(), power_of_two.get(), ctx()));
@@ -2012,12 +2035,12 @@ static const int kPrimes[] = {
 };
 
 TEST_F(BNTest, PrimeChecking) {
-  bssl::UniquePtr<BIGNUM> p(BN_new());
+  UniquePtr<BIGNUM> p(BN_new());
   ASSERT_TRUE(p);
   int is_probably_prime_1 = 0, is_probably_prime_2 = 0;
   enum bn_primality_result_t result_3;
 
-  const int max_prime = kPrimes[OPENSSL_ARRAY_SIZE(kPrimes) - 1];
+  const int max_prime = kPrimes[std::size(kPrimes) - 1];
   size_t next_prime_index = 0;
 
   for (int i = 0; i <= max_prime; i++) {
@@ -2301,7 +2324,7 @@ TEST_F(BNTest, PrimeChecking) {
   };
   for (const char *str : kPrimesHex) {
     SCOPED_TRACE(str);
-    EXPECT_NE(0, HexToBIGNUM(&p, str));
+    EXPECT_NE(0, HexToBIGNUMWithReturn(&p, str));
 
     ASSERT_TRUE(BN_primality_test(
         &is_probably_prime_1, p.get(), BN_prime_checks_for_generation, ctx(),
@@ -2319,7 +2342,7 @@ TEST_F(BNTest, PrimeChecking) {
     EXPECT_EQ(bn_probably_prime, result_3);
   }
 
-  // BN_primality_test works with null |BN_CTX|.
+  // BN_primality_test works with null `BN_CTX`.
   ASSERT_TRUE(BN_set_word(p.get(), 5));
   ASSERT_TRUE(
       BN_primality_test(&is_probably_prime_1, p.get(),
@@ -2333,15 +2356,14 @@ TEST_F(BNTest, MillerRabinIteration) {
       "crypto/fipsmodule/bn/test/miller_rabin_tests.txt", [&](FileTest *t) {
         BIGNUMFileTest bn_test(t, /*large_mask=*/0);
 
-        bssl::UniquePtr<BIGNUM> w = bn_test.GetBIGNUM("W");
+        UniquePtr<BIGNUM> w = bn_test.GetBIGNUM("W");
         ASSERT_TRUE(w);
-        bssl::UniquePtr<BIGNUM> b = bn_test.GetBIGNUM("B");
+        UniquePtr<BIGNUM> b = bn_test.GetBIGNUM("B");
         ASSERT_TRUE(b);
-        bssl::UniquePtr<BN_MONT_CTX> mont(
-            BN_MONT_CTX_new_consttime(w.get(), ctx()));
+        UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_consttime(w.get(), ctx()));
         ASSERT_TRUE(mont);
 
-        bssl::BN_CTXScope scope(ctx());
+        BN_CTXScope scope(ctx());
         BN_MILLER_RABIN miller_rabin;
         ASSERT_TRUE(bn_miller_rabin_init(&miller_rabin, mont.get(), ctx()));
         int possibly_prime;
@@ -2363,7 +2385,7 @@ TEST_F(BNTest, DISABLED_WycheproofPrimality) {
       [&](FileTest *t) {
         WycheproofResult result;
         ASSERT_TRUE(GetWycheproofResult(t, &result));
-        bssl::UniquePtr<BIGNUM> value = GetWycheproofBIGNUM(t, "value", false);
+        UniquePtr<BIGNUM> value = GetWycheproofBIGNUM(t, "value", false);
         ASSERT_TRUE(value);
 
         for (int checks :
@@ -2373,7 +2395,7 @@ TEST_F(BNTest, DISABLED_WycheproofPrimality) {
               std::find(result.flags.begin(), result.flags.end(),
                         "WorstCaseMillerRabin") != result.flags.end()) {
             // Skip the worst case Miller-Rabin cases.
-            // |BN_prime_checks_for_generation| relies on such values being rare
+            // `BN_prime_checks_for_generation` relies on such values being rare
             // when generating primes.
             continue;
           }
@@ -2483,68 +2505,63 @@ TEST_F(BNTest, LessThanWords) {
 
   // Determine where the single-word values stop.
   size_t one_word;
-  for (one_word = 0; one_word < OPENSSL_ARRAY_SIZE(kTestVectors); one_word++) {
-    int is_word = 1;
-    for (size_t i = 1; i < OPENSSL_ARRAY_SIZE(kTestVectors[one_word]); i++) {
-      if (kTestVectors[one_word][i] != 0) {
-        is_word = 0;
-        break;
-      }
-    }
-    if (!is_word) {
+  for (one_word = 0; one_word < std::size(kTestVectors); one_word++) {
+    if (std::any_of(std::begin(kTestVectors[one_word]) + 1,
+                    std::end(kTestVectors[one_word]),
+                    [](BN_ULONG w) { return w != 0; })) {
       break;
     }
   }
 
-  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(kTestVectors); i++) {
+  for (size_t i = 0; i < std::size(kTestVectors); i++) {
     SCOPED_TRACE(i);
-    for (size_t j = 0; j < OPENSSL_ARRAY_SIZE(kTestVectors); j++) {
+    for (size_t j = 0; j < std::size(kTestVectors); j++) {
       SCOPED_TRACE(j);
       EXPECT_EQ(i < j ? 1 : 0,
                 bn_less_than_words(kTestVectors[i], kTestVectors[j],
-                                   OPENSSL_ARRAY_SIZE(kTestVectors[i])));
+                                   std::size(kTestVectors[i])));
       for (size_t k = 0; k < one_word; k++) {
         SCOPED_TRACE(k);
         EXPECT_EQ(k <= i && i < j ? 1 : 0,
                   bn_in_range_words(kTestVectors[i], kTestVectors[k][0],
                                     kTestVectors[j],
-                                    OPENSSL_ARRAY_SIZE(kTestVectors[i])));
+                                    std::size(kTestVectors[i])));
       }
     }
   }
 
-  EXPECT_EQ(0, bn_less_than_words(NULL, NULL, 0));
-  EXPECT_EQ(0, bn_in_range_words(NULL, 0, NULL, 0));
+  EXPECT_EQ(0, bn_less_than_words(nullptr, nullptr, 0));
+  EXPECT_EQ(0, bn_in_range_words(nullptr, 0, nullptr, 0));
 }
 #endif  // !BORINGSSL_SHARED_LIBRARY
 
 TEST_F(BNTest, NonMinimal) {
-  bssl::UniquePtr<BIGNUM> ten(BN_new());
+  UniquePtr<BIGNUM> ten(BN_new());
   ASSERT_TRUE(ten);
   ASSERT_TRUE(BN_set_word(ten.get(), 10));
 
-  bssl::UniquePtr<BIGNUM> ten_copy(BN_dup(ten.get()));
+  UniquePtr<BIGNUM> ten_copy(BN_dup(ten.get()));
   ASSERT_TRUE(ten_copy);
 
-  bssl::UniquePtr<BIGNUM> eight(BN_new());
+  UniquePtr<BIGNUM> eight(BN_new());
   ASSERT_TRUE(eight);
   ASSERT_TRUE(BN_set_word(eight.get(), 8));
 
-  bssl::UniquePtr<BIGNUM> forty_two(BN_new());
+  UniquePtr<BIGNUM> forty_two(BN_new());
   ASSERT_TRUE(forty_two);
   ASSERT_TRUE(BN_set_word(forty_two.get(), 42));
 
-  bssl::UniquePtr<BIGNUM> two_exp_256(BN_new());
+  UniquePtr<BIGNUM> two_exp_256(BN_new());
   ASSERT_TRUE(two_exp_256);
   ASSERT_TRUE(BN_lshift(two_exp_256.get(), BN_value_one(), 256));
 
-  bssl::UniquePtr<BIGNUM> zero(BN_new());
+  UniquePtr<BIGNUM> zero(BN_new());
   ASSERT_TRUE(zero);
   BN_zero(zero.get());
 
   for (size_t width = 1; width < 10; width++) {
     SCOPED_TRACE(width);
-    // Make |ten| and |zero| wider.
+    // Make `ten` and `zero` wider.
     EXPECT_TRUE(bn_resize_words(ten.get(), width));
     EXPECT_EQ(static_cast<int>(width), ten->width);
     EXPECT_TRUE(bn_resize_words(zero.get(), width));
@@ -2578,19 +2595,19 @@ TEST_F(BNTest, NonMinimal) {
     EXPECT_EQ(1u, BN_num_bytes(ten.get()));
     EXPECT_FALSE(BN_is_pow2(ten.get()));
 
-    bssl::UniquePtr<char> hex(BN_bn2hex(ten.get()));
+    UniquePtr<char> hex(BN_bn2hex(ten.get()));
     EXPECT_STREQ("0a", hex.get());
     hex.reset(BN_bn2hex(zero.get()));
     EXPECT_STREQ("0", hex.get());
 
-    bssl::UniquePtr<BIO> bio(BIO_new(BIO_s_mem()));
+    UniquePtr<BIO> bio(BIO_new(BIO_s_mem()));
     ASSERT_TRUE(bio);
     ASSERT_TRUE(BN_print(bio.get(), ten.get()));
     const uint8_t *ptr;
     size_t len;
     ASSERT_TRUE(BIO_mem_contents(bio.get(), &ptr, &len));
-    // TODO(davidben): |BN_print| removes leading zeros within a byte, while
-    // |BN_bn2hex| rounds up to a byte, except for zero which it prints as
+    // TODO(davidben): `BN_print` removes leading zeros within a byte, while
+    // `BN_bn2hex` rounds up to a byte, except for zero which it prints as
     // "0". Fix this discrepancy?
     EXPECT_EQ(Bytes("a"), Bytes(ptr, len));
 
@@ -2601,7 +2618,7 @@ TEST_F(BNTest, NonMinimal) {
     EXPECT_EQ(Bytes("0"), Bytes(ptr, len));
   }
 
-  // |ten| may be resized back down to one word.
+  // `ten` may be resized back down to one word.
   EXPECT_TRUE(bn_resize_words(ten.get(), 1));
   EXPECT_EQ(1, ten->width);
 
@@ -2613,7 +2630,7 @@ TEST_F(BNTest, NonMinimal) {
   EXPECT_EQ(4, eight->width);
   EXPECT_TRUE(BN_is_pow2(eight.get()));
 
-  // |BN_MONT_CTX| is always stored minimally and uses the same R independent of
+  // `BN_MONT_CTX` is always stored minimally and uses the same R independent of
   // input width. Additionally, mont->RR is always the same width as mont->N,
   // even if it fits in a smaller value.
   static const uint8_t kP[] = {
@@ -2621,22 +2638,20 @@ TEST_F(BNTest, NonMinimal) {
       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01,
   };
-  bssl::UniquePtr<BIGNUM> p(BN_bin2bn(kP, sizeof(kP), nullptr));
+  UniquePtr<BIGNUM> p(BN_bin2bn(kP, sizeof(kP), nullptr));
   ASSERT_TRUE(p);
 
   // Test both the constant-time and variable-time functions at both minimal and
-  // non-minimal |p|.
-  bssl::UniquePtr<BN_MONT_CTX> mont(
-      BN_MONT_CTX_new_for_modulus(p.get(), ctx()));
+  // non-minimal `p`.
+  UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_for_modulus(p.get(), ctx()));
   ASSERT_TRUE(mont);
-  bssl::UniquePtr<BN_MONT_CTX> mont2(BN_MONT_CTX_new_consttime(p.get(), ctx()));
+  UniquePtr<BN_MONT_CTX> mont2(BN_MONT_CTX_new_consttime(p.get(), ctx()));
   ASSERT_TRUE(mont2);
 
   ASSERT_TRUE(bn_resize_words(p.get(), 32));
-  bssl::UniquePtr<BN_MONT_CTX> mont3(
-      BN_MONT_CTX_new_for_modulus(p.get(), ctx()));
+  UniquePtr<BN_MONT_CTX> mont3(BN_MONT_CTX_new_for_modulus(p.get(), ctx()));
   ASSERT_TRUE(mont3);
-  bssl::UniquePtr<BN_MONT_CTX> mont4(BN_MONT_CTX_new_consttime(p.get(), ctx()));
+  UniquePtr<BN_MONT_CTX> mont4(BN_MONT_CTX_new_consttime(p.get(), ctx()));
   ASSERT_TRUE(mont4);
 
   EXPECT_EQ(mont->N.width, mont2->N.width);
@@ -2652,7 +2667,7 @@ TEST_F(BNTest, NonMinimal) {
 }
 
 TEST_F(BNTest, CountLowZeroBits) {
-  bssl::UniquePtr<BIGNUM> bn(BN_new());
+  UniquePtr<BIGNUM> bn(BN_new());
   ASSERT_TRUE(bn);
 
   for (int i = 0; i < BN_BITS2; i++) {
@@ -2692,15 +2707,15 @@ TEST_F(BNTest, CountLowZeroBits) {
 }
 
 TEST_F(BNTest, WriteIntoNegative) {
-  bssl::UniquePtr<BIGNUM> r(BN_new());
+  UniquePtr<BIGNUM> r(BN_new());
   ASSERT_TRUE(r);
-  bssl::UniquePtr<BIGNUM> two(BN_new());
+  UniquePtr<BIGNUM> two(BN_new());
   ASSERT_TRUE(two);
   ASSERT_TRUE(BN_set_word(two.get(), 2));
-  bssl::UniquePtr<BIGNUM> three(BN_new());
+  UniquePtr<BIGNUM> three(BN_new());
   ASSERT_TRUE(three);
   ASSERT_TRUE(BN_set_word(three.get(), 3));
-  bssl::UniquePtr<BIGNUM> seven(BN_new());
+  UniquePtr<BIGNUM> seven(BN_new());
   ASSERT_TRUE(seven);
   ASSERT_TRUE(BN_set_word(seven.get(), 7));
 
@@ -2717,19 +2732,26 @@ TEST_F(BNTest, WriteIntoNegative) {
 }
 
 TEST_F(BNTest, ModSqrtInvalid) {
-  bssl::UniquePtr<BIGNUM> bn2140141 = ASCIIToBIGNUM("2140141");
-  ASSERT_TRUE(bn2140141);
-  bssl::UniquePtr<BIGNUM> bn2140142 = ASCIIToBIGNUM("2140142");
-  ASSERT_TRUE(bn2140142);
-  bssl::UniquePtr<BIGNUM> bn4588033 = ASCIIToBIGNUM("4588033");
+  // The modulus. `BN_mod_sqrt` is only defined for prime moduli, but this one
+  // is 1237 * 3709.
+  UniquePtr<BIGNUM> bn4588033 = ASCIIToBIGNUM("4588033");
   ASSERT_TRUE(bn4588033);
 
-  // |BN_mod_sqrt| may fail or return an arbitrary value, so we do not use
-  // |TestModSqrt| or |TestNotModSquare|. We only promise it will not crash or
-  // infinite loop. (For some invalid inputs, it may even be non-deterministic.)
-  // See CVE-2022-0778.
+  // Two numbers that, when trying to take their square root via
+  // Tonelli-Shanks, will lead to an endless loop.
+  UniquePtr<BIGNUM> bn2140141 = ASCIIToBIGNUM("2140141");
+  ASSERT_TRUE(bn2140141);
+  UniquePtr<BIGNUM> bn2140142 = ASCIIToBIGNUM("2140142");
+  ASSERT_TRUE(bn2140142);
+
+  // `BN_mod_sqrt` may fail or return an arbitrary value if fed a composite
+  // `p`, so we do not use `TestModSqrt` or `TestNotModSquare`. We only promise
+  // it will not crash or infinite loop. (For some invalid inputs, it may even
+  // be non-deterministic.) See CVE-2022-0778.
   BN_free(BN_mod_sqrt(nullptr, bn2140141.get(), bn4588033.get(), ctx()));
+  ERR_clear_error();
   BN_free(BN_mod_sqrt(nullptr, bn2140142.get(), bn4588033.get(), ctx()));
+  ERR_clear_error();
 }
 
 // Test that constructing Montgomery contexts for large bignums is not possible.
@@ -2737,20 +2759,22 @@ TEST_F(BNTest, ModSqrtInvalid) {
 // cap how large of moduli we accept.
 TEST_F(BNTest, MontgomeryLarge) {
   std::vector<uint8_t> large_bignum_bytes(16 * 1024, 0xff);
-  bssl::UniquePtr<BIGNUM> large_bignum(
+  UniquePtr<BIGNUM> large_bignum(
       BN_bin2bn(large_bignum_bytes.data(), large_bignum_bytes.size(), nullptr));
   ASSERT_TRUE(large_bignum);
-  bssl::UniquePtr<BN_MONT_CTX> mont(
+  UniquePtr<BN_MONT_CTX> mont(
       BN_MONT_CTX_new_for_modulus(large_bignum.get(), ctx()));
   EXPECT_FALSE(mont);
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_BN, BN_R_BIGNUM_TOO_LONG}}));
 
-  // The same limit should apply when |BN_mod_exp_mont_consttime| internally
-  // constructs a |BN_MONT_CTX|.
-  bssl::UniquePtr<BIGNUM> r(BN_new());
+  // The same limit should apply when `BN_mod_exp_mont_consttime` internally
+  // constructs a `BN_MONT_CTX`.
+  UniquePtr<BIGNUM> r(BN_new());
   ASSERT_TRUE(r);
   EXPECT_FALSE(BN_mod_exp_mont_consttime(r.get(), BN_value_one(),
                                          large_bignum.get(), large_bignum.get(),
                                          ctx(), nullptr));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_BN, BN_R_BIGNUM_TOO_LONG}}));
 }
 
 TEST_F(BNTest, FormatWord) {
@@ -2760,7 +2784,7 @@ TEST_F(BNTest, FormatWord) {
   snprintf(buf, sizeof(buf), BN_HEX_FMT1, BN_ULONG{1234});
   EXPECT_STREQ(buf, "4d2");
 
-  // |BN_HEX_FMT2| is zero-padded up to the maximum value.
+  // `BN_HEX_FMT2` is zero-padded up to the maximum value.
 #if defined(OPENSSL_64_BIT)
   snprintf(buf, sizeof(buf), BN_HEX_FMT2, BN_ULONG{1234});
   EXPECT_STREQ(buf, "00000000000004d2");
@@ -2814,12 +2838,11 @@ TEST_F(BNTest, BNMulMontABI) {
   for (size_t words : {4, 5, 6, 7, 8, 16, 32}) {
     SCOPED_TRACE(words);
 
-    bssl::UniquePtr<BIGNUM> m(BN_new());
+    UniquePtr<BIGNUM> m(BN_new());
     ASSERT_TRUE(m);
     ASSERT_TRUE(BN_set_bit(m.get(), 0));
     ASSERT_TRUE(BN_set_bit(m.get(), words * BN_BITS2 - 1));
-    bssl::UniquePtr<BN_MONT_CTX> mont(
-        BN_MONT_CTX_new_for_modulus(m.get(), ctx()));
+    UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_for_modulus(m.get(), ctx()));
     ASSERT_TRUE(mont);
 
     std::vector<BN_ULONG> r(words), a(words), b(words);
@@ -2873,12 +2896,11 @@ TEST_F(BNTest, BNMulMont5ABI) {
   for (size_t words : {4, 5, 6, 7, 8, 16, 32}) {
     SCOPED_TRACE(words);
 
-    bssl::UniquePtr<BIGNUM> m(BN_new());
+    UniquePtr<BIGNUM> m(BN_new());
     ASSERT_TRUE(m);
     ASSERT_TRUE(BN_set_bit(m.get(), 0));
     ASSERT_TRUE(BN_set_bit(m.get(), words * BN_BITS2 - 1));
-    bssl::UniquePtr<BN_MONT_CTX> mont(
-        BN_MONT_CTX_new_for_modulus(m.get(), ctx()));
+    UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_for_modulus(m.get(), ctx()));
     ASSERT_TRUE(mont);
 
     std::vector<BN_ULONG> r(words), a(words), b(words), table(words * 32);
@@ -2940,11 +2962,10 @@ TEST_F(BNTest, RSAZABI) {
   OPENSSL_memset(norm, 0x42, sizeof(norm));
   OPENSSL_memset(n_norm, 0x99, sizeof(n_norm));
 
-  bssl::UniquePtr<BIGNUM> n(BN_new());
+  UniquePtr<BIGNUM> n(BN_new());
   ASSERT_TRUE(n);
   ASSERT_TRUE(bn_set_words(n.get(), n_norm, 16));
-  bssl::UniquePtr<BN_MONT_CTX> mont(
-      BN_MONT_CTX_new_for_modulus(n.get(), nullptr));
+  UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_for_modulus(n.get(), nullptr));
   ASSERT_TRUE(mont);
   const BN_ULONG k = mont->n0[0];
 
@@ -2960,3 +2981,4 @@ TEST_F(BNTest, RSAZABI) {
 #endif  // RSAZ_ENABLED && SUPPORTS_ABI_TEST
 
 }  // namespace
+BSSL_NAMESPACE_END

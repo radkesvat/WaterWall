@@ -67,7 +67,7 @@ if ($flavour && $flavour ne "void") {
     ( $xlate="${dir}../../../perlasm/arm-xlate.pl" and -f $xlate) or
     die "can't locate arm-xlate.pl";
 
-    open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\"";
+    open OUT, "|-", $^X, $xlate, $flavour, $output;
     *STDOUT=*OUT;
 } else {
     open OUT,">$output";
@@ -279,7 +279,9 @@ $code .= <<___;
 .size	gcm_ghash_neon,.-gcm_ghash_neon
 
 .section	.rodata
+
 .align	4
+ghash_neon_masks:
 .Lmasks:
 .quad	0x0000ffffffffffff	// k48
 .quad	0x00000000ffffffff	// k32

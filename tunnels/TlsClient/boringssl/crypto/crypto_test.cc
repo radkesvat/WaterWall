@@ -29,6 +29,9 @@
 #include "internal.h"
 
 
+BSSL_NAMESPACE_BEGIN
+namespace {
+
 // Test that OPENSSL_VERSION_NUMBER and OPENSSL_VERSION_TEXT are consistent.
 // Node.js parses the version out of OPENSSL_VERSION_TEXT instead of using
 // OPENSSL_VERSION_NUMBER.
@@ -42,7 +45,7 @@ TEST(CryptoTest, Version) {
 }
 
 TEST(CryptoTest, Strndup) {
-  bssl::UniquePtr<char> str(OPENSSL_strndup(nullptr, 0));
+  UniquePtr<char> str(OPENSSL_strndup(nullptr, 0));
   EXPECT_TRUE(str);
   EXPECT_STREQ("", str.get());
 }
@@ -51,6 +54,74 @@ TEST(CryptoTest, ByteSwap) {
   EXPECT_EQ(0x04030201u, CRYPTO_bswap4(0x01020304u));
   EXPECT_EQ(UINT64_C(0x0807060504030201),
             CRYPTO_bswap8(UINT64_C(0x0102030405060708)));
+}
+
+TEST(CryptoTest, BitWidth) {
+  EXPECT_EQ(CRYPTO_bit_width(0), 0);
+  EXPECT_EQ(CRYPTO_bit_width(1), 1);
+  EXPECT_EQ(CRYPTO_bit_width(2), 2);
+  EXPECT_EQ(CRYPTO_bit_width(3), 2);
+  EXPECT_EQ(CRYPTO_bit_width(4), 3);
+  EXPECT_EQ(CRYPTO_bit_width(5), 3);
+  EXPECT_EQ(CRYPTO_bit_width(6), 3);
+  EXPECT_EQ(CRYPTO_bit_width(7), 3);
+  EXPECT_EQ(CRYPTO_bit_width(8), 4);
+  EXPECT_EQ(CRYPTO_bit_width(~uint64_t{0}), 64);
+  EXPECT_EQ(CRYPTO_bit_width(~uint64_t{0} - 1), 64);
+}
+
+TEST(CryptoTest, Popcount) {
+  EXPECT_EQ(CRYPTO_popcount(0), 0);
+  EXPECT_EQ(CRYPTO_popcount(1), 1);
+  EXPECT_EQ(CRYPTO_popcount(2), 1);
+  EXPECT_EQ(CRYPTO_popcount(3), 2);
+  EXPECT_EQ(CRYPTO_popcount(4), 1);
+  EXPECT_EQ(CRYPTO_popcount(5), 2);
+  EXPECT_EQ(CRYPTO_popcount(6), 2);
+  EXPECT_EQ(CRYPTO_popcount(7), 3);
+  EXPECT_EQ(CRYPTO_popcount(8), 1);
+  EXPECT_EQ(CRYPTO_popcount(~uint64_t{0}), 64);
+  EXPECT_EQ(CRYPTO_popcount(~uint64_t{0} - 1), 63);
+}
+
+TEST(CryptoTest, BitCeil) {
+  EXPECT_EQ(CRYPTO_bit_ceil(0), 1u);
+  EXPECT_EQ(CRYPTO_bit_ceil(1), 1u);
+  EXPECT_EQ(CRYPTO_bit_ceil(2), 2u);
+  EXPECT_EQ(CRYPTO_bit_ceil(3), 4u);
+  EXPECT_EQ(CRYPTO_bit_ceil(4), 4u);
+  EXPECT_EQ(CRYPTO_bit_ceil(5), 8u);
+  EXPECT_EQ(CRYPTO_bit_ceil(6), 8u);
+  EXPECT_EQ(CRYPTO_bit_ceil(7), 8u);
+  EXPECT_EQ(CRYPTO_bit_ceil(8), 8u);
+  EXPECT_EQ(CRYPTO_bit_ceil(9), 16u);
+}
+
+TEST(CryptoTest, BitFloor) {
+  EXPECT_EQ(CRYPTO_bit_floor(0), 0u);
+  EXPECT_EQ(CRYPTO_bit_floor(1), 1u);
+  EXPECT_EQ(CRYPTO_bit_floor(2), 2u);
+  EXPECT_EQ(CRYPTO_bit_floor(3), 2u);
+  EXPECT_EQ(CRYPTO_bit_floor(4), 4u);
+  EXPECT_EQ(CRYPTO_bit_floor(5), 4u);
+  EXPECT_EQ(CRYPTO_bit_floor(6), 4u);
+  EXPECT_EQ(CRYPTO_bit_floor(7), 4u);
+  EXPECT_EQ(CRYPTO_bit_floor(8), 8u);
+  EXPECT_EQ(CRYPTO_bit_floor(9), 8u);
+}
+
+TEST(CryptoTest, HasSingleBit) {
+  EXPECT_FALSE(CRYPTO_has_single_bit(0));
+  EXPECT_TRUE(CRYPTO_has_single_bit(1));
+  EXPECT_TRUE(CRYPTO_has_single_bit(2));
+  EXPECT_FALSE(CRYPTO_has_single_bit(3));
+  EXPECT_TRUE(CRYPTO_has_single_bit(4));
+  EXPECT_FALSE(CRYPTO_has_single_bit(5));
+  EXPECT_FALSE(CRYPTO_has_single_bit(6));
+  EXPECT_FALSE(CRYPTO_has_single_bit(7));
+  EXPECT_TRUE(CRYPTO_has_single_bit(8));
+  EXPECT_FALSE(CRYPTO_has_single_bit(~uint64_t{0}));
+  EXPECT_TRUE(CRYPTO_has_single_bit(uint64_t{1} << 63));
 }
 
 #if defined(BORINGSSL_FIPS_COUNTERS)
@@ -98,7 +169,7 @@ TEST(CryptoTest, FIPSCountersEVP) {
   CounterArray before, after;
   for (const auto &test : kTests) {
     read_all_counters(before);
-    bssl::ScopedEVP_CIPHER_CTX ctx;
+    ScopedEVP_CIPHER_CTX ctx;
     ASSERT_TRUE(EVP_EncryptInit_ex(ctx.get(), test.cipher(), /*engine=*/nullptr,
                                    key, iv));
     read_all_counters(after);
@@ -132,7 +203,7 @@ TEST(CryptoTest, FIPSCountersEVP_AEAD) {
     ASSERT_LE(test.key_len, sizeof(key));
 
     read_all_counters(before);
-    bssl::ScopedEVP_AEAD_CTX ctx;
+    ScopedEVP_AEAD_CTX ctx;
     ASSERT_TRUE(EVP_AEAD_CTX_init(ctx.get(), test.aead(), key, test.key_len,
                                   EVP_AEAD_DEFAULT_TAG_LENGTH,
                                   /*engine=*/nullptr));
@@ -172,6 +243,17 @@ TEST(CryptoTest, DeprecatedFunction) {
 }
 OPENSSL_END_ALLOW_DEPRECATED
 
+TEST(CryptoTest, Cleanup) {
+  bool cleaned_up = false;
+  {
+    Cleanup cleanup = [&] {
+      EXPECT_FALSE(cleaned_up);  // Cleanup should run exactly once.
+      cleaned_up = true;
+    };
+    EXPECT_FALSE(cleaned_up);  // Cleanup should not run yet.
+  }
+  EXPECT_TRUE(cleaned_up);  // Cleanup should have run.
+}
 
 #if (defined(OPENSSL_X86) || defined(OPENSSL_X86_64)) && \
     !defined(OPENSSL_NO_ASM) && !defined(BORINGSSL_SHARED_LIBRARY)
@@ -218,7 +300,7 @@ TEST(Crypto, CPUIDEnvVariable) {
 
       // Syntax errors are silently ignored.
       // TODO(davidben): We should also test something like " 1: 2", but that
-      // currently fails because |strtoull| skips leading spaces.
+      // currently fails because `strtoull` skips leading spaces.
       {{0x12345678, 0x12345678, 0x12345678, 0x12345678},
        "nope",
        {0x12345678, 0x12345678, 0x12345678, 0x12345678}},
@@ -245,3 +327,6 @@ TEST(Crypto, CPUIDEnvVariable) {
   }
 }
 #endif
+
+}  // namespace
+BSSL_NAMESPACE_END

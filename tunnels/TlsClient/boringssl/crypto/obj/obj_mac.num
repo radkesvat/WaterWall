@@ -953,3 +953,12 @@ sha512_256		962
 hkdf		963
 X25519Kyber768Draft00		964
 X25519MLKEM768		965
+ML_KEM_1024		966
+ML_DSA_44		967
+ML_DSA_65		968
+ML_DSA_87		969
+ML_KEM_768		970
+X_Wing		972
+alg_mtcProof_draft		976
+rdna_trustAnchorID_draft		977
+pe_mtcCertificationAuthority_draft		978

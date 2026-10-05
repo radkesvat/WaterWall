@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <functional>
+#include <iterator>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -29,6 +30,8 @@
 #include <openssl/x509.h>
 
 #include "../crypto/internal.h"
+
+using namespace bssl;
 
 static const uint8_t kCertificateDER[] = {
     0x30, 0x82, 0x02, 0xff, 0x30, 0x82, 0x01, 0xe7, 0xa0, 0x03, 0x02, 0x01,
@@ -215,12 +218,12 @@ struct GlobalState {
     assert(cert_.get() != nullptr);
 
     certs_.reset(sk_X509_new_null());
-    bssl::PushToStack(certs_.get(), bssl::UpRef(cert_));
+    PushToStack(certs_.get(), UpRef(cert_));
   }
 
-  bssl::UniquePtr<EVP_PKEY> pkey_;
-  bssl::UniquePtr<X509> cert_;
-  bssl::UniquePtr<STACK_OF(X509)> certs_;
+  UniquePtr<EVP_PKEY> pkey_;
+  UniquePtr<X509> cert_;
+  UniquePtr<STACK_OF(X509)> certs_;
 };
 
 static GlobalState g_state;
@@ -231,14 +234,14 @@ static bool GetString(std::string *out, CBS *cbs) {
     return false;
   }
 
-  *out = bssl::BytesAsStringView(str);
+  *out = BytesAsStringView(str);
   return true;
 }
 
 template <typename T>
 static bool GetVector(std::vector<T> *out, CBS *cbs) {
   static_assert(
-      std::is_standard_layout<T>::value && std::is_trivially_copyable<T>::value,
+      std::is_standard_layout_v<T> && std::is_trivially_copyable_v<T>,
       "GetVector may only be called on standard layout, trivially copyable "
       "types");
 
@@ -502,7 +505,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *buf, size_t len) {
         SSL_CTX_set1_sigalgs_list(ctx, sigalgs.c_str());
       },
       [](SSL_CTX *ctx, CBS *cbs) {
-        bssl::UniquePtr<SSL_ECH_KEYS> keys(SSL_ECH_KEYS_new());
+        UniquePtr<SSL_ECH_KEYS> keys(SSL_ECH_KEYS_new());
         if (keys == nullptr) {
           return;
         }
@@ -513,7 +516,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *buf, size_t len) {
             !CBS_get_u16_length_prefixed(cbs, &private_key)) {
           return;
         }
-        bssl::ScopedEVP_HPKE_KEY key;
+        ScopedEVP_HPKE_KEY key;
         if (!EVP_HPKE_KEY_init(key.get(), EVP_hpke_x25519_hkdf_sha256(),
                                CBS_data(&private_key), CBS_len(&private_key)) ||
             !SSL_ECH_KEYS_add(keys.get(), is_retry_config,
@@ -525,11 +528,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *buf, size_t len) {
       },
   };
 
-  bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
+  UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
 
   // If the number of functions exceeds this limit then the code needs to do
   // more than sample a single uint8_t to pick the function.
-  static_assert(OPENSSL_ARRAY_SIZE(kAPIs) < 256, "kAPIs too large");
+  static_assert(std::size(kAPIs) < 256, "kAPIs too large");
 
   CBS cbs;
   CBS_init(&cbs, buf, len);
@@ -540,10 +543,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *buf, size_t len) {
       break;
     }
 
-    kAPIs[index % OPENSSL_ARRAY_SIZE(kAPIs)](ctx.get(), &cbs);
+    kAPIs[index % std::size(kAPIs)](ctx.get(), &cbs);
   }
 
-  bssl::UniquePtr<SSL> ssl(SSL_new(ctx.get()));
+  UniquePtr<SSL> ssl(SSL_new(ctx.get()));
   ERR_clear_error();
 
   return 0;
