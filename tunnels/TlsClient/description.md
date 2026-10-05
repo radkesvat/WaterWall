@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TlsClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -412,8 +412,7 @@ The source code intentionally tries to make the handshake look Chrome-like.
 That includes:
 
 - a Chrome-like default ALPN list containing `h2` and `http/1.1`, unless `settings.alpns` overrides it
-- ALPS application settings for configured `h2` and `http/1.1` offers
-  `h2` is the fixed Chrome payload `0x026832`, not a serialized HTTP/2 `SETTINGS` frame
+- ALPS support for `h2` when offered through ALPN, with empty client application settings
 - OCSP stapling extension
 - signed certificate timestamp extension
 - certificate compression support with Brotli
@@ -517,14 +516,19 @@ Chrome supports Brotli certificate decompression, so this tunnel does too.
 
 ### ALPS handling
 
-ALPS needed special care because it is easy to feed the wrong bytes into the BoringSSL API.
+`TlsClient` registers ALPS only for `h2`, and only when `h2` is in `settings.alpns`. The registered client application
+settings are empty, matching Chrome's HTTP/2 registration. `http/1.1` and custom ALPN protocols have no ALPS registration;
+when `h2` is absent, the ClientHello has no ALPS extension. ALPS uses extension codepoint `17613` (`0x44cd`).
 
-- `SSL_add_application_settings` expects the raw per-protocol application settings value
-- for configured `h2`, the payload is the fixed Chrome value `0x026832`
-- for configured `http/1.1`, the payload is empty
-- values other than `h2` and `http/1.1` are offered through ALPN without a TlsClient-defined ALPS payload
-- this value must not be replaced with a serialized HTTP/2 `SETTINGS` frame
-- BoringSSL builds the final ALPS wire representation itself once the per-protocol values are configured
+`SSL_add_application_settings` takes the protocol name and its application settings as separate arguments. The bytes
+`02 68 32` encode the length-prefixed protocol name `h2`; they are not application settings. BoringSSL serializes the
+ClientHello ALPS protocol list as `00 03 02 68 32`. If the server negotiates ALPS for `h2`, the client sends an empty
+application-settings value in the encrypted handshake. Do not substitute a protocol-name encoding or an HTTP/2
+`SETTINGS` frame for that empty value.
+
+`TlsClient` does not parse, apply, or forward received server application settings to the preceding node. Its ALPS
+configuration shapes the TLS exchange visible to a passive observer; it does not implement Chrome's HTTP/2 response
+to server settings or make the connection indistinguishable from Chrome to the server.
 
 ### CA verification and session behavior
 

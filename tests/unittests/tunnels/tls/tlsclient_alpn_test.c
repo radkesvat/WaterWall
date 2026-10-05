@@ -1,7 +1,7 @@
 /*
  * Covers: Verifies TlsClient's ordered `alpns` encoding, Chrome-like absent-setting default, explicit
- * empty-list disable mode, malformed-list rejection, and an in-memory BoringSSL negotiation in which an
- * HTTP/1.1-only TlsClient context must negotiate `http/1.1`.
+ * empty-list disable mode, malformed-list rejection, serialized ALPS protocol offers, and in-memory
+ * BoringSSL negotiations with empty client ALPS settings and peers that decline ALPS.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: testDefaultOrder, testConfiguredOrder, testEmptyListDisablesAlpn, testInvalidListsAreRejected,
@@ -21,6 +21,8 @@
 
 #include "fixtures/worker_registry_fixture.h"
 #include "tls_client_hello.h"
+
+#include <openssl/bytestring.h>
 
 /*
  * Fake worker table for the stubbed GSTATE below. Without it the identity
@@ -320,6 +322,139 @@ static tunnel_t *createTlsClientFromSettings(node_t *node, cJSON *settings)
     return tlsclientTunnelCreate(node);
 }
 
+static cJSON *createTlsSettingsWithAlpns(const char *alpns)
+{
+    cJSON *settings = createTlsSettings("tls.integration.test", NULL);
+    if (alpns != NULL)
+    {
+        cJSON *list = cJSON_Parse(alpns);
+        require(list != NULL && cJSON_IsArray(list) && cJSON_AddItemToObject(settings, "alpns", list),
+                "failed to configure the ALPS fixture protocol list");
+    }
+    return settings;
+}
+
+static void requireClientHelloAlps(const sbuf_t *hello, const uint8_t *expected_alpn, size_t expected_alpn_len,
+                                   bool expect_alps)
+{
+    static const uint8_t    kH2Protocol[] = {2, 'h', '2'};
+    tls_client_hello_view_t parsed        = {0};
+    const uint8_t          *wire          = sbufGetRawPtr(hello);
+    require(tlsclienthelloParseRecord(wire, sbufGetLength(hello), &parsed) == kTlsClientHelloFound,
+            "ALPS fixture did not produce a complete ClientHello");
+
+    CBS extensions;
+    CBS_init(&extensions, wire + parsed.extensions_offset, parsed.extensions_length);
+    bool found_alpn = false;
+    bool found_alps = false;
+    while (CBS_len(&extensions) > 0)
+    {
+        uint16_t type = 0;
+        CBS      contents;
+        require(CBS_get_u16(&extensions, &type) && CBS_get_u16_length_prefixed(&extensions, &contents),
+                "ClientHello contains an invalid extension length");
+        require(type != 17513, "TlsClient advertised the old ALPS codepoint");
+        if (type != 16 && type != 17613)
+        {
+            continue;
+        }
+
+        CBS protocols;
+        require(CBS_get_u16_length_prefixed(&contents, &protocols) && CBS_len(&contents) == 0,
+                "ClientHello contains an invalid ALPN or ALPS protocol list");
+        if (type == 16)
+        {
+            require(! found_alpn && CBS_len(&protocols) == expected_alpn_len &&
+                        memoryCompare(CBS_data(&protocols), expected_alpn, expected_alpn_len) == 0,
+                    "ClientHello changed the configured ALPN offer");
+            found_alpn = true;
+        }
+        else
+        {
+            require(! found_alps && CBS_len(&protocols) == sizeof(kH2Protocol) &&
+                        memoryCompare(CBS_data(&protocols), kH2Protocol, sizeof(kH2Protocol)) == 0,
+                    "ClientHello ALPS must advertise only h2");
+            found_alps = true;
+        }
+    }
+    require(found_alpn == (expected_alpn_len != 0), "ClientHello ALPN presence differs from its configuration");
+    require(found_alps == expect_alps, "ClientHello ALPS must be present exactly when h2 is configured");
+}
+
+static void testClientHelloAlpsProtocols(void)
+{
+    static const struct
+    {
+        const char *name;
+        const char *alpns;
+        const char *wire;
+        bool        expect_alps;
+    } cases[] = {
+        {"alps_default",
+         NULL,
+         "\x02"
+         "h2"
+         "\x08"
+         "http/1.1",
+         true},
+        {"alps_h2",
+         "[\"h2\"]",
+         "\x02"
+         "h2",
+         true},
+        {"alps_http11",
+         "[\"http/1.1\"]",
+         "\x08"
+         "http/1.1",
+         false},
+        {"alps_empty", "[]", "", false},
+        {"alps_custom",
+         "[\"foo\"]",
+         "\x03"
+         "foo",
+         false},
+        {"alps_custom_h2",
+         "[\"foo\",\"h2\"]",
+         "\x03"
+         "foo"
+         "\x02"
+         "h2",
+         true},
+        {"alps_reordered",
+         "[\"http/1.1\",\"h2\",\"foo\"]",
+         "\x08"
+         "http/1.1"
+         "\x02"
+         "h2"
+         "\x03"
+         "foo",
+         true},
+    };
+    tlsclient_test_worker_env_t env;
+    workerEnvSetup(&env);
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        testCaseSet(cases[i].name);
+        cJSON    *settings = createTlsSettingsWithAlpns(cases[i].alpns);
+        node_t    node     = {0};
+        tunnel_t *tunnel   = createTlsClientFromSettings(&node, settings);
+        require(tunnel != NULL, "failed to create the ClientHello ALPS fixture");
+
+        tlsclient_tstate_t *ts    = tunnelGetState(tunnel);
+        sbuf_t             *hello = NULL;
+        require(tlsclientCreateClientHelloFromContext(
+                    ts->threadlocal_ssl_contexts[0], ts->sni, NULL, 0, ts->alpn_wire, ts->alpn_wire_len, &hello),
+                "failed to generate the ClientHello ALPS fixture");
+        requireClientHelloAlps(
+            hello, (const uint8_t *) cases[i].wire, stringLength(cases[i].wire), cases[i].expect_alps);
+        bufferpoolReuseBuffer(env.pool, hello);
+        tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
+        cJSON_Delete(settings);
+    }
+    workerEnvTeardown(&env);
+    testCaseSet("tlsclient_alpn_test");
+}
+
 static void testConfiguredSniLengthBounds(void)
 {
     const uint32_t saved_workers_count = GSTATE.workers_count;
@@ -612,28 +747,21 @@ static void testTypedClientHelloGeneration(void)
     workerEnvTeardown(&env);
 }
 
-static int selectHttp11(SSL *ssl, const uint8_t **out, uint8_t *out_len, const uint8_t *in, unsigned int in_len,
-                        void *arg)
+static int selectProtocol(SSL *ssl, const uint8_t **out, uint8_t *out_len, const uint8_t *in, unsigned int in_len,
+                          void *arg)
 {
-    static const uint8_t supported[] = {
-        8,
-        'h',
-        't',
-        't',
-        'p',
-        '/',
-        '1',
-        '.',
-        '1',
-    };
+    const char  *protocol     = arg;
+    const size_t protocol_len = stringLength(protocol);
+    uint8_t      supported[UINT8_MAX + 1U];
+    require(protocol_len > 0 && protocol_len <= UINT8_MAX, "invalid fixture ALPN selection");
+    supported[0] = (uint8_t) protocol_len;
+    memoryCopy(supported + 1, protocol, protocol_len);
 
     uint8_t *selected     = NULL;
     uint8_t  selected_len = 0;
 
     discard ssl;
-    discard arg;
-
-    if (SSL_select_next_proto(&selected, &selected_len, in, in_len, supported, (unsigned int) sizeof(supported)) !=
+    if (SSL_select_next_proto(&selected, &selected_len, in, in_len, supported, (unsigned int) protocol_len + 1U) !=
         OPENSSL_NPN_NEGOTIATED)
     {
         return SSL_TLSEXT_ERR_ALERT_FATAL;
@@ -709,6 +837,101 @@ static bool driveHandshake(SSL *client, SSL *server)
     }
 
     return false;
+}
+
+static void testTls13AlpsNegotiation(void)
+{
+    static const struct
+    {
+        const char *name;
+        const char *alpns;
+        const char *selected;
+        bool        server_alps;
+        bool        expect_alps;
+    } cases[] = {
+        {"alps_negotiated_empty_settings", NULL, "h2", true, true},
+        {"alps_declined_by_server", "[\"h2\"]", "h2", false, false},
+        {"alps_http11_selected", NULL, "http/1.1", true, false},
+    };
+    tlsclient_test_worker_env_t env;
+    workerEnvSetup(&env);
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        testCaseSet(cases[i].name);
+        cJSON    *settings = createTlsSettingsWithAlpns(cases[i].alpns);
+        node_t    node     = {0};
+        tunnel_t *tunnel   = createTlsClientFromSettings(&node, settings);
+        require(tunnel != NULL, "failed to create the ALPS negotiation TlsClient");
+        tlsclient_tstate_t *ts             = tunnelGetState(tunnel);
+        SSL_CTX            *client_context = ts->threadlocal_ssl_contexts[0];
+        SSL_CTX            *server_context = SSL_CTX_new(TLS_server_method());
+        require(server_context != NULL && SSL_CTX_set_min_proto_version(client_context, TLS1_3_VERSION) == 1 &&
+                    SSL_CTX_set_max_proto_version(client_context, TLS1_3_VERSION) == 1 &&
+                    SSL_CTX_set_min_proto_version(server_context, TLS1_3_VERSION) == 1 &&
+                    SSL_CTX_set_max_proto_version(server_context, TLS1_3_VERSION) == 1 &&
+                    SSL_CTX_use_certificate_chain_file(server_context, REALITY_TEST_CERT_FILE) == 1 &&
+                    SSL_CTX_use_PrivateKey_file(server_context, REALITY_TEST_KEY_FILE, SSL_FILETYPE_PEM) == 1 &&
+                    SSL_CTX_check_private_key(server_context) == 1,
+                "failed to configure the TLS 1.3 ALPS negotiation contexts");
+        SSL_CTX_set_alpn_select_cb(server_context, selectProtocol, (void *) cases[i].selected);
+
+        /* Use the same line-state and SSL configuration helpers as ordinary TlsClient Init. */
+        STACK_ALLOCATE_CACHE_ALIGNED(tlsclient_lstate_t, client_state);
+        memoryZero(client_state, sizeof(*client_state));
+        require(tlsclientLinestateInitialize(client_state, client_context, env.pool, ts->alpn_wire, ts->alpn_wire_len),
+                "failed to initialize the ALPS client line state");
+        require(tlsclientConfigureSslForConnect(
+                    client_state->ssl, client_state->rbio, client_state->wbio, ts->sni, NULL, 0),
+                "failed to configure the ALPS client handshake");
+        SSL *server      = SSL_new(server_context);
+        BIO *server_rbio = BIO_new(BIO_s_mem());
+        BIO *server_wbio = BIO_new(BIO_s_mem());
+        require(server != NULL && server_rbio != NULL && server_wbio != NULL,
+                "failed to allocate the ALPS negotiation peer");
+        BIO_set_mem_eof_return(server_rbio, -1);
+        BIO_set_mem_eof_return(server_wbio, -1);
+        SSL_set_bio(server, server_rbio, server_wbio);
+        SSL_set_accept_state(server);
+        SSL_set_alps_use_new_codepoint(server, 1);
+        if (cases[i].server_alps)
+        {
+            require(SSL_add_application_settings(
+                        server, (const uint8_t *) cases[i].selected, stringLength(cases[i].selected), NULL, 0) == 1,
+                    "failed to configure the ALPS negotiation peer settings");
+        }
+
+        if (! driveHandshake(client_state->ssl, server))
+        {
+            ERR_print_errors_fp(stderr);
+            require(false, "TLS 1.3 ALPS handshake failed");
+        }
+        require(SSL_version(client_state->ssl) == TLS1_3_VERSION && SSL_version(server) == TLS1_3_VERSION,
+                "ALPS fixture did not negotiate TLS 1.3");
+        const uint8_t *selected     = NULL;
+        unsigned int   selected_len = 0;
+        SSL_get0_alpn_selected(client_state->ssl, &selected, &selected_len);
+        require(selected_len == stringLength(cases[i].selected) &&
+                    memoryCompare(selected, cases[i].selected, selected_len) == 0,
+                "ALPS fixture selected the wrong application protocol");
+        require(SSL_has_application_settings(client_state->ssl) == cases[i].expect_alps &&
+                    SSL_has_application_settings(server) == cases[i].expect_alps,
+                "ALPS negotiation did not match the selected protocol and peer support");
+        if (cases[i].expect_alps)
+        {
+            const uint8_t *client_settings     = NULL;
+            size_t         client_settings_len = SIZE_MAX;
+            SSL_get0_peer_application_settings(server, &client_settings, &client_settings_len);
+            require(client_settings_len == 0, "TlsClient sent nonempty h2 ALPS application settings");
+        }
+
+        SSL_free(server);
+        tlsclientLinestateDestroy(client_state);
+        SSL_CTX_free(server_context);
+        tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
+        cJSON_Delete(settings);
+    }
+    workerEnvTeardown(&env);
+    testCaseSet("tlsclient_alpn_test");
 }
 
 static void testOrdinaryLargeClientHelloIsCompletelyDrained(void)
@@ -831,7 +1054,7 @@ static void testHttp11Negotiation(void)
                 SSL_CTX_check_private_key(server_context) == 1,
             "failed to configure ALPN negotiation contexts");
 
-    SSL_CTX_set_alpn_select_cb(server_context, selectHttp11, NULL);
+    SSL_CTX_set_alpn_select_cb(server_context, selectProtocol, (void *) "http/1.1");
 
     SSL *client      = SSL_new(client_context);
     SSL *server      = SSL_new(server_context);
@@ -883,6 +1106,8 @@ int main(void)
     testConfiguredOrder();
     testEmptyListDisablesAlpn();
     testInvalidListsAreRejected();
+    testClientHelloAlpsProtocols();
+    testTls13AlpsNegotiation();
     testTotalWireLengthBounds();
     testConfiguredSniLengthBounds();
     testConfiguredClientHelloFramingBounds();

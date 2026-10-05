@@ -4,14 +4,6 @@
 
 static bool tlsclientAddConfiguredApplicationSettings(SSL *ssl, const uint8_t *alpn_wire, size_t alpn_wire_len)
 {
-    // Chrome's h2 ALPS payload is a fixed three-byte value captured on the wire.
-    // Do not replace this with a serialized HTTP/2 SETTINGS frame.
-    static const uint8_t kChromeH2AlpsPayload[]  = {0x02, 0x68, 0x32};
-    static const void   *kChromeH1AlpsPayload    = NULL;
-    static const uint8_t kChromeH1AlpsPayloadLen = 0;
-
-    static_assert(sizeof(kChromeH2AlpsPayload) == 3, "Chrome h2 ALPS payload must stay 0x026832");
-
     size_t offset = 0;
     while (offset < alpn_wire_len)
     {
@@ -21,15 +13,9 @@ static bool tlsclientAddConfiguredApplicationSettings(SSL *ssl, const uint8_t *a
         const uint8_t *name = alpn_wire + offset;
         if (name_len == 2 && memoryCompare(name, "h2", 2) == 0)
         {
-            if (SSL_add_application_settings(ssl, name, name_len, kChromeH2AlpsPayload, sizeof(kChromeH2AlpsPayload)) !=
-                1)
-            {
-                return false;
-            }
-        }
-        else if (name_len == 8 && memoryCompare(name, "http/1.1", 8) == 0)
-        {
-            if (SSL_add_application_settings(ssl, name, name_len, kChromeH1AlpsPayload, kChromeH1AlpsPayloadLen) != 1)
+            // Chrome offers ALPS only for h2, with empty client settings. BoringSSL
+            // encodes the protocol name separately in the ClientHello ALPS list.
+            if (SSL_add_application_settings(ssl, name, name_len, NULL, 0) != 1)
             {
                 return false;
             }
