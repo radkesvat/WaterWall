@@ -7,6 +7,7 @@
       "settings": {
         "max-payload-size": 3800,
         "chunk-count": 9,
+        "split-payload-delay-ms": 5,
         "split-payload-burst": 1
       },
       "next": "outer-udp-connector"
