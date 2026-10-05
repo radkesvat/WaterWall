@@ -46,6 +46,9 @@ def run(binary, mode):
     with RunDirectory("waterwall-tls-fragment-") as directory:
         root = Path(directory)
         if mode == "reality":
+            # The case runner expects a tests/group/case layout when mirroring siblings.
+            case_dir = root / "cases" / "reality-fragment"
+            case_dir.mkdir(parents=True)
             config = json.loads((tests / "cases/reality_v2_roundtrip/config.json").read_text())
             for node in config["nodes"]:
                 if node["type"] == "RealityClient":
@@ -53,8 +56,8 @@ def run(binary, mode):
                 if node["type"] == "TlsServer":
                     for key, name in (("cert-file", "server.crt"), ("key-file", "server.key")):
                         node["settings"][key] = str(tests / "cases/tls_roundtrip" / name)
-            (root / "config.json").write_text(json.dumps(config))
-            subprocess.run(["bash", str(tests / "run_waterwall_case.sh"), binary, str(root), "30"], check=True)
+            (case_dir / "config.json").write_text(json.dumps(config))
+            subprocess.run(["bash", str(tests / "run_waterwall_case.sh"), binary, str(case_dir), "30"], check=True)
             return
 
         settings = {"sni": "tls.integration.test", "verify": False, "alpns": ["http/1.1"], "fragment": fragment}
