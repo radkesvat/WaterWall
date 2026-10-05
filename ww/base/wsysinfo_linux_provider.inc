@@ -567,8 +567,10 @@ static bool systemMemoryLinuxParseMountLine(const char *source, size_t length, s
     }
 
     *mount = (system_memory_linux_mount_t) {0};
-    if (! systemMemoryLinuxDecodeMountPath(root, mount->root, sizeof(mount->root)) ||
-        ! systemMemoryLinuxDecodeMountPath(mount_point, mount->mount_point, sizeof(mount->mount_point)))
+    /* Unrelated filesystems may expose non-path roots, such as nsfs net:[inode]. */
+    const bool cgroup_filesystem = strcmp(fstype, "cgroup") == 0 || strcmp(fstype, "cgroup2") == 0;
+    if (! systemMemoryLinuxDecodeMountPath(mount_point, mount->mount_point, sizeof(mount->mount_point)) ||
+        (cgroup_filesystem && ! systemMemoryLinuxDecodeMountPath(root, mount->root, sizeof(mount->root))))
     {
         return false;
     }
@@ -915,12 +917,12 @@ system_memory_provider_result_t systemMemoryLinuxResolveCgroup(const char *cgrou
     resolution->mount_device_major = selected.device_major;
     resolution->mount_device_minor = selected.device_minor;
     resolution->depth              = selected.depth;
-    strcpy(resolution->leaf_path, selected.leaf);
-    strcpy(resolution->boundary_path, selected.boundary);
     /* kernfs reserves inode 1 for the real cgroup hierarchy root; namespace and
      * bind subtree roots retain their non-root inode. Linux setup_root():
      * https://github.com/torvalds/linux/blob/v6.12/kernel/cgroup/cgroup.c#L1991 */
     resolution->hierarchy_root_visible = strcmp(selected.root, "/") == 0 && selected.boundary_identity.inode == 1U;
+    strcpy(resolution->leaf_path, selected.leaf);
+    strcpy(resolution->boundary_path, selected.boundary);
     return kSystemMemoryProviderOk;
 }
 
@@ -1228,13 +1230,13 @@ system_memory_linux_sample_result_t systemMemoryLinuxSampleResolvedCgroup(system
     {
         return kSystemMemoryLinuxSampleResolutionInvalid;
     }
-    if (! have_finite || ! have_diagnostic)
-    {
     if (! have_finite && resolution->hierarchy_root_visible)
     {
         snapshot->cgroup_limited = false;
         return kSystemMemoryLinuxSampleValid;
     }
+    if (! have_finite || ! have_diagnostic)
+    {
         return kSystemMemoryLinuxSampleUnavailable;
     }
 

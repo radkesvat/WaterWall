@@ -957,6 +957,42 @@ static void testDeterministicCandidateSelection(void)
             "distinct readable direct cgroup identities did not fail closed");
 }
 
+static void testNamespaceMountRoots(void)
+{
+    static const char nsfs_mount[] =
+        "875 29 0:4 net:[4026532299] /run/docker/netns/test rw shared:359 - nsfs nsfs rw\n";
+    static const char v2_mounts[] = "875 29 0:4 net:[4026532299] /run/docker/netns/test rw shared:359 - nsfs nsfs rw\n"
+                                    "34 25 0:26 / /cg rw - cgroup2 cgroup2 rw\n"
+                                    "937 771 0:4 mnt:[4026532246] /run/snapd/ns/test.mnt rw - nsfs nsfs rw\n";
+    static const char v1_mounts[] = "34 25 0:26 / /cg rw - cgroup cgroup rw,memory\n"
+                                    "875 29 0:4 net:[4026532299] /run/docker/netns/test rw shared:359 - nsfs nsfs rw\n";
+    linux_fixture_t   fixture     = {0};
+    fixtureAddDirectory(&fixture, "/cg", 0, 26, 1);
+    fixtureAddDirectory(&fixture, "/cg/leaf", 0, 26, 2);
+    addV2Level(&fixture, "/cg/leaf", "10\n", "100\n", 600);
+
+    system_memory_linux_resolution_t resolution;
+    system_memory_snapshot_t         snapshot = {0};
+    require(resolveFixture(&fixture, "0::/leaf\n", v2_mounts, &resolution) == kSystemMemoryProviderOk &&
+                sampleFixture(&fixture, &resolution, &snapshot) == kSystemMemoryLinuxSampleValid &&
+                snapshot.cgroup_limited && snapshot.cgroup_current_bytes == 10 && snapshot.cgroup_limit_bytes == 100,
+            "valid unrelated nsfs mount roots blocked v2 cgroup discovery");
+
+    addV1Level(&fixture, "/cg", "20\n", "9223372036854771712\n", "1\n", 610);
+    addV1Level(&fixture, "/cg/leaf", "10\n", "100\n", "1\n", 620);
+    require(resolveFixture(&fixture, "5:memory:/leaf\n", v1_mounts, &resolution) == kSystemMemoryProviderOk &&
+                sampleFixture(&fixture, &resolution, &snapshot) == kSystemMemoryLinuxSampleValid &&
+                snapshot.cgroup_limited && snapshot.cgroup_current_bytes == 10 && snapshot.cgroup_limit_bytes == 100,
+            "valid unrelated nsfs mount root blocked v1 cgroup discovery");
+
+    require(resolveFixture(&fixture, "0::/leaf\n", nsfs_mount, &resolution) == kSystemMemoryProviderUnavailable,
+            "namespace mount alone incorrectly established a cgroup hierarchy");
+    require(resolveFixture(
+                &fixture, "0::/leaf\n", "34 25 0:26 net:[4026532299] /cg rw - cgroup2 cgroup2 rw\n", &resolution) ==
+                kSystemMemoryProviderUnavailable,
+            "non-path cgroup root was accepted as unrelated namespace metadata");
+}
+
 static void testCanonicalPathsEscapesAndDepth(void)
 {
     system_memory_linux_resolution_t resolution;
@@ -1304,9 +1340,12 @@ int main(void)
     testKernelLongWidthDetection();
     testHierarchicalV2Sampling();
     testMissingPairsAndAllUnbounded();
+    testKnownV2RootWithoutFiniteLimits();
     testV1Hierarchy();
+    testKnownV1RootWithoutFiniteLimits();
     testV1KernelSentinelHierarchies();
     testDeterministicCandidateSelection();
+    testNamespaceMountRoots();
     testCanonicalPathsEscapesAndDepth();
     testIdentityReplacement();
     testBoundedReadClassification();
@@ -1315,5 +1354,3 @@ int main(void)
     puts("system_memory_linux_provider_test: all cases passed");
     return 0;
 }
-    testKnownV2RootWithoutFiniteLimits();
-    testKnownV1RootWithoutFiniteLimits();
