@@ -176,6 +176,9 @@ bool   tlsclientSslReadBoundaryIsClean(tlsclient_lstate_t *ls);
 void tlsclientPrintSSLState(const SSL *ssl);
 void tlsclientPrintSSLError(void);
 void tlsclientPrintSSLErrorAndAbort(void);
+bool tlsclientConfigureTrustAnchors(SSL_CTX *ctx);
+/* BoringSSL certificate callback; arg borrows an immutable STACK_OF(X509). */
+int  tlsclientVerifyCertificateWithIntermediates(X509_STORE_CTX *ctx, void *arg);
 bool tlsclientConfigureSslForConnect(SSL *ssl, BIO *rbio, BIO *wbio, const char *sni,
                                      const uint8_t *ech_grease_override_payload,
                                      size_t         ech_grease_override_payload_len);

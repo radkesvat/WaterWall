@@ -293,6 +293,13 @@ static SSL_CTX *setupSslContext(const uint8_t *alpn_wire, size_t alpn_wire_len, 
         return NULL;
     }
 
+    if (! tlsclientConfigureTrustAnchors(ssl_ctx))
+    {
+        LOGF("TlsClient: failed to configure Chrome trust anchor IDs and intermediate certificates");
+        SSL_CTX_free(ssl_ctx);
+        return NULL;
+    }
+
     // boringssl: Note this function's return value is backwards.
     if (SSL_CTX_set_alpn_protos(ssl_ctx, alpn_wire, alpn_wire_len))
     {

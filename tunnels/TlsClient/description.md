@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TlsClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -561,6 +561,35 @@ application-settings value in the encrypted handshake. Do not substitute a proto
 `TlsClient` does not parse, apply, or forward received server application settings to the preceding node. Its ALPS
 configuration shapes the TLS exchange visible to a passive observer; it does not implement Chrome's HTTP/2 response
 to server settings or make the connection indistinguishable from Chrome to the server.
+
+### Trust Anchor IDs
+
+`TlsClient` advertises the 28 Trust Anchor IDs captured from Chrome `154.0.8037.97`, using Chrome Root Store 39.
+BoringSSL encodes them in extension `0xca34`. The IDs identify 13 roots already present in WaterWall's built-in CA
+bundle and 15 intermediate certificates. Their source paths and certificate fingerprints are recorded in
+`tests/unittests/fixtures/tlsclient_chrome/trust_anchors.json`.
+
+With verification enabled, each SSL context owns a cache of those 15 intermediates. When the server reports a matching
+Trust Anchor ID, the verifier adds the cached certificates as untrusted chain-building candidates so the server can
+omit them from its certificate message. They do not become trusted roots. Normal certificate signatures, validity,
+hostname, purpose, path-length and name constraints still apply, and the chain must reach an existing trusted root.
+The ID advertisement also remains present with `verify: false`; that setting still disables server authentication.
+
+The ID list and intermediate cache are a paired, pinned profile. Update them together against their source mappings
+and the verifier's supported roots.
+
+### ClientHello Reference Comparison
+
+`waterwall.tlsclient_alpn_unit` compares the complete initial ClientHello with the checked-in capture of Google Chrome
+`154.0.8037.97` on Linux x86-64 with AES hardware. The reference case uses a fresh TCP connection, SNI
+`tls.integration.test`, default ALPN and groups, and ordinary ECH GREASE without custom overrides or fragmentation.
+
+The comparison covers record and handshake framing, versions, cipher order, compression, the complete extension set,
+and extension payloads, including Trust Anchor IDs. It normalizes random bytes, GREASE values and interior extension
+permutation, while preserving the leading empty and trailing one-byte GREASE extension positions and payloads.
+Key-share lengths and the permitted ECH GREASE framing and payload sizes are also checked. This is an initial-ClientHello
+comparison for that profile; it does not establish resumption, real ECH, later record sizes or timing, or application
+behavior matching Chrome.
 
 ### CA verification and session behavior
 

@@ -4,6 +4,8 @@
  * BoringSSL negotiations with empty client ALPS settings and peers that decline ALPS. Also verifies the
  * serialized supported groups and key shares with default, enabled, and disabled X25519MLKEM768, while
  * retaining the configured cipher ordering and matching Chrome's GREASE/ML-DSA signature offer.
+ * Fresh default ClientHellos are also compared completely to the stored AES-hardware Chrome capture,
+ * normalizing random fields, interior extension permutation, and the pinned ECH GREASE payload-size variants.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: testDefaultOrder, testConfiguredOrder, testEmptyListDisablesAlpn, testInvalidListsAreRejected,
@@ -602,7 +604,200 @@ static void requireClientHelloCipherAndSignatureProfile(const sbuf_t *hello)
     require(CBS_len(&signatures) == 0, "ClientHello advertised an unexpected additional signature algorithm");
 }
 
-static void requireOrdinaryClientHelloProfile(tunnel_t *tls, buffer_pool_t *pool, bool mlkem_enabled)
+typedef struct hello_extension_s
+{
+    uint16_t type;
+    CBS      contents;
+} hello_extension_t;
+
+typedef struct hello_semantics_s
+{
+    uint16_t          record_version;
+    uint16_t          legacy_version;
+    CBS               session_id;
+    CBS               ciphers;
+    CBS               compression;
+    hello_extension_t extensions[32];
+    size_t            extension_count;
+} hello_semantics_t;
+
+static uint16_t normalizeGrease(uint16_t value)
+{
+    return (value & 0x0f0fU) == 0x0a0aU && (value >> 8U) == (value & 0xffU) ? 0x0a0aU : value;
+}
+
+static hello_semantics_t parseHelloSemantics(const sbuf_t *hello)
+{
+    hello_semantics_t parsed = {0};
+    CBS               flight, record, body, random, extensions;
+    uint8_t           record_type = 0, handshake_type = 0;
+    CBS_init(&flight, sbufGetRawPtr(hello), sbufGetLength(hello));
+    require(CBS_get_u8(&flight, &record_type) && record_type == SSL3_RT_HANDSHAKE &&
+                CBS_get_u16(&flight, &parsed.record_version) && CBS_get_u16_length_prefixed(&flight, &record) &&
+                CBS_len(&flight) == 0 && CBS_get_u8(&record, &handshake_type) &&
+                handshake_type == SSL3_MT_CLIENT_HELLO && CBS_get_u24_length_prefixed(&record, &body) &&
+                CBS_len(&record) == 0,
+            "fresh ClientHello must occupy exactly one complete handshake record");
+    require(CBS_get_u16(&body, &parsed.legacy_version) && CBS_get_bytes(&body, &random, SSL3_RANDOM_SIZE) &&
+                CBS_get_u8_length_prefixed(&body, &parsed.session_id) &&
+                CBS_get_u16_length_prefixed(&body, &parsed.ciphers) &&
+                CBS_get_u8_length_prefixed(&body, &parsed.compression) &&
+                CBS_get_u16_length_prefixed(&body, &extensions) && CBS_len(&body) == 0,
+            "fresh ClientHello has inconsistent header or vector lengths");
+    while (CBS_len(&extensions) > 0)
+    {
+        require(parsed.extension_count < ARRAY_SIZE(parsed.extensions), "fresh ClientHello has too many extensions");
+        hello_extension_t *extension = &parsed.extensions[parsed.extension_count];
+        require(CBS_get_u16(&extensions, &extension->type) &&
+                    CBS_get_u16_length_prefixed(&extensions, &extension->contents),
+                "fresh ClientHello has a truncated extension");
+        for (size_t i = 0; i < parsed.extension_count; ++i)
+        {
+            require(parsed.extensions[i].type != extension->type, "fresh ClientHello has a duplicate extension");
+        }
+        ++parsed.extension_count;
+    }
+    return parsed;
+}
+
+static void requireEqualBytes(CBS actual, CBS expected, const char *message)
+{
+    require(CBS_len(&actual) == CBS_len(&expected) &&
+                (CBS_len(&actual) == 0 || memoryEqual(CBS_data(&actual), CBS_data(&expected), CBS_len(&actual))),
+            message);
+}
+
+static void requireEqualGreaseVector(CBS actual, CBS expected)
+{
+    require(CBS_len(&actual) == CBS_len(&expected), "Chrome ClientHello algorithm/version vector length differs");
+    while (CBS_len(&expected) > 0)
+    {
+        uint16_t actual_value = 0, expected_value = 0;
+        require(CBS_get_u16(&actual, &actual_value) && CBS_get_u16(&expected, &expected_value) &&
+                    normalizeGrease(actual_value) == normalizeGrease(expected_value),
+                "Chrome ClientHello algorithm/version vector content or order differs");
+    }
+}
+
+static void requireEqualEchGrease(CBS actual, CBS expected)
+{
+    uint8_t  actual_type = 0, expected_type = 0, config_id;
+    uint16_t actual_kdf = 0, expected_kdf = 0, actual_aead = 0, expected_aead = 0;
+    CBS      actual_enc, expected_enc, actual_payload, expected_payload;
+    require(CBS_get_u8(&actual, &actual_type) && CBS_get_u8(&expected, &expected_type) &&
+                CBS_get_u16(&actual, &actual_kdf) && CBS_get_u16(&expected, &expected_kdf) &&
+                CBS_get_u16(&actual, &actual_aead) && CBS_get_u16(&expected, &expected_aead) &&
+                CBS_get_u8(&actual, &config_id) && CBS_get_u8(&expected, &config_id) &&
+                CBS_get_u16_length_prefixed(&actual, &actual_enc) &&
+                CBS_get_u16_length_prefixed(&expected, &expected_enc) &&
+                CBS_get_u16_length_prefixed(&actual, &actual_payload) &&
+                CBS_get_u16_length_prefixed(&expected, &expected_payload) && CBS_len(&actual) == 0 &&
+                CBS_len(&expected) == 0,
+            "ECH GREASE has invalid framing");
+    require(actual_type == expected_type && actual_kdf == expected_kdf && actual_aead == expected_aead &&
+                CBS_len(&actual_enc) == CBS_len(&expected_enc),
+            "ECH GREASE type, cipher suite, or encapsulated-key length differs from the Chrome capture");
+    /* The pinned BoringSSL randomizes 128..224 bytes in 32-byte steps plus the 16-byte AEAD tag. */
+    const size_t actual_length = CBS_len(&actual_payload), expected_length = CBS_len(&expected_payload);
+    require(actual_length >= 144 && actual_length <= 240 && (actual_length - 144) % 32 == 0 && expected_length >= 144 &&
+                expected_length <= 240 && (expected_length - 144) % 32 == 0,
+            "ECH GREASE payload length is outside the pinned Chrome profile's four variants");
+}
+
+static void requireEqualHelloExtension(hello_extension_t actual, hello_extension_t expected)
+{
+    CBS actual_values, expected_values;
+    if (expected.type == 10 || expected.type == 13 || expected.type == 43)
+    {
+        require((expected.type == 43 ? CBS_get_u8_length_prefixed(&actual.contents, &actual_values) &&
+                                           CBS_get_u8_length_prefixed(&expected.contents, &expected_values)
+                                     : CBS_get_u16_length_prefixed(&actual.contents, &actual_values) &&
+                                           CBS_get_u16_length_prefixed(&expected.contents, &expected_values)) &&
+                    CBS_len(&actual.contents) == 0 && CBS_len(&expected.contents) == 0,
+                "Chrome ClientHello group/signature/version vector is malformed");
+        requireEqualGreaseVector(actual_values, expected_values);
+    }
+    else if (expected.type == 51)
+    {
+        require(CBS_get_u16_length_prefixed(&actual.contents, &actual_values) &&
+                    CBS_get_u16_length_prefixed(&expected.contents, &expected_values) &&
+                    CBS_len(&actual.contents) == 0 && CBS_len(&expected.contents) == 0,
+                "Chrome ClientHello key-share vector is malformed");
+        while (CBS_len(&expected_values) > 0)
+        {
+            uint16_t actual_group = 0, expected_group = 0;
+            CBS      actual_key, expected_key;
+            require(CBS_get_u16(&actual_values, &actual_group) && CBS_get_u16(&expected_values, &expected_group) &&
+                        normalizeGrease(actual_group) == normalizeGrease(expected_group) &&
+                        CBS_get_u16_length_prefixed(&actual_values, &actual_key) &&
+                        CBS_get_u16_length_prefixed(&expected_values, &expected_key) &&
+                        CBS_len(&actual_key) == CBS_len(&expected_key),
+                    "Chrome ClientHello key-share group, order, or key length differs");
+            if (normalizeGrease(expected_group) == 0x0a0aU)
+                requireEqualBytes(actual_key, expected_key, "Chrome ClientHello GREASE key-share content differs");
+        }
+        require(CBS_len(&actual_values) == 0, "Chrome ClientHello has an extra key share");
+    }
+    else if (expected.type == 0xfe0dU)
+    {
+        requireEqualEchGrease(actual.contents, expected.contents);
+    }
+    else
+    {
+        /* Includes SNI, ALPN/ALPS, TAI, OCSP, SCT, certificate compression, PSK modes and padding. */
+        requireEqualBytes(actual.contents, expected.contents, "Chrome ClientHello extension payload differs");
+    }
+}
+
+static void requireCompleteChromeClientHello(const sbuf_t *hello, const sbuf_t *reference)
+{
+    hello_semantics_t actual = parseHelloSemantics(hello), expected = parseHelloSemantics(reference);
+    require(actual.record_version == expected.record_version && actual.legacy_version == expected.legacy_version &&
+                CBS_len(&actual.session_id) == CBS_len(&expected.session_id),
+            "Chrome ClientHello record version, legacy version, or session-ID length differs");
+    requireEqualBytes(actual.compression, expected.compression, "Chrome ClientHello compression methods differ");
+    requireEqualGreaseVector(actual.ciphers, expected.ciphers);
+    require(actual.extension_count >= 2 && expected.extension_count >= 2,
+            "fresh Chrome ClientHello must retain its leading and trailing GREASE extensions");
+    for (size_t edge = 0; edge < 2; ++edge)
+    {
+        hello_extension_t actual_edge   = actual.extensions[edge == 0 ? 0 : actual.extension_count - 1];
+        hello_extension_t expected_edge = expected.extensions[edge == 0 ? 0 : expected.extension_count - 1];
+        require(normalizeGrease(actual_edge.type) == 0x0a0aU && normalizeGrease(expected_edge.type) == 0x0a0aU,
+                "fresh Chrome ClientHello GREASE extensions moved away from the first or last position");
+        requireEqualBytes(actual_edge.contents,
+                          expected_edge.contents,
+                          "fresh Chrome ClientHello boundary GREASE payload shape differs");
+    }
+    bool matched[ARRAY_SIZE(actual.extensions)] = {false};
+    for (size_t i = 0; i < expected.extension_count; ++i)
+    {
+        size_t match = actual.extension_count;
+        for (size_t j = 0; j < actual.extension_count; ++j)
+        {
+            if (! matched[j] &&
+                normalizeGrease(actual.extensions[j].type) == normalizeGrease(expected.extensions[i].type) &&
+                (normalizeGrease(expected.extensions[i].type) != 0x0a0aU ||
+                 CBS_len(&actual.extensions[j].contents) == CBS_len(&expected.extensions[i].contents)))
+            {
+                match = j;
+                break;
+            }
+        }
+        if (match == actual.extension_count)
+        {
+            fprintf(stderr, "Missing Chrome ClientHello extension: 0x%04x\n", expected.extensions[i].type);
+            require(false, "Chrome ClientHello extension set differs");
+        }
+        matched[match] = true;
+        requireEqualHelloExtension(actual.extensions[match], expected.extensions[i]);
+    }
+    require(actual.extension_count == expected.extension_count,
+            "ClientHello contains an extra extension absent from Chrome");
+}
+
+static void requireOrdinaryClientHelloProfile(tunnel_t *tls, buffer_pool_t *pool, bool mlkem_enabled,
+                                              const sbuf_t *reference)
 {
     tunnel_t *prev = tunnelCreate(NULL, 0, 0);
     tunnel_t *next = tunnelCreate(NULL, 0, 0);
@@ -625,6 +820,8 @@ static void requireOrdinaryClientHelloProfile(tunnel_t *tls, buffer_pool_t *pool
             "ordinary TlsClient Init did not emit its initial flight");
     requireClientHelloGroups(ordinary_init_flight, mlkem_enabled);
     requireClientHelloCipherAndSignatureProfile(ordinary_init_flight);
+    if (reference != NULL)
+        requireCompleteChromeClientHello(ordinary_init_flight, reference);
     bufferpoolReuseBuffer(pool, ordinary_init_flight);
     ordinary_init_flight = NULL;
     tlsclientLinestateDestroy(lineGetState(line, tls));
@@ -670,7 +867,7 @@ static void testClientHelloGroups(void)
         requireClientHelloGroups(hello, cases[i].mlkem_setting != 0);
         requireClientHelloCipherAndSignatureProfile(hello);
         bufferpoolReuseBuffer(env.pool, hello);
-        requireOrdinaryClientHelloProfile(tunnel, env.pool, cases[i].mlkem_setting != 0);
+        requireOrdinaryClientHelloProfile(tunnel, env.pool, cases[i].mlkem_setting != 0, NULL);
         tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
         cJSON_Delete(settings);
     }
@@ -694,11 +891,28 @@ static void testChromeReference(void)
     require(fclose(capture) == 0, "failed to close the captured Chrome ClientHello");
     sbufSetLength(hello, (uint32_t) length);
 
-    // Compare the scoped policies to real Chrome bytes. Other extensions remain
-    // available in the fixture for subsequent fingerprint work.
     requireClientHelloAlps(hello, kChromeAlpn, sizeof(kChromeAlpn), true);
     requireClientHelloGroups(hello, true);
     requireClientHelloCipherAndSignatureProfile(hello);
+
+    /* Match the captured fresh default profile; explicit custom settings keep their scoped tests above. */
+    cJSON *settings = createTlsSettings("tls.integration.test", NULL);
+    cJSON_DeleteItemFromObjectCaseSensitive(settings, "x25519mlkem768");
+    cJSON_DeleteItemFromObjectCaseSensitive(settings, "verify");
+    node_t    node   = {0};
+    tunnel_t *tunnel = createTlsClientFromSettings(&node, settings);
+    require(tunnel != NULL, "failed to create the default Chrome-profile TlsClient");
+    tlsclient_tstate_t *ts        = tunnelGetState(tunnel);
+    sbuf_t             *generated = NULL;
+    require(tlsclientCreateClientHelloFromContext(
+                ts->threadlocal_ssl_contexts[0], ts->sni, NULL, 0, ts->alpn_wire, ts->alpn_wire_len, &generated),
+            "failed to generate the default Chrome-profile ClientHello");
+    requireClientHelloGroups(generated, true);
+    requireCompleteChromeClientHello(generated, hello);
+    bufferpoolReuseBuffer(env.pool, generated);
+    requireOrdinaryClientHelloProfile(tunnel, env.pool, true, hello);
+    tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
+    cJSON_Delete(settings);
 
     bufferpoolReuseBuffer(env.pool, hello);
     workerEnvTeardown(&env);

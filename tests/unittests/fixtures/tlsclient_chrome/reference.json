@@ -133,14 +133,33 @@
   },
   "test_scope": {
     "test": "waterwall.tlsclient_alpn_unit",
-    "checked_against_waterwall": [
-      "cipher-suite order and GREASE presence",
-      "supported_groups and GREASE presence",
-      "initial key-share groups, order, lengths, and GREASE",
-      "signature-algorithm order, GREASE, and ML-DSA algorithms",
-      "ALPN protocol list",
-      "ALPS codepoint and protocol list"
+    "profile": "Fresh TCP TLS ClientHello for the captured Chrome 154.0.8037.97 Linux x86-64 AES-capable profile, with matching SNI, default ALPN/groups, verification enabled, and ordinary ECH GREASE.",
+    "waterwall_paths": [
+      "raw ClientHello generator",
+      "ordinary upstream Init"
     ],
-    "limitation": "Other captured fields are retained as a reference for later comparisons; this test does not assert full Chrome fingerprint equivalence."
+    "checked_against_waterwall": [
+      "single complete ClientHello record and handshake, including all vector lengths",
+      "record and legacy ClientHello versions, session-ID length, and compression methods",
+      "cipher-suite order and GREASE presence",
+      "complete extension set, duplicate rejection, and every extension payload",
+      "SNI and ALPN protocol list",
+      "ALPS codepoint and protocol list",
+      "supported versions and supported groups, including order and GREASE presence",
+      "initial key-share groups, order, lengths, and GREASE dummy-key bytes",
+      "signature-algorithm order, GREASE, and ML-DSA algorithms",
+      "exact ordered Trust Anchor ID payload",
+      "OCSP, SCT, certificate compression, PSK modes, session-ticket offer, renegotiation, and extended-master-secret payloads",
+      "ECH GREASE type, KDF/AEAD, encapsulated-key length, and allowed payload sizes"
+    ],
+    "normalizations": [
+      "ClientHello random and session-ID bytes; their encoded lengths remain checked",
+      "valid GREASE code points; list positions, multiplicity, and payloads remain checked",
+      "interior extension permutation; leading empty and trailing one-byte GREASE extension positions and payloads remain checked, and no missing or extra extension is accepted",
+      "fresh non-GREASE key-share public bytes; group order and key lengths remain checked",
+      "ECH GREASE config ID, encapsulated-key bytes, and payload bytes; framing and key length remain checked",
+      "ECH GREASE payload length may be 144, 176, 208, or 240 bytes as allowed by the pinned BoringSSL implementation"
+    ],
+    "limitation": "Covers the initial ClientHello semantics of this bounded profile, not randomness distributions, custom options, other browser/platform profiles, session resumption, real ECH, subsequent handshake or application records, traffic timing, or complete Chrome behavior."
   }
 }

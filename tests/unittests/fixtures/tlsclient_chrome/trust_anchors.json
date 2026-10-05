@@ -1,0 +1,275 @@
+{
+  "chromium_version": "154.0.8037.97",
+  "chromium_revision": "b510e9d7cd3a2fbd78d0ddc42234103206c5f78d",
+  "chrome_root_store_version": 39,
+  "upstream_base_url": "https://chromium.googlesource.com/chromium/src/+/refs/tags/154.0.8037.97/",
+  "mapping_source_path": "net/data/ssl/chrome_root_store/root_store.textproto",
+  "mapping_source_sha256": "fea50a202a27c3b9fde7a48ae1ae1f02773b5380f0212737be308892e201e2b2",
+  "reference_capture_sha256": "76d80872d82a80adf612ebfb56f6a94635205409b757b7e71cc1d58f61e629e7",
+  "wire_order": "lexicographic by encoded ID bytes, matching the captured ClientHello",
+  "encoded_id_list_bytes": 184,
+  "untrusted_intermediate_bundle_sha256": "9d47cd8e54826a89df9361f81b27f9918522e624e489dae0f97a1cac9dbac9be",
+  "certificates": [
+    {
+      "id_hex": "82df130201",
+      "id_components": "44947.2.1",
+      "subject": "CN=ISRG Root X1,O=Internet Security Research Group,C=US",
+      "certificate_sha256": "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "82df130206",
+      "id_components": "44947.2.6",
+      "subject": "CN=ISRG Root X2,O=Internet Security Research Group,C=US",
+      "certificate_sha256": "69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "82df13020d",
+      "id_components": "44947.2.13",
+      "subject": "CN=E7,O=Let's Encrypt,C=US",
+      "certificate_sha256": "54715420224c5b65beed018dc3940d7338c577e322d5488f633d8c6a8fed61b2",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470",
+      "not_after_utc": "2027-03-12T23:59:59Z"
+    },
+    {
+      "id_hex": "82df13020e",
+      "id_components": "44947.2.14",
+      "subject": "CN=E8,O=Let's Encrypt,C=US",
+      "certificate_sha256": "ac1274542267f17b525535b5563bf731febb182533b46a82dc869cb64eb528c0",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470",
+      "not_after_utc": "2027-03-12T23:59:59Z"
+    },
+    {
+      "id_hex": "82df13020f",
+      "id_components": "44947.2.15",
+      "subject": "CN=E9,O=Let's Encrypt,C=US",
+      "certificate_sha256": "4185df97806c2ba76f1d79823f112ffa639a49ccdc990908102067ab6412b886",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470",
+      "not_after_utc": "2027-03-12T23:59:59Z"
+    },
+    {
+      "id_hex": "82df130212",
+      "id_components": "44947.2.18",
+      "subject": "CN=R12,O=Let's Encrypt,C=US",
+      "certificate_sha256": "131fce7784016899a5a00203a9efc80f18ebbd75580717edc1553580930836ec",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6",
+      "not_after_utc": "2027-03-12T23:59:59Z"
+    },
+    {
+      "id_hex": "82df130213",
+      "id_components": "44947.2.19",
+      "subject": "CN=R13,O=Let's Encrypt,C=US",
+      "certificate_sha256": "d3b128216a843f8ef1321501f5df52a5df52939ee2c19297712cd3de4d419354",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6",
+      "not_after_utc": "2027-03-12T23:59:59Z"
+    },
+    {
+      "id_hex": "82df130214",
+      "id_components": "44947.2.20",
+      "subject": "CN=R14,O=Let's Encrypt,C=US",
+      "certificate_sha256": "24d45aa9b8d6053d281f3842c8cc0c6c1af7ccdfd42dd5c12f6a74fa9323f7a2",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6",
+      "not_after_utc": "2027-03-12T23:59:59Z"
+    },
+    {
+      "id_hex": "839a648c9b2d0107",
+      "id_components": "52580.200109.1.7",
+      "subject": "CN=QuoVadis Root CA 2 G3,O=QuoVadis Limited,C=BM",
+      "certificate_sha256": "8fe4fb0af93a4d0d67db0bebb23e37c71bf325dcbcdd240ea04daf58b47e1840",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "839a648c9b2d0108",
+      "id_components": "52580.200109.1.8",
+      "subject": "CN=QuoVadis Root CA 3 G3,O=QuoVadis Limited,C=BM",
+      "certificate_sha256": "88ef81de202eb018452e43f864725cea5fbd1fc2d9d205730709c5d8b8690f46",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "839a648c9b2d0109",
+      "id_components": "52580.200109.1.9",
+      "subject": "CN=DigiCert Global Root G2,OU=www.digicert.com,O=DigiCert Inc,C=US",
+      "certificate_sha256": "cb3ccbb76031e5e0138f8dd39a23f9de47ffc35e43c1144cea27d46a5ab1cb5f",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "839a648c9b2d010a",
+      "id_components": "52580.200109.1.10",
+      "subject": "CN=DigiCert Global Root G3,OU=www.digicert.com,O=DigiCert Inc,C=US",
+      "certificate_sha256": "31ad6648f8104138c738f39ea4320133393e3a18cc02296ef97c2ac9ef6731d0",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "839a648c9b2d010b",
+      "id_components": "52580.200109.1.11",
+      "subject": "CN=DigiCert Trusted Root G4,OU=www.digicert.com,O=DigiCert Inc,C=US",
+      "certificate_sha256": "552f7bdcf1a7af9e6ce672017f4f12abf77240c78e761ac203d1d9d20ac89988",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "839a648c9b2d010c",
+      "id_components": "52580.200109.1.12",
+      "subject": "CN=DigiCert Assured ID Root G2,OU=www.digicert.com,O=DigiCert Inc,C=US",
+      "certificate_sha256": "7d05ebb682339f8c9451ee094eebfefa7953a114edb2f44949452fab7d2fc185",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "839a648c9b2d010d",
+      "id_components": "52580.200109.1.13",
+      "subject": "CN=DigiCert Assured ID Root G3,OU=www.digicert.com,O=DigiCert Inc,C=US",
+      "certificate_sha256": "7e37cb8b4c47090cab36551ba6f45db840680fba166a952db100717f43053fc2",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "839a648c9b2d0112",
+      "id_components": "52580.200109.1.18",
+      "subject": "CN=DigiCert TLS RSA4096 Root G5,O=DigiCert\\, Inc.,C=US",
+      "certificate_sha256": "371a00dc0533b3721a7eeb40e8419e70799d2b0a0f2c1d80693165f7cec4ad75",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "839a648c9b2d0113",
+      "id_components": "52580.200109.1.19",
+      "subject": "CN=DigiCert TLS ECC P384 Root G5,O=DigiCert\\, Inc.,C=US",
+      "certificate_sha256": "018e13f0772532cf809bd1b17281867283fc48c6e13be9c69812854a490c1b05",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "d6790901",
+      "id_components": "11129.9.1",
+      "subject": "CN=GTS Root R1,O=Google Trust Services LLC,C=US",
+      "certificate_sha256": "d947432abde7b7fa90fc2e6b59101b1280e0e1c7e4e40fa3c6887fff57a7f4cf",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "d6790904",
+      "id_components": "11129.9.4",
+      "subject": "CN=GTS Root R4,O=Google Trust Services LLC,C=US",
+      "certificate_sha256": "349dfa4058c5e263123b398ae795573c4e1313c83fe68f93556cd5e8031b3c7d",
+      "source_path": "net/data/ssl/chrome_root_store/root_store.certs",
+      "role": "existing_root"
+    },
+    {
+      "id_hex": "d6790905",
+      "id_components": "11129.9.5",
+      "subject": "CN=WR1,O=Google Trust Services,C=US",
+      "certificate_sha256": "b10b6f00e609509e8700f6d34687a2bfce38ea05a8fdf1cdc40c3a2a0d0d0e45",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "d947432abde7b7fa90fc2e6b59101b1280e0e1c7e4e40fa3c6887fff57a7f4cf",
+      "not_after_utc": "2029-02-20T14:00:00Z"
+    },
+    {
+      "id_hex": "d6790906",
+      "id_components": "11129.9.6",
+      "subject": "CN=WR2,O=Google Trust Services,C=US",
+      "certificate_sha256": "e6fe22bf45e4f0d3b85c59e02c0f495418e1eb8d3210f788d48cd5e1cb547cd4",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "d947432abde7b7fa90fc2e6b59101b1280e0e1c7e4e40fa3c6887fff57a7f4cf",
+      "not_after_utc": "2029-02-20T14:00:00Z"
+    },
+    {
+      "id_hex": "d6790907",
+      "id_components": "11129.9.7",
+      "subject": "CN=WR3,O=Google Trust Services,C=US",
+      "certificate_sha256": "2fe357db13751ff9160e87354975b3407498f41c9bd16a48657866e6e5a9b4c7",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "d947432abde7b7fa90fc2e6b59101b1280e0e1c7e4e40fa3c6887fff57a7f4cf",
+      "not_after_utc": "2029-02-20T14:00:00Z"
+    },
+    {
+      "id_hex": "d6790908",
+      "id_components": "11129.9.8",
+      "subject": "CN=WR4,O=Google Trust Services,C=US",
+      "certificate_sha256": "dc9416c2f855126d6de977677538f2f967ff4998e90dfa435a17219be077fc06",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "d947432abde7b7fa90fc2e6b59101b1280e0e1c7e4e40fa3c6887fff57a7f4cf",
+      "not_after_utc": "2029-02-20T14:00:00Z"
+    },
+    {
+      "id_hex": "d679090a",
+      "id_components": "11129.9.10",
+      "subject": "CN=WE1,O=Google Trust Services,C=US",
+      "certificate_sha256": "1dfc1605fbad358d8bc844f76d15203fac9ca5c1a79fd4857ffaf2864fbebf96",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "349dfa4058c5e263123b398ae795573c4e1313c83fe68f93556cd5e8031b3c7d",
+      "not_after_utc": "2029-02-20T14:00:00Z"
+    },
+    {
+      "id_hex": "d679090b",
+      "id_components": "11129.9.11",
+      "subject": "CN=WE2,O=Google Trust Services,C=US",
+      "certificate_sha256": "9c3f2fd11c57d7c649ad5a0932c0f0d29756f6a0a1c74c43e1e89a62d64cd320",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "349dfa4058c5e263123b398ae795573c4e1313c83fe68f93556cd5e8031b3c7d",
+      "not_after_utc": "2029-02-20T14:00:00Z"
+    },
+    {
+      "id_hex": "d679090c",
+      "id_components": "11129.9.12",
+      "subject": "CN=WE3,O=Google Trust Services,C=US",
+      "certificate_sha256": "9f819a4c876e12dc84e6fe0e37c1a69b137094b453fa98449398f4b71f4d0092",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "349dfa4058c5e263123b398ae795573c4e1313c83fe68f93556cd5e8031b3c7d",
+      "not_after_utc": "2029-02-20T14:00:00Z"
+    },
+    {
+      "id_hex": "d679090d",
+      "id_components": "11129.9.13",
+      "subject": "CN=WE4,O=Google Trust Services,C=US",
+      "certificate_sha256": "d0c97e56c7b0ba812d944ad771f7799b5d4144a2327a4e416554f7ee2aa0aeae",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "349dfa4058c5e263123b398ae795573c4e1313c83fe68f93556cd5e8031b3c7d",
+      "not_after_utc": "2029-02-20T14:00:00Z"
+    },
+    {
+      "id_hex": "d679090f",
+      "id_components": "11129.9.15",
+      "subject": "CN=AE1,O=Google Trust Services,C=US",
+      "certificate_sha256": "812c212e9e45dc5005c7f47411183f5fb2ff1baee184d3354b2e93d78c280164",
+      "source_path": "net/data/ssl/chrome_root_store/additional.certs",
+      "role": "untrusted_intermediate",
+      "issuer_root_sha256": "349dfa4058c5e263123b398ae795573c4e1313c83fe68f93556cd5e8031b3c7d",
+      "not_after_utc": "2029-02-20T14:00:00Z"
+    }
+  ],
+  "verification_notes": [
+    "All 13 existing_root certificates match certificates already in ww/utils/cacert.c byte-for-byte.",
+    "All 15 untrusted_intermediate certificate signatures verify directly under the listed existing WaterWall root; retain ordinary chain, validity, hostname, purpose, CA, path-length, and name-constraint verification.",
+    "Do not install untrusted_intermediate certificates as new trust anchors or enable partial-chain trust.",
+    "No MTC IDs appear in this captured list.",
+    "This mapping does not adopt Chrome CT policy or Chrome Root Store version/SCT constraints; WaterWall existing trust policy remains authoritative."
+  ]
+}
