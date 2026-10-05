@@ -77,6 +77,7 @@ if(TARGET TlsClient)
   )
   target_compile_definitions(tlsclient_alpn_test PRIVATE
     BORINGSSL_PREFIX=WW_BSSL
+    TLSCLIENT_CHROME_REFERENCE_FILE="${CMAKE_SOURCE_DIR}/tests/unittests/fixtures/tlsclient_chrome/client_hello.bin"
     REALITY_TEST_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
     REALITY_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
   )

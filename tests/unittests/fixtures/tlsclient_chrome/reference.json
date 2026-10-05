@@ -1,0 +1,144 @@
+{
+  "product": "Google Chrome stable (regular browser, headless mode)",
+  "version_output": "Google Chrome 154.0.8037.97",
+  "package_version": "154.0.8037.97-1",
+  "package_source": "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_154.0.8037.97-1_amd64.deb",
+  "package_index_source": "https://dl.google.com/linux/chrome/deb/dists/stable/main/binary-amd64/Packages",
+  "package_sha256": "a4edbe95e9b01db6c9b97d7a1323121eda18362b5620df06abac1b59bee80053",
+  "chromium_tag": "154.0.8037.97",
+  "chromium_commit": "b510e9d7cd3a2fbd78d0ddc42234103206c5f78d",
+  "boringssl_revision": "ac39ea6853833c1f18fd23614091d11855e71752",
+  "captured_at_utc": "2026-10-05T10:37:12.916036+00:00",
+  "capture_format": "raw TCP TLS records containing exactly the initial ClientHello handshake; not a pcap",
+  "capture_method": "Python loopback TCP listener under tests/run_in_network_namespace.sh; save bytes before sending any server response",
+  "capture_file": "client_hello.bin",
+  "capture_sha256": "76d80872d82a80adf612ebfb56f6a94635205409b757b7e71cc1d58f61e629e7",
+  "capture_bytes": 1928,
+  "transport": "TCP TLS",
+  "sni": "tls.integration.test",
+  "target_url": "https://tls.integration.test:45535/",
+  "fresh_browser_profile": true,
+  "prior_sessions_or_tickets": false,
+  "server_bytes_sent": 0,
+  "network_interfaces": [
+    [
+      1,
+      "lo"
+    ]
+  ],
+  "architecture": "x86_64",
+  "cpu_model": "AMD Ryzen 9 7900X 12-Core Processor",
+  "cpu_aes_flag": true,
+  "browser_flags": [
+    "--headless=new",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--disable-sync",
+    "--no-proxy-server",
+    "--host-resolver-rules=MAP tls.integration.test 127.0.0.1",
+    "--user-data-dir=/tmp/waterwall-chrome-reference-154.0.8037.97/fresh-profile-ejy4wwv2",
+    "--dump-dom"
+  ],
+  "notes": [
+    "No TLS feature flags, cipher/group/signature overrides, or certificate-error bypasses were supplied.",
+    "No HTTPS DNS records or ECH configuration supplied; host resolver maps test name directly to isolated loopback.",
+    "No server handshake was completed; this fixture establishes only the initial ClientHello.",
+    "Profile is fresh and namespace has no external connectivity; component/variation downloads cannot occur.",
+    "The no-sandbox flag is required because this local capture runs as root; it does not claim browser sandbox equivalence.",
+    "GREASE values, extension order, key bytes, session ID, random, and ECH payload are one captured sample, not fixed values for future connections."
+  ],
+  "observed_client_hello": {
+    "legacy_version": "0303",
+    "ciphers": [
+      "0x7a7a",
+      "0x1301",
+      "0x1302",
+      "0x1303",
+      "0xc02b",
+      "0xc02f",
+      "0xc02c",
+      "0xc030",
+      "0xcca9",
+      "0xcca8",
+      "0xc013",
+      "0xc014",
+      "0x9c",
+      "0x9d",
+      "0x2f",
+      "0x35"
+    ],
+    "extensions": {
+      "0xa0a": 0,
+      "0xca34": 186,
+      "0xd": 26,
+      "0x1b": 3,
+      "0xb": 2,
+      "0x10": 14,
+      "0x12": 0,
+      "0xfe0d": 186,
+      "0x2d": 2,
+      "0x2b": 7,
+      "0xff01": 1,
+      "0x5": 5,
+      "0xa": 12,
+      "0x0": 25,
+      "0x44cd": 5,
+      "0x33": 1263,
+      "0x17": 0,
+      "0x23": 0,
+      "0xdada": 1
+    },
+    "supported_groups": [
+      "0xbaba",
+      "0x11ec",
+      "0x1d",
+      "0x17",
+      "0x18"
+    ],
+    "signature_algorithms": [
+      "0x3a3a",
+      "0x904",
+      "0x905",
+      "0x906",
+      "0x403",
+      "0x804",
+      "0x401",
+      "0x503",
+      "0x805",
+      "0x501",
+      "0x806",
+      "0x601"
+    ],
+    "key_shares": [
+      {
+        "group": "0xbaba",
+        "key_bytes": 1
+      },
+      {
+        "group": "0x11ec",
+        "key_bytes": 1216
+      },
+      {
+        "group": "0x1d",
+        "key_bytes": 32
+      }
+    ],
+    "alpn_hex": "000c02683208687474702f312e31",
+    "alps_hex": "0003026832",
+    "ech_payload_length": 144
+  },
+  "test_scope": {
+    "test": "waterwall.tlsclient_alpn_unit",
+    "checked_against_waterwall": [
+      "supported_groups and GREASE presence",
+      "initial key-share groups, order, lengths, and GREASE",
+      "ALPN protocol list",
+      "ALPS codepoint and protocol list"
+    ],
+    "limitation": "Other captured fields are retained as a reference for later comparisons; this test does not assert full Chrome fingerprint equivalence."
+  }
+}

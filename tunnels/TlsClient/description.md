@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TlsClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -498,13 +498,24 @@ The bundled BoringSSL client handshake logic is patched so the advertised cipher
 
 ### Supported groups and signature algorithms
 
-The context also pins the advertised key exchange and signature preferences.
+The context configures supported groups explicitly. Ignoring randomized GREASE entries, the default list is:
 
-- supported groups are configured explicitly rather than using library defaults
-- by default, that supported-groups list includes `X25519MLKEM768` to stay aligned with current Chrome-like behavior
-- if `settings.x25519mlkem768` is set to `false`, the tunnel falls back to a non-`X25519MLKEM768` groups list and becomes less Chrome-like
-- signature algorithms are configured explicitly in Chrome-like order
-- this reduces drift across BoringSSL updates and keeps the ClientHello layout predictable
+```text
+X25519MLKEM768:X25519:P-256:P-384
+```
+
+The initial TLS 1.3 `key_share` offer contains `X25519MLKEM768` followed by `X25519`, in addition to GREASE.
+The default supported-group order matches the Chrome 154 reference; this does not imply that the complete handshake
+matches Chrome.
+
+The explicit `settings.x25519mlkem768: false` opt-out remains supported. It uses:
+
+```text
+X25519:P-256:P-384
+```
+
+In that mode, `X25519` is the only non-GREASE initial key share. Signature algorithms remain configured explicitly
+in Chrome-like order.
 
 ### Certificate compression support
 

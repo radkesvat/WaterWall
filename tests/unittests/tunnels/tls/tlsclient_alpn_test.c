@@ -1,7 +1,8 @@
 /*
  * Covers: Verifies TlsClient's ordered `alpns` encoding, Chrome-like absent-setting default, explicit
  * empty-list disable mode, malformed-list rejection, serialized ALPS protocol offers, and in-memory
- * BoringSSL negotiations with empty client ALPS settings and peers that decline ALPS.
+ * BoringSSL negotiations with empty client ALPS settings and peers that decline ALPS. Also verifies the
+ * serialized supported groups and key shares with default, enabled, and disabled X25519MLKEM768.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: testDefaultOrder, testConfiguredOrder, testEmptyListDisablesAlpn, testInvalidListsAreRejected,
@@ -451,6 +452,133 @@ static void testClientHelloAlpsProtocols(void)
         tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
         cJSON_Delete(settings);
     }
+    workerEnvTeardown(&env);
+    testCaseSet("tlsclient_alpn_test");
+}
+
+static void requireClientHelloGroups(const sbuf_t *hello, bool mlkem_enabled)
+{
+    static const uint16_t   kExpectedGroups[]       = {4588, 29, 23, 24};
+    static const size_t     kExpectedShareLengths[] = {1216, 32};
+    tls_client_hello_view_t parsed                  = {0};
+    const uint8_t          *wire                    = sbufGetRawPtr(hello);
+    require(tlsclienthelloParseRecord(wire, sbufGetLength(hello), &parsed) == kTlsClientHelloFound,
+            "group fixture did not produce a complete ClientHello");
+
+    CBS extensions, groups = {0}, shares = {0};
+    CBS_init(&extensions, wire + parsed.extensions_offset, parsed.extensions_length);
+    bool found_groups = false;
+    bool found_shares = false;
+    while (CBS_len(&extensions) > 0)
+    {
+        uint16_t type = 0;
+        CBS      contents;
+        require(CBS_get_u16(&extensions, &type) && CBS_get_u16_length_prefixed(&extensions, &contents),
+                "ClientHello contains an invalid extension length");
+        if (type == 10)
+        {
+            require(! found_groups && CBS_get_u16_length_prefixed(&contents, &groups) && CBS_len(&contents) == 0,
+                    "ClientHello contains invalid supported_groups");
+            found_groups = true;
+        }
+        else if (type == 51)
+        {
+            require(! found_shares && CBS_get_u16_length_prefixed(&contents, &shares) && CBS_len(&contents) == 0,
+                    "ClientHello contains invalid key_share");
+            found_shares = true;
+        }
+    }
+    require(found_groups && found_shares, "ClientHello omitted supported_groups or key_share");
+
+    uint16_t grease_group = 0;
+    require(CBS_get_u16(&groups, &grease_group) && (grease_group & 0x0f0fU) == 0x0a0aU &&
+                (grease_group >> 8U) == (grease_group & 0xffU),
+            "supported_groups must start with a valid GREASE group");
+    const size_t first_group = mlkem_enabled ? 0 : 1;
+    for (size_t i = first_group; i < ARRAY_SIZE(kExpectedGroups); ++i)
+    {
+        uint16_t group = 0;
+        require(CBS_get_u16(&groups, &group) && group == kExpectedGroups[i],
+                "ClientHello supported_groups order or membership differs from the configured policy");
+    }
+    require(CBS_len(&groups) == 0, "ClientHello advertised an extra supported group, including P-521");
+
+    uint16_t share_group = 0;
+    CBS      key;
+    require(CBS_get_u16(&shares, &share_group) && share_group == grease_group &&
+                CBS_get_u16_length_prefixed(&shares, &key) && CBS_len(&key) == 1 && CBS_data(&key)[0] == 0,
+            "key_share must start with the supported GREASE group and its one-byte dummy key");
+    for (size_t i = first_group; i < ARRAY_SIZE(kExpectedShareLengths); ++i)
+    {
+        require(CBS_get_u16(&shares, &share_group) && share_group == kExpectedGroups[i] &&
+                    CBS_get_u16_length_prefixed(&shares, &key) && CBS_len(&key) == kExpectedShareLengths[i],
+                "ClientHello key-share group, order, or encoded key length differs from the configured policy");
+    }
+    require(CBS_len(&shares) == 0, "ClientHello advertised an unexpected additional key share");
+}
+
+static void testClientHelloGroups(void)
+{
+    static const struct
+    {
+        const char *name;
+        int         mlkem_setting;
+    } cases[] = {
+        {"groups_default", -1},
+        {"groups_mlkem_enabled", 1},
+        {"groups_mlkem_disabled", 0},
+    };
+    tlsclient_test_worker_env_t env;
+    workerEnvSetup(&env);
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        testCaseSet(cases[i].name);
+        cJSON *settings = createTlsSettings("tls.integration.test", NULL);
+        cJSON_DeleteItemFromObjectCaseSensitive(settings, "x25519mlkem768");
+        if (cases[i].mlkem_setting >= 0)
+        {
+            require(cJSON_AddBoolToObject(settings, "x25519mlkem768", cases[i].mlkem_setting != 0) != NULL,
+                    "failed to configure the supported-group fixture");
+        }
+        node_t    node   = {0};
+        tunnel_t *tunnel = createTlsClientFromSettings(&node, settings);
+        require(tunnel != NULL, "failed to create the supported-group TlsClient fixture");
+        tlsclient_tstate_t *ts    = tunnelGetState(tunnel);
+        sbuf_t             *hello = NULL;
+        require(tlsclientCreateClientHelloFromContext(
+                    ts->threadlocal_ssl_contexts[0], ts->sni, NULL, 0, ts->alpn_wire, ts->alpn_wire_len, &hello),
+                "failed to generate the supported-group ClientHello fixture");
+        requireClientHelloGroups(hello, cases[i].mlkem_setting != 0);
+        bufferpoolReuseBuffer(env.pool, hello);
+        tlsclientTunnelDestroy(tunnel, wwLifecycleStartupRollback());
+        cJSON_Delete(settings);
+    }
+    workerEnvTeardown(&env);
+    testCaseSet("tlsclient_alpn_test");
+}
+
+static void testChromeReference(void)
+{
+    static const uint8_t        kChromeAlpn[] = {2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+    tlsclient_test_worker_env_t env;
+    workerEnvSetup(&env);
+    testCaseSet("chrome_reference");
+
+    FILE *capture = fopen(TLSCLIENT_CHROME_REFERENCE_FILE, "rb");
+    require(capture != NULL, "failed to open the captured Chrome ClientHello");
+    sbuf_t *hello  = bufferpoolGetLargeBuffer(env.pool);
+    size_t  length = fread(sbufGetMutablePtr(hello), 1, sbufGetMaximumWriteableSize(hello), capture);
+    require(length > 0 && fgetc(capture) == EOF && ! ferror(capture),
+            "failed to read the complete captured Chrome ClientHello");
+    require(fclose(capture) == 0, "failed to close the captured Chrome ClientHello");
+    sbufSetLength(hello, (uint32_t) length);
+
+    // Compare the scoped policies to real Chrome bytes. Other extensions remain
+    // available in the fixture for subsequent fingerprint work.
+    requireClientHelloAlps(hello, kChromeAlpn, sizeof(kChromeAlpn), true);
+    requireClientHelloGroups(hello, true);
+
+    bufferpoolReuseBuffer(env.pool, hello);
     workerEnvTeardown(&env);
     testCaseSet("tlsclient_alpn_test");
 }
@@ -1107,6 +1235,8 @@ int main(void)
     testEmptyListDisablesAlpn();
     testInvalidListsAreRejected();
     testClientHelloAlpsProtocols();
+    testClientHelloGroups();
+    testChromeReference();
     testTls13AlpsNegotiation();
     testTotalWireLengthBounds();
     testConfiguredSniLengthBounds();

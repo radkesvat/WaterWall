@@ -187,10 +187,10 @@ static const char *getSupportedGroupsList(bool x25519mlkem768_enabled)
 {
     if (x25519mlkem768_enabled)
     {
-        return "X25519MLKEM768:X25519:P-256:P-384:P-521";
+        return "X25519MLKEM768:X25519:P-256:P-384";
     }
 
-    return "X25519:P-256:P-384:P-521";
+    return "X25519:P-256:P-384";
 }
 
 static bool loadCaCertificates(SSL_CTX *ssl_ctx)
