@@ -917,6 +917,10 @@ system_memory_provider_result_t systemMemoryLinuxResolveCgroup(const char *cgrou
     resolution->depth              = selected.depth;
     strcpy(resolution->leaf_path, selected.leaf);
     strcpy(resolution->boundary_path, selected.boundary);
+    /* kernfs reserves inode 1 for the real cgroup hierarchy root; namespace and
+     * bind subtree roots retain their non-root inode. Linux setup_root():
+     * https://github.com/torvalds/linux/blob/v6.12/kernel/cgroup/cgroup.c#L1991 */
+    resolution->hierarchy_root_visible = strcmp(selected.root, "/") == 0 && selected.boundary_identity.inode == 1U;
     return kSystemMemoryProviderOk;
 }
 
@@ -1226,6 +1230,11 @@ system_memory_linux_sample_result_t systemMemoryLinuxSampleResolvedCgroup(system
     }
     if (! have_finite || ! have_diagnostic)
     {
+    if (! have_finite && resolution->hierarchy_root_visible)
+    {
+        snapshot->cgroup_limited = false;
+        return kSystemMemoryLinuxSampleValid;
+    }
         return kSystemMemoryLinuxSampleUnavailable;
     }
 

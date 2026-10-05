@@ -607,6 +607,83 @@ static void testMissingPairsAndAllUnbounded(void)
             "no applicable memory membership was not the sole host-only absence result");
 }
 
+static void testKnownV2RootWithoutFiniteLimits(void)
+{
+    static const char cgroup_text[] = "0::/tenant/leaf\n";
+    static const char mountinfo[]   = "29 23 0:26 / /cg rw - cgroup2 cgroup rw\n";
+    linux_fixture_t   fixture       = {.now_ms = 100};
+    setupThreeLevelV2(&fixture);
+    fixtureFind(&fixture, "/cg")->identity.inode = 1;
+    addV2Level(&fixture, "/cg/tenant/leaf", "1\n", "max\n", 350);
+    addV2Level(&fixture, "/cg/tenant", "2\n", "max\n", 360);
+
+    system_memory_linux_resolution_t resolution;
+    system_memory_snapshot_t         snapshot = {0};
+    require(resolveFixture(&fixture, cgroup_text, mountinfo, &resolution) == kSystemMemoryProviderOk &&
+                sampleFixture(&fixture, &resolution, &snapshot) == kSystemMemoryLinuxSampleValid &&
+                ! snapshot.cgroup_limited,
+            "complete unbounded v2 hierarchy with kernel root inode did not allow host-only data");
+
+    fixtureAdd(&fixture,
+               "/proc/self/cgroup",
+               cgroup_text,
+               kSystemMemoryLinuxFsOk,
+               kSystemMemoryLinuxFsOk,
+               identity(0, 0, 1, kSystemMemoryLinuxFsTypeRegular));
+    fixtureAdd(&fixture,
+               "/proc/self/mountinfo",
+               mountinfo,
+               kSystemMemoryLinuxFsOk,
+               kSystemMemoryLinuxFsOk,
+               identity(0, 0, 2, kSystemMemoryLinuxFsTypeRegular));
+    fixtureAdd(&fixture,
+               "/proc/meminfo",
+               "MemTotal: 1000 kB\nMemAvailable: 500 kB\n",
+               kSystemMemoryLinuxFsOk,
+               kSystemMemoryLinuxFsOk,
+               identity(0, 0, 3, kSystemMemoryLinuxFsTypeRegular));
+    system_load_state_t sampler = {0};
+    require(systemLoadSamplerTryInit(&sampler), "failed to initialize known-root Linux provider fixture");
+    const system_memory_linux_io_t io = fixtureIO(&fixture);
+    systemLoadSamplerSetLinuxMemoryTestHooks(&sampler, &io, fixtureNow, &fixture);
+    system_load_state_t *saved_sampler = GSTATE.system_load;
+    GSTATE.system_load                 = &sampler;
+    require(systemLoadSamplerUpdate(&sampler) && systemMemorySnapshotGet(&snapshot) == kSystemMemorySnapshotFresh &&
+                ! snapshot.cgroup_limited && snapshot.host_total_bytes == 1000U * 1024U &&
+                snapshot.effective_available_bytes == 500U * 1024U,
+            "known-root unbounded provider did not publish a fresh coherent host memory snapshot");
+
+    const unsigned int discovery_reads                       = fixture.cgroup_reads;
+    fixtureFind(&fixture, "/cg/tenant/memory.max")->contents = "100\n";
+    fixture.now_ms                                           = 600;
+    require(systemLoadSamplerUpdate(&sampler) && systemMemorySnapshotGet(&snapshot) == kSystemMemorySnapshotFresh &&
+                snapshot.cgroup_limited && snapshot.cgroup_current_bytes == 2 && snapshot.cgroup_limit_bytes == 100 &&
+                snapshot.effective_available_bytes == 98 && fixture.cgroup_reads == discovery_reads,
+            "known-root cached provider missed a new finite ancestor limit");
+    fixtureFind(&fixture, "/cg/tenant/memory.max")->contents = "max\n";
+    fixture.now_ms                                           = 1100;
+    require(systemLoadSamplerUpdate(&sampler) && systemMemorySnapshotGet(&snapshot) == kSystemMemorySnapshotFresh &&
+                ! snapshot.cgroup_limited && snapshot.effective_available_bytes == 500U * 1024U,
+            "known-root cached provider did not return to host memory after the finite limit was removed");
+    GSTATE.system_load = saved_sampler;
+    systemLoadSamplerDestroy(&sampler);
+
+    fixtureFind(&fixture, "/cg/tenant/memory.current")->read_status = kSystemMemoryLinuxFsInaccessible;
+    require(sampleFixture(&fixture, &resolution, &snapshot) == kSystemMemoryLinuxSampleUnavailable,
+            "known hierarchy root bypassed inaccessible ancestor accounting");
+    fixtureFind(&fixture, "/cg/tenant/memory.current")->read_status = kSystemMemoryLinuxFsOk;
+    fixtureAddAccounting(&fixture, "/cg/memory.current", "1\n", 0, 26, 370);
+    require(sampleFixture(&fixture, &resolution, &snapshot) == kSystemMemoryLinuxSampleUnavailable,
+            "known hierarchy root bypassed a partially missing accounting pair");
+
+    linux_fixture_t root_process = {0};
+    fixtureAddDirectory(&root_process, "/cg", 0, 26, 1);
+    require(resolveFixture(&root_process, "0::/\n", mountinfo, &resolution) == kSystemMemoryProviderOk &&
+                sampleFixture(&root_process, &resolution, &snapshot) == kSystemMemoryLinuxSampleValid &&
+                ! snapshot.cgroup_limited,
+            "process in the real v2 hierarchy root did not allow host-only data");
+}
+
 static void testV1Hierarchy(void)
 {
     static const char mountinfo[] = "31 23 0:26 / /cg rw - cgroup cgroup rw,memory\n";
@@ -664,6 +741,30 @@ static void setupTwoLevelV1(linux_fixture_t *fixture, const char *child_limit, c
     fixtureAddDirectory(fixture, "/cg/child", 0, 26, 451);
     addV1Level(fixture, "/cg/child", "100\n", child_limit, "1\n", 460);
     addV1Level(fixture, "/cg", "200\n", parent_limit, "1\n", 470);
+}
+
+static void testKnownV1RootWithoutFiniteLimits(void)
+{
+    static const char mountinfo[] = "31 23 0:26 / /cg rw - cgroup cgroup rw,memory\n";
+    linux_fixture_t   fixture     = {0};
+    setupTwoLevelV1(&fixture, "9223372036854771712\n", "9223372036854771712\n");
+    fixtureFind(&fixture, "/cg")->identity.inode = 1;
+
+    system_memory_linux_resolution_t resolution;
+    system_memory_snapshot_t         snapshot = {0};
+    require(resolveFixture(&fixture, "5:memory:/child\n", mountinfo, &resolution) == kSystemMemoryProviderOk &&
+                sampleFixture(&fixture, &resolution, &snapshot) == kSystemMemoryLinuxSampleValid &&
+                ! snapshot.cgroup_limited,
+            "complete unbounded v1 hierarchy with kernel root inode did not allow host-only data");
+
+    fixtureFind(&fixture, "/cg/child/memory.limit_in_bytes")->contents = "500\n";
+    require(sampleFixture(&fixture, &resolution, &snapshot) == kSystemMemoryLinuxSampleValid &&
+                snapshot.cgroup_limited && snapshot.cgroup_limit_bytes == 500 && snapshot.cgroup_available_bytes == 400,
+            "known v1 hierarchy root bypassed a finite child limit");
+    fixtureFind(&fixture, "/cg/child/memory.limit_in_bytes")->contents = "9223372036854771712\n";
+    fixtureFind(&fixture, "/cg/memory.use_hierarchy")->contents        = "0\n";
+    require(sampleFixture(&fixture, &resolution, &snapshot) == kSystemMemoryLinuxSampleUnavailable,
+            "known v1 hierarchy root bypassed disabled hierarchy accounting");
 }
 
 static void testV1KernelSentinelHierarchies(void)
@@ -1214,3 +1315,5 @@ int main(void)
     puts("system_memory_linux_provider_test: all cases passed");
     return 0;
 }
+    testKnownV2RootWithoutFiniteLimits();
+    testKnownV1RootWithoutFiniteLimits();

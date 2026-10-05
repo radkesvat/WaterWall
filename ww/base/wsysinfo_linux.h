@@ -94,6 +94,7 @@ typedef struct system_memory_linux_resolution_s
     uint32_t                          mount_device_major;
     uint32_t                          mount_device_minor;
     uint8_t                           depth;
+    bool                              hierarchy_root_visible;
     uint64_t                          readable_pair_levels;
     uint64_t                          readable_hierarchy_levels;
     system_memory_linux_fs_identity_t current_identities[kSystemMemoryLinuxMaxCgroupLevels];
