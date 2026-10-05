@@ -49,6 +49,10 @@ void increaseFileLimit(void)
 
 #ifdef OS_LINUX
 
+#if ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
+#include <sys/sysinfo.h>
+#endif
+
 static bool sysctlOutputHasToken(const char *output, const char *token)
 {
     size_t token_len = stringLength(token);
@@ -125,9 +129,163 @@ static bool readPipeLimitValue(const char **cursor, unsigned long *value)
 }
 #endif
 
-void tryTuneTcp(void)
+#if ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
+static bool parseTcpMemoryLimits(const char *output, unsigned long limits[3])
+{
+    const char *cursor = output;
+    for (size_t i = 0; i < 3; ++i)
+    {
+        while (isspace((unsigned char) *cursor))
+        {
+            ++cursor;
+        }
+        if (! isdigit((unsigned char) *cursor))
+        {
+            return false;
+        }
+        char *end;
+        errno     = 0;
+        limits[i] = strtoul(cursor, &end, 10);
+        if (errno == ERANGE || limits[i] > LONG_MAX || (*end != '\0' && ! isspace((unsigned char) *end)))
+        {
+            return false;
+        }
+        cursor = end;
+    }
+    while (isspace((unsigned char) *cursor))
+    {
+        ++cursor;
+    }
+    return *cursor == '\0' && limits[0] <= limits[1] && limits[1] <= limits[2];
+}
+
+static void tryIncreaseTcpMemory(void)
+{
+    cmd_result_t current = execCmd("sysctl -n net.ipv4.tcp_mem 2>&1");
+    if (current.exit_code != 0)
+    {
+        LOGW("Core: Could not read TCP memory limits (exit %d: %s); keeping current limits",
+             current.exit_code,
+             commandResultDiagnostic(&current));
+        return;
+    }
+    unsigned long original[3];
+    if (! parseTcpMemoryLimits(current.output, original))
+    {
+        LOGW("Core: Invalid TCP memory limits; keeping current limits");
+        return;
+    }
+
+    struct sysinfo memory;
+    if (sysinfo(&memory) != 0)
+    {
+        LOGW("Core: Could not determine host RAM for TCP memory tuning: %s; keeping current limits", strerror(errno));
+        return;
+    }
+    if (memory.mem_unit == 0 || memory.totalram == 0 ||
+        (uint64_t) memory.totalram > UINT64_MAX / (uint64_t) memory.mem_unit)
+    {
+        LOGW("Core: Invalid host RAM for TCP memory tuning; keeping current limits");
+        return;
+    }
+    const long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0)
+    {
+        LOGW("Core: Could not determine page size for TCP memory tuning; keeping current limits");
+        return;
+    }
+    const uint64_t total_bytes = (uint64_t) memory.totalram * (uint64_t) memory.mem_unit;
+    const uint64_t unit        = (total_bytes / (uint64_t) page_size) / 16;
+    // tcp_mem stores signed native longs, although its sysctl handler accepts unsigned values.
+    if (unit == 0 || unit > (uint64_t) LONG_MAX / 6)
+    {
+        LOGW("Core: Host RAM exceeds the usable TCP memory tuning range; keeping current limits");
+        return;
+    }
+    const unsigned long target[3] = {
+        (unsigned long) (3 * unit), (unsigned long) (4 * unit), (unsigned long) (6 * unit)};
+    for (size_t i = 0; i < 3; ++i)
+    {
+        if (target[i] < original[i])
+        {
+            LOGI("Core: Keeping TCP memory limits %lu %lu %lu pages; target %lu %lu %lu would lower a threshold",
+                 original[0],
+                 original[1],
+                 original[2],
+                 target[0],
+                 target[1],
+                 target[2]);
+            return;
+        }
+    }
+    if (memoryCompare(original, target, sizeof(original)) == 0)
+    {
+        LOGI("Core: TCP memory limits already equal %lu %lu %lu pages", original[0], original[1], original[2]);
+        return;
+    }
+
+    char command[160];
+    snprintf(
+        command, sizeof(command), "sysctl -w net.ipv4.tcp_mem=\"%lu %lu %lu\" 2>&1", target[0], target[1], target[2]);
+    cmd_result_t result = execCmd(command);
+    if (result.exit_code != 0)
+    {
+        LOGW("Core: Could not raise TCP memory limits from %lu %lu %lu to %lu %lu %lu pages (exit %d: %s)",
+             original[0],
+             original[1],
+             original[2],
+             target[0],
+             target[1],
+             target[2],
+             result.exit_code,
+             commandResultDiagnostic(&result));
+        return;
+    }
+    current = execCmd("sysctl -n net.ipv4.tcp_mem 2>&1");
+    if (current.exit_code != 0)
+    {
+        LOGW("Core: Could not verify TCP memory limits after tuning (exit %d: %s)",
+             current.exit_code,
+             commandResultDiagnostic(&current));
+        return;
+    }
+    unsigned long confirmed[3];
+    if (! parseTcpMemoryLimits(current.output, confirmed))
+    {
+        LOGW("Core: Invalid TCP memory limits after tuning; could not verify the applied limits");
+        return;
+    }
+    if (memoryCompare(confirmed, target, sizeof(confirmed)) != 0)
+    {
+        LOGW("Core: TCP memory tuning requested %lu %lu %lu pages; original %lu %lu %lu, confirmed %lu %lu %lu",
+             target[0],
+             target[1],
+             target[2],
+             original[0],
+             original[1],
+             original[2],
+             confirmed[0],
+             confirmed[1],
+             confirmed[2]);
+        return;
+    }
+    LOGI("Core: TCP memory limits raised from %lu %lu %lu to %lu %lu %lu pages",
+         original[0],
+         original[1],
+         original[2],
+         confirmed[0],
+         confirmed[1],
+         confirmed[2]);
+}
+#endif
+
+void tryTuneTcp(bool splice_enabled)
 {
 #if ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
+    if (splice_enabled)
+    {
+        tryIncreaseTcpMemory();
+    }
     const char *commands[] = {
         "sysctl -w net.core.rmem_max=134217728 2>&1",
         "sysctl -w net.core.wmem_max=134217728 2>&1",
@@ -139,7 +297,7 @@ void tryTuneTcp(void)
     for (size_t i = 0; i < ARRAY_SIZE(commands); ++i)
     {
         const char  *command = commands[i];
-        cmd_result_t result = execCmd(command);
+        cmd_result_t result  = execCmd(command);
         if (result.exit_code != 0)
         {
             LOGW("Core: TCP tuning command failed: %s (exit %d: %s)",
@@ -150,7 +308,9 @@ void tryTuneTcp(void)
         }
         ++applied;
     }
-    LOGI("Core: TCP tuning applied %zu/%zu settings", applied, ARRAY_SIZE(commands));
+    LOGI("Core: TCP socket-buffer tuning applied %zu/%zu settings", applied, ARRAY_SIZE(commands));
+#else
+    discard(splice_enabled);
 #endif
 }
 
@@ -310,8 +470,9 @@ void tryEnableBbr(void)
 
 #else
 
-void tryTuneTcp(void)
+void tryTuneTcp(bool splice_enabled)
 {
+    discard(splice_enabled);
 }
 
 void tryIncreasePipeLimit(void)

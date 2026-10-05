@@ -230,7 +230,7 @@ int waterwallInnerMain(int argc, char **argv)
     LOGI("Parsing core settings complete");
     if (getCoreSettings()->tcp_tune_enabled)
     {
-        tryTuneTcp();
+        tryTuneTcp(getCoreSettings()->splice_enabled);
     }
     if (getCoreSettings()->try_enabling_bbr)
     {

@@ -920,6 +920,7 @@
   target_link_libraries(os_helpers_tcp_tune_test PRIVATE ww_test_support)
     target_include_directories(os_helpers_tcp_tune_test PRIVATE ${CMAKE_SOURCE_DIR}/core)
     target_link_libraries(os_helpers_tcp_tune_test PRIVATE ww)
+    target_link_options(os_helpers_tcp_tune_test PRIVATE "-Wl,--wrap=sysinfo" "-Wl,--wrap=sysconf")
     add_dependencies(waterwall_unit_tests os_helpers_tcp_tune_test)
     add_waterwall_unit_test(
       waterwall.os_helpers_tcp_tune_unit

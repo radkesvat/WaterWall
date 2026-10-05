@@ -261,7 +261,7 @@ setting nobody chose. This applies to every field in the table, not only to
 | `ram-profile` | string or integer | `"server"` | Memory sizing profile for pools and profile-aware node defaults. A number must be a whole number in `0..6`; `0` and `1` are legacy aliases for the smallest profile. |
 | `mtu` | integer | `1500` | Construction-time default for per-node MTUs. Must be a whole number in `68..65535` - RFC 791's minimum IPv4 MTU up to what the field can hold. |
 | `splice` | boolean | `true` | Allow splice on eligible stream chains. `false` disables splice for every chain. Platform support and support from every node are still required; packet chains remain ineligible. |
-| `tcp-tune` | boolean | `true` on Linux; `false` otherwise | Best-effort core startup tuning with 128 MiB socket ceilings and TCP autotuning maxima. |
+| `tcp-tune` | boolean | `true` on Linux; `false` otherwise | Best-effort core startup tuning with 128 MiB socket ceilings and TCP autotuning maxima; also raises RAM-based TCP memory thresholds when `splice` is enabled. |
 | `try-enabling-bbr` | boolean | `true` on Linux; `false` otherwise | Linux-only best-effort startup attempt to enable TCP BBR. |
 | `libs-path` | string | `"libs/"` | Directory used when loading external tunnel libraries. |
 
@@ -290,6 +290,9 @@ Recommended example:
 }
 ```
 
+On Linux, keeping both `splice` and `tcp-tune` enabled is recommended for
+supported stream chains to benefit from splice and the intended startup TCP tuning.
+
 Set `"splice": false` to use ordinary read/write buffers throughout the TCP
 adapters. This startup setting applies to every chain, including chains with
 internally inserted nodes. Omitting it, including when `misc` is empty or absent,
@@ -310,11 +313,13 @@ queueing disciplines already attached to network interfaces.
 `tcp-tune` defaults to `true` on native Linux and `false` on other platforms,
 including Android and Cygwin. Omitted or empty `misc` blocks use the same default.
 Only a JSON boolean is accepted. Set `"tcp-tune": false` to skip this core startup
-phase; it is independent of `splice` and `try-enabling-bbr`. On other platforms,
-explicit `true` is accepted but performs no tuning.
+phase. The four fixed socket/TCP buffer settings apply even when `splice` is
+disabled; the RAM-based `tcp_mem` step requires both flags to be enabled.
+`try-enabling-bbr` remains independent. On other platforms, explicit `true` is
+accepted but performs no tuning.
 
 After runtime logging is ready and before loading node configurations, WaterWall
-attempts exactly four live sysctl writes, independent of the memory profile:
+attempts these four fixed live sysctl writes, independent of the memory profile:
 
 | Setting | Value |
 | --- | --- |
@@ -322,6 +327,22 @@ attempts exactly four live sysctl writes, independent of the memory profile:
 | `net.core.wmem_max` | `134217728` (128 MiB) |
 | `net.ipv4.tcp_rmem` | `4096 87380 134217728` |
 | `net.ipv4.tcp_wmem` | `4096 87380 134217728` |
+
+When both `tcp-tune` and `splice` are enabled, it also tries to increase the
+system-wide `net.ipv4.tcp_mem` thresholds using total host physical RAM and the
+system page size. Setting `"splice": false` skips this step. With
+`unit = floor(floor(total_ram_bytes / page_size) / 16)`, the target is
+`3 * unit`, `4 * unit`, `6 * unit` pages. This preserves the `3:4:6` ratio:
+approximately 18.75% of RAM for leaving pressure mode, 25% for entering it,
+and 37.5% for the maximum TCP-accounting threshold. These values do not
+preallocate memory and do not override cgroup limits.
+
+WaterWall reads the current triple first and preserves it if any target value
+would lower an existing threshold. A changed triple is read back before success
+is logged. Invalid or unavailable memory/page-size information, unreadable
+settings, failed writes, and verification failures are nonfatal and do not skip
+the other tuning commands. This host-wide target does not use the RAM profile,
+current free RAM, or a container's memory quota.
 
 This phase does not change `net.core.netdev_max_backlog` or `net.core.somaxconn`.
 A chain containing either MuxClient or MuxServer activates TcpListener's and
@@ -336,7 +357,7 @@ writes change the live kernel settings and are not restored on exit. WaterWall
 does not persist them in `/etc/sysctl.conf`.
 
 RawSocket's separate tuning batch, controlled by `skip-sysctl`, tunes backlogs and
-other TCP parameters. The four buffer writes above belong exclusively to the core
+other TCP parameters. The buffer and `tcp_mem` writes above belong exclusively to the core
 `tcp-tune` phase.
 
 ### `ram-profile`
