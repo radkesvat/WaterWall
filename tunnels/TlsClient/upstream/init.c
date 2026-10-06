@@ -47,6 +47,11 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         ech_payload = NULL;
     }
 
+    if (! tlsclientPrepareSession(ls->ssl))
+    {
+        goto failed_before_next_init;
+    }
+
     if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
     {
         return;

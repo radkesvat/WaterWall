@@ -252,7 +252,7 @@ static SSL_CTX *setupSslContext(const uint8_t *alpn_wire, size_t alpn_wire_len, 
     // SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
 
     SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_CLIENT);
-    SSL_CTX_set_timeout(ssl_ctx, 7200); // 2 hours, typical for browsers
+    SSL_CTX_set_timeout(ssl_ctx, 3600); // Chrome's TLS 1.2 lifetime; TLS 1.3 has a separate ticket lifetime.
 
     if (! SSL_CTX_set1_groups_list(ssl_ctx, getSupportedGroupsList(x25519mlkem768_enabled)))
     {
@@ -339,14 +339,17 @@ static bool tlsclientPreflightClientHello(SSL_CTX *ssl_ctx, const char *sni, con
                                           size_t ech_grease_override_payload_len, uint8_t **out_payload,
                                           size_t *out_payload_len)
 {
-    if (ssl_ctx == NULL || sni == NULL || ((out_payload == NULL) != (out_payload_len == NULL)))
+    if (ssl_ctx == NULL || sni == NULL || (out_payload != NULL && out_payload_len == NULL))
     {
         return false;
     }
 
     if (out_payload != NULL)
     {
-        *out_payload     = NULL;
+        *out_payload = NULL;
+    }
+    if (out_payload_len != NULL)
+    {
         *out_payload_len = 0;
     }
 
@@ -411,11 +414,12 @@ static bool tlsclientPreflightClientHello(SSL_CTX *ssl_ctx, const char *sni, con
             goto cleanup;
         }
 
-        *out_payload     = payload;
-        *out_payload_len = pending;
-        payload          = NULL;
+        *out_payload = payload;
+        payload      = NULL;
     }
 
+    if (out_payload_len != NULL)
+        *out_payload_len = pending;
     success = true;
 
 cleanup:
@@ -439,7 +443,7 @@ cleanup:
  * vendored BoringSSL. Supplying 240 zero bytes is valid because an override is
  * intentionally opaque, and validates the largest runtime wire image.
  */
-static bool tlsclientPreflightConfiguredClientHello(const tlsclient_tstate_t *ts)
+static bool tlsclientPreflightConfiguredClientHello(const tlsclient_tstate_t *ts, size_t *out_wire_length)
 {
     if (ts == NULL || ts->threadlocal_ssl_contexts == NULL || ts->threadlocal_ssl_contexts[0] == NULL ||
         ts->sni == NULL)
@@ -458,7 +462,7 @@ static bool tlsclientPreflightConfiguredClientHello(const tlsclient_tstate_t *ts
                                              kMaximumEchGreasePayload,
                                              sizeof(kMaximumEchGreasePayload),
                                              NULL,
-                                             NULL);
+                                             out_wire_length);
     }
 
     if (ts->threadlocal_ech_grease_inner_ssl_contexts == NULL ||
@@ -490,7 +494,7 @@ static bool tlsclientPreflightConfiguredClientHello(const tlsclient_tstate_t *ts
                                             inner_payload,
                                             inner_payload_len,
                                             NULL,
-                                            NULL);
+                                            out_wire_length);
     memoryFree(inner_payload);
     return success;
 }
@@ -590,10 +594,20 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! tlsclientPreflightConfiguredClientHello(ts))
+    size_t fresh_hello_wire_length = 0;
+    if (! tlsclientPreflightConfiguredClientHello(ts, &fresh_hello_wire_length))
     {
         LOGF("TlsClient: configured ALPN and ECH settings do not fit a complete ClientHello");
         goto fail;
+    }
+
+    for (int i = 0; i < worker_count; ++i)
+    {
+        if (! tlsclientConfigureSessionCache(ts->threadlocal_ssl_contexts[i], ts->sni, fresh_hello_wire_length))
+        {
+            LOGF("TlsClient: failed to configure the client session cache");
+            goto fail;
+        }
     }
 
     if (ts->verbose)

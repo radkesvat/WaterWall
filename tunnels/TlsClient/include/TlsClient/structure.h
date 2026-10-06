@@ -177,6 +177,11 @@ void tlsclientPrintSSLState(const SSL *ssl);
 void tlsclientPrintSSLError(void);
 void tlsclientPrintSSLErrorAndAbort(void);
 bool tlsclientConfigureTrustAnchors(SSL_CTX *ctx);
+/* Context policy and cache access are serialized by the owning worker. */
+bool tlsclientConfigureSessionCache(SSL_CTX *ctx, const char *server_name, size_t fresh_hello_wire_length);
+/* Only ordinary connections opt in, after SNI/verification setup and before SSL I/O. */
+bool tlsclientPrepareSession(SSL *ssl);
+bool tlsclientReverifySession(SSL *ssl, const SSL_SESSION *session);
 /* BoringSSL certificate callback; arg borrows an immutable STACK_OF(X509). */
 int  tlsclientVerifyCertificateWithIntermediates(X509_STORE_CTX *ctx, void *arg);
 bool tlsclientConfigureSslForConnect(SSL *ssl, BIO *rbio, BIO *wbio, const char *sni,

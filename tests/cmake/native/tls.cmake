@@ -109,6 +109,27 @@ if(TARGET TlsClient)
     "unit;tunnels;tlsclient;certificate;hostname"
   )
 
+  waterwall_add_native_executable(tlsclient_session_resumption_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tls/tlsclient_session_resumption_test.c)
+  target_include_directories(tlsclient_session_resumption_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
+  )
+  target_include_directories(tlsclient_session_resumption_test BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
+  )
+  target_compile_definitions(tlsclient_session_resumption_test PRIVATE
+    BORINGSSL_PREFIX=WW_BSSL
+    TLSCLIENT_TEST_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
+    TLSCLIENT_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
+  )
+  target_link_libraries(tlsclient_session_resumption_test PRIVATE TlsClient ww ssl crypto)
+  add_dependencies(waterwall_unit_tests tlsclient_session_resumption_test)
+
+  add_waterwall_unit_test(
+    waterwall.tlsclient_session_resumption_unit
+    tlsclient_session_resumption_test
+    "unit;tunnels;tlsclient;session;certificate;takeover"
+  )
+
   waterwall_add_native_executable(tlsclient_close_lifecycle_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tls/tlsclient_close_lifecycle_test.c)
   target_include_directories(tlsclient_close_lifecycle_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include

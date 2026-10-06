@@ -65,6 +65,7 @@ add_library(TlsClient STATIC
     instance/node.c
     common/helpers.c
     common/line_state.c
+    common/session_cache.c
     common/trust_anchors.c
     upstream/init.c
     upstream/fin.c
