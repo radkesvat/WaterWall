@@ -50,6 +50,18 @@
 
   add_waterwall_unit_test(waterwall.wtime_epoch_unit wtime_epoch_test "unit;libc;time;epoch;overflow")
 
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    waterwall_add_native_executable(wtime_monotonic32_test SUPPORT
+      SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/base/wtime_narrow_clock_test.c
+      DEFINITIONS WW_TEST_CLOCK_GETTIME=1 LIBRARIES ww)
+    add_waterwall_unit_test(waterwall.wtime_monotonic32_unit wtime_monotonic32_test "unit;libc;time;monotonic;overflow")
+
+    waterwall_add_native_executable(wtime_fallback32_test SUPPORT
+      SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/base/wtime_narrow_clock_test.c
+      DEFINITIONS WW_TEST_CLOCK_GETTIME=0 LIBRARIES ww)
+    add_waterwall_unit_test(waterwall.wtime_fallback32_unit wtime_fallback32_test "unit;libc;time;fallback;overflow")
+  endif()
+
   waterwall_add_native_executable(wsocket_validation_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/wsocket_validation_test.c)
   target_link_libraries(wsocket_validation_test PRIVATE ww_test_support)
   target_link_libraries(wsocket_validation_test PRIVATE ww)

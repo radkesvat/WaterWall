@@ -57,11 +57,12 @@ unsigned long long getHRTimeUs(void)
 #elif HAVE_CLOCK_GETTIME
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ((ts.tv_sec * 1000000) + (ts.tv_nsec / 1000));
+    // Widen before scaling: supported 32-bit time_t cannot hold microseconds.
+    return (unsigned long long) ts.tv_sec * 1000000ULL + (unsigned long long) ts.tv_nsec / 1000ULL;
 #else
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return ((tv.tv_sec * 1000000) + tv.tv_usec);
+    return (unsigned long long) tv.tv_sec * 1000000ULL + (unsigned long long) tv.tv_usec;
 #endif
 }
 
