@@ -57,7 +57,7 @@ struct local_idle_item_s
 {
     void                   *userdata;     ///< User data associated with the item.
     local_idle_table_t     *table;        ///< Parent local idle table.
-    uint64_t                expire_at_ms; ///< Expiration time in milliseconds.
+    uint64_t                expire_at_ms; ///< Expiration in the owner loop's monotonic milliseconds.
     LocalIdleExpireCallBack cb;           ///< Expiration callback.
     hash_t                  hash;         ///< Hash used for item lookup.
     size_t                  heap_index;   ///< Indexed-heap slot, or SIZE_MAX while expiring.

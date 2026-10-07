@@ -93,7 +93,7 @@ static uint64_t localidletableNowMS(const local_idle_table_t *self)
         return self->test_now_ms;
     }
 #endif
-    return wloopNowMS(self->loop);
+    return wloopNowMonotonicMS(self->loop);
 }
 
 static uint64_t localidletableDeadlineFromAge(local_idle_table_t *self, uint64_t age_ms)

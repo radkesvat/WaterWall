@@ -141,7 +141,7 @@ static uint64_t idletableNowMS(const idle_table_t *self)
 #else
     discard self;
 #endif
-    return getTimeOfDayMS();
+    return getHRTimeUs() / 1000U;
 }
 
 static uint64_t idletableDeadlineFromAge(const idle_table_t *self, uint64_t age_ms)

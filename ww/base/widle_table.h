@@ -65,7 +65,7 @@ struct idle_item_s
 {
     void            *userdata;               ///< User data associated with the item.
     atomic_uintptr_t table;                  ///< Parent idle table pointer, or 0 when detached.
-    atomic_ullong    expire_at_ms;           ///< Expiration time in milliseconds.
+    atomic_ullong    expire_at_ms;           ///< Expiration in getHRTimeUs() monotonic milliseconds.
     ExpireCallBack   cb;                     ///< Expiration callback.
     hash_t           hash;                   ///< Hash used for item lookup.
     wid_t            wid;                    ///< Worker ID that owns this item.

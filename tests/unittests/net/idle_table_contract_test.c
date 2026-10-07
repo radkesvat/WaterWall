@@ -406,6 +406,16 @@ static void runContractCases(contract_env_t *env, contract_impl_e impl)
     contract_table_t table;
     contractTableCreate(&table, env, impl);
 
+    /* Exercise the production clock before enabling the deterministic seam. */
+    contract_probe_t clock_probe = {0};
+    const uint64_t   before      = impl == kContractLocal ? wloopNowMonotonicMS(env->loops[0]) : getHRTimeUs() / 1000U;
+    void            *clock_item  = contractCreate(&table, &clock_probe, kContractBaseKey + 51U, 100);
+    const uint64_t   after       = impl == kContractLocal ? wloopNowMonotonicMS(env->loops[0]) : getHRTimeUs() / 1000U;
+    require(clock_item != NULL && contractDeadline(&table, clock_item) >= before + 100U &&
+                contractDeadline(&table, clock_item) <= after + 100U,
+            "idle deadline did not use monotonic milliseconds");
+    require(contractRemove(&clock_probe), "failed to remove production-clock item");
+
     contractSetNow(&table, 1000);
     contract_probe_t first      = {0};
     void            *first_item = contractCreate(&table, &first, kContractBaseKey, 100);
