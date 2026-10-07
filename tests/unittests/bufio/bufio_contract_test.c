@@ -5,7 +5,7 @@
  * Cases: testFlagsInitializationAndReuse, testDuplicateToCopiesCompleteSource,
  * testDuplicateToRejectsCursorPastCapacity, testDuplicateToRejectsIncompletePayload,
  * testDuplicateToAcceptsEmptyExactEndCursor, testDuplicatePreservesCompleteSource,
- * testSliceHandlesPrependedPayload,
+ * testSliceHandlesPrependedPayload, testOrdinaryTailCapacity,
  * testPooledDuplicateHandlesConsumedPadding, testViewByteAcrossQueuedBuffers; the driver lists the
  * remaining cases
  * Checks: Assertion labels include: test cursor offset exceeds pooled buffer capacity; test payload exceeds
@@ -329,6 +329,30 @@ static void testSliceHandlesPrependedPayload(void)
         sbufDestroy(slice);
         sbufDestroy(source);
     }
+}
+
+static void testOrdinaryTailCapacity(void)
+{
+    sbuf_t        *buffer   = sbufCreateWithPadding(128, 32);
+    const uint32_t capacity = sbufGetMaximumWriteableSize(buffer);
+    require(sbufGetTailCapacity(buffer) == capacity, "empty buffer lost writable tail capacity");
+    sbufSetLength(buffer, 16);
+    require(sbufGetTailCapacity(buffer) == capacity - 16, "payload length did not reduce writable tail capacity");
+    sbufShiftLeft(buffer, 8);
+    require(sbufGetTailCapacity(buffer) == capacity - 16, "prepend changed writable tail capacity");
+    sbufShiftRight(buffer, 12);
+    require(sbufGetTailCapacity(buffer) == capacity - 16, "front consumption changed writable tail capacity");
+    sbufConsume(buffer, 4);
+    require(sbufGetTailCapacity(buffer) == capacity - 12, "tail consumption did not restore writable tail capacity");
+    sbufSetLength(buffer, sbufGetMaximumWriteableSize(buffer));
+    require(sbufGetTailCapacity(buffer) == 0, "full buffer retained writable tail capacity");
+    sbufShiftRight(buffer, sbufGetLength(buffer));
+    require(sbufGetTailCapacity(buffer) == 0, "empty end cursor gained writable tail capacity");
+    sbufDestroy(buffer);
+
+    buffer = sbufCreateWithPadding(0, 32);
+    require(sbufGetTailCapacity(buffer) == 0, "padding-only allocation exposed padding as writable tail capacity");
+    sbufDestroy(buffer);
 }
 
 static void testPooledDuplicateHandlesConsumedPadding(buffer_pool_t *pool)
@@ -1331,6 +1355,7 @@ int main(void)
     testDuplicateToAcceptsEmptyExactEndCursor();
     testDuplicatePreservesCompleteSource();
     testSliceHandlesPrependedPayload();
+    testOrdinaryTailCapacity();
     testPooledDuplicateHandlesConsumedPadding(pool);
     testViewByteAcrossQueuedBuffers(pool);
     testInvalidViewsAbort(pool);

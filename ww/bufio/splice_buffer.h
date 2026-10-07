@@ -63,10 +63,10 @@ sbuf_t *sbufTryEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf);
 /**
  * Replace an ordinary destination payload with the complete resident contents
  * of a splice wrapper. Real prefix bytes are copied before the private-pipe body.
- * The source must be exclusively owned, have no lifetime metadata, and is recycled
- * through pool on success. Destination allocation geometry and lifetime metadata
- * remain caller-owned. Invalid representation, bounds, pipe state, or incomplete
- * pipe contents are fatal invariants. Unsupported builds abort.
+ * The source must be exclusively owned and is recycled through pool on success.
+ * The destination remains caller-owned with unchanged allocation geometry.
+ * Invalid representation, bounds, pipe state, or incomplete pipe contents are
+ * fatal invariants. Unsupported builds abort.
  */
 sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *pool);
 
@@ -86,11 +86,11 @@ sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes);
  * caller retains source (possibly empty) and owns only the returned destination;
  * a replaced destination is recycled. final_size is the total planned assembly
  * size and padding is required onward headroom, also when destination is NULL.
- * Both ordinary and splice sources are accepted; no lifetime is transferred here.
+ * Both ordinary and splice sources are accepted.
  * Source range and destination geometry are preconditions. No callbacks occur. */
 sbuf_t *sbufMoveRangeTo(buffer_pool_t *pool, sbuf_t *source, sbuf_t *destination, uint32_t bytes, uint32_t final_size,
                         uint16_t padding);
 
-/** Consume exactly bytes into sufficient resident memory. Source remains owned
- * by the caller and its lifetime association is unchanged. */
+/** Consume exactly bytes into sufficient resident memory. Source remains
+ * caller-owned. */
 void sbufReadRangeToMemory(sbuf_t *source, void *destination, uint32_t bytes);

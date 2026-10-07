@@ -201,14 +201,9 @@ uint32_t bufferpoolGetSpliceBufferStorageSize(buffer_pool_t *pool);
 uint16_t bufferpoolGetSpliceBufferPadding(buffer_pool_t *pool);
 
 /**
- * Checks if a buffer is a large buffer.
- * @param buf The buffer to check.
- * @return True if the buffer is a large buffer, false otherwise.
- */
-bool bufferpoolCheckIsLargeBuffer(sbuf_t *buf);
-
-/**
- * Appends and merges two buffers.
+ * Appends and merges two exclusively owned ordinary buffers.
+ * Consumes both inputs: b2 is recycled through pool, and b1 may be destroyed
+ * and replaced during growth. The caller owns only the returned buffer.
  * @param pool The buffer pool.
  * @param b1 The first buffer.
  * @param b2 The second buffer.

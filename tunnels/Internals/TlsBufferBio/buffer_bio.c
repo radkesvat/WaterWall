@@ -102,7 +102,7 @@ static int tlsbufferbioWrite(BIO *bio, const char *data, int length)
         return -1;
 
     sbuf_t *buf = ww_sbuffer_queue_t_is_empty(&state->buffers) ? NULL : *ww_sbuffer_queue_t_back(&state->buffers);
-    if (buf != NULL && (uint32_t) length <= sbufGetMaximumWriteableSize(buf) - sbufGetLength(buf))
+    if (buf != NULL && (uint32_t) length <= sbufGetTailCapacity(buf))
     {
         const uint32_t previous = sbufGetLength(buf);
         memoryCopyLarge(sbufGetMutablePtr(buf) + previous, data, (size_t) length);
@@ -266,7 +266,7 @@ uint8_t *tlsbufferbioReserveWrite(BIO *bio, size_t capacity, size_t alignment, s
         return NULL;
 
     sbuf_t *buf = ww_sbuffer_queue_t_is_empty(&state->buffers) ? NULL : *ww_sbuffer_queue_t_back(&state->buffers);
-    bool    new_buffer = buf == NULL || capacity > sbufGetMaximumWriteableSize(buf) - sbufGetLength(buf);
+    bool    new_buffer = buf == NULL || capacity > sbufGetTailCapacity(buf);
     if (new_buffer)
     {
         if (UNLIKELY(ww_sbuffer_queue_t_size(&state->buffers) >= kTlsBufferBioMaxBuffers))

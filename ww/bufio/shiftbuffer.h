@@ -311,7 +311,11 @@ bool sbufSpliceIsReusable(const sbuf_t *buf);
 void sbufDestroySplice(sbuf_t *buf);
 
 /**
- * @brief Append one buffer's payload to another.
+ * @brief Append an ordinary buffer's payload to another ordinary buffer.
+ *
+ * The source remains unchanged and caller-owned. The destination may be
+ * replaced and freed; the caller owns only the returned destination afterward.
+ * The buffers must be distinct.
  *
  * @param root Destination buffer that receives data.
  * @param buf Source buffer to append.
@@ -320,7 +324,11 @@ void sbufDestroySplice(sbuf_t *buf);
 sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict buf);
 
 /**
- * @brief Move bytes from source payload head into destination tail.
+ * @brief Move bytes from an ordinary source's head into an ordinary destination's tail.
+ *
+ * Requires distinct buffers, at least bytes in source and bytes of destination
+ * tail capacity. Advances source's cursor and reduces its length. Neither
+ * allocation is replaced or freed; both remain caller-owned.
  *
  * @param dest Destination buffer.
  * @param source Source buffer.
@@ -344,7 +352,9 @@ sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, uint32_t byte
 sbuf_t *sbufSlice(sbuf_t *b, uint32_t bytes);
 
 /**
- * @brief Duplicate a buffer including its padding configuration.
+ * @brief Duplicate an ordinary buffer's complete payload, cursor and padding layout.
+ *
+ * The source remains unchanged and caller-owned. The caller owns the new result.
  *
  * @param b Source buffer.
  * @return sbuf_t* New duplicated buffer.
@@ -352,10 +362,12 @@ sbuf_t *sbufSlice(sbuf_t *b, uint32_t bytes);
 sbuf_t *sbufDuplicate(sbuf_t *b);
 
 /**
- * @brief Copy the complete payload and cursor layout into an existing destination buffer.
+ * @brief Copy an ordinary buffer's complete payload and cursor into a distinct ordinary destination.
  *
  * The destination is left unchanged when it cannot represent the source's
- * cursor and complete payload.
+ * cursor and complete payload. On success the destination payload is replaced;
+ * its allocation capacity and original padding remain unchanged. The source is
+ * never consumed, and both allocations remain caller-owned.
  *
  * @param b Source buffer.
  * @param dest Destination buffer.
@@ -390,19 +402,10 @@ static inline uint32_t sbufGetLeftCapacity(const sbuf_t *const b)
 }
 
 /**
- * Gets left capacity excluding padding.
- */
-static inline uint32_t sbufGetLeftCapacityNoPadding(const sbuf_t *const b)
-{
-    return b->curpos - b->l_pad;
-}
-
-/**
  * Gets the maximum total payload length that can be addressed from the current cursor.
  *
  * Important: this is not the spare growth available beyond the current payload length.
- * If you want to append `extra` bytes without moving `curpos`, compare against
- * `sbufGetLength(b) + extra` (or subtract the current length first).
+ * For ordinary-buffer append space, use sbufGetTailCapacity().
  * These writable-storage guarantees apply to ordinary buffers. With
  * kSbufFlagSplice, the result is logical and does not describe physical storage.
  */
@@ -412,7 +415,19 @@ static inline uint32_t sbufGetMaximumWriteableSize(const sbuf_t *const b)
 }
 
 /**
- * Gets original value of left padding of the buffer (unchanged, not aligned to 32).
+ * Gets spare writable bytes after an ordinary buffer's current payload.
+ * Requires valid ordinary-buffer geometry; splice capacity is not resident storage.
+ */
+static inline uint32_t sbufGetTailCapacity(const sbuf_t *const b)
+{
+    assert(b != NULL && ! sbufIsSplice(b));
+    assert(b->curpos <= b->capacity);
+    assert(b->len <= b->capacity - b->curpos);
+    return b->capacity - b->curpos - b->len;
+}
+
+/**
+ * Gets the original left padding, rounded to 32 bytes when allocated and unchanged afterward.
  */
 static inline uint16_t sbufGetLeftPadding(const sbuf_t *const b)
 {
@@ -516,7 +531,10 @@ static inline void sbufWriteZeros(sbuf_t *restrict const b, const uint32_t len)
 }
 
 /**
- * Writes data from one buffer to another.
+ * Copies length bytes from one ordinary buffer's payload into a distinct ordinary
+ * destination at its current cursor. Requires sufficient source length and
+ * destination writable capacity. Does not change either cursor or length;
+ * both allocations remain caller-owned.
  */
 static inline void sbufWriteBuf(sbuf_t *restrict const to, sbuf_t *restrict const from, uint32_t length)
 {
@@ -525,13 +543,17 @@ static inline void sbufWriteBuf(sbuf_t *restrict const to, sbuf_t *restrict cons
 }
 
 /**
- * Reserves space in the buffer for specified bytes.
+ * Ensures an ordinary buffer has writable capacity for the requested total payload.
+ * The bytes argument is a required total size from the cursor, not an increment
+ * or spare-tail count.
+ * Preserves existing payload and length. If growth is needed, frees the old
+ * allocation and returns a replacement with the full original padding available.
+ * The caller owns only the returned buffer and must use that pointer afterward.
  */
 static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
 {
     uint32_t current_length = sbufGetLength(b);
 
-    // `bytes` is the required writable size from current cursor, not an increment.
     if (sbufGetMaximumWriteableSize(b) < bytes)
     {
         uint32_t needed_writable = max(current_length, bytes);
@@ -545,7 +567,9 @@ static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
 }
 
 /**
- * Concatenates two buffers without capacity check.
+ * Appends an ordinary source's complete payload to a distinct ordinary destination
+ * without growth. Requires sufficient destination tail capacity. The source is
+ * unchanged; both allocations remain caller-owned and neither is replaced.
  */
 static inline void sbufConcatNoCheck(sbuf_t *restrict root, const sbuf_t *restrict buf)
 {

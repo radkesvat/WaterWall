@@ -127,10 +127,8 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
 
         if (tail != buf)
         {
-            const uint32_t tail_len              = sbufGetLength(tail);
-            const uint32_t tail_maximum_writable = sbufGetMaximumWriteableSize(tail);
-            assert(tail_len <= tail_maximum_writable);
-            const uint32_t tail_spare = tail_maximum_writable - tail_len;
+            const uint32_t tail_len   = sbufGetLength(tail);
+            const uint32_t tail_spare = sbufGetTailCapacity(tail);
 
             if (incoming_len <= tail_spare)
             {

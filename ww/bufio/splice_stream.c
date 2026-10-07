@@ -80,8 +80,7 @@ bool splicestreamPush(splice_stream_t *s, sbuf_t *input)
     /* Append only into existing ordinary tail space, without moving older bytes
      * or changing its allocation charge. */
     sbuf_t *tail = bufferqueueGetBufCount(&s->pending) != 0 ? *ww_sbuffer_queue_t_back(&s->pending.q) : s->head;
-    if (tail != NULL && ! sbufIsSplice(tail) && ! sbufIsSplice(input) &&
-        length <= sbufGetMaximumWriteableSize(tail) - sbufGetLength(tail))
+    if (tail != NULL && ! sbufIsSplice(tail) && ! sbufIsSplice(input) && length <= sbufGetTailCapacity(tail))
     {
         sbufMoveTo(tail, input, length);
         if (tail != s->head)
