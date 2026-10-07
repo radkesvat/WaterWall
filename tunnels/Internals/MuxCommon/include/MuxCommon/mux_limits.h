@@ -34,23 +34,6 @@ typedef struct mux_admission_defaults_s
     uint32_t fallback_live_children;
 } mux_admission_defaults_t;
 
-/* Explicit ordinary fallback only when residency is required; preserves headroom. */
-static inline sbuf_t *muxMaterializeRetainedPayload(buffer_pool_t *pool, sbuf_t *buf)
-{
-    if (! sbufIsSplice(buf))
-        return buf;
-
-    assert(buf->curpos <= UINT16_MAX);
-    sbuf_t *resident = bufferpoolTryGetBestFit(pool, sbufGetLength(buf), (uint16_t) buf->curpos);
-    if (UNLIKELY(resident == NULL))
-    {
-        printError("Mux: retained splice payload cannot be represented as ordinary storage");
-        abortProgramNow(1);
-    }
-    sbufSpliceMaterializeToBuffer(buf, resident, pool);
-    return resident;
-}
-
 /* Only paused-child queue admission should trade an ordinary allocation for a
  * smaller retained tier. Immediately forwarded frames keep their whole-chunk
  * fast path. Candidate sizes come from reusable small/medium/large tiers. */

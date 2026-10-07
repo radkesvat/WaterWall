@@ -31,7 +31,7 @@ static void pqRetentionChildSink(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
     pqCheckQueueCharges();
-    buf = muxMaterializeRetainedPayload(lineGetBufferPool(l), buf);
+    buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     twfRequire(sbufGetLength(buf) == 1 && *(const uint8_t *) sbufGetRawPtr(buf) == patternByte(0),
                "retained child delivery lost its frame bytes");
     ++pqRetentionChildDeliveries;
@@ -41,7 +41,7 @@ static void pqRetentionChildSink(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void pqRetentionParentSink(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pqCheckQueueCharges();
-    buf = muxMaterializeRetainedPayload(lineGetBufferPool(l), buf);
+    buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     pqSink(t, l, buf);
 }
 

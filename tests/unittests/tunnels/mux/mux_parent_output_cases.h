@@ -1393,7 +1393,7 @@ static void pqSpliceParentSink(tunnel_t *t, line_t *l, sbuf_t *buf)
         const int expected = pqParentPipeFDCount == 0 ? pqExpectedPipe : pqParentPipeFDs[pqSpliceParentDeliveries - 1U];
         twfRequire(sbufSpliceMetadata(buf).pipefd[0] == expected,
                    "parent output replaced or reordered the original private pipe");
-        buf = muxMaterializeRetainedPayload(lineGetBufferPool(l), buf);
+        buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     }
     pqSink(t, l, buf);
 }
@@ -1409,7 +1409,7 @@ static void pqSpliceChildSink(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         twfRequire(pqExpectedPipe < 0 || sbufSpliceMetadata(buf).pipefd[0] == pqExpectedPipe,
                    "direct child delivery replaced the original private pipe");
-        buf = muxMaterializeRetainedPayload(lineGetBufferPool(l), buf);
+        buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     }
     twfRequire(sbufGetLength(buf) == pqExpectedChildLength, "decoded child frame length changed");
     for (uint32_t i = 0; i < pqExpectedChildLength; ++i)
@@ -1905,7 +1905,7 @@ static unsigned pqOpeningPauseMode;
 static void pqOpeningPauseSink(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     if (sbufIsSplice(buf))
-        buf = muxMaterializeRetainedPayload(lineGetBufferPool(l), buf);
+        buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     pqSink(t, l, buf);
     if (pqDeliveries != 1)
         return;

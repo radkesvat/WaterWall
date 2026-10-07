@@ -411,7 +411,7 @@ static void testSpliceMuxPaths(buffer_pool_t *pool)
         while (bufferqueueGetBufCount(&output.pending) != 0)
         {
             sbuf_t *encoded = muxParentOutputPop(&output);
-            encoded         = muxMaterializeRetainedPayload(pool, encoded);
+            encoded         = sbufEnsureOrdinary(pool, encoded);
             frame_view_t frame[1];
             require(parseFrames(encoded, frame, 1) == 1, "batch item has wrong frame count");
             for (uint32_t i = 0; i < frame[0].length; ++i)
@@ -423,7 +423,7 @@ static void testSpliceMuxPaths(buffer_pool_t *pool)
     }
 
     {
-        sbuf_t *retained = muxMaterializeRetainedPayload(pool, makeSplicePattern(pool, 31));
+        sbuf_t *retained = sbufEnsureOrdinary(pool, makeSplicePattern(pool, 31));
         require((retained->flags & kSbufFlagSplice) == 0 && sbufGetLength(retained) == 31,
                 "paused Mux retention kept a private pipe");
         for (uint32_t i = 0; i < 31; ++i)
@@ -902,7 +902,10 @@ static void testLargeMaterialization(buffer_pool_t *pool)
                     "logical payload or prefix changed wrapper allocation geometry");
             if (! partial)
             {
-                sbuf_t *result = muxMaterializeRetainedPayload(pool, source);
+                // Test exact cursor preservation; sbufEnsureOrdinary() restores
+                // the pool padding instead of retaining the source cursor.
+                sbuf_t *result = bufferpoolGetBestFit(pool, sbufGetLength(source), (uint16_t) source->curpos);
+                result         = sbufSpliceMaterializeToBuffer(source, result, pool);
                 require(! sbufIsSplice(result) && sbufGetLength(result) == length + 4 && result->curpos == 28 &&
                             memoryEqual(sbufGetRawPtr(result), "HEAD", 4),
                         "full materialization lost prefix or residual headroom");

@@ -21,7 +21,7 @@ static void pqBatchSink(tunnel_t *t, line_t *l, sbuf_t *buf)
     if ((buf->flags & kSbufFlagSplice) != 0)
     {
         ++pqBatchSpliceFrames;
-        buf = muxMaterializeRetainedPayload(lineGetBufferPool(l), buf);
+        buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     }
     pqSink(t, l, buf);
     if (pqDeliveries == 1 && pqBatchAction == 1)
