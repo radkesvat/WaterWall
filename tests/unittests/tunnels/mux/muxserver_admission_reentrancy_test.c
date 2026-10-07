@@ -333,6 +333,53 @@ static void caseAggregateCapAcrossParentsReusesOneReleasedSlot(void)
     fixtureTeardown(&fixture);
 }
 
+static void caseRejectedOpenRefillIgnoresWallClockChanges(void)
+{
+    twfSetCase("MuxServer rejected-Open refill follows elapsed time across wall-clock changes");
+    muxserver_admission_fixture_t fixture;
+    fixtureSetup(&fixture, kMuxFrameLength);
+    muxserver_tstate_t *ts = tunnelGetState(fixture.mux);
+    ts->max_children       = 1;
+    line_t *parent_l       = fixtureCreateParent(&fixture);
+    sendFrame(&fixture, parent_l, 101, kMuxFlagOpen, 0);
+
+    muxserver_lstate_t           *parent_ls = lineGetState(parent_l, fixture.mux);
+    muxserver_rejection_bucket_t *bucket    = &parent_ls->parent_state->rejection_bucket;
+    bucket->tokens                          = 2;
+    fixture.env.loop->cur_hrtime            = 10000U * 1000U;
+    fixture.env.loop->cur_time_ms           = 50000;
+    sendFrame(&fixture, parent_l, 102, kMuxFlagOpen, 0);
+    twfRequireEqualU32(bucket->tokens, 1, "the initial rejection did not consume one token");
+
+    fixture.trace.capture_len     = 0;
+    fixture.env.loop->cur_hrtime  = 10500U * 1000U;
+    fixture.env.loop->cur_time_ms = 3650000;
+    sendFrame(&fixture, parent_l, 103, kMuxFlagOpen, 0);
+    twfRequireEqualU32(bucket->tokens, 0, "a forward wall-clock change refilled rejection tokens early");
+    requireCloseFrame(&fixture, 103);
+
+    fixture.trace.capture_len     = 0;
+    fixture.env.loop->cur_hrtime  = 11000U * 1000U;
+    fixture.env.loop->cur_time_ms = 10000;
+    sendFrame(&fixture, parent_l, 104, kMuxFlagOpen, 0);
+    twfRequireEqualU32(bucket->tokens,
+                       kMuxServerRejectedOpenRefillPerSecond - 1U,
+                       "a backward wall-clock change postponed elapsed rejection refill");
+    requireCloseFrame(&fixture, 104);
+
+    fixture.trace.capture_len     = 0;
+    fixture.env.loop->cur_time_ms = 7250000;
+    sendFrame(&fixture, parent_l, 105, kMuxFlagOpen, 0);
+    twfRequireEqualU32(bucket->tokens,
+                       kMuxServerRejectedOpenRefillPerSecond - 2U,
+                       "a repeated wall-clock change refilled tokens without elapsed time");
+    requireCloseFrame(&fixture, 105);
+    twfRequire(lineIsAlive(parent_l), "wall-clock changes closed an otherwise permitted parent");
+    twfRequireEqualU32(parent_ls->children_count, 1, "rejection refill changed the admitted sibling");
+    twfRequireEqualU32(fixture.trace.next_init, 1, "rejected Opens created a child during clock changes");
+    fixtureTeardown(&fixture);
+}
+
 static void caseMemoryAdmissionDrivesProductionParser(void)
 {
     twfSetCase("MuxServer production Open parser honors pressure hysteresis and stale fallback");
@@ -793,6 +840,7 @@ int main(void)
     caseParentGateDuringInit(false, true, false, false);
     caseExactPerParentCapPreservesSiblings();
     caseAggregateCapAcrossParentsReusesOneReleasedSlot();
+    caseRejectedOpenRefillIgnoresWallClockChanges();
     caseMemoryAdmissionDrivesProductionParser();
     caseReserveBoundaryAndTwoConditionRecovery();
     caseInitialProviderStatusUsesImmediateFallback(

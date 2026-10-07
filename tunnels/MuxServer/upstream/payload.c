@@ -6,7 +6,7 @@ static bool rejectFreshOpen(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
                             const char *reason)
 {
     muxserver_tstate_t *ts     = tunnelGetState(t);
-    const uint64_t      now_ms = wloopNowMS(getWorkerLoop(lineGetWID(parent_l)));
+    const uint64_t      now_ms = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(parent_l)));
 
     if (! muxserverConsumeRejectedOpenToken(parent_ls, now_ms))
     {

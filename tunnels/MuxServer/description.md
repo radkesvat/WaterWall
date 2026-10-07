@@ -1,5 +1,5 @@
 <!--
-Documentation version: 161
+Documentation version: 162
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -267,7 +267,8 @@ After that, `Data`, `Pause`, `Resume`, and `Close` frames for the same `cid` are
 A resource-rejected fresh Open allocates no child, sends `Close(cid)`, and keeps
 the healthy parent and siblings alive. A duplicate Open is a protocol violation
 and closes the parent. Rejected-Open abuse is bounded by a 1024-token burst
-bucket refilled at 64 tokens per second; sustained excess closes that parent.
+bucket refilled at 64 tokens per second using the owner's monotonic clock;
+sustained excess closes that parent.
 
 Fresh memory data is published by the process-global sampler every `500` ms and
 expires after one second. On Linux, cgroup pressure is the maximum used
