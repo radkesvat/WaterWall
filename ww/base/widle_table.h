@@ -9,6 +9,11 @@
  * or dereferenced by another thread. Expiration is staged by the table's timer
  * and posted to the recorded owner worker.
  *
+ * Creation, refresh, timer scans and expiration rechecks use the executing
+ * event worker's cached monotonic clock. Worker caches share one clock domain;
+ * their freshness follows loop updates and can lag during a long callback.
+ * No clock read accesses another worker's loop cache.
+ *
  * Common logical lifecycle shared with local_idle_table_t:
  *
  * 1. Successful creation publishes one active item in both the lookup and
@@ -65,7 +70,7 @@ struct idle_item_s
 {
     void            *userdata;               ///< User data associated with the item.
     atomic_uintptr_t table;                  ///< Parent idle table pointer, or 0 when detached.
-    atomic_ullong    expire_at_ms;           ///< Expiration in getHRTimeUs() monotonic milliseconds.
+    atomic_ullong    expire_at_ms;           ///< Expiration in cached event-loop monotonic milliseconds.
     ExpireCallBack   cb;                     ///< Expiration callback.
     hash_t           hash;                   ///< Hash used for item lookup.
     wid_t            wid;                    ///< Worker ID that owns this item.
@@ -112,7 +117,7 @@ void idletableDestroy(idle_table_t *self);
  * @param userdata Pointer to user data.
  * @param cb Expiration callback.
  * @param wid Worker ID of the caller.
- * @param age_ms Expiration age (in milliseconds).
+ * @param age_ms Relative expiration age from the caller's cached monotonic time (in milliseconds).
  * @return Borrowed pointer to the new idle item; NULL if allocation or either index
  * publication fails, or if the key already exists.
  */
@@ -136,7 +141,8 @@ idle_item_t *idletableGetIdleItemByHash(wid_t wid, idle_table_t *self, hash_t ke
 /**
  * @brief Update the expiration of an idle item.
  *
- * The idle item will be kept for at least the specified duration from now.
+ * The idle item will be kept for at least the specified duration from the
+ * caller's cached monotonic time.
  * Must run on item->wid with an active borrowed handle. This operation is
  * mutex-free, never shortens the deadline, and intentionally does not reorder
  * the heap; the next timer scan rebuilds ordering under the table mutex.

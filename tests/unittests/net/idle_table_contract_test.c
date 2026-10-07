@@ -3,7 +3,7 @@
  * suite.
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
- * Cases: contractEnvSetup, runContractCases, contractEnvTeardown
+ * Cases: contractEnvSetup, runSharedCachedClockCase, runContractCases, contractEnvTeardown
  * Checks: Assertion labels include: callback received a stale owner slot; shared key namespace accepted the
  * same key for a second WID; foreign-WID lookup exposed the first owner's item; duplicate create hid the
  * original shared item
@@ -401,6 +401,79 @@ static void runGlobalKeyNamespaceCase(contract_table_t *table)
     require(contractRemove(&owner_zero), "failed to remove original shared key owner");
 }
 
+static void setCachedClockMessage(void *worker_arg, void *arg1, void *arg2, void *arg3)
+{
+    worker_t *worker = worker_arg;
+    discard   arg2;
+    discard   arg3;
+    require(currentThreadIsEventWorkerWID(worker->wid), "cache update ran outside its owner worker");
+    worker->loop->cur_hrtime = *(const uint64_t *) arg1 * 1000U;
+}
+
+static void runSharedCachedClockCase(contract_env_t *env)
+{
+    contract_table_t table;
+    contractTableCreate(&table, env, kContractShared);
+    /* Keep the production clock active. Each simulated owner has a distinct
+     * cache, independent of both wall time and fresh clock readings. */
+    env->loops[0]->cur_hrtime  = 900U * 1000U;
+    env->loops[1]->cur_hrtime  = 1000U * 1000U;
+    env->loops[0]->cur_time_ms = UINT64_C(1700000000000);
+    env->loops[1]->cur_time_ms = UINT64_C(1700000010000);
+
+    contract_probe_t probe = {.table = &table, .key = kContractBaseKey + 52U, .action = kContractExtendOnce};
+    discard          setCurrentWorker(1);
+    idle_item_t     *item = idletableCreateItem(table.value.shared, probe.key, &probe, sharedContractCallback, 1, 100);
+    probe.authoritative_item = item;
+    require(item != NULL && idletableTestGetDeadline(item) == 1100,
+            "shared creation did not use the calling worker's cached monotonic clock");
+
+    env->loops[1]->cur_hrtime = 1200U * 1000U;
+    env->loops[1]->cur_time_ms += UINT64_C(3600000);
+    idletableKeepIdleItemForAtleast(table.value.shared, item, 100);
+    require(idletableTestGetDeadline(item) == 1300,
+            "shared refresh sampled fresh time, wall time, or another worker's cache");
+    discard setCurrentWorker(0);
+
+    env->loops[0]->cur_hrtime = 1299U * 1000U;
+    idletableTestRunExpiry(table.value.shared);
+    pumpWorker(env, 1);
+    require(probe.callbacks == 0, "shared scan ignored its executing worker's cached time");
+
+    uint64_t delivery_now = 1250;
+    require(sendWorkerMessageForceQueueWithCleanup(1, setCachedClockMessage, NULL, &delivery_now, NULL, NULL) ==
+                kWorkerMessageSubmitAccepted,
+            "failed to queue owner cache update before expiration delivery");
+    env->loops[0]->cur_hrtime = 1300U * 1000U;
+    idletableTestRunExpiry(table.value.shared);
+    pumpWorker(env, 1);
+    require(probe.callbacks == 0, "queued expiration ignored the receiving owner's cached time");
+
+    delivery_now = 1300;
+    require(sendWorkerMessageForceQueueWithCleanup(1, setCachedClockMessage, NULL, &delivery_now, NULL, NULL) ==
+                kWorkerMessageSubmitAccepted,
+            "failed to queue the due owner cache update");
+    idletableTestRunExpiry(table.value.shared);
+    pumpWorker(env, 1);
+    discard setCurrentWorker(1);
+    require(probe.callbacks == 1 && probe.callback_wid == 1 && probe.authoritative_item == item &&
+                idletableGetIdleItemByHash(1, table.value.shared, probe.key) == item &&
+                idletableTestGetDeadline(item) == 1350,
+            "shared callback renewal or its recheck did not use the owner's cached clock");
+    discard setCurrentWorker(0);
+
+    delivery_now = 1350;
+    require(sendWorkerMessageForceQueueWithCleanup(1, setCachedClockMessage, NULL, &delivery_now, NULL, NULL) ==
+                kWorkerMessageSubmitAccepted,
+            "failed to queue the final owner cache update");
+    env->loops[0]->cur_hrtime = 1350U * 1000U;
+    idletableTestRunExpiry(table.value.shared);
+    pumpWorker(env, 1);
+    require(probe.callbacks == 2 && probe.authoritative_item == NULL && contractActiveCount(&table) == 0,
+            "cached-clock expiration did not settle once after callback renewal");
+    contractDestroy(&table);
+}
+
 static void runContractCases(contract_env_t *env, contract_impl_e impl)
 {
     contract_table_t table;
@@ -408,9 +481,9 @@ static void runContractCases(contract_env_t *env, contract_impl_e impl)
 
     /* Exercise the production clock before enabling the deterministic seam. */
     contract_probe_t clock_probe = {0};
-    const uint64_t   before      = impl == kContractLocal ? wloopNowMonotonicMS(env->loops[0]) : getHRTimeUs() / 1000U;
+    const uint64_t   before      = wloopNowMonotonicMS(env->loops[0]);
     void            *clock_item  = contractCreate(&table, &clock_probe, kContractBaseKey + 51U, 100);
-    const uint64_t   after       = impl == kContractLocal ? wloopNowMonotonicMS(env->loops[0]) : getHRTimeUs() / 1000U;
+    const uint64_t   after       = wloopNowMonotonicMS(env->loops[0]);
     require(clock_item != NULL && contractDeadline(&table, clock_item) >= before + 100U &&
                 contractDeadline(&table, clock_item) <= after + 100U,
             "idle deadline did not use monotonic milliseconds");
@@ -538,6 +611,7 @@ int main(void)
     testCaseSet("idle_table_contract_test");
     contract_env_t env;
     contractEnvSetup(&env);
+    runSharedCachedClockCase(&env);
     runContractCases(&env, kContractLocal);
     runContractCases(&env, kContractShared);
     contractEnvTeardown(&env);
