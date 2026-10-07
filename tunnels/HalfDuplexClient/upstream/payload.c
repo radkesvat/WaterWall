@@ -45,6 +45,8 @@ bool halfduplexclientForwardPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
         if (! reuse)
         {
             sbufSetLength(framed, kHLFDIntroSize);
+            // Append after the intro in the reserved output; sbufEnsureOrdinary()
+            // would allocate a separate temporary buffer for splice input.
             if (sbufIsSplice(buf))
                 sbufSpliceReadToBuffer(buf, framed, length);
             else

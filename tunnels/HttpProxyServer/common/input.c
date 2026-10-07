@@ -303,6 +303,8 @@ void hpsAcceptPayload(hps_session_t *s, line_t *l, sbuf_t *buf, hps_direction_t 
         /* Every session slot is ordinary. The complete conversion is a bounded
          * temporary input (at most P+D), subject to the remainder allocation
          * bound; existing admission still decides what may survive this call. */
+        // Admit the allocation charge before reading the pipe so refusal returns
+        // 503; the shared ensure helpers consume input before that check.
         sbuf_t *ordinary = hpsMakeBuffer(s, (size_t) length);
         if (! ordinary || ! remainderAllocationFits(s, ordinary))
         {
