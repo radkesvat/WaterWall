@@ -169,6 +169,8 @@ typedef struct httpclient_lstate_s
     line_t                 *split_upload_line;
     line_t                 *split_download_line;
     char                    split_id[48];
+    bool                    h1_write_in_progress;
+    bool                    h2_request_headers_sent;
 } httpclient_lstate_t;
 
 enum
@@ -180,7 +182,14 @@ enum
 
     kHttpClientBufferQueueCap   = 8,
     kHttpClientMaxHeaderBytes   = 64 * 1024,
-    kHttpClientHttp2FrameBytes  = 32 * 1024,
+    kHttpClientHttp1ChunkBodyBytes   = 16 * 1024 - 12,
+    kHttpClientHttp1NestedMaxBuffers = 8,
+    kHttpClientHttp1NestedMaxBytes   = 1024 * 1024,
+    kHttpClientHttp1NestedMaxCharge  = 2 * 1024 * 1024,
+    kHttpClientHttp2DataBytes        = 16 * 1024 - 9,
+    kHttpClientHttp2SettingsMaxCount = 5,
+    kHttpClientHttp2StreamWindow     = 6 * 1024 * 1024,
+    kHttpClientHttp2ConnectionWindow = 15 * 1024 * 1024,
     kHttpClientDefaultHttp1Port = 80,
     kHttpClientDefaultHttpsPort = 443,
 
@@ -209,6 +218,8 @@ void httpclientLinestateDestroy(httpclient_lstate_t *ls);
 void httpclientH2DataQueueDestroy(httpclient_lstate_t *ls);
 
 sbuf_t *allocBufferForLength(line_t *l, uint32_t len);
+size_t  httpclientBuildHttp2Settings(const httpclient_tstate_t *ts,
+                                     nghttp2_settings_entry     settings[kHttpClientHttp2SettingsMaxCount]);
 
 bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upgrade_to_h2);
 bool httpclientTransportSendHttp1SplitRequestHeaders(tunnel_t *t, line_t *l);

@@ -1116,6 +1116,62 @@ bool httpclientTransportSendHttp1FinalChunk(tunnel_t *t, line_t *l)
     return sendTextUp(t, l, "0\r\n\r\n");
 }
 
+static bool httpclientSendHttp1ChunkedInput(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *payload)
+{
+    buffer_pool_t *pool = lineGetBufferPool(l);
+    while (sbufGetLength(payload) > 0)
+    {
+        uint32_t body_len = min(sbufGetLength(payload), (uint32_t) kHttpClientHttp1ChunkBodyBytes);
+        char     chunk_prefix[16];
+        int      prefix_len = snprintf(chunk_prefix, sizeof(chunk_prefix), "%x\r\n", body_len);
+        assert(prefix_len > 0 && (size_t) prefix_len < sizeof(chunk_prefix));
+        uint32_t framed_len = (uint32_t) prefix_len + body_len + 2;
+        sbuf_t  *framed;
+
+        if (body_len == sbufGetLength(payload) && sbufGetLeftCapacity(payload) >= (uint32_t) prefix_len &&
+            sbufGetMaximumWriteableSize(payload) - body_len >= 2)
+        {
+            /* Preserve the original allocation when the complete chunk fits. */
+            framed  = payload;
+            payload = NULL;
+            sbufShiftLeft(framed, (uint32_t) prefix_len);
+            sbufSetLength(framed, framed_len);
+            sbufWrite(framed, chunk_prefix, (uint32_t) prefix_len);
+        }
+        else
+        {
+            framed = bufferpoolGetBestFit(pool, framed_len, bufferpoolGetLargeBufferPadding(pool));
+            sbufSetLength(framed, framed_len);
+            sbufWrite(framed, chunk_prefix, (uint32_t) prefix_len);
+            memoryCopyLarge(sbufGetMutablePtr(framed) + prefix_len, sbufGetRawPtr(payload), body_len);
+            sbufShiftRight(payload, body_len);
+            if (sbufGetLength(payload) == 0)
+            {
+                bufferpoolReuseBuffer(pool, payload);
+                payload = NULL;
+            }
+        }
+        memoryCopy(sbufGetMutablePtr(framed) + framed_len - 2, "\r\n", 2);
+
+        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, framed))
+        {
+            if (payload != NULL)
+                bufferpoolReuseBuffer(pool, payload);
+            return false;
+        }
+        if (! httpclientCanSendUpstream(ls))
+        {
+            if (payload != NULL)
+                bufferpoolReuseBuffer(pool, payload);
+            return false;
+        }
+        if (payload == NULL)
+            return true;
+    }
+    bufferpoolReuseBuffer(pool, payload);
+    return true;
+}
+
 bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *payload)
 {
     httpclient_lstate_t *ls = lineGetState(l, t);
@@ -1124,62 +1180,39 @@ bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
         lineReuseBuffer(l, payload);
         return false;
     }
-
-    uint32_t payload_len = sbufGetLength(payload);
-
-    char chunk_prefix[32];
-    int  prefix_len = snprintf(chunk_prefix, sizeof(chunk_prefix), "%x\r\n", payload_len);
-
-    if (prefix_len <= 0)
+    if (sbufGetLength(payload) == 0)
     {
-        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, payload))
-        {
-            return false;
-        }
-        return httpclientCanSendUpstream(ls);
+        lineReuseBuffer(l, payload);
+        return true;
     }
 
-    if (sbufGetLeftCapacity(payload) >= (uint32_t) prefix_len)
+    if (ls->h1_write_in_progress)
     {
-        sbufShiftLeft(payload, (uint32_t) prefix_len);
-        sbufWrite(payload, chunk_prefix, (uint32_t) prefix_len);
-    }
-    else
-    {
-        if (! sendBytesUp(t, l, chunk_prefix, (uint32_t) prefix_len))
+        size_t bytes  = sbufGetLength(payload);
+        size_t charge = sbufGetAllocationCharge(payload);
+        if (bytes > kHttpClientHttp1NestedMaxBytes || charge > kHttpClientHttp1NestedMaxCharge ||
+            bufferqueueGetBufCount(&ls->pending_up) >= kHttpClientHttp1NestedMaxBuffers ||
+            bufferqueueGetBufLen(&ls->pending_up) > kHttpClientHttp1NestedMaxBytes - bytes ||
+            bufferqueueGetCharge(&ls->pending_up) > kHttpClientHttp1NestedMaxCharge - charge ||
+            ! bufferqueueTryPushBack(&ls->pending_up, &payload))
         {
             lineReuseBuffer(l, payload);
+            LOGW("HttpClient: nested HTTP/1 payload limit or queue admission failure");
             return false;
         }
+        return true;
     }
 
-    bool     appended_tail = false;
-    uint32_t old_len       = sbufGetLength(payload);
-    if (sbufGetMaximumWriteableSize(payload) >= old_len + 2)
+    /* A nested delivery must follow the entire older input, including its last
+     * chunk. These admitted batches finish within this synchronous dispatch. */
+    ls->h1_write_in_progress = true;
+    do
     {
-        sbufSetLength(payload, old_len + 2);
-        memoryCopy((uint8_t *) sbufGetMutablePtr(payload) + old_len, "\r\n", 2);
-        appended_tail = true;
-    }
-
-    if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, payload))
-    {
-        return false;
-    }
-
-    if (UNLIKELY(! httpclientCanSendUpstream(ls)))
-    {
-        return false;
-    }
-
-    if (! appended_tail)
-    {
-        if (! sendTextUp(t, l, "\r\n"))
-        {
+        if (! httpclientSendHttp1ChunkedInput(t, l, ls, payload))
             return false;
-        }
-    }
-
+        payload = bufferqueuePopFront(&ls->pending_up);
+    } while (payload != NULL);
+    ls->h1_write_in_progress = false;
     return true;
 }
 
@@ -1394,6 +1427,47 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
     return true;
 }
 
+static sbuf_t *httpclientCollectHttp2Startup(line_t *l, httpclient_lstate_t *ls)
+{
+    if (nghttp2_session_set_local_window_size(ls->session, NGHTTP2_FLAG_NONE, 0, kHttpClientHttp2ConnectionWindow) != 0)
+    {
+        LOGE("HttpClient: failed to set HTTP/2 connection window");
+        return NULL;
+    }
+
+    /* Only the preface, SETTINGS and connection WINDOW_UPDATE are queued here.
+     * Copy each library span before asking for the next; HEADERS stay separate. */
+    const uint32_t startup_limit = NGHTTP2_CLIENT_MAGIC_LEN + 9 + 6 * kHttpClientHttp2SettingsMaxCount + 13;
+    sbuf_t        *startup       = allocBufferForLength(l, startup_limit);
+    while (true)
+    {
+        const uint8_t *data = NULL;
+        nghttp2_ssize  len  = nghttp2_session_mem_send2(ls->session, &data);
+        if (len < 0 || (uint64_t) len > startup_limit - sbufGetLength(startup))
+        {
+            LOGE("HttpClient: failed to serialize HTTP/2 startup");
+            lineReuseBuffer(l, startup);
+            return NULL;
+        }
+        if (len == 0)
+        {
+            return startup;
+        }
+        uint32_t offset = sbufGetLength(startup);
+        sbufSetLength(startup, offset + (uint32_t) len);
+        memoryCopy(sbufGetMutablePtr(startup) + offset, data, (size_t) len);
+    }
+}
+
+static bool httpclientSendHttp2Startup(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *startup)
+{
+    if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, startup))
+    {
+        return false;
+    }
+    return httpclientCanSendUpstream(ls) && sendNghttp2Outbound(t, l, ls);
+}
+
 static httpclient_h2_data_item_t *httpclientH2DataItemCreate(sbuf_t *payload, bool end_stream)
 {
     httpclient_h2_data_item_t *item = memoryAllocate(sizeof(*item));
@@ -1469,6 +1543,7 @@ static ssize_t httpclientH2DataReadCallback(nghttp2_session *session, int32_t st
     uint32_t payload_len = item->payload == NULL ? 0 : sbufGetLength(item->payload);
     uint32_t remaining   = payload_len - item->offset;
     uint32_t to_copy     = (uint32_t) min((uint64_t) remaining, (uint64_t) length);
+    to_copy              = min(to_copy, (uint32_t) kHttpClientHttp2DataBytes);
 
     if (to_copy > 0)
     {
@@ -1493,7 +1568,7 @@ static bool httpclientSubmitNextHttp2Data(tunnel_t *t, line_t *l, httpclient_lst
 {
     discard t;
 
-    if (ls->h2_data_active != NULL || ls->h2_data_head == NULL)
+    if (! ls->h2_request_headers_sent || ls->h2_data_active != NULL || ls->h2_data_head == NULL)
     {
         return true;
     }
@@ -1702,12 +1777,20 @@ static int httpclientOnFrameSendCallback(nghttp2_session *session, const nghttp2
 {
     discard session;
 
-    if (userdata == NULL || frame == NULL || frame->hd.type != NGHTTP2_DATA)
+    if (userdata == NULL || frame == NULL)
     {
         return 0;
     }
 
     httpclient_lstate_t *ls = (httpclient_lstate_t *) userdata;
+    if (frame->hd.type == NGHTTP2_HEADERS && frame->hd.stream_id == ls->h2_stream_id)
+    {
+        ls->h2_request_headers_sent = true;
+    }
+    if (frame->hd.type != NGHTTP2_DATA)
+    {
+        return 0;
+    }
     if (frame->hd.stream_id != ls->h2_stream_id || ls->h2_data_active == NULL || ! ls->h2_data_active->complete)
     {
         return 0;
@@ -1967,18 +2050,22 @@ bool httpclientTransportEnsureHttp2Session(tunnel_t *t, line_t *l, httpclient_ls
         return false;
     }
 
-    nghttp2_settings_entry settings[] = {{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 1},
-                                         {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, (1U << 20)},
-                                         {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (uint32_t) kHttpClientHttp2FrameBytes},
-                                         {NGHTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL, ts->websocket_enabled ? 1U : 0U}};
+    nghttp2_settings_entry settings[kHttpClientHttp2SettingsMaxCount];
+    size_t                 settings_count = httpclientBuildHttp2Settings(ts, settings);
 
-    if (nghttp2_submit_settings(ls->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings)) != 0)
+    if (nghttp2_submit_settings(ls->session, NGHTTP2_FLAG_NONE, settings, settings_count) != 0)
     {
         LOGE("HttpClient: nghttp2_submit_settings failed");
         return false;
     }
 
     ls->runtime_proto = kHttpClientRuntimeHttp2;
+
+    sbuf_t *startup = httpclientCollectHttp2Startup(l, ls);
+    if (startup == NULL)
+    {
+        return false;
+    }
 
     if (ts->websocket_enabled)
     {
@@ -1988,12 +2075,13 @@ bool httpclientTransportEnsureHttp2Session(tunnel_t *t, line_t *l, httpclient_ls
             LOGD("HttpClient: HTTP/2 session ready, waiting for peer SETTINGS_ENABLE_CONNECT_PROTOCOL before websocket "
                  "CONNECT");
         }
-        return sendNghttp2Outbound(t, l, ls);
+        return httpclientSendHttp2Startup(t, l, ls, startup);
     }
 
     int32_t stream_id = 0;
     if (! httpclientSubmitHttp2RequestHeaders(ts, ls, &stream_id))
     {
+        lineReuseBuffer(l, startup);
         return false;
     }
 
@@ -2002,7 +2090,7 @@ bool httpclientTransportEnsureHttp2Session(tunnel_t *t, line_t *l, httpclient_ls
     {
         LOGD("HttpClient: submitted HTTP/2 request stream_id=%d method=%s path=%s", stream_id, ts->method, ts->path);
     }
-    return sendNghttp2Outbound(t, l, ls);
+    return httpclientSendHttp2Startup(t, l, ls, startup);
 }
 
 bool httpclientTransportHandleUpgradeAccepted(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
@@ -2038,15 +2126,23 @@ bool httpclientTransportHandleUpgradeAccepted(tunnel_t *t, line_t *l, httpclient
         return false;
     }
 
+    sbuf_t *startup = httpclientCollectHttp2Startup(l, ls);
+    if (startup == NULL)
+    {
+        return false;
+    }
+
     if (nghttp2_submit_rst_stream(ls->session, NGHTTP2_FLAG_NONE, 1, NGHTTP2_CANCEL) != 0)
     {
         LOGE("HttpClient: failed to cancel h2c upgrade stream 1");
+        lineReuseBuffer(l, startup);
         return false;
     }
 
     int32_t stream_id = 0;
     if (! httpclientSubmitHttp2RequestHeaders(ts, ls, &stream_id))
     {
+        lineReuseBuffer(l, startup);
         return false;
     }
 
@@ -2058,7 +2154,7 @@ bool httpclientTransportHandleUpgradeAccepted(tunnel_t *t, line_t *l, httpclient
         LOGD("HttpClient: accepted h2c upgrade and submitted HTTP/2 tunnel stream_id=%d", stream_id);
     }
 
-    return sendNghttp2Outbound(t, l, ls);
+    return httpclientSendHttp2Startup(t, l, ls, startup);
 }
 
 static bool httpclientTransportHandleCustomUpgradeAccepted(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
@@ -2392,7 +2488,7 @@ bool httpclientTransportFlushPendingUp(tunnel_t *t, line_t *l, httpclient_lstate
 {
     httpclient_tstate_t *ts = tunnelGetState(t);
 
-    if (ts->websocket_enabled && ! ls->websocket_active)
+    if ((ts->websocket_enabled && ! ls->websocket_active) || ls->h1_write_in_progress)
     {
         return true;
     }

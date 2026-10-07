@@ -17,6 +17,19 @@ if(LINUX AND TARGET RawSocket)
 endif()
 
 if(TARGET HttpClient)
+  waterwall_add_native_executable(httpclient_wire_profile_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/http/httpclient_wire_profile_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+  waterwall_line_failure_test_use_tunnel(httpclient_wire_profile_test HttpClient)
+  target_link_options(httpclient_wire_profile_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(httpclient_wire_profile_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests httpclient_wire_profile_test)
+  add_waterwall_unit_test(
+    waterwall.httpclient_wire_profile_unit
+    httpclient_wire_profile_test
+    "unit;tunnels;httpclient;framing;http2;reentrant"
+    30
+  )
+
   waterwall_add_native_executable(httpclient_chunked_terminator_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/http/httpclient_chunked_terminator_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   waterwall_line_failure_test_use_tunnel(httpclient_chunked_terminator_test HttpClient)

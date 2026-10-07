@@ -386,12 +386,11 @@ static bool buildUpgradeSettings(httpclient_tstate_t *ts)
         return true;
     }
 
-    nghttp2_settings_entry settings[] = {{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 1},
-                                         {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, (1U << 20)},
-                                         {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (uint32_t) kHttpClientHttp2FrameBytes}};
+    nghttp2_settings_entry settings[kHttpClientHttp2SettingsMaxCount];
+    size_t                 settings_count = httpclientBuildHttp2Settings(ts, settings);
 
     uint8_t       payload[128];
-    nghttp2_ssize raw_len = nghttp2_pack_settings_payload2(payload, sizeof(payload), settings, ARRAY_SIZE(settings));
+    nghttp2_ssize raw_len = nghttp2_pack_settings_payload2(payload, sizeof(payload), settings, settings_count);
     if (raw_len <= 0)
     {
         LOGF("HttpClient: nghttp2_pack_settings_payload2 failed");

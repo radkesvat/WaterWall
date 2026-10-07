@@ -18,6 +18,7 @@ foreach(fixture_target IN ITEMS
   halfduplexserver_reentrant_init_test
   headerserver_est_ordering_test
   httpclient_chunked_terminator_test
+  httpclient_wire_profile_test
   httpclient_reentrant_finish_test
   httpserver_chunked_terminator_test
   httpserver_reentrant_finish_test

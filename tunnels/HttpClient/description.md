@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HttpClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HttpClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -363,7 +363,8 @@ For HTTP/1.1, request bodies are always sent as chunked transfer encoding.
 That means:
 
 - request headers include `Transfer-Encoding: chunked`
-- each upstream payload buffer becomes one or more chunked body pieces
+- each upstream payload buffer becomes one or more complete chunks, each with at most 16,372 body bytes
+- each chunk's size prefix, body and trailing CRLF are handed to the next node together; an empty payload emits nothing
 - upstream `Finish` sends the final `0\r\n\r\n` chunk
 - response body bytes may arrive before that final chunk, so HTTP/1.1 request and response bodies can stream concurrently on the same connection
 
@@ -394,14 +395,22 @@ When `websocket` mode is enabled:
 
 For HTTP/2, `HttpClient` uses nghttp2 and opens a single request stream per Waterwall line.
 
-Current session settings include:
+The ordinary HTTP/2 framing profile follows the pinned Chrome 154 desktop reference:
 
-- `MAX_CONCURRENT_STREAMS = 1`
-- `INITIAL_WINDOW_SIZE = 1 MiB`
-- `MAX_FRAME_SIZE = 32 KiB`
+- `HEADER_TABLE_SIZE = 65,536`
+- `ENABLE_PUSH = 0`
+- `INITIAL_WINDOW_SIZE = 6 MiB`
+- `MAX_HEADER_LIST_SIZE = 262,144`
+- the default 16 KiB receive-frame limit remains in effect
+- the connection receive window is increased to 15 MiB
 
-Upstream payload is turned into HTTP/2 DATA frames.
-If the remote peer advertises a smaller frame size, payload is split accordingly.
+WebSocket mode additionally advertises `ENABLE_CONNECT_PROTOCOL = 1`. The same SETTINGS values are used for `h2c` upgrade. The one-request-stream design remains enforced by the node; it does not depend on advertising a concurrent-stream limit.
+
+For direct HTTP/2, the connection preface, initial SETTINGS and connection WINDOW_UPDATE are handed upstream together before separate request HEADERS. This is a bounded startup write, without a timer or waiting for application payload.
+
+Outgoing DATA carries at most 16,375 body bytes, so its nine-byte HTTP/2 header and payload fit within a 16 KiB TLS plaintext record when `TlsClient` follows directly. Peer flow-control credit and available payload can produce smaller frames. Receive-frame limits describe what the peer may send; they are not an outgoing DATA target.
+
+These framing choices reduce specific visible record-boundary differences. They do not emulate browser request contents, connection pooling or concurrent HTTP/2 streams, and configured TLS padding or other intervening transforms may change the final wire records.
 
 Incoming HTTP/2 bytes are fed to nghttp2 in 16 KiB slices. This is intentionally smaller than 32 KiB so large Waterwall
 buffers cannot trigger old nghttp2 receive-side stalls observed with oversized `nghttp2_session_mem_recv2()` calls.

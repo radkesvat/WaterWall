@@ -40,7 +40,9 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
                                  .split_role                     = kHttpClientSplitRoleNone,
                                  .split_main_line                = NULL,
                                  .split_upload_line              = NULL,
-                                 .split_download_line            = NULL};
+                                 .split_download_line            = NULL,
+                                 .h1_write_in_progress           = false,
+                                 .h2_request_headers_sent        = false};
 }
 
 static void httpclientLinestateH2DataItemDestroy(line_t *line, httpclient_h2_data_item_t *item)
