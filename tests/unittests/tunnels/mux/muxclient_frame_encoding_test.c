@@ -151,8 +151,9 @@ static void fixtureSetup(muxclient_fixture_t *fixture, uint32_t capture_capacity
     fixture->trace.capture_capacity = capture_capacity;
 
     fixture->prev = twfCreatePrevTunnel(&fixture->trace);
-    // one worker slot for the unsatisfied_lines flexible array
-    fixture->mux = tunnelCreate(NULL, sizeof(muxclient_tstate_t) + sizeof(line_t *), sizeof(muxclient_lstate_t));
+    // One inline owner-worker state slot.
+    fixture->mux =
+        tunnelCreate(NULL, sizeof(muxclient_tstate_t) + sizeof(muxclient_worker_state_t), sizeof(muxclient_lstate_t));
     twfRequire(fixture->mux != NULL, "failed to create the MuxClient tunnel");
     fixture->next = twfCreateNextTunnel(&fixture->trace);
 
@@ -171,11 +172,6 @@ static void fixtureSetup(muxclient_fixture_t *fixture, uint32_t capture_capacity
     ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
-    ts->worker_states                 = memoryAllocateZero(sizeof(*ts->worker_states));
-    ts->detached_child_counts         = memoryAllocateZero(sizeof(*ts->detached_child_counts));
-    ts->detached_queued_charge        = memoryAllocateZero(sizeof(*ts->detached_queued_charge));
-    twfRequire(ts->detached_child_counts != NULL && ts->detached_queued_charge != NULL,
-               "failed to allocate detached MuxClient accounting");
 
     twfLinePoolSetup(&fixture->lines, fixture->mux->lstate_size, 16);
     fixture->parent_l = twfLinePoolCreateLine(&fixture->lines);
@@ -220,10 +216,6 @@ static void fixtureTeardown(muxclient_fixture_t *fixture)
     {
         lineDestroy(fixture->parent_l);
     }
-    muxclient_tstate_t *ts = tunnelGetState(fixture->mux);
-    memoryFree(ts->worker_states);
-    memoryFree(ts->detached_child_counts);
-    memoryFree(ts->detached_queued_charge);
     memoryFree(fixture->capture);
     tunnelDestroy(fixture->prev);
     tunnelDestroy(fixture->mux);
@@ -769,13 +761,13 @@ static void caseParsedTinyFrameTransfersToDetachedAccounting(void)
     muxclient_fixture_t fixture;
     fixtureSetup(&fixture, 32);
 
-    muxclient_tstate_t *ts        = tunnelGetState(fixture.mux);
-    muxclient_lstate_t *parent_ls = lineGetState(fixture.parent_l, fixture.mux);
-    muxclient_lstate_t *child_ls  = lineGetState(fixture.child_l, fixture.mux);
-    const size_t        charge    = pooledBufferCharge(fixture.env.pool, true);
-    child_ls->paused              = true;
-    child_ls->open_frame_submitted = true;
-    ts->unsatisfied_lines[0]      = fixture.parent_l;
+    muxclient_tstate_t *ts                = tunnelGetState(fixture.mux);
+    muxclient_lstate_t *parent_ls         = lineGetState(fixture.parent_l, fixture.mux);
+    muxclient_lstate_t *child_ls          = lineGetState(fixture.child_l, fixture.mux);
+    const size_t        charge            = pooledBufferCharge(fixture.env.pool, true);
+    child_ls->paused                      = true;
+    child_ls->open_frame_submitted        = true;
+    ts->worker_states[0].unsatisfied_line = fixture.parent_l;
 
     sendParsedTinyClientData(&fixture, 0);
     requireEqualCharge(
@@ -789,15 +781,19 @@ static void caseParsedTinyFrameTransfersToDetachedAccounting(void)
     twfRequireLineStateZeroed(fixture.parent_l, fixture.mux, "tiny-frame parent loss retained parent state");
     requireEqualCharge(
         child_ls->pending_child_queue_charge, charge, "tiny-frame parent loss changed the child allocation charge");
-    requireEqualCharge(
-        ts->detached_queued_charge[0], charge, "tiny-frame parent loss did not transfer the exact detached charge");
-    twfRequireEqualU32(ts->detached_child_counts[0], 1, "tiny-frame parent loss lost detached child accounting");
+    requireEqualCharge(ts->worker_states[0].detached_queued_charge,
+                       charge,
+                       "tiny-frame parent loss did not transfer the exact detached charge");
+    twfRequireEqualU32(
+        ts->worker_states[0].detached_child_count, 1, "tiny-frame parent loss lost detached child accounting");
     lineUnref(fixture.parent_l);
     fixture.parent_l = NULL;
 
     muxclientTunnelUpStreamResume(fixture.mux, fixture.child_l);
-    requireEqualCharge(ts->detached_queued_charge[0], 0, "tiny-frame detached drain retained aggregate charge");
-    twfRequireEqualU32(ts->detached_child_counts[0], 0, "tiny-frame detached drain retained child accounting");
+    requireEqualCharge(
+        ts->worker_states[0].detached_queued_charge, 0, "tiny-frame detached drain retained aggregate charge");
+    twfRequireEqualU32(
+        ts->worker_states[0].detached_child_count, 0, "tiny-frame detached drain retained child accounting");
     twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "tiny-frame detached drain retained child state");
     twfRequire(lineIsAlive(fixture.child_l), "MuxClient destroyed its borrowed tiny-frame child");
 
@@ -1025,9 +1021,9 @@ static void caseParentLossDetachesAndDrainsBorrowedChild(void)
     fixtureSetup(&fixture, 128);
     queueTwoPausedClientPayloads(&fixture, kFirst, kSecond);
 
-    muxclient_tstate_t *ts       = tunnelGetState(fixture.mux);
-    muxclient_lstate_t *child_ls = lineGetState(fixture.child_l, fixture.mux);
-    ts->unsatisfied_lines[0]     = fixture.parent_l;
+    muxclient_tstate_t *ts                = tunnelGetState(fixture.mux);
+    muxclient_lstate_t *child_ls          = lineGetState(fixture.child_l, fixture.mux);
+    ts->worker_states[0].unsatisfied_line = fixture.parent_l;
 
     lineRef(fixture.parent_l);
     muxclientTunnelDownStreamFinish(fixture.mux, fixture.parent_l);
@@ -1039,12 +1035,13 @@ static void caseParentLossDetachesAndDrainsBorrowedChild(void)
     twfRequire(child_ls->parent == NULL, "detached borrowed child retained the dead parent pointer");
     twfRequire(child_ls->close_state == kMuxClientChildCloseParentGoneDraining,
                "parent loss did not publish detached drain state");
-    twfRequireEqualU32(ts->detached_child_counts[0], 1, "detached borrowed child count is wrong");
+    twfRequireEqualU32(ts->worker_states[0].detached_child_count, 1, "detached borrowed child count is wrong");
     const size_t entry_charge = pooledBufferCharge(fixture.env.pool, true);
     requireEqualCharge(child_ls->pending_child_queue_charge,
                        2U * entry_charge,
                        "detached borrowed child retained the wrong allocation charge");
-    requireEqualCharge(ts->detached_queued_charge[0], 2U * entry_charge, "detached borrowed aggregate charge is wrong");
+    requireEqualCharge(
+        ts->worker_states[0].detached_queued_charge, 2U * entry_charge, "detached borrowed aggregate charge is wrong");
     twfRequireEqualU32(fixture.trace.prev_payload, 0, "parent loss forced Payload through child Pause");
     twfRequireEqualU32(fixture.trace.prev_finish, 0, "parent loss finished a blocked child early");
 
@@ -1055,8 +1052,8 @@ static void caseParentLossDetachesAndDrainsBorrowedChild(void)
 
     twfRequireEqualText(fixture.trace.seq, "uppf", "detached borrowed drain did not preserve callback order");
     twfRequireEqualU32(fixture.trace.prev_payload_bytes, kFirst + kSecond, "detached borrowed drain lost bytes");
-    twfRequireEqualU32(ts->detached_child_counts[0], 0, "detached borrowed count survived completion");
-    requireEqualCharge(ts->detached_queued_charge[0], 0, "detached borrowed charge survived completion");
+    twfRequireEqualU32(ts->worker_states[0].detached_child_count, 0, "detached borrowed count survived completion");
+    requireEqualCharge(ts->worker_states[0].detached_queued_charge, 0, "detached borrowed charge survived completion");
     twfRequire(lineIsAlive(fixture.child_l), "MuxClient destroyed its borrowed child after detached drain");
     twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "detached borrowed child state survived completion");
 
@@ -1070,10 +1067,10 @@ static void caseParentLossRetainsPausedEmptyBorrowedChild(void)
     muxclient_fixture_t fixture;
     fixtureSetup(&fixture, 32);
 
-    muxclient_tstate_t *ts       = tunnelGetState(fixture.mux);
-    muxclient_lstate_t *child_ls = lineGetState(fixture.child_l, fixture.mux);
-    child_ls->paused             = true;
-    ts->unsatisfied_lines[0]     = fixture.parent_l;
+    muxclient_tstate_t *ts                = tunnelGetState(fixture.mux);
+    muxclient_lstate_t *child_ls          = lineGetState(fixture.child_l, fixture.mux);
+    child_ls->paused                      = true;
+    ts->worker_states[0].unsatisfied_line = fixture.parent_l;
 
     lineRef(fixture.parent_l);
     muxclientTunnelDownStreamFinish(fixture.mux, fixture.parent_l);
@@ -1081,9 +1078,9 @@ static void caseParentLossRetainsPausedEmptyBorrowedChild(void)
     twfRequire(! lineIsAlive(fixture.parent_l), "empty-queue parent loss left the owned parent alive");
     twfRequire(child_ls->close_state == kMuxClientChildCloseParentGoneDraining && child_ls->parent == NULL,
                "empty-queue borrowed child did not enter detached drain state");
-    twfRequireEqualU32(ts->detached_child_counts[0], 1, "empty-queue detached child was not counted");
+    twfRequireEqualU32(ts->worker_states[0].detached_child_count, 1, "empty-queue detached child was not counted");
     requireEqualCharge(child_ls->pending_child_queue_charge, 0, "empty detached child acquired queue charge");
-    requireEqualCharge(ts->detached_queued_charge[0], 0, "empty detached registry acquired queue charge");
+    requireEqualCharge(ts->worker_states[0].detached_queued_charge, 0, "empty detached registry acquired queue charge");
 
     lineUnref(fixture.parent_l);
     fixture.parent_l = NULL;
@@ -1091,8 +1088,8 @@ static void caseParentLossRetainsPausedEmptyBorrowedChild(void)
 
     twfRequire(lineIsAlive(fixture.child_l), "MuxClient destroyed its empty detached borrowed child");
     twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "empty detached borrowed child retained Mux state");
-    twfRequireEqualU32(ts->detached_child_counts[0], 0, "empty detached child count survived Resume");
-    requireEqualCharge(ts->detached_queued_charge[0], 0, "empty detached charge survived Resume");
+    twfRequireEqualU32(ts->worker_states[0].detached_child_count, 0, "empty detached child count survived Resume");
+    requireEqualCharge(ts->worker_states[0].detached_queued_charge, 0, "empty detached charge survived Resume");
 
     fixtureTeardown(&fixture);
 }
@@ -1261,8 +1258,9 @@ static void caseDetachedBorrowedLocalFinishReleasesAccounting(void)
     twfRequire(lineIsAlive(fixture.child_l), "MuxClient destroyed its borrowed child on local Finish");
     twfRequireEqualU32(fixture.trace.prev_payload, 0, "detached local Finish forwarded residual Payload");
     twfRequireEqualU32(fixture.trace.prev_finish, 0, "detached local Finish reflected Finish toward its sender");
-    twfRequireEqualU32(ts->detached_child_counts[0], 0, "detached local Finish retained borrowed count");
-    requireEqualCharge(ts->detached_queued_charge[0], 0, "detached local Finish retained borrowed charge");
+    twfRequireEqualU32(ts->worker_states[0].detached_child_count, 0, "detached local Finish retained borrowed count");
+    requireEqualCharge(
+        ts->worker_states[0].detached_queued_charge, 0, "detached local Finish retained borrowed charge");
     twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "detached local Finish retained MuxClient state");
 
     muxclientTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
@@ -1338,9 +1336,10 @@ static void runMuxclientDetachedAggregateLimitCase(bool unlimited_bytes, bool co
     detachClientParent(&fixture, older_parent);
     fixture.parent_l          = NULL;
     const size_t entry_charge = pooledBufferCharge(fixture.env.pool, true);
-    twfRequireEqualU32(ts->detached_child_counts[0], 1, "older detached MuxClient child was not retained");
-    requireEqualCharge(
-        ts->detached_queued_charge[0], entry_charge, "older detached MuxClient allocation charge was not retained");
+    twfRequireEqualU32(ts->worker_states[0].detached_child_count, 1, "older detached MuxClient child was not retained");
+    requireEqualCharge(ts->worker_states[0].detached_queued_charge,
+                       entry_charge,
+                       "older detached MuxClient allocation charge was not retained");
 
     line_t *new_parent = createClientParent(&fixture);
     line_t *new_child  = createClientChildOnParent(&fixture, new_parent, kTestChildCid + 1U, kNewBytes);
@@ -1356,8 +1355,8 @@ static void runMuxclientDetachedAggregateLimitCase(bool unlimited_bytes, bool co
     {
         twfRequire(new_ls->close_state == kMuxClientChildCloseParentGoneDraining,
                    "zero detached byte limit rejected the new child");
-        twfRequireEqualU32(ts->detached_child_counts[0], 2, "zero detached byte limit lost a child");
-        requireEqualCharge(ts->detached_queued_charge[0],
+        twfRequireEqualU32(ts->worker_states[0].detached_child_count, 2, "zero detached byte limit lost a child");
+        requireEqualCharge(ts->worker_states[0].detached_queued_charge,
                            2U * entry_charge,
                            "zero detached byte limit lost retained-charge accounting");
         muxclientTunnelUpStreamResume(fixture.mux, new_child);
@@ -1366,16 +1365,19 @@ static void runMuxclientDetachedAggregateLimitCase(bool unlimited_bytes, bool co
     else
     {
         twfRequireLineStateZeroed(new_child, fixture.mux, "detached aggregate limit retained the rejected child");
-        twfRequireEqualU32(ts->detached_child_counts[0], 1, "detached aggregate limit removed the older child");
-        requireEqualCharge(ts->detached_queued_charge[0],
+        twfRequireEqualU32(
+            ts->worker_states[0].detached_child_count, 1, "detached aggregate limit removed the older child");
+        requireEqualCharge(ts->worker_states[0].detached_queued_charge,
                            entry_charge,
                            "detached aggregate limit changed the older child's retained charge");
     }
 
     muxclientTunnelUpStreamResume(fixture.mux, fixture.child_l);
     twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "older detached child did not drain after rejection");
-    twfRequireEqualU32(ts->detached_child_counts[0], 0, "MuxClient detached count survived aggregate-limit drain");
-    requireEqualCharge(ts->detached_queued_charge[0], 0, "MuxClient detached charge survived aggregate-limit drain");
+    twfRequireEqualU32(
+        ts->worker_states[0].detached_child_count, 0, "MuxClient detached count survived aggregate-limit drain");
+    requireEqualCharge(
+        ts->worker_states[0].detached_queued_charge, 0, "MuxClient detached charge survived aggregate-limit drain");
     twfRequire(lineIsAlive(new_child), "MuxClient destroyed a borrowed rejected or drained child");
 
     lineDestroy(new_child);
@@ -1422,13 +1424,14 @@ static void runMuxclientReentrantPauseCase(bool parent_loss)
         muxclientTunnelDownStreamFinish(fixture.mux, fixture.parent_l);
         lineUnref(fixture.parent_l);
         fixture.parent_l = NULL;
-        requireEqualCharge(ts->detached_queued_charge[0],
+        requireEqualCharge(ts->worker_states[0].detached_queued_charge,
                            entry_charge,
                            "re-entrant detached Pause corrupted residual charge accounting");
         requireEqualCharge(child_ls->pending_child_queue_charge,
                            entry_charge,
                            "re-entrant detached Pause corrupted child charge accounting");
-        twfRequireEqualU32(ts->detached_child_counts[0], 1, "re-entrant detached Pause lost child accounting");
+        twfRequireEqualU32(
+            ts->worker_states[0].detached_child_count, 1, "re-entrant detached Pause lost child accounting");
     }
     else
     {
@@ -1461,8 +1464,10 @@ static void runMuxclientReentrantPauseCase(bool parent_loss)
     twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "re-entrant MuxClient drain retained child state");
     if (parent_loss)
     {
-        twfRequireEqualU32(ts->detached_child_counts[0], 0, "detached re-entrant drain retained child accounting");
-        requireEqualCharge(ts->detached_queued_charge[0], 0, "detached re-entrant drain retained charge accounting");
+        twfRequireEqualU32(
+            ts->worker_states[0].detached_child_count, 0, "detached re-entrant drain retained child accounting");
+        requireEqualCharge(
+            ts->worker_states[0].detached_queued_charge, 0, "detached re-entrant drain retained charge accounting");
     }
 
     fixtureTeardown(&fixture);
@@ -1526,20 +1531,20 @@ static void caseDetachedBorrowedChildSurvivesWorkerStop(bool empty)
     }
     muxclientTunnelDownStreamFinish(fixture.mux, fixture.parent_l);
     fixture.parent_l = NULL;
-    size_t charge    = ts->detached_queued_charge[0];
-    twfRequireEqualU32(ts->detached_child_counts[0], 1, "parent loss did not register detached child");
+    size_t charge    = ts->worker_states[0].detached_queued_charge;
+    twfRequireEqualU32(ts->worker_states[0].detached_child_count, 1, "parent loss did not register detached child");
     memoryZero(&fixture.trace, sizeof(fixture.trace));
     muxclientTunnelOnWorkerQuiesce(fixture.mux, 0, wwLifecycleProcessShutdown());
     muxclientTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
     muxclientTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
     twfRequire(lineIsAlive(fixture.child_l), "MUX destroyed a detached borrowed line");
-    twfRequireEqualU32(ts->detached_child_counts[0], 1, "worker stop lost borrowed accounting");
-    requireEqualCharge(ts->detached_queued_charge[0], charge, "worker stop changed detached charge");
+    twfRequireEqualU32(ts->worker_states[0].detached_child_count, 1, "worker stop lost borrowed accounting");
+    requireEqualCharge(ts->worker_states[0].detached_queued_charge, charge, "worker stop changed detached charge");
     muxclientTunnelUpStreamResume(fixture.mux, fixture.child_l);
     muxclientTunnelUpStreamFinish(fixture.mux, fixture.child_l);
     twfRequireEqualU32(fixture.trace.len, 0, "shutdown detached cleanup emitted a callback");
-    twfRequireEqualU32(ts->detached_child_counts[0], 0, "source Finish retained detached count");
-    requireEqualCharge(ts->detached_queued_charge[0], 0, "source Finish retained charge");
+    twfRequireEqualU32(ts->worker_states[0].detached_child_count, 0, "source Finish retained detached count");
+    requireEqualCharge(ts->worker_states[0].detached_queued_charge, 0, "source Finish retained charge");
     twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "source Finish retained MUX state");
     fixtureTeardown(&fixture);
 }

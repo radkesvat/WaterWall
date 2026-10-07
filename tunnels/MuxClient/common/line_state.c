@@ -5,7 +5,6 @@
 void muxclientLinestateInitialize(tunnel_t *t, muxclient_lstate_t *ls, line_t *l, bool is_child,
                                   mux_cid_t connection_id)
 {
-    discard                   t;
     wid_t                     wid          = lineGetWID(l);
     muxclient_parent_state_t *parent_state = NULL;
     if (! is_child)
@@ -16,6 +15,7 @@ void muxclientLinestateInitialize(tunnel_t *t, muxclient_lstate_t *ls, line_t *l
             LOGF("MuxClient: failed to allocate parent-only state");
             abortProgramNow(1);
         }
+        parent_state->t           = t;
         parent_state->read_stream = splicestreamCreate(lineGetBufferPool(l), kMuxFrameLength);
         if (UNLIKELY(parent_state->read_stream == NULL))
         {
@@ -31,7 +31,7 @@ void muxclientLinestateInitialize(tunnel_t *t, muxclient_lstate_t *ls, line_t *l
                                 .child_next                 = NULL,
                                 .pending_child_data         = bufferqueueCreate(kMuxChildBufferQueueCap),
                                 .pending_child_queue_charge = 0,
-                                .creation_epoch             = is_child ? 0 : wloopNowMS(getWorkerLoop(wid)),
+                                .creation_epoch             = is_child ? 0 : wloopNowMonotonicMS(getWorkerLoop(wid)),
                                 .connection_id              = connection_id,
                                 .close_state                = kMuxClientChildCloseOpen,
                                 .children_count             = 0,
@@ -63,6 +63,8 @@ void muxclientLinestateDestroy(muxclient_lstate_t *ls)
     // Check linked list integrity before destroying
     if (! ls->is_child)
     {
+        assert(ls->parent_state == NULL ||
+               (ls->parent_state->ping_item == NULL && ls->parent_state->pong_deadline_item == NULL));
         if (ls->parent_state != NULL && ls->parent_state->owned)
         {
             LOGF("MuxClient: destroying a published owned parent");

@@ -13,12 +13,10 @@ void muxclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_c
         abortProgramNow(1);
     }
     ts->worker_states[wid].quiescing = true;
-    wtimer_t *timer                  = ts->worker_states[wid].keepalive_timer;
-    if (timer != NULL)
+    local_idle_table_t *table        = ts->worker_states[wid].keepalive_table;
+    if (table != NULL)
     {
-        ts->worker_states[wid].keepalive_timer = NULL;
-        weventSetUserData(timer, NULL);
-        wtimerDelete(timer);
+        localidletableQuiesce(table);
     }
 }
 
@@ -29,5 +27,16 @@ void muxclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_cont
     while (ts->worker_states[wid].owned_parents != NULL)
     {
         muxclientHandleParentLoss(t, ts->worker_states[wid].owned_parents->l, true);
+    }
+    local_idle_table_t *table = ts->worker_states[wid].keepalive_table;
+    if (table != NULL)
+    {
+        if (UNLIKELY(localidletableGetItemCount(table) != 0))
+        {
+            LOGF("MuxClient: worker %u stopped with keepalive items", (unsigned int) wid);
+            abortProgramNow(1);
+        }
+        localidletableDestroy(table);
+        ts->worker_states[wid].keepalive_table = NULL;
     }
 }

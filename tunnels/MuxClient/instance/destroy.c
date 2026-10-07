@@ -9,15 +9,15 @@ void muxclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 
     for (uint32_t wid = 0; wid < ts->workers_count; ++wid)
     {
-        if (UNLIKELY(ts->worker_states[wid].owned_parents != NULL || ts->unsatisfied_lines[wid] != NULL ||
+        if (UNLIKELY(ts->worker_states[wid].owned_parents != NULL || ts->worker_states[wid].unsatisfied_line != NULL ||
                      ts->worker_states[wid].stall_retired_parents != 0 ||
-                     ts->worker_states[wid].keepalive_timer != NULL))
+                     ts->worker_states[wid].keepalive_table != NULL))
         {
             LOGF("MuxClient: destroy observed a published parent on worker %u", wid);
             abortProgramNow(1);
         }
-        if (UNLIKELY(ts->detached_child_counts == NULL || ts->detached_queued_charge == NULL ||
-                     ts->detached_child_counts[wid] != 0 || ts->detached_queued_charge[wid] != 0))
+        if (UNLIKELY(ts->worker_states[wid].detached_child_count != 0 ||
+                     ts->worker_states[wid].detached_queued_charge != 0))
         {
             LOGF("MuxClient: destroy observed detached borrowed children on worker %u", wid);
             abortProgramNow(1);
@@ -37,8 +37,5 @@ void muxclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
     {
         memoryFree(ts->fixed_parent_lines);
     }
-    memoryFree(ts->worker_states);
-    memoryFree(ts->detached_child_counts);
-    memoryFree(ts->detached_queued_charge);
     tunnelDestroy(t);
 }

@@ -176,7 +176,7 @@ bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstat
 
     if (ts->concurrency_mode == kConcurrencyModeTimer)
     {
-        if (wloopNowMS(getWorkerLoop(lineGetWID(ls->l))) < ts->concurrency_duration + ls->creation_epoch)
+        if (wloopNowMonotonicMS(getWorkerLoop(lineGetWID(ls->l))) < ts->concurrency_duration + ls->creation_epoch)
         {
             return false; // Connection is not exhausted yet
         }
@@ -227,9 +227,9 @@ void muxclientForgetParentSelection(muxclient_tstate_t *ts, wid_t wid, line_t *p
         return;
     }
 
-    if (ts->unsatisfied_lines[wid] == parent_l)
+    if (ts->worker_states[wid].unsatisfied_line == parent_l)
     {
-        ts->unsatisfied_lines[wid] = NULL;
+        ts->worker_states[wid].unsatisfied_line = NULL;
     }
 }
 
@@ -370,6 +370,7 @@ void muxclientUnregisterParent(muxclient_tstate_t *ts, muxclient_lstate_t *ls)
     muxclient_worker_state_t *worker = &ts->worker_states[lineGetWID(ls->l)];
     muxclient_parent_state_t *state  = ls->parent_state;
     assert(state->owned);
+    muxclientDisarmKeepalive(ls);
     if (state->stall_retired)
     {
         if (UNLIKELY(worker->stall_retired_parents == 0))
@@ -404,6 +405,7 @@ static bool muxclientCreateParentLine(tunnel_t *t, wid_t wid, line_t **selection
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
 
     muxclientLinestateInitialize(t, parent_ls, parent_l, false, 0);
+    parent_ls->parent_state->selection_slot = selection_slot;
     muxclientRegisterParent(tunnelGetState(t), parent_ls);
     assert(*selection_slot == NULL);
     *selection_slot = parent_l;
@@ -431,6 +433,7 @@ void muxclientCloseIdleExhaustedParentLine(tunnel_t *t, muxclient_tstate_t *ts, 
     }
     muxclientForgetParentSelection(ts, wid, parent_l);
     parent_ls->selection_retired = true;
+    muxclientDisarmKeepalive(parent_ls);
     mux_parent_output_t *output  = &parent_ls->parent_state->output;
     if (output->pumping || output->notifying || bufferqueueGetBufCount(&output->pending) != 0)
     {
@@ -475,6 +478,7 @@ void muxclientRetireUnresponsiveParent(tunnel_t *t, muxclient_tstate_t *ts, wid_
              parent->children_count,
              (unsigned long long) age);
         parent->selection_retired           = true;
+        muxclientDisarmKeepalive(parent);
         parent->parent_state->stall_retired = true;
         ++worker->stall_retired_parents;
         *slot = NULL;
@@ -568,11 +572,11 @@ line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
 
     if (ts->worker_states[wid].quiescing)
         return NULL;
-    muxclientRetireUnresponsiveParent(t, ts, wid, &ts->unsatisfied_lines[wid]);
+    muxclientRetireUnresponsiveParent(t, ts, wid, &ts->worker_states[wid].unsatisfied_line);
     if (ts->worker_states[wid].quiescing)
         return NULL;
 
-    line_t *candidate_parent_l = ts->unsatisfied_lines[wid];
+    line_t *candidate_parent_l = ts->worker_states[wid].unsatisfied_line;
     if (candidate_parent_l != NULL)
     {
         muxclient_lstate_t *candidate_parent_ls = lineGetState(candidate_parent_l, t);
@@ -585,7 +589,8 @@ line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
             else
             {
                 candidate_parent_ls->selection_retired = true;
-                ts->unsatisfied_lines[wid]             = NULL;
+                muxclientDisarmKeepalive(candidate_parent_ls);
+                ts->worker_states[wid].unsatisfied_line = NULL;
             }
         }
     }
@@ -593,15 +598,15 @@ line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
     if (ts->worker_states[wid].quiescing)
         return NULL;
 
-    if (ts->unsatisfied_lines[wid] == NULL)
+    if (ts->worker_states[wid].unsatisfied_line == NULL)
     {
-        if (! muxclientCreateParentLine(t, wid, &ts->unsatisfied_lines[wid]))
+        if (! muxclientCreateParentLine(t, wid, &ts->worker_states[wid].unsatisfied_line))
         {
             return NULL;
         }
     }
 
-    return ts->unsatisfied_lines[wid];
+    return ts->worker_states[wid].unsatisfied_line;
 }
 
 static void muxclientCloseChildKeepParentImpl(tunnel_t *t, muxclient_tstate_t *ts, line_t *parent_l,
@@ -1150,16 +1155,15 @@ static void muxclientRegisterDetachedChild(muxclient_tstate_t *ts, line_t *child
     assert(lineIsOnCurrentEventWorker(child_l));
     assert(workerWIDIsRegistered(wid));
 
-    if (UNLIKELY(ts->detached_child_counts == NULL || ts->detached_queued_charge == NULL || wid >= ts->workers_count ||
-                 ts->detached_child_counts[wid] == UINT32_MAX ||
-                 ts->detached_queued_charge[wid] > SIZE_MAX - queued_charge))
+    if (UNLIKELY(wid >= ts->workers_count || ts->worker_states[wid].detached_child_count == UINT32_MAX ||
+                 ts->worker_states[wid].detached_queued_charge > SIZE_MAX - queued_charge))
     {
         LOGF("MuxClient: detached retained queue-charge accounting overflow on worker %d", (int) wid);
         abortProgramNow(1);
     }
 
-    ts->detached_child_counts[wid]++;
-    ts->detached_queued_charge[wid] += queued_charge;
+    ts->worker_states[wid].detached_child_count++;
+    ts->worker_states[wid].detached_queued_charge += queued_charge;
 }
 
 static void muxclientSubtractDetachedCharge(muxclient_tstate_t *ts, line_t *child_l, size_t charge)
@@ -1167,13 +1171,12 @@ static void muxclientSubtractDetachedCharge(muxclient_tstate_t *ts, line_t *chil
     const wid_t wid = lineGetWID(child_l);
     assert(lineIsOnCurrentEventWorker(child_l));
 
-    if (UNLIKELY(ts->detached_queued_charge == NULL || wid >= ts->workers_count ||
-                 ts->detached_queued_charge[wid] < charge))
+    if (UNLIKELY(wid >= ts->workers_count || ts->worker_states[wid].detached_queued_charge < charge))
     {
         LOGF("MuxClient: detached retained queue-charge accounting underflow on worker %d", (int) wid);
         abortProgramNow(1);
     }
-    ts->detached_queued_charge[wid] -= charge;
+    ts->worker_states[wid].detached_queued_charge -= charge;
 }
 
 static void muxclientRemoveDetachedChild(muxclient_tstate_t *ts, line_t *child_l, muxclient_lstate_t *child_ls)
@@ -1186,16 +1189,16 @@ static void muxclientRemoveDetachedChild(muxclient_tstate_t *ts, line_t *child_l
     assert(child_ls->close_state == kMuxClientChildCloseParentGoneDraining);
     assert(child_ls->parent == NULL);
 
-    if (UNLIKELY((residual_charge == 0) != (residual_count == 0) || ts->detached_child_counts == NULL ||
-                 ts->detached_queued_charge == NULL || wid >= ts->workers_count ||
-                 ts->detached_child_counts[wid] == 0 || ts->detached_queued_charge[wid] < residual_charge))
+    if (UNLIKELY((residual_charge == 0) != (residual_count == 0) || wid >= ts->workers_count ||
+                 ts->worker_states[wid].detached_child_count == 0 ||
+                 ts->worker_states[wid].detached_queued_charge < residual_charge))
     {
         LOGF("MuxClient: invalid detached child removal on worker %d", (int) wid);
         abortProgramNow(1);
     }
 
-    ts->detached_queued_charge[wid] -= residual_charge;
-    ts->detached_child_counts[wid]--;
+    ts->worker_states[wid].detached_queued_charge -= residual_charge;
+    ts->worker_states[wid].detached_child_count--;
     child_ls->pending_child_queue_charge = 0;
 
     if (residual_count != 0)
@@ -1209,7 +1212,8 @@ static void muxclientRemoveDetachedChild(muxclient_tstate_t *ts, line_t *child_l
     }
 
     /* A paused detached child may validly have an empty queue. */
-    if (UNLIKELY(ts->detached_child_counts[wid] == 0 && ts->detached_queued_charge[wid] != 0))
+    if (UNLIKELY(ts->worker_states[wid].detached_child_count == 0 &&
+                 ts->worker_states[wid].detached_queued_charge != 0))
     {
         LOGF("MuxClient: detached queue charge remained without a child on worker %d", (int) wid);
         abortProgramNow(1);
@@ -1332,9 +1336,9 @@ bool muxclientBeginPeerCloseDrain(tunnel_t *t, line_t *parent_l, muxclient_tstat
 static bool muxclientDetachedLimitReached(muxclient_tstate_t *ts, wid_t wid)
 {
     return (ts->detached_buffer_limit != kMuxDetachedLimitUnlimited &&
-            ts->detached_queued_charge[wid] >= (size_t) ts->detached_buffer_limit) ||
+            ts->worker_states[wid].detached_queued_charge >= (size_t) ts->detached_buffer_limit) ||
            (ts->detached_child_limit != kMuxDetachedLimitUnlimited &&
-            ts->detached_child_counts[wid] >= ts->detached_child_limit);
+            ts->worker_states[wid].detached_child_count >= ts->detached_child_limit);
 }
 
 void muxclientHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent_next)
@@ -1428,8 +1432,8 @@ void muxclientHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
                  "child-limit=%u charge-limit=%u)",
                  (unsigned int) child_ls->connection_id,
                  child_ls->pending_child_queue_charge,
-                 ts->detached_child_counts[wid],
-                 ts->detached_queued_charge[wid],
+                 ts->worker_states[wid].detached_child_count,
+                 ts->worker_states[wid].detached_queued_charge,
                  ts->detached_child_limit,
                  ts->detached_buffer_limit);
             muxclientAbortDetachedChild(t, child_l, child_ls, true);

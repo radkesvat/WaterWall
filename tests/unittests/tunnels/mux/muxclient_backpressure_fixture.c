@@ -37,7 +37,8 @@ static void mxbClientParentFinish(tunnel_t *endpoint, line_t *parent)
 
 void mxbMuxClientCreate(mxb_fixture_t *fixture)
 {
-    fixture->mux = tunnelCreate(NULL, sizeof(muxclient_tstate_t) + sizeof(line_t *), sizeof(muxclient_lstate_t));
+    fixture->mux =
+        tunnelCreate(NULL, sizeof(muxclient_tstate_t) + sizeof(muxclient_worker_state_t), sizeof(muxclient_lstate_t));
     fixture->parent_peer = tunnelCreate(NULL, sizeof(mxb_fixture_t *), 0);
     mxbRequire(fixture->mux != NULL && fixture->parent_peer != NULL, "failed to create MuxClient composition tunnels");
 
@@ -63,11 +64,6 @@ void mxbMuxClientCreate(mxb_fixture_t *fixture)
     ts->detached_buffer_limit         = kMxbRetainedChargeLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
-    ts->worker_states                 = memoryAllocateZero(sizeof(*ts->worker_states));
-    ts->detached_child_counts         = memoryAllocateZero(sizeof(*ts->detached_child_counts));
-    ts->detached_queued_charge        = memoryAllocateZero(sizeof(*ts->detached_queued_charge));
-    mxbRequire(ts->detached_child_counts != NULL && ts->detached_queued_charge != NULL,
-               "failed to allocate MuxClient detached accounting");
 }
 
 void mxbMuxClientInitializeLines(mxb_fixture_t *fixture)
@@ -79,7 +75,7 @@ void mxbMuxClientInitializeLines(mxb_fixture_t *fixture)
     muxclientLinestateInitialize(fixture->mux, child_ls, fixture->child, true, kMxbClientCid);
     child_ls->open_frame_submitted = true;
     muxclientJoinConnection(parent_ls, child_ls);
-    ((muxclient_tstate_t *) tunnelGetState(fixture->mux))->unsatisfied_lines[0] = fixture->parent;
+    ((muxclient_tstate_t *) tunnelGetState(fixture->mux))->worker_states[0].unsatisfied_line = fixture->parent;
 }
 
 void mxbMuxClientFeedParent(mxb_fixture_t *fixture, bool include_close)
@@ -134,18 +130,18 @@ size_t mxbMuxClientParentQueueCharge(const mxb_fixture_t *fixture)
 
 uint32_t mxbMuxClientDetachedChildren(const mxb_fixture_t *fixture)
 {
-    return ((muxclient_tstate_t *) tunnelGetState(fixture->mux))->detached_child_counts[0];
+    return ((muxclient_tstate_t *) tunnelGetState(fixture->mux))->worker_states[0].detached_child_count;
 }
 
 size_t mxbMuxClientDetachedCharge(const mxb_fixture_t *fixture)
 {
-    return ((muxclient_tstate_t *) tunnelGetState(fixture->mux))->detached_queued_charge[0];
+    return ((muxclient_tstate_t *) tunnelGetState(fixture->mux))->worker_states[0].detached_queued_charge;
 }
 
 void mxbMuxClientDestroy(mxb_fixture_t *fixture)
 {
     muxclient_tstate_t *ts = tunnelGetState(fixture->mux);
-    mxbRequire(ts->detached_child_counts[0] == 0 && ts->detached_queued_charge[0] == 0,
+    mxbRequire(ts->worker_states[0].detached_child_count == 0 && ts->worker_states[0].detached_queued_charge == 0,
                "MuxClient composition teardown retained detached accounting");
 
     if (fixture->parent != NULL)
@@ -162,9 +158,6 @@ void mxbMuxClientDestroy(mxb_fixture_t *fixture)
         fixture->parent = NULL;
     }
 
-    memoryFree(ts->worker_states);
-    memoryFree(ts->detached_child_counts);
-    memoryFree(ts->detached_queued_charge);
     tunnelDestroy(fixture->parent_peer);
     tunnelDestroy(fixture->mux);
     fixture->parent_peer = NULL;

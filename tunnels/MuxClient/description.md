@@ -1,5 +1,5 @@
 <!--
-Documentation version: 161
+Documentation version: 162
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/MuxClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -280,10 +280,12 @@ Keepalive is enabled by default in all modes. Optional `settings`:
 The switch must be boolean; both durations must be integers in `1..2147483647`,
 even when disabled. Fixed-mode rendezvous remains active when disabled.
 
-One timer per worker checks and probes established selectable parents, not children. Its
-period is `min(ping-interval, tolerance-ms, 1000)` ms. The first probe is due one
-`ping-interval` after transport Est and is sent on the first eligible tick at or
-after that deadline. Waiting for it does not make the parent suspect or block new children.
+A worker-local idle table schedules probes and reply deadlines for established
+selectable parents, not children. Expiry has approximately one-second resolution,
+so a due probe or timeout may be handled about one second late, including when a
+configured duration is shorter. The first probe is due one `ping-interval` after
+transport Est and is sent at the first eligible expiry at or after that deadline.
+Waiting for it does not make the parent suspect or block new children.
 Later probes obey `ping-interval`, and reply timing starts when a probe is sent. Only one
 probe is outstanding per parent. Ping/Pong has zero payload and uses CID bytes
 as a 32-bit token. Only a complete matching Pong on that parent acknowledges it;
@@ -292,10 +294,11 @@ peer support. Before that, unanswered discovery is retried without suspicion or
 replacement. This permits a disabled MuxServer responder, but means a parent
 that never answers its first probe has no health-based recovery.
 
-The worker timer and outstanding reply deadlines continue through parent
+The scheduled probes and outstanding reply deadlines continue through parent
 transport Pause and child FlowPause. A due probe waits until parent output is
 unpaused, its active callback has returned, and its FIFO is empty. Missed ticks
-produce one due probe, not a burst. Its reply clock starts immediately before
+produce one due probe, not a burst. Blocked probes retry after about one second.
+Its reply clock starts immediately before
 handoff to the next node; an unsent probe cannot make a parent suspect or retire it.
 Pong replies share the ordinary parent FIFO, charge limit and Pause gate.
 All timestamps use the owner's monotonic clock. After handoff, queuing in later
@@ -303,7 +306,7 @@ nodes, local Pause and wire transfer consume tolerance. Idle connections and one
 do not require application replies: the Mux peer answers independently.
 
 At one quarter of tolerance (rounded down, at least 1 ms; 11250 ms by default),
-fixed selection prefers non-suspect parents. At full tolerance, the worker timer
+fixed selection prefers non-suspect parents. At full tolerance, reply-deadline expiry
 or a new-child request may softly retire a parent, including during Pause.
 A replacement is created only on a new-child request. A late matching Pong
 restores a still-selectable parent. A retired parent never rejoins selection;
@@ -315,8 +318,10 @@ through normal parent-loss cleanup, including blocked final output.
 Per worker, at most `per-worker-connections-count` keepalive-retired parents
 remain in fixed mode, or one in timer/counter modes. Pending final output still
 counts. At the bound, occupied unresponsive parents remain selectable until
-retirement capacity is released; empty ones can still be replaced. Existing
-counter/timer rotation continues independently. Timers probe and apply expiry;
+retirement capacity is released, with expiry retrying about once per second;
+empty ones can still be replaced. Existing counter/timer rotation continues
+independently and measures parent age with the owner's monotonic clock. Idle-table
+callbacks probe and apply expiry;
 replacement creation runs on a new-child request, with no forced termination of
 active children.
 Adapter and peer timeouts remain independent.
@@ -523,10 +528,13 @@ the same detached drain behavior to already parsed child queues.
 
 ## Worker shutdown
 
-During worker quiescence, `MuxClient` switches terminal cleanup to discard retained MUX queues without sending
+During worker quiescence, `MuxClient` stops its worker-local keepalive table and
+switches terminal cleanup to discard retained MUX queues without sending
 payload, Open/Close frames, or flow-control work. Each worker inventories every parent it creates independently
-of selection, including connecting, idle, active, and retired parents. Worker stop closes that inventory and
-finishes attached children toward their source owners, which destroy the borrowed child lines. Previously detached
+of selection, including connecting, idle, active, and retired parents. Worker stop
+closes that inventory, removing its keepalive items and finishing attached children
+toward their source owners, which destroy the borrowed child lines. It then
+destroys the empty table on the same worker. Previously detached
 borrowed children may outlive the MUX worker hook; their state and exact queue accounting remain available until
 their source owners send Finish. Final instance destruction requires both ownership and detached accounting to be
 empty. Ordinary connection loss and ordered peer Close retain their normal backpressure-driven drain behavior.

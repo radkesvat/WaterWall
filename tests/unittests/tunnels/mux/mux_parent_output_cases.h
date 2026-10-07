@@ -1760,7 +1760,7 @@ static void caseAccountedSpliceLifecycle(unsigned detach, bool discard_queue)
                    "detaching a child released or duplicated its retained queue charge");
 #ifdef MUX_OUTPUT_CLIENT
         pq_tstate_t *ts = tunnelGetState(f.mux);
-        twfRequire(ts->detached_queued_charge[lineGetWID(f.child_l)] == cost,
+        twfRequire(ts->worker_states[lineGetWID(f.child_l)].detached_queued_charge == cost,
                    "client detached queue charge omitted logical splice capacity");
 #else
         twfRequire(muxserverGetDetachedRegistry(f.mux, f.child_l)->queued_charge == cost,

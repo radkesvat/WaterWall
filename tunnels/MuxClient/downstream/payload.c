@@ -138,7 +138,7 @@ static void processParentPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
             if (ts->keepalive && frame.flags == kMuxFlagPong && state->awaiting_pong && frame.cid == state->ping_token)
             {
                 state->peer_keepalive = true;
-                state->awaiting_pong  = false;
+                muxclientAcknowledgePong(state);
             }
             continue;
         }

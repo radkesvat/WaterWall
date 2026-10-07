@@ -1,6 +1,6 @@
 /*
- * Covers: muxclient capacity dispatch; the explicit inputs, callbacks and expected results below define
- * this suite.
+ * Covers: MuxClient capacity dispatch, embedded worker state, monotonic rotation,
+ * worker/instance isolation, and idle-table parent health.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseCounterParentRetiresOnlyOnNextSelection, caseTimerParentRetiresOnlyOnNextSelection,
@@ -10,8 +10,8 @@
  * Checks: Assertion labels include: MuxClient teardown retained borrowed-child state; counter capacity
  * split children before exhaustion; counter parent retired before another selection was needed;
  * counter-exhausted parent was not retired on the next selection
- * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
- * or application-throughput behavior.
+ * Limits: Worker identities are simulated on one OS thread. Platform/feature
+ * branches remain conditional; these fixtures establish no throughput behavior.
  * CTest: waterwall.muxclient_capacity_dispatch_unit
  */
 #include "MuxClient/structure.h"
@@ -84,7 +84,8 @@ static void fixtureSetup(muxclient_capacity_fixture_t *fixture, uint8_t mode, ui
     twfWorkerEnvSetup(&fixture->env, kClientTestBufferSize, kMuxFrameLength * 2U);
 
     fixture->prev = twfCreatePrevTunnel(&fixture->trace);
-    fixture->mux  = tunnelCreate(NULL, sizeof(muxclient_tstate_t) + sizeof(line_t *), sizeof(muxclient_lstate_t));
+    fixture->mux =
+        tunnelCreate(NULL, sizeof(muxclient_tstate_t) + sizeof(muxclient_worker_state_t), sizeof(muxclient_lstate_t));
     fixture->next = twfCreateNextTunnel(&fixture->trace);
     twfRequire(fixture->mux != NULL, "failed to create the MuxClient capacity fixture tunnel");
     tunnelBind(fixture->prev, fixture->mux);
@@ -105,11 +106,6 @@ static void fixtureSetup(muxclient_capacity_fixture_t *fixture, uint8_t mode, ui
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->max_children                  = 16;
     ts->workers_count                 = 1;
-    ts->worker_states                 = memoryAllocateZero(sizeof(*ts->worker_states));
-    ts->detached_child_counts         = memoryAllocateZero(sizeof(*ts->detached_child_counts));
-    ts->detached_queued_charge        = memoryAllocateZero(sizeof(*ts->detached_queued_charge));
-    twfRequire(ts->detached_child_counts != NULL && ts->detached_queued_charge != NULL,
-               "failed to allocate MuxClient detached accounting");
 
     if (mode == kConcurrencyModeFixedConnectionsCount)
     {
@@ -157,17 +153,15 @@ static void fixtureTeardown(muxclient_capacity_fixture_t *fixture)
     }
 
     muxclient_tstate_t *ts = tunnelGetState(fixture->mux);
-    twfRequireEqualU32(ts->detached_child_counts[0], 0, "MuxClient fixture retained detached children");
-    twfRequire(ts->detached_queued_charge[0] == 0, "MuxClient fixture retained detached bytes");
+    twfRequireEqualU32(ts->worker_states[0].detached_child_count, 0, "MuxClient fixture retained detached children");
+    twfRequire(ts->worker_states[0].detached_queued_charge == 0, "MuxClient fixture retained detached bytes");
     muxclientTunnelOnWorkerStop(fixture->mux, 0, wwLifecycleProcessShutdown());
     twfRequire(ts->worker_states[0].stall_retired_parents == 0, "shutdown retained stalled-parent accounting");
 
     twfRequireNoLeakedBuffers();
     tunnelchainDestroy(fixture->chain);
     memoryFree(ts->fixed_parent_lines);
-    memoryFree(ts->worker_states);
-    memoryFree(ts->detached_child_counts);
-    memoryFree(ts->detached_queued_charge);
+
     memoryFree(fixture->children);
     twfLinePoolTeardown(&fixture->child_lines);
     tunnelDestroy(fixture->prev);
@@ -207,14 +201,14 @@ static void caseCounterParentRetiresOnlyOnNextSelection(void)
     muxclient_lstate_t *parent_ls    = first_ls->parent;
     muxclient_lstate_t *second_ls    = lineGetState(second_child, fixture.mux);
     twfRequire(second_ls->parent == parent_ls, "counter capacity split children before exhaustion");
-    twfRequire(! parent_ls->selection_retired && ts->unsatisfied_lines[0] == first_parent,
+    twfRequire(! parent_ls->selection_retired && ts->worker_states[0].unsatisfied_line == first_parent,
                "counter parent retired before another selection was needed");
 
     line_t             *third_child = fixtureOpenChild(&fixture);
     muxclient_lstate_t *third_ls    = lineGetState(third_child, fixture.mux);
     line_t             *new_parent  = third_ls->parent->l;
     twfRequire(parent_ls->selection_retired, "counter-exhausted parent was not retired on the next selection");
-    twfRequire(new_parent != first_parent && ts->unsatisfied_lines[0] == new_parent,
+    twfRequire(new_parent != first_parent && ts->worker_states[0].unsatisfied_line == new_parent,
                "counter mode selected its retired parent again");
 
     fixtureFinishChild(&fixture, first_child);
@@ -224,7 +218,8 @@ static void caseCounterParentRetiresOnlyOnNextSelection(void)
     twfRequireEqualU32(fixture.trace.next_finish,
                        parent_finishes_before + 1U,
                        "retired counter parent did not close through the owned-parent path");
-    twfRequire(ts->unsatisfied_lines[0] == new_parent, "retired parent close displaced the replacement selection");
+    twfRequire(ts->worker_states[0].unsatisfied_line == new_parent,
+               "retired parent close displaced the replacement selection");
     fixtureTeardown(&fixture);
 }
 
@@ -241,14 +236,14 @@ static void caseTimerParentRetiresOnlyOnNextSelection(void)
     line_t             *first_parent = parent_ls->l;
     parent_ls->creation_epoch        = 0;
     ts->concurrency_duration         = 1;
-    twfRequire(! parent_ls->selection_retired && ts->unsatisfied_lines[0] == first_parent,
+    twfRequire(! parent_ls->selection_retired && ts->worker_states[0].unsatisfied_line == first_parent,
                "expired timer parent retired without a selection request");
 
     line_t             *second_child = fixtureOpenChild(&fixture);
     muxclient_lstate_t *second_ls    = lineGetState(second_child, fixture.mux);
     line_t             *new_parent   = second_ls->parent->l;
     twfRequire(parent_ls->selection_retired, "expired timer parent was not retired on the next selection");
-    twfRequire(new_parent != first_parent && ts->unsatisfied_lines[0] == new_parent,
+    twfRequire(new_parent != first_parent && ts->worker_states[0].unsatisfied_line == new_parent,
                "timer mode selected its retired parent again");
 
     const uint32_t parent_finishes_before = fixture.trace.next_finish;
@@ -257,6 +252,64 @@ static void caseTimerParentRetiresOnlyOnNextSelection(void)
                        parent_finishes_before + 1U,
                        "retired timer parent did not close when its final child left");
     fixtureTeardown(&fixture);
+}
+
+static void caseTimerRotationIgnoresWallClock(void)
+{
+    twfSetCase("timer parent rotation follows elapsed monotonic time across wall clock jumps");
+    muxclient_capacity_fixture_t f;
+    fixtureSetup(&f, kConcurrencyModeTimer, 0);
+    f.env.loop->cur_hrtime     = 1000000;
+    f.env.loop->cur_time_ms    = 100000;
+    line_t             *first  = fixtureOpenChild(&f);
+    muxclient_lstate_t *parent = ((muxclient_lstate_t *) lineGetState(first, f.mux))->parent;
+    twfRequire(parent->creation_epoch == 1000, "parent creation time did not use the monotonic clock");
+    f.env.loop->cur_hrtime = 1999000;
+    f.env.loop->cur_time_ms += 3600000;
+    line_t *second = fixtureOpenChild(&f);
+    twfRequire(((muxclient_lstate_t *) lineGetState(second, f.mux))->parent == parent && ! parent->selection_retired,
+               "forward wall-clock adjustment rotated a parent before its elapsed duration");
+    f.env.loop->cur_hrtime  = 2000000;
+    f.env.loop->cur_time_ms = 1;
+    line_t *third           = fixtureOpenChild(&f);
+    twfRequire(((muxclient_lstate_t *) lineGetState(third, f.mux))->parent != parent && parent->selection_retired,
+               "backward wall-clock adjustment postponed elapsed parent rotation");
+    fixtureTeardown(&f);
+}
+
+static void caseEmbeddedWorkerStates(void)
+{
+    twfSetCase("MuxClient constructor embeds zeroed state through the highest worker slot");
+    twf_worker_env_t env;
+    twfWorkerEnvSetup(&env, kClientTestBufferSize, kMuxFrameLength * 2U);
+    GSTATE.workers_count                = 4;
+    const uint32_t previous_ram_profile = GSTATE.ram_profile;
+    GSTATE.ram_profile                  = kRamProfileL2Memory;
+    node_t node                         = {0};
+    node.node_settings_json             = cJSON_Parse("{\"mode\":\"counter\",\"connection-capacity\":16}");
+    twfRequire(node.node_settings_json != NULL, "failed to construct MuxClient settings");
+    tunnel_t *mux = muxclientTunnelCreate(&node);
+    twfRequire(mux != NULL, "MuxClient constructor rejected four inline worker slots");
+    muxclient_tstate_t *ts    = tunnelGetState(mux);
+    const uintptr_t     start = (uintptr_t) ts;
+    const uintptr_t     first = (uintptr_t) &ts->worker_states[0];
+    const uintptr_t     end   = (uintptr_t) &ts->worker_states[4];
+    twfRequire(first == start + offsetof(muxclient_tstate_t, worker_states) && end <= start + mux->tstate_size &&
+                   ts->workers_count == 4,
+               "inline worker array does not fit the tunnel allocation");
+    muxclient_worker_state_t zero;
+    memoryZero(&zero, sizeof(zero));
+    for (wid_t wid = 0; wid < 4; ++wid)
+        twfRequire(memcmp(&ts->worker_states[wid], &zero, sizeof(zero)) == 0,
+                   "constructor did not zero an embedded worker state");
+    ts->worker_states[3].next_parent_id = 7;
+    twfRequire(ts->worker_states[2].next_parent_id == 0 && ts->worker_states[3].next_parent_id == 7,
+               "highest worker slot overlaps its neighbor");
+    muxclientTunnelDestroy(mux, wwLifecycleStartupRollback());
+    cJSON_Delete(node.node_settings_json);
+    GSTATE.workers_count = 1;
+    GSTATE.ram_profile   = previous_ram_profile;
+    twfWorkerEnvTeardown(&env);
 }
 
 static void caseHardCapIndependentOfMode(uint8_t mode, const char *case_name)
@@ -277,14 +330,14 @@ static void caseHardCapIndependentOfMode(uint8_t mode, const char *case_name)
     line_t             *old_parent_l = old_parent->l;
     twfRequire(second_ls->parent == old_parent, "the first two children did not share the selected parent");
     twfRequireEqualU32(old_parent->children_count, 2, "the selected parent did not reach the exact hard cap");
-    twfRequire(! old_parent->selection_retired && ts->unsatisfied_lines[0] == old_parent_l,
+    twfRequire(! old_parent->selection_retired && ts->worker_states[0].unsatisfied_line == old_parent_l,
                "the parent retired merely because its second child reached the cap");
 
     line_t             *third_child = fixtureOpenChild(&fixture);
     muxclient_lstate_t *third_ls    = lineGetState(third_child, fixture.mux);
     muxclient_lstate_t *new_parent  = third_ls->parent;
     twfRequire(old_parent->selection_retired, "the capped parent did not retire when new capacity was requested");
-    twfRequire(new_parent != old_parent && ts->unsatisfied_lines[0] == new_parent->l,
+    twfRequire(new_parent != old_parent && ts->worker_states[0].unsatisfied_line == new_parent->l,
                "the third child reused the capped or retired parent");
 
     fixtureFinishChild(&fixture, first_child);
@@ -299,7 +352,7 @@ static void caseHardCapIndependentOfMode(uint8_t mode, const char *case_name)
     twfRequireEqualU32(fixture.trace.next_finish,
                        parent_finishes_before + 1U,
                        "retired parent's final child did not close it through the owned-parent path");
-    twfRequire(ts->unsatisfied_lines[0] == new_parent->l,
+    twfRequire(ts->worker_states[0].unsatisfied_line == new_parent->l,
                "retired parent destruction displaced the current replacement parent");
     fixtureTeardown(&fixture);
 }
@@ -597,7 +650,7 @@ static void caseShutdownInventory(uint8_t mode, unsigned order, unsigned reentra
     twfRequire(! lineIsAlive(parent_a) && ! lineIsAlive(parent_b), "owner drain left a parent alive");
     twfRequire(! lineIsAlive(first) && ! lineIsAlive(second), "source Finish left borrowed children alive");
     twfRequire(ts->worker_states[0].owned_parents == NULL, "owner inventory survived drain");
-    twfRequire(ts->unsatisfied_lines[0] == NULL, "selected parent survived drain");
+    twfRequire(ts->worker_states[0].unsatisfied_line == NULL, "selected parent survived drain");
     twfRequireEqualU32(fixture.trace.prev_finish, order == 1 ? 0 : 2, "source Finish reflected or repeated");
     twfRequireEqualU32(fixture.trace.next_finish,
                        (mode == kConcurrencyModeFixedConnectionsCount ? 3U : 2U) - (order == 2 ? 1U : 0U) -
@@ -623,7 +676,7 @@ static void caseInitClosesInventoriedParent(void)
     fixture.prev->fnFinD      = shutdownSourceFinish;
     line_t             *child = fixtureOpenChild(&fixture);
     muxclient_tstate_t *ts    = tunnelGetState(fixture.mux);
-    twfRequire(ts->worker_states[0].owned_parents == NULL && ts->unsatisfied_lines[0] == NULL,
+    twfRequire(ts->worker_states[0].owned_parents == NULL && ts->worker_states[0].unsatisfied_line == NULL,
                "Init failure retained parent publication");
     twfRequire(! lineIsAlive(child), "failed Init did not finish source child");
     fixtureTeardown(&fixture);
@@ -631,7 +684,7 @@ static void caseInitClosesInventoriedParent(void)
 
 static void caseWorkerDrainIsLocal(void)
 {
-    twfSetCase("MuxClient drains only the supplied worker without touching another worker inventory");
+    twfSetCase("MuxClient ping tables and owner drain remain isolated between workers and instances");
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, kClientTestBufferSize, kMuxFrameLength * 2U);
     master_pool_t *large       = masterpoolCreateWithCapacity(8);
@@ -660,48 +713,99 @@ static void caseWorkerDrainIsLocal(void)
     GSTATE.workers               = workers;
     GSTATE.shortcut_buffer_pools = pools;
     GSTATE.shortcut_loops        = loops;
-    twf_trace_t trace            = {0};
-    tunnel_t   *mux = tunnelCreate(NULL, sizeof(muxclient_tstate_t) + 2 * sizeof(line_t *), sizeof(muxclient_lstate_t));
-    tunnel_t   *next = twfCreateNextTunnel(&trace);
-    tunnelBind(mux, next);
-    muxclient_tstate_t *ts = tunnelGetState(mux);
-    ts->workers_count      = 2;
-    ts->worker_states      = memoryAllocateZero(2 * sizeof(*ts->worker_states));
-    ts->concurrency_mode   = kConcurrencyModeCounter;
-    twf_line_pool_t lines[2];
-    twfLinePoolSetup(&lines[0], mux->lstate_size, 8);
-    twfLinePoolSetup(&lines[1], mux->lstate_size, 8);
-    generic_pool_t *line_pools[2] = {lines[0].pools[0], lines[1].pools[0]};
-    line_t         *parents[2];
-    for (wid_t wid = 0; wid < 2; ++wid)
+    twf_trace_t traces[2];
+    memoryZero(traces, sizeof(traces));
+    tunnel_t           *muxes[2];
+    tunnel_t           *nexts[2];
+    muxclient_tstate_t *states[2];
+    twf_line_pool_t     lines[2];
+    for (unsigned instance = 0; instance < 2; ++instance)
     {
-        testWorkerBindWID(wid);
-        parents[wid] = lineCreateForWorker(wid, line_pools, wid);
-        lineRef(parents[wid]);
-        muxclient_lstate_t *parent = lineGetState(parents[wid], mux);
-        muxclientLinestateInitialize(mux, parent, parents[wid], false, 0);
-        muxclientRegisterParent(ts, parent);
-        ts->unsatisfied_lines[wid] = parents[wid];
+        muxes[instance] = tunnelCreate(
+            NULL, sizeof(muxclient_tstate_t) + 2 * sizeof(muxclient_worker_state_t), sizeof(muxclient_lstate_t));
+        nexts[instance] = twfCreateNextTunnel(&traces[instance]);
+        tunnelBind(muxes[instance], nexts[instance]);
+        states[instance]                                = tunnelGetState(muxes[instance]);
+        states[instance]->workers_count                 = 2;
+        states[instance]->concurrency_mode              = kConcurrencyModeCounter;
+        states[instance]->concurrency_capacity          = UINT32_MAX;
+        states[instance]->keepalive                     = true;
+        states[instance]->ping_interval_ms              = 1000;
+        states[instance]->pong_timeout_ms               = 90000;
+        states[instance]->parent_write_pause_threshold  = kMuxDefaultParentWritePauseThreshold;
+        states[instance]->parent_write_resume_threshold = kMuxDefaultParentWriteResumeThreshold;
+        states[instance]->parent_write_limit            = kMuxDefaultParentWriteLimit;
     }
-    testWorkerBindWID(0);
-    muxclientTunnelOnWorkerStop(mux, 0, wwLifecycleProcessShutdown());
-    twfRequire(! lineIsAlive(parents[0]) && lineIsAlive(parents[1]), "worker 0 drained another worker's child");
-    twfRequire(ts->worker_states[1].owned_parents != NULL && ! ts->worker_states[1].quiescing,
-               "worker 0 changed worker 1 state");
-    muxclientTunnelOnWorkerStop(mux, 0, wwLifecycleProcessShutdown());
+    twfLinePoolSetup(&lines[0], muxes[0]->lstate_size, 8);
+    twfLinePoolSetup(&lines[1], muxes[0]->lstate_size, 8);
+    generic_pool_t *line_pools[2] = {lines[0].pools[0], lines[1].pools[0]};
+    line_t         *parents[2][2];
     for (wid_t wid = 0; wid < 2; ++wid)
     {
         testWorkerBindWID(wid);
-        muxclientTunnelOnWorkerStop(mux, wid, wwLifecycleProcessShutdown());
-        twfRequire(! lineIsAlive(parents[wid]), "worker drain retained a child");
-        lineUnref(parents[wid]);
+        for (unsigned instance = 0; instance < 2; ++instance)
+            states[instance]->worker_states[wid].keepalive_table = localIdleTableCreate(loops[wid]);
+        loops[wid]->cur_hrtime = 1000000;
+        for (unsigned instance = 0; instance < 2; ++instance)
+        {
+            tunnel_t           *mux = muxes[instance];
+            muxclient_tstate_t *ts  = states[instance];
+            parents[instance][wid]  = lineCreateForWorker(wid, line_pools, wid);
+            lineRef(parents[instance][wid]);
+            muxclient_lstate_t *parent = lineGetState(parents[instance][wid], mux);
+            muxclientLinestateInitialize(mux, parent, parents[instance][wid], false, 0);
+            muxclientRegisterParent(ts, parent);
+            ts->worker_states[wid].unsatisfied_line = parents[instance][wid];
+            parent->parent_state->selection_slot    = &ts->worker_states[wid].unsatisfied_line;
+            muxclientTunnelDownStreamEst(mux, parents[instance][wid]);
+        }
+        twfRequire(states[0]->worker_states[wid].keepalive_table != states[1]->worker_states[wid].keepalive_table,
+                   "different MuxClient instances shared an idle table");
+    }
+    twfRequire(states[0]->worker_states[0].keepalive_table != states[0]->worker_states[1].keepalive_table,
+               "different MuxClient workers shared an idle table");
+    testWorkerBindWID(0);
+    loops[0]->cur_hrtime = 2000000;
+    localidletableTestRunExpiry(states[0]->worker_states[0].keepalive_table);
+    twfRequire(traces[0].next_payload == 1 && traces[1].next_payload == 0 &&
+                   ! ((muxclient_lstate_t *) lineGetState(parents[0][1], muxes[0]))->parent_state->awaiting_pong,
+               "worker 0 expiry probed another worker or instance");
+    localidletableTestRunExpiry(states[1]->worker_states[0].keepalive_table);
+    twfRequireEqualU32(traces[1].next_payload, 1, "second instance did not retain its own ping schedule");
+    muxclientTunnelOnWorkerStop(muxes[0], 0, wwLifecycleProcessShutdown());
+    twfRequire(! lineIsAlive(parents[0][0]), "worker drain retained its own parent");
+    twfRequire(lineIsAlive(parents[0][1]), "worker drain closed another worker's parent");
+    twfRequire(lineIsAlive(parents[1][0]), "worker drain closed another instance's parent");
+    twfRequire(states[0]->worker_states[0].keepalive_table == NULL, "worker drain retained its idle table");
+    twfRequire(states[0]->worker_states[1].owned_parents != NULL && ! states[0]->worker_states[1].quiescing,
+               "worker 0 changed worker 1 state");
+    muxclientTunnelOnWorkerStop(muxes[0], 0, wwLifecycleProcessShutdown());
+    testWorkerBindWID(1);
+    loops[1]->cur_hrtime = 2000000;
+    localidletableTestRunExpiry(states[0]->worker_states[1].keepalive_table);
+    twfRequire(traces[0].next_payload == 2 && traces[1].next_payload == 1,
+               "worker 1 lost its own schedule or probed another instance");
+    localidletableTestRunExpiry(states[1]->worker_states[1].keepalive_table);
+    twfRequireEqualU32(traces[1].next_payload, 2, "second instance lost its worker 1 schedule");
+    for (wid_t wid = 0; wid < 2; ++wid)
+    {
+        testWorkerBindWID(wid);
+        for (unsigned instance = 0; instance < 2; ++instance)
+        {
+            muxclientTunnelOnWorkerStop(muxes[instance], wid, wwLifecycleProcessShutdown());
+            twfRequire(! lineIsAlive(parents[instance][wid]) &&
+                           states[instance]->worker_states[wid].keepalive_table == NULL,
+                       "worker drain retained its parent or idle table");
+            lineUnref(parents[instance][wid]);
+        }
         twfRequireEqualU32(masterpoolGetCheckedOut(lines[wid].master), 0, "worker retained pooled lines");
         twfLinePoolTeardown(&lines[wid]);
     }
-    mux->onStop(mux, wwLifecycleProcessShutdown());
-    memoryFree(ts->worker_states);
-    tunnelDestroy(mux);
-    tunnelDestroy(next);
+    for (unsigned instance = 0; instance < 2; ++instance)
+    {
+        tunnelDestroy(muxes[instance]);
+        tunnelDestroy(nexts[instance]);
+    }
     wloopDestroy(&second_loop);
     bufferpoolDestroy(second_pool);
     masterpoolDestroy(large);
@@ -811,7 +915,7 @@ static void caseIdleParentWaitsForOutput(uint8_t mode, bool stop)
                "last-child Finish lost parent output ownership");
     twfRequire(f.trace.next_payload == 0, "final Close bypassed parent Pause");
     if (mode != kConcurrencyModeFixedConnectionsCount)
-        twfRequire(ts->unsatisfied_lines[0] == NULL && parent_state->selection_retired,
+        twfRequire(ts->worker_states[0].unsatisfied_line == NULL && parent_state->selection_retired,
                    "pending idle parent stayed selectable");
     if (stop)
     {
@@ -833,6 +937,13 @@ static void caseIdleParentWaitsForOutput(uint8_t mode, bool stop)
 
 int main(void)
 {
+    caseEmbeddedWorkerStates();
+    caseTimerRotationIgnoresWallClock();
+    caseKeepaliveTableAdmission(false);
+    caseKeepaliveTableAdmission(true);
+    caseSeparatePingAndReplyItems();
+    caseCappedTimeoutRetriesWithoutSelection();
+    caseReplyDeadlinePrecedesNextPing();
     caseParentFirstProbeWaitsForInterval(false);
     caseParentFirstProbeWaitsForInterval(true);
     caseParentProbeDiscoveryAndPause();

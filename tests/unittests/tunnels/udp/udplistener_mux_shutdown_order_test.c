@@ -48,8 +48,9 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     twf_trace_t      trace = {0};
     twfWorkerEnvSetup(&env, 8192, kMuxFrameLength * 2U);
 
-    tunnel_t *udp  = udplistenerShutdownFixtureCreateTunnel();
-    tunnel_t *mux  = tunnelCreate(NULL, sizeof(muxclient_tstate_t) + sizeof(line_t *), sizeof(muxclient_lstate_t));
+    tunnel_t *udp = udplistenerShutdownFixtureCreateTunnel();
+    tunnel_t *mux =
+        tunnelCreate(NULL, sizeof(muxclient_tstate_t) + sizeof(muxclient_worker_state_t), sizeof(muxclient_lstate_t));
     tunnel_t *next = twfCreateNextTunnel(&trace);
     twfRequire(udp != NULL && mux != NULL, "failed to create the UdpListener/MuxClient shutdown fixture");
 
@@ -76,11 +77,6 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
-    ts->worker_states                 = memoryAllocateZero(sizeof(*ts->worker_states));
-    ts->detached_child_counts         = memoryAllocateZero(sizeof(*ts->detached_child_counts));
-    ts->detached_queued_charge        = memoryAllocateZero(sizeof(*ts->detached_queued_charge));
-    twfRequire(ts->detached_child_counts != NULL && ts->detached_queued_charge != NULL,
-               "failed to allocate detached MuxClient accounting");
 
     line_t *parent = twfLinePoolCreateLine(&lines);
     lineRef(parent);
@@ -97,7 +93,7 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     }
     else
     {
-        ts->unsatisfied_lines[0] = parent;
+        ts->worker_states[0].unsatisfied_line = parent;
     }
 
     line_t *child = twfLinePoolCreateLine(&lines);
@@ -138,9 +134,7 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     twfRequireNoLeakedBuffers();
 
     memoryFree(ts->fixed_parent_lines);
-    memoryFree(ts->worker_states);
-    memoryFree(ts->detached_child_counts);
-    memoryFree(ts->detached_queued_charge);
+
     tunnelDestroy(next);
     tunnelDestroy(mux);
     tunnelDestroy(udp);

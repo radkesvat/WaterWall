@@ -2,6 +2,49 @@
 
 #include "loggers/network_logger.h"
 
+static void muxclientPingExpired(local_idle_item_t *item);
+static void muxclientPongDeadlineExpired(local_idle_item_t *item);
+
+static void muxclientRemoveKeepaliveItem(local_idle_item_t **slot)
+{
+    local_idle_item_t *item = *slot;
+    if (item == NULL)
+        return;
+    *slot              = NULL;
+    const bool removed = localidletableRemoveIdleItem(item->table, item);
+    assert(removed);
+    discard removed;
+}
+
+static local_idle_item_t *muxclientCreateKeepaliveItem(muxclient_lstate_t *parent, local_idle_item_t **slot,
+                                                       LocalIdleExpireCallBack callback, uint64_t age_ms)
+{
+    _Static_assert(sizeof(uintptr_t) <= sizeof(hash_t), "MuxClient keepalive item keys must fit pointers");
+    assert(lineIsOnCurrentEventWorker(parent->l) && *slot == NULL);
+    muxclient_tstate_t *ts    = tunnelGetState(parent->parent_state->t);
+    local_idle_table_t *table = ts->worker_states[lineGetWID(parent->l)].keepalive_table;
+    local_idle_item_t  *item  = localidletableCreateItem(table, (hash_t) (uintptr_t) slot, parent, callback, age_ms);
+    if (UNLIKELY(item == NULL))
+    {
+        LOGF("MuxClient: duplicate keepalive item key");
+        abortProgramNow(1);
+    }
+    return item;
+}
+
+void muxclientDisarmKeepalive(muxclient_lstate_t *parent)
+{
+    assert(lineIsOnCurrentEventWorker(parent->l));
+    muxclientRemoveKeepaliveItem(&parent->parent_state->ping_item);
+    muxclientRemoveKeepaliveItem(&parent->parent_state->pong_deadline_item);
+}
+
+void muxclientAcknowledgePong(muxclient_parent_state_t *state)
+{
+    muxclientRemoveKeepaliveItem(&state->pong_deadline_item);
+    state->awaiting_pong = false;
+}
+
 uint64_t muxclientUnansweredPingMS(const muxclient_tstate_t *ts, const muxclient_parent_state_t *state, uint64_t now)
 {
     if (! ts->keepalive || ! state->peer_keepalive || ! state->awaiting_pong)
@@ -9,129 +52,111 @@ uint64_t muxclientUnansweredPingMS(const muxclient_tstate_t *ts, const muxclient
     return now >= state->ping_sent_at_ms ? now - state->ping_sent_at_ms : 0;
 }
 
-static void muxclientProbeParent(tunnel_t *t, line_t *l)
+static bool muxclientProbeParent(tunnel_t *t, line_t *l)
 {
+    assert(lineIsOnCurrentEventWorker(l));
     muxclient_tstate_t *ts = tunnelGetState(t);
-    if (! lineIsAlive(l) || ts->worker_states[lineGetWID(l)].quiescing)
-        return;
+    if (! lineIsAlive(l))
+        return false;
     muxclient_lstate_t *parent = lineGetState(l, t);
-    if (parent->parent_state == NULL || parent->parent_finishing || parent->selection_retired)
-        return;
+    if (ts->worker_states[lineGetWID(l)].quiescing || parent->parent_finishing || parent->selection_retired)
+        return true;
     muxclient_parent_state_t *state = parent->parent_state;
-    if (! state->transport_established)
-        return;
+    assert(state != NULL && state->transport_established);
     const uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
-    if (state->awaiting_pong)
-    {
-        if (state->peer_keepalive || now - state->ping_sent_at_ms < ts->pong_timeout_ms)
-            return;
-        // No confirmed support yet: retry discovery without penalizing the parent.
-        state->awaiting_pong = false;
-    }
-    if (now < state->next_ping_at_ms)
-        return;
-    /* Leave the due timestamp unchanged until direct handoff is possible. An
-     * unsent probe must not start a reply deadline or join the output backlog. */
+    if (state->awaiting_pong || now < state->next_ping_at_ms)
+        return true;
+    /* An unsent probe retains its due time without entering the FIFO or
+     * starting a reply deadline. */
     if (state->output.transport_paused || state->output.pumping || bufferqueueGetBufCount(&state->output.pending) != 0)
-        return;
+        return true;
 
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
     sbufSetLength(buf, 0);
     ++state->ping_token;
     muxMakeMuxFrame(buf, state->ping_token, kMuxFlagPing);
-    // Publish before forwarding: a response or Finish may arrive synchronously.
-    state->awaiting_pong   = true;
-    state->ping_sent_at_ms = now;
-    state->next_ping_at_ms = now + ts->ping_interval_ms;
-    discard muxclientSendParentOutput(t, l, buf, NULL, kMuxFlagPing);
+    // Publish the token and deadline before a synchronous Pong or Finish.
+    state->awaiting_pong      = true;
+    state->ping_sent_at_ms    = now;
+    state->next_ping_at_ms    = now + ts->ping_interval_ms;
+    state->pong_deadline_item = muxclientCreateKeepaliveItem(
+        parent, &state->pong_deadline_item, muxclientPongDeadlineExpired, ts->pong_timeout_ms);
+    return muxclientSendParentOutput(t, l, buf, NULL, kMuxFlagPing);
 }
 
-void muxclientKeepaliveWorkerTick(tunnel_t *t, wid_t wid)
+static void muxclientRearmPing(muxclient_lstate_t *parent)
 {
-    assert(currentThreadIsEventWorkerWID(wid));
-    muxclient_tstate_t *ts = tunnelGetState(t);
-    assert(wid < ts->workers_count);
-    if (! ts->keepalive || ts->worker_states[wid].quiescing)
+    muxclient_parent_state_t *state = parent->parent_state;
+    if (state == NULL || state->ping_item == NULL)
         return;
-    const bool   fixed = ts->concurrency_mode == kConcurrencyModeFixedConnectionsCount;
-    const size_t count = fixed ? ts->fixed_connections_count : 1;
-    line_t     **slots = fixed ? &ts->fixed_parent_lines[(size_t) wid * count] : &ts->unsatisfied_lines[wid];
-    size_t       bytes;
-    if (! memoryTryComputeArraySize(count, sizeof(line_t *), &bytes))
+    const uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(parent->l)));
+    const uint64_t age = state->next_ping_at_ms > now ? state->next_ping_at_ms - now : kMuxKeepaliveRetryMs;
+    localidletableKeepIdleItemForAtleast(state->ping_item->table, state->ping_item, age);
+}
+
+static void muxclientPingExpired(local_idle_item_t *item)
+{
+    muxclient_lstate_t *parent = item->userdata;
+    tunnel_t           *t      = parent->parent_state->t;
+    line_t             *l      = parent->l;
+    assert(lineIsOnCurrentEventWorker(l));
+    assert(parent->parent_state->ping_item == item);
+    /* Only this exact line needs a reference. Reentrant sibling removal takes
+     * that sibling out of the table before the heap visits it. */
+    lineRef(l);
+    if (muxclientProbeParent(t, l))
+        muxclientRearmPing(parent);
+    lineUnref(l);
+}
+
+static void muxclientPongDeadlineExpired(local_idle_item_t *item)
+{
+    muxclient_lstate_t       *parent = item->userdata;
+    muxclient_parent_state_t *state  = parent->parent_state;
+    tunnel_t                 *t      = state->t;
+    line_t                   *l      = parent->l;
+    assert(lineIsOnCurrentEventWorker(l));
+    assert(state->awaiting_pong && state->pong_deadline_item == item);
+    lineRef(l);
+    if (! state->peer_keepalive)
     {
-        LOGF("MuxClient: keepalive snapshot geometry overflow");
-        abortProgramNow(1);
+        // An unconfirmed peer may have keepalive disabled: retry discovery.
+        muxclientAcknowledgePong(state);
+        if (muxclientProbeParent(t, l))
+            muxclientRearmPing(parent);
     }
-    line_t **snapshot = memoryAllocate(bytes);
-    if (snapshot == NULL)
+    else
     {
-        LOGW("MuxClient: keepalive snapshot allocation failed");
-        return;
-    }
-    // A callback can close any sibling or reuse a selection slot. Hold every entry first.
-    for (size_t i = 0; i < count; ++i)
-    {
-        snapshot[i] = slots[i];
-        if (snapshot[i] != NULL)
-            lineRef(snapshot[i]);
-    }
-    for (size_t i = 0; i < count; ++i)
-    {
-        if (snapshot[i] != NULL)
+        assert(state->selection_slot != NULL && *state->selection_slot == l);
+        muxclient_tstate_t *ts = tunnelGetState(t);
+        muxclientRetireUnresponsiveParent(t, ts, lineGetWID(l), state->selection_slot);
+        if (lineIsAlive(l) && parent->parent_state != NULL && parent->parent_state->pong_deadline_item == item)
         {
-            if (lineIsAlive(snapshot[i]) && slots[i] == snapshot[i])
-                muxclientRetireUnresponsiveParent(t, ts, wid, &slots[i]);
-            if (lineIsAlive(snapshot[i]))
-                muxclientProbeParent(t, snapshot[i]);
-            lineUnref(snapshot[i]);
+            /* Retirement capacity can be occupied. Retry without moving the
+             * original send time, including while output is paused. */
+            localidletableKeepIdleItemForAtleast(item->table, item, kMuxKeepaliveRetryMs);
         }
     }
-    memoryFree(snapshot);
+    lineUnref(l);
 }
 
-static void muxclientKeepaliveTimer(wtimer_t *timer)
+void muxclientArmKeepalive(tunnel_t *t, muxclient_lstate_t *parent)
 {
-    tunnel_t *t = weventGetUserdata(timer);
-    if (t != NULL)
-        muxclientKeepaliveWorkerTick(t, getLoopEventWorkerWID(weventGetLoop(timer)));
-}
-
-static void muxclientStartKeepalive(void *worker_ptr, void *arg1, void *arg2, void *arg3)
-{
-    discard                   arg2;
-    discard                   arg3;
-    worker_t                 *worker = worker_ptr;
-    tunnel_t                 *t      = arg1;
+    assert(lineIsOnCurrentEventWorker(parent->l));
     muxclient_tstate_t       *ts     = tunnelGetState(t);
-    muxclient_worker_state_t *state  = &ts->worker_states[worker->wid];
-    if (state->quiescing)
+    muxclient_worker_state_t *worker = &ts->worker_states[lineGetWID(parent->l)];
+    muxclient_parent_state_t *state  = parent->parent_state;
+    assert(state->transport_established && state->ping_item == NULL);
+    if (! ts->keepalive || worker->quiescing || parent->selection_retired)
         return;
-    assert(state->keepalive_timer == NULL);
-    const uint32_t interval = min((uint32_t) kMuxKeepaliveCheckMs, min(ts->ping_interval_ms, ts->pong_timeout_ms));
-    state->keepalive_timer  = wtimerAdd(worker->loop, muxclientKeepaliveTimer, interval, INFINITE);
-    if (state->keepalive_timer == NULL)
+    wloop_t       *loop = getWorkerLoop(lineGetWID(parent->l));
+    const uint64_t now  = wloopNowMonotonicMS(loop);
+    const uint64_t age  = state->next_ping_at_ms > now ? state->next_ping_at_ms - now : 0;
+    if (worker->keepalive_table == NULL)
     {
-        LOGF("MuxClient: failed to create keepalive timer");
-        if (! requestProgramShutdown(1))
-            abortProgramNow(1);
-        return;
+        worker->keepalive_table = localIdleTableCreate(loop);
+        // Installing the table timer refreshes the owner's cached loop clock.
+        state->next_ping_at_ms = wloopNowMonotonicMS(loop) + age;
     }
-    weventSetUserData(state->keepalive_timer, t);
-}
-
-void muxclientTunnelOnStart(tunnel_t *t)
-{
-    muxclient_tstate_t *ts = tunnelGetState(t);
-    if (! ts->keepalive)
-        return;
-    for (wid_t wid = 0; wid < ts->workers_count; ++wid)
-    {
-        if (sendWorkerMessageForceQueueWithCleanup(wid, muxclientStartKeepalive, NULL, t, NULL, NULL) !=
-            kWorkerMessageSubmitAccepted)
-        {
-            LOGF("MuxClient: failed to admit keepalive startup on worker %u", (unsigned int) wid);
-            startupFailureRecord(1);
-            return;
-        }
-    }
+    state->ping_item = muxclientCreateKeepaliveItem(parent, &state->ping_item, muxclientPingExpired, age);
 }

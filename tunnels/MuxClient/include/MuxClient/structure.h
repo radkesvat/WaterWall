@@ -18,6 +18,10 @@ typedef struct muxclient_lstate_s muxclient_lstate_t;
 
 typedef struct muxclient_parent_state_s
 {
+    tunnel_t             *t;
+    line_t              **selection_slot;
+    local_idle_item_t    *ping_item;
+    local_idle_item_t    *pong_deadline_item;
     muxclient_lstate_t   *local_hold_head;
     muxclient_lstate_t   *local_hold_tail;
     uint32_t              local_hold_count;
@@ -42,10 +46,13 @@ typedef struct muxclient_parent_state_s
 typedef struct muxclient_worker_state_s
 {
     muxclient_lstate_t *owned_parents;
+    line_t             *unsatisfied_line;
+    local_idle_table_t *keepalive_table;
+    size_t              detached_queued_charge;
+    uint32_t            detached_child_count;
     uint64_t            next_parent_id;
     uint64_t            next_child_key;
     uint32_t            stall_retired_parents;
-    wtimer_t           *keepalive_timer;
     bool                quiescing;
 } muxclient_worker_state_t;
 
@@ -70,12 +77,9 @@ typedef struct muxclient_tstate_s
     uint32_t workers_count;
     bool     log_main_line_stats;
 
-    muxclient_worker_state_t *worker_states;
     line_t                  **fixed_parent_lines;
-    uint32_t                 *detached_child_counts;
-    size_t                   *detached_queued_charge;
 
-    line_t *unsatisfied_lines[]; // lines (per worker) that still want child connections
+    muxclient_worker_state_t worker_states[];
 } muxclient_tstate_t;
 
 typedef enum muxclient_child_close_state_e
@@ -104,7 +108,7 @@ struct muxclient_lstate_s
     muxclient_lstate_t        *local_hold_next;
     buffer_queue_t             pending_child_data; // decoded frames kept separate, including empty Data, while paused
     size_t    pending_child_queue_charge; // child: own retained resource charge; parent: attached-child aggregate
-    uint64_t  creation_epoch;             // epoch of the connection creation, used for concurrency mode timer
+    uint64_t  creation_epoch;             // monotonic creation time in milliseconds, used for timer mode
     mux_cid_t connection_id;              // unique connection id, used for multiplexing
     muxclient_child_close_state_t close_state; // child: monotonic ordered-close/drain state
     uint32_t children_count; // number of children in the parent connection, used for concurrency mode counter
@@ -125,7 +129,7 @@ enum
 {
     kMuxDefaultPingIntervalMs             = 15000,
     kMuxDefaultPongTimeoutMs              = 45000,
-    kMuxKeepaliveCheckMs                  = 1000,
+    kMuxKeepaliveRetryMs                  = 1000,
     kTunnelStateSize                      = sizeof(muxclient_tstate_t),
     kLineStateSize                        = sizeof(muxclient_lstate_t),
     kConcurrencyModeTimer                 = kDvsFirstOption,
@@ -144,8 +148,9 @@ WW_EXPORT tunnel_t    *muxclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t muxclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void muxclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
-void     muxclientTunnelOnStart(tunnel_t *t);
-void     muxclientKeepaliveWorkerTick(tunnel_t *t, wid_t wid);
+void     muxclientArmKeepalive(tunnel_t *t, muxclient_lstate_t *parent);
+void     muxclientDisarmKeepalive(muxclient_lstate_t *parent);
+void     muxclientAcknowledgePong(muxclient_parent_state_t *state);
 uint64_t muxclientUnansweredPingMS(const muxclient_tstate_t *ts, const muxclient_parent_state_t *state, uint64_t now);
 void     muxclientRetireUnresponsiveParent(tunnel_t *t, muxclient_tstate_t *ts, wid_t wid, line_t **slot);
 
