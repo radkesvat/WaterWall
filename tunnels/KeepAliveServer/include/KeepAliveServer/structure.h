@@ -25,7 +25,7 @@ enum
     kKeepAliveServerFrameLengthSize     = sizeof(uint32_t),
     kKeepAliveServerFrameTypeSize       = sizeof(uint8_t),
     kKeepAliveServerFramePrefixSize     = kKeepAliveServerFrameLengthSize + kKeepAliveServerFrameTypeSize,
-    kKeepAliveServerMaxPayloadChunkSize = 6U * 1024U * 1024U,
+    kKeepAliveServerMaxPayloadChunkSize = 1024U * 1024U,
     kKeepAliveServerMaxFrameBodyLength  = kKeepAliveServerMaxPayloadChunkSize + kKeepAliveServerFrameTypeSize,
     kKeepAliveServerReadOverflowLimit   = kKeepAliveServerMaxPayloadChunkSize + kKeepAliveServerFramePrefixSize,
     kKeepAliveServerReadChargeLimit     = 16U * 1024U * 1024U,

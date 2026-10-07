@@ -46,7 +46,7 @@ enum
     kKeepAliveFrameLengthSize     = sizeof(uint32_t),
     kKeepAliveFrameTypeSize       = sizeof(uint8_t),
     kKeepAliveFramePrefixSize     = kKeepAliveFrameLengthSize + kKeepAliveFrameTypeSize,
-    kKeepAliveMaxPayloadChunkSize = 6U * 1024U * 1024U,
+    kKeepAliveMaxPayloadChunkSize = 1024U * 1024U,
     kKeepAliveMaxFrameBodyLength  = kKeepAliveMaxPayloadChunkSize + kKeepAliveFrameTypeSize,
     kKeepAliveReadOverflowLimit   = kKeepAliveMaxPayloadChunkSize + kKeepAliveFramePrefixSize,
     kKeepAliveReadChargeLimit     = 16U * 1024U * 1024U,

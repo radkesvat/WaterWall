@@ -7,8 +7,8 @@ cleanup. Both sides also compile the actual framing and buffer sources with
 `WW_HAVE_SPLICE=0`. The `framed_{constant,port,v1,v2,keepalive,keepalive_client,keepalive_server}_splice_{true,false}`
 socket cases exercise HeaderServer modes and a TCP-connected KeepAlive pair,
 checking exact bidirectional bytes, positive endpoint pipe-to-TCP transfers,
-disabled splice and orderly shutdown. External KeepAlive peers send a complete
-6 MiB frame in each decoding direction. Native cases cover the 6 MiB boundary,
+disabled splice and orderly shutdown. External KeepAlive peers send 6 MiB across
+complete 1 MiB frames in each decoding direction. Native cases cover the 1 MiB boundary,
 32-bit length rejection, five-byte header fragments and a maximum frame
 assembled from many real pipes with complete ordinary fallback.
 

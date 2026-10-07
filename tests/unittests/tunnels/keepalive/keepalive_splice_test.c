@@ -40,7 +40,7 @@
 
 enum
 {
-    kExpectedChunkBytes = 6U * 1024U * 1024U
+    kExpectedChunkBytes = 1024U * 1024U
 };
 
 static twf_worker_env_t env;
@@ -620,7 +620,7 @@ static void testLargeFrameBoundaries(void)
             payload[i] = (uint8_t) (i * 31);
         encode(node, line, ordinary(payload, length));
         unsigned frames = (length + kExpectedChunkBytes - 1) / kExpectedChunkBytes;
-        twfRequire(wire_calls == frames, "encoder did not use the 6 MiB chunk boundary");
+        twfRequire(wire_calls == frames, "encoder did not use the 1 MiB chunk boundary");
         twfRequire(framePrefix == 5 && wire_length == length + 5 * frames, "incorrect large-frame prefix size");
         size_t   offset    = 0;
         uint32_t remaining = length;
@@ -879,7 +879,7 @@ static void testLargePipeFrame(void)
     twfRequire(plain_calls == 1 && plain_length == kExpectedChunkBytes &&
                    memoryCompare(plain, payload, kExpectedChunkBytes) == 0,
                "maximum frame from many pipes changed bytes");
-    /* The fixture requests 64 KiB pipes, so a complete 6 MiB body must use ordinary fallback. */
+    /* The fixture requests 64 KiB pipes, so a complete 1 MiB body must use ordinary fallback. */
     twfRequire(measured_reads == wire_length, "large pipe-pressure fallback did not settle all bytes exactly once");
     memoryFree(payload);
     teardown();

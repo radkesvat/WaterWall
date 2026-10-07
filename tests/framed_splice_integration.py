@@ -41,11 +41,17 @@ from wwtest.sockets import exact
 from wwtest.trace import successful_calls
 
 HOST, APP_PORT, PEER_PORT, BACKEND_PORT = "127.0.0.1", 27981, 27982, 27983
+KEEPALIVE_MAX_PAYLOAD = 1024 * 1024
 
 
 def keepalive_frame(data, kind=1):
-    assert len(data) <= 6 * 1024 * 1024
+    assert len(data) <= KEEPALIVE_MAX_PAYLOAD
     return (len(data) + 1).to_bytes(4, "big") + bytes([kind]) + data
+
+
+def keepalive_frames(data):
+    return b"".join(keepalive_frame(data[offset:offset + KEEPALIVE_MAX_PAYLOAD])
+                    for offset in range(0, len(data), KEEPALIVE_MAX_PAYLOAD))
 
 
 def keepalive_exact(sock, size):
@@ -53,7 +59,7 @@ def keepalive_exact(sock, size):
     while len(data) < size:
         header = exact(sock, 5)
         length, kind = int.from_bytes(header[:4], "big"), header[4]
-        assert 1 <= length <= 6 * 1024 * 1024 + 1, "invalid 32-bit KeepAlive length"
+        assert 1 <= length <= KEEPALIVE_MAX_PAYLOAD + 1, "invalid 32-bit KeepAlive length"
         body = exact(sock, length - 1)
         if kind == 1:
             assert len(data) + len(body) <= size, "KeepAlive frame crossed expected payload boundary"
@@ -184,7 +190,7 @@ def run(binary, mode, enabled):
                         assert read(conn, len(early)) == early, "early upload changed"
                         conn.sendall(keepalive_frame(early[::-1]) if external_client else early[::-1])
                         assert read(conn, len(data)) == data, "framed upload changed"
-                        conn.sendall(keepalive_frame(data[::-1]) if external_client else data[::-1])
+                        conn.sendall(keepalive_frames(data[::-1]) if external_client else data[::-1])
                         if watchdog:
                             for _ in range(3):
                                 assert exact(conn, 5) == keepalive_frame(b"", 2), "invalid watchdog ping"
@@ -203,7 +209,7 @@ def run(binary, mode, enabled):
                     client.sendall(keepalive_frame(early) if external_server else prefix[1:] + early)
                     read = keepalive_exact if external_server else exact
                     assert read(client, len(early)) == early[::-1], "early download changed"
-                    client.sendall(keepalive_frame(data) if external_server else data)
+                    client.sendall(keepalive_frames(data) if external_server else data)
                     assert read(client, len(data)) == data[::-1], "framed download changed"
                     if watchdog:
                         assert exact(client, 25) == b"watchdog replies received", "timely pong stopped watchdog pings"

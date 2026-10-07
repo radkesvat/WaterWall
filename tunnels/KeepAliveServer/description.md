@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/KeepAliveServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/KeepAliveServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -70,7 +70,7 @@ Source-backed metadata:
 a five-byte `splice_stream_t` header cache; its downstream encoder prepends the
 same five-byte header in real left padding. Framing continues for the whole
 connection, with payload bodies eligible for private-pipe forwarding. Payloads
-larger than 6 MiB are split with representation-aware range operations.
+larger than 1 MiB are split with representation-aware range operations.
 Pipe allocation or capacity pressure may select complete ordinary fallback.
 Pong control frames use ordinary buffers.
 
@@ -78,7 +78,7 @@ Nested encoder input stays behind the active payload under a shared 8 MiB
 logical-byte and 1,024-buffer reentry bound, counting the active suffix. The decoder serializes nested input,
 limits nested retained bytes to 8 MiB, and limits retained allocation charge to
 16 MiB, attempting beneficial ordinary compaction before refusing excess charge.
-Complete frames in an admitted delivery drain before checking the 6 MiB + 5 byte
+Complete frames in an admitted delivery drain before checking the 1 MiB + 5 byte
 incomplete-remainder limit. Pause is forwarded promptly and does not interrupt
 that synchronous batch. Upstream Pause delays Pong output toward `prev`; Resume
 drains at most 1,024 pending replies, stopping on reentrant Pause or Finish.
