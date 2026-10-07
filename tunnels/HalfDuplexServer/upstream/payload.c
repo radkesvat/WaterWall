@@ -349,7 +349,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (sbufIsSplice(buf))
         {
-            sbuf_t *ordinary = halfduplexserverMaterialize(l, buf);
+            sbuf_t *ordinary = sbufTryEnsureOrdinary(pool, buf);
             if (ordinary == NULL)
                 goto setup_failure;
             buf = ordinary;
@@ -389,7 +389,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             halfduplexserver_lstate_t *main_ls = lineGetState(main, t);
             if (main_ls->startup_active)
             {
-                sbuf_t *ordinary = halfduplexserverMaterialize(l, buf);
+                sbuf_t *ordinary = sbufTryEnsureOrdinary(lineGetBufferPool(l), buf);
                 if (ordinary == NULL)
                 {
                     lineReuseBuffer(l, buf);

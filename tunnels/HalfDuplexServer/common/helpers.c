@@ -10,25 +10,6 @@ bool halfduplexserverPairAlive(tunnel_t *t, line_t *main, line_t *upload, line_t
            ((halfduplexserver_lstate_t *) lineGetState(download, t))->main_line == main;
 }
 
-// NULL leaves the source caller-owned. Success consumes a splice source.
-sbuf_t *halfduplexserverMaterialize(line_t *line, sbuf_t *buf)
-{
-    if (! sbufIsSplice(buf))
-        return buf;
-    buffer_pool_t *pool     = lineGetBufferPool(line);
-    sbuf_t        *ordinary = bufferpoolTryGetBestFit(pool, sbufGetLength(buf), bufferpoolGetLargeBufferPadding(pool));
-    if (ordinary == NULL)
-        return NULL;
-    if (sbufGetMaximumWriteableSize(ordinary) < sbufGetLength(buf))
-    {
-        bufferpoolReuseBuffer(pool, ordinary);
-        return NULL;
-    }
-    sbufSpliceReadToBuffer(buf, ordinary, sbufGetLength(buf));
-    bufferpoolReuseBuffer(pool, buf);
-    return ordinary;
-}
-
 void halfduplexserverAbortPair(tunnel_t *t, line_t *main)
 {
     halfduplexserver_lstate_t *ls     = lineGetState(main, t);

@@ -42,6 +42,17 @@ static void spliceReadPipe(int fd, uint8_t *dest, uint32_t bytes, const char *ca
 
 sbuf_t *sbufEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf)
 {
+    sbuf_t *ordinary = sbufTryEnsureOrdinary(pool, buf);
+    if (UNLIKELY(ordinary == NULL))
+    {
+        LOGF("sbufEnsureOrdinary: payload cannot be represented as ordinary storage");
+        abortProgramNow(1);
+    }
+    return ordinary;
+}
+
+sbuf_t *sbufTryEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf)
+{
     assert(pool != NULL && buf != NULL);
     if (! sbufIsSplice(buf))
     {
@@ -49,7 +60,11 @@ sbuf_t *sbufEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf)
     }
 
     const uint32_t length   = sbufGetLength(buf);
-    sbuf_t        *ordinary = bufferpoolGetBestFit(pool, length, bufferpoolGetLargeBufferPadding(pool));
+    sbuf_t        *ordinary = bufferpoolTryGetBestFit(pool, length, bufferpoolGetLargeBufferPadding(pool));
+    if (ordinary == NULL)
+    {
+        return NULL;
+    }
     sbufSpliceReadToBuffer(buf, ordinary, length);
     bufferpoolReuseBuffer(pool, buf);
     return ordinary;

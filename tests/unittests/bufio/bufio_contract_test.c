@@ -59,6 +59,7 @@ typedef enum expected_exact_tier_e
     kExpectedExactGrown
 } expected_exact_tier_e;
 
+typedef sbuf_t *(*ensure_ordinary_fn_t)(buffer_pool_t *, sbuf_t *);
 
 static void fillPattern(sbuf_t *buf, uint8_t seed)
 {
@@ -1094,7 +1095,7 @@ static sbuf_t *makeOrdinaryBytes(buffer_pool_t *pool, const uint8_t *bytes, uint
 
 #endif
 
-static void testEnsureOrdinaryPreservesResidentBuffers(void)
+static void testEnsureOrdinaryPreservesResidentBuffers(ensure_ordinary_fn_t ensure_ordinary)
 {
     pool_fixture_t fixture = poolFixtureCreate(1024, 128, 192, 64);
     for (unsigned int mode = 0; mode < 4; ++mode)
@@ -1117,7 +1118,7 @@ static void testEnsureOrdinaryPreservesResidentBuffers(void)
         memoryCopy(payload, sbufGetRawPtr(source), length);
         uint32_t before[4], after[4];
         bufferpoolCachedTierCountsForTest(fixture.pool, &before[0], &before[1], &before[2], &before[3]);
-        sbuf_t *result = sbufEnsureOrdinary(fixture.pool, source);
+        sbuf_t *result = ensure_ordinary(fixture.pool, source);
         bufferpoolCachedTierCountsForTest(fixture.pool, &after[0], &after[1], &after[2], &after[3]);
         require(result == source && result->curpos == cursor && result->capacity == capacity && result->len == length &&
                     result->l_pad == padding && result->flags == flags,
@@ -1130,7 +1131,7 @@ static void testEnsureOrdinaryPreservesResidentBuffers(void)
 }
 
 #if WW_HAVE_SPLICE
-static void testEnsureOrdinaryMaterializesCompletePayload(void)
+static void testEnsureOrdinaryMaterializesCompletePayload(ensure_ordinary_fn_t ensure_ordinary)
 {
     pool_fixture_t fixture = {
         .large_master  = masterpoolCreateWithCapacity(16),
@@ -1178,7 +1179,8 @@ static void testEnsureOrdinaryMaterializesCompletePayload(void)
         require(memoryEqual(consumed, wire, cases[i].consumed), "conversion fixture consumed the wrong prefix");
         const splice_buffer_metadata_t metadata = sbufSpliceMetadata(source);
         const uint32_t                 length   = cases[i].prefix + cases[i].body - cases[i].consumed;
-        sbuf_t                        *result   = sbufEnsureOrdinary(fixture.pool, source);
+        sbuf_t                        *result   = ensure_ordinary(fixture.pool, source);
+        require(result != NULL, "ensuring ordinary storage rejected representable splice payload");
         requireResidentPayload(
             result, wire + cases[i].consumed, length, "ensuring ordinary storage lost or changed splice payload bytes");
         require(result != source && result->curpos == result->l_pad && sbufGetLeftCapacity(result) >= 192,
@@ -1203,6 +1205,60 @@ static void testEnsureOrdinaryMaterializesCompletePayload(void)
         require(fcntl(descriptors[i], F_GETFD) == -1 && errno == EBADF,
                 "ordinary-conversion pool teardown leaked a private pipe");
 }
+
+static void testTryEnsureOrdinaryRefusalPreservesSource(void)
+{
+    pool_fixture_t fixture = poolFixtureCreate(1024, 128, 192, 64);
+    uint8_t        wire[103];
+    for (size_t i = 0; i < sizeof(wire); ++i)
+        wire[i] = (uint8_t) (0x51U + i);
+    sbuf_t *source = makeSpliceTestBuffer(fixture.pool, wire, 7, wire + 7, sizeof(wire) - 7);
+
+    const uint32_t original_capacity = source->capacity;
+    const uint32_t original_length   = source->len;
+    /* This claimed payload cannot fit beside onward padding; refusal must
+     * happen before any attempt to read its deliberately smaller pipe body. */
+    source->capacity                        = UINT32_MAX;
+    source->len                             = UINT32_MAX - source->curpos;
+    const uint32_t                 cursor   = source->curpos;
+    const uint32_t                 capacity = source->capacity;
+    const uint32_t                 length   = source->len;
+    const uint16_t                 padding  = source->l_pad;
+    const uint16_t                 flags    = source->flags;
+    const splice_buffer_metadata_t metadata = sbufSpliceMetadata(source);
+    uint32_t                       before[4], after[4];
+    bufferpoolCachedTierCountsForTest(fixture.pool, &before[0], &before[1], &before[2], &before[3]);
+
+    require(sbufTryEnsureOrdinary(fixture.pool, source) == NULL,
+            "checked ordinary conversion accepted unrepresentable padded storage");
+    bufferpoolCachedTierCountsForTest(fixture.pool, &after[0], &after[1], &after[2], &after[3]);
+    require(memoryEqual(before, after, sizeof(before)), "refused ordinary conversion changed pool cache ownership");
+    require(source->curpos == cursor && source->capacity == capacity && source->len == length &&
+                source->l_pad == padding && source->flags == flags,
+            "refused ordinary conversion changed source geometry or flags");
+    require(sbufGetResidentPrefixLength(source) == 7 && memoryEqual(sbufGetRawPtr(source), wire, 7),
+            "refused ordinary conversion consumed or changed resident prefix bytes");
+    const splice_buffer_metadata_t after_metadata = sbufSpliceMetadata(source);
+    require(after_metadata.pipefd[0] == metadata.pipefd[0] && after_metadata.pipefd[1] == metadata.pipefd[1] &&
+                after_metadata.pipe_capacity == metadata.pipe_capacity &&
+                after_metadata.capacity_retry_at_us == metadata.capacity_retry_at_us,
+            "refused ordinary conversion changed private pipe metadata");
+    int pipe_bytes = 0;
+    require(ioctl(metadata.pipefd[0], FIONREAD, &pipe_bytes) == 0 && pipe_bytes == (int) (sizeof(wire) - 7),
+            "refused ordinary conversion consumed private pipe bytes");
+
+    source->capacity = original_capacity;
+    source->len      = original_length;
+    sbuf_t *result   = sbufTryEnsureOrdinary(fixture.pool, source);
+    require(result != NULL, "refused source could not be converted after restoring representable geometry");
+    requireResidentPayload(result, wire, sizeof(wire), "refused ordinary conversion changed source payload bytes");
+    sbuf_t *recycled = bufferpoolGetSpliceBuffer(fixture.pool);
+    require(recycled == source && sbufGetLength(recycled) == 0 && sbufSpliceIsReusable(recycled),
+            "checked conversion failed to settle the source ownership after refusal");
+    bufferpoolReuseBuffer(fixture.pool, recycled);
+    bufferpoolReuseBuffer(fixture.pool, result);
+    poolFixtureDestroy(&fixture);
+}
 #endif
 
 #include "splice_stream_cases.h"
@@ -1210,9 +1266,16 @@ static void testEnsureOrdinaryMaterializesCompletePayload(void)
 int main(void)
 {
     testCaseSet("bufio_contract_test");
-    testEnsureOrdinaryPreservesResidentBuffers();
+    const ensure_ordinary_fn_t ensure_ordinary[] = {sbufEnsureOrdinary, sbufTryEnsureOrdinary};
+    for (size_t i = 0; i < ARRAY_SIZE(ensure_ordinary); ++i)
+    {
+        testEnsureOrdinaryPreservesResidentBuffers(ensure_ordinary[i]);
 #if WW_HAVE_SPLICE
-    testEnsureOrdinaryMaterializesCompletePayload();
+        testEnsureOrdinaryMaterializesCompletePayload(ensure_ordinary[i]);
+#endif
+    }
+#if WW_HAVE_SPLICE
+    testTryEnsureOrdinaryRefusalPreservesSource();
 #endif
     testSpliceStreamContracts();
     testMoveExactBytesTo();

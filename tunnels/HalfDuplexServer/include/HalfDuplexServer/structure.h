@@ -139,7 +139,6 @@ static inline uint64_t halfduplexserverWaitingLimit(line_t *line)
     return (uint64_t) kMaxBuffering * max(UINT64_C(1), (basis + 32767) / 32768);
 }
 
-bool    halfduplexserverPairAlive(tunnel_t *t, line_t *main, line_t *upload, line_t *download);
-void    halfduplexserverReplayStartup(tunnel_t *t, line_t *main);
-void    halfduplexserverAbortPair(tunnel_t *t, line_t *main);
-sbuf_t *halfduplexserverMaterialize(line_t *line, sbuf_t *buf);
+bool halfduplexserverPairAlive(tunnel_t *t, line_t *main, line_t *upload, line_t *download);
+void halfduplexserverReplayStartup(tunnel_t *t, line_t *main);
+void halfduplexserverAbortPair(tunnel_t *t, line_t *main);

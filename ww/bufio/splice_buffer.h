@@ -54,6 +54,12 @@ static inline void sbufSpliceConsumeBody(sbuf_t *buf, uint32_t bytes)
  * contract; invalid splice contents are fatal invariants. */
 sbuf_t *sbufEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf);
 
+/** Checked counterpart of sbufEnsureOrdinary(). Returns NULL for unrepresentable
+ * destination geometry, leaving buf unchanged and caller-owned. Ordinary input
+ * returns unchanged. Successful conversion consumes and recycles the splice
+ * source. Allocation otherwise follows the pool's fail-fast contract. */
+sbuf_t *sbufTryEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf);
+
 /**
  * Replace an ordinary destination payload with the complete resident contents
  * of a splice wrapper. Real prefix bytes are copied before the private-pipe body.
