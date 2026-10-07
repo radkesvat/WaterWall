@@ -36,7 +36,6 @@ void socks5clientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 
     tunnel_t *resolver    = ts->domain_resolver_tunnel;
     tunnel_t *next_tunnel = next_node->instance;
-    tunnel_t *prev        = t->prev;
 
     if (next_tunnel == NULL)
     {
@@ -60,26 +59,19 @@ void socks5clientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         return;
     }
 
-    if (prev->next == t)
+    if (resolver != NULL && ! tunnelInsertBefore(t, resolver, chain))
     {
-        prev->next = resolver != NULL ? resolver : t;
-    }
-
-    if (resolver != NULL)
-    {
-        resolver->prev = prev;
-        resolver->next = t;
-        t->prev        = resolver;
+        return;
     }
 
     t->next           = next_tunnel;
     next_tunnel->prev = t;
 
-    if (resolver != NULL)
-    {
-        tunnelchainInsert(chain, resolver);
-    }
     tunnelchainInsert(chain, t);
+    if (startupFailurePending())
+    {
+        return;
+    }
 
     if (next_tunnel->chain != NULL)
     {

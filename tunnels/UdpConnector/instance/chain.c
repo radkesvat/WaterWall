@@ -19,7 +19,6 @@ void udpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     }
 
     tunnel_t *resolver = ts->domain_resolver_tunnel;
-    tunnel_t *prev     = t->prev;
 
     if (resolver == NULL)
     {
@@ -35,15 +34,10 @@ void udpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         return;
     }
 
-    if (prev->next == t)
+    if (! tunnelInsertBefore(t, resolver, chain))
     {
-        prev->next = resolver;
+        return;
     }
 
-    resolver->prev  = prev;
-    resolver->next  = t;
-    t->prev         = resolver;
-
-    tunnelchainInsert(chain, resolver);
     tunnelchainInsert(chain, t);
 }

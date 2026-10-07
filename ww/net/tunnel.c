@@ -29,6 +29,35 @@ void tunnelBind(tunnel_t *from, tunnel_t *to)
     tunnelBindDown(from, to);
 }
 
+bool tunnelInsertBefore(tunnel_t *target, tunnel_t *inserted, tunnel_chain_t *chain)
+{
+    assert(target != NULL && inserted != NULL && chain != NULL);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return false;
+    }
+    assert(target != inserted && target->prev != NULL && target->prev != inserted);
+    assert(target->chain == NULL && inserted->chain == NULL);
+    assert(inserted->prev == NULL && inserted->next == NULL);
+    assert(! chain->finalized);
+
+    tunnelchainInsert(chain, inserted);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return false;
+    }
+
+    tunnel_t *prev = target->prev;
+    if (prev->next == target)
+    {
+        prev->next = inserted;
+    }
+    inserted->prev = prev;
+    inserted->next = target;
+    target->prev   = inserted;
+    return true;
+}
+
 // Resolves the callable upstream entry of a branch bound below `owner`.
 // A target may insert internal tunnels in front of itself while chaining, so the
 // real entry is the head bound directly below `owner`. Walk target's prev-links
@@ -174,6 +203,10 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
     tunnelBind(t, tnext);
 
     tunnelchainInsert(tc, t);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
 
     if (tnext->chain != NULL)
     {

@@ -236,6 +236,15 @@
   add_dependencies(waterwall_unit_tests chain_node_limit_test)
   add_waterwall_unit_test(waterwall.chain_node_limit_unit chain_node_limit_test "unit;net;chain;configuration")
 
+  waterwall_add_native_executable(tunnel_insert_before_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/tunnel_insert_before_test.c)
+  target_link_libraries(tunnel_insert_before_test PRIVATE ww)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(tunnel_insert_before_test PRIVATE WW_TUNNEL_LOOKUP_WRAP_TEST=1)
+    target_link_options(tunnel_insert_before_test PRIVATE "-Wl,--wrap=nodemanagerGetConfigNodeByHash")
+  endif()
+  add_dependencies(waterwall_unit_tests tunnel_insert_before_test)
+  add_waterwall_unit_test(waterwall.tunnel_insert_before_unit tunnel_insert_before_test "unit;net;chain;configuration")
+
   waterwall_add_native_executable(chain_mux_presence_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/chain_mux_presence_test.c)
   target_link_libraries(chain_mux_presence_test PRIVATE ww_test_support)
   target_link_libraries(chain_mux_presence_test PRIVATE ww)

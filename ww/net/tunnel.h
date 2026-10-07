@@ -225,6 +225,22 @@ void tunnelBindDown(tunnel_t *from, tunnel_t *to);
 void tunnelBindUp(tunnel_t *from, tunnel_t *to);
 
 /**
+ * Register and link a private predecessor during onChain construction.
+ *
+ * target must be unchained and already have a previous tunnel. inserted must be
+ * distinct, unbound and unchained; chain must be mutable. The caller validates
+ * node-specific settings before calling. A pending startup failure returns false
+ * without changing the topology.
+ *
+ * Registers inserted before changing links. On insertion failure, records startup
+ * failure and returns false with links unchanged. On success, replaces prev->next
+ * only when it points to target, preserving an owner's separate main branch.
+ * target remains unregistered; its insertion and onward traversal belong to the
+ * caller. No allocation, destruction or callbacks occur here.
+ */
+bool tunnelInsertBefore(tunnel_t *target, tunnel_t *inserted, tunnel_chain_t *chain);
+
+/**
  * @brief Resolves the callable upstream entry of a branch bound below @p owner.
  *
  * When a tunnel binds another node below itself (a fallback, route target,
