@@ -243,7 +243,9 @@ sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const uint32_
 
 sbuf_t *sbufSlice(sbuf_t *const b, const uint32_t bytes)
 {
-    sbuf_t *newbuf = sbufCreateWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
+    assert(b != NULL && ! sbufIsSplice(b));
+    assert(bytes <= sbufGetLength(b));
+    sbuf_t *newbuf = sbufCreateWithPadding(bytes, b->l_pad);
     sbufMoveTo(newbuf, b, bytes);
     return newbuf;
 }

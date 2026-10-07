@@ -5,6 +5,7 @@
  * Cases: testFlagsInitializationAndReuse, testDuplicateToCopiesCompleteSource,
  * testDuplicateToRejectsCursorPastCapacity, testDuplicateToRejectsIncompletePayload,
  * testDuplicateToAcceptsEmptyExactEndCursor, testDuplicatePreservesCompleteSource,
+ * testSliceHandlesPrependedPayload,
  * testPooledDuplicateHandlesConsumedPadding, testViewByteAcrossQueuedBuffers; the driver lists the
  * remaining cases
  * Checks: Assertion labels include: test cursor offset exceeds pooled buffer capacity; test payload exceeds
@@ -294,6 +295,40 @@ static void testDuplicatePreservesCompleteSource(void)
 
     sbufDestroy(duplicate);
     sbufDestroy(source);
+}
+
+static void testSliceHandlesPrependedPayload(void)
+{
+    const uint32_t suffix_lengths[] = {0, 16};
+    for (size_t i = 0; i < ARRAY_SIZE(suffix_lengths); ++i)
+    {
+        sbuf_t        *source  = sbufCreateWithPadding(128, 32);
+        const uint32_t payload = sbufGetTotalCapacityNoPadding(source);
+        const uint16_t padding = sbufGetLeftPadding(source);
+        sbufSetLength(source, payload);
+        sbufShiftLeft(source, 32);
+        fillPattern(source, 0x30);
+
+        const uint32_t original_cursor = source->curpos;
+        const uint32_t length          = sbufGetLength(source);
+        const uint32_t sliced          = length - suffix_lengths[i];
+        require(sliced > payload, "slice regression did not include payload from reserved padding");
+        sbuf_t *slice = sbufSlice(source, sliced);
+
+        require(sbufGetLength(slice) == sliced, "slice lost prepended payload bytes");
+        require(sbufGetLeftPadding(slice) == padding && sbufGetLeftCapacity(slice) == padding,
+                "slice did not restore the source's original padding");
+        require(sbufGetLength(slice) <= sbufGetMaximumWriteableSize(slice),
+                "slice allocation cannot hold its complete payload");
+        requirePatternRange(slice, 0, sliced, 0x30, "slice changed its leading payload bytes");
+        require(source->curpos == original_cursor + sliced && sbufGetLength(source) == suffix_lengths[i],
+                "slice consumed the wrong source range");
+        requirePatternRange(
+            source, 0, suffix_lengths[i], (uint8_t) (0x30 + sliced), "slice changed its unconsumed source suffix");
+
+        sbufDestroy(slice);
+        sbufDestroy(source);
+    }
 }
 
 static void testPooledDuplicateHandlesConsumedPadding(buffer_pool_t *pool)
@@ -1295,6 +1330,7 @@ int main(void)
     testDuplicateToRejectsIncompletePayload();
     testDuplicateToAcceptsEmptyExactEndCursor();
     testDuplicatePreservesCompleteSource();
+    testSliceHandlesPrependedPayload();
     testPooledDuplicateHandlesConsumedPadding(pool);
     testViewByteAcrossQueuedBuffers(pool);
     testInvalidViewsAbort(pool);

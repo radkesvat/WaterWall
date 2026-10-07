@@ -330,7 +330,12 @@ sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict buf);
 sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, uint32_t bytes);
 
 /**
- * @brief Extract a leading slice into a new buffer.
+ * @brief Consume a leading ordinary payload slice into a new ordinary buffer.
+ *
+ * Requires bytes <= source length. The result starts with the source's full
+ * original padding available. Advances the source cursor and reduces its length;
+ * the source remains caller-owned, including when empty. The caller owns both
+ * allocations after return.
  *
  * @param b Source buffer.
  * @param bytes Number of bytes to slice.
