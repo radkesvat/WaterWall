@@ -178,19 +178,17 @@ static inline context_t *contextSwitchLine(context_t *const c, line_t *const lin
     return c;
 }
 
-/*
-    same as c->payload = NULL, this is necessary before destroying a context to prevent bugs, dose nothing on release
-    build
-*/
+/**
+ * @brief Clear context payload ownership in every build configuration.
+ *
+ * Call after transferring or recycling the payload; this does not free it.
+ * @param c Context that owns a payload.
+ */
 
 static inline void contextDropPayload(context_t *const c)
 {
-#if defined(NDEBUG)
-    discard(c);
-#else
     assert(c->payload != NULL);
     c->payload = NULL;
-#endif
 }
 
 /**

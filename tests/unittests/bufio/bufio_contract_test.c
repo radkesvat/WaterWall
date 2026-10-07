@@ -1322,9 +1322,42 @@ static void testTryEnsureOrdinaryRefusalPreservesSource(void)
 
 #include "splice_stream_cases.h"
 
+/* Context payload ownership must be cleared in both Debug and NDEBUG builds,
+ * including when a stream push immediately recycles a coalesced input. These
+ * stack contexts exercise payload bookkeeping only and do not bind a line. */
+static void testContextPayloadOwnership(void)
+{
+    pool_fixture_t fixture = poolFixtureCreate(kTestLargeBufferSize, kTestSmallBufferSize, 0, 0);
+    sbuf_t        *payload = makePooledBuffer(fixture.pool, false, 8, 0, 0x20);
+    context_t      context = {.payload = payload};
+
+    contextDropPayload(&context);
+    require(context.payload == NULL, "dropping context payload retained ownership");
+    requirePatternRange(payload, 0, 8, 0x20, "dropping context payload changed transferred bytes");
+    bufferpoolReuseBuffer(fixture.pool, payload);
+
+    buffer_stream_t stream = bufferstreamCreate(fixture.pool, 0);
+    context.payload        = makePooledBuffer(fixture.pool, false, 8, 0, 0x30);
+    bufferStreamPushContextPayload(&stream, &context);
+    require(context.payload == NULL, "stream push retained context payload ownership");
+    context.payload = makePooledBuffer(fixture.pool, false, 8, 0, 0x40);
+    bufferStreamPushContextPayload(&stream, &context);
+    require(context.payload == NULL, "coalescing stream push retained context payload ownership");
+    require(streamQueueCount(&stream) == 1, "context payload input did not coalesce");
+
+    payload = bufferstreamIdealRead(&stream);
+    require(sbufGetLength(payload) == 16, "context stream transfer changed payload length");
+    requirePatternRange(payload, 0, 8, 0x30, "context stream transfer changed first payload bytes");
+    requirePatternRange(payload, 8, 8, 0x40, "context stream transfer changed coalesced payload bytes");
+    bufferpoolReuseBuffer(fixture.pool, payload);
+    bufferstreamDestroy(&stream);
+    poolFixtureDestroy(&fixture);
+}
+
 int main(void)
 {
     testCaseSet("bufio_contract_test");
+    testContextPayloadOwnership();
     const ensure_ordinary_fn_t ensure_ordinary[] = {sbufEnsureOrdinary, sbufTryEnsureOrdinary};
     for (size_t i = 0; i < ARRAY_SIZE(ensure_ordinary); ++i)
     {
