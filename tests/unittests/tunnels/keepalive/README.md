@@ -15,8 +15,16 @@ assembled from many real pipes with complete ordinary fallback.
 The optional KeepAliveClient watchdog has native coverage for exact reply
 deadlines, one outstanding ping, fragmented ordinary/pipe pongs, reentrant replies,
 late and nonempty pongs, transport Est, overlapping Pause/Resume, pending-frame
-cleanup on timeout, disabled behavior and strict settings validation. Worker
-startup failure coverage also checks a tolerance shorter than the ping interval.
+cleanup on timeout, disabled behavior and strict settings validation. Separate
+idle items verify that a timely pong cancels only its watchdog, waiting never
+extends a reply deadline, and a tolerance shorter than the ping interval expires
+independently of probes or Resume.
+The orderly-shutdown fixture checks embedded allocation and zero initialization
+for four worker slots, then exercises two client instances across two workers,
+checking independent idle tables, exact-line removal, surviving-line pings and
+callback-reference settlement. It covers reentrant closes of the current line
+and an unvisited due sibling, lazy table timer failure, late Est after quiescence,
+and owner-worker table destruction with line cleanup before or after quiescence.
 The `framed_keepalive_client_{watchdog,timeout}_splice_{true,false}` socket
 cases check large transfers and continued pings after timely replies, closure of
 both TCP endpoints after a missing reply, and orderly shutdown.

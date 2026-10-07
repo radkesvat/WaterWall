@@ -37,7 +37,16 @@ static bool keepaliveclientLoadSettings(keepaliveclient_tstate_t *ts, const cJSO
 
 tunnel_t *keepaliveclientTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(keepaliveclient_tstate_t), sizeof(keepaliveclient_lstate_t));
+    size_t worker_bytes;
+    if (UNLIKELY(
+            ! memoryTryComputeArraySize(getWorkersCount(), sizeof(keepaliveclient_worker_state_t), &worker_bytes) ||
+            worker_bytes > SIZE_MAX - sizeof(keepaliveclient_tstate_t)))
+    {
+        LOGF("KeepAliveClient: worker state size is not representable");
+        return NULL;
+    }
+
+    tunnel_t *t = tunnelCreate(node, sizeof(keepaliveclient_tstate_t) + worker_bytes, sizeof(keepaliveclient_lstate_t));
     if (! t)
     {
         return NULL;
@@ -56,26 +65,8 @@ tunnel_t *keepaliveclientTunnelCreate(node_t *node)
     t->fnPauseD   = &keepaliveclientTunnelDownStreamPause;
     t->fnResumeD  = &keepaliveclientTunnelDownStreamResume;
 
-    t->onStart         = &keepaliveclientTunnelOnStart;
     t->onWorkerQuiesce = &keepaliveclientTunnelOnWorkerQuiesce;
     t->onDestroy       = &keepaliveclientTunnelDestroy;
-
-    if (UNLIKELY(! mutexTryInit(&ts->lines_mutex)))
-    {
-        LOGF("KeepAliveClient: failed to initialize line-registry mutex");
-        tunnelDestroy(t);
-        return NULL;
-    }
-    ts->lines_head       = NULL;
-    ts->worker_timers    = memoryAllocateZero(sizeof(wtimer_t *) * getWorkersCount());
-    ts->ping_interval_ms = kKeepAliveDefaultPingMs;
-
-    if (UNLIKELY(ts->worker_timers == NULL))
-    {
-        LOGF("KeepAliveClient: failed to allocate worker timers");
-        keepaliveclientTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
 
     if (! keepaliveclientLoadSettings(ts, node->node_settings_json))
     {

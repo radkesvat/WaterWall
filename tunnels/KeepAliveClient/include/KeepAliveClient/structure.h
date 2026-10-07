@@ -4,35 +4,41 @@
 
 typedef struct keepaliveclient_lstate_s keepaliveclient_lstate_t;
 
+typedef struct keepaliveclient_worker_state_s
+{
+    /* Quiescence stops expiry; the last borrowed line releases its table. */
+    local_idle_table_t *idle_table;
+    size_t              active_lines;
+    bool                quiesced;
+} keepaliveclient_worker_state_t;
+
 typedef struct keepaliveclient_tstate_s
 {
-    wmutex_t                  lines_mutex;
-    keepaliveclient_lstate_t *lines_head;
-    wtimer_t                **worker_timers;
-    uint32_t                  ping_interval_ms;
-    uint32_t                  tolerance_ms;
-    bool                      sensitive_mode;
+    uint32_t                       ping_interval_ms;
+    uint32_t                       tolerance_ms;
+    bool                           sensitive_mode;
+    keepaliveclient_worker_state_t worker_states[];
 } keepaliveclient_tstate_t;
 
 struct keepaliveclient_lstate_s
 {
-    splice_stream_t          *read_stream;
-    buffer_pool_t            *pool;
-    buffer_queue_t            write_reentry;
-    sbuf_t                   *write_active;
-    bool                      read_draining;
-    bool                      write_draining;
-    bool                      write_paused;
-    bool                      pong_draining;
-    uint32_t                  pending_pongs;
-    bool                      established;
-    bool                      awaiting_pong;
-    uint64_t                  next_ping_at_ms;
-    uint64_t                  pong_deadline_ms;
-    line_t                   *line;
-    keepaliveclient_lstate_t *tracked_prev;
-    keepaliveclient_lstate_t *tracked_next;
-    wid_t                     wid;
+    splice_stream_t   *read_stream;
+    buffer_pool_t     *pool;
+    buffer_queue_t     write_reentry;
+    sbuf_t            *write_active;
+    bool               read_draining;
+    bool               write_draining;
+    bool               write_paused;
+    bool               pong_draining;
+    uint32_t           pending_pongs;
+    bool               established;
+    bool               awaiting_pong;
+    uint64_t           next_ping_at_ms;
+    uint64_t           pong_deadline_ms;
+    line_t            *line;
+    tunnel_t          *tunnel;
+    local_idle_item_t *ping_item;
+    local_idle_item_t *pong_deadline_item;
 };
 
 enum
@@ -52,7 +58,7 @@ enum
     kKeepAliveFrameKindPong       = 3,
     kKeepAliveDefaultPingMs       = 30000,
     kKeepAliveDefaultToleranceMs  = 90000,
-    kKeepAliveWatchdogCheckMs     = 1000,
+    kKeepAlivePingRetryMs         = 1000,
     kTunnelStateSize              = sizeof(keepaliveclient_tstate_t),
     kLineStateSize                = sizeof(keepaliveclient_lstate_t)
 };
@@ -61,7 +67,6 @@ WW_EXPORT void         keepaliveclientTunnelDestroy(tunnel_t *t, const ww_lifecy
 WW_EXPORT tunnel_t    *keepaliveclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t keepaliveclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void keepaliveclientTunnelOnStart(tunnel_t *t);
 void keepaliveclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void keepaliveclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
@@ -81,7 +86,6 @@ void keepaliveclientLinestateDestroy(keepaliveclient_lstate_t *ls);
 
 void keepaliveclientTrackLine(tunnel_t *t, line_t *l);
 void keepaliveclientUntrackLine(tunnel_t *t, line_t *l);
-void keepaliveclientWorkerTimerCallback(wtimer_t *timer);
 
 bool keepaliveclientSendPingFrame(tunnel_t *t, line_t *l);
 bool keepaliveclientSendNormalFrameUpstream(tunnel_t *t, line_t *l, sbuf_t *buf);

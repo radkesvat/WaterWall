@@ -293,6 +293,11 @@ static void setupWithSettings(const char *settings)
     prev = tunnelCreate(NULL, 0, 0);
     next = tunnelCreate(NULL, 0, 0);
     twfRequire(node != NULL && prev != NULL && next != NULL, "construct KeepAlive fixture");
+#ifndef TEST_KEEPALIVE_SERVER
+    /* Install the real table before these cases step the cached loop clock.
+     * Lazy installation is covered by the orderly-shutdown fixture. */
+    ((keepaliveclient_tstate_t *) tunnelGetState(node))->worker_states[0].idle_table = localIdleTableCreate(env.loop);
+#endif
     tunnelBind(prev, node);
     tunnelBind(node, next);
     memoryZero(&chain, sizeof(chain));
@@ -352,40 +357,31 @@ static void setTime(uint64_t now)
     env.loop->cur_hrtime = now * 1000U;
 }
 
-static wtimer_t *watchdogSetup(bool establish)
+static void watchdogSetup(bool establish)
 {
     setupWithSettings("{\"ping-interval\":10,\"sensitive-mode\":true,\"tolerance-ms\":30}");
-    keepaliveclient_tstate_t *ts    = tunnelGetState(node);
-    wtimer_t                 *timer = wtimerAdd(env.loop, keepaliveclientWorkerTimerCallback, 10, INFINITE);
-    twfRequire(timer != NULL, "create watchdog fixture timer");
-    weventSetUserData(timer, node);
-    ts->worker_timers[0] = timer;
     setTime(1000);
     if (establish)
         node->fnEstD(node, line);
-    return timer;
 }
 
-static void tick(wtimer_t *timer, uint64_t now)
+static void tick(uint64_t now)
 {
     setTime(now);
-    keepaliveclientWorkerTimerCallback(timer);
+    keepaliveclient_tstate_t *ts = tunnelGetState(node);
+    if (ts->worker_states[0].idle_table != NULL)
+        localidletableTestRunExpiry(ts->worker_states[0].idle_table);
 }
 
 static void testFirstPingInterval(bool sensitive)
 {
     setupWithSettings(sensitive ? "{\"ping-interval\":100,\"sensitive-mode\":true,\"tolerance-ms\":10}"
                                 : "{\"ping-interval\":100,\"sensitive-mode\":false,\"tolerance-ms\":10}");
-    keepaliveclient_tstate_t *ts    = tunnelGetState(node);
-    keepaliveclient_lstate_t *ls    = lineGetState(line, node);
-    wtimer_t                 *timer = wtimerAdd(env.loop, keepaliveclientWorkerTimerCallback, 100, INFINITE);
-    twfRequire(timer != NULL, "create first-ping fixture timer");
-    weventSetUserData(timer, node);
-    ts->worker_timers[0] = timer;
-    tick(timer, 2000);
+    keepaliveclient_lstate_t *ls = lineGetState(line, node);
+    tick(2000);
     twfRequire(wire_calls == 0 && lineIsAlive(line), "first ping ran before transport Est");
     node->fnEstD(node, line);
-    tick(timer, 2000);
+    tick(2000);
     twfRequire(wire_calls == 0 && ! ls->awaiting_pong, "Est triggered an immediate first ping");
     encode(node, line, ordinary("A", 1));
     twfRequire(wire_calls == 1 && lineIsAlive(line), "waiting for the first ping blocked application data");
@@ -393,25 +389,25 @@ static void testFirstPingInterval(bool sensitive)
     node->fnPauseU(node, line);
     node->fnPauseD(node, line);
     node->fnEstD(node, line);
-    tick(timer, 2099);
+    tick(2099);
     twfRequire(wire_calls == 1 && ! ls->awaiting_pong && ls->pong_deadline_ms == 0 && lineIsAlive(line),
                "first ping escaped its interval or its unsent deadline closed the line");
-    tick(timer, 2100);
-    tick(timer, 2500);
+    tick(2100);
+    tick(2500);
     twfRequire(wire_calls == 1 && ! ls->awaiting_pong && ls->pong_deadline_ms == 0 && lineIsAlive(line),
                "paused unsent ping was emitted or started a reply deadline");
     node->fnResumeD(node, line);
-    tick(timer, 2500);
+    tick(3100);
     twfRequire(wire_calls == 2 && ls->awaiting_pong == sensitive && lineIsAlive(line) &&
                    memoryCompare(wire + wire_length - 5, "\0\0\0\1\2", 5) == 0,
                "Resume lost the due first ping");
-    tick(timer, 2509);
+    tick(3109);
     twfRequire(wire_calls == 2 && lineIsAlive(line), "paused time shortened the new ping's deadline or interval");
     if (! sensitive)
     {
-        tick(timer, 2599);
+        tick(3199);
         twfRequire(wire_calls == 2, "regular ping interval was shortened");
-        tick(timer, 2600);
+        tick(3200);
         twfRequire(wire_calls == 3 && lineIsAlive(line), "regular pings stopped with the watchdog disabled");
     }
     teardown();
@@ -419,8 +415,8 @@ static void testFirstPingInterval(bool sensitive)
 
 static void testWatchdogTimeout(void)
 {
-    wtimer_t *timer = watchdogSetup(true);
-    tick(timer, 1010);
+    watchdogSetup(true);
+    tick(1010);
     twfRequire(wire_calls == 1 && memoryCompare(wire, "\0\0\0\1\2", 5) == 0, "watchdog did not send ping");
     const uint8_t partial[] = {0, 0, 0, 5, 1, 'A'};
 #if WW_HAVE_SPLICE
@@ -428,21 +424,66 @@ static void testWatchdogTimeout(void)
 #else
     decode(node, line, ordinary(partial, sizeof(partial)));
 #endif
-    tick(timer, 1039);
+    tick(1039);
     twfRequire(lineIsAlive(line), "watchdog expired before tolerance");
-    tick(timer, 1040);
+    tick(1040);
     twfRequire(! lineIsAlive(line) && finishes == 2, "missing pong did not close borrowed connection");
     twfRequire(wire_calls == 1, "watchdog sent another ping while awaiting a reply");
+    teardown();
+}
+
+static void testSeparatePingAndDeadlineItems(void)
+{
+    setupWithSettings("{\"ping-interval\":1000,\"sensitive-mode\":true,\"tolerance-ms\":90000}");
+    setTime(1000);
+    node->fnEstD(node, line);
+    keepaliveclient_tstate_t *ts    = tunnelGetState(node);
+    keepaliveclient_lstate_t *ls    = lineGetState(line, node);
+    local_idle_table_t       *table = ts->worker_states[0].idle_table;
+    local_idle_item_t        *ping  = ls->ping_item;
+    twfRequire(ping != NULL && ls->pong_deadline_item == NULL && localidletableGetItemCount(table) == 1,
+               "Est did not create only the ping item");
+    tick(2000);
+    twfRequire(wire_calls == 1 && ls->pong_deadline_item != NULL && localidletableGetItemCount(table) == 2,
+               "sending a ping did not publish a separate reply deadline");
+    twfRequire(localidletableTestGetDeadline(ping) == 3000 &&
+                   localidletableTestGetDeadline(ls->pong_deadline_item) == 92000,
+               "ping and watchdog deadlines were coupled");
+    setTime(2500);
+    const uint8_t pong[] = {0, 0, 0, 1, 3};
+    decode(node, line, ordinary(pong, sizeof(pong)));
+    twfRequire(ls->ping_item == ping && localidletableTestGetDeadline(ping) == 3000 && ls->pong_deadline_item == NULL &&
+                   localidletableGetItemCount(table) == 1,
+               "a timely pong rescheduled the ping or retained its watchdog");
+    tick(3000);
+    tick(4000);
+    twfRequire(wire_calls == 2 && ls->next_ping_at_ms == 4000 && ls->pong_deadline_ms == 93000 &&
+                   localidletableTestGetDeadline(ls->pong_deadline_item) == 93000,
+               "waiting for a pong sent another probe or extended the watchdog");
+    tick(93000);
+    twfRequire(! lineIsAlive(line) && localidletableGetItemCount(table) == 0, "timeout did not cancel both idle items");
+    teardown();
+
+    setupWithSettings("{\"ping-interval\":1000,\"sensitive-mode\":true,\"tolerance-ms\":100}");
+    setTime(1000);
+    node->fnEstD(node, line);
+    tick(2000);
+    node->fnPauseD(node, line);
+    tick(2099);
+    twfRequire(lineIsAlive(line), "short watchdog expired early");
+    tick(2100);
+    twfRequire(! lineIsAlive(line) && finishes == 2 && wire_calls == 1,
+               "the independent short watchdog waited for a ping or Resume");
     teardown();
 }
 
 static void testWatchdogReplies(void)
 {
     const uint8_t pong[] = {0, 0, 0, 1, 3};
-    wtimer_t     *timer  = watchdogSetup(true);
-    tick(timer, 1009);
+    watchdogSetup(true);
+    tick(1009);
     twfRequire(wire_calls == 0, "watchdog ping escaped interval");
-    tick(timer, 1010);
+    tick(1010);
     setTime(1015);
     for (unsigned i = 0; i < sizeof(pong); ++i)
     {
@@ -453,45 +494,45 @@ static void testWatchdogReplies(void)
 #endif
     }
     node->fnEstD(node, line); /* Repeated Est must not postpone the next ping. */
-    tick(timer, 1019);
+    tick(1019);
     twfRequire(wire_calls == 1, "timely pong accelerated the ping interval");
-    tick(timer, 1020);
+    tick(1020);
     twfRequire(wire_calls == 2 && lineIsAlive(line), "timely pong did not release next ping");
     const uint8_t other[] = {0, 0, 0, 2, 3, 'X', 0, 0, 0, 2, 1, 'A', 0, 0, 0, 1, 2};
     setTime(1025);
     decode(node, line, ordinary(other, sizeof(other)));
-    tick(timer, 1050);
+    tick(1050);
     twfRequire(! lineIsAlive(line) && finishes == 2 && plain_length == 1 && wire_calls == 3,
                "normal traffic, peer ping or nonempty pong satisfied watchdog");
     teardown();
 
-    timer = watchdogSetup(true);
-    tick(timer, 1010);
+    watchdogSetup(true);
+    tick(1010);
     setTime(1040);
     decode(node, line, ordinary(pong, sizeof(pong)));
     twfRequire(! lineIsAlive(line) && finishes == 2, "late pong bypassed the reply deadline");
     teardown();
 
-    timer       = watchdogSetup(true);
+    watchdogSetup(true);
     inject_pong = true;
-    tick(timer, 1010);
-    tick(timer, 1020);
+    tick(1010);
+    tick(1020);
     twfRequire(wire_calls == 2 && lineIsAlive(line), "reentrant pong was lost before ping state was published");
     close_output = true;
     setTime(1025);
     decode(node, line, ordinary(pong, sizeof(pong)));
-    tick(timer, 1030);
+    tick(1030);
     twfRequire(! lineIsAlive(line) && wire_calls == 3, "watchdog continued after ping callback closed line");
     teardown();
 }
 
 static void testWatchdogPauseAndEst(void)
 {
-    wtimer_t *timer = watchdogSetup(false);
-    tick(timer, 2000);
+    watchdogSetup(false);
+    tick(2000);
     twfRequire(wire_calls == 0 && lineIsAlive(line), "watchdog ran before transport Est");
     node->fnEstD(node, line);
-    tick(timer, 2010);
+    tick(2010);
     twfRequire(wire_calls == 1, "watchdog did not start after Est");
     setTime(2020);
     node->fnPauseD(node, line);
@@ -499,30 +540,30 @@ static void testWatchdogPauseAndEst(void)
     node->fnPauseD(node, line);
     setTime(2035);
     node->fnPauseU(node, line);
-    tick(timer, 2039);
+    tick(2039);
     twfRequire(lineIsAlive(line) && wire_calls == 1, "paused watchdog expired before its deadline");
-    tick(timer, 2040);
+    tick(2040);
     twfRequire(! lineIsAlive(line) && finishes == 2, "Pause postponed the watchdog deadline");
     teardown();
 
-    timer = watchdogSetup(true);
-    tick(timer, 1010);
+    watchdogSetup(true);
+    tick(1010);
     setTime(1015);
     node->fnPauseU(node, line);
     node->fnPauseD(node, line);
     const uint8_t pong[] = {0, 0, 0, 1, 3};
     decode(node, line, ordinary(pong, sizeof(pong)));
-    tick(timer, 1020);
+    tick(1020);
     twfRequire(wire_calls == 1 && lineIsAlive(line), "paused watchdog emitted a new ping or lost a timely Pong");
-    setTime(1030);
+    setTime(2020);
     node->fnResumeD(node, line);
-    tick(timer, 1030);
+    tick(2020);
     twfRequire(wire_calls == 2, "write Resume lost the due probe while the read direction remained paused");
-    setTime(1040);
+    setTime(2030);
     node->fnPauseD(node, line);
-    tick(timer, 1059);
+    tick(2049);
     twfRequire(lineIsAlive(line), "partial Resume shortened the watchdog deadline");
-    tick(timer, 1060);
+    tick(2050);
     twfRequire(! lineIsAlive(line) && finishes == 2, "overlapping Pause or Resume extended the watchdog deadline");
     teardown();
 }
@@ -545,21 +586,17 @@ static void testWatchdogSettings(void)
         cJSON_Delete(config.node_settings_json);
         memoryFree(config.type);
     }
-    wtimer_t *timer = wtimerAdd(env.loop, keepaliveclientWorkerTimerCallback, 10, INFINITE);
-    twfRequire(timer != NULL, "create disabled watchdog timer");
-    weventSetUserData(timer, node);
-    ((keepaliveclient_tstate_t *) tunnelGetState(node))->worker_timers[0] = timer;
     setTime(1000);
     node->fnEstD(node, line);
     node->fnPauseU(node, line);
     node->fnPauseD(node, line);
-    tick(timer, 1010);
-    tick(timer, 1000000);
+    tick(1010);
+    tick(1000000);
     twfRequire(lineIsAlive(line) && wire_calls == 0, "disabled watchdog emitted paused probes or closed the line");
     node->fnResumeD(node, line);
-    tick(timer, 1000000);
+    tick(1001000);
     twfRequire(wire_calls == 1, "Resume accumulated missed timer probes");
-    tick(timer, 1000010);
+    tick(1001010);
     twfRequire(lineIsAlive(line) && wire_calls == 2, "regular probes stopped after Resume");
     teardown();
     setup();
@@ -856,6 +893,7 @@ int main(void)
     testFirstPingInterval(false);
     testFirstPingInterval(true);
     testWatchdogTimeout();
+    testSeparatePingAndDeadlineItems();
     testWatchdogReplies();
     testWatchdogPauseAndEst();
     testWatchdogSettings();

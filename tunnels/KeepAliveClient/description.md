@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/KeepAliveClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/KeepAliveClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -43,8 +43,9 @@ Frame kinds are:
 
 ## Keepalive Timer
 
-`KeepAliveClient` tracks each initialized line in tunnel state and starts one periodic timer per worker during
-`onStart()`.
+`KeepAliveClient` creates a worker-local idle table when the first connection on
+that worker reaches transport `Est`. Each established line has a recurring ping
+item and, in sensitive mode, a separate item while waiting for a pong.
 
 In both modes, the first ping is due one `ping-interval` after downstream transport
 `Est`. The worker timer sends it on the first eligible check at or after that
@@ -53,9 +54,9 @@ there is no burst of missed probes after Resume. Application traffic can flow
 during the initial wait. In sensitive mode, the reply deadline starts immediately
 before the ping is handed to the next node, never while it waits locally.
 
-With sensitive mode disabled, the worker-local timer checks every `ping-interval`
-milliseconds and sends one empty `ping` frame on each still-alive line whose ping
-is due and whose outgoing direction is unpaused.
+With sensitive mode disabled, the ping item sends one empty `ping` frame when due
+and unpaused, then schedules its next interval. A blocked probe stays due and
+retries after one second. There is no catch-up burst.
 
 Default interval:
 
@@ -70,10 +71,10 @@ peer pings, unknown kinds and nonempty pongs do not.
 `tolerance-ms` defaults to `90000` and must be an integer in `1..2147483647`.
 A missing or late pong closes the borrowed connection through its owner. This
 node does not recreate it. Deadlines use the owner event loop's monotonic clock.
-The existing worker timer checks every `min(ping-interval, tolerance-ms, 1000)`
-milliseconds in sensitive mode; ping sends still obey `ping-interval`. Expiry
-is handled on the first check at or after the deadline, or when a late pong is
-decoded.
+The separate deadline item is canceled by a timely pong and is never extended by
+the ping item. Expiry is handled on the first idle-table check at or after the
+deadline, or when a late pong is decoded. New short deadlines may be checked about
+one second late; this node does not guarantee subsecond wakeup precision.
 
 Pause in either direction leaves the timer and any outstanding reply deadline
 running. Downstream Pause delays Ping/Pong output toward `next`; Resume permits
@@ -92,7 +93,7 @@ tolerance that allows for the path's throughput and latency.
 
 On either directional `Finish`, `KeepAliveClient`:
 
-1. removes the line from its tracked-line list
+1. cancels its ping and reply-deadline items and releases its worker tracking
 2. destroys its own per-line state
 3. propagates the received directional finish
 

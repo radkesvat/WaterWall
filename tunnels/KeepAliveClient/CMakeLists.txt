@@ -4,7 +4,6 @@ add_library(KeepAliveClient STATIC
                     instance/destroy.c
                     instance/api.c
                     instance/node.c
-                    instance/start.c
                     instance/stop.c
                     common/helpers.c
                     common/line_state.c

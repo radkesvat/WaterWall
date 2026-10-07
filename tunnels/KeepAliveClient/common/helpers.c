@@ -2,6 +2,37 @@
 
 #include "loggers/network_logger.h"
 
+static void keepaliveclientPingExpired(local_idle_item_t *item);
+static void keepaliveclientPongDeadlineExpired(local_idle_item_t *item);
+
+static local_idle_item_t *keepaliveclientCreateIdleItem(tunnel_t *t, line_t *l, local_idle_item_t **slot,
+                                                        LocalIdleExpireCallBack callback, uint64_t age_ms)
+{
+    assert(lineIsOnCurrentEventWorker(l));
+    assert(*slot == NULL);
+    keepaliveclient_tstate_t *ts    = tunnelGetState(t);
+    local_idle_table_t       *table = ts->worker_states[lineGetWID(l)].idle_table;
+    local_idle_item_t        *item =
+        localidletableCreateItem(table, (hash_t) (uintptr_t) slot, lineGetState(l, t), callback, age_ms);
+    if (UNLIKELY(item == NULL))
+    {
+        LOGF("KeepAliveClient: duplicate idle item for a line");
+        abortProgramNow(1);
+    }
+    return item;
+}
+
+static void keepaliveclientRemoveIdleItem(local_idle_item_t **slot)
+{
+    local_idle_item_t *item = *slot;
+    if (item == NULL)
+        return;
+    *slot              = NULL;
+    const bool removed = localidletableRemoveIdleItem(item->table, item);
+    assert(removed);
+    discard removed;
+}
+
 static bool keepaliveclientIsPacketLine(tunnel_t *t, line_t *l)
 {
     return tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l);
@@ -184,6 +215,7 @@ bool keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
                 alive              = keepaliveclientCheckPongDeadline(t, l, now);
                 if (alive)
                 {
+                    keepaliveclientRemoveIdleItem(&ls->pong_deadline_item);
                     ls->awaiting_pong    = false;
                     ls->pong_deadline_ms = 0;
                 }
@@ -213,121 +245,32 @@ bool keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
 
 void keepaliveclientTrackLine(tunnel_t *t, line_t *l)
 {
-    keepaliveclient_tstate_t *ts = tunnelGetState(t);
-    keepaliveclient_lstate_t *ls = lineGetState(l, t);
+    assert(lineIsOnCurrentEventWorker(l));
+    keepaliveclient_tstate_t       *ts    = tunnelGetState(t);
+    keepaliveclient_lstate_t       *ls    = lineGetState(l, t);
+    keepaliveclient_worker_state_t *state = &ts->worker_states[lineGetWID(l)];
 
-    mutexLock(&ts->lines_mutex);
-
-    ls->tracked_prev = NULL;
-    ls->tracked_next = ts->lines_head;
-    if (ts->lines_head != NULL)
-    {
-        ts->lines_head->tracked_prev = ls;
-    }
-    ts->lines_head = ls;
-
-    mutexUnlock(&ts->lines_mutex);
+    assert(state->active_lines < SIZE_MAX);
+    ls->tunnel = t;
+    ++state->active_lines;
 }
 
 void keepaliveclientUntrackLine(tunnel_t *t, line_t *l)
 {
-    keepaliveclient_tstate_t *ts = tunnelGetState(t);
-    keepaliveclient_lstate_t *ls = lineGetState(l, t);
+    assert(lineIsOnCurrentEventWorker(l));
+    keepaliveclient_tstate_t       *ts    = tunnelGetState(t);
+    keepaliveclient_lstate_t       *ls    = lineGetState(l, t);
+    keepaliveclient_worker_state_t *state = &ts->worker_states[lineGetWID(l)];
 
-    mutexLock(&ts->lines_mutex);
-
-    if (ls->tracked_prev != NULL)
+    keepaliveclientRemoveIdleItem(&ls->ping_item);
+    keepaliveclientRemoveIdleItem(&ls->pong_deadline_item);
+    assert(state->active_lines != 0);
+    --state->active_lines;
+    if (state->quiesced && state->active_lines == 0 && state->idle_table != NULL)
     {
-        ls->tracked_prev->tracked_next = ls->tracked_next;
-    }
-    else if (ts->lines_head == ls)
-    {
-        ts->lines_head = ls->tracked_next;
-    }
-
-    if (ls->tracked_next != NULL)
-    {
-        ls->tracked_next->tracked_prev = ls->tracked_prev;
-    }
-
-    ls->tracked_prev = NULL;
-    ls->tracked_next = NULL;
-    mutexUnlock(&ts->lines_mutex);
-}
-
-void keepaliveclientWorkerTimerCallback(wtimer_t *timer)
-{
-    tunnel_t *t = weventGetUserdata(timer);
-    if (t == NULL)
-    {
-        return;
-    }
-
-    keepaliveclient_tstate_t *ts    = tunnelGetState(t);
-    keepaliveclient_lstate_t *it    = NULL;
-    line_t                  **lines = NULL;
-    size_t                    count = 0;
-    size_t                    index = 0;
-    const wid_t               wid   = getLoopEventWorkerWID(weventGetLoop(timer));
-
-    mutexLock(&ts->lines_mutex);
-
-    for (it = ts->lines_head; it != NULL; it = it->tracked_next)
-    {
-        if (it->wid == wid && it->line != NULL)
-        {
-            count += 1;
-        }
-    }
-
-    if (count > 0)
-    {
-        if (UNLIKELY(count > SIZE_MAX / sizeof(*lines)))
-        {
-            LOGW("KeepAliveClient: too many tracked lines to snapshot periodic pings on worker %d", (int) wid);
-            mutexUnlock(&ts->lines_mutex);
-            return;
-        }
-
-        lines = memoryAllocate(sizeof(line_t *) * count);
-        if (UNLIKELY(lines == NULL))
-        {
-            LOGW("KeepAliveClient: failed to snapshot %zu tracked line(s) for periodic pings on worker %d",
-                 count,
-                 (int) wid);
-            mutexUnlock(&ts->lines_mutex);
-            return;
-        }
-
-        for (it = ts->lines_head; it != NULL; it = it->tracked_next)
-        {
-            if (it->wid == wid && it->line != NULL)
-            {
-                /* A ping callback for one line may synchronously close another
-                 * tracked line. Retain every snapshot entry while the registry
-                 * lock still proves it is live, so later entries remain
-                 * physically valid after such re-entrant removal. */
-                lineRef(it->line);
-                lines[index++] = it->line;
-            }
-        }
-    }
-
-    mutexUnlock(&ts->lines_mutex);
-
-    for (size_t i = 0; i < count; ++i)
-    {
-        if (lineIsAlive(lines[i]))
-        {
-            discard keepaliveclientSendPingFrame(t, lines[i]);
-        }
-
-        lineUnref(lines[i]);
-    }
-
-    if (lines != NULL)
-    {
-        memoryFree(lines);
+        /* Owner drain may run after this tunnel's lifecycle hook. */
+        localidletableDestroy(state->idle_table);
+        state->idle_table = NULL;
     }
 }
 
@@ -335,7 +278,7 @@ bool keepaliveclientSendPingFrame(tunnel_t *t, line_t *l)
 {
     keepaliveclient_tstate_t *ts = tunnelGetState(t);
     keepaliveclient_lstate_t *ls = lineGetState(l, t);
-    if (! ls->established)
+    if (! ls->established || ts->worker_states[lineGetWID(l)].quiesced)
         return true;
     const uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
     if (ts->sensitive_mode)
@@ -352,10 +295,47 @@ bool keepaliveclientSendPingFrame(tunnel_t *t, line_t *l)
     if (ts->sensitive_mode)
     {
         /* Publish before sending: the callback can deliver its pong inline. */
-        ls->awaiting_pong    = true;
-        ls->pong_deadline_ms = now + ts->tolerance_ms;
+        ls->awaiting_pong      = true;
+        ls->pong_deadline_ms   = now + ts->tolerance_ms;
+        ls->pong_deadline_item = keepaliveclientCreateIdleItem(
+            t, l, &ls->pong_deadline_item, keepaliveclientPongDeadlineExpired, ts->tolerance_ms);
     }
     return keepaliveclientSendControlFrame(t, l, kKeepAliveFrameKindPing);
+}
+
+static void keepaliveclientPingExpired(local_idle_item_t *item)
+{
+    keepaliveclient_lstate_t *ls = item->userdata;
+    line_t                   *l  = ls->line;
+    tunnel_t                 *t  = ls->tunnel;
+    assert(lineIsOnCurrentEventWorker(l));
+    /* The payload callback may close this line or another due table item. */
+    lineRef(l);
+    if (! keepaliveclientSendPingFrame(t, l))
+    {
+        lineUnref(l);
+        return;
+    }
+    if (ls->read_stream != NULL)
+    {
+        const uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
+        const uint64_t age = ls->next_ping_at_ms > now ? ls->next_ping_at_ms - now : kKeepAlivePingRetryMs;
+        /* Retry without moving the due time or an outstanding reply deadline. */
+        localidletableKeepIdleItemForAtleast(item->table, item, age);
+    }
+    lineUnref(l);
+}
+
+static void keepaliveclientPongDeadlineExpired(local_idle_item_t *item)
+{
+    keepaliveclient_lstate_t *ls = item->userdata;
+    tunnel_t                 *t  = ls->tunnel;
+    line_t                   *l  = ls->line;
+    assert(lineIsOnCurrentEventWorker(l));
+    assert(ls->awaiting_pong);
+    keepaliveclient_tstate_t *ts = tunnelGetState(t);
+    LOGW("KeepAliveClient: pong timed out (tolerance=%u ms), closing connection", ts->tolerance_ms);
+    keepaliveclientCloseLineFromProtocolError(t, l);
 }
 
 void keepaliveclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
@@ -364,8 +344,15 @@ void keepaliveclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     keepaliveclient_lstate_t *ls = lineGetState(l, t);
     if (! ls->established)
     {
+        keepaliveclient_worker_state_t *state = &ts->worker_states[lineGetWID(l)];
+        if (! state->quiesced && state->idle_table == NULL)
+            state->idle_table = localIdleTableCreate(getWorkerLoop(lineGetWID(l)));
+        /* Table creation refreshes the loop clock while installing its timer. */
         ls->established     = true;
         ls->next_ping_at_ms = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l))) + ts->ping_interval_ms;
+        if (! state->quiesced)
+            ls->ping_item =
+                keepaliveclientCreateIdleItem(t, l, &ls->ping_item, keepaliveclientPingExpired, ts->ping_interval_ms);
     }
     tunnelPrevDownStreamEst(t, l);
 }
