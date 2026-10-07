@@ -2,6 +2,30 @@
 
 #include "loggers/network_logger.h"
 
+static void tlsclientCaptureOuterClientHello(int is_write, int version, int content_type, const void *buffer,
+                                             size_t length, SSL *ssl, void *arg)
+{
+    discard version;
+    if (! is_write || content_type != SSL3_RT_HANDSHAKE)
+        return;
+
+    const uint8_t *message = buffer;
+    assert(length >= SSL3_HM_HEADER_LENGTH);
+    if (message[0] != SSL3_MT_CLIENT_HELLO)
+        return;
+
+    tlsclient_lstate_t *ls = arg;
+    assert(ls != NULL && ls->ssl == ssl);
+    discard      ssl;
+    const size_t random_offset = SSL3_HM_HEADER_LENGTH + 2U;
+    assert(length >= random_offset + sizeof(ls->outer_client_random));
+    discard length;
+    /* BoringSSL reports the ECH inner hello with SSL3_RT_CLIENT_HELLO_INNER.
+     * Copy only the complete outgoing wire hello; no callback storage escapes. */
+    memoryCopy(ls->outer_client_random, message + random_offset, sizeof(ls->outer_client_random));
+    ls->outer_client_random_captured = true;
+}
+
 static bool tlsclientAddConfiguredApplicationSettings(SSL *ssl, const uint8_t *alpn_wire, size_t alpn_wire_len)
 {
     size_t offset = 0;
@@ -102,6 +126,8 @@ bool tlsclientLinestateInitializeWithShaping(tlsclient_lstate_t *ls, SSL_CTX *sc
     }
 
     tlsbufferbioEnableDirectWrite(ls->ssl);
+    SSL_set_msg_callback(ls->ssl, tlsclientCaptureOuterClientHello);
+    SSL_set_msg_callback_arg(ls->ssl, ls);
 
     if (record_shaping->enabled && ! SSL_set_tls13_record_padding_callback(
                                        ls->ssl, tlsclientRecordPaddingCallback, ls, kTlsRecordShapingMaxPaddingBytes))

@@ -115,6 +115,8 @@ typedef struct client_tls_lstate_view_s
     tlsrecordshaping_state_t        shaping_state;
     wtimer_t                       *shaping_output_timer;
     uint32_t                        takeover_phase;
+    uint8_t                         outer_client_random[kRealityV2TlsRandomSize];
+    bool                            outer_client_random_captured;
     bool                            handshake_completed;
     bool                            handshake_ready_sent;
     bool                            resources_released;
@@ -793,6 +795,8 @@ static void clientFixtureEnableTlsTakeover(client_lifecycle_fixture_t *fixture, 
         requireClient(moved > 0, "client TLS fixture handshake stalled before completion");
     }
     requireClient(completed, "client TLS fixture did not complete its handshake");
+    requireClient(tls_ls->outer_client_random_captured,
+                  "client TLS fixture did not capture its emitted ClientHello random");
 
     tls_ls->handshake_completed = true;
     if (((realityclient_lstate_t *) lineGetState(fixture->line, fixture->reality))->phase ==

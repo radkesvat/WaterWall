@@ -374,7 +374,8 @@ static bool tlsclientPreflightClientHello(SSL_CTX *ssl_ctx, const char *sni, con
     /* tlsclientConfigureSslForConnect transfers both BIOs before any fallible setting. */
     ssl_owns_bios = true;
     if (! tlsclientConfigureSslForConnect(
-            ssl, rbio, wbio, sni, ech_grease_override_payload, ech_grease_override_payload_len))
+            ssl, rbio, wbio, sni, ech_grease_override_payload, ech_grease_override_payload_len) ||
+        ! tlsclientConfigureEchForSsl(ssl))
     {
         goto cleanup;
     }
@@ -594,10 +595,13 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
         return NULL;
     }
 
+    if (! tlsclientConfigureEchContexts(ts, settings))
+        goto fail;
+
     size_t fresh_hello_wire_length = 0;
     if (! tlsclientPreflightConfiguredClientHello(ts, &fresh_hello_wire_length))
     {
-        LOGF("TlsClient: configured ALPN and ECH settings do not fit a complete ClientHello");
+        LOGF("TlsClient: configured ALPN and ECH settings cannot produce a complete ClientHello");
         goto fail;
     }
 

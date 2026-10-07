@@ -130,9 +130,10 @@ bool tlsclientConfigureSessionCache(SSL_CTX *ctx, const char *server_name, size_
         return false;
     /* The worst-case fresh wire image overbounds its extension block. A TLS 1.3
      * PSK adds the ticket plus 15 bytes of framing/age and one binder; TLS 1.2
-     * only adds the ticket. Leave room in the uint16 extension block, including
+     * only adds the ticket. Real ECH may add up to 31 bytes when rounding its
+     * encoded inner hello to a 32-byte boundary. Leave room in the uint16 extension block, including
      * when custom ALPN or an ECH override already nearly fills it. */
-    const size_t psk_overhead = 15U + EVP_MAX_MD_SIZE;
+    const size_t psk_overhead = 15U + EVP_MAX_MD_SIZE + 31U;
     cache->ticket_limit =
         fresh_hello_wire_length < UINT16_MAX - psk_overhead ? UINT16_MAX - psk_overhead - fresh_hello_wire_length : 0;
     cache->verify_mode = SSL_CTX_get_verify_mode(ctx);

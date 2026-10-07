@@ -47,7 +47,7 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         ech_payload = NULL;
     }
 
-    if (! tlsclientPrepareSession(ls->ssl))
+    if (! tlsclientConfigureEchForSsl(ls->ssl) || ! tlsclientPrepareSession(ls->ssl))
     {
         goto failed_before_next_init;
     }

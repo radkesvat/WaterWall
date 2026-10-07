@@ -1,5 +1,5 @@
 <!--
-Documentation version: 159
+Documentation version: 160
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TlsClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -108,6 +108,9 @@ That arrangement lets:
   - the tunnel no longer mimics Chrome as closely
   - you lose the Chrome-like `X25519MLKEM768` key share behavior
 
+- `ech-config-list` `(string, default: absent)`
+  Standard Base64 ECHConfigList for required real ECH; see Configured ECH below.
+
 - `verbose` `(boolean, default: false)`
   Enables extra TLS state logging.
 
@@ -120,6 +123,29 @@ That arrangement lets:
 Optional defaults apply only when their keys are absent. If `alpns` is absent, the Chrome-like default
 `["h2", "http/1.1"]` is used. If `verify`, `x25519mlkem768`, or `verbose` is present, it must be a JSON boolean. Any other
 type is a startup error.
+
+## Configured ECH
+
+`ech-config-list` accepts a nonempty standard Base64 string containing a serialized ECHConfigList for the destination.
+The configuration is fixed for the node's lifetime. Startup rejects malformed Base64, an invalid ECHConfigList, or a
+list with no supported configuration. `ech-config-list` and `ech-sni-trick` cannot be used together.
+
+Ordinary connections encrypt `settings.sni` in ClientHelloInner. The visible ClientHelloOuter uses the selected
+ECHConfig's `public_name`; users do not configure a second SNI. With this setting absent, the existing ECH GREASE
+behavior remains unchanged.
+
+Configured ECH must be accepted for the connection to succeed. Rejection closes the connection without releasing
+application data, retrying the transport, or falling back to a cleartext SNI or GREASE. TlsClient does not discover
+configurations through HTTPS DNS records, refresh them, or apply server retry configurations.
+
+Normal certificate verification still applies to the configured inner SNI. `verify: false` remains an explicit
+server-authentication opt-out; it does not permit ECH rejection or enable an authenticated retry path. 0-RTT remains
+disabled. TLS 1.3 resumption can use the existing session cache, with the PSK offer encrypted inside ClientHelloInner;
+TLS 1.2 sessions are not offered with real ECH.
+
+The `generateTlsHello:<sni>` API remains a fresh, arbitrary-hostname GREASE generator. It does not apply the node's
+fixed-origin `ech-config-list` or consume cached sessions. Startup preflight measures the actual configured outer
+ClientHello flight so its size checks also cover real ECH.
 
 ## TLS Stream Fragmentation
 
@@ -253,21 +279,23 @@ pass-through.
 Accepted request format:
 
 - `generateTlsHello:<sni>`
-  Generates a ClientHello using the tunnel's configured behavior.
+  Generates a fresh GREASE ClientHello for the supplied SNI, following the tunnel's ALPN and group configuration.
 
 Important note:
 
 - the API SNI must contain between 1 and 255 bytes
 - the API follows the tunnel's configured `settings.alpns` order
 - the API follows the tunnel's `settings.x25519mlkem768` value
-- if that setting is disabled, the generated ClientHello is smaller but less Chrome-like
+- if `x25519mlkem768` is disabled, the generated ClientHello is smaller but less Chrome-like
+- the API does not apply `settings.ech-config-list` or consume cached sessions
 
 ### Internal handshake takeover API
 
 This path is used by internal owners such as `RealityClient`; it has no JSON setting:
 
 - `tlsclientTunnelEnableHandshakeTakeover()` enables record-bounded takeover input.
-- `tlsclientTunnelGetHandshakeBinding()` captures the negotiated binding while BoringSSL is retained.
+- `tlsclientTunnelGetHandshakeBinding()` captures the negotiated binding while BoringSSL is retained. Its client random
+  is the emitted ClientHelloOuter random, including when real ECH is accepted.
 - `tlsclientTunnelDeinitAfterHandshake()` performs the TLS 1.2-only immediate release.
 - `tlsclientTunnelBeginTakeoverDrain()` starts TLS 1.3 external post-handshake dispatch and returns accumulated raw bytes.
 - `tlsclientTunnelConsumePostHandshakeRecord()` consumes one complete TLS 1.3 record and flushes generated protocol output.
@@ -485,7 +513,7 @@ The SSL context is configured to stay in the same protocol band this tunnel was 
 - maximum protocol version is TLS 1.3
 - GREASE is enabled
 - TLS extension permutation is enabled
-- ECH grease is enabled on each `SSL` object
+- ECH GREASE is enabled by default; configured real ECH must be accepted on ordinary connections
 - OCSP stapling and signed certificate timestamps are enabled
 
 ### Cipher suite ordering patch
@@ -607,7 +635,8 @@ SNI, ALPN and verification policy. Runtime connections check their SNI and verif
 constructor preflight, raw ClientHello generation and ECH-inner generation always remain fresh and neither consume
 nor add cached sessions. The cache belongs to the SSL context and is released with it.
 
-Ticket size is capped using the worst-case fresh ClientHello preflight, with space reserved for PSK framing.
+Ticket size is capped using the worst-case fresh ClientHello preflight, with space reserved for PSK framing and,
+with real ECH, up to 31 bytes for inner padding.
 Oversized tickets are discarded, keeping later ClientHellos within their size limit even with large custom ALPN or
 ECH settings. If no usable session remains, the next connection starts with a fresh handshake.
 
@@ -683,7 +712,8 @@ intended TLS library.
 of `TlsClient`. Use it only when a deployment deliberately coordinates TLS ClientHello construction with compatible
 packet-level manipulation.
 
-The optional `ech-sni-trick` setting accepts a hostname string containing between 1 and 255 bytes:
+The optional `ech-sni-trick` setting is incompatible with `ech-config-list`. It accepts a hostname string containing
+between 1 and 255 bytes:
 
 ```json
 "ech-sni-trick": "example.net"

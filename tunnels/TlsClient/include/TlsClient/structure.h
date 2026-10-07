@@ -55,6 +55,9 @@ typedef struct tlsclient_lstate_s
     tlsrecordshaping_state_t        shaping_state;
     wtimer_t                       *shaping_output_timer;
     tlsclient_takeover_phase_t      takeover_phase;
+    // Reality binds the visible ClientHello, including when ECH hides a different inner random.
+    uint8_t                         outer_client_random[SSL3_RANDOM_SIZE];
+    bool                            outer_client_random_captured;
     bool                            handshake_completed;
     bool                            handshake_ready_sent;
     bool                            resources_released;
@@ -177,6 +180,9 @@ void tlsclientPrintSSLState(const SSL *ssl);
 void tlsclientPrintSSLError(void);
 void tlsclientPrintSSLErrorAndAbort(void);
 bool tlsclientConfigureTrustAnchors(SSL_CTX *ctx);
+/* Static real ECH is owned by the worker contexts; only Init and startup preflight opt in. */
+bool tlsclientConfigureEchContexts(tlsclient_tstate_t *ts, const cJSON *settings);
+bool tlsclientConfigureEchForSsl(SSL *ssl);
 /* Context policy and cache access are serialized by the owning worker. */
 bool tlsclientConfigureSessionCache(SSL_CTX *ctx, const char *server_name, size_t fresh_hello_wire_length);
 /* Only ordinary connections opt in, after SNI/verification setup and before SSL I/O. */

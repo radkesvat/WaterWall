@@ -63,6 +63,7 @@ add_library(TlsClient STATIC
     instance/destroy.c
     instance/api.c
     instance/node.c
+    common/ech.c
     common/helpers.c
     common/line_state.c
     common/session_cache.c

@@ -22,6 +22,7 @@
 #include "reality_tls_binding_fixture.h"
 
 #include "TlsClient/structure.h"
+#include "tls_client_hello.h"
 
 #ifndef REALITY_TEST_CERT_FILE
 #error "REALITY_TEST_CERT_FILE must name the test certificate"
@@ -214,8 +215,14 @@ static bool collectTls13PostHandshakeFlights(SSL *client, SSL *server, reality_t
     return ok;
 }
 
-static bool readTlsClientAccessor(SSL *ssl, tlsclient_handshake_binding_t *binding)
+static bool readTlsClientAccessor(SSL *ssl, reality_tls_handshake_fixture_t *fixture)
 {
+    tls_client_hello_view_t   view;
+    tls_client_hello_result_t parsed =
+        tlsclienthelloParseRecord(fixture->client_flight, fixture->client_flight_len, &view);
+    if (parsed != kTlsClientHelloFound && parsed != kTlsClientHelloNoSni)
+        return false;
+
     tunnel_t *tunnel = tunnelCreate(NULL, 0, sizeof(tlsclient_lstate_t));
     if (tunnel == NULL)
     {
@@ -232,8 +239,14 @@ static bool readTlsClientAccessor(SSL *ssl, tlsclient_handshake_binding_t *bindi
     tlsclient_lstate_t *line_state  = lineGetState(line, tunnel);
     line_state->ssl                 = ssl;
     line_state->handshake_completed = true;
+    /* This bare-SSL fixture bypasses production Init; seed its captured binding
+     * from the actual outgoing wire hello, rather than the TLS random accessor. */
+    memoryCopy(line_state->outer_client_random,
+               fixture->client_flight + view.handshake_body_offset + 2U,
+               sizeof(line_state->outer_client_random));
+    line_state->outer_client_random_captured = true;
 
-    bool ok = tlsclientTunnelGetHandshakeBinding(tunnel, line, binding);
+    bool ok = tlsclientTunnelGetHandshakeBinding(tunnel, line, &fixture->accessor_binding);
 
     memoryZero(line_state, tunnel->lstate_size);
     memoryFreeAligned(line);
@@ -331,7 +344,7 @@ static bool buildTlsHandshakeFixture(uint16_t version, const char *cipher, bool 
         fixture->session_reused = true;
     }
 
-    ok = readTlsClientAccessor(client, &fixture->accessor_binding) &&
+    ok = readTlsClientAccessor(client, fixture) &&
          (version != TLS1_3_VERSION || collectTls13PostHandshakeFlights(client, server, fixture)) &&
          driveShutdown(client, server, fixture);
 

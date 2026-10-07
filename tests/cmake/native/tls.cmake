@@ -130,6 +130,30 @@ if(TARGET TlsClient)
     "unit;tunnels;tlsclient;session;certificate;takeover"
   )
 
+  waterwall_add_native_executable(tlsclient_ech_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tls/tlsclient_ech_test.c)
+  target_include_directories(tlsclient_ech_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
+  )
+  target_include_directories(tlsclient_ech_test BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
+  )
+  target_compile_definitions(tlsclient_ech_test PRIVATE BORINGSSL_PREFIX=WW_BSSL)
+  target_link_libraries(tlsclient_ech_test PRIVATE TlsClient ww ssl crypto)
+  if(TARGET RealityServer)
+    target_include_directories(tlsclient_ech_test PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/RealityServer/include
+    )
+    target_compile_definitions(tlsclient_ech_test PRIVATE TLSCLIENT_ECH_REALITY_BINDING=1)
+    target_link_libraries(tlsclient_ech_test PRIVATE RealityServer RealityCommon)
+  endif()
+  add_dependencies(waterwall_unit_tests tlsclient_ech_test)
+
+  add_waterwall_unit_test(
+    waterwall.tlsclient_ech_unit
+    tlsclient_ech_test
+    "unit;tunnels;tlsclient;ech;session;certificate;tls-accessor"
+  )
+
   waterwall_add_native_executable(tlsclient_close_lifecycle_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tls/tlsclient_close_lifecycle_test.c)
   target_include_directories(tlsclient_close_lifecycle_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
