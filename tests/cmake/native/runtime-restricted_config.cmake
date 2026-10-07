@@ -250,6 +250,15 @@
   )
 
   if(LINUX)
+    waterwall_add_native_executable(bufio_queue_failure_test SUPPORT
+      SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/bufio/bufio_queue_failure_test.c)
+    target_link_libraries(bufio_queue_failure_test PRIVATE ww)
+    target_link_options(bufio_queue_failure_test PRIVATE
+      "-Wl,--wrap=memoryReAllocate" "-Wl,--wrap=abortProgramNow")
+    add_dependencies(waterwall_unit_tests bufio_queue_failure_test)
+    add_waterwall_unit_test(waterwall.bufio_queue_failure_unit bufio_queue_failure_test
+      "unit;bufio;buffer-stream;context-queue;failure")
+
     # Compile the actual stream and splice primitives with splice disabled.
     # Linking only the normal ww objects would not exercise these code paths.
     waterwall_add_native_executable(bufio_contract_no_splice_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/bufio/bufio_contract_test.c

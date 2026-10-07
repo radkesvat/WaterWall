@@ -4,9 +4,9 @@
 
 #include "context_queue.h"
 #include "buffer_pool.h"
+#include "loggers/internal_logger.h"
 #include "stc/common.h"
 #include "tunnel.h"
-
 
 enum
 {
@@ -34,11 +34,19 @@ void contextqueueDestroy(context_queue_t *self)
 
 void contextqueuePush(context_queue_t *self, context_t *context)
 {
-    ww_context_queue_t_push_back(&self->q, context);
+    if (UNLIKELY(ww_context_queue_t_push_back(&self->q, context) == NULL))
+    {
+        LOGF("ContextQueue: queue insertion failed");
+        abortProgramNow(1);
+    }
 }
 
 context_t *contextqueuePop(context_queue_t *self)
 {
+    if (ww_context_queue_t_is_empty(&self->q))
+    {
+        return NULL;
+    }
     context_t *context = ww_context_queue_t_pull_front(&self->q);
     return context;
 }

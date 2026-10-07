@@ -41,7 +41,11 @@ static uint32_t bufferstreamValidatePush(buffer_stream_t *self, sbuf_t *buf)
 
 static void bufferstreamEnqueueValidated(buffer_stream_t *self, sbuf_t *buf, uint32_t buf_len)
 {
-    bs_doublequeue_t_push_back(&self->q, buf);
+    if (UNLIKELY(bs_doublequeue_t_push_back(&self->q, buf) == NULL))
+    {
+        LOGF("BufferStream: queue insertion failed");
+        abortProgramNow(1);
+    }
     self->size += buf_len;
 }
 
@@ -160,7 +164,11 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
             sbuf_t *slice = bufferstreamAllocExactReadBuffer(self, (uint32_t) bytes);
 
             slice = sbufMoveTo(slice, container, (uint32_t) bytes);
-            bs_doublequeue_t_push_front(&self->q, container);
+            if (UNLIKELY(bs_doublequeue_t_push_front(&self->q, container) == NULL))
+            {
+                LOGF("BufferStream: remainder queue insertion failed");
+                abortProgramNow(1);
+            }
             return slice;
         }
         if (available == bytes)
