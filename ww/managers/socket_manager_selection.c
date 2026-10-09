@@ -207,7 +207,7 @@ listener_selection_t socketManagerSelect(const filters_t filters[kFilterLevels],
         if (count > 0)
         {
             return (listener_selection_t) {
-                .filter = candidates[fastRand() % count], .sticky_key = key, .pending_sticky = true};
+                .filter = candidates[count == 1 ? 0 : fastRand() % count], .sticky_key = key, .pending_sticky = true};
         }
     }
     return (listener_selection_t) {0};

@@ -2,7 +2,8 @@
  * Covers: the production shared TCP/UDP selector, independent of transport delivery.
  * Setup: real worker-zero loop, idle tables and random source; private logical filters.
  * Cases: interface eligibility, address tiers/mapped IPs, ACLs/ports/ties, mixed
- * balancing, first group/candidate limit, pending commit, expiry and stale targets.
+ * balancing, first group/candidate limit, pending commit, expiry and stale targets;
+ * single-candidate selection leaves the random stream untouched.
  * Limits: physical binding and asynchronous ownership belong to the lifetime and
  * two-veth integration suites. CTest: waterwall.socket_manager_selection_unit.
  */
@@ -177,6 +178,32 @@ static void caseBalancing(wloop_t *loop, uint8_t protocol)
     socketfilteroptionDeInit(&immediate.option);
 }
 
+#if defined(WFRAND_TEST_SEAM)
+static void caseSingleCandidate(wloop_t *loop, uint8_t protocol)
+{
+    static const uint8_t key[32]                = {0};
+    filters_t            filters[kFilterLevels] = {0};
+    listener_endpoint_t  endpoint               = {0};
+    listener_arrival_t   input                  = arrival(&endpoint, protocol);
+    idle_table_t        *table                  = idleTableCreate(loop);
+    socket_filter_t      single                 = filter(protocol, "0.0.0.0", NULL);
+    single.balance_table                        = table;
+    add(filters, 1, &single);
+
+    wfrandTestReset(key, 0);
+    uint64_t expected_next = fastRand64();
+    wfrandTestReset(key, 0);
+    listener_selection_t choice = socketManagerSelect(filters, 0, &input);
+    twfRequire(choice.filter == &single && choice.pending_sticky,
+               "single balanced candidate did not retain pending sticky selection");
+    twfRequire(fastRand64() == expected_next, "single balanced candidate consumed random bytes");
+
+    drop(filters);
+    idletableDestroy(table);
+    socketfilteroptionDeInit(&single.option);
+}
+#endif
+
 static void caseCachedRevalidation(wloop_t *loop, uint8_t protocol)
 {
     filters_t           filters[kFilterLevels] = {0};
@@ -308,6 +335,9 @@ int main(void)
         caseEffectiveInterfaceAddress(protocol);
         caseTiersAndPorts(protocol);
         caseBalancing(loop, protocol);
+#if defined(WFRAND_TEST_SEAM)
+        caseSingleCandidate(loop, protocol);
+#endif
         caseCachedRevalidation(loop, protocol);
     }
     caseCandidateLimit(loop);
