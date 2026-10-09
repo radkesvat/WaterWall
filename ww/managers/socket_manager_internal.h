@@ -10,8 +10,7 @@ enum
     kDefaultBalanceInterval     = 60 * 1000,
     kDispatchTierExact          = 0,
     kDispatchTierWildcardFamily = 1,
-    kDispatchTierWildcardDual   = 2,
-    kDispatchTierCount          = 3
+    kDispatchTierWildcardDual   = 2
 };
 
 typedef struct socket_filter_s

@@ -151,6 +151,58 @@ static uint64_t balanceInterval(const socket_filter_t *filter)
     return filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval : filter->option.balance_group_interval;
 }
 
+static listener_selection_t searchTier(const filters_t filters[kFilterLevels], wid_t wid,
+                                       const listener_arrival_t *arrival, int tier)
+{
+    socket_filter_t *candidates[kMaxBalanceSelections];
+    size_t           count          = 0;
+    idle_table_t    *selected_table = NULL;
+    hash_t           key            = 0;
+    for (int level = kFilterLevels - 1; level >= 0; --level)
+    {
+        c_foreach(it, filters_t, filters[level])
+        {
+            socket_filter_t *filter = *it.ref;
+            if (! filterMatchesArrival(filter, arrival, tier))
+                continue;
+            /* Preserve immediate unbalanced selection even after balanced
+             * candidates at a higher priority have accumulated. */
+            if (filter->balance_table == NULL)
+                return (listener_selection_t) {.filter = filter};
+            if (selected_table != NULL && filter->balance_table != selected_table)
+                continue;
+            if (selected_table == NULL)
+                key = socketManagerArrivalBalanceHash(arrival, tier);
+
+            idle_item_t *item = idletableGetIdleItemByHash(wid, filter->balance_table, key);
+            if (item != NULL)
+            {
+                socket_filter_t *target = item->userdata;
+                if (target->balance_table == filter->balance_table && filterMatchesArrival(target, arrival, tier))
+                {
+                    /* The scanning filter supplies the refresh interval,
+                     * matching the historical cached-hit timing. */
+                    idletableKeepIdleItemForAtleast(filter->balance_table, item, balanceInterval(filter));
+                    return (listener_selection_t) {.filter = target};
+                }
+            }
+            if (UNLIKELY(count >= kMaxBalanceSelections))
+            {
+                LOGW("SocketManager: balance between more than %d tunnels is not supported", kMaxBalanceSelections);
+                continue;
+            }
+            candidates[count++] = filter;
+            selected_table      = filter->balance_table;
+        }
+    }
+    if (count > 0)
+    {
+        return (listener_selection_t) {
+            .filter = candidates[count == 1 ? 0 : fastRand() % count], .sticky_key = key, .pending_sticky = true};
+    }
+    return (listener_selection_t) {0};
+}
+
 listener_selection_t socketManagerSelect(const filters_t filters[kFilterLevels], wid_t wid,
                                          const listener_arrival_t *arrival)
 {
@@ -160,57 +212,15 @@ listener_selection_t socketManagerSelect(const filters_t filters[kFilterLevels],
     normalizeIpAddr(&normalized.peer_addr);
     normalizeIpAddr(&normalized.local_addr);
 
-    for (int tier = 0; tier < kDispatchTierCount; ++tier)
-    {
-        socket_filter_t *candidates[kMaxBalanceSelections];
-        size_t           count          = 0;
-        idle_table_t    *selected_table = NULL;
-        hash_t           key            = 0;
-        for (int level = kFilterLevels - 1; level >= 0; --level)
-        {
-            c_foreach(it, filters_t, filters[level])
-            {
-                socket_filter_t *filter = *it.ref;
-                if (! filterMatchesArrival(filter, &normalized, tier))
-                    continue;
-                /* Preserve immediate unbalanced selection even after balanced
-                 * candidates at a higher priority have accumulated. */
-                if (filter->balance_table == NULL)
-                    return (listener_selection_t) {.filter = filter};
-                if (selected_table != NULL && filter->balance_table != selected_table)
-                    continue;
-                if (selected_table == NULL)
-                    key = socketManagerArrivalBalanceHash(&normalized, tier);
+    listener_selection_t selection = searchTier(filters, wid, &normalized, kDispatchTierExact);
+    if (selection.filter != NULL)
+        return selection;
 
-                idle_item_t *item = idletableGetIdleItemByHash(wid, filter->balance_table, key);
-                if (item != NULL)
-                {
-                    socket_filter_t *target = item->userdata;
-                    if (target->balance_table == filter->balance_table &&
-                        filterMatchesArrival(target, &normalized, tier))
-                    {
-                        /* The scanning filter supplies the refresh interval,
-                         * matching the historical cached-hit timing. */
-                        idletableKeepIdleItemForAtleast(filter->balance_table, item, balanceInterval(filter));
-                        return (listener_selection_t) {.filter = target};
-                    }
-                }
-                if (UNLIKELY(count >= kMaxBalanceSelections))
-                {
-                    LOGW("SocketManager: balance between more than %d tunnels is not supported", kMaxBalanceSelections);
-                    continue;
-                }
-                candidates[count++] = filter;
-                selected_table      = filter->balance_table;
-            }
-        }
-        if (count > 0)
-        {
-            return (listener_selection_t) {
-                .filter = candidates[count == 1 ? 0 : fastRand() % count], .sticky_key = key, .pending_sticky = true};
-        }
-    }
-    return (listener_selection_t) {0};
+    selection = searchTier(filters, wid, &normalized, kDispatchTierWildcardFamily);
+    if (selection.filter != NULL)
+        return selection;
+
+    return searchTier(filters, wid, &normalized, kDispatchTierWildcardDual);
 }
 
 void socketManagerCommitSelection(wid_t wid, const listener_selection_t *selection)
