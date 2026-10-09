@@ -5,8 +5,6 @@
  */
 
 #include "wlibc.h"
-#include "widle_table.h"
-
 
 #define i_type vec_ipmask_t, ipmask_t
 #include "stc/vec.h"
@@ -49,9 +47,6 @@ typedef struct socket_filter_option_s
 
     vec_ipmask_t white_list;
     vec_ipmask_t black_list;
-    // Internal use
-
-    idle_table_t *shared_balance_table;
 
 } socket_filter_option_t;
 

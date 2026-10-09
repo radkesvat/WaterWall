@@ -39,6 +39,19 @@ add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_tcp_ran
 add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_udp_range_socket_wildcard_specific_tun socket_manager_udp_range_socket_wildcard_specific_tun 15)
 add_waterwall_iptables_recovery_integration_test(waterwall.socket_manager_iptables_crash_recovery)
 
+if(LINUX AND NOT CMAKE_CROSSCOMPILING AND TARGET TcpListener AND TARGET TcpConnector
+   AND TARGET UdpListener AND TARGET UdpConnector)
+  foreach(protocol IN ITEMS tcp udp)
+    # Always isolate: this case creates veth interfaces and nested client namespaces.
+    add_test(NAME waterwall.socket_manager_${protocol}_interface_scope
+      COMMAND "${BASH_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"
+        "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/socket_manager_interface_scope_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${protocol}")
+    set_tests_properties(waterwall.socket_manager_${protocol}_interface_scope PROPERTIES
+      TIMEOUT 60 LABELS "integration;linux;socket-manager;network-isolated")
+  endforeach()
+endif()
+
 if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
   # This test mutates firewall rules, so always isolate it even when ordinary
   # integration tests have explicitly selected host-serial mode.

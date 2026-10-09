@@ -29,7 +29,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 201
+EXPECTED_TOTAL_ABORTS = 202
 
 
 # ---------------------------------------------------------------------------
@@ -521,6 +521,9 @@ MANIFEST = [
     ("ww/managers/socket_manager.c", "socketManagerBuildOwnedChainCommand", 1,
      ("socketManagerBuildOwnedChainCommand: invalid iptables chain action %u",),
      "internal command invariant: socket-manager owned-chain action enum"),
+    ("ww/managers/socket_manager.c", "publishEndpoint", 1,
+     ("SocketManager: reserved listener endpoint publication failed",),
+     "runtime ownership invariant: pre-reserved endpoint publication cannot fail"),
     ("ww/lwip/engine_runtime.c", "wwLwipRuntimeDestroyWorker", 1,
      ("lwIP engine teardown preceded owner timer quiescence",),
      "shutdown teardown invariant: engine release requires detached owner timer roots"),

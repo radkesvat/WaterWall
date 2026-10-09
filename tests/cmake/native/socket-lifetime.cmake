@@ -1,6 +1,5 @@
 # Explicit native registrations; included in dependency order by unittests/CMakeLists.txt.
-waterwall_add_native_executable(socket_manager_lifetime_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/devices/socket_manager/socket_manager_lifetime_test.c
-  ${CMAKE_SOURCE_DIR}/ww/managers/socket_manager.c)
+waterwall_add_native_executable(socket_manager_lifetime_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/devices/socket_manager/socket_manager_lifetime_test.c)
   target_link_libraries(socket_manager_lifetime_test PRIVATE ww_test_support)
 set_target_properties(socket_manager_lifetime_test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 target_compile_definitions(socket_manager_lifetime_test PRIVATE
@@ -12,6 +11,12 @@ target_include_directories(socket_manager_lifetime_test PRIVATE
   ${CMAKE_SOURCE_DIR}/ww/managers
 )
 target_link_libraries(socket_manager_lifetime_test PRIVATE ww)
+target_link_options(socket_manager_lifetime_test PRIVATE
+  "-Wl,--wrap=memoryAllocateZero" "-Wl,--wrap=setsockopt" "-Wl,--wrap=close"
+  "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolGetSmallBuffer"
+  "-Wl,--wrap=bufferpoolGetMediumBuffer" "-Wl,--wrap=bufferpoolTryGetBestFit"
+  "-Wl,--wrap=bufferpoolGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+  "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy")
 add_dependencies(waterwall_unit_tests socket_manager_lifetime_test)
 add_waterwall_unit_test(
   waterwall.socket_manager_lifetime_unit

@@ -2,7 +2,7 @@
  * Socket listener manager for filtered TCP/UDP accept and worker dispatch.
  */
 
-#include "socket_manager.h"
+#include "socket_manager_internal.h"
 
 #include "global_state.h"
 #include "local_widle_table.h"
@@ -24,53 +24,6 @@
 #define i_val  idle_table_t *          // NOLINT
 
 #include "stc/hmap.h"
-
-typedef struct socket_filter_s
-{
-
-    wio_t                **listen_ios;
-    wio_t                 *listen_io;
-    size_t                 listen_ios_count;
-    udpsock_t            **listen_udp_sockets;
-    udpsock_t             *listen_udp_socket;
-    size_t                 listen_udp_sockets_count;
-    socket_filter_option_t option;
-    tunnel_t              *tunnel;
-    onAccept               cb;
-    bool                   v6_dualstack;
-
-    // Effective bind endpoint used for listen-aware dispatch and endpoint sharing.
-    ip_addr_t bind_addr;           // meaningful only when !bind_is_wildcard
-    uint8_t   bind_family;         // AF_INET / AF_INET6
-    bool      bind_is_wildcard;    // true for 0.0.0.0 / :: / empty host
-    bool      bind_endpoint_ready; // computed lazily during listen setup
-
-} socket_filter_t;
-
-#define i_type    filters_t         // NOLINT
-#define i_key     socket_filter_t * // NOLINT
-#define i_use_cmp                   // NOLINT
-#include "stc/vec.h"
-
-// Endpoints that successfully bound; failed bind attempts are never recorded.
-typedef struct listener_endpoint_s
-{
-    uint8_t     protocol;        // IPPROTO_TCP / IPPROTO_UDP
-    uint8_t     family;          // AF_INET / AF_INET6
-    bool        is_wildcard;     // wildcard bind (0.0.0.0 / ::)
-    ip_addr_t   bind_addr;       // meaningful only when !is_wildcard
-    uint16_t    port;            // bound port
-    const char *interface_scope; // SO_BINDTODEVICE scope when active, else NULL
-    wio_t      *listen_io;       // shared listener socket (for exact-duplicate reuse)
-    udpsock_t  *udp_socket;      // shared udp side-data (for exact-duplicate reuse)
-    // UDP sharers inherit these options from the physical socket.
-    int fwmark;
-    int send_buffer_size;
-    int recv_buffer_size;
-} listener_endpoint_t;
-
-#define i_type endpoint_registry_t, listener_endpoint_t // NOLINT
-#include "stc/vec.h"
 
 // NAT redirect rule queued during listener setup and installed after sorting.
 typedef struct pending_iptables_rule_s
@@ -101,15 +54,13 @@ typedef struct owned_iptables_chain_s
 
 enum
 {
-    kSoOriginalDest         = 80,
-    kFilterLevels           = 4,
-    kMaxBalanceSelections   = 64,
-    kDefaultBalanceInterval = 60 * 1000
+    kSoOriginalDest = 80
 };
 
 typedef struct socket_manager_s
 {
     filters_t filters[kFilterLevels];
+    endpoint_registry_t endpoints;
 
     threadsafe_generic_pool_t **udp_pools; /* holds udp_payload_t */
     threadsafe_generic_pool_t **tcp_pools; /* holds socket_accept_result_t */
@@ -161,13 +112,9 @@ void socketManagerRegistrationTestSetStarted(bool started)
 
 static void distributeTcpSocket(wio_t *io, uint16_t local_port, const ip_addr_t *local_addr);
 
-static void distributeUdpPayload(udp_payload_t pl);
+static void distributeUdpPayload(udp_payload_t pl, const listener_endpoint_t *endpoint);
 
 static const char *getSocketBindHost(socket_filter_t *filter, const char *host, char *host_if);
-
-static bool addrMatchesFilter(const socket_filter_t *filter, const ip_addr_t *local_addr, int tier);
-static bool processFilterMatch(socket_filter_option_t option, uint16_t local_port, ip_addr_t paddr);
-static bool processUdpFilterMatch(socket_filter_option_t option, uint16_t local_port, ip_addr_t paddr);
 
 local_idle_table_t *udpsockGetWorkerIdleTable(udpsock_t *socket)
 {
@@ -191,9 +138,9 @@ local_idle_table_t *udpsockGetWorkerIdleTable(udpsock_t *socket)
 }
 
 /**
- * @brief Allocate UDP listener side-data for a bound socket.
+ * @brief Prepare UDP listener side-data before acquiring its socket.
  */
-static udpsock_t *createUdpSocketSideData(wio_t *io)
+static udpsock_t *createUdpSocketSideData(void)
 {
     udpsock_t *socket = memoryAllocate(sizeof(*socket));
     if (UNLIKELY(socket == NULL))
@@ -208,8 +155,8 @@ static udpsock_t *createUdpSocketSideData(wio_t *io)
         return NULL;
     }
 
-    socket->io = io;
-    socket->listener_fd = wioGetFD(io);
+    socket->io          = NULL;
+    socket->listener_fd = -1;
     socket->owner_slot  = NULL;
     atomic_init(&socket->retired, false);
     return socket;
@@ -242,13 +189,15 @@ void udpsockRetire(udpsock_t *socket)
     }
 }
 
-static void onUdpListenerSocketClose(wio_t *io)
+static void onListenerSocketClose(wio_t *io)
 {
-    udpsock_t *socket = weventGetUserdata(io);
+    listener_endpoint_t *endpoint = weventGetUserdata(io);
+    endpoint->listen_io           = NULL;
     weventSetUserData(io, NULL);
     wioSetCallBackRead(io, NULL);
     wioSetCallBackClose(io, NULL);
-    udpsockRetire(socket);
+    if (endpoint->udp_socket != NULL)
+        udpsockRetire(endpoint->udp_socket);
 }
 
 static bool startUdpListener(wio_t *io, wread_cb read_cb)
@@ -1142,28 +1091,6 @@ static void installPendingIptablesRules(void)
 }
 
 /**
- * @brief Convert an ACL range wholly contained in the IPv4-mapped IPv6 prefix to native IPv4.
- */
-static inline bool mappedAclRangeToV4(const ipmask_t *range, ip4_addr_t *ip, ip4_addr_t *mask)
-{
-    if (range->ip.type != IPADDR_TYPE_V6 || range->mask.type != IPADDR_TYPE_V6 ||
-        ! needsV4SocketStrategy(range->ip.u_addr.ip6))
-    {
-        return false;
-    }
-
-    const ip6_addr_t *range_mask = &range->mask.u_addr.ip6;
-    if (range_mask->addr[0] != UINT32_MAX || range_mask->addr[1] != UINT32_MAX || range_mask->addr[2] != UINT32_MAX)
-    {
-        return false;
-    }
-
-    memoryCopy(ip, &range->ip.u_addr.ip6.addr[3], sizeof(ip->addr));
-    memoryCopy(mask, &range_mask->addr[3], sizeof(mask->addr));
-    return true;
-}
-
-/**
  * @brief Calculate filter priority from ACL and port specificity.
  */
 static unsigned int calculateFilterPriority(const socket_filter_option_t option)
@@ -1200,21 +1127,6 @@ static void socketacceptorReleaseUnpublishedOption(socket_filter_option_t *optio
 static bool socketFilterOptionHasPortList(const socket_filter_option_t *option)
 {
     return vec_listener_port_t_size(&option->ports) > 0;
-}
-
-/**
- * @brief Check if an explicit port list contains a port.
- */
-static bool socketFilterOptionPortListContains(const socket_filter_option_t *option, uint16_t port)
-{
-    for (isize i = 0; i < vec_listener_port_t_size(&option->ports); ++i)
-    {
-        if (*vec_listener_port_t_at(&option->ports, i) == port)
-        {
-            return true;
-        }
-    }
-    return false;
 }
 
 /**
@@ -1285,10 +1197,11 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
         return;
     }
 
+    idle_table_t *balance_table = NULL;
     if (option.balance_group_name)
     {
-        option.shared_balance_table = getOrCreateBalanceTable(option.balance_group_name);
-        if (UNLIKELY(option.shared_balance_table == NULL))
+        balance_table = getOrCreateBalanceTable(option.balance_group_name);
+        if (UNLIKELY(balance_table == NULL))
         {
             memoryFree(filter);
             LOGF("SocketManager: failed to create balance-group metadata");
@@ -1298,7 +1211,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
         }
     }
 
-    *filter = (socket_filter_t) {.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
+    *filter = (socket_filter_t) {.tunnel = tunnel, .option = option, .cb = cb, .balance_table = balance_table};
 
     mutexLock(&(socketmanager_gstate->mutex));
     filters_t *filters  = &socketmanager_gstate->filters[priority];
@@ -1456,320 +1369,34 @@ static void noTcpSocketConsumerFound(wio_t *io)
     wioClose(io);
 }
 
-bool socketManagerIpMatchesAcl(ip_addr_t addr, const vec_ipmask_t *acl)
-{
-    normalizeIpAddr(&addr);
-
-    for (isize i = 0; i < vec_ipmask_t_size(acl); ++i)
-    {
-        const ipmask_t *range = vec_ipmask_t_at(acl, i);
-
-        if (addr.type == IPADDR_TYPE_V4)
-        {
-            if (range->ip.type == IPADDR_TYPE_V4 && range->mask.type == IPADDR_TYPE_V4 &&
-                checkIPRange4(addr.u_addr.ip4, range->ip.u_addr.ip4, range->mask.u_addr.ip4))
-            {
-                return true;
-            }
-
-            ip4_addr_t mapped_ip;
-            ip4_addr_t mapped_mask;
-            if (mappedAclRangeToV4(range, &mapped_ip, &mapped_mask) &&
-                checkIPRange4(addr.u_addr.ip4, mapped_ip, mapped_mask))
-            {
-                return true;
-            }
-        }
-        if (addr.type == IPADDR_TYPE_V6 && range->ip.type == IPADDR_TYPE_V6 && range->mask.type == IPADDR_TYPE_V6 &&
-            checkIPRange6(addr.u_addr.ip6, range->ip.u_addr.ip6, range->mask.u_addr.ip6))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
 /**
- * @brief Check peer IP against whitelist strategy for dual-stack handling.
- */
-static bool checkIpIsWhiteList(const ip_addr_t addr, const socket_filter_option_t option)
-{
-    return socketManagerIpMatchesAcl(addr, &option.white_list);
-}
-
-/**
- * @brief Check peer IP against blacklist strategy for dual-stack handling.
- */
-static bool checkIpIsBlackList(const ip_addr_t addr, const socket_filter_option_t option)
-{
-    return socketManagerIpMatchesAcl(addr, &option.black_list);
-}
-
-hash_t socketManagerCombineBalanceLocalHash(hash_t src_hash, const ip_addr_t *local_addr, uint16_t local_port,
-                                            int match_tier)
-{
-    hash_t scope = ipaddrCalcHashNoPort(*local_addr);
-    scope ^= (hash_t) local_port + 0x9E3779B97F4A7C15ULL + (scope << 6) + (scope >> 2);
-    scope ^= ((hash_t) match_tier + 1U) + 0x9E3779B97F4A7C15ULL + (scope << 6) + (scope >> 2);
-    return src_hash ^ (scope + 0x9E3779B97F4A7C15ULL + (src_hash << 6) + (src_hash >> 2));
-}
-
-/**
- * @brief Check whether a sticky balance target still matches the current endpoint.
- */
-static bool balanceTargetStillMatches(const socket_filter_t *target, uint16_t local_port, const ip_addr_t paddr,
-                                      const ip_addr_t *local_addr, int match_tier, bool is_udp)
-{
-    const socket_filter_option_t opt = target->option;
-    const bool                   proto_ok =
-        is_udp ? processUdpFilterMatch(opt, local_port, paddr) : processFilterMatch(opt, local_port, paddr);
-    return proto_ok && addrMatchesFilter(target, local_addr, match_tier);
-}
-
-/**
- * @brief Handle one TCP balance candidate or collect it for random selection.
- */
-static bool handleBalancedFilter(socket_filter_t *filter, const socket_filter_option_t option, wio_t *io,
-                                 uint16_t local_port, const ip_addr_t *local_addr, int match_tier, hash_t *src_hash,
-                                 bool *src_hashed, socket_filter_t **balance_selection_filters,
-                                 uint8_t *balance_selection_filters_length, idle_table_t **selected_balance_table)
-{
-    if (*selected_balance_table != NULL && option.shared_balance_table != *selected_balance_table)
-    {
-        return false;
-    }
-
-    ip_addr_t paddr;
-    sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr);
-
-    if (! *src_hashed)
-    {
-        *src_hash =
-            socketManagerCombineBalanceLocalHash(ipaddrCalcHashNoPort(paddr), local_addr, local_port, match_tier);
-        *src_hashed = true;
-    }
-
-    idle_item_t *idle_item =
-        idletableGetIdleItemByHash(socketmanager_gstate->wid, option.shared_balance_table, *src_hash);
-
-    // Stale or colliding sticky entries must not cross endpoint scopes.
-    if (idle_item && balanceTargetStillMatches(idle_item->userdata, local_port, paddr, local_addr, match_tier, false))
-    {
-        socket_filter_t *target_filter = idle_item->userdata;
-        idletableKeepIdleItemForAtleast(option.shared_balance_table,
-                                        idle_item,
-                                        option.balance_group_interval == 0 ? kDefaultBalanceInterval
-                                                                           : option.balance_group_interval);
-        if (! applyAcceptedTcpSocketOptions(io, &target_filter->option))
-        {
-            wioClose(io);
-            return true;
-        }
-        distributeSocket(io, target_filter, local_port);
-        return true;
-    }
-
-    if (UNLIKELY(*balance_selection_filters_length >= kMaxBalanceSelections))
-    {
-        LOGW("SocketManager: balance between more than %d tunnels is not supported", kMaxBalanceSelections);
-        return false;
-    }
-    balance_selection_filters[(*balance_selection_filters_length)++] = filter;
-    *selected_balance_table                                          = option.shared_balance_table;
-    return false;
-}
-
-/**
- * @brief Select a TCP balance candidate after a dispatch pass.
- */
-static bool finalizeTcpDistribution(socket_filter_t **balance_selection_filters,
-                                    uint8_t balance_selection_filters_length, wio_t *io, uint16_t local_port,
-                                    hash_t src_hash)
-{
-    if (balance_selection_filters_length > 0)
-    {
-        socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
-        if (! applyAcceptedTcpSocketOptions(io, &filter->option))
-        {
-            wioClose(io);
-            return true;
-        }
-        idletableCreateItem(filter->option.shared_balance_table,
-                            src_hash,
-                            filter,
-                            NULL,
-                            socketmanager_gstate->wid,
-                            filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
-                                                                       : filter->option.balance_group_interval);
-        distributeSocket(io, filter, local_port);
-        return true;
-    }
-    return false;
-}
-
-enum
-{
-    kDispatchTierExact          = 0, // specific local-address filters
-    kDispatchTierWildcardFamily = 1, // wildcard whose family matches the destination family
-    kDispatchTierWildcardDual   = 2, // :: dual-stack wildcard serving an IPv4 destination (least specific)
-    kDispatchTierCount          = 3
-};
-
-bool socketManagerWildcardMatchesTier(bool bind_is_v6_wildcard, bool dest_is_v4, int tier)
-{
-    if (tier == kDispatchTierWildcardFamily)
-    {
-        // 0.0.0.0 serves IPv4, :: serves IPv6.
-        return dest_is_v4 ? (! bind_is_v6_wildcard) : bind_is_v6_wildcard;
-    }
-    if (tier == kDispatchTierWildcardDual)
-    {
-        // :: also serves IPv4, but only after the family-matching tier found no consumer.
-        return dest_is_v4 && bind_is_v6_wildcard;
-    }
-    return false;
-}
-
-/**
- * @brief Match a filter against the local destination at one specificity tier.
- */
-static bool addrMatchesFilter(const socket_filter_t *filter, const ip_addr_t *local_addr, int tier)
-{
-    if (tier == kDispatchTierExact)
-    {
-        if (filter->bind_is_wildcard)
-        {
-            return false;
-        }
-        return ipAddrEqualsExact(&filter->bind_addr, local_addr);
-    }
-
-    if (! filter->bind_is_wildcard)
-    {
-        return false;
-    }
-
-    return socketManagerWildcardMatchesTier(filter->bind_family == AF_INET6, local_addr->type == IPADDR_TYPE_V4, tier);
-}
-
-/**
- * @brief Evaluate whether filter matches TCP packet metadata and ACL rules.
- */
-static bool processFilterMatch(const socket_filter_option_t option, uint16_t local_port, const ip_addr_t paddr)
-{
-    if (option.protocol != IPPROTO_TCP)
-    {
-        return false;
-    }
-
-    if (socketFilterOptionHasPortList(&option))
-    {
-        if (! socketFilterOptionPortListContains(&option, local_port))
-        {
-            return false;
-        }
-    }
-    else if (option.port_min > local_port || option.port_max < local_port)
-    {
-        return false;
-    }
-
-    if (vec_ipmask_t_size(&option.white_list) > 0)
-    {
-        if (! checkIpIsWhiteList(paddr, option))
-        {
-            return false;
-        }
-    }
-    if (vec_ipmask_t_size(&option.black_list) > 0)
-    {
-        if (checkIpIsBlackList(paddr, option))
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
-/**
- * @brief Try to dispatch an accepted TCP socket at one specificity tier.
- */
-static bool distributeTcpSocketPass(wio_t *io, uint16_t local_port, const ip_addr_t *local_addr, const ip_addr_t paddr,
-                                    int match_tier)
-{
-    socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
-    uint8_t          balance_selection_filters_length = 0;
-    idle_table_t    *selected_balance_table           = NULL;
-    hash_t           src_hash                         = 0x0;
-    bool             src_hashed                       = false;
-
-    for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
-    {
-        c_foreach(k, filters_t, socketmanager_gstate->filters[ri])
-        {
-            socket_filter_t       *filter = *(k.ref);
-            socket_filter_option_t option = filter->option;
-
-            if (! processFilterMatch(option, local_port, paddr))
-            {
-                continue;
-            }
-            if (! addrMatchesFilter(filter, local_addr, match_tier))
-            {
-                continue;
-            }
-
-            if (option.shared_balance_table)
-            {
-                if (handleBalancedFilter(filter,
-                                         option,
-                                         io,
-                                         local_port,
-                                         local_addr,
-                                         match_tier,
-                                         &src_hash,
-                                         &src_hashed,
-                                         balance_selection_filters,
-                                         &balance_selection_filters_length,
-                                         &selected_balance_table))
-                {
-                    return true;
-                }
-            }
-            else
-            {
-                if (! applyAcceptedTcpSocketOptions(io, &filter->option))
-                {
-                    wioClose(io);
-                    return true;
-                }
-                distributeSocket(io, filter, local_port);
-                return true;
-            }
-        }
-    }
-
-    return finalizeTcpDistribution(
-        balance_selection_filters, balance_selection_filters_length, io, local_port, src_hash);
-}
-
-/**
- * @brief Dispatch an accepted TCP socket from exact listener to broadest wildcard.
+ * @brief Select a TCP listener, apply its options, then transfer the accepted WIO.
  */
 static void distributeTcpSocket(wio_t *io, uint16_t local_port, const ip_addr_t *local_addr)
 {
-    ip_addr_t paddr;
-    sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr);
-
-    for (int tier = 0; tier < kDispatchTierCount; ++tier)
+    listener_arrival_t arrival = {.endpoint   = weventGetUserdata(io),
+                                  .local_addr = *local_addr,
+                                  .local_port = local_port,
+                                  .protocol   = IPPROTO_TCP};
+    if (! sockaddrToNormalizedIpAddr(wioGetPeerAddrU(io), &arrival.peer_addr))
     {
-        if (distributeTcpSocketPass(io, local_port, local_addr, paddr, tier))
-        {
-            return;
-        }
+        wioClose(io);
+        return;
     }
-
-    noTcpSocketConsumerFound(io);
+    listener_selection_t selection =
+        socketManagerSelect(socketmanager_gstate->filters, socketmanager_gstate->wid, &arrival);
+    if (selection.filter == NULL)
+    {
+        noTcpSocketConsumerFound(io);
+        return;
+    }
+    if (! applyAcceptedTcpSocketOptions(io, &selection.filter->option))
+    {
+        wioClose(io);
+        return;
+    }
+    socketManagerCommitSelection(socketmanager_gstate->wid, &selection);
+    distributeSocket(io, selection.filter, local_port);
 }
 
 /**
@@ -1923,8 +1550,8 @@ static void computeFilterBindEndpoint(socket_filter_t *filter)
         }
         else
         {
+            family = (addr.type == IPADDR_TYPE_V6) ? AF_INET6 : AF_INET;
             normalizeIpAddr(&addr);
-            family   = (addr.type == IPADDR_TYPE_V6) ? AF_INET6 : AF_INET;
             wildcard = ipAddrIsWildcard(&addr);
         }
     }
@@ -1933,19 +1560,6 @@ static void computeFilterBindEndpoint(socket_filter_t *filter)
     filter->bind_family         = family;
     filter->bind_is_wildcard    = wildcard;
     filter->bind_endpoint_ready = true;
-}
-
-/**
- * @brief Return the interface component of endpoint identity, when device binding is active.
- */
-static const char *filterInterfaceScope(const socket_filter_t *filter)
-{
-    if (filter->option.interface_name != NULL && filter->option.interface_name[0] != '\0' &&
-        socketOptionBindToDeviceSupported())
-    {
-        return filter->option.interface_name;
-    }
-    return NULL;
 }
 
 /**
@@ -1971,12 +1585,12 @@ static listener_endpoint_t *endpointRegistryFind(endpoint_registry_t *reg, uint8
 
     c_foreach(it, endpoint_registry_t, *reg)
     {
-        listener_endpoint_t *ep = it.ref;
-        if (ep->protocol != protocol || ep->port != port)
+        listener_endpoint_t *ep = *it.ref;
+        if (ep->listen_io == NULL || ep->protocol != protocol || ep->port != port)
         {
             continue;
         }
-        if (ep->is_wildcard != filter->bind_is_wildcard)
+        if (ep->family != filter->bind_family || ep->is_wildcard != filter->bind_is_wildcard)
         {
             continue;
         }
@@ -1984,14 +1598,7 @@ static listener_endpoint_t *endpointRegistryFind(endpoint_registry_t *reg, uint8
         {
             continue;
         }
-        if (ep->is_wildcard)
-        {
-            if (ep->family != filter->bind_family)
-            {
-                continue;
-            }
-        }
-        else if (! ipAddrEqualsExact(&ep->bind_addr, &filter->bind_addr))
+        if (! ep->is_wildcard && ! ipAddrEqualsExact(&ep->bind_addr, &filter->bind_addr))
         {
             continue;
         }
@@ -2000,34 +1607,101 @@ static listener_endpoint_t *endpointRegistryFind(endpoint_registry_t *reg, uint8
     return NULL;
 }
 
-/**
- * @brief Record a successfully bound endpoint in the registry.
- */
-static void endpointRegistryReserve(endpoint_registry_t *reg, uint8_t protocol, socket_filter_t *filter, uint16_t port,
-                                    wio_t *io, udpsock_t *udp)
+/* Consume an unpublished, caller-owned endpoint. No socket or callbacks may
+ * have been attached to it. */
+static void releaseUnpublishedEndpoint(listener_endpoint_t *endpoint)
+{
+    if (endpoint->udp_socket != NULL)
+    {
+        memoryFree(endpoint->udp_socket->idle_tables);
+        memoryFree(endpoint->udp_socket);
+    }
+    memoryFree(endpoint->interface_scope);
+    memoryFree(endpoint);
+}
+
+/* Prepare fallible metadata before acquiring a socket. A non-NULL result is
+ * caller-owned until publishEndpoint() or releaseUnpublishedEndpoint(). */
+static listener_endpoint_t *prepareEndpoint(endpoint_registry_t *reg, socket_filter_t *filter, uint8_t protocol,
+                                            uint16_t port)
 {
     computeFilterBindEndpoint(filter);
-
-    listener_endpoint_t ep;
-    memoryZero(&ep, sizeof(ep));
-    ep.protocol         = protocol;
-    ep.family           = filter->bind_family;
-    ep.is_wildcard      = filter->bind_is_wildcard;
-    ep.bind_addr        = filter->bind_addr;
-    ep.port             = port;
-    ep.interface_scope  = filterInterfaceScope(filter);
-    ep.listen_io        = io;
-    ep.udp_socket       = udp;
-    ep.fwmark           = filter->option.fwmark;
-    ep.send_buffer_size = filter->option.send_buffer_size;
-    ep.recv_buffer_size = filter->option.recv_buffer_size;
-
-    if (UNLIKELY(endpoint_registry_t_push(reg, ep) == NULL))
+    if (UNLIKELY(startupFailurePending()))
+        return NULL;
+    const isize_t required = endpoint_registry_t_size(reg) + 1;
+    if (UNLIKELY(! endpoint_registry_t_reserve(reg, required) || endpoint_registry_t_capacity(reg) < required))
+        goto failed;
+    listener_endpoint_t *endpoint = memoryAllocateZero(sizeof(*endpoint));
+    if (UNLIKELY(endpoint == NULL))
+        goto failed;
+    *endpoint         = (listener_endpoint_t) {.protocol         = protocol,
+                                               .family           = filter->bind_family,
+                                               .is_wildcard      = filter->bind_is_wildcard,
+                                               .bind_addr        = filter->bind_addr,
+                                               .port             = port,
+                                               .fwmark           = filter->option.fwmark,
+                                               .send_buffer_size = filter->option.send_buffer_size,
+                                               .recv_buffer_size = filter->option.recv_buffer_size};
+    const char *scope = filterInterfaceScope(filter);
+    if (scope != NULL)
     {
-        LOGF("SocketManager: failed to publish ownership for a bound listener endpoint");
-        startupFailureRecord(1);
-        return;
+        endpoint->interface_scope = stringDuplicate(scope);
+        if (UNLIKELY(endpoint->interface_scope == NULL))
+        {
+            releaseUnpublishedEndpoint(endpoint);
+            goto failed;
+        }
     }
+    if (protocol == IPPROTO_UDP)
+    {
+        endpoint->udp_socket = createUdpSocketSideData();
+        if (UNLIKELY(endpoint->udp_socket == NULL))
+        {
+            releaseUnpublishedEndpoint(endpoint);
+            goto failed;
+        }
+        endpoint->udp_socket->owner_slot = &endpoint->listen_io;
+    }
+    return endpoint;
+failed:
+    LOGF("SocketManager: failed to prepare listener endpoint metadata before binding");
+    startupFailureRecord(1);
+    return NULL;
+}
+
+/* Startup is exclusive. Publish the sole owner and initialize callbacks before
+ * enabling accept/read; no fallible allocation remains in this publication.
+ * Consumes endpoint and io on every result: success transfers both to reg;
+ * false closes io and frees endpoint. Neither remains caller-owned. */
+static bool publishEndpoint(endpoint_registry_t *reg, listener_endpoint_t *endpoint, wio_t *io)
+{
+    sockaddr_u bound_addr = {0};
+    socklen_t  bound_len  = sizeof(bound_addr);
+    if (getsockname(wioGetFD(io), &bound_addr.sa, &bound_len) != 0)
+    {
+        wioClose(io);
+        releaseUnpublishedEndpoint(endpoint);
+        LOGF("SocketManager: could not snapshot bound listener address");
+        startupFailureRecord(1);
+        return false;
+    }
+    endpoint->port = sockaddrPort(&bound_addr);
+    wioSetLocaladdr(io, &bound_addr.sa, (int) bound_len);
+    assert(endpoint_registry_t_size(reg) < endpoint_registry_t_capacity(reg));
+    if (UNLIKELY(endpoint_registry_t_push(reg, endpoint) == NULL))
+    {
+        LOGF("SocketManager: reserved listener endpoint publication failed");
+        abortProgramNow(1);
+    }
+    endpoint->listen_io = io;
+    if (endpoint->udp_socket != NULL)
+    {
+        endpoint->udp_socket->io          = io;
+        endpoint->udp_socket->listener_fd = wioGetFD(io);
+    }
+    weventSetUserData(io, endpoint);
+    wioSetCallBackClose(io, onListenerSocketClose);
+    return true;
 }
 
 /**
@@ -2088,8 +1762,8 @@ static bool registryHasBoundTcpWildcard(const endpoint_registry_t *reg, uint16_t
 {
     c_foreach(it, endpoint_registry_t, *reg)
     {
-        const listener_endpoint_t *ep = it.ref;
-        if (ep->protocol != IPPROTO_TCP || ! ep->is_wildcard || ep->port != port)
+        const listener_endpoint_t *ep = *it.ref;
+        if (ep->listen_io == NULL || ep->protocol != IPPROTO_TCP || ! ep->is_wildcard || ep->port != port)
         {
             continue;
         }
@@ -2116,7 +1790,9 @@ static bool tcpBindDefersToExisting(const endpoint_registry_t *reg, socket_filte
 
     if (! filter->bind_is_wildcard)
     {
-        return registryHasBoundTcpWildcard(reg, port, iface, filter->bind_family == AF_INET6);
+        // Deferral follows the normalized destination family: a mapped IPv4
+        // specific bind can be served by an existing IPv4 wildcard socket.
+        return registryHasBoundTcpWildcard(reg, port, iface, filter->bind_addr.type == IPADDR_TYPE_V6);
     }
 
     // A 0.0.0.0 wildcard defers only to a bound :: dual-stack wildcard.
@@ -2128,30 +1804,55 @@ static bool tcpBindDefersToExisting(const endpoint_registry_t *reg, socket_filte
 }
 
 /**
- * @brief Create TCP listener with configured socket options.
+ * @brief Create a TCP listener with a persistent owner before enabling accept.
  */
-static wio_t *createTcpServerWithSocketOptions(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
-                                               void (*callback)(wio_t *))
+static listener_endpoint_t *createTcpListener(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
+                                              endpoint_registry_t *reg, waccept_cb callback)
 {
+    listener_endpoint_t *endpoint = prepareEndpoint(reg, filter, IPPROTO_TCP, port);
+    if (endpoint == NULL)
+        return NULL;
     char        host_if[INET_ADDRSTRLEN] = {0};
     const char *bind_host                = getSocketBindHost(filter, host, host_if);
     if (UNLIKELY(startupFailurePending()))
     {
+        releaseUnpublishedEndpoint(endpoint);
         return NULL;
     }
-    return wloopCreateTcpServerWithOptions(
-        loop, bind_host, port, callback, filter->option.interface_name, filter->option.fwmark);
+    wio_t *io = wioCreateSocketWithOptions(
+        loop, bind_host, port, WIO_TYPE_TCP, WIO_SERVER_SIDE, filter->option.interface_name, filter->option.fwmark);
+    if (io == NULL)
+    {
+        releaseUnpublishedEndpoint(endpoint);
+        return NULL;
+    }
+    if (! publishEndpoint(reg, endpoint, io))
+        return NULL;
+    wioSetCallBackAccept(io, callback);
+    /* wioAccept closes on failure. The endpoint remains owned for rollback,
+     * with a NULL authoritative slot, and cannot be reused as a bound socket. */
+    if (wioAccept(io) != 0)
+        return NULL;
+    return endpoint;
 }
 
 /**
- * @brief Create UDP listener with configured socket options.
+ * @brief Create a UDP listener with side-data/userdata before enabling reads.
+ *
+ * After publication, read-setup failure closes the socket but leaves its
+ * endpoint and side-data owned by reg for rollback.
  */
-static wio_t *createUdpServerWithSocketOptions(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port)
+static listener_endpoint_t *createUdpListener(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
+                                              endpoint_registry_t *reg, wread_cb callback, bool stop_on_read_failure)
 {
+    listener_endpoint_t *endpoint = prepareEndpoint(reg, filter, IPPROTO_UDP, port);
+    if (endpoint == NULL)
+        return NULL;
     char        host_if[INET_ADDRSTRLEN] = {0};
     const char *bind_host                = getSocketBindHost(filter, host, host_if);
     if (UNLIKELY(startupFailurePending()))
     {
+        releaseUnpublishedEndpoint(endpoint);
         return NULL;
     }
     wio_t *io = wloopCreateUdpServerWithBufferOptions(loop,
@@ -2161,13 +1862,25 @@ static wio_t *createUdpServerWithSocketOptions(wloop_t *loop, socket_filter_t *f
                                                       filter->option.fwmark,
                                                       filter->option.send_buffer_size,
                                                       filter->option.recv_buffer_size);
-
     if (io == NULL)
     {
+        releaseUnpublishedEndpoint(endpoint);
         return NULL;
     }
-
-    return io;
+    if (! publishEndpoint(reg, endpoint, io))
+        return NULL;
+    if (! startUdpListener(io, callback))
+    {
+        if (endpoint->listen_io != NULL)
+            wioClose(endpoint->listen_io);
+        if (stop_on_read_failure)
+        {
+            LOGF("SocketManager: could not register UDP redirect listener on %s:[%u]", host, port);
+            startupFailureRecord(1);
+        }
+        return NULL;
+    }
+    return endpoint;
 }
 
 /**
@@ -2223,15 +1936,13 @@ static uint16_t selectMainPortForIptables(socket_filter_t *filter, wloop_t *loop
             continue;
         }
 
-        filter->listen_io =
-            createTcpServerWithSocketOptions(loop, filter, host, (uint16_t) main_port, onAcceptTcpMultiPort);
-        if (filter->listen_io == NULL)
-        {
+        listener_endpoint_t *endpoint =
+            createTcpListener(loop, filter, host, (uint16_t) main_port, reg, onAcceptTcpMultiPort);
+        if (UNLIKELY(startupFailurePending()))
+            return 0;
+        if (endpoint == NULL)
             continue;
-        }
 
-        endpointRegistryReserve(reg, IPPROTO_TCP, filter, (uint16_t) main_port, filter->listen_io, NULL);
-        filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
         return (uint16_t) main_port;
     }
 
@@ -2302,16 +2013,6 @@ static void listenTcpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
 static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
                                       endpoint_registry_t *reg, uint16_t port_max)
 {
-    const int length   = (int) (port_max - port_min + 1);
-    filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
-    if (UNLIKELY(filter->listen_ios == NULL))
-    {
-        LOGF("SocketManager: failed to allocate TCP range listener ownership slots");
-        startupFailureRecord(1);
-        return;
-    }
-    int i = 0;
-
     for (uint32_t p = port_min; p <= port_max; ++p)
     {
         const uint16_t port = (uint16_t) p;
@@ -2328,26 +2029,16 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
             continue;
         }
 
-        wio_t *io = createTcpServerWithSocketOptions(loop, filter, host, port, onAcceptTcpSinglePort);
-
-        if (io == NULL)
+        listener_endpoint_t *endpoint = createTcpListener(loop, filter, host, port, reg, onAcceptTcpSinglePort);
+        if (UNLIKELY(startupFailurePending()))
+            return;
+        if (endpoint == NULL)
         {
             LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, port);
             continue;
         }
-        filter->listen_ios[i]    = io;
-        filter->listen_ios_count = (size_t) i + 1U;
-        endpointRegistryReserve(reg, IPPROTO_TCP, filter, port, io, NULL);
-        if (UNLIKELY(startupFailurePending()))
-        {
-            return;
-        }
-        filter->v6_dualstack = wioGetLocaladdr(io)->sa_family == AF_INET6;
-
-        i++;
         LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "TCP");
     }
-    filter->listen_ios_count = (size_t) i;
 }
 
 /**
@@ -2357,15 +2048,6 @@ static void listenTcpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
                                      const vec_listener_port_t *ports)
 {
     const isize length = vec_listener_port_t_size(ports);
-    filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
-    if (UNLIKELY(filter->listen_ios == NULL))
-    {
-        LOGF("SocketManager: failed to allocate TCP list listener ownership slots");
-        startupFailureRecord(1);
-        return;
-    }
-    int i = 0;
-
     for (isize pi = 0; pi < length; ++pi)
     {
         uint16_t p = *vec_listener_port_t_at(ports, pi);
@@ -2382,26 +2064,16 @@ static void listenTcpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
             continue;
         }
 
-        wio_t *io = createTcpServerWithSocketOptions(loop, filter, host, p, onAcceptTcpSinglePort);
-
-        if (io == NULL)
+        listener_endpoint_t *endpoint = createTcpListener(loop, filter, host, p, reg, onAcceptTcpSinglePort);
+        if (UNLIKELY(startupFailurePending()))
+            return;
+        if (endpoint == NULL)
         {
             LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
             continue;
         }
-        filter->listen_ios[i]    = io;
-        filter->listen_ios_count = (size_t) i + 1U;
-        endpointRegistryReserve(reg, IPPROTO_TCP, filter, p, io, NULL);
-        if (UNLIKELY(startupFailurePending()))
-        {
-            return;
-        }
-        filter->v6_dualstack = wioGetLocaladdr(io)->sa_family == AF_INET6;
-
-        i++;
         LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "TCP");
     }
-    filter->listen_ios_count = (size_t) i;
 }
 
 /**
@@ -2422,20 +2094,15 @@ static void listenTcpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
         return;
     }
 
-    filter->listen_io = createTcpServerWithSocketOptions(loop, filter, host, port, onAcceptTcpSinglePort);
-
-    if (filter->listen_io == NULL)
+    listener_endpoint_t *endpoint = createTcpListener(loop, filter, host, port, reg, onAcceptTcpSinglePort);
+    if (UNLIKELY(startupFailurePending()))
+        return;
+    if (endpoint == NULL)
     {
         LOGF("SocketManager: stopping due to null socket handle");
         startupFailureRecord(1);
         return;
     }
-    endpointRegistryReserve(reg, IPPROTO_TCP, filter, port, filter->listen_io, NULL);
-    if (UNLIKELY(startupFailurePending()))
-    {
-        return;
-    }
-    filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
     LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "TCP");
 }
 
@@ -2590,194 +2257,29 @@ static void postUdpPayload(udp_payload_t post_pl, socket_filter_t *filter)
 }
 
 /**
- * @brief Evaluate whether filter matches UDP packet metadata and ACL rules.
+ * @brief Select a UDP listener and transfer its payload with existing side-data.
  */
-static bool processUdpFilterMatch(const socket_filter_option_t option, uint16_t local_port, const ip_addr_t paddr)
+static void distributeUdpPayload(const udp_payload_t pl, const listener_endpoint_t *endpoint)
 {
-    if (UNLIKELY(option.protocol != IPPROTO_UDP))
+    listener_arrival_t arrival = {.endpoint = endpoint, .local_port = pl.real_localport, .protocol = IPPROTO_UDP};
+    if (! sockaddrToNormalizedIpAddr(&pl.peer_addr, &arrival.peer_addr))
     {
-        return false;
+        sbufDestroy(pl.buf);
+        return;
     }
-
-    if (socketFilterOptionHasPortList(&option))
+    if (! sockaddrToNormalizedIpAddr(&pl.real_localaddr, &arrival.local_addr))
     {
-        if (! socketFilterOptionPortListContains(&option, local_port))
-        {
-            return false;
-        }
+        memoryZero(&arrival.local_addr, sizeof(arrival.local_addr));
+        arrival.local_addr.type = IPADDR_TYPE_V4;
     }
-    else if (option.port_min > local_port || option.port_max < local_port)
+    listener_selection_t selection =
+        socketManagerSelect(socketmanager_gstate->filters, socketmanager_gstate->wid, &arrival);
+    if (selection.filter != NULL)
     {
-        return false;
+        socketManagerCommitSelection(socketmanager_gstate->wid, &selection);
+        postUdpPayload(pl, selection.filter);
+        return;
     }
-
-    if (vec_ipmask_t_size(&option.white_list) > 0)
-    {
-        if (! checkIpIsWhiteList(paddr, option))
-        {
-            return false;
-        }
-    }
-    if (vec_ipmask_t_size(&option.black_list) > 0)
-    {
-        if (checkIpIsBlackList(paddr, option))
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
-/**
- * @brief Handle one UDP balance candidate or collect it for random selection.
- */
-static bool handleUdpBalancedFilter(socket_filter_t *filter, const socket_filter_option_t option,
-                                    const udp_payload_t pl, const ip_addr_t *local_addr, int match_tier,
-                                    hash_t *src_hash, bool *src_hashed, socket_filter_t **balance_selection_filters,
-                                    uint8_t *balance_selection_filters_length, idle_table_t **selected_balance_table)
-{
-    if (*selected_balance_table != NULL && option.shared_balance_table != *selected_balance_table)
-    {
-        return false;
-    }
-
-    ip_addr_t paddr;
-    sockaddrToIpAddr((sockaddr_u *) &pl.peer_addr, &paddr);
-
-    if (! *src_hashed)
-    {
-        *src_hash = socketManagerCombineBalanceLocalHash(
-            ipaddrCalcHashNoPort(paddr), local_addr, pl.real_localport, match_tier);
-        *src_hashed = true;
-    }
-
-    idle_item_t *idle_item =
-        idletableGetIdleItemByHash(socketmanager_gstate->wid, option.shared_balance_table, *src_hash);
-
-    if (idle_item &&
-        balanceTargetStillMatches(idle_item->userdata, pl.real_localport, paddr, local_addr, match_tier, true))
-    {
-        socket_filter_t *target_filter = idle_item->userdata;
-        idletableKeepIdleItemForAtleast(option.shared_balance_table,
-                                        idle_item,
-                                        option.balance_group_interval == 0 ? kDefaultBalanceInterval
-                                                                           : option.balance_group_interval);
-        postUdpPayload(pl, target_filter);
-        return true;
-    }
-
-    if (UNLIKELY(*balance_selection_filters_length >= kMaxBalanceSelections))
-    {
-        LOGW("SocketManager: balance between more than %d tunnels is not supported", kMaxBalanceSelections);
-        return false;
-    }
-    balance_selection_filters[(*balance_selection_filters_length)++] = filter;
-    *selected_balance_table                                          = option.shared_balance_table;
-    return false;
-}
-
-/**
- * @brief Select a UDP balance candidate after a dispatch pass.
- */
-static bool finalizeUdpDistribution(socket_filter_t **balance_selection_filters,
-                                    uint8_t balance_selection_filters_length, const udp_payload_t pl, hash_t src_hash)
-{
-    if (balance_selection_filters_length > 0)
-    {
-        socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
-        idletableCreateItem(filter->option.shared_balance_table,
-                            src_hash,
-                            filter,
-                            NULL,
-                            socketmanager_gstate->wid,
-                            filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
-                                                                       : filter->option.balance_group_interval);
-        postUdpPayload(pl, filter);
-        return true;
-    }
-    return false;
-}
-
-/**
- * @brief Try to dispatch a UDP payload at one specificity tier.
- */
-static bool distributeUdpPayloadPass(const udp_payload_t pl, uint16_t local_port, const ip_addr_t *local_addr,
-                                     const ip_addr_t paddr, int match_tier)
-{
-    socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
-    uint8_t          balance_selection_filters_length = 0;
-    idle_table_t    *selected_balance_table           = NULL;
-    hash_t           src_hash                         = 0x0;
-    bool             src_hashed                       = false;
-
-    for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
-    {
-        c_foreach(k, filters_t, socketmanager_gstate->filters[ri])
-        {
-            socket_filter_t       *filter = *(k.ref);
-            socket_filter_option_t option = filter->option;
-
-            if (! processUdpFilterMatch(option, local_port, paddr))
-            {
-                continue;
-            }
-            if (! addrMatchesFilter(filter, local_addr, match_tier))
-            {
-                continue;
-            }
-
-            if (option.shared_balance_table)
-            {
-                if (handleUdpBalancedFilter(filter,
-                                            option,
-                                            pl,
-                                            local_addr,
-                                            match_tier,
-                                            &src_hash,
-                                            &src_hashed,
-                                            balance_selection_filters,
-                                            &balance_selection_filters_length,
-                                            &selected_balance_table))
-                {
-                    return true;
-                }
-            }
-            else
-            {
-                postUdpPayload(pl, filter);
-                return true;
-            }
-        }
-    }
-
-    return finalizeUdpDistribution(balance_selection_filters, balance_selection_filters_length, pl, src_hash);
-}
-
-/**
- * @brief Dispatch a UDP payload from exact listener to broadest wildcard.
- */
-static void distributeUdpPayload(const udp_payload_t pl)
-{
-    ip_addr_t paddr;
-    sockaddrToIpAddr((sockaddr_u *) &pl.peer_addr, &paddr);
-
-    ip_addr_t local_addr;
-    if (! sockaddrToNormalizedIpAddr(&pl.real_localaddr, &local_addr))
-    {
-        memoryZero(&local_addr, sizeof(local_addr));
-        local_addr.type = IPADDR_TYPE_V4;
-    }
-
-    uint16_t local_port = pl.real_localport;
-
-    for (int tier = 0; tier < kDispatchTierCount; ++tier)
-    {
-        if (distributeUdpPayloadPass(pl, local_port, &local_addr, paddr, tier))
-        {
-            return;
-        }
-    }
-
     noUdpSocketConsumerFound(pl);
     sbufDestroy(pl.buf);
 }
@@ -2787,7 +2289,8 @@ static void distributeUdpPayload(const udp_payload_t pl)
  */
 static void onUdpPacketReceived(wio_t *io, sbuf_t *buf)
 {
-    udpsock_t *socket      = weventGetUserdata(io);
+    listener_endpoint_t *endpoint    = weventGetUserdata(io);
+    udpsock_t           *socket      = endpoint->udp_socket;
     sockaddr_u local_addr  = *wioGetLocaladdrU(io);
     uint16_t   local_port  = sockaddrPort(&local_addr);
     uint16_t   remote_port = sockaddrPort(wioGetPeerAddrU(io));
@@ -2800,7 +2303,7 @@ static void onUdpPacketReceived(wio_t *io, sbuf_t *buf)
                                           .real_localaddr = local_addr,
                                           .real_localport = local_port};
 
-    distributeUdpPayload(item);
+    distributeUdpPayload(item, endpoint);
 }
 
 /**
@@ -2810,7 +2313,8 @@ static void onUdpPacketReceivedMultiPort(wio_t *io, sbuf_t *buf)
 {
 
 #ifdef OS_UNIX
-    udpsock_t *socket          = weventGetUserdata(io);
+    listener_endpoint_t *endpoint        = weventGetUserdata(io);
+    udpsock_t           *socket          = endpoint->udp_socket;
     sockaddr_u local_addr      = *wioGetLocaladdrU(io);
     uint16_t   remote_port     = sockaddrPort(wioGetPeerAddrU(io));
     wid_t      target_wid      = (wid_t) remote_port % (getWorkersCount());
@@ -2849,7 +2353,7 @@ static void onUdpPacketReceivedMultiPort(wio_t *io, sbuf_t *buf)
                                           .real_localaddr = local_addr,
                                           .real_localport = real_local_port};
 
-    distributeUdpPayload(item);
+    distributeUdpPayload(item, endpoint);
 #else
     onUdpPacketReceived(io, buf);
 #endif
@@ -2873,38 +2377,13 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
         return;
     }
 
-    filter->listen_io = createUdpServerWithSocketOptions(loop, filter, host, port);
-
-    if (filter->listen_io == NULL)
-    {
-        LOGF("SocketManager: stopping due to null socket handle");
-        startupFailureRecord(1);
-        return;
-    }
-    if (UNLIKELY(! startUdpListener(filter->listen_io, onUdpPacketReceived)))
-    {
-        wioClose(filter->listen_io);
-        filter->listen_io = NULL;
-        LOGF("SocketManager: could not register UDP listener on %s:[%u]", host, port);
-        startupFailureRecord(1);
-        return;
-    }
-    udpsock_t *socket = createUdpSocketSideData(filter->listen_io);
-    if (UNLIKELY(socket == NULL))
-    {
-        wioClose(filter->listen_io);
-        filter->listen_io = NULL;
-        LOGF("SocketManager: failed to allocate UDP listener side data");
-        startupFailureRecord(1);
-        return;
-    }
-    filter->listen_udp_socket = socket;
-    socket->owner_slot        = &filter->listen_io;
-    weventSetUserData(filter->listen_io, socket);
-    wioSetCallBackClose(filter->listen_io, onUdpListenerSocketClose);
-    endpointRegistryReserve(reg, IPPROTO_UDP, filter, port, filter->listen_io, socket);
+    listener_endpoint_t *endpoint = createUdpListener(loop, filter, host, port, reg, onUdpPacketReceived, false);
     if (UNLIKELY(startupFailurePending()))
+        return;
+    if (endpoint == NULL)
     {
+        LOGF("SocketManager: could not start UDP listener on %s:[%u]", host, port);
+        startupFailureRecord(1);
         return;
     }
     LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "UDP");
@@ -2941,51 +2420,21 @@ static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
     for (int p = (int) port_max; p >= (int) port_min; --p)
     {
         if (endpointRegistryFind(reg, IPPROTO_UDP, filter, (uint16_t) p) != NULL)
-        {
             continue;
-        }
-
-        filter->listen_io = createUdpServerWithSocketOptions(loop, filter, host, (uint16_t) p);
-        if (filter->listen_io != NULL)
+        listener_endpoint_t *endpoint =
+            createUdpListener(loop, filter, host, (uint16_t) p, reg, onUdpPacketReceivedMultiPort, true);
+        if (UNLIKELY(startupFailurePending()))
+            return;
+        if (endpoint != NULL)
         {
             main_port = p;
             break;
         }
     }
-
-    if (filter->listen_io == NULL)
+    if (main_port < 0)
     {
         LOGF("SocketManager: stopping due to null UDP socket handle");
         startupFailureRecord(1);
-        return;
-    }
-
-    filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
-
-    if (UNLIKELY(! startUdpListener(filter->listen_io, onUdpPacketReceivedMultiPort)))
-    {
-        wioClose(filter->listen_io);
-        filter->listen_io = NULL;
-        LOGF("SocketManager: could not register UDP redirect listener on %s:[%d]", host, main_port);
-        startupFailureRecord(1);
-        return;
-    }
-    udpsock_t *socket = createUdpSocketSideData(filter->listen_io);
-    if (UNLIKELY(socket == NULL))
-    {
-        wioClose(filter->listen_io);
-        filter->listen_io = NULL;
-        LOGF("SocketManager: failed to allocate redirected UDP listener side data");
-        startupFailureRecord(1);
-        return;
-    }
-    filter->listen_udp_socket = socket;
-    socket->owner_slot        = &filter->listen_io;
-    weventSetUserData(filter->listen_io, socket);
-    wioSetCallBackClose(filter->listen_io, onUdpListenerSocketClose);
-    endpointRegistryReserve(reg, IPPROTO_UDP, filter, (uint16_t) main_port, filter->listen_io, socket);
-    if (UNLIKELY(startupFailurePending()))
-    {
         return;
     }
 
@@ -3003,21 +2452,6 @@ static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
 static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
                                       endpoint_registry_t *reg, uint16_t port_max)
 {
-    const int length           = (int) (port_max - port_min + 1);
-    filter->listen_ios         = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
-    filter->listen_udp_sockets = (udpsock_t **) memoryAllocateZero(sizeof(udpsock_t *) * (size_t) length);
-    if (UNLIKELY(filter->listen_ios == NULL || filter->listen_udp_sockets == NULL))
-    {
-        memoryFree(filter->listen_ios);
-        memoryFree(filter->listen_udp_sockets);
-        filter->listen_ios         = NULL;
-        filter->listen_udp_sockets = NULL;
-        LOGF("SocketManager: failed to allocate UDP range listener ownership slots");
-        startupFailureRecord(1);
-        return;
-    }
-    int i = 0;
-
     for (uint32_t p = port_min; p <= port_max; ++p)
     {
         const uint16_t       port   = (uint16_t) p;
@@ -3033,49 +2467,16 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
             continue;
         }
 
-        wio_t *udp_io = createUdpServerWithSocketOptions(loop, filter, host, port);
-        if (udp_io == NULL)
+        listener_endpoint_t *endpoint = createUdpListener(loop, filter, host, port, reg, onUdpPacketReceived, false);
+        if (UNLIKELY(startupFailurePending()))
+            return;
+        if (endpoint == NULL)
         {
             LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, port);
             continue;
         }
-
-        if (UNLIKELY(! startUdpListener(udp_io, onUdpPacketReceived)))
-        {
-            wioClose(udp_io);
-            LOGW("SocketManager: could not register UDP listener on %s:[%u], skipped...", host, port);
-            continue;
-        }
-
-        filter->listen_ios[i] = udp_io;
-        filter->v6_dualstack  = wioGetLocaladdr(udp_io)->sa_family == AF_INET6;
-
-        udpsock_t *socket = createUdpSocketSideData(udp_io);
-        if (UNLIKELY(socket == NULL))
-        {
-            wioClose(udp_io);
-            filter->listen_ios[i] = NULL;
-            LOGF("SocketManager: failed to allocate UDP range listener side data");
-            startupFailureRecord(1);
-            return;
-        }
-        filter->listen_udp_sockets[i]    = socket;
-        filter->listen_ios_count         = (size_t) i + 1U;
-        filter->listen_udp_sockets_count = (size_t) i + 1U;
-        socket->owner_slot               = &filter->listen_ios[i];
-        weventSetUserData(udp_io, socket);
-        wioSetCallBackClose(udp_io, onUdpListenerSocketClose);
-        endpointRegistryReserve(reg, IPPROTO_UDP, filter, port, udp_io, socket);
-        if (UNLIKELY(startupFailurePending()))
-        {
-            return;
-        }
-
-        i++;
         LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "UDP");
     }
-    filter->listen_ios_count         = (size_t) i;
-    filter->listen_udp_sockets_count = (size_t) i;
 }
 
 /**
@@ -3085,20 +2486,6 @@ static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
                                      const vec_listener_port_t *ports)
 {
     const isize length         = vec_listener_port_t_size(ports);
-    filter->listen_ios         = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
-    filter->listen_udp_sockets = (udpsock_t **) memoryAllocateZero(sizeof(udpsock_t *) * (size_t) length);
-    if (UNLIKELY(filter->listen_ios == NULL || filter->listen_udp_sockets == NULL))
-    {
-        memoryFree(filter->listen_ios);
-        memoryFree(filter->listen_udp_sockets);
-        filter->listen_ios         = NULL;
-        filter->listen_udp_sockets = NULL;
-        LOGF("SocketManager: failed to allocate UDP list listener ownership slots");
-        startupFailureRecord(1);
-        return;
-    }
-    int i = 0;
-
     for (isize pi = 0; pi < length; ++pi)
     {
         uint16_t p = *vec_listener_port_t_at(ports, pi);
@@ -3115,49 +2502,16 @@ static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
             continue;
         }
 
-        wio_t *udp_io = createUdpServerWithSocketOptions(loop, filter, host, p);
-        if (udp_io == NULL)
+        listener_endpoint_t *endpoint = createUdpListener(loop, filter, host, p, reg, onUdpPacketReceived, false);
+        if (UNLIKELY(startupFailurePending()))
+            return;
+        if (endpoint == NULL)
         {
             LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
             continue;
         }
-
-        if (UNLIKELY(! startUdpListener(udp_io, onUdpPacketReceived)))
-        {
-            wioClose(udp_io);
-            LOGW("SocketManager: could not register UDP listener on %s:[%u], skipped...", host, p);
-            continue;
-        }
-
-        filter->listen_ios[i] = udp_io;
-        filter->v6_dualstack  = wioGetLocaladdr(udp_io)->sa_family == AF_INET6;
-
-        udpsock_t *socket = createUdpSocketSideData(udp_io);
-        if (UNLIKELY(socket == NULL))
-        {
-            wioClose(udp_io);
-            filter->listen_ios[i] = NULL;
-            LOGF("SocketManager: failed to allocate UDP list listener side data");
-            startupFailureRecord(1);
-            return;
-        }
-        filter->listen_udp_sockets[i]    = socket;
-        filter->listen_ios_count         = (size_t) i + 1U;
-        filter->listen_udp_sockets_count = (size_t) i + 1U;
-        socket->owner_slot               = &filter->listen_ios[i];
-        weventSetUserData(udp_io, socket);
-        wioSetCallBackClose(udp_io, onUdpListenerSocketClose);
-        endpointRegistryReserve(reg, IPPROTO_UDP, filter, p, udp_io, socket);
-        if (UNLIKELY(startupFailurePending()))
-        {
-            return;
-        }
-
-        i++;
         LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "UDP");
     }
-    filter->listen_ios_count         = (size_t) i;
-    filter->listen_udp_sockets_count = (size_t) i;
 }
 
 /**
@@ -3337,29 +2691,28 @@ ww_startup_result_t socketmanagerStart(void)
     reconcileIptablesStartup();
 
     // Record only successful binds, so failed attempts never block later endpoint setup.
-    endpoint_registry_t registry = endpoint_registry_t_init();
+    endpoint_registry_t *registry = &socketmanager_gstate->endpoints;
 
     const isize_t listener_bound = socketmanagerListenerReservationBound();
     if (UNLIKELY(
             listener_bound < 0 ||
-            (listener_bound > 0 && (! endpoint_registry_t_reserve(&registry, listener_bound) ||
-                                    endpoint_registry_t_capacity(&registry) < listener_bound ||
+            (listener_bound > 0 && (! endpoint_registry_t_reserve(registry, listener_bound) ||
+                                    endpoint_registry_t_capacity(registry) < listener_bound ||
                                     ! pending_rules_t_reserve(&socketmanager_gstate->pending_rules, listener_bound) ||
                                     pending_rules_t_capacity(&socketmanager_gstate->pending_rules) < listener_bound))))
     {
-        endpoint_registry_t_drop(&registry);
         mutexUnlock(&(socketmanager_gstate->mutex));
         LOGF("SocketManager: failed to reserve listener ownership metadata before binding");
         startupFailureRecord(1);
         return wwStartupContextEnd(&startup);
     }
 
-    listenTcp(socketmanager_gstate->worker->loop, &registry);
+    listenTcp(socketmanager_gstate->worker->loop, registry);
     if (UNLIKELY(startupFailurePending()))
     {
         goto startup_failed;
     }
-    listenUdp(socketmanager_gstate->worker->loop, &registry);
+    listenUdp(socketmanager_gstate->worker->loop, registry);
     if (UNLIKELY(startupFailurePending()))
     {
         goto startup_failed;
@@ -3372,14 +2725,12 @@ ww_startup_result_t socketmanagerStart(void)
         goto startup_failed;
     }
 
-    endpoint_registry_t_drop(&registry);
 
     socketmanager_gstate->started = true;
     mutexUnlock(&(socketmanager_gstate->mutex));
     return wwStartupContextEnd(&startup);
 
 startup_failed:
-    endpoint_registry_t_drop(&registry);
     mutexUnlock(&(socketmanager_gstate->mutex));
     return wwStartupContextEnd(&startup);
 }
@@ -3475,6 +2826,7 @@ socket_manager_state_t *socketmanagerCreate(void)
     }
     state->balance_groups = balancegroup_registry_t_init();
     state->pending_rules  = pending_rules_t_init();
+    state->endpoints      = endpoint_registry_t_init();
 
     state->iptables_owner_lease_fd = -1;
 
@@ -3516,30 +2868,6 @@ socket_manager_state_t *socketmanagerCreate(void)
 }
 
 /**
- * @brief Close one listener while its event-loop IO storage is still alive.
- */
-static void closeOneListenerIo(wio_t *io)
-{
-    if (io == NULL)
-    {
-        return;
-    }
-
-    wioClose(io);
-}
-
-/**
- * @brief Close one listener slot and clear the stored non-owning IO pointer.
- */
-static void closeOneListenerSlot(wio_t **io_slot)
-{
-    assert(io_slot != NULL && *io_slot != NULL);
-
-    closeOneListenerIo(*io_slot);
-    *io_slot = NULL;
-}
-
-/**
  * @brief Release UDP listener side-data owned by the socket manager.
  */
 static void cleanupOneUdpSocket(udpsock_t **socket_slot)
@@ -3565,33 +2893,6 @@ static void cleanupOneUdpSocket(udpsock_t **socket_slot)
 }
 
 /**
- * @brief Release all UDP listener side-data for one filter.
- */
-static void cleanupFilterUdpSockets(socket_filter_t *filter)
-{
-    if (filter == NULL)
-    {
-        return;
-    }
-
-    if (filter->listen_udp_sockets != NULL)
-    {
-        for (size_t i = 0; i < filter->listen_udp_sockets_count; ++i)
-        {
-            cleanupOneUdpSocket(&filter->listen_udp_sockets[i]);
-        }
-        memoryFree(filter->listen_udp_sockets);
-        filter->listen_udp_sockets       = NULL;
-        filter->listen_udp_sockets_count = 0;
-        return;
-    }
-    if (filter->listen_udp_socket != NULL)
-    {
-        cleanupOneUdpSocket(&filter->listen_udp_socket);
-    }
-}
-
-/**
  * @brief Drain active UDP listener idle entries for one socket/worker pair.
  */
 void socketmanagerDrainUdpSocketForWorker(udpsock_t *socket, wid_t wid)
@@ -3611,85 +2912,28 @@ void socketmanagerDrainUdpSocketForWorker(udpsock_t *socket, wid_t wid)
     }
 }
 
-/**
- * @brief Drain active UDP listener idle entries for one filter/worker pair.
- */
-static void drainFilterUdpSocketsForWorker(socket_filter_t *filter, wid_t wid)
-{
-    if (filter == NULL)
-    {
-        return;
-    }
-
-    if (filter->listen_udp_sockets != NULL)
-    {
-        for (size_t i = 0; i < filter->listen_udp_sockets_count; ++i)
-        {
-            socketmanagerDrainUdpSocketForWorker(filter->listen_udp_sockets[i], wid);
-        }
-        return;
-    }
-
-    socketmanagerDrainUdpSocketForWorker(filter->listen_udp_socket, wid);
-}
-
 void socketmanagerDrainUdpIdleForWorker(wid_t wid)
 {
     if (socketmanager_gstate == NULL)
-    {
         return;
-    }
-
-    for (size_t i = 0; i < kFilterLevels; i++)
+    c_foreach(it, endpoint_registry_t, socketmanager_gstate->endpoints)
     {
-        c_foreach(filter, filters_t, socketmanager_gstate->filters[i])
-        {
-            drainFilterUdpSocketsForWorker(*filter.ref, wid);
-        }
-    }
-}
-
-/**
- * @brief Close listeners for a filter while their event-loop IO storage is still alive.
- */
-static void cleanupFilterListenersForLiveLoop(socket_filter_t *filter, wloop_t *loop)
-{
-    if (filter == NULL || loop == NULL)
-    {
-        return;
-    }
-
-    if (filter->listen_ios != NULL)
-    {
-        for (size_t ios_i = 0; ios_i < filter->listen_ios_count; ++ios_i)
-        {
-            wio_t *io = filter->listen_ios[ios_i];
-            if (io != NULL && weventGetLoop(io) == loop)
-            {
-                closeOneListenerSlot(&filter->listen_ios[ios_i]);
-            }
-        }
-        return;
-    }
-
-    if (filter->listen_io != NULL && weventGetLoop(filter->listen_io) == loop)
-    {
-        closeOneListenerSlot(&filter->listen_io);
+        socketmanagerDrainUdpSocketForWorker((*it.ref)->udp_socket, wid);
     }
 }
 
 void socketmanagerCloseListenersForLoop(wloop_t *loop)
 {
     if (socketmanager_gstate == NULL || loop == NULL)
-    {
         return;
-    }
-
-    for (size_t i = 0; i < kFilterLevels; i++)
+    c_foreach(it, endpoint_registry_t, socketmanager_gstate->endpoints)
     {
-        c_foreach(filter, filters_t, socketmanager_gstate->filters[i])
+        listener_endpoint_t *endpoint = *it.ref;
+        if (endpoint->listen_io != NULL && weventGetLoop(endpoint->listen_io) == loop)
         {
-            cleanupFilterListenersForLiveLoop(*filter.ref, loop);
+            wioClose(endpoint->listen_io);
+            /* The close callback clears the one authoritative slot. */
+            assert(endpoint->listen_io == NULL);
         }
     }
 }
@@ -3712,9 +2956,25 @@ void socketmanagerQuiesceWorker(wid_t wid)
     }
 }
 
-/**
- * @brief Destroy all registered filters and associated listener sockets.
- */
+/* Startup rollback can destroy the manager while its loop remains alive;
+ * normal shutdown already closed sockets and settled all worker dependencies. */
+static void cleanupEndpoints(void)
+{
+    wloop_t *loop = socketmanager_gstate->worker != NULL ? socketmanager_gstate->worker->loop : NULL;
+    if (loop != NULL)
+        socketmanagerCloseListenersForLoop(loop);
+    c_foreach(it, endpoint_registry_t, socketmanager_gstate->endpoints)
+    {
+        listener_endpoint_t *endpoint = *it.ref;
+        assert(endpoint->listen_io == NULL);
+        if (endpoint->udp_socket != NULL)
+            cleanupOneUdpSocket(&endpoint->udp_socket);
+        memoryFree(endpoint->interface_scope);
+        memoryFree(endpoint);
+    }
+    endpoint_registry_t_drop(&socketmanager_gstate->endpoints);
+}
+
 static void cleanupFilters(void)
 {
     for (size_t i = 0; i < kFilterLevels; i++)
@@ -3722,30 +2982,10 @@ static void cleanupFilters(void)
         c_foreach(filter, filters_t, socketmanager_gstate->filters[i])
         {
             socket_filter_t *f = *filter.ref;
-
-            if (f->listen_ios != NULL)
-            {
-                wloop_t *loop = socketmanager_gstate->worker != NULL ? socketmanager_gstate->worker->loop : NULL;
-                if (loop != NULL)
-                {
-                    cleanupFilterListenersForLiveLoop(f, loop);
-                }
-                memoryFree((void *) f->listen_ios);
-            }
-            else
-            {
-                wloop_t *loop = socketmanager_gstate->worker != NULL ? socketmanager_gstate->worker->loop : NULL;
-                if (loop != NULL)
-                {
-                    cleanupFilterListenersForLiveLoop(f, loop);
-                }
-            }
-
-            cleanupFilterUdpSockets(f);
-            socketfilteroptionDeInit(&(f->option));
+            socketfilteroptionDeInit(&f->option);
             memoryFree(f);
         }
-        filters_t_drop(&(socketmanager_gstate->filters[i]));
+        filters_t_drop(&socketmanager_gstate->filters[i]);
     }
 }
 
@@ -3801,6 +3041,7 @@ void socketmanagerDestroy(void)
     }
     socketManagerIptablesReleaseLease(&socketmanager_gstate->iptables_owner_lease_fd);
 
+    cleanupEndpoints();
     cleanupFilters();
     destroyBalanceGroups();
     pending_rules_t_drop(&socketmanager_gstate->pending_rules);

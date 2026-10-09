@@ -24,6 +24,15 @@ function(_waterwall_register_portable_contract test_name target_name labels)
   waterwall_register_native_test(${test_name} ${target_name} "${labels}" AGGREGATE ${aggregate})
 endfunction()
 
+if(NOT TARGET socket_manager_selection_test)
+  waterwall_add_native_executable(socket_manager_selection_test SUPPORT EXCLUDE_FROM_ALL SOURCES
+    "${WATERWALL_UNIT_SOURCE_ROOT}/devices/socket_manager/socket_manager_selection_test.c")
+  target_include_directories(socket_manager_selection_test PRIVATE "${CMAKE_SOURCE_DIR}/ww/managers")
+  target_link_libraries(socket_manager_selection_test PRIVATE ww)
+  _waterwall_register_portable_contract(waterwall.socket_manager_selection_unit
+    socket_manager_selection_test "unit;net;socket-manager;selection;portable")
+endif()
+
 waterwall_add_native_executable(wwapi_header_test EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/base/wwapi_header_test.c")
 target_link_libraries(wwapi_header_test PRIVATE ww)
 set_target_properties(wwapi_header_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)

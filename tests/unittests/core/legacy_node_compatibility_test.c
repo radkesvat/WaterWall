@@ -4,9 +4,8 @@
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
  * Cases: libraryDirectory, verifyRejectedLibrary, verifyExternalNodeAbiV3
- * Checks: Assertion labels include: incompatible lifecycle ABI was accepted; node getter ran before
- * lifecycle ABI rejection; current external-node ABI tunnel construction failed; lifecycle stages ran
- * out of order
+ * Checks: Missing and previous external-node ABI versions are rejected before calling nodeGet;
+ * current external-node ABI tunnel construction succeeds; lifecycle stages run in order.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.external_node_abi_v3_unit
@@ -181,8 +180,8 @@ static void verifyRejectedLibrary(const char *path, const char *directory, const
     reset();
 
     node_t node = nodelibraryLoadByTypeName(type);
-    require(node.createHandle == NULL, "incompatible lifecycle ABI was accepted");
-    require(get_calls() == 0, "node getter ran before lifecycle ABI rejection");
+    require(node.createHandle == NULL, "incompatible external-node ABI was accepted");
+    require(get_calls() == 0, "node getter ran before external-node ABI rejection");
 
     closeLibrary(handle);
     deleteLibrary(candidate);

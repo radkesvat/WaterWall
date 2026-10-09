@@ -77,7 +77,7 @@
   add_library(mismatched_abi_node_library SHARED ${WATERWALL_UNIT_SOURCE_ROOT}/core/legacy_node_library.c)
   target_compile_definitions(
     mismatched_abi_node_library
-    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=3
+    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=4
   )
   set_target_properties(mismatched_abi_node_library PROPERTIES PREFIX "")
   add_library(external_node_abi_v3_library SHARED ${WATERWALL_UNIT_SOURCE_ROOT}/core/lifecycle_v2_node_library.c)
@@ -178,6 +178,14 @@
   add_dependencies(waterwall_unit_tests socket_manager_rules_test)
 
   add_waterwall_unit_test(waterwall.socket_manager_rules_unit socket_manager_rules_test "unit;net;socket-manager")
+
+  waterwall_add_native_executable(socket_manager_selection_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/devices/socket_manager/socket_manager_selection_test.c)
+  target_include_directories(socket_manager_selection_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/managers)
+  target_link_libraries(socket_manager_selection_test PRIVATE ww_test_support ww)
+  add_dependencies(waterwall_unit_tests socket_manager_selection_test)
+  add_waterwall_unit_test(waterwall.socket_manager_selection_unit socket_manager_selection_test
+    "unit;net;socket-manager;selection")
 
   waterwall_add_native_executable(socket_manager_iptables_recovery_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/devices/socket_manager/socket_manager_iptables_recovery_test.c)
   target_link_libraries(socket_manager_iptables_recovery_test PRIVATE ww_test_support)

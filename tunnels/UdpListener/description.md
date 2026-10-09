@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpListener.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpListener.mdx, and all files must keep the same documentation version.
 -->
 
@@ -86,6 +86,17 @@ One of `port` or `port-range` is required.
   Example: `"eth0"`
 
   On Linux this uses `SO_BINDTODEVICE`. On platforms without device binding, WaterWall falls back to binding the listener using the interface's IPv4 address.
+
+  On a device-bound socket, dispatch considers listeners restricted to that same
+  interface and listeners without an interface restriction. A different interface
+  is ineligible, even with higher ACL priority or a cached balance choice.
+  Unrestricted listeners still compete under the usual address/ACL priorities and
+  registration order; interface scope does not add priority. An unrestricted socket
+  has unknown ingress scope and cannot select an explicitly interface-bound
+  listener. On other platforms, dispatch matches the effective interface bind
+  address instead. Sticky balancing separates protocol and effective interface
+  scope as well as client IP, local address and logical destination port.
+
 
 - `fwmark` `(integer)`
   Linux-style socket mark.

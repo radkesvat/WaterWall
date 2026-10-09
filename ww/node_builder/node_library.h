@@ -10,7 +10,7 @@
 
 /* The historical descriptor symbol name is retained, but the version gates the
  * complete external-node ABI, including buffer and device APIs. */
-#define WW_EXTERNAL_NODE_ABI_VERSION           4u
+#define WW_EXTERNAL_NODE_ABI_VERSION           5u
 #define WW_EXTERNAL_NODE_LIFECYCLE_ABI_VERSION WW_EXTERNAL_NODE_ABI_VERSION
 #define WW_EXTERNAL_NODE_LIFECYCLE_ABI_SYMBOL  "waterwallNodeLifecycleAbiVersion"
 
