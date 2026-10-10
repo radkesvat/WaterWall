@@ -41,6 +41,11 @@ if ((EUID != 0)); then
   unshare_args=(--user --map-root-user --net)
 fi
 
+# Capture our own namespace while it is readable; namespace-root children may
+# not inspect the host's PID 1. Replace any marker inherited from an outer run.
+WATERWALL_TEST_PARENT_NETNS=$(readlink /proc/self/ns/net)
+export WATERWALL_TEST_PARENT_NETNS
+
 # The inner script is deliberately single-quoted so its positional parameters
 # are expanded only after unshare starts the inner shell. A caller that already
 # has root authority must remain in its current user namespace: nested namespace

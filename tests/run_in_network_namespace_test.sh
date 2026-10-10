@@ -46,6 +46,15 @@ for test_exit in 0 7 42 123; do
   fi
 done
 
+# The wrapper publishes its caller's namespace without inspecting host PID 1.
+# A stale marker from an outer wrapper must not bypass the isolation check.
+parent_network_namespace=$(readlink /proc/self/ns/net)
+WATERWALL_TEST_PARENT_NETNS=stale "$wrapper_script" "$python_bin" -c '
+import os, sys
+assert os.environ["WATERWALL_TEST_PARENT_NETNS"] == sys.argv[1]
+assert os.readlink("/proc/self/ns/net") != sys.argv[1]
+' "$parent_network_namespace"
+
 # 3. Root callers retain their user namespace so runner-owned workspace paths
 # remain accessible from the isolated network namespace.
 if ((EUID == 0)); then

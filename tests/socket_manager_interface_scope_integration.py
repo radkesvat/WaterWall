@@ -61,7 +61,8 @@ def ingress_interfaces():
 
 
 def run(binary, protocol):
-    assert os.readlink("/proc/self/ns/net") != os.readlink("/proc/1/ns/net"), \
+    parent_netns = os.environ.get("WATERWALL_TEST_PARENT_NETNS")
+    assert parent_netns and os.readlink("/proc/self/ns/net") != parent_netns, \
         "run this case through run_in_network_namespace.sh"
     server_type = TcpMarkerServer if protocol == "tcp" else UdpMarkerServer
     markers = [f"{protocol}-interface-{index}\n".encode() for index in range(2)]
