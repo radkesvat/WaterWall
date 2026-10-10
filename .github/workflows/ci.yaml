@@ -388,6 +388,14 @@ jobs:
         run: >
           ctest --test-dir build/${{ matrix.preset }} -C Release
           -R '^waterwall\.linux_runtime_dependencies$' --output-on-failure --no-tests=error
+      - name: Allow parallel splice inventories
+        if: matrix.preset == 'linux-gcc-x64'
+        run: |
+          # Pipe pages are charged to the host UID across private namespaces.
+          # Budget two 512 MiB inventories per slot at the lane's 32-job cap,
+          # plus one inventory of headroom for other pipes owned by the runner.
+          pipe_pages=$((65 * 512 * 1024 * 1024 / $(getconf PAGESIZE)))
+          sudo sysctl -w fs.pipe-user-pages-soft="$pipe_pages"
       - name: Network namespace preflight
         if: matrix.preset == 'linux-gcc-x64'
         run: bash tests/run_test_lane.sh preflight build/${{ matrix.preset }}
