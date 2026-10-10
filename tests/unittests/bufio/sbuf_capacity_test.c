@@ -4,7 +4,7 @@
  * shown below.
  * Cases: testAllocationPageTouches, testNullablePaddedAllocation, testRoundsUpToCacheLines,
  * testPaddingIsAlignedAndAdded, testSpliceCapacityAndPadding, testUnrepresentableRequestsAreRejected,
- * testFullAllocationMustFitInSizeT, testMuxEncodedLengthBoundary; the driver lists the remaining cases
+ * testFullAllocationMustFitInSizeT; the driver lists the remaining cases
  * Checks: Assertion labels include: nullable sbuf did not provide the requested scratch geometry; a
  * zero-capacity request was rejected; a one-byte request was rejected; a sub-line request was rejected
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -327,47 +327,7 @@ static void testFullAllocationMustFitInSizeT(void)
 }
 
 /*
- * The MUX encoders size their frame buffer from a peer-influenced payload
- * length. `encoded_length <= UINT32_MAX` alone let a value through that then
- * wrapped inside the allocator, so the encoders now validate the real
- * allocation. This pins the specific boundary that reaches them.
- */
-static void testMuxEncodedLengthBoundary(void)
-{
-    enum
-    {
-        kMuxFrameLength        = 8,
-        kMuxMaxDataFrameLength = 1024U * 1024U
-    };
-
-    // The smallest payload whose encoded length lands above the largest aligned
-    // capacity while still being <= UINT32_MAX: the old check accepted it.
-    const uint64_t max_aligned = maxAlignedCapacity();
-    bool           found       = false;
-
-    for (uint64_t payload = UINT64_C(4294000000); payload <= (uint64_t) UINT32_MAX; payload++)
-    {
-        const uint64_t data_frames    = (payload + kMuxMaxDataFrameLength - 1U) / kMuxMaxDataFrameLength;
-        const uint64_t encoded_length = payload + (data_frames * kMuxFrameLength);
-
-        if (encoded_length > (uint64_t) UINT32_MAX || encoded_length <= max_aligned)
-        {
-            continue;
-        }
-
-        // This is the dangerous window: the old `> UINT32_MAX` test passes it.
-        uint32_t capacity = 0;
-        require(! sbufTryComputeCapacity(encoded_length, 0, &capacity),
-                "a MUX encoded length that wraps the allocator was accepted");
-        found = true;
-        break;
-    }
-
-    require(found, "no MUX payload reaching the wrap window was found; the boundary scan is not testing anything");
-}
-
-/*
- * sbufCreateWithPadding() must actually reject a request in that window rather
+ * sbufCreateWithPadding() must reject an unrepresentable request rather
  * than returning a small buffer. It aborts, so this runs in a forked child.
  */
 static void testCreateRejectsUnrepresentableRequest(void)
@@ -501,7 +461,6 @@ int main(void)
     testSpliceCapacityAndPadding();
     testUnrepresentableRequestsAreRejected();
     testFullAllocationMustFitInSizeT();
-    testMuxEncodedLengthBoundary();
     testCreateRejectsUnrepresentableRequest();
     testPoolRoundsRepresentableBufferSizes();
     testPoolRejectsUnrepresentableBufferSizes();

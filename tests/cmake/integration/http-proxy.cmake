@@ -138,12 +138,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND TARGET Ht
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND TARGET HttpProxyClient AND TARGET TlsClient AND TARGET TlsServer)
-  foreach(splice_mode IN ITEMS true false)
-    add_waterwall_isolated_test(waterwall.httpproxyclient_tls_splice_${splice_mode}
-      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/httpproxyclient_splice_integration.py"
-      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" connect "${splice_mode}" tls)
-    set_tests_properties(waterwall.httpproxyclient_tls_splice_${splice_mode} PROPERTIES TIMEOUT 60)
-    add_waterwall_test_labels(waterwall.httpproxyclient_tls_splice_${splice_mode} "integration" "http" "proxy")
-    add_waterwall_case_resource_lock(waterwall.httpproxyclient_tls_splice_${splice_mode} httpproxyclient_splice)
-  endforeach()
+  # TLS disables splice for this topology; enabled mode checks that capability gate.
+  add_waterwall_isolated_test(waterwall.httpproxyclient_tls_splice_true
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/httpproxyclient_splice_integration.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" connect true tls)
+  set_tests_properties(waterwall.httpproxyclient_tls_splice_true PROPERTIES TIMEOUT 60)
+  add_waterwall_test_labels(waterwall.httpproxyclient_tls_splice_true "integration" "http" "proxy")
+  add_waterwall_case_resource_lock(waterwall.httpproxyclient_tls_splice_true httpproxyclient_splice)
 endif()
