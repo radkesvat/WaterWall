@@ -614,7 +614,8 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
         if (sbufIsPooledSplice(b))
         {
             /* A retired entry has no pipe and must leave the inventory. */
-            if (sbufSpliceMetadata(b).pipefd[0] >= 0)
+            const splice_buffer_metadata_t metadata = sbufSpliceMetadata(b);
+            if (metadata.pipefd[0] >= 0)
             {
                 sbufSplicePoolCheckPadding(pool->splice_buffer_left_padding);
                 b->capacity = (uint32_t) b->l_pad + SPLICE_BUFFER_STORAGE_SIZE;
