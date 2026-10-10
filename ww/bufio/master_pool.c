@@ -72,6 +72,26 @@ master_pool_item_t *masterpoolRequireCreatedItem(master_pool_t *pool, master_poo
     return item;
 }
 
+master_pool_item_t *masterpoolTryGetItem(master_pool_t *pool)
+{
+    master_pool_item_t *item = NULL;
+    masterpoolTryGetItems(pool, &item, 1);
+    return item;
+}
+
+uint32_t masterpoolTryGetItems(master_pool_t *pool, master_pool_item_t **items, uint32_t requested)
+{
+    assert(pool != NULL && items != NULL);
+    mutexLock(&pool->mutex);
+    const uint32_t count = (uint32_t) atomicLoadExplicit(&pool->len, memory_order_relaxed);
+    const uint32_t taken = min(count, requested);
+    for (uint32_t i = 0; i < taken; ++i)
+        items[i] = pool->available[count - 1U - i];
+    atomicStoreExplicit(&pool->len, count - taken, memory_order_relaxed);
+    mutexUnlock(&pool->mutex);
+    return taken;
+}
+
 master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
 {
     uint32_t capacity;
@@ -146,7 +166,7 @@ void masterpoolDestroy(master_pool_t *pool)
         printError("MasterPool: destroying a pool with %zu checked-out item(s)", masterpoolGetCheckedOut(pool));
         abortProgramNow(1);
     }
-    if (pool->len != 0)
+    if (atomicLoadExplicit(&pool->len, memory_order_relaxed) != 0)
     {
         // wmutex_t* wbs = NULL; some bullshit code that was used to debug
         // mutexUnlock(wbs);

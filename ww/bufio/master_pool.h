@@ -69,8 +69,8 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct master_pool_s
     wmutex_t                    mutex;
     MasterPoolItemCreateHandle  create_item_handle;
     MasterPoolItemDestroyHandle destroy_item_handle;
-    atomic_uint                 len;
-    atomic_size_t               checked_out;
+    atomic_uint                 len;         // Advisory probes are lockless; the mutex protects cached slots.
+    atomic_size_t               checked_out; // Terminal returns publish completion independently of the mutex.
     const uint32_t              cap;
     void                       *available[];
 } GNU_ATTR_ALIGNED_LINE_CACHE master_pool_t;
@@ -89,6 +89,8 @@ static inline void masterpoolRecordCheckout(master_pool_t *const pool)
 
 static inline void masterpoolRecordReturn(master_pool_t *const pool)
 {
+    /* Return/destruction can finish outside the master's mutex. Publish its
+     * completion before teardown observes that all checkouts have settled. */
     const size_t previous = atomicSubExplicit(&pool->checked_out, 1, memory_order_release);
     assert(previous != 0);
     if (UNLIKELY(previous == 0))
@@ -100,6 +102,8 @@ static inline void masterpoolRecordReturn(master_pool_t *const pool)
 
 static inline size_t masterpoolGetCheckedOut(const master_pool_t *const pool)
 {
+    /* Pair with terminal returns. Teardown must also close checkout admission;
+     * observing zero alone cannot exclude a new checkout. */
     return atomicLoadExplicit(&((master_pool_t *) pool)->checked_out, memory_order_acquire);
 }
 
@@ -109,6 +113,14 @@ static inline size_t masterpoolGetCheckedOut(const master_pool_t *const pool)
  * is fail-fast and never returns or stores a NULL item.
  */
 master_pool_item_t *masterpoolRequireCreatedItem(master_pool_t *pool, master_pool_item_t *item, void *userdata);
+
+/** Pop one already-cached item, or return NULL when the cache is empty.
+ * Never allocates or calls the creation callback. Like GetItems/ReuseItems,
+ * checkout/return accounting remains the caller's responsibility. */
+master_pool_item_t *masterpoolTryGetItem(master_pool_t *pool);
+
+/* Remove up to count cached entries, without creating missing items. */
+uint32_t masterpoolTryGetItems(master_pool_t *pool, master_pool_item_t **items, uint32_t count);
 
 /**
  * Retrieves a specified number of items from the master pool.
@@ -137,9 +149,9 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
             {
                 iptr[i] = pool->available[pbase + i];
             }
-            /* Consumers have copied every slot before making them unavailable
-             * to lockless probes and the next mutex holder. */
-            atomicStoreExplicit(&(pool->len), pbase, memory_order_release);
+            /* Slot ownership is transferred under the mutex. Lockless probes
+             * only inspect the count and never read the slots. */
+            atomicStoreExplicit(&(pool->len), pbase, memory_order_relaxed);
         }
         mutexUnlock(&(pool->mutex));
     }
@@ -183,8 +195,8 @@ static inline void masterpoolReuseItems(master_pool_t *const pool, master_pool_i
         pool->available[i + tmp_len] = iptr[i];
     }
 
-    /* Publish initialized slots only after writing them. */
-    atomicStoreExplicit(&(pool->len), tmp_len + consumed, memory_order_release);
+    /* Unlocking publishes the initialized slots to the next mutex holder. */
+    atomicStoreExplicit(&(pool->len), tmp_len + consumed, memory_order_relaxed);
 
     mutexUnlock(&(pool->mutex));
 
