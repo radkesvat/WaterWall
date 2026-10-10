@@ -102,7 +102,7 @@
   target_link_libraries(wlibc_helpers_test PRIVATE ww_test_support)
   target_link_libraries(wlibc_helpers_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests wlibc_helpers_test)
-  add_waterwall_unit_test(waterwall.wlibc_helpers_unit wlibc_helpers_test "unit;libc;helpers")
+  add_waterwall_unit_test(waterwall.wlibc_helpers_unit wlibc_helpers_test "unit;libc;helpers;file")
 
   waterwall_add_native_executable(base64_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/base/base64_test.c)
   target_link_libraries(base64_test PRIVATE ww ww_test_support)

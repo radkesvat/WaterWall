@@ -225,12 +225,6 @@
   add_waterwall_unit_test(waterwall.udp_zero_length_unit udp_zero_length_test "unit;event;udp")
 
   if(LINUX)
-    waterwall_add_native_executable(wlibc_write_file_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/base/wlibc_write_file_test.c)
-    target_link_libraries(wlibc_write_file_test PRIVATE ww)
-    add_dependencies(waterwall_unit_tests wlibc_write_file_test)
-
-    add_waterwall_unit_test(waterwall.wlibc_write_file_unit wlibc_write_file_test "unit;libc;file")
-
     waterwall_add_native_executable(capture_linux_nfqueue_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/devices/capture_linux_nfqueue_test.c)
   target_link_libraries(capture_linux_nfqueue_test PRIVATE ww_test_support)
     target_link_libraries(capture_linux_nfqueue_test PRIVATE ww)

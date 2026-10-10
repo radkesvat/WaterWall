@@ -2,7 +2,8 @@
  * Covers: wlibc helpers; the explicit inputs, callbacks and expected results below define this suite.
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
- * Cases: testBoolText, testAsciiCaseEqualsAny, testStringAppendFormat, testRotateLeft32
+ * Cases: testBoolText, testAsciiCaseEqualsAny, testStringAppendFormat, testRotateLeft32,
+ * testWriteFileReportsFlushFailure (Linux)
  * Checks: Assertion labels include: true; false; yes; no
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
@@ -105,6 +106,15 @@ static void testRotateLeft32(void)
     require(wwRotateLeft32(value, 36) == UINT32_C(0x23456781), "rotate-left count greater than 32 failed");
 }
 
+#if defined(OS_LINUX)
+static void testWriteFileReportsFlushFailure(void)
+{
+    static const char data[] = "flush failure";
+
+    require(! writeFile("/dev/full", data, sizeof(data) - 1U), "writeFile reported success after fclose failed");
+}
+#endif
+
 int main(void)
 {
     testCaseSet("wlibc_helpers_test");
@@ -112,5 +122,8 @@ int main(void)
     testAsciiCaseEqualsAny();
     testStringAppendFormat();
     testRotateLeft32();
+#if defined(OS_LINUX)
+    testWriteFileReportsFlushFailure();
+#endif
     return 0;
 }
