@@ -653,6 +653,9 @@ jobs:
         run: ccache -sv
 
   msys2:
+    env:
+      # Supported by the pinned setup-msys2 version; avoid rate-limited geo mirrors.
+      __SETUP_MSYS2_USE_MAIN_MIRROR_ONLY: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -716,7 +719,7 @@ jobs:
       - name: Wait before MSYS2 retry
         if: ${{ !cancelled() && steps.setup_msys2_initial.outcome == 'failure' }}
         shell: pwsh
-        run: Start-Sleep -Seconds 20
+        run: Start-Sleep -Seconds 60
 
       - name: Setup MSYS2 (retry 1)
         id: setup_msys2_retry_1
@@ -748,7 +751,7 @@ jobs:
       - name: Wait before final MSYS2 retry
         if: ${{ !cancelled() && steps.setup_msys2_retry_1.outcome == 'failure' }}
         shell: pwsh
-        run: Start-Sleep -Seconds 45
+        run: Start-Sleep -Seconds 120
 
       - name: Setup MSYS2 (retry 2)
         if: ${{ !cancelled() && steps.setup_msys2_retry_1.outcome == 'failure' }}
