@@ -238,14 +238,13 @@ static void serverFixtureSetup(server_delay_fixture_t *fixture)
     GSTATE.workers_count         = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
 
-    fixture->large_master = masterpoolCreateWithCapacity(64);
-    fixture->small_master = masterpoolCreateWithCapacity(8);
+    fixture->large_master  = masterpoolCreateWithCapacity(64);
+    fixture->small_master  = masterpoolCreateWithCapacity(8);
     fixture->medium_master = masterpoolCreateWithCapacity(8);
     fixture->splice_master = masterpoolCreateWithCapacity(8);
     fixture->pool          = bufferpoolCreate(fixture->large_master,
                                      fixture->medium_master,
                                      fixture->small_master,
-                                     fixture->splice_master,
                                      8,
                                      32768,
                                      MEDIUM_BUFFER_SIZE_RAM_HIGH,

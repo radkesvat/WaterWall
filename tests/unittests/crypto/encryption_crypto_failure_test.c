@@ -114,20 +114,12 @@ int main(void)
     testCaseSet("encryption_crypto_failure_test");
     require(wCryptoGlobalInit() == kWCryptoOk, "crypto global initialization failed");
 
-    master_pool_t  *large_master    = masterpoolCreateWithCapacity(8);
-    master_pool_t  *small_master    = masterpoolCreateWithCapacity(8);
-    master_pool_t  *medium_master   = masterpoolCreateWithCapacity(8);
-    master_pool_t  *splice_master   = masterpoolCreateWithCapacity(8);
-    buffer_pool_t  *pool            = bufferpoolCreate(large_master,
-                                           medium_master,
-                                           small_master,
-                                           splice_master,
-                                           8,
-                                           65536,
-                                           MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                           1024,
-                                           65536,
-                                           65536);
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool          = bufferpoolCreate(
+        large_master, medium_master, small_master, 8, 65536, MEDIUM_BUFFER_SIZE_RAM_HIGH, 1024, 65536, 65536);
     buffer_pool_t **saved_shortcuts = GSTATE.shortcut_buffer_pools;
     buffer_pool_t  *shortcuts[1]    = {pool};
     GSTATE.flag_initialized         = true;

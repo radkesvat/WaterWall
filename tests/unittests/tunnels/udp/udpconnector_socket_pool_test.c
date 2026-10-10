@@ -229,7 +229,7 @@ static void setupFixtureMode(test_fixture_t *fixture, enum udpconnector_balance_
     memoryZero(g_captured_wio_write_data, sizeof(g_captured_wio_write_data));
     g_captured_wio_write_len = 0;
 #endif
-    twfWorkerEnvSetup(&fixture->env, kTestLargeBuffer, 0);
+    twfWorkerEnvSetup(&fixture->env, kTestLargeBuffer, 32);
 
     fixture->prev = tunnelCreate(NULL, sizeof(test_fixture_t *), 0);
     twfRequire(fixture->prev != NULL, "failed to create prev tunnel");
@@ -1727,10 +1727,9 @@ static void testRetiringSibling(unsigned mode, unsigned path)
     test_fixture_t f;
     setupFixtureMode(&f, mode ? kUdpConnectorBalanceModePacket : kUdpConnectorBalanceModeConnection);
     f.destroy_on_finish = true;
-    bufferpoolUpdateAllocationPaddings(f.env.pool, 32, 32, 32, 32);
-    line_t *a     = createAndInitLineIpv4(&f, "127.0.0.1", 20001);
-    line_t *b     = createAndInitLineIpv4(&f, "127.0.0.1", 20002);
-    line_t *other = createAndInitLineIpv4(&f, "127.0.0.1", 20001);
+    line_t *a           = createAndInitLineIpv4(&f, "127.0.0.1", 20001);
+    line_t *b           = createAndInitLineIpv4(&f, "127.0.0.1", 20002);
+    line_t *other       = createAndInitLineIpv4(&f, "127.0.0.1", 20001);
     lineRef(a);
     lineRef(b);
     udpconnector_lstate_t *a_ls     = lineGetState(a, f.connector);

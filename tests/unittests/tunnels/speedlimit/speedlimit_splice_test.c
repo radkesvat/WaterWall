@@ -9,6 +9,7 @@
 #include "SpeedLimit/interface.h"
 #include "SpeedLimit/structure.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/protocols/splice_source.h"
 
 #include <unistd.h>
 
@@ -29,22 +30,10 @@ static uint8_t          received[65536];
 static size_t           received_length, materialized;
 static unsigned         payloads, pauses, resumes, finishes;
 static bool upstream, measuring, expect_splice, expect_ordinary, pause_output, close_output, close_resume, inject_input;
-static bool fail_pipe;
 static sbuf_t *expected_identity;
+static bool    independent_sources;
 
 #if WW_HAVE_SPLICE
-int __real_pipe2(int pipefd[2], int flags);
-int __wrap_pipe2(int pipefd[2], int flags);
-int __wrap_pipe2(int pipefd[2], int flags)
-{
-    if (fail_pipe)
-    {
-        errno = EMFILE;
-        return -1;
-    }
-    return __real_pipe2(pipefd, flags);
-}
-
 ssize_t __real_read(int fd, void *destination, size_t bytes);
 ssize_t __wrap_read(int fd, void *destination, size_t bytes);
 ssize_t __wrap_read(int fd, void *destination, size_t bytes)
@@ -82,7 +71,8 @@ static sbuf_t *ordinary(const void *data, uint32_t length)
 #if WW_HAVE_SPLICE
 static sbuf_t *pipeBytes(const void *data, uint32_t length, uint32_t prefix)
 {
-    sbuf_t *buf = bufferpoolGetSpliceBuffer(env.pool);
+    sbuf_t *buf = independent_sources ? twfTrackAcquired(testSpliceSourceBuffer(kPadding, length - prefix))
+                                      : bufferpoolGetSpliceBuffer(env.pool);
     twfRequire(buf != NULL && prefix <= length && prefix <= kPadding, "allocate private pipe input");
     uint32_t body = length - prefix;
     twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], (const uint8_t *) data + prefix, body) == (ssize_t) body,
@@ -203,8 +193,7 @@ static void setup(bool up, const char *work_mode, const char *limit_mode)
     upstream        = up;
     received_length = materialized = 0;
     payloads = pauses = resumes = finishes = 0;
-    measuring = expect_splice = expect_ordinary = pause_output = close_output = close_resume = inject_input =
-        fail_pipe                                                                            = false;
+    measuring = expect_splice = expect_ordinary = pause_output = close_output = close_resume = inject_input = false;
     expected_identity                                                                        = NULL;
     twfWorkerEnvSetup(&env, 8192, kPadding);
     metadata = nodeSpeedLimitGet();
@@ -340,11 +329,13 @@ static void testFallback(bool up)
     for (unsigned i = 0; i < sizeof(bytes); ++i)
         bytes[i] = (uint8_t) i;
     submit(pipeBytes(bytes, sizeof(bytes), 7));
-    fail_pipe = expect_ordinary = measuring = true;
+    test_splice_inventory_hold_t held = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
+    expect_ordinary = measuring = true;
     tokens(2048);
     tick();
     twfRequire(materialized == 2048 - 7, "ordinary fallback did not consume the exact granted pipe range");
-    fail_pipe = expect_ordinary = false;
+    testSpliceInventoryReleaseHeld(&held);
+    expect_ordinary = false;
     tokens(2048);
     tick();
     twfRequire(received_length == sizeof(bytes) && memoryCompare(received, bytes, sizeof(bytes)) == 0,
@@ -400,6 +391,7 @@ static void testClose(bool up, bool from_resume)
 static void testLimits(bool up, unsigned dimension)
 {
     setup(up, "pause", "per-line");
+    independent_sources = dimension == 2;
     pauseConsumer();
     tokens(0);
     if (dimension == 0)
@@ -429,6 +421,7 @@ static void testLimits(bool up, unsigned dimension)
     }
     submit(input("X", 1, WW_HAVE_SPLICE, 0));
     twfRequire(! lineIsAlive(line) && finishes == 2 && payloads == 0, "overflow did not close and discard owned data");
+    independent_sources = false;
     teardown();
 }
 

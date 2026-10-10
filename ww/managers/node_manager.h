@@ -92,11 +92,15 @@ void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
 tunnel_t *nodemanagerCreateTunnelInstance(node_t *node);
 
 /**
- * @brief Run a parsed config file through node manager pipeline.
+ * @brief Build and finalize a parsed config without calling prepare/start hooks.
  *
  * @param config_file Parsed config file.
  */
-ww_startup_result_t nodemanagerRunConfigFile(config_file_t *config_file);
+ww_startup_result_t nodemanagerBuildConfigFile(config_file_t *config_file);
+
+/* Once all configurations are built and shared buffers are ready, prepare and
+ * start every configuration. No further configurations may be built afterward. */
+ww_startup_result_t nodemanagerStartConfigs(void);
 
 /**
  * @brief Stop all loaded chained tunnel runtime instances.

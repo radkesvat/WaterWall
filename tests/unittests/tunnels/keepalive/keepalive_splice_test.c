@@ -13,6 +13,7 @@
  * waterwall.keepaliveserver_no_splice_unit; waterwall.keepaliveserver_splice_unit
  */
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/protocols/splice_source.h"
 
 #ifdef TEST_KEEPALIVE_SERVER
 #include "KeepAliveServer/interface.h"
@@ -95,16 +96,20 @@ static sbuf_t *ordinary(const void *data, uint32_t length)
 }
 
 #if WW_HAVE_SPLICE
+static bool independent_sources;
+
 static sbuf_t *pipeBytes(const void *data, uint32_t length, uint32_t prefix)
 {
     const uint8_t *bytes = data;
     sbuf_t        *buf;
-    if (prefix <= 128)
+    if (independent_sources)
+        buf = twfTrackAcquired(testSpliceSourceBuffer((uint16_t) (max(prefix, 128U)), length - prefix));
+    else if (prefix <= 128)
         buf = bufferpoolGetSpliceBuffer(env.pool);
     else
     {
         buf = twfTrackAcquired(sbufCreateSplice((uint16_t) (prefix + 128)));
-        twfRequire(sbufSpliceInitPipe(buf, 8192) == 0, "create large resident-prefix pipe");
+        twfRequire(testSpliceSourceInitPipe(buf) == 0, "create large resident-prefix pipe");
         buf->flags |= kSbufFlagSplice;
     }
     twfRequire(buf != NULL && prefix <= length, "create splice input");
@@ -862,6 +867,7 @@ static void testPipes(void)
 static void testLargePipeFrame(void)
 {
     setup();
+    independent_sources = true;
     uint8_t *payload = memoryAllocate(kExpectedChunkBytes);
     for (uint32_t i = 0; i < kExpectedChunkBytes; ++i)
         payload[i] = (uint8_t) (i * 17);
@@ -879,7 +885,8 @@ static void testLargePipeFrame(void)
     twfRequire(plain_calls == 1 && plain_length == kExpectedChunkBytes &&
                    memoryCompare(plain, payload, kExpectedChunkBytes) == 0,
                "maximum frame from many pipes changed bytes");
-    /* The fixture requests 64 KiB pipes, so a complete 1 MiB body must use ordinary fallback. */
+    independent_sources = false;
+    /* The split source pages exceed the full-size destination pipe's slot capacity. */
     twfRequire(measured_reads == wire_length, "large pipe-pressure fallback did not settle all bytes exactly once");
     memoryFree(payload);
     teardown();

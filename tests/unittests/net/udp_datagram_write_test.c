@@ -10,6 +10,7 @@
  * or application-throughput behavior.
  * CTest: waterwall.udp_datagram_write_no_splice_unit; waterwall.udp_datagram_write_unit
  */
+#include "fixtures/splice_inventory.h"
 #include "splice_buffer.h"
 
 #include "test_assert.h"
@@ -329,14 +330,15 @@ static void runTcpChecks(wloop_t *loop, buffer_pool_t *pool, const sockaddr_u *u
 
 int main(void)
 {
+    testSpliceInventoryInitialize(64);
     testCaseSet("udp_datagram_write_test");
-    master_pool_t             *large_master = masterpoolCreateWithCapacity(16);
-    master_pool_t             *small_master = masterpoolCreateWithCapacity(16);
-    master_pool_t             *medium_master = masterpoolCreateWithCapacity(16);
-    master_pool_t             *splice_master = masterpoolCreateWithCapacity(16);
-    master_pool_t             *wio_master   = masterpoolCreateWithCapacity(16);
-    buffer_pool_t             *buffer_pool =
-        bufferpoolCreate(large_master, medium_master, small_master, splice_master, 16, 8192, 2048, 1024, 8192, 8192);
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(16);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(16);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(16);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(16);
+    master_pool_t *wio_master    = masterpoolCreateWithCapacity(16);
+    buffer_pool_t *buffer_pool =
+        bufferpoolCreate(large_master, medium_master, small_master, 16, 8192, 2048, 1024, 8192, 8192);
     threadsafe_generic_pool_t *wio_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 16);
     threadsafe_generic_pool_t *wio_pools[] = {wio_pool};

@@ -3,6 +3,7 @@
  * CTest: waterwall.connectionfisher{client,server}_{splice,no_splice}_unit
  */
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/protocols/splice_source.h"
 
 #ifdef TEST_FISHER_SERVER
 #include "ConnectionFisherServer/interface.h"
@@ -91,7 +92,7 @@ static sbuf_t *input(const void *data, uint32_t length, bool pipe)
         else
         {
             buf = twfTrackAcquired(sbufCreateSplice((uint16_t) (prefix + 128)));
-            twfRequire(sbufSpliceInitPipe(buf, 8192) == 0, "create resident-prefix pipe");
+            twfRequire(testSpliceSourceInitPipe(buf) == 0, "create resident-prefix pipe");
             buf->flags |= kSbufFlagSplice;
         }
         twfRequire(buf != NULL && prefix <= UINT16_MAX - 128, "create exclusive splice input");

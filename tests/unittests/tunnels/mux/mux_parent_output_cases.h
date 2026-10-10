@@ -1343,6 +1343,7 @@ static void caseChildCloseKeepsParentParsing(void)
 }
 
 #if WW_HAVE_SPLICE
+#include "fixtures/protocols/splice_source.h"
 #include "splice_buffer.h"
 #include <sys/ioctl.h>
 
@@ -1354,7 +1355,8 @@ static int      pqExpectedPipe;
 
 static sbuf_t *pqSpliceBytes(pq_fixture_t *f, const uint8_t *bytes, uint32_t length)
 {
-    sbuf_t *buf = bufferpoolGetSpliceBuffer(f->env.pool);
+    sbuf_t *buf = length == 0 ? twfTrackAcquired(sbufCreateSplice(bufferpoolGetSpliceBufferPadding(f->env.pool)))
+                              : bufferpoolGetSpliceBuffer(f->env.pool);
     twfRequire(buf != NULL, "failed to allocate private-pipe fixture");
     const int fd     = sbufSpliceMetadata(buf).pipefd[1];
     uint32_t  offset = 0;
@@ -1369,6 +1371,18 @@ static sbuf_t *pqSpliceBytes(pq_fixture_t *f, const uint8_t *bytes, uint32_t len
     buf->capacity = buf->l_pad + length;
     sbufSetLength(buf, length);
     return buf;
+}
+
+/* Cardinality/compaction input is independent of the destination inventory. */
+static sbuf_t *pqIndependentSpliceByte(pq_fixture_t *f, uint8_t byte, uint32_t minimum_capacity)
+{
+    sbuf_t *input =
+        twfTrackAcquired(testSpliceSourceBuffer(bufferpoolGetSpliceBufferPadding(f->env.pool), minimum_capacity));
+    twfRequire(write(sbufSpliceMetadata(input).pipefd[1], &byte, 1) == 1,
+               "retained source fixture could not hold its payload");
+    input->capacity = input->l_pad + 1;
+    sbufSetLength(input, 1);
+    return input;
 }
 
 static sbuf_t *pqSplicePattern(pq_fixture_t *f, uint32_t length)
@@ -1488,9 +1502,14 @@ static void caseSpliceDecodedFrames(bool paused, bool header_in_pipe, uint32_t l
         if (length != 0)
             twfRequire(queued == input && sbufSpliceMetadata(queued).pipefd[0] == pqExpectedPipe,
                        "paused frame did not retain its original wrapper and pipe");
-        int available = -1;
-        twfRequire(ioctl(pqExpectedPipe, FIONREAD, &available) == 0 && available == (int) length,
-                   "eligible queued frame consumed its private body before Resume");
+        if (pqExpectedPipe >= 0)
+        {
+            int available = -1;
+            twfRequire(ioctl(pqExpectedPipe, FIONREAD, &available) == 0 && available == (int) length,
+                       "eligible queued frame consumed its private body before Resume");
+        }
+        else
+            twfRequire(length == 0, "nonempty queued source lacked a private pipe");
         pqResumeDecodedChild(&f);
         twfRequire(child->pending_child_queue_charge == 0 && parent->pending_child_queue_charge == 0,
                    "Resume did not settle child and parent queue charges");
@@ -1503,7 +1522,7 @@ static sbuf_t *pqTinyCarrierByte(pq_fixture_t *f, uint32_t index, bool splice_in
 {
     const uint8_t byte = patternByte(index);
     if (splice_input)
-        return pqSpliceBytes(f, &byte, 1);
+        return pqIndependentSpliceByte(f, byte, 1);
     sbuf_t *buf = bufferpoolGetSmallBuffer(f->env.pool);
     sbufSetLength(buf, 1);
     sbufWriteUI8(buf, byte);

@@ -42,7 +42,7 @@ if(TARGET Bgp4Client AND TARGET Bgp4Server)
   target_link_options(bgp4_large_stream_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
   target_link_options(bgp4_large_stream_test PRIVATE
     "-Wl,--wrap=fastRand" "-Wl,--wrap=splicestreamCreate" "-Wl,--wrap=bufferqueueReserveExtra"
-    "-Wl,--wrap=pipe2" "-Wl,--wrap=splice" "-Wl,--wrap=read" "-Wl,--wrap=fcntl")
+    "-Wl,--wrap=splice" "-Wl,--wrap=read")
   add_dependencies(waterwall_unit_tests bgp4_large_stream_test)
   add_waterwall_unit_test(waterwall.bgp4_large_stream_unit bgp4_large_stream_test "unit;tunnels;bgp4;framing")
   if(LINUX)

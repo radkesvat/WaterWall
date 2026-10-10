@@ -43,7 +43,6 @@ static void globalstateDestroyMasterPools(void)
     masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_large);
     masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_small);
     masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_medium);
-    masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_splice);
     masterpoolMakeEmpty(GSTATE.masterpool_wios);
     masterpoolMakeEmpty(GSTATE.masterpool_context_pools);
     masterpoolMakeEmpty(GSTATE.masterpool_messages);
@@ -52,20 +51,21 @@ static void globalstateDestroyMasterPools(void)
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_medium);
-    masterpoolDestroy(GSTATE.masterpool_buffer_pools_splice);
     masterpoolDestroy(GSTATE.masterpool_wios);
     masterpoolDestroy(GSTATE.masterpool_context_pools);
     masterpoolDestroy(GSTATE.masterpool_messages);
     masterpoolDestroy(GSTATE.masterpool_timers);
 
-    GSTATE.masterpool_buffer_pools_large = NULL;
-    GSTATE.masterpool_buffer_pools_small = NULL;
+    GSTATE.masterpool_buffer_pools_large  = NULL;
+    GSTATE.masterpool_buffer_pools_small  = NULL;
     GSTATE.masterpool_buffer_pools_medium = NULL;
-    GSTATE.masterpool_buffer_pools_splice = NULL;
-    GSTATE.masterpool_wios               = NULL;
-    GSTATE.masterpool_context_pools       = NULL;
-    GSTATE.masterpool_messages           = NULL;
-    GSTATE.masterpool_timers              = NULL;
+
+    GSTATE.masterpool_wios          = NULL;
+    GSTATE.masterpool_context_pools = NULL;
+    GSTATE.masterpool_messages      = NULL;
+    GSTATE.masterpool_timers        = NULL;
+
+    sbufSplicePoolDestroy();
 }
 
 static err_t wwDefaultInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
@@ -77,23 +77,20 @@ static err_t wwDefaultInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
 
 static bool initializeMasterPools(void)
 {
-    master_pool_t *large  = masterpoolCreateWithCapacity(2 * PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE));
-    master_pool_t *small  = masterpoolCreateWithCapacity(2 * PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE));
-    master_pool_t *medium = masterpoolCreateWithCapacity(2 * PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE));
-    /* Preserve reusable pipes at the full profile capacity. */
-    master_pool_t *splice   = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    master_pool_t *large    = masterpoolCreateWithCapacity(2 * PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE));
+    master_pool_t *small    = masterpoolCreateWithCapacity(2 * PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE));
+    master_pool_t *medium   = masterpoolCreateWithCapacity(2 * PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE));
     master_pool_t *wios     = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *contexts = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *messages = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     master_pool_t *timers   = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
 
-    if (UNLIKELY(large == NULL || small == NULL || splice == NULL || medium == NULL || wios == NULL ||
-                 contexts == NULL || messages == NULL || timers == NULL))
+    if (UNLIKELY(large == NULL || small == NULL || medium == NULL || wios == NULL || contexts == NULL ||
+                 messages == NULL || timers == NULL))
     {
         masterpoolDestroy(large);
         masterpoolDestroy(small);
         masterpoolDestroy(medium);
-        masterpoolDestroy(splice);
         masterpoolDestroy(wios);
         masterpoolDestroy(contexts);
         masterpoolDestroy(messages);
@@ -102,14 +99,14 @@ static bool initializeMasterPools(void)
         return false;
     }
 
-    GSTATE.masterpool_buffer_pools_large = large;
-    GSTATE.masterpool_buffer_pools_small = small;
+    GSTATE.masterpool_buffer_pools_large  = large;
+    GSTATE.masterpool_buffer_pools_small  = small;
     GSTATE.masterpool_buffer_pools_medium = medium;
-    GSTATE.masterpool_buffer_pools_splice = splice;
-    GSTATE.masterpool_wios               = wios;
-    GSTATE.masterpool_context_pools       = contexts;
-    GSTATE.masterpool_messages           = messages;
-    GSTATE.masterpool_timers              = timers;
+
+    GSTATE.masterpool_wios          = wios;
+    GSTATE.masterpool_context_pools = contexts;
+    GSTATE.masterpool_messages      = messages;
+    GSTATE.masterpool_timers        = timers;
 
     workerMessagesInstallMasterPoolCallbacks(GSTATE.masterpool_messages);
     return true;
@@ -889,13 +886,13 @@ WW_EXPORT void destroyGlobalState(void)
 #endif
     wCryptoGlobalCleanup();
 
+    globalstateDestroyMasterPools();
+
     coreloggerDestroy();
     networkloggerDestroy();
     dnsloggerDestroy();
     internaloggerDestroy();
     loggerDestroyDefaultLogger();
-
-    globalstateDestroyMasterPools();
 
     memoryFree((void *) GSTATE.shortcut_loops);
     GSTATE.shortcut_loops         = NULL;

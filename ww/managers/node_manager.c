@@ -9,6 +9,7 @@
 #include "loggers/internal_logger.h"
 #include "net/node_layer_solver.h"
 #include "node_builder/config_policy.h"
+#include "signal_manager.h"
 #include "utils/json_helpers.h"
 
 enum
@@ -48,6 +49,7 @@ typedef struct node_manager_config_s
 typedef struct node_manager_s
 {
     vec_configs_t          configs;
+    bool                   startup_started;
     atomic_bool            quiesce_request_started;
     atomic_bool            quiesce_wait_started;
     atomic_bool            stop_started;
@@ -538,11 +540,11 @@ static bool initializePacketTunnels(node_manager_config_t *cfg)
 }
 
 /**
- * @brief Execute full node startup pipeline for one config.
+ * @brief Construct and finalize every chain in one config, without producers.
  *
  * @param cfg Node manager config.
  */
-static void runNodes(node_manager_config_t *cfg)
+static void buildNodes(node_manager_config_t *cfg)
 {
     tunnel_t *t_array[kMaxNodesPerConfig] = {0};
     int       tunnels_count               = createTunnelInstances(cfg, t_array, kMaxNodesPerConfig);
@@ -572,21 +574,6 @@ static void runNodes(node_manager_config_t *cfg)
     {
         return;
     }
-    if (UNLIKELY(! initializePacketTunnels(cfg)))
-    {
-        /* Already-admitted messages remain owned by their worker queues and are
-         * reclaimed by startup-failure teardown. Packet lines themselves stay
-         * chain-owned and are released only by tunnelchainDestroy(). */
-        startupFailureRecord(1);
-        return;
-    }
-
-    prepareTunnels(cfg);
-    if (UNLIKELY(startupFailurePending()))
-    {
-        return;
-    }
-    startTunnels(cfg);
 }
 
 /**
@@ -953,7 +940,7 @@ static void freezeNodeMap(node_manager_config_t *cfg)
 }
 
 /**
- * @brief Parse, validate, and run all nodes for one config.
+ * @brief Parse, validate, and finalize all nodes for one config.
  *
  * @param cfg Node manager config.
  */
@@ -979,7 +966,7 @@ static void startInstallingConfigFile(node_manager_config_t *cfg)
     {
         return;
     }
-    runNodes(cfg);
+    buildNodes(cfg);
 }
 
 struct node_manager_s *nodemanagerGetState(void)
@@ -1025,8 +1012,9 @@ static node_manager_config_t *createNodeManagerConfig(config_file_t *config_file
     return cfg;
 }
 
-ww_startup_result_t nodemanagerRunConfigFile(config_file_t *config_file)
+ww_startup_result_t nodemanagerBuildConfigFile(config_file_t *config_file)
 {
+    assert(! nodemanager_gstate->startup_started);
     ww_startup_context_t startup = {0};
     wwStartupContextBegin(&startup);
 
@@ -1046,6 +1034,44 @@ ww_startup_result_t nodemanagerRunConfigFile(config_file_t *config_file)
         return wwStartupContextEnd(&startup);
     }
     startInstallingConfigFile(cfg);
+    return wwStartupContextEnd(&startup);
+}
+
+static bool startupWasStopped(void)
+{
+    signalmanagerConsumePendingShutdownSignal();
+    return applicationShutdownWasRequested();
+}
+
+ww_startup_result_t nodemanagerStartConfigs(void)
+{
+    assert(! nodemanager_gstate->startup_started);
+    nodemanager_gstate->startup_started = true;
+    ww_startup_context_t startup        = {0};
+    wwStartupContextBegin(&startup);
+    /* All configurations have finalized padding before any prepare/start hook.
+     * Admit packet-line bootstrap before starting any external reader. */
+    c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
+    {
+        if (startupWasStopped())
+            return wwStartupContextEnd(&startup);
+        if (! initializePacketTunnels(*conf.ref))
+        {
+            startupFailureRecord(1);
+            return wwStartupContextEnd(&startup);
+        }
+        prepareTunnels(*conf.ref);
+        if (startupFailurePending())
+            return wwStartupContextEnd(&startup);
+    }
+    c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
+    {
+        if (startupWasStopped())
+            break;
+        startTunnels(*conf.ref);
+        if (startupFailurePending())
+            break;
+    }
     return wwStartupContextEnd(&startup);
 }
 

@@ -1089,7 +1089,6 @@ static void envSetup(test_env_t *env)
     env->worker_buffer_pool = bufferpoolCreate(env->large_master,
                                                env->medium_master,
                                                env->small_master,
-                                               env->splice_master,
                                                16,
                                                8192,
                                                MEDIUM_BUFFER_SIZE_RAM_HIGH,
@@ -1102,10 +1101,10 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_large  = env->large_master;
     GSTATE.masterpool_buffer_pools_small  = env->small_master;
     GSTATE.masterpool_buffer_pools_medium = env->medium_master;
-    GSTATE.masterpool_buffer_pools_splice = env->splice_master;
-    GSTATE.shortcut_buffer_pools          = env->buffer_pools;
-    GSTATE.shortcut_loops                 = env->loops;
-    GSTATE.workers_count                  = 1;
+
+    GSTATE.shortcut_buffer_pools = env->buffer_pools;
+    GSTATE.shortcut_loops        = env->loops;
+    GSTATE.workers_count         = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
     GSTATE.ram_profile = 1;
     testWorkerBindWID(0);
@@ -1116,10 +1115,10 @@ static void envTeardown(test_env_t *env)
     GSTATE.masterpool_buffer_pools_large  = NULL;
     GSTATE.masterpool_buffer_pools_small  = NULL;
     GSTATE.masterpool_buffer_pools_medium = NULL;
-    GSTATE.masterpool_buffer_pools_splice = NULL;
-    GSTATE.shortcut_buffer_pools          = NULL;
-    GSTATE.shortcut_loops                 = NULL;
-    GSTATE.workers_count                  = 0;
+
+    GSTATE.shortcut_buffer_pools = NULL;
+    GSTATE.shortcut_loops        = NULL;
+    GSTATE.workers_count         = 0;
     testWorkerRegistryRestore(&g_test_worker_registry);
 
     bufferpoolDestroy(env->worker_buffer_pool);
@@ -3204,13 +3203,13 @@ static void testGsoWorkerPoolPaddingGrowth(test_env_t *env)
     master_pool_t *small  = masterpoolCreateWithCapacity(4);
     master_pool_t *splice = masterpoolCreateWithCapacity(4);
     buffer_pool_t *isolated =
-        bufferpoolCreate(large, medium, small, splice, 4, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, 4096, 8192, 8192);
+        bufferpoolCreate(large, medium, small, 4, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, 4096, 8192, 8192);
     bufferpoolUpdateAllocationPaddings(isolated, 64, 64, 64, 64);
     GSTATE.masterpool_buffer_pools_large  = large;
     GSTATE.masterpool_buffer_pools_medium = medium;
     GSTATE.masterpool_buffer_pools_small  = small;
-    GSTATE.masterpool_buffer_pools_splice = splice;
-    env->buffer_pools[0]                  = isolated;
+
+    env->buffer_pools[0] = isolated;
     buffer_pool_fit_t initial_fit;
     require(bufferpoolQueryBestFit(isolated, 1500, 64, &initial_fit), "initial output allowance query failed");
     padding_growth_output_allowance = initial_fit.allocation_charge;
@@ -3237,7 +3236,7 @@ static void testGsoWorkerPoolPaddingGrowth(test_env_t *env)
     GSTATE.masterpool_buffer_pools_large  = env->large_master;
     GSTATE.masterpool_buffer_pools_medium = env->medium_master;
     GSTATE.masterpool_buffer_pools_small  = env->small_master;
-    GSTATE.masterpool_buffer_pools_splice = env->splice_master;
+
     bufferpoolDestroy(isolated);
     masterpoolMakeEmpty(large);
     masterpoolMakeEmpty(medium);

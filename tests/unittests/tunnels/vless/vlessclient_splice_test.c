@@ -5,7 +5,7 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: testBaseline, testResponse, testTcp, testRequests, testUdp, testPressure, testLimits,
  * testNestedTcpRetention; the driver lists the remaining cases
- * Checks: Assertion labels include: one-page pipe setup failed; VlessClient destroyed a borrowed line;
+ * Checks: Assertion labels include: inventory exhaustion; VlessClient destroyed a borrowed line;
  * exact retained entry bound was refused; nested FIFO accounting omitted or duplicated an active buffer
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
@@ -21,6 +21,7 @@
 /* Keep the normal ownership ledger while refusing one first-output allocation. */
 #define __wrap_bufferpoolTryGetBestFit trackedTryGetBestFit
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/protocols/splice_source.h"
 #undef __wrap_bufferpoolTryGetBestFit
 
 static bool fail_initial_allocation;
@@ -42,8 +43,9 @@ sbuf_t     *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, u
 #endif
 
 static bool     fail_queue;
-static bool     fail_pipe, pressure, reject_growth;
-static unsigned moves, pipe_refusals, growth_refusals;
+static bool                         pressure, immediate_pressure;
+static unsigned                     moves, pressure_refusals;
+static test_splice_inventory_hold_t held_pipes;
 static size_t   reads;
 bool            __real_bufferqueueTryPushBack(buffer_queue_t *, sbuf_t **);
 bool            __wrap_bufferqueueTryPushBack(buffer_queue_t *, sbuf_t **);
@@ -57,43 +59,19 @@ bool            __wrap_bufferqueueTryPushBack(buffer_queue_t *q, sbuf_t **n)
     return __real_bufferqueueTryPushBack(q, n);
 }
 #if WW_HAVE_SPLICE
-int __real_pipe2(int *, int);
-int __wrap_pipe2(int *, int);
-int __wrap_pipe2(int *fds, int flags)
-{
-    if (fail_pipe)
-    {
-        ++pipe_refusals;
-        errno = EMFILE;
-        return -1;
-    }
-    int result = __real_pipe2(fds, flags);
-    if (result == 0 && reject_growth)
-        twfRequire(fcntl(fds[0], F_SETPIPE_SZ, 4096) == 4096, "one-page pipe setup failed");
-    return result;
-}
-int __real_fcntl(int, int, ...);
-int __wrap_fcntl(int, int, ...);
-int __wrap_fcntl(int fd, int command, ...)
-{
-    if (command == F_GETPIPE_SZ || command == F_GETFD || command == F_GETFL)
-        return __real_fcntl(fd, command);
-    va_list args;
-    va_start(args, command);
-    int value = va_arg(args, int);
-    va_end(args);
-    if (command == F_SETPIPE_SZ && reject_growth && value > 4096)
-    {
-        ++growth_refusals;
-        errno = EPERM;
-        return -1;
-    }
-    return __real_fcntl(fd, command, value);
-}
 ssize_t __real_splice(int, off_t *, int, off_t *, size_t, unsigned);
 ssize_t __wrap_splice(int, off_t *, int, off_t *, size_t, unsigned);
 ssize_t __wrap_splice(int in, off_t *oi, int out, off_t *oo, size_t count, unsigned flags)
 {
+    /* Inject destination-pipe pressure, not refusal by the discard sink. */
+    if ((pressure || immediate_pressure) && fcntl(out, F_GETPIPE_SZ) < 0)
+        return __real_splice(in, oi, out, oo, count, flags);
+    if (immediate_pressure)
+    {
+        ++pressure_refusals;
+        errno = EAGAIN;
+        return -1;
+    }
     if (pressure && moves++ != 0)
     {
         errno = EAGAIN;
@@ -145,8 +123,8 @@ static sbuf_t   *bytes(const void *data, uint32_t len, bool pipe, uint16_t paddi
 #if WW_HAVE_SPLICE
     if (pipe)
     {
-        b = padding == 320 ? bufferpoolGetSpliceBuffer(f.env.pool) : twfTrackAcquired(sbufCreateSplice(padding));
-        twfRequire(b != NULL && sbufSpliceInitPipe(b, 4096) == 0, "source pipe allocation failed");
+        const uint16_t source_padding = padding == 320 ? bufferpoolGetSpliceBufferPadding(f.env.pool) : padding;
+        b                             = twfTrackAcquired(testSpliceSourceBuffer(source_padding, len));
         twfRequire(write(sbufSpliceMetadata(b).pipefd[1], data, len) == (ssize_t) len, "source exceeds pipe fixture");
         b->capacity = b->l_pad + len;
     }
@@ -320,8 +298,8 @@ static void resumed(tunnel_t *t, line_t *l)
 static void begin(bool udp, const char *target, uint32_t pool_size, unsigned init_action, bool context)
 {
     memoryZero(&f, sizeof(f));
-    fail_pipe = pressure = fail_queue = reject_growth = false;
-    reads = moves = pipe_refusals = growth_refusals = 0;
+    pressure = fail_queue = immediate_pressure = false;
+    reads = moves = pressure_refusals               = 0;
     f.udp                                           = udp;
     twfWorkerEnvSetupWithBufferSizes(&f.env, pool_size, 512, 320, 8192, pool_size);
     if (test_wid != 0)
@@ -417,6 +395,7 @@ static void end(void)
         f.env.loop->wid              = 0;
         testWorkerBindWID(0);
     }
+    testSpliceInventoryReleaseHeld(&held_pipes);
     twfWorkerEnvTeardown(&f.env);
 }
 static void establish(void)
@@ -748,9 +727,10 @@ static void testFallback(void)
             sbuf_t  *part = bytes(wire + offset, size, true, 320);
             if (offset + size == n)
             {
-                fail_pipe     = fault == 1;
-                pressure      = fault == 2;
-                reject_growth = fault == 3;
+                if (fault == 1)
+                    held_pipes = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
+                pressure           = fault == 2;
+                immediate_pressure = fault == 3;
             }
             f.t->fnPayloadD(f.t, f.carrier, part);
             offset += size;
@@ -760,12 +740,13 @@ static void testFallback(void)
         twfRequire(f.headroom >= 320, "fallback lost onward padding");
 #if WW_HAVE_SPLICE
         if (fault == 1)
-            twfRequire(pipe_refusals != 0 && ! f.last_splice, "pipe refusal did not select ordinary fallback");
+            twfRequire(held_pipes.count != 0 && ! f.last_splice,
+                       "exhausted inventory did not select ordinary fallback");
         if (fault == 2)
             twfRequire(moves >= 2 && ! f.last_splice, "partial transfer pressure did not select complete fallback");
         if (fault == 3)
-            twfRequire(growth_refusals != 0 && ! f.last_splice,
-                       "small destination pipe did not exercise growth fallback");
+            twfRequire(pressure_refusals != 0 && ! f.last_splice,
+                       "immediate pipe pressure did not select ordinary fallback");
 #endif
         end();
     }

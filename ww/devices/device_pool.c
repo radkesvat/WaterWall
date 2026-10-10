@@ -7,7 +7,6 @@ buffer_pool_t *devicePoolCreate(buffer_pool_t *worker_pool, uint32_t minimum_sma
     return bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                             GSTATE.masterpool_buffer_pools_medium,
                             GSTATE.masterpool_buffer_pools_small,
-                            GSTATE.masterpool_buffer_pools_splice,
                             PROPER_BUFFER_POOL_WIDTH(RAM_PROFILE),
                             bufferpoolGetLargeBufferSize(worker_pool),
                             bufferpoolGetMediumBufferSize(worker_pool),

@@ -126,7 +126,6 @@ static void contractEnvSetup(contract_env_t *env)
         env->pools[wid] = bufferpoolCreate(env->large_masters[wid],
                                            env->medium_masters[wid],
                                            env->small_masters[wid],
-                                           env->splice_masters[wid],
                                            4,
                                            kContractBufSize,
                                            MEDIUM_BUFFER_SIZE_RAM_HIGH,

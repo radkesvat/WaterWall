@@ -16,6 +16,7 @@
  * CTest: waterwall.speedtestclient_orderly_shutdown_test_unit
  */
 #include "SpeedTestClient/structure.h"
+#include "fixtures/splice_inventory.h"
 
 #include "ev_memory.h"
 #include "fixtures/failure/tunnel_orderly_shutdown_harness.h"
@@ -509,6 +510,7 @@ static void caseMalformedReceiverLengthClosesLine(bool splice)
 
 int main(void)
 {
+    testSpliceInventoryInitialize(0);
     caseWorkerStopDrainsOnlyItsPublishedSlots();
     caseRequiredStartupFailuresPropagateStartupStatus();
     caseAcceptedQueuedTimerAdmissionClosureUsesCleanup();

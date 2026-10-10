@@ -24,6 +24,7 @@
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
 #include "buffer_pool_internal.h"
+#include "fixtures/splice_inventory.h"
 #include "splice_buffer.h"
 #if WW_HAVE_SPLICE
 #include <fcntl.h>
@@ -80,6 +81,7 @@ static void requireSamePayload(const sbuf_t *actual, const sbuf_t *expected, con
 static pool_fixture_t poolFixtureCreate(uint32_t large_size, uint32_t small_size, uint16_t large_padding,
                                         uint16_t small_padding)
 {
+    testSpliceInventoryInitialize(64);
     pool_fixture_t fixture = {
         .large_master  = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
         .small_master  = masterpoolCreateWithCapacity(kTestPoolWidth * 2U),
@@ -92,7 +94,6 @@ static pool_fixture_t poolFixtureCreate(uint32_t large_size, uint32_t small_size
     fixture.pool = bufferpoolCreate(fixture.large_master,
                                     fixture.medium_master,
                                     fixture.small_master,
-                                    fixture.splice_master,
                                     kTestPoolWidth,
                                     large_size,
                                     MEDIUM_BUFFER_SIZE_RAM_HIGH,
@@ -100,7 +101,7 @@ static pool_fixture_t poolFixtureCreate(uint32_t large_size, uint32_t small_size
                                     min((uint32_t) (large_size), (uint32_t) SPLICE_PAYLOAD_LIMIT),
                                     large_size);
     require(fixture.pool != NULL, "failed to create BufferStream test pool");
-    bufferpoolUpdateAllocationPaddings(fixture.pool, large_padding, large_padding, small_padding, small_padding);
+    bufferpoolUpdateAllocationPaddings(fixture.pool, large_padding, large_padding, small_padding, 64);
     return fixture;
 }
 
@@ -218,7 +219,7 @@ static void testFlagsInitializationAndReuse(buffer_pool_t *pool)
     require(buffer != NULL, "splice buffer checkout failed");
     bufferpoolReuseBuffer(pool, buffer);
     buffer = bufferpoolGetSpliceBuffer(pool);
-    require(buffer != NULL && buffer->flags == kSbufFlagSplice, "pool checkout did not restore the splice flag");
+    require(buffer != NULL && sbufIsSplice(buffer), "pool checkout did not restore the splice flag");
     bufferpoolReuseBuffer(pool, buffer);
 #else
     require(buffer == NULL && errno == ENOSYS, "unsupported splice checkout did not return ENOSYS");
@@ -1198,16 +1199,8 @@ static void testEnsureOrdinaryMaterializesCompletePayload(ensure_ordinary_fn_t e
         .medium_master = masterpoolCreateWithCapacity(16),
         .splice_master = masterpoolCreateWithCapacity(16),
     };
-    fixture.pool = bufferpoolCreate(fixture.large_master,
-                                    fixture.medium_master,
-                                    fixture.small_master,
-                                    fixture.splice_master,
-                                    8,
-                                    1024,
-                                    512,
-                                    128,
-                                    4096,
-                                    1024);
+    fixture.pool = bufferpoolCreate(
+        fixture.large_master, fixture.medium_master, fixture.small_master, 8, 1024, 512, 128, 4096, 1024);
     require(fixture.pool != NULL, "could not create ordinary-conversion test pool");
     bufferpoolUpdateAllocationPaddings(fixture.pool, 192, 192, 64, 64);
     static const struct
@@ -1226,7 +1219,6 @@ static void testEnsureOrdinaryMaterializesCompletePayload(ensure_ordinary_fn_t e
     uint8_t wire[1537];
     for (size_t i = 0; i < sizeof(wire); ++i)
         wire[i] = (uint8_t) (0x31U + i);
-    int descriptors[ARRAY_SIZE(cases) * 2];
     for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
     {
         sbuf_t *source =
@@ -1248,21 +1240,20 @@ static void testEnsureOrdinaryMaterializesCompletePayload(ensure_ordinary_fn_t e
         require(length <= 512 ? capacity == 512 : capacity >= length && capacity < 2048,
                 "ensuring ordinary storage did not choose padded best-fit storage");
         sbuf_t *recycled = bufferpoolGetSpliceBuffer(fixture.pool);
-        require(recycled == source && sbufGetLength(recycled) == 0 && sbufSpliceIsReusable(recycled),
+        require(recycled != NULL && (cases[i].uninitialized || recycled == source) && sbufGetLength(recycled) == 0 &&
+                    sbufSpliceIsReusable(recycled),
                 "ensuring ordinary storage failed to recycle the consumed splice source");
         const splice_buffer_metadata_t reused_metadata = sbufSpliceMetadata(recycled);
         require(cases[i].uninitialized || (metadata.pipefd[0] == reused_metadata.pipefd[0] &&
                                            metadata.pipefd[1] == reused_metadata.pipefd[1]),
                 "ensuring ordinary storage replaced the source's healthy private pipe");
-        descriptors[2 * i]     = reused_metadata.pipefd[0];
-        descriptors[2 * i + 1] = reused_metadata.pipefd[1];
         bufferpoolReuseBuffer(fixture.pool, recycled);
         bufferpoolReuseBuffer(fixture.pool, result);
     }
+    const uint32_t inventory_count = sbufSplicePoolCount();
     poolFixtureDestroy(&fixture);
-    for (size_t i = 0; i < ARRAY_SIZE(descriptors); ++i)
-        require(fcntl(descriptors[i], F_GETFD) == -1 && errno == EBADF,
-                "ordinary-conversion pool teardown leaked a private pipe");
+    require(sbufSplicePoolCount() == inventory_count,
+            "ordinary-conversion pool teardown retired a healthy inventory pipe");
 }
 
 static void testTryEnsureOrdinaryRefusalPreservesSource(void)
@@ -1300,7 +1291,7 @@ static void testTryEnsureOrdinaryRefusalPreservesSource(void)
     const splice_buffer_metadata_t after_metadata = sbufSpliceMetadata(source);
     require(after_metadata.pipefd[0] == metadata.pipefd[0] && after_metadata.pipefd[1] == metadata.pipefd[1] &&
                 after_metadata.pipe_capacity == metadata.pipe_capacity &&
-                after_metadata.capacity_retry_at_us == metadata.capacity_retry_at_us,
+                after_metadata.pipe_capacity == metadata.pipe_capacity,
             "refused ordinary conversion changed private pipe metadata");
     int pipe_bytes = 0;
     require(ioctl(metadata.pipefd[0], FIONREAD, &pipe_bytes) == 0 && pipe_bytes == (int) (sizeof(wire) - 7),
@@ -1312,7 +1303,7 @@ static void testTryEnsureOrdinaryRefusalPreservesSource(void)
     require(result != NULL, "refused source could not be converted after restoring representable geometry");
     requireResidentPayload(result, wire, sizeof(wire), "refused ordinary conversion changed source payload bytes");
     sbuf_t *recycled = bufferpoolGetSpliceBuffer(fixture.pool);
-    require(recycled == source && sbufGetLength(recycled) == 0 && sbufSpliceIsReusable(recycled),
+    require(recycled != NULL && recycled == source && sbufGetLength(recycled) == 0 && sbufSpliceIsReusable(recycled),
             "checked conversion failed to settle the source ownership after refusal");
     bufferpoolReuseBuffer(fixture.pool, recycled);
     bufferpoolReuseBuffer(fixture.pool, result);
@@ -1377,8 +1368,9 @@ int main(void)
     master_pool_t *small_master  = masterpoolCreateWithCapacity(16);
     master_pool_t *medium_master = masterpoolCreateWithCapacity(16);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(16);
-    buffer_pool_t *pool          = bufferpoolCreate(
-        large_master, medium_master, small_master, splice_master, 8, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64, 256, 256);
+    buffer_pool_t *pool =
+        bufferpoolCreate(large_master, medium_master, small_master, 8, 256, MEDIUM_BUFFER_SIZE_RAM_HIGH, 64, 256, 256);
+    testSpliceInventoryInitialize(64);
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
 
     testFlagsInitializationAndReuse(pool);

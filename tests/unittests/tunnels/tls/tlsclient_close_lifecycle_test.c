@@ -263,7 +263,6 @@ static void fixtureInitialize(tlsclient_lifecycle_fixture_t *fixture)
     fixture->pool                = bufferpoolCreate(fixture->large_master,
                                      fixture->medium_master,
                                      fixture->small_master,
-                                     fixture->splice_master,
                                      8,
                                      65536,
                                      MEDIUM_BUFFER_SIZE_RAM_HIGH,

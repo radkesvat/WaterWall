@@ -10,8 +10,12 @@
  * or application-throughput behavior.
  * CTest: waterwall.socks5server_udp_identity_unit
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include "Socks5Server/internal.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/protocols/splice_source.h"
 
 static tunnel_t        *server, *prev, *next;
 static tunnel_chain_t  *chain;
@@ -30,7 +34,7 @@ static sbuf_t *spliceBytes(const void *data, size_t len, size_t prefix, bool hea
 {
     twfRequire(prefix <= len && prefix <= 300 && (headroom || prefix == 0), "invalid splice fixture prefix");
     sbuf_t *b = headroom ? bufferpoolGetSpliceBuffer(env.pool) : twfTrackAcquired(sbufCreateSplice(0));
-    twfRequire(b != NULL && (headroom || sbufSpliceInitPipe(b, 0) == 0), "private pipe allocation failed");
+    twfRequire(b != NULL && (headroom || testSpliceSourceInitPipe(b) == 0), "private pipe allocation failed");
     const size_t body = len - prefix;
     if (body)
         twfRequire(write(sbufSpliceMetadata(b).pipefd[1], (const uint8_t *) data + prefix, body) == (ssize_t) body,

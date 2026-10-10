@@ -56,11 +56,11 @@
   target_link_libraries(buffer_pool_splice_bypass_test PRIVATE ww_test_support)
     target_compile_definitions(buffer_pool_splice_bypass_test PRIVATE WW_SPLICE_POOL_BYPASS_TEST=1)
     target_link_libraries(buffer_pool_splice_bypass_test PRIVATE ww)
-    target_link_options(buffer_pool_splice_bypass_test PRIVATE "-Wl,--wrap=pipe2")
+    target_link_options(buffer_pool_splice_bypass_test PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl" "-Wl,--wrap=read" "-Wl,--wrap=splice")
     add_dependencies(waterwall_unit_tests buffer_pool_splice_bypass_test)
     add_waterwall_unit_test(waterwall.buffer_pool_splice_bypass_unit buffer_pool_splice_bypass_test "unit;bufio;buffer-pool;splice")
     target_compile_definitions(buffer_pool_splice_test PRIVATE WW_SPLICE_POOL_FAILURE_TEST=1)
-    target_link_options(buffer_pool_splice_test PRIVATE "-Wl,--wrap=memoryAllocate" "-Wl,--wrap=pipe2")
+    target_link_options(buffer_pool_splice_test PRIVATE "-Wl,--wrap=memoryAllocate" "-Wl,--wrap=memoryAllocateAligned" "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl" "-Wl,--wrap=read" "-Wl,--wrap=splice")
   endif()
   add_dependencies(waterwall_unit_tests buffer_pool_splice_test)
   add_waterwall_unit_test(waterwall.buffer_pool_splice_unit buffer_pool_splice_test "unit;bufio;buffer-pool;splice")
@@ -77,7 +77,7 @@
   add_library(mismatched_abi_node_library SHARED ${WATERWALL_UNIT_SOURCE_ROOT}/core/legacy_node_library.c)
   target_compile_definitions(
     mismatched_abi_node_library
-    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=4
+    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=5
   )
   set_target_properties(mismatched_abi_node_library PROPERTIES PREFIX "")
   add_library(external_node_abi_v3_library SHARED ${WATERWALL_UNIT_SOURCE_ROOT}/core/lifecycle_v2_node_library.c)
@@ -658,6 +658,12 @@
         shutdown_signal_test
         "unit;signal-manager;shutdown;signals"
       )
+
+      waterwall_add_native_executable(node_manager_startup_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/core/node_manager_startup_test.c)
+      target_link_libraries(node_manager_startup_test PRIVATE ww_test_support ww)
+      target_link_options(node_manager_startup_test PRIVATE "-Wl,--wrap=applicationShutdownWasRequested")
+      add_dependencies(waterwall_unit_tests node_manager_startup_test)
+      add_waterwall_unit_test(waterwall.node_manager_startup_unit node_manager_startup_test "unit;node-manager;startup;bufio")
 
       waterwall_add_native_executable(node_manager_stop_once_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/core/node_manager_stop_once_test.c)
   target_link_libraries(node_manager_stop_once_test PRIVATE ww_test_support)

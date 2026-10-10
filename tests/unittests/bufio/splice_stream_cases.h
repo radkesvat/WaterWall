@@ -5,6 +5,7 @@
  * cleanup; this header has no independent CTest entry.
  * CTest: Shared header; see the including suite for execution.
  */
+#include "fixtures/protocols/splice_source.h"
 #include "splice_stream.h"
 #if WW_HAVE_SPLICE
 #include <fcntl.h>
@@ -308,10 +309,8 @@ static void testSpliceStreamContracts(void)
     require(splicestreamPush(s, source), "split source push failed");
     const long page_size = sysconf(_SC_PAGESIZE);
     require(page_size > 0 && page_size <= INT_MAX / 4, "invalid test host page size");
-    sbuf_t *split_destination = bufferpoolGetSpliceBuffer(f.pool);
-    require(fcntl(sbufSpliceMetadata(split_destination).pipefd[1], F_SETPIPE_SZ, (int) (4 * page_size)) >=
-                4 * page_size,
-            "cannot reserve slots for the positive-short-transfer fixture");
+    sbuf_t *split_destination =
+        testSpliceSourceBuffer(bufferpoolGetSpliceBufferPadding(f.pool), (uint32_t) (4 * page_size));
     streamProbe         = true;
     streamTransferFault = 1;
     streamReadBytes     = 0;
@@ -337,10 +336,13 @@ static void testSpliceStreamContracts(void)
         s = splicestreamCreate(f.pool, 0);
         require(splicestreamPush(s, makeSpliceTestBuffer(f.pool, NULL, 0, (const uint8_t *) "A", 1)), "A push failed");
         require(splicestreamPush(s, makeSpliceTestBuffer(f.pool, NULL, 0, (const uint8_t *) "BC", 2)), "B push failed");
-        sbuf_t   *dest      = bufferpoolGetSpliceBuffer(f.pool);
-        const int fd        = sbufSpliceMetadata(dest).pipefd[1];
+        sbuf_t                  *dest      = testSpliceSourceBuffer(bufferpoolGetSpliceBufferPadding(f.pool), 0);
+        splice_buffer_metadata_t metadata  = sbufSpliceMetadata(dest);
         const int pipe_size = (int) ((pressure ? 1 : 2) * page_size);
-        require(fcntl(fd, F_SETPIPE_SZ, pipe_size) >= pipe_size, "cannot set pipe slots");
+        const int                capacity  = fcntl(metadata.pipefd[1], F_SETPIPE_SZ, pipe_size);
+        require(capacity >= pipe_size, "cannot set pipe slots");
+        metadata.pipe_capacity = (uint32_t) capacity;
+        sbufSpliceSetMetadata(dest, metadata);
         streamReadBytes = 0;
         streamProbe     = true;
         a               = splicestreamMoveFrame(s, dest, 2);
@@ -372,11 +374,17 @@ static void testSpliceStreamContracts(void)
         streamCheckBytes(f.pool, splicestreamMoveFrame(s, NULL, 2), "CD", 2);
         splicestreamDestroy(s);
     }
-    /* No automatic worker quota: pressure compaction is explicit and beneficial. */
+    /* Independent sources can exceed the destination inventory; stream pressure
+     * compaction remains explicit and beneficial. */
     s = splicestreamCreate(f.pool, 0);
     for (unsigned i = 0; i < 160; ++i)
-        require(splicestreamPush(s, makeSpliceTestBuffer(f.pool, NULL, 0, (const uint8_t *) "x", 1)),
-                "tiny push failed");
+    {
+        sbuf_t *part = testSpliceSourceBuffer(bufferpoolGetSpliceBufferPadding(f.pool), 1);
+        writeSpliceTestBody(sbufSpliceMetadata(part).pipefd[1], (const uint8_t *) "x", 1);
+        part->capacity = part->l_pad + 1;
+        sbufSetLength(part, 1);
+        require(splicestreamPush(s, part), "tiny push failed");
+    }
     require(bufferqueueGetBufCount(&s->pending) == 159, "retention silently converted pipes");
     size_t before   = splicestreamCharge(s);
     streamProbe     = true;

@@ -1,6 +1,7 @@
 /* Both cross-worker pairing orders, setup replay barriers, opaque direct payload identity and transport-owner Finish.
  * Invoked explicitly before workers close admission, when enabled. CTest: waterwall.worker_context_helpers_unit; see
  * the driver for ordering and CLI. */
+#include "fixtures/protocols/splice_source.h"
 #include "worker_fixture.h"
 
 #ifdef WW_TEST_HALFDUPLEX_WORKERS
@@ -22,7 +23,7 @@ static sbuf_t *halfWorkerBytes(const void *data, uint32_t length)
 {
 #if WW_HAVE_SPLICE
     sbuf_t *buf = sbufCreateSplice(64);
-    require(sbufSpliceInitPipe(buf, 0) == 0, "HalfDuplex private pipe failed");
+    require(testSpliceSourceInitPipe(buf) == 0, "HalfDuplex private pipe failed");
     require(write(sbufSpliceMetadata(buf).pipefd[1], data, length) == length, "HalfDuplex pipe write failed");
     buf->capacity += length;
     sbufSetLength(buf, length);

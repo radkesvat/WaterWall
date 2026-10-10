@@ -91,22 +91,6 @@ static unsigned int pipe_calls;
 static bool         mock_pipe_capacity;
 static int          pipe_capacity = 65536, pipe_query_error, pipe_growth_error, pipe_requested_capacity;
 static unsigned int pipe_query_calls, pipe_growth_calls;
-static bool         mock_pipe_time;
-static uint64_t     pipe_time_us;
-static unsigned int pipe_time_calls;
-unsigned long long  __real_getHRTimeUs(void);
-unsigned long long  __wrap_getHRTimeUs(void);
-
-unsigned long long __wrap_getHRTimeUs(void)
-{
-    if (mock_pipe_time)
-    {
-        ++pipe_time_calls;
-        return pipe_time_us;
-    }
-    return __real_getHRTimeUs();
-}
-
 int __real_fcntl(int fd, int command, ...);
 int __wrap_fcntl(int fd, int command, ...);
 
@@ -231,6 +215,12 @@ ssize_t __wrap_send(int fd, const void *buf, size_t len, int flags)
 
 ssize_t __wrap_splice(int in, off_t *in_offset, int out, off_t *out_offset, size_t len, unsigned int flags)
 {
+    if (in == pipe_read_fd)
+    {
+        /* Keep read fault injection effective when discard prefers splice. */
+        errno = EINVAL;
+        return -1;
+    }
     if (in == read_test_fd)
     {
         ++splice_read_calls;
@@ -284,6 +274,11 @@ static void requireClosed(int fd)
 static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
 {
     memoryZero(env, sizeof(*env));
+#if WW_HAVE_SPLICE
+    const uint32_t pipe_size = (uint32_t) sysconf(_SC_PAGESIZE) * 16U;
+    require(sbufSplicePoolInitialize((uint64_t) pipe_size * 16U, pipe_size, 16, 64) == 16,
+            "failed to initialize WIO test pipe inventory");
+#endif
     GSTATE.workers_count = 1;
     testWorkerRegistryInstall(&env->registry);
     testWorkerBindWID(0);
@@ -296,7 +291,6 @@ static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
         bufferpoolCreate(env->masters[0],
                          env->masters[4],
                          env->masters[1],
-                         env->masters[2],
                          4,
                          large_size,
                          MEDIUM_BUFFER_SIZE_RAM_HIGH,
@@ -304,16 +298,17 @@ static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
                          large_size >= LARGE_BUFFER_SIZE_RAM_LOW ? SPLICE_PAYLOAD_LIMIT : large_size,
                          max((uint32_t) (large_size),
                              (uint32_t) (large_size >= LARGE_BUFFER_SIZE_RAM_LOW ? SPLICE_PAYLOAD_LIMIT : large_size)));
-    env->wios    = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->masters[3], sizeof(wio_t), 4);
+    bufferpoolUpdateAllocationPaddings(env->buffers, 0, 0, 0, 64);
+    env->wios = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->masters[3], sizeof(wio_t), 4);
     require(env->buffers != NULL && env->wios != NULL, "failed to create test pools");
     require(bufferpoolGetSplicePayloadLimit(env->buffers) ==
                 (large_size >= LARGE_BUFFER_SIZE_RAM_LOW ? SPLICE_PAYLOAD_LIMIT : large_size),
             "pool lost explicit splice setting, including on unsupported builds");
     env->buffer_pools[0]         = env->buffers;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
-    env->wio_pools[0]          = env->wios;
-    GSTATE.shortcut_wios_pools = env->wio_pools;
-    env->loop                  = wloopCreate(WLOOP_FLAG_RUN_ONCE, env->buffers, 0);
+    env->wio_pools[0]            = env->wios;
+    GSTATE.shortcut_wios_pools   = env->wio_pools;
+    env->loop                    = wloopCreate(WLOOP_FLAG_RUN_ONCE, env->buffers, 0);
     require(env->loop != NULL, "failed to create test loop");
 }
 
@@ -337,6 +332,9 @@ static void teardown(test_env_t *env)
     }
     testWorkerUnbindWID();
     testWorkerRegistryRestore(&env->registry);
+#if WW_HAVE_SPLICE
+    sbufSplicePoolDestroy();
+#endif
 }
 
 static wio_t *socketIO(test_env_t *env, int sockets[2])
@@ -350,26 +348,19 @@ static wio_t *socketIO(test_env_t *env, int sockets[2])
 
 static void testOwnedDescriptor(test_env_t *env)
 {
-    int       sockets[2];
-    wio_t    *io     = socketIO(env, sockets);
+    int    sockets[2];
+    wio_t *io = socketIO(env, sockets);
 #if WW_HAVE_SPLICE
-    sbuf_t *pipe_buf = sbufCreateSplice(0);
-    fail_pipe = true;
-    require(sbufSpliceInitPipe(pipe_buf, 0) == -1 && errno == EMFILE, "pipe failure did not propagate");
-    require(sbufSpliceInitPipe(pipe_buf, 0) == 0, "pipe creation failed");
+    sbuf_t *pipe_buf = sbufSplicePoolGet(64);
+    require(pipe_buf != NULL, "pipe inventory lease failed");
     const int reader = sbufSpliceMetadata(pipe_buf).pipefd[0];
     const int writer = sbufSpliceMetadata(pipe_buf).pipefd[1];
-    require(sbufSpliceInitPipe(pipe_buf, 0) == 0 && sbufSpliceMetadata(pipe_buf).pipefd[0] == reader &&
-                sbufSpliceMetadata(pipe_buf).pipefd[1] == writer,
-            "repeated pipe initialization replaced live descriptors");
     require((fcntl(reader, F_GETFL) & O_NONBLOCK) && (fcntl(writer, F_GETFL) & O_NONBLOCK), "splice pipe is blocking");
     require((fcntl(reader, F_GETFD) & FD_CLOEXEC) && (fcntl(writer, F_GETFD) & FD_CLOEXEC),
             "splice pipe is inheritable across exec");
 #else
     require(wioEnableSplice(io) == -1 && errno == ENOSYS, "unsupported splice mode did not fail");
-    sbuf_t *unsupported = sbufCreateSplice(0);
-    require(sbufSpliceInitPipe(unsupported, 0) == -1 && errno == ENOSYS, "unsupported pipe initialization succeeded");
-    sbufDestroySplice(unsupported);
+    require(sbufSplicePoolGet(64) == NULL && errno == ENOSYS, "unsupported inventory checkout succeeded");
     for (unsigned int i = 0; i < 2; ++i)
         require(bufferpoolGetSpliceBuffer(env->buffers) == NULL && errno == ENOSYS,
                 "unsupported splice checkout did not return ENOSYS");
@@ -381,8 +372,8 @@ static void testOwnedDescriptor(test_env_t *env)
     char byte = 'x';
     require(write(writer, &byte, 1) == 1 && read(reader, &byte, 1) == 1, "retained pipe stopped working");
     sbufDestroySplice(pipe_buf);
-    requireClosed(reader);
-    requireClosed(writer);
+    require(fcntl(reader, F_GETFD) >= 0 && fcntl(writer, F_GETFD) >= 0,
+            "wrapper destruction closed healthy inventory descriptors");
 #endif
 
     require(dup2(sockets[1], sockets[0]) == sockets[0], "failed to reuse descriptor number");
@@ -398,8 +389,8 @@ static void testNoClose(test_env_t *env)
     int    sockets[2];
     wio_t *io = socketIO(env, sockets);
 #if WW_HAVE_SPLICE
-    sbuf_t *pipe_buf = sbufCreateSplice(0);
-    require(sbufSpliceInitPipe(pipe_buf, 0) == 0, "failed to create no-close pipe");
+    sbuf_t *pipe_buf = sbufSplicePoolGet(64);
+    require(pipe_buf != NULL, "failed to create no-close pipe");
     int reader = sbufSpliceMetadata(pipe_buf).pipefd[0], writer = sbufSpliceMetadata(pipe_buf).pipefd[1];
 #endif
     wioReleaseNoClose(io);
@@ -407,8 +398,8 @@ static void testNoClose(test_env_t *env)
     require(fcntl(sockets[0], F_GETFD) >= 0, "watcher release closed the external descriptor");
 #if WW_HAVE_SPLICE
     sbufDestroySplice(pipe_buf);
-    requireClosed(reader);
-    requireClosed(writer);
+    require(fcntl(reader, F_GETFD) >= 0 && fcntl(writer, F_GETFD) >= 0,
+            "wrapper destruction closed healthy inventory descriptors");
 #endif
     char byte = 'x';
     require(send(sockets[0], &byte, 1, 0) == 1 && recv(sockets[1], &byte, 1, 0) == 1,
@@ -587,12 +578,18 @@ static void testPipeDescriptorZero(void)
         setup(&env);
         int    sockets[2];
         wio_t *io = socketIO(&env, sockets);
-        sbuf_t *pipe_buf = sbufCreateSplice(0);
+        sbufSplicePoolDestroy();
         close(STDIN_FILENO);
-        require(sbufSpliceInitPipe(pipe_buf, 0) == 0 && sbufSpliceMetadata(pipe_buf).pipefd[0] == STDIN_FILENO,
+        const uint32_t pipe_size = (uint32_t) sysconf(_SC_PAGESIZE);
+        require(sbufSplicePoolInitialize(SPLICE_PAYLOAD_LIMIT, pipe_size, 1, 64) == 1,
+                "pipe inventory initialization failed with descriptor zero");
+        sbuf_t *pipe_buf = sbufSplicePoolGet(64);
+        require(pipe_buf != NULL && sbufSpliceMetadata(pipe_buf).pipefd[0] == STDIN_FILENO,
                 "pipe initializer failed with descriptor zero");
         wioClose(io);
         sbufDestroySplice(pipe_buf);
+        require(fcntl(STDIN_FILENO, F_GETFD) >= 0, "return closed inventory descriptor zero");
+        sbufSplicePoolDestroy();
         requireClosed(STDIN_FILENO);
         close(sockets[1]);
         teardown(&env);
@@ -605,25 +602,22 @@ static void testPipeDescriptorZero(void)
 }
 
 #if WW_HAVE_SPLICE
-static void testPipeCapacityPreference(void)
+static void testPipeCapacityStartup(void)
 {
-    mock_pipe_time = true;
-    pipe_time_us   = 10000000;
     const struct
     {
-        uint32_t     preferred;
         int          initial, query_error, growth_error;
         unsigned int expected_growth;
+        bool         accepted;
     } cases[] = {
-        {0, 65536, 0, 0, 0},
-        {4096, 65536, 0, 0, 0},
-        {512 * 1024, 65536, 0, 0, 1},
-        {512 * 1024, 1024 * 1024, 0, 0, 0},
-        {512 * 1024, 65536, 0, EPERM, 1},
-        {512 * 1024, 65536, 0, ENOMEM, 1},
-        {512 * 1024, 65536, 0, EINTR, 1},
-        {512 * 1024, 65536, EINVAL, 0, 0},
+        {65536, 0, 0, 1, true},
+        {1024 * 1024, 0, 0, 0, true},
+        {65536, 0, EPERM, 1, false},
+        {65536, 0, ENOMEM, 1, false},
+        {65536, 0, EINVAL, 1, false},
+        {65536, EINVAL, 0, 0, false},
     };
+    const uint32_t required_capacity = 512U * 1024U;
     for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
     {
         mock_pipe_capacity      = true;
@@ -633,26 +627,40 @@ static void testPipeCapacityPreference(void)
         pipe_query_calls        = 0;
         pipe_growth_calls       = 0;
         pipe_requested_capacity = 0;
-        sbuf_t *buf             = sbufCreateSplice(0);
-        require(sbufSpliceInitPipe(buf, cases[i].preferred) == 0, "capacity preference failure rejected a usable pipe");
-        const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
-        require(pipe_query_calls == (cases[i].preferred != 0) && pipe_growth_calls == cases[i].expected_growth,
-                "pipe capacity query or growth had the wrong call count");
-        require(! cases[i].expected_growth || pipe_requested_capacity == (int) cases[i].preferred,
-                "pipe growth used the wrong requested size");
-        require(sbufSpliceInitPipe(buf, cases[i].preferred) == 0 && pipe_growth_calls == cases[i].expected_growth &&
-                    pipe_query_calls == (cases[i].preferred != 0),
-                "repeated pipe initialization retried capacity negotiation");
-        char byte = 0;
-        require(write(metadata.pipefd[1], "x", 1) == 1 && read(metadata.pipefd[0], &byte, 1) == 1 && byte == 'x',
-                "capacity negotiation left an unusable pipe");
-        sbufDestroySplice(buf);
-        requireClosed(metadata.pipefd[0]);
-        requireClosed(metadata.pipefd[1]);
+        require(sbufSplicePoolInitialize(UINT64_C(4) * 1024U * 1024U, required_capacity, 1, 64) == cases[i].accepted,
+                "startup accepted an undersized pipe or rejected a full-sized pipe");
+        require(pipe_query_calls == 1 && pipe_growth_calls == cases[i].expected_growth,
+                "startup pipe capacity query or growth had the wrong call count");
+        require(! cases[i].expected_growth || pipe_requested_capacity == (int) required_capacity,
+                "startup pipe growth used the wrong requested size");
+        sbuf_t *buf = sbufSplicePoolGet(64);
+        require((buf != NULL) == cases[i].accepted, "checkout did not reflect the successfully initialized inventory");
+        const splice_buffer_metadata_t metadata =
+            buf != NULL ? sbufSpliceMetadata(buf) : (splice_buffer_metadata_t) {0};
+        if (cases[i].accepted)
+        {
+            require(sbufSplicePoolCapacity() == metadata.pipe_capacity && metadata.pipe_capacity >= required_capacity,
+                    "runtime inventory did not account actual full pipe capacity");
+            char byte = 0;
+            require(write(metadata.pipefd[1], "x", 1) == 1 && read(metadata.pipefd[0], &byte, 1) == 1 && byte == 'x',
+                    "startup capacity negotiation left an unusable pipe");
+        }
+        if (buf != NULL)
+            sbufDestroySplice(buf);
+        sbufSplicePoolDestroy();
+        if (cases[i].accepted)
+        {
+            requireClosed(metadata.pipefd[0]);
+            requireClosed(metadata.pipefd[1]);
+        }
     }
     mock_pipe_capacity = false;
     pipe_query_error = pipe_growth_error = 0;
-    mock_pipe_time                       = false;
+
+    fail_pipe = true;
+    require(sbufSplicePoolInitialize(required_capacity, required_capacity, 1, 64) == 0 && ! fail_pipe,
+            "startup pipe creation failure did not leave an empty inventory");
+    sbufSplicePoolDestroy();
 }
 
 static void testSpliceReuseValidation(void)
@@ -684,92 +692,41 @@ static void testSpliceReuseValidation(void)
     teardown(&env);
 }
 
-static void testPipeCapacityRetry(void)
+static void testPipeInventoryReuse(void)
 {
     test_env_t env;
     setupWithBufferSize(&env, LARGE_BUFFER_SIZE_RAM_HIGH);
-    mock_pipe_capacity = mock_pipe_time = true;
-    pipe_time_us                        = 10000000;
-    pipe_capacity                       = 65536;
-    pipe_growth_error                   = EPERM;
-    pipe_query_error                    = 0;
-    pipe_query_calls = pipe_growth_calls = 0;
-    const uint32_t     preferred         = SPLICE_PAYLOAD_LIMIT;
-    const unsigned int initial_creates   = pipe_calls;
-    sbuf_t            *buf               = bufferpoolGetSpliceBuffer(env.buffers);
-    require(buf != NULL, "denied initial growth failed checkout");
+    const unsigned int initial_creates = pipe_calls;
+    const unsigned int initial_queries = pipe_query_calls;
+    const unsigned int initial_growth  = pipe_growth_calls;
+    sbuf_t            *buf             = bufferpoolGetSpliceBuffer(env.buffers);
+    require(buf != NULL, "could not lease an initialized inventory pipe");
     const splice_buffer_metadata_t initial = sbufSpliceMetadata(buf);
-    require(initial.pipe_capacity == 65536 && initial.capacity_retry_at_us == pipe_time_us + 1000000,
-            "denied growth did not record its capacity and one-second cooldown");
-
-    // Repeated pool returns must retain both the pair and its retry deadline.
     for (unsigned int i = 0; i < 10; ++i)
     {
-        pipe_time_us     = initial.capacity_retry_at_us - 1;
         sbuf_t *previous = buf;
         bufferpoolReuseBuffer(env.buffers, buf);
         buf = bufferpoolGetSpliceBuffer(env.buffers);
-        require(buf == previous, "retry fixture did not reuse its pooled wrapper");
+        require(buf == previous, "inventory fixture did not reuse its pooled wrapper");
         const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
         require(metadata.pipefd[0] == initial.pipefd[0] && metadata.pipefd[1] == initial.pipefd[1] &&
-                    metadata.capacity_retry_at_us == initial.capacity_retry_at_us,
-                "pool reuse lost pipe ownership or reset its cooldown");
+                    metadata.pipe_capacity == initial.pipe_capacity,
+                "immediate reuse lost the available inventory pipe");
     }
-    require(pipe_calls == initial_creates + 1 && pipe_query_calls == 1 && pipe_growth_calls == 1,
-            "pool reuse recreated the pipe or retried growth before its cooldown");
-
-    pipe_time_us = initial.capacity_retry_at_us;
-    require(sbufSpliceInitPipe(buf, preferred) == 0 && pipe_query_calls == 2 && pipe_growth_calls == 2 &&
-                sbufSpliceMetadata(buf).capacity_retry_at_us == pipe_time_us + 1000000,
-            "persistent growth failure did not start another cooldown");
-
-    // Expiring the cooldown while payload is held must not resize or consume it.
-    require(write(initial.pipefd[1], "x", 1) == 1, "could not fill the undersized pipe");
+    require(write(initial.pipefd[1], "x", 1) == 1, "could not fill the inventory pipe");
     buf->len      = 1;
     buf->capacity = buf->l_pad + 1;
-    pipe_time_us += 1000000;
-    pipe_growth_error = 0;
-    require(sbufSpliceInitPipe(buf, preferred) == 0 && pipe_query_calls == 2 && pipe_growth_calls == 2,
-            "initialization retried growth on a nonempty buffer");
-    sbuf_t *dest = bufferpoolGetSmallBuffer(env.buffers);
+    sbuf_t *dest  = bufferpoolGetSmallBuffer(env.buffers);
     sbufSpliceReadToBuffer(buf, dest, 1);
     require(sbufGetLength(dest) == 1 && memoryEqual(sbufGetRawPtr(dest), "x", 1),
-            "growth retry disturbed the pipe payload");
+            "repeated lease disturbed pipe payload");
     bufferpoolReuseBuffer(env.buffers, dest);
     bufferpoolReuseBuffer(env.buffers, buf);
-    buf = bufferpoolGetSpliceBuffer(env.buffers);
-    require(buf != NULL && pipe_query_calls == 3 && pipe_growth_calls == 3,
-            "empty pooled pipe did not retry after pressure cleared");
-    splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
-    require(metadata.pipe_capacity == preferred && metadata.capacity_retry_at_us == 0 &&
-                metadata.pipefd[0] == initial.pipefd[0] && metadata.pipefd[1] == initial.pipefd[1],
-            "successful retry replaced the pair or failed to clear retry state");
-    pipe_time_us += 10000000;
-    const unsigned int clock_calls = pipe_time_calls;
-    require(sbufSpliceInitPipe(buf, preferred) == 0 && sbufSpliceInitPipe(buf, 4096) == 0 && pipe_query_calls == 3 &&
-                pipe_growth_calls == 3 && pipe_time_calls == clock_calls,
-            "adequate-capacity reuse queried the clock, renegotiated, or shrank the pipe");
-
-    sbufSpliceClosePipe(buf);
-    metadata = sbufSpliceMetadata(buf);
-    require(metadata.pipefd[0] == -1 && metadata.pipefd[1] == -1 && metadata.pipe_capacity == 0 &&
-                metadata.capacity_retry_at_us == 0,
-            "pipe close retained stale capacity or retry state");
-    pipe_capacity    = 65536;
-    pipe_query_error = EINVAL;
-    require(sbufSpliceInitPipe(buf, preferred) == 0 && pipe_query_calls == 4 && pipe_growth_calls == 3 &&
-                sbufSpliceMetadata(buf).pipe_capacity == 0,
-            "query failure did not preserve the new usable pipe with unknown capacity");
-    require(sbufSpliceInitPipe(buf, preferred) == 0 && pipe_query_calls == 4,
-            "unknown capacity bypassed its retry cooldown");
-    pipe_time_us += 1000000;
-    pipe_query_error = 0;
-    require(sbufSpliceInitPipe(buf, preferred) == 0 && pipe_query_calls == 5 && pipe_growth_calls == 4 &&
-                sbufSpliceMetadata(buf).pipe_capacity == preferred,
-            "unknown-capacity pipe failed to recover after a query failure");
-    bufferpoolReuseBuffer(env.buffers, buf);
-    mock_pipe_capacity = mock_pipe_time = false;
+    require(pipe_calls == initial_creates && pipe_query_calls == initial_queries && pipe_growth_calls == initial_growth,
+            "runtime checkout or return created, queried, or resized a pipe");
     teardown(&env);
+    requireClosed(initial.pipefd[0]);
+    requireClosed(initial.pipefd[1]);
 }
 
 typedef enum splice_case_e
@@ -854,7 +811,7 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
     const uint32_t limit = bufferpoolGetSplicePayloadLimit(pool);
     require(count <= min(probe->length - probe->received, limit) && count > 0,
             "splice delivery exceeded available bytes or its read cap");
-    require(buf->flags == kSbufFlagSplice && buf->curpos == 64 && buf->capacity == 64 + count,
+    require(sbufIsSplice(buf) && buf->curpos == 64 && buf->capacity == 64 + count,
             "splice dispatch supplied an invalid pipe-backed wrapper");
     const splice_buffer_metadata_t metadata  = sbufSpliceMetadata(buf);
     int                            available = -1;
@@ -1132,24 +1089,13 @@ static void runSpliceCase(splice_case_t kind, uint32_t large_size, uint32_t leng
 
 static void testSpliceReadCapacityPreference(void)
 {
-    for (unsigned int mode = 0; mode < 3; ++mode)
+    const uint32_t large_sizes[] = {LARGE_BUFFER_SIZE_RAM_LOW, LARGE_BUFFER_SIZE_RAM_HIGH};
+    for (size_t i = 0; i < ARRAY_SIZE(large_sizes); ++i)
     {
-        const uint32_t read_limit = SPLICE_PAYLOAD_LIMIT;
-        mock_pipe_capacity        = true;
-        pipe_capacity             = 65536;
-        pipe_query_error          = 0;
-        pipe_growth_error         = mode == 1 ? EPERM : 0;
-        pipe_query_calls = pipe_growth_calls = 0;
-        pipe_requested_capacity              = 0;
-        runSpliceCase(kSpliceConvertPipe, mode == 0 ? LARGE_BUFFER_SIZE_RAM_LOW : LARGE_BUFFER_SIZE_RAM_HIGH, 9);
-        require(splice_read_requested == read_limit, "NIO did not request the independent splice limit");
-        require(pipe_query_calls == 1 && pipe_growth_calls == 1,
-                "read loop negotiated the wrong pipe capacity for its buffer profile");
-        require(pipe_requested_capacity == (int) read_limit,
-                "read loop sized the pipe to current availability instead of its read limit");
+        runSpliceCase(kSpliceConvertPipe, large_sizes[i], 9);
+        require(splice_read_requested == SPLICE_PAYLOAD_LIMIT,
+                "NIO did not request the independent splice limit with a smaller test inventory pipe");
     }
-    mock_pipe_capacity = false;
-    pipe_growth_error  = 0;
 }
 
 static void testSplicePipeFallback(void)
@@ -1164,31 +1110,30 @@ static void testSplicePipeFallback(void)
     weventSetUserData(io, &probe);
     wioSetCallBackRead(io, spliceRead);
     require(wioEnableSplice(io) == 0 && wioRead(io) == 0, "failed to start pipe-fallback reads");
-    sbuf_t *unused = bufferpoolGetSpliceBuffer(env.buffers);
-    require(unused != NULL, "failed to prepare fallback wrapper");
-    sbufSpliceClosePipe(unused);
-    bufferpoolReuseBuffer(env.buffers, unused);
+    sbuf_t *held[16];
+    for (size_t i = 0; i < ARRAY_SIZE(held); ++i)
+    {
+        held[i] = bufferpoolGetSpliceBuffer(env.buffers);
+        require(held[i] != NULL, "failed to exhaust the fixed test inventory");
+    }
     read_test_fd                    = sockets[0];
     splice_read_calls               = 0;
     const unsigned int pipes_before = pipe_calls;
-    fail_pipe                       = true;
     require(send(sockets[1], probe.data, 9, 0) == 9, "failed to supply pipe-fallback payload");
     require(wloopProcessEvents(env.loop, 0) >= 0 && probe.calls == 1 && probe.received == 9,
-            "pipe creation failure did not deliver ordinary bytes");
-    require(! fail_pipe && pipe_calls == pipes_before + 1 && splice_read_calls == 0 && wioIsSpliceEnabled(io) &&
-                ! wioIsClosed(io) && wioGetError(io) == 0,
-            "pipe creation failure attempted splice or changed source state");
-    sbuf_t *reused = bufferpoolGetSpliceBuffer(env.buffers);
-    require(reused == unused && sbufSpliceIsReusable(reused) && sbufSpliceMetadata(reused).pipefd[0] >= 0 &&
-                sbufSpliceMetadata(reused).pipefd[1] >= 0 && pipe_calls == pipes_before + 2,
-            "pipe creation failure leaked or damaged the unused wrapper");
-    bufferpoolReuseBuffer(env.buffers, reused);
+            "inventory exhaustion did not deliver ordinary bytes");
+    require(pipe_calls == pipes_before && splice_read_calls == 0 && wioIsSpliceEnabled(io) && ! wioIsClosed(io) &&
+                wioGetError(io) == 0,
+            "inventory exhaustion attempted splice or changed source state");
+    bufferpoolReuseBuffer(env.buffers, held[0]);
 
     probe.received = 0;
     require(send(sockets[1], probe.data, 9, 0) == 9, "failed to supply subsequent splice payload");
     require(wloopProcessEvents(env.loop, 0) >= 0 && probe.calls == 2 && probe.received == 9 &&
-                pipe_calls == pipes_before + 2 && splice_read_calls == 1,
-            "later delivery did not resume splice after pipe creation recovered");
+                pipe_calls == pipes_before && splice_read_calls == 1,
+            "later delivery did not resume splice after an inventory pipe was returned");
+    for (size_t i = 1; i < ARRAY_SIZE(held); ++i)
+        bufferpoolReuseBuffer(env.buffers, held[i]);
     wioClose(io);
     close(sockets[1]);
     read_test_fd = -1;
@@ -1375,8 +1320,7 @@ typedef struct deferred_reads_s
 static void deferSpliceRead(wio_t *io, sbuf_t *buf)
 {
     deferred_reads_t *held = weventGetUserdata(io);
-    require(held->count < 2 && sbufGetLength(buf) == 3 && buf->flags == kSbufFlagSplice,
-            "invalid deferred read wrapper");
+    require(held->count < 2 && sbufGetLength(buf) == 3 && sbufIsSplice(buf), "invalid deferred read wrapper");
     held->buffers[held->count++] = buf;
     if (held->count == 2)
     {
@@ -1571,12 +1515,13 @@ static void testSpliceQueueCleanupAndRefusal(void)
             requireClosed(metadata.pipefd[1]);
         }
         sbuf_t *reused = bufferpoolGetSpliceBuffer(env.buffers);
-        require(reused == buf && sbufSpliceIsReusable(reused), "queue destruction leaked its last splice wrapper");
+        require(reused != NULL && (mode == 2 || reused == buf) && sbufSpliceIsReusable(reused),
+                "queue destruction lost a reusable buffer");
         if (mode == 2)
         {
             require(sbufSpliceMetadata(reused).pipefd[0] >= 0 && sbufSpliceMetadata(reused).pipefd[1] >= 0 &&
-                        pipe_calls == pipes_before + 1,
-                    "checkout did not replace the pair closed after a failed drain");
+                        pipe_calls == pipes_before,
+                    "checkout created a replacement instead of borrowing a remaining inventory pipe");
         }
         else
         {
@@ -1692,7 +1637,7 @@ static void testPrivateBodies(void)
     require(wioEnableSplice(source) == 0 && pipe_calls == before, "enabling splice created a pipe");
     sbuf_t                  *a  = makeSpliceWriteBuffer(&env, source, sockets[1], "AAA", "a:");
     splice_buffer_metadata_t ma = sbufSpliceMetadata(a);
-    require(pipe_calls == before + 1, "first transfer did not create a private pair");
+    require(pipe_calls == before, "first transfer created a pipe after startup");
     sbuf_t                  *b  = makeSpliceWriteBuffer(&env, source, sockets[1], "BBB", "b:");
     splice_buffer_metadata_t mb = sbufSpliceMetadata(b);
     require(ma.pipefd[0] != mb.pipefd[0], "bodies share a pipe or retain a source");
@@ -1700,7 +1645,11 @@ static void testPrivateBodies(void)
     requireClosed(sockets[0]);
     int replacement[2];
     require(socketpair(AF_UNIX, SOCK_STREAM, 0, replacement) == 0, "replacement socketpair failed");
-    require(replacement[0] == sockets[0], "source descriptor number was not reused");
+    if (replacement[0] != sockets[0])
+    {
+        require(dup2(replacement[0], sockets[0]) == sockets[0], "source descriptor number could not be reused");
+        close(replacement[0]);
+    }
     close(sockets[1]);
     sockets[1]   = replacement[1];
     source       = wioGet(env.loop, sockets[0]);
@@ -1734,8 +1683,8 @@ static void testPrivateBodies(void)
     requireClosed(ma.pipefd[1]);
     before = pipe_calls;
     a = bufferpoolGetSpliceBuffer(env.buffers);
-    require(a != NULL && sbufSpliceMetadata(a).pipefd[0] >= 0 && sbufSpliceIsReusable(a) && pipe_calls == before + 1,
-            "checkout did not replace the pair closed after a failed drain");
+    require(a != NULL && sbufSpliceMetadata(a).pipefd[0] >= 0 && sbufSpliceIsReusable(a) && pipe_calls == before,
+            "checkout created a replacement instead of borrowing a remaining inventory pipe");
     bufferpoolReuseBuffer(env.buffers, a);
     pipe_read_fd = -1;
     bufferpoolReuseBuffer(env.buffers, dest);
@@ -1893,7 +1842,7 @@ static void testSpliceWrite(splice_write_case_t kind)
             "splice queue has incorrect remaining-byte accounting");
     if (queued)
     {
-        require(*write_queue_front(&destination->write_queue) == buf && buf->flags == kSbufFlagSplice,
+        require(*write_queue_front(&destination->write_queue) == buf && sbufIsSplice(buf),
                 "splice remainder was not queued as a pipe-backed wrapper");
         const uint32_t prefix_sent = min((uint32_t) first_write, (uint32_t) strlen(prefix));
         require(buf->curpos == 64U - strlen(prefix) + prefix_sent &&
@@ -2466,9 +2415,9 @@ int main(void)
     testSpliceModeSwitch();
     testDirectSpliceRead();
     testSpliceUrgentRead();
-    testPipeCapacityPreference();
+    testPipeCapacityStartup();
     testSpliceReuseValidation();
-    testPipeCapacityRetry();
+    testPipeInventoryReuse();
     testSpliceReadCapacityPreference();
     testSpliceBufferQueue();
     testSpliceQueueCleanupAndRefusal();

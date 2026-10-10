@@ -6,11 +6,13 @@
 #include "buffer_pool_internal.h"
 #include "loggers/internal_logger.h"
 #include "shiftbuffer.h"
+#include "splice_buffer.h"
 #include "wmath.h"
 
 enum
 {
-    kBufferPoolRechargeBatchSize = 4
+    kBufferPoolRechargeBatchSize = 4,
+    kSpliceBufferLocalCacheLimit = 8
 };
 
 struct buffer_pool_s
@@ -49,8 +51,7 @@ struct buffer_pool_s
     sbuf_t       **medium_buffers;
     master_pool_t *small_buffers_mp;
     sbuf_t       **small_buffers;
-    master_pool_t *splice_buffers_mp;
-    sbuf_t       **splice_buffers;
+    sbuf_t        *splice_buffers[kSpliceBufferLocalCacheLimit];
 };
 
 static uint32_t bufferpoolRechargeCount(const buffer_pool_t *pool, uint32_t cached_count)
@@ -162,17 +163,6 @@ static master_pool_item_t *createSmallBufHandle(void *userdata)
     return sbufCreateWithPadding(bpool->small_buffers_size, bpool->small_buffer_left_padding);
 }
 
-static master_pool_item_t *createSpliceBufHandle(void *userdata)
-{
-    buffer_pool_t *pool = userdata;
-    return sbufCreateSplice(pool->splice_buffer_left_padding);
-}
-
-static void destroySpliceBufHandle(master_pool_item_t *item)
-{
-    sbufDestroySplice(item);
-}
-
 /**
  * Destroys a large buffer using the provided destroy handler.
  * @param pool The master pool.
@@ -215,10 +205,7 @@ static sbuf_t *requireExactMasterBuffer(buffer_pool_t *pool, master_pool_t *mast
         return buf;
     }
 
-    if (create_handle == createSpliceBufHandle)
-        sbufDestroySplice(buf);
-    else
-        sbufDestroy(buf);
+    sbufDestroy(buf);
     return (sbuf_t *) masterpoolRequireCreatedItem(master, create_handle(pool), pool);
 }
 
@@ -304,26 +291,9 @@ static void reChargeSmallBuffers(buffer_pool_t *pool)
 
 static void reChargeSpliceBuffers(buffer_pool_t *pool)
 {
-    const uint32_t increase = bufferpoolRechargeCount(pool, pool->splice_buffers_container_len);
-
-    masterpoolGetItems(
-        pool->splice_buffers_mp, (void **) &(pool->splice_buffers[pool->splice_buffers_container_len]), increase, pool);
-
-    for (uint32_t i = 0; i < increase; ++i)
-    {
-        const uint32_t index        = pool->splice_buffers_container_len + i;
-        pool->splice_buffers[index] = requireExactMasterBuffer(pool,
-                                                               pool->splice_buffers_mp,
-                                                               pool->splice_buffers[index],
-                                                               SPLICE_BUFFER_STORAGE_SIZE,
-                                                               pool->splice_buffer_left_padding,
-                                                               createSpliceBufHandle);
-    }
-
-    pool->splice_buffers_container_len += increase;
-#if BUFFER_POOL_DEBUG == 1
-    LOGD("BufferPool: allocated %d new splice buffers, %zu are in use", increase, pool->in_use);
-#endif
+    assert(pool->splice_buffers_container_len == 0);
+    pool->splice_buffers_container_len =
+        sbufSplicePoolGetBuffers(pool->splice_buffers, kBufferPoolRechargeBatchSize, pool->splice_buffer_left_padding);
 }
 
 /**
@@ -343,10 +313,6 @@ static void firstCharge(buffer_pool_t *pool)
     if (pool->small_buffers_mp)
     {
         reChargeSmallBuffers(pool);
-    }
-    if (pool->splice_buffers_mp)
-    {
-        reChargeSpliceBuffers(pool);
     }
 }
 
@@ -405,17 +371,9 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
 
 static void shrinkSpliceBuffers(buffer_pool_t *pool)
 {
-    const uint32_t decrease = min(pool->splice_buffers_container_len, pool->cap / 2);
-
-    masterpoolReuseItems(pool->splice_buffers_mp,
-                         (void **) &(pool->splice_buffers[pool->splice_buffers_container_len - decrease]),
-                         decrease);
-
-    pool->splice_buffers_container_len -= decrease;
-
-#if BUFFER_POOL_DEBUG == 1
-    LOGD("BufferPool: freed %d splice buffers, %zu are in use", decrease, pool->in_use);
-#endif
+    const uint32_t count = min(pool->splice_buffers_container_len, (uint32_t) kBufferPoolRechargeBatchSize);
+    for (uint32_t i = 0; i < count; ++i)
+        sbufDestroySplice(pool->splice_buffers[--pool->splice_buffers_container_len]);
 }
 
 sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
@@ -524,31 +482,22 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
 
 sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool)
 {
+    bufferpoolDebugCheckThreadAccess(pool);
+    sbufSplicePoolCheckPadding(pool->splice_buffer_left_padding);
 #if BYPASS_BUFFERPOOL == 1
-    sbuf_t *buf =
-        masterpoolRequireCreatedItem(pool->splice_buffers_mp, sbufCreateSplice(pool->splice_buffer_left_padding), pool);
+    return sbufSplicePoolGet(pool->splice_buffer_left_padding);
 #else
+    if (pool->splice_buffers_container_len == 0)
+        reChargeSpliceBuffers(pool);
+    if (pool->splice_buffers_container_len == 0)
+        return NULL;
+    sbuf_t *buf = pool->splice_buffers[--pool->splice_buffers_container_len];
+    sbufSpliceCheckBuffer(buf);
 #if BUFFER_POOL_DEBUG == 1
     pool->in_use += 1;
 #endif
-
-    bufferpoolDebugCheckThreadAccess(pool);
-    if (UNLIKELY(pool->splice_buffers_container_len == 0))
-    {
-        reChargeSpliceBuffers(pool);
-    }
-    sbuf_t *buf = pool->splice_buffers[--pool->splice_buffers_container_len];
-    buf->flags  = kSbufFlagSplice;
-#endif
-    const uint32_t preferred_capacity = pool->splice_payload_limit;
-    if (UNLIKELY(sbufSpliceInitPipe(buf, preferred_capacity) != 0))
-    {
-        const int error = errno;
-        bufferpoolReuseBuffer(pool, buf);
-        errno = error;
-        return NULL;
-    }
     return buf;
+#endif
 }
 
 typedef enum buffer_pool_tier_e
@@ -658,6 +607,26 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
             abortProgramNow(1);
         }
 #endif
+#if BYPASS_BUFFERPOOL != 1
+#if BUFFER_POOL_DEBUG == 1
+        pool->in_use -= 1;
+#endif
+        if (sbufIsPooledSplice(b))
+        {
+            /* A retired entry has no pipe and must leave the inventory. */
+            if (sbufSpliceMetadata(b).pipefd[0] >= 0)
+            {
+                sbufSplicePoolCheckPadding(pool->splice_buffer_left_padding);
+                b->capacity = (uint32_t) b->l_pad + SPLICE_BUFFER_STORAGE_SIZE;
+                if (pool->splice_buffers_container_len == kSpliceBufferLocalCacheLimit)
+                    shrinkSpliceBuffers(pool);
+                pool->splice_buffers[pool->splice_buffers_container_len++] = b;
+                return;
+            }
+        }
+#endif
+        sbufDestroySplice(b);
+        return;
     }
 
 #if BYPASS_BUFFERPOOL == 1
@@ -668,29 +637,12 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
 #if BUFFER_POOL_DEBUG == 1
     pool->in_use -= 1;
 #endif
-    if (is_splice)
-    {
-        // A splice wrapper reports logical capacity; restore its actual allocation geometry before reset.
-        b->capacity = (uint32_t) b->l_pad + SPLICE_BUFFER_STORAGE_SIZE;
-    }
     sbufReset(b);
     // we dont compare total capacity because another buffer can have 0 padding and more capacity but still
     // the sumation of capaicity and padding is the same, so we compare the capacity without padding and the padding
     // itself
-    if (is_splice && ! bufferMatchesGeometry(b, SPLICE_BUFFER_STORAGE_SIZE, pool->splice_buffer_left_padding))
-    {
-        sbufDestroySplice(b);
-    }
-    else if (is_splice)
-    {
-        if (UNLIKELY(pool->splice_buffers_container_len > pool->free_threshold))
-        {
-            shrinkSpliceBuffers(pool);
-        }
-        pool->splice_buffers[pool->splice_buffers_container_len++] = b;
-    }
-    else if (sbufGetTotalCapacityNoPadding(b) == pool->large_buffers_size &&
-             sbufGetLeftPadding(b) == pool->large_buffer_left_padding)
+    if (sbufGetTotalCapacityNoPadding(b) == pool->large_buffers_size &&
+        sbufGetLeftPadding(b) == pool->large_buffer_left_padding)
     {
         if (UNLIKELY(pool->large_buffers_container_len > pool->free_threshold))
         {
@@ -782,10 +734,11 @@ void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buff
     small_buffer_left_padding = sbufAlignLeftPadding(small_buffer_left_padding);
     splice_buffer_left_padding = sbufAlignLeftPadding(splice_buffer_left_padding);
 
-    uint16_t l_new_max = max(pool->large_buffer_left_padding, large_buffer_left_padding);
+    uint16_t l_new_max      = max(pool->large_buffer_left_padding, large_buffer_left_padding);
     uint16_t medium_new_max = max(pool->medium_buffer_left_padding, medium_buffer_left_padding);
-    uint16_t s_new_max = max(pool->small_buffer_left_padding, small_buffer_left_padding);
-    uint16_t m_new_max = max(pool->splice_buffer_left_padding, splice_buffer_left_padding);
+    uint16_t s_new_max      = max(pool->small_buffer_left_padding, small_buffer_left_padding);
+    uint16_t m_new_max      = max(pool->splice_buffer_left_padding, splice_buffer_left_padding);
+    sbufSplicePoolCheckPadding(m_new_max);
 
     if (l_new_max == pool->large_buffer_left_padding && s_new_max == pool->small_buffer_left_padding &&
         medium_new_max == pool->medium_buffer_left_padding && m_new_max == pool->splice_buffer_left_padding)
@@ -867,8 +820,8 @@ void bufferpoolCachedTierCountsForTest(const buffer_pool_t *pool, uint32_t *larg
 }
 
 buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_medium, master_pool_t *mp_small,
-                                master_pool_t *mp_splice, uint32_t bufcount, uint32_t large_buffer_size,
-                                uint32_t medium_buffer_size, uint32_t small_buffer_size, uint32_t splice_payload_limit,
+                                uint32_t bufcount, uint32_t large_buffer_size, uint32_t medium_buffer_size,
+                                uint32_t small_buffer_size, uint32_t splice_payload_limit,
                                 uint32_t waiting_budget_basis)
 {
     uint32_t capacity;
@@ -880,7 +833,7 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_mediu
 
     if (splice_payload_limit == 0 || splice_payload_limit > INT_MAX || waiting_budget_basis == 0 ||
         waiting_budget_basis > INT_MAX || mp_large == NULL || mp_medium == NULL || mp_small == NULL ||
-        mp_splice == NULL || ! bufferpoolTryComputeGeometry(bufcount, &capacity, &free_threshold, &container_len) ||
+        ! bufferpoolTryComputeGeometry(bufcount, &capacity, &free_threshold, &container_len) ||
         ! bufferpoolTryRoundBufferSize(large_buffer_size, &rounded_large_buffer_size) ||
         ! bufferpoolTryRoundBufferSize(medium_buffer_size, &rounded_medium_buffer_size) ||
         ! bufferpoolTryRoundBufferSize(small_buffer_size, &rounded_small_buffer_size))
@@ -932,19 +885,9 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_mediu
         return NULL;
     }
 
-    sbuf_t **splice_buffers = (sbuf_t **) memoryAllocate(container_len);
-    if (splice_buffers == NULL)
-    {
-        memoryFree(small_buffers);
-        memoryFree(large_buffers);
-        memoryFree(ptr_pool);
-        return NULL;
-    }
-
     sbuf_t **medium_buffers = (sbuf_t **) memoryAllocate(container_len);
     if (medium_buffers == NULL)
     {
-        memoryFree(splice_buffers);
         memoryFree(small_buffers);
         memoryFree(large_buffers);
         memoryFree(ptr_pool);
@@ -973,20 +916,16 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_mediu
         .medium_buffers    = medium_buffers,
         .small_buffers_mp  = mp_small,
         .small_buffers     = small_buffers,
-        .splice_buffers_mp = mp_splice,
-        .splice_buffers    = splice_buffers,
     };
 
     masterpoolInstallCallBacks(ptr_pool->large_buffers_mp, createLargeBufHandle, destroyLargeBufHandle);
     masterpoolInstallCallBacks(ptr_pool->medium_buffers_mp, createMediumBufHandle, destroyLargeBufHandle);
     masterpoolInstallCallBacks(ptr_pool->small_buffers_mp, createSmallBufHandle, destroySmallBufHandle);
-    masterpoolInstallCallBacks(ptr_pool->splice_buffers_mp, createSpliceBufHandle, destroySpliceBufHandle);
 
 #ifdef DEBUG
     memorySet((void *) ptr_pool->large_buffers, 0xFE, container_len);
     memorySet((void *) ptr_pool->medium_buffers, 0xFE, container_len);
     memorySet((void *) ptr_pool->small_buffers, 0xFE, container_len);
-    memorySet((void *) ptr_pool->splice_buffers, 0xFE, container_len);
 #endif
 
     // firstCharge(ptr_pool);
@@ -1016,6 +955,5 @@ void bufferpoolDestroy(buffer_pool_t *pool)
     memoryFree((void *) pool->medium_buffers);
     memoryFree((void *) pool->large_buffers);
     memoryFree((void *) pool->small_buffers);
-    memoryFree((void *) pool->splice_buffers);
     memoryFree(pool);
 }

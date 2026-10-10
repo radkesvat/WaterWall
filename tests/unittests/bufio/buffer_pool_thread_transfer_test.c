@@ -11,6 +11,7 @@
  * or application-throughput behavior.
  * CTest: waterwall.buffer_pool_thread_transfer_unit
  */
+#include "fixtures/splice_inventory.h"
 #include "wwapi.h"
 
 #include "test_assert.h"
@@ -61,24 +62,17 @@ static void startAndJoinGeneration(pool_thread_probe_t *probe, pthread_t *thread
 
 int main(void)
 {
+    testSpliceInventoryInitialize(0);
     testCaseSet("buffer_pool_thread_transfer_test");
-    master_pool_t      *large_master = masterpoolCreateWithCapacity(8);
-    master_pool_t      *small_master = masterpoolCreateWithCapacity(8);
-    master_pool_t      *medium_master = masterpoolCreateWithCapacity(8);
-    master_pool_t      *splice_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t      *pool          = bufferpoolCreate(large_master,
-                                           medium_master,
-                                           small_master,
-                                           splice_master,
-                                           8,
-                                           8192,
-                                           MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                           4096,
-                                           8192,
-                                           8192);
-    pool_thread_probe_t first        = {
-               .pool       = pool,
-               .may_access = true,
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool          = bufferpoolCreate(
+        large_master, medium_master, small_master, 8, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, 4096, 8192, 8192);
+    pool_thread_probe_t first = {
+        .pool       = pool,
+        .may_access = true,
     };
     pool_thread_probe_t second = {
         .pool = pool,

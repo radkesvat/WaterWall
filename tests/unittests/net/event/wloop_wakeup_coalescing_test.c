@@ -120,7 +120,6 @@ static void runnerCreate(loop_runner_t *runner, env_t *env)
     runner->pool = bufferpoolCreate(env->large_master,
                                     env->medium_master,
                                     env->small_master,
-                                    env->splice_master,
                                     64,
                                     8192,
                                     MEDIUM_BUFFER_SIZE_RAM_HIGH,

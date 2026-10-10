@@ -13,6 +13,7 @@
 #pragma once
 
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/protocols/splice_source.h"
 
 /* Small real-pipe inputs; large cases use resident prefix storage rather than
  * assuming that the kernel grants pipe growth. Include after the TWF harness. */
@@ -26,12 +27,14 @@ static sbuf_t *halfduplexTestBytes(buffer_pool_t *pool, const void *data, uint32
     if (splice)
     {
         twfRequire(prefix <= length && length - prefix <= 4096, "invalid real-pipe fixture geometry");
-        sbuf_t *buf = twfTrackAcquired(sbufCreateSplice(max(prefix, (uint16_t) 64)));
-        twfRequire(sbufSpliceInitPipe(buf, 0) == 0, "private pipe creation failed");
+        sbuf_t  *buf  = twfTrackAcquired(sbufCreateSplice(max(prefix, (uint16_t) 64)));
         uint32_t body = length - prefix;
         if (body != 0)
+        {
+            twfRequire(testSpliceSourceInitPipe(buf) == 0, "private pipe lease failed");
             twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], (const uint8_t *) data + prefix, body) == body,
                        "private pipe did not receive every claimed byte");
+        }
         buf->capacity += body;
         sbufSetLength(buf, body);
         sbufShiftLeft(buf, prefix);

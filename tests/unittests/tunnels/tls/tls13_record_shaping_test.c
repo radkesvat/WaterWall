@@ -209,7 +209,6 @@ static shaping_pool_t createPool(void)
     result.pool           = bufferpoolCreate(result.large_master,
                                    result.medium_master,
                                    result.small_master,
-                                   result.splice_master,
                                    4,
                                    32768,
                                    MEDIUM_BUFFER_SIZE_RAM_HIGH,

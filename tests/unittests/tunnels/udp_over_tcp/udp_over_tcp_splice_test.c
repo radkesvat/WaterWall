@@ -4,6 +4,7 @@
  * CTest: waterwall.udpovertcp{client,server}_{splice,no_splice}_unit
  */
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/protocols/splice_source.h"
 
 #ifdef TEST_UOT_SERVER
 #include "UdpOverTcpServer/interface.h"
@@ -34,7 +35,7 @@ static size_t           wire_length, plain_length, measured_reads;
 static uint32_t         datagrams[256];
 static unsigned         wire_calls, plain_calls, inits, finishes, pauses, resumes;
 static bool             measuring, require_splice, close_output, inject_encode, inject_decode;
-static bool             pause_output, startup_payload, startup_pause, close_init, fail_stream, fail_queue, fail_pipe;
+static bool             pause_output, startup_payload, startup_pause, close_init, fail_stream, fail_queue;
 static unsigned         decode_overflow;
 static sbuf_t          *expected_identity;
 
@@ -47,20 +48,6 @@ ssize_t __wrap_read(int fd, void *destination, size_t bytes)
         measured_reads += (size_t) result;
     return result;
 }
-
-#if WW_HAVE_SPLICE
-int __real_pipe2(int pipefd[2], int flags);
-int __wrap_pipe2(int pipefd[2], int flags);
-int __wrap_pipe2(int pipefd[2], int flags)
-{
-    if (fail_pipe)
-    {
-        errno = EMFILE;
-        return -1;
-    }
-    return __real_pipe2(pipefd, flags);
-}
-#endif
 
 splice_stream_t *__real_splicestreamCreate(buffer_pool_t *pool, uint32_t header_size);
 splice_stream_t *__wrap_splicestreamCreate(buffer_pool_t *pool, uint32_t header_size);
@@ -94,7 +81,7 @@ static sbuf_t *pipeBytes(const void *data, uint32_t length, uint32_t prefix)
     else
     {
         buf = twfTrackAcquired(sbufCreateSplice((uint16_t) (prefix + 128)));
-        twfRequire(sbufSpliceInitPipe(buf, 8192) == 0, "create resident-prefix pipe");
+        twfRequire(testSpliceSourceInitPipe(buf) == 0, "create resident-prefix pipe");
         buf->flags |= kSbufFlagSplice;
     }
     twfRequire(buf != NULL && prefix <= length, "create splice input");
@@ -298,7 +285,7 @@ static void checkInitialized(void)
 
 static void teardown(void)
 {
-    fail_stream = fail_queue = fail_pipe = false;
+    fail_stream = fail_queue = false;
     startup_payload = startup_pause = close_init = false;
     if (lineIsAlive(line))
     {
@@ -536,13 +523,14 @@ static void testOversizedPipe(void)
 
 static void testDecodeFallback(void)
 {
-    twfSetCase("pipe allocation refusal materializes complete frame with correct boundaries");
+    twfSetCase("pipe inventory exhaustion materializes complete frame with correct boundaries");
     setup(IP_PROTO_UDP);
     checkInitialized();
-    const uint8_t data[] = {0, 3, 'a', 'b', 'c', 0, 1, 'd'};
-    sbuf_t       *buf    = pipeBytes(data, sizeof(data), 0);
-    fail_pipe            = true;
+    const uint8_t                data[] = {0, 3, 'a', 'b', 'c', 0, 1, 'd'};
+    sbuf_t                      *buf    = pipeBytes(data, sizeof(data), 0);
+    test_splice_inventory_hold_t held   = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
     decode(node, line, buf);
+    testSpliceInventoryReleaseHeld(&held);
     twfRequire(plain_calls == 2 && datagrams[0] == 3 && datagrams[1] == 1 && plain_length == 4 &&
                    memcmp(plain, "abcd", 4) == 0,
                "fallback changed datagram boundaries or bytes");

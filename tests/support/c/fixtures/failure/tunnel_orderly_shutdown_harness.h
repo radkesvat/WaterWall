@@ -230,7 +230,6 @@ static void tosWorkerEnvSetup(tos_worker_env_t *env, wid_t count, uint32_t large
         env->pools[wi] = bufferpoolCreate(env->large_masters[wi],
                                           env->medium_masters[wi],
                                           env->small_masters[wi],
-                                          env->splice_masters[wi],
                                           4,
                                           large_buffer_size,
                                           MEDIUM_BUFFER_SIZE_RAM_HIGH,
@@ -313,6 +312,13 @@ static void tosWorkerEnvTeardown(tos_worker_env_t *env)
         wloopDestroy(&env->loops[wi]);
         env->workers[wi].loop = NULL;
         mutexDestroy(&env->workers[wi].control_mutex);
+    }
+    /* Complete splice entries remain owned by local caches until pool teardown. */
+    for (wid_t wi = 0; wi < env->count; ++wi)
+    {
+        bufferpoolDestroy(env->pools[wi]);
+        env->pools[wi]               = NULL;
+        env->workers[wi].buffer_pool = NULL;
     }
     testWorkerUnbindWID();
     GSTATE.flag_initialized      = false;

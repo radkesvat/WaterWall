@@ -461,7 +461,6 @@ static void clientFixtureInitialize(client_lifecycle_fixture_t *fixture)
     fixture->pool           = bufferpoolCreate(fixture->large_master,
                                      fixture->medium_master,
                                      fixture->small_master,
-                                     fixture->splice_master,
                                      8,
                                      8192,
                                      MEDIUM_BUFFER_SIZE_RAM_HIGH,
@@ -1849,16 +1848,8 @@ static void runClientSizingCase(uint16_t tls_version, const reality_v2_record_pr
     master_pool_t *small_master  = masterpoolCreateWithCapacity(8);
     master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
     master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool          = bufferpoolCreate(large_master,
-                                           medium_master,
-                                           small_master,
-                                           splice_master,
-                                           8,
-                                           65536,
-                                           MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                           1024,
-                                           65536,
-                                           65536);
+    buffer_pool_t *pool          = bufferpoolCreate(
+        large_master, medium_master, small_master, 8, 65536, MEDIUM_BUFFER_SIZE_RAM_HIGH, 1024, 65536, 65536);
     bufferpoolUpdateAllocationPaddings(pool,
                                        kRealityClientMaxFramePrefixSize,
                                        kRealityClientMaxFramePrefixSize,

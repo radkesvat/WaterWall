@@ -953,6 +953,7 @@ static void testStaticSpliceRetirement(void)
         twfSetCase("static UDP retirement drains exact peer owners and detaches cached WIO slots");
         tos_worker_env_t env;
         tosWorkerEnvSetup(&env, 2, 8192, 1024);
+        testSpliceInventoryInitialize(0);
         tunnel_t   *source = tunnelCreate(NULL, 0, sizeof(udplistener_lstate_t));
         twf_trace_t trace  = {0};
         tunnel_t   *next   = twfCreateNextTunnel(&trace);

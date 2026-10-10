@@ -10,6 +10,7 @@
  * CTest: waterwall.router_splice_unit
  */
 #include "Router/interface.h"
+#include "fixtures/splice_inventory.h"
 
 #include "test_assert.h"
 
@@ -373,6 +374,7 @@ int main(void)
     data.internal_logger_data.log_level = data.core_logger_data.log_level = off;
     data.network_logger_data.log_level = data.dns_logger_data.log_level = off;
     require(wwStartupSucceeded(createGlobalState(data)), "initialize runtime");
+    testSpliceInventoryInitialize(kOnwardPadding + 32);
     globalstateUpdateAllocationPadding(kOnwardPadding + 32);
     for (unsigned splice = 0; splice <= WW_HAVE_SPLICE; ++splice)
     {

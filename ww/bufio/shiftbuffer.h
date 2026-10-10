@@ -17,7 +17,7 @@ enum
     /**
      * Represent kernel-backed payload with a splice sbuf wrapper whose actual
      * payload storage is 32 bytes. Private metadata at the original payload
-     * start (buf + l_pad) holds an owned lazy pipe;
+     * start (buf + l_pad) holds an exclusively leased inventory pipe;
      * the preceding bytes remain reserved left padding. The metadata stays
      * at that fixed offset when a tunnel prepends bytes by shifting left.
      * Length and capacity account for that logical payload, not the wrapper's
@@ -37,8 +37,9 @@ enum
      * the actual transferred length. Delivered wrappers contain no source socket
      * pointer or reservation and survive source reclamation. Splice-aware code
      * may defer them immediately, retaining exclusive ownership and stream order.
-     * Consume bodies through the dedicated pipe helpers. Recycling preserves an
-     * empty private pair; physical destruction closes it. See splice_buffer.h.
+     * Consume bodies through the dedicated pipe helpers. Recycling caches the
+     * complete empty buffer; direct destruction returns pooled entries to the
+     * shared master from any thread. See splice_buffer.h.
      *
      * Reserved left padding remains real, writable storage. A tunnel may use
      * sbufShiftLeft() and write its prefix within the available, advertised
@@ -51,7 +52,9 @@ enum
      * body is resident in memory. Violating this contract can corrupt the
      * descriptor pointer, break I/O, or crash the process; a crash is not guaranteed.
      */
-    kSbufFlagSplice = 1U << 0
+    kSbufFlagSplice = 1U << 0,
+    /* A complete startup inventory entry. Retained while cached or retired. */
+    kSbufFlagSplicePooled = 1U << 1
 };
 
 struct sbuf_s
@@ -89,6 +92,12 @@ enum
     // the real allocation size and must be accounted for in the limit checks.
     kSbufAllocationAlignment = 32
 };
+
+/** Whether this buffer belongs to the fixed startup inventory. */
+static inline bool sbufIsPooledSplice(const sbuf_t *buf)
+{
+    return (buf->flags & kSbufFlagSplicePooled) != 0;
+}
 
 /**
  * @brief sbufTryComputeCapacity() against an explicit allocation-size ceiling.
@@ -227,7 +236,7 @@ static inline void sbufByteCopy(void *restrict dst, const void *restrict src, co
 uint16_t sbufAlignLeftPadding(uint16_t pad_left);
 
 /**
- * @brief Destroy a buffer and free its allocation.
+ * @brief Release a buffer; healthy splice inventory entries return to the master.
  *
  * @param b Buffer to destroy.
  */
@@ -285,29 +294,49 @@ sbuf_t *sbufTryCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
 sbuf_t *sbufCreate(uint32_t minimum_capacity);
 
 /**
- * @brief Create an empty splice wrapper with 32 bytes of control storage plus left padding.
+ * @brief Allocate an unmanaged empty splice representation with control storage and padding.
  *
  * @param pad_left Requested left padding in bytes, rounded up to a 32-byte boundary.
- * @return sbuf_t* Empty wrapper with only kSbufFlagSplice set and an uninitialized private pipe pair.
- * Populate the pipe before publishing its actual logical body size.
+ * @return sbuf_t* Empty wrapper with only kSbufFlagSplice set and no pipe.
+ * This does not draw from or grow the fixed inventory. Normal I/O uses the pool.
  */
 sbuf_t *sbufCreateSplice(uint16_t pad_left);
 
-/* Create the private pipe if needed. For empty buffers, try to grow its capacity
- * to preferred_capacity (at most INT_MAX); zero skips capacity negotiation.
- * Query/growth failure is nonfatal and retains the usable pipe. Undersized or
- * unknown-capacity pairs retry on later empty initialization at most once per
- * second per pair, including after pool reuse. Never shrinks a pipe or resizes
- * a buffer with payload. Returns -1 only when creation fails or splice is unsupported. */
-int  sbufSpliceInitPipe(sbuf_t *buf, uint32_t preferred_capacity);
+/* Publish the shared control object before imports can copy global state.
+ * Allocates no pipes/buffers. Failure disables inventory for that startup;
+ * callers must not retry after distributing copies with a NULL pointer. */
+bool sbufSplicePoolPrepare(void);
+/* Exclusive startup after all chain padding is finalized, before producers.
+ * Preallocate complete buffers and full-sized pipes within the resource limits.
+ * Stops on allocation/sizing refusal, retaining prior successes; zero is valid.
+ * Padding is aligned once and immutable. Uses the published control object;
+ * standalone callers may omit Prepare when no state copies have been shared. */
+uint32_t sbufSplicePoolInitialize(uint64_t capacity_limit, uint32_t pipe_capacity, uint32_t max_pipe_count,
+                                  uint16_t padding);
+uint64_t sbufSplicePoolCapacity(void);
+uint32_t sbufSplicePoolCount(void);
+uint16_t sbufSplicePoolPadding(void);
+/* Fatal in every build if an existing inventory's padding differs. */
+void sbufSplicePoolCheckPadding(uint16_t padding);
+void sbufSpliceCheckBuffer(const sbuf_t *buf);
+/* Exclusive final teardown after all users and local caches have returned. */
+void sbufSplicePoolDestroy(void);
+/* Take complete empty entries, without allocating or resizing anything.
+ * A miss returns NULL/zero with ENOBUFS (ENOSYS on unsupported builds).
+ * Bulk checkout may return fewer than count entries. */
+sbuf_t  *sbufSplicePoolGet(uint16_t padding);
+uint32_t sbufSplicePoolGetBuffers(sbuf_t **buffers, uint32_t count, uint16_t padding);
+/* Permanently retire a failed owned pipe; it is never replaced during runtime. */
 void sbufSpliceClosePipe(sbuf_t *buf);
 /* Discard an exclusively owned splice payload before recycling. Drains the private
- * pipe, or closes it on error; clears length/cursor without freeing the wrapper.
+ * pipe using the startup discard sink with a read fallback, or closes it on drain
+ * failure; clears length/cursor without freeing the wrapper.
  * Empty unused wrappers are valid. */
 void sbufSpliceDiscard(sbuf_t *buf);
 /* Checks kernel emptiness as well as logical settlement; reset never drains. */
 bool sbufSpliceIsReusable(const sbuf_t *buf);
-/* Type-specific destruction also accepts cached wrappers with reset flags. */
+/* Return a healthy inventory buffer to the global master from any thread.
+ * Retired entries and unmanaged wrappers are physically freed. */
 void sbufDestroySplice(sbuf_t *buf);
 
 /**

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/01-getting-started/tutorial-part1.mdx, and both English files must keep the same documentation version. User-facing behavior changes should also update WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/01-getting-started/tutorial-part1.mdx.
 -->
 
@@ -297,6 +297,35 @@ Set `"splice": false` to use ordinary read/write buffers throughout the TCP
 adapters. This startup setting applies to every chain, including chains with
 internally inserted nodes. Omitting it, including when `misc` is empty or absent,
 defaults to `true`; a non-boolean value is a configuration error.
+
+On supported Linux builds, enabled splice also makes a best-effort startup
+request to raise `fs.pipe-user-pages-soft` to the 512 MiB splice budget converted
+to system pages, capped by `fs.pipe-user-pages-hard` when that limit is nonzero.
+These settings apply system-wide to each user's pipe usage. WaterWall preserves
+an unlimited soft limit (`0`) and any soft limit already at or above the target;
+lack of permission or another failure does not stop startup. It never changes
+the hard limit or `fs.pipe-max-size`, or writes persistent sysctl configuration.
+A successful increase remains in effect after exit.
+
+After every startup configuration's chains are finalized, and before prepare/start
+hooks or producers run, WaterWall allocates complete splice buffers with their
+fixed maximum required padding and full-sized 1 MiB pipes, up to a process-wide
+512 MiB capacity budget. The number of pipes is also capped
+at `floor((RLIMIT_NOFILE.soft - open_descriptors) / 8)`: each pipe has two
+descriptors, so inventory uses at most one quarter of the remaining descriptor
+allowance, leaving the rest for configuration and runtime resources. The
+`/proc/self/fd` count includes its temporary scan descriptor
+conservatively; an unavailable limit or scan leaves the inventory empty. Kernel
+limits and allocation failures can reduce the acquired inventory further.
+Startup logs the actual pipe count and capacity. This is a pipe-capacity budget,
+not a reservation of 512 MiB of physical payload memory.
+
+Each worker caches up to eight unused splice buffers. An empty local cache draws
+from the shared master. If both are empty, checkout returns NULL and callers
+normally fall back to ordinary buffers, even if other worker caches retain pipes. Healthy pipes are retained until shutdown; traffic
+never creates replacement pipes, grows them, or accepts smaller pipes. An
+unusable pipe is retired without replacement. Setting `splice` to `false` skips
+both pipe-limit tuning and inventory allocation.
 
 When `try-enabling-bbr` is true on Linux, Waterwall checks the current TCP
 congestion control, configures `net.core.default_qdisc=fq` when needed, and

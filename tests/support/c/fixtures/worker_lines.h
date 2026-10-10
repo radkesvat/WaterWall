@@ -2,6 +2,7 @@
 
 /* Explicit worker-zero pools/loop and normal-line fixtures. The scenario owns line shutdown and visible teardown. */
 #include "fixtures/buffer_ledger.h"
+#include "fixtures/splice_inventory.h"
 #include "wevent.h"
 #include "wwapi.h"
 
@@ -44,6 +45,7 @@ static void twfWorkerEnvSetupWithBufferSizes(twf_worker_env_t *env, uint32_t lar
                                              uint32_t waiting_budget_basis)
 {
     memoryZero(env, sizeof(*env));
+    testSpliceInventoryInitialize(left_padding);
 
     GSTATE.flag_initialized = true;
 
@@ -61,7 +63,6 @@ static void twfWorkerEnvSetupWithBufferSizes(twf_worker_env_t *env, uint32_t lar
     env->pool = bufferpoolCreate(env->large_master,
                                  env->medium_master,
                                  env->small_master,
-                                 env->splice_master,
                                  4,
                                  large_buffer_size,
                                  MEDIUM_BUFFER_SIZE_RAM_HIGH,

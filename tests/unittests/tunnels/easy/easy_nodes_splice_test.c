@@ -10,6 +10,7 @@
  */
 #include "easy_nodes_splice_fixture.h"
 #include "fixtures/failure/buffer_disposal_probe.h"
+#include "fixtures/splice_inventory.h"
 #include "global_state.h"
 
 #include "test_assert.h"
@@ -107,7 +108,7 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
             splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
             easyRequire(metadata.pipefd[0] == f->metadata.pipefd[0] && metadata.pipefd[1] == f->metadata.pipefd[1] &&
                             metadata.pipe_capacity == f->metadata.pipe_capacity &&
-                            metadata.capacity_retry_at_us == f->metadata.capacity_retry_at_us,
+                            metadata.pipe_capacity == f->metadata.pipe_capacity,
                         "private pipe metadata changed");
         }
         uint8_t bytes[256];
@@ -195,6 +196,7 @@ int main(void)
     data.internal_logger_data.log_level = data.core_logger_data.log_level = off;
     data.network_logger_data.log_level = data.dns_logger_data.log_level = off;
     easyRequire(wwStartupSucceeded(createGlobalState(data)), "initialize runtime");
+    testSpliceInventoryInitialize(192);
     globalstateUpdateAllocationPadding(192);
     for (unsigned splice = 0; splice <= WW_HAVE_SPLICE; ++splice)
     {

@@ -14,6 +14,8 @@
  * suites.
  */
 #include "AuthenticationClient/structure.h"
+#include "fixtures/protocols/splice_source.h"
+#include "fixtures/splice_inventory.h"
 
 #include "test_assert.h"
 
@@ -296,7 +298,7 @@ static sbuf_t *makeInput(line_t *l, const char *bytes, unsigned mode)
     if (mode && n - prefix <= 4096)
     {
         sbuf_t *b = sbufCreateSplice((uint16_t) (prefix + 64));
-        require(sbufSpliceInitPipe(b, 0) == 0, "real test pipe");
+        require(testSpliceSourceInitPipe(b) == 0, "real test pipe");
         const splice_buffer_metadata_t metadata = sbufSpliceMetadata(b);
         if (n != prefix)
             require(write(metadata.pipefd[1], bytes + prefix, n - prefix) == (ssize_t) (n - prefix), "fill real pipe");
@@ -1545,7 +1547,6 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     buffer_pool_t *pool   = bufferpoolCreate(large,
                                            medium,
                                            small,
-                                           splice,
                                            4,
                                            large_size,
                                            MEDIUM_BUFFER_SIZE_RAM_HIGH,
@@ -1859,6 +1860,7 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
 
 int main(void)
 {
+    testSpliceInventoryInitialize(64);
     testCaseSet("http_proxy_server_lifecycle_test");
     runSuite(32768, 32768);
     runSuite(LARGE_BUFFER_SIZE_RAM_HIGH, SPLICE_PAYLOAD_LIMIT);

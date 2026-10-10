@@ -70,7 +70,7 @@ static void caseIndependentSpliceRetention(void)
     unsigned children        = 0;
     for (unsigned i = 0; i < 144; ++i)
     {
-        sbuf_t *input = pqSplicePattern(&f, 1);
+        sbuf_t *input = pqIndependentSpliceByte(&f, patternByte(0), 65536);
         kernel_capacity += sbufSpliceMetadata(input).pipe_capacity;
         buffer_queue_t *queue;
         if (i % 3 == 0)

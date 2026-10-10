@@ -144,16 +144,8 @@ static void fixtureSetupWithLargeAlpn(session_fixture_t *f, uint16_t version, bo
         f->masters[i] = masterpoolCreateWithCapacity(8);
         require(f->masters[i] != NULL, "failed to allocate session fixture master pool");
     }
-    f->pools[0] = bufferpoolCreate(f->masters[0],
-                                   f->masters[1],
-                                   f->masters[2],
-                                   f->masters[3],
-                                   4,
-                                   32768,
-                                   MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                   1024,
-                                   32768,
-                                   32768);
+    f->pools[0] = bufferpoolCreate(
+        f->masters[0], f->masters[1], f->masters[2], 4, 32768, MEDIUM_BUFFER_SIZE_RAM_HIGH, 1024, 32768, 32768);
     require(f->pools[0] != NULL, "failed to allocate session fixture buffer pool");
     bufferpoolUpdateAllocationPaddings(f->pools[0], 96, 96, 96, 96);
     GSTATE.workers_count         = 1;

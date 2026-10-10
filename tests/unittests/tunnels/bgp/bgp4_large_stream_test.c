@@ -13,6 +13,7 @@
  * CTest: waterwall.bgp4_large_stream_unit; waterwall.bgp4_no_splice_unit
  */
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/protocols/splice_source.h"
 
 extern tunnel_t *bgp4clientTunnelCreate(node_t *node);
 extern tunnel_t *bgp4serverTunnelCreate(node_t *node);
@@ -202,10 +203,10 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
 #include <unistd.h>
 #endif
 
-static bool fail_stream, fail_queue, fail_pipe, pipe_pressure;
+static bool fail_stream, fail_queue, pipe_pressure;
 #if WW_HAVE_SPLICE
-static bool     reject_growth;
-static unsigned growth_refusals;
+static bool   pipe_refusal;
+static size_t first_pipe_move_limit = 257;
 #endif
 static uint32_t fixture_splice_limit = 4096;
 static int      fixed_random         = -1;
@@ -235,48 +236,19 @@ bool __wrap_bufferqueueReserveExtra(buffer_queue_t *q, size_t count)
     return __real_bufferqueueReserveExtra(q, count);
 }
 #if WW_HAVE_SPLICE
-int __real_fcntl(int, int, ...);
-int __wrap_fcntl(int, int, ...);
-int __wrap_fcntl(int fd, int command, ...)
-{
-    if (command == F_GETPIPE_SZ || command == F_GETFD || command == F_GETFL)
-        return __real_fcntl(fd, command);
-    va_list args;
-    va_start(args, command);
-    int value = va_arg(args, int);
-    va_end(args);
-    if (command == F_SETPIPE_SZ && reject_growth)
-    {
-        ++growth_refusals;
-        errno = EPERM;
-        return -1;
-    }
-    return __real_fcntl(fd, command, value);
-}
-int __real_pipe2(int *, int);
-int __wrap_pipe2(int *, int);
-int __wrap_pipe2(int *fds, int flags)
-{
-    if (fail_pipe)
-    {
-        errno = EMFILE;
-        return -1;
-    }
-    int result = __real_pipe2(fds, flags);
-    if (result == 0 && reject_growth)
-        twfRequire(__real_fcntl(fds[0], F_SETPIPE_SZ, 4096) == 4096, "cannot create one-page pipe fixture");
-    return result;
-}
 ssize_t __real_splice(int, off_t *, int, off_t *, size_t, unsigned);
 ssize_t __wrap_splice(int, off_t *, int, off_t *, size_t, unsigned);
 ssize_t __wrap_splice(int in, off_t *oi, int out, off_t *oo, size_t count, unsigned flags)
 {
-    if (pipe_pressure && pipe_moves++ != 0)
+    /* Inject destination-pipe pressure, not refusal by the discard sink. */
+    if ((pipe_pressure || pipe_refusal) && fcntl(out, F_GETPIPE_SZ) < 0)
+        return __real_splice(in, oi, out, oo, count, flags);
+    if ((pipe_pressure || pipe_refusal) && (pipe_moves++ != 0 || pipe_refusal))
     {
         errno = EAGAIN;
         return -1;
     }
-    return __real_splice(in, oi, out, oo, pipe_pressure ? min(count, (size_t) 257) : count, flags);
+    return __real_splice(in, oi, out, oo, pipe_pressure ? min(count, first_pipe_move_limit) : count, flags);
 }
 ssize_t __real_read(int, void *, size_t);
 ssize_t __wrap_read(int, void *, size_t);
@@ -301,7 +273,7 @@ typedef struct bgp_fixture_s
     line_t          *line;
     twf_trace_t      trace;
     bool             client, encode;
-    unsigned         action, deliveries, pauses, resumes, finishes;
+    unsigned         action, deliveries, ordinary_deliveries, pauses, resumes, finishes;
     size_t           length, reads_at_delivery;
     uint8_t         *bytes;
     sbuf_t          *last_buffer;
@@ -319,8 +291,7 @@ static sbuf_t *fixtureBytes(bgp_fixture_t *f, const void *bytes, uint32_t length
 #if WW_HAVE_SPLICE
     if (splice_input)
     {
-        b = bufferpoolGetSpliceBuffer(f->env.pool);
-        twfRequire(b != NULL, "source pipe checkout failed");
+        b = twfTrackAcquired(testSpliceSourceBuffer(bufferpoolGetSpliceBufferPadding(f->env.pool), length));
         const splice_buffer_metadata_t m = sbufSpliceMetadata(b);
         twfRequire(write(m.pipefd[1], bytes, length) == (ssize_t) length, "small source pipe write failed");
         b->capacity = b->l_pad + length;
@@ -372,6 +343,7 @@ static void fixtureReceive(tunnel_t *t, line_t *l, sbuf_t *b)
     bgp_fixture_t *f = active;
     twfRequire(t == (f->encode == f->client ? f->next : f->prev), "Payload direction reversed");
     ++f->deliveries;
+    f->ordinary_deliveries += ! sbufIsSplice(b);
     f->last_buffer       = b;
     f->last_pipe         = sbufIsSplice(b) ? sbufSpliceMetadata(b).pipefd[0] : -1;
     f->headroom          = sbufGetLeftCapacity(b);
@@ -681,11 +653,14 @@ static void testDecodePressureAndFallback(void)
                 fixtureSubmit(&f, fixtureBytes(&f, bytes + i, chunk, WW_HAVE_SPLICE && (i / 4096) % 2 == 0));
                 i += chunk;
             }
-            fail_pipe     = mode == 0;
+            test_splice_inventory_hold_t held = {0};
+            if (mode == 0)
+                held = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
             pipe_pressure = mode == 1;
             pipe_moves    = 0;
             fixturePermission(&f, false);
-            fail_pipe = pipe_pressure = false;
+            pipe_pressure = false;
+            testSpliceInventoryReleaseHeld(&held);
             if (mode == 3)
                 twfRequire(! lineIsAlive(f.line) && f.deliveries == 1, "decoder continued after Finish");
             else
@@ -733,19 +708,15 @@ static void testEncoderPipeFallback(void)
 {
 #if WW_HAVE_SPLICE
     for (unsigned client = 0; client < 2; ++client)
-        for (unsigned refuse = 0; refuse < 2; ++refuse)
+        for (unsigned mode = 0; mode < 3; ++mode)
         {
             bgp_fixture_t f;
-            fixture_splice_limit = 1024 * 1024;
-            reject_growth        = true;
-            growth_refusals      = 0;
             fixtureBegin(&f, client, true, 8192);
-            /* A large real prefix plus one page of pipe data exercises splitting
-             * even on hosts that cannot grant a large pipe. Leave 39 header bytes. */
+            /* The resident prefix crosses the first frame boundary with a
+             * private body, so refusal must preserve both representations. */
             const uint32_t prefix = 65504 - 39, body = 4096;
-            sbuf_t        *input = twfTrackAcquired(sbufCreateSplice(65504));
-            twfRequire(sbufSpliceInitPipe(input, 1024 * 1024) == 0, "source pipe creation failed");
-            uint8_t bytes[4096];
+            sbuf_t        *input = twfTrackAcquired(testSpliceSourceBuffer(65504, body));
+            uint8_t        bytes[4096];
             for (uint32_t i = 0; i < body; ++i)
                 bytes[i] = pattern(prefix + i);
             twfRequire(write(sbufSpliceMetadata(input).pipefd[1], bytes, body) == body, "source pipe fill failed");
@@ -754,14 +725,23 @@ static void testEncoderPipeFallback(void)
             sbufShiftLeft(input, prefix);
             for (uint32_t i = 0; i < prefix; ++i)
                 sbufGetMutablePtr(input)[i] = pattern(i);
-            fail_pipe = refuse != 0;
+            test_splice_inventory_hold_t held = {0};
+            if (mode == 0)
+                held = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
+            pipe_refusal          = mode == 1;
+            pipe_pressure         = mode == 2;
+            first_pipe_move_limit = 1;
+            pipe_moves            = 0;
             fixtureSubmit(&f, input);
-            fail_pipe = false;
-            twfRequire(f.deliveries == 2 && growth_refusals != 0, "split/refused growth path was not exercised");
+            pipe_refusal = pipe_pressure = false;
+            first_pipe_move_limit        = 257;
+            testSpliceInventoryReleaseHeld(&held);
+            twfRequire(f.deliveries == 2 && f.ordinary_deliveries != 0,
+                       "split encoder did not use complete ordinary fallback");
+            twfRequire(mode == 0 ? pipe_moves == 0 : pipe_moves >= mode,
+                       "encoder did not exercise exhausted, refused, or partial pipe progress");
             checkEncoded(&f, prefix + body, false);
             fixtureEnd(&f);
-            reject_growth        = false;
-            fixture_splice_limit = 4096;
         }
 #endif
 }

@@ -113,7 +113,6 @@ static pool_fixture_t makePool(const geometry_t *geometry, uint32_t width)
     fixture.pool = bufferpoolCreate(fixture.large,
                                     fixture.medium,
                                     fixture.small,
-                                    fixture.splice_buffer_pool,
                                     width,
                                     geometry->large,
                                     MEDIUM_BUFFER_SIZE_RAM_HIGH,

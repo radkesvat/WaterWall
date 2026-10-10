@@ -221,7 +221,6 @@ static void envSetup(test_env_t *env)
     env->worker_buffer_pool = bufferpoolCreate(env->large_master,
                                                env->medium_master,
                                                env->small_master,
-                                               env->splice_master,
                                                16,
                                                8192,
                                                MEDIUM_BUFFER_SIZE_RAM_HIGH,
@@ -231,13 +230,13 @@ static void envSetup(test_env_t *env)
     env->buffer_pools[0]    = env->worker_buffer_pool;
     env->loops[0]           = (wloop_t *) (void *) env;
 
-    GSTATE.shortcut_buffer_pools         = env->buffer_pools;
-    GSTATE.shortcut_loops                = env->loops;
-    GSTATE.masterpool_buffer_pools_large = env->large_master;
-    GSTATE.masterpool_buffer_pools_small = env->small_master;
+    GSTATE.shortcut_buffer_pools          = env->buffer_pools;
+    GSTATE.shortcut_loops                 = env->loops;
+    GSTATE.masterpool_buffer_pools_large  = env->large_master;
+    GSTATE.masterpool_buffer_pools_small  = env->small_master;
     GSTATE.masterpool_buffer_pools_medium = env->medium_master;
-    GSTATE.masterpool_buffer_pools_splice = env->splice_master;
-    GSTATE.workers_count                 = 1;
+
+    GSTATE.workers_count = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
     GSTATE.ram_profile = 1;
     testWorkerBindWID(0);
@@ -245,13 +244,13 @@ static void envSetup(test_env_t *env)
 
 static void envTeardown(test_env_t *env)
 {
-    GSTATE.shortcut_buffer_pools         = NULL;
-    GSTATE.shortcut_loops                = NULL;
-    GSTATE.masterpool_buffer_pools_large = NULL;
-    GSTATE.masterpool_buffer_pools_small = NULL;
+    GSTATE.shortcut_buffer_pools          = NULL;
+    GSTATE.shortcut_loops                 = NULL;
+    GSTATE.masterpool_buffer_pools_large  = NULL;
+    GSTATE.masterpool_buffer_pools_small  = NULL;
     GSTATE.masterpool_buffer_pools_medium = NULL;
-    GSTATE.masterpool_buffer_pools_splice = NULL;
-    GSTATE.workers_count                 = 0;
+
+    GSTATE.workers_count = 0;
     testWorkerRegistryRestore(&g_test_worker_registry);
 
     bufferpoolDestroy(env->worker_buffer_pool);
@@ -280,7 +279,6 @@ static capture_device_t *createDevice(test_env_t *env)
     cdev->reader_buffer_pool  = bufferpoolCreate(env->large_master,
                                                 env->medium_master,
                                                 env->small_master,
-                                                env->splice_master,
                                                 16,
                                                 8192,
                                                 MEDIUM_BUFFER_SIZE_RAM_HIGH,

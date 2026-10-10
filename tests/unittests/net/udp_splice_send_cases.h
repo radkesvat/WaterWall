@@ -1,3 +1,4 @@
+#include "fixtures/protocols/splice_source.h"
 /*
  * Covers: udp splice send cases; the explicit inputs, callbacks and expected results below define this
  * suite.
@@ -72,7 +73,7 @@ static void runSegmentedAndTcpPipeChecks(wloop_t *loop, buffer_pool_t *pool)
     wio_t     *io       = wloopCreateUdpServer(loop, "127.0.0.1", 0);
     require(io != NULL, "segmented pipe UDP sender");
     sbuf_t *buf = bufferpoolGetSpliceBuffer(pool);
-    require(buf != NULL && sbufSpliceInitPipe(buf, 32U * 4096U) == 0, "segmented fixture pipe");
+    require(buf != NULL && testSpliceSourceInitPipe(buf) == 0, "segmented fixture pipe");
     splice_buffer_metadata_t meta     = sbufSpliceMetadata(buf);
     int                      capacity = fcntl(meta.pipefd[1], F_GETPIPE_SZ);
     unsigned                 segments = (unsigned) capacity / (unsigned) sysconf(_SC_PAGESIZE);
@@ -106,7 +107,7 @@ static void runSegmentedAndTcpPipeChecks(wloop_t *loop, buffer_pool_t *pool)
     memset(large_prefix, 'P', sizeof(large_prefix) - 1);
     large_prefix[60000] = 0;
     buf                 = sbufCreateSplice(60000);
-    require(sbufSpliceInitPipe(buf, 65536) == 0, "large-prefix pipe");
+    require(testSpliceSourceInitPipe(buf) == 0, "large-prefix pipe");
     meta     = sbufSpliceMetadata(buf);
     capacity = fcntl(meta.pipefd[1], F_GETPIPE_SZ);
     segments = (unsigned) capacity / (unsigned) sysconf(_SC_PAGESIZE);
@@ -284,7 +285,7 @@ static void runSpliceUdpChecks(wloop_t *loop, buffer_pool_t *pool)
         }
         /* Large resident prefix plus pipe still obeys total-datagram preflight. */
         sbuf_t *oversize = sbufCreateSplice(65504);
-        require(sbufSpliceInitPipe(oversize, 0) == 0, "oversize fixture pipe");
+        require(testSpliceSourceInitPipe(oversize) == 0, "oversize fixture pipe");
         char body[24] = {0};
         require(write(sbufSpliceMetadata(oversize).pipefd[1], body, sizeof(body)) == sizeof(body),
                 "oversize fixture body");

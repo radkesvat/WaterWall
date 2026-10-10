@@ -157,8 +157,8 @@ int main(void)
         masters[i] = masterpoolCreateWithCapacity(4);
         require(masters[i] != NULL, "failed to create buffer master pool");
     }
-    buffer_pool_t *pool = bufferpoolCreate(
-        masters[0], masters[1], masters[2], masters[3], 2, kPayloadSize, 4096, 1024, kPayloadSize, kPayloadSize);
+    buffer_pool_t *pool =
+        bufferpoolCreate(masters[0], masters[1], masters[2], 2, kPayloadSize, 4096, 1024, kPayloadSize, kPayloadSize);
     require(pool != NULL, "failed to create buffer pool");
 
     bool passed = testStreamInsertionFailure(pool);

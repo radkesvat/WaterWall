@@ -13,6 +13,7 @@
  * waterwall.http_proxy_client_no_splice_unit
  */
 #include "HttpProxyClient/interface.h"
+#include "fixtures/splice_inventory.h"
 
 #include "test_assert.h"
 
@@ -943,6 +944,7 @@ static void limitsAndTimers(void)
 #endif
 int main(void)
 {
+    testSpliceInventoryInitialize(64);
     testCaseSet("http_proxy_client_lifecycle_test");
     discard representation;
     GSTATE.flag_initialized = true;
@@ -950,7 +952,7 @@ int main(void)
     master_pool_t *large = masterpoolCreateWithCapacity(8), *medium = masterpoolCreateWithCapacity(8),
                   *small = masterpoolCreateWithCapacity(8), *splice = masterpoolCreateWithCapacity(8),
                   *ios  = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool = bufferpoolCreate(large, medium, small, splice, 4, 1024, 512, 128, 4096, 4096);
+    buffer_pool_t *pool = bufferpoolCreate(large, medium, small, 4, 1024, 512, 128, 4096, 4096);
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
     threadsafe_generic_pool_t *io_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(ios, sizeof(wio_t), 8);

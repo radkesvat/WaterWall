@@ -101,7 +101,6 @@ static void workerEnvSetup(tlsclient_test_worker_env_t *env)
     env->pool = bufferpoolCreate(env->large_master,
                                  env->medium_master,
                                  env->small_master,
-                                 env->splice_master,
                                  4,
                                  kTestLargeBufferSize,
                                  MEDIUM_BUFFER_SIZE_RAM_HIGH,

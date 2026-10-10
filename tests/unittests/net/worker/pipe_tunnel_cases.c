@@ -1,6 +1,7 @@
 /* Cross-worker pipe publication, private-pipe byte/identity transfer, refusal/late-dispatch cancellation and exact
  * borrowed/owned line settlement. Source lines are fixture-owned; companions are pipe-owned normal lines. CTest:
  * waterwall.worker_context_helpers_unit; see the driver for ordering and CLI. */
+#include "fixtures/protocols/splice_source.h"
 #include "worker_fixture.h"
 
 static atomic_bool       g_pipe_stop_in_fast_check_seam;
@@ -40,7 +41,7 @@ static sbuf_t *pipeTestPayload(pipe_payload_lifetime_t *lifetime)
     atomic_init(&lifetime->releases, 0);
 #if WW_HAVE_SPLICE
     sbuf_t *buf = sbufCreateSplice(64);
-    require(sbufSpliceInitPipe(buf, 0) == 0, "failed to create payload private pipe");
+    require(testSpliceSourceInitPipe(buf) == 0, "failed to create payload private pipe");
     uint8_t data[32];
     for (unsigned i = 0; i < sizeof(data); ++i)
         data[i] = (uint8_t) i;

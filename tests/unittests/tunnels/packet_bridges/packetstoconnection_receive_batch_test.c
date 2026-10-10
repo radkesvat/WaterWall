@@ -419,7 +419,8 @@ static void caseReusePadding(uint16_t padding, bool grow)
     fixture_t f;
     setup(&f);
     f.prepend = padding;
-    globalstateUpdateAllocationPadding(padding);
+    bufferpoolUpdateAllocationPaddings(
+        f.env.pool, padding, padding, padding, bufferpoolGetSpliceBufferPadding(f.env.pool));
     ptc_lstate_t     *ls = lineGetState(f.line, f.ptc);
     ww_lwip_engine_t *previous;
     twfRequire(wwLwipEngineEnter(f.engine, &previous), "reuse fixture engine entry failed");
@@ -459,7 +460,8 @@ static void caseReuseFallback(unsigned variant)
     fixture_t f;
     setup(&f);
     f.prepend = variant == 1 ? 512 : 16;
-    globalstateUpdateAllocationPadding(f.prepend);
+    bufferpoolUpdateAllocationPaddings(
+        f.env.pool, f.prepend, f.prepend, f.prepend, bufferpoolGetSpliceBufferPadding(f.env.pool));
     const uint16_t padding = bufferpoolGetLargeBufferPadding(f.env.pool);
     sbuf_t        *source  = NULL;
     if (variant == 0)

@@ -241,6 +241,7 @@ static void caseSpliceOwnerDispatch(bool cancel_drain)
     twfSetCase("stateless UDP local/foreign splice disposal, cancellation and socket retirement");
     tos_worker_env_t env;
     tosWorkerEnvSetup(&env, 2, 8192, 1024);
+    testSpliceInventoryInitialize(0);
     node_t node             = nodeUdpStatelessSocketGet();
     node.hash_next          = 1;
     node.next               = (char *) "next";

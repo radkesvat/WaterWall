@@ -14,6 +14,7 @@
  * in main rather than hiding the timing fixture behind another API.
  */
 #include "StreamFragmenter/structure.h"
+#include "fixtures/splice_inventory.h"
 #include "wevent.h"
 #include "wloop_internal.h"
 
@@ -109,10 +110,12 @@ static sbuf_t *input(const char *data, uint32_t length)
 #if WW_HAVE_SPLICE
     if (representation)
     {
-        sbuf_t *buf = bufferpoolGetSpliceBuffer(lineGetBufferPool(line));
-        require(buf != NULL, "source pipe allocation");
         const uint32_t prefix = representation == 2 ? min(length, 3U) : 0;
         const uint32_t body   = length - prefix;
+        buffer_pool_t *pool   = lineGetBufferPool(line);
+        sbuf_t        *buf =
+            body == 0 ? sbufCreateSplice(bufferpoolGetSpliceBufferPadding(pool)) : bufferpoolGetSpliceBuffer(pool);
+        require(buf != NULL, "source pipe allocation");
         if (body)
             require(write(sbufSpliceMetadata(buf).pipefd[1], data + prefix, body) == body, "source pipe contents");
         buf->capacity = buf->l_pad + body;
@@ -1275,6 +1278,7 @@ static void tlsHelloSplice(void)
 #endif
 int main(void)
 {
+    testSpliceInventoryInitialize(96);
     testCaseSet("streamfragmenter_test");
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 1;
@@ -1282,7 +1286,7 @@ int main(void)
     master_pool_t *large = masterpoolCreateWithCapacity(8), *medium = masterpoolCreateWithCapacity(8),
                   *small = masterpoolCreateWithCapacity(8), *splice = masterpoolCreateWithCapacity(8),
                   *ios  = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool = bufferpoolCreate(large, medium, small, splice, 4, 4096, 1024, 128, 4096, 4096);
+    buffer_pool_t *pool = bufferpoolCreate(large, medium, small, 4, 4096, 1024, 128, 4096, 4096);
     bufferpoolUpdateAllocationPaddings(pool, 96, 96, 96, 96);
     threadsafe_generic_pool_t *io_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(ios, sizeof(wio_t), 8);

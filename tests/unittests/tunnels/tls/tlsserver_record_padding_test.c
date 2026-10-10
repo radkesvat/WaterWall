@@ -134,7 +134,6 @@ static tlsserver_padding_fixture_t createFixture(uint16_t version)
     fixture.pool                        = bufferpoolCreate(fixture.large_master,
                                     fixture.medium_master,
                                     fixture.small_master,
-                                    fixture.splice_master,
                                     4,
                                     32768,
                                     MEDIUM_BUFFER_SIZE_RAM_HIGH,

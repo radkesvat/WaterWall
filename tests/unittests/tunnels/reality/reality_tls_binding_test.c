@@ -924,20 +924,12 @@ static sbuf_t *createPooledBuffer(buffer_pool_t *pool, const uint8_t *data, size
 
 static void testLinestateDestroyClearsPartialTlsState(void)
 {
-    master_pool_t          *large_master = masterpoolCreateWithCapacity(8);
-    master_pool_t          *small_master = masterpoolCreateWithCapacity(8);
-    master_pool_t          *medium_master = masterpoolCreateWithCapacity(8);
-    master_pool_t          *splice_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t          *pool          = bufferpoolCreate(large_master,
-                                           medium_master,
-                                           small_master,
-                                           splice_master,
-                                           8,
-                                           8192,
-                                           MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                           1024,
-                                           8192,
-                                           8192);
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool          = bufferpoolCreate(
+        large_master, medium_master, small_master, 8, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, 1024, 8192, 8192);
     uint32_t                aligned_size = tunnelGetCorrectAlignedLineStateSize(sizeof(realityserver_lstate_t));
     realityserver_lstate_t *ls           = memoryAllocateCacheAlignedZero(aligned_size);
     require(ls != NULL, "failed to allocate aligned RealityServer line state");

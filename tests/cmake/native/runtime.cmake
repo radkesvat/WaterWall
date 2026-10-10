@@ -5,7 +5,7 @@ if(TARGET ww)
   target_link_libraries(wio_fd_test PRIVATE ww_test_support)
     target_link_libraries(wio_fd_test PRIVATE ww)
     target_link_options(wio_fd_test PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=read" "-Wl,--wrap=send" "-Wl,--wrap=splice"
-        "-Wl,--wrap=memoryReAllocate" "-Wl,--wrap=fcntl" "-Wl,--wrap=getHRTimeUs"
+        "-Wl,--wrap=memoryReAllocate" "-Wl,--wrap=fcntl"
         "-Wl,--wrap=sbufSpliceIsReusable" "-Wl,--wrap=ioctl")
     add_dependencies(waterwall_unit_tests wio_fd_test)
     add_waterwall_unit_test(waterwall.wio_fd_unit wio_fd_test "unit;event;fd;pipe;lifetime")

@@ -117,7 +117,7 @@ sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *
     spliceReadPipe(metadata.pipefd[0], dest->buf + buf->l_pad, body_bytes, __func__);
 
     sbufSetLength(dest, buf->len);
-    dest->flags = buf->flags & (uint16_t) ~kSbufFlagSplice;
+    dest->flags = buf->flags & (uint16_t) ~(kSbufFlagSplice | kSbufFlagSplicePooled);
     sbufSetLength(buf, 0);
     bufferpoolReuseBuffer(pool, buf);
     return dest;

@@ -278,8 +278,8 @@ static void raceFixtureSetup(admission_race_fixture_t *fixture)
 
     for (wid_t wid = 0; wid < kRaceWorkers; ++wid)
     {
-        fixture->large_masters[wid] = masterpoolCreateWithCapacity(16);
-        fixture->small_masters[wid] = masterpoolCreateWithCapacity(16);
+        fixture->large_masters[wid]  = masterpoolCreateWithCapacity(16);
+        fixture->small_masters[wid]  = masterpoolCreateWithCapacity(16);
         fixture->medium_masters[wid] = masterpoolCreateWithCapacity(16);
         fixture->splice_masters[wid] = masterpoolCreateWithCapacity(16);
         require(fixture->large_masters[wid] != NULL && fixture->small_masters[wid] != NULL,
@@ -287,7 +287,6 @@ static void raceFixtureSetup(admission_race_fixture_t *fixture)
         fixture->pools[wid] = bufferpoolCreate(fixture->large_masters[wid],
                                                fixture->medium_masters[wid],
                                                fixture->small_masters[wid],
-                                               fixture->splice_masters[wid],
                                                8,
                                                kRaceBufferSize,
                                                MEDIUM_BUFFER_SIZE_RAM_HIGH,

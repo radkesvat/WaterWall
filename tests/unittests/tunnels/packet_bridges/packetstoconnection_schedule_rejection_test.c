@@ -609,7 +609,8 @@ static void casePacketOutput(bool certified, unsigned settlement, bool chained)
     twfSetCase("PTC final output sbuf and certified inline dispatch");
     ptc_fixture_t fixture;
     ptcFixtureSetup(&fixture);
-    bufferpoolUpdateAllocationPaddings(fixture.env.pool, 96, 96, 96, 96);
+    bufferpoolUpdateAllocationPaddings(
+        fixture.env.pool, 96, 96, 96, bufferpoolGetSpliceBufferPadding(fixture.env.pool));
     /* Warm allocation before the measured output callback. */
     lineReuseBuffer(fixture.packet_line, bufferpoolGetBestFit(fixture.env.pool, 257, 96));
     twfBufferLedgerReset();

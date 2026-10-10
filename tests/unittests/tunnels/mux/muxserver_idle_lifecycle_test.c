@@ -547,7 +547,6 @@ static void caseWorkerDrainIsLocal(void)
     buffer_pool_t *second_pool = bufferpoolCreate(large,
                                                   medium,
                                                   small,
-                                                  splice,
                                                   4,
                                                   kIdleBufferSize,
                                                   MEDIUM_BUFFER_SIZE_RAM_HIGH,

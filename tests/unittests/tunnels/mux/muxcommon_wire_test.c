@@ -14,6 +14,8 @@
  * allocation oracle. Node-specific lifecycle cases are in separate client/server suites.
  */
 #include "MuxCommon/mux_limits.h"
+#include "fixtures/protocols/splice_source.h"
+#include "fixtures/splice_inventory.h"
 
 #include "test_assert.h"
 
@@ -52,9 +54,9 @@ typedef struct frame_view_s
     const uint8_t *data;
 } frame_view_t;
 
-
 static test_pool_t testPoolCreateWithSizes(uint32_t large_size, uint32_t medium_size, uint16_t splice_padding)
 {
+    testSpliceInventoryInitialize(splice_padding);
     test_pool_t result = {
         .large_master  = masterpoolCreateWithCapacity(kTestPoolCapacity),
         .small_master  = masterpoolCreateWithCapacity(kTestPoolCapacity),
@@ -68,7 +70,6 @@ static test_pool_t testPoolCreateWithSizes(uint32_t large_size, uint32_t medium_
         result.large_master,
         result.medium_master,
         result.small_master,
-        result.splice_master,
         kTestPoolCapacity,
         large_size,
         medium_size,
@@ -147,8 +148,15 @@ static sbuf_t *tryMakeLargeSplicePattern(buffer_pool_t *pool, uint32_t length, c
     require(input != NULL, "could not allocate large splice payload");
     const uint32_t resident = length > kMuxMaxDataFrameLength ? length - kMuxMaxDataFrameLength : 0;
     require(resident <= 16, "large fixture prefix exceeds real headroom");
+    if (resident > sbufGetLeftCapacity(input))
+    {
+        /* An independently padded source exercises a destination inventory
+         * whose fixed headroom is deliberately insufficient for encoding. */
+        sbufDestroy(input);
+        input = testSpliceSourceBuffer(32, kMuxMaxDataFrameLength);
+    }
     const uint32_t body = length - resident;
-    require(sbufSpliceInitPipe(input, body) == 0, "could not initialize the large splice test pipe");
+    require(testSpliceSourceInitPipe(input) == 0, "could not initialize the large splice test pipe");
     const splice_buffer_metadata_t metadata = sbufSpliceMetadata(input);
     const int                      capacity = fcntl(metadata.pipefd[0], F_GETPIPE_SZ);
     require(capacity > 0, "could not query the large splice test pipe capacity");
@@ -471,7 +479,7 @@ static void testSpliceMuxPaths(buffer_pool_t *pool)
 #endif
 
 #if WW_HAVE_SPLICE
-static void testBatchFallbackEquality(buffer_pool_t *source_pool)
+static void testBatchFallbackEquality(void)
 {
     // A destination pool with insufficient splice headroom must select complete
     // ordinary fallback. The source uses a separate real, full-capacity pipe.
@@ -483,8 +491,8 @@ static void testBatchFallbackEquality(buffer_pool_t *source_pool)
     const size_t limit = full.allocation_charge + tail.allocation_charge;
     for (unsigned refuse = 0; refuse < 2; ++refuse)
     {
-        sbuf_t *input =
-            tryMakeLargeSplicePattern(source_pool, kMuxMaxDataFrameLength + 1U, "Mux batch fallback equality/refusal");
+        sbuf_t *input = tryMakeLargeSplicePattern(
+            fallback.pool, kMuxMaxDataFrameLength + 1U, "Mux batch fallback equality/refusal");
         if (input == NULL)
             break;
         mux_parent_output_t output = {0};
@@ -502,22 +510,24 @@ static void testBatchFallbackEquality(buffer_pool_t *source_pool)
 
 static void testBatchWithRetainedIncoming(buffer_pool_t *pool)
 {
-    // Reserve the actual large source before retaining other pipes. One-byte
-    // fragments need small pipes, not 80 MiB of requested kernel capacity.
+    // Retain every remaining pipe after the large source. Output must make
+    // complete ordinary progress without changing the retained input.
     sbuf_t *input =
         tryMakeLargeSplicePattern(pool, kMuxMaxDataFrameLength + 1U, "Mux batch with independent incoming retention");
     if (input == NULL)
         return;
     test_pool_t      retained = testPoolCreateWithSizes(4096, 4096, 32);
     splice_stream_t *incoming = splicestreamCreate(retained.pool, 0);
-    for (unsigned i = 0; i < 80; ++i)
-        require(splicestreamPush(incoming, makeSplicePattern(retained.pool, 1)), "incoming fixture refused");
+    for (unsigned i = 1; i < sbufSplicePoolCount(); ++i)
+        require(splicestreamPush(incoming, makeSplicePattern(pool, 1)), "incoming fixture refused");
     const size_t        before = splicestreamCharge(incoming);
     mux_parent_output_t output = {0};
     bufferqueueInitEmpty(&output.pending);
     require(muxEncodeSpliceBatch(pool, input, kTestCid, true, &output, SIZE_MAX),
             "incoming retention blocked independent output batch");
     require(splicestreamCharge(incoming) == before, "output batch changed incoming ownership");
+    c_foreach(entry, ww_sbuffer_queue_t, output.pending.q)
+        require(! sbufIsSplice(*entry.ref), "exhausted inventory did not select complete ordinary output");
     while (bufferqueueGetBufCount(&output.pending) != 0)
         bufferpoolReuseBuffer(pool, muxParentOutputPop(&output));
     require(output.charge == 0, "batch drain retained charge");
@@ -796,6 +806,7 @@ static void testQueueCapacityCharge(buffer_pool_t *pool)
     require(sbufGetAllocationCharge(small) ==
                 sizeof(sbuf_t) + small->l_pad + SPLICE_BUFFER_STORAGE_SIZE + kSbufAllocationAlignment,
             "physical splice allocation helper changed");
+    sbufSpliceClosePipe(small); /* Deliberately shrunk test pipe must not rejoin the full-sized inventory. */
     bufferpoolReuseBuffer(pool, small);
     bufferpoolReuseBuffer(pool, large);
     for (unsigned prefix = 0; prefix <= 3; ++prefix)
@@ -1043,7 +1054,6 @@ int main(void)
     testMaximumMixedFrame(test_pool.pool, true);
     testSpliceMuxPaths(test_pool.pool);
     testBatchWithRetainedIncoming(test_pool.pool);
-    testBatchFallbackEquality(test_pool.pool);
 #endif
     testHeaderPeekBoundaries(test_pool.pool);
     testEncodedLengthBoundaries();
@@ -1059,6 +1069,10 @@ int main(void)
     testPausedRetentionStorage(test_pool.pool);
     testQueuedFrameExtraction(test_pool.pool);
     testPoolDestroy(&test_pool);
+#if WW_HAVE_SPLICE
+    /* Zero headroom is a separate, fully torn-down inventory geometry. */
+    testBatchFallbackEquality();
+#endif
     puts("muxcommon_wire_test: all cases passed");
     return 0;
 }

@@ -265,7 +265,6 @@ static void envSetup(test_env_t *env)
     env->worker_buffer_pool        = bufferpoolCreate(env->large_master,
                                                env->medium_master,
                                                env->small_master,
-                                               env->splice_master,
                                                16,
                                                8192,
                                                MEDIUM_BUFFER_SIZE_RAM_HIGH,
@@ -275,7 +274,6 @@ static void envSetup(test_env_t *env)
     env->second_worker_buffer_pool = bufferpoolCreate(env->large_master,
                                                       env->medium_master,
                                                       env->small_master,
-                                                      env->splice_master,
                                                       16,
                                                       8192,
                                                       MEDIUM_BUFFER_SIZE_RAM_HIGH,
@@ -292,8 +290,8 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_large  = env->large_master;
     GSTATE.masterpool_buffer_pools_small  = env->small_master;
     GSTATE.masterpool_buffer_pools_medium = env->medium_master;
-    GSTATE.masterpool_buffer_pools_splice = env->splice_master;
-    GSTATE.workers_count                  = 2;
+
+    GSTATE.workers_count = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);
     testWorkerBindWID(0);
 }
@@ -305,8 +303,8 @@ static void envTeardown(test_env_t *env)
     GSTATE.masterpool_buffer_pools_large  = NULL;
     GSTATE.masterpool_buffer_pools_small  = NULL;
     GSTATE.masterpool_buffer_pools_medium = NULL;
-    GSTATE.masterpool_buffer_pools_splice = NULL;
-    GSTATE.workers_count                  = 0;
+
+    GSTATE.workers_count = 0;
     testWorkerRegistryRestore(&g_test_worker_registry);
 
     bufferpoolDestroy(env->worker_buffer_pool);
@@ -1099,7 +1097,6 @@ static void testWorkerQueueStopWakesOrdinaryCapacityWait(test_env_t *env)
     buffer_pool_t           *reader_pool = bufferpoolCreate(env->large_master,
                                                   env->medium_master,
                                                   env->small_master,
-                                                  env->splice_master,
                                                   4,
                                                   8192,
                                                   MEDIUM_BUFFER_SIZE_RAM_HIGH,

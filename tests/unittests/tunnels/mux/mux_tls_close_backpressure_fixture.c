@@ -42,7 +42,6 @@ void mxbSetupEnvironment(mxb_fixture_t *fixture, uint32_t combined_lstate_size)
     env->pool = bufferpoolCreate(env->large_master,
                                  env->medium_master,
                                  env->small_master,
-                                 env->splice_master,
                                  32,
                                  LARGE_BUFFER_SIZE_RAM_HIGH,
                                  MEDIUM_BUFFER_SIZE_RAM_HIGH,

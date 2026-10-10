@@ -204,7 +204,6 @@ static void envSetup(test_env_t *env)
         env->buffer_pools[wid] = bufferpoolCreate(env->large_master,
                                                   env->medium_master,
                                                   env->small_master,
-                                                  env->splice_master,
                                                   64,
                                                   8192,
                                                   MEDIUM_BUFFER_SIZE_RAM_HIGH,
@@ -237,15 +236,15 @@ static void envSetup(test_env_t *env)
 
     testWorkerRegistryInstallTable(&g_test_worker_registry, env->workers);
     GSTATE.workers_count                  = 2;
-    GSTATE.shortcut_buffer_pools         = env->buffer_pools;
-    GSTATE.shortcut_loops                = env->loops;
+    GSTATE.shortcut_buffer_pools          = env->buffer_pools;
+    GSTATE.shortcut_loops                 = env->loops;
     GSTATE.shortcut_wios_pools            = env->wios_pools;
-    GSTATE.masterpool_buffer_pools_large = env->large_master;
-    GSTATE.masterpool_buffer_pools_small = env->small_master;
+    GSTATE.masterpool_buffer_pools_large  = env->large_master;
+    GSTATE.masterpool_buffer_pools_small  = env->small_master;
     GSTATE.masterpool_buffer_pools_medium = env->medium_master;
-    GSTATE.masterpool_buffer_pools_splice = env->splice_master;
-    GSTATE.masterpool_messages           = env->messages_master;
-    GSTATE.mtu_size                      = 1500;
+
+    GSTATE.masterpool_messages = env->messages_master;
+    GSTATE.mtu_size            = 1500;
     testWorkerBindWID(0);
 
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
@@ -267,16 +266,16 @@ static void envTeardown(test_env_t *env)
     wloopDestroy(&env->loops[1]);
 
     testWorkerRegistryRestore(&g_test_worker_registry);
-    GSTATE.workers_count                 = 0;
-    GSTATE.shortcut_buffer_pools         = NULL;
-    GSTATE.shortcut_loops                = NULL;
+    GSTATE.workers_count                  = 0;
+    GSTATE.shortcut_buffer_pools          = NULL;
+    GSTATE.shortcut_loops                 = NULL;
     GSTATE.shortcut_wios_pools            = NULL;
-    GSTATE.masterpool_buffer_pools_large = NULL;
-    GSTATE.masterpool_buffer_pools_small = NULL;
+    GSTATE.masterpool_buffer_pools_large  = NULL;
+    GSTATE.masterpool_buffer_pools_small  = NULL;
     GSTATE.masterpool_buffer_pools_medium = NULL;
-    GSTATE.masterpool_buffer_pools_splice = NULL;
-    GSTATE.masterpool_messages           = NULL;
-    GSTATE.mtu_size                      = 0;
+
+    GSTATE.masterpool_messages = NULL;
+    GSTATE.mtu_size            = 0;
 
     memoryFree(env->lines[0]);
     memoryFree(env->lines[1]);

@@ -121,21 +121,13 @@ static void receiveQueued(wloop_t *loop, udp_test_state_t *state)
 int main(void)
 {
     testCaseSet("udp_zero_length_test");
-    master_pool_t             *large_master = masterpoolCreateWithCapacity(8);
-    master_pool_t             *small_master = masterpoolCreateWithCapacity(8);
-    master_pool_t             *medium_master = masterpoolCreateWithCapacity(8);
-    master_pool_t             *splice_master = masterpoolCreateWithCapacity(8);
-    master_pool_t             *wio_master   = masterpoolCreateWithCapacity(8);
-    buffer_pool_t             *buffer_pool   = bufferpoolCreate(large_master,
-                                                  medium_master,
-                                                  small_master,
-                                                  splice_master,
-                                                  8,
-                                                  8192,
-                                                  MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                                  512,
-                                                  8192,
-                                                  8192);
+    master_pool_t *large_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *small_master  = masterpoolCreateWithCapacity(8);
+    master_pool_t *medium_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *splice_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *wio_master    = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *buffer_pool   = bufferpoolCreate(
+        large_master, medium_master, small_master, 8, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, 512, 8192, 8192);
     bufferpoolUpdateAllocationPaddings(buffer_pool, 64, 64, 64, 64);
     threadsafe_generic_pool_t *wio_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 8);

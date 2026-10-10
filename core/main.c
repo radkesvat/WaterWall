@@ -241,6 +241,11 @@ int waterwallInnerMain(int argc, char **argv)
     if (getCoreSettings()->splice_enabled)
     {
         tryIncreasePipeLimit();
+        discard sbufSplicePoolPrepare();
+    }
+    if (UNLIKELY(! waterwallStartupCheckpoint()))
+    {
+        goto startup_failed;
     }
     startup_result                            = loadImportedTunnelsIntoCore();
     const bool imported_tunnels_checkpoint_ok = waterwallStartupCheckpoint();
@@ -283,7 +288,7 @@ int waterwallInnerMain(int argc, char **argv)
             }
 
             LOGI("Core: parsing config file \"%s\" complete", configPolicyDiagnostic(*k.ref));
-            startup_result                          = nodemanagerRunConfigFile(cfile);
+            startup_result                          = nodemanagerBuildConfigFile(cfile);
             const bool config_install_checkpoint_ok = waterwallStartupCheckpoint();
             if (UNLIKELY(! wwStartupSucceeded(startup_result) || ! config_install_checkpoint_ok))
             {
@@ -296,6 +301,27 @@ int waterwallInnerMain(int argc, char **argv)
     {
         goto startup_failed;
     }
+
+    if (getCoreSettings()->splice_enabled)
+    {
+        const uint32_t pipe_count =
+            GSTATE.splice_inventory != NULL
+                ? sbufSplicePoolInitialize(SPLICE_TOTAL_SIZE_LIMIT,
+                                           SPLICE_PAYLOAD_LIMIT,
+                                           splicePipeCountLimit(),
+                                           bufferpoolGetSpliceBufferPadding(getWorkerBufferPool(0)))
+                : 0;
+        LOGI("Core: Splice inventory acquired %u pipes and %llu bytes of capacity (target %llu bytes)",
+             pipe_count,
+             (unsigned long long) sbufSplicePoolCapacity(),
+             (unsigned long long) SPLICE_TOTAL_SIZE_LIMIT);
+    }
+    if (UNLIKELY(! waterwallStartupCheckpoint()))
+        goto startup_failed;
+    startup_result                       = nodemanagerStartConfigs();
+    const bool nodes_start_checkpoint_ok = waterwallStartupCheckpoint();
+    if (UNLIKELY(! wwStartupSucceeded(startup_result) || ! nodes_start_checkpoint_ok))
+        goto startup_failed;
 
     LOGD("Core: starting workers ...");
     startup_result                          = socketmanagerStart();

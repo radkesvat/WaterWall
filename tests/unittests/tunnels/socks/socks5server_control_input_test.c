@@ -14,6 +14,7 @@
 #include "AuthenticationClient/interface.h"
 #include "Socks5Server/internal.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/protocols/splice_source.h"
 
 static tunnel_t        *server, *prev, *next;
 static line_t          *control;
@@ -24,7 +25,7 @@ static size_t           captured_len;
 static bool             long_auth, omit_est;
 static unsigned         methods, auths, commands, inits, finishes, callback_depth, max_depth;
 static bool             inject_method, inject_auth, inject_init, inject_payload, close_reply, reject_auth, pause_init;
-static bool             splice_input, require_ordinary;
+static bool             splice_input, require_ordinary, independent_sources;
 static sbuf_t          *expected_upstream_buffer, *expected_downstream_buffer;
 static unsigned         provider_opens, provider_closes;
 static const uint8_t    request[]     = {5, 1, 0, 1, 127, 0, 0, 1, 0, 80};
@@ -66,7 +67,9 @@ static sbuf_t *bytes(const void *data, size_t len)
 static sbuf_t *spliceBytes(const void *data, size_t len, size_t prefix)
 {
     twfRequire(prefix <= len && prefix <= 300, "invalid splice prefix");
-    sbuf_t *b = bufferpoolGetSpliceBuffer(env.pool);
+    sbuf_t *b = independent_sources ? twfTrackAcquired(testSpliceSourceBuffer(
+                                          bufferpoolGetSpliceBufferPadding(env.pool), (uint32_t) (len - prefix)))
+                                    : bufferpoolGetSpliceBuffer(env.pool);
     twfRequire(b != NULL, "splice allocation failed");
     const size_t body = len - prefix;
     if (body)
@@ -596,11 +599,13 @@ static void spliceNegotiation(void)
     memoryCopy(request_tail + sizeof(request), chunk, sizeof(chunk));
     sendBytes(request_tail, sizeof(request_tail));
     splice_input = true;
+    independent_sources = true;
     for (unsigned i = 1; i < kSocks5ServerMaxPendingBytes / sizeof(chunk); ++i)
         sendBytes(chunk, sizeof(chunk));
     twfRequire(lineIsAlive(control) && captured_len == 0, "exact splice pending-byte boundary refused or drained");
     sendBytes("X", 1);
     twfRequire(! lineIsAlive(control) && finishes == 1, "splice pending-byte overflow did not close once");
+    independent_sources = false;
     teardown();
 }
 static bool providerOpen(tunnel_t *t, wid_t wid, const udplistener_dynamic_endpoint_open_request_t *req,

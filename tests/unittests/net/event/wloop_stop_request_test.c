@@ -82,23 +82,22 @@ bool __wrap_wloopInvokeWriteCallback(wio_t *io, wwrite_cb cb)
 
 static void envSetup(env_t *env)
 {
-    env->large_master = masterpoolCreateWithCapacity(64);
-    env->small_master = masterpoolCreateWithCapacity(64);
+    env->large_master  = masterpoolCreateWithCapacity(64);
+    env->small_master  = masterpoolCreateWithCapacity(64);
     env->medium_master = masterpoolCreateWithCapacity(64);
     env->splice_master = masterpoolCreateWithCapacity(64);
-    env->wio_master   = masterpoolCreateWithCapacity(64);
+    env->wio_master    = masterpoolCreateWithCapacity(64);
     env->buffer_pool   = bufferpoolCreate(env->large_master,
                                         env->medium_master,
                                         env->small_master,
-                                        env->splice_master,
                                         64,
                                         8192,
                                         MEDIUM_BUFFER_SIZE_RAM_HIGH,
                                         1024,
                                         8192,
                                         8192);
-    env->wio_pool     = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
-    env->wio_pools[0] = env->wio_pool;
+    env->wio_pool      = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
+    env->wio_pools[0]  = env->wio_pool;
 
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 1;
@@ -171,7 +170,6 @@ static void runnerCreate(loop_runner_t *runner, env_t *env)
     runner->pool = bufferpoolCreate(env->large_master,
                                     env->medium_master,
                                     env->small_master,
-                                    env->splice_master,
                                     64,
                                     8192,
                                     MEDIUM_BUFFER_SIZE_RAM_HIGH,

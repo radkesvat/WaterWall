@@ -279,7 +279,7 @@ static void caseThousandsOfChildren(void)
         pqPause(f.mux, parents[p]);
         for (unsigned i = 0; i < 40; ++i)
         {
-            sbuf_t         *input = pqSplicePattern(&f, 1);
+            sbuf_t         *input = pqIndependentSpliceByte(&f, patternByte(0), 1);
             buffer_queue_t *queue;
             if (p % 2 == 0)
             {

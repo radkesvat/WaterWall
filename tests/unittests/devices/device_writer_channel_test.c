@@ -61,17 +61,15 @@ typedef struct sender_probe_s
     atomic_uint              attempts;
 } sender_probe_t;
 
-
 static void envSetup(test_env_t *env)
 {
-    env->large_master = masterpoolCreateWithCapacity(16);
-    env->small_master = masterpoolCreateWithCapacity(16);
+    env->large_master  = masterpoolCreateWithCapacity(16);
+    env->small_master  = masterpoolCreateWithCapacity(16);
     env->medium_master = masterpoolCreateWithCapacity(16);
     env->splice_master = masterpoolCreateWithCapacity(16);
     env->buffer_pool   = bufferpoolCreate(env->large_master,
                                         env->medium_master,
                                         env->small_master,
-                                        env->splice_master,
                                         16,
                                         8192,
                                         MEDIUM_BUFFER_SIZE_RAM_HIGH,

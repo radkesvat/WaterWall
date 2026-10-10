@@ -14,6 +14,7 @@
  * CTest: waterwall.reverseclient_owner_drain_unit
  */
 #include "ReverseClient/structure.h"
+#include "fixtures/splice_inventory.h"
 
 #include "test_assert.h"
 
@@ -431,6 +432,7 @@ int main(void)
     init_data.network_logger_data.log_level  = log_off;
     init_data.dns_logger_data.log_level      = log_off;
     require(wwStartupSucceeded(createGlobalState(init_data)), "failed to create ReverseClient owner test state");
+    testSpliceInventoryInitialize(32);
 
     globalstateUpdateAllocationPadding(32);
 #if WW_HAVE_SPLICE

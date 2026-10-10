@@ -687,15 +687,14 @@ static void caseWorkerDrainIsLocal(void)
     twfSetCase("MuxClient ping tables and owner drain remain isolated between workers and instances");
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, kClientTestBufferSize, kMuxFrameLength * 2U);
-    master_pool_t *large       = masterpoolCreateWithCapacity(8);
-    master_pool_t *small       = masterpoolCreateWithCapacity(8);
-    master_pool_t *medium      = masterpoolCreateWithCapacity(8);
-    master_pool_t *splice      = masterpoolCreateWithCapacity(8);
+    master_pool_t *large  = masterpoolCreateWithCapacity(8);
+    master_pool_t *small  = masterpoolCreateWithCapacity(8);
+    master_pool_t *medium = masterpoolCreateWithCapacity(8);
+    master_pool_t *splice = masterpoolCreateWithCapacity(8);
     buffer_pool_t *second_pool =
         bufferpoolCreate(large,
                          medium,
                          small,
-                         splice,
                          4,
                          kClientTestBufferSize,
                          MEDIUM_BUFFER_SIZE_RAM_HIGH,
