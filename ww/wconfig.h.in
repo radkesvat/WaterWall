@@ -200,8 +200,10 @@ enum ram_profiles_e
 // Depending on memory profile, we can choose which is the best buffer size (core.json typically)
 #define LARGE_BUFFER_SIZE_RAM_LOW   (64 * 1024)
 #define LARGE_BUFFER_SIZE_RAM_HIGH  (128 * 1024)
-/* Every profile requests the same splice ceiling; actual pipe growth is best effort. */
+/* Every profile uses the same socket read limit and required startup pipe capacity. */
 #define SPLICE_PAYLOAD_LIMIT (1024 * 1024)
+/* Process-wide startup inventory budget, independent of worker count and RAM profile. */
+#define SPLICE_TOTAL_SIZE_LIMIT (512ULL * 1024ULL * 1024ULL)
 
 /* Waiting budgets retain their profile values independently of allocation and splice sizes. */
 #define WAITING_BUDGET_BASIS_RAM_LOW  (64 * 1024)

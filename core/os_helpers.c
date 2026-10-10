@@ -49,6 +49,8 @@ void increaseFileLimit(void)
 
 #ifdef OS_LINUX
 
+#include <dirent.h>
+
 #if ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
 #include <sys/sysinfo.h>
 #endif
@@ -347,17 +349,17 @@ void tryIncreasePipeLimit(void)
     {
         return;
     }
-    unsigned long target = hard;
-    if (target == 0)
+    const long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0)
     {
-        const long page_size = sysconf(_SC_PAGESIZE);
-        if (page_size <= 0)
-        {
-            LOGW("Core: Could not determine page size for the pipe soft limit; keeping current limits");
-            return;
-        }
-        const unsigned long target_bytes = 512UL * 1024UL * 1024UL;
-        target = target_bytes / (unsigned long) page_size + (target_bytes % (unsigned long) page_size != 0);
+        LOGW("Core: Could not determine page size for the pipe soft limit; keeping current limits");
+        return;
+    }
+    const unsigned long target_bytes = SPLICE_TOTAL_SIZE_LIMIT;
+    unsigned long target = target_bytes / (unsigned long) page_size + (target_bytes % (unsigned long) page_size != 0);
+    if (hard != 0 && hard < target)
+    {
+        target = hard;
     }
     if (soft >= target)
     {
@@ -376,6 +378,48 @@ void tryIncreasePipeLimit(void)
         return;
     }
     LOGI("Core: System-wide pipe soft limit raised from %lu to %lu pages", soft, target);
+#endif
+}
+
+uint32_t splicePipeCountLimit(void)
+{
+#if WW_HAVE_SPLICE
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_NOFILE, &limit) != 0)
+    {
+        LOGW("Core: Could not read the descriptor limit; splice inventory will be empty");
+        return 0;
+    }
+
+    DIR *descriptors = opendir("/proc/self/fd");
+    if (descriptors == NULL)
+    {
+        LOGW("Core: Could not inspect open descriptors; splice inventory will be empty");
+        return 0;
+    }
+    rlim_t         open_count = 0;
+    struct dirent *entry;
+    errno = 0;
+    while ((entry = readdir(descriptors)) != NULL)
+    {
+        /* Include the directory descriptor conservatively. Saturating at the
+         * allowance also handles unexpectedly many inherited descriptors. */
+        if (isdigit((unsigned char) entry->d_name[0]) && open_count < limit.rlim_cur)
+            ++open_count;
+    }
+    const bool scan_succeeded  = errno == 0;
+    const bool close_succeeded = closedir(descriptors) == 0;
+    if (! scan_succeeded || ! close_succeeded)
+    {
+        LOGW("Core: Could not finish inspecting open descriptors; splice inventory will be empty");
+        return 0;
+    }
+
+    const uint32_t target_count     = SPLICE_TOTAL_SIZE_LIMIT / SPLICE_PAYLOAD_LIMIT;
+    const rlim_t   descriptor_count = (limit.rlim_cur - open_count) / 8;
+    return descriptor_count < target_count ? (uint32_t) descriptor_count : target_count;
+#else
+    return 0;
 #endif
 }
 
@@ -478,6 +522,11 @@ void tryTuneTcp(bool splice_enabled)
 void tryIncreasePipeLimit(void)
 {
     discard(0);
+}
+
+uint32_t splicePipeCountLimit(void)
+{
+    return 0;
 }
 
 void tryEnableBbr(void)

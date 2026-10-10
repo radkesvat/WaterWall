@@ -15,12 +15,42 @@
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 #include "os_helpers.h"
+#include <dirent.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 static char test_dir[] = "/tmp/waterwall-pipe-limit-test-XXXXXX";
 static char log_path[PATH_MAX];
 static long test_page_size;
+static rlim_t test_descriptor_limit;
+static bool   test_descriptor_failure;
+static bool   test_descriptor_scan_failure;
+
+DIR *__real_opendir(const char *path);
+DIR *__wrap_opendir(const char *path);
+DIR *__wrap_opendir(const char *path)
+{
+    if (test_descriptor_scan_failure && strcmp(path, "/proc/self/fd") == 0)
+    {
+        errno = EACCES;
+        return NULL;
+    }
+    return __real_opendir(path);
+}
+
+int __wrap_getrlimit(int resource, struct rlimit *limit);
+int __wrap_getrlimit(int resource, struct rlimit *limit)
+{
+    require(resource == RLIMIT_NOFILE, "unexpected resource-limit query");
+    if (test_descriptor_failure)
+    {
+        errno = EIO;
+        return -1;
+    }
+    *limit = (struct rlimit) {.rlim_cur = test_descriptor_limit, .rlim_max = test_descriptor_limit};
+    return 0;
+}
 
 long __real_sysconf(int name);
 long __wrap_sysconf(int name);
@@ -68,8 +98,11 @@ int main(void)
         long          page_size;
         unsigned long expected_target;
     } cases[] = {
-        {"16384\n32768\n", 0, 0, -1, 32768},
+        {"16384\n32768\n", 0, 0, 4096, 32768},
         {"16384\n32768\n", 0, 1, 4096, 32768},
+        {"16384\n262144\n", 0, 0, 4096, 131072},
+        {"131072\n262144\n", 0, 0, 4096, 0},
+        {"16384\n32768\n", 0, 0, -1, 0},
         {"16384\n0\n", 0, 0, 4096, 131072},
         {"16384\n0\n", 0, 1, 4096, 131072},
         {"131071\n0\n", 0, 0, 4096, 131072},
@@ -124,9 +157,63 @@ int main(void)
         }
         require(strcmp(commands, expected) == 0, "startup attempted an incorrect pipe-limit operation or retried");
     }
+
+    DIR *descriptors = opendir("/proc/self/fd");
+    require(descriptors != NULL, "could not measure initial descriptor count");
+    rlim_t         baseline_open = 0;
+    struct dirent *entry;
+    errno = 0;
+    while ((entry = readdir(descriptors)) != NULL)
+        if (isdigit((unsigned char) entry->d_name[0]))
+            ++baseline_open;
+    require(errno == 0 && closedir(descriptors) == 0, "could not finish measuring initial descriptor count");
+
+    const struct
+    {
+        rlim_t   remaining;
+        uint32_t expected_count;
+    } descriptor_cases[] = {
+        {0, 0},
+        {7, 0},
+        {8, 1},
+        {1024, 128},
+        {4095, 511},
+        {4096, 512},
+        {8192, 512},
+        {RLIM_INFINITY, 512},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(descriptor_cases); ++i)
+    {
+        test_descriptor_limit = descriptor_cases[i].remaining == RLIM_INFINITY
+                                    ? RLIM_INFINITY
+                                    : baseline_open + descriptor_cases[i].remaining;
+        require(splicePipeCountLimit() == descriptor_cases[i].expected_count,
+                "startup splice inventory did not preserve descriptor headroom or cap the target");
+    }
+    test_descriptor_limit = baseline_open - 1;
+    require(splicePipeCountLimit() == 0, "inherited descriptors above the limit wrapped the available allowance");
+
+    test_descriptor_limit = baseline_open + 80;
+    require(splicePipeCountLimit() == 10, "initial remaining descriptor allowance was miscounted");
+    int held_descriptors[16];
+    for (size_t i = 0; i < ARRAY_SIZE(held_descriptors); ++i)
+    {
+        held_descriptors[i] = dup(STDERR_FILENO);
+        require(held_descriptors[i] >= 0, "could not occupy descriptor headroom");
+    }
+    require(splicePipeCountLimit() == 8, "existing descriptors did not reduce the startup pipe count");
+    for (size_t i = 0; i < ARRAY_SIZE(held_descriptors); ++i)
+        require(close(held_descriptors[i]) == 0, "could not release descriptor headroom fixture");
+
+    test_descriptor_scan_failure = true;
+    require(splicePipeCountLimit() == 0, "unavailable open-descriptor scan allowed splice preallocation");
+    test_descriptor_scan_failure = false;
+    test_descriptor_failure      = true;
+    require(splicePipeCountLimit() == 0, "unavailable descriptor limit allowed splice preallocation");
 #else
     tryIncreasePipeLimit();
     require(access(log_path, F_OK) != 0, "unsupported splice build changed system pipe limits");
+    require(splicePipeCountLimit() == 0, "unsupported splice build allowed pipe preallocation");
 #endif
     coreloggerDestroy();
     unlink(log_path);
