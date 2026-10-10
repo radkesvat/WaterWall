@@ -1063,13 +1063,15 @@ static void caseParentWriteConfiguration(void)
         }
     }
     const uint32_t pairs[][2] = {
-        {0, 0}, {4096, 0}, {0, 67108864}, {8192, 16384}, {16384, 16384}, {32768, 16384}, {0, 16384}};
+        {0, 0}, {8388608, 0}, {0, 268435456}, {8192, 16384}, {16384, 16384}, {32768, 16384}, {0, 16384}};
     for (unsigned i = 0; i < ARRAY_SIZE(pairs); ++i)
     {
         cJSON *settings = pqSettings();
         for (unsigned key = 0; key < 2; ++key)
             if (pairs[i][key])
                 cJSON_AddNumberToObject(settings, keys[key], pairs[i][key]);
+        if (i >= 3 && pairs[i][0] != 0)
+            cJSON_AddNumberToObject(settings, "parent-write-buffer-resume-threshold", 0);
         node_t    node = {.node_settings_json = settings};
         tunnel_t *mux  = pqCreate(&node);
         if (i >= 4)
@@ -1078,12 +1080,12 @@ static void caseParentWriteConfiguration(void)
         {
             twfRequire(mux != NULL, "valid parent write settings rejected");
             pq_tstate_t *ts = tunnelGetState(mux);
-            twfRequire(ts->parent_write_pause_threshold == (pairs[i][0] ? pairs[i][0] : 16777216) &&
+            twfRequire(ts->parent_write_pause_threshold == (pairs[i][0] ? pairs[i][0] : 134217728) &&
                            ts->parent_write_limit == (pairs[i][1] ? pairs[i][1] : 536870912),
                        "parent write independent defaults drifted");
             if (i == 0)
             {
-                twfRequire(ts->parent_write_resume_threshold == 12582912, "default parent resume threshold drifted");
+                twfRequire(ts->parent_write_resume_threshold == 4194304, "default parent resume threshold drifted");
                 twfRequire(ts->parent_buffer_limit == 536870912, "default parent receive limit drifted");
             }
             if (i == 3)
@@ -1119,7 +1121,8 @@ static void caseParentWriteConfiguration(void)
                 f.child_l = NULL;
                 lineUnref(f.parent_l);
 #endif
-                twfRequire(original_ts->parent_write_pause_threshold == 16777216 &&
+                twfRequire(original_ts->parent_write_pause_threshold == 134217728 &&
+                               original_ts->parent_write_resume_threshold == 4194304 &&
                                original_ts->parent_write_limit == 536870912,
                            "node instances shared settings");
                 f.mux = original;
@@ -1171,16 +1174,26 @@ static void caseParentResumeConfiguration(void)
         }
         cJSON_Delete(settings);
     }
-    const uint32_t derived[][2] = {{1, 0}, {3, 2}, {8388608, 6291456}, {16777216, 12582912}, {33554432, 25165824}};
-    for (unsigned i = 0; i < ARRAY_SIZE(derived); ++i)
+    const uint32_t pauses[] = {
+        0, 1, 2, 3, 4194303, 4194304, 4194305, 8388608, 16777216, 33554432, 134217728, 268435456};
+    for (unsigned i = 0; i < ARRAY_SIZE(pauses); ++i)
     {
         cJSON *settings = pqSettings();
-        cJSON_AddNumberToObject(settings, "parent-write-buffer-pause-threshold", derived[i][0]);
-        node_t    node = {.node_settings_json = settings};
-        tunnel_t *mux  = pqCreate(&node);
-        twfRequire(mux != NULL, "derived resume rejected");
+        if (pauses[i] != 0)
+            cJSON_AddNumberToObject(settings, "parent-write-buffer-pause-threshold", pauses[i]);
+        node_t     node  = {.node_settings_json = settings};
+        tunnel_t  *mux   = pqCreate(&node);
+        const bool valid = pauses[i] == 0 || pauses[i] > 4194304;
+        twfRequire((mux != NULL) == valid, "incorrect acceptance with default resume threshold");
+        if (! valid)
+        {
+            cJSON_AddNumberToObject(settings, "parent-write-buffer-resume-threshold", 0);
+            mux = pqCreate(&node);
+            twfRequire(mux != NULL, "explicit zero resume did not allow a small pause threshold");
+        }
         pq_tstate_t *ts = tunnelGetState(mux);
-        twfRequire(ts->parent_write_resume_threshold == derived[i][1], "derived resume incorrect");
+        twfRequire(ts->parent_write_resume_threshold == (valid ? 4194304U : 0U),
+                   "resume threshold changed with the pause threshold");
         pqDestroy(mux, wwLifecycleProcessShutdown());
         cJSON_Delete(settings);
     }

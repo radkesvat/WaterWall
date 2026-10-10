@@ -46,7 +46,7 @@ both `parent-write-buffer-*threshold` settings from both mux nodes in its
 `config.json`. Keep limits, admission settings and idle policies unchanged.
 `MUX_PRESSURE_BATCH` controls the hot transaction size (default 1 MiB); choose
 and record it before running. The default transaction geometry does not guarantee
-crossing the 16 MiB default pause threshold, so distinguish ordinary progress
+crossing the 128 MiB default pause threshold, so distinguish ordinary progress
 from observed throttle episodes. A large backlog is not a receive-capacity
 promise: individual and aggregate receive limits are 128/512 MiB.
 

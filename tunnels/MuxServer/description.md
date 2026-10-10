@@ -87,22 +87,23 @@ this is not a physical memory, descriptor, or RSS limit.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `parent-write-buffer-pause-threshold` | `16777216` (16 MiB) | Pause attached child producers when retained charge reaches this value. |
-| `parent-write-buffer-resume-threshold` | `12582912` (12 MiB) | Release parent pressure at or below this charge while transport is writable. Omitted values derive from pause × 3/4, rounded down. |
+| `parent-write-buffer-pause-threshold` | `134217728` (128 MiB) | Pause attached child producers when retained charge reaches this value. |
+| `parent-write-buffer-resume-threshold` | `4194304` (4 MiB) | Release parent pressure at or below this charge while transport is writable. |
 | `parent-write-buffer-limit` | `536870912` (512 MiB) | Maximum retained charge for each parent; equality is allowed. |
 
 Pause and hard limits must be integers in `[1, INT_MAX]`; resume accepts
 `[0, INT_MAX]`. The effective tuple must satisfy `0 <= resume < pause < hard`.
-Omitted pause and hard settings use their defaults; omitted resume derives as
-`floor(pause * 3 / 4)` with a wide intermediate. Explicit zero requests
-empty-queue release, still subject to transport writability. Booleans, strings,
-null, fractions, negatives and out-of-range values reject startup. Invalid
+Omitted settings use their defaults. Resume defaults to `4194304` (4 MiB)
+independently of pause. Explicit values are honored; `0` requires an empty
+outgoing queue before release. Transport must be writable in every case. Booleans,
+strings, null, fractions, negatives and out-of-range values reject startup. Invalid
 combinations report all three effective values without clamping. For example,
-inside `settings` (derives a 1.5 MiB resume threshold):
+inside `settings` (explicitly selects a 1.5 MiB resume threshold):
 
 ```json
 {
   "parent-write-buffer-pause-threshold": 2097152,
+  "parent-write-buffer-resume-threshold": 1572864,
   "parent-write-buffer-limit": 4194304
 }
 ```
@@ -115,9 +116,9 @@ an interrupted Resume pass; the FIFO of locally held children preserves later
 release opportunities. Init/Est completion reconciles deferred producer permission.
 Peer FlowPause and terminal close remain independent reasons to stop a source.
 
-The 4 MiB hysteresis gap avoids waiting for the entire queue to drain, but does
-not promise continuous sender throughput or a faster carrier. The 512 MiB limit
-is per parent, allocated on demand, and is not an RSS, socket-buffer or FD bound.
+The default releases held producers when outgoing queue charge is at or below
+4 MiB and the transport is writable. The 512 MiB limit is per parent,
+allocated on demand, and is not an RSS, socket-buffer or FD bound.
 Already-admitted Data can still reach a peer-paused child; the default 128 MiB
 child and 512 MiB parent receive budgets can shed children or close that parent.
 
@@ -528,9 +529,10 @@ that parent through normal parent-loss cleanup. A zero parent limit disables
 this combined finite bound; it introduces no other aggregate cap.
 
 `child-buffer-limit` remains 128 MiB by default and rejects equality. Outgoing
-parent queues remain separate: their pause/resume thresholds are 16/12 MiB, hard limit is
-512 MiB, and hard-limit equality is permitted. Detached queues retain their
-per-worker settings and zero/unlimited meanings. The FlowResume threshold counts
+parent queues remain separate: their default pause threshold is 128 MiB, resume
+threshold is 4 MiB, and hard limit is 512 MiB; hard-limit equality is permitted.
+Detached queues retain their per-worker settings and zero/unlimited meanings.
+The FlowResume threshold counts
 logical payload bytes; FlowPause follows the local child pause state. Ordinary
 child candidates may still compact to a cheaper pooled tier; valid splice
 candidates are not individually materialized for queue pressure.
