@@ -24,6 +24,6 @@ Prerequisites: The production build and Linux user/network namespace support. Lo
 
 Success: The serial speed runner requires its original complete client summary, verified transfers, and original exit/report verdict. Reported throughput is diagnostic for this fixed workload and host; it is not a portable performance threshold.
 
-Discover properties with `ctest --preset linux -N -V -R '^waterwall\.speedtest_obfuscator_tcp_sandwich$'`. Execute through the [lane wrapper](../../run_test_lane.sh) using the registered lane; privileged/external and speed cases keep their own prerequisites/serialization.
+Discover properties with `ctest --test-dir build/linux -C Release -N -V -R '^waterwall\.speedtest_obfuscator_tcp_sandwich$'`. Execute through the [lane wrapper](../../run_test_lane.sh) using the registered lane; privileged/external and speed cases keep their own prerequisites/serialization.
 
 Generated core settings, logs and mutable inputs belong to the private run directory. Failures/skips retain initialized artifacts; `WATERWALL_TEST_KEEP_RUN_DIR=1` also retains success. See the [test workflow](../../README.md).

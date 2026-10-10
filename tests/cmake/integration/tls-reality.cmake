@@ -25,8 +25,10 @@ add_waterwall_integration_test_with_timeout(
 add_waterwall_probe_integration_test(waterwall.tlsclient_direct_close_probe tlsclient_direct_close_probe 20)
 add_waterwall_probe_integration_test(waterwall.mux_parent_pressure_probe mux_parent_pressure_probe 120)
 set_tests_properties(waterwall.mux_parent_pressure_probe PROPERTIES ENVIRONMENT "WATERWALL_TEST_SPLICE=true")
+add_waterwall_test_labels(waterwall.mux_parent_pressure_probe "stress")
 add_waterwall_probe_integration_test(waterwall.mux_parent_pressure_no_splice_probe mux_parent_pressure_probe 120)
 set_tests_properties(waterwall.mux_parent_pressure_no_splice_probe PROPERTIES ENVIRONMENT "WATERWALL_TEST_SPLICE=false")
+add_waterwall_test_labels(waterwall.mux_parent_pressure_no_splice_probe "stress")
 add_waterwall_probe_integration_test(waterwall.muxserver_admission_idle_probe muxserver_admission_idle_probe 15)
 add_waterwall_probe_integration_test(waterwall.mux_udp_boundaries_probe mux_udp_boundaries_probe 15)
 set_tests_properties(waterwall.mux_udp_boundaries_probe PROPERTIES ENVIRONMENT "WATERWALL_TEST_SPLICE=true")
@@ -123,40 +125,25 @@ add_test(
   COMMAND
     "${PYTHON3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tunnels_abort_policy_test.py"
-    "--mutation-test"
 )
 set_tests_properties(
   waterwall.tunnels_abort_policy_test
   PROPERTIES
     TIMEOUT 120
-    LABELS "unit;tunnels;policy;abort"
+    LABELS "unit;tunnels;policy;source-policy;abort"
 )
 add_test(
   NAME waterwall.tunnels_orderly_shutdown_policy_test
   COMMAND
     "${PYTHON3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tunnels_orderly_shutdown_policy_test.py"
-    "--mutation-test"
 )
 set_tests_properties(
   waterwall.tunnels_orderly_shutdown_policy_test
   PROPERTIES
     TIMEOUT 120
-    LABELS "unit;tunnels;policy;shutdown"
+    LABELS "unit;tunnels;policy;source-policy;shutdown"
 )
-# add_test(
-#   NAME waterwall.line_ownership_policy_test
-#   COMMAND
-#     "${PYTHON3_EXECUTABLE}"
-#     "${CMAKE_CURRENT_SOURCE_DIR}/line_ownership_policy_test.py"
-#     "--mutation-test"
-# )
-# set_tests_properties(
-#   waterwall.line_ownership_policy_test
-#   PROPERTIES
-#     TIMEOUT 180
-#     LABELS "unit;tunnels;policy;line;ownership"
-# )
 add_test(
   NAME waterwall.ipmanipulator_source_policy_test
   COMMAND
@@ -167,7 +154,7 @@ set_tests_properties(
   waterwall.ipmanipulator_source_policy_test
   PROPERTIES
     TIMEOUT 30
-    LABELS "unit;tunnels;ipmanipulator;policy;nonblocking"
+    LABELS "unit;tunnels;ipmanipulator;policy;source-policy;nonblocking"
 )
 add_test(
   NAME waterwall.worker_identity_source_policy_test
@@ -179,7 +166,7 @@ set_tests_properties(
   waterwall.worker_identity_source_policy_test
   PROPERTIES
     TIMEOUT 60
-    LABELS "unit;worker;identity;context;policy"
+    LABELS "unit;worker;identity;context;policy;source-policy"
 )
 add_waterwall_integration_test(waterwall.connection_fisher_roundtrip connection_fisher_roundtrip)
 add_waterwall_integration_test(waterwall.connection_fisher_encryption_roundtrip connection_fisher_encryption_roundtrip)

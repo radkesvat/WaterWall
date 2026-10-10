@@ -4,7 +4,7 @@ Exercises `SpeedTestClient -> TcpConnector -> loopback TcpListener -> SpeedTestS
 with the default `verify-payload=false`, bidirectional TCP, 16 connections, and
 32 KiB payloads. The existing `tcp_loopback` case explicitly enables verification.
 
-Run `ctest --preset linux --output-on-failure -R '^waterwall\.speedtest_tcp_loopback_unverified$'`.
+Run `ctest --test-dir build/linux -C Release --output-on-failure -R '^waterwall\.speedtest_tcp_loopback_unverified$'`.
 The serial speed lane runs this case inside the private loopback namespace.
 Success requires normal test completion and both direction reports. Headers,
 frame lengths and sequence accounting remain active; payload bytes are not verified.

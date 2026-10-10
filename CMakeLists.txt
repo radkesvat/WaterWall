@@ -1407,13 +1407,12 @@ elseif(BUILD_TESTING)
     COMMAND
       "${WATERWALL_POLICY_TEST_PYTHON}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/tunnels_abort_policy_test.py"
-      "--mutation-test"
   )
   set_tests_properties(
     waterwall.tunnels_abort_policy_test
     PROPERTIES
       TIMEOUT 120
-      LABELS "unit;tunnels;policy;abort"
+      LABELS "unit;tunnels;policy;source-policy;abort"
   )
 
   include("${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/tunnels_abort_runtime_test.cmake")

@@ -131,7 +131,7 @@ grep -q -- "-L policy|test-harness -LE integration" "${MOCK_LOG}"
 # 5b. functional lane
 : > "${MOCK_LOG}"
 "${runner_script}" functional "${test_dir_isolated}" >/dev/null
-grep -q -- "-L integration -LE privileged|speedtest|external-network" "${MOCK_LOG}"
+grep -q -- "-L integration -LE privileged|speedtest|stress|external-network" "${MOCK_LOG}"
 
 # 5c. external lane
 : > "${MOCK_LOG}"
@@ -148,17 +148,25 @@ grep -q -- "-L speedtest" "${MOCK_LOG}"
 "${runner_script}" privileged "${test_dir_isolated}" >/dev/null
 grep -q -- "-L privileged" "${MOCK_LOG}"
 
-# Test 6: all runs the four ordinary non-privileged stages exactly once.
+# 5f. stress lane remains explicit and serial.
+: > "${MOCK_LOG}"
+"${runner_script}" stress "${test_dir_isolated}" >/dev/null
+grep -q -- "--parallel 1 -L stress" "${MOCK_LOG}"
+
+# Test 6: all runs the three routine non-privileged stages exactly once.
 : > "${MOCK_LOG}"
 "${runner_script}" all "${test_dir_host}" >/dev/null
-if [[ $(wc -l < "${MOCK_LOG}") -ne 4 ]]; then
-  echo "FAIL: all lane did not invoke exactly four CTest stages" >&2
+if [[ $(wc -l < "${MOCK_LOG}") -ne 3 ]]; then
+  echo "FAIL: all lane did not invoke exactly three CTest stages" >&2
   exit 1
 fi
 grep -q -- "-L policy|test-harness -LE integration" "${MOCK_LOG}"
-grep -q -- "-L integration -LE privileged|speedtest|external-network" "${MOCK_LOG}"
+grep -q -- "-L integration -LE privileged|speedtest|stress|external-network" "${MOCK_LOG}"
 grep -q -- "-L external-network -LE speedtest" "${MOCK_LOG}"
-grep -q -- "-L speedtest" "${MOCK_LOG}"
+if grep -Eq -- '-L (speedtest|stress)( |$)' "${MOCK_LOG}"; then
+  echo "FAIL: all lane included an opt-in speed or stress stage" >&2
+  exit 1
+fi
 
 # Test 7: do not advertise the non-privileged all lane as a full suite.
 if "${runner_script}" full "${test_dir_host}" >"${tmp_dir}/out7.log" 2>"${tmp_dir}/err7.log"; then

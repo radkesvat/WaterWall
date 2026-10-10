@@ -8,19 +8,19 @@ add_test(
   NAME waterwall.application_shutdown_authority_policy
   COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/application_shutdown_authority_policy_test.py"
 )
-set_tests_properties(waterwall.application_shutdown_authority_policy PROPERTIES LABELS "unit;policy;core;lifecycle;shutdown")
+set_tests_properties(waterwall.application_shutdown_authority_policy PROPERTIES LABELS "unit;policy;source-policy;core;lifecycle;shutdown")
 
 add_test(
   NAME waterwall.device_reader_retire_order_policy
   COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/device_reader_retire_order_policy_test.py"
 )
-set_tests_properties(waterwall.device_reader_retire_order_policy PROPERTIES LABELS "unit;policy;devices;lifetime;fragments")
+set_tests_properties(waterwall.device_reader_retire_order_policy PROPERTIES LABELS "unit;policy;source-policy;devices;lifetime;fragments")
 
 add_test(
   NAME waterwall.udpstatelesssocket_io_owner_policy
   COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/udpstatelesssocket_io_owner_policy_test.py"
 )
-set_tests_properties(waterwall.udpstatelesssocket_io_owner_policy PROPERTIES LABELS "unit;policy;tunnels;udpstatelesssocket;worker;ownership")
+set_tests_properties(waterwall.udpstatelesssocket_io_owner_policy PROPERTIES LABELS "unit;policy;source-policy;tunnels;udpstatelesssocket;worker;ownership")
 
 # Helper to append labels to a test without overwriting existing labels.
 
@@ -128,7 +128,7 @@ set_tests_properties(
   waterwall.lwip_shutdown_order_policy
   PROPERTIES
     TIMEOUT 10
-    LABELS "unit;net;lwip;lifetime;shutdown;policy"
+    LABELS "unit;net;lwip;lifetime;shutdown;policy;source-policy"
 )
 
 

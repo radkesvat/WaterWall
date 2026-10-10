@@ -548,6 +548,11 @@
         {
             "name": "linux-packed",
             "configurePreset": "linux-packed",
+            "filter": {
+                "exclude": {
+                    "label": "speedtest|stress"
+                }
+            },
             "inherits": [
                 "host-linux",
                 "options"
@@ -556,6 +561,11 @@
         {
             "name": "linux",
             "configurePreset": "linux",
+            "filter": {
+                "exclude": {
+                    "label": "speedtest|stress"
+                }
+            },
             "inherits": [
                 "host-linux",
                 "options"
@@ -568,6 +578,9 @@
             "filter": {
                 "include": {
                     "label": "unit"
+                },
+                "exclude": {
+                    "label": "source-policy"
                 }
             },
             "inherits": [
@@ -582,6 +595,9 @@
             "filter": {
                 "include": {
                     "label": "unit"
+                },
+                "exclude": {
+                    "label": "source-policy"
                 }
             },
             "inherits": [

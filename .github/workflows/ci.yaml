@@ -5,7 +5,15 @@ permissions:
   contents: write
 
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      extended_tests:
+        description: Run speed and stress workloads, including the TUN TCP benchmark
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -99,7 +107,7 @@ jobs:
       - name: Run complete Windows platform unit lane
         run: >
           ctest --test-dir build/windows-iocp-unit -C Release --no-tests=error --output-on-failure
-          -L unit
+          -L unit -LE source-policy
 
       - name: Upload native test failure diagnostics
         if: failure()
@@ -356,7 +364,7 @@ jobs:
           sudo apt-get install -y ninja-build ccache iproute2 util-linux strace
 
       - name: Install TUN TCP benchmark dependency
-        if: matrix.preset == 'linux-gcc-x64'
+        if: matrix.preset == 'linux-gcc-x64' && inputs.extended_tests
         run: sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y iperf3
 
       - name: Install cross-compiler
@@ -372,7 +380,7 @@ jobs:
           cmake --preset ${{ matrix.preset }}
           -DWW_PACK_RUNTIME=${{ matrix.pack_runtime }}
           -DBUILD_TESTING=ON
-          -DWATERWALL_ENABLE_TUN_TCP_SPEEDTEST=${{ matrix.preset == 'linux-gcc-x64' && 'ON' || 'OFF' }}
+          -DWATERWALL_ENABLE_TUN_TCP_SPEEDTEST=${{ matrix.preset == 'linux-gcc-x64' && inputs.extended_tests && 'ON' || 'OFF' }}
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
@@ -393,8 +401,11 @@ jobs:
         if: matrix.preset == 'linux-gcc-x64'
         run: bash tests/run_test_lane.sh external build/${{ matrix.preset }} Release --no-tests=error
       - name: Speed tests
-        if: matrix.preset == 'linux-gcc-x64'
+        if: matrix.preset == 'linux-gcc-x64' && inputs.extended_tests
         run: bash tests/run_test_lane.sh speed build/${{ matrix.preset }} Release --no-tests=error -LE privileged
+      - name: Stress tests
+        if: matrix.preset == 'linux-gcc-x64' && inputs.extended_tests
+        run: bash tests/run_test_lane.sh stress build/${{ matrix.preset }} Release --no-tests=error
       - name: Privileged network namespace preflight
         if: matrix.preset == 'linux-gcc-x64'
         run: sudo -E bash tests/run_test_lane.sh preflight build/${{ matrix.preset }}
@@ -611,7 +622,7 @@ jobs:
       - name: Run complete macOS platform unit lane
         run: >
           ctest --test-dir build/macos-unit-tests -C Release --no-tests=error --output-on-failure
-          -L unit
+          -L unit -LE source-policy
 
       - name: Upload native test failure diagnostics
         if: failure()

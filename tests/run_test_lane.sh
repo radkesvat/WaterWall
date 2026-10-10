@@ -2,7 +2,7 @@
 
 # Centralized test-lane runner for WaterWall integration tests.
 # Supports adaptive parallel jobs for deterministic functional tests
-# and serial execution for support, external, speed, and privileged lanes.
+# and serial execution for support, external, speed, stress, and privileged lanes.
 
 set -euo pipefail
 
@@ -15,8 +15,9 @@ Lanes:
   functional   Deterministic functional tests in isolated network namespaces (adaptive parallel jobs)
   external     External network tests on host network (serial)
   speed        Speed tests (serial)
+  stress       Sustained integration stress tests (serial)
   privileged   Privileged tests requiring root/CAP_NET_ADMIN (serial)
-  all          Run support, functional, external, and speed lanes in explicit sequence
+  all          Run support, functional, and external lanes in explicit sequence
   preflight    Verify Linux user and network namespace capabilities for isolation
 EOF
   exit 2
@@ -190,7 +191,7 @@ case "$lane" in
     if [[ "${mode}" == "isolated" ]]; then
       echo "Running deterministic functional integration tests (detected CPUs: ${cpus}, CTest jobs: ${jobs})..."
     fi
-    run_ctest "$jobs" -L integration -LE 'privileged|speedtest|external-network'
+    run_ctest "$jobs" -L integration -LE 'privileged|speedtest|stress|external-network'
     ;;
 
   external)
@@ -202,6 +203,12 @@ case "$lane" in
     ensure_lane_preflight
     echo "Running speed tests (serial)..."
     run_ctest 1 -L speedtest
+    ;;
+
+  stress)
+    ensure_lane_preflight
+    echo "Running integration stress tests (serial)..."
+    run_ctest 1 -L stress
     ;;
 
   privileged)
@@ -218,13 +225,11 @@ case "$lane" in
     cpus=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
     jobs=$(calculate_jobs)
     echo "=== Stage 2: Deterministic functional integration tests (detected CPUs: ${cpus}, CTest jobs: ${jobs}) ==="
-    run_ctest "$jobs" -L integration -LE 'privileged|speedtest|external-network'
+    run_ctest "$jobs" -L integration -LE 'privileged|speedtest|stress|external-network'
 
     echo "=== Stage 3: External network integration tests (serial) ==="
     run_ctest 1 -L external-network -LE speedtest
 
-    echo "=== Stage 4: Speed tests (serial) ==="
-    run_ctest 1 -L speedtest
     ;;
 
   *)

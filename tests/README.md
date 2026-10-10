@@ -27,8 +27,11 @@ cmake --preset linux
 cmake --build --preset linux -j8
 bash tests/run_test_lane.sh support build/linux Release --no-tests=error
 bash tests/run_test_lane.sh functional build/linux Release --no-tests=error
-# Support, functional, external and serial speed lanes in their original order:
+# Routine support, functional and external lanes:
 bash tests/run_test_lane.sh all build/linux Release --no-tests=error
+# Opt-in throughput and longer traffic/churn workloads:
+bash tests/run_test_lane.sh speed build/linux Release --no-tests=error
+bash tests/run_test_lane.sh stress build/linux Release --no-tests=error
 # Requires the privileges/tools stated by the individual cases:
 sudo -E bash tests/run_test_lane.sh privileged build/linux Release --no-tests=error
 
@@ -38,6 +41,12 @@ ctest --preset linux-unit-debug --output-on-failure --no-tests=error
 cmake --build --preset linux-unit-release -j8
 ctest --preset linux-unit-release --output-on-failure --no-tests=error
 ```
+
+The `linux` and `linux-packed` CTest presets exclude speed and stress workloads.
+Short verified/unverified SpeedTestClient smoke cases remain in the functional
+lane. Source-only policy checks run in production support once per source revision;
+native Debug/Release presets exclude `source-policy` while retaining runtime and
+build-policy checks. CI's manual `extended_tests` input enables the optional lanes.
 
 Discover actual names and properties rather than maintaining a manual catalog:
 

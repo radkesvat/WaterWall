@@ -1,0 +1,51 @@
+{
+  "name": "speed-client-tcp-smoke-verified",
+  "nodes": [
+    {
+      "name": "speedtest-client",
+      "type": "SpeedTestClient",
+      "settings": {
+        "mode": "tcp",
+        "direction": "bidirectional",
+        "duration-ms": 250,
+        "warmup-ms": 0,
+        "report-interval-ms": 1000,
+        "connection-count": 2,
+        "payload-size": 32768,
+        "json-summary": true,
+        "terminate-on-complete": true,
+        "verify-payload": true
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27250,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27250,
+        "nodelay": true
+      },
+      "next": "speedtest-server"
+    },
+    {
+      "name": "speedtest-server",
+      "type": "SpeedTestServer",
+      "settings": {
+        "report-interval-ms": 1000,
+        "json-summary": true,
+        "quiet": false
+      }
+    }
+  ]
+}

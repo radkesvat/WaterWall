@@ -213,8 +213,11 @@ clang-format --dry-run -Werror --style=file path/to/changed_file.c
 ### Validation policy
 
 - Start with the smallest direct check. Expand to the functional lane for shared
-  tunnel/network behavior and to all production lanes plus native units for
+  tunnel/network behavior and to routine production lanes plus native units for
   shared-core, lifecycle/concurrency, multi-subsystem, or uncertain-scope changes.
+- Speed and stress lanes are opt-in; run them when requested or directly validating
+  their workloads. Run source-only policy checks once across configurations for
+  the same source revision. See Part 6 for lane selection.
 - When native Linux units are relevant, normally exercise the focused coverage in
   both `linux-unit-debug` and `linux-unit-release`. Prefer Debug first during
   behavioral iteration because assertions and guardrails are active, but never use

@@ -9,9 +9,12 @@ subset reconnects every fourth exchange and sends useful bytes immediately.
 All streams check payload order and contents. Five-second samples report sender
 and receiver progress separately, runtime RSS/FDs, and final mux statistics.
 
-The registered functional cases run for seven seconds in both splice modes.
+The registered stress cases run for seven seconds in both splice modes.
 They check TCP composition and diagnostics; unit tests supply the deterministic
 nonempty-release and exact boundary assertions.
+
+Run both explicitly with `bash tests/run_test_lane.sh stress build/linux Release`.
+The routine `functional` and `all` lanes exclude these sustained workloads.
 
 For a frozen carrier scenario (run each direction and splice mode separately):
 
