@@ -133,10 +133,6 @@ logger_t *loggerCreate(void)
     s_gmtoff     = (local_hour - gmt_hour) * SECONDS_PER_HOUR;
 
     logger_t *logger = (logger_t *) memoryAllocate(sizeof(logger_t));
-    if (logger == NULL)
-    {
-        return NULL;
-    }
     if (UNLIKELY(! initLogger(logger)))
     {
         memoryFree(logger);
@@ -723,28 +719,20 @@ static inline void loggerAppendMessageFormat(char *buf, int bufsize, int *len, c
  * @brief Pick a render buffer for one log line.
  *
  * Returns @p stack_buf (capacity DEFAULT_LOG_MAX_BUFSIZE) for the common case;
- * heap-allocates only when a larger maximum line length is configured. On a
- * failed heap allocation the size is clamped back to the stack capacity so the
- * line is truncated rather than dropped.
+ * heap-allocates only when a larger maximum line length is configured.
  *
  * @param stack_buf Caller-owned stack buffer of DEFAULT_LOG_MAX_BUFSIZE bytes.
- * @param bufsize In: configured max size. Out: effective buffer capacity.
+ * @param bufsize Configured maximum line size.
  * @param heap_out Out: heap pointer the caller must free, or NULL.
  * @return Buffer to render into.
  */
-static char *loggerAcquireRenderBuffer(char *stack_buf, int *bufsize, char **heap_out)
+static char *loggerAcquireRenderBuffer(char *stack_buf, int bufsize, char **heap_out)
 {
     *heap_out = NULL;
-    if (*bufsize > DEFAULT_LOG_MAX_BUFSIZE)
+    if (bufsize > DEFAULT_LOG_MAX_BUFSIZE)
     {
-        char *heap_buf = (char *) memoryAllocate((size_t) *bufsize);
-        if (heap_buf != NULL)
-        {
-            *heap_out = heap_buf;
-            return heap_buf;
-        }
-        // allocation failed: emit a truncated line from the stack buffer
-        *bufsize = DEFAULT_LOG_MAX_BUFSIZE;
+        *heap_out = memoryAllocate((size_t) bufsize);
+        return *heap_out;
     }
     return stack_buf;
 }
@@ -780,7 +768,7 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
 
     char  stack_buf[DEFAULT_LOG_MAX_BUFSIZE];
     char *heap_buf = NULL;
-    char *buf      = loggerAcquireRenderBuffer(stack_buf, &bufsize, &heap_buf);
+    char *buf      = loggerAcquireRenderBuffer(stack_buf, bufsize, &heap_buf);
 
     int year, month, day, hour, min, sec, us;
 #ifdef _WIN32

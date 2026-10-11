@@ -910,7 +910,7 @@ wchan_t *chanOpen(size_t elemsize, uint32_t cap)
     wchan_t *channel = chanTryOpen(elemsize, cap);
     if (UNLIKELY(channel == NULL))
     {
-        printError("channel allocation or geometry failure");
+        printError("channel geometry is unrepresentable");
         abortProgramNow(1);
     }
     return channel;

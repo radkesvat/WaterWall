@@ -23,8 +23,8 @@
 typedef struct wchan_s wchan_t; // opaque
 
 // chanTryOpen creates and initializes a new channel which holds elements of
-// elemsize byte. It returns NULL when the geometry is not representable or the
-// allocation is refused.
+// elemsize byte. It returns NULL when the geometry is not representable;
+// heap allocation failure terminates the process.
 wchan_t *chanTryOpen(size_t elemsize, uint32_t cap);
 
 // Fail-fast compatibility wrapper around chanTryOpen().
