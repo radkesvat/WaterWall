@@ -174,11 +174,6 @@ static void localidletableHeapReserve(local_idle_table_t *self)
 
     const size_t new_cap  = self->heap_cap * 2U;
     void        *new_heap = memoryReAllocate(self->heap, new_cap * sizeof(*self->heap));
-    if (UNLIKELY(new_heap == NULL))
-    {
-        printError("LocalIdleTable: failed to grow indexed heap");
-        abortProgramNow(1);
-    }
     self->heap     = new_heap;
     self->heap_cap = new_cap;
 }
@@ -241,19 +236,7 @@ local_idle_table_t *localIdleTableCreate(wloop_t *loop)
     }
 
     local_idle_table_t *newtable = memoryAllocateCacheAligned(sizeof(*newtable));
-    if (UNLIKELY(newtable == NULL))
-    {
-        printError("LocalIdleTable: failed to allocate local idle table");
-        abortProgramNow(1);
-    }
-
-    local_idle_item_t **heap = memoryAllocate(kLocalIdleTableCap * sizeof(*heap));
-    if (UNLIKELY(heap == NULL))
-    {
-        memoryFreeAligned(newtable);
-        printError("LocalIdleTable: failed to allocate indexed heap");
-        abortProgramNow(1);
-    }
+    local_idle_item_t **heap     = memoryAllocate(kLocalIdleTableCap * sizeof(*heap));
 
     *newtable = (local_idle_table_t) {.loop     = loop,
                                       .heap     = heap,
@@ -282,11 +265,6 @@ local_idle_item_t *localidletableCreateItem(local_idle_table_t *self, hash_t key
     localidletableAssertOwner(self);
 
     local_idle_item_t *item = localIdleItemAllocate();
-    if (UNLIKELY(item == NULL))
-    {
-        printError("LocalIdleTable: failed to allocate local idle item");
-        abortProgramNow(1);
-    }
 
     *item = (local_idle_item_t) {.userdata     = userdata,
                                  .table        = self,

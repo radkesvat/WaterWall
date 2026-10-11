@@ -11,6 +11,7 @@
  * or application-throughput behavior.
  * CTest: waterwall.idle_table_contract_unit
  */
+#include "idle_table_geometry.h"
 #include "local_widle_table.h"
 
 #include "test_assert.h"
@@ -605,9 +606,27 @@ static void runContractCases(contract_env_t *env, contract_impl_e impl)
     require(destroyed_live.callbacks == 0, "table destruction invoked a live item's expiration callback");
 }
 
+static void runIndexGeometryCases(void)
+{
+    const size_t maximum = idleTableMaximumEntries();
+    require(idleTableCanAddEntry(0, 0) && idleTableCanAddEntry(maximum - 1U, 0),
+            "representable idle entry counts were rejected");
+    require(! idleTableCanAddEntry(maximum, 0) && ! idleTableCanAddEntry(maximum - 1U, 1) &&
+                ! idleTableCanAddEntry(SIZE_MAX, 0) && ! idleTableCanAddEntry(0, SIZE_MAX),
+            "heap and pending restoration counts exceeded staging storage");
+    require(idleTableHashCapacityIsRepresentable(32, sizeof(uint64_t) + sizeof(void *), 1),
+            "initial idle index geometry was rejected");
+    require(! idleTableHashCapacityIsRepresentable(SIZE_MAX, sizeof(uint64_t) + sizeof(void *), 1) &&
+                ! idleTableHashCapacityIsRepresentable(
+                    (size_t) PTRDIFF_MAX / sizeof(void *), sizeof(uint64_t) + sizeof(void *), 1) &&
+                ! idleTableHashCapacityIsRepresentable(32, sizeof(uint64_t) + sizeof(void *), (size_t) PTRDIFF_MAX),
+            "idle hash rounding or array byte overflow was accepted");
+}
+
 int main(void)
 {
     testCaseSet("idle_table_contract_test");
+    runIndexGeometryCases();
     contract_env_t env;
     contractEnvSetup(&env);
     runSharedCachedClockCase(&env);

@@ -7,6 +7,7 @@
  */
 
 #include "widle_table.h"
+#include "idle_table_geometry.h"
 
 #include "global_state.h"
 #include "wdef.h"
@@ -65,29 +66,6 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct idle_table_s
 
 void idleCallBack(wtimer_t *timer);
 #ifdef WW_IDLE_TABLE_TEST_SEAM
-void idletableTestRefuseNextInitialStagingReserve(void);
-void idletableTestRefuseNextStagingGrowth(void);
-void idletableTestRefuseNextCreateHeapPublication(void);
-
-static bool refuse_next_initial_staging_reserve;
-static bool refuse_next_staging_growth;
-static bool refuse_next_create_heap_publication;
-
-void idletableTestRefuseNextInitialStagingReserve(void)
-{
-    refuse_next_initial_staging_reserve = true;
-}
-
-void idletableTestRefuseNextStagingGrowth(void)
-{
-    refuse_next_staging_growth = true;
-}
-
-void idletableTestRefuseNextCreateHeapPublication(void)
-{
-    refuse_next_create_heap_publication = true;
-}
-
 void idletableTestSetNowMS(idle_table_t *self, uint64_t now_ms)
 {
     assert(self != NULL);
@@ -157,42 +135,6 @@ static void idletableAssertItemOwner(wid_t wid)
         LOGF("IdleTable: item for worker %d accessed from worker %d", workerWIDForLog(wid), workerWIDForLog(getWID()));
         abortProgramNow(1);
     }
-}
-
-static bool idletableTestTakeInitialStagingReserveRefusal(void)
-{
-#ifdef WW_IDLE_TABLE_TEST_SEAM
-    if (refuse_next_initial_staging_reserve)
-    {
-        refuse_next_initial_staging_reserve = false;
-        return true;
-    }
-#endif
-    return false;
-}
-
-static bool idletableTestTakeStagingGrowthRefusal(void)
-{
-#ifdef WW_IDLE_TABLE_TEST_SEAM
-    if (refuse_next_staging_growth)
-    {
-        refuse_next_staging_growth = false;
-        return true;
-    }
-#endif
-    return false;
-}
-
-static bool idletableTestTakeCreateHeapPublicationRefusal(void)
-{
-#ifdef WW_IDLE_TABLE_TEST_SEAM
-    if (refuse_next_create_heap_publication)
-    {
-        refuse_next_create_heap_publication = false;
-        return true;
-    }
-#endif
-    return false;
 }
 
 // Detaching the table hands the item memory to whoever observes NULL, and that observer frees it
@@ -288,11 +230,6 @@ idle_table_t *idleTableCreate(wloop_t *loop)
     // assert(sizeof(idle_table_t) <= kCpuLineCacheSize); promotion to 128 bytes
     const size_t  required_size = sizeof(idle_table_t);
     idle_table_t *newtable      = memoryAllocateCacheAligned(required_size);
-    if (newtable == NULL)
-    {
-        printError("buffer size out of range");
-        abortProgramNow(1);
-    }
 
     *newtable = (idle_table_t) {
         .loop = loop,
@@ -303,13 +240,14 @@ idle_table_t *idleTableCreate(wloop_t *loop)
 #endif
     newtable->hqueue = heapq_idles_t_init();
     newtable->hmap   = hmap_idles_t_init();
-    if (UNLIKELY(! heapq_idles_t_reserve(&newtable->hqueue, kIdleTableCap) ||
-                 ! hmap_idles_t_reserve(&newtable->hmap, kIdleTableCap) || ! mutexTryInit(&(newtable->mutex))))
+    discard heapq_idles_t_reserve(&newtable->hqueue, kIdleTableCap);
+    discard hmap_idles_t_reserve(&newtable->hmap, kIdleTableCap);
+    if (UNLIKELY(! mutexTryInit(&(newtable->mutex))))
     {
         heapq_idles_t_drop(&(newtable->hqueue));
         hmap_idles_t_drop(&(newtable->hmap));
         memoryFreeAligned(newtable);
-        printError("IdleTable: failed to initialize table storage");
+        printError("IdleTable: failed to initialize table mutex");
         abortProgramNow(1);
     }
 
@@ -335,10 +273,6 @@ idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata,
     idletableAssertItemOwner(wid);
 
     idle_item_t *item = idleItemAllocate();
-    if (UNLIKELY(item == NULL))
-    {
-        return NULL;
-    }
 
     *item = (idle_item_t) {.expire_at_ms           = idletableDeadlineFromAge(self, age_ms),
                            .hash                   = key,
@@ -351,7 +285,26 @@ idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata,
 
     mutexLock(&(self->mutex));
 
-    // LOGD("add to expire on idle table, wid: %ld, hash: %lx", wid, key);
+    const isize_t heap_size = heapq_idles_t_size(&(self->hqueue));
+    if (UNLIKELY(! idleTableCanAddEntry((size_t) heap_size, self->posted_messages)))
+    {
+        mutexUnlock(&(self->mutex));
+        idleItemFree(item);
+        return NULL;
+    }
+
+    if (hmap_idles_t_size(&self->hmap) >= hmap_idles_t_capacity(&self->hmap))
+    {
+        const size_t map_entries = (size_t) hmap_idles_t_size(&self->hmap);
+        const size_t capacity    = map_entries <= (size_t) PTRDIFF_MAX / 3U ? map_entries * 3U / 2U + 2U : SIZE_MAX;
+        if (! idleTableHashCapacityIsRepresentable(capacity, sizeof(*self->hmap.table), sizeof(*self->hmap.meta)))
+        {
+            mutexUnlock(&(self->mutex));
+            idleItemFree(item);
+            return NULL;
+        }
+    }
+
     if (! hmap_idles_t_insert(&(self->hmap), item->hash, item).inserted)
     {
         // hash is already in the table !
@@ -360,49 +313,19 @@ idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata,
         return NULL;
     }
 
-    const isize_t heap_size = heapq_idles_t_size(&(self->hqueue));
-    const bool    restoration_capacity_overflow =
-        heap_size >= ISIZE_MAX || self->posted_messages > (size_t) (ISIZE_MAX - heap_size - 1);
-    const isize_t required_heap_capacity =
-        restoration_capacity_overflow ? 0 : heap_size + (isize_t) self->posted_messages + 1;
-    bool heap_capacity_ready = ! restoration_capacity_overflow;
-    if (heap_capacity_ready && required_heap_capacity > heapq_idles_t_capacity(&(self->hqueue)))
+    const isize_t required_heap_capacity = heap_size + (isize_t) self->posted_messages + 1;
+    if (required_heap_capacity > heapq_idles_t_capacity(&(self->hqueue)))
     {
         const isize_t current_capacity = heapq_idles_t_capacity(&(self->hqueue));
-        const isize_t half_capacity    = current_capacity / 2;
-        isize_t       grown_capacity   = ISIZE_MAX;
-        if (current_capacity <= ISIZE_MAX - half_capacity - 4)
-        {
-            grown_capacity = current_capacity + half_capacity + 4;
-        }
+        isize_t       grown_capacity =
+            (isize_t) min((size_t) current_capacity + (size_t) current_capacity / 2U + 4U, idleTableMaximumEntries());
         if (grown_capacity < required_heap_capacity)
         {
             grown_capacity = required_heap_capacity;
         }
-        heap_capacity_ready = heapq_idles_t_reserve(&(self->hqueue), grown_capacity);
+        discard heapq_idles_t_reserve(&(self->hqueue), grown_capacity);
     }
-    if (UNLIKELY(! heap_capacity_ready))
-    {
-        idletableEraseItemFromMapLocked(self, item);
-        idleItemSetTable(item, NULL);
-        mutexUnlock(&(self->mutex));
-        idleItemFree(item);
-        return NULL;
-    }
-
-    idle_item_t **heap_slot = NULL;
-    if (! idletableTestTakeCreateHeapPublicationRefusal())
-    {
-        heap_slot = heapq_idles_t_push(&(self->hqueue), item);
-    }
-    if (UNLIKELY(heap_slot == NULL))
-    {
-        idletableEraseItemFromMapLocked(self, item);
-        idleItemSetTable(item, NULL);
-        mutexUnlock(&(self->mutex));
-        idleItemFree(item);
-        return NULL;
-    }
+    heapq_idles_t_push(&(self->hqueue), item);
 
     mutexUnlock(&(self->mutex));
     return item;
@@ -773,18 +696,7 @@ void idleCallBack(wtimer_t *timer)
     }
 
     const uint64_t    now           = idletableNowMS(self);
-    idle_item_deque_t expired_items = idle_item_deque_t_init();
-    bool              staging_ready = false;
-    if (! idletableTestTakeInitialStagingReserveRefusal())
-    {
-        staging_ready = idle_item_deque_t_reserve(&expired_items, 8);
-    }
-    if (UNLIKELY(! staging_ready))
-    {
-        idle_item_deque_t_drop(&expired_items);
-        discard wtimerReset(timer, kDefaultTimeout);
-        return;
-    }
+    idle_item_deque_t expired_items = idle_item_deque_t_with_capacity(8);
 
     mutexLock(&(self->mutex));
     // LOGD("idleCallBack called, wid: %ld , loop current ms: %lu", getWID(), wloopNowMS(self->loop));
@@ -808,27 +720,10 @@ void idleCallBack(wtimer_t *timer)
             else
             {
                 idleItemSetWorkerMessagePending(item, true);
-                idle_item_t **staged = NULL;
-                const bool    needs_growth =
-                    idle_item_deque_t_size(&expired_items) > 0 &&
-                    idle_item_deque_t_size(&expired_items) == idle_item_deque_t_capacity(&expired_items);
-                if (! (needs_growth && idletableTestTakeStagingGrowthRefusal()))
-                {
-                    staged = idle_item_deque_t_push_back(&expired_items, item);
-                }
-                if (UNLIKELY(staged == NULL))
-                {
-                    idleItemSetWorkerMessagePending(item, false);
-                    idletableRestoreItemToHeapLocked(self, item);
-                    next_timeout = kDefaultTimeout;
-                    break;
-                }
-                else
-                {
-                    // Pin the table for the message posted below. Exactly one of its callback or its
-                    // cleanup always runs, and whichever it is drops this reference.
-                    self->posted_messages += 1;
-                }
+                idle_item_deque_t_push_back(&expired_items, item);
+                // Pin the table for the message posted below. Exactly one of its callback or its
+                // cleanup always runs, and whichever it is drops this reference.
+                self->posted_messages += 1;
             }
         }
         else

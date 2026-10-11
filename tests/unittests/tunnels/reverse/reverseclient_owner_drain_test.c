@@ -4,7 +4,7 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: testConnectingPairDrain, testActivePairDrain, testSpliceActivation, testReentrantInitClose,
- * testFinishBeforeDrainDoesNotDuplicateClose, testIdleStagingRefusalPreservesPairForDrain,
+ * testFinishBeforeDrainDoesNotDuplicateClose,
  * testCanceledIdleDeliveryPreservesPairForDrain
  * Checks: Assertion labels include: ReverseClient replaced the application buffer; ReverseClient changed
  * payload representation; ReverseClient changed application bytes; ReverseClient handshake must remain
@@ -365,27 +365,6 @@ static void testFinishBeforeDrainDoesNotDuplicateClose(void)
     fixtureTeardown(&fixture);
 }
 
-static void testIdleStagingRefusalPreservesPairForDrain(void)
-{
-    reverseclient_fixture_t fixture;
-    fixtureSetup(&fixture, kEndpointLeaveConnecting);
-    createFirstPair(&fixture);
-
-    reverseclient_pair_t *pair        = currentPair(&fixture);
-    idle_item_t          *idle_handle = pair->idle_handle;
-    require(idle_handle != NULL, "ReverseClient did not publish its idle handle");
-
-    idletableTestRefuseNextInitialStagingReserve();
-    stageDuePair(&fixture);
-    require(pair->idle_handle == idle_handle, "staging refusal changed the ReverseClient idle handle");
-    require(reverseclientOwnedPairCount(fixture.reverse, 0) == 1,
-            "staging refusal removed the ReverseClient owner entry");
-
-    quiesceAndDrain(&fixture);
-    require(fixture.upstream_finish_count == 1, "staging-refused pair did not close exactly once during drain");
-    fixtureTeardown(&fixture);
-}
-
 static void testCanceledIdleDeliveryPreservesPairForDrain(void)
 {
     reverseclient_fixture_t fixture;
@@ -443,7 +422,6 @@ int main(void)
     testActivePairDrain();
     testReentrantInitClose();
     testFinishBeforeDrainDoesNotDuplicateClose();
-    testIdleStagingRefusalPreservesPairForDrain();
     testCanceledIdleDeliveryPreservesPairForDrain();
 
     teardownGlobalState();

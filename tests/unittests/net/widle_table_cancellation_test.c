@@ -5,8 +5,7 @@
  * topology is implied.
  * Cases: caseAcceptedCancellationRestoresForOwnerDrain,
  * caseImmediateForeignRefusalRestoresForOwnerDrain, caseDetachedPendingItemsAreFreedWithoutCallback,
- * caseInitialStagingRefusalPreservesAttachedItem, caseStagingGrowthRefusalRestoresPoppedItem,
- * caseCreateHeapRefusalRollsBackMapPublication, casePendingDeliveryRetainsHeapRestorationCapacity,
+ * caseStagingGrowthDeliversEveryItem, casePendingDeliveryRetainsHeapRestorationCapacity,
  * caseOwnerDrainDetachesPendingMessageItem; the driver lists the remaining cases
  * Checks: Assertion labels include: worker-message cleanup invoked a worker-affine idle callback; accepted
  * cancellation did not restore the attached idle item; owner drain did not invoke the restored item on
@@ -164,61 +163,30 @@ static void caseDetachedPendingItemsAreFreedWithoutCallback(void)
     tosWorkerEnvTeardown(&env);
 }
 
-static void caseInitialStagingRefusalPreservesAttachedItem(void)
-{
-    tos_worker_env_t env;
-    tosWorkerEnvSetup(&env, kTestWorkers, kTestBufferSize, kTestBufferSize);
-
-    idle_probe_t  probe = {0};
-    idle_table_t *table = createTestTable();
-    idle_item_t  *item  = createOwnerItem(table, kTestHash, &probe, 0);
-    twfRequire(item != NULL, "failed to create the initial-reservation item");
-
-    idletableTestRefuseNextInitialStagingReserve();
-    postExpiredItem(table);
-    twfRequire(probe.callbacks == 0, "initial staging refusal invoked the expiration callback");
-    twfRequire(lookupOwnerItem(table, kTestHash) == item, "initial staging refusal changed the owner-visible handle");
-
-    const wid_t previous_wid = tosSetCurrentWorker(1);
-    idletableDrainWorkerItems(table, 1);
-    discard tosSetCurrentWorker(previous_wid);
-    twfRequire(probe.callbacks == 1 && probe.callback_wid == 1,
-               "owner drain did not settle the initial-reservation item once");
-
-    idletableDestroy(table);
-    tosWorkerEnvTeardown(&env);
-}
-
-static void caseStagingGrowthRefusalRestoresPoppedItem(void)
+static void caseStagingGrowthDeliversEveryItem(void)
 {
     tos_worker_env_t env;
     tosWorkerEnvSetup(&env, kTestWorkers, kTestBufferSize, kTestBufferSize);
 
     idle_probe_t  probes[kGrowthItems] = {0};
-    idle_item_t  *items[kGrowthItems]  = {0};
     idle_table_t *table                = createTestTable();
     for (unsigned int i = 0; i < kGrowthItems; ++i)
     {
-        items[i] = createOwnerItem(table, kTestHash + i, &probes[i], 0);
-        twfRequire(items[i] != NULL, "failed to create a staging-growth item");
+        twfRequire(createOwnerItem(table, kTestHash + i, &probes[i], 0) != NULL,
+                   "failed to create a staging-growth item");
     }
 
-    idletableTestRefuseNextStagingGrowth();
     postExpiredItem(table);
 
     tosPumpWorker(&env, 1);
     unsigned int delivered = 0;
-    unsigned int restored  = 0;
     for (unsigned int i = 0; i < kGrowthItems; ++i)
     {
         delivered += probes[i].callbacks;
-        if (lookupOwnerItem(table, kTestHash + i) == items[i])
-        {
-            restored++;
-        }
+        twfRequire(lookupOwnerItem(table, kTestHash + i) == NULL, "staged item remained attached after delivery");
+        twfRequire(probes[i].callback_wid == 1, "a staging-growth callback ran outside its owner worker");
     }
-    twfRequireEqualU32(delivered, kGrowthItems - 1, "successfully staged items did not settle exactly once");
-    twfRequire(restored == 1, "staging growth refusal did not restore exactly the popped item");
+    twfRequireEqualU32(delivered, kGrowthItems, "successfully staged items did not settle exactly once");
 
     const wid_t previous_wid = tosSetCurrentWorker(1);
     idletableDrainWorkerItems(table, 1);
@@ -228,33 +196,8 @@ static void caseStagingGrowthRefusalRestoresPoppedItem(void)
     for (unsigned int i = 0; i < kGrowthItems; ++i)
     {
         delivered += probes[i].callbacks;
-        twfRequire(probes[i].callback_wid == 1, "a staging-growth callback ran outside its owner worker");
     }
-    twfRequire(delivered == kGrowthItems, "owner drain did not settle the restored staging item once");
-
-    idletableDestroy(table);
-    tosWorkerEnvTeardown(&env);
-}
-
-static void caseCreateHeapRefusalRollsBackMapPublication(void)
-{
-    tos_worker_env_t env;
-    tosWorkerEnvSetup(&env, kTestWorkers, kTestBufferSize, kTestBufferSize);
-
-    idle_probe_t  probe = {0};
-    idle_table_t *table = createTestTable();
-    idletableTestRefuseNextCreateHeapPublication();
-    twfRequire(createOwnerItem(table, kTestHash, &probe, 0) == NULL, "create-time heap refusal published a handle");
-    twfRequire(lookupOwnerItem(table, kTestHash) == NULL, "create-time heap refusal retained a map entry");
-
-    idle_item_t *item = createOwnerItem(table, kTestHash, &probe, 0);
-    twfRequire(item != NULL && lookupOwnerItem(table, kTestHash) == item,
-               "create-time rollback prevented later publication of the same key");
-
-    const wid_t previous_wid = tosSetCurrentWorker(1);
-    idletableDrainWorkerItems(table, 1);
-    discard tosSetCurrentWorker(previous_wid);
-    twfRequire(probe.callbacks == 1, "owner drain did not settle the post-rollback item once");
+    twfRequire(delivered == kGrowthItems, "owner drain duplicated a delivered staging item");
 
     idletableDestroy(table);
     tosWorkerEnvTeardown(&env);
@@ -422,9 +365,7 @@ static void caseConcurrentRefreshStageRemoveAndDrain(void)
 
 int main(void)
 {
-    caseInitialStagingRefusalPreservesAttachedItem();
-    caseStagingGrowthRefusalRestoresPoppedItem();
-    caseCreateHeapRefusalRollsBackMapPublication();
+    caseStagingGrowthDeliversEveryItem();
     casePendingDeliveryRetainsHeapRestorationCapacity();
     caseAcceptedCancellationRestoresForOwnerDrain();
     caseImmediateForeignRefusalRestoresForOwnerDrain();

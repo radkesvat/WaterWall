@@ -118,8 +118,8 @@ void idletableDestroy(idle_table_t *self);
  * @param cb Expiration callback.
  * @param wid Worker ID of the caller.
  * @param age_ms Relative expiration age from the caller's cached monotonic time (in milliseconds).
- * @return Borrowed pointer to the new idle item; NULL if allocation or either index
- * publication fails, or if the key already exists.
+ * @return Borrowed pointer to the new idle item; NULL if the key already exists
+ * or the required index/staging geometry is unrepresentable. Heap allocation failure is fatal.
  */
 idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
                                  uint64_t age_ms);
@@ -187,9 +187,6 @@ bool idletableRemoveIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key);
 
 #ifdef WW_IDLE_TABLE_TEST_SEAM
 void     idleCallBack(wtimer_t *timer);
-void     idletableTestRefuseNextInitialStagingReserve(void);
-void     idletableTestRefuseNextStagingGrowth(void);
-void     idletableTestRefuseNextCreateHeapPublication(void);
 void     idletableTestSetNowMS(idle_table_t *self, uint64_t now_ms);
 void     idletableTestRunExpiry(idle_table_t *self);
 uint64_t idletableTestGetDeadline(const idle_item_t *item);
