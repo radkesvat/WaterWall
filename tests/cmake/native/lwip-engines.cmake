@@ -9,7 +9,7 @@ if(TARGET ww_lwip_engine_test)
   waterwall_add_native_executable(lwip_engine_pools_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/lwip/lwip_engine_pools_test.c)
   target_link_libraries(lwip_engine_pools_test PRIVATE ww_test_support)
   target_link_libraries(lwip_engine_pools_test PRIVATE ww_lwip_engine_test pthread)
-  target_link_options(lwip_engine_pools_test PRIVATE "-Wl,--wrap=sys_now" "-Wl,--wrap=calloc" "-Wl,--wrap=sys_arch_protect")
+  target_link_options(lwip_engine_pools_test PRIVATE "-Wl,--wrap=sys_now" "-Wl,--wrap=sys_arch_protect")
   add_dependencies(waterwall_unit_tests lwip_engine_pools_test)
   add_waterwall_unit_test(waterwall.lwip_engine_pools_unit lwip_engine_pools_test "unit;net;lwip;thread")
   waterwall_add_native_executable(lwip_engine_ports_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/lwip/lwip_engine_ports_test.c)
@@ -27,7 +27,7 @@ if(TARGET ww_lwip_engine_test)
   waterwall_add_native_executable(lwip_engine_runtime_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/lwip/lwip_engine_runtime_test.c ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)
   target_link_libraries(lwip_engine_runtime_test PRIVATE ww_test_support)
   target_link_libraries(lwip_engine_runtime_test PRIVATE ww_lwip_engine_test ww)
-  target_link_options(lwip_engine_runtime_test PRIVATE "-Wl,--wrap=sys_now" "-Wl,--wrap=calloc" "-Wl,--wrap=wtimerAdd"
+  target_link_options(lwip_engine_runtime_test PRIVATE "-Wl,--wrap=sys_now" "-Wl,--wrap=wtimerAdd"
 
     "-Wl,--wrap=nodemanagerQuiesceWorker" "-Wl,--wrap=workerMessagesDestroyDetached")
   add_dependencies(waterwall_unit_tests lwip_engine_runtime_test)

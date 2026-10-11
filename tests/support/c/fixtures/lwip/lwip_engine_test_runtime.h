@@ -17,6 +17,7 @@
 #include "lwip/ip_addr.h"
 #include "test_assert.h"
 #include "trusted_checksum.h"
+#include "wmem.h"
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -37,6 +38,21 @@ static _Thread_local unsigned              owner = 255;
 static _Thread_local const struct wloop_s *owner_loop;
 static atomic_uint                         clock_ms;
 static atomic_uint                         random_state = 100;
+
+/* Isolated engine suites supply the shared allocator contract without the full
+ * worker runtime. Backend failure semantics are covered by memory_allocation_test. */
+void *memoryAllocateZero(size_t size)
+{
+    void *allocation = calloc(1, size == 0 ? 1 : size);
+    if (allocation == NULL)
+        _Exit(EXIT_FAILURE);
+    return allocation;
+}
+
+void memoryFree(void *allocation)
+{
+    free(allocation);
+}
 
 bool wwLwipEngineOwnerIsCurrent(uint8_t wid, const struct wloop_s *loop)
 {

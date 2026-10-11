@@ -5,6 +5,7 @@
 #include "pool_cache_internal.h"
 #include "port_registry.h"
 #include "shared_pools.h"
+#include "wmem.h"
 
 #include "lwip/init.h"
 #include "lwip/ip.h"
@@ -236,11 +237,7 @@ ww_lwip_engine_t *wwLwipEngineCreate(uint8_t owner, struct wloop_s *loop)
     {
         return NULL;
     }
-    ww_lwip_engine_t *engine = calloc(1, control_size);
-    if (engine == NULL)
-    {
-        return NULL;
-    }
+    ww_lwip_engine_t *engine = memoryAllocateZero(control_size);
     engine->owner = owner;
     engine->loop  = loop;
     wwLwipPoolCacheInitialize(&engine->pool_cache);
@@ -374,6 +371,6 @@ void wwLwipEngineDestroy(ww_lwip_engine_t *engine)
     }
     wwLwipEngineLeave(engine, previous);
     wwLwipPoolCacheDestroy(&engine->pool_cache);
-    free(engine);
+    memoryFree(engine);
     SYS_ARCH_LOCKED(--live_engines);
 }

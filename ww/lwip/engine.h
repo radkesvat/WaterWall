@@ -14,7 +14,8 @@ typedef void (*ww_lwip_wake_fn)(ww_lwip_engine_t *engine, void *argument);
 void wwLwipEngineSharedInit(void);
 void wwLwipEngineSharedCleanup(void);
 
-/* The runtime owns engines. Creation, entry, dispatch and destruction require the owner. */
+/* The runtime owns engines. Creation, entry, dispatch and destruction require the owner.
+ * Creation returns NULL before shared initialization or for a foreign owner; heap OOM is fatal. */
 ww_lwip_engine_t *wwLwipEngineCreate(uint8_t owner, struct wloop_s *loop);
 void              wwLwipEngineDestroy(ww_lwip_engine_t *engine);
 bool              wwLwipEngineEnter(ww_lwip_engine_t *engine, ww_lwip_engine_t **previous);

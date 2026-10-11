@@ -855,12 +855,7 @@ void initTcpIpStack(void)
         return;
     }
     assert((uint64_t) getTID() == GSTATE.main_thread_id);
-    if (! wwLwipRuntimeInitialize(getWorkersCount()))
-    {
-        LOGF("lwIP: failed to allocate worker engine slots");
-        startupFailureRecord(1);
-        return;
-    }
+    wwLwipRuntimeInitialize(getWorkersCount());
     wwLwipInitializeProtocolState();
     GSTATE.lwip_process_v4_hook  = wwDefaultInternalLwipIpv4Hook;
     GSTATE.flag_lwip_initialized = 1;

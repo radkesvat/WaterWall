@@ -18,14 +18,6 @@ typedef struct engine_slot_s
 /* A private sidecar preserves the public worker/global-state layouts. */
 static engine_slot_t *slots;
 static uint8_t        slot_count;
-#if defined(WW_LWIP_TEST_SEAM)
-static bool fail_slots;
-void        wwLwipRuntimeTestFailSlots(bool fail)
-{
-    assert(slots == NULL);
-    fail_slots = fail;
-}
-#endif
 
 static void scheduleEngine(ww_lwip_engine_t *engine, void *argument);
 
@@ -36,22 +28,15 @@ bool wwLwipEngineOwnerIsCurrent(uint8_t owner, const struct wloop_s *loop)
     return currentThreadIsEventWorkerWID(owner) && loop != NULL && wloopGetWID((wloop_t *) loop) == owner;
 }
 
-bool wwLwipRuntimeInitialize(uint8_t workers)
+void wwLwipRuntimeInitialize(uint8_t workers)
 {
     assert(slots == NULL && workers > 0 && workers <= 254);
-#if defined(WW_LWIP_TEST_SEAM)
-    if (fail_slots)
-        return false;
-#endif
-    engine_slot_t *storage = calloc(workers, sizeof(*storage));
-    if (storage == NULL)
-        return false;
+    engine_slot_t *storage = memoryAllocateZero((size_t) workers * sizeof(*storage));
     for (uint8_t owner = 0; owner < workers; ++owner)
         storage[owner].owner = owner;
     wwLwipEngineSharedInit();
     slot_count = workers;
     slots      = storage;
-    return true;
 }
 
 static void onEngineTimer(wtimer_t *timer)
@@ -184,7 +169,7 @@ void wwLwipRuntimeFinalize(void)
         }
     }
     wwLwipEngineSharedCleanup();
-    free(slots);
+    memoryFree(slots);
     slots      = NULL;
     slot_count = 0;
 }

@@ -30,7 +30,6 @@
 
 static pthread_barrier_t  rendezvous;
 static struct netif       interfaces[2];
-static _Thread_local bool fail_engine_allocation;
 static unsigned           custom_frees[2];
 
 static void                  *heap_handoff[2];
@@ -103,14 +102,6 @@ static void concurrentCachePressure(void)
         }
         meet();
     }
-}
-
-void *__real_calloc(size_t count, size_t size);
-void *__wrap_calloc(size_t count, size_t size)
-{
-    if (fail_engine_allocation && count == 1 && size == wwLwipEngineControlSize())
-        return NULL;
-    return __real_calloc(count, size);
 }
 
 static void meet(void)
@@ -237,10 +228,7 @@ static void *run(void *argument)
 {
     owner                  = (unsigned) (uintptr_t) argument;
     owner_loop             = (struct wloop_s *) &interfaces[owner];
-    fail_engine_allocation = true;
-    CHECK(wwLwipEngineCreate((uint8_t) owner, (struct wloop_s *) owner_loop) == NULL);
     CHECK(wwLwipEngineCurrent() == NULL);
-    fail_engine_allocation   = false;
     ww_lwip_engine_t *engine = wwLwipEngineCreate((uint8_t) owner, (struct wloop_s *) owner_loop);
     CHECK(engine != NULL);
     ww_lwip_engine_t *previous;
@@ -456,6 +444,6 @@ int main(void)
     wwLwipEngineSharedInit();
     checkNestedProtection();
     wwLwipEngineSharedCleanup();
-    puts("shared capacities, concurrent allocation, custom free, initialization refusal and IPv4 quotas passed");
+    puts("shared capacities, concurrent allocation, custom free and IPv4 quotas passed");
     return 0;
 }

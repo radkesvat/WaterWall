@@ -45,7 +45,6 @@ static pthread_barrier_t       poll_pressure;
 static uint32_t                clock_offset;
 static atomic_bool             finished[2];
 static bool                    teardown_detached[3];
-static _Thread_local bool      fail_next_calloc;
 static _Thread_local unsigned  timer_adds;
 static _Thread_local wtimer_t *last_timer;
 
@@ -59,8 +58,6 @@ wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t delay, uint32_t
 }
 u32_t __real_sys_now(void);
 u32_t __wrap_sys_now(void);
-void *__real_calloc(size_t count, size_t size);
-void *__wrap_calloc(size_t count, size_t size);
 void  __real_nodemanagerQuiesceWorker(wid_t owner, const ww_lifecycle_context_t *context);
 void  __wrap_nodemanagerQuiesceWorker(wid_t owner, const ww_lifecycle_context_t *context);
 void  __real_workerMessagesDestroyDetached(worker_message_queue_t *queue);
@@ -70,15 +67,7 @@ u32_t __wrap_sys_now(void)
 {
     return __real_sys_now() + clock_offset;
 }
-void *__wrap_calloc(size_t count, size_t size)
-{
-    if (fail_next_calloc)
-    {
-        fail_next_calloc = false;
-        return NULL;
-    }
-    return __real_calloc(count, size);
-}
+
 void __wrap_nodemanagerQuiesceWorker(wid_t owner, const ww_lifecycle_context_t *context)
 {
     __real_nodemanagerQuiesceWorker(owner, context);
@@ -253,10 +242,6 @@ static void setup(void *worker_ptr, void *argument, void *unused1, void *unused2
     worker_t *worker = worker_ptr;
     probe_t  *probe  = argument;
     CHECK(worker->wid == probe->owner);
-    unsigned timers  = worker->loop->ntimers;
-    fail_next_calloc = true;
-    CHECK(wwLwipRuntimeGet(worker->wid) == NULL);
-    CHECK(worker->loop->ntimers == timers);
     probe->engine = wwLwipRuntimeGet(worker->wid);
     CHECK(probe->engine != NULL);
     CHECK(wwLwipRuntimeGet(worker->wid) == probe->engine);
@@ -323,10 +308,6 @@ int main(void)
     data.core_logger_data.log_level     = log_off;
     data.network_logger_data.log_level  = log_off;
     data.dns_logger_data.log_level      = log_off;
-    wwLwipRuntimeTestFailSlots(true);
-    CHECK(! wwStartupSucceeded(createGlobalState(data)));
-    CHECK(GSTATE.workers == NULL && GSTATE.workers_count == 0 && ! GSTATE.flag_lwip_initialized);
-    wwLwipRuntimeTestFailSlots(false);
     CHECK(wwStartupSucceeded(createGlobalState(data)));
     CHECK(pthread_barrier_init(&poll_pressure, NULL, 2) == 0);
     clock_offset = UINT32_MAX - __real_sys_now() - 20;
@@ -376,7 +357,8 @@ int main(void)
     CHECK(wwLwipShutdown());
     GSTATE.flag_lwip_initialized = 0;
     destroyGlobalState();
-    puts("real workers: lazy failure, earlier deadlines, clock wrap, retransmit, poll retry, TIME_WAIT, quiescence and "
-         "detached-loop teardown passed");
+    puts(
+        "real workers: lazy creation, earlier deadlines, clock wrap, retransmit, poll retry, TIME_WAIT, quiescence and "
+        "detached-loop teardown passed");
     return 0;
 }
