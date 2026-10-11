@@ -417,11 +417,6 @@ static bool ipmanipulatorSchedulePrestartTimeout(tunnel_t *t, uint32_t slot_inde
 {
     ipmanipulator_tls_prestart_timeout_msg_t *msg = memoryAllocate(sizeof(*msg));
 
-    if (msg == NULL)
-    {
-        return false;
-    }
-
     *msg = (ipmanipulator_tls_prestart_timeout_msg_t) {
         .slot_index = slot_index,
         .generation = generation,
@@ -487,11 +482,6 @@ static bool ipmanipulatorScheduleCaptureTimeout(tunnel_t *t, uint32_t slot_index
     }
 
     ipmanipulator_tls_capture_timeout_msg_t *msg = memoryAllocate(sizeof(*msg));
-
-    if (msg == NULL)
-    {
-        return false;
-    }
 
     *msg = (ipmanipulator_tls_capture_timeout_msg_t) {
         .slot_index = slot_index,
@@ -1686,11 +1676,6 @@ bool ipmanipulatorDelayBarrierInstallOrdered(tunnel_t *t, ipmanipulator_delay_ba
         return false;
     }
     ipmanipulator_ordered_output_t *owned_outputs = memoryAllocateZero(sizeof(*owned_outputs) * count);
-    if (owned_outputs == NULL)
-    {
-        return false;
-    }
-
     barrier->owner_wid = owner_wid;
 
     for (uint32_t i = 0; i < count; ++i)
@@ -2161,11 +2146,6 @@ bool ipmanipulatorDelayBarrierSchedule(tunnel_t *t, const ipmanipulator_flow_key
 #endif
 
     ipmanipulator_delay_timer_message_t *msg = memoryAllocate(sizeof(*msg));
-
-    if (msg == NULL)
-    {
-        return false;
-    }
 
     *msg = (ipmanipulator_delay_timer_message_t) {.key = *key, .kind = kind, .generation = generation, .wid = wid};
     return sendWorkerMessageTimedWithCleanup(wid,

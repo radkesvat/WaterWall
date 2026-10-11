@@ -1058,11 +1058,6 @@ static bool echsnitrickScheduleOriginalRelease(tunnel_t *t, const echsnitrick_fl
     }
 
     echsnitrick_delayed_release_t *release = memoryAllocate(sizeof(*release));
-    if (release == NULL)
-    {
-        return false;
-    }
-
     *release = (echsnitrick_delayed_release_t) {
         .generation    = identity->generation,
         .src_addr      = identity->src_addr,

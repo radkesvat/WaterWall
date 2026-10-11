@@ -29,7 +29,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 202
+EXPECTED_TOTAL_ABORTS = 201
 
 
 # ---------------------------------------------------------------------------
@@ -435,9 +435,6 @@ MANIFEST = [
     ("tunnels/IpManipulator/common/flow_table.c", "flowtableAbortStructuralCorruption", 1,
      ("IpManipulator: flow table structural corruption: %s",),
      "runtime table invariant: IpManipulator heap or bucket corruption before unsafe mutation"),
-    ("tunnels/IpManipulator/common/tricks/smugglefin/trick.c", "smugglefintrickCreateReleaseContextLocked", 1,
-     ("IpManipulator: failed to allocate a smuggle-fin release context",),
-     "runtime allocation invariant: IpManipulator required release context would otherwise be dereferenced null"),
     ("tunnels/MuxClient/common/helpers.c", "muxclientLeaveConnection", 3,
      ("MuxClient: attempted to unlink a child without a live parent link",
       "MuxClient: child CID index disagrees with ownership list",

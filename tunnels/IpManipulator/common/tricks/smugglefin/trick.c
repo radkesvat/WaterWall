@@ -317,11 +317,6 @@ static bool smugglefintrickQueuePacketLocked(ipmanipulator_smuggle_fin_flow_t *f
         ipmanipulator_smuggle_fin_queued_packet_t *grown =
             memoryReAllocate(flow->queued_packets, sizeof(*flow->queued_packets) * new_capacity);
 
-        if (grown == NULL)
-        {
-            return false;
-        }
-
         flow->queued_packets          = grown;
         flow->queued_packets_capacity = new_capacity;
     }
@@ -440,12 +435,6 @@ static smugglefintrick_release_context_t *smugglefintrickCreateReleaseContextLoc
     const ipmanipulator_smuggle_fin_flow_t *flow, bool force)
 {
     smugglefintrick_release_context_t *context = memoryAllocate(sizeof(*context));
-    if (UNLIKELY(context == NULL))
-    {
-        LOGF("IpManipulator: failed to allocate a smuggle-fin release context");
-        abortProgramNow(1);
-    }
-
     *context = (smugglefintrick_release_context_t) {
         .src_addr   = flow->src_addr,
         .dst_addr   = flow->dst_addr,
@@ -623,10 +612,7 @@ static sbuf_t *smugglefintrickCreateHandoffBuffer(line_t *owner_line, uint32_t p
         buf = sbufCreateWithPadding(packet_length, bufferpoolGetLargeBufferPadding(pool));
     }
 
-    if (buf != NULL)
-    {
-        sbufSetLength(buf, packet_length);
-    }
+    sbufSetLength(buf, packet_length);
 
     return buf;
 }
@@ -678,14 +664,6 @@ static void smugglefintrickRunHandoffMessage(worker_t *worker, void *arg1, void 
         .src_port   = src_port,
         .dst_port   = dst_port,
     };
-
-    if (buf == NULL)
-    {
-        memoryFree(message);
-        lineUnref(owner_line);
-        LOGF("IpManipulator: failed to allocate an owner-worker buffer for a smuggle-fin handoff");
-        abortProgramNow(1);
-    }
 
     memoryCopyLarge(sbufGetMutablePtr(buf), message->packet, packet_length);
     memoryFree(message);
@@ -1049,12 +1027,6 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 #endif
 
                 smugglefintrick_handoff_message_t *message = memoryAllocate(sizeof(*message) + (size_t) packet_length);
-                if (message == NULL)
-                {
-                    lineUnref(owner_line);
-                    return false;
-                }
-
                 *message = (smugglefintrick_handoff_message_t) {
                     .src_addr             = src_addr,
                     .dst_addr             = dst_addr,
@@ -1125,13 +1097,6 @@ bool smugglefintrickInitializeState(tunnel_t *t)
     state->smuggle_fin_worker_pauses_count = (uint32_t) getTotalWorkersCount();
     state->smuggle_fin_worker_pauses =
         memoryAllocateZero(sizeof(*state->smuggle_fin_worker_pauses) * state->smuggle_fin_worker_pauses_count);
-
-    if (state->smuggle_fin_worker_pauses == NULL)
-    {
-        state->smuggle_fin_worker_pauses_count = 0;
-        LOGF("IpManipulator: failed to allocate the smuggle-fin per-worker paused-flow registry");
-        return false;
-    }
 
     return ipmanipulatorFlowTableInit(&state->smuggle_fin_table,
                                       "smuggle-fin",

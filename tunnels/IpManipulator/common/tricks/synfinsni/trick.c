@@ -93,11 +93,6 @@ static sbuf_t *synfinsnitrickDuplicateStandalonePacket(const sbuf_t *source)
     uint32_t packet_len = sbufGetLength((sbuf_t *) source);
     sbuf_t  *copy       = sbufCreateWithPadding(packet_len, sbufGetLeftPadding((sbuf_t *) source));
 
-    if (copy == NULL)
-    {
-        return NULL;
-    }
-
     sbufSetLength(copy, packet_len);
     memoryCopyLarge(sbufGetMutablePtr(copy), sbufGetRawPtr((sbuf_t *) source), packet_len);
     return copy;
@@ -504,15 +499,6 @@ static bool synfinsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipma
     const bool recover_on_caller = lineIsOnCurrentEventWorker(l);
 
     synfinsnitrick_hold_timeout_t *context = memoryAllocate(sizeof(*context));
-    if (context == NULL)
-    {
-        if (recover_on_caller)
-        {
-            synfinsnitrickReleaseTimedOutHold(t, key, generation);
-        }
-        return false;
-    }
-
     *context = (synfinsnitrick_hold_timeout_t) {
         .key        = *key,
         .generation = generation,

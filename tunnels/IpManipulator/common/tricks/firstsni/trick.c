@@ -801,13 +801,6 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
     }
 
     ipmanipulator_ordered_output_t *ordered_outputs = memoryAllocateZero(sizeof(*ordered_outputs) * ordered_capacity);
-    if (ordered_outputs == NULL)
-    {
-        firstsnitrickSendOriginalPacket(t, l, buf);
-        lineUnref(l);
-        return true;
-    }
-
     uint32_t ordered_count = 0;
 
     for (uint32_t replay_index = 1; replay_index < state->trick_first_sni_count; ++replay_index)

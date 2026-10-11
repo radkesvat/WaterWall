@@ -197,13 +197,8 @@ static bool createInternalTlsClient(tunnel_t *t, node_t *owner, const char *sni,
     assert(*role_tunnel == NULL);
 
     state->internal_tls_client_settings = cJSON_CreateObject();
-    if (state->internal_tls_client_settings == NULL ||
-        cJSON_AddStringToObject(state->internal_tls_client_settings, "sni", sni) == NULL ||
-        cJSON_AddBoolToObject(state->internal_tls_client_settings, "x25519mlkem768", false) == NULL)
-    {
-        LOGF("IpManipulator: failed to build internal TlsClient settings");
-        return false;
-    }
+    discard cJSON_AddStringToObject(state->internal_tls_client_settings, "sni", sni);
+    discard cJSON_AddBoolToObject(state->internal_tls_client_settings, "x25519mlkem768", false);
 
     if (! nodeConfigureChild(&state->internal_tls_client_node,
                              nodeTlsClientGet(),
@@ -998,21 +993,6 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         state->tls_prestart_slots_count = state->tls_capture_slots_count;
         state->tls_prestart_slots =
             memoryAllocateZero(sizeof(*state->tls_prestart_slots) * state->tls_prestart_slots_count);
-
-        if (state->tls_capture_slots == NULL || state->tls_prestart_slots == NULL)
-        {
-            memoryFree(state->tls_capture_slots);
-            memoryFree(state->tls_prestart_slots);
-            state->tls_capture_slots        = NULL;
-            state->tls_prestart_slots       = NULL;
-            state->tls_capture_slots_count  = 0;
-            state->tls_prestart_slots_count = 0;
-            mutexDestroy(&state->tls_capture_mutex);
-
-            LOGF("IpManipulator: failed to allocate the TLS ClientHello capture slots");
-            ipmanipulatorDestroy(t, wwLifecycleStartupRollback());
-            return NULL;
-        }
     }
 
     if (! initializeStatefulTrickTables(t))

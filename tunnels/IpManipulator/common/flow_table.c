@@ -232,12 +232,7 @@ bool ipmanipulatorFlowTableInit(ipmanipulator_flow_table_t *table, const char *n
         return false;
     }
 
-    table->shards = memoryAllocateZero(shards_size);
-    if (table->shards == NULL)
-    {
-        return false;
-    }
-
+    table->shards             = memoryAllocateZero(shards_size);
     table->name               = name;
     table->destructor         = destructor;
     table->destructor_context = destructor_context;
@@ -274,13 +269,6 @@ bool ipmanipulatorFlowTableInit(ipmanipulator_flow_table_t *table, const char *n
 
         shard->buckets = (ipmanipulator_flow_entry_t **) memoryAllocateZero(buckets_size);
         shard->heap    = (ipmanipulator_flow_entry_t **) memoryAllocateZero(heap_size);
-
-        if (shard->buckets == NULL || shard->heap == NULL)
-        {
-            flowtableShardDestroyStorage(shard);
-            ipmanipulatorFlowTableDestroy(table);
-            return false;
-        }
 
         if (UNLIKELY(! mutexTryInit(&shard->mutex)))
         {
@@ -487,11 +475,6 @@ ipmanipulator_flow_entry_t *ipmanipulatorFlowShardReserve(ipmanipulator_flow_tab
     }
 
     ipmanipulator_flow_entry_t *entry = memoryAllocateZero(table->entry_size);
-    if (entry == NULL)
-    {
-        return NULL;
-    }
-
     entry->key         = *key;
     entry->deadline_ms = deadline_ms;
 

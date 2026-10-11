@@ -409,15 +409,6 @@ static bool overlapsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipm
     const bool recover_on_caller = lineIsOnCurrentEventWorker(l);
 
     overlapsnitrick_hold_timeout_t *context = memoryAllocate(sizeof(*context));
-    if (context == NULL)
-    {
-        if (recover_on_caller)
-        {
-            overlapsnitrickReleaseTimedOutHold(t, key, generation);
-        }
-        return false;
-    }
-
     *context = (overlapsnitrick_hold_timeout_t) {
         .key        = *key,
         .generation = generation,
