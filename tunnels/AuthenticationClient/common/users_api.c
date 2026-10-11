@@ -151,20 +151,10 @@ static void authenticationclientFillUserProfileLocked(authenticationclient_user_
     if (user->name != NULL && user->name[0] != '\0')
     {
         profile->name = stringDuplicate(user->name);
-        if (UNLIKELY(profile->name == NULL))
-        {
-            LOGF("AuthenticationClient: failed to allocate authenticated identity");
-            abortProgramNow(1);
-        }
     }
     if (user->password != NULL && user->password[0] != '\0')
     {
         profile->password = stringDuplicate(user->password);
-        if (UNLIKELY(profile->password == NULL))
-        {
-            LOGF("AuthenticationClient: failed to allocate authenticated identity");
-            abortProgramNow(1);
-        }
     }
     rwlockReadUnlock(&user->lock);
 }

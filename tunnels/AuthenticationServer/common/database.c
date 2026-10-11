@@ -22,12 +22,9 @@ static char *authenticationserverCreateBackupPath(const char *db_path)
 
     size_t db_path_len = stringLength(db_path);
     size_t suffix_len  = sizeof(suffix) - 1U;
-    char  *backup_path = memoryAllocate(db_path_len + suffix_len + 1U);
-
-    if (UNLIKELY(backup_path == NULL))
-    {
+    if (UNLIKELY(db_path_len > SIZE_MAX - suffix_len - 1U))
         return NULL;
-    }
+    char *backup_path = memoryAllocate(db_path_len + suffix_len + 1U);
 
     memoryCopy(backup_path, db_path, db_path_len);
     memoryCopy(backup_path + db_path_len, suffix, suffix_len + 1U);
@@ -198,21 +195,17 @@ static bool authenticationserverBackupPathListAppend(authenticationserver_backup
 {
     if (list->count == list->capacity)
     {
-        size_t new_capacity = list->capacity == 0U ? 16U : list->capacity * 2U;
-        char **new_items    = memoryReAllocate(list->items, sizeof(*new_items) * new_capacity);
-        if (UNLIKELY(new_items == NULL))
-        {
+        if (UNLIKELY(list->capacity > SIZE_MAX / 2U))
             return false;
-        }
+        size_t new_capacity = list->capacity == 0U ? 16U : list->capacity * 2U;
+        if (UNLIKELY(new_capacity > SIZE_MAX / sizeof(*list->items)))
+            return false;
+        char **new_items = memoryReAllocate(list->items, sizeof(*new_items) * new_capacity);
         list->items    = new_items;
         list->capacity = new_capacity;
     }
 
     list->items[list->count] = stringDuplicate(path);
-    if (UNLIKELY(list->items[list->count] == NULL))
-    {
-        return false;
-    }
     ++list->count;
     return true;
 }
@@ -244,19 +237,13 @@ static bool authenticationserverUserIdListAppend(authenticationserver_user_id_li
 
     if (list->count == list->capacity)
     {
-        size_t new_capacity = list->capacity == 0U ? 16U : list->capacity * 2U;
-        if (UNLIKELY(new_capacity < list->count))
-        {
-            LOGE("AuthenticationServer: user id validation capacity overflow");
+        if (UNLIKELY(list->capacity > SIZE_MAX / 2U))
             return false;
-        }
+        size_t new_capacity = list->capacity == 0U ? 16U : list->capacity * 2U;
+        if (UNLIKELY(new_capacity > SIZE_MAX / sizeof(*list->items)))
+            return false;
 
         uint64_t *new_items = memoryReAllocate(list->items, sizeof(*new_items) * new_capacity);
-        if (UNLIKELY(new_items == NULL))
-        {
-            LOGE("AuthenticationServer: failed to allocate user id validation list");
-            return false;
-        }
         list->items    = new_items;
         list->capacity = new_capacity;
     }
@@ -763,7 +750,7 @@ bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
     ts->backup_path = authenticationserverCreateBackupPath(ts->db_path);
     if (UNLIKELY(ts->backup_path == NULL))
     {
-        LOGE("AuthenticationServer: failed to allocate backup path for \"%s\"", ts->db_path);
+        LOGE("AuthenticationServer: backup path is too large for \"%s\"", ts->db_path);
         return false;
     }
 

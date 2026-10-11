@@ -110,7 +110,7 @@ static users_t *authenticationclientCreateUsersCopy(const users_t *src)
 
     /* users_t snapshots are aligned-allocated; always release them with authenticationclientDestroyUsers(). */
     users_t *copy = memoryAllocateAligned(sizeof(*copy), 32);
-    if (UNLIKELY(copy == NULL || ! usersCreate(copy)))
+    if (UNLIKELY(! usersCreate(copy)))
     {
         memoryFreeAligned(copy);
         return NULL;
@@ -331,12 +331,10 @@ static bool authenticationclientPendingReserve(authenticationclient_tstate_t *ts
         return false;
     }
 
-    authenticationclient_pending_request_t *new_items =
-        memoryReAllocate(ts->pending_requests, sizeof(*new_items) * (size_t) new_capacity);
-    if (UNLIKELY(new_items == NULL))
-    {
+    size_t bytes;
+    if (UNLIKELY(! memoryTryComputeArraySize(new_capacity, sizeof(*ts->pending_requests), &bytes)))
         return false;
-    }
+    authenticationclient_pending_request_t *new_items = memoryReAllocate(ts->pending_requests, bytes);
 
     ts->pending_requests = new_items;
     ts->pending_capacity = new_capacity;
@@ -1024,7 +1022,7 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
 
     /* Keep heap users_t allocations paired with memoryFreeAligned() on every cleanup path. */
     users_t *new_users = memoryAllocateAligned(sizeof(*new_users), 32);
-    if (UNLIKELY(new_users == NULL || ! usersCreate(new_users)))
+    if (UNLIKELY(! usersCreate(new_users)))
     {
         cJSON_Delete(json);
         memoryFreeAligned(new_users);

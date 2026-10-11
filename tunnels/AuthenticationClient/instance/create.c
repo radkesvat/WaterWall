@@ -137,12 +137,6 @@ tunnel_t *authenticationclientTunnelCreate(node_t *node)
 
     /* Paired with memoryFreeAligned() in authenticationclientTunnelDestroy(). */
     users_t *users = memoryAllocateAligned(sizeof(*users), 32);
-    if (UNLIKELY(users == NULL))
-    {
-        LOGE("AuthenticationClient: failed to create local users table");
-        authenticationclientTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
 
     if (UNLIKELY(! usersCreate(users)))
     {

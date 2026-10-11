@@ -18,10 +18,6 @@ static char *authenticationserverPasswordFromPayload(const uint8_t *request_data
     }
 
     char *password = memoryAllocate((size_t) request_data_len + 1U);
-    if (UNLIKELY(password == NULL))
-    {
-        return NULL;
-    }
 
     memoryCopy(password, request_data, request_data_len);
     password[request_data_len] = '\0';

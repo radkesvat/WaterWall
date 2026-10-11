@@ -81,11 +81,6 @@ static bool authenticationserverParseNormalBackups(authenticationserver_tstate_t
     }
 
     ts->normal_backups_path = stringDuplicate(path_json->valuestring);
-    if (UNLIKELY(ts->normal_backups_path == NULL))
-    {
-        LOGE("AuthenticationServer: failed to allocate normal-backups-path");
-        return false;
-    }
     authenticationserverTrimTrailingPathSeparators(ts->normal_backups_path);
 
     if (UNLIKELY(ts->normal_backups_path[0] == '\0'))
@@ -215,12 +210,13 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
     }
 
     int auth_clients_count = cJSON_GetArraySize(auth_clients);
-    ts->auth_clients       = memoryAllocateZero(sizeof(*ts->auth_clients) * (size_t) auth_clients_count);
-    if (UNLIKELY(ts->auth_clients == NULL))
+    size_t bytes;
+    if (UNLIKELY(! memoryTryComputeArraySize((size_t) auth_clients_count, sizeof(*ts->auth_clients), &bytes)))
     {
-        LOGE("AuthenticationServer: failed to allocate auth-clients array");
+        LOGE("AuthenticationServer: auth-clients array is too large");
         return false;
     }
+    ts->auth_clients       = memoryAllocateZero(bytes);
     ts->auth_clients_count = (uint32_t) auth_clients_count;
 
     const cJSON *client_json = NULL;

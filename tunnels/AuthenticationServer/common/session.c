@@ -156,13 +156,13 @@ static bool authenticationserverEnsureSessionCapacity(authenticationserver_tstat
         return true;
     }
 
-    uint32_t                         new_capacity = ts->sessions_capacity == 0 ? 4U : ts->sessions_capacity * 2U;
-    authenticationserver_session_t **new_sessions =
-        memoryReAllocate(ts->sessions, sizeof(*new_sessions) * (size_t) new_capacity);
-    if (UNLIKELY(new_sessions == NULL))
-    {
+    if (UNLIKELY(ts->sessions_capacity > UINT32_MAX / 2U))
         return false;
-    }
+    uint32_t new_capacity = ts->sessions_capacity == 0 ? 4U : ts->sessions_capacity * 2U;
+    size_t   bytes;
+    if (UNLIKELY(! memoryTryComputeArraySize(new_capacity, sizeof(*ts->sessions), &bytes)))
+        return false;
+    authenticationserver_session_t **new_sessions = memoryReAllocate(ts->sessions, bytes);
 
     memoryZero(&new_sessions[ts->sessions_capacity],
                sizeof(*new_sessions) * (size_t) (new_capacity - ts->sessions_capacity));
@@ -193,10 +193,6 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
     }
 
     authenticationserver_session_t *session = memoryAllocateZero(sizeof(*session));
-    if (UNLIKELY(session == NULL))
-    {
-        return NULL;
-    }
 
     if (UNLIKELY(! usersCreate(&session->baseline_users)))
     {
@@ -211,11 +207,6 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
     }
 
     session->client_name = stringDuplicate(client->name);
-    if (UNLIKELY(session->client_name == NULL))
-    {
-        authenticationserverSessionFree(session);
-        return NULL;
-    }
 
     session->allow_stats_push        = client->allow_stats_push;
     session->allow_user_pull         = client->allow_user_pull;

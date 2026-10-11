@@ -123,10 +123,6 @@ static bool authenticationserverPushStatsHintListReserve(authenticationserver_st
     }
 
     authenticationserver_stats_hint_t *new_items = memoryReAllocate(hints->items, sizeof(*new_items) * new_capacity);
-    if (UNLIKELY(new_items == NULL))
-    {
-        return false;
-    }
 
     hints->items    = new_items;
     hints->capacity = new_capacity;
@@ -334,11 +330,10 @@ static bool authenticationserverPushStatsBuildDeltas(tunnel_t *t, authentication
 
     if (hints->count > 0)
     {
-        deltas = memoryAllocateZero(sizeof(*deltas) * hints->count);
-        if (UNLIKELY(deltas == NULL))
-        {
+        size_t bytes;
+        if (UNLIKELY(! memoryTryComputeArraySize(hints->count, sizeof(*deltas), &bytes)))
             return false;
-        }
+        deltas = memoryAllocateZero(bytes);
     }
 
     for (size_t i = 0; i < hints->count; ++i)

@@ -3,9 +3,9 @@
  * this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: testCopyRefusal, testSuccess, testAbsentFields
+ * Cases: testSuccess, testAbsentFields
  * Checks: Assertion labels include: user construction failed; user insertion failed; alice; profile lookup
- * returned after credential-copy refusal
+ * returns complete owned credentials
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.authenticationclient_profile_unit
@@ -17,9 +17,6 @@
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
 #include "loggers/network_logger.h"
-
-#include <sys/wait.h>
-#include <unistd.h>
 
 typedef enum lookup_kind_e
 {
@@ -41,8 +38,7 @@ typedef struct profile_fixture_s
     uint8_t       publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
 } profile_fixture_t;
 
-static unsigned fail_copy, copy_calls;
-
+static unsigned copy_calls;
 
 char *__real_stringDuplicate(const char *source);
 char *__wrap_stringDuplicate(const char *source);
@@ -50,8 +46,6 @@ char *__wrap_stringDuplicate(const char *source);
 char *__wrap_stringDuplicate(const char *source)
 {
     ++copy_calls;
-    if (fail_copy != 0 && copy_calls == fail_copy)
-        return NULL;
     return __real_stringDuplicate(source);
 }
 
@@ -110,27 +104,6 @@ static bool lookup(const profile_fixture_t *fixture, user_handle_t *handle,
     return false;
 }
 
-static void testCopyRefusal(const profile_fixture_t *fixture)
-{
-    for (unsigned refuse = 1; refuse <= 2; ++refuse)
-    {
-        pid_t child = fork();
-        require(child >= 0, "failed to fork profile refusal fixture");
-        if (child == 0)
-        {
-            user_handle_t                       handle  = {0};
-            authenticationclient_user_profile_t profile = {0};
-            copy_calls                                  = 0;
-            fail_copy                                   = refuse;
-            discard lookup(fixture, &handle, &profile);
-            _exit(99); /* Allocation refusal must terminate before lookup returns. */
-        }
-        int status;
-        require(waitpid(child, &status, 0) == child, "failed to join profile refusal fixture");
-        require(WIFEXITED(status) && WEXITSTATUS(status) == 1, "profile lookup returned after credential-copy refusal");
-    }
-}
-
 static void testSuccess(const profile_fixture_t *fixture)
 {
     user_handle_t                       handle  = {0};
@@ -145,10 +118,8 @@ static void testSuccess(const profile_fixture_t *fixture)
     require(profile.name == NULL && profile.password == NULL, "profile clear left owned fields");
 
     copy_calls = 0;
-    fail_copy  = 1;
     require(lookup(fixture, &handle, NULL) && userHandleIsValid(&handle) && copy_calls == 0,
             "handle-only lookup attempted a profile allocation");
-    fail_copy = 0;
 }
 
 static void testAbsentFields(profile_fixture_t *fixture)
@@ -196,13 +167,12 @@ int main(void)
     {
         profile_fixture_t fixture;
         fixtureCreate(&fixture, kind);
-        testCopyRefusal(&fixture);
         testSuccess(&fixture);
         testAbsentFields(&fixture);
         fixtureDestroy(&fixture);
     }
     wCryptoGlobalCleanup();
     networkloggerDestroy();
-    puts("AuthenticationClient credential-copy refusal fails fast");
+    puts("AuthenticationClient owned credential profiles passed");
     return 0;
 }
