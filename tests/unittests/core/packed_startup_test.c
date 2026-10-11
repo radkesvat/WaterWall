@@ -2,7 +2,7 @@
  * Covers: packed startup; the explicit inputs, callbacks and expected results below define this suite.
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
- * Cases: realSnapshotExec, resetSimulation, runLauncherWithStdin, runLauncherInput
+ * Cases: realSnapshotExec, resetSimulation, runLauncherWithStdin, runLauncherInput, testRestrictedKeyValidation
  * Checks: Exact return/byte/order and resource-count oracles in the explicit case bodies.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
@@ -373,6 +373,17 @@ static int runLauncherWithStdin(const char *input)
     return runLauncherInput(input, strlen(input), NULL);
 }
 
+static void testRestrictedKeyValidation(void)
+{
+    const char valid[] = "{\"z\":1,\"a\":2,\"nested\":{\"x\":3,\"y\":4}}";
+    cJSON     *json    = configLexicalParse(valid, sizeof(valid) - 1U, WW_HOST_JSON_DEPTH_LIMIT);
+    CHECK(json != NULL);
+    cJSON_Delete(json);
+
+    const char duplicate[] = "{\"outer\":{\"a\":1,\"\\u0061\":2}}";
+    CHECK(configLexicalParse(duplicate, sizeof(duplicate) - 1U, WW_HOST_JSON_DEPTH_LIMIT) == NULL);
+}
+
 extern long __real_syscall(long number, ...);
 
 static void realSnapshotExec(void)
@@ -437,6 +448,7 @@ int main(int argc, char **argv)
         waterwallStartupHandoffCleanup(&handoff);
         return 0;
     }
+    testRestrictedKeyValidation();
     realSnapshotExec();
     {
         struct stat before, after;

@@ -8,6 +8,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if ! defined(WW_CJSON_CRT_ALLOCATOR)
+#include "wmem.h"
+#endif
+
 static bool configLexicalRejectInput(const char *category, size_t offset)
 {
     fprintf(stderr, "Restricted config: %s at byte %zu\n", category, offset);
@@ -195,9 +199,15 @@ bool configLexicalCheckKeys(const cJSON *item)
             ++count;
         if (count > 1)
         {
+            if (count > SIZE_MAX / sizeof(const char *))
+                return false;
+#if defined(WW_CJSON_CRT_ALLOCATOR)
             const char **keys = malloc(count * sizeof(*keys));
             if (keys == NULL)
                 return false;
+#else
+            const char **keys = memoryAllocate(count * sizeof(*keys));
+#endif
             size_t index = 0;
             for (const cJSON *child = item->child; child != NULL; child = child->next)
                 keys[index++] = child->string;
@@ -206,7 +216,11 @@ bool configLexicalCheckKeys(const cJSON *item)
             for (size_t i = 1; i < count; ++i)
                 if (strcmp(keys[i - 1], keys[i]) == 0)
                     unique = false;
+#if defined(WW_CJSON_CRT_ALLOCATOR)
             free(keys);
+#else
+            memoryFree(keys);
+#endif
             if (! unique)
                 return false;
         }
@@ -243,7 +257,11 @@ cJSON *configLexicalParse(const char *input, size_t length, size_t max_depth)
     }
     if (! configLexicalCheckKeys(json))
     {
+#if defined(WW_CJSON_CRT_ALLOCATOR)
         configLexicalRejectInput("duplicate key, number range or allocation failure (document end)", length);
+#else
+        configLexicalRejectInput("duplicate key, number range or size overflow (document end)", length);
+#endif
         cJSON_Delete(json);
         return NULL;
     }
