@@ -18,46 +18,12 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->onDestroy       = &udpconnectorTunnelDestroy;
 }
 
-static bool udpconnectorAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
-{
-    cJSON *strategy_json = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
-    if (strategy_json == NULL)
-    {
-        return false;
-    }
-
-    strategy_json->valueint    = (int) strategy;
-    strategy_json->valuedouble = (double) strategy_json->valueint;
-    return true;
-}
-
-static cJSON *udpconnectorCreateDomainResolverSettings(enum domain_strategy strategy)
-{
-    cJSON *settings = cJSON_CreateObject();
-    if (settings == NULL)
-    {
-        return NULL;
-    }
-
-    if (! udpconnectorAddDomainStrategySetting(settings, strategy))
-    {
-        cJSON_Delete(settings);
-        return NULL;
-    }
-
-    return settings;
-}
-
 static bool udpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     udpconnector_tstate_t *ts = tunnelGetState(t);
 
-    ts->domain_resolver_settings = udpconnectorCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
-    if (ts->domain_resolver_settings == NULL)
-    {
-        LOGF("UdpConnector: failed to create internal DomainResolver settings");
-        return false;
-    }
+    ts->domain_resolver_settings = cJSON_CreateObject();
+    cJSON_AddNumberToObject(ts->domain_resolver_settings, "strategy", (double) ts->domain_strategy);
 
     if (! nodeConfigureChild(&ts->domain_resolver_node,
                              nodeDomainResolverGet(),
@@ -390,12 +356,7 @@ static bool parseDestinationArray(udpconnector_tstate_t *state, const cJSON *set
         return false;
     }
 
-    state->destinations = memoryAllocateZero(destinations_size);
-    if (UNLIKELY(state->destinations == NULL))
-    {
-        LOGF("UdpConnector: failed to allocate destination metadata");
-        return false;
-    }
+    state->destinations       = memoryAllocateZero(destinations_size);
     state->destinations_count = (uint32_t) destination_count;
 
     int          index = 0;
@@ -545,13 +506,6 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     }
 
     state->worker_pools = memoryAllocateZero(sizeof(*state->worker_pools) * getWorkersCount());
-    if (UNLIKELY(state->worker_pools == NULL))
-    {
-        LOGF("UdpConnector: failed to allocate worker pool slots");
-        udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
-
     for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
     {
         state->worker_pools[wid].wid = wid;

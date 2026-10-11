@@ -309,32 +309,23 @@ static bool copyIpMaskList(vec_ipmask_t *dst, const vec_ipmask_t *src)
     }
     const isize_t needed = initial_size + source_size;
 
-    if (needed > vec_ipmask_t_capacity(dst))
+    if (needed > PTRDIFF_MAX / (isize_t) sizeof(ipmask_t))
     {
-#ifdef UDPLISTENER_CREATE_TEST_HOOKS
-        if (udplistenerTestFailAclCopyReserve())
-        {
-            return false;
-        }
-#endif
-
-        if (! vec_ipmask_t_reserve(dst, needed) || vec_ipmask_t_capacity(dst) < needed)
-        {
-            return false;
-        }
+        return false;
     }
 
-    for (isize i = 0; i < vec_ipmask_t_size(src); ++i)
+    if (needed > vec_ipmask_t_capacity(dst))
     {
-        if (UNLIKELY(vec_ipmask_t_push(dst, *vec_ipmask_t_at(src, i)) == NULL))
-        {
-            /* ipmask_t has no owned subobjects. Keep this helper atomic for
-             * callers that choose to retry after a transient allocation
-             * failure, while the constructor below still deinitializes the
-             * complete unpublished option before returning NULL. */
-            dst->size = initial_size;
-            return false;
-        }
+        const bool reserved = vec_ipmask_t_reserve(dst, needed);
+        assert(reserved && vec_ipmask_t_capacity(dst) >= needed);
+        discard reserved;
+    }
+
+    for (isize_t i = 0; i < source_size; ++i)
+    {
+        ipmask_t *entry = vec_ipmask_t_push(dst, *vec_ipmask_t_at(src, i));
+        assert(entry != NULL);
+        discard entry;
     }
 
     return true;
@@ -406,12 +397,6 @@ tunnel_t *udplistenerTunnelCreate(node_t *node)
 
     state->workers_count     = (wid_t) getWorkersCount();
     state->worker_registries = memoryAllocateZero(sizeof(udplistener_worker_registry_t) * state->workers_count);
-    if (state->worker_registries == NULL)
-    {
-        udplistenerTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
-
     for (wid_t wid = 0; wid < state->workers_count; ++wid)
     {
         state->worker_registries[wid].endpoints       = udplistener_endpoint_map_t_init();

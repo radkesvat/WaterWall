@@ -216,8 +216,6 @@ static void setupFixtureMode(test_fixture_t *fixture, enum udpconnector_balance_
 {
     memoryZero(fixture, sizeof(*fixture));
     g_udpconnector_pool_test_force_hash_zero        = false;
-    g_udpconnector_pool_test_fail_socket_alloc      = false;
-    g_udpconnector_pool_test_fail_binding_alloc     = false;
     g_udpconnector_pool_test_fail_socket_map_insert = false;
     g_udpconnector_pool_test_fail_line_map_insert   = false;
 #if defined(OS_LINUX)
@@ -1171,10 +1169,11 @@ static void testCase21_PacketDnsFailurePreservesExistingBindings(void)
 
     testQueueWrite(ls, &ls->pause_queue, makeDatagram(&fixture, "sibling"));
     const size_t sibling_charge                 = bufferqueueGetCharge(&ls->pause_queue);
-    g_udpconnector_pool_test_fail_binding_alloc = true;
+    udpconnector_tstate_t *ts                             = tunnelGetState(fixture.connector);
+    ts->worker_pools[0].quiescing                         = true;
     twfRequire(udpconnectorTestFlushPacketDestinationQueue(fixture.connector, l, 0),
                "queue settlement unexpectedly destroyed the line");
-    g_udpconnector_pool_test_fail_binding_alloc = false;
+    ts->worker_pools[0].quiescing = false;
 
     twfRequireEqualU32(ls->bindings_count, 1, "existing binding must be preserved");
     twfRequireEqualU32(bufferqueueGetBufCount(&cache->pending_queue), 0, "failed peer queue must be dropped in full");
@@ -1499,8 +1498,8 @@ static void testCase27_UnexpectedSocketCloseMultiBindingDeduplication(void)
     teardownFixture(&fixture);
 }
 
-// Case 28: WIO read, binding allocation, and map publication failures leave no leaked state or descriptor.
-static void testCase28_BindingAllocFailureRollback(void)
+// Case 28: WIO read and map publication failures leave no leaked state or descriptor.
+static void testCase28_BindingPublicationFailureRollback(void)
 {
     twfSetCase("Case 28: Socket and binding publication failures roll back cleanly");
     test_fixture_t fixture;
@@ -1540,24 +1539,6 @@ static void testCase28_BindingAllocFailureRollback(void)
     twfRequireEqualU32(fixture.finish_calls, 1, "Init rollback must notify the downstream line owner");
     lineDestroy(l);
 
-    l        = createFixtureNormalLine(&fixture);
-    dest_ctx = lineGetDestinationAddressContext(l);
-    addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
-    addresscontextFromSockAddr(dest_ctx, &addr);
-    ls = lineGetState(l, fixture.connector);
-    twfRequire(udpconnectorLinestateInitialize(ls, fixture.connector, l), "failed to initialize second line");
-
-    g_udpconnector_pool_test_fail_binding_alloc = true;
-    binding                                     = udpconnectorAcquireBinding(fixture.connector, l, ls, &addr);
-    twfRequire(binding == NULL, "binding allocation must fail");
-    g_udpconnector_pool_test_fail_binding_alloc = false;
-    udpconnectorLineDetach(fixture.connector, l, ls, kUdpConnectorDetachInitRollback);
-    twfRequireEqualU32(fixture.finish_calls, 2, "binding allocation rollback must notify the line owner");
-    lineDestroy(l);
-
-    twfRequire(worker_pool->v4_sockets == NULL, "socket must be retired after failed binding rollback");
-    twfRequireEqualU32((uint32_t) worker_pool->active_bindings_count, 0, "failed rollback retained pool bindings");
-
     teardownFixture(&fixture);
 }
 
@@ -1570,7 +1551,9 @@ static void testCase29_SecondSocketFailurePreservesExisting(void)
 
     line_t *l1 = createAndInitLineIpv4(&fixture, "127.0.0.1", 20001);
 
-    g_udpconnector_pool_test_fail_socket_alloc = true;
+    udpconnector_tstate_t *ts                  = tunnelGetState(fixture.connector);
+    char                  *saved_source_ip     = ts->source_ip;
+    ts->source_ip                              = stringDuplicate("::1");
     line_t            *l2                      = createFixtureNormalLine(&fixture);
     address_context_t *dest_ctx                = lineGetDestinationAddressContext(l2);
     sockaddr_u         addr                    = {0};
@@ -1583,7 +1566,8 @@ static void testCase29_SecondSocketFailurePreservesExisting(void)
     udpconnector_binding_t *b2 = udpconnectorAcquireBinding(fixture.connector, l2, ls2, &addr);
     twfRequire(b2 == NULL, "second socket creation must fail");
 
-    g_udpconnector_pool_test_fail_socket_alloc = false;
+    memoryFree(ts->source_ip);
+    ts->source_ip = saved_source_ip;
     udpconnectorLineDetach(fixture.connector, l2, ls2, kUdpConnectorDetachInitRollback);
     lineDestroy(l2);
 
@@ -1966,7 +1950,7 @@ int main(int argc, char **argv)
     testCase25_DualFamilyPacketModeLineReplies();
     testCase26_MultiPeerPacketModeLineFinishRemovesAllBindings();
     testCase27_UnexpectedSocketCloseMultiBindingDeduplication();
-    testCase28_BindingAllocFailureRollback();
+    testCase28_BindingPublicationFailureRollback();
     testCase29_SecondSocketFailurePreservesExisting();
     testCase30_WorkerQuiesceStopCleanup();
 

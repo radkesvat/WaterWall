@@ -174,13 +174,7 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
     state->listen_port = (uint16_t) listen_port;
 
     atomic_init(&state->socket.retired, false);
-    state->socket.idle_tables = memoryAllocateZero(sizeof(*state->socket.idle_tables) * getWorkersCount());
-    if (UNLIKELY(state->socket.idle_tables == NULL))
-    {
-        LOGF("UdpStatelessSocket: failed to allocate worker idle-table slots");
-        return udpstatelesssocketTunnelCreateFail(t);
-    }
-
+    state->socket.idle_tables       = memoryAllocateZero(sizeof(*state->socket.idle_tables) * getWorkersCount());
     state->send_request_master_pool = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
     if (UNLIKELY(state->send_request_master_pool == NULL))
     {
@@ -189,12 +183,6 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
     }
 
     state->send_request_pools = memoryAllocateZero(sizeof(*state->send_request_pools) * getTotalWorkersCount());
-    if (UNLIKELY(state->send_request_pools == NULL))
-    {
-        LOGF("UdpStatelessSocket: failed to allocate send-request worker-pool slots");
-        return udpstatelesssocketTunnelCreateFail(t);
-    }
-
     for (wid_t wid = 0; wid < getTotalWorkersCount(); ++wid)
     {
         state->send_request_pools[wid] = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(

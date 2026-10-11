@@ -616,23 +616,8 @@ void udpstatelesssocketDnsCacheStore(udpstatelesssocket_tstate_t *state, const c
         udpstatelesssocketDnsCacheEvictOldestLocked(state);
     }
 
-    udpstatelesssocket_dns_cache_entry_t *entry = memoryAllocate(sizeof(*entry));
-    if (entry == NULL)
-    {
-        mutexUnlock(&state->dns_cache_mutex);
-        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpStatelessSocket: failed to allocate async dns cache entry");
-        return;
-    }
-
-    char *domain_copy = stringDuplicate(domain);
-    if (domain_copy == NULL)
-    {
-        memoryFree(entry);
-        mutexUnlock(&state->dns_cache_mutex);
-        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpStatelessSocket: failed to copy async dns cache domain");
-        return;
-    }
-
+    udpstatelesssocket_dns_cache_entry_t *entry       = memoryAllocate(sizeof(*entry));
+    char                                 *domain_copy = stringDuplicate(domain);
     *entry = (udpstatelesssocket_dns_cache_entry_t) {
         .domain         = domain_copy,
         .port           = port,
@@ -736,23 +721,8 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
         return false;
     }
 
-    udpstatelesssocket_dns_request_t *request = memoryAllocate(sizeof(*request));
-    if (request == NULL)
-    {
-        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpStatelessSocket: failed to allocate async dns request");
-        lineReuseBuffer(l, buf);
-        return false;
-    }
-
-    char *domain_copy = stringDuplicate(dest_ctx->domain);
-    if (domain_copy == NULL)
-    {
-        memoryFree(request);
-        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpStatelessSocket: failed to copy async dns domain");
-        lineReuseBuffer(l, buf);
-        return false;
-    }
-
+    udpstatelesssocket_dns_request_t *request     = memoryAllocate(sizeof(*request));
+    char                             *domain_copy = stringDuplicate(dest_ctx->domain);
     *request = (udpstatelesssocket_dns_request_t) {
         .tunnel   = t,
         .line     = l,

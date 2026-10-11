@@ -359,12 +359,6 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
     }
 
     state->idle_tables = memoryAllocateZero(sizeof(*state->idle_tables) * getWorkersCount());
-    if (UNLIKELY(state->idle_tables == NULL))
-    {
-        LOGF("TcpListener: failed to allocate worker idle-table slots");
-        tcplistenerTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
     atomicStoreRelaxed(&state->stopping, false);
 
     socket_filter_option_t filter_opt;

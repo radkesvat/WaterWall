@@ -39,8 +39,6 @@ typedef struct udpconnector_peer_key_s
 
 #if defined(UDPCONNECTOR_POOL_TEST_HOOKS)
 extern bool g_udpconnector_pool_test_force_hash_zero;
-extern bool g_udpconnector_pool_test_fail_socket_alloc;
-extern bool g_udpconnector_pool_test_fail_binding_alloc;
 extern bool g_udpconnector_pool_test_fail_socket_map_insert;
 extern bool g_udpconnector_pool_test_fail_line_map_insert;
 #endif

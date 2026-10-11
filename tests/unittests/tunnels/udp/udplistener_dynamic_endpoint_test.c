@@ -546,7 +546,6 @@ static void testDynamicEndpointOpenRollbackFailures(void)
     };
 
     const udplistener_dynamic_endpoint_test_fault_t faults[] = {
-        kUdpListenerDynamicEndpointTestFaultAllocateEndpoint,
         kUdpListenerDynamicEndpointTestFaultPublishEndpoint,
     };
     for (size_t index = 0; index < ARRAY_SIZE(faults); ++index)

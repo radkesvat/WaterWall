@@ -4,7 +4,7 @@
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
  * Cases: testEmptyAclCopiesKeepInitializedStorage, testAclCopiesGrowAndPreserveMatching,
- * testAclCopyReserveFailureIsAtomic, testCreateRollsBackBothAclCopyFailureOrders,
+ * testAclCopyRejectsUnrepresentableGeometry,
  * testCreateDestroyEmptyAndPopulatedAcls
  * Checks: Assertion labels include: empty whitelist copy failed; empty blacklist copy failed; empty
  * whitelist copy replaced initialized storage; empty blacklist copy replaced initialized storage
@@ -25,8 +25,6 @@ enum
 {
     kAclCopyItems = 12,
 };
-
-static uint32_t g_fail_reserve_on_copy;
 
 #if defined(OS_LINUX)
 static uint32_t g_registration_calls;
@@ -70,18 +68,6 @@ void __wrap_socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t opti
     socketfilteroptionDeInit(&option);
 }
 #endif
-
-bool udplistenerTestFailAclCopyReserve(void)
-{
-    if (g_fail_reserve_on_copy == 0)
-    {
-        return false;
-    }
-
-    --g_fail_reserve_on_copy;
-    return g_fail_reserve_on_copy == 0;
-}
-
 
 static ipmask_t parseMask(const char *text)
 {
@@ -196,24 +182,24 @@ static void testAclCopiesGrowAndPreserveMatching(void)
     vec_ipmask_t_drop(&black);
 }
 
-static void testAclCopyReserveFailureIsAtomic(void)
+static void testAclCopyRejectsUnrepresentableGeometry(void)
 {
     socket_filter_option_t option;
     socketfilteroptionInit(&option);
+    ipmask_t *const original = option.white_list.data;
+    vec_ipmask_t    source   = {.size = PTRDIFF_MAX / (isize_t) sizeof(ipmask_t) + 1};
 
-    vec_ipmask_t source = vec_ipmask_t_init();
-    appendMasks(&source, "203.0");
+    require(! udplistenerTestCopyIpMaskList(&option.white_list, &source), "unrepresentable ACL byte size was accepted");
+    require(option.white_list.data == original && vec_ipmask_t_size(&option.white_list) == 0,
+            "rejected ACL geometry changed the destination");
 
-    g_fail_reserve_on_copy = 1;
-    require(! udplistenerTestCopyIpMaskList(&option.white_list, &source), "injected ACL reserve failure was accepted");
-    require(vec_ipmask_t_size(&option.white_list) == 0, "injected ACL reserve failure left a partial destination ACL");
-
-    require(udplistenerTestCopyIpMaskList(&option.white_list, &source),
-            "ACL copy did not remain retryable after reserve failure");
-    requireMasksEqual(&option.white_list, &source, "ACL retry after reserve failure copied the wrong entries");
-
+    source.size            = PTRDIFF_MAX;
+    option.white_list.size = 1;
+    require(! udplistenerTestCopyIpMaskList(&option.white_list, &source), "overflowing ACL entry count was accepted");
+    require(option.white_list.data == original && vec_ipmask_t_size(&option.white_list) == 1,
+            "rejected ACL entry count changed the destination");
+    option.white_list.size = 0;
     socketfilteroptionDeInit(&option);
-    vec_ipmask_t_drop(&source);
 }
 
 #if defined(OS_LINUX)
@@ -248,28 +234,6 @@ static void resetCreateCounters(void)
     g_registered_whitelist_size = 0;
     g_registered_blacklist_size = 0;
     g_registered_has_interface  = false;
-    g_fail_reserve_on_copy      = 0;
-}
-
-static void testCreateRollsBackBothAclCopyFailureOrders(void)
-{
-    installCreateWorkerContext();
-
-    for (uint32_t fail_copy = 1; fail_copy <= 2; ++fail_copy)
-    {
-        resetCreateCounters();
-        g_fail_reserve_on_copy = fail_copy;
-
-        cJSON *settings = createListenerSettings(true, true);
-        node_t node     = {.node_settings_json = settings};
-        require(udplistenerTunnelCreate(&node) == NULL, "ACL copy failure unexpectedly constructed UdpListener");
-        require(g_registration_calls == 0, "ACL copy failure registered a partial SocketManager filter");
-        require(g_option_deinit_calls == 1, "ACL copy failure did not release its unpublished filter option once");
-        require(g_tunnel_destroy_calls == 1, "ACL copy failure did not destroy its unpublished listener once");
-        cJSON_Delete(settings);
-    }
-
-    uninstallCreateWorkerContext();
 }
 
 static void testCreateDestroyEmptyAndPopulatedAcls(void)
@@ -307,9 +271,8 @@ int main(void)
     testCaseSet("udplistener_acl_copy_test");
     testEmptyAclCopiesKeepInitializedStorage();
     testAclCopiesGrowAndPreserveMatching();
-    testAclCopyReserveFailureIsAtomic();
+    testAclCopyRejectsUnrepresentableGeometry();
 #if defined(OS_LINUX)
-    testCreateRollsBackBothAclCopyFailureOrders();
     testCreateDestroyEmptyAndPopulatedAcls();
 #endif
 

@@ -43,13 +43,7 @@ bool udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
             return false;
         }
 
-        ls->packet_destinations = memoryAllocateZero(packet_destinations_size);
-        if (UNLIKELY(ls->packet_destinations == NULL))
-        {
-            LOGE("UdpConnector: failed to allocate packet destination cache");
-            return false;
-        }
-
+        ls->packet_destinations       = memoryAllocateZero(packet_destinations_size);
         ls->packet_destinations_count = count;
         for (uint32_t i = 0; i < count; ++i)
         {

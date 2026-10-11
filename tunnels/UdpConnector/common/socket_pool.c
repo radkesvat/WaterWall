@@ -4,8 +4,6 @@
 
 #if defined(UDPCONNECTOR_POOL_TEST_HOOKS)
 bool g_udpconnector_pool_test_force_hash_zero        = false;
-bool g_udpconnector_pool_test_fail_socket_alloc      = false;
-bool g_udpconnector_pool_test_fail_binding_alloc     = false;
 bool g_udpconnector_pool_test_fail_socket_map_insert = false;
 bool g_udpconnector_pool_test_fail_line_map_insert   = false;
 #endif
@@ -192,21 +190,9 @@ udpconnector_pool_socket_t *udpconnectorPoolSocketCreate(tunnel_t *t, udpconnect
     assert(pool != NULL);
     assert(currentThreadIsEventWorkerWID(pool->wid));
 
-#if defined(UDPCONNECTOR_POOL_TEST_HOOKS)
-    if (g_udpconnector_pool_test_fail_socket_alloc)
-    {
-        return NULL;
-    }
-#endif
-
     udpconnector_tstate_t *ts = tunnelGetState(t);
 
     udpconnector_pool_socket_t *sock = memoryAllocateZero(sizeof(*sock));
-    if (UNLIKELY(sock == NULL))
-    {
-        return NULL;
-    }
-
     sock->tunnel      = t;
     sock->worker_pool = pool;
     sock->wid         = pool->wid;
@@ -410,27 +396,7 @@ udpconnector_binding_t *udpconnectorAcquireBinding(tunnel_t *t, line_t *l, udpco
         }
     }
 
-#if defined(UDPCONNECTOR_POOL_TEST_HOOKS)
-    if (g_udpconnector_pool_test_fail_binding_alloc)
-    {
-        if (candidate->active_bindings_count == 0)
-        {
-            udpconnectorPoolSocketRetire(candidate);
-        }
-        return NULL;
-    }
-#endif
-
     udpconnector_binding_t *binding = memoryAllocateZero(sizeof(*binding));
-    if (UNLIKELY(binding == NULL))
-    {
-        if (candidate->active_bindings_count == 0)
-        {
-            udpconnectorPoolSocketRetire(candidate);
-        }
-        return NULL;
-    }
-
     binding->socket    = candidate;
     binding->peer_key  = key;
     binding->peer_addr = *peer_addr;

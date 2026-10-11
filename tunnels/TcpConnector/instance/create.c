@@ -19,46 +19,12 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->onDestroy       = &tcpconnectorTunnelDestroy;
 }
 
-static bool tcpconnectorAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
-{
-    cJSON *strategy_json = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
-    if (strategy_json == NULL)
-    {
-        return false;
-    }
-
-    strategy_json->valueint    = (int) strategy;
-    strategy_json->valuedouble = (double) strategy_json->valueint;
-    return true;
-}
-
-static cJSON *tcpconnectorCreateDomainResolverSettings(enum domain_strategy strategy)
-{
-    cJSON *settings = cJSON_CreateObject();
-    if (settings == NULL)
-    {
-        return NULL;
-    }
-
-    if (! tcpconnectorAddDomainStrategySetting(settings, strategy))
-    {
-        cJSON_Delete(settings);
-        return NULL;
-    }
-
-    return settings;
-}
-
 static bool tcpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     tcpconnector_tstate_t *ts = tunnelGetState(t);
 
-    ts->domain_resolver_settings = tcpconnectorCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
-    if (ts->domain_resolver_settings == NULL)
-    {
-        LOGF("TcpConnector: failed to create internal DomainResolver settings");
-        return false;
-    }
+    ts->domain_resolver_settings = cJSON_CreateObject();
+    cJSON_AddNumberToObject(ts->domain_resolver_settings, "strategy", (double) ts->domain_strategy);
 
     if (! nodeConfigureChild(&ts->domain_resolver_node,
                              nodeDomainResolverGet(),
@@ -145,7 +111,7 @@ static bool parseDestinationStringOption(char **dest, const cJSON *settings, con
     if (jstr == NULL)
     {
         *dest = stringDuplicate(default_value);
-        return default_value == NULL || *dest != NULL;
+        return true;
     }
 
     if (cJSON_IsNull(jstr))
@@ -160,7 +126,7 @@ static bool parseDestinationStringOption(char **dest, const cJSON *settings, con
     }
 
     *dest = stringDuplicate(jstr->valuestring);
-    return *dest != NULL;
+    return true;
 }
 
 static bool parseDestinationSocketOptions(tcpconnector_destination_t *destination, const tcpconnector_tstate_t *state,
@@ -436,12 +402,7 @@ static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *set
         return false;
     }
 
-    state->destinations = memoryAllocateZero(destinations_size);
-    if (UNLIKELY(state->destinations == NULL))
-    {
-        LOGF("TcpConnector: failed to allocate destination metadata");
-        return false;
-    }
+    state->destinations       = memoryAllocateZero(destinations_size);
     state->destinations_count = (uint32_t) destination_count;
 
     int          index = 0;
@@ -541,12 +502,5 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     }
 
     state->idle_tables = memoryAllocateZero(sizeof(*state->idle_tables) * getWorkersCount());
-    if (UNLIKELY(state->idle_tables == NULL))
-    {
-        LOGF("TcpConnector: failed to allocate worker idle-table slots");
-        tcpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
-
     return t;
 }

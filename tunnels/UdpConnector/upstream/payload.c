@@ -276,21 +276,8 @@ static bool udpconnectorStartPacketDnsResolve(tunnel_t *t, line_t *l, udpconnect
         return false;
     }
 
-    udpconnector_packet_dns_request_t *request = memoryAllocate(sizeof(*request));
-    if (request == NULL)
-    {
-        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpConnector: failed to allocate packet async dns request");
-        return false;
-    }
-
-    char *domain_copy = stringDuplicate(dest_ctx->domain);
-    if (domain_copy == NULL)
-    {
-        memoryFree(request);
-        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpConnector: failed to copy packet async dns domain");
-        return false;
-    }
-
+    udpconnector_packet_dns_request_t *request     = memoryAllocate(sizeof(*request));
+    char                              *domain_copy = stringDuplicate(dest_ctx->domain);
     *request = (udpconnector_packet_dns_request_t) {
         .tunnel            = t,
         .line              = l,

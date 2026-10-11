@@ -105,14 +105,12 @@ void udplistenerRequireCurrentLineWorker(const line_t *l, const char *callback_n
 
 #ifdef UDPLISTENER_CREATE_TEST_HOOKS
 bool udplistenerTestCopyIpMaskList(vec_ipmask_t *dst, const vec_ipmask_t *src);
-bool udplistenerTestFailAclCopyReserve(void);
 #endif
 
 #ifdef UDPLISTENER_DYNAMIC_ENDPOINT_TEST_HOOKS
 typedef enum udplistener_dynamic_endpoint_test_fault_e
 {
     kUdpListenerDynamicEndpointTestFaultNone = 0,
-    kUdpListenerDynamicEndpointTestFaultAllocateEndpoint,
     kUdpListenerDynamicEndpointTestFaultPublishEndpoint,
 } udplistener_dynamic_endpoint_test_fault_t;
 

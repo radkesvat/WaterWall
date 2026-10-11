@@ -134,21 +134,7 @@ bool udplistenerDynamicEndpointOpen(tunnel_t *t, wid_t wid, const udplistener_dy
         return false;
     }
 
-#ifdef UDPLISTENER_DYNAMIC_ENDPOINT_TEST_HOOKS
-    if (udplistenerDynamicEndpointTestShouldFail(kUdpListenerDynamicEndpointTestFaultAllocateEndpoint))
-    {
-        wioClose(wio);
-        return false;
-    }
-#endif
-
     udplistener_dynamic_endpoint_t *ep = memoryAllocateZero(sizeof(*ep));
-    if (ep == NULL)
-    {
-        wioClose(wio);
-        return false;
-    }
-
     ep->handle               = (udplistener_dynamic_endpoint_handle_t) {.owner_wid = wid, .generation = generation};
     ep->state                = kDynamicEndpointPrepared;
     ep->wio                  = wio;
