@@ -298,10 +298,6 @@ static bool pingwireDigestPayload(const uint8_t digest_key[WCRYPTO_BLAKE2S_MAX_K
 ping_wire_tracker_t *pingwireTrackerCreate(void)
 {
     ping_wire_tracker_t *tracker = memoryAllocateZero(sizeof(*tracker));
-    if (tracker == NULL)
-    {
-        return NULL;
-    }
 
     if (! mutexTryInit(&tracker->outstanding_mutex))
     {

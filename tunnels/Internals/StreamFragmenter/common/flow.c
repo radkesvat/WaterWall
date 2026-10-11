@@ -24,8 +24,6 @@ bool streamfragmenterEnqueue(tunnel_t *t, line_t *l, sbuf_t *buf, uint64_t cuts,
 {
     streamfragmenter_lstate_t *ls  = lineGetState(l, t);
     streamfragmenter_job_t    *job = memoryAllocateZero(sizeof(*job));
-    if (job == NULL)
-        return false;
     if (! bufferbudgetTryReserve(&ls->budget, buf, &job->reservation))
     {
         memoryFree(job);

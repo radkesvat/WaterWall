@@ -285,7 +285,7 @@ static bool speedtestclientSendFrame(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     if (buf == NULL)
     {
-        speedtestclientFailLine(t, l, "failed to allocate protocol frame");
+        speedtestclientFailLine(t, l, "protocol frame size is not representable");
         return false;
     }
 
@@ -308,7 +308,7 @@ static bool speedtestclientSendHello(tunnel_t *t, line_t *l, speedtestclient_lst
                                              state->target_bandwidth_bps);
     if (buf == NULL)
     {
-        speedtestclientFailLine(t, l, "failed to allocate hello frame");
+        speedtestclientFailLine(t, l, "hello frame size is not representable");
         return false;
     }
 
@@ -564,7 +564,7 @@ void speedtestclientSendTask(tunnel_t *t, line_t *l)
             t, l, kSpeedTestClientFrameData, flags, ls->stream_id, sequence, payload_size, now_us, 0, 0);
         if (buf == NULL)
         {
-            speedtestclientFailLine(t, l, "failed to allocate data frame");
+            speedtestclientFailLine(t, l, "data frame size is not representable");
             return;
         }
 

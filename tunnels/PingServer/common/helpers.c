@@ -155,20 +155,11 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         /* Clone before stripping the original; replies must echo every ICMP byte exactly. */
         sbuf_t *reply = sbufDuplicateByPool(lineGetBufferPool(l), buf);
-        if (reply == NULL)
-        {
-            if (atomicLogRateLimiterShouldLog(&state->drop_log_limiter, kPingServerDropLogIntervalMs))
-            {
-                LOGE("PingServer: could not allocate an Echo Reply clone; delivering the request without an "
-                     "acknowledgement (request-bytes=%u)",
-                     (unsigned int) sbufGetLength(buf));
-            }
-        }
-        else if (! pingwireBuildEchoReply(reply,
-                                          &state->wire,
-                                          &envelope,
-                                          pingwireReplyIdGeneratorNext(
-                                              &state->reply_ids, wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l))))))
+        if (! pingwireBuildEchoReply(
+                reply,
+                &state->wire,
+                &envelope,
+                pingwireReplyIdGeneratorNext(&state->reply_ids, wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l))))))
         {
             lineReuseBuffer(l, reply);
             reply = NULL;

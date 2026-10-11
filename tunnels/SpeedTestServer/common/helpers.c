@@ -272,7 +272,7 @@ static bool speedtestserverSendFrame(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     if (buf == NULL)
     {
-        speedtestserverFailLine(t, l, "failed to allocate protocol frame");
+        speedtestserverFailLine(t, l, "protocol frame size is not representable");
         return false;
     }
 
@@ -542,7 +542,7 @@ void speedtestserverSendTask(tunnel_t *t, line_t *l)
             t, l, kSpeedTestServerFrameData, flags, ls->stream_id, sequence, ls->payload_size, now_us, 0, 0);
         if (buf == NULL)
         {
-            speedtestserverFailLine(t, l, "failed to allocate data frame");
+            speedtestserverFailLine(t, l, "data frame size is not representable");
             return;
         }
         uint8_t *payload = sbufGetMutablePtr(buf) + kSpeedTestServerFrameHeaderSize;

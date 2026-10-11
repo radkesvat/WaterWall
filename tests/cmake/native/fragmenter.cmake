@@ -15,7 +15,7 @@ if(TARGET StreamFragmenter AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_
       target_link_libraries(${sf_test} PRIVATE StreamFragmenter)
     endif()
     target_link_options(${sf_test} PRIVATE "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=wtimerAdd"
-      "-Wl,--wrap=bufferpoolGetSpliceBuffer" "-Wl,--wrap=memoryAllocateZero" "-Wl,--wrap=fastRand")
+      "-Wl,--wrap=bufferpoolGetSpliceBuffer" "-Wl,--wrap=fastRand")
     target_link_libraries(${sf_test} PRIVATE ww)
     add_dependencies(waterwall_unit_tests ${sf_test})
     add_waterwall_unit_test(waterwall.streamfragmenter_${variant}_unit ${sf_test} "unit;tunnels;fragmenter;timers;ownership")

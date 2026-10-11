@@ -15,9 +15,7 @@ static bool commitHello(tunnel_t *t, line_t *l)
     if (! sbufTryComputeCapacity(length, padding, &capacity))
         return false;
 
-    sbuf_t *replacement = bufferpoolTryGetBestFit(pool, length, padding);
-    if (replacement == NULL)
-        return false;
+    sbuf_t *replacement = bufferpoolGetBestFit(pool, length, padding);
     sbufSetLength(replacement, length);
     buffer_budget_reservation_t replacement_reservation = {0};
     if (! bufferbudgetTryReserve(&ls->budget, replacement, &replacement_reservation))
@@ -26,7 +24,7 @@ static bool commitHello(tunnel_t *t, line_t *l)
         return false;
     }
     uint32_t *mapped = memoryAllocateZero(sizeof(uint32_t) * ts->cut_count);
-    if (mapped == NULL || ! streamfragmenterTlsRewrite(job->buf, job->cuts, ts, replacement, mapped))
+    if (! streamfragmenterTlsRewrite(job->buf, job->cuts, ts, replacement, mapped))
     {
         memoryFree(mapped);
         bufferbudgetReservationRelease(&replacement_reservation);
@@ -61,9 +59,7 @@ static bool growCandidate(tunnel_t *t, line_t *l, streamfragmenter_job_t *job, u
     uint32_t       capacity;
     if (! sbufTryComputeCapacity(target, padding, &capacity))
         return false;
-    sbuf_t *replacement = bufferpoolTryGetBestFit(pool, target, padding);
-    if (replacement == NULL)
-        return false;
+    sbuf_t        *replacement = bufferpoolGetBestFit(pool, target, padding);
     const uint32_t length = sbufGetLength(job->buf);
     sbufSetLength(replacement, length);
     streamfragmenter_lstate_t  *ls                      = lineGetState(l, t);

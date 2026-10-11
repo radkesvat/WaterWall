@@ -122,33 +122,18 @@ static bool loggertunnelParseOutputMode(loggertunnel_tstate_t *state, const cJSO
     return false;
 }
 
-static bool loggertunnelInitializePrefix(loggertunnel_tstate_t *state, node_t *node)
+static void loggertunnelInitializePrefix(loggertunnel_tstate_t *state, node_t *node)
 {
     const char *prefix = (node->name != NULL && node->name[0] != '\0') ? node->name : "LoggerTunnel";
 
     state->file_prefix = stringDuplicate(prefix);
-    if (state->file_prefix == NULL)
-    {
-        LOGF("LoggerTunnel: failed to allocate file prefix");
-        return false;
-    }
-
-    return true;
 }
 
-static bool loggertunnelInitializeFilePaths(loggertunnel_tstate_t *state)
+static void loggertunnelInitializeFilePaths(loggertunnel_tstate_t *state)
 {
     state->up_path   = loggertunnelBuildStaticPath(state->file_prefix, "up.txt");
     state->down_path = loggertunnelBuildStaticPath(state->file_prefix, "down.txt");
     state->all_path  = loggertunnelBuildStaticPath(state->file_prefix, "all.txt");
-
-    if (state->up_path == NULL || state->down_path == NULL || state->all_path == NULL)
-    {
-        LOGF("LoggerTunnel: failed to allocate output file paths");
-        return false;
-    }
-
-    return true;
 }
 
 tunnel_t *loggertunnelTunnelCreate(node_t *node)
@@ -193,11 +178,12 @@ tunnel_t *loggertunnelTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! loggertunnelParseMode(state, settings) || ! loggertunnelInitializePrefix(state, node))
+    if (! loggertunnelParseMode(state, settings))
     {
         loggertunnelTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
+    loggertunnelInitializePrefix(state, node);
 
     if (state->mode == kLoggerTunnelModeLog)
     {
@@ -209,11 +195,12 @@ tunnel_t *loggertunnelTunnelCreate(node_t *node)
     }
     else
     {
-        if (! loggertunnelParseOutputMode(state, settings) || ! loggertunnelInitializeFilePaths(state))
+        if (! loggertunnelParseOutputMode(state, settings))
         {
             loggertunnelTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
+        loggertunnelInitializeFilePaths(state);
     }
 
     return t;

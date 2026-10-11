@@ -282,12 +282,6 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
         return NULL;
     }
     state->owned_lines = memoryAllocateZero(owned_lines_bytes);
-    if (state->owned_lines == NULL)
-    {
-        LOGF("SpeedTestClient: failed to allocate the connection owner inventory");
-        speedtestclientTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
 
     atomicStoreExplicit(&state->stopping, false, memory_order_relaxed);
     atomicStoreRelaxed(&state->completed_streams, 0);

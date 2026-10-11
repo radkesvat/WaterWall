@@ -14,10 +14,6 @@ char *loggertunnelBuildStaticPath(const char *prefix, const char *suffix)
     const size_t total_len  = prefix_len + 1U + suffix_len + 1U;
 
     char *path = memoryAllocate(total_len);
-    if (path == NULL)
-    {
-        return NULL;
-    }
 
     snprintf(path, total_len, "%s-%s", prefix, suffix);
     return path;
@@ -41,12 +37,6 @@ static void loggertunnelWriteLogMessage(loggertunnel_tstate_t *state, const uint
     }
 
     char *hex = memoryAllocate(hex_len);
-    if (hex == NULL)
-    {
-        loggerPrint(getNetworkLogger(), level, "LoggerTunnel[%s]: %s payload len=%u", state->file_prefix,
-                    is_upstream ? "upstream" : "downstream", len);
-        return;
-    }
 
     static const char digits[] = "0123456789abcdef";
 

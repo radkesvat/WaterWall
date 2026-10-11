@@ -23,7 +23,7 @@
 #endif
 
 static uint64_t        now_us = UINT64_C(1000123456);
-static bool            refuse_timer, refuse_pipe, refuse_job;
+static bool            refuse_timer, refuse_pipe;
 static bool            defer_est;
 static unsigned        representation;
 static tunnel_t       *fragmenter, *previous, *next;
@@ -59,13 +59,6 @@ sbuf_t *__wrap_bufferpoolGetSpliceBuffer(buffer_pool_t *pool)
 {
     return refuse_pipe ? NULL : __real_bufferpoolGetSpliceBuffer(pool);
 }
-void *__real_memoryAllocateZero(size_t);
-void *__wrap_memoryAllocateZero(size_t size);
-void *__wrap_memoryAllocateZero(size_t size)
-{
-    return refuse_job && size == sizeof(streamfragmenter_job_t) ? NULL : __real_memoryAllocateZero(size);
-}
-
 #include "test_assert.h"
 
 #define require(condition, message) requireFragmenterAt((condition), (message), #condition, __FILE__, __LINE__)
@@ -570,17 +563,13 @@ static void limitsAndCleanup(void)
     require(! lineIsAlive(line), "8 MiB capacity limit");
     closeLine();
 
-    for (unsigned failure = 0; failure < 2; ++failure)
-    {
-        openLine(settings);
-        sbuf_t *buf  = input("abcd", 4);
-        refuse_timer = failure == 0;
-        refuse_job   = failure == 1;
-        fragmenter->fnPayloadU(fragmenter, line, buf);
-        refuse_timer = refuse_job = false;
-        require(! lineIsAlive(line) && ! writes && finish_count == 2, "local resource refusal");
-        closeLine();
-    }
+    openLine(settings);
+    sbuf_t *buf  = input("abcd", 4);
+    refuse_timer = true;
+    fragmenter->fnPayloadU(fragmenter, line, buf);
+    refuse_timer = false;
+    require(! lineIsAlive(line) && ! writes && finish_count == 2, "timer admission refusal");
+    closeLine();
     for (unsigned direction = 0; direction < 2; ++direction)
     {
         openLine(settings);
@@ -1222,13 +1211,6 @@ static void tlsHelloSelectionAndOwnership(void)
     require(writes == 4 && checkOutputHello(100) == length + 10 && output_size == length + 13 &&
                 memoryCompare(output + length + 10, "NEW", 3) == 0,
             "Resume reentry overtook ready hello");
-    closeLine();
-
-    openLine(settings);
-    refuse_job = true;
-    sendBytes(hello_wire, length);
-    refuse_job = false;
-    require(! lineIsAlive(line) && finish_count == 2, "candidate job refusal did not close line");
     closeLine();
 
     /* A replacement must fit alongside the candidate, including a second job

@@ -122,7 +122,7 @@ void speedlimitTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! bufferqueueTryPushBack(&ls->down_queue, &buf))
     {
-        LOGW("SpeedLimit: downstream retention limit or queue allocation refusal, closing connection");
+        LOGW("SpeedLimit: downstream retention limit or queue geometry refusal, closing connection");
         speedlimitCloseLineOnDrainFailure(ls, buf);
         return;
     }
