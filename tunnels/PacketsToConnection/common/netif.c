@@ -189,23 +189,13 @@ interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t pack
         return cur;
     }
 
-    cur = memoryAllocateZero(sizeof(*cur));
-    if (UNLIKELY(cur == NULL))
-    {
-        return NULL;
-    }
-
+    cur             = memoryAllocateZero(sizeof(*cur));
     cur->engine     = wwLwipEngineCurrent();
     cur->tunnel     = t;
     cur->packet_wid = packet_wid;
-    cur->udp_flows  = ptc_udp_flow_map_t_init();
+    cur->udp_flows  = ptc_udp_flow_map_t_with_capacity(64);
 
-    if (! ptc_udp_flow_map_t_reserve(&cur->udp_flows, 64) || ptc_udp_flow_map_t_capacity(&cur->udp_flows) < 64)
-    {
-        ptc_udp_flow_map_t_drop(&cur->udp_flows);
-        memoryFree(cur);
-        return NULL;
-    }
+    assert(ptc_udp_flow_map_t_capacity(&cur->udp_flows) >= 64);
 
     if (netif_add_noaddr(&cur->netif, cur, interfaceInit, ip_input) == NULL)
     {

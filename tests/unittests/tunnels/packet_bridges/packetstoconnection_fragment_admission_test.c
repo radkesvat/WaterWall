@@ -3,7 +3,7 @@
  * below define this suite.
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
- * Cases: testStorage
+ * Cases: testStorage, testInvalidCopyLength
  * Checks: Assertion labels include: stack payload not aligned; storage boundary lost engine context;
  * refusal leaked or delivered; packet not retained by stack
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -109,19 +109,18 @@ int __wrap_wwLwipEngineInput(ww_lwip_engine_t *engine, struct pbuf *p, struct ne
     return netif->input(p, netif);
 }
 
-static void testStorage(test_env_t *env, bool shifted, bool fail_copy, bool fail_wrapper)
+static void testStorage(test_env_t *env, bool shifted, bool fail_wrapper)
 {
     input_probe_t probe = {0};
     struct netif  netif = {.input = captureInput, .state = &probe};
     sbuf_t       *buf   = bufferpoolGetSmallBuffer(env->worker_pool);
     fillFragment(buf, 42, shifted);
-    ptc_fragment_admission_test_hooks_t hooks = {.fail_aligned_copy          = fail_copy,
-                                                 .fail_rx_wrapper_allocation = fail_wrapper};
+    ptc_fragment_admission_test_hooks_t hooks = {.fail_rx_wrapper_allocation = fail_wrapper};
     ptcFragmentAdmissionTestInstallHooks(&hooks);
     recycled = 0;
     retained = NULL;
     ptcFragmentAdmissionTestSubmitPacketToStack(buf, &netif);
-    if (fail_copy || fail_wrapper)
+    if (fail_wrapper)
         require(probe.input_calls == 0 && recycled == 1, "refusal leaked or delivered");
     else
     {
@@ -133,6 +132,24 @@ static void testStorage(test_env_t *env, bool shifted, bool fail_copy, bool fail
     }
     ptcFragmentAdmissionTestInstallHooks(NULL);
 }
+
+static void testInvalidCopyLength(test_env_t *env, uint32_t length)
+{
+    input_probe_t probe = {0};
+    struct netif  netif = {.input = captureInput, .state = &probe};
+    sbuf_t       *buf   = bufferpoolGetBestFit(env->worker_pool, length + 1U, 0);
+    sbufSetLength(buf, length + 1U);
+    sbufShiftRight(buf, 1);
+    require(((uintptr_t) sbufGetRawPtr(buf) % MEM_ALIGNMENT) != 0, "invalid-length fixture is not shifted");
+    if (length > 0)
+        memoryZero(sbufGetMutablePtr(buf), length);
+    recycled = 0;
+    retained = NULL;
+    ptcFragmentAdmissionTestSubmitPacketToStack(buf, &netif);
+    require(probe.input_calls == 0 && retained == NULL && recycled == 1,
+            "invalid aligned-copy length was delivered or leaked");
+}
+
 static void envSetup(test_env_t *env)
 {
     memoryZero(env, sizeof(*env));
@@ -197,10 +214,11 @@ int main(void)
 
     test_env_t env;
     envSetup(&env);
-    testStorage(&env, false, false, false);
-    testStorage(&env, true, false, false);
-    testStorage(&env, true, true, false);
-    testStorage(&env, false, false, true);
+    testStorage(&env, false, false);
+    testStorage(&env, true, false);
+    testStorage(&env, false, true);
+    testInvalidCopyLength(&env, 0);
+    testInvalidCopyLength(&env, (uint32_t) UINT16_MAX + 1U);
     envTeardown(&env);
 
     lwipTestEngineEnd();

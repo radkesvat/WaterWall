@@ -87,11 +87,6 @@ static char *ptcFakeDnsDuplicateString(const char *value, uint8_t len)
 {
     char *out = memoryAllocate((size_t) len + 1U);
 
-    if (UNLIKELY(out == NULL))
-    {
-        return NULL;
-    }
-
     memoryCopy(out, value, len);
     out[len] = '\0';
     return out;
@@ -350,20 +345,8 @@ static bool ptcFakeDnsCommitQuestions(ptc_fake_dns_t *dns, ptc_dns_question_t *q
         ++staged_count;
 #endif
 
-        char *domain = ptcFakeDnsDuplicateString(mapping->domain, mapping->domain_len);
-        if (UNLIKELY(domain == NULL))
-        {
-            ptcFakeDnsDiscardStagedMappings(dns, mappings, mapping_count);
-            return false;
-        }
-
-        mapping->entry = memoryAllocateZero(sizeof(*mapping->entry));
-        if (UNLIKELY(mapping->entry == NULL))
-        {
-            memoryFree(domain);
-            ptcFakeDnsDiscardStagedMappings(dns, mappings, mapping_count);
-            return false;
-        }
+        char *domain               = ptcFakeDnsDuplicateString(mapping->domain, mapping->domain_len);
+        mapping->entry             = memoryAllocateZero(sizeof(*mapping->entry));
         mapping->entry->domain     = domain;
         mapping->entry->domain_len = mapping->domain_len;
     }
@@ -913,12 +896,7 @@ bool ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
     ptc_fake_dns_name_map_t names        = ptc_fake_dns_name_map_t_with_capacity(map_capacity);
     ptc_fake_dns_entry_t  **records      = memoryAllocateZero(geometry.record_bytes);
 
-    if (UNLIKELY(ptc_fake_dns_name_map_t_capacity(&names) < (isize_t) map_capacity || records == NULL))
-    {
-        ptc_fake_dns_name_map_t_drop(&names);
-        memoryFree(records);
-        return false;
-    }
+    assert(ptc_fake_dns_name_map_t_capacity(&names) >= map_capacity);
 
     ptc_fake_dns_t *dns = &ts->fake_dns;
     dns->names          = names;

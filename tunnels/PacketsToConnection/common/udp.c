@@ -85,13 +85,7 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
         ptc_lstate_t *ls = lineGetState(line, t);
         ip_addr_t     local_ip;
 
-        if (UNLIKELY(! ptcLinestateInitialize(ls, t, line, kPtcLineKindUdp, upcb)))
-        {
-            LOGW("PacketsToConnection: out of memory accepting a udp flow; dropping it");
-            lineDestroy(line);
-            pbuf_free(p);
-            return;
-        }
+        ptcLinestateInitialize(ls, t, line, kPtcLineKindUdp, upcb);
 
         ls->route_ctx      = route_ctx;
         ls->udp_flow_key   = key;

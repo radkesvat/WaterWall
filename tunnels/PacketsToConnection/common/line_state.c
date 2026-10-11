@@ -2,14 +2,8 @@
 
 #include "loggers/network_logger.h"
 
-/*
- * Reports whether the line is usable rather than publishing a queue that only
- * looks allocated. On failure the caller must not use the state at all: the line
- * reference this took is released here, and the partially created queue with it.
- *
- * Only TCP lines retain payloads, so a UDP flow allocates neither queue.
- */
-bool ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_kind_t kind, void *pcb)
+/* Only TCP lines retain payloads; UDP initializes no queues. */
+void ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_kind_t kind, void *pcb)
 {
     lineRef(l);
 
@@ -25,15 +19,10 @@ bool ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_k
         ls->tcp_pcb   = pcb;
         ls->ack_queue = sbuf_ack_queue_t_init();
 
-        if (! bufferqueueInit(&ls->pause_queue, kPtcRetainQueueCapacity) ||
-            ! sbuf_ack_queue_t_reserve(&ls->ack_queue, kPtcRetainQueueCapacity))
-        {
-            bufferqueueDestroy(&ls->pause_queue);
-            sbuf_ack_queue_t_drop(&ls->ack_queue);
-            memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
-            lineUnref(l);
-            return false;
-        }
+        ls->pause_queue     = bufferqueueCreate(kPtcRetainQueueCapacity);
+        const bool reserved = sbuf_ack_queue_t_reserve(&ls->ack_queue, kPtcRetainQueueCapacity);
+        assert(reserved);
+        discard reserved;
     }
     else if (kind == kPtcLineKindUdp)
     {
@@ -41,7 +30,6 @@ bool ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_k
     }
 
     ptcOwnedLineRegister(ls);
-    return true;
 }
 
 /*

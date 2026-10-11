@@ -174,19 +174,15 @@ size_t ptcFrontPauseAckIndexOf(const ptc_lstate_t *ls)
     return ptcFrontPauseAckIndex(ls);
 }
 
-bool ptcReserveWriteSlots(ptc_lstate_t *ls)
+void ptcReserveWriteSlots(ptc_lstate_t *ls)
 {
-    /*
-     * One acknowledgement record, plus the one pause slot the payload needs if
-     * lwIP will not take all of it. Reserving both before any ownership moves is
-     * what makes the write path transactional: after this succeeds, neither
-     * insertion can fail, and before it succeeds nothing has been handed over.
-     */
-    if (! sbuf_ack_queue_t_reserve(&ls->ack_queue, sbuf_ack_queue_t_size(&ls->ack_queue) + 1))
-    {
-        return false;
-    }
-    return bufferqueueReserveExtra(&ls->pause_queue, 1);
+    /* Admission caps both queues at kPtcMaxPendingEntries before reserving.
+     * Reserve outside assertions so Release builds perform the growth too. */
+    const bool ack_reserved   = sbuf_ack_queue_t_reserve(&ls->ack_queue, sbuf_ack_queue_t_size(&ls->ack_queue) + 1);
+    const bool pause_reserved = bufferqueueReserveExtra(&ls->pause_queue, 1);
+    assert(ack_reserved && pause_reserved);
+    discard ack_reserved;
+    discard pause_reserved;
 }
 
 void ptcAckQueuePushBack(ptc_lstate_t *ls, sbuf_t *buf, uint32_t total)

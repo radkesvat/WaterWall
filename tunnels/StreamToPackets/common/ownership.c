@@ -238,12 +238,6 @@ bool streamtopacketsRegisterCandidateLine(tunnel_t *t, line_t *l)
     streamtopackets_lstate_t     *ls    = lineGetState(l, t);
     streamtopackets_line_entry_t *entry = memoryAllocate(sizeof(*entry));
 
-    if (UNLIKELY(entry == NULL))
-    {
-        LOGE("StreamToPackets: failed to allocate a line registry entry");
-        return false;
-    }
-
     streamtopackets_source_key_t source;
     streamtopacketsSourceKeyFromLine(l, &source);
 
@@ -816,14 +810,6 @@ static void streamtopacketsCleanupSelectedWrite(void *arg1, void *arg2, void *ar
 void streamtopacketsQueueSelectedWrite(tunnel_t *t, streamtopackets_selected_line_t *selected, sbuf_t *buf)
 {
     streamtopackets_line_write_msg_t *msg = memoryAllocate(sizeof(*msg));
-
-    if (UNLIKELY(msg == NULL))
-    {
-        LOGE("StreamToPackets: failed to allocate a cross-worker return-write message");
-        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), buf);
-        lineUnref(selected->line);
-        return;
-    }
 
     *msg = (streamtopackets_line_write_msg_t) {.tunnel     = t,
                                                .line       = selected->line,

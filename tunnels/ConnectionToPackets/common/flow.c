@@ -35,16 +35,8 @@ bool ctpFlowRegistryInitialize(ctp_tstate_t *ts)
     ts->tomb_head       = 0;
     ts->tomb_count      = 0;
 
-    if (UNLIKELY(ctp_flow_map_t_capacity(&ts->flows) < 128 || ! ctpFragTableInitialize(ts) || ts->tombstones == NULL))
-    {
-        ctp_frag_map_t_drop(&ts->frags);
-        ctp_flow_map_t_drop(&ts->flows);
-        memoryFree(ts->tombstones);
-        ts->tombstones = NULL;
-        rwlockDestroy(&ts->flows_lock);
-        mutexDestroy(&ts->drain_lock);
-        return false;
-    }
+    assert(ctp_flow_map_t_capacity(&ts->flows) >= 128);
+    ctpFragTableInitialize(ts);
 
     ts->flow_registry_initialized = true;
     return true;

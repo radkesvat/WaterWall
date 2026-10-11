@@ -259,11 +259,6 @@ static bool ctpFragSchedulePurge(tunnel_t *t, const ctp_frag_key_t *frag_key, ui
 {
     ctp_frag_purge_msg_t *msg = memoryAllocate(sizeof(*msg));
 
-    if (UNLIKELY(msg == NULL))
-    {
-        return false;
-    }
-
     *msg = (ctp_frag_purge_msg_t) {
         .tunnel = t,
         .key    = *frag_key,
@@ -437,11 +432,6 @@ static ctp_inject_msg_t *ctpAllocatePacketMessage(uint32_t len)
     }
 
     ctp_inject_msg_t *msg = memoryAllocateAligned(offsetof(ctp_inject_msg_t, data) + (size_t) len, MEM_ALIGNMENT);
-
-    if (UNLIKELY(msg == NULL))
-    {
-        return NULL;
-    }
 
     assert(((uintptr_t) msg->data % MEM_ALIGNMENT) == 0);
 

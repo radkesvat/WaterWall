@@ -26,32 +26,17 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->onDestroy        = &ctpTunnelDestroy;
 }
 
-static bool ctpAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
+static void ctpAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
 {
-    cJSON *strategy_json = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
-    if (strategy_json == NULL)
-    {
-        return false;
-    }
-
+    cJSON *strategy_json       = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
     strategy_json->valueint    = (int) strategy;
     strategy_json->valuedouble = (double) strategy_json->valueint;
-    return true;
 }
 
 static cJSON *ctpCreateDomainResolverSettings(enum domain_strategy strategy)
 {
     cJSON *settings = cJSON_CreateObject();
-    if (settings == NULL)
-    {
-        return NULL;
-    }
-
-    if (! ctpAddDomainStrategySetting(settings, strategy))
-    {
-        cJSON_Delete(settings);
-        return NULL;
-    }
+    ctpAddDomainStrategySetting(settings, strategy);
 
     return settings;
 }
@@ -66,12 +51,6 @@ static bool ctpCreateInternalDomainResolver(tunnel_t *t, node_t *node)
     ctp_tstate_t *ts = tunnelGetState(t);
 
     ts->domain_resolver_settings = ctpCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
-    if (ts->domain_resolver_settings == NULL)
-    {
-        LOGF("ConnectionToPackets: failed to create internal DomainResolver settings");
-        return false;
-    }
-
     if (! nodeConfigureChild(&ts->domain_resolver_node,
                              nodeDomainResolverGet(),
                              node,
@@ -270,27 +249,12 @@ tunnel_t *ctpTunnelCreate(node_t *node)
     // Shared bootstrap precedes worker traffic; individual engines stay lazy.
     initTcpIpStack();
 
-    /*
-     * One stage per fallible resource, each committed before the next is
-     * attempted. ctpTunnelDestroy() is the single unwind path for all of them,
-     * and it decides what to release from the state each stage published -
-     * `netifs`, `flow_registry_initialized` - rather than from
-     * how far this function happened to get.
-     *
-     * The registry stage used to share a short-circuiting condition with the
-     * netif array, so a failed array allocation skipped it entirely and the
-     * unwind then locked a flows_lock that was never created.
-     */
+    /* Publish registry initialization only after native locks succeed, so
+     * startup cleanup never locks an uninitialized registry. */
     ts->netifs_count   = getWorkersCount();
     ts->netifs         = memoryAllocateZero(sizeof(*ts->netifs) * ts->netifs_count);
     ts->terminal_lines = memoryAllocateZero(sizeof(*ts->terminal_lines) * ts->netifs_count);
     ts->owned_lines    = memoryAllocateZero(sizeof(*ts->owned_lines) * ts->netifs_count);
-    if (UNLIKELY(ts->netifs == NULL || ts->terminal_lines == NULL || ts->owned_lines == NULL))
-    {
-        ctpTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
-
     if (UNLIKELY(! ctpFlowRegistryInitialize(ts)))
     {
         ctpTunnelDestroy(t, wwLifecycleStartupRollback());

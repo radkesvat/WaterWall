@@ -251,7 +251,7 @@ static void setup(fixture_t *f)
     struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_V4);
     twfRequire(pcb != NULL, "receive fixture PCB allocation failed");
     ptc_lstate_t *ls = lineGetState(f->line, f->ptc);
-    twfRequire(ptcLinestateInitialize(ls, f->ptc, f->line, kPtcLineKindTcp, pcb), "receive state init failed");
+    ptcLinestateInitialize(ls, f->ptc, f->line, kPtcLineKindTcp, pcb);
     f->route.engine = f->engine;
     f->route.tunnel = f->ptc;
     ls->route_ctx   = &f->route;

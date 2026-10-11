@@ -40,7 +40,6 @@ enum
 
 static atomic_log_rate_limiter_t g_drain_budget_log;
 static atomic_log_rate_limiter_t g_drain_abort_log;
-static atomic_log_rate_limiter_t g_drain_alloc_log;
 
 struct ctp_tcp_drain_s
 {
@@ -634,11 +633,6 @@ static uint8_t *ctpDrainTakeBytes(ctp_lstate_t *ls, uint32_t total, wid_t wid)
 {
     uint8_t *bytes = memoryAllocate(total);
 
-    if (UNLIKELY(bytes == NULL))
-    {
-        return NULL;
-    }
-
     uint32_t offset = 0;
 
     while (bufferqueueGetBufCount(&ls->pending_queue) > 0)
@@ -716,31 +710,9 @@ ctp_tcp_drain_adopt_result_t ctpTcpDrainAdoptLocked(tunnel_t *t, ctp_lstate_t *l
 
     ctp_tcp_drain_t *drain = memoryAllocateZero(sizeof(*drain));
 
-    if (UNLIKELY(drain == NULL))
-    {
-        ctpDrainBudgetRelease(ts, total);
-        if (atomicLogRateLimiterShouldLog(&g_drain_alloc_log, kCtpDrainLogIntervalMs))
-        {
-            LOGW("ConnectionToPackets: out of memory for a closing flow's drain, %u queued byte(s) affected",
-                 (unsigned int) total);
-        }
-        return kCtpTcpDrainFailed;
-    }
-
     if (total > 0)
     {
         drain->bytes = ctpDrainTakeBytes(ls, total, lineGetWID(ls->line));
-
-        if (UNLIKELY(drain->bytes == NULL))
-        {
-            memoryFree(drain);
-            ctpDrainBudgetRelease(ts, total);
-            if (atomicLogRateLimiterShouldLog(&g_drain_alloc_log, kCtpDrainLogIntervalMs))
-            {
-                LOGW("ConnectionToPackets: out of memory for a closing flow's %u queued byte(s)", (unsigned int) total);
-            }
-            return kCtpTcpDrainFailed;
-        }
     }
 
     drain->netif_ctx = ls->netif_ctx;

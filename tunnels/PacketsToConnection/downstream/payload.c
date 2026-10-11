@@ -27,9 +27,7 @@ typedef enum ptc_write_outcome_e
     /* The PCB was reset; the owned line must be closed toward the network. */
     kPtcWriteTerminal,
     /* Admission refused these bytes; recycle them, then shed the flow. */
-    kPtcWriteOverLimit,
-    /* No room could be reserved for this flow's bookkeeping; shed only it. */
-    kPtcWriteNoMemory
+    kPtcWriteOverLimit
 } ptc_write_outcome_t;
 
 static void ptcArmWritePollLocked(ptc_lstate_t *ls, struct tcp_pcb *tpcb)
@@ -73,10 +71,7 @@ static ptc_write_outcome_t ptcTcpWriteLocked(ptc_tstate_t *ts, ptc_lstate_t *ls,
      * reserved before anything is handed over, so from here on no insertion can
      * fail and there is no point at which the queues disagree about ownership.
      */
-    if (UNLIKELY(! ptcReserveWriteSlots(ls)))
-    {
-        return kPtcWriteNoMemory;
-    }
+    ptcReserveWriteSlots(ls);
 
     const uint16_t available = tcp_sndbuf(tpcb);
 
@@ -223,30 +218,21 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         (ls->kind == kPtcLineKindTcp) ? ptcTcpWriteLocked(ts, ls, buf, buf_len) : ptcUdpSendLocked(ls, buf, buf_len);
     wwLwipEngineLeave(ls->engine, previous);
 
-    if (outcome == kPtcWriteReuse || outcome == kPtcWriteReuseAndPause || outcome == kPtcWriteOverLimit ||
-        outcome == kPtcWriteNoMemory)
+    if (outcome == kPtcWriteReuse || outcome == kPtcWriteReuseAndPause || outcome == kPtcWriteOverLimit)
     {
         lineReuseBuffer(l, buf);
     }
 
-    if (outcome == kPtcWriteOverLimit || outcome == kPtcWriteNoMemory)
+    if (outcome == kPtcWriteOverLimit)
     {
         if (atomicLogRateLimiterShouldLog(&tcp_over_limit_log, kPtcOverLimitLogIntervalMs))
         {
-            if (outcome == kPtcWriteOverLimit)
-            {
-                LOGW("PacketsToConnection: retained payload passed max-pending-bytes (%u budget bytes + %u delivery "
-                     "bytes) or %u entries, "
-                     "closing the flow",
-                     (unsigned int) ts->max_pending_bytes,
-                     (unsigned int) kPtcPendingDeliveryHeadroom,
-                     (unsigned int) ts->max_pending_entries);
-            }
-            else
-            {
-                // One flow's bookkeeping, not the process: every other flow keeps working.
-                LOGW("PacketsToConnection: out of memory queueing a payload, closing the flow");
-            }
+            LOGW("PacketsToConnection: retained payload passed max-pending-bytes (%u budget bytes + %u delivery "
+                 "bytes) or %u entries, "
+                 "closing the flow",
+                 (unsigned int) ts->max_pending_bytes,
+                 (unsigned int) kPtcPendingDeliveryHeadroom,
+                 (unsigned int) ts->max_pending_entries);
         }
         ptcCloseLineOverPendingLimit(t, l);
         return;

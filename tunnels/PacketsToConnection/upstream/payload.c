@@ -119,13 +119,6 @@ my_custom_pbuf_t *ptcReusableReceiveBuffer(struct pbuf *p, buffer_pool_t *pool, 
  */
 static sbuf_t *ptcAcquireAlignedCopy(buffer_pool_t *pool, sbuf_t *src)
 {
-#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
-    if (ptc_fragment_admission_test_hooks.fail_aligned_copy)
-    {
-        return NULL;
-    }
-#endif
-
     const uint32_t len = sbufGetLength(src);
 
     if (UNLIKELY(len == 0 || len > (uint32_t) UINT16_MAX))

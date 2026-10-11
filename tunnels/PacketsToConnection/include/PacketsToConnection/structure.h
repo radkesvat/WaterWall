@@ -314,8 +314,8 @@ void ptcTunnelDownStreamResume(tunnel_t *t, line_t *l);
 /* Takes ownership of buf and emits it only while the quiesce gate is admitted. */
 bool ptcEmitPacketBuffer(tunnel_t *t, line_t *packet_line, sbuf_t *buf);
 
-/* False when the line could not be made usable; it took and released no reference. */
-bool ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_kind_t kind, void *pcb);
+/* Initializes state and retains one line reference until LinestateDestroy. */
+void ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_kind_t kind, void *pcb);
 void ptcLinestateDestroy(ptc_lstate_t *ls);
 
 err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr);
@@ -346,7 +346,6 @@ my_custom_pbuf_t *ptcReusableReceiveBuffer(struct pbuf *p, buffer_pool_t *pool, 
 typedef struct ptc_fragment_admission_test_hooks_s
 {
     void                        *context;
-    bool                         fail_aligned_copy;
     bool                         fail_rx_wrapper_allocation;
 } ptc_fragment_admission_test_hooks_t;
 
@@ -444,11 +443,10 @@ void ptcAckQueuePopFront(ptc_lstate_t *lstate);
 
 /*
  * Reserves the one acknowledgement slot and the one pause slot a payload can
- * need, so that every later insertion on this path is infallible. Returns false
- * without changing anything when the reservation could not be made; the caller
- * still owns its buffer and must shed only this flow.
+ * need after the caller enforces the bounded entry count. The caller retains
+ * buffer ownership until insertion; heap growth follows the fatal policy.
  */
-bool ptcReserveWriteSlots(ptc_lstate_t *lstate);
+void ptcReserveWriteSlots(ptc_lstate_t *lstate);
 
 /*
  * Unwritten payloads occupy a contiguous suffix of `ack_queue` in `pause_queue`

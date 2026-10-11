@@ -2,12 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-/*
- * Reports whether the line is usable rather than publishing a queue that only
- * looks allocated. On failure the caller must not use the state at all: the line
- * reference taken here is released again, exactly once.
- */
-bool ctpLinestateInitialize(ctp_lstate_t *ls, tunnel_t *t, line_t *l, ctp_line_kind_t kind)
+void ctpLinestateInitialize(ctp_lstate_t *ls, tunnel_t *t, line_t *l, ctp_line_kind_t kind)
 {
     assert(kind == kCtpLineKindTcp || kind == kCtpLineKindUdp);
 
@@ -19,12 +14,9 @@ bool ctpLinestateInitialize(ctp_lstate_t *ls, tunnel_t *t, line_t *l, ctp_line_k
     ls->kind   = (uint8_t) kind;
     bufferqueueInitEmpty(&ls->pending_queue);
 
-    if (kind == kCtpLineKindTcp && ! bufferqueueInit(&ls->pending_queue, kCtpPendingQueueCapacity))
+    if (kind == kCtpLineKindTcp)
     {
-        bufferqueueDestroy(&ls->pending_queue);
-        memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
-        lineUnref(l);
-        return false;
+        ls->pending_queue = bufferqueueCreate(kCtpPendingQueueCapacity);
     }
 
     assert(currentThreadIsEventWorkerWID(lineGetWID(l)));
@@ -34,7 +26,6 @@ bool ctpLinestateInitialize(ctp_lstate_t *ls, tunnel_t *t, line_t *l, ctp_line_k
     if (ls->owned_next != NULL)
         ls->owned_next->owned_prev = ls;
     ts->owned_lines[lineGetWID(l)] = ls;
-    return true;
 }
 
 void ctpLinestateDestroy(ctp_lstate_t *ls)

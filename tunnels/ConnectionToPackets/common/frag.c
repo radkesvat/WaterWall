@@ -82,13 +82,13 @@ static void ctpFragHandlePacketAt(tunnel_t *t, uint64_t now_ms, const ctp_frag_k
                                   uint32_t len, ctp_frag_publish_fn publish, ctp_frag_discard_fn release,
                                   ctp_frag_purge_schedule_fn schedule_purge);
 
-bool ctpFragTableInitialize(ctp_tstate_t *ts)
+void ctpFragTableInitialize(ctp_tstate_t *ts)
 {
     ts->frags               = ctp_frag_map_t_with_capacity(kCtpFragMaxAssociations);
     ts->frag_pending_bytes  = 0;
     ts->frag_next_expiry_ms = 0;
     ts->frag_next_serial    = 0;
-    return ctp_frag_map_t_capacity(&ts->frags) >= (isize_t) kCtpFragMaxAssociations;
+    assert(ctp_frag_map_t_capacity(&ts->frags) >= (isize_t) kCtpFragMaxAssociations);
 }
 
 static uint64_t ctpFragNextSerialLocked(ctp_tstate_t *ts)

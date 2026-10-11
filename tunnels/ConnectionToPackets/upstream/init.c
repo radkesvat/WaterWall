@@ -51,21 +51,7 @@ void ctpTunnelUpStreamInit(tunnel_t *t, line_t *l)
     const ctp_line_kind_t kind = rls->protocol == IP_PROTO_UDP ? kCtpLineKindUdp : kCtpLineKindTcp;
 
     // Line state exists before any resolver, lwIP or scheduling work can observe it.
-    if (UNLIKELY(! ctpLinestateInitialize(ls, t, l, kind)))
-    {
-        /*
-         * This flow's queue could not be allocated. No state was published and no
-         * line reference is held, so the only thing owed is the close report to
-         * prev, which owns the line. Other flows are unaffected.
-         */
-        LOGW("ConnectionToPackets: out of memory starting a flow; refusing it");
-        if (ctpPrevGateEnter(t))
-        {
-            tunnelPrevDownStreamFinish(t, l);
-            ctpPrevGateLeave(t);
-        }
-        return;
-    }
+    ctpLinestateInitialize(ls, t, l, kind);
 
     if (UNLIKELY(ctpTunnelIsStopping(t)))
     {

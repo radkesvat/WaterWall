@@ -169,11 +169,6 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     }
 
     ctp_packet_emit_msg_t *packet_msg = memoryAllocate(sizeof(*packet_msg) + p->tot_len);
-    if (UNLIKELY(packet_msg == NULL))
-    {
-        return ERR_MEM;
-    }
-
     packet_msg->len = p->tot_len;
     pbufLargeCopyToPtr(p, packet_msg->data);
 
@@ -227,11 +222,6 @@ ctp_netif_ctx_t *ctpEnsureNetifLocked(tunnel_t *t, wid_t wid)
     }
 
     ctp_netif_ctx_t *ctx = memoryAllocateZero(sizeof(ctp_netif_ctx_t));
-    if (ctx == NULL)
-    {
-        return NULL;
-    }
-
     ctx->engine = wwLwipEngineCurrent();
     ctx->tunnel = t;
     ctx->wid    = wid;

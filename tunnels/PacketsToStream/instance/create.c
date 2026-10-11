@@ -131,22 +131,8 @@ tunnel_t *packetstostreamTunnelCreate(node_t *node)
             return NULL;
         }
 
-        wtimer_t **worker_timers         = memoryAllocateZero(timer_array_bytes);
-        wtimer_t **worker_timeout_timers = NULL;
-        if (worker_timers != NULL)
-        {
-            worker_timeout_timers = memoryAllocateZero(timer_array_bytes);
-        }
-        if (worker_timers == NULL || worker_timeout_timers == NULL)
-        {
-            memoryFree(worker_timers);
-            memoryFree(worker_timeout_timers);
-            tunnelDestroy(t);
-            return NULL;
-        }
-
-        ts->worker_timers         = worker_timers;
-        ts->worker_timeout_timers = worker_timeout_timers;
+        ts->worker_timers         = memoryAllocateZero(timer_array_bytes);
+        ts->worker_timeout_timers = memoryAllocateZero(timer_array_bytes);
     }
 
     return t;

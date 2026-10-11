@@ -226,8 +226,7 @@ static struct tcp_pcb *ptcAttachTestPcb(ptc_fixture_t *fixture, uint32_t pcb_bas
     twfRequireEqualU32(
         ptcTcpPcbUsedLocked(), pcb_baseline + 1U, "PTC test PCB allocation did not raise the used-count once");
     ptc_lstate_t *ls = lineGetState(fixture->line, fixture->ptc);
-    twfRequire(ptcLinestateInitialize(ls, fixture->ptc, fixture->line, kPtcLineKindTcp, pcb),
-               "failed to initialize the PTC line state");
+    ptcLinestateInitialize(ls, fixture->ptc, fixture->line, kPtcLineKindTcp, pcb);
     tcp_arg(pcb, ls);
     tcp_recv(pcb, lwipThreadPtcTcpRecvCallback);
     tcp_sent(pcb, ptcTcpSendCompleteCallback);
@@ -413,7 +412,7 @@ static void caseResumeWaitsForDeliveryHeadroom(void)
     ptc_tstate_t  *ts = tunnelGetState(fixture.ptc);
     ptc_lstate_t  *ls = lineGetState(fixture.line, fixture.ptc);
     enterEngine();
-    twfRequire(ptcReserveWriteSlots(ls), "PTC could not reserve a test ACK record");
+    ptcReserveWriteSlots(ls);
     ptcAckQueuePushBack(ls, NULL, ts->max_pending_bytes + 1);
     ls->write_paused = true;
     twfRequire(ptcFlushWriteQueue(ls) == kPtcFlushRetryable && ls->write_paused,

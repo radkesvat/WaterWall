@@ -653,8 +653,8 @@ void ctpTunnelDownStreamResume(tunnel_t *t, line_t *l);
 // common/line_state.c
 // ---------------------------------------------------------------------------
 
-/* False when the line could not be made usable; it took and released no reference. */
-bool ctpLinestateInitialize(ctp_lstate_t *ls, tunnel_t *t, line_t *l, ctp_line_kind_t kind);
+/* Initializes state and retains one line reference until LinestateDestroy. */
+void ctpLinestateInitialize(ctp_lstate_t *ls, tunnel_t *t, line_t *l, ctp_line_kind_t kind);
 void ctpLinestateDestroy(ctp_lstate_t *ls);
 
 // ---------------------------------------------------------------------------
@@ -718,7 +718,7 @@ typedef ctp_frag_publish_result_t (*ctp_frag_publish_fn)(tunnel_t *t, const ctp_
 typedef void (*ctp_frag_discard_fn)(void *payload);
 typedef bool (*ctp_frag_purge_schedule_fn)(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, wid_t wid);
 
-bool ctpFragTableInitialize(ctp_tstate_t *ts);
+void ctpFragTableInitialize(ctp_tstate_t *ts);
 void ctpFragTableDestroy(ctp_tstate_t *ts, ctp_frag_discard_fn release);
 /* Caller holds flows_lock for writing. */
 void ctpFragClearLocked(ctp_tstate_t *ts, ctp_frag_discard_fn release);

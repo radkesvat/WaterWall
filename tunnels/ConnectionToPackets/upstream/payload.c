@@ -93,11 +93,11 @@ void ctpTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
      */
     if (UNLIKELY(! bufferqueueTryPushBack(&ls->pending_queue, &buf)))
     {
-        // One flow's queue could not grow. Reset only that flow.
+        // Queue size or storage charge is unrepresentable. Reset only that flow.
         lineReuseBuffer(l, buf);
         if (atomicLogRateLimiterShouldLog(&ctp_admission_log, kCtpDropLogIntervalMs))
         {
-            LOGW("ConnectionToPackets: out of memory queueing a payload, resetting the flow");
+            LOGW("ConnectionToPackets: payload queue capacity rejected, resetting the flow");
         }
         ctpCloseLineTowardPrevWithoutDrain(t, l);
         return;

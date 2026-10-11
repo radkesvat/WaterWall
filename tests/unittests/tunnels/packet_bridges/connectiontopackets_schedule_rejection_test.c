@@ -181,9 +181,7 @@ static void ctpFixtureSetup(ctp_fixture_t *fixture)
     twfRequire(quiescenceGateOpen(&state->packet_ingress_gate), "failed to open the CTP packet-ingress gate");
 
     fixture->line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
-    twfRequire(
-        ctpLinestateInitialize(lineGetState(fixture->line, fixture->ctp), fixture->ctp, fixture->line, kCtpLineKindTcp),
-        "failed to initialize the CTP line state");
+    ctpLinestateInitialize(lineGetState(fixture->line, fixture->ctp), fixture->ctp, fixture->line, kCtpLineKindTcp);
 
     ((ctp_lstate_t *) lineGetState(fixture->line, fixture->ctp))->engine = fixture->engine;
     g_fixture            = fixture;

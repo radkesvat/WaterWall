@@ -258,18 +258,7 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     line_t       *l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), owner_wid);
     ptc_lstate_t *ls = lineGetState(l, t);
 
-    if (UNLIKELY(! ptcLinestateInitialize(ls, t, l, kPtcLineKindTcp, newpcb)))
-    {
-        /*
-         * One flow's bookkeeping could not be allocated. The line never became
-         * usable, so it is destroyed here and the peer sees a reset - every other
-         * flow on this node keeps running.
-         */
-        LOGW("PacketsToConnection: out of memory accepting a tcp flow; resetting it");
-        lineDestroy(l);
-        tcp_abort(newpcb);
-        return ERR_ABRT;
-    }
+    ptcLinestateInitialize(ls, t, l, kPtcLineKindTcp, newpcb);
 
     ls->route_ctx = route_ctx;
 

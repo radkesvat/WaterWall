@@ -534,13 +534,6 @@ void streamtopacketsForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_
 
     streamtopackets_packet_msg_t *msg = memoryAllocate(sizeof(*msg));
 
-    if (UNLIKELY(msg == NULL))
-    {
-        LOGE("StreamToPackets: failed to allocate a cross-worker packet message");
-        lineReuseBuffer(stream_line, packet);
-        return;
-    }
-
     *msg = (streamtopackets_packet_msg_t) {
         .tunnel = t, .packet_line = packet_line, .buf = packet, .generation = generation};
 

@@ -54,7 +54,6 @@ struct ptc_tcp_drain_s
 
 static atomic_log_rate_limiter_t g_ptc_drain_budget_log;
 static atomic_log_rate_limiter_t g_ptc_drain_abort_log;
-static atomic_log_rate_limiter_t g_ptc_drain_alloc_log;
 
 static err_t ptcDrainRecvCallback(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err);
 static err_t ptcDrainSentCallback(void *arg, struct tcp_pcb *pcb, u16_t len);
@@ -372,12 +371,7 @@ static void ptcDrainErrorCallback(void *arg, err_t err)
 
 static uint8_t *ptcDrainTakeBytes(ptc_lstate_t *ls, uint32_t total)
 {
-    uint8_t *bytes = memoryAllocate(total);
-    if (bytes == NULL)
-    {
-        return NULL;
-    }
-
+    uint8_t *bytes  = memoryAllocate(total);
     uint32_t offset = 0;
     size_t   index  = ptcFrontPauseAckIndexOf(ls);
 
@@ -437,26 +431,11 @@ ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *l
     }
 
     ptc_tcp_drain_t *drain = memoryAllocateZero(sizeof(*drain));
-    if (drain == NULL)
-    {
-        ptcDrainBudgetRelease(ts, (uint32_t) queued);
-        if (atomicLogRateLimiterShouldLog(&g_ptc_drain_alloc_log, kPtcDrainLogIntervalMs))
-        {
-            LOGW("PacketsToConnection: out of memory for a closing TCP flow");
-        }
-        return kPtcTcpDrainFailed;
-    }
 
     const uint32_t total = (uint32_t) queued;
     if (total > 0)
     {
         drain->bytes = ptcDrainTakeBytes(ls, total);
-        if (drain->bytes == NULL)
-        {
-            memoryFree(drain);
-            ptcDrainBudgetRelease(ts, total);
-            return kPtcTcpDrainFailed;
-        }
     }
 
     drain->route = ls->route_ctx;
