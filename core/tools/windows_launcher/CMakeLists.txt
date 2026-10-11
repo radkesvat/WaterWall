@@ -77,7 +77,8 @@ add_test(NAME waterwall.windows_session_effects_unit COMMAND windows_session_eff
 set_tests_properties(waterwall.windows_session_effects_unit PROPERTIES TIMEOUT 30)
 
 add_executable(windows_tun_ownership_test ownership.c)
-target_include_directories(windows_tun_ownership_test PRIVATE "${WATERWALL_SOURCE_DIR}/ww/devices/tun")
+target_include_directories(windows_tun_ownership_test PRIVATE "${WATERWALL_SOURCE_DIR}/ww/devices/tun"
+  "${WATERWALL_SOURCE_DIR}/ww/libc")
 target_compile_definitions(windows_tun_ownership_test PRIVATE _WIN32_WINNT=0x0600)
 target_link_libraries(windows_tun_ownership_test PRIVATE advapi32 bcrypt setupapi)
 add_test(NAME waterwall.windows_tun_ownership_unit COMMAND windows_tun_ownership_test)

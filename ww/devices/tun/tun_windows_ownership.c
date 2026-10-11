@@ -1,4 +1,5 @@
 #include "tun_windows_ownership.h"
+#include "wmem.h"
 
 #include <assert.h>
 #include <bcrypt.h>
@@ -232,9 +233,8 @@ bool tunWindowsOwnershipStartHelper(HANDLE lease, const wchar_t *executable, wch
     STARTUPINFOEXW startup = {0};
     SIZE_T         size    = 0;
     InitializeProcThreadAttributeList(NULL, 1, 0, &size);
-    startup.lpAttributeList = malloc(size);
-    bool initialized =
-        startup.lpAttributeList != NULL && InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &size);
+    startup.lpAttributeList = memoryAllocate(size);
+    bool initialized        = InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &size);
     bool ok = false;
     if (initialized &&
         UpdateProcThreadAttribute(
@@ -253,10 +253,10 @@ bool tunWindowsOwnershipStartHelper(HANDLE lease, const wchar_t *executable, wch
                             &startup.StartupInfo,
                             child) != FALSE;
     }
-    DWORD error = startup.lpAttributeList == NULL ? ERROR_NOT_ENOUGH_MEMORY : GetLastError();
+    DWORD error = GetLastError();
     if (initialized)
         DeleteProcThreadAttributeList(startup.lpAttributeList);
-    free(startup.lpAttributeList);
+    memoryFree(startup.lpAttributeList);
     CloseHandle(inherited);
     SetLastError(error);
     return ok;

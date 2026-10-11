@@ -1,12 +1,28 @@
 /* Real kernel lease/helper lifetime; deterministic PnP enumeration/removal.
  * This fixture never installs or removes a host network device. */
 #include "tun_windows_ownership.h"
+#include "wmem.h"
 #include <setupapi.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+
+/* This standalone fixture does not link the WaterWall runtime. Supply only the
+ * allocation boundary used by the included ownership implementation. */
+void *memoryAllocate(size_t size)
+{
+    void *allocation = malloc(size == 0 ? 1 : size);
+    if (allocation == NULL)
+        ExitProcess(1);
+    return allocation;
+}
+
+void memoryFree(void *allocation)
+{
+    free(allocation);
+}
 
 static void require(bool value, const char *message)
 {

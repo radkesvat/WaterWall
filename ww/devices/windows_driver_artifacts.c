@@ -106,13 +106,7 @@ static bool driverPinRoot(HANDLE root_handle, wchar_t *root)
             SetLastError(ERROR_BAD_PATHNAME);
             return false;
         }
-        HANDLE *grown = realloc(ancestor_locks, (ancestor_count + 1) * sizeof(*grown));
-        if (grown == NULL)
-        {
-            CloseHandle(pin);
-            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-            return false;
-        }
+        HANDLE *grown                    = memoryReAllocate(ancestor_locks, (ancestor_count + 1) * sizeof(*grown));
         ancestor_locks                   = grown;
         ancestor_locks[ancestor_count++] = pin;
     }
@@ -134,13 +128,13 @@ static PSECURITY_DESCRIPTOR driverPrivateSecurity(void)
     if (! OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
         goto done;
     GetTokenInformation(token, TokenUser, NULL, 0, &size);
-    user = malloc(size);
-    if (user == NULL || ! GetTokenInformation(token, TokenUser, user, size, &size) ||
+    user = memoryAllocate(size);
+    if (! GetTokenInformation(token, TokenUser, user, size, &size) ||
         ! ConvertSidToStringSidW(((TOKEN_USER *) user)->User.Sid, &sid))
         goto done;
     GetTokenInformation(token, TokenIntegrityLevel, NULL, 0, &size);
-    integrity = malloc(size);
-    if (integrity == NULL || ! GetTokenInformation(token, TokenIntegrityLevel, integrity, size, &size) ||
+    integrity = memoryAllocate(size);
+    if (! GetTokenInformation(token, TokenIntegrityLevel, integrity, size, &size) ||
         ! ConvertSidToStringSidW(((TOKEN_MANDATORY_LABEL *) integrity)->Label.Sid, &label))
         goto done;
     wchar_t sddl[512];
@@ -151,8 +145,8 @@ static PSECURITY_DESCRIPTOR driverPrivateSecurity(void)
 done:
     if (token != NULL)
         CloseHandle(token);
-    free(user);
-    free(integrity);
+    memoryFree(user);
+    memoryFree(integrity);
     LocalFree(sid);
     LocalFree(label);
     return descriptor;
@@ -185,7 +179,7 @@ static bool driverDirectoryCleanup(void)
             return false;
         --ancestor_count;
     }
-    free(ancestor_locks);
+    memoryFree(ancestor_locks);
     ancestor_locks = NULL;
     return true;
 }
