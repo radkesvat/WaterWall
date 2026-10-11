@@ -10,10 +10,10 @@ typedef enum worker_message_cancel_reason_e
 {
     kWorkerMessageCancelTargetUnavailable = 0,
     kWorkerMessageCancelAdmissionClosed,
+    /* Queue geometry is unrepresentable, or wake publication refused submission. */
     kWorkerMessageCancelEnqueueFailure,
     kWorkerMessageCancelQuiesced,
-    kWorkerMessageCancelTeardown,
-    kWorkerMessageCancelResourceFailure
+    kWorkerMessageCancelTeardown
 } worker_message_cancel_reason_e;
 
 typedef enum worker_message_submit_result_e
@@ -35,7 +35,7 @@ typedef struct worker_msg_s
 
 void workerMessagesInstallMasterPoolCallbacks(master_pool_t *pool);
 
-bool workerMessagesInit(worker_t *worker);
+void workerMessagesInit(worker_t *worker);
 bool workerMessagesOpenAdmission(worker_t *worker);
 void workerMessagesCloseAdmission(worker_t *worker);
 void workerMessagesCloseAdmissionLocked(worker_t *worker);
@@ -49,15 +49,7 @@ void workerMessagesDestroyDetached(worker_message_queue_t *queue);
 
 typedef enum
 {
-    kWorkerMessageInitFailNone = 0,
-    kWorkerMessageInitFailOuterAllocation,
-    kWorkerMessageInitFailQueuedReserve
-} worker_message_init_test_failure_e;
-
-typedef enum
-{
     kWorkerMessageEnqueueFailNone = 0,
-    kWorkerMessageEnqueueFailDequeGrowth,
     kWorkerMessageEnqueueFailWakeupPost
 } worker_message_enqueue_test_failure_e;
 
@@ -72,7 +64,6 @@ typedef enum
 
 void workerMessageEnqueueTestSeam(worker_t *worker, worker_message_enqueue_test_stage_e stage);
 void workerMessageTimedRearmTestSeam(worker_t *worker, uint64_t *deadline_us);
-void workerMessagesInitTestSetFailure(worker_message_init_test_failure_e failure);
 void workerMessagesEnqueueTestSetFailure(worker_message_enqueue_test_failure_e failure);
 /* Close the target loop's normal admission immediately before the next timed
  * install attempt, after the worker-message precheck has passed. */

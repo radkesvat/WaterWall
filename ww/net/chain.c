@@ -113,10 +113,6 @@ tunnel_chain_t *tunnelchainCreate(wid_t workers_count)
 {
     const size_t    size = sizeof(tunnel_chain_t) + ((size_t) workers_count * sizeof(void *));
     tunnel_chain_t *tc   = memoryAllocateZero(size);
-    if (UNLIKELY(tc == NULL))
-    {
-        return NULL;
-    }
     tc->workers_count = workers_count;
     return tc;
 }
@@ -140,13 +136,6 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
     }
 
     line_t **packet_lines = memoryAllocate(sizeof(*packet_lines) * tc->workers_count);
-    if (UNLIKELY(packet_lines == NULL))
-    {
-        masterpoolDestroy(master_pool);
-        LOGF("TunnelChain: failed to allocate packet-line slots");
-        startupFailureRecord(1);
-        return;
-    }
 
     for (wid_t i = 0; i < tc->workers_count; i++)
     {

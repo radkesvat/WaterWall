@@ -227,7 +227,7 @@ static inline void lineDestroy(line_t *const l)
  * Valid user handles are copied into the line. When username/password are also
  * supplied, they are stored on the same auth marker so consumers such as Router
  * can match raw authenticated credentials without a users-table lookup.
- * Credential allocation failure logs a fatal error and terminates immediately;
+ * Credential allocation failure terminates at the memory-manager boundary;
  * this API never returns a partial identity or reports recoverable allocation failure.
  *
  * @param line Pointer to the line.
@@ -541,12 +541,10 @@ typedef enum line_task_cancel_reason_e
     kLineTaskCancelTargetUnavailable = 0,
     /** Target worker no longer admits normal work or timer setup. */
     kLineTaskCancelAdmissionClosed,
-    /** Queue growth or wake publication refused the submission. */
+    /** Queue geometry is unrepresentable, or wake publication refused submission. */
     kLineTaskCancelEnqueueFailure,
-    /** Owner-side delayed resource installation failed after/before admission. */
-    kLineTaskCancelResourceFailure,
     /** Worker quiescence settled accepted work before execution. */
-    kLineTaskCancelQuiesced,
+    kLineTaskCancelQuiesced = 4,
     /** Detached queue teardown settled the task before execution. */
     kLineTaskCancelTeardown,
     /** The physical line remained present but was logically dead at dispatch. */

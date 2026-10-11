@@ -351,7 +351,7 @@ static void timeoutFixtureSetup(connectionfisher_timeout_fixture_t *fixture, lin
     workerMessagesInstallMasterPoolCallbacks(fixture->message_master);
     GSTATE.masterpool_messages = fixture->message_master;
     mutexInit(&fixture->env.worker.control_mutex);
-    twfRequire(workerMessagesInit(&fixture->env.worker), "failed to create the ConnectionFisher message queue");
+    workerMessagesInit(&fixture->env.worker);
     twfRequire(workerMessagesOpenAdmission(&fixture->env.worker), "failed to open ConnectionFisher message admission");
 
     fixture->prev = tunnelCreate(NULL, sizeof(connectionfisher_timeout_fixture_t *), 0);

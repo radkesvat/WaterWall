@@ -53,7 +53,6 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    testWorkerMessageConstructionTransactional();
     testWorkerMessageInitialCapacity();
 #if defined(WW_WORKER_MESSAGE_LINK_WRAP) && defined(HAS_UNIX_FORK)
     testTimedRearmRefusalInIsolatedProcess();

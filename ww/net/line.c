@@ -71,20 +71,10 @@ static void lineAddAuthEntry(line_t *const line, const user_handle_t *user_handl
         if (username != NULL)
         {
             entry->credentials.username = stringDuplicate(username);
-            if (UNLIKELY(entry->credentials.username == NULL))
-            {
-                LOGF("Line: failed to allocate authenticated username");
-                abortProgramNow(1);
-            }
         }
         if (password != NULL)
         {
             entry->credentials.password = stringDuplicate(password);
-            if (UNLIKELY(entry->credentials.password == NULL))
-            {
-                LOGF("Line: failed to allocate authenticated password");
-                abortProgramNow(1);
-            }
         }
     }
     line->user_count += 1;
@@ -381,8 +371,6 @@ static line_task_cancel_reason_e lineMapWorkerTaskCancelReason(worker_message_ca
         return kLineTaskCancelAdmissionClosed;
     case kWorkerMessageCancelEnqueueFailure:
         return kLineTaskCancelEnqueueFailure;
-    case kWorkerMessageCancelResourceFailure:
-        return kLineTaskCancelResourceFailure;
     case kWorkerMessageCancelQuiesced:
         return kLineTaskCancelQuiesced;
     case kWorkerMessageCancelTeardown:
@@ -627,11 +615,6 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
     lineRef(line);
 
     line_dns_resolve_msg_t *msg = memoryAllocate(sizeof(*msg));
-    if (msg == NULL)
-    {
-        lineUnref(line);
-        return ARES_ENOMEM;
-    }
 
     *msg = (line_dns_resolve_msg_t) {
         .callback = cb,

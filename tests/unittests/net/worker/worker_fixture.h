@@ -57,7 +57,6 @@ void                          testTunnelApiHelpersRejectNonEventWorkers(void);
 void                          testResolverRejectsForeignCallers(void);
 void                          testLineResolverRejectsForeignCallers(void);
 void                          testCheckedAccessorsAbortOffEventWorkers(void);
-void                          testWorkerMessageConstructionTransactional(void);
 void                          testWorkerMessageInitialCapacity(void);
 void                          testTransactionalEnqueueFailureStages(void);
 void                          testWorkerMessagePoolCrossWorkerReturn(void);

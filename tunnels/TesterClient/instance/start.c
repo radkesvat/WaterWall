@@ -98,35 +98,15 @@ void testerclientStartWorkerTestInvoke(worker_t *worker, tunnel_t *t)
 }
 #endif
 
-static void testerclientCleanupStartWorker(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
-{
-    discard arg1;
-    discard arg2;
-    discard arg3;
-    if (reason != kWorkerMessageCancelResourceFailure)
-    {
-        return;
-    }
-    LOGE("TesterClient: worker start task failed after admission");
-    if (! requestProgramShutdown(1))
-    {
-        abortProgramNow(1);
-    }
-}
-
 void testerclientTunnelOnStart(tunnel_t *t)
 {
     tunnel_chain_t *tc = tunnelGetChain(t);
 
     for (wid_t wi = 0; wi < tc->workers_count; ++wi)
     {
-        if (UNLIKELY(sendWorkerMessageTimedRetainOnRefusal(wi,
-                                                           testerclientStartWorker,
-                                                           testerclientCleanupStartWorker,
-                                                           kTesterClientStartDelayMs,
-                                                           t,
-                                                           NULL,
-                                                           NULL) != kWorkerMessageSubmitAccepted))
+        if (UNLIKELY(sendWorkerMessageTimedRetainOnRefusal(
+                         wi, testerclientStartWorker, NULL, kTesterClientStartDelayMs, t, NULL, NULL) !=
+                     kWorkerMessageSubmitAccepted))
         {
             startupFailureRecord(1);
             return;

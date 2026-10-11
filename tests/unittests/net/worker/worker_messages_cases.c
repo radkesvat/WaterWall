@@ -1,35 +1,7 @@
-/* Transactional queue construction, first-wake rollback, immediate/timed messages, local-batch FIFO/fairness and
+/* Profile queue construction, first-wake rollback, immediate/timed messages, local-batch FIFO/fairness and
  * fork-isolated quiescence/cancellation. CTest: waterwall.worker_context_helpers_unit; see the driver for ordering and
  * CLI. */
 #include "worker_fixture.h"
-
-void testWorkerMessageConstructionTransactional(void)
-{
-    worker_t worker = {0};
-    mutexInit(&worker.control_mutex);
-
-    const worker_message_init_test_failure_e failures[] = {
-        kWorkerMessageInitFailOuterAllocation,
-        kWorkerMessageInitFailQueuedReserve,
-    };
-    for (size_t i = 0; i < sizeof(failures) / sizeof(failures[0]); ++i)
-    {
-        workerMessagesInitTestSetFailure(failures[i]);
-        require(! workerMessagesInit(&worker), "worker-message construction refusal reported success");
-        require(worker.message_queue == NULL, "worker-message construction refusal published a partial queue");
-        require(! atomicLoadExplicit(&worker.message_admission_open, memory_order_acquire),
-                "worker-message construction refusal opened admission");
-
-        require(workerMessagesInit(&worker), "worker-message construction could not retry cleanly");
-        require(worker.message_queue != NULL, "successful worker-message construction did not publish its queue");
-        require(! atomicLoadExplicit(&worker.message_admission_open, memory_order_acquire),
-                "successful construction opened admission before worker startup");
-        workerMessagesDestroy(&worker);
-        require(worker.message_queue == NULL, "worker-message retry queue did not detach during teardown");
-    }
-
-    mutexDestroy(&worker.control_mutex);
-}
 
 void testWorkerMessageInitialCapacity(void)
 {
@@ -52,7 +24,7 @@ void testWorkerMessageInitialCapacity(void)
     for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
     {
         GSTATE.ram_profile = cases[i].profile;
-        require(workerMessagesInit(&worker), "failed to reserve the profile's initial message queue");
+        workerMessagesInit(&worker);
         require(workerMessagesTestQueueCapacity(&worker) == cases[i].capacity,
                 "initial message queue capacity does not match its RAM profile");
         require(! atomicLoadExplicit(&worker.message_admission_open, memory_order_acquire),
@@ -110,7 +82,6 @@ static void probeReset(void)
 void testTransactionalEnqueueFailureStages(void)
 {
     const worker_message_enqueue_test_failure_e failures[] = {
-        kWorkerMessageEnqueueFailDequeGrowth,
         kWorkerMessageEnqueueFailWakeupPost,
     };
 

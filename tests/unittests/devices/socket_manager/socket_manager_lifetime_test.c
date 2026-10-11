@@ -499,7 +499,7 @@ int main(void)
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, 8192, 0);
     mutexInit(&env.worker.control_mutex);
-    require(workerMessagesInit(&env.worker), "message queue construction failed");
+    workerMessagesInit(&env.worker);
     require(globalstateInitializeSecureRandom() && frandGlobalInit(), "random fixture initialization failed");
     frandInit();
     testCaseSet("socket_manager_endpoint_sharing");

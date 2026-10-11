@@ -211,7 +211,7 @@ static void dnsTests(void)
     for (unsigned failure = 0; failure < 5; ++failure)
     {
         dnsOpen(2, false, false, "origin.test");
-        submit_status = failure == 0 ? ARES_ENOMEM : 0;
+        submit_status = failure == 0 ? ARES_ECANCELLED : 0;
         dnsStart();
         submit_status = 0;
         if (failure)

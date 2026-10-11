@@ -95,7 +95,7 @@ line_task_submit_result_e __wrap_lineScheduleDelayedTask(line_t *const line, Lin
     lineRef(line);
     if (on_cancel != NULL)
     {
-        on_cancel(t, line, kLineTaskCancelResourceFailure);
+        on_cancel(t, line, kLineTaskCancelAdmissionClosed);
     }
     lineUnref(line);
     return kLineTaskSubmitRejectedSettled;

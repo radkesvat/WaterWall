@@ -46,30 +46,10 @@ static void speedtestclientStartStream(void *worker, void *arg1, void *arg2, voi
 
 static void speedtestclientCleanupStartStream(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
-    tunnel_t                 *t     = arg1;
-    speedtestclient_tstate_t *state = tunnelGetState(t);
-    discard                   arg3;
-
+    discard arg1;
+    discard arg3;
+    discard reason;
     memoryFree(arg2);
-    if (atomicLoadRelaxed(&state->stopping))
-    {
-        return;
-    }
-    if (reason != kWorkerMessageCancelResourceFailure)
-    {
-        return;
-    }
-    LOGF("SpeedTestClient: delayed stream creation failed after admission");
-    if (! requestProgramShutdown(1))
-    {
-        abortProgramNow(1);
-    }
-}
-
-static void speedtestclientRequiredStartFailure(const char *reason)
-{
-    LOGF("SpeedTestClient: %s", reason);
-    startupFailureRecord(1);
 }
 
 void speedtestclientTunnelOnStart(tunnel_t *t)
@@ -80,11 +60,6 @@ void speedtestclientTunnelOnStart(tunnel_t *t)
     for (uint32_t stream_id = 0; stream_id < state->connection_count; ++stream_id)
     {
         uint32_t *stream_id_ptr = memoryAllocate(sizeof(*stream_id_ptr));
-        if (stream_id_ptr == NULL)
-        {
-            speedtestclientRequiredStartFailure("failed to allocate startup stream id");
-            return;
-        }
         *stream_id_ptr = stream_id;
 
         wid_t wid = (wid_t) (stream_id % chain->workers_count);

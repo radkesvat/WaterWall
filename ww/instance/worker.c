@@ -487,12 +487,7 @@ bool workerInit(worker_t *worker, wid_t wid, bool eventloop)
     atomicStoreRelaxed(&worker->resources_destroyed, false);
     atomicStoreRelaxed(&worker->message_admission_open, false);
 
-    if (UNLIKELY(! workerMessagesInit(worker)))
-    {
-        LOGF("Worker %d: failed to construct worker-message queue metadata", (int) wid);
-        workerRollbackInitialization(worker);
-        return false;
-    }
+    workerMessagesInit(worker);
 
     if (UNLIKELY(! workerTryCreateCorePools(worker)))
     {

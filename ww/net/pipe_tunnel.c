@@ -992,11 +992,6 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
 #endif
 
     pipe_pair_t *pair = memoryAllocateZero(sizeof(*pair));
-    if (pair == NULL)
-    {
-        LOGE("PipeTunnel: failed to allocate cross-worker pair metadata");
-        return false;
-    }
 
     line_t *owned = lineCreateForWorker(wid, tunnelchainGetLinePools(tunnelGetChain(t)), wid_to);
     lineCopyUsers(owned, line);

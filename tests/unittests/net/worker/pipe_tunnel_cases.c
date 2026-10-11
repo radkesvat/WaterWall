@@ -341,7 +341,6 @@ void testPipePublicationIsLinearizedWithPreStop(void)
 
 #ifdef WW_WORKER_MESSAGE_LINK_WRAP
     const worker_message_enqueue_test_failure_e pipe_failures[] = {
-        kWorkerMessageEnqueueFailDequeGrowth,
         kWorkerMessageEnqueueFailWakeupPost,
     };
     atomicStoreRelaxed(&g_pipe_shutdown_requests, 0);
@@ -772,7 +771,6 @@ void testPipePayloadFinishLateAndRefused(void)
     pipeRunQueuedSourceClose();
 #ifdef WW_WORKER_MESSAGE_LINK_WRAP
     const worker_message_enqueue_test_failure_e failures[] = {
-        kWorkerMessageEnqueueFailDequeGrowth,
         kWorkerMessageEnqueueFailWakeupPost,
     };
     for (uint32_t failure_index = 0; failure_index < ARRAY_SIZE(failures); ++failure_index)

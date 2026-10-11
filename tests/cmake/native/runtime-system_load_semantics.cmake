@@ -217,7 +217,7 @@
   target_link_libraries(line_user_identifier_test PRIVATE ww)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(line_user_identifier_test PRIVATE WW_LINE_IDENTITY_FAILURE_TEST=1)
-    target_link_options(line_user_identifier_test PRIVATE "-Wl,--wrap=stringDuplicate")
+    target_link_options(line_user_identifier_test PRIVATE "-Wl,--wrap=malloc" "-Wl,--wrap=mi_malloc")
   endif()
   add_dependencies(waterwall_unit_tests line_user_identifier_test)
 

@@ -58,7 +58,6 @@ struct worker_message_queue_s
 static void workerMessageReceived(wevent_t *ev);
 
 #ifdef WW_WORKER_MESSAGE_TEST_SEAM
-static worker_message_init_test_failure_e    g_worker_message_init_failure;
 static worker_message_enqueue_test_failure_e g_worker_message_enqueue_failure;
 static atomic_bool                           g_worker_message_close_timer_install_admission;
 
@@ -72,11 +71,6 @@ size_t workerMessagesTestQueueCapacity(worker_t *worker)
     return capacity;
 }
 
-void workerMessagesInitTestSetFailure(worker_message_init_test_failure_e failure)
-{
-    g_worker_message_init_failure = failure;
-}
-
 void workerMessagesEnqueueTestSetFailure(worker_message_enqueue_test_failure_e failure)
 {
     g_worker_message_enqueue_failure = failure;
@@ -85,16 +79,6 @@ void workerMessagesEnqueueTestSetFailure(worker_message_enqueue_test_failure_e f
 void workerMessagesTimerInstallTestCloseAdmission(void)
 {
     atomicStoreExplicit(&g_worker_message_close_timer_install_admission, true, memory_order_release);
-}
-
-static bool workerMessagesInitTestRefuse(worker_message_init_test_failure_e failure)
-{
-    if (g_worker_message_init_failure != failure)
-    {
-        return false;
-    }
-    g_worker_message_init_failure = kWorkerMessageInitFailNone;
-    return true;
 }
 
 static bool workerMessagesEnqueueTestRefuse(worker_message_enqueue_test_failure_e failure)
@@ -112,12 +96,6 @@ static bool workerMessagesTimerInstallTestShouldCloseAdmission(void)
     return atomicExchangeExplicit(&g_worker_message_close_timer_install_admission, false, memory_order_acq_rel);
 }
 #else
-static bool workerMessagesInitTestRefuse(int failure)
-{
-    discard failure;
-    return false;
-}
-
 static bool workerMessagesEnqueueTestRefuse(int failure)
 {
     discard failure;
@@ -458,21 +436,13 @@ void workerMessagesInstallMasterPoolCallbacks(master_pool_t *pool)
     masterpoolInstallCallBacks(pool, allocWorkerMessage, destroyWorkerMessage);
 }
 
-bool workerMessagesInit(worker_t *worker)
+void workerMessagesInit(worker_t *worker)
 {
     assert(worker != NULL);
     assert(worker->message_queue == NULL);
     workerMessagesCloseAdmissionLocked(worker);
 
-    if (workerMessagesInitTestRefuse(kWorkerMessageInitFailOuterAllocation))
-    {
-        return false;
-    }
     worker_message_queue_t *queue = memoryAllocate(sizeof(*queue));
-    if (UNLIKELY(queue == NULL))
-    {
-        return false;
-    }
     *queue = (worker_message_queue_t) {
         .queued = worker_msg_deque_t_init(),
     };
@@ -482,17 +452,11 @@ bool workerMessagesInit(worker_t *worker)
                                                                       : kWorkerMessageInitialQueueSlotsSmall;
     /* STC rounds capacity + 1 up to a power of two and keeps one slot empty.
      * Reserve usable entries, independently of the callback drain batch size. */
-    const bool queued_ready = ! workerMessagesInitTestRefuse(kWorkerMessageInitFailQueuedReserve) &&
-                              worker_msg_deque_t_reserve(&queue->queued, initial_slots - 1);
-    if (UNLIKELY(! queued_ready))
-    {
-        worker_msg_deque_t_drop(&queue->queued);
-        memoryFree(queue);
-        return false;
-    }
+    const bool queued_ready = worker_msg_deque_t_reserve(&queue->queued, initial_slots - 1);
+    assert(queued_ready);
+    discard queued_ready;
 
     worker->message_queue = queue;
-    return true;
 }
 
 bool workerMessagesOpenAdmission(worker_t *worker)
@@ -734,8 +698,10 @@ static worker_message_submit_result_e sendWorkerMessageForceQueueTransactional(w
     workerMessageEnqueueTestSeam(worker, kWorkerMessageEnqueueBeforeEnqueue);
 #endif
 
-    if (UNLIKELY(workerMessagesEnqueueTestRefuse(kWorkerMessageEnqueueFailDequeGrowth) ||
-                 worker_msg_deque_t_push_back(&queue->queued, msg) == NULL))
+    /* STC grows a full ring to the next power of two and keeps one empty slot.
+     * Bound the rounded storage before its signed count/byte arithmetic. */
+    const size_t maximum_entries = (size_t) PTRDIFF_MAX / (2U * sizeof(queued_worker_msg_t));
+    if (UNLIKELY((size_t) worker_msg_deque_t_size(&queue->queued) >= maximum_entries))
     {
         mutexUnlock(&worker->control_mutex);
         if (! retain_on_refusal)
@@ -744,6 +710,9 @@ static worker_message_submit_result_e sendWorkerMessageForceQueueTransactional(w
         }
         return retain_on_refusal ? kWorkerMessageSubmitRejectedCallerRetains : kWorkerMessageSubmitRejectedCleanupRan;
     }
+    queued_worker_msg_t *queued = worker_msg_deque_t_push_back(&queue->queued, msg);
+    assert(queued != NULL);
+    discard queued;
 
     if (queue->wakeup_pending)
     {

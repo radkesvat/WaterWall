@@ -181,13 +181,6 @@ static void assignChainsToTunnels(tunnel_t **t_array, int tunnels_count)
         if (tunnel->chain == NULL)
         {
             tunnel_chain_t *tc = tunnelchainCreate(getWorkersCount());
-            if (UNLIKELY(tc == NULL))
-            {
-                LOGF("NodeManager: failed to allocate tunnel-chain metadata for node \"%s\"",
-                     configPolicyDiagnostic(tunnel->node->name));
-                startupFailureRecord(1);
-                return;
-            }
             tunnel->onChain(tunnel, tc);
             if (UNLIKELY(startupFailurePending()))
             {

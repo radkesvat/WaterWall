@@ -511,7 +511,6 @@ static void testSynchronousRefusals(line_task_test_env_t *env)
     requirePoolBaseline(env, "admission refusal leaked a scheduling record");
 
     const worker_message_enqueue_test_failure_e failures[] = {
-        kWorkerMessageEnqueueFailDequeGrowth,
         kWorkerMessageEnqueueFailWakeupPost,
     };
     for (size_t i = 0; i < ARRAY_SIZE(failures); ++i)
@@ -664,7 +663,7 @@ static void testLineDeathNullAndBufferedSettlement(line_task_test_env_t *env)
     line                  = createLine(env, 0);
     sbuf_t *reentrant_buf = createTrackedPooledBuffer(line, &probe, &reentrant_lifetime);
     lineRef(line);
-    workerMessagesEnqueueTestSetFailure(kWorkerMessageEnqueueFailDequeGrowth);
+    workerMessagesEnqueueTestSetFailure(kWorkerMessageEnqueueFailWakeupPost);
     require(lineScheduleTaskWithBuf(line, probeTaskWithBuf, probe_tunnel, reentrant_buf, probeCancellation) ==
                 kLineTaskSubmitRejectedSettled,
             "buffered re-entrant cancellation was not settled synchronously");

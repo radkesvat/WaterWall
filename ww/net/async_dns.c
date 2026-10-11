@@ -316,7 +316,8 @@ static bool asyncdnsReservePollEvents(dns_resolver_t *r, size_t needed)
         return true;
     }
 
-    if (needed > SIZE_MAX / sizeof(*r->poll_events))
+    const size_t maximum_capacity = SIZE_MAX / sizeof(*r->poll_events);
+    if (needed > maximum_capacity)
     {
         return false;
     }
@@ -324,7 +325,7 @@ static bool asyncdnsReservePollEvents(dns_resolver_t *r, size_t needed)
     size_t capacity = r->poll_capacity == 0 ? 16 : r->poll_capacity;
     while (capacity < needed)
     {
-        if (capacity > SIZE_MAX / 2U)
+        if (capacity > maximum_capacity / 2U)
         {
             capacity = needed;
             break;
@@ -333,11 +334,6 @@ static bool asyncdnsReservePollEvents(dns_resolver_t *r, size_t needed)
     }
 
     ares_fd_events_t *grown = memoryReAllocate(r->poll_events, capacity * sizeof(*grown));
-    if (grown == NULL)
-    {
-        return false;
-    }
-
     r->poll_events   = grown;
     r->poll_capacity = capacity;
     return true;
@@ -380,7 +376,7 @@ static size_t asyncdnsPollWatchedFds(dns_resolver_t *r)
         }
         if (! asyncdnsReservePollEvents(r, nwatched + 1U))
         {
-            break; // Out of memory: probe what fits; the rest retries next tick.
+            break; // Unrepresentable array geometry: probe the entries already collected.
         }
         r->poll_events[nwatched++] = (ares_fd_events_t) {.fd = watch->fd, .events = interest};
     }
@@ -584,15 +580,7 @@ static void asyncdnsAddrInfoCallback(void *arg, int status, int timeouts, struct
         else
         {
             addrs = memoryAllocate(sizeof(*addrs) * count);
-            if (addrs == NULL)
-            {
-                cb_status = ARES_ENOMEM;
-                count     = 0;
-            }
-            else
-            {
-                asyncdnsCopyAddrs(addrs, res);
-            }
+            asyncdnsCopyAddrs(addrs, res);
         }
     }
 
@@ -784,28 +772,13 @@ int asyncdnsResolve(dns_resolver_t *r, const char *host, const char *service, in
     }
 
     asyncdns_request_t *req = memoryAllocate(sizeof(*req));
-    if (req == NULL)
-    {
-        return ARES_ENOMEM;
-    }
 
     char *host_copy = stringDuplicate(host);
-    if (host_copy == NULL)
-    {
-        memoryFree(req);
-        return ARES_ENOMEM;
-    }
 
     char *service_copy = NULL;
     if (service != NULL)
     {
         service_copy = stringDuplicate(service);
-        if (service_copy == NULL)
-        {
-            memoryFree(host_copy);
-            memoryFree(req);
-            return ARES_ENOMEM;
-        }
     }
 
     *req = (asyncdns_request_t) {

@@ -22,19 +22,27 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static unsigned fail_copy_on;
-static unsigned copy_calls;
+static unsigned fail_allocation_on;
+static unsigned allocation_calls;
 
-char *__real_stringDuplicate(const char *source);
-char *__wrap_stringDuplicate(const char *source);
+void *__real_malloc(size_t size);
+void *__wrap_malloc(size_t size);
+void *__real_mi_malloc(size_t size);
+void *__wrap_mi_malloc(size_t size);
 
-char *__wrap_stringDuplicate(const char *source)
+static bool failAllocation(void)
 {
-    if (fail_copy_on != 0 && ++copy_calls == fail_copy_on)
-    {
-        return NULL;
-    }
-    return __real_stringDuplicate(source);
+    return fail_allocation_on != 0 && ++allocation_calls == fail_allocation_on;
+}
+
+void *__wrap_malloc(size_t size)
+{
+    return failAllocation() ? NULL : __real_malloc(size);
+}
+
+void *__wrap_mi_malloc(size_t size)
+{
+    return failAllocation() ? NULL : __real_mi_malloc(size);
 }
 #endif
 
@@ -283,8 +291,8 @@ static void testCredentialCopyFailureTerminates(void)
             require(child >= 0, "failed to fork credential allocation test");
             if (child == 0)
             {
-                fail_copy_on = fail_on;
-                copy_calls   = 0;
+                fail_allocation_on = fail_on;
+                allocation_calls   = 0;
                 switch (api)
                 {
                 case 0:
