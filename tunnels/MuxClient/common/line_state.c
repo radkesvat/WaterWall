@@ -9,19 +9,9 @@ void muxclientLinestateInitialize(tunnel_t *t, muxclient_lstate_t *ls, line_t *l
     muxclient_parent_state_t *parent_state = NULL;
     if (! is_child)
     {
-        parent_state = memoryAllocateZero(sizeof(*parent_state));
-        if (UNLIKELY(parent_state == NULL))
-        {
-            LOGF("MuxClient: failed to allocate parent-only state");
-            abortProgramNow(1);
-        }
+        parent_state              = memoryAllocateZero(sizeof(*parent_state));
         parent_state->t           = t;
         parent_state->read_stream = splicestreamCreate(lineGetBufferPool(l), kMuxFrameLength);
-        if (UNLIKELY(parent_state->read_stream == NULL))
-        {
-            LOGF("MuxClient: failed to allocate parent stream");
-            abortProgramNow(1);
-        }
         bufferqueueInitEmpty(&parent_state->output.pending);
         parent_state->child_map = muxclient_child_map_t_init();
     }

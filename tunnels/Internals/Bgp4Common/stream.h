@@ -31,12 +31,11 @@ typedef struct bgp_stream_s
     bool             open; // Client OPEN admitted, or server OPEN validated.
 } bgp_stream_t;
 
-static inline bool bgpStreamInitialize(bgp_stream_t *s, line_t *l, bool client)
+static inline void bgpStreamInitialize(bgp_stream_t *s, line_t *l, bool client)
 {
     *s = (bgp_stream_t) {.client = client};
     bufferqueueInitEmpty(&s->output);
     s->read_stream = splicestreamCreate(lineGetBufferPool(l), kBgpFramePrefix);
-    return s->read_stream != NULL;
 }
 
 static inline void bgpStreamDestroy(bgp_stream_t *s)
@@ -203,7 +202,7 @@ static inline void bgpDecode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *bu
     }
     if (! splicestreamPush(s->read_stream, buf))
     {
-        bgpClose(t, l, s, "receive queue allocation failed");
+        bgpClose(t, l, s, "receive queue capacity exceeded");
         return;
     }
     if (! bgpHeaderValid(s))

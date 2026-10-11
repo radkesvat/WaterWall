@@ -2,11 +2,11 @@
  * Covers: sbuf capacity; the explicit inputs, callbacks and expected results below define this suite.
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
- * Cases: testAllocationPageTouches, testNullablePaddedAllocation, testRoundsUpToCacheLines,
+ * Cases: testAllocationPageTouches, testRoundsUpToCacheLines,
  * testPaddingIsAlignedAndAdded, testSpliceCapacityAndPadding, testUnrepresentableRequestsAreRejected,
  * testFullAllocationMustFitInSizeT; the driver lists the remaining cases
- * Checks: Assertion labels include: nullable sbuf did not provide the requested scratch geometry; a
- * zero-capacity request was rejected; a one-byte request was rejected; a sub-line request was rejected
+ * Checks: Assertion labels include: a zero-capacity request was rejected; a one-byte request was
+ * rejected; a sub-line request was rejected
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.sbuf_capacity_unit
@@ -45,22 +45,12 @@ enum
     kChildAllocationReturnedNull = 67
 };
 
-
-static bool         fail_next_aligned_allocation;
-static unsigned int injected_aligned_failures;
-static bool         poison_aligned_allocation;
+static bool poison_aligned_allocation;
 
 void *__real_memoryAllocateAligned(size_t size, size_t alignment);
 void *__wrap_memoryAllocateAligned(size_t size, size_t alignment);
 void *__wrap_memoryAllocateAligned(size_t size, size_t alignment)
 {
-    if (fail_next_aligned_allocation)
-    {
-        fail_next_aligned_allocation = false;
-        injected_aligned_failures++;
-        require(alignment == kSbufAllocationAlignment, "nullable sbuf used unexpected allocation alignment");
-        return NULL;
-    }
     void *ptr = __real_memoryAllocateAligned(size + (poison_aligned_allocation ? 32 : 0), alignment);
     if (poison_aligned_allocation && ptr != NULL)
         memorySet(ptr, 0xa5, size + 32);
@@ -112,23 +102,6 @@ static void testAllocationPageTouches(void)
             sbufDestroy(buf);
         }
     }
-}
-
-static void testNullablePaddedAllocation(void)
-{
-    sbuf_t *normal = sbufTryCreateWithPadding(65536, 10);
-    require(normal != NULL && sbufGetTotalCapacityNoPadding(normal) >= 65536 && sbufGetLeftPadding(normal) >= 10,
-            "nullable sbuf did not provide the requested scratch geometry");
-    sbufDestroy(normal);
-
-    fail_next_aligned_allocation = true;
-    sbuf_t *rejected             = sbufTryCreateWithPadding(65536, 10);
-    require(rejected == NULL && ! fail_next_aligned_allocation && injected_aligned_failures == 1,
-            "nullable sbuf did not return NULL on a real aligned-allocation failure");
-
-    sbuf_t *retry = sbufTryCreateWithPadding(65536, 10);
-    require(retry != NULL, "nullable sbuf did not recover after the injected allocation failure");
-    sbufDestroy(retry);
 }
 
 // Cache-line size is 64 or 128 depending on the target, so every expectation is
@@ -457,7 +430,6 @@ int main(void)
     testRoundsUpToCacheLines();
     testPaddingIsAlignedAndAdded();
     testAllocationPageTouches();
-    testNullablePaddedAllocation();
     testSpliceCapacityAndPadding();
     testUnrepresentableRequestsAreRejected();
     testFullAllocationMustFitInSizeT();

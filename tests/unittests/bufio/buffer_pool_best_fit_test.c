@@ -270,7 +270,7 @@ static void testIndependentSizing(void)
         checkBestFitQuery(pool, 65536, 64, 65536, 64, true);
         buffer_pool_fit_t scratch_fit;
         require(bufferpoolQueryBestFit(pool, 65536, 64, &scratch_fit), "GSO scratch fit query failed");
-        sbuf_t *scratch = sbufTryCreateWithPadding(scratch_fit.payload_capacity, scratch_fit.left_padding);
+        sbuf_t *scratch = sbufCreateWithPadding(scratch_fit.payload_capacity, scratch_fit.left_padding);
         require(scratch != NULL && sbufGetTotalCapacityNoPadding(scratch) == scratch_fit.payload_capacity &&
                     sbufGetLeftPadding(scratch) == scratch_fit.left_padding &&
                     sbufGetAllocationCharge(scratch) == scratch_fit.allocation_charge,

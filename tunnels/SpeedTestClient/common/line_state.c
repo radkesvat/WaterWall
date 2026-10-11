@@ -43,11 +43,6 @@ void speedtestclientLinestateInitialize(speedtestclient_lstate_t *ls, tunnel_t *
         .line_complete                   = false,
         .failed                          = false,
     };
-    if (ls->recv_stream == NULL)
-    {
-        LOGF("SpeedTestClient: failed to allocate receive stream");
-        abortProgramNow(1);
-    }
 }
 
 void speedtestclientLinestateDestroy(speedtestclient_lstate_t *ls)

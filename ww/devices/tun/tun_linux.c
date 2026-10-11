@@ -834,68 +834,66 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
                  tdev->name);
             offload_fallback = true;
         }
-        else if ((tdev->offload_scratch =
-                      sbufTryCreateWithPadding(scratch_fit.payload_capacity, scratch_fit.left_padding)) == NULL)
+        else
         {
-            LOGW("TunDevice: offload receive scratch unavailable for %s; falling back to raw-IP TUN", tdev->name);
-            offload_fallback = true;
-        }
-        else if (UNLIKELY(sbufGetLeftCapacity(tdev->offload_scratch) < kTunVirtioHeaderSize ||
-                          sbufGetMaximumWriteableSize(tdev->offload_scratch) < kTunOffloadPacketStorageCapacity))
-        {
-            LOGF("TunDevice: offload scratch allocation violates required geometry");
-            abortProgramNow(1);
-        }
-        else if (! tunConfigureWorkerOffload(tdev))
-        {
-            const int budget_errno = errno;
-            LOGW("TunDevice: offload worker-budget setup failed for %s (errno %d: %s); falling back to raw-IP TUN",
-                 tdev->name,
-                 budget_errno,
-                 strerror(budget_errno));
-            offload_fallback = true;
-        }
-        else if (tdev->gso_enabled && ! tunConfigureWorkerGso(tdev))
-        {
-            LOGW("TunDevice: %s GSO output allowance unavailable; disabling TCPv4 segmentation", tdev->name);
-            if (ioctl(tdev->handle, TUNSETOFFLOAD, (unsigned long) TUN_F_CSUM) == 0)
+            tdev->offload_scratch = sbufCreateWithPadding(scratch_fit.payload_capacity, scratch_fit.left_padding);
+            if (UNLIKELY(sbufGetLeftCapacity(tdev->offload_scratch) < kTunVirtioHeaderSize ||
+                         sbufGetMaximumWriteableSize(tdev->offload_scratch) < kTunOffloadPacketStorageCapacity))
             {
-                tdev->gso_enabled = false;
+                LOGF("TunDevice: offload scratch allocation violates required geometry");
+                abortProgramNow(1);
             }
-            else
+            else if (! tunConfigureWorkerOffload(tdev))
             {
-                const int downgrade_errno = errno;
-                LOGW("TunDevice: %s checksum-only downgrade failed (errno %d: %s); reopening device",
+                const int budget_errno = errno;
+                LOGW("TunDevice: offload worker-budget setup failed for %s (errno %d: %s); falling back to raw-IP TUN",
                      tdev->name,
-                     downgrade_errno,
-                     strerror(downgrade_errno));
-                close(tdev->handle);
-                tdev->handle = -1;
-                result       = tunLinuxOpenAttempt(tdev->name,
-                                             true,
-                                             false,
-                                             true,
-                                             mtu,
-                                             &tdev->handle,
-                                             &ifr,
-                                             &tdev->gso_enabled,
-                                             &reason,
-                                             &failure_errno);
-                if (result == kTunLinuxOpenOffloadUnavailable)
-                {
-                    offload_fallback = true;
-                }
-                else if (result != kTunLinuxOpenOk)
-                {
-                    LOGE("TunDevice: checksum-only reopen failed for %s at %s (errno %d: %s)",
-                         tdev->name,
-                         reason,
-                         failure_errno,
-                         strerror(failure_errno));
-                    goto fail_after_session;
-                }
+                     budget_errno,
+                     strerror(budget_errno));
+                offload_fallback = true;
             }
-            memoryZero(tdev->gso_output_charge, sizeof(tdev->gso_output_charge));
+            else if (tdev->gso_enabled && ! tunConfigureWorkerGso(tdev))
+            {
+                LOGW("TunDevice: %s GSO output allowance unavailable; disabling TCPv4 segmentation", tdev->name);
+                if (ioctl(tdev->handle, TUNSETOFFLOAD, (unsigned long) TUN_F_CSUM) == 0)
+                {
+                    tdev->gso_enabled = false;
+                }
+                else
+                {
+                    const int downgrade_errno = errno;
+                    LOGW("TunDevice: %s checksum-only downgrade failed (errno %d: %s); reopening device",
+                         tdev->name,
+                         downgrade_errno,
+                         strerror(downgrade_errno));
+                    close(tdev->handle);
+                    tdev->handle = -1;
+                    result       = tunLinuxOpenAttempt(tdev->name,
+                                                 true,
+                                                 false,
+                                                 true,
+                                                 mtu,
+                                                 &tdev->handle,
+                                                 &ifr,
+                                                 &tdev->gso_enabled,
+                                                 &reason,
+                                                 &failure_errno);
+                    if (result == kTunLinuxOpenOffloadUnavailable)
+                    {
+                        offload_fallback = true;
+                    }
+                    else if (result != kTunLinuxOpenOk)
+                    {
+                        LOGE("TunDevice: checksum-only reopen failed for %s at %s (errno %d: %s)",
+                             tdev->name,
+                             reason,
+                             failure_errno,
+                             strerror(failure_errno));
+                        goto fail_after_session;
+                    }
+                }
+                memoryZero(tdev->gso_output_charge, sizeof(tdev->gso_output_charge));
+            }
         }
     }
     if (offload_fallback)

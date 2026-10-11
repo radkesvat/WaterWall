@@ -2,7 +2,7 @@
  * Covers: fixed startup splice-pipe capacity, shared exhaustion, cross-thread release,
  * discard retirement and teardown, including bypassed ordinary buffer caching.
  * Setup: real pipe descriptors and buffer-pool APIs; only capacity negotiation and
- * selected allocation/splice/read failures are substituted at the OS boundary.
+ * selected splice/read failures are substituted at the OS boundary.
  * Limits: capacity negotiation is deterministic; payload/reuse/closure use real pipes.
  * CTest: waterwall.buffer_pool_splice_unit; waterwall.buffer_pool_splice_bypass_unit
  */
@@ -18,29 +18,6 @@
 #endif
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
-
-#ifdef WW_SPLICE_POOL_FAILURE_TEST
-static unsigned int fail_allocation;
-static unsigned int fail_aligned_allocation;
-void               *__real_memoryAllocate(size_t size);
-void               *__wrap_memoryAllocate(size_t size);
-void               *__real_memoryAllocateAligned(size_t size, size_t alignment);
-void               *__wrap_memoryAllocateAligned(size_t size, size_t alignment);
-
-void *__wrap_memoryAllocateAligned(size_t size, size_t alignment)
-{
-    if (fail_aligned_allocation != 0 && --fail_aligned_allocation == 0)
-        return NULL;
-    return __real_memoryAllocateAligned(size, alignment);
-}
-
-void *__wrap_memoryAllocate(size_t size)
-{
-    if (fail_allocation != 0 && --fail_allocation == 0)
-        return NULL;
-    return __real_memoryAllocate(size);
-}
-#endif
 
 #if WW_HAVE_SPLICE
 #include <fcntl.h>
@@ -322,27 +299,6 @@ static void testStartupLimits(void)
                 sbufSplicePoolCapacity() == 4ULL * kPipeCapacity,
             "startup charged requested capacity instead of granted capacity");
     destroyInventory();
-
-#ifdef WW_SPLICE_POOL_FAILURE_TEST
-    /* Refuse either inventory metadata or the first complete buffer. */
-    for (unsigned int allocation = 1; allocation <= 2; ++allocation)
-    {
-        resetProbe();
-        fail_allocation         = allocation == 1 ? 1 : 0;
-        fail_aligned_allocation = allocation == 2 ? 1 : 0;
-        require(sbufSplicePoolInitialize(2ULL * kPipeCapacity, kPipeCapacity, 2, 64) == 0 && pipe_calls == 0 &&
-                    fail_allocation == 0,
-                "inventory metadata refusal created pipes or failed fatally");
-        fixture_t unavailable = makeFixture(1);
-        require(bufferpoolGetSpliceBuffer(unavailable.first) == NULL && errno == ENOBUFS,
-                "unavailable startup inventory did not refuse checkout");
-        sbuf_t *ordinary = bufferpoolGetLargeBuffer(unavailable.first);
-        require(ordinary != NULL && ! sbufIsSplice(ordinary), "zero inventory disabled ordinary allocation");
-        bufferpoolReuseBuffer(unavailable.first, ordinary);
-        destroyFixture(&unavailable);
-        destroyInventory();
-    }
-#endif
 
     resetProbe();
     require(sbufSplicePoolInitialize(kPipeCapacity - 1, kPipeCapacity, 8, 64) == 0 && pipe_calls == 0,
@@ -701,24 +657,6 @@ static void testConstructionFailure(void)
     require(bufferpoolCreate(
                 masters[0], NULL, masters[2], 2, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, 1024, 1024 * 1024, 8192) == NULL,
             "missing medium master was accepted");
-#ifdef WW_SPLICE_POOL_FAILURE_TEST
-    MasterPoolItemCreateHandle original[3];
-    for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
-        original[i] = masters[i]->create_item_handle;
-    for (unsigned int allocation = 1; allocation <= 4; ++allocation)
-    {
-        fail_allocation = allocation;
-        require(
-            bufferpoolCreate(
-                masters[0], masters[1], masters[2], 2, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, 1024, 1024 * 1024, 8192) ==
-                NULL,
-            "buffer-pool metadata allocation failure was not returned");
-        require(fail_allocation == 0, "metadata allocation failure was not exercised");
-        for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
-            require(masters[i]->create_item_handle == original[i],
-                    "failed buffer-pool construction published callbacks");
-    }
-#endif
     for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
         masterpoolDestroy(masters[i]);
 #endif

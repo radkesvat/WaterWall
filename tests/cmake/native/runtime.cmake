@@ -1,6 +1,28 @@
 # Explicit native registrations; included in dependency order by unittests/CMakeLists.txt.
 if(TARGET ww)
   if(LINUX)
+    foreach(backend IN ITEMS mimalloc bypass)
+      if(backend STREQUAL "bypass")
+        set(memory_test_target memory_allocation_bypass_test)
+        set(memory_test_name waterwall.memory_allocation_bypass_unit)
+        set(memory_test_bypass 1)
+        set(memory_test_wraps malloc calloc realloc free)
+      else()
+        set(memory_test_target memory_allocation_test)
+        set(memory_test_name waterwall.memory_allocation_unit)
+        set(memory_test_bypass 0)
+        set(memory_test_wraps mi_malloc mi_calloc mi_realloc mi_free)
+      endif()
+      waterwall_add_native_executable(${memory_test_target} SUPPORT
+        SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/base/memory_allocation_test.c
+        DEFINITIONS WW_TEST_ALLOCATOR_BYPASS=${memory_test_bypass}
+        LIBRARIES ww)
+      foreach(symbol IN LISTS memory_test_wraps)
+        target_link_options(${memory_test_target} PRIVATE "-Wl,--wrap=${symbol}")
+      endforeach()
+      add_waterwall_unit_test(${memory_test_name} ${memory_test_target} "unit;memory;allocation;failure")
+    endforeach()
+
     waterwall_add_native_executable(wio_fd_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/event/wio_fd_test.c)
   target_link_libraries(wio_fd_test PRIVATE ww_test_support)
     target_link_libraries(wio_fd_test PRIVATE ww)

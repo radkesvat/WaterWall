@@ -102,10 +102,6 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     }
     // allocate memory, placing master_pool_t at a line cache address boundary
     master_pool_t *pool_ptr = memoryAllocateCacheAligned(required_size);
-    if (pool_ptr == NULL)
-    {
-        return NULL;
-    }
 
 #ifdef DEBUG
     memorySet(pool_ptr, 0xEB, required_size);

@@ -34,11 +34,7 @@ void contextqueueDestroy(context_queue_t *self)
 
 void contextqueuePush(context_queue_t *self, context_t *context)
 {
-    if (UNLIKELY(ww_context_queue_t_push_back(&self->q, context) == NULL))
-    {
-        LOGF("ContextQueue: queue insertion failed");
-        abortProgramNow(1);
-    }
+    ww_context_queue_t_push_back(&self->q, context);
 }
 
 context_t *contextqueuePop(context_queue_t *self)

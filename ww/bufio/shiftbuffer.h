@@ -281,10 +281,6 @@ static inline void sbufReset(sbuf_t *b)
  */
 sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
 
-/* Same buffer layout as sbufCreateWithPadding, but returns NULL when geometry
- * or allocation is unavailable. Use for optional facilities with a fallback. */
-sbuf_t *sbufTryCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
-
 /**
  * @brief Create a new buffer with zero left padding.
  *
@@ -303,12 +299,12 @@ sbuf_t *sbufCreate(uint32_t minimum_capacity);
 sbuf_t *sbufCreateSplice(uint16_t pad_left);
 
 /* Publish the shared control object before imports can copy global state.
- * Allocates no pipes/buffers. Failure disables inventory for that startup;
- * callers must not retry after distributing copies with a NULL pointer. */
+ * Allocates no pipes/buffers. Returns false on unsupported builds;
+ * heap allocation failure terminates the process. */
 bool sbufSplicePoolPrepare(void);
 /* Exclusive startup after all chain padding is finalized, before producers.
  * Preallocate complete buffers and full-sized pipes within the resource limits.
- * Stops on allocation/sizing refusal, retaining prior successes; zero is valid.
+ * Stops on pipe creation/sizing refusal, retaining prior successes; zero is valid.
  * Padding is aligned once and immutable. Uses the published control object;
  * standalone callers may omit Prepare when no state copies have been shared. */
 uint32_t sbufSplicePoolInitialize(uint64_t capacity_limit, uint32_t pipe_capacity, uint32_t max_pipe_count,

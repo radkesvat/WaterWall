@@ -219,7 +219,7 @@ void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle 
  * Creates a master pool with a specified capacity.
  * @param pool_width The width of the pool.
  * @return A pointer to the created master pool, or NULL when its metadata
- *         geometry or allocation cannot be satisfied. Callers must check the
+ *         geometry or mutex initialization fails. Callers must check the
  *         result before publication.
  */
 master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width);

@@ -43,9 +43,9 @@ typedef struct buffer_pool_s buffer_pool_t;
  * @param splice_payload_limit Socket splice request limit, in [1, INT_MAX], independent of inventory sizing.
  * @param waiting_budget_basis Independent basis for node waiting limits, in [1, INT_MAX]; not a receive size.
  * @return A pointer to the completely constructed buffer pool, or NULL when
- *         the input geometry, any master pool, or any metadata allocation
- *         cannot be satisfied. Nothing is published and no master-pool
- *         callback is installed on failure.
+ *         the input geometry or a master pool is invalid. Nothing is published
+ *         and no master-pool callback is installed on rejection. Heap allocation
+ *         failure terminates the process.
  */
 buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_medium, master_pool_t *mp_small,
                                 uint32_t bufcount, uint32_t large_buffer_size, uint32_t medium_buffer_size,

@@ -6,6 +6,18 @@
 #include "mimalloc.h"
 #include "wmutex.h"
 
+static void *memoryRequireAllocation(void *ptr)
+{
+    if (UNLIKELY(ptr == NULL))
+    {
+        /* Allocation may fail inside logging, with locks held, or before the
+         * shutdown controller exists. Do not allocate, log, flush streams or
+         * wait for orderly cleanup on this path. */
+        abortProgramNow(1);
+    }
+    return ptr;
+}
+
 static bool memoryAlignmentIsValid(size_t alignment)
 {
     return alignment != 0 && (alignment & (alignment - 1)) == 0;
@@ -24,6 +36,7 @@ bool memoryAlignedAllocationSizeIsRepresentable(size_t size, size_t alignment)
 
 void *memoryAllocateAligned(size_t size, size_t alignment)
 {
+    size = max(size, (size_t) 1);
     if (! memoryAlignedAllocationSizeIsRepresentable(size, alignment))
     {
         return NULL;
@@ -37,10 +50,6 @@ void *memoryAllocateAligned(size_t size, size_t alignment)
     // since the allocator returns pointer-aligned memory, so the padding
     // itself has room for the back-pointer
     void *base = memoryAllocate(size + alignment);
-    if (base == NULL)
-    {
-        return NULL;
-    }
 
     uintptr_t aligned = ALIGN2((uintptr_t) base + 1, alignment);
     assert(aligned - (uintptr_t) base >= sizeof(void *));
@@ -132,23 +141,34 @@ dedicated_memory_t *memorymanagerCreateDedicatedMemory(void)
 */
 void *memoryAllocate(size_t size)
 {
-    void *ptr = mi_malloc(size);
+    size      = max(size, (size_t) 1);
+    void *ptr = memoryRequireAllocation(mi_malloc(size));
 #ifdef DEBUG
-    if (ptr != NULL)
-    {
-        memorySet(ptr, 0XBE, size);
-    }
+    memorySet(ptr, 0XBE, size);
 #endif
     return ptr;
 }
 void *memoryReAllocate(void *ptr, size_t size)
 {
-    return mi_realloc(ptr, size);
+    if (size == 0)
+    {
+        memoryFree(ptr);
+        return NULL;
+    }
+    return memoryRequireAllocation(mi_realloc(ptr, size));
 }
 
 void *memoryCalloc(size_t n, size_t size)
 {
-    return mi_calloc(n, size);
+    if (n != 0 && size > SIZE_MAX / n)
+    {
+        return NULL;
+    }
+    if (n == 0 || size == 0)
+    {
+        n = size = 1;
+    }
+    return memoryRequireAllocation(mi_calloc(n, size));
 }
 
 void memoryFree(void *ptr)
@@ -210,24 +230,35 @@ void memorymanagerInit(void)
 
 void *memoryAllocate(size_t size)
 {
-    void *ptr = malloc(size);
+    size      = max(size, (size_t) 1);
+    void *ptr = memoryRequireAllocation(malloc(size));
 #ifdef DEBUG
-    if (ptr != NULL)
-    {
-        memorySet(ptr, 0XBE, size);
-    }
+    memorySet(ptr, 0XBE, size);
 #endif
     return ptr;
 }
 
 void *memoryReAllocate(void *ptr, size_t size)
 {
-    return realloc(ptr, size);
+    if (size == 0)
+    {
+        memoryFree(ptr);
+        return NULL;
+    }
+    return memoryRequireAllocation(realloc(ptr, size));
 }
 
 void *memoryCalloc(size_t n, size_t size)
 {
-    return calloc(n, size);
+    if (n != 0 && size > SIZE_MAX / n)
+    {
+        return NULL;
+    }
+    if (n == 0 || size == 0)
+    {
+        n = size = 1;
+    }
+    return memoryRequireAllocation(calloc(n, size));
 }
 
 void memoryFree(void *ptr)
@@ -272,9 +303,6 @@ void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 void *memoryAllocateZero(size_t size)
 {
     void *ptr = memoryAllocate(size);
-    if (ptr != NULL)
-    {
-        memoryZero(ptr, size);
-    }
+    memoryZero(ptr, size);
     return ptr;
 }

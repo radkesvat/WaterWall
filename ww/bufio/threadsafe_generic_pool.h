@@ -49,8 +49,9 @@ static inline void threadsafegenericpoolSetItemSize(threadsafe_generic_pool_t *p
     mutexUnlock(&(pool->mutex));
 }
 
-/* All wrapper constructors return NULL when either inner-pool metadata or the
- * mutex wrapper allocation fails. Callers must check before publication. */
+/* All wrapper constructors return NULL for invalid inner-pool arguments/geometry
+ * or failed mutex initialization. Heap allocation failure terminates the process.
+ * Callers must check before publication. */
 threadsafe_generic_pool_t *threadsafegenericpoolCreate(master_pool_t *mp, PoolItemCreateHandle create_h,
                                                        PoolItemDestroyHandle destroy_h);
 

@@ -19,7 +19,8 @@ typedef struct splice_stream_s
     uint8_t        header[];
 } splice_stream_t;
 
-/* Checked object/header allocation. Zero header size is valid.
+/* Returns NULL only for unrepresentable object/header geometry. Zero header size
+ * is valid; heap allocation failure terminates the process.
  * The borrowed owner-worker pool must outlive destroy. */
 splice_stream_t *splicestreamCreate(buffer_pool_t *pool, uint32_t header_size);
 void             splicestreamDestroy(splice_stream_t *stream);

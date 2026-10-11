@@ -185,8 +185,8 @@ static inline void genericpoolSetItemSize(generic_pool_t *pool, uint32_t item_si
  * @param mp The master pool.
  * @param create_h The handler to create pool items.
  * @param destroy_h The handler to destroy pool items.
- * @return A pointer to the created generic pool, or NULL when metadata geometry
- *         or allocation fails. Callers must check the result before publication.
+ * @return A pointer to the created generic pool, or NULL for invalid arguments
+ *         or metadata geometry. Heap allocation failure terminates the process.
  */
 generic_pool_t *genericpoolCreate(master_pool_t *mp, PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h);
 
@@ -196,7 +196,7 @@ generic_pool_t *genericpoolCreate(master_pool_t *mp, PoolItemCreateHandle create
  * @param pool_width The width of the pool.
  * @param create_h The handler to create pool items.
  * @param destroy_h The handler to destroy pool items.
- * @return A pointer to the created generic pool, or NULL on metadata failure.
+ * @return A pointer to the created generic pool, or NULL for invalid arguments or geometry.
  */
 generic_pool_t *genericpoolCreateWithCapacity(master_pool_t *mp, uint32_t pool_width, PoolItemCreateHandle create_h,
                                               PoolItemDestroyHandle destroy_h);
@@ -206,7 +206,7 @@ generic_pool_t *genericpoolCreateWithCapacity(master_pool_t *mp, uint32_t pool_w
  * The master must have fixed, userdata-independent callbacks installed before
  * construction, and every local cache in this family must use this constructor.
  * This also permits direct master checkout with NULL userdata on foreign threads.
- * Returns NULL on metadata allocation or geometry failure.
+ * Returns NULL for invalid arguments or metadata geometry.
  */
 generic_pool_t *genericpoolCreateWithMasterPoolCallbacks(master_pool_t *mp, uint32_t pool_width);
 
@@ -214,7 +214,7 @@ generic_pool_t *genericpoolCreateWithMasterPoolCallbacks(master_pool_t *mp, uint
  * Creates a generic pool with a default allocator.
  * @param mp The master pool.
  * @param item_size The size of each item in the pool.
- * @return A pointer to the created generic pool, or NULL on metadata failure.
+ * @return A pointer to the created generic pool, or NULL for invalid arguments or geometry.
  */
 generic_pool_t *genericpoolCreateWithDefaultAllocator(master_pool_t *mp, uint32_t item_size);
 
@@ -223,7 +223,7 @@ generic_pool_t *genericpoolCreateWithDefaultAllocator(master_pool_t *mp, uint32_
  * @param mp The master pool.
  * @param item_size The size of each item in the pool.
  * @param pool_width The width of the pool.
- * @return A pointer to the created generic pool, or NULL on metadata failure.
+ * @return A pointer to the created generic pool, or NULL for invalid arguments or geometry.
  */
 generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
                                                                  uint32_t pool_width);
@@ -233,7 +233,7 @@ generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *
  * @param mp The master pool.
  * @param item_size The size of each item in the pool.
  * @param pool_width The width of the pool.
- * @return A pointer to the created generic pool, or NULL on metadata failure.
+ * @return A pointer to the created generic pool, or NULL for invalid arguments or geometry.
  */
 generic_pool_t *genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
                                                                              uint32_t pool_width);

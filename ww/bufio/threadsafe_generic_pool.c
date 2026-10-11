@@ -8,14 +8,8 @@ static threadsafe_generic_pool_t *allocateThreadSafeGenericPool(generic_pool_t *
     }
 
     threadsafe_generic_pool_t *pool = memoryAllocate(sizeof(*pool));
-    if (pool == NULL)
-    {
-        genericpoolDestroy(inner_pool);
-        return NULL;
-    }
-
-    *pool = (threadsafe_generic_pool_t) {
-        .inner_pool = inner_pool,
+    *pool                           = (threadsafe_generic_pool_t) {
+                                  .inner_pool = inner_pool,
     };
 
     if (UNLIKELY(! mutexTryInit(&pool->mutex)))

@@ -32,8 +32,9 @@ void initWLibc(void);
  * assume teardown finished.
  *
  * abortProgramNow() is the immediate hard abort. It skips every registered
- * cleanup callback and is only for corrupted state, documented fail-fast
- * allocation failures, or failures reached while arbitrary locks may still be held.
+ * cleanup callback and is used for heap allocation failure, corrupted state,
+ * or failures reached while arbitrary locks may still be held. Allocation
+ * failure must not enter ordinary logging or request asynchronous cleanup.
  *
  */
 bool           requestProgramShutdown(int exit_code); // in signal_manager.c

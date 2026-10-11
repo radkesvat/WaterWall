@@ -53,7 +53,7 @@ static line_t          *line;
 static uint8_t          wire[2 * kExpectedChunkBytes + 1024], plain[2 * kExpectedChunkBytes + 1024];
 static size_t           wire_length, plain_length, measured_reads;
 static unsigned         wire_calls, plain_calls, finishes, inits;
-static bool             measuring, fail_stream, fail_queue, inject_encode, inject_decode, close_output, require_splice;
+static bool             measuring, fail_queue, inject_encode, inject_decode, close_output, require_splice;
 static sbuf_t          *expected_identity;
 static bool             pause_output;
 static unsigned         encode_overflow;
@@ -71,13 +71,6 @@ ssize_t __wrap_read(int fd, void *destination, size_t bytes)
     if (measuring && result > 0)
         measured_reads += (size_t) result;
     return result;
-}
-
-splice_stream_t *__real_splicestreamCreate(buffer_pool_t *pool, uint32_t header_size);
-splice_stream_t *__wrap_splicestreamCreate(buffer_pool_t *pool, uint32_t header_size);
-splice_stream_t *__wrap_splicestreamCreate(buffer_pool_t *pool, uint32_t header_size)
-{
-    return fail_stream ? NULL : __real_splicestreamCreate(pool, header_size);
 }
 
 bool __real_bufferqueueReserveExtra(buffer_queue_t *queue, size_t extra);
@@ -332,7 +325,7 @@ static void setup(void)
 
 static void teardown(void)
 {
-    fail_stream = fail_queue = false;
+    fail_queue = false;
     if (lineIsAlive(line))
     {
         node->fnFinU(node, line);
@@ -774,11 +767,6 @@ static void testControlAndRejection(void)
     const uint8_t invalid[] = {0, 0, 0, 0, 1};
     decode(node, line, ordinary(invalid, sizeof(invalid)));
     twfRequire(! lineIsAlive(line) && finishes == 2, "invalid frame did not close both directions");
-    teardown();
-
-    fail_stream = true;
-    setup();
-    twfRequire(! lineIsAlive(line) && inits == 0 && finishes == 1, "stream allocation failure reached next Init");
     teardown();
 
     setup();

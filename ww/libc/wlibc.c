@@ -117,10 +117,6 @@ char *stringDuplicate(const char *src)
 
     size_t length = stringLength(src) + 1;
     char  *dup    = (char *) memoryAllocate(length);
-    if (dup == NULL)
-    {
-        return NULL;
-    }
     memoryCopy(dup, src, length);
     return dup;
 }

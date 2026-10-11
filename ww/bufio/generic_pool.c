@@ -109,10 +109,6 @@ static generic_pool_t *allocateGenericPool(master_pool_t *mp, uint32_t item_size
         return NULL;
     }
     generic_pool_t *pool_ptr = memoryAllocate(required_size);
-    if (pool_ptr == NULL)
-    {
-        return NULL;
-    }
 #ifdef DEBUG
     memorySet(pool_ptr, 0xEB, required_size);
 #endif

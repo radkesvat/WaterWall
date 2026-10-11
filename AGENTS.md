@@ -32,10 +32,9 @@ Preserve every **applicable** invariant without forcing irrelevant tunnel analys
 
 ### Durable project knowledge
 
-The Developer Guide is durable project memory, not a task journal. During
-implementation, update its canonical section when in-scope work changes a contract
-or confirms reusable knowledge whose omission would mislead; docs are not redesign
-authority.
+The Developer Guide is durable memory, not task history. Update its canonical
+section for in-scope contract changes or confirmed reusable knowledge whose
+omission would mislead; docs do not authorize redesign.
 
 Never record speculation, pending ideas, review history, artifacts, or one-off
 details as contracts or promote patterns without confirming intent. Report
@@ -59,10 +58,9 @@ implementations, and `tests/` native/integration coverage. `CMakePresets.json` a
 `WaterWall-Docs/docs/05-devguides/`; node settings in
 `WaterWall-Docs/docs/02-noderefs/`.
 
-The routing table is mandatory. Before substantive work, read every row matching
-the expected or discovered scope; the guide's normative `must` and `never`
-statements then join this policy. If scope expands, read newly applicable material
-before continuing.
+Before substantive work, read every routing-table source matching the scope;
+the guide's `must` and `never` statements join this policy. Read newly applicable
+sources before continuing when scope expands.
 
 | Trigger | Required sources |
 | --- | --- |
@@ -125,8 +123,11 @@ These guardrails do not replace the mandatory guide reading:
 13. Callers own preconditions; use Debug `assert()`, not silent error returns, for
     programmer errors. Critical runtime invariants require `LOGF` and
     `abortProgramNow()`. Keep checks for expected failure, external input, valid nulls
-    and callback-driven changes. See Part 5 "Caller preconditions and failure handling"
-    and Part 7. Reserve `LIKELY`/`UNLIKELY` for meaningful branch expectations.
+    and callback-driven changes. See Parts 5 and 7. Reserve `LIKELY`/`UNLIKELY`
+    for meaningful branch expectations.
+14. Memory-manager OOM is fatal; never add recovery or orderly shutdown.
+    Preserve geometry, budget, fixed-resource and I/O refusals. See
+    [Part 5](WaterWall-Docs/docs/05-devguides/part5-tunnel-anatomy.mdx#heap-allocation-failure).
 
 ## 4. Implementation Workflow
 
@@ -178,17 +179,13 @@ These guardrails do not replace the mandatory guide reading:
   **“The implementation satisfies the required contract. No further blocking changes
   are necessary.”** Optional ideas stay separate and do not extend the loop without
   explicit authorization.
-- For tunnel-related changes, verify every applicable rule in §3, especially exact
-  line ownership, re-entrant callback continuation, no reflection after `Finish`,
-  owner death on `Finish`, packet-line classification, padding, buffer transfer,
-  WID use, shutdown inventories, and bounded backpressure.
+- For tunnel-related changes, verify every applicable §3 rule.
 
 ## 6. Build, Format, Test, And Validate
 
-Part 6 is the canonical source for complete commands, lane meanings, and current
-timings. Use CMake presets and project scripts, not hand-built compiler commands.
-Prefer the `linux` production tree and do not mix it with `linux-gcc-x64` in one
-validation flow.
+Part 6 defines commands, lanes and timings. Use CMake presets and project scripts,
+not hand-built compiler commands. Prefer the `linux` production tree; never mix
+it with `linux-gcc-x64` in one validation flow.
 
 ```bash
 cmake --preset linux

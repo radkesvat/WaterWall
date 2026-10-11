@@ -39,7 +39,7 @@ if(LINUX)
         waterwall_line_failure_test_use_tunnel(${uot_target} UdpOverTcp${uot_side})
         target_link_libraries(${uot_target} PRIVATE ww)
         target_link_options(${uot_target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
-          "-Wl,--wrap=read" "-Wl,--wrap=splicestreamCreate" "-Wl,--wrap=bufferqueueReserveExtra")
+          "-Wl,--wrap=read" "-Wl,--wrap=bufferqueueReserveExtra")
         if(uot_side STREQUAL "Server")
           target_compile_definitions(${uot_target} PRIVATE TEST_UOT_SERVER=1)
         endif()

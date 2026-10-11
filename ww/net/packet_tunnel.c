@@ -106,9 +106,7 @@ tunnel_t *packettunnelCreate(node_t *node, size_t tstate_size, size_t lstate_siz
 
     tunnel_t *t = tunnelCreate(node, tstate_size, 0);
 
-    // tunnelCreate() is nullable by contract: it returns NULL on a state-size
-    // overflow or an allocation failure. Callers unwind from a NULL create
-    // handle, so the failure has to survive as far as them.
+    // Invalid or unrepresentable state sizes remain a nullable constructor result.
     if (! t)
     {
         return NULL;

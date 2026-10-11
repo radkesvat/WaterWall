@@ -3,7 +3,7 @@
  * this suite.
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
- * Cases: testGsoNegotiationAndRawFallback, testGsoScratchAllocationFallsBackToRaw,
+ * Cases: testGsoNegotiationAndRawFallback,
  * testOrdinaryChecksumWorkerHandoff, testOrdinaryChecksumMixedFifo,
  * testOrdinaryChecksumBudget, testOrdinaryChecksumReaderFallback,
  * testTunWriterRefusalClassesUseFreshTlsState, testQueuedCleanupOutlivesDevice,
@@ -114,8 +114,6 @@ static unsigned int       gso_limit_calls;
 static unsigned long      fail_gso_ioctl_request;
 static int                fail_gso_ioctl_errno;
 static bool               gso_feature_available;
-static bool               fail_gso_scratch_once;
-static unsigned int       gso_scratch_failures;
 static char               gso_attach_name[IFNAMSIZ];
 static char               raw_attach_name[IFNAMSIZ];
 static bool               raw_attach_exclusive;
@@ -194,8 +192,8 @@ void                           __real_masterpoolDestroy(master_pool_t *pool);
 void                           __wrap_masterpoolDestroy(master_pool_t *pool);
 void                           __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
 void                           __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
-sbuf_t                        *__real_sbufTryCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
-sbuf_t                        *__wrap_sbufTryCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
+sbuf_t                        *__real_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
+sbuf_t                        *__wrap_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
 void                           __real_sbufDestroy(sbuf_t *buf);
 void                           __wrap_sbufDestroy(sbuf_t *buf);
 bool __wrap_tunLinuxGsoMaxSegmentsConfigure(const char *ifname, uint32_t requested, uint32_t *active);
@@ -937,17 +935,10 @@ void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
     }
 }
 
-sbuf_t *__wrap_sbufTryCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
+sbuf_t *__wrap_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
 {
-    if (fail_gso_scratch_once && minimum_capacity == 65536 && pad_left >= 10)
-    {
-        fail_gso_scratch_once = false;
-        gso_scratch_failures++;
-        errno = ENOMEM;
-        return NULL;
-    }
-    sbuf_t *buf = __real_sbufTryCreateWithPadding(minimum_capacity, pad_left);
-    if (minimum_capacity == 65536 && pad_left >= 10)
+    sbuf_t *buf = __real_sbufCreateWithPadding(minimum_capacity, pad_left);
+    if (gso_scratch_buffer == NULL && minimum_capacity == 65536 && pad_left >= 10)
     {
         gso_scratch_buffer = buf;
     }
@@ -1052,10 +1043,8 @@ static void resetGsoSetup(void)
     gso_offload_calls      = 0;
     gso_limit_calls        = 0;
     fail_gso_ioctl_request = 0;
-    fail_gso_ioctl_errno   = EOPNOTSUPP;
-    gso_feature_available  = true;
-    fail_gso_scratch_once  = false;
-    gso_scratch_failures   = 0;
+    fail_gso_ioctl_errno    = EOPNOTSUPP;
+    gso_feature_available   = true;
     memoryZero(gso_attach_name, sizeof(gso_attach_name));
     memoryZero(raw_attach_name, sizeof(raw_attach_name));
     raw_attach_exclusive      = false;
@@ -1376,31 +1365,6 @@ static void testOffloadResourceFallbacks(void)
         require(tundeviceBringUp(tdev) && tundeviceBringDown(tdev), "downgraded device could not start and stop");
         tundeviceDestroy(tdev);
     }
-}
-
-static void testGsoScratchAllocationFallsBackToRaw(bool gso_requested)
-{
-    resetFakeThreads(0);
-    resetGsoSetup();
-    resetTunLogCapture();
-    fail_gso_scratch_once = true;
-
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, NULL, kDeviceFragmentPreserve);
-    require(tdev != NULL, "GSO scratch-allocation failure did not fall back to raw TUN");
-    require(! tundeviceEnableTrustedChecksums(tdev), "scratch fallback activated trust");
-    require(gso_scratch_failures == 1 && ! fail_gso_scratch_once,
-            "GSO scratch-allocation injection did not hit exactly one scratch request");
-    require(gso_setiff_calls == 1 && raw_setiff_calls == 1 && raw_attach_exclusive &&
-                memoryEqual(gso_attach_name, raw_attach_name, IFNAMSIZ),
-            "scratch failure did not reopen the same exclusive TUN name in raw mode");
-    require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) < 0,
-            "scratch failure left offload output credits active on raw TUN");
-    require(countTunLogSubstring("offload receive scratch unavailable") == 1 &&
-                countTunLogSubstring("falling back to raw-IP TUN") == 1,
-            "scratch failure did not explain the one-time raw fallback");
-    require(tundeviceBringUp(tdev), "raw TUN fallback after scratch failure did not start");
-    require(tundeviceBringDown(tdev), "raw TUN fallback after scratch failure did not stop");
-    tundeviceDestroy(tdev);
 }
 
 static void *tunRefusalWriterRoutine(void *userdata)
@@ -3512,8 +3476,6 @@ int main(void)
     testChecksumOnlyNegotiation();
     testDnsMutationCleanup();
     testGsoNegotiationAndRawFallback();
-    testGsoScratchAllocationFallsBackToRaw(false);
-    testGsoScratchAllocationFallsBackToRaw(true);
     testOffloadResourceFallbacks();
     testChecksumOnlyRejectsGso();
     testTrustedChecksumOnlyFallback();

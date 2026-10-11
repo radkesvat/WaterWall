@@ -46,7 +46,7 @@ void bgp4serverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void bgp4serverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 bool    bgp4serverLoadSettings(bgp4server_tstate_t *ts, const cJSON *settings);
-bool    bgp4serverLinestateInitialize(bgp4server_lstate_t *ls, line_t *l);
+void    bgp4serverLinestateInitialize(bgp4server_lstate_t *ls, line_t *l);
 void    bgp4serverLinestateDestroy(bgp4server_lstate_t *ls);
 void    bgp4serverTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void    bgp4serverTunnelUpStreamResume(tunnel_t *t, line_t *l);

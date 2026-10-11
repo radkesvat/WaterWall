@@ -14,7 +14,7 @@
 #endif
 #include "wlibc.h"
 
-static sbuf_t *sbufTryAllocate(uint32_t capacity, uint16_t pad_left);
+static sbuf_t *sbufAllocate(uint32_t capacity, uint16_t pad_left);
 
 #if WW_HAVE_SPLICE
 /* Owned by GSTATE. Startup fixes both the inventory and aligned padding before
@@ -87,8 +87,6 @@ bool sbufSplicePoolPrepare(void)
 #if WW_HAVE_SPLICE
     assert(GSTATE.splice_inventory == NULL);
     sbuf_splice_inventory_t *inventory = memoryAllocate(sizeof(*inventory));
-    if (inventory == NULL)
-        return false;
     *inventory              = (sbuf_splice_inventory_t) {.padding = -1, .discard_fd = -1};
     GSTATE.splice_inventory = inventory;
     return true;
@@ -103,8 +101,8 @@ uint32_t sbufSplicePoolInitialize(uint64_t capacity_limit, uint32_t pipe_capacit
     assert(pipe_capacity > 0 && pipe_capacity <= INT_MAX);
     padding = sbufAlignLeftPadding(padding);
 #if WW_HAVE_SPLICE
-    if (GSTATE.splice_inventory == NULL && ! sbufSplicePoolPrepare())
-        return 0;
+    if (GSTATE.splice_inventory == NULL)
+        discard sbufSplicePoolPrepare();
     sbuf_splice_inventory_t *inventory = GSTATE.splice_inventory;
     assert(inventory->padding == -1);
     inventory->padding    = padding;
@@ -120,9 +118,7 @@ uint32_t sbufSplicePoolInitialize(uint64_t capacity_limit, uint32_t pipe_capacit
     uint32_t acquired_count    = 0;
     for (uint32_t i = 0; i < target; ++i)
     {
-        sbuf_t *buf = sbufTryAllocate(SPLICE_BUFFER_STORAGE_SIZE + (uint32_t) padding, padding);
-        if (buf == NULL)
-            break;
+        sbuf_t *buf = sbufAllocate(SPLICE_BUFFER_STORAGE_SIZE + (uint32_t) padding, padding);
         int pair[2];
         if (pipe2(pair, O_NONBLOCK | O_CLOEXEC) != 0)
         {
@@ -265,14 +261,10 @@ void sbufDestroy(sbuf_t *b)
     memoryFreeAligned(b);
 }
 
-static sbuf_t *sbufTryAllocate(uint32_t capacity, uint16_t pad_left)
+static sbuf_t *sbufAllocate(uint32_t capacity, uint16_t pad_left)
 {
     size_t  total_size = sizeof(sbuf_t) + (size_t) capacity;
     sbuf_t *b          = memoryAllocateAligned(total_size, kSbufAllocationAlignment);
-    if (b == NULL)
-    {
-        return NULL;
-    }
 
 #ifdef DEBUG
     memorySet(b->buf, 0x55, capacity);
@@ -302,27 +294,6 @@ static sbuf_t *sbufTryAllocate(uint32_t capacity, uint16_t pad_left)
     b->l_pad    = pad_left;
 
     return b;
-}
-
-static sbuf_t *sbufAllocate(uint32_t capacity, uint16_t pad_left)
-{
-    sbuf_t *buffer = sbufTryAllocate(capacity, pad_left);
-    if (buffer == NULL)
-    {
-        printError("sbuf: allocation failed");
-        exit(1);
-    }
-    return buffer;
-}
-
-sbuf_t *sbufTryCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
-{
-    uint32_t real_cap;
-    if (! sbufTryComputeCapacity(minimum_capacity, pad_left, &real_cap))
-    {
-        return NULL;
-    }
-    return sbufTryAllocate(real_cap, sbufAlignLeftPadding(pad_left));
 }
 
 sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)

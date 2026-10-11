@@ -17,6 +17,15 @@ static inline bool memoryTryComputeArraySize(size_t count, size_t item_size, siz
 struct dedicated_memory_s;
 typedef struct dedicated_memory_s dedicated_memory_t;
 
+/* Heap exhaustion terminates immediately through abortProgramNow(); no orderly
+ * cleanup is attempted and no NULL result is returned for allocation failure.
+ * Zero-byte allocations reserve at least one byte. memoryReAllocate(ptr, 0)
+ * instead frees ptr and returns NULL, including when ptr is NULL.
+ *
+ * Invalid geometry remains distinguishable from heap exhaustion: aligned
+ * allocation returns NULL for invalid alignment or unrepresentable size, and
+ * memoryCalloc returns NULL if n * size overflows. Validate external sizes before
+ * committing to an allocation. Dedicated helpers inherit these contracts. */
 void *memoryAllocate(size_t size);
 void *memoryAllocateZero(size_t size);
 bool  memoryAlignedAllocationSizeIsRepresentable(size_t size, size_t alignment);

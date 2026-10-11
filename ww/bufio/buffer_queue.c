@@ -21,13 +21,6 @@ void bufferqueueInitEmpty(buffer_queue_t *self)
     self->budget       = NULL;
 }
 
-/*
- * STC's _with_capacity() is not usable here. It computes the ring size first and
- * only then allocates, so a refused allocation publishes {cbuf == NULL,
- * capmask != 0} - a queue that reports storage it does not have, and whose first
- * insertion writes through NULL. _init() plus a checked _reserve() is the only
- * construction that cannot produce that state.
- */
 bool bufferqueueInit(buffer_queue_t *self, int init_capacity)
 {
     if (init_capacity < 1)
@@ -36,24 +29,29 @@ bool bufferqueueInit(buffer_queue_t *self, int init_capacity)
     }
 
     bufferqueueInitEmpty(self);
-    return ww_sbuffer_queue_t_reserve(&self->q, init_capacity);
+    return bufferqueueReserveExtra(self, (size_t) init_capacity);
 }
 
 buffer_queue_t bufferqueueCreate(int init_capacity)
 {
     buffer_queue_t bq;
 
-    // The empty queue left behind by a refused reservation is valid and will
-    // allocate again on first use, so this stays best effort by design.
-    discard bufferqueueInit(&bq, init_capacity);
+    if (UNLIKELY(! bufferqueueInit(&bq, init_capacity)))
+    {
+        printError("buffer queue: initial capacity is unrepresentable");
+        abortProgramNow(1);
+    }
     return bq;
 }
 
 bool bufferqueueReserveExtra(buffer_queue_t *self, size_t extra)
 {
     const size_t size = (size_t) ww_sbuffer_queue_t_size(&self->q);
-
-    if (UNLIKELY(extra > (size_t) PTRDIFF_MAX - size))
+    /* STC rounds the ring to a power of two, reserves one empty slot and
+     * computes its byte size in isize_t. Bound the rounded storage as well as
+     * the entry count before calling its unchecked arithmetic. */
+    const size_t maximum_capacity = (size_t) PTRDIFF_MAX / (2U * sizeof(*self->q.cbuf));
+    if (UNLIKELY(size > maximum_capacity || extra > maximum_capacity - size))
     {
         return false;
     }
@@ -89,7 +87,7 @@ void bufferqueueDestroy(buffer_queue_t *self)
 /*
  * Reserving one slot first makes the insertion below infallible: STC only grows
  * when the ring is full, and after the reserve it provably is not. A NULL here
- * would mean the container itself is corrupt, not that memory ran out, and by
+ * would mean the container itself is corrupt, and by
  * that point the Debug replacement has already destroyed the caller's original -
  * so there is nothing left to hand back and no honest failure to report.
  */

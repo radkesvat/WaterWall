@@ -10,8 +10,8 @@
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.users_index_unit
- * Organization: Lookup, mutation, removal and copy failures all check the users table indexes through
- * the same allocation/hash seams. Keeping one fixture makes the transactional state comparisons visible.
+ * Organization: Lookup, mutation, removal and copy check the users table indexes through
+ * allocation counting and crypto seams. Invalid updates and crypto failures retain transactional checks.
  */
 /*
  * Focused correctness and instrumentation tests for the users_t lookup indexes.
@@ -108,44 +108,12 @@ wcrypto_status_t __wrap_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY
     return __real_wCryptoX25519(out, scalar, point);
 }
 
-/*
- * Narrowly scoped stringDuplicate fault injection. userChangePassword() copies
- * the new plaintext password (via stringDuplicate) only after deriving its
- * staged hashes, i.e. after usersChangePasswordLocked() has already captured the
- * old credential snapshot. Arming this flag fails that exact allocation so the
- * post-snapshot failure/cleanup path can be exercised deterministically. The
- * wrapper is a strict pass-through unless armed.
- */
-static bool fail_next_string_duplicate = false;
-
-char *__real_stringDuplicate(const char *src);
-char *__wrap_stringDuplicate(const char *src);
-
-char *__wrap_stringDuplicate(const char *src)
-{
-    if (fail_next_string_duplicate)
-    {
-        fail_next_string_duplicate = false;
-        return NULL;
-    }
-    return __real_stringDuplicate(src);
-}
 #endif
 
-#if defined(USERS_TEST_ALLOC_INJECTION)
-/*
- * Deterministic allocation-fault injection. When the probe is armed, the Nth
- * heap allocation of the measured operation (N == g_alloc_fail_at) returns NULL;
- * every other allocation passes through to the real allocator. Sweeping N across
- * an operation and asserting the database stays consistent proves the mutation
- * paths are transactional: each fails cleanly before any irreversible change, or
- * completes fully. The wrappers cover the three allocation entry points the STC
- * maps and the user/users code actually use (memoryAllocateZero/Aligned funnel
- * through memoryAllocate, so wrapping it catches them too).
- */
-static bool   g_alloc_probe_active = false;
-static size_t g_alloc_calls        = 0;
-static size_t g_alloc_fail_at      = 0; /* 0 disables failure; else fail the Nth call */
+#if defined(USERS_TEST_ALLOC_COUNTING)
+/* Count core allocations without replacing their succeed-or-terminate contract. */
+static bool   g_alloc_probe_active;
+static size_t g_alloc_calls;
 
 void *__real_memoryAllocate(size_t size);
 void *__real_memoryReAllocate(void *ptr, size_t size);
@@ -154,53 +122,37 @@ void *__wrap_memoryAllocate(size_t size);
 void *__wrap_memoryReAllocate(void *ptr, size_t size);
 void *__wrap_memoryCalloc(size_t count, size_t size);
 
-static bool allocInjectionShouldFail(void)
+static void countAllocation(void)
 {
-    if (! g_alloc_probe_active)
-    {
-        return false;
-    }
-    g_alloc_calls += 1U;
-    return g_alloc_fail_at != 0U && g_alloc_calls == g_alloc_fail_at;
+    if (g_alloc_probe_active)
+        ++g_alloc_calls;
 }
 
 void *__wrap_memoryAllocate(size_t size)
 {
-    if (allocInjectionShouldFail())
-    {
-        return NULL;
-    }
+    countAllocation();
     return __real_memoryAllocate(size);
 }
 
 void *__wrap_memoryReAllocate(void *ptr, size_t size)
 {
-    if (allocInjectionShouldFail())
-    {
-        return NULL;
-    }
+    countAllocation();
     return __real_memoryReAllocate(ptr, size);
 }
 
 void *__wrap_memoryCalloc(size_t count, size_t size)
 {
-    if (allocInjectionShouldFail())
-    {
-        return NULL;
-    }
+    countAllocation();
     return __real_memoryCalloc(count, size);
 }
 
-/* Arms the probe so the `fail_at`-th subsequent allocation fails (0 = none). */
-static void allocInjectionArm(size_t fail_at)
+static void allocationCountBegin(void)
 {
     g_alloc_calls        = 0;
-    g_alloc_fail_at      = fail_at;
     g_alloc_probe_active = true;
 }
 
-/* Disarms the probe and returns how many allocations the operation performed. */
-static size_t allocInjectionDisarm(void)
+static size_t allocationCountEnd(void)
 {
     g_alloc_probe_active = false;
     return g_alloc_calls;
@@ -210,7 +162,6 @@ static size_t allocInjectionDisarm(void)
 #if defined(USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER)
 extern size_t users_test_credential_snapshot_wipes;
 #endif
-
 
 static void resetCounters(void)
 {
@@ -662,53 +613,11 @@ static void testIncrementalPasswordChange(void)
 
 #if defined(WCRYPTO_TEST_LINKER_WRAP) && defined(USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER)
 /*
- * A password update that fails after the old credential snapshot is captured
- * must still wipe that snapshot and leave the database untouched. This case
- * fails the plaintext copy inside userChangePassword (an allocation failure that
- * happens after the staged hashes are derived), which is the first failure that
- * can occur once usersChangePasswordLocked() holds the old snapshot. The old
- * password is a UUID string so the SHA, UUID, and WireGuard snapshot paths all
- * carry meaningful secret material.
- */
-static void testChangePasswordAllocationFailureWipesSnapshot(void)
-{
-    users_t users;
-    require(usersCreate(&users), "failed to create users table");
-
-    const char *old_uuid_pw = "12345678-1234-1234-1234-1234567890ab";
-    uint8_t     old_uuid_bytes[kWwUuidBytesLen];
-    require(wwUuidParseString(old_uuid_pw, old_uuid_bytes), "failed to parse old UUID password");
-    addUser(&users, 1, old_uuid_pw);
-    user_t *u1 = usersLookupByIdentifier(&users, 1);
-    require(u1 != NULL, "seed user missing");
-    require(usersValidate(&users), "fixture invalid before allocation injection");
-
-    users_test_credential_snapshot_wipes = 0;
-    fail_next_string_duplicate           = true;
-    bool ok                              = usersChangePassword(&users, u1, "proposed-new-password");
-    bool injection_consumed              = ! fail_next_string_duplicate;
-    fail_next_string_duplicate           = false;
-
-    require(! ok, "password update unexpectedly succeeded under an injected allocation failure");
-    require(injection_consumed, "the injected stringDuplicate failure was not consumed");
-    require(users_test_credential_snapshot_wipes == 1U,
-            "a failed password update did not wipe the credential snapshot exactly once");
-
-    require(usersLookupByPassword(&users, old_uuid_pw) == u1, "old password stopped resolving after a failed update");
-    require(usersLookupByUUID(&users, old_uuid_bytes) == u1, "old UUID stopped resolving after a failed update");
-    require(usersLookupByPassword(&users, "proposed-new-password") == NULL,
-            "the proposed new password resolves after a failed update");
-    require(usersValidate(&users), "database invalid after a failed password update");
-
-    usersDestroy(&users);
-}
-
-/*
  * The password probe derives the credential hashes once before the snapshot and
  * userChangePassword derives them a second time afterward. Failing SHA-224 on
  * its second call reaches the snapshot (call 1 succeeds) and then fails the
- * post-snapshot derivation, proving the same wipe-and-atomicity guarantees hold
- * for a second-pass crypto failure as for an allocation failure.
+ * post-snapshot derivation, proving the snapshot is wiped and the update stays
+ * atomic when the crypto backend reports failure.
  */
 static void testChangePasswordSecondPassCryptoFailureWipesSnapshot(void)
 {
@@ -1001,12 +910,7 @@ static void testRuntimeStateSelfMove(void)
     userDestroy(&user);
 }
 
-#if defined(USERS_TEST_ALLOC_INJECTION)
-enum
-{
-    kAllocationFailureSweepSafetyLimit = 256
-};
-
+#if defined(USERS_TEST_ALLOC_COUNTING)
 /*
  * Removal must not allocate: it only erases index entries, swaps the last active
  * pointer into the freed slot, rewrites one existing pointer-map value, and frees
@@ -1028,9 +932,9 @@ static void testRemovalIsAllocationFree(void)
     user_t *victim = usersLookupByIdentifier(&users, 5);
     require(victim != NULL, "victim user missing");
 
-    allocInjectionArm(0); /* count only; never fail */
+    allocationCountBegin();
     bool   ok          = usersRemoveUser(&users, victim);
-    size_t allocations = allocInjectionDisarm();
+    size_t allocations = allocationCountEnd();
 
     require(ok, "removal failed");
     require(allocations == 0, "removal performed a heap allocation; the swap-with-last path is not allocation-free");
@@ -1040,19 +944,13 @@ static void testRemovalIsAllocationFree(void)
     usersDestroy(&users);
 }
 
-/*
- * Fills the ordered Allowed-IP tree to its initial reserved capacity with
- * `ranged` users carrying distinct, non-overlapping /24 ranges (ids 1..ranged).
- * Because the tree's first reservation sizes it for 16 nodes, a fixture of 16
- * ranged users leaves the next range insertion (a 17th) forced to grow the tree,
- * which is an allocation made directly inside users.c and therefore observable to
- * (and failable by) the injection probe. String copies inside userChangePassword
- * route through libww and are deliberately not the allocation under test here.
- */
-static void buildRangedFixture(users_t *users, uint64_t ranged)
+#endif
+
+/* The seventeenth non-overlapping range grows the initially reserved tree. */
+static void buildFullRangedFixture(users_t *users)
 {
     require(usersCreate(users), "failed to create users table");
-    for (uint64_t i = 0; i < ranged; ++i)
+    for (uint64_t i = 0; i < 16; ++i)
     {
         char pw[40];
         char cidr[24];
@@ -1063,216 +961,79 @@ static void buildRangedFixture(users_t *users, uint64_t ranged)
     require(usersValidate(users), "ranged fixture failed validation");
 }
 
-/* The Allowed-IP tree is reserved for this many nodes on first use; the (N+1)th
- * range insertion is the one that grows it. */
-enum
+static void testUpdateGrowsAllowedIpIndex(void)
 {
-    kAllowedIpInitialCapacity = 16
-};
+    users_t users;
+    buildFullRangedFixture(&users);
+    user_t *target = addNamedUser(&users, 100, "txn-old-pw", "txn-name-old");
+    require(target != NULL && usersValidate(&users), "update fixture setup failed");
 
-/*
- * Sweeps a single injected allocation failure across an update that adds a
- * brand-new Allowed-IP range (alongside a password change and a rename) to a
- * target user, where the tree is already full so the reinsert must grow it. At
- * every failure point the update must be atomic: it either fully commits or fully
- * rolls back, and the database stays valid with exactly one of the old/new
- * credential+range sets live. This exercises the incremental password reindex
- * (Finding 1) and, crucially, the reserve-before-mutation Allowed-IP path
- * (Finding 2): the growth is reserved before any field is published.
- */
-static void testUpdateAllocationFailureIsTransactional(void)
-{
-    const ip_addr_t new_range_probe = parseIp("10.1.0.9");
+    user_update_t update = {.mask     = kUserUpdatePassword | kUserUpdateName | kUserUpdateWireGuardAllowedIps,
+                            .password = "txn-new-pw",
+                            .name     = "txn-name-new",
+                            .wireguard_allowed_ips = "10.0.0.0/24"};
+    require(! usersUpdateUser(&users, target, &update), "overlapping range update was accepted");
+    require(usersValidate(&users), "rejected update corrupted the indexes");
+    require(usersLookupByPassword(&users, "txn-old-pw") == target &&
+                usersLookupByPassword(&users, "txn-new-pw") == NULL,
+            "rejected update changed the password index");
+    require(stringCompare(target->name, "txn-name-old") == 0 && ! target->wireguard_allowed_ips_valid,
+            "rejected update changed the name or Allowed-IP state");
 
-    for (size_t fail_at = 1;; ++fail_at)
-    {
-        require(fail_at <= kAllocationFailureSweepSafetyLimit, "update allocation-failure sweep did not converge");
-
-        users_t users;
-        buildRangedFixture(&users, kAllowedIpInitialCapacity);
-        /* A ranged tree at capacity, plus one target that has a name but no range. */
-        user_t *target = addNamedUser(&users, 100, "txn-old-pw", "txn-name-old");
-        require(target != NULL && usersValidate(&users), "update fixture setup failed");
-
-        user_update_t update;
-        memoryZero(&update, sizeof(update));
-        update.mask                  = kUserUpdatePassword | kUserUpdateName | kUserUpdateWireGuardAllowedIps;
-        update.password              = "txn-new-pw";
-        update.name                  = "txn-name-new";
-        update.wireguard_allowed_ips = "10.1.0.0/24"; /* non-overlapping 17th range */
-
-        allocInjectionArm(fail_at);
-        bool   ok          = usersUpdateUser(&users, target, &update);
-        size_t allocations = allocInjectionDisarm();
-
-        require(usersValidate(&users), "database corrupted by an injected allocation failure during update");
-        ip_addr_t probe = new_range_probe;
-
-        if (ok)
-        {
-            require(usersLookupByPassword(&users, "txn-new-pw") == target, "committed update lost the new password");
-            require(usersLookupByPassword(&users, "txn-old-pw") == NULL, "old password survived a committed update");
-            require(usersLookupByWireGuardAllowedIp(&users, &probe) == target,
-                    "committed update did not index the new range");
-        }
-        else
-        {
-            require(usersLookupByPassword(&users, "txn-old-pw") == target, "rolled-back update lost the old password");
-            require(usersLookupByPassword(&users, "txn-new-pw") == NULL,
-                    "new password leaked from a rolled-back update");
-            require(usersLookupByWireGuardAllowedIp(&users, &probe) == NULL,
-                    "new range leaked from a rolled-back update");
-        }
-
-        usersDestroy(&users);
-
-        /* Stop once an attempt completes without tripping the injected failure. */
-        if (ok && allocations < fail_at)
-        {
-            break;
-        }
-    }
+    update.wireguard_allowed_ips = "10.1.0.0/24";
+    require(usersUpdateUser(&users, target, &update), "full-index update failed");
+    require(usersValidate(&users), "committed update corrupted the indexes");
+    require(usersLookupByPassword(&users, "txn-new-pw") == target &&
+                usersLookupByPassword(&users, "txn-old-pw") == NULL,
+            "committed update did not replace the password index");
+    require(stringCompare(target->name, "txn-name-new") == 0, "committed update did not replace the name index");
+    ip_addr_t probe = parseIp("10.1.0.9");
+    require(usersLookupByWireGuardAllowedIp(&users, &probe) == target, "committed update did not index the new range");
+    usersDestroy(&users);
 }
 
-/*
- * Sweeps a single injected allocation failure across a checked add of a ranged
- * user into a tree that is already full (so the commit must grow it). At every
- * failure point the add must be atomic: it either fully commits (count grows by
- * one, the user resolves) or fully rolls back (count unchanged, the user is
- * absent) and reports the allocation failure distinctly, and the database stays
- * valid. This exercises the prevalidated commit path (Finding 5).
- */
-static void testAddAllocationFailureIsTransactional(void)
+static void testAddGrowsAllowedIpIndex(void)
 {
-    for (size_t fail_at = 1;; ++fail_at)
-    {
-        require(fail_at <= kAllocationFailureSweepSafetyLimit, "add allocation-failure sweep did not converge");
+    users_t users;
+    buildFullRangedFixture(&users);
+    const size_t base_count = usersCount(&users);
 
-        users_t users;
-        buildRangedFixture(&users, kAllowedIpInitialCapacity);
-        const size_t base_count = usersCount(&users);
+    user_t candidate;
+    memoryZero(&candidate, sizeof(candidate));
+    require(userCreate(&candidate, "txn-add-pw"), "failed to create add candidate");
+    userSetId(&candidate, 100);
+    require(userSetWireGuardAllowedIps(&candidate, "10.1.0.0/24"), "failed to set candidate range");
+    require(usersAddUserChecked(&users, &candidate) == kUsersAddResultOk, "full-index add failed");
+    userDestroy(&candidate);
 
-        user_t candidate;
-        memoryZero(&candidate, sizeof(candidate));
-        require(userCreate(&candidate, "txn-add-pw"), "failed to create add candidate");
-        userSetId(&candidate, 100);
-        require(userSetWireGuardAllowedIps(&candidate, "10.1.0.0/24"), "failed to set candidate range");
-
-        allocInjectionArm(fail_at);
-        users_add_result_t result      = usersAddUserChecked(&users, &candidate);
-        size_t             allocations = allocInjectionDisarm();
-        userDestroy(&candidate);
-
-        require(usersValidate(&users), "database corrupted by an injected allocation failure during add");
-        if (result == kUsersAddResultOk)
-        {
-            require(usersCount(&users) == base_count + 1, "committed add did not grow the table");
-            require(usersLookupByPassword(&users, "txn-add-pw") != NULL, "committed add is not resolvable");
-        }
-        else
-        {
-            require(result == kUsersAddResultAllocationFailed,
-                    "add failed for a non-allocation reason under injection");
-            require(usersCount(&users) == base_count, "rolled-back add changed the table size");
-            require(usersLookupByPassword(&users, "txn-add-pw") == NULL, "rolled-back add left a resolvable user");
-        }
-
-        usersDestroy(&users);
-
-        if (result == kUsersAddResultOk && allocations < fail_at)
-        {
-            break;
-        }
-    }
+    require(usersValidate(&users), "committed add corrupted the indexes");
+    require(usersCount(&users) == base_count + 1, "committed add did not grow the table");
+    user_t *added = usersLookupByPassword(&users, "txn-add-pw");
+    require(added != NULL, "committed add is not resolvable");
+    ip_addr_t probe = parseIp("10.1.0.9");
+    require(usersLookupByWireGuardAllowedIp(&users, &probe) == added, "committed add did not index its range");
+    usersDestroy(&users);
 }
 
-static void testCopyAllocationFailureIsAtomic(void)
+static void testRebuildLookups(void)
 {
-    for (size_t fail_at = 1;; ++fail_at)
-    {
-        require(fail_at <= kAllocationFailureSweepSafetyLimit, "copy allocation-failure sweep did not converge");
+    users_t users;
+    require(usersCreate(&users), "failed to create rebuild table");
+    addNamedUser(&users, 1, "rebuild-one", "rebuild-name-one");
+    addAllowedIpUser(&users, 2, "rebuild-two", "10.88.0.0/24");
+    addUser(&users, 3, "rebuild-three");
+    require(usersValidate(&users), "rebuild fixture invalid");
 
-        users_t src;
-        users_t dest;
-        require(usersCreate(&src), "failed to create copy source table");
-        require(usersCreate(&dest), "failed to create copy destination table");
-
-        addNamedUser(&src, 1, "copy-fail-src-one", "copy-fail-name-one");
-        addAllowedIpUser(&src, 2, "copy-fail-src-two", "10.77.0.0/24");
-        addUser(&dest, 100, "copy-fail-dest-old");
-        require(usersValidate(&src), "copy source fixture invalid");
-        require(usersValidate(&dest), "copy destination fixture invalid");
-
-        allocInjectionArm(fail_at);
-        bool   ok          = usersCopy(&dest, &src);
-        size_t allocations = allocInjectionDisarm();
-
-        require(usersValidate(&src), "copy source corrupted by allocation injection");
-        require(usersValidate(&dest), "copy destination corrupted by allocation injection");
-        if (ok)
-        {
-            require(usersCount(&dest) == usersCount(&src), "committed copy produced the wrong destination count");
-            require(usersLookupByPassword(&dest, "copy-fail-dest-old") == NULL,
-                    "committed copy retained the old destination user");
-            require(usersLookupByPassword(&dest, "copy-fail-src-one") != NULL, "committed copy lost source user one");
-            ip_addr_t probe = parseIp("10.77.0.99");
-            require(usersLookupByWireGuardAllowedIp(&dest, &probe) != NULL,
-                    "committed copy lost source Allowed-IP index");
-        }
-        else
-        {
-            require(usersCount(&dest) == 1, "failed copy changed the destination count");
-            require(usersLookupByPassword(&dest, "copy-fail-dest-old") != NULL,
-                    "failed copy lost the old destination user");
-            require(usersLookupByPassword(&dest, "copy-fail-src-one") == NULL,
-                    "failed copy leaked a source user into the destination");
-        }
-
-        usersDestroy(&src);
-        usersDestroy(&dest);
-
-        if (ok && allocations < fail_at)
-        {
-            break;
-        }
-    }
+    require(usersRebuildLookups(&users), "lookup rebuild failed");
+    require(usersValidate(&users), "lookup rebuild left partial indexes");
+    require(usersCount(&users) == 3, "lookup rebuild changed the user count");
+    require(usersLookupByPassword(&users, "rebuild-one") != NULL, "lookup rebuild lost password user one");
+    require(usersLookupByPassword(&users, "rebuild-two") != NULL, "lookup rebuild lost password user two");
+    require(usersLookupByIdentifier(&users, 3) != NULL, "lookup rebuild lost identifier user three");
+    ip_addr_t probe = parseIp("10.88.0.55");
+    require(usersLookupByWireGuardAllowedIp(&users, &probe) != NULL, "lookup rebuild lost Allowed-IP user");
+    usersDestroy(&users);
 }
-
-static void testRebuildLookupAllocationFailureIsAtomic(void)
-{
-    for (size_t fail_at = 1;; ++fail_at)
-    {
-        require(fail_at <= kAllocationFailureSweepSafetyLimit, "rebuild allocation-failure sweep did not converge");
-
-        users_t users;
-        require(usersCreate(&users), "failed to create rebuild table");
-
-        addNamedUser(&users, 1, "rebuild-fail-one", "rebuild-name-one");
-        addAllowedIpUser(&users, 2, "rebuild-fail-two", "10.88.0.0/24");
-        addUser(&users, 3, "rebuild-fail-three");
-        require(usersValidate(&users), "rebuild fixture invalid before injection");
-
-        allocInjectionArm(fail_at);
-        bool   ok          = usersRebuildLookups(&users);
-        size_t allocations = allocInjectionDisarm();
-
-        require(usersValidate(&users), "lookup rebuild failure left the database with partial indexes");
-        require(usersCount(&users) == 3, "lookup rebuild failure changed the user count");
-        require(usersLookupByPassword(&users, "rebuild-fail-one") != NULL, "lookup rebuild lost password user one");
-        require(usersLookupByPassword(&users, "rebuild-fail-two") != NULL, "lookup rebuild lost password user two");
-        require(usersLookupByIdentifier(&users, 3) != NULL, "lookup rebuild lost identifier user three");
-        ip_addr_t probe = parseIp("10.88.0.55");
-        require(usersLookupByWireGuardAllowedIp(&users, &probe) != NULL, "lookup rebuild lost Allowed-IP user");
-
-        usersDestroy(&users);
-
-        if (ok && allocations < fail_at)
-        {
-            break;
-        }
-    }
-}
-#endif
 
 int main(void)
 {
@@ -1285,7 +1046,6 @@ int main(void)
     testValidationAtScaleAndCorruption();
     testIncrementalPasswordChange();
 #if defined(WCRYPTO_TEST_LINKER_WRAP) && defined(USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER)
-    testChangePasswordAllocationFailureWipesSnapshot();
     testChangePasswordSecondPassCryptoFailureWipesSnapshot();
 #endif
     testNativeCopy();
@@ -1296,13 +1056,12 @@ int main(void)
     testExactVerificationDerivesNoHash();
     testCollisionFailsClosed();
     testRuntimeStateSelfMove();
-#if defined(USERS_TEST_ALLOC_INJECTION)
+#if defined(USERS_TEST_ALLOC_COUNTING)
     testRemovalIsAllocationFree();
-    testUpdateAllocationFailureIsTransactional();
-    testAddAllocationFailureIsTransactional();
-    testCopyAllocationFailureIsAtomic();
-    testRebuildLookupAllocationFailureIsAtomic();
 #endif
+    testUpdateGrowsAllowedIpIndex();
+    testAddGrowsAllowedIpIndex();
+    testRebuildLookups();
 
     printf("users_index_test: all checks passed\n");
     return 0;

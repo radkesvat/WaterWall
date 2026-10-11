@@ -35,7 +35,7 @@ static size_t           wire_length, plain_length, measured_reads;
 static uint32_t         datagrams[256];
 static unsigned         wire_calls, plain_calls, inits, finishes, pauses, resumes;
 static bool             measuring, require_splice, close_output, inject_encode, inject_decode;
-static bool             pause_output, startup_payload, startup_pause, close_init, fail_stream, fail_queue;
+static bool             pause_output, startup_payload, startup_pause, close_init, fail_queue;
 static unsigned         decode_overflow;
 static sbuf_t          *expected_identity;
 
@@ -47,13 +47,6 @@ ssize_t __wrap_read(int fd, void *destination, size_t bytes)
     if (measuring && result > 0)
         measured_reads += (size_t) result;
     return result;
-}
-
-splice_stream_t *__real_splicestreamCreate(buffer_pool_t *pool, uint32_t header_size);
-splice_stream_t *__wrap_splicestreamCreate(buffer_pool_t *pool, uint32_t header_size);
-splice_stream_t *__wrap_splicestreamCreate(buffer_pool_t *pool, uint32_t header_size)
-{
-    return fail_stream ? NULL : __real_splicestreamCreate(pool, header_size);
 }
 
 bool __real_bufferqueueReserveExtra(buffer_queue_t *queue, size_t extra);
@@ -285,7 +278,7 @@ static void checkInitialized(void)
 
 static void teardown(void)
 {
-    fail_stream = fail_queue = false;
+    fail_queue      = false;
     startup_payload = startup_pause = close_init = false;
     if (lineIsAlive(line))
     {
@@ -442,11 +435,6 @@ static void testAdmission(void)
 
 static void testFailures(void)
 {
-    twfSetCase("stream allocation refusal closes only the owner before backend Init");
-    fail_stream = true;
-    setup(IP_PROTO_UDP);
-    twfRequire(! lineIsAlive(line) && finishes == 1 && inits == 0, "stream refusal leaked live carrier");
-    teardown();
     twfSetCase("receive queue refusal settles transferred input and both initialized sides");
     setup(IP_PROTO_UDP);
     checkInitialized();

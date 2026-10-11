@@ -11,11 +11,9 @@ splice_stream_t *splicestreamCreate(buffer_pool_t *pool, uint32_t header_size)
     if (UNLIKELY((uint64_t) header_size + sizeof(splice_stream_t) > SIZE_MAX))
         return NULL;
     splice_stream_t *s = memoryAllocateZero(sizeof(*s) + (size_t) header_size);
-    if (UNLIKELY(s == NULL))
-        return NULL;
-    s->pool        = pool;
-    s->header_size = header_size;
-    s->discard_fd  = -1;
+    s->pool            = pool;
+    s->header_size     = header_size;
+    s->discard_fd      = -1;
     bufferqueueInitEmpty(&s->pending);
     return s;
 }

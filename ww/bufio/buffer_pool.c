@@ -845,18 +845,6 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_mediu
 #ifdef DEBUG
     sbuf_t *test_large_buf = sbufCreateWithPadding(rounded_large_buffer_size, 0);
     sbuf_t *test_small_buf = sbufCreateWithPadding(rounded_small_buffer_size, 0);
-    if (test_large_buf == NULL || test_small_buf == NULL)
-    {
-        if (test_large_buf != NULL)
-        {
-            sbufDestroy(test_large_buf);
-        }
-        if (test_small_buf != NULL)
-        {
-            sbufDestroy(test_small_buf);
-        }
-        return NULL;
-    }
     assert(sbufGetTotalCapacityNoPadding(test_large_buf) == rounded_large_buffer_size);
     assert(sbufGetLeftPadding(test_large_buf) == 0);
     assert(sbufGetTotalCapacityNoPadding(test_small_buf) == rounded_small_buffer_size);
@@ -865,35 +853,10 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_mediu
     sbufDestroy(test_small_buf);
 #endif
 
-    buffer_pool_t *ptr_pool = memoryAllocate(sizeof(buffer_pool_t));
-    if (ptr_pool == NULL)
-    {
-        return NULL;
-    }
-
-    sbuf_t **large_buffers = (sbuf_t **) memoryAllocate(container_len);
-    if (large_buffers == NULL)
-    {
-        memoryFree(ptr_pool);
-        return NULL;
-    }
-
-    sbuf_t **small_buffers = (sbuf_t **) memoryAllocate(container_len);
-    if (small_buffers == NULL)
-    {
-        memoryFree(large_buffers);
-        memoryFree(ptr_pool);
-        return NULL;
-    }
-
-    sbuf_t **medium_buffers = (sbuf_t **) memoryAllocate(container_len);
-    if (medium_buffers == NULL)
-    {
-        memoryFree(small_buffers);
-        memoryFree(large_buffers);
-        memoryFree(ptr_pool);
-        return NULL;
-    }
+    buffer_pool_t *ptr_pool       = memoryAllocate(sizeof(buffer_pool_t));
+    sbuf_t       **large_buffers  = (sbuf_t **) memoryAllocate(container_len);
+    sbuf_t       **small_buffers  = (sbuf_t **) memoryAllocate(container_len);
+    sbuf_t       **medium_buffers = (sbuf_t **) memoryAllocate(container_len);
 
     *ptr_pool = (buffer_pool_t) {
         .cap                  = capacity,

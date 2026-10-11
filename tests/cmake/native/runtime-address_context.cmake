@@ -59,8 +59,7 @@
     target_link_options(buffer_pool_splice_bypass_test PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl" "-Wl,--wrap=read" "-Wl,--wrap=splice")
     add_dependencies(waterwall_unit_tests buffer_pool_splice_bypass_test)
     add_waterwall_unit_test(waterwall.buffer_pool_splice_bypass_unit buffer_pool_splice_bypass_test "unit;bufio;buffer-pool;splice")
-    target_compile_definitions(buffer_pool_splice_test PRIVATE WW_SPLICE_POOL_FAILURE_TEST=1)
-    target_link_options(buffer_pool_splice_test PRIVATE "-Wl,--wrap=memoryAllocate" "-Wl,--wrap=memoryAllocateAligned" "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl" "-Wl,--wrap=read" "-Wl,--wrap=splice")
+    target_link_options(buffer_pool_splice_test PRIVATE "-Wl,--wrap=pipe2" "-Wl,--wrap=fcntl" "-Wl,--wrap=read" "-Wl,--wrap=splice")
   endif()
   add_dependencies(waterwall_unit_tests buffer_pool_splice_test)
   add_waterwall_unit_test(waterwall.buffer_pool_splice_unit buffer_pool_splice_test "unit;bufio;buffer-pool;splice")
@@ -151,18 +150,15 @@
   target_compile_definitions(users_index_test PRIVATE USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER=1)
   if(LINUX)
     target_compile_definitions(users_index_test PRIVATE WCRYPTO_TEST_LINKER_WRAP=1)
-    # Deterministic allocation-fault injection so the transactional password-change,
-    # removal, add, and Allowed-IP-update paths can be swept for failure atomicity.
-    target_compile_definitions(users_index_test PRIVATE USERS_TEST_ALLOC_INJECTION=1)
+    # Count allocations without replacing the allocator's fatal failure contract.
+    target_compile_definitions(users_index_test PRIVATE USERS_TEST_ALLOC_COUNTING=1)
     target_link_options(users_index_test PRIVATE
       "-Wl,-u,wCryptoSHA224"
       "-Wl,-u,wCryptoSHA256"
       "-Wl,-u,wCryptoX25519"
-      "-Wl,-u,stringDuplicate"
       "-Wl,--wrap=wCryptoSHA224"
       "-Wl,--wrap=wCryptoSHA256"
       "-Wl,--wrap=wCryptoX25519"
-      "-Wl,--wrap=stringDuplicate"
       "-Wl,--wrap=memoryAllocate"
       "-Wl,--wrap=memoryReAllocate"
       "-Wl,--wrap=memoryCalloc"
@@ -378,7 +374,7 @@
       "-Wl,--wrap=deviceReaderSessionConfigureOutputBudget"
       "-Wl,--wrap=tunConfigureWorkerGso"
       "-Wl,--wrap=fcntl"
-      "-Wl,--wrap=sbufTryCreateWithPadding"
+      "-Wl,--wrap=sbufCreateWithPadding"
       "-Wl,--wrap=sbufDestroy"
       "-Wl,--wrap=pthread_create"
       "-Wl,--wrap=pthread_join"

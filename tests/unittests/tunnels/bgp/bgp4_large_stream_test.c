@@ -203,7 +203,7 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
 #include <unistd.h>
 #endif
 
-static bool fail_stream, fail_queue, pipe_pressure;
+static bool fail_queue, pipe_pressure;
 #if WW_HAVE_SPLICE
 static bool   pipe_refusal;
 static size_t first_pipe_move_limit = 257;
@@ -217,12 +217,6 @@ uint32_t        __wrap_fastRand(void);
 uint32_t        __wrap_fastRand(void)
 {
     return fixed_random < 0 ? __real_fastRand() : (uint32_t) fixed_random;
-}
-splice_stream_t *__real_splicestreamCreate(buffer_pool_t *, uint32_t);
-splice_stream_t *__wrap_splicestreamCreate(buffer_pool_t *, uint32_t);
-splice_stream_t *__wrap_splicestreamCreate(buffer_pool_t *pool, uint32_t header)
-{
-    return fail_stream ? NULL : __real_splicestreamCreate(pool, header);
 }
 bool __real_bufferqueueReserveExtra(buffer_queue_t *, size_t);
 bool __wrap_bufferqueueReserveExtra(buffer_queue_t *, size_t);
@@ -776,12 +770,6 @@ static void testNotificationReentry(void)
     for (unsigned client = 0; client < 2; ++client)
     {
         bgp_fixture_t f;
-        fail_stream = true;
-        fixtureBegin(&f, client, false, 8192);
-        fail_stream = false;
-        twfRequire(! lineIsAlive(f.line) && f.trace.next_init == 0 && f.trace.next_finish == 0,
-                   "failed stream initialization reached uninitialized neighbour");
-        fixtureEnd(&f);
         fixtureBegin(&f, client, false, 8192);
         sbuf_t *input = fixtureBytes(&f, "x", 1, false);
         fail_queue    = true;
@@ -892,14 +880,8 @@ static void testAdmission(void)
         twfRequire(! lineIsAlive(f.line) && f.deliveries == 0, "decoder overflow escaped");
         fixtureEnd(&f);
     }
-    fail_stream = true;
-    bgp_fixture_t f;
-    fixtureBegin(&f, true, false, 8192);
-    fail_stream = false;
-    twfRequire(! lineIsAlive(f.line) && f.trace.next_init == 0 && f.trace.next_finish == 0,
-               "failed Init called uninitialized next node");
-    fixtureEnd(&f);
 #if WW_HAVE_SPLICE
+    bgp_fixture_t f;
     fixtureBegin(&f, true, false, 8192);
     fixturePermission(&f, true);
     uint8_t  bytes[2048];

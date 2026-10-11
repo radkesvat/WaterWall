@@ -57,10 +57,9 @@ void bufferqueueInitEmpty(buffer_queue_t *self);
 /**
  * @brief Creates a new buffer queue.
  *
- * The returned queue is always in a valid, destroyable state. The requested
- * capacity is best effort: when the eager reservation fails the queue is simply
- * empty and will try again on first insertion. Callers that need the capacity to
- * exist must use bufferqueueInit() instead.
+ * The returned queue has the requested capacity. Unrepresentable geometry or
+ * heap allocation failure terminates the process. Use bufferqueueInit() when
+ * an unrepresentable requested capacity should be reported to the caller.
  *
  * @param init_capacity The initial capacity for the queue. If less than 1, a default value is used.
  * @return A newly created buffer queue.
@@ -68,10 +67,10 @@ void bufferqueueInitEmpty(buffer_queue_t *self);
 buffer_queue_t bufferqueueCreate(int init_capacity);
 
 /**
- * @brief Initializes a buffer queue and reports whether the eager reservation succeeded.
+ * @brief Initializes a buffer queue, rejecting unrepresentable capacity.
  *
- * On failure @p self is still a valid empty queue that bufferqueueDestroy() must
- * be called on; only the requested capacity is absent.
+ * On geometry rejection @p self is a valid empty queue. Heap allocation failure
+ * terminates the process.
  *
  * @param self Queue to initialize. Any previous contents are ignored, not freed.
  * @param init_capacity The initial capacity. If less than 1, a default value is used.
@@ -89,7 +88,8 @@ bool bufferqueueInit(buffer_queue_t *self, int init_capacity);
  *
  * @param self A pointer to the buffer queue.
  * @param extra Number of additional entries the queue must be able to hold.
- * @return false when the reservation could not be satisfied; the queue is unchanged.
+ * @return false for unrepresentable deque geometry; the queue is unchanged.
+ *         Heap allocation failure terminates the process.
  */
 bool bufferqueueReserveExtra(buffer_queue_t *self, size_t extra);
 
@@ -99,7 +99,8 @@ bool bufferqueueReserveExtra(buffer_queue_t *self, size_t extra);
  * Either the queue takes ownership and `*b` is updated to the exact retained
  * buffer, or nothing at all happened: entries, byte/charge totals, `*b` and the
  * buffer's lifetime are untouched and the caller still owns the buffer.
- * Unrepresentable byte/charge totals are refused before ownership transfers.
+ * Budget limits or unrepresentable storage/byte/charge totals are refused before
+ * ownership transfers. Heap allocation failure terminates the process.
  *
  * Ordering matters here. Debug builds replace ordinary allocations to expose stale
  * aliases, which destroys the caller's original; that replacement must therefore
@@ -137,7 +138,7 @@ void bufferqueueDestroy(buffer_queue_t *self);
  * @brief Pushes an sbuf_t pointer onto the back of the queue.
  *
  * Fail-fast wrapper over bufferqueueTryPushBack() for callers that have no
- * per-flow recovery path. Refused storage or accounting terminates the process rather
+ * per-flow recovery path. Refused geometry or accounting terminates the process rather
  * than reporting a transfer that did not happen; a node that can reset one flow
  * instead should call the try form directly.
  *
