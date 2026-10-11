@@ -307,13 +307,6 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
         staged_fixed_parent_lines = memoryAllocateZero(fixed_parent_bytes);
     }
 
-    if (staged_fixed_connections != 0 && staged_fixed_parent_lines == NULL)
-    {
-        memoryFree(staged_fixed_parent_lines);
-        tunnelDestroy(t);
-        return NULL;
-    }
-
     ts->fixed_connections_count   = staged_fixed_connections;
     ts->fixed_parent_lines        = staged_fixed_parent_lines;
 

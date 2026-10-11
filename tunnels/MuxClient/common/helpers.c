@@ -1478,14 +1478,13 @@ static line_t **muxclientSnapshotChildren(tunnel_t *t, line_t *parent_l, bool lo
     muxclient_lstate_t *parent = lineGetState(parent_l, t);
     *count                     = local ? parent->parent_state->local_hold_count : parent->children_count;
     size_t     bytes           = 0;
-    const bool fits            = memoryTryComputeArraySize(*count, sizeof(line_t *), &bytes);
-    line_t   **lines           = *count && fits ? memoryAllocate(bytes) : NULL;
-    if (*count && ! lines)
+    if (! memoryTryComputeArraySize(*count, sizeof(line_t *), &bytes))
     {
-        LOGE("MuxClient: unable to snapshot children for parent write pressure");
+        LOGE("MuxClient: child snapshot size is not representable");
         muxclientHandleParentLoss(t, parent_l, true);
         return NULL;
     }
+    line_t            **lines = *count ? memoryAllocate(bytes) : NULL;
     muxclient_lstate_t *child = local ? parent->parent_state->local_hold_head : parent->child_next;
     for (size_t i = 0; i < *count; ++i)
     {

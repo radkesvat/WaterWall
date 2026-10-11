@@ -12,7 +12,6 @@ foreach(mux_side Client Server)
     target_link_options(${mux_test} PRIVATE
       ${WATERWALL_LINE_FAILURE_WRAPS}
       "-Wl,--wrap=memoryAllocate"
-      "-Wl,--wrap=memoryReAllocate"
       "-Wl,--wrap=sbufConcat"
       "-Wl,--wrap=sbufSpliceReadToBuffer"
       "-Wl,--wrap=sbufReadRangeToMemory"

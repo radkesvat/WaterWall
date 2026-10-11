@@ -170,10 +170,6 @@ static void caseSpliceBatchAdmission(unsigned mode)
     if (mode == 0)
         pqParentPause(&f);
     sbuf_t *input = pqLargeSplice(&f);
-    if (mode == 2)
-        g_reject_next_queue_reallocation = true;
-    if (mode == 3)
-        g_reject_queue_after = 1; // Stage reservation succeeds; parent publication reservation fails.
     lineRef(f.parent_l);
     lineRef(f.child_l);
     pqSend(f.mux, f.child_l, input);

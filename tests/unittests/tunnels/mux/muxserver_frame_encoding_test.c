@@ -5,7 +5,7 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseDownstreamFraming, caseLargeCompleteBatchIsDrained, caseCoalescedDataBoundaries,
  * caseParsedTinyFrameUsesAllocationCharge, caseParsedTinyFrameTransfersToDetachedAccounting,
- * caseQueueReservationFailureClosesOnlyServerChild, caseConfiguredResumeThresholdControlsFlowResume,
+ * caseQueueBudgetRefusalClosesOnlyServerChild, caseConfiguredResumeThresholdControlsFlowResume,
  * casePerParentAdmissionRejectsWithClose; the driver lists the remaining cases
  * Checks: Assertion labels include: the encoded stream ends inside a frame header; the encoded stream has
  * more frames than the test can hold; the encoded stream ends inside a frame body; a fragment carries a
@@ -40,29 +40,6 @@ enum
 };
 
 static uint32_t g_pool_size = kTestLargeBufferSize;
-
-static bool g_reject_next_queue_reallocation = false;
-static int  g_reject_queue_after             = -1;
-
-void *__real_memoryReAllocate(void *ptr, size_t size);
-void *__wrap_memoryReAllocate(void *ptr, size_t size);
-
-void *__wrap_memoryReAllocate(void *ptr, size_t size)
-{
-    if (g_reject_queue_after == 0)
-    {
-        g_reject_queue_after = -1;
-        return NULL;
-    }
-    if (g_reject_queue_after > 0)
-        --g_reject_queue_after;
-    if (g_reject_next_queue_reallocation)
-    {
-        g_reject_next_queue_reallocation = false;
-        return NULL;
-    }
-    return __real_memoryReAllocate(ptr, size);
-}
 
 // ---------------------------------------------------------------------------
 // wire helpers
@@ -588,9 +565,9 @@ static void caseParsedTinyFrameTransfersToDetachedAccounting(void)
     fixtureTeardown(&fixture);
 }
 
-static void caseQueueReservationFailureClosesOnlyServerChild(void)
+static void caseQueueBudgetRefusalClosesOnlyServerChild(void)
 {
-    twfSetCase("MuxServer queue reservation failure closes only the affected owned child");
+    twfSetCase("MuxServer queue budget refusal closes only the affected owned child");
 
     muxserver_fixture_t fixture;
     fixtureSetup(&fixture, 32);
@@ -603,20 +580,22 @@ static void caseQueueReservationFailureClosesOnlyServerChild(void)
     bufferqueueDestroy(&child_ls->pending_child_data);
     bufferqueueInitEmpty(&child_ls->pending_child_data);
     lineRef(fixture.child_l);
-    g_reject_next_queue_reallocation = true;
+    buffer_budget_t budget;
+    bufferbudgetInit(&budget, (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, 0});
+    twfRequire(bufferqueueTryAttachBudget(&child_ls->pending_child_data, &budget),
+               "failed to attach child queue admission budget");
     twfRequire(muxserverQueueChildPayload(
                    fixture.mux, fixture.parent_l, ts, parent_ls, child_ls, makePatternPayload(&fixture, 1)),
-               "queue reservation failure tore down the server parent");
-    twfRequire(! g_reject_next_queue_reallocation, "queue reservation failure seam was not exercised");
+               "queue budget refusal tore down the server parent");
 
-    twfRequire(lineIsAlive(fixture.parent_l), "queue reservation failure closed the server parent");
-    twfRequire(! lineIsAlive(fixture.child_l), "queue reservation failure left the owned child alive");
-    twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "queue reservation failure retained child state");
+    twfRequire(lineIsAlive(fixture.parent_l), "queue budget refusal closed the server parent");
+    twfRequire(! lineIsAlive(fixture.child_l), "queue budget refusal left the owned child alive");
+    twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "queue budget refusal retained child state");
     requireEqualCharge(
-        parent_ls->pending_child_queue_charge, 0, "queue reservation failure mutated parent charge accounting");
-    twfRequireEqualU32(fixture.trace.prev_payload, 1, "queue reservation failure did not send one Close frame");
-    twfRequireEqualU32(fixture.trace.next_finish, 1, "queue reservation failure did not finish the child once");
-    twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer queue reservation failure child cleanup");
+        parent_ls->pending_child_queue_charge, 0, "queue budget refusal mutated parent charge accounting");
+    twfRequireEqualU32(fixture.trace.prev_payload, 1, "queue budget refusal did not send one Close frame");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "queue budget refusal did not finish the child once");
+    twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer queue budget refusal child cleanup");
     fixture.child_l = NULL;
 
     fixtureTeardown(&fixture);
@@ -1242,7 +1221,7 @@ int main(void)
     caseParsedTinyFrameUsesAllocationCharge(0, "MuxServer charges parsed empty Data and closes at the charge limit");
     caseParsedTinyFrameUsesAllocationCharge(1, "MuxServer charges parsed one-byte Data and closes at the charge limit");
     caseParsedTinyFrameTransfersToDetachedAccounting();
-    caseQueueReservationFailureClosesOnlyServerChild();
+    caseQueueBudgetRefusalClosesOnlyServerChild();
     caseConfiguredResumeThresholdControlsFlowResume();
     casePerParentAdmissionRejectsWithClose(false);
     casePerParentAdmissionRejectsWithClose(true);
