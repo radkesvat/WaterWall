@@ -4,8 +4,7 @@
 
 static bool routerGeoipCodeParse(const char *pattern, router_geoip_code_t *out, const char *json_path)
 {
-    if (stringLength(pattern) != 8U || ! asciiIsAlpha((uint8_t) pattern[6]) ||
-        ! asciiIsAlpha((uint8_t) pattern[7]))
+    if (stringLength(pattern) != 8U || ! asciiIsAlpha((uint8_t) pattern[6]) || ! asciiIsAlpha((uint8_t) pattern[7]))
     {
         LOGF("JSON Error: %s : \"%s\" is not a valid geoip:<ISO-3166-alpha-2> token", json_path, pattern);
         return false;
@@ -240,11 +239,6 @@ bool routerGeoipOpenIfNeeded(router_tstate_t *ts, const cJSON *settings)
     }
 
     ts->geoip_db_path = stringDuplicate(path_json->valuestring);
-    if (UNLIKELY(ts->geoip_db_path == NULL))
-    {
-        LOGF("Router: failed to allocate geoip-db-path");
-        return false;
-    }
 
     int status = MMDB_open(ts->geoip_db_path, MMDB_MODE_MMAP, &ts->geoip_db);
     if (UNLIKELY(status != MMDB_SUCCESS))

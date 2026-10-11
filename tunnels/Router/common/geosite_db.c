@@ -96,11 +96,6 @@ static bool geositeDuplicateRequiredString(const cJSON *object, const char *key,
     }
 
     *out = stringDuplicate(value->valuestring);
-    if (UNLIKELY(*out == NULL))
-    {
-        LOGF("Router: failed to allocate GeoSite string field \"%s\"", key);
-        return false;
-    }
 
     return true;
 }
@@ -121,11 +116,6 @@ static bool geositeDuplicateOptionalString(const cJSON *object, const char *key,
     }
 
     *out = stringDuplicate(value->valuestring);
-    if (UNLIKELY(*out == NULL))
-    {
-        LOGF("Router: failed to allocate GeoSite string field \"%s\"", key);
-        return false;
-    }
 
     return true;
 }
@@ -156,11 +146,6 @@ static bool geositeDuplicateOptionalBytes(const cJSON *object, const char *key, 
     }
 
     *out = memoryAllocate(len);
-    if (UNLIKELY(*out == NULL))
-    {
-        LOGF("Router: failed to allocate GeoSite byte field \"%s\"", key);
-        return false;
-    }
 
     memoryCopy(*out, value->valuestring, len);
     *out_len = len;
@@ -264,13 +249,14 @@ static bool geositeParseAttributes(geosite_domain_rule_t *rule, const cJSON *dom
         return true;
     }
 
-    rule->attributes_count = (uint32_t) attributes_count;
-    rule->attributes       = memoryAllocateZero(sizeof(*rule->attributes) * (size_t) rule->attributes_count);
-    if (UNLIKELY(rule->attributes == NULL))
+    size_t bytes;
+    if (UNLIKELY(! memoryTryComputeArraySize((size_t) attributes_count, sizeof(*rule->attributes), &bytes)))
     {
-        LOGF("Router: failed to allocate GeoSite attributes");
+        LOGF("Router: GeoSite array is too large");
         return false;
     }
+    rule->attributes       = memoryAllocateZero(bytes);
+    rule->attributes_count = (uint32_t) attributes_count;
 
     uint32_t     index = 0;
     const cJSON *attr_json;
@@ -338,13 +324,14 @@ static bool geositeParseList(geosite_list_t *list, const cJSON *json, const char
         return true;
     }
 
-    list->domains_count = (uint32_t) domains_count;
-    list->domains       = memoryAllocateZero(sizeof(*list->domains) * (size_t) list->domains_count);
-    if (UNLIKELY(list->domains == NULL))
+    size_t bytes;
+    if (UNLIKELY(! memoryTryComputeArraySize((size_t) domains_count, sizeof(*list->domains), &bytes)))
     {
-        LOGF("Router: failed to allocate GeoSite domains");
+        LOGF("Router: GeoSite array is too large");
         return false;
     }
+    list->domains       = memoryAllocateZero(bytes);
+    list->domains_count = (uint32_t) domains_count;
 
     uint32_t     index = 0;
     const cJSON *domain_json;
@@ -376,23 +363,19 @@ static bool geositeDbParseJson(cJSON *root, geosite_db_t **out_db, const char *p
     }
 
     geosite_db_t *db = memoryAllocateZero(sizeof(*db));
-    if (UNLIKELY(db == NULL))
-    {
-        LOGF("Router: failed to allocate GeoSite database");
-        return false;
-    }
 
     int lists_count = cJSON_GetArraySize(lists);
     if (lists_count > 0)
     {
-        db->lists_count = (uint32_t) lists_count;
-        db->lists       = memoryAllocateZero(sizeof(*db->lists) * (size_t) db->lists_count);
-        if (UNLIKELY(db->lists == NULL))
+        size_t bytes;
+        if (UNLIKELY(! memoryTryComputeArraySize((size_t) lists_count, sizeof(*db->lists), &bytes)))
         {
-            LOGF("Router: failed to allocate GeoSite lists");
+            LOGF("Router: GeoSite array is too large");
             geositeDbDestroy(db);
             return false;
         }
+        db->lists       = memoryAllocateZero(bytes);
+        db->lists_count = (uint32_t) lists_count;
     }
 
     uint32_t     index = 0;
@@ -478,6 +461,8 @@ static bool geositeCollectReferencedListNames(router_tstate_t *ts, const char **
             const char *name = NULL;
             if (geositePatternListName(condition->patterns.items[j], &name))
             {
+                if (UNLIKELY(tokens_count == UINT32_MAX))
+                    return false;
                 ++tokens_count;
             }
         }
@@ -488,12 +473,10 @@ static bool geositeCollectReferencedListNames(router_tstate_t *ts, const char **
         return true;
     }
 
-    const char **names = memoryAllocateZero(sizeof(*names) * (size_t) tokens_count);
-    if (UNLIKELY(names == NULL))
-    {
-        LOGF("Router: failed to allocate GeoSite referenced list names");
+    size_t bytes;
+    if (UNLIKELY(! memoryTryComputeArraySize(tokens_count, sizeof(const char *), &bytes)))
         return false;
-    }
+    const char **names = memoryAllocateZero(bytes);
 
     uint32_t names_count = 0;
     for (uint32_t i = 0; i < ts->rules_count; ++i)
@@ -533,7 +516,10 @@ static bool geositeCollectReferencedListNames(router_tstate_t *ts, const char **
 
 static bool geositeNormalizeDomainToOwned(const char *value, char **out, uint32_t *out_len)
 {
-    uint32_t len = (uint32_t) stringLength(value);
+    const size_t length = stringLength(value);
+    if (UNLIKELY(length != (uint32_t) length))
+        return false;
+    uint32_t len = (uint32_t) length;
     while (len > 0 && value[len - 1U] == '.')
     {
         --len;
@@ -547,11 +533,6 @@ static bool geositeNormalizeDomainToOwned(const char *value, char **out, uint32_
     }
 
     char *normalized = memoryAllocate((size_t) len + 1U);
-    if (UNLIKELY(normalized == NULL))
-    {
-        LOGF("Router: failed to allocate normalized GeoSite domain");
-        return false;
-    }
 
     for (uint32_t i = 0; i < len; ++i)
     {
@@ -684,14 +665,15 @@ static bool geositeCompiledListAddPlainRule(router_geosite_compiled_list_t *comp
         return true;
     }
 
-    char **patterns = memoryReAllocate(
-        compiled->plain_patterns, sizeof(*compiled->plain_patterns) * (size_t) (compiled->plain_patterns_count + 1U));
-    if (UNLIKELY(patterns == NULL))
+    size_t bytes;
+    if (UNLIKELY(compiled->plain_patterns_count == UINT32_MAX ||
+                 ! memoryTryComputeArraySize(
+                     (size_t) compiled->plain_patterns_count + 1U, sizeof(*compiled->plain_patterns), &bytes)))
     {
         memoryFree(normalized);
-        LOGF("Router: failed to allocate GeoSite plain matchers");
         return false;
     }
+    char **patterns = memoryReAllocate(compiled->plain_patterns, bytes);
 
     compiled->plain_patterns                                 = patterns;
     compiled->plain_patterns[compiled->plain_patterns_count] = normalized;
@@ -748,11 +730,6 @@ static bool geositeRegexBuilderReserve(geosite_regex_builder_t *builder, uint32_
     }
 
     char *data = builder->data == NULL ? memoryAllocate(cap) : memoryReAllocate(builder->data, cap);
-    if (UNLIKELY(data == NULL))
-    {
-        LOGF("Router: failed to allocate normalized GeoSite regex");
-        return false;
-    }
 
     builder->data = data;
     builder->cap  = cap;
@@ -875,11 +852,6 @@ static bool geositeRegexAppendExpandedRepeat(geosite_regex_builder_t *builder, u
 
     uint32_t atom_len = builder->len - atom_start;
     char    *atom     = memoryAllocate((size_t) atom_len + 1U);
-    if (UNLIKELY(atom == NULL))
-    {
-        LOGF("Router: failed to allocate GeoSite regex repeat atom");
-        return false;
-    }
 
     memoryCopy(atom, builder->data + atom_start, atom_len);
     atom[atom_len]           = '\0';
@@ -1164,11 +1136,6 @@ static void geositeCompiledListDestroy(router_geosite_compiled_list_t *compiled)
 static bool geositeCompiledListCompile(router_geosite_compiled_list_t *compiled, const geosite_list_t *list)
 {
     compiled->name = stringDuplicate(list->name);
-    if (UNLIKELY(compiled->name == NULL))
-    {
-        LOGF("Router: failed to allocate compiled GeoSite list name");
-        return false;
-    }
 
     uint32_t full_count  = 0;
     uint32_t root_count  = 0;
@@ -1203,12 +1170,13 @@ static bool geositeCompiledListCompile(router_geosite_compiled_list_t *compiled,
 
     if (regex_count > 0)
     {
-        compiled->regex_patterns = memoryAllocateZero(sizeof(*compiled->regex_patterns) * (size_t) regex_count);
-        if (UNLIKELY(compiled->regex_patterns == NULL))
+        size_t bytes;
+        if (UNLIKELY(! memoryTryComputeArraySize(regex_count, sizeof(*compiled->regex_patterns), &bytes)))
         {
-            LOGF("Router: failed to allocate GeoSite regex matchers");
+            LOGF("Router: GeoSite array is too large");
             return false;
         }
+        compiled->regex_patterns = memoryAllocateZero(bytes);
     }
 
     for (uint32_t i = 0; i < list->domains_count; ++i)
@@ -1272,13 +1240,14 @@ static bool geositeAttachCompiledList(router_match_destination_domain_t *conditi
         }
     }
 
-    router_geosite_compiled_list_t **lists = memoryReAllocate(
-        condition->geosite_lists, sizeof(*condition->geosite_lists) * (size_t) (condition->geosite_lists_count + 1U));
-    if (UNLIKELY(lists == NULL))
+    size_t bytes;
+    if (UNLIKELY(condition->geosite_lists_count == UINT32_MAX ||
+                 ! memoryTryComputeArraySize(
+                     (size_t) condition->geosite_lists_count + 1U, sizeof(*condition->geosite_lists), &bytes)))
     {
-        LOGF("Router: failed to allocate rule GeoSite handles");
         return false;
     }
+    router_geosite_compiled_list_t **lists = memoryReAllocate(condition->geosite_lists, bytes);
 
     condition->geosite_lists                                 = lists;
     condition->geosite_lists[condition->geosite_lists_count] = compiled;
@@ -1335,13 +1304,14 @@ static bool geositeCompileReferencedLists(router_tstate_t *ts, const geosite_db_
         return true;
     }
 
-    ts->geosite_lists = memoryAllocateZero(sizeof(*ts->geosite_lists) * (size_t) names_count);
-    if (UNLIKELY(ts->geosite_lists == NULL))
+    size_t bytes;
+    if (UNLIKELY(! memoryTryComputeArraySize(names_count, sizeof(*ts->geosite_lists), &bytes)))
     {
+        LOGF("Router: GeoSite array is too large");
         memoryFree((void *) names);
-        LOGF("Router: failed to allocate compiled GeoSite lists");
         return false;
     }
+    ts->geosite_lists       = memoryAllocateZero(bytes);
     ts->geosite_lists_count = names_count;
 
     for (uint32_t i = 0; i < names_count; ++i)
@@ -1531,11 +1501,6 @@ bool routerGeositeOpenIfNeeded(router_tstate_t *ts, const cJSON *settings)
     }
 
     ts->geosite_db_path = stringDuplicate(path_json->valuestring);
-    if (UNLIKELY(ts->geosite_db_path == NULL))
-    {
-        LOGF("Router: failed to allocate geosite-db-path");
-        return false;
-    }
 
     geosite_db_t *db = NULL;
     if (! geositeDbLoadFromJsonFile(ts->geosite_db_path, &db))

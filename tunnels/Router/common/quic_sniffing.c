@@ -550,11 +550,6 @@ generic_sniffer_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         }
 
         uint8_t *packet = memoryAllocate(packet_end);
-        if (packet == NULL)
-        {
-            result = kGenericSnifferMissing;
-            break;
-        }
         memoryCopy(packet, packet_start, packet_end);
 
         if (! routerQuicAes128EncryptBlock(hp, packet + pn_offset + 4U, mask))
@@ -590,12 +585,6 @@ generic_sniffer_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         size_t   aad_len            = pn_offset + pn_len;
         size_t   ciphertext_tag_len = packet_end - aad_len;
         uint8_t *decrypted_payload  = memoryAllocate(ciphertext_tag_len);
-        if (decrypted_payload == NULL)
-        {
-            memoryFree(packet);
-            result = kGenericSnifferMissing;
-            break;
-        }
 
         size_t decrypted_payload_len = 0;
         if (! routerQuicAes128GcmOpen(key,
@@ -617,17 +606,6 @@ generic_sniffer_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         {
             crypto = memoryAllocateZero(kRouterQuicCryptoMax);
             seen   = memoryAllocateZero(kRouterQuicCryptoMax);
-            if (crypto == NULL || seen == NULL)
-            {
-                memoryFree(crypto);
-                memoryFree(seen);
-                crypto = NULL;
-                seen   = NULL;
-                memoryFree(decrypted_payload);
-                memoryFree(packet);
-                result = kGenericSnifferMissing;
-                break;
-            }
         }
 
         bool frames_ok =
