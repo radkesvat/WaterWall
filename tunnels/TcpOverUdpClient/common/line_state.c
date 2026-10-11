@@ -18,12 +18,6 @@ bool tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tcpoverudpclient_lstate_t)));
 
     ikcpcb *k_handle = ikcp_create(0, ls);
-    if (k_handle == NULL)
-    {
-        LOGE("TcpOverUdpClient: failed to create the KCP handle for this line");
-        return false;
-    }
-
     /* configuring the high-efficiency KCP settings */
 
     ikcp_setoutput(k_handle, tcpoverudpclientKUdpOutput);
@@ -35,14 +29,6 @@ bool tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
 
     const int kcp_mtu       = tcpoverudpclientGetKcpMtu(ts);
     const int setmtu_result = ikcp_setmtu(k_handle, kcp_mtu);
-
-    if (setmtu_result == -2)
-    {
-        // allocation failure of the KCP frame buffer, this is a per-line resource failure
-        ikcp_release(k_handle);
-        LOGE("TcpOverUdpClient: failed to allocate the KCP frame buffer for MTU %d", kcp_mtu);
-        return false;
-    }
 
     if (setmtu_result != 0)
     {

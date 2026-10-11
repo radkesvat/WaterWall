@@ -494,7 +494,6 @@ foreach(tcpoverudp_side Client Server)
       "-Wl,--wrap=wtimerDelete"
       "-Wl,--wrap=ikcp_create"
       "-Wl,--wrap=ikcp_release"
-      "-Wl,--wrap=ikcp_setmtu"
       "-Wl,--wrap=tcpoverudpFecEncoderCreate"
       "-Wl,--wrap=tcpoverudpFecDecoderCreate"
       "-Wl,--wrap=tcpoverudpFecEncoderDestroy"

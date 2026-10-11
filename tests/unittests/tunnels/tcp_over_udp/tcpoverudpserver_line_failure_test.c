@@ -15,10 +15,9 @@
 /*
  * TcpOverUdpServer line-state initialization failure injection.
  *
- * Every resource the KCP line needs - the KCP handle, its frame buffer, the interval timer and the optional FEC
- * pair - is a per-line allocation. Losing one of them may close that line and nothing else: the partial state has
- * to be released exactly once, the line state has to come back zeroed, and only the previous side may be closed
- * because the next tunnel never received Init.
+ * Timer admission and FEC initialization can still refuse a line. Partial resources must be released exactly
+ * once, the line state must return to zero, and only the previous side may be closed because the next tunnel
+ * never received Init. KCP heap failures terminate at the WaterWall allocator and are not injected here.
  *
  * The one branch that is deliberately fatal, ikcp_setmtu() rejecting an MTU that tunnel creation already
  * validated, lives in tunnels_abort_runtime_test instead.
@@ -34,8 +33,6 @@
 typedef enum tcpoverudp_injection_e
 {
     kInjectNothing = 0,
-    kInjectKcpHandle,
-    kInjectKcpBuffer,
     kInjectKcpTimer,
     kInjectFecEncoder,
     kInjectFecDecoder
@@ -56,8 +53,6 @@ static uint32_t  g_pause_schedule_calls;
 
 ikcpcb *__real_ikcp_create(IUINT32 conv, void *user);
 ikcpcb *__wrap_ikcp_create(IUINT32 conv, void *user);
-int     __real_ikcp_setmtu(ikcpcb *kcp, int mtu);
-int     __wrap_ikcp_setmtu(ikcpcb *kcp, int mtu);
 
 wtimer_t *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
 wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
@@ -89,11 +84,6 @@ void __wrap_ikcp_release(ikcpcb *kcp);
 
 ikcpcb *__wrap_ikcp_create(IUINT32 conv, void *user)
 {
-    if (g_injection == kInjectKcpHandle)
-    {
-        return NULL;
-    }
-
     ikcpcb *handle = __real_ikcp_create(conv, user);
     if (handle != NULL)
     {
@@ -109,15 +99,6 @@ void __wrap_ikcp_release(ikcpcb *kcp)
         --g_live_kcp_handles;
     }
     __real_ikcp_release(kcp);
-}
-
-int __wrap_ikcp_setmtu(ikcpcb *kcp, int mtu)
-{
-    if (g_injection == kInjectKcpBuffer)
-    {
-        return -2; // the documented allocation failure, which is per-line and must not be fatal
-    }
-    return __real_ikcp_setmtu(kcp, mtu);
 }
 
 wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
@@ -289,7 +270,7 @@ static void caseInitializationFails(tcpoverudp_injection_t injection, bool fec_e
     g_injection = kInjectNothing;
 
     twfRequireEqualText(fixture.trace.seq, "f", "the failing line did not close exactly the previous side");
-    twfRequireEqualU32(fixture.trace.next_init, 0, "the next tunnel received Init after the allocation failure");
+    twfRequireEqualU32(fixture.trace.next_init, 0, "the next tunnel received Init after initialization refusal");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "the next tunnel received Finish it never opened");
     twfRequireEqualU32(fixture.trace.prev_finish, 1, "the previous side was not finished exactly once");
     twfRequireLineStateZeroed(l, fixture.kcp, "the failing TcpOverUdpServer line state was not zeroed");
@@ -548,8 +529,6 @@ static void caseMtuConfigurationAndOutput(void)
 int main(void)
 {
     caseMtuConfigurationAndOutput();
-    caseInitializationFails(kInjectKcpHandle, false, "KCP handle allocation fails");
-    caseInitializationFails(kInjectKcpBuffer, false, "ikcp_setmtu reports an allocation failure");
     caseInitializationFails(kInjectKcpTimer, false, "KCP interval timer creation fails");
     caseInitializationFails(kInjectFecEncoder, true, "FEC encoder creation fails");
     caseInitializationFails(kInjectFecDecoder, true, "FEC decoder creation fails");
