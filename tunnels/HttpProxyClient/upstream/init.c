@@ -20,7 +20,7 @@ void httpproxyclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
     ls->carry = memoryAllocate((size_t) max(ts->max_header, kHpsTrailerLimit) + 1);
-    if (! ls->carry || ! hpcStartTimer(t, l))
+    if (! hpcStartTimer(t, l))
     {
         hpcClose(t, l);
         return;

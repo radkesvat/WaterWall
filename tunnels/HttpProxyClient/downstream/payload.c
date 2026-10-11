@@ -111,11 +111,6 @@ bool hpcResponse(tunnel_t *t, line_t *l, sbuf_t *b)
             }
             ls->carry[length] = 0;
             ls->saved_header  = memoryAllocate(length + 1);
-            if (! ls->saved_header)
-            {
-                hpcClose(t, l);
-                return false;
-            }
             memoryCopy(ls->saved_header, ls->carry, length + 1);
             hp_response_context_t context = ts->connect                           ? kHpResponseToConnect
                                             : ! stringCompare(ts->method, "HEAD") ? kHpResponseToHead

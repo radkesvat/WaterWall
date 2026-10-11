@@ -35,7 +35,7 @@ void httpproxyserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
     hps_lstate_t *ls = lineGetState(l, t);
     *ls              = (hps_lstate_t) {.line = l};
     hps_session_t *s = memoryAllocateZero(sizeof(*s));
-    if (! s || ts->workers[lineGetWID(l)].quiescing)
+    if (ts->workers[lineGetWID(l)].quiescing)
     {
         memoryFree(s);
         hpsClearLineState(l, t);

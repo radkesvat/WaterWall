@@ -28,7 +28,7 @@
 #include <unistd.h>
 #endif
 
-/* Real pool-backed lines and callbacks; Linux tests can refuse optional trailer allocation. */
+/* Real pool-backed lines and callbacks; Linux tests track optional trailer ownership. */
 static tunnel_t   *proxy, *prev, *next, *fallback;
 static unsigned    fallback_opens, init_action, child_pauses;
 static bool        in_fallback_init;
@@ -74,7 +74,7 @@ static void childEof(void);
 
 
 #ifdef HPS_TRAILER_ALLOC_TEST
-static bool           track_trailers, refuse_trailer;
+static bool           track_trailers;
 static unsigned       trailer_allocations, trailer_frees;
 static hps_session_t *observed_session;
 static struct
@@ -88,11 +88,6 @@ void *__wrap_memoryAllocate(size_t size)
 {
     if (track_trailers && size == sizeof(hps_trailer_owner_t))
     {
-        if (refuse_trailer)
-        {
-            refuse_trailer = false;
-            return NULL;
-        }
         hps_trailer_owner_t *owner = __real_memoryAllocate(size);
         require(owner != NULL, "trailer allocation fixture");
         for (unsigned i = 0; i < ARRAY_SIZE(trailer_slots); ++i)
@@ -140,7 +135,6 @@ static void startTrailerTracking(void)
 {
     require(! track_trailers, "nested allocation tracking");
     trailer_allocations = trailer_frees = 0;
-    refuse_trailer                      = false;
     observed_session                    = ((hps_lstate_t *) lineGetState(client, proxy))->session;
     hpsRetain(observed_session);
     track_trailers = true;
@@ -1324,27 +1318,12 @@ static void trailerOwnerCases(tunnel_chain_t *chain)
             require(! lineIsAlive(client), "forbidden trailer was accepted");
             finishTrailerTracking();
         }
-    for (unsigned down = 0; down < 2; ++down)
-    {
-        resetClient(chain);
-        automatic_response = false;
-        startTrailerTracking();
-        if (down)
-            sendBytes(client, false, requests[1]);
-        refuse_trailer = true;
-        sendBytes(down ? child : client, down, down ? chunk_response : chunk_request);
-        require(! refuse_trailer && ! lineIsAlive(client) && ! fallback_opens && opens == down &&
-                    trailer_allocations == 0 && strstr(received, down ? "502" : "503"),
-                "trailer refusal published a partial owner or changed refusal policy");
-        finishTrailerTracking();
-    }
     resetClient(chain);
     automatic_response = false;
     startTrailerTracking();
     sendBytes(client, false, requests[1]);
-    close_on       = 9;
-    refuse_trailer = true;
-    sendBytes(child, true, chunk_response);
+    close_on = 9;
+    sendBytes(child, true, "HTTP/1.1 200 OK\r\nContent-Length: invalid\r\n\r\n");
     require(! lineIsAlive(client) && ! observed_session->directions[1].output,
             "error handling queued output after child Finish closed the client");
     finishTrailerTracking();

@@ -34,7 +34,7 @@ static bool extraHeaders(hpc_tstate_t *ts, const cJSON *headers)
     if (! headers)
     {
         ts->headers = stringDuplicate("");
-        return ts->headers != NULL;
+        return true;
     }
     if (! cJSON_IsObject(headers))
         return false;
@@ -76,8 +76,6 @@ static bool extraHeaders(hpc_tstate_t *ts, const cJSON *headers)
         length += n;
     }
     ts->headers = memoryAllocate(length + 1);
-    if (! ts->headers)
-        return false;
     size_t at = 0;
     cJSON_ArrayForEach(f, headers) at +=
         (size_t) stringNPrintf(ts->headers + at, length + 1 - at, "%s: %s\r\n", f->string, f->valuestring);
@@ -170,8 +168,6 @@ bool hpcParseSettings(hpc_tstate_t *ts, node_t *node)
         return false;
     ts->dynamic_address = ! stringCompare(f->valuestring, "dest_context->address");
     ts->target          = stringDuplicate(f->valuestring);
-    if (! ts->target)
-        return false;
     f                = GET("port");
     ts->dynamic_port = cJSON_IsString(f) && ! stringCompare(f->valuestring, "dest_context->port");
     int64_t port;
@@ -241,8 +237,6 @@ bool hpcParseSettings(hpc_tstate_t *ts, node_t *node)
             }
         }
         ts->path = stringDuplicate(path);
-        if (! ts->path)
-            return false;
         f = GET("body-mode");
         if (f && ! cJSON_IsString(f))
             return false;

@@ -85,11 +85,9 @@ bool hpcBuildRequest(tunnel_t *t, line_t *l)
     hps_authority_t    authority;
     if (! selectAuthority(ts, l, ts->resolve_domains, &authority))
         return false;
-    char *text = memoryAllocate((size_t) ts->max_header + 1);
-    if (! text)
-        return false;
-    size_t at = 0;
-    bool   ok = true;
+    char  *text = memoryAllocate((size_t) ts->max_header + 1);
+    size_t at   = 0;
+    bool   ok   = true;
 #define ADD(s)                                                                                                         \
     do                                                                                                                 \
     {                                                                                                                  \

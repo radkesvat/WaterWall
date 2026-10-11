@@ -42,13 +42,6 @@ bool hpsProcessRequest(hps_session_t *s)
     if (hpsSettings(s)->fallback && hpsSettings(s)->auth_mode != kHpsAuthNone && ! s->protected_committed)
     {
         original = memoryAllocate((size_t) n + 1);
-        if (! original)
-        {
-            memoryZero(block, (size_t) n);
-            memoryFree(block);
-            hpsFail(s, 503);
-            return true;
-        }
         memoryCopy(original, block, (size_t) n + 1);
     }
     bool         auth_rejected = false;
@@ -127,10 +120,8 @@ bool hpsProcessRequest(hps_session_t *s)
             }
             if (! error && h.body.kind == kHpsBodyChunked)
             {
-                if (! hpsRetainTrailer(s, kHpsUpstream, &h, block, (size_t) n))
-                    error = 503;
-                else
-                    block = NULL;
+                hpsRetainTrailer(s, kHpsUpstream, &h, block, (size_t) n);
+                block = NULL;
             }
             if (! error && ! reuse)
                 hpsCreateChild(s, username, password);

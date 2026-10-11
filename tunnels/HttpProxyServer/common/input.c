@@ -24,15 +24,12 @@ void hpsClearHeader(hps_session_t *s, hps_direction_t d)
     memoryFree(owner);
 }
 
-bool hpsRetainTrailer(hps_session_t *s, hps_direction_t d, const hps_header_t *header, char *storage, size_t length)
+void hpsRetainTrailer(hps_session_t *s, hps_direction_t d, const hps_header_t *header, char *storage, size_t length)
 {
     assert(header->body.kind == kHpsBodyChunked && s->directions[d].trailer == NULL);
     hps_trailer_owner_t *owner = memoryAllocate(sizeof(*owner));
-    if (! owner)
-        return false;
     *owner                   = (hps_trailer_owner_t) {.context = *header, .storage = storage, .length = length};
-    s->directions[d].trailer = owner;
-    return true;
+    s->directions[d].trailer   = owner;
 }
 
 size_t hpsPendingBytes(hps_session_t *s)
@@ -178,8 +175,6 @@ int hpsReadHeader(hps_session_t *s, hps_direction_t d, char **block)
     if (! n)
         return 0;
     *block = memoryAllocate(n + 1);
-    if (! *block)
-        return -503;
     memoryCopy(*block, p, n);
     (*block)[n] = 0;
     hpsConsumeInput(s, d, n);
@@ -191,8 +186,6 @@ bool hpsRewriteHeaderOutput(hps_session_t *s, const hps_header_t *h, hps_directi
 {
     size_t cap  = (size_t) hpsSettings(s)->max_header + 1024;
     char  *text = memoryAllocate(cap);
-    if (! text)
-        return false;
     size_t n = 0;
     bool   ok =
         hpsRewriteHeader(h, d == kHpsDownstream, s->http10, d == kHpsDownstream && s->close_after, text, cap, &n) &&

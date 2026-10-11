@@ -30,8 +30,6 @@ tunnel_t *httpproxyserverTunnelCreate(node_t *node)
     }
     ts->worker_count = getWorkersCount();
     ts->workers      = memoryAllocateZero(sizeof(*ts->workers) * ts->worker_count);
-    if (! ts->workers)
-        goto fail;
     if (ts->auth_mode == kHpsAuthTracked)
     {
         if (! nodeConfigureChild(&ts->controller_node,

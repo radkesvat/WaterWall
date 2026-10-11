@@ -27,8 +27,8 @@ void hpsClearLineState(line_t *l, tunnel_t *t);
 void hpsCreateChild(hps_session_t *s, const char *username, const char *password);
 void hpsDiscardBuffer(hps_session_t *s, sbuf_t **slot);
 void hpsClearHeader(hps_session_t *s, hps_direction_t d);
-/* Success transfers storage; refusal leaves it with the caller. */
-bool   hpsRetainTrailer(hps_session_t *s, hps_direction_t d, const hps_header_t *header, char *storage, size_t length);
+/* Transfers storage to the session. */
+void   hpsRetainTrailer(hps_session_t *s, hps_direction_t d, const hps_header_t *header, char *storage, size_t length);
 size_t hpsPendingBytes(hps_session_t *s);
 bool   hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigned char *data, size_t n);
 bool   hpsQueueOutput(hps_session_t *s, hps_direction_t d, const char *data, size_t n);

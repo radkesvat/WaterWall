@@ -67,10 +67,8 @@ bool hpsProcessResponse(hps_session_t *s)
         if (! error && h.body.kind == kHpsBodyChunked && h.status >= 200)
         {
             hpsClearHeader(s, kHpsDownstream);
-            if (! hpsRetainTrailer(s, kHpsDownstream, &h, block, (size_t) n))
-                error = 503;
-            else
-                block = NULL;
+            hpsRetainTrailer(s, kHpsDownstream, &h, block, (size_t) n);
+            block = NULL;
         }
     }
     memoryFree(block);

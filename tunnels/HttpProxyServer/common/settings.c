@@ -41,9 +41,7 @@ static bool localUsers(hps_tstate_t *ts, const cJSON *users)
             return false;
         ++count;
     }
-    ts->users = memoryAllocateZero(count * sizeof(*ts->users));
-    if (! ts->users)
-        return false;
+    ts->users      = memoryAllocateZero(count * sizeof(*ts->users));
     ts->user_count = count; /* Destruction also clears partially populated storage. */
     size_t index   = 0;
     cJSON_ArrayForEach(entry, users)

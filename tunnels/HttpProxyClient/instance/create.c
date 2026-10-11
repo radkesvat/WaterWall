@@ -27,17 +27,11 @@ tunnel_t *httpproxyclientTunnelCreate(node_t *node)
     }
     ts->worker_count = getWorkersCount();
     ts->workers      = memoryAllocateZero(sizeof(*ts->workers) * ts->worker_count);
-    if (! ts->workers)
-    {
-        httpproxyclientTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
     if (ts->resolve_domains)
     {
         ts->domain_resolver_settings = cJSON_CreateObject();
-        if (! ts->domain_resolver_settings ||
-            ! cJSON_AddNumberToObject(ts->domain_resolver_settings, "strategy", ts->domain_strategy) ||
-            ! nodeConfigureChild(&ts->domain_resolver_node,
+        cJSON_AddNumberToObject(ts->domain_resolver_settings, "strategy", ts->domain_strategy);
+        if (! nodeConfigureChild(&ts->domain_resolver_node,
                                  nodeDomainResolverGet(),
                                  node,
                                  ".domain-resolver",
