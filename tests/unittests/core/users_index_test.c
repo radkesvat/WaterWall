@@ -29,6 +29,7 @@
  * on platforms without --wrap.
  */
 
+#include "objects/user_index_geometry.h"
 #include "wwapi.h"
 
 #include "test_assert.h"
@@ -1035,6 +1036,21 @@ static void testRebuildLookups(void)
     usersDestroy(&users);
 }
 
+static void testIndexGeometryRejection(void)
+{
+    require(userIndexHashCapacityIsRepresentable(0, 40, 2), "empty hash geometry was rejected");
+    require(userIndexHashCapacityIsRepresentable(16, 40, 2), "initial hash geometry was rejected");
+    require(! userIndexHashCapacityIsRepresentable(SIZE_MAX, 40, 2), "overflowing hash count was accepted");
+    require(! userIndexHashCapacityIsRepresentable((size_t) PTRDIFF_MAX / 40U, 40, 2),
+            "hash bucket rounding was omitted from the storage bound");
+
+    users_t users;
+    require(usersCreate(&users), "failed to create capacity-refusal fixture");
+    require(! usersReserve(&users, SIZE_MAX), "unrepresentable user storage was accepted");
+    require(usersCount(&users) == 0 && usersValidate(&users), "capacity refusal changed the user database");
+    usersDestroy(&users);
+}
+
 int main(void)
 {
     testCaseSet("users_index_test");
@@ -1062,6 +1078,7 @@ int main(void)
     testUpdateGrowsAllowedIpIndex();
     testAddGrowsAllowedIpIndex();
     testRebuildLookups();
+    testIndexGeometryRejection();
 
     printf("users_index_test: all checks passed\n");
     return 0;

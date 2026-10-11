@@ -3,6 +3,7 @@
  */
 
 #include "objects/users.h"
+#include "objects/user_index_geometry.h"
 
 #include "loggers/internal_logger.h"
 
@@ -334,16 +335,9 @@ static const char *usersUserNameForLog(const user_t *user)
     return user->name;
 }
 
-static bool usersStringDuplicate(char **dest, const char *value)
+static void usersStringDuplicate(char **dest, const char *value)
 {
-    char *copy = stringDuplicate(value != NULL ? value : "");
-    if (UNLIKELY(copy == NULL))
-    {
-        return false;
-    }
-
-    *dest = copy;
-    return true;
+    *dest = stringDuplicate(value != NULL ? value : "");
 }
 
 static void usersReplaceStringOwned(char **dest, char **owned_value)
@@ -485,24 +479,12 @@ static bool usersAllowedIpUserFieldsIndexable(const user_t *user)
         &user->wireguard_allowed_ip, &user->wireguard_allowed_mask, user->wireguard_allowed_ip_family, start16, end16);
 }
 
-static bool usersAllowedIpTableCreateIfNeeded(users_t *users)
+static void usersAllowedIpTableCreateIfNeeded(users_t *users)
 {
-    users_allowed_ip_table_t *table;
-
-    if (LIKELY(users->allowed_ip_table != NULL))
-    {
-        return true;
-    }
-
-    table = memoryAllocateZero(sizeof(*table));
-    if (UNLIKELY(table == NULL))
-    {
-        LOGE("Users: failed to allocate Allowed-IP lookup table");
-        return false;
-    }
-
-    users->allowed_ip_table = table;
-    return true;
+    if (users->allowed_ip_table != NULL)
+        return;
+    users_allowed_ip_table_t *table = memoryAllocateZero(sizeof(*table));
+    users->allowed_ip_table         = table;
 }
 
 static size_t usersAllowedIpTableSize(const users_allowed_ip_table_t *table)
@@ -521,13 +503,14 @@ static size_t usersAllowedIpTableSize(const users_allowed_ip_table_t *table)
  */
 static bool usersAllowedIpTableReserve(users_allowed_ip_table_t *table, size_t min_capacity)
 {
+    const size_t maximum_capacity = min((size_t) INT32_MAX, (size_t) PTRDIFF_MAX / sizeof(*table->map.nodes) - 1U);
     size_t capacity = (size_t) users_allowed_ip_map_t_capacity(&table->map);
 
     if (capacity >= min_capacity)
     {
         return true;
     }
-    if (UNLIKELY(min_capacity > (size_t) INT32_MAX))
+    if (UNLIKELY(min_capacity > maximum_capacity))
     {
         LOGE("Users: Allowed-IP lookup table capacity overflow");
         return false;
@@ -538,30 +521,27 @@ static bool usersAllowedIpTableReserve(users_allowed_ip_table_t *table, size_t m
     }
     while (capacity < min_capacity)
     {
-        if (UNLIKELY(capacity > (size_t) INT32_MAX / 2U))
+        if (UNLIKELY(capacity > maximum_capacity / 2U))
         {
             capacity = min_capacity;
             break;
         }
         capacity *= 2U;
     }
-    if (UNLIKELY(capacity > (size_t) INT32_MAX))
+    if (UNLIKELY(capacity > maximum_capacity))
     {
         LOGE("Users: Allowed-IP lookup table capacity overflow");
         return false;
     }
-    if (UNLIKELY(! users_allowed_ip_map_t_reserve(&table->map, (isize) capacity)))
-    {
-        LOGE("Users: failed to reserve Allowed-IP lookup table");
-        return false;
-    }
+    discard users_allowed_ip_map_t_reserve(&table->map, (isize) capacity);
 
     return true;
 }
 
 static bool usersAllowedIpTableEnsureCapacity(users_t *users, size_t count)
 {
-    return usersAllowedIpTableCreateIfNeeded(users) && usersAllowedIpTableReserve(users->allowed_ip_table, count);
+    usersAllowedIpTableCreateIfNeeded(users);
+    return usersAllowedIpTableReserve(users->allowed_ip_table, count);
 }
 
 static bool usersAllowedIpTableEnsureOneMoreRange(users_t *users)
@@ -612,17 +592,9 @@ static bool usersAllowedIpTableInsertLocked(users_t *users, user_t *user)
         LOGE("Users: user \"%s\" has an unparseable WireGuard Allowed-IP range", usersUserNameForLog(user));
         return false;
     }
-    if (UNLIKELY(! usersAllowedIpTableCreateIfNeeded(users)))
-    {
-        return false;
-    }
+    usersAllowedIpTableCreateIfNeeded(users);
 
     users_allowed_ip_map_t_result result = users_allowed_ip_map_t_insert(&users->allowed_ip_table->map, key, value);
-    if (UNLIKELY(result.ref == NULL))
-    {
-        LOGE("Users: failed to insert Allowed-IP lookup entry");
-        return false;
-    }
     if (UNLIKELY(! result.inserted && result.ref->second.user != user))
     {
         LOGE("Users: duplicate WireGuard Allowed-IPs \"%s\"", user->wireguard_allowed_ips);
@@ -934,16 +906,12 @@ static bool usersSHA224TableReserve(users_sha224_table_t *table, size_t count)
 {
     size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
 
-    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
+    if (UNLIKELY(! userIndexHashCapacityIsRepresentable(capacity, sizeof(*table->map.table), sizeof(*table->map.meta))))
     {
         LOGE("Users: SHA-224 lookup table capacity overflow");
         return false;
     }
-    if (UNLIKELY(! users_sha224_map_t_reserve(&table->map, (isize) capacity)))
-    {
-        LOGE("Users: failed to reserve SHA-224 lookup table");
-        return false;
-    }
+    discard users_sha224_map_t_reserve(&table->map, (isize) capacity);
 
     return true;
 }
@@ -952,16 +920,12 @@ static bool usersSHA256TableReserve(users_sha256_table_t *table, size_t count)
 {
     size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
 
-    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
+    if (UNLIKELY(! userIndexHashCapacityIsRepresentable(capacity, sizeof(*table->map.table), sizeof(*table->map.meta))))
     {
         LOGE("Users: SHA-256 lookup table capacity overflow");
         return false;
     }
-    if (UNLIKELY(! users_sha256_map_t_reserve(&table->map, (isize) capacity)))
-    {
-        LOGE("Users: failed to reserve SHA-256 lookup table");
-        return false;
-    }
+    discard users_sha256_map_t_reserve(&table->map, (isize) capacity);
 
     return true;
 }
@@ -970,16 +934,12 @@ static bool usersUUIDTableReserve(users_uuid_table_t *table, size_t count)
 {
     size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
 
-    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
+    if (UNLIKELY(! userIndexHashCapacityIsRepresentable(capacity, sizeof(*table->map.table), sizeof(*table->map.meta))))
     {
         LOGE("Users: UUID lookup table capacity overflow");
         return false;
     }
-    if (UNLIKELY(! users_uuid_map_t_reserve(&table->map, (isize) capacity)))
-    {
-        LOGE("Users: failed to reserve UUID lookup table");
-        return false;
-    }
+    discard users_uuid_map_t_reserve(&table->map, (isize) capacity);
 
     return true;
 }
@@ -988,16 +948,12 @@ static bool usersWireGuardPublicKeyTableReserve(users_wireguard_publickey_table_
 {
     size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
 
-    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
+    if (UNLIKELY(! userIndexHashCapacityIsRepresentable(capacity, sizeof(*table->map.table), sizeof(*table->map.meta))))
     {
         LOGE("Users: WireGuard public key lookup table capacity overflow");
         return false;
     }
-    if (UNLIKELY(! users_wireguard_publickey_map_t_reserve(&table->map, (isize) capacity)))
-    {
-        LOGE("Users: failed to reserve WireGuard public key lookup table");
-        return false;
-    }
+    discard users_wireguard_publickey_map_t_reserve(&table->map, (isize) capacity);
 
     return true;
 }
@@ -1006,179 +962,89 @@ static bool usersIDTableReserve(users_id_table_t *table, size_t count)
 {
     size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
 
-    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
+    if (UNLIKELY(! userIndexHashCapacityIsRepresentable(capacity, sizeof(*table->map.table), sizeof(*table->map.meta))))
     {
         LOGE("Users: id lookup table capacity overflow");
         return false;
     }
-    if (UNLIKELY(! users_id_map_t_reserve(&table->map, (isize) capacity)))
-    {
-        LOGE("Users: failed to reserve id lookup table");
-        return false;
-    }
+    discard users_id_map_t_reserve(&table->map, (isize) capacity);
 
     return true;
 }
 
-static bool usersSHA224TableCreateIfNeeded(users_t *users)
+static void usersSHA224TableCreateIfNeeded(users_t *users)
 {
-    users_sha224_table_t *table;
-
-    if (LIKELY(users->sha224_table != NULL))
-    {
-        return true;
-    }
-
-    table = memoryAllocateZero(sizeof(*table));
-    if (UNLIKELY(table == NULL))
-    {
-        LOGE("Users: failed to allocate SHA-224 lookup table");
-        return false;
-    }
-
-    if (UNLIKELY(! usersSHA224TableReserve(table, kUsersInitialTableCapacity)))
-    {
-        users_sha224_map_t_drop(&table->map);
-        memoryFree(table);
-        return false;
-    }
-
+    if (users->sha224_table != NULL)
+        return;
+    users_sha224_table_t *table = memoryAllocateZero(sizeof(*table));
+    discard               users_sha224_map_t_reserve(&table->map, kUsersInitialTableCapacity);
     users->sha224_table = table;
-    return true;
 }
 
-static bool usersSHA256TableCreateIfNeeded(users_t *users)
+static void usersSHA256TableCreateIfNeeded(users_t *users)
 {
-    users_sha256_table_t *table;
-
-    if (LIKELY(users->sha256_table != NULL))
-    {
-        return true;
-    }
-
-    table = memoryAllocateZero(sizeof(*table));
-    if (UNLIKELY(table == NULL))
-    {
-        LOGE("Users: failed to allocate SHA-256 lookup table");
-        return false;
-    }
-
-    if (UNLIKELY(! usersSHA256TableReserve(table, kUsersInitialTableCapacity)))
-    {
-        users_sha256_map_t_drop(&table->map);
-        memoryFree(table);
-        return false;
-    }
-
+    if (users->sha256_table != NULL)
+        return;
+    users_sha256_table_t *table = memoryAllocateZero(sizeof(*table));
+    discard               users_sha256_map_t_reserve(&table->map, kUsersInitialTableCapacity);
     users->sha256_table = table;
-    return true;
 }
 
-static bool usersUUIDTableCreateIfNeeded(users_t *users)
+static void usersUUIDTableCreateIfNeeded(users_t *users)
 {
-    users_uuid_table_t *table;
-
-    if (LIKELY(users->uuid_table != NULL))
-    {
-        return true;
-    }
-
-    table = memoryAllocateZero(sizeof(*table));
-    if (UNLIKELY(table == NULL))
-    {
-        LOGE("Users: failed to allocate UUID lookup table");
-        return false;
-    }
-
-    if (UNLIKELY(! usersUUIDTableReserve(table, kUsersInitialTableCapacity)))
-    {
-        users_uuid_map_t_drop(&table->map);
-        memoryFree(table);
-        return false;
-    }
-
+    if (users->uuid_table != NULL)
+        return;
+    users_uuid_table_t *table = memoryAllocateZero(sizeof(*table));
+    discard             users_uuid_map_t_reserve(&table->map, kUsersInitialTableCapacity);
     users->uuid_table = table;
-    return true;
 }
 
-static bool usersWireGuardPublicKeyTableCreateIfNeeded(users_t *users)
+static void usersWireGuardPublicKeyTableCreateIfNeeded(users_t *users)
 {
-    users_wireguard_publickey_table_t *table;
-
-    if (LIKELY(users->wireguard_publickey_table != NULL))
-    {
-        return true;
-    }
-
-    table = memoryAllocateZero(sizeof(*table));
-    if (UNLIKELY(table == NULL))
-    {
-        LOGE("Users: failed to allocate WireGuard public key lookup table");
-        return false;
-    }
-
-    if (UNLIKELY(! usersWireGuardPublicKeyTableReserve(table, kUsersInitialTableCapacity)))
-    {
-        users_wireguard_publickey_map_t_drop(&table->map);
-        memoryFree(table);
-        return false;
-    }
-
+    if (users->wireguard_publickey_table != NULL)
+        return;
+    users_wireguard_publickey_table_t *table = memoryAllocateZero(sizeof(*table));
+    discard                            users_wireguard_publickey_map_t_reserve(&table->map, kUsersInitialTableCapacity);
     users->wireguard_publickey_table = table;
-    return true;
 }
 
-static bool usersIDTableCreateIfNeeded(users_t *users)
+static void usersIDTableCreateIfNeeded(users_t *users)
 {
-    users_id_table_t *table;
-
-    if (LIKELY(users->id_table != NULL))
-    {
-        return true;
-    }
-
-    table = memoryAllocateZero(sizeof(*table));
-    if (UNLIKELY(table == NULL))
-    {
-        LOGE("Users: failed to allocate id lookup table");
-        return false;
-    }
-
-    if (UNLIKELY(! usersIDTableReserve(table, kUsersInitialTableCapacity)))
-    {
-        users_id_map_t_drop(&table->map);
-        memoryFree(table);
-        return false;
-    }
-
+    if (users->id_table != NULL)
+        return;
+    users_id_table_t *table = memoryAllocateZero(sizeof(*table));
+    discard           users_id_map_t_reserve(&table->map, kUsersInitialTableCapacity);
     users->id_table = table;
-    return true;
 }
 
 static bool usersSHA256TableEnsureCapacity(users_t *users, size_t count)
 {
-    return usersSHA256TableCreateIfNeeded(users) && usersSHA256TableReserve(users->sha256_table, count);
+    usersSHA256TableCreateIfNeeded(users);
+    return usersSHA256TableReserve(users->sha256_table, count);
 }
 
 static bool usersSHA224TableEnsureCapacity(users_t *users, size_t count)
 {
-    return usersSHA224TableCreateIfNeeded(users) && usersSHA224TableReserve(users->sha224_table, count);
+    usersSHA224TableCreateIfNeeded(users);
+    return usersSHA224TableReserve(users->sha224_table, count);
 }
 
 static bool usersUUIDTableEnsureCapacity(users_t *users, size_t count)
 {
-    return usersUUIDTableCreateIfNeeded(users) && usersUUIDTableReserve(users->uuid_table, count);
+    usersUUIDTableCreateIfNeeded(users);
+    return usersUUIDTableReserve(users->uuid_table, count);
 }
 
 static bool usersWireGuardPublicKeyTableEnsureCapacity(users_t *users, size_t count)
 {
-    return usersWireGuardPublicKeyTableCreateIfNeeded(users) &&
-           usersWireGuardPublicKeyTableReserve(users->wireguard_publickey_table, count);
+    usersWireGuardPublicKeyTableCreateIfNeeded(users);
+    return usersWireGuardPublicKeyTableReserve(users->wireguard_publickey_table, count);
 }
 
 static bool usersIDTableEnsureCapacity(users_t *users, size_t count)
 {
-    return usersIDTableCreateIfNeeded(users) && usersIDTableReserve(users->id_table, count);
+    usersIDTableCreateIfNeeded(users);
+    return usersIDTableReserve(users->id_table, count);
 }
 
 static void usersSHA224TableClear(users_sha224_table_t *table)
@@ -1359,8 +1225,8 @@ static user_t *usersIDTableLookupLocked(const users_t *users, uint64_t id)
 /*
  * Capacity-free credential inserts. These never reserve, so a caller that has
  * already reserved headroom (see usersEnsureLookupCapacityLocked) can run them
- * after an irreversible mutation without risking a rehash-time allocation
- * failure. The password-change commit relies on this to stay transactional.
+ * after an irreversible mutation without growing their storage. Duplicate-key
+ * and invalid-credential checks remain part of the transactional commit.
  */
 static bool usersSHA224TableInsertEntryLocked(users_t *users, user_t *user)
 {
@@ -1375,11 +1241,6 @@ static bool usersSHA224TableInsertEntryLocked(users_t *users, user_t *user)
 
     key    = usersSHA224KeyFromBytes(user->sha224_pass.bytes);
     result = users_sha224_map_t_insert(&users->sha224_table->map, key, user);
-    if (UNLIKELY(result.ref == NULL))
-    {
-        LOGE("Users: failed to insert SHA-224 lookup entry");
-        return false;
-    }
     if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
         LOGE("Users: duplicate SHA-224 lookup key between users \"%s\" and \"%s\"",
@@ -1413,11 +1274,6 @@ static bool usersSHA256TableInsertEntryLocked(users_t *users, user_t *user)
 
     key    = usersSHA256KeyFromBytes(user->sha256_pass.bytes);
     result = users_sha256_map_t_insert(&users->sha256_table->map, key, user);
-    if (UNLIKELY(result.ref == NULL))
-    {
-        LOGE("Users: failed to insert SHA-256 lookup entry");
-        return false;
-    }
     if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
         LOGE("Users: duplicate SHA-256 lookup key between users \"%s\" and \"%s\"",
@@ -1450,11 +1306,6 @@ static bool usersUUIDTableInsertEntryLocked(users_t *users, user_t *user)
 
     key    = usersUUIDKeyFromBytes(user->uuid_pass);
     result = users_uuid_map_t_insert(&users->uuid_table->map, key, user);
-    if (UNLIKELY(result.ref == NULL))
-    {
-        LOGE("Users: failed to insert UUID lookup entry");
-        return false;
-    }
     if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
         LOGE("Users: duplicate UUID credential between users \"%s\" and \"%s\"",
@@ -1492,11 +1343,6 @@ static bool usersWireGuardPublicKeyTableInsertEntryLocked(users_t *users, user_t
 
     key    = usersWireGuardPublicKeyFromBytes(user->wireguard_publickey);
     result = users_wireguard_publickey_map_t_insert(&users->wireguard_publickey_table->map, key, user);
-    if (UNLIKELY(result.ref == NULL))
-    {
-        LOGE("Users: failed to insert WireGuard public key lookup entry");
-        return false;
-    }
     if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
         LOGE("Users: duplicate WireGuard public key between users \"%s\" and \"%s\"",
@@ -1537,11 +1383,6 @@ static bool usersIDTableInsertLocked(users_t *users, user_t *user)
     }
 
     result = users_id_map_t_insert(&users->id_table->map, id, user);
-    if (UNLIKELY(result.ref == NULL))
-    {
-        LOGE("Users: failed to insert id lookup entry");
-        return false;
-    }
     if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
         LOGE("Users: duplicate id %" PRIu64 " between users \"%s\" and \"%s\"",
@@ -1695,50 +1536,29 @@ static bool usersNameTableReserve(users_name_table_t *table, size_t count)
 {
     size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
 
-    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
+    if (UNLIKELY(! userIndexHashCapacityIsRepresentable(capacity, sizeof(*table->map.table), sizeof(*table->map.meta))))
     {
         LOGE("Users: name lookup table capacity overflow");
         return false;
     }
-    if (UNLIKELY(! users_name_map_t_reserve(&table->map, (isize) capacity)))
-    {
-        LOGE("Users: failed to reserve name lookup table");
-        return false;
-    }
+    discard users_name_map_t_reserve(&table->map, (isize) capacity);
 
     return true;
 }
 
-static bool usersNameTableCreateIfNeeded(users_t *users)
+static void usersNameTableCreateIfNeeded(users_t *users)
 {
-    users_name_table_t *table;
-
-    if (LIKELY(users->name_table != NULL))
-    {
-        return true;
-    }
-
-    table = memoryAllocateZero(sizeof(*table));
-    if (UNLIKELY(table == NULL))
-    {
-        LOGE("Users: failed to allocate name lookup table");
-        return false;
-    }
-
-    if (UNLIKELY(! usersNameTableReserve(table, kUsersInitialTableCapacity)))
-    {
-        users_name_map_t_drop(&table->map);
-        memoryFree(table);
-        return false;
-    }
-
+    if (users->name_table != NULL)
+        return;
+    users_name_table_t *table = memoryAllocateZero(sizeof(*table));
+    discard             users_name_map_t_reserve(&table->map, kUsersInitialTableCapacity);
     users->name_table = table;
-    return true;
 }
 
 static bool usersNameTableEnsureCapacity(users_t *users, size_t count)
 {
-    return usersNameTableCreateIfNeeded(users) && usersNameTableReserve(users->name_table, count);
+    usersNameTableCreateIfNeeded(users);
+    return usersNameTableReserve(users->name_table, count);
 }
 
 static void usersNameTableClear(users_name_table_t *table)
@@ -1797,11 +1617,6 @@ static bool usersNameTableInsertLocked(users_t *users, user_t *user)
 
     key    = (users_name_key_t) {.name = user->name};
     result = users_name_map_t_insert(&users->name_table->map, key, user);
-    if (UNLIKELY(result.ref == NULL))
-    {
-        LOGE("Users: failed to insert name lookup entry");
-        return false;
-    }
     if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
         LOGE("Users: duplicate username \"%s\" between two users", user->name);
@@ -1853,50 +1668,29 @@ static bool usersPointerTableReserve(users_pointer_table_t *table, size_t count)
 {
     size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
 
-    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
+    if (UNLIKELY(! userIndexHashCapacityIsRepresentable(capacity, sizeof(*table->map.table), sizeof(*table->map.meta))))
     {
         LOGE("Users: pointer lookup table capacity overflow");
         return false;
     }
-    if (UNLIKELY(! users_pointer_map_t_reserve(&table->map, (isize) capacity)))
-    {
-        LOGE("Users: failed to reserve pointer lookup table");
-        return false;
-    }
+    discard users_pointer_map_t_reserve(&table->map, (isize) capacity);
 
     return true;
 }
 
-static bool usersPointerTableCreateIfNeeded(users_t *users)
+static void usersPointerTableCreateIfNeeded(users_t *users)
 {
-    users_pointer_table_t *table;
-
-    if (LIKELY(users->pointer_table != NULL))
-    {
-        return true;
-    }
-
-    table = memoryAllocateZero(sizeof(*table));
-    if (UNLIKELY(table == NULL))
-    {
-        LOGE("Users: failed to allocate pointer lookup table");
-        return false;
-    }
-
-    if (UNLIKELY(! usersPointerTableReserve(table, kUsersInitialTableCapacity)))
-    {
-        users_pointer_map_t_drop(&table->map);
-        memoryFree(table);
-        return false;
-    }
-
+    if (users->pointer_table != NULL)
+        return;
+    users_pointer_table_t *table = memoryAllocateZero(sizeof(*table));
+    discard                users_pointer_map_t_reserve(&table->map, kUsersInitialTableCapacity);
     users->pointer_table = table;
-    return true;
 }
 
 static bool usersPointerTableEnsureCapacity(users_t *users, size_t count)
 {
-    return usersPointerTableCreateIfNeeded(users) && usersPointerTableReserve(users->pointer_table, count);
+    usersPointerTableCreateIfNeeded(users);
+    return usersPointerTableReserve(users->pointer_table, count);
 }
 
 static void usersPointerTableClear(users_pointer_table_t *table)
@@ -1944,19 +1738,12 @@ static bool usersPointerTableLookupLocked(const users_t *users, const user_t *us
 /* Records (or updates) the active items[] index for a stored user. */
 static bool usersPointerTableSetLocked(users_t *users, user_t *user, size_t index)
 {
-    users_pointer_map_t_result result;
-
     if (UNLIKELY(! usersPointerTableEnsureCapacity(users, users->count + 1U)))
     {
         return false;
     }
 
-    result = users_pointer_map_t_insert_or_assign(&users->pointer_table->map, (uintptr_t) user, index);
-    if (UNLIKELY(result.ref == NULL))
-    {
-        LOGE("Users: failed to insert pointer lookup entry");
-        return false;
-    }
+    discard users_pointer_map_t_insert_or_assign(&users->pointer_table->map, (uintptr_t) user, index);
 
     return true;
 }
@@ -2028,12 +1815,16 @@ static bool usersEnsureLookupCapacityLocked(users_t *users, size_t count)
     return true;
 }
 
-static bool usersLookupTablesCreateIfNeededLocked(users_t *users)
+static void usersLookupTablesCreateIfNeededLocked(users_t *users)
 {
-    return usersSHA224TableCreateIfNeeded(users) && usersSHA256TableCreateIfNeeded(users) &&
-           usersUUIDTableCreateIfNeeded(users) && usersWireGuardPublicKeyTableCreateIfNeeded(users) &&
-           usersIDTableCreateIfNeeded(users) && usersNameTableCreateIfNeeded(users) &&
-           usersPointerTableCreateIfNeeded(users) && usersAllowedIpTableCreateIfNeeded(users);
+    usersSHA224TableCreateIfNeeded(users);
+    usersSHA256TableCreateIfNeeded(users);
+    usersUUIDTableCreateIfNeeded(users);
+    usersWireGuardPublicKeyTableCreateIfNeeded(users);
+    usersIDTableCreateIfNeeded(users);
+    usersNameTableCreateIfNeeded(users);
+    usersPointerTableCreateIfNeeded(users);
+    usersAllowedIpTableCreateIfNeeded(users);
 }
 
 static void usersLookupTablesDestroy(users_t *users)
@@ -2100,8 +1891,8 @@ static bool usersBuildLookupTablesForItemsLocked(users_t *lookup_users, user_t *
     }
     lookup_capacity += 1U;
 
-    if (UNLIKELY(! usersLookupTablesCreateIfNeededLocked(lookup_users) ||
-                 ! usersEnsureLookupCapacityLocked(lookup_users, lookup_capacity) ||
+    usersLookupTablesCreateIfNeededLocked(lookup_users);
+    if (UNLIKELY(! usersEnsureLookupCapacityLocked(lookup_users, lookup_capacity) ||
                  ! usersAllowedIpTableReserve(lookup_users->allowed_ip_table, ranged_count)))
     {
         return false;
@@ -2229,12 +2020,13 @@ static bool usersReserveItemsLocked(users_t *users, size_t capacity)
     }
 
     /* This array is aligned-allocated, so grow it manually; memoryReAllocate() cannot preserve that contract. */
-    user_t **new_items = usersAllocateAlignedZero32(new_capacity * sizeof(*new_items));
-    if (UNLIKELY(new_items == NULL))
+    const size_t bytes = new_capacity * sizeof(*users->items);
+    if (UNLIKELY(! memoryAlignedAllocationSizeIsRepresentable(bytes, 32)))
     {
-        LOGE("Users: failed to grow active user pointer array");
+        LOGE("Users: active user pointer capacity overflow");
         return false;
     }
+    user_t **new_items = usersAllocateAlignedZero32(bytes);
     if (LIKELY(users->items != NULL))
     {
         memoryCopy(new_items, users->items, users->capacity * sizeof(*new_items));
@@ -2270,12 +2062,13 @@ static bool usersReserveStorageLocked(users_t *users, size_t slot_capacity)
             }
 
             /* Keep this manual grow in sync with memoryFreeAligned() in usersDestroy(). */
-            user_t **new_blocks = usersAllocateAlignedZero32(new_block_capacity * sizeof(*new_blocks));
-            if (UNLIKELY(new_blocks == NULL))
+            const size_t bytes = new_block_capacity * sizeof(*users->blocks);
+            if (UNLIKELY(! memoryAlignedAllocationSizeIsRepresentable(bytes, 32)))
             {
-                LOGE("Users: failed to grow user block pointer array");
+                LOGE("Users: user block pointer capacity overflow");
                 return false;
             }
+            user_t **new_blocks = usersAllocateAlignedZero32(bytes);
             if (LIKELY(users->blocks != NULL))
             {
                 memoryCopy(new_blocks, users->blocks, users->block_capacity * sizeof(*new_blocks));
@@ -2287,11 +2080,6 @@ static bool usersReserveStorageLocked(users_t *users, size_t slot_capacity)
         }
 
         block = usersAllocateAlignedZero32(kUsersBlockSize * sizeof(*block));
-        if (UNLIKELY(block == NULL))
-        {
-            LOGE("Users: failed to allocate user storage block");
-            return false;
-        }
 
         users->blocks[users->block_count] = block;
         users->block_count += 1U;
@@ -2346,7 +2134,7 @@ static user_t *usersFindByNameLocked(const users_t *users, const char *name, con
  * would only repeat that work (recomputing SHA-224/256, the UUID form, and the
  * WireGuard key, plus every index lookup) for no benefit; they are skipped. The
  * capacity reservation and the index inserts always run, so a false return on the
- * prevalidated path can only be an allocation failure.
+ * prevalidated path reflects rejected capacity geometry or an index inconsistency.
  */
 static bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalidated)
 {
@@ -2657,9 +2445,8 @@ users_add_result_t usersAddUserChecked(users_t *users, const user_t *user)
     }
     /*
      * `slot` is an exact copy of the immutable, just-validated snapshot, so
-     * commit skips the redundant revalidation. Its only remaining failure mode
-     * is an index-capacity allocation failure, which is reported as such rather
-     * than collapsed into a generic commit error.
+     * commit skips the redundant revalidation. Capacity geometry refusal keeps
+     * the public resource-failure result; heap exhaustion does not return.
      */
     if (UNLIKELY(! usersCommitNewUserLocked(users, slot, true)))
     {
@@ -2956,23 +2743,13 @@ static void usersRollbackFeedLocked(users_t *users, size_t old_count, size_t old
     }
 }
 
-static bool usersApplyNameHint(user_t *user, const char *name_hint)
+static void usersApplyNameHint(user_t *user, const char *name_hint)
 {
-    char *name = NULL;
-
     if (name_hint == NULL || name_hint[0] == '\0' || (user->name != NULL && user->name[0] != '\0'))
-    {
-        return true;
-    }
-    if (UNLIKELY(! usersStringDuplicate(&name, name_hint)))
-    {
-        LOGE("Users: failed to allocate object-key username hint");
-        return false;
-    }
-
+        return;
+    char *name = stringDuplicate(name_hint);
     memoryFree(user->name);
     user->name = name;
-    return true;
 }
 
 static bool usersAppendJsonUserLocked(users_t *users, const cJSON *user_json, const char *name_hint)
@@ -2995,11 +2772,7 @@ static bool usersAppendJsonUserLocked(users_t *users, const cJSON *user_json, co
         LOGE("Users: failed to create user from JSON entry at index %zu", users->count);
         return false;
     }
-    if (UNLIKELY(! usersApplyNameHint(slot, name_hint)))
-    {
-        userDestroy(slot);
-        return false;
-    }
+    usersApplyNameHint(slot, name_hint);
     if (LIKELY(usersCommitNewUserLocked(users, slot, false)))
     {
         return true;
@@ -3356,23 +3129,7 @@ bool usersCreate(users_t *users)
     {
         return false;
     }
-    if (UNLIKELY(! usersSHA224TableCreateIfNeeded(users) || ! usersSHA256TableCreateIfNeeded(users) ||
-                 ! usersUUIDTableCreateIfNeeded(users) || ! usersWireGuardPublicKeyTableCreateIfNeeded(users) ||
-                 ! usersIDTableCreateIfNeeded(users) || ! usersNameTableCreateIfNeeded(users) ||
-                 ! usersPointerTableCreateIfNeeded(users) || ! usersAllowedIpTableCreateIfNeeded(users)))
-    {
-        usersSHA224TableDestroy(users->sha224_table);
-        usersSHA256TableDestroy(users->sha256_table);
-        usersUUIDTableDestroy(users->uuid_table);
-        usersWireGuardPublicKeyTableDestroy(users->wireguard_publickey_table);
-        usersIDTableDestroy(users->id_table);
-        usersNameTableDestroy(users->name_table);
-        usersPointerTableDestroy(users->pointer_table);
-        usersAllowedIpTableDestroy(users->allowed_ip_table);
-        rwlockDestroy(&users->lock);
-        memoryZero(users, sizeof(*users));
-        return false;
-    }
+    usersLookupTablesCreateIfNeededLocked(users);
 
     return true;
 }
@@ -3958,22 +3715,12 @@ static users_update_result_t usersCopyUpdateStrings(const user_update_t *update,
     *notes_copy = NULL;
     memoryZero(wireguard_allowed_ips, sizeof(*wireguard_allowed_ips));
 
-    if (UNLIKELY((update->mask & kUserUpdateName) != 0U && ! usersStringDuplicate(name_copy, update->name)))
-    {
-        return kUsersUpdateResultAllocationFailed;
-    }
-    if (UNLIKELY((update->mask & kUserUpdateEmail) != 0U && ! usersStringDuplicate(email_copy, update->email)))
-    {
-        usersFreeUpdateStringCopies(*name_copy, *email_copy, *notes_copy, wireguard_allowed_ips);
-        *name_copy = *email_copy = *notes_copy = NULL;
-        return kUsersUpdateResultAllocationFailed;
-    }
-    if (UNLIKELY((update->mask & kUserUpdateNotes) != 0U && ! usersStringDuplicate(notes_copy, update->notes)))
-    {
-        usersFreeUpdateStringCopies(*name_copy, *email_copy, *notes_copy, wireguard_allowed_ips);
-        *name_copy = *email_copy = *notes_copy = NULL;
-        return kUsersUpdateResultAllocationFailed;
-    }
+    if ((update->mask & kUserUpdateName) != 0U)
+        usersStringDuplicate(name_copy, update->name);
+    if ((update->mask & kUserUpdateEmail) != 0U)
+        usersStringDuplicate(email_copy, update->email);
+    if ((update->mask & kUserUpdateNotes) != 0U)
+        usersStringDuplicate(notes_copy, update->notes);
     if ((update->mask & kUserUpdateWireGuardAllowedIps) != 0U)
     {
         if (UNLIKELY(! userWireGuardAllowedIpsParse(update->wireguard_allowed_ips,

@@ -3,6 +3,7 @@
  */
 
 #include "objects/user.h"
+#include "objects/user_index_geometry.h"
 
 #include "utils/json_helpers.h"
 
@@ -21,29 +22,16 @@ static bool userObjectIsInitialized(const User *user)
     return user != NULL && user->initialized;
 }
 
-static bool userStringDuplicate(char **dest, const char *value)
+static void userStringDuplicate(char **dest, const char *value)
 {
-    char *copy = stringDuplicate(value != NULL ? value : "");
-    if (UNLIKELY(copy == NULL))
-    {
-        return false;
-    }
-
-    *dest = copy;
-    return true;
+    *dest = stringDuplicate(value != NULL ? value : "");
 }
 
-static bool userReplaceString(char **dest, const char *value)
+static void userReplaceString(char **dest, const char *value)
 {
     char *copy = stringDuplicate(value != NULL ? value : "");
-    if (UNLIKELY(copy == NULL))
-    {
-        return false;
-    }
-
     memoryFree(*dest);
     *dest = copy;
-    return true;
 }
 
 static void userFreePassword(char *password)
@@ -205,7 +193,7 @@ bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_a
         if (normalized_out != NULL)
         {
             *normalized_out = stringDuplicate("");
-            return *normalized_out != NULL;
+            return true;
         }
         return true;
     }
@@ -215,17 +203,13 @@ bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_a
     }
 
     compact = stringNewWithoutSpace(value);
-    if (UNLIKELY(compact == NULL))
-    {
-        return false;
-    }
     if (compact[0] == '\0')
     {
         if (normalized_out != NULL)
         {
             *normalized_out = stringDuplicate("");
             memoryFree(compact);
-            return *normalized_out != NULL;
+            return true;
         }
         memoryFree(compact);
         return true;
@@ -295,10 +279,6 @@ bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_a
     if (normalized_out != NULL)
     {
         *normalized_out = stringDuplicate(normalized);
-        if (UNLIKELY(*normalized_out == NULL))
-        {
-            return false;
-        }
     }
     if (ip_out != NULL)
     {
@@ -443,17 +423,11 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     rwlockReadLock(&mutable_src->lock);
     rwlockReadLock(&mutable_src->stats_lock);
 
-    if (UNLIKELY(! userStringDuplicate(&snapshot->name, src->name) ||
-                 ! userStringDuplicate(&snapshot->password, src->password) ||
-                 ! userStringDuplicate(&snapshot->email, src->email) ||
-                 ! userStringDuplicate(&snapshot->notes, src->notes) ||
-                 ! userStringDuplicate(&snapshot->wireguard_allowed_ips, src->wireguard_allowed_ips)))
-    {
-        rwlockReadUnlock(&mutable_src->stats_lock);
-        rwlockReadUnlock(&mutable_src->lock);
-        userSnapshotDestroy(snapshot);
-        return false;
-    }
+    userStringDuplicate(&snapshot->name, src->name);
+    userStringDuplicate(&snapshot->password, src->password);
+    userStringDuplicate(&snapshot->email, src->email);
+    userStringDuplicate(&snapshot->notes, src->notes);
+    userStringDuplicate(&snapshot->wireguard_allowed_ips, src->wireguard_allowed_ips);
 
     snapshot->id                          = src->id;
     snapshot->gid                         = src->gid;
@@ -1035,29 +1009,14 @@ void userRuntimeStateMove(user_runtime_stat_t *dest, user_runtime_stat_t *src)
     memoryZero(src, sizeof(*src));
 }
 
-/* Builds the adaptive index from the current dense array. Silently stays on the
- * linear path (index left NULL) if any allocation fails. */
+/* Builds the adaptive index from the authoritative dense array. Its capacity
+ * is validated before the corresponding array entry is admitted. */
 static void userRuntimePromoteIpIndexLocked(user_runtime_stat_t *runtime)
 {
     user_ip_index_t *index = memoryAllocateZero(sizeof(*index));
-    if (index == NULL)
-    {
-        return;
-    }
-    if (runtime->ip_usage_count > (size_t) PTRDIFF_MAX ||
-        ! user_ip_index_map_t_reserve(&index->map, (isize) runtime->ip_usage_count))
-    {
-        userIpIndexFree(index);
-        return;
-    }
+    discard          user_ip_index_map_t_reserve(&index->map, (isize) runtime->ip_usage_count);
     for (size_t i = 0; i < runtime->ip_usage_count; ++i)
-    {
-        if (user_ip_index_map_t_insert(&index->map, runtime->ip_usages[i].key, i).ref == NULL)
-        {
-            userIpIndexFree(index);
-            return;
-        }
-    }
+        discard user_ip_index_map_t_insert(&index->map, runtime->ip_usages[i].key, i);
     runtime->ip_index = index;
 }
 
@@ -1067,19 +1026,11 @@ static void userRuntimeIpAddedLocked(user_runtime_stat_t *runtime, size_t new_in
 {
     if (runtime->ip_index != NULL)
     {
-        if (user_ip_index_map_t_insert(&runtime->ip_index->map, runtime->ip_usages[new_index].key, new_index).ref ==
-            NULL)
-        {
-            /* Keep the array authoritative: fall back to the linear scan. */
-            userIpIndexFree(runtime->ip_index);
-            runtime->ip_index = NULL;
-        }
+        discard user_ip_index_map_t_insert(&runtime->ip_index->map, runtime->ip_usages[new_index].key, new_index);
         return;
     }
     if (runtime->ip_usage_count >= (size_t) kUserIpIndexPromotionThreshold)
-    {
         userRuntimePromoteIpIndexLocked(runtime);
-    }
 }
 
 /*
@@ -1129,17 +1080,20 @@ static size_t userRuntimeFindIpLocked(const user_runtime_stat_t *runtime, const 
 /* Ensures room for at least one more IP usage entry. Caller holds user->stats_lock. */
 static bool userRuntimeReserveIpLocked(user_runtime_stat_t *runtime)
 {
-    if (runtime->ip_usage_count < runtime->ip_usage_capacity)
-    {
-        return true;
-    }
-
-    size_t           new_capacity = runtime->ip_usage_capacity == 0 ? 4 : runtime->ip_usage_capacity * 2;
-    user_ip_usage_t *grown        = memoryReAllocate(runtime->ip_usages, new_capacity * sizeof(*grown));
-    if (UNLIKELY(grown == NULL))
-    {
+    const size_t count = runtime->ip_usage_count;
+    /* Insertion can grow an existing hash table by 3/2, so validate that request
+     * before admitting a new array entry. This is a geometry refusal, not OOM. */
+    if (count >= (size_t) PTRDIFF_MAX / 2U || ! userIndexHashCapacityIsRepresentable(count * 3U / 2U + 2U,
+                                                                                     sizeof(user_ip_index_map_t_value),
+                                                                                     sizeof(struct hmap_meta)))
         return false;
-    }
+    if (count < runtime->ip_usage_capacity)
+        return true;
+    const size_t maximum_capacity = (size_t) PTRDIFF_MAX / sizeof(*runtime->ip_usages);
+    if (runtime->ip_usage_capacity > maximum_capacity / 2U)
+        return false;
+    const size_t     new_capacity = runtime->ip_usage_capacity == 0 ? 4 : runtime->ip_usage_capacity * 2U;
+    user_ip_usage_t *grown        = memoryReAllocate(runtime->ip_usages, new_capacity * sizeof(*grown));
 
     runtime->ip_usages         = grown;
     runtime->ip_usage_capacity = new_capacity;
@@ -1170,9 +1124,11 @@ bool userCreate(User *user, const char *password)
     user->record_stat_interval_ms = USER_DEFAULT_RECORD_STAT_INTERVAL_MS;
     user->timeinfo.created_at_ms  = getTimeOfDayMS();
 
-    if (UNLIKELY(! userStringDuplicate(&user->name, "") || ! userStringDuplicate(&user->email, "") ||
-                 ! userStringDuplicate(&user->notes, "") || ! userStringDuplicate(&user->wireguard_allowed_ips, "") ||
-                 ! userChangePassword(user, password)))
+    userStringDuplicate(&user->name, "");
+    userStringDuplicate(&user->email, "");
+    userStringDuplicate(&user->notes, "");
+    userStringDuplicate(&user->wireguard_allowed_ips, "");
+    if (UNLIKELY(! userChangePassword(user, password)))
     {
         userDestroy(user);
         return false;
@@ -1302,14 +1258,6 @@ bool userChangePassword(User *user, const char *password)
     }
 
     copy = stringDuplicate(password);
-    if (UNLIKELY(copy == NULL))
-    {
-        memorySecureZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
-        memorySecureZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
-        memorySecureZero(staged_hashes.uuid_pass, sizeof(staged_hashes.uuid_pass));
-        memoryZero(staged_hashes.wireguard_publickey, sizeof(staged_hashes.wireguard_publickey));
-        return false;
-    }
 
     rwlockWriteLock(&user->lock);
 
@@ -1346,6 +1294,9 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
 {
     const char  *password = NULL;
     const char  *value    = NULL;
+    const char  *name     = NULL;
+    const char  *email    = NULL;
+    const char  *notes    = NULL;
     const cJSON *limit    = NULL;
     const cJSON *timeinfo = NULL;
     const cJSON *stats    = NULL;
@@ -1363,12 +1314,9 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
         return false;
     }
 
-    if (UNLIKELY(! userJsonReadOptionalString(user_json, "name", &value) ||
-                 (value != NULL && ! userReplaceString(&user->name, value)) ||
-                 ! userJsonReadOptionalString(user_json, "email", &value) ||
-                 (value != NULL && ! userReplaceString(&user->email, value)) ||
-                 ! userJsonReadOptionalString(user_json, "notes", &value) ||
-                 (value != NULL && ! userReplaceString(&user->notes, value)) ||
+    if (UNLIKELY(! userJsonReadOptionalString(user_json, "name", &name) ||
+                 ! userJsonReadOptionalString(user_json, "email", &email) ||
+                 ! userJsonReadOptionalString(user_json, "notes", &notes) ||
                  ! userJsonReadOptionalString(user_json, "wireguard-allowed-ips", &value) ||
                  (value != NULL && ! userSetWireGuardAllowedIps(user, value)) ||
                  ! userJsonReadOptionalUint64Aliased(user_json, "id", "user-id", &user->id) ||
@@ -1379,6 +1327,13 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
         userDestroy(user);
         return false;
     }
+
+    if (name != NULL)
+        userReplaceString(&user->name, name);
+    if (email != NULL)
+        userReplaceString(&user->email, email);
+    if (notes != NULL)
+        userReplaceString(&user->notes, notes);
 
     limit    = cJSON_GetObjectItemCaseSensitive(user_json, "limit");
     timeinfo = cJSON_GetObjectItemCaseSensitive(user_json, "time");
