@@ -88,6 +88,8 @@ void socketManagerIptablesFormatOwnerLeaseName(uint64_t token, char *out, size_t
 void socketManagerIptablesCleanupPlanInit(socket_manager_iptables_cleanup_plan_t *plan);
 void socketManagerIptablesCleanupPlanDrop(socket_manager_iptables_cleanup_plan_t *plan);
 
+/* Snapshot, lease and reference failures are reported per address family. Planning
+ * heap allocation failure terminates; it does not produce a recoverable result. */
 bool socketManagerIptablesBuildCleanupPlan(const char *snapshot_v4, bool include_v4, const char *snapshot_v6,
                                            bool include_v6, socket_manager_iptables_probe_owner_fn probe_owner,
                                            void *probe_userdata, socket_manager_iptables_cleanup_plan_t *plan,

@@ -187,17 +187,8 @@
   target_link_libraries(socket_manager_iptables_recovery_test PRIVATE ww_test_support)
   target_link_libraries(socket_manager_iptables_recovery_test PRIVATE ww)
   if(LINUX)
-    target_sources(socket_manager_iptables_recovery_test PRIVATE
-      ${CMAKE_SOURCE_DIR}/ww/managers/socket_manager_iptables_recovery.c
-    )
-    target_compile_definitions(socket_manager_iptables_recovery_test PRIVATE
-      SOCKET_MANAGER_IPTABLES_ALLOC_FAILURE_TEST=1
-    )
-    # Only the planner's reallocation and the lease cleanup close() are injected
-    # here. The command supervisor's own allocation failure moved to
-    # ${WATERWALL_UNIT_SOURCE_ROOT}/base/wproc_deadline_test.c along with the supervisor itself.
+    # Keep real lease cleanup failure coverage at the OS boundary.
     target_link_options(socket_manager_iptables_recovery_test PRIVATE
-      "-Wl,--wrap=memoryReAllocate"
       "-Wl,--wrap=close"
     )
   endif()
@@ -232,12 +223,9 @@
       "unit;net;capture;nfqueue"
     )
 
-    # Generic deadline-aware command supervisor. wproc.c is compiled directly so
-    # the linker wrap still intercepts the capture-buffer allocation it performs.
-    waterwall_add_native_executable(wproc_deadline_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/base/wproc_deadline_test.c
-      ${CMAKE_SOURCE_DIR}/ww/base/wproc.c)
+    # Generic deadline-aware command supervisor through the runtime library.
+    waterwall_add_native_executable(wproc_deadline_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/base/wproc_deadline_test.c)
   target_link_libraries(wproc_deadline_test PRIVATE ww_test_support)
-    target_link_options(wproc_deadline_test PRIVATE "-Wl,--wrap=memoryAllocate")
     target_link_libraries(wproc_deadline_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests wproc_deadline_test)
 

@@ -295,7 +295,7 @@ typedef struct proc_command_result_s
     /** `-1` until the child is reaped; then WEXITSTATUS, or 128 + signal. */
     int  exit_code;
     bool output_too_large;
-    /** Pipe/fork/fcntl/poll/read/allocation failure on the parent side. */
+    /** Pipe/fork/fcntl/poll/read failure on the parent side. */
     bool spawn_failed;
     /** True only when the monotonic command deadline expired. */
     bool timed_out;
@@ -330,7 +330,7 @@ typedef struct proc_command_options_s
  * failure surfaces as a child exit status of `127`, not as a spawn failure.
  *
  * The child is placed in its own process group so a timeout terminates the
- * command and every descendant together. On any failure the group is signalled
+ * command and every descendant together. On a returned failure the group is signalled
  * and the direct child is reaped before returning; no post-fork return path
  * leaves a known live or zombie direct child behind.
  *

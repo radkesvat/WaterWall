@@ -47,22 +47,6 @@ enum
     kContinuousOutputSlackMs    = 1000
 };
 
-static bool fail_next_allocation = false;
-
-void *__real_memoryAllocate(size_t size);
-void *__wrap_memoryAllocate(size_t size);
-
-void *__wrap_memoryAllocate(size_t size)
-{
-    if (fail_next_allocation)
-    {
-        fail_next_allocation = false;
-        return NULL;
-    }
-    return __real_memoryAllocate(size);
-}
-
-
 static uint64_t monotonicMs(void)
 {
     struct timespec ts;
@@ -443,28 +427,6 @@ static void testZeroOutputCapIsRejected(void)
     requireNoChildren("a rejected command must never fork");
 }
 
-static void testAllocationFailureAfterForkReapsChild(void)
-{
-    char tool[64];
-    writeTempTool(tool, sizeof(tool), "#!/bin/sh\nexec sleep 30\n");
-
-    const char *const      argv[]  = {tool, NULL};
-    proc_command_options_t options = makeOptions(kGenerousDeadlineMs, kDefaultMaxOutput);
-    proc_command_result_t  result;
-    const uint64_t         start = monotonicMs();
-    fail_next_allocation         = true;
-    require(! procRunArgvWithDeadline(tool, argv, &options, &result),
-            "the command must fail when the capture allocation fails");
-    const uint64_t elapsed = monotonicMs() - start;
-    require(! fail_next_allocation, "the injected allocation failure was never consumed");
-    require(result.spawn_failed, "an allocation failure must be reported as a spawn failure");
-    require(! result.timed_out, "an allocation failure is not a timeout");
-    require(elapsed < kTimeoutUpperBoundMs, "an allocation failure must terminate the child, not wait for it");
-    procCommandResultDrop(&result);
-    requireNoChildren("an allocation failure left an unreaped child");
-    require(unlink(tool) == 0, "could not remove fake tool");
-}
-
 static void testDropIsSafeAndIdempotent(void)
 {
     // After success.
@@ -518,7 +480,6 @@ int main(void)
     testOutputSizeLimitFailsAndTerminatesProducer();
     testContinuousOutputStillHonoursTheDeadline();
     testZeroOutputCapIsRejected();
-    testAllocationFailureAfterForkReapsChild();
     testDropIsSafeAndIdempotent();
 
     printf("wproc_deadline_test: all tests passed\n");

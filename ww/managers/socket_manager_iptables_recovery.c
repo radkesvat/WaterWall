@@ -32,25 +32,20 @@ typedef struct held_fd_list_s
     size_t capacity;
 } held_fd_list_t;
 
-static bool appendHeldFd(held_fd_list_t *list, int fd)
+static void appendHeldFd(held_fd_list_t *list, int fd)
 {
     if (fd < 0)
     {
-        return true;
+        return;
     }
     if (list->count == list->capacity)
     {
         const size_t new_capacity = list->capacity == 0 ? 8 : list->capacity * 2U;
         int         *new_items    = memoryReAllocate(list->items, new_capacity * sizeof(*new_items));
-        if (new_items == NULL)
-        {
-            return false;
-        }
         list->items    = new_items;
         list->capacity = new_capacity;
     }
     list->items[list->count++] = fd;
-    return true;
 }
 
 static void closeHeldFds(held_fd_list_t *list)
@@ -208,17 +203,13 @@ void socketManagerIptablesCleanupPlanDrop(socket_manager_iptables_cleanup_plan_t
     plan->blocker_capacity = 0;
 }
 
-static bool appendCleanupOp(socket_manager_iptables_cleanup_plan_t *plan, const iptables_candidate_t *candidate,
+static void appendCleanupOp(socket_manager_iptables_cleanup_plan_t *plan, const iptables_candidate_t *candidate,
                             socket_manager_iptables_cleanup_action_t action)
 {
     if (plan->count == plan->capacity)
     {
         const size_t                          new_capacity = plan->capacity == 0 ? 16 : plan->capacity * 2U;
         socket_manager_iptables_cleanup_op_t *new_ops = memoryReAllocate(plan->ops, new_capacity * sizeof(*new_ops));
-        if (new_ops == NULL)
-        {
-            return false;
-        }
         plan->ops      = new_ops;
         plan->capacity = new_capacity;
     }
@@ -226,20 +217,15 @@ static bool appendCleanupOp(socket_manager_iptables_cleanup_plan_t *plan, const 
     op->family                               = candidate->family;
     op->action                               = action;
     snprintf(op->chain_name, sizeof(op->chain_name), "%s", candidate->chain_name);
-    return true;
 }
 
-static bool appendLegacyBlocker(socket_manager_iptables_cleanup_plan_t *plan, const iptables_candidate_t *candidate)
+static void appendLegacyBlocker(socket_manager_iptables_cleanup_plan_t *plan, const iptables_candidate_t *candidate)
 {
     if (plan->blocker_count == plan->blocker_capacity)
     {
         const size_t new_capacity = plan->blocker_capacity == 0 ? 4 : plan->blocker_capacity * 2U;
         socket_manager_iptables_legacy_blocker_t *new_blockers =
             memoryReAllocate(plan->blockers, new_capacity * sizeof(*new_blockers));
-        if (new_blockers == NULL)
-        {
-            return false;
-        }
         plan->blockers         = new_blockers;
         plan->blocker_capacity = new_capacity;
     }
@@ -248,7 +234,6 @@ static bool appendLegacyBlocker(socket_manager_iptables_cleanup_plan_t *plan, co
     blocker->prerouting_jumps                         = candidate->prerouting_jumps;
     blocker->unexpected_reference                     = candidate->unexpected_reference;
     snprintf(blocker->chain_name, sizeof(blocker->chain_name), "%s", candidate->chain_name);
-    return true;
 }
 
 // Candidates are isolated by address family: iptables and ip6tables have
@@ -268,21 +253,17 @@ static iptables_candidate_t *findCandidate(candidate_list_t *list, int family, c
     return NULL;
 }
 
-static bool appendCandidate(candidate_list_t *list, iptables_candidate_kind_t kind, uint64_t token, int family,
+static void appendCandidate(candidate_list_t *list, iptables_candidate_kind_t kind, uint64_t token, int family,
                             const char *chain_name)
 {
     if (findCandidate(list, family, chain_name) != NULL)
     {
-        return true;
+        return;
     }
     if (list->count == list->capacity)
     {
         const size_t          new_capacity = list->capacity == 0 ? 8 : list->capacity * 2U;
         iptables_candidate_t *new_items    = memoryReAllocate(list->items, new_capacity * sizeof(*new_items));
-        if (new_items == NULL)
-        {
-            return false;
-        }
         list->items    = new_items;
         list->capacity = new_capacity;
     }
@@ -292,7 +273,6 @@ static bool appendCandidate(candidate_list_t *list, iptables_candidate_kind_t ki
     candidate->token  = token;
     candidate->family = family;
     snprintf(candidate->chain_name, sizeof(candidate->chain_name), "%s", chain_name);
-    return true;
 }
 
 static void dropCandidateList(candidate_list_t *list)
@@ -303,16 +283,16 @@ static void dropCandidateList(candidate_list_t *list)
     list->capacity = 0;
 }
 
-static bool parseChainDeclarationLine(const char *line, size_t len, int expected_family, candidate_list_t *candidates)
+static void parseChainDeclarationLine(const char *line, size_t len, int expected_family, candidate_list_t *candidates)
 {
     if (len <= 3 || memcmp(line, "-N ", 3) != 0)
     {
-        return true;
+        return;
     }
     char chain_name[kSocketManagerIptablesChainNameBufLen];
     if (len - 3 >= sizeof(chain_name))
     {
-        return true;
+        return;
     }
     memoryCopy(chain_name, line + 3, len - 3);
     chain_name[len - 3] = '\0';
@@ -321,13 +301,14 @@ static bool parseChainDeclarationLine(const char *line, size_t len, int expected
     int      family = 0;
     if (socketManagerIptablesParseChainName(chain_name, &token, &family) && family == expected_family)
     {
-        return appendCandidate(candidates, kIptablesCandidateV2, token, family, chain_name);
+        appendCandidate(candidates, kIptablesCandidateV2, token, family, chain_name);
+        return;
     }
     if (socketManagerIptablesParseLegacyChainName(chain_name, &family) && family == expected_family)
     {
-        return appendCandidate(candidates, kIptablesCandidateLegacy, 0, family, chain_name);
+        appendCandidate(candidates, kIptablesCandidateLegacy, 0, family, chain_name);
     }
-    return true;
+    return;
 }
 
 static bool snapshotHasCompleteLines(const char *snapshot)
@@ -340,8 +321,7 @@ static bool snapshotHasCompleteLines(const char *snapshot)
     return len == 0 || snapshot[len - 1] == '\n';
 }
 
-static bool collectCandidateDeclarations(const char *snapshot, int expected_family, candidate_list_t *candidates,
-                                         bool *internal_failure)
+static bool collectCandidateDeclarations(const char *snapshot, int expected_family, candidate_list_t *candidates)
 {
     const char *line = snapshot;
     while (*line != '\0')
@@ -352,11 +332,7 @@ static bool collectCandidateDeclarations(const char *snapshot, int expected_fami
             return false;
         }
         const size_t len = (size_t) (end - line);
-        if (! parseChainDeclarationLine(line, len, expected_family, candidates))
-        {
-            *internal_failure = true;
-            return false;
-        }
+        parseChainDeclarationLine(line, len, expected_family, candidates);
         line = end + 1;
     }
     return true;
@@ -407,17 +383,13 @@ static void markFamilyCandidatesUnexpected(candidate_list_t *candidates, int fam
     }
 }
 
-static bool analyzeRuleLine(const char *line, size_t len, int family, candidate_list_t *candidates)
+static void analyzeRuleLine(const char *line, size_t len, int family, candidate_list_t *candidates)
 {
     if (len <= 3 || memcmp(line, "-A ", 3) != 0)
     {
-        return true;
+        return;
     }
     char *copy = memoryAllocate(len + 1U);
-    if (copy == NULL)
-    {
-        return false;
-    }
     memoryCopy(copy, line, len);
     copy[len] = '\0';
 
@@ -427,7 +399,7 @@ static bool analyzeRuleLine(const char *line, size_t len, int family, candidate_
     {
         markFamilyCandidatesUnexpected(candidates, family);
         memoryFree(copy);
-        return true;
+        return;
     }
     for (int i = 0; i + 1 < count; ++i)
     {
@@ -455,10 +427,9 @@ static bool analyzeRuleLine(const char *line, size_t len, int family, candidate_
         }
     }
     memoryFree(copy);
-    return true;
 }
 
-static bool analyzeReferences(const char *snapshot, int family, candidate_list_t *candidates, bool *internal_failure)
+static bool analyzeReferences(const char *snapshot, int family, candidate_list_t *candidates)
 {
     const char *line = snapshot;
     while (*line != '\0')
@@ -468,18 +439,13 @@ static bool analyzeReferences(const char *snapshot, int family, candidate_list_t
         {
             return false;
         }
-        if (! analyzeRuleLine(line, (size_t) (end - line), family, candidates))
-        {
-            *internal_failure = true;
-            return false;
-        }
+        analyzeRuleLine(line, (size_t) (end - line), family, candidates);
         line = end + 1;
     }
     return true;
 }
 
-static bool parseSnapshot(const char *snapshot, bool include, int family, candidate_list_t *candidates,
-                          bool *internal_failure)
+static bool parseSnapshot(const char *snapshot, bool include, int family, candidate_list_t *candidates)
 {
     if (! include)
     {
@@ -489,11 +455,11 @@ static bool parseSnapshot(const char *snapshot, bool include, int family, candid
     {
         return false;
     }
-    if (! collectCandidateDeclarations(snapshot, family, candidates, internal_failure))
+    if (! collectCandidateDeclarations(snapshot, family, candidates))
     {
         return false;
     }
-    return analyzeReferences(snapshot, family, candidates, internal_failure);
+    return analyzeReferences(snapshot, family, candidates);
 }
 
 static bool tokenWasSeen(const uint64_t *tokens, size_t count, uint64_t token)
@@ -508,25 +474,20 @@ static bool tokenWasSeen(const uint64_t *tokens, size_t count, uint64_t token)
     return false;
 }
 
-static bool appendToken(uint64_t **tokens, size_t *count, size_t *capacity, uint64_t token)
+static void appendToken(uint64_t **tokens, size_t *count, size_t *capacity, uint64_t token)
 {
     if (tokenWasSeen(*tokens, *count, token))
     {
-        return true;
+        return;
     }
     if (*count == *capacity)
     {
         const size_t new_capacity = *capacity == 0 ? 8 : *capacity * 2U;
         uint64_t    *new_tokens   = memoryReAllocate(*tokens, new_capacity * sizeof(*new_tokens));
-        if (new_tokens == NULL)
-        {
-            return false;
-        }
         *tokens   = new_tokens;
         *capacity = new_capacity;
     }
     (*tokens)[(*count)++] = token;
-    return true;
 }
 
 static bool candidateFamilyIncluded(const iptables_candidate_t *candidate, bool include_v4, bool include_v6)
@@ -534,24 +495,11 @@ static bool candidateFamilyIncluded(const iptables_candidate_t *candidate, bool 
     return (candidate->family == 4 && include_v4) || (candidate->family == 6 && include_v6);
 }
 
-static void markIncludedFamiliesFailed(bool include_v4, bool include_v6, bool *v4_ok, bool *v6_ok)
-{
-    if (include_v4 && v4_ok != NULL)
-    {
-        *v4_ok = false;
-    }
-    if (include_v6 && v6_ok != NULL)
-    {
-        *v6_ok = false;
-    }
-}
-
 // Turn referenced legacy chains into publication blockers without ever touching
 // them. A legacy chain is a blocker when it has at least one exact unconditional
 // PREROUTING jump or any other (conditional/indirect) reference; an orphan legacy
-// chain is left alone. Blockers fail only their own address family. Returns false
-// only on an internal allocation failure so the caller can discard the plan.
-static bool collectLegacyBlockers(socket_manager_iptables_cleanup_plan_t *plan, candidate_list_t *candidates,
+// chain is left alone. Blockers fail only their own address family.
+static void collectLegacyBlockers(socket_manager_iptables_cleanup_plan_t *plan, candidate_list_t *candidates,
                                   bool include_v4, bool include_v6, bool *v4_ok, bool *v6_ok, bool *result)
 {
     for (size_t ci = 0; ci < candidates->count; ++ci)
@@ -565,10 +513,7 @@ static bool collectLegacyBlockers(socket_manager_iptables_cleanup_plan_t *plan, 
         {
             continue;
         }
-        if (! appendLegacyBlocker(plan, candidate))
-        {
-            return false;
-        }
+        appendLegacyBlocker(plan, candidate);
         if (candidate->family == 4 && v4_ok != NULL)
         {
             *v4_ok = false;
@@ -579,7 +524,6 @@ static bool collectLegacyBlockers(socket_manager_iptables_cleanup_plan_t *plan, 
         }
         *result = false;
     }
-    return true;
 }
 
 bool socketManagerIptablesBuildCleanupPlan(const char *snapshot_v4, bool include_v4, const char *snapshot_v6,
@@ -601,41 +545,26 @@ bool socketManagerIptablesBuildCleanupPlan(const char *snapshot_v4, bool include
     held_fd_list_t   held_fds    = {0};
     uint64_t        *tokens      = NULL;
     size_t           token_count = 0, token_capacity = 0;
-    bool             result           = true;
-    bool             internal_failure = false;
+    bool             result = true;
 
-    bool v4_internal_failure = false;
-    if (! parseSnapshot(snapshot_v4, include_v4, 4, &candidates, &v4_internal_failure))
+    if (! parseSnapshot(snapshot_v4, include_v4, 4, &candidates))
     {
         if (v4_ok != NULL)
         {
             *v4_ok = false;
         }
-        result           = false;
-        internal_failure = v4_internal_failure;
+        result = false;
     }
-    bool v6_internal_failure = false;
-    if (! parseSnapshot(snapshot_v6, include_v6, 6, &candidates, &v6_internal_failure))
+    if (! parseSnapshot(snapshot_v6, include_v6, 6, &candidates))
     {
         if (v6_ok != NULL)
         {
             *v6_ok = false;
         }
-        result           = false;
-        internal_failure = internal_failure || v6_internal_failure;
+        result = false;
     }
-    if (internal_failure)
-    {
-        goto done;
-    }
-
-    // Referenced legacy chains block their family but are never mutated. Collected
-    // before the V2 machinery so an allocation failure here also discards the plan.
-    if (! collectLegacyBlockers(plan, &candidates, include_v4, include_v6, v4_ok, v6_ok, &result))
-    {
-        internal_failure = true;
-        goto done;
-    }
+    // Referenced legacy chains block their family but are never mutated.
+    collectLegacyBlockers(plan, &candidates, include_v4, include_v6, v4_ok, v6_ok, &result);
 
     for (size_t i = 0; i < candidates.count; ++i)
     {
@@ -643,11 +572,7 @@ bool socketManagerIptablesBuildCleanupPlan(const char *snapshot_v4, bool include
         {
             continue;
         }
-        if (! appendToken(&tokens, &token_count, &token_capacity, candidates.items[i].token))
-        {
-            internal_failure = true;
-            goto done;
-        }
+        appendToken(&tokens, &token_count, &token_capacity, candidates.items[i].token);
     }
 
     for (size_t ti = 0; ti < token_count; ++ti)
@@ -680,12 +605,7 @@ bool socketManagerIptablesBuildCleanupPlan(const char *snapshot_v4, bool include
             result = false;
             continue;
         }
-        if (! appendHeldFd(&held_fds, held_fd))
-        {
-            socketManagerIptablesReleaseLease(&held_fd);
-            internal_failure = true;
-            goto done;
-        }
+        appendHeldFd(&held_fds, held_fd);
 
         for (size_t ci = 0; ci < candidates.count; ++ci)
         {
@@ -710,29 +630,13 @@ bool socketManagerIptablesBuildCleanupPlan(const char *snapshot_v4, bool include
             }
             for (size_t jump_i = 0; jump_i < candidate->prerouting_jumps; ++jump_i)
             {
-                if (! appendCleanupOp(plan, candidate, kSocketManagerIptablesCleanupDeleteJump))
-                {
-                    internal_failure = true;
-                    goto done;
-                }
+                appendCleanupOp(plan, candidate, kSocketManagerIptablesCleanupDeleteJump);
             }
-            if (! appendCleanupOp(plan, candidate, kSocketManagerIptablesCleanupFlushChain) ||
-                ! appendCleanupOp(plan, candidate, kSocketManagerIptablesCleanupDeleteChain))
-            {
-                internal_failure = true;
-                goto done;
-            }
+            appendCleanupOp(plan, candidate, kSocketManagerIptablesCleanupFlushChain);
+            appendCleanupOp(plan, candidate, kSocketManagerIptablesCleanupDeleteChain);
         }
     }
 
-done:
-    if (internal_failure)
-    {
-        markIncludedFamiliesFailed(include_v4, include_v6, v4_ok, v6_ok);
-        socketManagerIptablesCleanupPlanDrop(plan);
-        socketManagerIptablesCleanupPlanInit(plan);
-        result = false;
-    }
     closeHeldFds(&held_fds);
     memoryFree(tokens);
     dropCandidateList(&candidates);

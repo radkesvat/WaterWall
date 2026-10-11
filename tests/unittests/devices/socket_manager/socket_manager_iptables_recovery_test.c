@@ -27,23 +27,6 @@
 #include <unistd.h>
 #endif
 
-#if defined(SOCKET_MANAGER_IPTABLES_ALLOC_FAILURE_TEST)
-static size_t realloc_failure_min_size = SIZE_MAX;
-
-void *__real_memoryReAllocate(void *ptr, size_t size);
-void *__wrap_memoryReAllocate(void *ptr, size_t size);
-
-void *__wrap_memoryReAllocate(void *ptr, size_t size)
-{
-    if (size >= realloc_failure_min_size)
-    {
-        realloc_failure_min_size = SIZE_MAX;
-        return NULL;
-    }
-    return __real_memoryReAllocate(ptr, size);
-}
-#endif
-
 #if defined(__linux__)
 // Disabled-by-default close() fault injection. When armed, the next close() still
 // releases the descriptor (so the test never leaks one) but then reports EIO,
@@ -526,32 +509,61 @@ static void testLegacyBlockerCoexistsWithStaleV2(void)
     socketManagerIptablesCleanupPlanDrop(&plan);
 }
 
-static void testLegacyBlockerAllocationFailureIsAtomic(void)
+#if defined(__linux__)
+typedef struct held_descriptor_probe_s
 {
-#if defined(SOCKET_MANAGER_IPTABLES_ALLOC_FAILURE_TEST)
-    char snapshot[2048];
-    snprintf(snapshot,
-             sizeof(snapshot),
-             "-N WW_00000001_00000002_4\n"
-             "-A PREROUTING -j WW_00000001_00000002_4\n"
-             "-N WW2_ACACACACACACACAC_4\n");
-    for (size_t i = 0; i < 15; ++i)
+    int    descriptors[20];
+    size_t count;
+} held_descriptor_probe_t;
+
+static socket_manager_iptables_lease_probe_result_t probeWithHeldDescriptor(uint64_t token, int *held_fd,
+                                                                            void *userdata)
+{
+    discard                  token;
+    held_descriptor_probe_t *state = userdata;
+    require(state->count < ARRAY_SIZE(state->descriptors), "too many held-descriptor probes");
+    for (size_t i = 0; i < state->count; ++i)
+        require(fcntl(state->descriptors[i], F_GETFD) >= 0, "planner released an owner lease before planning finished");
+    *held_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    require(*held_fd >= 0, "failed to open held-descriptor fixture");
+    state->descriptors[state->count++] = *held_fd;
+    return kSocketManagerIptablesLeaseAcquired;
+}
+#endif
+
+static void testPlanGrowthReleasesHeldLeases(void)
+{
+#if defined(__linux__)
+    char   snapshot[8192];
+    size_t used = 0;
+    for (unsigned int i = 1; i <= 20; ++i)
     {
-        strcat(snapshot, "-A PREROUTING -j WW2_ACACACACACACACAC_4\n");
+        char chain[kSocketManagerIptablesChainNameBufLen];
+        require(socketManagerIptablesFormatChainName(i, 4, chain, sizeof(chain)), "growth chain formatting failed");
+        int written = snprintf(snapshot + used, sizeof(snapshot) - used, "-N %s\n-A PREROUTING -j %s\n", chain, chain);
+        require(written > 0 && (size_t) written < sizeof(snapshot) - used, "growth snapshot overflow");
+        used += (size_t) written;
+    }
+    for (unsigned int i = 1; i <= 5; ++i)
+    {
+        char chain[kSocketManagerIptablesChainNameBufLen];
+        snprintf(chain, sizeof(chain), "WW_%08X_%08X_4", i, i);
+        int written = snprintf(snapshot + used, sizeof(snapshot) - used, "-N %s\n-A PREROUTING -j %s\n", chain, chain);
+        require(written > 0 && (size_t) written < sizeof(snapshot) - used, "legacy growth snapshot overflow");
+        used += (size_t) written;
     }
 
-    probe_state_t                          probe = {0};
     socket_manager_iptables_cleanup_plan_t plan;
     socketManagerIptablesCleanupPlanInit(&plan);
-    bool v4_ok               = true;
-    bool v6_ok               = true;
-    realloc_failure_min_size = 1024;
-    require(! socketManagerIptablesBuildCleanupPlan(snapshot, true, "", true, fakeProbe, &probe, &plan, &v4_ok, &v6_ok),
-            "injected planning allocation failure should be reported");
-    require(! v4_ok && ! v6_ok, "internal planning failure must fail every included family");
-    require(plan.count == 0 && plan.ops == NULL, "internal planning failure must discard the partial cleanup plan");
-    require(plan.blocker_count == 0 && plan.blockers == NULL,
-            "internal planning failure must discard partially built blocker diagnostics");
+    held_descriptor_probe_t probe = {0};
+    bool                    v4_ok = true, v6_ok = true;
+    require(! socketManagerIptablesBuildCleanupPlan(
+                snapshot, true, NULL, false, probeWithHeldDescriptor, &probe, &plan, &v4_ok, &v6_ok),
+            "legacy references should block publication during a growing plan");
+    require(! v4_ok && v6_ok && plan.blocker_count == 5, "growing blocker list lost family isolation");
+    require(plan.count == 60 && probe.count == 20, "growing plan lost candidates, tokens or cleanup operations");
+    for (size_t i = 0; i < probe.count; ++i)
+        require(fcntl(probe.descriptors[i], F_GETFD) == -1 && errno == EBADF, "planner leaked a held owner lease");
     socketManagerIptablesCleanupPlanDrop(&plan);
 #endif
 }
@@ -646,30 +658,6 @@ static void testLockAndOwnerLeaseContention(void)
     require(socketManagerIptablesAcquireOwnerLease(token, &second_owner) == kSocketManagerIptablesLeaseAcquired,
             "owner lease should be reusable after release");
     socketManagerIptablesReleaseLease(&second_owner);
-#endif
-}
-
-static void testInternalPlanningFailureIsAtomic(void)
-{
-#if defined(SOCKET_MANAGER_IPTABLES_ALLOC_FAILURE_TEST)
-    char snapshot[2048];
-    snprintf(snapshot, sizeof(snapshot), "-N WW2_ACACACACACACACAC_4\n");
-    for (size_t i = 0; i < 15; ++i)
-    {
-        strcat(snapshot, "-A PREROUTING -j WW2_ACACACACACACACAC_4\n");
-    }
-
-    probe_state_t                          probe = {0};
-    socket_manager_iptables_cleanup_plan_t plan;
-    socketManagerIptablesCleanupPlanInit(&plan);
-    bool v4_ok               = true;
-    bool v6_ok               = true;
-    realloc_failure_min_size = 1024;
-    require(! socketManagerIptablesBuildCleanupPlan(snapshot, true, "", true, fakeProbe, &probe, &plan, &v4_ok, &v6_ok),
-            "injected planning allocation failure should be reported");
-    require(! v4_ok && ! v6_ok, "internal planning failure must fail every included family");
-    require(plan.count == 0 && plan.ops == NULL, "internal planning failure must discard the partial plan");
-    socketManagerIptablesCleanupPlanDrop(&plan);
 #endif
 }
 
@@ -926,10 +914,9 @@ int main(void)
     testDuplicateLegacyJumps();
     testLegacyUnexpectedReferences();
     testLegacyBlockerCoexistsWithStaleV2();
-    testLegacyBlockerAllocationFailureIsAtomic();
     testCleanupFailureOrdering();
+    testPlanGrowthReleasesHeldLeases();
     testLockAndOwnerLeaseContention();
-    testInternalPlanningFailureIsAtomic();
 #if defined(__linux__)
     testInspectBuildsTheExpectedArgv();
     testInspectSuccessAcceptsCompleteSnapshot();

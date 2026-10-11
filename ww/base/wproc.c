@@ -268,14 +268,14 @@ static void terminateAndReapChild(pid_t pid, uint32_t grace_ms, proc_command_res
 // Grow the capture buffer to hold `additional` more bytes plus a NUL, never
 // allocating beyond `max_output_bytes + 1`. The caller has already proven that
 // `output_len + additional <= max_output_bytes`, so the clamped growth is always
-// sufficient. Returns false only on allocation failure.
-static bool ensureCaptureCapacity(proc_command_result_t *out, size_t *capacity, size_t additional,
+// sufficient. Heap allocation failure terminates the process.
+static void ensureCaptureCapacity(proc_command_result_t *out, size_t *capacity, size_t additional,
                                   size_t max_output_bytes)
 {
     const size_t required = out->output_len + additional + 1U;
     if (required <= *capacity)
     {
-        return true;
+        return;
     }
     const size_t hard_cap     = max_output_bytes + 1U;
     size_t       new_capacity = *capacity;
@@ -289,14 +289,8 @@ static bool ensureCaptureCapacity(proc_command_result_t *out, size_t *capacity, 
         }
         new_capacity *= 2U;
     }
-    char *new_output = memoryReAllocate(out->output, new_capacity);
-    if (new_output == NULL)
-    {
-        return false;
-    }
-    out->output = new_output;
+    out->output = memoryReAllocate(out->output, new_capacity);
     *capacity   = new_capacity;
-    return true;
 }
 
 // Move a pipe end above the standard descriptors. When the process was started
@@ -428,14 +422,7 @@ bool procRunArgvWithDeadline(const char *file, const char *const argv[], const p
     {
         capacity = max_output_bytes + 1U;
     }
-    out->output = memoryAllocate(capacity);
-    if (out->output == NULL)
-    {
-        out->spawn_failed = true;
-        close(output_pipe[0]);
-        terminateAndReapChild(pid, options->terminate_grace_ms, out);
-        return false;
-    }
+    out->output    = memoryAllocate(capacity);
     out->output[0] = '\0';
 
     bool failed       = false;
@@ -489,13 +476,7 @@ bool procRunArgvWithDeadline(const char *file, const char *const argv[], const p
                         drain_error           = true;
                         break;
                     }
-                    if (! ensureCaptureCapacity(out, &capacity, (size_t) nread, max_output_bytes))
-                    {
-                        out->spawn_failed = true;
-                        failed            = true;
-                        drain_error       = true;
-                        break;
-                    }
+                    ensureCaptureCapacity(out, &capacity, (size_t) nread, max_output_bytes);
                     memoryCopy(out->output + out->output_len, buf, (size_t) nread);
                     out->output_len += (size_t) nread;
                     out->output[out->output_len] = '\0';
