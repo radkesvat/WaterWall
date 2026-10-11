@@ -13,8 +13,8 @@ static const char *authenticationserverTrafficDiffResultError(users_update_resul
     case kUsersUpdateResultInvalidRecordStatInterval:
     case kUsersUpdateResultInvalidWireGuardAllowedIps:
         return "invalid-update-user-traffic-stats-diff-request";
-    case kUsersUpdateResultAllocationFailed:
-        return "allocation-failed";
+    case kUsersUpdateResultCapacityRejected:
+        return "capacity-rejected";
     case kUsersUpdateResultUserNotFound:
         return "user-not-found";
     case kUsersUpdateResultDuplicateName:

@@ -796,6 +796,9 @@ If validation or saving fails, it returns an error response frame with the same 
 after the in-memory add succeeds, the module attempts to remove that user from memory and returns
 `database-save-failed`.
 
+`storage-unavailable` reports rejected user storage/index capacity or failure to initialize the native locks for a
+copied user. Heap exhaustion terminates the process instead of producing an error response.
+
 ### UpdateUser Module
 
 The `UpdateUser` module expects request data containing a full user JSON object in the same format exported by
@@ -812,6 +815,8 @@ On success it returns response type `0` and response data equal to `user-updated
 If the JSON is malformed, the user does not exist, the submitted id is missing or mismatched, or the update would create
 a conflicting user name or overlapping `wireguard-allowed-ips`, it returns an error response frame with the same
 correlation ID.
+
+`capacity-rejected` reports an unrepresentable index-capacity request; the rejected update is not applied.
 
 ### UpdateUserTraficStatsDiff Module
 

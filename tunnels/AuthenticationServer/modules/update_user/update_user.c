@@ -14,8 +14,8 @@ static const char *authenticationserverUsersUpdateResultError(users_update_resul
         return "invalid-update-user-request";
     case kUsersUpdateResultInvalidWireGuardAllowedIps:
         return "invalid-wireguard-allowed-ips";
-    case kUsersUpdateResultAllocationFailed:
-        return "allocation-failed";
+    case kUsersUpdateResultCapacityRejected:
+        return "capacity-rejected";
     case kUsersUpdateResultUserNotFound:
         return "user-not-found";
     case kUsersUpdateResultDuplicateName:

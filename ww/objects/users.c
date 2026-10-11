@@ -2417,7 +2417,7 @@ users_add_result_t usersAddUserChecked(users_t *users, const user_t *user)
     memoryZero(&user_copy, sizeof(user_copy));
     if (UNLIKELY(! userCopy(&user_copy, user)))
     {
-        return kUsersAddResultAllocationFailed;
+        return kUsersAddResultStorageUnavailable;
     }
 
     rwlockWriteLock(&users->lock);
@@ -2433,7 +2433,7 @@ users_add_result_t usersAddUserChecked(users_t *users, const user_t *user)
     {
         rwlockWriteUnlock(&users->lock);
         userDestroy(&user_copy);
-        return kUsersAddResultAllocationFailed;
+        return kUsersAddResultStorageUnavailable;
     }
 
     slot = usersStorageAtLocked(users, users->slot_count);
@@ -2441,19 +2441,19 @@ users_add_result_t usersAddUserChecked(users_t *users, const user_t *user)
     {
         rwlockWriteUnlock(&users->lock);
         userDestroy(&user_copy);
-        return kUsersAddResultAllocationFailed;
+        return kUsersAddResultStorageUnavailable;
     }
     /*
      * `slot` is an exact copy of the immutable, just-validated snapshot, so
      * commit skips the redundant revalidation. Capacity geometry refusal keeps
-     * the public resource-failure result; heap exhaustion does not return.
+     * the public storage-unavailable result; heap exhaustion does not return.
      */
     if (UNLIKELY(! usersCommitNewUserLocked(users, slot, true)))
     {
         userDestroy(slot);
         rwlockWriteUnlock(&users->lock);
         userDestroy(&user_copy);
-        return kUsersAddResultAllocationFailed;
+        return kUsersAddResultStorageUnavailable;
     }
 
     rwlockWriteUnlock(&users->lock);
@@ -2534,7 +2534,7 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
     if (UNLIKELY(! usersEnsureLookupCapacityLocked(users, users->count)))
     {
         usersPasswordProbeDestroy(&password_probe);
-        return kUsersUpdateResultAllocationFailed;
+        return kUsersUpdateResultCapacityRejected;
     }
 
     /* Snapshot the credential keys that are about to be overwritten so they can
@@ -3775,7 +3775,7 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
          */
         if (UNLIKELY(! usersNameTableEnsureCapacity(users, users->count + 1U)))
         {
-            return kUsersUpdateResultAllocationFailed;
+            return kUsersUpdateResultCapacityRejected;
         }
     }
     if ((update->mask & kUserUpdateWireGuardAllowedIps) != 0U)
@@ -3803,7 +3803,7 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
         if (UNLIKELY(! user->wireguard_allowed_ips_valid && wireguard_allowed_ips->valid &&
                      ! usersAllowedIpTableEnsureOneMoreRange(users)))
         {
-            return kUsersUpdateResultAllocationFailed;
+            return kUsersUpdateResultCapacityRejected;
         }
     }
     if ((update->mask & kUserUpdatePassword) != 0U)

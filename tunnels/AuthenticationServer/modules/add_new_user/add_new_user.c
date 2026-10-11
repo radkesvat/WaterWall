@@ -30,8 +30,8 @@ static const char *authenticationserverUsersAddResultError(users_add_result_t re
         return "user-wireguard-publickey-exists";
     case kUsersAddResultDuplicateWireGuardAllowedIps:
         return "user-wireguard-allowed-ips-overlap";
-    case kUsersAddResultAllocationFailed:
-        return "allocation-failed";
+    case kUsersAddResultStorageUnavailable:
+        return "storage-unavailable";
     }
 
     return "user-add-failed";

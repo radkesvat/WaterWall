@@ -116,7 +116,7 @@ typedef enum users_add_result_e
     kUsersAddResultDuplicateWireGuardAllowedIps,
     /* Rejected storage/index geometry or failed native lock initialization;
      * memory-manager heap exhaustion terminates instead of returning. */
-    kUsersAddResultAllocationFailed
+    kUsersAddResultStorageUnavailable
 } users_add_result_t;
 
 typedef enum users_update_result_e
@@ -127,7 +127,7 @@ typedef enum users_update_result_e
     kUsersUpdateResultInvalidRecordStatInterval,
     kUsersUpdateResultInvalidWireGuardAllowedIps,
     /* Rejected index-capacity geometry; heap exhaustion does not return. */
-    kUsersUpdateResultAllocationFailed,
+    kUsersUpdateResultCapacityRejected,
     kUsersUpdateResultUserNotFound,
     kUsersUpdateResultDuplicateName,
     kUsersUpdateResultDuplicateUUID,
