@@ -118,11 +118,26 @@ static FARPROC WINAPI fixtureExport(HMODULE module, LPCSTR name)
         SetLastError(ERROR_PROC_NOT_FOUND);
         return NULL;
     }
+    FARPROC proc;
     if (strcmp(name, "WinDivertOpen") == 0)
-        return (FARPROC) fixtureOpen;
-    if (strcmp(name, "WinDivertClose") == 0)
-        return (FARPROC) fixtureClose;
-    return (FARPROC) fixtureUnused;
+    {
+        HANDLE(WINAPI * function)(const char *, WINDIVERT_LAYER, INT16, UINT64) = fixtureOpen;
+        _Static_assert(sizeof(function) == sizeof(proc), "Windows export pointer size mismatch");
+        memcpy(&proc, &function, sizeof(proc));
+    }
+    else if (strcmp(name, "WinDivertClose") == 0)
+    {
+        BOOL(WINAPI * function)(HANDLE) = fixtureClose;
+        _Static_assert(sizeof(function) == sizeof(proc), "Windows export pointer size mismatch");
+        memcpy(&proc, &function, sizeof(proc));
+    }
+    else
+    {
+        void(WINAPI * function)(void) = fixtureUnused;
+        _Static_assert(sizeof(function) == sizeof(proc), "Windows export pointer size mismatch");
+        memcpy(&proc, &function, sizeof(proc));
+    }
+    return proc;
 }
 
 #define windivert_dll     fixture_windivert_dll
