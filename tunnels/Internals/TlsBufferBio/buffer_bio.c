@@ -52,7 +52,7 @@ static int tlsbufferbioDestroy(BIO *bio)
     {
         tlsbufferbioClear(state);
         ww_sbuffer_queue_t_drop(&state->buffers);
-        OPENSSL_free(state);
+        memoryFree(state);
         BIO_set_data(bio, NULL);
     }
     return 1;
@@ -118,11 +118,7 @@ static int tlsbufferbioWrite(BIO *bio, const char *data, int length)
     buf = sbufReserveSpace(buf, (uint32_t) length);
     sbufWriteLarge(buf, data, (uint32_t) length);
     sbufSetLength(buf, (uint32_t) length);
-    if (UNLIKELY(ww_sbuffer_queue_t_push_back(&state->buffers, buf) == NULL))
-    {
-        bufferpoolReuseBuffer(state->pool, buf);
-        return -1;
-    }
+    discard ww_sbuffer_queue_t_push_back(&state->buffers, buf);
     state->pending += (size_t) length;
     return length;
 }
@@ -198,12 +194,7 @@ BIO *tlsbufferbioNew(SSL_CTX *ctx, buffer_pool_t *pool)
     BIO *bio = BIO_new(method);
     if (UNLIKELY(bio == NULL))
         return NULL;
-    tls_buffer_bio_t *state = OPENSSL_zalloc(sizeof(*state));
-    if (UNLIKELY(state == NULL))
-    {
-        BIO_free(bio);
-        return NULL;
-    }
+    tls_buffer_bio_t *state = memoryAllocateZero(sizeof(*state));
     state->pool       = pool;
     state->eof_return = -1;
     BIO_set_data(bio, state);
@@ -223,12 +214,12 @@ bool tlsbufferbioFeed(BIO *bio, sbuf_t *buf)
         return true;
     }
     if (UNLIKELY(length > kTlsBufferBioMaxBytes - state->pending ||
-                 ww_sbuffer_queue_t_size(&state->buffers) >= kTlsBufferBioMaxBuffers ||
-                 ww_sbuffer_queue_t_push_back(&state->buffers, buf) == NULL))
+                 ww_sbuffer_queue_t_size(&state->buffers) >= kTlsBufferBioMaxBuffers))
     {
         bufferpoolReuseBuffer(state->pool, buf);
         return false;
     }
+    discard ww_sbuffer_queue_t_push_back(&state->buffers, buf);
     state->pending += length;
     BIO_clear_retry_flags(bio);
     return true;
@@ -280,11 +271,7 @@ uint8_t *tlsbufferbioReserveWrite(BIO *bio, size_t capacity, size_t alignment, s
         sbufShiftRight(buf, offset);
         /* Allocate the queue slot before encryption; publishing length later
          * must not fail after the TLS record sequence number has advanced. */
-        if (UNLIKELY(ww_sbuffer_queue_t_push_back(&state->buffers, buf) == NULL))
-        {
-            bufferpoolReuseBuffer(state->pool, buf);
-            return NULL;
-        }
+        discard ww_sbuffer_queue_t_push_back(&state->buffers, buf);
     }
 
     state->reserved          = buf;

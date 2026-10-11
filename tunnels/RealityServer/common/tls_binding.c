@@ -322,10 +322,6 @@ static bool realityserverTlsParserFeedHandshake(realityserver_tls_parser_t *pars
             if (realityserverTlsParserTargetMessage(parser))
             {
                 parser->handshake_body = memoryAllocate(parser->handshake_length);
-                if (parser->handshake_body == NULL)
-                {
-                    return realityserverTlsParserFail(parser);
-                }
             }
         }
 

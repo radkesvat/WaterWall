@@ -37,7 +37,7 @@ static void tlsclientSessionCacheFree(void *parent, void *ptr, CRYPTO_EX_DATA *d
     if (cache != NULL)
     {
         tlsclientSessionCacheClear(cache);
-        OPENSSL_free(cache);
+        memoryFree(cache);
     }
 }
 
@@ -125,9 +125,7 @@ bool tlsclientConfigureSessionCache(SSL_CTX *ctx, const char *server_name, size_
         return false;
     assert(SSL_CTX_get_ex_data(ctx, tlsclientSessionContextIndex) == NULL);
 
-    tlsclient_session_cache_t *cache = OPENSSL_zalloc(sizeof(*cache));
-    if (cache == NULL)
-        return false;
+    tlsclient_session_cache_t *cache = memoryAllocateZero(sizeof(*cache));
     /* The worst-case fresh wire image overbounds its extension block. A TLS 1.3
      * PSK adds the ticket plus 15 bytes of framing/age and one binder; TLS 1.2
      * only adds the ticket. Real ECH may add up to 31 bytes when rounding its
@@ -140,7 +138,7 @@ bool tlsclientConfigureSessionCache(SSL_CTX *ctx, const char *server_name, size_
     memoryCopy(cache->server_name, server_name, name_length + 1U);
     if (! SSL_CTX_set_ex_data(ctx, tlsclientSessionContextIndex, cache))
     {
-        OPENSSL_free(cache);
+        memoryFree(cache);
         return false;
     }
 

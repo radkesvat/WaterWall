@@ -470,7 +470,7 @@ bool tlsclientScheduleShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *l
 
     if (! ls->shaping_timer_failure_logged)
     {
-        LOGW("TlsClient: failed to allocate record shaping timer; draining queued ciphertext immediately");
+        LOGW("TlsClient: record shaping timer admission rejected; draining queued ciphertext immediately");
         ls->shaping_timer_failure_logged = true;
     }
     return tlsclientDrainShapedOutput(t, l, ls, true);

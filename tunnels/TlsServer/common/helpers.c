@@ -563,7 +563,7 @@ bool tlsserverScheduleShapedOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *l
 
     if (! ls->shaping_timer_failure_logged)
     {
-        LOGW("TlsServer: failed to allocate record shaping timer; draining queued ciphertext immediately");
+        LOGW("TlsServer: record shaping timer admission rejected; draining queued ciphertext immediately");
         ls->shaping_timer_failure_logged = true;
     }
     return tlsserverDrainShapedOutput(t, l, ls, true);
@@ -817,11 +817,7 @@ static buffer_queue_t *tlsserverEnsureFallbackPendingQueue(tlsserver_lstate_t *l
 {
     if (ls->fallback_pending_up == NULL)
     {
-        ls->fallback_pending_up = memoryAllocate(sizeof(*ls->fallback_pending_up));
-        if (UNLIKELY(ls->fallback_pending_up == NULL))
-        {
-            return NULL;
-        }
+        ls->fallback_pending_up  = memoryAllocate(sizeof(*ls->fallback_pending_up));
         *ls->fallback_pending_up = bufferqueueCreate(kTlsServerFallbackBufferQueueCap);
     }
 
@@ -982,12 +978,6 @@ bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls
     }
 
     buffer_queue_t *pending = tlsserverEnsureFallbackPendingQueue(ls);
-    if (UNLIKELY(pending == NULL))
-    {
-        lineReuseBuffer(l, buf);
-        tlsserverCloseLineFatal(t, l);
-        return false;
-    }
 
     bufferqueuePushBack(pending, buf);
     if (UNLIKELY(bufferqueueGetBufLen(pending) > kTlsServerMaxFallbackPendingBytes))

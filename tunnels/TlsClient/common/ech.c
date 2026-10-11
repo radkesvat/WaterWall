@@ -21,7 +21,7 @@ static void tlsclientEchConfigFree(void *parent, void *ptr, CRYPTO_EX_DATA *data
     discard index;
     discard argl;
     discard argp;
-    OPENSSL_free(ptr);
+    memoryFree(ptr);
 }
 
 static void tlsclientEchIndexInit(void)
@@ -64,16 +64,14 @@ bool tlsclientConfigureEchContexts(tlsclient_tstate_t *ts, const cJSON *settings
         return false;
     }
 
-    uint8_t *decoded        = OPENSSL_malloc(capacity);
+    uint8_t *decoded        = memoryAllocate(capacity);
     size_t   decoded_length = 0;
-    if (decoded == NULL)
-        return false;
     if (! EVP_DecodeBase64(
             decoded, &decoded_length, capacity, (const uint8_t *) configured->valuestring, encoded_length) ||
         decoded_length < 2 || decoded_length > maximum_bytes)
     {
         LOGF("TlsClient: 'ech-config-list' is not a valid base64 ECHConfigList");
-        OPENSSL_free(decoded);
+        memoryFree(decoded);
         return false;
     }
 
@@ -83,21 +81,16 @@ bool tlsclientConfigureEchContexts(tlsclient_tstate_t *ts, const cJSON *settings
     {
         SSL_CTX *context = ts->threadlocal_ssl_contexts[i];
         assert(SSL_CTX_get_ex_data(context, tlsclientEchContextIndex) == NULL);
-        tlsclient_ech_config_t *config = OPENSSL_malloc(sizeof(*config) + decoded_length);
-        if (config == NULL)
-        {
-            success = false;
-            break;
-        }
+        tlsclient_ech_config_t *config = memoryAllocate(sizeof(*config) + decoded_length);
         config->length = decoded_length;
         memoryCopy(config->bytes, decoded, decoded_length);
         if (! SSL_CTX_set_ex_data(context, tlsclientEchContextIndex, config))
         {
-            OPENSSL_free(config);
+            memoryFree(config);
             success = false;
         }
     }
-    OPENSSL_free(decoded);
+    memoryFree(decoded);
     return success;
 }
 

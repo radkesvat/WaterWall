@@ -86,11 +86,6 @@ static bool initializeInternalTlsClient(tunnel_t *t, node_t *node)
     realityclient_tstate_t *ts = tunnelGetState(t);
 
     ts->tls_settings = cJSON_Duplicate(node->node_settings_json, true);
-    if (ts->tls_settings == NULL)
-    {
-        LOGF("RealityClient: failed to duplicate TLS settings");
-        return false;
-    }
 
     ts->tls_node      = nodeTlsClientGet();
     ts->tls_node.name = nodeMakeChildName(node, ".internal-tls-client");

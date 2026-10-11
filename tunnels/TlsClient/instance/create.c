@@ -394,10 +394,6 @@ static bool tlsclientPreflightClientHello(SSL_CTX *ssl_ctx, const char *sni, con
     if (out_payload != NULL)
     {
         payload = memoryAllocate(pending);
-        if (payload == NULL)
-        {
-            goto cleanup;
-        }
 
         size_t offset = 0;
         while (offset < pending)
