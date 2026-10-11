@@ -39,7 +39,10 @@ if(NOT TARGET tcp_over_udp_fec)
     )
     target_compile_features(tcp_over_udp_fec PRIVATE cxx_std_17)
     target_link_libraries(tcp_over_udp_fec PRIVATE waterwall_runtime_options)
-    target_include_directories(tcp_over_udp_fec PUBLIC ${TCP_OVER_UDP_FEC_DIR})
+    target_include_directories(tcp_over_udp_fec
+        PUBLIC ${TCP_OVER_UDP_FEC_DIR}
+        PRIVATE ${CMAKE_SOURCE_DIR}/ww/libc
+    )
     # Release IPO is controlled by CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE.
     # set_property(TARGET tcp_over_udp_fec PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
 endif()

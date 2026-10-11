@@ -5,11 +5,11 @@
 #ifndef KCP_MATRIX_H
 #define KCP_MATRIX_H
 
-#include <vector>
-#include <memory>
 #include "galois.h"
+#include "ww_fec_allocator.h"
+#include <memory>
 
-using row_type = std::shared_ptr<std::vector<byte>>;
+using row_type = std::shared_ptr<FecVector<byte>>;
 
 struct rs_matrix {
     // newMatrix returns a matrix of zeros.
@@ -47,7 +47,7 @@ struct rs_matrix {
     //  Gaussian elimination (also known as row reduction)
     int gaussianElimination();
 
-    std::vector<row_type> data;
+    FecVector<row_type> data;
     int rows{0}, cols{0};
 
     inline byte &at(int row, int col) { return (*(data[row]))[col]; }

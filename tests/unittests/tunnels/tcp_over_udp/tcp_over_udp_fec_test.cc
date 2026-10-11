@@ -10,6 +10,7 @@
  * CTest: waterwall.tcp_over_udp_fec_unit
  */
 #include "ww_fec.h"
+#include "ww_fec_allocator.h"
 
 #include "test_assert.h"
 
@@ -21,6 +22,31 @@
 #include <set>
 #include <string>
 #include <vector>
+
+#if defined(WW_FEC_ALLOCATOR_TEST)
+#include <sys/wait.h>
+#include <unistd.h>
+
+static bool        refuse_allocations;
+static std::size_t allocation_calls;
+static std::size_t free_calls;
+
+extern "C" void *__real_mi_malloc(std::size_t size);
+extern "C" void  __real_mi_free(void *ptr);
+
+extern "C" void *__wrap_mi_malloc(std::size_t size)
+{
+    ++allocation_calls;
+    return refuse_allocations ? nullptr : __real_mi_malloc(size);
+}
+
+extern "C" void __wrap_mi_free(void *ptr)
+{
+    if (ptr != nullptr)
+        ++free_calls;
+    __real_mi_free(ptr);
+}
+#endif
 
 namespace
 {
@@ -151,13 +177,99 @@ void testInvalidPacketsAreRejected()
     tcpoverudpFecDecoderDestroy(&decoder);
 }
 
+void testInvalidGeometryIsRejected()
+{
+    require(tcpoverudpFecEncoderCreate(0, 1) == nullptr, "zero data shard count was accepted");
+    require(tcpoverudpFecDecoderCreate(1, 0) == nullptr, "zero parity shard count was accepted");
+    require(tcpoverudpFecEncoderCreate(200, 100) == nullptr, "oversized encoder shard count was accepted");
+    require(tcpoverudpFecDecoderCreate(200, 100) == nullptr, "oversized decoder shard count was accepted");
+
+    FecVector<uint64_t> values;
+    try
+    {
+        values.resize(values.max_size() + 1);
+        require(false, "unrepresentable FEC vector size was accepted");
+    }
+    catch (const std::length_error &)
+    {
+    }
+}
+
+#if defined(WW_FEC_ALLOCATOR_TEST)
+void unexpectedExitCleanup()
+{
+    _Exit(72);
+}
+
+bool acceptPacket(void *, const uint8_t *, size_t)
+{
+    return true;
+}
+
+bool throwAllocationFailure(void *, const uint8_t *, size_t)
+{
+    throw std::bad_alloc();
+}
+
+void testFatalAllocation(unsigned kind)
+{
+    const pid_t child = fork();
+    require(child >= 0, "failed to fork FEC allocation failure case");
+    if (child == 0)
+    {
+        auto *encoder = kind >= 2 ? tcpoverudpFecEncoderCreate(2, 1) : nullptr;
+        auto *decoder = kind == 3 ? tcpoverudpFecDecoderCreate(2, 1) : nullptr;
+        if (atexit(unexpectedExitCleanup) != 0)
+            _Exit(74);
+        alarm(3);
+        refuse_allocations = kind != 4;
+        uint8_t packet[]   = {0, 0, 0, 0, 0xf1, 0, 3, 0, 'x'};
+        switch (kind)
+        {
+        case 0:
+            tcpoverudpFecEncoderCreate(2, 1);
+            break;
+        case 1:
+            tcpoverudpFecDecoderCreate(2, 1);
+            break;
+        case 2:
+            tcpoverudpFecEncodePacket(encoder, packet, sizeof(packet), acceptPacket, nullptr);
+            break;
+        case 3:
+            tcpoverudpFecDecodePacket(decoder, packet, sizeof(packet), acceptPacket, nullptr);
+            break;
+        case 4:
+            tcpoverudpFecEncodePacket(encoder, packet, sizeof(packet), throwAllocationFailure, nullptr);
+            break;
+        }
+        _Exit(73);
+    }
+    int status = 0;
+    require(waitpid(child, &status, 0) == child, "failed to wait for FEC allocation failure case");
+    require(WIFEXITED(status) && WEXITSTATUS(status) == 1,
+            "FEC allocation failure must exit immediately with status 1 without cleanup or recovery");
+}
+#endif
+
 } // namespace
 
 int main()
 {
     testCaseSet("tcp_over_udp_fec_test");
+#if defined(WW_FEC_ALLOCATOR_TEST)
+    const auto allocations_before = allocation_calls;
+    const auto frees_before       = free_calls;
+#endif
     testRecoveryWithOneMissingDataShard();
     testEncoderRecoversAfterFailedParityEmit();
     testInvalidPacketsAreRejected();
+    testInvalidGeometryIsRejected();
+#if defined(WW_FEC_ALLOCATOR_TEST)
+    require(allocation_calls > allocations_before, "FEC did not use the WaterWall mimalloc backend");
+    require(allocation_calls - allocations_before == free_calls - frees_before,
+            "FEC retained heap storage after destruction or geometry rejection");
+    for (unsigned kind = 0; kind < 5; ++kind)
+        testFatalAllocation(kind);
+#endif
     return 0;
 }

@@ -12,7 +12,7 @@
 struct tcpoverudp_fec_encoder_s
 {
     FEC                  fec;
-    std::vector<row_type> shards;
+    FecVector<row_type>  shards;
     size_t               pkt_idx;
     size_t               data_shards;
     size_t               parity_shards;
@@ -72,13 +72,10 @@ extern "C" tcpoverudp_fec_encoder_t *tcpoverudpFecEncoderCreate(uint8_t data_sha
         return nullptr;
     }
 
+    tcpoverudp_fec_encoder_t *encoder = nullptr;
     try
     {
-        tcpoverudp_fec_encoder_t *encoder = new (std::nothrow) tcpoverudp_fec_encoder_t;
-        if (encoder == nullptr)
-        {
-            return nullptr;
-        }
+        encoder = fecCreate<tcpoverudp_fec_encoder_t>();
 
         encoder->fec           = FEC::New(tcpoverudpFecRxLimit(data_shards, parity_shards), data_shards, parity_shards);
         encoder->data_shards   = data_shards;
@@ -88,8 +85,13 @@ extern "C" tcpoverudp_fec_encoder_t *tcpoverudpFecEncoderCreate(uint8_t data_sha
 
         return encoder;
     }
+    catch (const std::bad_alloc &)
+    {
+        abortProgramNow(1);
+    }
     catch (...)
     {
+        fecDestroy(encoder);
         return nullptr;
     }
 }
@@ -101,7 +103,7 @@ extern "C" void tcpoverudpFecEncoderDestroy(tcpoverudp_fec_encoder_t **encoder_p
         return;
     }
 
-    delete *encoder_ptr;
+    fecDestroy(*encoder_ptr);
     *encoder_ptr = nullptr;
 }
 
@@ -124,11 +126,11 @@ extern "C" bool tcpoverudpFecEncodePacket(tcpoverudp_fec_encoder_t *encoder, con
     try
     {
         const size_t shard_len = packet_len + 2U;
-        row_type     shard     = std::make_shared<std::vector<byte>>(shard_len);
+        row_type     shard     = fecMakeShared<FecVector<byte>>(shard_len);
         encode16u(shard->data(), (uint16_t) shard_len);
         std::copy_n(packet, packet_len, shard->data() + 2);
 
-        std::vector<byte> data_packet(fecHeaderSize + shard_len);
+        FecVector<byte> data_packet(fecHeaderSize + shard_len);
         std::copy_n(shard->data(), shard_len, data_packet.data() + fecHeaderSize);
         encoder->fec.MarkData(data_packet.data(), (uint16_t) packet_len);
         encoder->shards[encoder->pkt_idx] = shard;
@@ -155,7 +157,7 @@ extern "C" bool tcpoverudpFecEncodePacket(tcpoverudp_fec_encoder_t *encoder, con
                 return false;
             }
 
-            std::vector<byte> parity_packet(fecHeaderSize + encoder->shards[i]->size());
+            FecVector<byte> parity_packet(fecHeaderSize + encoder->shards[i]->size());
             std::copy_n(encoder->shards[i]->data(), encoder->shards[i]->size(), parity_packet.data() + fecHeaderSize);
             encoder->fec.MarkFEC(parity_packet.data());
             next_parity_index = i + 1;
@@ -169,6 +171,10 @@ extern "C" bool tcpoverudpFecEncodePacket(tcpoverudp_fec_encoder_t *encoder, con
         tcpoverudpFecEncoderResetBlock(encoder);
 
         return emit_ok;
+    }
+    catch (const std::bad_alloc &)
+    {
+        abortProgramNow(1);
     }
     catch (...)
     {
@@ -188,19 +194,21 @@ extern "C" tcpoverudp_fec_decoder_t *tcpoverudpFecDecoderCreate(uint8_t data_sha
         return nullptr;
     }
 
+    tcpoverudp_fec_decoder_t *decoder = nullptr;
     try
     {
-        tcpoverudp_fec_decoder_t *decoder = new (std::nothrow) tcpoverudp_fec_decoder_t;
-        if (decoder == nullptr)
-        {
-            return nullptr;
-        }
+        decoder = fecCreate<tcpoverudp_fec_decoder_t>();
 
         decoder->fec = FEC::New(tcpoverudpFecRxLimit(data_shards, parity_shards), data_shards, parity_shards);
         return decoder;
     }
+    catch (const std::bad_alloc &)
+    {
+        abortProgramNow(1);
+    }
     catch (...)
     {
+        fecDestroy(decoder);
         return nullptr;
     }
 }
@@ -212,7 +220,7 @@ extern "C" void tcpoverudpFecDecoderDestroy(tcpoverudp_fec_decoder_t **decoder_p
         return;
     }
 
-    delete *decoder_ptr;
+    fecDestroy(*decoder_ptr);
     *decoder_ptr = nullptr;
 }
 
@@ -226,7 +234,7 @@ extern "C" bool tcpoverudpFecDecodePacket(tcpoverudp_fec_decoder_t *decoder, con
 
     try
     {
-        std::vector<byte> packet_copy(packet, packet + packet_len);
+        FecVector<byte>   packet_copy(packet, packet + packet_len);
         fecPacket         decoded = FEC::Decode(packet_copy.data(), packet_copy.size());
 
         if (decoded.flag != typeData && decoded.flag != typeFEC)
@@ -242,7 +250,7 @@ extern "C" bool tcpoverudpFecDecodePacket(tcpoverudp_fec_decoder_t *decoder, con
             }
         }
 
-        std::vector<row_type> recovered = decoder->fec.Input(decoded);
+        FecVector<row_type> recovered = decoder->fec.Input(decoded);
         for (const row_type &shard : recovered)
         {
             if (! tcpoverudpFecEmitRecoveredShard(shard, emit, ctx))
@@ -252,6 +260,10 @@ extern "C" bool tcpoverudpFecDecodePacket(tcpoverudp_fec_decoder_t *decoder, con
         }
 
         return true;
+    }
+    catch (const std::bad_alloc &)
+    {
+        abortProgramNow(1);
     }
     catch (...)
     {

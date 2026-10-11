@@ -47,15 +47,15 @@ ReedSolomon::New(int dataShards, int parityShards) {
     // with the original data.
     r.tree = inversionTree::newInversionTree(dataShards, parityShards);
 
-    r.parity = std::vector<row_type>(parityShards);
+    r.parity = FecVector<row_type>(parityShards);
     for (int i = 0; i < parityShards; i++) {
         r.parity[i] = r.m.data[dataShards + i];
     }
     return r;
 }
 
-void
-ReedSolomon::Encode(std::vector<row_type> &shards) {
+void ReedSolomon::Encode(FecVector<row_type> &shards)
+{
     if (shards.size() != m_totalShards) {
         throw std::invalid_argument("too few shards given");
     }
@@ -63,17 +63,16 @@ ReedSolomon::Encode(std::vector<row_type> &shards) {
     checkShards(shards, false);
 
     // Get the slice of output buffers.
-    std::vector<row_type> output(shards.begin() + m_dataShards, shards.end());
+    FecVector<row_type> output(shards.begin() + m_dataShards, shards.end());
 
     // Do the coding.
-    std::vector<row_type> input(shards.begin(), shards.begin() + m_dataShards);
+    FecVector<row_type> input(shards.begin(), shards.begin() + m_dataShards);
     codeSomeShards(parity, input, output, m_parityShards);
 };
 
-
-void
-ReedSolomon::codeSomeShards(std::vector<row_type> &matrixRows, std::vector<row_type> &inputs,
-                            std::vector<row_type> &outputs, int outputCount) {
+void ReedSolomon::codeSomeShards(FecVector<row_type> &matrixRows, FecVector<row_type> &inputs,
+                                 FecVector<row_type> &outputs, int outputCount)
+{
     for (int c = 0; c < m_dataShards; c++) {
         auto in = inputs[c];
         for (int iRow = 0; iRow < outputCount; iRow++) {
@@ -86,8 +85,8 @@ ReedSolomon::codeSomeShards(std::vector<row_type> &matrixRows, std::vector<row_t
     }
 }
 
-void
-ReedSolomon::Reconstruct(std::vector<row_type> &shards) {
+void ReedSolomon::Reconstruct(FecVector<row_type> &shards)
+{
     if (shards.size() != m_totalShards) {
         throw std::invalid_argument("too few shards given");
     }
@@ -124,9 +123,9 @@ ReedSolomon::Reconstruct(std::vector<row_type> &shards) {
     //
     // Also, create an array of indices of the valid rows we do have
     // and the invalid rows we don't have up until we have enough valid rows.
-    std::vector<row_type> subShards(m_dataShards);
-    std::vector<int> validIndices(m_dataShards, 0);
-    std::vector<int> invalidIndices;
+    FecVector<row_type> subShards(m_dataShards);
+    FecVector<int>      validIndices(m_dataShards, 0);
+    FecVector<int>      invalidIndices;
     int subMatrixRow = 0;
 
     for (int matrixRow = 0; matrixRow < m_totalShards && subMatrixRow < m_dataShards; matrixRow++) {
@@ -181,13 +180,13 @@ ReedSolomon::Reconstruct(std::vector<row_type> &shards) {
     // The Input to the coding is all of the shards we actually
     // have, and the output is the missing data shards.  The computation
     // is done using the special Decode matrix we just built.
-    std::vector<row_type> outputs(m_parityShards);
-    std::vector<row_type> matrixRows(m_parityShards);
+    FecVector<row_type> outputs(m_parityShards);
+    FecVector<row_type> matrixRows(m_parityShards);
     int outputCount = 0;
 
     for (int iShard = 0; iShard < m_dataShards; iShard++) {
         if (shards[iShard] == nullptr) {
-            shards[iShard] = std::make_shared<std::vector<byte>>(shardSize);
+            shards[iShard]          = fecMakeShared<FecVector<byte>>(shardSize);
             outputs[outputCount] = shards[iShard];
             matrixRows[outputCount] = dataDecodeMatrix.data[iShard];
             outputCount++;
@@ -204,7 +203,7 @@ ReedSolomon::Reconstruct(std::vector<row_type> &shards) {
     outputCount = 0;
     for (int iShard = m_dataShards; iShard < m_totalShards; iShard++) {
         if (shards[iShard] == nullptr) {
-            shards[iShard] = std::make_shared<std::vector<byte>>(shardSize);
+            shards[iShard]          = fecMakeShared<FecVector<byte>>(shardSize);
             outputs[outputCount] = shards[iShard];
             matrixRows[outputCount] = parity[iShard - m_dataShards];
             outputCount++;
@@ -213,8 +212,8 @@ ReedSolomon::Reconstruct(std::vector<row_type> &shards) {
     codeSomeShards(matrixRows, shards, outputs, outputCount);
 }
 
-void
-ReedSolomon::checkShards(std::vector<row_type> &shards, bool nilok) {
+void ReedSolomon::checkShards(FecVector<row_type> &shards, bool nilok)
+{
     auto size = shardSize(shards);
     if (size == 0) {
         throw std::invalid_argument("no shard data");
@@ -231,9 +230,8 @@ ReedSolomon::checkShards(std::vector<row_type> &shards, bool nilok) {
     }
 }
 
-
-int
-ReedSolomon::shardSize(std::vector<row_type> &shards) {
+int ReedSolomon::shardSize(FecVector<row_type> &shards)
+{
     for (int i = 0; i < shards.size(); i++) {
         if (shards[i] != nullptr) {
             return shards[i]->size();

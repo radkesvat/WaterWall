@@ -27,7 +27,7 @@ public:
     // Each shard is a byte array, and they must all be the same empty.
     // The parity shards will always be overwritten and the data shards
     // will remain the same.
-    void Encode(std::vector<row_type> &shards);
+    void Encode(FecVector<row_type> &shards);
 
     // Reconstruct will recreate the missing shards, if possible.
     //
@@ -42,19 +42,18 @@ public:
     //
     // The reconstructed shard set is complete, but integrity is not verified.
     // Use the Verify function to check if data set is ok.
-    void Reconstruct(std::vector<row_type> &shards);
+    void Reconstruct(FecVector<row_type> &shards);
 
-private:
+  private:
     int m_dataShards;  // Number of data shards, should not be modified.
     int m_parityShards; // Number of parity shards, should not be modified.
     int m_totalShards; // Total number of shards. Calculated, and should not be modified.
 
     rs_matrix m;
     inversionTree tree;
-    std::vector<row_type> parity;
+    FecVector<row_type> parity;
 
-    int shardSize(std::vector<row_type> &shards);
-
+    int shardSize(FecVector<row_type> &shards);
 
     // Multiplies a subset of rows from a coding matrix by a full set of
     // Input shards to produce some output shards.
@@ -65,14 +64,13 @@ private:
     // The number of outputs computed, and the
     // number of matrix rows used, is determined by
     // outputCount, which is the number of outputs to compute.
-    void
-    codeSomeShards(std::vector<row_type> &matrixRows, std::vector<row_type> &inputs, std::vector<row_type> &outputs,
-                   int outputCount);
+    void codeSomeShards(FecVector<row_type> &matrixRows, FecVector<row_type> &inputs, FecVector<row_type> &outputs,
+                        int outputCount);
 
     // checkShards will check if shards are the same size
     // or 0, if allowed. An error is returned if this fails.
     // An error is also returned if all shards are size 0.
-    void checkShards(std::vector<row_type> &shards, bool nilok) ;
+    void checkShards(FecVector<row_type> &shards, bool nilok);
 };
 
 

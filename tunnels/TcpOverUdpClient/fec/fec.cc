@@ -42,7 +42,7 @@ FEC::Decode(byte *data, size_t sz) {
     data = decode32u(data, &pkt.seqid);
     data = decode16u(data, &pkt.flag);
     pkt.ts = currentMs();
-    pkt.data = std::make_shared<std::vector<byte>>(data, data+sz - fecHeaderSize);
+    pkt.data = fecMakeShared<FecVector<byte>>(data, data + sz - fecHeaderSize);
     return pkt;
 }
 
@@ -64,9 +64,9 @@ FEC::MarkFEC(byte *data) {
     }
 }
 
-std::vector<row_type>
-FEC::Input(fecPacket &pkt) {
-    std::vector<row_type> recovered;
+FecVector<row_type> FEC::Input(fecPacket &pkt)
+{
+    FecVector<row_type> recovered;
 
     uint32_t now = currentMs();
     if (now-lastCheck >= fecExpire) {
@@ -123,8 +123,8 @@ FEC::Input(fecPacket &pkt) {
         int first = 0;
         size_t maxlen = 0;
 
-        std::vector<row_type> shardVec(totalShards);
-        std::vector<bool> shardflag(totalShards, false);
+        FecVector<row_type> shardVec(totalShards);
+        FecVector<bool>     shardflag(totalShards, false);
 
         for (auto i = searchBegin; i <= searchEnd; i++) {
             auto seqid = rx[i].seqid;
@@ -175,8 +175,8 @@ FEC::Input(fecPacket &pkt) {
     return recovered;
 }
 
-
-void FEC::Encode(std::vector<row_type> &shards) {
+void FEC::Encode(FecVector<row_type> &shards)
+{
     // resize elements with 0 appending
     size_t max = 0;
     for (int i = 0;i<dataShards;i++) {
@@ -187,7 +187,7 @@ void FEC::Encode(std::vector<row_type> &shards) {
 
     for ( auto &s : shards) {
         if (s == nullptr) {
-            s = std::make_shared<std::vector<byte>>(max);
+            s = fecMakeShared<FecVector<byte>>(max);
         } else {
             s->resize(max, 0);
         }

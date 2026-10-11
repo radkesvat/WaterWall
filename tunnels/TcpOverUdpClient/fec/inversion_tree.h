@@ -10,10 +10,10 @@
 
 struct inversionNode {
     struct rs_matrix m_matrix;
-    std::vector<std::shared_ptr<inversionNode>> m_children;
-    struct rs_matrix getInvertedMatrix(std::vector<int> & invalidIndices, int parent);
+    FecVector<std::shared_ptr<inversionNode>> m_children;
+    struct rs_matrix                          getInvertedMatrix(FecVector<int> &invalidIndices, int parent);
 
-    void insertInvertedMatrix(std::vector<int> &invalidIndices, struct rs_matrix &matrix, int shards, int parent);
+    void insertInvertedMatrix(FecVector<int> &invalidIndices, struct rs_matrix &matrix, int shards, int parent);
 };
 
 class inversionTree {
@@ -25,15 +25,15 @@ public:
 
     // GetInvertedMatrix returns the cached inverted matrix or nil if it
     // is not found in the tree keyed on the indices of invalid rows.
-    rs_matrix GetInvertedMatrix(std::vector<int> & invalidIndices);
+    rs_matrix GetInvertedMatrix(FecVector<int> &invalidIndices);
 
     // InsertInvertedMatrix inserts a new inverted matrix into the tree
     // keyed by the indices of invalid rows.  The total number of shards
     // is required for creating the proper length lists of child nodes for
     // each node.
-    int InsertInvertedMatrix(std::vector<int> & invalidIndices, struct rs_matrix &matrix, int shards);
+    int InsertInvertedMatrix(FecVector<int> &invalidIndices, struct rs_matrix &matrix, int shards);
 
-private:
+  private:
     inversionNode m_root;
 };
 

@@ -12,9 +12,8 @@ inversionTree inversionTree::newInversionTree(int dataShards, int parityShards) 
     return tree;
 }
 
-
-rs_matrix
-inversionTree::GetInvertedMatrix(std::vector<int> &invalidIndices) {
+rs_matrix inversionTree::GetInvertedMatrix(FecVector<int> &invalidIndices)
+{
     if (invalidIndices.size() == 0) {
         return m_root.m_matrix;
     }
@@ -22,8 +21,8 @@ inversionTree::GetInvertedMatrix(std::vector<int> &invalidIndices) {
     return m_root.getInvertedMatrix(invalidIndices, 0);
 }
 
-int
-inversionTree::InsertInvertedMatrix(std::vector<int> &invalidIndices, rs_matrix &matrix, int shards) {
+int inversionTree::InsertInvertedMatrix(FecVector<int> &invalidIndices, rs_matrix &matrix, int shards)
+{
     // If no invalid indices were given then we are done because the
     // m_root node is already set with the identity matrix.
     if (invalidIndices.size() == 0) {
@@ -42,8 +41,8 @@ inversionTree::InsertInvertedMatrix(std::vector<int> &invalidIndices, rs_matrix 
     return 0;
 }
 
-rs_matrix
-inversionNode::getInvertedMatrix(std::vector<int> &invalidIndices, int parent) {
+rs_matrix inversionNode::getInvertedMatrix(FecVector<int> &invalidIndices, int parent)
+{
     // Get the child node to search next from the list of m_children.  The
     // list of m_children starts relative to the parent index passed in
     // because the indices of invalid rows is sorted (by default).  As we
@@ -65,7 +64,7 @@ inversionNode::getInvertedMatrix(std::vector<int> &invalidIndices, int parent) {
         // Search recursively on the child node by passing in the invalid indices
         // with the first index popped off the front.  Also the parent index to
         // pass down is the first index plus one.
-        std::vector<int> v(invalidIndices.begin() + 1, invalidIndices.end());
+        FecVector<int> v(invalidIndices.begin() + 1, invalidIndices.end());
         return node->getInvertedMatrix(v, firstIndex + 1);
     }
 
@@ -77,12 +76,9 @@ inversionNode::getInvertedMatrix(std::vector<int> &invalidIndices, int parent) {
     return node->m_matrix;
 }
 
-void
-inversionNode::insertInvertedMatrix(
-        std::vector<int> &invalidIndices,
-        struct rs_matrix &matrix,
-        int shards,
-        int parent) {
+void inversionNode::insertInvertedMatrix(FecVector<int> &invalidIndices, struct rs_matrix &matrix, int shards,
+                                         int parent)
+{
     // As above, get the child node to search next from the list of m_children.
     // The list of m_children starts relative to the parent index passed in
     // because the indices of invalid rows is sorted (by default).  As we
@@ -100,7 +96,7 @@ inversionNode::insertInvertedMatrix(
         // of shards minus the first invalid index because the list of
         // invalid indices is sorted, so only this length of errors
         // are possible in the tree.
-        node = std::make_shared<inversionNode>();
+        node = fecMakeShared<inversionNode>();
         node->m_children.resize(shards - firstIndex, nullptr);
         m_children[firstIndex - parent] = node;
     }
@@ -114,7 +110,7 @@ inversionNode::insertInvertedMatrix(
         // the invalid indices with the first index popped off the front.
         // Also the total number of shards and parent index are passed down
         // which is equal to the first index plus one.
-        std::vector<int> v(invalidIndices.begin() + 1, invalidIndices.end());
+        FecVector<int> v(invalidIndices.begin() + 1, invalidIndices.end());
         node->insertInvertedMatrix(v, matrix, shards, firstIndex + 1);
     } else {
         node->m_matrix = matrix;

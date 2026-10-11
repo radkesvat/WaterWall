@@ -35,10 +35,10 @@ public:
     inline bool isEnabled() { return dataShards > 0 && parityShards > 0 ; }
 
     // Input a FEC packet, and return recovered data if possible.
-    std::vector<row_type> Input(fecPacket &pkt);
+    FecVector<row_type> Input(fecPacket &pkt);
 
     // Calc Parity Shards
-    void Encode(std::vector<row_type> &shards);
+    void Encode(FecVector<row_type> &shards);
 
     // Decode a raw array into fecPacket
     static fecPacket Decode(byte *data, size_t sz);
@@ -49,15 +49,15 @@ public:
     // Mark raw array as typeFEC
     void MarkFEC(byte *data);
 private:
-    std::vector<fecPacket> rx; // ordered receive queue
-    int rxlimit;  // queue empty limit
-    int dataShards;
-    int parityShards;
-    int totalShards;
-    uint32_t next{0}; // next seqid
-    ReedSolomon enc;
-    uint32_t paws;  // Protect Against Wrapped Sequence numbers
-    uint32_t lastCheck{0};
+  FecVector<fecPacket> rx;      // ordered receive queue
+  int                  rxlimit; // queue empty limit
+  int                  dataShards;
+  int                  parityShards;
+  int                  totalShards;
+  uint32_t             next{0}; // next seqid
+  ReedSolomon          enc;
+  uint32_t             paws; // Protect Against Wrapped Sequence numbers
+  uint32_t             lastCheck{0};
 };
 
 

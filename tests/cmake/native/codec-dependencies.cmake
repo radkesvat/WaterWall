@@ -2,7 +2,12 @@
 if(TARGET tcp_over_udp_fec)
   waterwall_add_native_executable(tcp_over_udp_fec_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcp_over_udp/tcp_over_udp_fec_test.cc)
   target_compile_features(tcp_over_udp_fec_test PRIVATE cxx_std_17)
-  target_link_libraries(tcp_over_udp_fec_test PRIVATE tcp_over_udp_fec)
+  target_include_directories(tcp_over_udp_fec_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/libc)
+  target_link_libraries(tcp_over_udp_fec_test PRIVATE tcp_over_udp_fec "$<LINK_ONLY:ww>")
+  if(LINUX AND NOT ALLOCATOR_BYPASS)
+    target_compile_definitions(tcp_over_udp_fec_test PRIVATE WW_FEC_ALLOCATOR_TEST=1)
+    target_link_options(tcp_over_udp_fec_test PRIVATE "-Wl,--wrap=mi_malloc" "-Wl,--wrap=mi_free")
+  endif()
   add_dependencies(waterwall_unit_tests tcp_over_udp_fec_test)
 
   add_waterwall_unit_test(waterwall.tcp_over_udp_fec_unit tcp_over_udp_fec_test "unit;tunnels;fec")
