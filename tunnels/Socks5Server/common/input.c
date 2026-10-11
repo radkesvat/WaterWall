@@ -120,11 +120,8 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
             user_handle_t  user_handle = userHandleEmpty();
             bool           authenticated =
                 socks5serverAuthUserFromClient(t, l, raw + 2, head[1], raw + 3 + head[1], plen, &user_handle);
-            if (authenticated && ! socks5serverStoreAuthCredentials(ls, raw + 2, head[1], raw + 3 + head[1], plen))
-            {
-                socks5serverLogAuthRejected(t, l, raw + 2, head[1], "failed to retain authenticated credentials");
-                authenticated = false;
-            }
+            if (authenticated)
+                socks5serverStoreAuthCredentials(ls, raw + 2, head[1], raw + 3 + head[1], plen);
             lineReuseBuffer(l, auth_buf);
 
             sbuf_t *reply = socks5serverCreateAuthReply(l, authenticated ? 0x00 : 0x01);

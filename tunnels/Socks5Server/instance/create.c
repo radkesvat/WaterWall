@@ -199,12 +199,6 @@ tunnel_t *socks5serverTunnelCreate(node_t *node)
     ts->no_auth             = false;
     ts->workers_count       = (wid_t) getWorkersCount();
     ts->worker_associations = memoryAllocateZero(sizeof(socks5server_assoc_map_t) * ts->workers_count);
-    if (UNLIKELY(ts->worker_associations == NULL))
-    {
-        LOGF("Socks5Server: failed to allocate worker associations array");
-        tunnelDestroy(t);
-        return NULL;
-    }
 
     for (wid_t wid = 0; wid < ts->workers_count; ++wid)
     {

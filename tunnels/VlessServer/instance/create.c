@@ -114,26 +114,16 @@ static bool vlessserverAppendUuid(vlessserver_tstate_t *ts, const uint8_t uuid[k
     }
 
     size_t new_count = (size_t) ts->user_count + 1U;
-    if (UNLIKELY(new_count > UINT32_MAX))
+    if (UNLIKELY(ts->user_count == UINT32_MAX || new_count > SIZE_MAX / sizeof(*ts->users)))
     {
         LOGF("VlessServer: too many configured users");
         return false;
     }
 
     vlessserver_user_t *users = memoryReAllocate(ts->users, sizeof(*users) * new_count);
-    if (UNLIKELY(users == NULL))
-    {
-        LOGF("VlessServer: failed to allocate UUID allowlist");
-        return false;
-    }
 
     ts->users       = users;
     char *name_copy = username != NULL ? stringDuplicate(username) : NULL;
-    if (username != NULL && name_copy == NULL)
-    {
-        LOGF("VlessServer: failed to copy local user name");
-        return false;
-    }
     memoryCopy(ts->users[ts->user_count].uuid, uuid, kVlessServerUuidLen);
     ts->users[ts->user_count].username = name_copy;
     ts->user_count                     = (uint32_t) new_count;

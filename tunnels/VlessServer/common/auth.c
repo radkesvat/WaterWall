@@ -62,12 +62,6 @@ vlessserver_auth_result_t vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vl
         char *name_copy     = matched->username != NULL ? stringDuplicate(matched->username) : NULL;
         char *password_copy = stringDuplicate(uuid_password);
         memoryZero(uuid_password, sizeof(uuid_password));
-        if ((matched->username != NULL && name_copy == NULL) || password_copy == NULL)
-        {
-            memoryFree(name_copy);
-            memoryFree(password_copy);
-            return kVlessServerAuthResourceFailure;
-        }
         memoryFree(ls->auth_username);
         memoryFree(ls->auth_password);
         ls->auth_username = name_copy;

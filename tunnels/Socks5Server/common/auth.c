@@ -127,17 +127,11 @@ bool socks5serverAuthUserFromClient(tunnel_t *t, line_t *l, const uint8_t *usern
     return false;
 }
 
-bool socks5serverStoreAuthCredentials(socks5server_lstate_t *ls, const uint8_t *username, uint8_t username_len,
+void socks5serverStoreAuthCredentials(socks5server_lstate_t *ls, const uint8_t *username, uint8_t username_len,
                                       const uint8_t *password, uint8_t password_len)
 {
     char *new_username = memoryAllocate((size_t) username_len + 1U);
     char *new_password = memoryAllocate((size_t) password_len + 1U);
-    if (UNLIKELY(new_username == NULL || new_password == NULL))
-    {
-        memoryFree(new_username);
-        memoryFree(new_password);
-        return false;
-    }
 
     if (username_len > 0)
     {
@@ -155,7 +149,6 @@ bool socks5serverStoreAuthCredentials(socks5server_lstate_t *ls, const uint8_t *
     memoryFree(ls->auth_password);
     ls->auth_username = new_username;
     ls->auth_password = new_password;
-    return true;
 }
 
 void socks5serverRecordLineUser(line_t *l, socks5server_lstate_t *ls, const user_handle_t *user_handle)

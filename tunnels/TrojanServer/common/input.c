@@ -143,10 +143,7 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
         memoryZero(digest, sizeof(digest));
         if (result != kTrojanServerAuthAccepted)
         {
-            if (result == kTrojanServerAuthResourceFailure)
-                trojanserverCloseLineBidirectional(t, l);
-            else
-                trojanserverStartFallback(t, l, ls);
+            trojanserverStartFallback(t, l, ls);
             return;
         }
     }
@@ -182,11 +179,7 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
         trojanserverResetHeader(ls);
         return;
     }
-    if (! trojanserverApplyDestinationContext(l, &target, false))
-    {
-        trojanserverCloseLineBidirectional(t, l);
-        return;
-    }
+    trojanserverApplyDestinationContext(l, &target, false);
     trojanserverResetHeader(ls);
     if (! trojanserverRetainActiveHead(ls) || ls->input_bytes > kTrojanServerMaxPendingBytes ||
         ! bufferqueueTryAttachBudget(&ls->pending_up, &ls->output_budget))
@@ -317,14 +310,12 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     return true;
 }
 
-bool trojanserverApplyDestinationContext(line_t *l, const trojanserver_address_t *target, bool udp)
+void trojanserverApplyDestinationContext(line_t *l, const trojanserver_address_t *target, bool udp)
 {
     address_context_t *dest = lineGetDestinationAddressContext(l);
     if (target->kind == kTrojanServerAddressDomain)
     {
         char *domain = memoryAllocate((size_t) target->length + 1);
-        if (domain == NULL)
-            return false;
         memoryCopy(domain, target->bytes, target->length);
         domain[target->length] = '\0';
         addresscontextReset(dest);
@@ -344,5 +335,4 @@ bool trojanserverApplyDestinationContext(line_t *l, const trojanserver_address_t
         addresscontextSetIpPort(dest, &ip, target->port);
     }
     addresscontextSetOnlyProtocol(dest, udp ? IP_PROTO_UDP : IP_PROTO_TCP);
-    return true;
 }

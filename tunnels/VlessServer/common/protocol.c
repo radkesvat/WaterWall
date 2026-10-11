@@ -154,11 +154,6 @@ bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_lstate_
     if (! vlessserverLineAuthenticated(ls))
     {
         vlessserver_auth_result_t result = vlessserverAuthenticateUuid(t, l, ls, ls->header + 1);
-        if (result == kVlessServerAuthResourceFailure)
-        {
-            vlessserverCloseLineBidirectional(t, l);
-            return false;
-        }
         if (result == kVlessServerAuthRejected)
             return vlessserverStartFallback(t, l);
     }

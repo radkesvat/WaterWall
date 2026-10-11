@@ -3,9 +3,9 @@
  * suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: roles, queueFailure, mapFailure
+ * Cases: roles, queueFailure, remoteReuse
  * Checks: Assertion labels include: client reference leak; unused role reserved backing storage; first
- * queue refusal did not close and settle the flow; map refusal destroyed borrowed client
+ * queue refusal did not close and settle the flow; remote reuse destroyed borrowed client
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.socks5server_resources_unit
@@ -14,7 +14,7 @@
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 
 static bool             measuring;
-static unsigned         allocations, fail_nth, failures, inits;
+static unsigned         allocations, inits;
 static tunnel_t        *server, *prev, *next;
 static tunnel_chain_t  *chain;
 static twf_worker_env_t env;
@@ -26,28 +26,26 @@ void       *__real_memoryReAllocate(void *p, size_t size);
 void       *__wrap_memoryAllocate(size_t size);
 void       *__wrap_memoryCalloc(size_t n, size_t size);
 void       *__wrap_memoryReAllocate(void *p, size_t size);
-static bool refuse(void)
+static void countAllocation(void)
 {
     if (measuring)
         ++allocations;
-    if (fail_nth && --fail_nth == 0)
-    {
-        ++failures;
-        return true;
-    }
-    return false;
 }
+
 void *__wrap_memoryAllocate(size_t size)
 {
-    return refuse() ? NULL : __real_memoryAllocate(size);
+    countAllocation();
+    return __real_memoryAllocate(size);
 }
 void *__wrap_memoryCalloc(size_t n, size_t size)
 {
-    return refuse() ? NULL : __real_memoryCalloc(n, size);
+    countAllocation();
+    return __real_memoryCalloc(n, size);
 }
 void *__wrap_memoryReAllocate(void *p, size_t size)
 {
-    return refuse() ? NULL : __real_memoryReAllocate(p, size);
+    countAllocation();
+    return __real_memoryReAllocate(p, size);
 }
 static void noop(tunnel_t *t, line_t *l)
 {
@@ -102,11 +100,10 @@ static void setup(socks5server_line_kind_t kind)
     client        = lineCreate(tunnelchainGetLinePools(chain), 0);
     lineRef(client);
     socks5serverLinestateInitialize(lineGetState(client, server), server, client, kind);
-    inits = failures = 0;
+    inits = 0;
 }
 static void teardown(void)
 {
-    fail_nth  = 0;
     measuring = false;
     if (lineIsAlive(client))
     {
@@ -151,22 +148,21 @@ static void roles(bool measure_only)
 }
 static void queueFailure(void)
 {
-    twfSetCase("first ordering queue allocation failure");
+    twfSetCase("ordering queue byte budget refusal");
     setup(kSocks5ServerLineKindControlTcp);
     socks5server_lstate_t *ls = lineGetState(client, server);
     ls->phase                 = kSocks5ServerPhaseConnectWaitEst;
     ls->next_initialized      = true;
     ls->next_initializing     = true;
-    sbuf_t *b                 = bufferpoolGetSmallBuffer(env.pool);
-    sbufSetLength(b, 1);
-    fail_nth = 1;
+    sbuf_t *b                 = bufferpoolGetBestFit(env.pool, kSocks5ServerMaxPendingBytes + 1U, 0);
+    sbufSetLength(b, kSocks5ServerMaxPendingBytes + 1U);
     socks5serverTunnelUpStreamPayload(server, client, b);
-    twfRequire(failures == 1 && ! lineIsAlive(client), "first queue refusal did not close and settle the flow");
+    twfRequire(! lineIsAlive(client), "first queue refusal did not close and settle the flow");
     teardown();
 }
-static void mapFailure(unsigned allocation)
+static void remoteReuse(void)
 {
-    twfSetCase("first remote registry allocation failure");
+    twfSetCase("remote registry insertion and reuse");
     setup(kSocks5ServerLineKindUdpClient);
     socks5server_tstate_t *ts = tunnelGetState(server);
     ts->workers_count         = 1;
@@ -185,14 +181,12 @@ static void mapFailure(unsigned allocation)
         sbuf_t *b = bufferpoolGetSmallBuffer(env.pool);
         sbufSetLength(b, sizeof(datagram));
         memoryCopy(sbufGetMutablePtr(b), datagram, sizeof(datagram));
-        fail_nth = attempt == 0 ? allocation : 0;
         socks5serverTunnelUpStreamPayload(server, client, b);
-        twfRequire(lineIsAlive(client), "map refusal destroyed borrowed client");
-        twfRequire(inits == attempt && socks5server_remote_map_t_size(&ls->udp_remote_lines) == attempt,
-                   "failed insertion published an unregistered remote");
-        twfRequire(twfLineRefCount(client) == 2 + attempt, "failed insertion leaked parent reference");
+        twfRequire(lineIsAlive(client), "remote reuse destroyed borrowed client");
+        twfRequire(inits == 1 && socks5server_remote_map_t_size(&ls->udp_remote_lines) == 1,
+                   "remote registry duplicated an existing backend");
+        twfRequire(twfLineRefCount(client) == 3, "remote reuse changed parent reference ownership");
     }
-    twfRequire(failures == 1, "map allocation failure was not exercised");
     teardown();
 }
 int main(int argc, char **argv)
@@ -212,9 +206,7 @@ int main(int argc, char **argv)
     if (! measure_only)
     {
         queueFailure();
-        mapFailure(1);
-        mapFailure(2);
-        mapFailure(3);
+        remoteReuse();
     }
     return 0;
 }

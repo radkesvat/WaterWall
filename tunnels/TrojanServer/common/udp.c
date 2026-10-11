@@ -129,8 +129,6 @@ line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, troj
     if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(client_l)))))
         return NULL;
     trojanserver_remote_key_t *key = memoryAllocate(sizeof(*key));
-    if (UNLIKELY(key == NULL))
-        return NULL;
     *key                          = lookup;
     line_t                *line   = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l));
     trojanserver_lstate_t *remote = lineGetState(line, t);
@@ -142,10 +140,8 @@ line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, troj
     remote->phase       = kTrojanServerPhaseUdpConnecting;
     lineRef(client_l);
     lineGetRoutingContext(line)->local_listener_port = lineGetRoutingContext(client_l)->local_listener_port;
-    if (! trojanserverApplyDestinationContext(line, target, true))
-        goto unpublished;
-    if (! trojanserverSetCredentialSnapshot(remote, client->auth_username, client->auth_password))
-        goto unpublished;
+    trojanserverApplyDestinationContext(line, target, true);
+    trojanserverSetCredentialSnapshot(remote, client->auth_username, client->auth_password);
     trojanserverRecordLineUser(line, remote, &remote->user_handle);
     trojanserver_remote_map_t_result result = trojanserver_remote_map_t_insert(&client->udp_remote_lines, key, line);
     if (UNLIKELY(! result.inserted))

@@ -4,7 +4,7 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: testUdpPressureRelease, testFirstResponse, testOrdinaryResponsePadding, testResponseOrdering,
- * testRequests, testFallback, testFallbackLocalReplies, testCredentialRefusal; the driver lists the
+ * testRequests, testFallback, testFallbackLocalReplies, testCredentialSnapshots; the driver lists the
  * remaining cases
  * Checks: Assertion labels include: inventory exhaustion; server destroyed borrowed client; exact
  * reentry retention budget rejected; reentry retention overflow accepted
@@ -74,17 +74,7 @@ ssize_t __wrap_read(int fd, void *out, size_t count)
 }
 #endif
 
-/* Refuse a selected node-owned snapshot copy, before shared line publication. */
-static unsigned fail_duplicate;
-static bool     bare_local_user;
-char           *__real_stringDuplicate(const char *src);
-char           *__wrap_stringDuplicate(const char *src);
-char           *__wrap_stringDuplicate(const char *src)
-{
-    if (fail_duplicate != 0 && --fail_duplicate == 0)
-        return NULL;
-    return __real_stringDuplicate(src);
-}
+static bool bare_local_user;
 
 static unsigned              auth_calls;
 static bool                  auth_available = true, auth_match = true;
@@ -409,7 +399,6 @@ static void begin(bool fallback, bool database, uint32_t pool)
     moves = pressure_refusals = auth_calls               = 0;
     reads                                                = 0;
     auth_available = auth_match = true;
-    fail_duplicate              = 0;
     fallbackFinishResetScheduledTask();
     twfWorkerEnvSetupWithBufferSizes(&f.env, pool, 512, 320, 8192, pool);
     f.metadata                    = nodeVlessServerGet();
@@ -858,65 +847,22 @@ static void testFallbackLocalReplies(void)
                "source close during fallback reply was not settled once");
     end();
 }
-static void testCredentialRefusal(void)
+static void testCredentialSnapshots(void)
 {
-    twfSetCase("node-owned credential snapshot refusals close without fallback or protected Init");
-    for (unsigned udp = 0; udp < 2; ++udp)
-        for (unsigned copy = 1; copy <= 2; ++copy)
-        {
-            begin(true, false, 128);
-            uint8_t  wire[320];
-            uint32_t n     = request(wire, 0, udp != 0);
-            fail_duplicate = copy;
-            /* Authenticate from the first valid delivery while the request is
-             * still incomplete; refusal must not cache a partial username. */
-            f.t->fnPayloadU(f.t, f.line, bytes(wire, 17, true, 320));
-            twfRequire(! fail_duplicate && ! lineIsAlive(f.line) && f.inits == 0 && f.fallback_inits == 0,
-                       "local snapshot refusal survived or selected fallback");
-            discard n;
-            end();
-        }
-
-    twfSetCase("bare local credential snapshot refusal and subsequent complete identity");
-    for (unsigned fail = 0; fail < 2; ++fail)
+    twfSetCase("complete local credential snapshots with optional username");
+    for (unsigned bare = 0; bare < 2; ++bare)
     {
-        bare_local_user = true;
+        bare_local_user = bare != 0;
         begin(true, false, 128);
         uint8_t  wire[320];
-        uint32_t n     = request(wire, 0, false);
-        fail_duplicate = fail;
+        uint32_t n = request(wire, 0, false);
         f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
-        twfRequire(! fail_duplicate && lineIsAlive(f.line) == ! fail && f.inits == ! fail && f.fallback_inits == 0,
-                   "bare credential refusal or success changed policy");
+        vlessserver_lstate_t *ls = lineGetState(f.line, f.t);
+        twfRequire(lineIsAlive(f.line) && f.inits == 1 && f.fallback_inits == 0 && ls->auth_password != NULL &&
+                       (ls->auth_username == NULL) == (bare != 0),
+                   "local credential snapshot lost identity or optional username");
         end();
     }
-
-    twfSetCase("local-user constructor rejects incomplete credential snapshots");
-    for (unsigned copy = 1; copy <= 1; ++copy)
-    {
-        twf_worker_env_t env;
-        twfWorkerEnvSetup(&env, 8192, 320);
-        node_t metadata    = nodeVlessServerGet();
-        metadata.hash_next = 1;
-        metadata.next      = (char *) "next";
-        metadata.node_settings_json =
-            cJSON_Parse("{\"users\":[{\"username\":\"alice\",\"uuid\":\"42424242-4242-4242-4242-424242424242\"}]}");
-        fail_duplicate = copy;
-        tunnel_t *node = vlessserverTunnelCreate(&metadata);
-        twfRequire(! fail_duplicate && node == NULL, "constructor accepted a missing configured credential");
-        node = vlessserverTunnelCreate(&metadata);
-        twfRequire(node != NULL, "snapshot refusal broke subsequent constructor");
-        node->onDestroy(node, wwLifecycleStartupRollback());
-        cJSON_Delete(metadata.node_settings_json);
-        memoryFree(metadata.type);
-        twfWorkerEnvTeardown(&env);
-    }
-    begin(false, false, 128);
-    uint8_t  wire[320];
-    uint32_t n = request(wire, 0, false);
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
-    twfRequire(lineIsAlive(f.line) && f.inits == 1, "subsequent valid flow lost its full identity");
-    end();
 }
 
 static void testAuthentication(void)
@@ -1362,7 +1308,7 @@ int main(void)
     testFallbackReceiverPressure();
     testRepresentationsAndPipePressure();
     testRequests();
-    testCredentialRefusal();
+    testCredentialSnapshots();
     testAuthentication();
     testUdp();
     testReentry();

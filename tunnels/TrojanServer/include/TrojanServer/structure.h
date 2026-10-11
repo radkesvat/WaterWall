@@ -76,8 +76,7 @@ typedef enum trojanserver_close_origin_e
 typedef enum trojanserver_auth_result_e
 {
     kTrojanServerAuthRejected = 0,
-    kTrojanServerAuthAccepted,
-    kTrojanServerAuthResourceFailure
+    kTrojanServerAuthAccepted
 } trojanserver_auth_result_t;
 
 typedef struct trojanserver_user_s

@@ -64,15 +64,6 @@ void socks5serverTunnelUpStreamInit(tunnel_t *t, line_t *l)
             ls->auth_password = stringDuplicate(assoc->auth_password);
         }
 
-        if ((assoc->auth_username != NULL && ls->auth_username == NULL) ||
-            (assoc->auth_password != NULL && ls->auth_password == NULL))
-        {
-            socks5serverLinestateDestroy(ls);
-            socks5serverLinestateInitialize(lineGetState(l, t), t, l, kSocks5ServerLineKindRejected);
-            LOGW("Socks5Server: rejected UDP ingress because authenticated association metadata could not be copied");
-            return;
-        }
-
         socks5serverRecordLineUser(l, ls, &ls->user_handle);
         return;
     }

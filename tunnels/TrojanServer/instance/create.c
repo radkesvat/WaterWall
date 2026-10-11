@@ -123,7 +123,7 @@ static bool trojanserverAppendPassword(trojanserver_tstate_t *ts, const char *us
     }
 
     size_t new_count = (size_t) ts->user_count + 1U;
-    if (UNLIKELY(new_count > UINT32_MAX))
+    if (UNLIKELY(ts->user_count == UINT32_MAX || new_count > SIZE_MAX / sizeof(*ts->users)))
     {
         memoryZero(&digest, sizeof(digest));
         LOGF("TrojanServer: too many configured users");
@@ -131,24 +131,10 @@ static bool trojanserverAppendPassword(trojanserver_tstate_t *ts, const char *us
     }
 
     trojanserver_user_t *users = memoryReAllocate(ts->users, sizeof(*users) * new_count);
-    if (UNLIKELY(users == NULL))
-    {
-        memoryZero(&digest, sizeof(digest));
-        LOGF("TrojanServer: failed to allocate password allowlist");
-        return false;
-    }
 
     ts->users           = users;
     char *name_copy     = username != NULL ? stringDuplicate(username) : NULL;
     char *password_copy = stringDuplicate(password);
-    if ((username != NULL && name_copy == NULL) || password_copy == NULL)
-    {
-        memoryFree(name_copy);
-        memoryFree(password_copy);
-        memoryZero(&digest, sizeof(digest));
-        LOGF("TrojanServer: failed to copy local user credentials");
-        return false;
-    }
     memoryCopy(ts->users[ts->user_count].sha224, digest.bytes, SHA224_DIGEST_SIZE);
     ts->users[ts->user_count].username = name_copy;
     ts->users[ts->user_count].password = password_copy;

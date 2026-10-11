@@ -64,7 +64,7 @@ void     socks5serverLogAuthRejected(tunnel_t *t, line_t *l, const uint8_t *user
                                      const char *reason);
 bool     socks5serverAuthUserFromClient(tunnel_t *t, line_t *l, const uint8_t *username, uint8_t username_len,
                                         const uint8_t *password, uint8_t password_len, user_handle_t *user_handle_out);
-bool     socks5serverStoreAuthCredentials(socks5server_lstate_t *ls, const uint8_t *username, uint8_t username_len,
+void     socks5serverStoreAuthCredentials(socks5server_lstate_t *ls, const uint8_t *username, uint8_t username_len,
                                           const uint8_t *password, uint8_t password_len);
 uint16_t socks5serverGetLocalPort(const line_t *l);
 bool     socks5serverRegisterUdpAssociation(tunnel_t *t, line_t *l, const user_handle_t *user_handle,

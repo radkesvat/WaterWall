@@ -120,7 +120,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET TrojanServer)
     waterwall_line_failure_test_use_tunnel(${trojan_server_test} TrojanServer)
     target_compile_definitions(${trojan_server_test} PRIVATE TROJANSERVER_TEST_CONSTANT_HASH=1)
     target_link_libraries(${trojan_server_test} PRIVATE ww)
-    target_link_options(${trojan_server_test} PRIVATE "-Wl,--wrap=stringDuplicate")
     target_link_options(${trojan_server_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
       "-Wl,--wrap=bufferqueueTryPushBack" "-Wl,--wrap=memoryAllocate" "-Wl,--wrap=lineScheduleDelayedTask"
       "-Wl,--wrap=authenticationclientGetState" "-Wl,--wrap=authenticationclientGetUserBySHA224WithProfile")
@@ -141,7 +140,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET VlessServer)
     waterwall_add_native_executable(${vless_server_test} SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/vless/vlessserver_splice_test.c ${WATERWALL_LINE_FAILURE_WW_SOURCES})
     waterwall_line_failure_test_use_tunnel(${vless_server_test} VlessServer)
     target_link_libraries(${vless_server_test} PRIVATE ww)
-    target_link_options(${vless_server_test} PRIVATE "-Wl,--wrap=stringDuplicate")
     target_link_options(${vless_server_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
       "-Wl,--wrap=bufferqueueTryPushBack" "-Wl,--wrap=lineScheduleDelayedTask"
       "-Wl,--wrap=authenticationclientGetState" "-Wl,--wrap=authenticationclientGetUserByUUIDWithProfile")

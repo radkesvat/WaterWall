@@ -10,11 +10,7 @@ static buffer_queue_t *vlessserverEnsureFallbackPendingQueue(vlessserver_lstate_
 {
     if (ls->fallback_pending_up == NULL)
     {
-        ls->fallback_pending_up = memoryAllocate(sizeof(*ls->fallback_pending_up));
-        if (UNLIKELY(ls->fallback_pending_up == NULL))
-        {
-            return NULL;
-        }
+        ls->fallback_pending_up  = memoryAllocate(sizeof(*ls->fallback_pending_up));
         *ls->fallback_pending_up = bufferqueueCreate(kVlessServerBufferQueueCap);
         bool attached            = bufferqueueTryAttachBudget(ls->fallback_pending_up, &ls->upstream_budget);
         assert(attached);
@@ -209,12 +205,6 @@ bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t
     }
 
     buffer_queue_t *pending = vlessserverEnsureFallbackPendingQueue(ls);
-    if (UNLIKELY(pending == NULL))
-    {
-        lineReuseBuffer(l, buf);
-        vlessserverCloseLineBidirectional(t, l);
-        return false;
-    }
 
     if (! bufferqueueTryPushBack(pending, &buf))
     {
@@ -251,8 +241,6 @@ bool vlessserverStartFallback(tunnel_t *t, line_t *l)
         }
     }
     buffer_queue_t *queue = vlessserverEnsureFallbackPendingQueue(ls);
-    if (queue == NULL)
-        goto failed;
     bufferqueueDestroy(queue);
     *queue = ls->pending_up;
     bufferqueueInitEmpty(&ls->pending_up);

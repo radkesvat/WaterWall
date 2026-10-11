@@ -20,21 +20,14 @@ static const char *trojanserverAuthClientStateName(authenticationclient_state_t 
     }
 }
 
-bool trojanserverSetCredentialSnapshot(trojanserver_lstate_t *ls, const char *username, const char *password)
+void trojanserverSetCredentialSnapshot(trojanserver_lstate_t *ls, const char *username, const char *password)
 {
     char *name_copy     = username != NULL ? stringDuplicate(username) : NULL;
     char *password_copy = password != NULL ? stringDuplicate(password) : NULL;
-    if ((username != NULL && name_copy == NULL) || (password != NULL && password_copy == NULL))
-    {
-        memoryFree(name_copy);
-        memoryFree(password_copy);
-        return false;
-    }
     memoryFree(ls->auth_username);
     memoryFree(ls->auth_password);
     ls->auth_username = name_copy;
     ls->auth_password = password_copy;
-    return true;
 }
 
 trojanserver_auth_result_t trojanserverAuthenticateHash(tunnel_t *t, line_t *l,
@@ -68,8 +61,7 @@ trojanserver_auth_result_t trojanserverAuthenticateHash(tunnel_t *t, line_t *l,
             return kTrojanServerAuthRejected;
         }
 
-        if (! trojanserverSetCredentialSnapshot(ls, matched->username, matched->password))
-            return kTrojanServerAuthResourceFailure;
+        trojanserverSetCredentialSnapshot(ls, matched->username, matched->password);
         *user_handle_out = userHandleEmpty();
         return kTrojanServerAuthAccepted;
     }

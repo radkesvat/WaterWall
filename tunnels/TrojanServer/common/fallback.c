@@ -11,11 +11,7 @@ static buffer_queue_t *trojanserverEnsureFallbackPendingQueue(trojanserver_lstat
 {
     if (ls->fallback_pending_up == NULL)
     {
-        ls->fallback_pending_up = memoryAllocate(sizeof(*ls->fallback_pending_up));
-        if (UNLIKELY(ls->fallback_pending_up == NULL))
-        {
-            return NULL;
-        }
+        ls->fallback_pending_up  = memoryAllocate(sizeof(*ls->fallback_pending_up));
         *ls->fallback_pending_up = bufferqueueCreate(kTrojanServerBufferQueueCap);
         const bool attached      = bufferqueueTryAttachBudget(ls->fallback_pending_up, &ls->output_budget);
         assert(attached);
@@ -156,7 +152,7 @@ bool trojanserverSendFallbackPayload(tunnel_t *t, line_t *l, trojanserver_lstate
         return alive;
     }
     buffer_queue_t *pending = trojanserverEnsureFallbackPendingQueue(ls);
-    if (UNLIKELY(pending == NULL || ! trojanserverQueuePayload(pending, &buf)))
+    if (UNLIKELY(! trojanserverQueuePayload(pending, &buf)))
     {
         lineReuseBuffer(l, buf);
         trojanserverCloseLineBidirectional(t, l);
@@ -238,11 +234,6 @@ void trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls
         }
     }
     buffer_queue_t *queue = trojanserverEnsureFallbackPendingQueue(ls);
-    if (UNLIKELY(queue == NULL))
-    {
-        trojanserverCloseLineBidirectional(t, l);
-        return;
-    }
     bufferqueueDestroy(queue);
     *queue = ls->pending_up;
     bufferqueueInitEmpty(&ls->pending_up);

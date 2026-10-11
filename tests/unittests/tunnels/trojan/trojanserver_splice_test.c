@@ -3,7 +3,7 @@
  * suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: testDomainAddressOwnership, testUdpIdentity, testRequests, testCredentialRefusal,
+ * Cases: testDomainAddressOwnership, testUdpIdentity, testRequests, testCredentialSnapshots,
  * testAuthentication, testReentrancy, testUdpFrames, testUdpPressure; the driver lists the remaining
  * cases
  * Checks: Assertion labels include: inventory exhaustion; server destroyed borrowed client; exact
@@ -74,45 +74,17 @@ ssize_t __wrap_read(int fd, void *out, size_t count)
 }
 #endif
 
-static bool     fail_map, fail_key, fail_domain_allocation, count_domain_allocations;
+static bool     count_domain_allocations;
 static unsigned domain_allocations;
-void       *__real_memoryAllocate(size_t);
-void       *__wrap_memoryAllocate(size_t);
-void       *__wrap_memoryAllocate(size_t size)
+void           *__real_memoryAllocate(size_t);
+void           *__wrap_memoryAllocate(size_t);
+void           *__wrap_memoryAllocate(size_t size)
 {
-    if (size == UINT8_MAX + 1U)
-    {
-        if (count_domain_allocations)
-            ++domain_allocations;
-        if (fail_domain_allocation)
-        {
-            fail_domain_allocation = false;
-            return NULL;
-        }
-    }
-    if (fail_key && size == sizeof(trojanserver_remote_key_t))
-    {
-        fail_key = false;
-        return NULL;
-    }
-    if (fail_map && size == 8 * sizeof(trojanserver_remote_map_t_value))
-    {
-        fail_map = false;
-        return NULL;
-    }
+    if (size == UINT8_MAX + 1U && count_domain_allocations)
+        ++domain_allocations;
     return __real_memoryAllocate(size);
 }
-/* Refuse a selected node-owned snapshot copy, before shared line publication. */
-static unsigned fail_duplicate;
-static bool     bare_local_user;
-char           *__real_stringDuplicate(const char *src);
-char           *__wrap_stringDuplicate(const char *src);
-char           *__wrap_stringDuplicate(const char *src)
-{
-    if (fail_duplicate != 0 && --fail_duplicate == 0)
-        return NULL;
-    return __real_stringDuplicate(src);
-}
+static bool bare_local_user;
 
 static unsigned              auth_calls;
 static bool                  auth_available = true, auth_match = true;
@@ -453,11 +425,10 @@ static void onInit(tunnel_t *t, line_t *l)
 static void begin(bool fallback, bool database, uint32_t pool)
 {
     memoryZero(&f, sizeof(f));
-    fail_queue = pressure = immediate_pressure = fail_map = fail_key = false;
+    fail_queue = pressure = immediate_pressure = false;
     moves = pressure_refusals = auth_calls               = 0;
     reads                                                = 0;
     auth_available = auth_match = true;
-    fail_duplicate              = 0;
     fallbackFinishResetScheduledTask();
     twfWorkerEnvSetupWithBufferSizes(&f.env, pool, 512, 320, 8192, pool);
     f.metadata           = nodeTrojanServerGet();
@@ -577,24 +548,6 @@ static void testDomainAddressOwnership(void)
     twfRequire(domain_allocations == 0 && f.remote_count == 1 && f.calls_up == 3,
                "reused UDP destination allocated a transient domain or changed delivery");
     end();
-    twfSetCase("new owning destination allocation refusal settles TCP and UDP");
-    for (unsigned udp = 0; udp < 2; ++udp)
-    {
-        begin(false, false, 128);
-        if (udp)
-        {
-            startUdp();
-            n = frame(wire, 3, 80, "X", 1);
-        }
-        else
-            n = request(wire, 3, false);
-        sbuf_t *input          = bytes(wire, n, true, 320);
-        fail_domain_allocation = true;
-        f.t->fnPayloadU(f.t, f.line, input);
-        twfRequire(! fail_domain_allocation && ! lineIsAlive(f.line) && f.inits == 0 && f.remote_count == 0,
-                   "destination allocation refusal published a partial backend");
-        end();
-    }
 }
 
 static void testUdpIdentity(void)
@@ -696,71 +649,22 @@ static void testRequests(void)
     memoryFree(large);
     end();
 }
-static void testCredentialRefusal(void)
+static void testCredentialSnapshots(void)
 {
-    twfSetCase("node-owned credential snapshot refusals close without fallback or protected Init");
-    for (unsigned udp = 0; udp < 2; ++udp)
-        for (unsigned copy = 1; copy <= 2; ++copy)
-        {
-            begin(true, false, 128);
-            uint8_t  wire[320];
-            uint32_t n     = request(wire, 0, udp != 0);
-            fail_duplicate = copy;
-            f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
-            twfRequire(! fail_duplicate && ! lineIsAlive(f.line) && f.inits == 0 && f.fallback_inits == 0,
-                       "local snapshot refusal published identity or selected fallback");
-            end();
-        }
-    for (unsigned copy = 1; copy <= 2; ++copy)
+    twfSetCase("complete local credential snapshots with optional username");
+    for (unsigned bare = 0; bare < 2; ++bare)
     {
-        begin(false, false, 128);
-        startUdp();
-        fail_duplicate = copy;
-        datagram(443, "A", 1, true);
-        twfRequire(! fail_duplicate && ! lineIsAlive(f.line) && f.inits == 0 && f.remote_count == 0,
-                   "remote credential refusal initialized an unpublished backend");
-        end();
-    }
-
-    twfSetCase("bare local credential snapshot refusal and subsequent complete identity");
-    for (unsigned fail = 0; fail < 2; ++fail)
-    {
-        bare_local_user = true;
+        bare_local_user = bare != 0;
         begin(true, false, 128);
         uint8_t  wire[320];
-        uint32_t n     = request(wire, 0, false);
-        fail_duplicate = fail;
+        uint32_t n = request(wire, 0, false);
         f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
-        twfRequire(! fail_duplicate && lineIsAlive(f.line) == ! fail && f.inits == ! fail && f.fallback_inits == 0,
-                   "bare credential refusal or success changed policy");
+        trojanserver_lstate_t *ls = lineGetState(f.line, f.t);
+        twfRequire(lineIsAlive(f.line) && f.inits == 1 && f.fallback_inits == 0 && ls->auth_password != NULL &&
+                       (ls->auth_username == NULL) == (bare != 0),
+                   "local credential snapshot lost identity or optional username");
         end();
     }
-
-    twfSetCase("local-user constructor rejects incomplete credential snapshots");
-    for (unsigned copy = 1; copy <= 2; ++copy)
-    {
-        twf_worker_env_t env;
-        twfWorkerEnvSetup(&env, 8192, 320);
-        node_t metadata             = nodeTrojanServerGet();
-        metadata.hash_next          = 1;
-        metadata.next               = (char *) "next";
-        metadata.node_settings_json = cJSON_Parse("{\"users\":[{\"username\":\"alice\",\"password\":\"test\"}]}");
-        fail_duplicate              = copy;
-        tunnel_t *node              = trojanserverTunnelCreate(&metadata);
-        twfRequire(! fail_duplicate && node == NULL, "constructor accepted a missing configured credential");
-        node = trojanserverTunnelCreate(&metadata);
-        twfRequire(node != NULL, "snapshot refusal broke subsequent constructor");
-        node->onDestroy(node, wwLifecycleStartupRollback());
-        cJSON_Delete(metadata.node_settings_json);
-        memoryFree(metadata.type);
-        twfWorkerEnvTeardown(&env);
-    }
-    begin(false, false, 128);
-    uint8_t  wire[320];
-    uint32_t n = request(wire, 0, false);
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
-    twfRequire(lineIsAlive(f.line) && f.inits == 1, "subsequent valid flow lost its full identity");
-    end();
 }
 
 static void testAuthentication(void)
@@ -1135,7 +1039,7 @@ static void testFallbackLocalReplies(void)
 }
 static void testLimitsAndFailures(void)
 {
-    twfSetCase("fixed budgets, empty reply entries, queue/map refusal and large reply asymmetry");
+    twfSetCase("fixed budgets, empty reply entries, queue refusal and large reply asymmetry");
     uint8_t *data = memoryAllocateZero(kTrojanServerMaxWireBytes + 320);
     for (unsigned pool = 0; pool < 2; ++pool)
     {
@@ -1174,19 +1078,6 @@ static void testLimitsAndFailures(void)
     fail_queue = true;
     f.t->fnPayloadU(f.t, f.line, b);
     twfRequire(! lineIsAlive(f.line), "initial queue refusal survived");
-    end();
-    begin(false, false, 128);
-    startUdp();
-    fail_map = true;
-    datagram(1001, "A", 1, true);
-    twfRequire(! lineIsAlive(f.line) && f.inits == 0, "map refusal initialized unpublished backend");
-    end();
-    begin(false, false, 128);
-    startUdp();
-    fail_key = true;
-    datagram(1001, "A", 1, true);
-    twfRequire(! fail_key && ! lineIsAlive(f.line) && f.inits == 0,
-               "key refusal initialized an unpublished backend or left the association alive");
     end();
     memoryFree(data);
 }
@@ -1509,7 +1400,7 @@ static void testPipeFallbackAndPadding(void)
 
 static void testReplyFormsAndRefusal(void)
 {
-    twfSetCase("UDP reply address forms, partial pipe pressure and allocation refusal");
+    twfSetCase("UDP reply address forms and partial pipe pressure");
     uint8_t wire[512], expected[512], body[1024];
     memset(body, 'r', sizeof(body));
     for (unsigned form = 0; form < 4; ++form)
@@ -1596,7 +1487,7 @@ int main(void)
     testUdpIdentity();
     testShutdownAdmission();
     testRequests();
-    testCredentialRefusal();
+    testCredentialSnapshots();
     testAuthentication();
     testReentrancy();
     testUdpFrames();

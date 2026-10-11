@@ -189,13 +189,6 @@ bool socks5serverRegisterUdpAssociation(tunnel_t *t, line_t *l, const user_handl
         .active         = false,
     };
 
-    if ((src_username != NULL && entry.auth_username == NULL) || (src_password != NULL && entry.auth_password == NULL))
-    {
-        socks5serverAssocEntryFreeCreds(&entry);
-        ts->dynamic_provider.close(ts->dynamic_provider.instance, res.handle);
-        return false;
-    }
-
     socks5server_assoc_map_t *map = &ts->worker_associations[wid];
     if (! socks5server_assoc_map_t_insert(map, res.handle.generation, entry).inserted)
     {

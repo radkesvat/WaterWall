@@ -19,9 +19,7 @@ static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
         return it.ref->second;
 
     socks5server_remote_key_t *remote_key = memoryAllocate(sizeof(*remote_key));
-    if (remote_key == NULL)
-        return NULL;
-    *remote_key = lookup;
+    *remote_key                           = lookup;
 
     line_t                *remote_l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l));
     socks5server_lstate_t *remote_ls = lineGetState(remote_l, t);
@@ -47,9 +45,6 @@ static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
     {
         remote_ls->auth_password = stringDuplicate(client_ls->auth_password);
     }
-    if ((client_ls->auth_username != NULL && remote_ls->auth_username == NULL) ||
-        (client_ls->auth_password != NULL && remote_ls->auth_password == NULL))
-        goto unpublished;
     socks5serverRecordLineUser(remote_l, remote_ls, user_handle);
 
     if (! socks5server_remote_map_t_insert(&client_ls->udp_remote_lines, remote_key, remote_l).inserted)

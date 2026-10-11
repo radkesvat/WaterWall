@@ -42,8 +42,7 @@ typedef enum vlessserver_close_origin_e
 typedef enum vlessserver_auth_result_e
 {
     kVlessServerAuthRejected = 0,
-    kVlessServerAuthAccepted,
-    kVlessServerAuthResourceFailure
+    kVlessServerAuthAccepted
 } vlessserver_auth_result_t;
 
 typedef struct vlessserver_user_s

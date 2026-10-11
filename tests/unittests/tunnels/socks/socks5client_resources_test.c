@@ -13,29 +13,26 @@
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 
 static bool     measuring;
-static unsigned allocations, fail_nth, failures;
+static unsigned allocations;
 void           *__real_memoryAllocate(size_t size);
 void           *__real_memoryReAllocate(void *p, size_t size);
 void           *__wrap_memoryAllocate(size_t size);
 void           *__wrap_memoryReAllocate(void *p, size_t size);
-static bool     refuse(void)
+static void     countAllocation(void)
 {
     if (measuring)
         ++allocations;
-    if (fail_nth && --fail_nth == 0)
-    {
-        ++failures;
-        return true;
-    }
-    return false;
 }
+
 void *__wrap_memoryAllocate(size_t size)
 {
-    return refuse() ? NULL : __real_memoryAllocate(size);
+    countAllocation();
+    return __real_memoryAllocate(size);
 }
 void *__wrap_memoryReAllocate(void *p, size_t size)
 {
-    return refuse() ? NULL : __real_memoryReAllocate(p, size);
+    countAllocation();
+    return __real_memoryReAllocate(p, size);
 }
 static void noop(tunnel_t *t, line_t *l)
 {
@@ -94,22 +91,21 @@ int main(int argc, char **argv)
         {
             for (unsigned downstream = 0; downstream < 2; ++downstream)
             {
-                twfSetCase("first client ordering-queue allocation failure");
+                twfSetCase("client ordering-queue byte limit");
                 line_t *l = twfLinePoolCreateLine(&lines);
                 lineRef(l);
                 socks5client_lstate_t *ls = lineGetState(l, client);
                 socks5clientLinestateInitialize(ls, client, l, kSocks5ClientLineKindDirect);
                 ls->phase          = kSocks5ClientPhaseWaitCommand;
                 ls->input_draining = true;
-                sbuf_t *b          = bufferpoolGetSmallBuffer(env.pool);
-                sbufSetLength(b, 1);
-                failures = 0;
-                fail_nth = 1;
+                uint32_t limit     = downstream ? kSocks5ClientMaxPendingDownBytes : kSocks5ClientMaxPendingUpBytes;
+                sbuf_t  *b         = bufferpoolGetBestFit(env.pool, limit + 1U, 0);
+                sbufSetLength(b, limit + 1U);
                 if (downstream)
                     socks5clientTunnelDownStreamPayload(client, l, b);
                 else
                     socks5clientTunnelUpStreamPayload(client, l, b);
-                twfRequire(failures == 1 && ! lineIsAlive(l) && twfLineRefCount(l) == 1,
+                twfRequire(! lineIsAlive(l) && twfLineRefCount(l) == 1,
                            "queue failure leaked ownership or left flow alive");
                 lineUnref(l);
             }
