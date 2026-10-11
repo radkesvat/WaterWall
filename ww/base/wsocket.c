@@ -700,18 +700,14 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
     ULONG result = GetAdaptersAddresses(family, flags, NULL, NULL, &size);
     for (int attempt = 0; attempt < 3 && result == ERROR_BUFFER_OVERFLOW; ++attempt)
     {
-        free(adapters);
-        adapters = (PIP_ADAPTER_ADDRESSES) malloc(size);
-        if (adapters == NULL)
-        {
-            return false;
-        }
+        memoryFree(adapters);
+        adapters = (PIP_ADAPTER_ADDRESSES) memoryAllocate(size);
         result = GetAdaptersAddresses(family, flags, NULL, adapters, &size);
     }
 
     if (result != NO_ERROR)
     {
-        free(adapters);
+        memoryFree(adapters);
         return false;
     }
 
@@ -723,10 +719,10 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
     const int wide_len  = MultiByteToWideChar(CP_UTF8, 0, if_name, -1, NULL, 0);
     if (wide_len > 0)
     {
-        if_name_w = (wchar_t *) malloc((size_t) wide_len * sizeof(wchar_t));
-        if (if_name_w != NULL && MultiByteToWideChar(CP_UTF8, 0, if_name, -1, if_name_w, wide_len) <= 0)
+        if_name_w = (wchar_t *) memoryAllocate((size_t) wide_len * sizeof(wchar_t));
+        if (MultiByteToWideChar(CP_UTF8, 0, if_name, -1, if_name_w, wide_len) <= 0)
         {
-            free(if_name_w);
+            memoryFree(if_name_w);
             if_name_w = NULL;
         }
     }
@@ -753,16 +749,16 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
                 if (sa->sin_family == AF_INET)
                 {
                     ip4AddrSetU32(ip_buffer, sa->sin_addr.S_un.S_addr);
-                    free(if_name_w);
-                    free(adapters);
+                    memoryFree(if_name_w);
+                    memoryFree(adapters);
                     return true;
                 }
             }
         }
     }
 
-    free(if_name_w);
-    free(adapters);
+    memoryFree(if_name_w);
+    memoryFree(adapters);
     return false;
 
 #elif defined(OS_ANDROID)
