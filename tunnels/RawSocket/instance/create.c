@@ -116,12 +116,6 @@ static bool rawsocketLoadCaptureRanges(rawsocket_tstate_t *state, const cJSON *s
     }
 
     ipmask_t *ranges = memoryAllocateZero(ranges_size);
-    if (ranges == NULL)
-    {
-        LOGE("RawSocket: failed to allocate capture ranges");
-        return false;
-    }
-
     for (int i = 0; i < range_count; ++i)
     {
         const cJSON *range_json = is_array ? cJSON_GetArrayItem(ranges_json, i) : ranges_json;
@@ -257,13 +251,6 @@ tunnel_t *rawsocketCreate(node_t *node)
         state->capture_device_name =
             rawsocketDuplicateSettingOrDefault(settings, "capture-device-name", "unnamed-capture-device");
     }
-    if (state->raw_device_name == NULL || (state->capture_range_count > 0 && state->capture_device_name == NULL))
-    {
-        LOGE("RawSocket: failed to allocate device names");
-        rawsocketDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
-
     if (state->capture_range_count > 0)
     {
         dynamic_value_t fmode =

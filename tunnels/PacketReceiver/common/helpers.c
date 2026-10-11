@@ -264,13 +264,6 @@ void packetreceiverPrepareRuntime(tunnel_t *t)
 
     state->received_counts =
         memoryAllocateZero((size_t) state->source_count * state->protocol_count * sizeof(uint64_t));
-    if (UNLIKELY(state->received_counts == NULL))
-    {
-        LOGF("PacketReceiver: failed to allocate received-packet counters");
-        startupFailureRecord(1);
-        return;
-    }
-
     state->total_expected_packets = state->source_count * expected_per_source;
     state->report_written         = false;
     state->report_in_progress     = false;

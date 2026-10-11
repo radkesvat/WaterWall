@@ -13,15 +13,8 @@ static sbuf_t *wireguarddeviceCreateiateHandshake(wireguard_device_t *device, wi
     {
         // Send this packet out!
         buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
-        if (buf)
-        {
-            sbufWrite(buf, msg, sizeof(message_handshake_initiation_t));
-            sbufSetLength(buf, sizeof(message_handshake_initiation_t));
-        }
-        else
-        {
-            err = ERR_MEM;
-        }
+        sbufWrite(buf, msg, sizeof(message_handshake_initiation_t));
+        sbufSetLength(buf, sizeof(message_handshake_initiation_t));
     }
     else
     {
@@ -80,11 +73,6 @@ err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *pe
     }
 
     buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
-    if (buf == NULL)
-    {
-        return ERR_MEM;
-    }
-
     sbufWrite(buf, pending.packet, pending.packet_len);
     sbufSetLength(buf, pending.packet_len);
     result = wireguardifPeerOutput(device, buf, peer);

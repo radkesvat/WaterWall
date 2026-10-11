@@ -21,13 +21,7 @@ static void wireguarddeviceSetInternalUserControllerNext(wgd_tstate_t *state, co
         return;
     }
 
-    controller_node->next = stringDuplicate(next);
-    if (controller_node->next == NULL)
-    {
-        LOGF("WireGuardDevice: failed to set internal UserController next node");
-        startupFailureRecord(1);
-        return;
-    }
+    controller_node->next      = stringDuplicate(next);
     controller_node->hash_next = hash_next;
 }
 

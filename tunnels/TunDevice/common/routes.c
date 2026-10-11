@@ -219,12 +219,6 @@ static bool routeListAppend(route_list_t *list, route_cidr_t cidr)
         }
 
         route_cidr_t *new_items = memoryReAllocate(list->items, next_capacity * sizeof(route_cidr_t));
-        if (new_items == NULL)
-        {
-            LOGE("TunDevice: failed to allocate route list");
-            return false;
-        }
-
         list->items    = new_items;
         list->capacity = next_capacity;
     }
@@ -417,13 +411,7 @@ static bool routeListStoreOnState(tundevice_tstate_t *state, const route_list_t 
         return false;
     }
 
-    state->system_routes = memoryCalloc(routes->count, sizeof(char *));
-    if (state->system_routes == NULL)
-    {
-        LOGE("TunDevice: failed to allocate system route strings");
-        return false;
-    }
-
+    state->system_routes      = memoryCalloc(routes->count, sizeof(char *));
     state->system_route_count = routes->count;
     for (size_t i = 0; i < routes->count; ++i)
     {

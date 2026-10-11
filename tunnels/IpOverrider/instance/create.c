@@ -151,17 +151,10 @@ static bool ipoverriderParseChance(ipoverrider_tstate_t *state, const cJSON *set
     return true;
 }
 
-static bool ipoverriderCreateWorkerGates(ipoverrider_tstate_t *state)
+static void ipoverriderCreateWorkerGates(ipoverrider_tstate_t *state)
 {
     state->worker_gate_count = getWorkersCount();
     state->worker_gates      = memoryAllocateCacheAlignedZero(sizeof(*state->worker_gates) * state->worker_gate_count);
-    if (state->worker_gates == NULL)
-    {
-        LOGF("IpOverrider: failed to allocate per-worker percentage gates");
-        startupFailureRecord(1);
-        return false;
-    }
-
     for (wid_t wid = 0; wid < state->worker_gate_count; ++wid)
     {
         nonCryptoPercentGateInit(
@@ -169,8 +162,6 @@ static bool ipoverriderCreateWorkerGates(ipoverrider_tstate_t *state)
         nonCryptoPercentGateInit(
             &(state->worker_gates[wid].direction[kIpOverriderDirectionDown]), (uint32_t) state->chance, fastRand64());
     }
-
-    return true;
 }
 
 static bool ipoverriderParseLegacySettings(ipoverrider_tstate_t *state, const cJSON *settings)
@@ -316,11 +307,7 @@ tunnel_t *ipoverriderCreate(node_t *node)
         return NULL;
     }
 
-    if (! ipoverriderCreateWorkerGates(state))
-    {
-        ipoverriderDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
+    ipoverriderCreateWorkerGates(state);
 
     return t;
 }

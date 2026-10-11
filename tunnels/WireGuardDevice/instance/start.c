@@ -82,13 +82,7 @@ static bool wireguarddeviceEnsureTransportLineStorage(tunnel_t *t, wgd_tstate_t 
         return false;
     }
 
-    line_t **storage = memoryAllocateZero(storage_bytes);
-    if (UNLIKELY(storage == NULL))
-    {
-        LOGF("WireGuardDevice: failed to allocate mandatory transport line storage");
-        startupFailureRecord(1);
-        return false;
-    }
+    line_t **storage       = memoryAllocateZero(storage_bytes);
     state->transport_lines = storage;
     return true;
 }

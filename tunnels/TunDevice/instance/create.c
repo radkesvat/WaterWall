@@ -92,11 +92,6 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
     const char *slash  = stringChr(state->ip_subnet, '/');
     size_t      ip_len = (size_t) (slash - state->ip_subnet);
     state->ip_present  = memoryAllocate(ip_len + 1U);
-    if (UNLIKELY(state->ip_present == NULL))
-    {
-        LOGF("TunDevice: failed to allocate the parsed device IPv4 address");
-        return tundeviceTunnelCreateFail(t);
-    }
     memoryCopy(state->ip_present, state->ip_subnet, ip_len);
     state->ip_present[ip_len] = '\0';
 

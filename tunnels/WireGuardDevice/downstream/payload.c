@@ -51,12 +51,9 @@ static void wireguardifSendHandshakeCookie(wireguard_device_t *device, const uin
 
     // Send this packet out!
     buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
-    if (buf != NULL)
-    {
-        sbufSetLength(buf, sizeof(message_cookie_reply_t));
-        sbufWrite(buf, &packet, sizeof(message_cookie_reply_t));
-        wireguardifDeviceOutput(device, buf, addr, port);
-    }
+    sbufSetLength(buf, sizeof(message_cookie_reply_t));
+    sbufWrite(buf, &packet, sizeof(message_cookie_reply_t));
+    wireguardifDeviceOutput(device, buf, addr, port);
 }
 
 static void updatePeerAddr(wireguard_peer_t *peer, const ip_addr_t *addr, uint16_t port)
@@ -297,21 +294,18 @@ static void wireguardifSendHandshakeResponse(wireguard_device_t *device, wiregua
         // Send this packet out!
         buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
 
-        if (buf)
+        if (UNLIKELY(! wireguardStorePendingHandshake(peer, &packet, sizeof(packet))))
         {
-            if (UNLIKELY(! wireguardStorePendingHandshake(peer, &packet, sizeof(packet))))
-            {
-                reuseBuffer(buf);
-                LOGW("WireGuardDevice: failed to retain outbound handshake response");
-                return;
-            }
-
-            sbufSetLength(buf, sizeof(message_handshake_response_t));
-
-            sbufWrite(buf, &packet, sizeof(message_handshake_response_t));
-            // OK!
-            wireguardifPeerOutput(device, buf, peer);
+            reuseBuffer(buf);
+            LOGW("WireGuardDevice: failed to retain outbound handshake response");
+            return;
         }
+
+        sbufSetLength(buf, sizeof(message_handshake_response_t));
+
+        sbufWrite(buf, &packet, sizeof(message_handshake_response_t));
+        // OK!
+        wireguardifPeerOutput(device, buf, peer);
     }
 }
 

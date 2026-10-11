@@ -277,7 +277,7 @@ RETRYABLE_LOCAL = [
 #   (relative path, function, expected startupFailureRecord count, description)
 
 MAIN_THREAD_STARTUP = [
-    ("tunnels/PacketSender/common/helpers.c", "packetsenderPrepareRuntime", 13,
+    ("tunnels/PacketSender/common/helpers.c", "packetsenderPrepareRuntime", 11,
      "prepare-time validation and materialization"),
     ("tunnels/AuthenticationServer/instance/start.c", "authenticationserverTunnelOnStart", 2,
      "direct main-thread onStart timer creation"),

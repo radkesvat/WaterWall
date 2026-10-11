@@ -584,10 +584,7 @@ void wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer
 {
     // Send a NULL packet as a keep-alive
     sbuf_t *empty_buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
-    if (empty_buf != NULL)
-    {
-        wireguardifOutputToPeer(device, empty_buf, NULL, peer);
-    }
+    wireguardifOutputToPeer(device, empty_buf, NULL, peer);
 }
 
 static err_t wireguardifLookupPeer(wireguard_device_t *device, uint8_t peer_index, wireguard_peer_t **out)

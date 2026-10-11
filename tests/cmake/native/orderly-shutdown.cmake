@@ -36,7 +36,6 @@ foreach(orderly_case IN ITEMS
         ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/instance/start.c
       )
       target_link_options(${orderly_test} PRIVATE
-        "-Wl,--wrap=memoryAllocateZero"
         "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
         "-Wl,--wrap=wtimerAdd"
       )

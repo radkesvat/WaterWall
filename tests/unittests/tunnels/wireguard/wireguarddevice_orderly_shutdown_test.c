@@ -4,10 +4,9 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseRejectionIsRetriedSuccessfully, casePacketLineFinishAborts,
- * caseTransportLineFinishKillsLine, caseStartupStorageAndAdmissionAreTransactional
- * Checks: Assertion labels include: WireGuard storage failure queued worker work; WireGuard storage failure
- * published its timer; WireGuard storage failure lost tunnel state; WireGuard storage failure published
- * a partial line table
+ * caseTransportLineFinishKillsLine, caseStartupGeometryAndAdmissionAreTransactional
+ * Checks: Invalid startup geometry publishes no storage, worker work or timer; worker admission
+ * refusal preserves startup failure and successful startup publishes all required work.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.wireguarddevice_orderly_shutdown_test_unit
@@ -34,38 +33,20 @@ enum
 
 static tos_worker_env_t g_env;
 
-static bool      g_fail_transport_storage;
 static int       g_refuse_queue_at = -1;
 static uint32_t  g_queue_attempts;
 static uint32_t  g_timer_attempts;
 static tunnel_t *g_start_tunnel;
 static wtimer_t  g_fake_timer;
 
-void                          *__real_memoryAllocateZero(size_t size);
 worker_message_submit_result_e __real_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
                                                                              WorkerMessageCleanupCallback cleanup,
                                                                              void *arg1, void *arg2, void *arg3);
 wtimer_t                      *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
-void                          *__wrap_memoryAllocateZero(size_t size);
 worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
                                                                              WorkerMessageCleanupCallback cleanup,
                                                                              void *arg1, void *arg2, void *arg3);
 wtimer_t                      *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
-
-void *__wrap_memoryAllocateZero(size_t size)
-{
-    if (g_fail_transport_storage)
-    {
-        g_fail_transport_storage = false;
-        twfRequireEqualU32(g_queue_attempts, 0, "WireGuard storage failure queued worker work");
-        twfRequireEqualU32(g_timer_attempts, 0, "WireGuard storage failure published its timer");
-        twfRequire(tunnelGetState(g_start_tunnel) != NULL, "WireGuard storage failure lost tunnel state");
-        twfRequire(((wgd_tstate_t *) tunnelGetState(g_start_tunnel))->transport_lines == NULL,
-                   "WireGuard storage failure published a partial line table");
-        return NULL;
-    }
-    return __real_memoryAllocateZero(size);
-}
 
 worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
                                                                              WorkerMessageCleanupCallback cleanup,
@@ -348,25 +329,27 @@ static void startFixtureDestroy(wireguarddevice_start_fixture_t *fixture)
 static void resetStartupInjection(tunnel_t *t)
 {
     g_start_tunnel           = t;
-    g_fail_transport_storage = false;
     g_refuse_queue_at        = -1;
     g_queue_attempts         = 0;
     g_timer_attempts         = 0;
     memoryZero(&g_fake_timer, sizeof(g_fake_timer));
 }
 
-static void allocationFailureBody(void *argument)
+static void geometryFailureBody(void)
 {
-    discard                         argument;
     wireguarddevice_start_fixture_t fixture = startFixtureCreate(true);
     resetStartupInjection(fixture.wgd);
     ww_startup_context_t startup = {0};
     wwStartupContextBegin(&startup);
-    g_fail_transport_storage = true;
+    fixture.chain->workers_count = 0;
     wireguarddeviceTunnelOnStart(fixture.wgd);
     const ww_startup_result_t result = wwStartupContextEnd(&startup);
-    twfRequire(! wwStartupSucceeded(result), "WireGuard did not propagate the storage startup failure");
+    twfRequire(! wwStartupSucceeded(result), "WireGuard did not propagate invalid startup worker geometry");
     twfRequireEqualU32((uint32_t) result.exit_code, 1, "WireGuard propagated the wrong startup status");
+    twfRequireEqualU32(g_queue_attempts, 0, "WireGuard invalid geometry queued worker work");
+    twfRequireEqualU32(g_timer_attempts, 0, "WireGuard invalid geometry published its timer");
+    twfRequire(((wgd_tstate_t *) tunnelGetState(fixture.wgd))->transport_lines == NULL,
+               "WireGuard invalid geometry published a line table");
     startFixtureDestroy(&fixture);
 }
 
@@ -391,12 +374,12 @@ static void startupRefusalBody(void *argument)
     startFixtureDestroy(&fixture);
 }
 
-static void caseStartupStorageAndAdmissionAreTransactional(void)
+static void caseStartupGeometryAndAdmissionAreTransactional(void)
 {
-    twfSetCase("WireGuard mandatory startup storage and queue admission");
+    twfSetCase("WireGuard startup geometry and queue admission");
     tosWorkerEnvSetup(&g_env, 3, kTestLargeBufferSize, kTestSmallBufferSize);
     tosResetProcessApi(true);
-    allocationFailureBody(NULL);
+    geometryFailureBody();
 
     for (int worker = 0; worker < 3; ++worker)
     {
@@ -425,7 +408,7 @@ static void caseStartupStorageAndAdmissionAreTransactional(void)
 
 int main(void)
 {
-    caseStartupStorageAndAdmissionAreTransactional();
+    caseStartupGeometryAndAdmissionAreTransactional();
     caseRejectionIsRetriedSuccessfully();
     caseTransportLineFinishKillsLine();
     casePacketLineFinishAborts();
