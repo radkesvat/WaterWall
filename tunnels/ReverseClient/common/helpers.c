@@ -161,17 +161,6 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
     const wid_t             wid = worker->wid;
 
     reverseclient_pair_t *pair = memoryAllocateZero(sizeof(*pair));
-    if (UNLIKELY(pair == NULL))
-    {
-        assert(ts->threadlocal_pool[wid].connecting_cons_count > 0);
-        ts->threadlocal_pool[wid].connecting_cons_count--;
-        if (! signalmanagerRequestShutdownPreservingAcceptedStatus(1))
-        {
-            abortProgramNow(1);
-        }
-        return;
-    }
-
     line_t *ul = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
     line_t *dl = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
 

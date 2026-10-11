@@ -284,12 +284,6 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
             }
 
             losers = memoryAllocate(sizeof(*losers) * loser_capacity);
-            if (UNLIKELY(losers == NULL))
-            {
-                LOGW("ConnectionFisherClient: failed to snapshot losing child lines");
-                connectionfisherclientCloseMainLine(t, main_l);
-                goto cleanup;
-            }
         }
 
         main_ls->selecting_child = true;

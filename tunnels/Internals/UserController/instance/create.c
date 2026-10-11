@@ -102,13 +102,6 @@ tunnel_t *usercontrollerTunnelCreate(node_t *node)
     ts->sweep_interval_ms = kUserControllerDefaultSweepIntervalMs;
     ts->worker_count      = getWorkersCount();
     ts->worker_states     = memoryAllocateZero(sizeof(*ts->worker_states) * ts->worker_count);
-    if (UNLIKELY(ts->worker_states == NULL))
-    {
-        LOGF("UserController: failed to allocate worker state");
-        tunnelDestroy(t);
-        return NULL;
-    }
-
     if (! parseSettings(ts, node, settings))
     {
         usercontrollerTunnelstateDestroy(ts);

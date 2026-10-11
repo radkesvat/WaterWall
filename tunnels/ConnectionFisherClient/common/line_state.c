@@ -29,12 +29,6 @@ bool connectionfisherclientLinestateInitializeMain(connectionfisherclient_lstate
 #endif
 
     ls->child_lines = memoryAllocateZero(sizeof(*ls->child_lines) * (size_t) child_count);
-    if (UNLIKELY(ls->child_lines == NULL))
-    {
-        LOGW("ConnectionFisherClient: failed to allocate child line slots");
-        return false;
-    }
-
     ls->child_count = child_count;
     return true;
 }

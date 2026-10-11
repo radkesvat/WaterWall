@@ -138,11 +138,6 @@ static bool usercontrollerWorkerReserveLine(usercontroller_worker_state_t *ws)
     }
 
     line_t **new_lines = memoryReAllocate(ws->lines, new_capacity * sizeof(*new_lines));
-    if (UNLIKELY(new_lines == NULL))
-    {
-        return false;
-    }
-
     memoryZero(new_lines + ws->line_capacity, (new_capacity - ws->line_capacity) * sizeof(*new_lines));
     ws->lines         = new_lines;
     ws->line_capacity = new_capacity;
