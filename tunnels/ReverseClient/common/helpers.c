@@ -108,6 +108,14 @@ void reverseclientClosePair(reverseclient_pair_t *pair, reverseclient_close_orig
     }
 
     reverseclientReleasePairCounter(pair);
+    if (pair->activation_payload != NULL)
+    {
+        lineReuseBuffer(ul, pair->activation_payload);
+        pair->activation_payload = NULL;
+    }
+    bufferbudgetReservationRelease(&pair->activation_initial);
+    bufferqueueDestroy(&pair->activation_pending);
+    bufferbudgetAssertEmpty(&pair->activation_budget);
     reverseclientLinestateDestroy(lineGetState(ul, t));
     reverseclientLinestateDestroy(lineGetState(dl, t));
 
@@ -165,6 +173,14 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
     line_t *dl = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
 
     *pair = (reverseclient_pair_t) {.t = t, .u = ul, .d = dl, .phase = kReverseClientPairConnecting};
+    bufferbudgetInit(&pair->activation_budget,
+                     (buffer_budget_cost_t) {.bytes   = kReverseClientPendingBytes,
+                                             .charge  = SIZE_MAX,
+                                             .entries = kReverseClientPendingBuffers});
+    bufferqueueInitEmpty(&pair->activation_pending);
+    bool attached = bufferqueueTryAttachBudget(&pair->activation_pending, &pair->activation_budget);
+    assert(attached);
+    discard attached;
     reverseclientLinestateInitialize(lineGetState(ul, t), pair);
     reverseclientLinestateInitialize(lineGetState(dl, t), pair);
     reverseclientRegisterPair(pair);

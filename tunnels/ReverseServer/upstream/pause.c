@@ -1,15 +1,10 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void reverseserverTunnelUpStreamPause(tunnel_t *t, line_t *d)
 {
-    reverseserver_lstate_t *dls = lineGetState(d, t);
-
-    if (! dls->paired || dls->u == NULL)
-    {
+    reverseserver_lstate_t *ls = lineGetState(d, t);
+    ls->output_paused          = true;
+    if (! ls->paired)
         return;
-    }
-
-    tunnelNextUpStreamPause(t, dls->u);
+    reverseserverReconcileSource(t, ls->u);
 }

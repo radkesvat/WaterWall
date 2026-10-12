@@ -46,11 +46,21 @@ typedef struct reverseclient_fixture_s
     bool                close_downstream_init;
     sbuf_t             *expected_payload;
     bool                expected_splice;
+    uint32_t            expected_prefix;
     unsigned int        payload_count;
     unsigned int        upstream_init_count;
     unsigned int        downstream_init_count;
     unsigned int        upstream_finish_count;
     unsigned int        downstream_finish_count;
+    bool                nested_during_init;
+    bool                nested_overflow;
+    bool                capture_application;
+    uint32_t            nested_count;
+    uint32_t            nested_size;
+    uint32_t            delivered_buffers;
+    uint32_t            delivered_bytes;
+    uint8_t             application[128];
+    uint32_t            application_length;
 } reverseclient_fixture_t;
 
 static reverseclient_fixture_t *g_fixture;
@@ -86,7 +96,7 @@ static void checkPayload(line_t *line, sbuf_t *buf)
     {
         require(buf == g_fixture->expected_payload, "ReverseClient replaced the application buffer");
         require(sbufIsSplice(buf) == g_fixture->expected_splice &&
-                    sbufGetResidentPrefixLength(buf) == (g_fixture->expected_splice ? 3 : 7),
+                    sbufGetResidentPrefixLength(buf) == g_fixture->expected_prefix,
                 "ReverseClient changed payload representation");
         char bytes[7];
         sbufReadRangeToMemory(buf, bytes, sizeof(bytes));
@@ -127,13 +137,47 @@ static void prevInit(tunnel_t *prev, line_t *line)
         atomicStoreRelaxed(&ts->stopping, true);
         reverseclientTunnelUpStreamFinish(g_fixture->reverse, line);
     }
+    else if (g_fixture->nested_count != 0)
+    {
+        line_t *upstream = g_fixture->upstream_line;
+        lineRef(upstream);
+        for (uint32_t i = 0; i < g_fixture->nested_count && lineIsAlive(upstream); ++i)
+        {
+            sbuf_t *buf = bufferpoolGetBestFit(lineGetBufferPool(line), g_fixture->nested_size, 32);
+            memorySet(sbufGetMutablePtr(buf), 'x', g_fixture->nested_size);
+            sbufSetLength(buf, g_fixture->nested_size);
+            reverseclientTunnelDownStreamPayload(g_fixture->reverse, upstream, buf);
+        }
+        lineUnref(upstream);
+    }
+    else if (g_fixture->nested_during_init)
+    {
+        uint32_t size = g_fixture->nested_overflow ? 2U * 1024U * 1024U : 4U;
+        sbuf_t  *buf  = bufferpoolGetBestFit(lineGetBufferPool(line), size, 32);
+        memorySet(sbufGetMutablePtr(buf), 'x', size);
+        if (! g_fixture->nested_overflow)
+            sbufWrite(buf, "tail", 4);
+        sbufSetLength(buf, size);
+        reverseclientTunnelDownStreamPayload(g_fixture->reverse, g_fixture->upstream_line, buf);
+    }
 }
 
 static void prevPayload(tunnel_t *prev, line_t *line, sbuf_t *buf)
 {
     discard prev;
     require(line == g_fixture->downstream_line, "downstream payload used the wrong paired line");
-    if (g_fixture->expected_payload != NULL)
+    ++g_fixture->delivered_buffers;
+    g_fixture->delivered_bytes += sbufGetLength(buf);
+    if (g_fixture->capture_application)
+    {
+        const uint32_t length = sbufGetLength(buf);
+        require(g_fixture->application_length + length <= sizeof(g_fixture->application),
+                "application capture overflow");
+        sbufReadRangeToMemory(buf, g_fixture->application + g_fixture->application_length, length);
+        g_fixture->application_length += length;
+        lineReuseBuffer(line, buf);
+    }
+    else if (g_fixture->expected_payload != NULL)
         checkPayload(line, buf);
     else
         lineReuseBuffer(line, buf);
@@ -150,6 +194,7 @@ static void fixtureSetup(reverseclient_fixture_t *fixture, endpoint_behavior_e b
 {
     memoryZero(fixture, sizeof(*fixture));
     fixture->behavior = behavior;
+    fixture->expected_prefix = 7;
     g_fixture         = fixture;
 
     fixture->prev    = tunnelCreate(NULL, 0, 0);
@@ -259,8 +304,10 @@ static void testActivePairDrain(void)
     createFirstPair(&fixture);
 
     sbuf_t *payload = bufferpoolGetLargeBuffer(getWorkerBufferPool(0));
-    sbufSetLength(payload, 7);
-    sbufWrite(payload, "prebody", 7);
+    sbufSetLength(payload, 64 + 7);
+    getRandomBytes(sbufGetMutablePtr(payload), 64);
+    reverseActivationWriteSize(sbufGetMutablePtr(payload), 64);
+    memoryCopy(sbufGetMutablePtr(payload) + 64, "prebody", 7);
     fixture.expected_payload = payload;
     reverseclientTunnelDownStreamPayload(fixture.reverse, fixture.upstream_line, payload);
     require(fixture.downstream_init_count == 1, "active pair did not publish its downstream side");
@@ -298,8 +345,11 @@ static void testSpliceActivation(bool close_during_init)
     fixtureSetup(&fixture, kEndpointEstablish);
     fixture.close_downstream_init = close_during_init;
     fixture.expected_splice       = true;
+    fixture.expected_prefix       = 3;
     createFirstPair(&fixture);
     sbuf_t     *buf         = privatePayload();
+    sbufShiftLeft(buf, kReverseActivationHeaderSize);
+    reverseActivationWriteSize(sbufGetMutablePtr(buf), kReverseActivationHeaderSize);
     atomic_uint disposed    = 0;
     int         pipe_reader = -1;
     if (close_during_init)
@@ -334,7 +384,149 @@ static void testSpliceActivation(bool close_during_init)
     quiesceAndDrain(&fixture);
     fixtureTeardown(&fixture);
 }
+
+static void testPipeActivationPadding(void)
+{
+    reverseclient_fixture_t fixture;
+    fixtureSetup(&fixture, kEndpointEstablish);
+    fixture.expected_splice = true;
+    fixture.expected_prefix = 0;
+    createFirstPair(&fixture);
+    uint8_t bytes[64 + 7];
+    getRandomBytes(bytes, 64);
+    reverseActivationWriteSize(bytes, 64);
+    memoryCopy(bytes + 64, "prebody", 7);
+    for (uint32_t offset = 0; offset < sizeof(bytes);)
+    {
+        uint32_t count = offset == 0 ? 2 : (uint32_t) sizeof(bytes) - offset;
+        sbuf_t  *buf   = bufferpoolGetSpliceBuffer(getWorkerBufferPool(0));
+        require(buf != NULL, "allocate pipe-backed activation");
+        require(write(sbufSpliceMetadata(buf).pipefd[1], bytes + offset, count) == count, "populate pipe activation");
+        buf->capacity = buf->l_pad + count;
+        sbufSetLength(buf, count);
+        if (offset != 0)
+            fixture.expected_payload = buf;
+        reverseclientTunnelDownStreamPayload(fixture.reverse, fixture.upstream_line, buf);
+        offset += count;
+        require(fixture.downstream_init_count == (offset == sizeof(bytes) ? 1U : 0U),
+                "pipe header activated too early");
+    }
+    require(fixture.expected_payload == NULL && fixture.payload_count == 1,
+            "pipe activation changed the application body");
+    quiesceAndDrain(&fixture);
+    fixtureTeardown(&fixture);
+}
 #endif
+
+static sbuf_t *activationPart(const uint8_t *bytes, uint32_t count)
+{
+    sbuf_t *buf = bufferpoolGetBestFit(getWorkerBufferPool(0), count, 32);
+    sbufWrite(buf, bytes, count);
+    sbufSetLength(buf, count);
+    return buf;
+}
+
+static void testFragmentedActivation(uint32_t size)
+{
+    reverseclient_fixture_t fixture;
+    fixtureSetup(&fixture, kEndpointEstablish);
+    createFirstPair(&fixture);
+    uint8_t *bytes = memoryAllocate(size);
+    getRandomBytes(bytes, size);
+    reverseActivationWriteSize(bytes, size);
+    /* Every header byte arrives separately; padding then crosses deliveries. */
+    for (uint32_t offset = 0; offset < size;)
+    {
+        uint32_t count = offset < 4 ? 1 : min(137U, size - offset);
+        reverseclientTunnelDownStreamPayload(
+            fixture.reverse, fixture.upstream_line, activationPart(bytes + offset, count));
+        offset += count;
+        require(fixture.downstream_init_count == (offset == size ? 1U : 0U),
+                "destination opened before activation completed");
+    }
+    memoryFree(bytes);
+    require(fixture.downstream_init_count == 1 && fixture.payload_count == 0, "padding reached the destination");
+    fixture.expected_payload = activationPart((const uint8_t *) "prebody", 7);
+    reverseclientTunnelDownStreamPayload(fixture.reverse, fixture.upstream_line, fixture.expected_payload);
+    require(fixture.expected_payload == NULL && fixture.payload_count == 1, "direct data after activation changed");
+    quiesceAndDrain(&fixture);
+    fixtureTeardown(&fixture);
+}
+
+static void testInvalidActivation(uint32_t size, bool truncated)
+{
+    reverseclient_fixture_t fixture;
+    fixtureSetup(&fixture, kEndpointEstablish);
+    createFirstPair(&fixture);
+    reverseclient_tstate_t *ts = tunnelGetState(fixture.reverse);
+    atomicStoreRelaxed(&ts->stopping, true);
+    uint8_t header[4];
+    reverseActivationWriteSize(header, size);
+    reverseclientTunnelDownStreamPayload(
+        fixture.reverse, fixture.upstream_line, activationPart(header, truncated ? 3 : 4));
+    require(fixture.downstream_init_count == 0, "invalid/incomplete activation opened destination");
+    require(reverseclientOwnedPairCount(fixture.reverse, 0) == (truncated ? 1U : 0U),
+            "invalid activation did not close pair");
+    quiesceAndDrain(&fixture);
+    fixtureTeardown(&fixture);
+}
+
+static void testActivationInitOrdering(bool overflow)
+{
+    reverseclient_fixture_t fixture;
+    fixtureSetup(&fixture, kEndpointEstablish);
+    fixture.nested_during_init = fixture.capture_application = true;
+    fixture.nested_overflow                                  = overflow;
+    createFirstPair(&fixture);
+    const uint8_t bytes[] = {0, 0, 0, 4, 'h', 'e', 'a', 'd'};
+    reverseclientTunnelDownStreamPayload(fixture.reverse, fixture.upstream_line, activationPart(bytes, sizeof(bytes)));
+    if (overflow)
+        require(reverseclientOwnedPairCount(fixture.reverse, 0) == 0 && fixture.application_length == 0,
+                "nested activation overflow did not close without leaking payload");
+    else
+        require(fixture.application_length == 8 && memcmp(fixture.application, "headtail", 8) == 0,
+                "nested destination Init input overtook coalesced application data");
+    quiesceAndDrain(&fixture);
+    fixtureTeardown(&fixture);
+}
+
+static void testActivationBufferLimit(bool overflow, bool empty)
+{
+    reverseclient_fixture_t fixture;
+    fixtureSetup(&fixture, kEndpointEstablish);
+    fixture.nested_count = kReverseClientPendingBuffers - (overflow ? 0 : 1);
+    fixture.nested_size  = empty ? 0 : 1;
+    createFirstPair(&fixture);
+    const uint8_t bytes[] = {0, 0, 0, 4, 'h', 'e', 'a', 'd'};
+    reverseclientTunnelDownStreamPayload(fixture.reverse, fixture.upstream_line, activationPart(bytes, sizeof(bytes)));
+    if (overflow && ! empty)
+        require(reverseclientOwnedPairCount(fixture.reverse, 0) == 0 && fixture.delivered_buffers == 0,
+                "activation accepted more than 1024 retained buffers or leaked data after refusal");
+    else
+        require(reverseclientOwnedPairCount(fixture.reverse, 0) == 1 &&
+                    fixture.delivered_buffers == (empty ? 1 : kReverseClientPendingBuffers) &&
+                    fixture.delivered_bytes == (empty ? 4 : 4 + kReverseClientPendingBuffers - 1),
+                "activation refused the inclusive buffer limit, counted empty input, or lost FIFO bytes");
+    quiesceAndDrain(&fixture);
+    fixtureTeardown(&fixture);
+}
+
+static void testInitialBodyLimit(void)
+{
+    reverseclient_fixture_t fixture;
+    fixtureSetup(&fixture, kEndpointEstablish);
+    createFirstPair(&fixture);
+    sbuf_t *buf = bufferpoolGetBestFit(getWorkerBufferPool(0), kReverseClientPendingBytes + 5, 32);
+    reverseActivationWriteSize(sbufGetMutablePtr(buf), 4);
+    memorySet(sbufGetMutablePtr(buf) + 4, 'x', kReverseClientPendingBytes + 1);
+    sbufSetLength(buf, kReverseClientPendingBytes + 5);
+    reverseclientTunnelDownStreamPayload(fixture.reverse, fixture.upstream_line, buf);
+    require(reverseclientOwnedPairCount(fixture.reverse, 0) == 0 && fixture.downstream_init_count == 0 &&
+                fixture.delivered_buffers == 0,
+            "oversized retained initial body opened the destination or escaped its budget");
+    quiesceAndDrain(&fixture);
+    fixtureTeardown(&fixture);
+}
 
 static void testReentrantInitClose(void)
 {
@@ -417,9 +609,25 @@ int main(void)
 #if WW_HAVE_SPLICE
     testSpliceActivation(false);
     testSpliceActivation(true);
+    testPipeActivationPadding();
 #endif
     testConnectingPairDrain();
     testActivePairDrain();
+    testFragmentedActivation(4);
+    testFragmentedActivation(64);
+    testFragmentedActivation(4097);
+    testFragmentedActivation(kReverseActivationMaxSize);
+    testInvalidActivation(0, false);
+    testInvalidActivation(3, false);
+    testInvalidActivation(kReverseActivationMaxSize + 1, false);
+    testInvalidActivation(UINT32_MAX, false);
+    testInvalidActivation(64, true);
+    testActivationInitOrdering(false);
+    testActivationInitOrdering(true);
+    testActivationBufferLimit(false, false);
+    testActivationBufferLimit(true, false);
+    testActivationBufferLimit(true, true);
+    testInitialBodyLimit();
     testReentrantInitClose();
     testFinishBeforeDrainDoesNotDuplicateClose();
     testCanceledIdleDeliveryPreservesPairForDrain();

@@ -1,15 +1,15 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void reverseserverTunnelUpStreamResume(tunnel_t *t, line_t *d)
 {
-    reverseserver_lstate_t *dls = lineGetState(d, t);
-
-    if (! dls->paired || dls->u == NULL)
-    {
+    reverseserver_lstate_t *ls = lineGetState(d, t);
+    ls->output_paused          = false;
+    if (! ls->paired)
         return;
-    }
-
-    tunnelNextUpStreamResume(t, dls->u);
+    line_t *other = ls->u;
+    lineRef(d);
+    lineRef(other);
+    reverseserverDrainPair(t, ls->u);
+    lineUnref(other);
+    lineUnref(d);
 }

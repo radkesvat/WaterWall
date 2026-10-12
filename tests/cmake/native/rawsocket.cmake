@@ -539,7 +539,7 @@ if(TARGET ReverseServer)
   waterwall_add_native_executable(reverseserver_splice_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/reverse/reverseserver_splice_test.c)
   target_link_libraries(reverseserver_splice_test PRIVATE ReverseServer ww)
   target_include_directories(reverseserver_splice_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/ReverseClient/include)
-  target_link_options(reverseserver_splice_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=sbufAppendMerge")
+  target_link_options(reverseserver_splice_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
   add_dependencies(waterwall_unit_tests reverseserver_splice_test)
   add_waterwall_unit_test(waterwall.reverseserver_splice_unit reverseserver_splice_test "unit;tunnels;reverse;splice;lifetime")
 

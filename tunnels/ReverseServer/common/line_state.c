@@ -9,15 +9,23 @@ void reverseserverLinestateInitialize(reverseserver_lstate_t *ls, line_t *u, lin
         .next       = NULL,
         .u          = u,
         .d          = d,
-        .buffering  = NULL,
         .paired     = false,
         .handshaked = false,
     };
+    bufferbudgetInit(&ls->pending_budget,
+                     (buffer_budget_cost_t) {.bytes   = kReverseServerPendingBytes,
+                                             .charge  = SIZE_MAX,
+                                             .entries = kReverseServerPendingBuffers});
+    bufferqueueInitEmpty(&ls->pending);
+    bool attached = bufferqueueTryAttachBudget(&ls->pending, &ls->pending_budget);
+    assert(attached);
+    discard attached;
 }
 
 void reverseserverLinestateDestroy(reverseserver_lstate_t *ls)
 {
-    assert(ls->buffering == NULL);
+    bufferqueueDestroy(&ls->pending);
+    bufferbudgetAssertEmpty(&ls->pending_budget);
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(reverseserver_lstate_t)));
 }

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ReverseServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ReverseServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -61,6 +61,12 @@ the reverse-link handshake signature.
 
 ## Optional `settings` Fields
 
+- `activation-min-size` `(integer)`: minimum total activation size, default `64`.
+- `activation-max-size` `(integer)`: maximum total activation size, default `1024`.
+
+Both include the four-byte header, accept `4..65536`, and require `min <= max`.
+Configure this range only on ReverseServer.
+
 - `reverse-secret-length` `(integer)`
   Overrides the reverse handshake length.
 
@@ -92,8 +98,7 @@ with the secret bytes repeatedly.
 
 When payload arrives from the reverse side before pairing:
 
-- payload is buffered until enough bytes are available to validate the complete
-  reverse handshake
+- handshake bytes are compared incrementally; only the matched offset is retained
 - if the handshake is invalid, that half-connection is dropped
 - if the handshake is valid, the handshake bytes are removed
 - the reverse-side half is placed into a waiting list
@@ -101,13 +106,42 @@ When payload arrives from the reverse side before pairing:
 
 ### Local-side waiting behavior
 
-When payload arrives from the local side before pairing:
+A local/user half enters the waiting list during Init and attempts pairing without
+waiting for application data. Early payload is retained under the existing waiting
+limit until an authenticated reverse peer is available. An existing application
+backlog remains queued after pairing while its consumer is paused.
+After Est, an unpaired user source is paused. A fully authenticated reverse source
+is also held while unpaired. Pairing sends activation and drains eligible older
+bytes before releasing these holds. Consumer Pause keeps its source held; clearing
+a waiting hold never overrides it. Holds and consumer pressure survive migration.
 
-- the local half is marked as available
-- it is placed into a waiting list
-- its first payload is buffered if no reverse-side peer is ready yet
+### Variable-size activation
 
-Once a peer becomes available, the waiting halves are paired and any buffered first payloads are forwarded.
+A pair sends exactly one activation prefix before any user application bytes:
+
+```text
+4-byte big-endian total length | random padding | direct application stream
+```
+
+The total length includes the four-byte header and is in `4..65536`. Each pair
+chooses a fresh random length between `activation-min-size` (default `64`) and
+`activation-max-size` (default `1024`), inclusive. Both settings belong only to
+ReverseServer; ReverseClient reads the advertised length without knowing the
+configured range. Values must be integers in `4..65536`, with `min <= max`.
+
+ReverseClient consumes the complete prefix, then opens its destination line.
+No user payload is required, so a destination greeting can reach a silent user.
+The prefix is also sent for users that send immediately; it always precedes
+application data and never reaches the destination. There are no later activation
+headers. Fragmentation and a prefix coalesced with application data are supported.
+
+ReverseServer hands off activation once even if the reverse side is paused, in a
+separate buffer containing no application data. Buffered application bytes still
+wait for Resume. The receiving transport may queue activation until it can write.
+
+Random lengths avoid one fixed activation size. The plaintext length field and
+traffic timing remain visible without an enclosing encrypted transport; this is
+not a guarantee against traffic fingerprinting.
 
 ### Pairing behavior
 
@@ -118,9 +152,13 @@ After pairing:
 - finish events close the peer half as well
 - pause and resume are forwarded across the pair
 
-If both sides already have buffered payload, those buffered chunks are delivered immediately after the pair is formed.
+Buffered application bytes preserve FIFO order during activation and initial replay.
+Retained application output waits for Resume when its consumer is paused; ready
+payloads continue to use direct forwarding.
 
 ### Cross-worker pairing
+
+A newly initialized user notifies the worker of an already waiting reverse peer, so either arrival order can pair without new payload. Notifications carry no foreign line pointer.
 
 `ReverseServer` keeps waiting lists per worker. If a reverse-side half arrives on a worker that has no local peer waiting, the tunnel can move that reverse-side line to another worker using an internal pipe tunnel layer and then complete the pairing there.
 
@@ -128,13 +166,13 @@ This is an implementation detail, but it matters because it allows reverse links
 
 ### Buffering limits
 
-Each unpaired half can buffer data while waiting for its peer.
+Each half has one application FIFO with inclusive limits of **2 MiB logical bytes
+and 1,024 buffers**, independent of the RAM profile. Waiting data and retained
+startup replay share that budget. Empty TCP input consumes no entries; handshake
+comparison state and the separate activation prefix are protocol metadata.
 
-Current limit:
-
-- `65535 * max(1, ceil(L / 32768))` bytes per waiting half, with `L` from the line pool's independent waiting-budget basis (64 KiB in S1/S2, 1 MiB in higher profiles)
-
-If that limit is exceeded, the waiting half is dropped.
+A refused admission closes the waiting half, or both halves if already paired.
+Ready direct payloads do not acquire a backlog or inherit its size limit.
 
 ### Establishment semantics
 
@@ -156,9 +194,10 @@ Instead:
 
 ReverseServer materializes each complete splice payload into ordinary memory in
 both directions while the half is unpaired. This covers handshake validation,
-handshake removal, waiting-buffer merges and replay when pairing moves to another
+handshake removal, waiting FIFOs and replay when pairing moves to another
 worker. Handshake completion alone does not end materialization: waiting storage
-remains ordinary until pairing completes. After pairing, payloads pass through
+remains ordinary until pairing completes. Initial replay and input queued behind
+startup backlog also use ordinary storage. Ready paired payloads pass through
 unchanged in both directions.
 
 The internal PipeTunnel shares ReverseServer's splice capability and transfers
@@ -180,4 +219,4 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
 
-Handshake validation and available pairing precede the waiting check. Close occurs strictly above the limit: 131,070 bytes in S1/S2 and 2,097,120 bytes in higher profiles.
+Application retention uses the same 2 MiB / 1,024-buffer limits in every RAM profile.

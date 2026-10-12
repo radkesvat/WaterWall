@@ -1,34 +1,20 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void reverseserverTunnelUpStreamFinish(tunnel_t *t, line_t *d)
 {
-    reverseserver_tstate_t     *ts      = tunnelGetState(t);
-    reverseserver_lstate_t     *dls     = lineGetState(d, t);
-    reverseserver_thread_box_t *this_tb = &(ts->threadlocal_pool[lineGetWID(d)]);
-
+    reverseserver_lstate_t *dls = lineGetState(d, t);
     if (dls->paired)
     {
-        line_t                 *u   = dls->u;
-        reverseserver_lstate_t *uls = lineGetState(u, t);
+        line_t *u = dls->u;
         reverseserverLinestateDestroy(dls);
-        reverseserverLinestateDestroy(uls);
+        reverseserverLinestateDestroy(lineGetState(u, t));
         tunnelNextUpStreamFinish(t, u);
-
+        return;
     }
-    else
+    if (dls->handshaked)
     {
-        if (dls->buffering != NULL)
-        {
-            lineReuseBuffer(d, dls->buffering);
-            dls->buffering = NULL;
-        }
-
-        if (dls->handshaked)
-        {
-            reverseserverRemoveConnectionD(this_tb, dls);
-        }
-        reverseserverLinestateDestroy(dls);
+        reverseserver_tstate_t *ts = tunnelGetState(t);
+        reverseserverRemoveConnectionD(&ts->threadlocal_pool[lineGetWID(d)], dls);
     }
+    reverseserverLinestateDestroy(dls);
 }

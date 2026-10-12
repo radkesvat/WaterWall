@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Waiting users pair with authenticated reverse peers, including cross-worker pairing. Fixed
-secret/handshake bytes, replay/opaque echo and a retained unpaired half during shutdown143; endpoint
+secret/handshake bytes, replay/opaque echo and an unpaired half with paused socket input during shutdown143; endpoint
 splice in both modes. Requires strace/network namespaces. CTest:
 waterwall.reverseserver_workers_1_splice_false, waterwall.reverseserver_workers_1_splice_true,
 waterwall.reverseserver_workers_2_splice_false, waterwall.reverseserver_workers_2_splice_true."""
@@ -34,6 +34,12 @@ def run(binary, workers, enabled):
     secret = settings.get("reverse-secret", "").encode()
     handshake = bytes(0xff ^ (secret[i % len(secret)] if secret else 0)
                       for i in range(settings.get("reverse-secret-length", 640)))
+
+    def activation(peer):
+        size = int.from_bytes(exact(peer, 4), "big")
+        assert 64 <= size <= 1024, "activation outside default range"
+        exact(peer, size - 4)
+
     with RunDirectory("waterwall-reverse-splice-") as directory:
         root = Path(directory)
         nodes = [
@@ -54,21 +60,26 @@ def run(binary, workers, enabled):
         }))
         with (root / "stdout.log").open("w+") as log:
             with Process([tracer, '-D', '-f', '-yy', '-e', 'trace=splice', '-o', str(root / 'splice.log'), binary], cwd=root, log=log) as process:
+                def wait_user_accept(after, deadline):
+                    while not re.search(r"TcpListener: Accepted.*\[127\.0\.0\.1:27982\]",
+                                        (root / "stdout.log").read_text()[after:]):
+                        if process.poll() is not None or time.monotonic() >= deadline:
+                            raise AssertionError("user source was not accepted")
+                        time.sleep(.01)
+
                 deadline = time.monotonic() + 10
                 client = connect_when_ready(process, ('127.0.0.1', 27982), deadline=deadline,
                     failure=lambda: AssertionError('WaterWall exited during startup'), timeout=1, pause=0.02)
                 with client:
                     client.settimeout(15)
                     client.sendall(b"local-first")
-                    while "ReverseServer: no peer left" not in (root / "stdout.log").read_text():
-                        if process.poll() is not None or time.monotonic() >= deadline:
-                            raise AssertionError("local half did not enter the waiting list")
-                        time.sleep(.01)
+                    wait_user_accept(0, deadline)
                     # These are consecutive accepts. With two workers, round-robin
                     # dispatch puts the waiting user and reverse peer on different WIDs.
                     with socket.create_connection(("127.0.0.1", 27981), timeout=5) as peer:
                         peer.settimeout(15)
                         peer.sendall(handshake)
+                        activation(peer)
                         assert exact(peer, 11) == b"local-first", "waiting replay changed bytes"
                         peer.sendall(b"ready")
                         assert exact(client, 5) == b"ready", "pair activation stalled"
@@ -80,15 +91,30 @@ def run(binary, workers, enabled):
                         assert exact(client, len(data)) == data[::-1], "opaque peer-to-user data changed"
                         client.shutdown(socket.SHUT_RDWR)
                         assert peer.recv(1) == b"", "unexpected trailing bytes"
-                # Keep an unpaired half with retained payload alive during owner drain.
+                # A silent user pairs in either arrival order. Consecutive
+                # accepts also exercise the idle-peer notification across WIDs.
+                for user_first in (False, True):
+                    first_port, second_port = (27982, 27981) if user_first else (27981, 27982)
+                    with socket.create_connection(("127.0.0.1", first_port), timeout=5) as first:
+                        if not user_first:
+                            first.sendall(handshake)
+                        with socket.create_connection(("127.0.0.1", second_port), timeout=5) as second:
+                            user, peer = (first, second) if user_first else (second, first)
+                            user.settimeout(10)
+                            peer.settimeout(10)
+                            if user_first:
+                                peer.sendall(handshake)
+                            activation(peer)
+                            peer.sendall(b"SSH-2.0-test\r\n")
+                            assert exact(user, 14) == b"SSH-2.0-test\r\n", "silent user missed greeting"
+                            user.shutdown(socket.SHUT_RDWR)
+                            assert peer.recv(1) == b"", "activation emitted more than once"
+                # Keep an unpaired source paused with unread socket input during owner drain.
+                old_log_length = len((root / "stdout.log").read_text())
                 with socket.create_connection(("127.0.0.1", 27982), timeout=5) as waiting:
-                    old_log_length = len((root / "stdout.log").read_text())
                     waiting.sendall(b"waiting during shutdown")
                     deadline = time.monotonic() + 10
-                    while "ReverseServer: no peer left" not in (root / "stdout.log").read_text()[old_log_length:]:
-                        if process.poll() is not None or time.monotonic() >= deadline:
-                            raise AssertionError("shutdown half did not retain input")
-                        time.sleep(.01)
+                    wait_user_accept(old_log_length, deadline)
                     process.send_signal(signal.SIGTERM)
                     assert process.wait(timeout=10) == 128 + signal.SIGTERM, "unclean reverse shutdown"
                 calls = list(successful_calls((root / "splice.log").read_text()[boundary:]))

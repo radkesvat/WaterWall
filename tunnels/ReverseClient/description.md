@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ReverseClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ReverseClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -127,17 +127,24 @@ recognize these spare reverse connections.
 
 ### When a spare connection becomes active
 
-A spare reverse connection remains unused until the remote side sends actual payload back through it.
+A spare reverse link remains unused until the complete one-time activation
+prefix from ReverseServer has arrived. Its four-byte big-endian total length
+includes the header and must be in `4..65536`. Random padding is discarded
+incrementally with a four-byte header cache and 256-byte scratch, without
+allocating the advertised total length. Split headers/padding and a prefix
+coalesced with application bytes are accepted. Malformed lengths close the pair;
+the existing 30-second idle deadline also covers incomplete activation.
 
-When the first real downstream payload arrives on that reverse connection:
-
-- the connection is removed from the unused pool
-- the spare counter is decremented
-- a replacement spare connection is scheduled
-- the local paired line is initialized toward the previous node
-- payload starts flowing between the local line and the reverse channel
-
-This is the key behavior of `ReverseClient`: it turns an already-open outbound reverse connection into a newly exposed local line only when the remote side actually needs it.
+After consuming the prefix, the client removes the unused/idle entry, increments
+the active count, schedules a replacement spare, and initializes the local
+paired line toward the previous node. A destination greeting can flow immediately,
+even when the user has sent nothing. The activation never reaches the destination.
+Remaining application bytes are forwarded in order, and all later deliveries pass
+through directly. There is no further activation framing and no client setting for
+the server's size range. Nested application input during destination Init/initial
+handoff stays behind older bytes in a FIFO. The original initial body and queued
+input share a 2 MiB logical-byte / 1,024-buffer budget. Empty input consumes no
+entries; overflow closes the pair. Ready direct payloads do not use this backlog.
 
 ### Data flow direction
 
@@ -193,6 +200,12 @@ Source-backed metadata:
 
 ## Splice support
 
-The generated handshake remains an ordinary buffer. Application payloads retain their private-pipe bodies when forwarded between the two owned normal lines, including pair activation. If downstream Init closes the pair, the held application buffer is recycled once. Keep the direct Bridge -> ReverseClient adjacency. This capability does not imply ReverseServer support; chains containing ReverseServer remain in ordinary mode.
+The reverse handshake is generated in ordinary memory. Activation parsing consumes
+only the prefix bytes through representation-aware helpers; an accompanying
+application body can retain its private pipe. Ready application payloads pass
+through unchanged in both directions. Nested startup input retains its ordinary
+or private-pipe representation in FIFO order. Closing during destination Init settles
+retained application bytes exactly once. Both reverse nodes support eligible
+splice chains; keep the direct Bridge -> ReverseClient adjacency.
 
 Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.

@@ -4,14 +4,29 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: runCase
- * Checks: Assertion labels include: waiting allowance changed with ordinary storage; waiting overflow did
- * not close; valid waiting data closed; paired forwarding lost bytes
+ * Checks: Inclusive 2 MiB retention across pool profiles, overflow settlement, and uncapped ready
+ * paired forwarding with exact application bytes.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.reverseserver_large_wait_unit
  */
 #include "ReverseServer/structure.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+
+static TunnelFlowRoutinePayload receiveApplication;
+static bool                     activation_received;
+
+static void stripActivation(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    if (! activation_received)
+    {
+        twfRequire(sbufGetLength(buf) >= 4 && reverseActivationReadSize(sbufGetRawPtr(buf)) == 4,
+                   "missing one-time activation prefix");
+        sbufShiftRight(buf, 4);
+        activation_received = true;
+    }
+    receiveApplication(t, line, buf);
+}
 
 static void runCase(uint32_t large, uint32_t length, bool local_first, bool available)
 {
@@ -23,6 +38,9 @@ static void runCase(uint32_t large, uint32_t length, bool local_first, bool avai
     trace.capture          = capture;
     trace.capture_capacity = length + 128;
     tunnel_t *prev = twfCreatePrevTunnel(&trace), *next = twfCreateNextTunnel(&trace);
+    receiveApplication  = prev->fnPayloadD;
+    activation_received = false;
+    prev->fnPayloadD    = stripActivation;
     tunnel_t *reverse = tunnelCreate(
         NULL, sizeof(reverseserver_tstate_t) + sizeof(reverseserver_thread_box_t), sizeof(reverseserver_lstate_t));
     tunnelBind(prev, reverse);
@@ -31,11 +49,12 @@ static void runCase(uint32_t large, uint32_t length, bool local_first, bool avai
     uint8_t                 handshake[] = {1, 2, 3};
     ts->handshake_bytes                 = handshake;
     ts->handshake_length                = sizeof(handshake);
+    ts->activation_min_size = ts->activation_max_size = 4;
     line_t *u = twfLineCreate(reverse->lstate_size), *d = twfLineCreate(reverse->lstate_size);
     reverseserverTunnelUpStreamInit(reverse, d);
-    reverseserverTunnelDownStreamInit(reverse, u);
-    const uint64_t limit = reverseserverWaitingLimit(u);
-    twfRequire(limit == 65535ULL * max(1U, (large + 32767) / 32768), "waiting allowance changed with ordinary storage");
+    if (local_first)
+        reverseserverTunnelDownStreamInit(reverse, u);
+    const uint64_t limit = kReverseServerPendingBytes;
     if (available)
     {
         sbuf_t *hello = bufferpoolGetSmallBuffer(env.pool);
@@ -74,8 +93,8 @@ static void runCase(uint32_t large, uint32_t length, bool local_first, bool avai
             }
             else
             {
-                sbufSetLength(peer, 0);
-                reverseserverTunnelDownStreamPayload(reverse, u, peer);
+                lineReuseBuffer(u, peer);
+                reverseserverTunnelDownStreamInit(reverse, u);
             }
         }
         twfRequire(trace.capture_len == length, "paired forwarding lost bytes");
@@ -99,10 +118,11 @@ static void runCase(uint32_t large, uint32_t length, bool local_first, bool avai
 }
 int main(void)
 {
+    twfRequire(globalstateInitializeSecureRandom() && frandGlobalInit(), "random initialization failed");
     const uint32_t sizes[] = {32768, 64 * 1024, SPLICE_PAYLOAD_LIMIT};
     for (unsigned i = 0; i < 2; ++i)
     {
-        uint32_t limit = 65535 * (sizes[i] / 32768);
+        uint32_t limit = kReverseServerPendingBytes;
         for (unsigned side = 0; side < 2; ++side)
         {
             runCase(sizes[i], limit - 1, side, false);
@@ -111,6 +131,8 @@ int main(void)
         }
         runCase(sizes[i], limit + 1, true, true);
     }
-    runCase(SPLICE_PAYLOAD_LIMIT, SPLICE_PAYLOAD_LIMIT, true, false);
+    runCase(SPLICE_PAYLOAD_LIMIT, kReverseServerPendingBytes, true, false);
+    frandThreadCleanup();
+    frandGlobalCleanup();
     return 0;
 }

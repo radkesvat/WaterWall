@@ -11,6 +11,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND TARGET Re
       set_tests_properties(${reverse_case} PROPERTIES TIMEOUT 60)
       add_waterwall_test_labels(${reverse_case} "integration" "tunnels")
       add_waterwall_case_resource_lock(${reverse_case} reverseserver_splice)
+      if(TARGET ReverseClient AND TARGET TcpConnector)
+        set(activation_case waterwall.reverse_activation_workers_${reverse_workers}_splice_${splice_mode})
+        add_waterwall_isolated_test(${activation_case}
+          "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/reverse_activation_integration.py"
+          "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${reverse_workers}" "${splice_mode}")
+        set_tests_properties(${activation_case} PROPERTIES TIMEOUT 60)
+        add_waterwall_test_labels(${activation_case} "integration" "tunnels")
+        add_waterwall_case_resource_lock(${activation_case} reverse_activation)
+      endif()
     endforeach()
   endforeach()
 endif()

@@ -1,15 +1,10 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
-void reverseserverTunnelDownStreamPause(tunnel_t *t, line_t *l)
+void reverseserverTunnelDownStreamPause(tunnel_t *t, line_t *u)
 {
-
-    reverseserver_lstate_t *ls = lineGetState(l, t);
-    if (! ls->paired || ls->d == NULL)
-    {
+    reverseserver_lstate_t *ls = lineGetState(u, t);
+    ls->output_paused          = true;
+    if (! ls->paired)
         return;
-    }
-
-    tunnelPrevDownStreamPause(t, ls->d);
+    reverseserverReconcileSource(t, ls->d);
 }

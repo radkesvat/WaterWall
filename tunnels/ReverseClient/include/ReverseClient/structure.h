@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ReverseClient/reverseclient_activation.h"
 #include "ReverseClient/reverseclient_handshake.h"
 #include "wwapi.h"
 
@@ -42,10 +43,20 @@ struct reverseclient_pair_s
     line_t                    *u;
     line_t                    *d;
     reverseclient_pair_phase_e phase;
+    sbuf_t                     *activation_payload;
+    buffer_queue_t              activation_pending;
+    buffer_budget_t             activation_budget;
+    buffer_budget_reservation_t activation_initial;
+    uint32_t                    activation_remaining;
+    uint32_t                    activation_reentry_bytes;
+    uint32_t                    activation_reentry_buffers;
+    uint8_t                     activation_header[kReverseActivationHeaderSize];
+    uint8_t                     activation_header_length;
     bool                       registered : 1;
     bool                       upstream_init_sent : 1;
     bool                       downstream_init_sent : 1;
     bool                       closing : 1;
+    bool                        activation_dispatching : 1;
 };
 
 typedef struct reverseclient_lstate_s
@@ -67,7 +78,9 @@ enum
     kLineStateSize                  = sizeof(reverseclient_lstate_t),
     kPreconnectDelayShort           = 10,
     kPreconnectDelayLong            = 750,
-    kConnectionStarvationTimeOutSec = 30
+    kConnectionStarvationTimeOutSec = 30,
+    kReverseClientPendingBytes      = 2 * 1024 * 1024,
+    kReverseClientPendingBuffers    = 1024
 };
 
 WW_EXPORT void         reverseclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);

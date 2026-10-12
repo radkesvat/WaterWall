@@ -40,6 +40,31 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
     }
 
     reverseserver_tstate_t *ts = tunnelGetState(t);
+    int64_t                 activation_min = kReverseActivationDefaultMinSize;
+    int64_t                 activation_max = kReverseActivationDefaultMaxSize;
+    if (jsonGetObjectIntegerInRange(settings,
+                                    "activation-min-size",
+                                    kReverseActivationHeaderSize,
+                                    kReverseActivationMaxSize,
+                                    &activation_min) == kJsonValueInvalid ||
+        jsonGetObjectIntegerInRange(settings,
+                                    "activation-max-size",
+                                    kReverseActivationHeaderSize,
+                                    kReverseActivationMaxSize,
+                                    &activation_max) == kJsonValueInvalid ||
+        activation_min > activation_max)
+    {
+        LOGF("ReverseServer: activation sizes must be integers in [4, 65536] with min <= max");
+        tunnelDestroy(t);
+        return NULL;
+    }
+    ts->activation_min_size = (uint32_t) activation_min;
+    ts->activation_max_size = (uint32_t) activation_max;
+    for (int i = 0; i < wc; ++i)
+    {
+        atomic_init(&ts->threadlocal_pool[i].u_count, 0);
+        atomic_init(&ts->threadlocal_pool[i].d_count, 0);
+    }
     if (! reverseclientHandshakeBuildFromSettings(
             settings, "ReverseServer", &ts->handshake_bytes, &ts->handshake_length))
     {
@@ -51,6 +76,7 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
     if (! pipe_tunnel)
     {
         // The wrapper never took ownership, so the child is still this call's.
+        reverseclientHandshakeDestroy(ts->handshake_bytes);
         tunnelDestroy(t);
         return NULL;
     }
