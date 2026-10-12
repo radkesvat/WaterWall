@@ -5,8 +5,7 @@
 void headerclientLinestateInitialize(headerclient_lstate_t *ls)
 {
     *ls = (headerclient_lstate_t) {
-        .phase       = kHeaderClientPhaseActive,
-        .header_sent = false,
+        .phase = kHeaderClientPhaseActive,
     };
 }
 

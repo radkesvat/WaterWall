@@ -12,6 +12,8 @@ void headerserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
     if (ts->override_mode == kHeaderServerOverrideModeConstant)
     {
         addresscontextSetPort(lineGetDestinationAddressContext(l), ts->constant_port);
+        headerserverLinestateDestroy(ls);
+        tunnelBypassLine(t, l);
         tunnelNextUpStreamInit(t, l);
     }
 }

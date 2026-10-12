@@ -61,7 +61,10 @@ void testHeaderSplice(bool splice)
         lineGetSourceAddressContext(f.line)->port          = 4660;
         lineGetRoutingContext(f.line)->peer_source_port    = 4660;
         lineGetRoutingContext(f.line)->local_listener_port = 80;
-        f.node->fnInitU(f.node, f.line);
+        f.prev->chain_index                                = 0;
+        f.node->chain_index                                = 1;
+        f.next->chain_index                                = 2;
+        tunnelUpStreamInit(f.node, f.line);
         uint8_t  expected[160];
         uint32_t header = mode < 2 ? 2 : mode == 2 ? sizeof(v1) - 1 : sizeof(v2);
         if (mode < 2)
@@ -74,16 +77,22 @@ void testHeaderSplice(bool splice)
         memcpy(expected + header, "prebody", 7);
         sbuf_t *buf = easyPayload(splice);
         easyExpect(&f, buf, expected, header + 7, header + 3);
-        f.node->fnPayloadU(f.node, f.line, buf);
+        tunnelUpStreamPayload(f.node, f.line, buf);
         easyRequire(f.expected == NULL && f.upstream == 1, "first header delivery");
+        easyRequire(! tunnelIsActiveForLine(f.node, f.line), "HeaderClient stayed active after its header");
+        const uint8_t *state = lineGetState(f.line, f.node);
+        for (uint32_t i = 0; i < f.node->lstate_size; ++i)
+            easyRequire(state[i] == 0, "HeaderClient retained state after bypass");
         buf = easyPayload(! splice && WW_HAVE_SPLICE);
         easyExpect(&f, buf, "prebody", 7, 3);
-        f.node->fnPayloadU(f.node, f.line, buf);
+        tunnelUpStreamPayload(f.node, f.line, buf);
         easyRequire(f.expected == NULL && f.upstream == 2, "header repeated on later/mixed delivery");
         buf = easyPayload(splice);
         easyExpect(&f, buf, "prebody", 7, 3);
-        f.node->fnPayloadD(f.node, f.line, buf);
+        tunnelDownStreamPayload(f.node, f.line, buf);
         easyRequire(f.expected == NULL && f.downstream == 1, "downstream passthrough");
+        tunnelDownStreamFin(f.node, f.line);
+        easyRequire(f.line == NULL && f.finishes == 1, "bypassed HeaderClient lost Finish");
         easyTeardown(&f);
         cJSON_Delete(node.node_settings_json);
         memoryFree(node.type);
@@ -92,12 +101,12 @@ void testHeaderSplice(bool splice)
     node.node_settings_json = cJSON_Parse(settings[2]);
     easy_fixture_t f;
     easySetup(&f, node.createHandle(&node));
-    f.node->fnInitU(f.node, f.line);
+    tunnelUpStreamInit(f.node, f.line);
     sbuf_t *buf = easyPayload(splice);
     easyWatch(buf);
     addresscontextSetIpAddress(lineGetSourceAddressContext(f.line), "192.0.2.1");
     fail_header = true;
-    f.node->fnPayloadU(f.node, f.line, buf);
+    tunnelUpStreamPayload(f.node, f.line, buf);
     fail_header = false;
     easyRequireDisposed();
     easyRequire(f.line == NULL && f.finishes == 2 && f.upstream == 0, "header failure cleanup");

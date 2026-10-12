@@ -124,7 +124,7 @@ A controller can replace the outbound section with any compatible chain, includi
 
 HTTP/1.0 clients get one exchange and close. A single Expect: 100-continue on an ordinary HTTP/1.0 request is ignored and removed before forwarding; its body proceeds without a Continue handshake. Chunked upstream responses are decoded to close-delimited output for them, with trailers dropped. Close-delimited responses and Connection close responses complete before closing the client. The existing TCP adapters turn read EOF into full closure on both POSIX and Windows IOCP; full half-close semantics and new reverse traffic after peer EOF are not promised.
 
-The incoming line is borrowed from its source owner. HttpProxyServer creates, inventories, and destroys its separate outbound child. Worker quiescence detaches timers and disables new work; worker drain closes every owned child independently of source drain order.
+The incoming line is borrowed from its source owner. HttpProxyServer creates, inventories, and destroys its separate outbound child. It is the incoming line's tail and the child's head, including during CONNECT and fallback relay. It therefore remains active to map payload, pressure and closure between those lines, and retains producer control with idempotent Pause/Resume handling. Permanent per-line tunnel bypass does not apply to this association. Worker quiescence detaches timers and disables new work; worker drain closes every owned child independently of source drain order.
 
 ## Complete examples
 

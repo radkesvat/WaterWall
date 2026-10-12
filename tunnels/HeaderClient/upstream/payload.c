@@ -161,23 +161,20 @@ void headerclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     headerclient_tstate_t *ts = tunnelGetState(t);
     headerclient_lstate_t *ls = lineGetState(l, t);
 
-    if (! ls->header_sent)
+    uint8_t  header[kHeaderClientMaxHeaderSize];
+    uint32_t header_len = headerclientBuildHeader(ts, l, header);
+    if (UNLIKELY(header_len == 0))
     {
-        uint8_t  header[kHeaderClientMaxHeaderSize];
-        uint32_t header_len = headerclientBuildHeader(ts, l, header);
-        if (UNLIKELY(header_len == 0))
-        {
-            LOGE("HeaderClient: could not build configured header");
-            lineReuseBuffer(l, buf);
-            headerclientCloseLineFromHeaderError(t, l, ls);
-            return;
-        }
-
-        ls->header_sent = true;
-        assert(sbufGetLeftCapacity(buf) >= header_len);
-        sbufShiftLeft(buf, header_len);
-        sbufWrite(buf, header, header_len);
+        LOGE("HeaderClient: could not build configured header");
+        lineReuseBuffer(l, buf);
+        headerclientCloseLineFromHeaderError(t, l, ls);
+        return;
     }
 
+    assert(sbufGetLeftCapacity(buf) >= header_len);
+    sbufShiftLeft(buf, header_len);
+    sbufWrite(buf, header, header_len);
+    headerclientLinestateDestroy(ls);
+    tunnelBypassLine(t, l);
     tunnelNextUpStreamPayload(t, l, buf);
 }

@@ -348,19 +348,14 @@ void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->phase == kHeaderServerPhaseEstablished)
     {
-        if (ls->initial_forwarding)
+        /* Established state exists only until the initial replay retires it. */
+        if (UNLIKELY(sbufGetLength(buf) > kHeaderServerMaxReentryBytes - bufferqueueGetBufLen(&ls->initial_reentry) ||
+                     bufferqueueGetBufCount(&ls->initial_reentry) >= kHeaderServerMaxReentryBuffers ||
+                     ! bufferqueueTryPushBack(&ls->initial_reentry, &buf)))
         {
-            if (UNLIKELY(sbufGetLength(buf) >
-                             kHeaderServerMaxReentryBytes - bufferqueueGetBufLen(&ls->initial_reentry) ||
-                         bufferqueueGetBufCount(&ls->initial_reentry) >= kHeaderServerMaxReentryBuffers ||
-                         ! bufferqueueTryPushBack(&ls->initial_reentry, &buf)))
-            {
-                lineReuseBuffer(l, buf);
-                headerserverCloseLineFromProtocolError(t, l);
-            }
-            return;
+            lineReuseBuffer(l, buf);
+            headerserverCloseLineFromProtocolError(t, l);
         }
-        tunnelNextUpStreamPayload(t, l, buf);
         return;
     }
 
@@ -379,10 +374,9 @@ void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    buffer_pool_t *pool    = lineGetBufferPool(l);
-    sbuf_t        *first   = bufferstreamFullRead(&ls->read_stream);
-    ls->phase              = kHeaderServerPhaseEstablished;
-    ls->initial_forwarding = true;
+    buffer_pool_t *pool  = lineGetBufferPool(l);
+    sbuf_t        *first = bufferstreamFullRead(&ls->read_stream);
+    ls->phase            = kHeaderServerPhaseEstablished;
     lineRef(l);
     tunnelNextUpStreamInit(t, l);
     while (lineIsAlive(l))
@@ -396,7 +390,8 @@ void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         first       = NULL;
         if (out == NULL)
         {
-            ls->initial_forwarding = false;
+            headerserverLinestateDestroy(ls);
+            tunnelBypassLine(t, l);
             break;
         }
         tunnelNextUpStreamPayload(t, l, out);

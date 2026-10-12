@@ -282,11 +282,12 @@ send-only completion or TCP half-close signal.
 
 When the source sends `Finish`, HttpProxyClient may send `0\r\n\r\n` to terminate
 the chunked request. This happens only if the request header has already been
-sent, no older upload buffers or active chunk remain, the next side is writable,
-normal dispatch is still allowed, and the response has not already completed.
+sent, no older upload buffers or active chunk remain, normal dispatch is still
+allowed, and the response has not already completed. Advisory Pause does not
+suppress this terminal chunk.
 The node then destroys its state and forwards `Finish`; it does not retain the
-line to receive a response. A paused or incomplete upload is closed without a
-terminal chunk, and final-byte delivery is not guaranteed.
+line to receive a response. An incomplete upload with older pending work is
+closed without a terminal chunk, and final-byte delivery is not guaranteed.
 
 A terminal HTTP chunk can mark the request end without closing TCP. The
 limitation here is the absence of a separate WaterWall signal for “upload
@@ -300,15 +301,23 @@ incomplete upload; the origin should consume the bytes it needs before respondin
 
 ## Response and Connection Behavior
 
-The request header is sent as soon as the following Init returns and output is
-permitted. There is no first-payload delay, and it does not wait for transport
-`Est`. Transport `Est` is forwarded independently and does not mean the proxy
+The request header is sent as soon as the following Init returns and normal
+dispatch remains allowed, including during advisory Pause. There is no
+first-payload delay, and it does not wait for transport `Est`. Every transport
+`Est` is forwarded independently, including repeats, and does not mean the proxy
 has accepted the request.
 
 CONNECT holds application data until a successful final response, then relays
 opaque bytes. HTTP mode can send its body immediately after the request header
-and receive a response while uploading. Protocol holds and retained FIFO drains
-apply backpressure; an already admitted bounded input may complete after Pause.
+and receive a response while uploading. Pause/Resume are relayed transparently,
+including duplicates. Ready headers, FIFO drains and chunk suffixes do not wait
+for Resume; protocol barriers and storage bounds still apply. Locally originated
+protocol/FIFO Pause is released when its hold clears, while a relayed Resume may
+override that advisory signal.
+
+Both modes remain active for the lifetime of the line: CONNECT retains its
+configured idle deadline after negotiation, and HTTP mode also retains body
+framing and completion duties. Permanent bypass would discard those obligations.
 
 Both modes require an HTTP/1.1 final 2xx response and consume up to 32
 informational responses internally. HTTP/1.0, `101`/Upgrade, non-2xx finals

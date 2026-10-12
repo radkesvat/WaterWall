@@ -12,7 +12,7 @@ It is most often used for one of two jobs:
 - passing WaterWall routing metadata to a paired `HeaderServer`
 - adding a HAProxy PROXY protocol header before traffic reaches a receiver that understands PROXY protocol
 
-`HeaderClient` does not open sockets and does not create lines. It only mutates the first upstream payload, then becomes transparent for the rest of the line.
+`HeaderClient` does not open sockets and does not create lines. It only mutates the first upstream payload. Before handing that payload onward, it destroys and zeros its line state and permanently bypasses itself. Later callbacks go directly to the adjacent active nodes. Pause/Resume remain transparent and repeatable throughout startup.
 
 ## What It Does
 
@@ -24,7 +24,7 @@ It is most often used for one of two jobs:
 - Supports IPv4-only HAProxy PROXY protocol v1 and v2 headers with a configured frontend IPv4 address.
 - Forwards every later upstream payload unchanged.
 - Forwards downstream payload, `Est`, `Pause`, and `Resume` unchanged.
-- Destroys local line state before forwarding either directional `Finish`.
+- Destroys local line state before bypass, or before forwarding an earlier directional `Finish`.
 
 ## Typical Placement
 
@@ -322,6 +322,9 @@ If `HeaderServer.settings.override` is a number, the server sets a constant dest
 `UpStreamEst` and `DownStreamInit` are disabled callbacks for this node.
 
 ## Finish Behavior
+
+Before the first upstream payload, the node handles Finish as described below. After
+bypass, Finish travels directly to the next active node in its direction.
 
 On upstream `Finish`, `HeaderClient` destroys its local line state and forwards the finish to `next`.
 

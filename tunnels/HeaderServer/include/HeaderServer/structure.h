@@ -29,8 +29,6 @@ typedef struct headerserver_lstate_s
     buffer_stream_t      read_stream;
     /* Nested input received while next Init/initial replay is on the stack. */
     buffer_queue_t initial_reentry;
-    bool           initial_forwarding;
-    bool           transport_est_sent;
 } headerserver_lstate_t;
 
 enum

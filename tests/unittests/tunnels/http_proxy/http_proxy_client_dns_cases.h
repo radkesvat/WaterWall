@@ -89,7 +89,7 @@ static void        dnsOpen(unsigned strategy, bool dynamic_address, bool dynamic
 static void dnsStart(void)
 {
     require(entry == tunnelGetBranchEntry(prev, proxy), "exported entry");
-    entry->fnInitU(entry, line);
+    tunnelUpStreamInit(entry, line);
 }
 static void numericWire(const char *authority)
 {
@@ -235,14 +235,15 @@ static void dnsTests(void)
         sbuf_t   *b        = input("older", 5);
         uintptr_t identity = (uintptr_t) b;
         inject_pause_input = inject_resume_input = true;
-        entry->fnPayloadU(entry, line, b);
+        tunnelUpStreamPayload(entry, line, b);
         source_in_est = init_est = init_pause = true;
         dnsComplete(ARES_SUCCESS, both, 2);
-        require(source_paused && ! writes && established == 1, "startup pressure/Est");
-        proxy->fnResumeD(proxy, line);
-        require(source_paused && writes == 1, "transport Resume cleared protocol/FIFO hold");
+        require(source_paused && writes == 1 && established == 2, "startup pressure/Est");
+        tunnelDownStreamResume(proxy, line);
+        require(! source_paused && writes == 1, "advisory transport Resume was not relayed");
         sendText(true, "HTTP/1.1 200 OK\r\n\r\n");
-        require(strstr(sent, "\r\n\r\nolderpauseearlyresume") && ! source_paused && (! rep || second_up == identity),
+        require(strstr(sent, "\r\n\r\nolderpauseearlyearlyresume") && ! source_paused &&
+                    (! rep || second_up == identity),
                 "resolver FIFO or opaque wrapper lost");
         closeLine();
     }
@@ -251,7 +252,7 @@ static void dnsTests(void)
     dnsStart();
     sbuf_t *big = hpcBuffer(line, kHpcDeliveryLimit + 1);
     sbufSetLength(big, kHpcDeliveryLimit + 1);
-    entry->fnPayloadU(entry, line, big);
+    tunnelUpStreamPayload(entry, line, big);
     require(! lineIsAlive(line) && ! next_inits, "resolver overflow");
     dnsComplete(ARES_SUCCESS, both, 2);
     closeLine();

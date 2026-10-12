@@ -2,8 +2,7 @@
 void httpproxyclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
     hpc_lstate_t *ls = lineGetState(l, t);
-    if (ls->prev_finished || ls->est_sent)
+    if (ls->prev_finished)
         return;
-    ls->est_sent = true;
     tunnelPrevDownStreamEst(t, l);
 }

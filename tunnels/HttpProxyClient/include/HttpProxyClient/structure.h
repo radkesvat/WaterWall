@@ -59,11 +59,8 @@ struct hpc_lstate_s
     bool                        init_busy : 1;
     bool                        header_sent : 1;
     bool                        accepted : 1;
-    bool                        est_sent : 1;
     bool                        up_busy : 1;
     bool                        down_busy : 1;
-    bool                        next_paused : 1;
-    bool                        prev_paused : 1;
     bool                        source_paused : 1;
     bool                        prev_finished : 1;
     bool                        next_finished : 1;

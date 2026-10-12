@@ -2,7 +2,8 @@
 
 The [native fixture](headerserver_est_ordering_test.c) checks real-pipe split
 port/PROXY headers, coalesced tails, nested initialization input and opaque
-established forwarding. The previous mock owns the normal line; HeaderServer and
+established forwarding. It also checks repeated Est and Pause/Resume, retirement
+after the initial FIFO drains, zeroed state and callback dispatch after bypass. The previous mock owns the normal line; HeaderServer and
 the next mock borrow it, with a held observation reference for post-Finish checks.
 The source gives its exact CTest name and feature conditions.
 

@@ -27,7 +27,6 @@ typedef struct headerclient_tstate_s
 typedef struct headerclient_lstate_s
 {
     headerclient_phase_e phase;
-    bool                 header_sent;
 } headerclient_lstate_t;
 
 enum

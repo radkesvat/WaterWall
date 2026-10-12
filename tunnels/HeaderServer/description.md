@@ -6,9 +6,13 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 # HeaderServer
 
 `HeaderServer` publishes its continuing-path state before calling the next Init, so a synchronous transport Est is
-forwarded promptly and once. Input submitted reentrantly from Init, Est or initial replay stays behind the original
+forwarded promptly, including repeated notifications. Input submitted reentrantly from Init, Est or initial replay stays behind the original
 accepted bytes. This temporary ordering FIFO is bounded to 2 MiB / 1,024 buffers and is drained within the current
 synchronous dispatch; it is empty on the ordinary direct path. Overflow closes the borrowed line through its owner.
+
+After next Init and the initial FIFO replay finish, the node destroys and zeros its line state and permanently
+bypasses itself. Constant-port mode bypasses immediately after applying the port, before forwarding Init.
+Pause/Resume are transparent and repeatable once the next side is initialized; they do not gate the initial replay.
 
 `HeaderServer` is the server-side reader for small connection metadata headers.
 It can do three different jobs:
@@ -252,6 +256,9 @@ upstream and downstream callbacks are forwarded directionally.
 `UpStreamEst` and `DownStreamInit` are disabled callbacks for this node.
 
 ## Finish Behavior
+
+After bypass, Finish travels directly to the next active node in its direction.
+The following cleanup applies while header routing or initial replay is active.
 
 On upstream `Finish`, `HeaderServer` destroys local line state. It forwards the
 finish to `next` only if the line had already completed header routing and

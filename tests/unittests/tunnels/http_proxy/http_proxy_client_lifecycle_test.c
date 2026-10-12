@@ -26,7 +26,7 @@
 
 static tunnel_t       *proxy, *prev, *next, *entry;
 static bool            defer_start, inject_pause_input, inject_resume_input;
-static unsigned        next_inits;
+static unsigned        next_inits, pauses[2], resumes[2];
 static line_t         *line;
 static tunnel_chain_t *chain;
 static node_t          node;
@@ -90,9 +90,9 @@ static void sendn(bool down, const void *bytes, size_t length)
     require(lineIsAlive(line), "send after death in fixture");
     sbuf_t *b = input(bytes, length);
     if (down)
-        proxy->fnPayloadD(proxy, line, b);
+        tunnelDownStreamPayload(proxy, line, b);
     else
-        entry->fnPayloadU(entry, line, b);
+        tunnelUpStreamPayload(entry, line, b);
 }
 static void sendText(bool down, const char *bytes)
 {
@@ -100,7 +100,7 @@ static void sendText(bool down, const char *bytes)
 }
 static void sourceClose(void)
 {
-    entry->fnFinU(entry, line);
+    tunnelUpStreamFin(entry, line);
     require(lineIsAlive(line), "client destroyed borrowed line");
     lineDestroy(line);
 }
@@ -135,6 +135,7 @@ static void previousPause(tunnel_t *t, line_t *l)
 {
     discard t;
     discard l;
+    ++pauses[0];
     source_paused = true;
     if (inject_pause_input)
     {
@@ -152,6 +153,7 @@ static void previousResume(tunnel_t *t, line_t *l)
     requireParsingRetired();
     discard t;
     discard l;
+    ++resumes[0];
     source_paused = false;
     if (inject_resume_input)
     {
@@ -164,35 +166,42 @@ static void previousResume(tunnel_t *t, line_t *l)
         sourceClose();
     }
 }
-static void nextSignal(tunnel_t *t, line_t *l)
+static void nextPause(tunnel_t *t, line_t *l)
 {
     discard t;
     discard l;
+    ++pauses[1];
+}
+static void nextResume(tunnel_t *t, line_t *l)
+{
+    discard t;
+    discard l;
+    ++resumes[1];
 }
 static void action(unsigned which)
 {
     if (which == 12)
-        proxy->fnResumeD(proxy, line);
+        tunnelDownStreamResume(proxy, line);
     if (which == 1)
         sendText(false, "new");
     if (which == 2)
-        proxy->fnPauseD(proxy, line);
+        tunnelDownStreamPause(proxy, line);
     if (which == 3)
     {
-        proxy->fnPauseD(proxy, line);
-        proxy->fnResumeD(proxy, line);
+        tunnelDownStreamPause(proxy, line);
+        tunnelDownStreamResume(proxy, line);
         sendText(false, "new");
     }
     if (which == 4)
         sourceClose();
     if (which == 5)
-        proxy->fnFinD(proxy, line);
+        tunnelDownStreamFin(proxy, line);
     if (which == 6)
         sendText(true, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokTAIL");
     if (which == 7)
     {
         sendText(false, "new");
-        proxy->fnPauseD(proxy, line);
+        tunnelDownStreamPause(proxy, line);
     }
     if (which == 8)
         sendText(true, "HTTP/1.1 200 OK\r\n\r\n");
@@ -200,16 +209,16 @@ static void action(unsigned which)
         sendText(true, "new");
     if (which == 10)
     {
-        proxy->fnPauseU(proxy, line);
+        tunnelUpStreamPause(proxy, line);
         sendText(true, "new");
     }
     if (which == 11)
     {
-        proxy->fnPauseD(proxy, line);
-        proxy->fnResumeD(proxy, line);
-        proxy->fnEstD(proxy, line);
+        tunnelDownStreamPause(proxy, line);
+        tunnelDownStreamResume(proxy, line);
+        tunnelDownStreamEst(proxy, line);
         sendText(true, "ignored");
-        proxy->fnFinD(proxy, line);
+        tunnelDownStreamFin(proxy, line);
     }
 }
 static void nextPayload(tunnel_t *t, line_t *l, sbuf_t *b)
@@ -265,25 +274,25 @@ static void nextInit(tunnel_t *t, line_t *l)
     }
     if (init_est)
     {
-        proxy->fnEstD(proxy, l);
+        tunnelDownStreamEst(proxy, l);
         if (! lineIsAlive(l))
         {
             in_init = false;
             return;
         }
-        proxy->fnEstD(proxy, l);
+        tunnelDownStreamEst(proxy, l);
     }
     if (init_pause)
-        proxy->fnPauseD(proxy, l);
+        tunnelDownStreamPause(proxy, l);
     if (! lineIsAlive(l))
     {
         in_init = false;
         return;
     }
     if (init_resume)
-        proxy->fnResumeD(proxy, l);
+        tunnelDownStreamResume(proxy, l);
     if (init_finish)
-        proxy->fnFinD(proxy, l);
+        tunnelDownStreamFin(proxy, l);
     if (quiesce_in_init)
         httpproxyclientTunnelOnWorkerQuiesce(proxy, 0, NULL);
     in_init = false;
@@ -325,17 +334,19 @@ static void openLine(const char *settings)
     next->fnInitU               = nextInit;
     next->fnFinU                = nextFinish;
     next->fnPayloadU            = nextPayload;
-    next->fnPauseU              = nextSignal;
-    next->fnResumeU             = nextSignal;
+    next->fnPauseU              = nextPause;
+    next->fnResumeU             = nextResume;
     chain                       = tunnelchainCreate(1);
     chain->masterpool_line_pool = masterpoolCreateWithCapacity(8);
     uint32_t size, offset = 0;
+    prev->onIndex(prev, 0, &offset);
     if (entry != proxy)
     {
-        entry->onIndex(entry, 0, &offset);
+        entry->onIndex(entry, 1, &offset);
         entry->chain = chain;
     }
-    proxy->onIndex(proxy, entry != proxy ? 1 : 0, &offset);
+    proxy->onIndex(proxy, entry != proxy ? 2 : 1, &offset);
+    next->onIndex(next, entry != proxy ? 3 : 2, &offset);
     require(tunnelchainTryComputeLineItemSize(offset, &size), "line size");
     chain->line_pools[0] =
         genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(chain->masterpool_line_pool, size, 4);
@@ -349,10 +360,11 @@ static void openLine(const char *settings)
     writes = finishes = previous_finishes = established = next_inits = 0;
     last_up = last_down = second_up = 0;
     source_paused                   = false;
+    pauses[0] = pauses[1] = resumes[0] = resumes[1] = 0;
     if (late_init)
         httpproxyclientTunnelOnWorkerQuiesce(proxy, 0, NULL);
     if (! defer_start)
-        entry->fnInitU(entry, line);
+        tunnelUpStreamInit(entry, line);
     require(! linePrefersOrdinaryReadUpstream(line) && ! linePrefersOrdinaryReadDownstream(line),
             "client selected ordinary reads instead of retaining its direct body paths");
 }
@@ -429,18 +441,31 @@ static void startup(void)
     require(writes == 1 && established == 0, "immediate header requires neither input nor Est");
     sendText(false, "early");
     require(writes == 1 && source_paused, "CONNECT early upload escaped");
-    proxy->fnEstD(proxy, line);
-    proxy->fnEstD(proxy, line);
-    require(established == 1, "Est once");
+    tunnelDownStreamEst(proxy, line);
+    tunnelDownStreamEst(proxy, line);
+    require(established == 2, "repeated Est was suppressed");
     sendText(true, "HTTP/1.1 200 OK\r\nContent-Length: bad\r\nTransfer-Encoding: gzip\r\n\r\nreply");
     require(writes == 2 && strstr(sent, "\r\n\r\nearly") && ! stringCompare(received, "reply") && ! source_paused,
             "CONNECT transition");
     closeLine();
     init_est = source_in_est = init_pause = true;
     openLine(chunk_settings);
-    require(writes == 0 && established == 1, "paused Init emitted header or delayed Est");
-    proxy->fnResumeD(proxy, line);
-    require(writes == 3 && strstr(sent, "\r\n\r\n5\r\nearly\r\n"), "Init reentry body/header order");
+    require(writes == 5 && established == 2 && strstr(sent, "\r\n\r\n5\r\nearly\r\n5\r\nearly\r\n"),
+            "advisory Pause delayed Init header or repeated Est input escaped FIFO");
+    unsigned previous_pauses = pauses[0], previous_resumes = resumes[0];
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        tunnelDownStreamPause(proxy, line);
+        tunnelUpStreamPause(proxy, line);
+    }
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        tunnelDownStreamResume(proxy, line);
+        tunnelUpStreamResume(proxy, line);
+    }
+    require(pauses[0] == previous_pauses + 2 && resumes[0] == previous_resumes + 2 && pauses[1] == 2 &&
+                resumes[1] == 2 && writes == 5,
+            "Pause/Resume did not relay every notification transparently");
     closeLine();
     init_pause = init_resume = true;
     openLine(connect_settings);
@@ -599,9 +624,8 @@ static void reentry(void)
             require(strstr(sent, "3\r\nold\r\n") != NULL, "Pause split admitted chunk");
             if (event == 7)
             {
-                require(! strstr(sent, "new"), "paused backlog drained");
-                proxy->fnResumeD(proxy, line);
-                require(strstr(sent, "old\r\n3\r\nnew\r\n") != NULL, "Resume reordered suffix");
+                require(strstr(sent, "old\r\n3\r\nnew\r\n") != NULL,
+                        "advisory Pause delayed ready backlog or reordered suffix");
             }
         }
         else
@@ -615,10 +639,10 @@ static void reentry(void)
     require(finishes == 0 && previous_finishes == 0 && established == 0, "terminal callback reflected Finish/Est");
     closeLine();
     openLine(chunk_settings);
-    proxy->fnPauseD(proxy, line);
+    tunnelDownStreamPause(proxy, line);
     unsigned before = writes;
     sourceClose();
-    require(writes == before, "paused Finish emitted terminal chunk");
+    require(writes == before + 1 && strstr(sent, "0\r\n\r\n"), "advisory Pause suppressed terminal chunk");
     closeLine();
     openLine(get_settings);
     sendText(true, "HTTP/1.1 200 OK\r\n\r\n");
@@ -632,9 +656,7 @@ static void reentry(void)
     on_receive     = 1;
     receive_action = 10;
     sendText(true, "old");
-    require(! stringCompare(received, "old"), "paused independent response backlog");
-    proxy->fnResumeU(proxy, line);
-    require(! stringCompare(received, "oldnew"), "response Resume");
+    require(! stringCompare(received, "oldnew"), "advisory Pause delayed ready response backlog");
     closeLine();
 }
 static void directBuffers(void)
@@ -643,17 +665,17 @@ static void directBuffers(void)
     sendText(true, "HTTP/1.1 200 OK\r\n\r\n");
     sbuf_t   *b        = input("opaque", 6);
     uintptr_t identity = (uintptr_t) b;
-    entry->fnPayloadU(entry, line, b);
+    tunnelUpStreamPayload(entry, line, b);
     require(last_up == identity, "CONNECT upload copied");
     b        = input("opaque", 6);
     identity = (uintptr_t) b;
-    proxy->fnPayloadD(proxy, line, b);
+    tunnelDownStreamPayload(proxy, line, b);
     require(last_down == identity, "CONNECT download copied");
     closeLine();
     openLine(fixed_settings);
     b        = input("abcdef", 6);
     identity = (uintptr_t) b;
-    entry->fnPayloadU(entry, line, b);
+    tunnelUpStreamPayload(entry, line, b);
     require(last_up == identity, "fixed upload copied");
     closeLine();
     openLine(chunk_settings);
@@ -661,7 +683,7 @@ static void directBuffers(void)
     identity     = (uintptr_t) b;
     on_write     = 2;
     write_action = 2;
-    entry->fnPayloadU(entry, line, b);
+    tunnelUpStreamPayload(entry, line, b);
     require(second_up == identity && strstr(sent, "6\r\nabcdef\r\n") && writes == 3, "chunk body/tail bytes");
     closeLine();
     const char *headers[] = {"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\n",
@@ -673,11 +695,11 @@ static void directBuffers(void)
         sendText(true, headers[i]);
         b        = input("abc", 3);
         identity = (uintptr_t) b;
-        proxy->fnPayloadD(proxy, line, b);
+        tunnelDownStreamPayload(proxy, line, b);
         require(last_down == identity, "body-only download copied");
         b        = input("def", 3);
         identity = (uintptr_t) b;
-        proxy->fnPayloadD(proxy, line, b);
+        tunnelDownStreamPayload(proxy, line, b);
         require(last_down == identity, "exact body boundary copied");
         if (i == 2)
             sendText(true, "\r\n0\r\n\r\nTAIL");
@@ -707,11 +729,11 @@ static void ordinaryReadPreferences(void)
         representation     = i;
         sbuf_t   *upload   = input("abc", 3);
         uintptr_t identity = (uintptr_t) upload;
-        proxy->fnPayloadU(proxy, line, upload);
+        tunnelUpStreamPayload(proxy, line, upload);
         require(last_up == identity, "read preference changed opaque upload forwarding");
         sbuf_t *download = input("def", 3);
         identity         = (uintptr_t) download;
-        proxy->fnPayloadD(proxy, line, download);
+        tunnelDownStreamPayload(proxy, line, download);
         require(last_down == identity, "read preference changed opaque download forwarding");
     }
     require(linePrefersOrdinaryReadUpstream(line) && linePrefersOrdinaryReadDownstream(line) &&
@@ -731,12 +753,6 @@ static void additionalBoundaries(void)
     openLine(connect_settings);
     require(lineIsAlive(line) && ! writes && ! ((hpc_lstate_t *) lineGetState(line, proxy))->timer,
             "quiescence during Init emitted header or retained timer");
-    closeLine();
-    init_pause = true;
-    openLine(chunk_settings);
-    require(! writes, "fixture header must be pending");
-    sourceClose();
-    require(! writes && finishes == 1, "source Finish started pending request");
     closeLine();
     init_est     = true;
     close_signal = 1;
@@ -801,16 +817,24 @@ static void additionalBoundaries(void)
     sbufSetLength(b, kHpcDeliveryLimit - 128);
     buffer_budget_cost_t cost;
     require(bufferbudgetTryGetCost(b, &cost) && cost.charge == kHpcDeliveryLimit, "exact charge fixture");
-    entry->fnPayloadU(entry, line, b);
+    tunnelUpStreamPayload(entry, line, b);
     hpc_lstate_t *ls = lineGetState(line, proxy);
     require(lineIsAlive(line) && bufferbudgetGetUsage(&ls->budgets[0]).charge == kHpcDeliveryLimit,
             "exact budget admission");
     /* A full upload budget cannot block a response in the other direction. */
-    proxy->fnPauseD(proxy, line);
+    tunnelDownStreamPause(proxy, line);
     sendText(true, "HTTP/1.1 200 OK\r\n\r\nreply");
     require(! stringCompare(received, "reply"), "full upload budget blocked response");
     sendText(false, "x");
-    require(! lineIsAlive(line), "charge overflow accepted");
+    require(lineIsAlive(line) && ! bufferbudgetGetUsage(&ls->budgets[0]).charge,
+            "advisory Pause retained an established CONNECT upload");
+    closeLine();
+    openLine(connect_settings);
+    b = hpcBuffer(line, kHpcDeliveryLimit - 128);
+    sbufSetLength(b, kHpcDeliveryLimit - 128);
+    tunnelUpStreamPayload(entry, line, b);
+    sendText(false, "x");
+    require(! lineIsAlive(line), "protocol-held charge overflow accepted");
     closeLine();
     openLine(get_settings);
     char oversized[9000];
@@ -841,12 +865,12 @@ static void additionalBoundaries(void)
     require(writes == before, "truncated fixed upload emitted completion");
     closeLine();
     openLine(connect_settings);
-    proxy->fnFinD(proxy, line);
+    tunnelDownStreamFin(proxy, line);
     require(! lineIsAlive(line) && ! finishes, "response truncation reflected");
     closeLine();
     openLine(get_settings);
     sendText(true, "HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\nabc");
-    proxy->fnFinD(proxy, line);
+    tunnelDownStreamFin(proxy, line);
     require(! lineIsAlive(line) && ! finishes, "truncated body reflected");
     closeLine();
     /* Real pipe materialization must exceed the deliberately tiny pool tiers. */
@@ -879,9 +903,9 @@ static void additionalBoundaries(void)
         loop->cur_hrtime = (start + duration - 1) * 1000;
         ls->timer->cb((wevent_t *) ls->timer);
         require(lineIsAlive(line), "deadline early");
-        proxy->fnPauseD(proxy, line);
-        proxy->fnResumeD(proxy, line);
-        proxy->fnEstD(proxy, line);
+        tunnelDownStreamPause(proxy, line);
+        tunnelDownStreamResume(proxy, line);
+        tunnelDownStreamEst(proxy, line);
         loop->cur_hrtime = (start + duration) * 1000;
         ls->timer->cb((wevent_t *) ls->timer);
         require(! lineIsAlive(line), "cached deadline missed");
@@ -904,7 +928,7 @@ static void limitsAndTimers(void)
     openLine(connect_settings);
     sbuf_t *b = hpcBuffer(line, kHpcDeliveryLimit + 1);
     sbufSetLength(b, kHpcDeliveryLimit + 1);
-    entry->fnPayloadU(entry, line, b);
+    tunnelUpStreamPayload(entry, line, b);
     require(! lineIsAlive(line), "delivery cap");
     closeLine();
     openLine(get_settings);
@@ -918,7 +942,7 @@ static void limitsAndTimers(void)
     openLine(connect_settings);
     ls             = lineGetState(line, proxy);
     ls->connect_at = hpcNow(line) - 30000;
-    proxy->fnPauseD(proxy, line);
+    tunnelDownStreamPause(proxy, line);
     timer = ls->timer;
     timer->cb((wevent_t *) timer);
     require(! lineIsAlive(line), "paused CONNECT deadline");

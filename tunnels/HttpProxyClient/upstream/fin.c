@@ -5,7 +5,7 @@ void httpproxyclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     hpc_tstate_t *ts       = tunnelGetState(t);
     bool          terminal = ! (ls->accepted && ls->body.kind == kHpsBodyDone) && ! ts->connect &&
                     ts->upload == kHpcBodyChunked && ls->header_sent && ! ls->init_busy && ! ls->up_busy &&
-                    ! ls->suffix && ! bufferqueueGetBufCount(&ls->pending[0]) && ! ls->next_paused && hpcAllowed(t, l);
+                    ! ls->suffix && ! bufferqueueGetBufCount(&ls->pending[0]) && hpcAllowed(t, l);
     if (! terminal)
     {
         bool next_init = ls->next_init;
