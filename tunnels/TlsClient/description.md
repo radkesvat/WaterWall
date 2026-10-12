@@ -186,22 +186,27 @@ and downstream TLS input do not. The complete message is capped at 64 KiB.
 Non-TLS or unsupported framing, an oversized hello, bypass, and an incomplete
 hello reaching `tls-hello-timeout-ms` pass the original wire bytes unchanged and
 end detection for that line. The timeout starts on the first eligible non-empty
-input, including time waiting for Est or Resume. Finish discards an incomplete
+input, including time waiting for Est. Finish discards an incomplete
 candidate instead of replaying it. The option does not infer SNI-relative cuts
 or provide independent TLS and TCP cut profiles.
 
 `wait-for-est` defaults to true: output waits until transport Est has been
 forwarded, then fragment delays start. The TLS assembly deadline may run before
-Est or while paused; a completed rewrite is no longer subject to that deadline.
+Est or during advisory Pause; a completed rewrite is no longer subject to that
+deadline. Pause/Resume pass through transparently, including duplicates, and
+ready output does not wait for Resume.
 Timed eligibility starts at the first Est by default. Explicit `wait-for-est:
 false` permits output scheduling before Est. Later buffering may combine writes
 or change spacing on the wire; neither mode promises TCP packet boundaries.
 
 The helper borrows the same line and uses its own bounded FIFO: 8 MiB logical
-bytes, 8 MiB capacity charge, and 1,024 jobs. Pause, reentry, Finish, and
-shutdown use StreamFragmenter's normal ordering and cleanup. This budget is
-separate from TLS plaintext and ciphertext-shaping storage. TlsClient still
-blocks whole-chain splice eligibility.
+bytes, 8 MiB capacity charge, and 1,024 jobs. Reentry, Finish, and shutdown use
+StreamFragmenter's normal ordering and cleanup. The helper releases its own
+pressure at its low watermarks, independently of forwarded Pause/Resume. When
+shaping and the startup wait have finished and retained work has drained, it
+destroys its line state and permanently bypasses itself. TlsClient remains active
+for TLS processing. This budget is separate from TLS plaintext and
+ciphertext-shaping storage. TlsClient still blocks whole-chain splice eligibility.
 
 `tls13-record-shaping` can be used with `fragment`: its record padding and
 delays run first, followed by StreamFragmenter. The raw ClientHello-generation

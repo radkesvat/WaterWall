@@ -32,6 +32,7 @@ static tunnel_chain_t *chain;
 static line_t         *line;
 static wloop_t        *loop;
 static unsigned        writes, downstream_writes, pauses, resumes, establishments;
+static unsigned        upstream_pauses, upstream_resumes;
 static uint32_t        lengths[2048];
 static uint64_t        times[2048];
 static bool            spliced[2048], source_paused;
@@ -93,6 +94,14 @@ static streamfragmenter_lstate_t *state(void)
 {
     return lineGetState(line, fragmenter);
 }
+static void requireBypassed(void)
+{
+    require(! tunnelIsActiveForLine(fragmenter, line), "completed shaping remained active");
+    require(tunnelIsActiveForLine(previous, line) && tunnelIsActiveForLine(next, line), "bypass affected a neighbor");
+    const uint8_t *bytes = (const uint8_t *) state();
+    for (uint32_t i = 0; i < fragmenter->lstate_size; ++i)
+        require(bytes[i] == 0, "bypass retained line state");
+}
 static void advance(uint64_t microseconds)
 {
     now_us += microseconds;
@@ -128,25 +137,25 @@ static sbuf_t *input(const char *data, uint32_t length)
 }
 static void sendText(const char *text)
 {
-    fragmenter->fnPayloadU(fragmenter, line, input(text, (uint32_t) stringLength(text)));
+    tunnelUpStreamPayload(fragmenter, line, input(text, (uint32_t) stringLength(text)));
 }
 static void sendBytes(const uint8_t *bytes, uint32_t length)
 {
-    fragmenter->fnPayloadU(fragmenter, line, input((const char *) bytes, length));
+    tunnelUpStreamPayload(fragmenter, line, input((const char *) bytes, length));
 }
 static void sourceClose(void)
 {
-    fragmenter->fnFinU(fragmenter, line);
+    tunnelUpStreamFin(fragmenter, line);
     require(lineIsAlive(line), "node destroyed its borrowed line");
     lineDestroy(line);
 }
 static void consumerClose(void)
 {
-    fragmenter->fnFinD(fragmenter, line);
+    tunnelDownStreamFin(fragmenter, line);
 }
 static void consumerPause(void)
 {
-    fragmenter->fnPauseD(fragmenter, line);
+    tunnelDownStreamPause(fragmenter, line);
 }
 static void inject(void)
 {
@@ -155,7 +164,7 @@ static void inject(void)
 static void resumeThenInject(void)
 {
     consumerPause();
-    fragmenter->fnResumeD(fragmenter, line);
+    tunnelDownStreamResume(fragmenter, line);
     inject();
 }
 static void previousFinish(tunnel_t *t, line_t *l)
@@ -186,6 +195,18 @@ static void previousResume(tunnel_t *t, line_t *l)
     source_paused = false;
     fireHook(&on_resume);
 }
+static void nextPause(tunnel_t *t, line_t *l)
+{
+    discard t;
+    discard l;
+    ++upstream_pauses;
+}
+static void nextResume(tunnel_t *t, line_t *l)
+{
+    discard t;
+    discard l;
+    ++upstream_resumes;
+}
 static void previousEst(tunnel_t *t, line_t *l)
 {
     discard t;
@@ -197,7 +218,7 @@ static void nextInit(tunnel_t *t, line_t *l)
 {
     discard t;
     if (! defer_est)
-        fragmenter->fnEstD(fragmenter, l);
+        tunnelDownStreamEst(fragmenter, l);
 }
 static void capture(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -227,6 +248,7 @@ static void captureDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void openLine(const char *settings)
 {
     writes = downstream_writes = pauses = resumes = establishments = 0;
+    upstream_pauses = upstream_resumes = 0;
     output_size = finish_count = 0;
     output[0] = finishes[0] = 0;
     source_paused           = false;
@@ -247,17 +269,21 @@ static void openLine(const char *settings)
     next->fnInitU        = nextInit;
     next->fnPayloadU     = capture;
     next->fnFinU         = nextFinish;
+    next->fnPauseU       = nextPause;
+    next->fnResumeU      = nextResume;
     chain                = tunnelchainCreate(1);
     tunnelchainInsert(chain, fragmenter);
     /* Model onward padding plus a previous transform's resident prefix. */
     chain->sum_padding_left = 96;
     uint32_t offset         = 0;
-    fragmenter->onIndex(fragmenter, 0, &offset);
+    previous->onIndex(previous, 0, &offset);
+    fragmenter->onIndex(fragmenter, 1, &offset);
+    next->onIndex(next, 2, &offset);
     tunnelchainFinalize(chain);
     require(chain->supports_splice == (WW_HAVE_SPLICE != 0), "splice capability registration");
     line = lineCreate(chain->line_pools, 0);
     lineRef(line);
-    fragmenter->fnInitU(fragmenter, line);
+    tunnelUpStreamInit(fragmenter, line);
     require(establishments == (defer_est ? 0U : 1U), "Est was held by fragmenter");
 }
 static void closeLine(void)
@@ -351,11 +377,12 @@ static void boundaries(void)
     require(writes == 5 && lengths[0] == 1 && lengths[1] == 2 && lengths[2] == 2 && lengths[3] == 2 && lengths[4] == 4,
             "counter counts arrivals including ignored/equal cuts");
     require(! strcmp(output, "abcdefghijk"), "counter bytes");
+    requireBypassed();
     /* A second line in the same instance starts with its own full scope. */
     line_t *first = line;
     line          = lineCreate(chain->line_pools, 0);
     lineRef(line);
-    fragmenter->fnInitU(fragmenter, line);
+    tunnelUpStreamInit(fragmenter, line);
     sendText("lmno");
     require(writes == 7, "per-line independent counter");
     sourceClose();
@@ -369,7 +396,7 @@ static void boundaries(void)
     require(writes == 3 && lengths[0] == 2 && lengths[1] == 2 && lengths[2] == 2, "independent applicable cuts");
     sbuf_t   *down     = input("down", 4);
     uintptr_t original = (uintptr_t) down;
-    fragmenter->fnPayloadD(fragmenter, line, down);
+    tunnelDownStreamPayload(fragmenter, line, down);
     require(downstream_writes == 1 && last_buffer == original, "downstream passthrough");
     closeLine();
 
@@ -385,8 +412,11 @@ static void boundaries(void)
         openLine(disabled[i]);
         sbuf_t *buf = input("unchanged", 9);
         original    = (uintptr_t) buf;
-        fragmenter->fnPayloadU(fragmenter, line, buf);
-        require(writes == 1 && last_buffer == original && ! state()->head && ! state()->timer, "direct bypass path");
+        tunnelUpStreamPayload(fragmenter, line, buf);
+        require(writes == 1 && last_buffer == original, "direct bypass path");
+        requireBypassed();
+        tunnelDownStreamEst(fragmenter, line);
+        require(establishments == 2, "Est stopped after bypass");
         closeLine();
     }
 }
@@ -430,8 +460,9 @@ static void timersAndFifo(void)
     require(writes == 7 && ! strcmp(output, "abcdefghijklMNOP"), "draining FIFO byte order");
     sbuf_t   *buf      = input("PASS", 4);
     uintptr_t original = (uintptr_t) buf;
-    fragmenter->fnPayloadU(fragmenter, line, buf);
-    require(writes == 8 && last_buffer == original && ! state()->head && ! state()->timer, "retired direct path");
+    tunnelUpStreamPayload(fragmenter, line, buf);
+    require(writes == 8 && last_buffer == original, "retired direct path");
+    requireBypassed();
     closeLine();
 
     openLine("{\"mode\":\"timed\",\"duration-ms\":10,\"cuts\":[[2,20,100]]}");
@@ -475,26 +506,36 @@ static void pauseAndReentry(void)
     sendText("abcd");
     advance(2000);
     consumerPause();
+    consumerPause();
     advance(1000);
-    fragmenter->fnResumeD(fragmenter, line);
+    tunnelDownStreamResume(fragmenter, line);
+    tunnelDownStreamResume(fragmenter, line);
+    tunnelUpStreamPause(fragmenter, line);
+    tunnelUpStreamPause(fragmenter, line);
+    tunnelUpStreamResume(fragmenter, line);
+    tunnelUpStreamResume(fragmenter, line);
+    require(pauses == 2 && resumes == 2 && upstream_pauses == 2 && upstream_resumes == 2,
+            "repeat advisory signals were not transparent");
     advance(1999);
     require(! writes, "Resume shortened unexpired delay");
     advance(1);
     require(writes == 2, "Resume restarted unexpired delay");
+    requireBypassed();
     closeLine();
 
     openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,2,100],[4,5,100]]}");
     sendText("abcdef");
     consumerPause();
     advance(20000);
-    require(! writes && ! state()->timer && source_paused, "due output must wait for Resume");
+    require(writes == 1 && state()->timer && source_paused, "due output waited for advisory Resume");
     on_resume = inject;
-    fragmenter->fnResumeD(fragmenter, line);
-    require(writes == 1 && ! source_paused, "Resume must release already elapsed delay");
+    tunnelDownStreamResume(fragmenter, line);
+    require(writes == 1 && ! source_paused, "Resume changed the next fragment deadline");
     advance(4999);
     require(writes == 1, "next delay did not start at actual handoff");
     advance(1);
     require(writes == 4 && ! strcmp(output, "abcdefNEW"), "Resume reentry FIFO");
+    requireBypassed();
     closeLine();
 
     void (*actions[])(void) = {inject, resumeThenInject, sourceClose, consumerClose, consumerPause};
@@ -509,9 +550,10 @@ static void pauseAndReentry(void)
             require(! lineIsAlive(line) && writes == 1 && finish_count == 1, "reentrant Finish continued or reflected");
         else
         {
-            require(writes == 1, "drain continued after synchronous Pause");
-            fragmenter->fnResumeD(fragmenter, line);
-            require(writes == 3, "paused suffix lost");
+            require(writes == 3 && source_paused, "synchronous advisory Pause stopped ready suffix");
+            requireBypassed();
+            tunnelDownStreamResume(fragmenter, line);
+            require(resumes == 1 && ! source_paused && writes == 3, "Resume did not cross bypassed node");
         }
         closeLine();
     }
@@ -535,11 +577,11 @@ static void limitsAndCleanup(void)
         sendText("");
     require(source_paused && pauses == 1, "job high watermark");
     consumerPause();
-    advance(UINT64_C(60000000));
-    require(! writes && resumes == 0, "external pressure must hold expired work");
+    require(pauses == 2, "local pressure swallowed advisory Pause");
     on_resume = inject;
-    fragmenter->fnResumeD(fragmenter, line);
-    require(! source_paused && resumes == 1 && ! strcmp(output, "abcdNEW"), "pressure reasons/hysteresis/FIFO");
+    advance(UINT64_C(60000000));
+    require(! source_paused && resumes == 1 && ! strcmp(output, "abcdNEW"), "local pressure hysteresis/reentrant FIFO");
+    requireBypassed();
     closeLine();
 
     openLine(settings);
@@ -556,17 +598,17 @@ static void limitsAndCleanup(void)
     sbuf_t *large = bufferpoolGetBestFit(lineGetBufferPool(line), 7 * 1024 * 1024, 64);
     sbufWrite(large, "abcd", 4);
     sbufSetLength(large, 4);
-    fragmenter->fnPayloadU(fragmenter, line, large);
+    tunnelUpStreamPayload(fragmenter, line, large);
     require(source_paused && pauses == 1, "allocation capacity must count, not just four payload bytes");
     large = bufferpoolGetBestFit(lineGetBufferPool(line), 2 * 1024 * 1024, 64);
-    fragmenter->fnPayloadU(fragmenter, line, large);
+    tunnelUpStreamPayload(fragmenter, line, large);
     require(! lineIsAlive(line), "8 MiB capacity limit");
     closeLine();
 
     openLine(settings);
     sbuf_t *buf  = input("abcd", 4);
     refuse_timer = true;
-    fragmenter->fnPayloadU(fragmenter, line, buf);
+    tunnelUpStreamPayload(fragmenter, line, buf);
     refuse_timer = false;
     require(! lineIsAlive(line) && ! writes && finish_count == 2, "timer admission refusal");
     closeLine();
@@ -594,21 +636,21 @@ static void limitsAndCleanup(void)
     sendText("abcd");
     consumerPause();
     on_resume = sourceClose;
-    fragmenter->fnResumeD(fragmenter, line);
+    tunnelDownStreamResume(fragmenter, line);
     require(! lineIsAlive(line), "Resume reentrant close");
     closeLine();
 }
 static void injectDuringEst(void)
 {
     inject();
-    fragmenter->fnResumeD(fragmenter, line);
+    tunnelDownStreamResume(fragmenter, line);
     require(! writes && ! state()->timer, "nested input/Resume escaped Est forwarding");
 }
 
 static void injectAndRepeatEst(void)
 {
     injectDuringEst();
-    fragmenter->fnEstD(fragmenter, line);
+    tunnelDownStreamEst(fragmenter, line);
     require(! writes && ! state()->timer, "nested input/Resume/Est escaped outer Est forwarding");
 }
 
@@ -639,7 +681,7 @@ static void delayedEst(void)
     openLine("{\"mode\":\"timed\",\"duration-ms\":10,\"cuts\":[[2,5,100]],\"wait-for-est\":true}");
     sendText("abcd");
     on_est = injectAfterEstWindow;
-    fragmenter->fnEstD(fragmenter, line);
+    tunnelDownStreamEst(fragmenter, line);
     advance(4999);
     require(! writes, "Est callback time consumed the first fragment delay");
     advance(1);
@@ -655,11 +697,11 @@ static void delayedEst(void)
             "pre-Est counter or scheduling");
     advance(1000000);
     consumerPause();
-    fragmenter->fnResumeD(fragmenter, line);
+    tunnelDownStreamResume(fragmenter, line);
     require(pauses == 1 && resumes == 1 && ! source_paused && ! writes && ! state()->timer,
             "pre-Est pressure forwarding or Resume opened the gate");
     on_est = injectAndRepeatEst;
-    fragmenter->fnEstD(fragmenter, line);
+    tunnelDownStreamEst(fragmenter, line);
     require(establishments == 2 && ! writes && state()->timer, "Est not forwarded before scheduling");
     advance(4999);
     require(! writes, "connection wait consumed first delay");
@@ -669,20 +711,21 @@ static void delayedEst(void)
     require(writes == 6 && ! strcmp(output, "abcdEFGHIJKLNEW"), "Est reentry or exhausted input broke FIFO");
     sbuf_t         *buf      = input("PASS", 4);
     const uintptr_t identity = (uintptr_t) buf;
-    fragmenter->fnPayloadU(fragmenter, line, buf);
-    require(last_buffer == identity && ! state()->head && ! state()->timer, "gate did not retire to direct output");
+    tunnelUpStreamPayload(fragmenter, line, buf);
+    require(last_buffer == identity, "gate did not retire to direct output");
+    requireBypassed();
     closeLine();
 
     defer_est = true;
     openLine("{\"mode\":\"timed\",\"duration-ms\":10,\"cuts\":[[2,20,100]]}");
     sendText("abcd");
     advance(50000);
-    fragmenter->fnEstD(fragmenter, line);
+    tunnelDownStreamEst(fragmenter, line);
     advance(9999);
     sendText("EFGH");
     advance(1);
     const uint64_t deadline = state()->deadline_us;
-    fragmenter->fnEstD(fragmenter, line);
+    tunnelDownStreamEst(fragmenter, line);
     sendText("IJKL");
     require(state()->deadline_us == deadline && state()->exhausted && ! state()->tail->cuts,
             "timed scope must start once at Est and exclude its deadline");
@@ -696,12 +739,21 @@ static void delayedEst(void)
     openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,5,100]],\"wait-for-est\":true}");
     sendText("abcd");
     consumerPause();
-    fragmenter->fnEstD(fragmenter, line);
-    require(establishments == 1 && source_paused && state()->timer && ! writes, "Pause held Est or allowed output");
+    tunnelDownStreamEst(fragmenter, line);
+    require(establishments == 1 && source_paused && state()->timer && ! writes,
+            "Pause held Est or lost fragment delay");
     advance(20000);
-    require(! writes && ! state()->timer, "paused due work emitted or polled");
-    fragmenter->fnResumeD(fragmenter, line);
-    require(writes == 2 && ! strcmp(output, "abcd") && ! source_paused, "Resume restarted elapsed delay");
+    require(writes == 2 && ! strcmp(output, "abcd") && source_paused, "post-Est due work waited for Resume");
+    requireBypassed();
+    closeLine();
+
+    defer_est = true;
+    openLine("{\"mode\":\"counter\",\"count\":0,\"cuts\":[],\"wait-for-est\":false}");
+    requireBypassed();
+    sendText("PASS");
+    require(writes == 1 && ! establishments && ! strcmp(output, "PASS"), "disabled shaping retained startup state");
+    consumerClose();
+    require(! lineIsAlive(line) && finish_count == 1, "Finish did not cross bypassed node");
     closeLine();
 
     /* Empty and bypassed input still consumes counter scope before Est. */
@@ -709,7 +761,7 @@ static void delayedEst(void)
     openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,5,100]],\"wait-for-est\":true}");
     sendText("");
     sendText("abcd");
-    fragmenter->fnEstD(fragmenter, line);
+    tunnelDownStreamEst(fragmenter, line);
     require(writes == 2 && lengths[0] == 0 && lengths[1] == 4 && ! state()->timer, "empty arrival lost counter scope");
     closeLine();
 
@@ -725,8 +777,9 @@ static void delayedEst(void)
         openLine(disabled[i]);
         sendText("abcd");
         require(! writes && ! state()->timer, "disabled shaping bypassed startup wait");
-        fragmenter->fnEstD(fragmenter, line);
-        require(writes == 1 && lengths[0] == 4 && ! state()->timer, "disabled shaping gained cuts");
+        tunnelDownStreamEst(fragmenter, line);
+        require(writes == 1 && lengths[0] == 4, "disabled shaping gained cuts");
+        requireBypassed();
         closeLine();
     }
 
@@ -741,7 +794,7 @@ static void delayedEst(void)
             if (during_est)
             {
                 on_est = finish;
-                fragmenter->fnEstD(fragmenter, line);
+                tunnelDownStreamEst(fragmenter, line);
             }
             else
                 finish();
@@ -764,7 +817,7 @@ static void delayedEst(void)
     openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,5,100]],\"wait-for-est\":true}");
     sendText("abcd");
     refuse_timer = true;
-    fragmenter->fnEstD(fragmenter, line);
+    tunnelDownStreamEst(fragmenter, line);
     refuse_timer = false;
     require(establishments == 1 && ! lineIsAlive(line) && ! writes && finish_count == 2, "timer refusal after Est");
     closeLine();
@@ -882,10 +935,12 @@ static void tlsHelloFraming(void)
         openLine("{\"mode\":\"counter\",\"count\":1,\"tls-hello-fragment\":true,"
                  "\"cuts\":[[3,0,100],[100,0,100]]}");
         sendBytes(hello_wire, split);
-        require(state()->protocol == kStreamFragmenterCollecting && ! writes, "split prefix not retained");
+        require(state()->protocol == kStreamFragmenterCollecting && state()->exhausted && ! writes &&
+                    tunnelIsActiveForLine(fragmenter, line),
+                "exhausted scope retired an incomplete TLS candidate");
         sendBytes(hello_wire + split, length - split);
-        require(writes == 3 && checkOutputHello(500) == length + 10 && state()->exhausted,
-                "split record or handshake header");
+        require(writes == 3 && checkOutputHello(500) == length + 10, "split record or handshake header");
+        requireBypassed();
         closeLine();
     }
     openLine("{\"mode\":\"counter\",\"count\":1,\"tls-hello-fragment\":true,"
@@ -943,9 +998,9 @@ static void tlsHelloFallbackAndBounds(void)
     openLine("{\"mode\":\"counter\",\"count\":1,\"tls-hello-fragment\":true,"
              "\"cuts\":[[250,0,100]]}");
     sendBytes(hello_wire, length);
-    require(output_size == length && memoryCompare(output, hello_wire, length) == 0 &&
-                state()->protocol == kStreamFragmenterOpaque,
+    require(output_size == length && memoryCompare(output, hello_wire, length) == 0,
             "oversized hello changed original records");
+    requireBypassed();
     closeLine();
 
     const uint8_t invalid[][9] = {
@@ -962,9 +1017,9 @@ static void tlsHelloFallbackAndBounds(void)
         openLine("{\"mode\":\"counter\",\"count\":1,\"tls-hello-fragment\":true,"
                  "\"cuts\":[[2,0,100]]}");
         sendBytes(invalid[i], sizes[i]);
-        require(output_size == sizes[i] && memoryCompare(output, invalid[i], sizes[i]) == 0 &&
-                    state()->protocol == kStreamFragmenterOpaque,
+        require(output_size == sizes[i] && memoryCompare(output, invalid[i], sizes[i]) == 0,
                 "invalid TLS prefix changed");
+        requireBypassed();
         closeLine();
     }
 
@@ -993,8 +1048,8 @@ static void tlsHelloFallbackAndBounds(void)
     openLine("{\"mode\":\"counter\",\"count\":1,\"tls-hello-fragment\":true,"
              "\"cuts\":[[100,0,100],[101,0,100]]}");
     sendBytes(hello_wire, 9);
-    require(output_size == 9 && state()->protocol == kStreamFragmenterOpaque && ! state()->timer,
-            "inapplicable cuts waited for full hello");
+    require(output_size == 9, "inapplicable cuts waited for full hello");
+    requireBypassed();
     sendBytes(hello_wire + 9, length - 9);
     require(output_size == length && memoryCompare(output, hello_wire, length) == 0,
             "no-cut replay changed original wire");
@@ -1011,8 +1066,8 @@ static void tlsHelloFallbackAndBounds(void)
     {
         openLine(disabled[i]);
         sendBytes(hello_wire, 9);
-        require(output_size == 9 && state()->protocol == kStreamFragmenterOpaque && ! state()->timer,
-                "disabled TLS probing retained prefix");
+        require(output_size == 9, "disabled TLS probing retained prefix");
+        requireBypassed();
         sendBytes(hello_wire + 9, length - 9);
         require(output_size == length && memoryCompare(output, hello_wire, length) == 0,
                 "disabled TLS shaping changed original wire");
@@ -1051,7 +1106,7 @@ static void tlsHelloDeadlineAndLifecycle(void)
     require(! writes && state()->protocol == kStreamFragmenterOpaque && ! state()->timer,
             "pre-Est timeout crossed startup gate");
     sendBytes(hello_wire + 8, length - 8);
-    fragmenter->fnEstD(fragmenter, line);
+    tunnelDownStreamEst(fragmenter, line);
     require(output_size == length && memoryCompare(output, hello_wire, length) == 0, "pre-Est timeout replay");
     closeLine();
 
@@ -1070,19 +1125,20 @@ static void tlsHelloDeadlineAndLifecycle(void)
     sendBytes(hello_wire, 8);
     consumerPause();
     advance(10000);
-    require(! writes && state()->protocol == kStreamFragmenterOpaque && ! state()->timer,
-            "paused timeout emitted or polled");
-    fragmenter->fnResumeD(fragmenter, line);
-    require(output_size == 8, "Resume did not release timed-out prefix");
+    require(output_size == 8 && source_paused, "assembly fallback waited for advisory Resume");
+    requireBypassed();
     closeLine();
 
     openLine(settings);
     sendBytes(hello_wire, 8);
     consumerPause();
     now_us += 10000; /* Resume runs before the due timer dispatch. */
-    fragmenter->fnResumeD(fragmenter, line);
-    require(output_size == 8 && state()->protocol == kStreamFragmenterOpaque && ! state()->timer,
-            "Resume did not enforce an overdue assembly deadline");
+    tunnelDownStreamResume(fragmenter, line);
+    require(! writes && state()->timer_kind == kStreamFragmenterTimerAssembly,
+            "transparent Resume unexpectedly drove assembly");
+    advance(0);
+    require(output_size == 8 && ! source_paused, "due assembly timer did not release fallback");
+    requireBypassed();
     closeLine();
 
     openLine(settings);
@@ -1099,7 +1155,7 @@ static void tlsHelloDeadlineAndLifecycle(void)
     require(state()->protocol == kStreamFragmenterOpaque && ! state()->timer && ! writes,
             "completed hello stayed on assembly timer");
     advance(1000000);
-    fragmenter->fnEstD(fragmenter, line);
+    tunnelDownStreamEst(fragmenter, line);
     require(state()->timer_kind == kStreamFragmenterTimerDelay && ! writes, "Est wait consumed first fragment delay");
     advance(2000);
     require(writes == 2 && checkOutputHello(100) == length + 5, "completed hello was abandoned after Est wait");
@@ -1171,17 +1227,18 @@ static void tlsHelloSelectionAndOwnership(void)
     require(writes == 1, "first cut delay did not start at completion");
     consumerPause();
     advance(10000);
-    require(writes == 1 && ! state()->timer, "paused second cut timer polled or emitted");
-    fragmenter->fnResumeD(fragmenter, line);
-    require(writes == 3 && checkOutputHello(100) == length + 10, "paused second delay restarted or lost bytes");
+    require(writes == 3 && checkOutputHello(100) == length + 10 && source_paused,
+            "second TLS cut waited for advisory Resume");
+    requireBypassed();
     closeLine();
 
+    defer_est = true;
     openLine(settings);
     consumerPause();
     sendBytes(hello_wire, length);
-    require(! writes && state()->head->kind == kStreamFragmenterJobHello, "paused ready hello not retained");
+    require(! writes && state()->head->kind == kStreamFragmenterJobHello, "pre-Est ready hello not retained");
     consumerClose();
-    require(! lineIsAlive(line) && ! writes && finish_count == 1, "paused ready hello escaped Finish");
+    require(! lineIsAlive(line) && ! writes && finish_count == 1, "pre-Est ready hello escaped Finish");
     closeLine();
 
     for (unsigned event = 0; event < 3; ++event)
@@ -1205,12 +1262,13 @@ static void tlsHelloSelectionAndOwnership(void)
 
     openLine(settings);
     consumerPause();
-    sendBytes(hello_wire, length);
     on_resume = inject;
-    fragmenter->fnResumeD(fragmenter, line);
-    require(writes == 4 && checkOutputHello(100) == length + 10 && output_size == length + 13 &&
-                memoryCompare(output + length + 10, "NEW", 3) == 0,
+    on_payload = resumeThenInject;
+    sendBytes(hello_wire, length);
+    require(writes == 5 && checkOutputHello(100) == length + 10 && output_size == length + 16 &&
+                memoryCompare(output + length + 10, "NEWNEW", 6) == 0,
             "Resume reentry overtook ready hello");
+    requireBypassed();
     closeLine();
 
     /* A replacement must fit alongside the candidate, including a second job
@@ -1229,7 +1287,7 @@ static void tlsHelloSelectionAndOwnership(void)
     sbuf_t *large = bufferpoolGetBestFit(lineGetBufferPool(line), 8 * 1024 * 1024, 64);
     memoryCopy(sbufGetMutablePtr(large), hello_wire, length);
     sbufSetLength(large, 8 * 1024 * 1024);
-    fragmenter->fnPayloadU(fragmenter, line, large);
+    tunnelUpStreamPayload(fragmenter, line, large);
     require(! lineIsAlive(line) && ! writes && finish_count == 2, "coalesced suffix exceeded budget");
     closeLine();
 }
@@ -1250,7 +1308,7 @@ static void tlsHelloSplice(void)
                 "mixed private-pipe hello failed");
         sbuf_t         *later    = input((const char *) hello_wire, length);
         const uintptr_t identity = (uintptr_t) later;
-        fragmenter->fnPayloadU(fragmenter, line, later);
+        tunnelUpStreamPayload(fragmenter, line, later);
         require(last_buffer == identity && spliced[2] && output_size == 2 * length + 5,
                 "opaque post-hello pipe lost direct path");
         closeLine();
@@ -1307,7 +1365,7 @@ int main(void)
         openLine("{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,0,100],[4,0,100]]}");
         sbuf_t *buf = input("abcdef", 6);
         refuse_pipe = true;
-        fragmenter->fnPayloadU(fragmenter, line, buf);
+        tunnelUpStreamPayload(fragmenter, line, buf);
         refuse_pipe = false;
         require(writes == 3 && ! spliced[0] && ! spliced[1] && ! strcmp(output, "abcdef"), "pipe allocation fallback");
         closeLine();

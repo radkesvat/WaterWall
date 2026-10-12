@@ -111,8 +111,6 @@ typedef struct streamfragmenter_lstate_s
     streamfragmenter_timer_kind_t timer_kind;
     bool                          exhausted : 1;
     bool                          draining : 1;
-    bool                          consumer_paused : 1;
-    bool                          locally_paused : 1;
     bool                          source_paused : 1;
     bool                          waiting_for_est : 1;
     bool                          est_received : 1;
@@ -121,6 +119,7 @@ typedef struct streamfragmenter_lstate_s
 bool streamfragmenterLoadSettings(streamfragmenter_tstate_t *ts, const cJSON *settings);
 void streamfragmenterLinestateInitialize(streamfragmenter_lstate_t *ls, tunnel_t *t, line_t *l);
 void streamfragmenterLinestateDestroy(streamfragmenter_lstate_t *ls);
+void streamfragmenterTryBypass(tunnel_t *t, line_t *l);
 void streamfragmenterCloseLine(tunnel_t *t, line_t *l);
 bool streamfragmenterUpdatePressure(tunnel_t *t, line_t *l);
 void streamfragmenterDrain(tunnel_t *t, line_t *l);
@@ -142,5 +141,3 @@ void streamfragmenterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void streamfragmenterTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void streamfragmenterTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void streamfragmenterTunnelDownStreamEst(tunnel_t *t, line_t *l);
-void streamfragmenterTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void streamfragmenterTunnelDownStreamResume(tunnel_t *t, line_t *l);

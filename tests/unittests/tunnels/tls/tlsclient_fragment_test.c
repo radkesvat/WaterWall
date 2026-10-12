@@ -84,7 +84,7 @@ static void destroy(tunnel_t *t)
 }
 static void sourceFinish(void)
 {
-    tls->fnFinU(tls, line);
+    tunnelUpStreamFin(tls, line);
     twfRequire(lineIsAlive(line), "TlsClient/helper destroyed borrowed line");
     lineDestroy(line);
 }
@@ -175,11 +175,12 @@ static void openLine(const char *settings)
     uint32_t offset = 0;
     for (uint16_t i = 0; i < chain->tunnels.len; ++i)
         chain->tunnels.tuns[i]->onIndex(chain->tunnels.tuns[i], i, &offset);
+    previous->onIndex(previous, chain->tunnels.len, &offset);
     tunnelchainFinalize(chain);
     twfRequire(! chain->supports_splice && chain->sum_padding_left == 64, "TLS splice block/padding changed");
     line = lineCreate(chain->line_pools, 0);
     lineRef(line);
-    tls->fnInitU(tls, line);
+    tunnelUpStreamInit(tls, line);
     twfRequire(next_inits == 1, "transport Init count");
 }
 static void closeLine(void)
@@ -250,11 +251,12 @@ int main(void)
     memoryCopy(expected, sbufGetRawPtr(fs->head->buf), expected_size);
     tunnelPrevDownStreamPause(backend, line);
     tunnelPrevDownStreamEst(backend, line);
-    twfRequire(prev_est == 1 && ! writes, "Est was delayed by Pause or output bypassed it");
-    tunnelPrevDownStreamResume(backend, line);
-    twfRequire(writes == 3 && lengths[0] == 250 && lengths[1] == 50 && wire_size == expected_size &&
+    twfRequire(prev_est == 1 && writes == 3 && lengths[0] == 250 && lengths[1] == 50 && wire_size == expected_size &&
                    memoryCompare(wire, expected, expected_size) == 0,
-               "fragmented ClientHello bytes changed");
+               "fragmented ClientHello waited for Resume or bytes changed");
+    twfRequire(! tunnelIsActiveForLine(fragment, line), "completed private fragment helper did not bypass");
+    tunnelPrevDownStreamResume(backend, line);
+    twfRequire(writes == 3, "Resume repeated completed output");
     closeLine();
 
     stringNPrintf(json,

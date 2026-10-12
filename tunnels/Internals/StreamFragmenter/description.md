@@ -77,9 +77,9 @@ A job's first delay starts when it becomes the active FIFO head and the startup
 gate is open. Later delays
 start after the previous fragment's actual handoff. Time spent behind older jobs
 does not satisfy a later job's delay. Zero-delay fragments and the final suffix
-are sent immediately when the consumer permits. Scheduling can make delivery
-late, but the node checks monotonic deadlines so timer rounding cannot shorten
-the configured delay.
+are sent immediately once the startup gate is open. Pause/Resume do not delay
+due output. Scheduling can make delivery late, but the node checks monotonic
+deadlines so timer rounding cannot shorten the configured delay.
 
 ### Initial TLS ClientHello records
 
@@ -105,11 +105,12 @@ promise TCP segment boundaries.
 Unsupported framing, non-TLS input, a hello over 64 KiB, a hello sharing its
 final record with another message, bypass, or deadline expiry ends detection
 and forwards the original wire bytes in order. The assembly deadline starts on
-the first eligible non-empty arrival and includes time waiting for Est or Resume.
-Its timer may run before Est or while paused; expiry keeps the original bytes
-behind those output gates. A completed rewrite cannot later time out. Finish
-discards incomplete input without a timeout replay. This option neither locates
-SNI automatically nor applies independent TLS and TCP cut profiles.
+the first eligible non-empty arrival and includes time waiting for Est. Its timer
+may run before Est or during advisory Pause; expiry makes the original bytes
+ready, subject only to the startup wait and older FIFO work. A completed rewrite
+cannot later time out. Finish discards incomplete input without a timeout replay.
+This option neither locates SNI automatically nor applies independent TLS and
+TCP cut profiles.
 
 ### Waiting for transport establishment
 
@@ -122,12 +123,11 @@ through their normal paths.
 Set `wait-for-est: false` to allow scheduling and upstream delivery before Est.
 
 The first downstream Est starts the timed eligibility window and is forwarded
-immediately, including while paused. The startup gate remains closed during
-that notification: nested Payload, Resume or Est cannot release data or start a
-fragment-delay timer. After forwarding returns on the live line, scheduling begins at the FIFO
-head. Duplicate Est notifications still forward but do not restart either the
-eligibility window or fragment delays. Subsequent Pause/Resume retains the usual
-elapsed-delay behavior.
+immediately. The startup gate remains closed during that notification: nested
+Payload, Resume or Est cannot release data or start a fragment-delay timer. After
+forwarding returns on the live line, scheduling begins at the FIFO head. Duplicate Est notifications still forward but do not restart either the
+eligibility window or fragment delays. Pause/Resume pass through without changing
+fragment scheduling.
 
 This can keep configured delays from being consumed while a following TCP
 transport connects. It requires a genuine downstream Est to release input; no
@@ -138,16 +138,21 @@ so this setting does not guarantee packet boundaries or spacing on the wire.
 ## FIFO, pressure, and shutdown
 
 One FIFO owns all retained upstream payloads, including its active head. Bypassed
-payloads and arrivals after eligibility ends remain behind older work. Once
-eligibility ends and retained work drains, writable upstream traffic forwards
-directly without allocating jobs or scheduling timers. Reentrant arrivals cannot
-overtake an active job's remainder.
+payloads and arrivals after eligibility ends remain behind older work. Reentrant
+arrivals cannot overtake an active job's remainder.
 
-Consumer Pause stops upstream output. An armed timer keeps running; expiry while
-paused leaves the due fragment queued, without polling or restarting its delay.
-Resume releases due work. The next fragment's delay starts only after the
-previous fragment is forwarded. Pause/Resume controlling downstream traffic
-continue through the default callbacks.
+Pause/Resume are advisory and forward transparently in both directions, including
+duplicates. Due fragments and ready FIFO work do not wait for Resume. The next
+fragment's delay starts only after the previous fragment is forwarded.
+
+Once shaping eligibility ends, or initial TLS handling finishes, the node
+permanently bypasses itself for that line after the startup wait, retained work,
+timer, and local pressure have settled. It destroys and zeros its line state
+before bypassing; later callbacks skip it. An incomplete TLS candidate still
+finishes or times out even if its selection scope has expired. Timed stream
+eligibility is checked on input or drain; no timer is added solely to retire an
+idle line. Disabled shaping can bypass during Init with `wait-for-est: false`,
+or after the first Est and queued input have settled with the default wait.
 
 The fixed per-line budget includes waiting jobs and the active remainder:
 
@@ -162,8 +167,10 @@ Capacity charge uses WaterWall's buffer-budget accounting, including empty
 buffers and retained ordinary allocation capacity. It is not an RSS or physical
 kernel-pipe-memory limit. Job metadata is bounded by the job count. Fragment
 extraction additionally uses one transient output buffer before transferring it
-to the next node. Consumer and local pressure are combined: clearing one reason
-cannot resume a source still held by the other.
+to the next node. Locally originated Pause is released automatically with Resume
+at the low watermarks. This local hold is independent of forwarded Pause/Resume;
+a forwarded Resume does not settle the node's own hold, and a forwarded Pause
+does not prevent releasing it.
 
 Admission overflow or recoverable job/timer setup refusal closes this connection
 in both directions. It never drops arbitrary TCP bytes while leaving the

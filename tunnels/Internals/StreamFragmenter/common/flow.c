@@ -7,11 +7,11 @@ bool streamfragmenterUpdatePressure(tunnel_t *t, line_t *l)
 {
     streamfragmenter_lstate_t *ls    = lineGetState(l, t);
     const buffer_budget_cost_t usage = bufferbudgetGetUsage(&ls->budget);
+    bool                       paused = ls->source_paused;
     if (usage.charge >= kStreamFragmenterHighCharge || usage.entries >= kStreamFragmenterHighJobs)
-        ls->locally_paused = true;
+        paused = true;
     else if (usage.charge <= kStreamFragmenterLowCharge && usage.entries <= kStreamFragmenterLowJobs)
-        ls->locally_paused = false;
-    const bool paused = ls->consumer_paused || ls->locally_paused;
+        paused = false;
     if (paused == ls->source_paused)
         return true;
     ls->source_paused = paused;
@@ -157,11 +157,6 @@ void streamfragmenterDrain(tunnel_t *t, line_t *l)
             }
             break;
         }
-        /* Timers keep elapsed time during Pause. Due work waits here for Resume.
-         * Rechecking the deadline also handles the timer API's coarse rounding. */
-        if (ls->consumer_paused)
-            break;
-
         sbuf_t *output;
         if (cut)
         {
@@ -204,6 +199,9 @@ void streamfragmenterDrain(tunnel_t *t, line_t *l)
             break;
     }
     if (lineIsAlive(l) && ls->tunnel == t)
+    {
         ls->draining = false;
+        streamfragmenterTryBypass(t, l);
+    }
     lineUnref(l);
 }

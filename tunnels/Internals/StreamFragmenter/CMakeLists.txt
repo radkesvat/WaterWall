@@ -11,8 +11,6 @@ add_library(StreamFragmenter STATIC
     upstream/fin.c
     downstream/fin.c
     downstream/est.c
-    downstream/pause.c
-    downstream/resume.c
 )
 target_include_directories(StreamFragmenter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(StreamFragmenter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/StreamFragmenter)

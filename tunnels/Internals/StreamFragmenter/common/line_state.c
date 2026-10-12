@@ -49,3 +49,21 @@ void streamfragmenterCloseLine(tunnel_t *t, line_t *l)
     tunnelNextUpStreamFinish(t, l);
     tunnelPrevDownStreamFinish(t, l);
 }
+
+void streamfragmenterTryBypass(tunnel_t *t, line_t *l)
+{
+    streamfragmenter_lstate_t       *ls = lineGetState(l, t);
+    const streamfragmenter_tstate_t *ts = tunnelGetState(t);
+    assert(ls->tunnel == t);
+    if (ls->waiting_for_est || ls->draining || ls->head != NULL || ls->timer != NULL || ls->source_paused ||
+        ls->protocol == kStreamFragmenterCollecting)
+        return;
+    if (ts->timed && getHRTimeUs() >= ls->deadline_us)
+        ls->exhausted = true;
+    if (! ls->exhausted && ! (ts->tls_hello_fragment && ls->protocol == kStreamFragmenterOpaque))
+        return;
+
+    /* No later callback needs shaping state. Finish will skip us as well. */
+    streamfragmenterLinestateDestroy(ls);
+    tunnelBypassLine(t, l);
+}

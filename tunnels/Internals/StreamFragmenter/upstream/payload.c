@@ -243,8 +243,9 @@ void streamfragmenterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 cuts |= UINT64_C(1) << i;
     }
 
-    if (cuts == 0 && ls->head == NULL && ! ls->draining && ! ls->consumer_paused && ! ls->waiting_for_est)
+    if (cuts == 0 && ls->head == NULL && ! ls->draining && ! ls->waiting_for_est)
     {
+        streamfragmenterTryBypass(t, l);
         tunnelNextUpStreamPayload(t, l, buf);
         return;
     }
