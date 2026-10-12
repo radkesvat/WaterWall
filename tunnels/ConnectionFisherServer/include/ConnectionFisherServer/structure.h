@@ -19,7 +19,7 @@ typedef struct connectionfisherserver_lstate_s
 {
     connectionfisherserver_phase_e phase;
     bool                           next_init_sent;
-    bool                           est_forwarded;
+    bool                           pending_next_pause;
     bool                           dispatching;
     /* Holds older coalesced body across reply/Init and serializes nested input. */
     buffer_queue_t  pending_up;

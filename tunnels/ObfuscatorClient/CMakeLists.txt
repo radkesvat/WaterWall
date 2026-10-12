@@ -10,8 +10,6 @@ add_library(ObfuscatorClient STATIC
                     downstream/init.c
                     upstream/fin.c
                     downstream/fin.c
-                    upstream/pause.c
-                    upstream/resume.c
                     upstream/payload.c
                     downstream/payload.c
 

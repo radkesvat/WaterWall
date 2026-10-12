@@ -8,11 +8,6 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
         lineReuseBuffer(l, buf);
         return;
     }
-    if (ls->phase == kConnectionFisherServerPhaseEstablished && ! ls->dispatching)
-    {
-        tunnelNextUpStreamPayload(t, l, buf);
-        return;
-    }
     if (UNLIKELY(sbufGetLength(buf) == 0))
     {
         lineReuseBuffer(l, buf);
@@ -58,6 +53,16 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
                 bufferpoolReuseBuffer(pool, buf);
                 break;
             }
+            if (ls->pending_next_pause)
+            {
+                ls->pending_next_pause = false;
+                tunnelNextUpStreamPause(t, l);
+                if (UNLIKELY(! lineIsAlive(l) || ls->phase == kConnectionFisherServerPhaseClosing))
+                {
+                    bufferpoolReuseBuffer(pool, buf);
+                    break;
+                }
+            }
         }
         ls->init_payload_bytes = 0;
         tunnelNextUpStreamPayload(t, l, buf);
@@ -66,7 +71,10 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
     {
         ls->dispatching = false;
         if (ls->phase == kConnectionFisherServerPhaseEstablished)
-            bufferqueueDestroy(&ls->pending_up);
+        {
+            connectionfisherserverLinestateDestroy(ls);
+            tunnelBypassLine(t, l);
+        }
     }
     lineUnref(l);
 }

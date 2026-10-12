@@ -115,15 +115,15 @@ static sbuf_t *input(const void *data, uint32_t length, bool pipe)
 
 static void upstream(sbuf_t *buf)
 {
-    node->fnPayloadU(node, main_line, buf);
+    tunnelUpStreamPayload(node, main_line, buf);
 }
 
 static void downstream(sbuf_t *buf)
 {
 #ifdef TEST_FISHER_SERVER
-    node->fnPayloadD(node, main_line, buf);
+    tunnelDownStreamPayload(node, main_line, buf);
 #else
-    node->fnPayloadD(node, children[0], buf);
+    tunnelDownStreamPayload(node, children[0], buf);
 #endif
 }
 
@@ -194,11 +194,11 @@ static void capture(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (side)
         {
-            node->fnFinU(node, l);
+            tunnelUpStreamFin(node, l);
             lineDestroy(l);
         }
         else
-            node->fnFinD(node, l);
+            tunnelDownStreamFin(node, l);
     }
 }
 
@@ -206,7 +206,7 @@ static void init(tunnel_t *t, line_t *l)
 {
     discard t;
     ++inits;
-    node->fnEstD(node, l);
+    tunnelDownStreamEst(node, l);
     if (overflow_init)
     {
         for (unsigned i = 0; i < MAX_BUFFERS - 1; ++i)
@@ -235,6 +235,9 @@ static void setup(void)
     twfRequire(node != NULL && prev != NULL && next != NULL, "construct Fisher fixture");
     tunnelBind(prev, node);
     tunnelBind(node, next);
+    prev->chain_index = 0;
+    node->chain_index = 1;
+    next->chain_index = 2;
     prev->fnFinD = next->fnFinU = finish;
     prev->fnEstD = prev->fnPauseD = prev->fnResumeD = next->fnPauseU = next->fnResumeU = noop;
     prev->fnPayloadD = next->fnPayloadU = capture;
@@ -243,7 +246,7 @@ static void setup(void)
     main_line = twfLinePoolCreateLine(&lines);
     lineRef(main_line);
 #ifdef TEST_FISHER_SERVER
-    node->fnInitU(node, main_line);
+    tunnelUpStreamInit(node, main_line);
 #else
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_line, node);
     twfRequire(connectionfisherclientLinestateInitializeMain(main_ls, main_line, 3), "initialize main line");
@@ -266,7 +269,7 @@ static void teardown(void)
     fail_queue = false;
     if (lineIsAlive(main_line))
     {
-        node->fnFinU(node, main_line);
+        tunnelUpStreamFin(node, main_line);
         lineDestroy(main_line);
     }
     twfRequireLineStateZeroed(main_line, node, "Fisher retained main state");
@@ -292,10 +295,8 @@ static void teardown(void)
 static void checkRetired(void)
 {
 #ifdef TEST_FISHER_SERVER
-    connectionfisherserver_lstate_t *ls = lineGetState(main_line, node);
-    twfRequire(ls->phase == kConnectionFisherServerPhaseEstablished && ls->in_stream.pool == NULL &&
-                   ww_sbuffer_queue_t_capacity(&ls->pending_up.q) == 0,
-               "server retained setup storage");
+    twfRequire(! tunnelIsActiveForLine(node, main_line), "server did not bypass after startup replay");
+    twfRequireLineStateZeroed(main_line, node, "server retained state after bypass");
 #else
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_line, node);
     connectionfisherclient_lstate_t *child   = lineGetState(children[0], node);
@@ -438,7 +439,7 @@ static void testPausedBacklog(void)
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_line, node);
     twfRequire(calls[0] == 0 && bufferqueueGetBufCount(&main_ls->pending_up) == 1 && child->read_stream.pool == NULL,
                "selection drained through Pause or retained the parser");
-    node->fnResumeD(node, children[0]);
+    tunnelDownStreamResume(node, children[0]);
     twfRequire(lengths[0] == 1 && output[0][0] == 'Q' && pipe_calls[0] == (unsigned) WW_HAVE_SPLICE,
                "Resume lost or materialized the queued private body");
     checkRetired();

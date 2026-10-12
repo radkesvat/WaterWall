@@ -3,7 +3,7 @@
  * suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: testFixedRetention
+ * Cases: runCase; testFixedRetention
  * Checks: Assertion labels include: encoder emitted more than one callback; roundtrip changed stream bytes;
  * encoder dropped input; single record copied despite sufficient headroom
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -19,9 +19,17 @@ static unsigned  interruption;
 static uint32_t  pool_size = SPLICE_PAYLOAD_LIMIT;
 static tunnel_t *decoder;
 static bool      decoder_receives_upstream;
-static void      ownerFinish(tunnel_t *t, line_t *l)
+static void      recordFinish(tunnel_t *t, line_t *l)
 {
-    discard t;
+    twfRequire(lineIsAlive(l), "Finish arrived after owner destroyed the line");
+    if (t->prev == NULL)
+        twfPrevFinish(t, l);
+    else
+        twfNextFinish(t, l);
+}
+static void ownerFinish(tunnel_t *t, line_t *l)
+{
+    recordFinish(t, l);
     lineDestroy(l);
 }
 static sbuf_t  *wire;
@@ -157,7 +165,31 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
         if (fragment == 0)
         {
             if (interruption == 3)
-                decoder->fnPauseU(decoder, reverse ? cl : sl);
+            {
+                line_t *line = reverse ? cl : sl;
+                trace        = (twf_trace_t) {0};
+                tunnelUpStreamPause(decoder, line);
+                tunnelUpStreamPause(decoder, line);
+                tunnelDownStreamPause(decoder, line);
+                tunnelDownStreamPause(decoder, line);
+                twfRequire(strcmp(trace.seq, "UUuu") == 0, "repeated Pause was not relayed in both directions");
+
+                sbuf_t *partial = sbufCreateWithPadding(6, 128);
+                sbufMoveTo(partial, encoded, 6);
+                tunnelDownStreamPayload(decoder, line, partial);
+                twfRequire(calls == 0, "decoder forwarded an incomplete record");
+                tunnelUpStreamResume(decoder, line);
+                tunnelUpStreamResume(decoder, line);
+                tunnelDownStreamResume(decoder, line);
+                tunnelDownStreamResume(decoder, line);
+                twfRequire(strcmp(trace.seq, "UUuuRRrr") == 0,
+                           "incomplete record suppressed repeated Resume in either direction");
+                twfRequire(calls == 0, "Resume forwarded an incomplete record");
+                tunnelUpStreamPause(decoder, line);
+                tunnelUpStreamPause(decoder, line);
+                tunnelDownStreamPause(decoder, line);
+                tunnelDownStreamPause(decoder, line);
+            }
             if (reverse)
                 client->fnPayloadD(client, cl, encoded);
             else
@@ -170,14 +202,16 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
             }
             if (interruption == 3)
             {
-                twfRequire(calls == 0, "paused decoder forwarded input");
-                decoder->fnResumeU(decoder, reverse ? cl : sl);
+                twfRequire(calls == 1 && received == length, "Pause delayed complete decoded output until Resume");
+                line_t *line = reverse ? cl : sl;
+                tunnelUpStreamResume(decoder, line);
+                tunnelUpStreamResume(decoder, line);
+                tunnelDownStreamResume(decoder, line);
+                tunnelDownStreamResume(decoder, line);
+                twfRequire(strcmp(trace.seq, "UUuuRRrrUUuuURRrr") == 0,
+                           "decoder suppressed or reordered repeated advisory signals");
             }
-            twfRequire(calls == 1, "decoder sent another callback after Pause");
-            if (reverse)
-                client->fnResumeU(client, cl);
-            else
-                server->fnResumeU(server, sl);
+            twfRequire(calls == 1, "decoder did not deliver one complete batch through Pause");
         }
         else
         {
@@ -223,7 +257,26 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
     twfRequireNoLeakedBuffers();
     twfWorkerEnvTeardown(&env);
 }
-static void testFixedRetention(bool server, uint32_t ordinary_size, uint32_t splice_limit)
+static uint32_t fillRecords(sbuf_t *input, uint32_t offset)
+{
+    const uint32_t length = sbufGetLength(input);
+    uint8_t       *bytes  = sbufGetMutablePtr(input);
+    memoryZero(bytes, length);
+    uint32_t records = 0;
+    for (; offset < length; ++records)
+    {
+        twfRequire(length - offset >= 5, "fixture leaves an incomplete header");
+        const uint32_t body = min(65535U, length - offset - 5U);
+        bytes[offset]       = 23;
+        bytes[offset + 1] = bytes[offset + 2] = 3;
+        bytes[offset + 3]                     = (uint8_t) (body >> 8);
+        bytes[offset + 4]                     = (uint8_t) body;
+        offset += 5U + body;
+    }
+    return records;
+}
+
+static void testFixedRetention(bool server, uint32_t ordinary_size, uint32_t splice_limit, bool owner_at_next)
 {
     twf_worker_env_t env;
     twfWorkerEnvSetupWithBufferSizes(&env, ordinary_size, 4096, 128, splice_limit, ordinary_size);
@@ -235,38 +288,44 @@ static void testFixedRetention(bool server, uint32_t ordinary_size, uint32_t spl
     tunnel_t   *prev = twfCreatePrevTunnel(&trace), *next = twfCreateNextTunnel(&trace);
     tunnelBind(prev, t);
     tunnelBind(t, next);
-    prev->fnFinD = ownerFinish;
+    prev->fnFinD = owner_at_next ? recordFinish : ownerFinish;
+    next->fnFinU = owner_at_next ? ownerFinish : recordFinish;
     twf_line_pool_t lines;
     twfLinePoolSetup(&lines, t->lstate_size, 8);
     line_t *line = twfLinePoolCreateLine(&lines);
     lineRef(line);
-    t->fnInitU(t, line);
-    t->fnPauseU(t, line);
+    if (owner_at_next)
+        tunnelDownStreamInit(t, line);
+    else
+        tunnelUpStreamInit(t, line);
+    tunnelUpStreamPause(t, line);
 
     // The fixed decoder bound is 2 MiB plus one maximum five-byte-header record.
     const uint32_t limit = 2U * 1024U * 1024U + 65540U;
     sbuf_t        *input = bufferpoolGetBestFit(env.pool, limit, 128);
     sbufSetLength(input, limit);
-    uint8_t *bytes = sbufGetMutablePtr(input);
-    memoryZero(bytes, limit);
-    for (uint32_t offset = 0; offset < limit;)
-    {
-        const uint32_t body = min(65535U, limit - offset - 5U);
-        bytes[offset]       = 23;
-        bytes[offset + 1] = bytes[offset + 2] = 3;
-        bytes[offset + 3]                     = (uint8_t) (body >> 8);
-        bytes[offset + 4]                     = (uint8_t) body;
-        offset += 5U + body;
-    }
+    const uint32_t records = fillRecords(input, 0);
     t->fnPayloadD(t, line, input);
-    twfRequire(lineIsAlive(line) && trace.prev_payload == 0,
-               "Obfuscator refused its exact fixed retention boundary or ignored Pause");
-    input = bufferpoolGetSmallBuffer(env.pool);
-    sbufSetLength(input, 1);
-    sbufWriteUI8(input, 0);
+    twfRequire(lineIsAlive(line) && trace.prev_payload == 1 && trace.prev_payload_bytes == limit - 5U * records,
+               "Obfuscator refused its exact fixed retention boundary or waited for Resume");
+    // An incomplete header remains part of the same fixed admission budget.
+    input                          = bufferpoolGetSmallBuffer(env.pool);
+    const uint8_t partial_header[] = {23, 3, 3, 0};
+    sbufSetLength(input, sizeof(partial_header));
+    sbufWrite(input, partial_header, sizeof(partial_header));
+    t->fnPayloadD(t, line, input);
+    twfRequire(lineIsAlive(line) && trace.prev_payload == 1, "incomplete record was not retained");
+    input = bufferpoolGetBestFit(env.pool, limit - sizeof(partial_header) + 1U, 128);
+    sbufSetLength(input, limit - sizeof(partial_header) + 1U);
+    // Complete that empty record and fill the rest with valid frames: only the admission limit should refuse it.
+    fillRecords(input, 1);
     t->fnPayloadD(t, line, input);
     twfRequire(! lineIsAlive(line), "Obfuscator retention limit grew with pool geometry");
+    twfRequire(trace.prev_finish == 1 && trace.next_finish == 1 &&
+                   strcmp(trace.seq, owner_at_next ? "iUpfF" : "IUpFf") == 0,
+               "Obfuscator did not finish the borrower before the owner exactly once");
     twfRequireLineStateZeroed(line, t, "Obfuscator overflow retained stream state");
+    twfRequire(twfLineRefCount(line) == 1, "Obfuscator overflow did not settle its line references");
     lineUnref(line);
     twfLinePoolTeardown(&lines);
     tunnelDestroy(prev);
@@ -306,9 +365,9 @@ int main(void)
     runCase(true, SPLICE_PAYLOAD_LIMIT, 65521, 128);
     for (unsigned server = 0; server < 2; ++server)
     {
-        testFixedRetention(server != 0, 8192, 4096);
-        testFixedRetention(server != 0, 65536, 4U * 1024U * 1024U);
-        testFixedRetention(server != 0, 131072, 1024U * 1024U);
+        testFixedRetention(server != 0, 8192, 4096, false);
+        testFixedRetention(server != 0, 65536, 4U * 1024U * 1024U, false);
+        testFixedRetention(server != 0, 131072, 1024U * 1024U, true);
     }
     frandThreadCleanup();
     frandGlobalCleanup();

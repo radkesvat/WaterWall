@@ -20,13 +20,11 @@ tunnel_t *obfuscatorserverTunnelCreate(node_t *node)
 
     if (stream_records)
     {
-        t->fnInitU   = obfuscatorserverTunnelUpStreamInit;
-        t->fnInitD   = obfuscatorserverTunnelDownStreamInit;
-        t->fnEstU    = tunnelNextUpStreamEst;
-        t->fnFinU    = obfuscatorserverTunnelUpStreamFinish;
-        t->fnFinD    = obfuscatorserverTunnelDownStreamFinish;
-        t->fnPauseU  = obfuscatorserverTunnelUpStreamPause;
-        t->fnResumeU = obfuscatorserverTunnelUpStreamResume;
+        t->fnInitU = obfuscatorserverTunnelUpStreamInit;
+        t->fnInitD = obfuscatorserverTunnelDownStreamInit;
+        t->fnEstU  = tunnelNextUpStreamEst;
+        t->fnFinU  = obfuscatorserverTunnelUpStreamFinish;
+        t->fnFinD  = obfuscatorserverTunnelDownStreamFinish;
     }
 
     obfuscatorserver_tstate_t *ts = tunnelGetState(t);

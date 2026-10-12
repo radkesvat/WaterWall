@@ -26,7 +26,7 @@ typedef struct obfuscatorclient_tstate_s
 typedef struct obfuscatorclient_lstate_s
 {
     buffer_stream_t read_stream;
-    bool            paused;
+    bool            initialized_from_downstream;
 } obfuscatorclient_lstate_t;
 
 enum
@@ -45,7 +45,7 @@ void obfuscatorclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 void obfuscatorclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void obfuscatorclientLinestateInitialize(obfuscatorclient_lstate_t *ls, line_t *l);
+void obfuscatorclientLinestateInitialize(obfuscatorclient_lstate_t *ls, line_t *l, bool from_downstream);
 void obfuscatorclientLinestateDestroy(obfuscatorclient_lstate_t *ls);
 
 void obfuscatorclientXorByte(uint8_t *data, size_t size, uint8_t key);
@@ -57,8 +57,5 @@ void obfuscatorclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void obfuscatorclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void obfuscatorclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void obfuscatorclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-void obfuscatorclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void obfuscatorclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 void obfuscatorclientEncodeStream(tunnel_t *t, line_t *l, sbuf_t *buf);
 void obfuscatorclientDecodeStream(tunnel_t *t, line_t *l, sbuf_t *buf);
-void obfuscatorclientDrainStream(tunnel_t *t, line_t *l);

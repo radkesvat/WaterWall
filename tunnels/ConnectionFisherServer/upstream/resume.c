@@ -6,8 +6,9 @@ void connectionfisherserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
 {
     connectionfisherserver_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->phase == kConnectionFisherServerPhaseEstablished)
-    {
+    if (ls->phase == kConnectionFisherServerPhaseClosing)
+        return;
+    ls->pending_next_pause = false;
+    if (ls->next_init_sent)
         tunnelNextUpStreamResume(t, l);
-    }
 }

@@ -117,12 +117,13 @@ This only imitates the post-handshake TLS record shape. It is not a real TLS han
 
 ### Event forwarding behavior
 
-`ObfuscatorServer` forwards all non-payload events without adding protocol or buffering of its own:
+`ObfuscatorServer` forwards non-payload events in their original direction:
 
 - upstream `init`, `est`, `finish`, `pause`, `resume`
 - downstream `init`, `est`, `finish`, `pause`, `resume`
 
-Only payload bytes are transformed.
+With TLS-like framing, normal stream Init initializes receive state and records the source side; Finish releases it.
+Pause/Resume always relay transparently and do not gate encoding or decoding.
 
 ### Implementation details
 
@@ -163,7 +164,9 @@ With TLS-like framing enabled on ordinary streams, large deliveries split into
 records of at most 65,535 body bytes, applying XOR and skip per record. One encoded
 aggregate is sent per delivery. Receivers reassemble fragmented headers/bodies,
 coalesce complete records into one onward callback, and retain partial tails.
-Pause stops decoding until Resume. Retention is bounded by
+Pause/Resume relay transparently, including repeats; complete records decode without waiting for Resume.
+Incoming bytes plus any retained partial record are bounded by
 a fixed **2,162,692 bytes** (`2 MiB + 65,540`), independent of pool sizes, RAM
 profile and splice settings. The 65,535-byte record-body limit is separate. Malformed records
-and overflow close the borrowed normal line. Packet behavior stays unchanged.
+and overflow close the borrowed normal line, finishing the opposite side before the source side after local cleanup.
+The nodes stay active to apply XOR and record processing to every payload. Packet behavior stays unchanged.

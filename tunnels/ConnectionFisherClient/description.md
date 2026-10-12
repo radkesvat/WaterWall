@@ -98,11 +98,12 @@ or selection parsing are materialized with `sbufEnsureOrdinary()`; application F
 opaquely. A complete five-byte marker can carry up to 2 MiB of following application data. An incomplete
 marker retains at most four bytes, and the marker does not consume the application-data allowance.
 
-After setup and FIFO drain, the nodes release their handshake streams and empty queue storage. Ready
-payloads pass through without inspection, materialization or the startup backlog limit. The client
-keeps the main-to-selected-child mapping needed for payload, pressure and Finish callbacks. Server
-backend initialization still waits for the first application payload, so losing candidates create no
-backend connection. Neither node requests ordinary reads for the established TCP stream.
+After setup and FIFO drain, the client releases its handshake streams and empty queue storage but
+keeps the main-to-selected-child mapping and endpoint flow control needed for payload, pressure and Finish.
+The server destroys and zeros its entire line state, then permanently bypasses itself after backend Init
+and replay settle. Ready payloads preserve their buffers without inspection, materialization or the startup
+backlog limit. Server backend initialization still waits for the first application payload, so losing
+candidates create no backend connection. Neither node requests ordinary reads for the established TCP stream.
 
 ## Node Metadata
 

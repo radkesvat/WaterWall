@@ -126,7 +126,8 @@ It simply forwards:
 - upstream `init`, `est`, `finish`, `pause`, `resume`
 - downstream `init`, `est`, `finish`, `pause`, `resume`
 
-Normal stream Init initializes receive state, Finish releases it, and Pause/Resume govern decoding.
+Normal stream Init initializes receive state and records the source side; Finish releases that state.
+Pause/Resume always relay transparently and do not gate encoding or decoding.
 
 ### Implementation details
 
@@ -167,7 +168,9 @@ With TLS-like framing enabled on ordinary streams, large deliveries split into
 records of at most 65,535 body bytes, applying XOR and skip per record. One encoded
 aggregate is sent per delivery. Receivers reassemble fragmented headers/bodies,
 coalesce complete records into one onward callback, and retain partial tails.
-Pause stops decoding until Resume. Retention is bounded by
+Pause/Resume relay transparently, including repeats; complete records decode without waiting for Resume.
+Incoming bytes plus any retained partial record are bounded by
 a fixed **2,162,692 bytes** (`2 MiB + 65,540`), independent of pool sizes, RAM
 profile and splice settings. The 65,535-byte record-body limit is separate. Malformed records
-and overflow close the borrowed normal line. Packet behavior stays unchanged.
+and overflow close the borrowed normal line, finishing the opposite side before the source side after local cleanup.
+The nodes stay active to apply XOR and record processing to every payload. Packet behavior stays unchanged.

@@ -2,9 +2,24 @@
 
 static void closeStream(tunnel_t *t, line_t *l)
 {
-    obfuscatorclientLinestateDestroy(lineGetState(l, t));
-    tunnelNextUpStreamFinish(t, l);
-    tunnelPrevDownStreamFinish(t, l);
+    obfuscatorclient_lstate_t *ls              = lineGetState(l, t);
+    const bool                 from_downstream = ls->initialized_from_downstream;
+    lineRef(l);
+    obfuscatorclientLinestateDestroy(ls);
+    /* Finish the borrowed side before notifying the source that owns this line. */
+    if (from_downstream)
+    {
+        tunnelPrevDownStreamFinish(t, l);
+        if (lineIsAlive(l))
+            tunnelNextUpStreamFinish(t, l);
+    }
+    else
+    {
+        tunnelNextUpStreamFinish(t, l);
+        if (lineIsAlive(l))
+            tunnelPrevDownStreamFinish(t, l);
+    }
+    lineUnref(l);
 }
 
 void obfuscatorclientEncodeStream(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -59,10 +74,10 @@ void obfuscatorclientEncodeStream(tunnel_t *t, line_t *l, sbuf_t *buf)
     tunnelNextUpStreamPayload(t, l, out);
 }
 
-void obfuscatorclientDrainStream(tunnel_t *t, line_t *l)
+static void obfuscatorclientDrainStream(tunnel_t *t, line_t *l)
 {
     obfuscatorclient_lstate_t *ls = lineGetState(l, t);
-    if (ls->paused || bufferstreamGetBufLen(&ls->read_stream) < 5)
+    if (bufferstreamGetBufLen(&ls->read_stream) < 5)
         return;
     buffer_pool_t *pool = lineGetBufferPool(l);
     sbuf_t        *out  = NULL;
