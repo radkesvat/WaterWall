@@ -143,6 +143,9 @@ bool vlessclientSendInitialRequest(tunnel_t *t, line_t *l, vlessclient_lstate_t 
     }
     vlessclientCancelFirstPayloadTimer(ls);
     ls->request_sent = true;
+    /* A peer response may already be complete. Retire before handoff only if
+     * no outer receive batch still owns parser/order state. */
+    vlessclientTryBypass(t, l, ls);
     tunnelNextUpStreamPayload(t, l, buf);
     return true;
 }

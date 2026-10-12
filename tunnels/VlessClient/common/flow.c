@@ -2,12 +2,23 @@
 
 bool vlessclientAssociationAlive(tunnel_t *t, line_t *next_line, line_t *prev_line)
 {
-    if (! lineIsAlive(next_line) || ! lineIsAlive(prev_line))
+    /* A nested TCP exchange can retire our state while the line stays alive. */
+    if (! lineIsAlive(next_line) || ! lineIsAlive(prev_line) || ! tunnelIsActiveForLine(t, next_line))
         return false;
     vlessclient_lstate_t *ls      = lineGetState(next_line, t);
     vlessclient_lstate_t *prev_ls = lineGetState(prev_line, t);
     return ls->phase != kVlessClientPhaseClosed && prev_ls->phase != kVlessClientPhaseClosed &&
            (next_line == prev_line || (ls->application_line == prev_line && prev_ls->carrier_line == next_line));
+}
+
+void vlessclientTryBypass(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls)
+{
+    if (ls->kind != kVlessClientLineKindDirect || ! ls->request_sent || ! ls->response_complete || ls->receiving)
+        return;
+    assert(ls->receive_head == NULL && ls->receive_bytes == 0 && ls->header_filled == 0);
+    assert(bufferqueueGetBufCount(&ls->pending_down) == 0);
+    vlessclientLinestateDestroy(ls);
+    tunnelBypassLine(t, l);
 }
 
 void vlessclientCancelFirstPayloadTimer(vlessclient_lstate_t *ls)
@@ -55,8 +66,14 @@ static void firstPayloadExpired(wtimer_t *timer)
 
 void vlessclientOnNextEstablished(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls)
 {
-    if (ls->phase == kVlessClientPhaseClosed || ls->next_established)
+    if (ls->phase == kVlessClientPhaseClosed)
         return;
+    if (ls->next_established)
+    {
+        if (ls->kind == kVlessClientLineKindDirect)
+            tunnelPrevDownStreamEst(t, l);
+        return;
+    }
     line_t *application = ls->kind == kVlessClientLineKindUdpCarrier ? ls->application_line : l;
     lineRef(l);
     if (application != l)

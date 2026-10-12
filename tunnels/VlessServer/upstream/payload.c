@@ -49,6 +49,8 @@ void vlessserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             ls->input_dispatching = false;
             if (ls->phase == kVlessServerPhaseFallback && ! vlessserverScheduleFallbackPayloadDrain(t, l, ls))
                 vlessserverCloseLineBidirectional(t, l);
+            else
+                vlessserverTryBypassTcp(t, l);
         }
     }
     lineUnref(l);

@@ -47,5 +47,6 @@ void vlessserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         tunnelPrevDownStreamPayload(t, l, buf);
         return;
     }
-    discard vlessserverForwardResponse(t, l, buf);
+    if (vlessserverForwardResponse(t, l, buf))
+        vlessserverTryBypassTcp(t, l);
 }

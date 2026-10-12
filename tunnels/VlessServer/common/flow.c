@@ -1,5 +1,21 @@
 #include "internal.h"
 
+void vlessserverTryBypassTcp(tunnel_t *t, line_t *l)
+{
+    if (! tunnelIsActiveForLine(t, l))
+        return;
+    vlessserver_lstate_t *ls = lineGetState(l, t);
+    if (ls->line_kind != kVlessServerLineKindClient ||
+        (ls->phase != kVlessServerPhaseTcpConnecting && ls->phase != kVlessServerPhaseTcpEstablished) ||
+        ! ls->response_sent || ls->input_dispatching || ls->branch_initializing || ls->response_dispatching ||
+        bufferqueueGetBufCount(&ls->pending_up) != 0 || bufferqueueGetBufCount(&ls->pending_down) != 0)
+        return;
+
+    assert(ls->input_head == NULL && ls->input_bytes == 0 && ls->header_filled == 0);
+    vlessserverLinestateDestroy(ls);
+    tunnelBypassLine(t, l);
+}
+
 bool vlessserverDrainResponse(tunnel_t *t, line_t *l, bool admitted)
 {
     vlessserver_lstate_t *ls = lineGetState(l, t);
@@ -122,7 +138,7 @@ void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate
     lineRef(client);
     vlessserver_lstate_t *client_ls = lineGetState(client, t);
     client_ls->phase                = client == l ? kVlessServerPhaseTcpEstablished : kVlessServerPhaseUdpEstablished;
-    if (! client_ls->transport_est_sent)
+    if (client == l || ! client_ls->transport_est_sent)
     {
         bool was_dispatching            = client_ls->response_dispatching;
         client_ls->transport_est_sent   = true;
@@ -136,7 +152,8 @@ void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate
             if (client_ls->tunnel == t && client_ls->phase != kVlessServerPhaseClosing)
             {
                 client_ls->response_dispatching = was_dispatching;
-                discard vlessserverDrainResponse(t, client, false);
+                if (vlessserverDrainResponse(t, client, false))
+                    vlessserverTryBypassTcp(t, client);
             }
         }
     }

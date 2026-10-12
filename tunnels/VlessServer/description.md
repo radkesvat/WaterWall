@@ -321,12 +321,18 @@ Response format:
 00 00
 ```
 
-Transport Est is forwarded once on the correct client association, independently of the response header and output
-Pause. The `00 00` header is sent exactly once, together with the complete first nonempty backend reply in one ordinary
-buffer, including a valid reply received before Est. For UDP, that buffer includes the datagram's two-byte length prefix.
+Every same-line TCP and fallback Est is forwarded, including repeats, independently of the response header and output
+Pause. Owned UDP backend Est maps to its client association once. The `00 00` header is sent exactly once, together with
+the complete first nonempty backend reply in one ordinary buffer, including a valid reply received before Est. For UDP,
+that buffer includes the datagram's two-byte length prefix.
 Est, Resume and empty replies never send a standalone header; there is no header-only timer. A connection that closes
 without a backend reply sends no VLESS response bytes. Later replies keep the normal splice-capable forwarding path.
 This avoids a deliberate header-only write, but does not guarantee TCP packet or TLS record boundaries.
+
+Authenticated TCP permanently bypasses this node after the first response header/body
+handoff, once initialization, retained input/replies and pending permission notifications
+have settled. Local line state is destroyed before bypass. UDP and fallback remain
+active for framing, owned-line cleanup and branch routing.
 
 An independent retained reply drain waits while the client output is paused; an admitted first reply may complete its
 combined header and body synchronously. Response/Est reentry cannot reorder older replies. The retained response FIFO

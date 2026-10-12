@@ -80,7 +80,10 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         tunnelPrevDownStreamPayload(t, application, body);
     }
     if (vlessclientAssociationAlive(t, l, application))
+    {
         ls->receiving = false;
+        vlessclientTryBypass(t, l, ls);
+    }
     if (application != l)
         lineUnref(application);
     lineUnref(l);

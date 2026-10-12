@@ -110,6 +110,7 @@ typedef struct fixture_s
     unsigned         action, boundary;
     bool             udp, paused_up, paused_down, last_splice;
     bool             inject_extra;
+    bool             expect_request_bypass;
     bool             retention_pipe;
     unsigned         retention_fault, retention_size;
     sbuf_t          *last;
@@ -150,47 +151,61 @@ static void performAction(unsigned boundary)
     if (action == 1 || action == 2)
     {
         f.paused_up = true;
-        f.t->fnPauseD(f.t, f.carrier);
+        tunnelDownStreamPause(f.t, f.carrier);
         if (action == 2)
         {
             f.paused_up = false;
-            f.t->fnResumeD(f.t, f.carrier);
+            tunnelDownStreamResume(f.t, f.carrier);
         }
     }
     if (action == 3 || action == 4)
     {
         f.paused_down = true;
-        f.t->fnPauseU(f.t, f.application);
+        tunnelUpStreamPause(f.t, f.application);
         if (action == 4)
         {
             f.paused_down = false;
-            f.t->fnResumeU(f.t, f.application);
+            tunnelUpStreamResume(f.t, f.application);
         }
     }
     if (action == 5)
-        f.t->fnPayloadU(f.t, f.application, bytes("C", 1, false, 320));
+        tunnelUpStreamPayload(f.t, f.application, bytes("C", 1, false, 320));
     if (action == 6)
-        f.t->fnPayloadD(f.t, f.carrier, bytes("Z", 1, false, 320));
+        tunnelDownStreamPayload(f.t, f.carrier, bytes("Z", 1, false, 320));
     if (action == 7)
     {
-        f.t->fnFinU(f.t, f.application);
+        tunnelUpStreamFin(f.t, f.application);
         twfRequire(lineIsAlive(f.application), "VlessClient destroyed a borrowed line");
         lineDestroy(f.application);
     }
     if (action == 8)
-        f.t->fnFinD(f.t, f.carrier);
+        tunnelDownStreamFin(f.t, f.carrier);
     if (action == 9)
-        f.t->fnEstD(f.t, f.carrier);
+        tunnelDownStreamEst(f.t, f.carrier);
     if (action == 10)
-        f.t->fnPayloadD(f.t, f.carrier, bytes("\0\1C", 3, false, 320));
+        tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\1C", 3, false, 320));
     if (action == 11)
     {
         uint8_t *data = memoryAllocate(kVlessClientMaxOrderBytes);
         memset(data, 'r', kVlessClientMaxOrderBytes);
-        f.t->fnPayloadD(f.t, f.carrier, bytes(data, kVlessClientMaxOrderBytes, false, 320));
+        tunnelDownStreamPayload(f.t, f.carrier, bytes(data, kVlessClientMaxOrderBytes, false, 320));
         if (f.inject_extra)
-            f.t->fnPayloadD(f.t, f.carrier, bytes("x", 1, false, 320));
+            tunnelDownStreamPayload(f.t, f.carrier, bytes("x", 1, false, 320));
         memoryFree(data);
+    }
+    if (action == 13)
+        tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\0R", 3, false, 320));
+    if (action == 14)
+    {
+        tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\0", 2, false, 320));
+        tunnelUpStreamPayload(f.t, f.application, bytes("C", 1, false, 320));
+    }
+    if (action == 15)
+    {
+        tunnelDownStreamPayload(f.t, f.carrier, bytes("Z", 1, false, 320));
+        tunnelUpStreamPayload(f.t, f.application, bytes("C", 1, false, 320));
+        twfRequire(tunnelIsActiveForLine(f.t, f.application),
+                   "request bypassed while an older response body was queued");
     }
     if (action == 12)
     {
@@ -200,7 +215,7 @@ static void performAction(unsigned boundary)
             memset(data, (int) (i % 251), f.retention_size);
             if (f.retention_fault == 2 && i == 1023)
                 fail_queue = true;
-            f.t->fnPayloadD(f.t, f.carrier, bytes(data, f.retention_size, f.retention_pipe, 320));
+            tunnelDownStreamPayload(f.t, f.carrier, bytes(data, f.retention_size, f.retention_pipe, 320));
             if (! lineIsAlive(f.application))
             {
                 twfRequire(f.retention_fault == 2 && ! fail_queue, "exact retained entry bound was refused");
@@ -213,11 +228,11 @@ static void performAction(unsigned boundary)
                    "nested FIFO accounting omitted or duplicated an active buffer");
         if (f.retention_fault == 1)
         {
-            f.t->fnPayloadD(f.t, f.carrier, bytes("x", 1, f.retention_pipe, 320));
+            tunnelDownStreamPayload(f.t, f.carrier, bytes("x", 1, f.retention_pipe, 320));
             twfRequire(! lineIsAlive(f.application), "TCP retained entry overflow was accepted");
         }
         if (f.retention_fault == 3)
-            f.t->fnFinD(f.t, f.carrier);
+            tunnelDownStreamFin(f.t, f.carrier);
     }
 }
 static void ownerFinish(tunnel_t *t, line_t *l)
@@ -256,6 +271,11 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *b)
     bool request = up && f.requests == 0;
 
     twfRequire(l == (up ? f.carrier : f.application), "Payload used wrong line");
+    if (request && f.expect_request_bypass)
+    {
+        twfRequire(! tunnelIsActiveForLine(f.t, l), "completed request handed off before bypass publication");
+        twfRequireLineStateZeroed(l, f.t, "completed request handed off before destroying state");
+    }
     uint32_t n    = sbufGetLength(b);
     f.last        = b;
     f.last_splice = sbufIsSplice(b);
@@ -337,6 +357,9 @@ static void begin(bool udp, const char *target, uint32_t pool_size, unsigned ini
     ((vlessclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 0;
     f.prev                                                                   = twfCreatePrevTunnel(&f.trace);
     f.next                                                                   = twfCreateNextTunnel(&f.trace);
+    f.prev->chain_index                                                      = 0;
+    f.t->chain_index                                                         = 1;
+    f.next->chain_index                                                      = 2;
     tunnelBind(f.prev, f.t);
     tunnelBind(f.t, f.next);
     twfLinePoolSetup(&f.lines, f.t->lstate_size, 8);
@@ -359,15 +382,34 @@ static void begin(bool udp, const char *target, uint32_t pool_size, unsigned ini
     f.prev->fnResumeD = f.next->fnResumeU = resumed;
     f.boundary                            = 1;
     f.action                              = init_action;
-    f.t->fnInitU(f.t, f.application);
+    tunnelUpStreamInit(f.t, f.application);
     if (udp && lineIsAlive(f.application))
         twfRequire(lineGetDestinationAddressContext(f.application)->proto_udp, "application context changed to TCP");
+}
+static void requireTcpBypassed(void)
+{
+    twfRequire(! tunnelIsActiveForLine(f.t, f.application), "completed TCP setup remained active");
+    twfRequireLineStateZeroed(f.application, f.t, "TCP bypass retained or resurrected state");
+    twfRequire(wloopNTimers(f.env.loop) == 0, "TCP bypass retained a first-payload timer");
 }
 static void end(void)
 {
     if (lineIsAlive(f.application))
     {
-        f.t->fnFinU(f.t, f.application);
+        if (f.udp)
+            twfRequire(tunnelIsActiveForLine(f.t, f.application) && tunnelIsActiveForLine(f.t, f.carrier),
+                       "UDP application or owned carrier bypassed");
+        else if (! tunnelIsActiveForLine(f.t, f.application))
+            requireTcpBypassed();
+        else
+        {
+            vlessclient_lstate_t *ls = lineGetState(f.application, f.t);
+            twfRequire(! (ls->request_sent && ls->response_complete), "completed TCP setup missed bypass");
+        }
+    }
+    if (lineIsAlive(f.application))
+    {
+        tunnelUpStreamFin(f.t, f.application);
         twfRequire(lineIsAlive(f.application), "client destroyed borrowed application");
         lineDestroy(f.application);
     }
@@ -400,9 +442,9 @@ static void end(void)
 }
 static void establish(void)
 {
-    f.t->fnEstD(f.t, f.carrier);
+    tunnelDownStreamEst(f.t, f.carrier);
     if (lineIsAlive(f.application))
-        f.t->fnEstD(f.t, f.carrier);
+        tunnelDownStreamEst(f.t, f.carrier);
 }
 static void testBaseline(void)
 {
@@ -410,13 +452,13 @@ static void testBaseline(void)
     {
         twfSetCase("VLESS early Est and pre-response outbound progress");
         begin(udp, "127.0.0.1", 65536, 0, true);
-        f.t->fnPayloadU(f.t, f.application, bytes("A", 1, false, 320));
+        tunnelUpStreamPayload(f.t, f.application, bytes("A", 1, false, 320));
         f.boundary = 3;
         f.action   = 5;
         establish();
         const uint8_t expected[] = {0,    0x57, 0x83, 0xa3, 0xe7, 0xe3, 0x73, 0x51, 0xcd, 0x86, 0x42, 0xc8, 0x37,
                                     0x82, 0xb8, 0x07, 0xc5, 0,    1,    1,    0xbb, 1,    127,  0,    0,    1};
-        twfRequire(f.requests == 1 && f.ests == 1, "duplicate request/Est");
+        twfRequire(f.requests == 1 && f.ests == (udp ? 1U : 2U), "request repeated or TCP Est suppressed");
         twfRequire(memcmp(f.up, expected, 18) == 0 && f.up[18] == (udp ? 2 : 1) &&
                        memcmp(f.up + 19, expected + 19, 7) == 0,
                    "wire request changed");
@@ -428,7 +470,7 @@ static void testBaseline(void)
 
 static void response(void)
 {
-    f.t->fnPayloadD(f.t, f.carrier, bytes("\0\0", 2, false, 320));
+    tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\0", 2, false, 320));
 }
 static uint32_t frame(uint8_t *out, const void *body, uint32_t n)
 {
@@ -457,12 +499,16 @@ static void testResponse(bool pipe)
             {
                 begin(udp, "127.0.0.1", 128, 0, false);
                 establish();
-                f.t->fnPayloadD(f.t, f.carrier, bytes(wire, split, pipe, 320));
+                tunnelDownStreamPayload(f.t, f.carrier, bytes(wire, split, pipe, 320));
                 if (split < header || (udp && split < total))
                     twfRequire(f.down_len == 0, "metadata or partial datagram leaked");
-                f.t->fnPayloadD(f.t, f.carrier, bytes(wire + split, total - split, pipe, 320));
+                if (! udp && split < header)
+                    twfRequire(tunnelIsActiveForLine(f.t, f.application), "incomplete response header bypassed");
+                tunnelDownStreamPayload(f.t, f.carrier, bytes(wire + split, total - split, pipe, 320));
                 twfRequire(f.down_len == 3 && memcmp(f.down, "ABC", 3) == 0, "response consumed body");
                 twfRequire(! udp || f.deliveries_down == 1, "UDP response boundary lost");
+                if (! udp)
+                    requireTcpBypassed();
                 if (pipe && WW_HAVE_SPLICE && (! udp || f.last_splice))
                     twfRequire(f.parser_reads == header + (udp ? 2 : 0), "parser read pipe body");
                 end();
@@ -473,9 +519,10 @@ static void testTcp(bool pipe)
 {
     twfSetCase("opaque TCP identity, early FIFO and nested receive");
     begin(false, "127.0.0.1", 65536, 0, true);
-    f.t->fnPayloadU(f.t, f.application, bytes("A", 1, pipe, 320));
-    f.t->fnPayloadU(f.t, f.application, bytes("B", 1, pipe, 320));
-    f.t->fnPayloadD(f.t, f.application, bytes("\0\0X", 3, false, 320));
+    tunnelUpStreamPayload(f.t, f.application, bytes("A", 1, pipe, 320));
+    tunnelUpStreamPayload(f.t, f.application, bytes("B", 1, pipe, 320));
+    tunnelDownStreamPayload(f.t, f.application, bytes("\0\0X", 3, false, 320));
+    requireTcpBypassed();
     f.boundary = 3;
     f.action   = 5;
     establish();
@@ -485,9 +532,9 @@ static void testTcp(bool pipe)
     {
         sbuf_t *b = bytes("direct", 6, pipe, 320);
         if (up)
-            f.t->fnPayloadU(f.t, f.application, b);
+            tunnelUpStreamPayload(f.t, f.application, b);
         else
-            f.t->fnPayloadD(f.t, f.application, b);
+            tunnelDownStreamPayload(f.t, f.application, b);
         twfRequire(f.last == b && f.last_splice == (pipe && WW_HAVE_SPLICE), "opaque forwarding replaced buffer");
     }
     twfRequire(f.parser_reads == 0, "opaque TCP materialized");
@@ -506,13 +553,13 @@ static void testRequests(void)
             for (unsigned form = 0; form < 4; ++form)
             {
                 begin(udp, targets[form], 128, 1, context);
-                f.t->fnPayloadU(f.t, f.application, bytes("A", 1, false, 320));
+                tunnelUpStreamPayload(f.t, f.application, bytes("A", 1, false, 320));
                 f.boundary = 3;
                 f.action   = 9;
                 establish();
-                twfRequire(f.ests == 1 && f.requests == 1, "combined send or early Est gated by Pause");
+                twfRequire(f.ests == (udp ? 1U : 3U) && f.requests == 1, "combined send or early Est gated by Pause");
                 f.paused_up = false;
-                f.t->fnResumeD(f.t, f.carrier);
+                tunnelDownStreamResume(f.t, f.carrier);
                 twfRequire(f.requests == 1 && f.up_len == lengths[form] + (udp ? 3 : 1), "request size changed");
                 twfRequire(f.up[18] == (udp ? 2 : 1) && f.up[19] == 1 && f.up[20] == 187, "command/port changed");
                 if (form == 0)
@@ -543,7 +590,7 @@ static void testUdp(bool pipe)
             begin(true, "127.0.0.1", 128, 0, false);
             establish();
             unsigned n = sizes[i];
-            f.t->fnPayloadU(f.t, f.application, bytes(payload, n, pipe && n <= 4096, pad ? 320 : 0));
+            tunnelUpStreamPayload(f.t, f.application, bytes(payload, n, pipe && n <= 4096, pad ? 320 : 0));
             if (n == 0 || n > 65535)
                 twfRequire(f.deliveries_up == 0 && lineIsAlive(f.application), "invalid local UDP closed association");
             else
@@ -554,7 +601,7 @@ static void testUdp(bool pipe)
                 for (unsigned offset = 0; offset < len;)
                 {
                     unsigned chunk = min(2048U, len - offset);
-                    f.t->fnPayloadD(f.t, f.carrier, bytes(wire + offset, chunk, pipe, 320));
+                    tunnelDownStreamPayload(f.t, f.carrier, bytes(wire + offset, chunk, pipe, 320));
                     offset += chunk;
                 }
                 twfRequire(f.deliveries_down == 1 && f.down_len == n && memcmp(f.down, payload, n) == 0,
@@ -578,7 +625,7 @@ static void testPressure(void)
             length += frame(wire + length, "x", 1);
         f.boundary = 5;
         f.action   = close ? 8 : 3;
-        f.t->fnPayloadD(f.t, f.carrier, bytes(wire, length, false, 320));
+        tunnelDownStreamPayload(f.t, f.carrier, bytes(wire, length, false, 320));
         twfRequire(f.deliveries_down == (close ? 1U : 1500U), "batch paused early or continued after Finish");
         if (! close)
         {
@@ -586,7 +633,7 @@ static void testPressure(void)
             twfRequire(ls->receive_bytes == 0 && bufferqueueGetBufCount(&ls->pending_down) == 0,
                        "ready datagrams retained for Resume");
             f.paused_down = false;
-            f.t->fnResumeU(f.t, f.application);
+            tunnelUpStreamResume(f.t, f.application);
             twfRequire(f.deliveries_down == 1500, "Resume replayed batch");
         }
         end();
@@ -599,7 +646,7 @@ static void testPressure(void)
     length += frame(wire + length, "B", 1);
     f.boundary = 5;
     f.action   = 10;
-    f.t->fnPayloadD(f.t, f.carrier, bytes(wire, length, false, 320));
+    tunnelDownStreamPayload(f.t, f.carrier, bytes(wire, length, false, 320));
     twfRequire(f.down_len == 3 && memcmp(f.down, "ABC", 3) == 0, "nested admitted batch overtook older input");
     end();
 }
@@ -615,9 +662,9 @@ static void testLimits(uint32_t pool_size)
         /* Model nested input while an outer parser owns the cursor. No callbacks
          * may run until that admission returns to its real outer dispatch. */
         ls->receiving = true;
-        f.t->fnPayloadD(f.t, f.carrier, bytes(data, (uint32_t) limit, false, 320));
+        tunnelDownStreamPayload(f.t, f.carrier, bytes(data, (uint32_t) limit, false, 320));
         twfRequire(lineIsAlive(f.application) && ls->receive_bytes == limit, "exact retained limit refused");
-        f.t->fnPayloadD(f.t, f.carrier, bytes("x", 1, false, 320));
+        tunnelDownStreamPayload(f.t, f.carrier, bytes("x", 1, false, 320));
         twfRequire(! lineIsAlive(f.application), "retained input overflow survived");
         memoryFree(data);
         end();
@@ -629,10 +676,11 @@ static void testNestedTcpRetention(void)
     for (unsigned extra = 0; extra < 2; ++extra)
     {
         begin(false, "127.0.0.1", 128, 0, false);
+        tunnelUpStreamPayload(f.t, f.application, bytes("request", 7, false, 320));
         f.inject_extra = extra != 0;
         f.boundary     = 5;
         f.action       = 11;
-        f.t->fnPayloadD(f.t, f.carrier, bytes("\0\0A", 3, false, 320));
+        tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\0A", 3, false, 320));
         twfRequire(lineIsAlive(f.application) == ! extra, "nested body-only retention bound changed");
         twfRequire(f.down_len == (extra ? 1U : 1U + kVlessClientMaxOrderBytes),
                    "nested input lost FIFO or survived overflow");
@@ -645,22 +693,20 @@ static void testNestedTcpRetention(void)
             for (unsigned fault = 0; fault < 4; ++fault)
             {
                 begin(false, "127.0.0.1", 128, 0, false);
+                tunnelUpStreamPayload(f.t, f.application, bytes("request", 7, false, 320));
                 f.retention_pipe  = pipe != 0;
                 f.retention_fault = fault;
                 f.retention_size  = size;
                 f.boundary        = 5;
                 f.action          = 12;
-                f.t->fnPayloadD(f.t, f.carrier, bytes("\0\0A", 3, pipe != 0, 320));
+                tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\0A", 3, pipe != 0, 320));
                 twfRequire(lineIsAlive(f.application) == (fault == 0), "retained TCP settlement changed");
                 twfRequire(f.down_len == (fault ? 1U : 1U + 1024U * size), "nested TCP delivery count changed");
                 if (! fault)
                 {
                     for (unsigned i = 0; i < 1024U * size; ++i)
                         twfRequire(f.down[1 + i] == (i / size) % 251, "nested TCP FIFO bytes changed");
-                    vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-                    twfRequire(ls->receive_bytes == 0 && ls->receive_head == NULL &&
-                                   bufferqueueGetBufCount(&ls->pending_down) == 0,
-                               "TCP retention did not settle");
+                    requireTcpBypassed();
                 }
                 end();
             }
@@ -675,7 +721,7 @@ static void testFailuresAndClose(void)
         {
             begin(udp, "127.0.0.1", 128, 0, false);
             fail_queue = true;
-            f.t->fnPayloadD(f.t, f.carrier, bytes("x", 1, true, 320));
+            tunnelDownStreamPayload(f.t, f.carrier, bytes("x", 1, true, 320));
             twfRequire(! lineIsAlive(f.application), "parser queue refusal left flow alive");
             end();
         }
@@ -688,20 +734,20 @@ static void testFailuresAndClose(void)
                     if (boundary >= 4)
                         establish();
                     if (boundary == 5 && ! false)
-                        f.t->fnPayloadD(f.t, f.carrier, bytes("\0\0", 2, false, 320));
+                        tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\0", 2, false, 320));
                     f.boundary = boundary;
                     f.action   = action;
                     if (boundary == 2 || boundary == 3)
                         establish();
                     if (boundary == 4)
-                        f.t->fnPayloadU(f.t, f.application, bytes("A", 1, true, 320));
+                        tunnelUpStreamPayload(f.t, f.application, bytes("A", 1, true, 320));
                     if (boundary == 5)
-                        f.t->fnPayloadD(f.t, f.carrier, bytes(udp ? "\0\1C" : "A", udp ? 3 : 1, true, 320));
+                        tunnelDownStreamPayload(f.t, f.carrier, bytes(udp ? "\0\1C" : "A", udp ? 3 : 1, true, 320));
                     if (boundary >= 6)
                     {
-                        f.t->fnPauseD(f.t, f.carrier);
+                        tunnelDownStreamPause(f.t, f.carrier);
                         if (boundary == 7)
-                            f.t->fnResumeD(f.t, f.carrier);
+                            tunnelDownStreamResume(f.t, f.carrier);
                     }
                 }
                 twfRequire(! lineIsAlive(f.application), "Finish callback did not close application");
@@ -732,7 +778,7 @@ static void testFallback(void)
                 pressure           = fault == 2;
                 immediate_pressure = fault == 3;
             }
-            f.t->fnPayloadD(f.t, f.carrier, part);
+            tunnelDownStreamPayload(f.t, f.carrier, part);
             offset += size;
         }
         twfRequire(f.deliveries_down == 1 && f.down_len == 8192 && memcmp(f.down, payload, 8192) == 0,
@@ -756,14 +802,14 @@ static void testSetupAndCallbackBudget(void)
 {
     twfSetCase("failed setup and admission during Est");
     begin(false, "127.0.0.1", 128, 0, false);
-    f.t->fnFinU(f.t, f.application);
+    tunnelUpStreamFin(f.t, f.application);
     lineDestroy(f.application);
     lineUnref(f.application);
     f.application = f.carrier = twfLinePoolCreateLine(&f.lines);
     lineRef(f.application);
     vlessclient_tstate_t *ts = tunnelGetState(f.t);
     ts->target_port_source   = kDvsFirstOption;
-    f.t->fnInitU(f.t, f.application);
+    tunnelUpStreamInit(f.t, f.application);
     twfRequire(! lineIsAlive(f.application) && f.finishes == 1 && f.transport_finishes == 1,
                "failed target setup finished an uninitialized next branch");
     end();
@@ -778,34 +824,34 @@ static void testPrefixes(void)
     sbuf_t *b = bytes("body", 4, true, 320);
     sbufShiftLeft(b, 3);
     sbufWrite(b, "pre", 3);
-    f.t->fnPayloadU(f.t, f.application, b);
+    tunnelUpStreamPayload(f.t, f.application, b);
     twfRequire(memcmp(f.up + 26, "\0\7prebody", 9) == 0 && f.parser_reads == 0, "prefix overwritten or materialized");
     b = bytes("body", 4, true, 320);
     sbufShiftLeft(b, 2);
     sbufWrite(b, "\0\4", 2);
-    f.t->fnPayloadD(f.t, f.carrier, b);
+    tunnelDownStreamPayload(f.t, f.carrier, b);
     twfRequire((! WW_HAVE_SPLICE || f.last == b) && f.parser_reads == 0, "whole body lost identity");
-    f.t->fnPayloadD(f.t, f.carrier, bytes("\0\4A", 3, false, 320));
-    f.t->fnPayloadD(f.t, f.carrier, bytes("BC", 2, true, 320));
-    f.t->fnPayloadD(f.t, f.carrier, bytes("D", 1, false, 320));
+    tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\4A", 3, false, 320));
+    tunnelDownStreamPayload(f.t, f.carrier, bytes("BC", 2, true, 320));
+    tunnelDownStreamPayload(f.t, f.carrier, bytes("D", 1, false, 320));
     twfRequire(f.down_len == 8 && memcmp(f.down, "bodyABCD", 8) == 0, "mixed assembly changed");
     f.paused_down = true;
-    f.t->fnPauseU(f.t, f.application);
-    f.t->fnPayloadD(f.t, f.carrier, bytes("\5\334", 2, false, 320));
+    tunnelUpStreamPause(f.t, f.application);
+    tunnelDownStreamPayload(f.t, f.carrier, bytes("\5\334", 2, false, 320));
     for (unsigned i = 0; i < 1500; ++i)
-        f.t->fnPayloadD(f.t, f.carrier, bytes("X", 1, false, 320));
+        tunnelDownStreamPayload(f.t, f.carrier, bytes("X", 1, false, 320));
     twfRequire(lineIsAlive(f.application), "wire fragments consumed output-entry budget");
     f.paused_down = false;
-    f.t->fnResumeU(f.t, f.application);
+    tunnelUpStreamResume(f.t, f.application);
     twfRequire(f.deliveries_down == 3 && f.down_len == 1508, "fragment boundaries lost");
     end();
     begin(true, "127.0.0.1", 128, 0, false);
     bufferpoolUpdateAllocationPaddings(f.env.pool, 352, 352, 352, 32);
     establish();
     response();
-    f.t->fnPayloadD(f.t, f.carrier, bytes("\0\6padded", 8, true, 32));
+    tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\6padded", 8, true, 32));
     twfRequire(f.headroom >= 352 && memcmp(f.down, "padded", 6) == 0, "receive padding lost");
-    f.t->fnPayloadU(f.t, f.application, bytes("send", 4, true, 0));
+    tunnelUpStreamPayload(f.t, f.application, bytes("send", 4, true, 0));
     twfRequire(f.headroom >= 350 && memcmp(f.up + 28, "send", 4) == 0, "send padding lost");
     end();
 }
@@ -816,14 +862,14 @@ static void testMalformed(void)
     {
         begin(udp, "127.0.0.1", 128, 0, false);
         establish();
-        f.t->fnPayloadD(f.t, f.carrier, bytes("\1\0", 2, true, 320));
+        tunnelDownStreamPayload(f.t, f.carrier, bytes("\1\0", 2, true, 320));
         twfRequire(! lineIsAlive(f.application) && f.down_len == 0, "invalid response survived");
         end();
     }
     begin(true, "127.0.0.1", 128, 0, false);
     establish();
     response();
-    f.t->fnPayloadD(f.t, f.carrier, bytes("\0\0", 2, true, 320));
+    tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\0", 2, true, 320));
     twfRequire(! lineIsAlive(f.application) && ! lineIsAlive(f.carrier), "zero incoming UDP survived");
     end();
 }
@@ -836,33 +882,78 @@ static void testNested(void)
         begin(udp, "127.0.0.1", 128, 0, false);
         f.boundary = 2;
         f.action   = 9;
-        f.t->fnPayloadU(f.t, f.application, bytes("A", 1, true, 320));
+        tunnelUpStreamPayload(f.t, f.application, bytes("A", 1, true, 320));
         establish();
-        twfRequire(f.ests == 1 && f.requests == 1, "nested Est duplicated request or signal");
+        twfRequire(f.ests == (udp ? 1U : 3U) && f.requests == 1, "nested Est mapping or request count changed");
         end();
         begin(udp, "127.0.0.1", 128, 0, false);
         f.boundary = 3;
         f.action   = 5;
         establish();
-        twfRequire(f.ests == 1 && f.requests == 1 && f.up_len == 26 + (udp ? 3 : 1),
+        twfRequire(f.ests == (udp ? 1U : 2U) && f.requests == 1 && f.up_len == 26 + (udp ? 3 : 1),
                    "Est input was split from request");
         end();
         begin(udp, "127.0.0.1", 128, 0, false);
         f.boundary = 2;
         f.action   = 5;
-        f.t->fnPayloadU(f.t, f.application, bytes("A", 1, true, 320));
+        tunnelUpStreamPayload(f.t, f.application, bytes("A", 1, true, 320));
         twfRequire(f.requests == 1 && f.up[28 * udp + 26 * ! udp] == 'A' && f.up[f.up_len - 1] == 'C',
                    "nested payload overtook initial output");
         end();
     }
 }
+static void testTcpBypassTransitions(void)
+{
+    twfSetCase("TCP request/response completion in either order and inside live callbacks");
+    for (unsigned mode = 0; mode < 4; ++mode)
+    {
+        begin(false, "127.0.0.1", 128, mode == 0 ? 13 : 0, false);
+        if (mode == 0)
+        {
+            twfRequire(f.down_len == 1 && tunnelIsActiveForLine(f.t, f.application),
+                       "response from Init bypassed before the request existed");
+            f.expect_request_bypass = true;
+            f.boundary              = 2;
+            f.action                = 9;
+            tunnelUpStreamPayload(f.t, f.application, bytes("C", 1, false, 320));
+        }
+        else if (mode == 1)
+        {
+            ((vlessclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 400;
+            f.expect_request_bypass                                                  = true;
+            f.boundary                                                               = 3;
+            f.action                                                                 = 14;
+            establish();
+            twfRequire(f.ests == 2, "bypass during Est suppressed the repeated notification");
+        }
+        else if (mode == 2)
+        {
+            f.boundary = 5;
+            f.action   = 15;
+            tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\0AB", 4, false, 320));
+            twfRequire(f.down_len == 3 && memcmp(f.down, "ABZ", 3) == 0,
+                       "request completion lost or reordered retained response input");
+        }
+        else
+        {
+            f.boundary = 2;
+            f.action   = 13;
+            tunnelUpStreamPayload(f.t, f.application, bytes("C", 1, false, 320));
+            twfRequire(f.down_len == 1 && f.down[0] == 'R', "inline request response lost its body");
+        }
+        twfRequire(f.requests == 1 && f.up_len == 27 && f.up[26] == 'C', "transition duplicated or lost request data");
+        requireTcpBypassed();
+        end();
+    }
+}
+
 static void testPreparedDestination(void)
 {
     twfSetCase("prepare before DNS, resolved destination preserved and UUID aliases");
     for (unsigned udp = 0; udp < 2; ++udp)
     {
         begin(udp, "example.test", 128, 0, true);
-        f.t->fnFinU(f.t, f.application);
+        tunnelUpStreamFin(f.t, f.application);
         lineDestroy(f.application);
         lineUnref(f.application);
         if (udp)
@@ -882,7 +973,7 @@ static void testPreparedDestination(void)
         dns_resolved_addr_t answer = {.family = AF_INET, .addrlen = sizeof(struct sockaddr_in)};
         memcpy(&answer.addr, &resolved, answer.addrlen);
         twfRequire(dnsstrategyApplyResolvedAddress(target, &answer), "DNS application failed");
-        f.t->fnInitU(f.t, f.application);
+        tunnelUpStreamInit(f.t, f.application);
         establish();
         twfRequire(f.up_len == 26 && f.up[18] == (udp ? 2 : 1) && f.up[25] == 2,
                    "Init reapplied configured domain after DNS");
@@ -910,17 +1001,17 @@ static void testOwnerDrain(void)
     for (unsigned stage = 0; stage < 4; ++stage)
     {
         begin(true, "127.0.0.1", 128, 0, true);
-        f.t->fnPayloadU(f.t, f.application, bytes("queued", 6, true, 320));
+        tunnelUpStreamPayload(f.t, f.application, bytes("queued", 6, true, 320));
         if (stage)
             establish();
         if (stage == 2)
-            f.t->fnPayloadD(f.t, f.carrier, bytes("\0\377partial", 9, true, 320));
+            tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\377partial", 9, true, 320));
         if (stage == 3)
         {
             response();
             f.paused_down = true;
-            f.t->fnPauseU(f.t, f.application);
-            f.t->fnPayloadD(f.t, f.carrier, bytes("\0\7partial", 9, true, 320));
+            tunnelUpStreamPause(f.t, f.application);
+            tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\7partial", 9, true, 320));
         }
         end();
     }
@@ -944,23 +1035,25 @@ static void testFirstPayload(void)
             bool     ordinary = ! sbufIsSplice(body);
             uint32_t expected_padding =
                 ordinary ? sbufGetLeftCapacity(body) - 26 - (udp ? 2 : 0) : bufferpoolGetLargeBufferPadding(f.env.pool);
-            f.t->fnPayloadU(f.t, f.application, body);
+            tunnelUpStreamPayload(f.t, f.application, body);
             twfRequire(f.requests == 1 && f.deliveries_up == 0 && ! f.last_splice && f.headroom == expected_padding &&
                            (! ordinary || f.last == body),
                        "initial output split, splice-backed or missing padding");
             twfRequire(f.up_len == 26 + (udp ? 2 : 0) + length &&
                            memcmp(f.up + f.up_len - length, representation == 2 ? "prebody" : "body", length) == 0,
                        "combined first payload lost bytes");
+            twfRequire(tunnelIsActiveForLine(f.t, f.application), "request bypassed before response completion");
             establish();
-            twfRequire(f.ests == 1 && wloopNTimers(f.env.loop) == 0, "pre-Est send created timer or duplicate signal");
+            twfRequire(f.ests == (udp ? 1U : 2U) && wloopNTimers(f.env.loop) == 0,
+                       "pre-Est send created timer or changed Est mapping");
             end();
         }
     begin(false, "127.0.0.1", 128, 0, false);
-    f.t->fnPayloadU(f.t, f.application, bytes("", 0, false, 320));
+    tunnelUpStreamPayload(f.t, f.application, bytes("", 0, false, 320));
     twfRequire(f.requests == 0, "empty TCP triggered request");
     end();
     begin(true, "127.0.0.1", 128, 0, false);
-    f.t->fnPayloadU(f.t, f.application, bytes("", 0, false, 320));
+    tunnelUpStreamPayload(f.t, f.application, bytes("", 0, false, 320));
     twfRequire(f.requests == 0, "empty UDP policy changed");
     end();
 }
@@ -986,7 +1079,7 @@ static void testFirstPayloadReuse(void)
                 sbufShiftLeft(body, sbufGetLeftCapacity(body) - padding);
                 sbufSetLength(body, 7);
                 sbufWrite(body, "payload", 7);
-                f.t->fnPayloadU(f.t, f.application, body);
+                tunnelUpStreamPayload(f.t, f.application, body);
                 twfRequire(f.requests == 1 && f.up_len == headers + 7 && ! f.last_splice &&
                                memoryCompare(f.up + headers, "payload", 7) == 0,
                            "initial request split or corrupted the first body");
@@ -1017,7 +1110,7 @@ static void testInitialAllocationRefusal(void)
         establish();
         sbuf_t *body            = bytes("owned", 5, true, 0);
         fail_initial_allocation = true;
-        f.t->fnPayloadU(f.t, f.application, body);
+        tunnelUpStreamPayload(f.t, f.application, body);
         twfRequire(! lineIsAlive(f.application) && f.requests == 0 && wloopNTimers(f.env.loop) == 0,
                    "failed initial allocation leaked source, timer or association");
         end();
@@ -1064,9 +1157,9 @@ static void testTimers(void)
     twfSetCase("deadline cancellation, paused due work, early dispatch and quiescence");
     begin(false, "127.0.0.1", 128, 1, false);
     establish();
-    twfRequire(f.ests == 1 && f.requests == 0 && wloopNTimers(f.env.loop) == 0,
+    twfRequire(f.ests == 2 && f.requests == 0 && wloopNTimers(f.env.loop) == 0,
                "zero timeout emitted idle header through Pause or withheld Est");
-    f.t->fnResumeD(f.t, f.carrier);
+    tunnelDownStreamResume(f.t, f.carrier);
     twfRequire(f.requests == 1, "zero timeout due header stranded on Resume");
     end();
     for (unsigned udp = 0; udp < 2; ++udp)
@@ -1076,18 +1169,26 @@ static void testTimers(void)
             ((vlessclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 400;
             establish();
             vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-            twfRequire(f.ests == 1 && f.requests == 0 && ls->first_payload_timer != NULL,
+            twfRequire(f.ests == (udp ? 1U : 2U) && f.requests == 0 && ls->first_payload_timer != NULL,
                        "idle deadline missing or header sent early");
             uint64_t deadline = ls->first_payload_deadline_us;
             establish();
-            twfRequire(ls->first_payload_deadline_us == deadline && wloopNTimers(f.env.loop) == 1,
-                       "duplicate Est reset deadline");
+            twfRequire(f.ests == (udp ? 1U : 4U) && ls->first_payload_deadline_us == deadline &&
+                           wloopNTimers(f.env.loop) == 1,
+                       "duplicate Est reset deadline or changed mapping");
+            if (! udp)
+            {
+                response();
+                twfRequire(tunnelIsActiveForLine(f.t, f.application), "response bypassed before request submission");
+            }
             if (mode == 0)
             {
-                f.t->fnPayloadU(f.t, f.application, bytes("A", 1, true, 320));
+                tunnelUpStreamPayload(f.t, f.application, bytes("A", 1, true, 320));
                 twfRequire(ls->first_payload_timer == NULL && wloopNTimers(f.env.loop) == 0 &&
                                f.up_len == 26 + (udp ? 2 + 1 : 1),
                            "data did not cancel timer");
+                if (! udp)
+                    requireTcpBypassed();
             }
             else if (mode == 1)
             {
@@ -1106,14 +1207,14 @@ static void testTimers(void)
             else if (mode == 3)
             {
                 wtimerTestMakePendingOneShot(ls->first_payload_timer);
-                f.t->fnFinD(f.t, f.carrier);
+                tunnelDownStreamFin(f.t, f.carrier);
                 discard wloopProcessEvents(f.env.loop, 0);
                 twfRequire(! lineIsAlive(f.application) && f.requests == 0, "canceled pending timer emitted header");
             }
             else
             {
                 if (mode != 4)
-                    f.t->fnPauseD(f.t, f.carrier);
+                    tunnelDownStreamPause(f.t, f.carrier);
                 ls->first_payload_deadline_us = getHRTimeUs() - 1;
                 wtimerTestMakePendingOneShot(ls->first_payload_timer);
                 if (mode == 4)
@@ -1129,22 +1230,24 @@ static void testTimers(void)
                     twfRequire(f.requests == 0 && ls->first_payload_due && ls->first_payload_timer == NULL,
                                "timer sent through Pause or retained executing one-shot");
                     if (mode == 5)
-                        f.t->fnResumeD(f.t, f.carrier);
+                        tunnelDownStreamResume(f.t, f.carrier);
                     else if (mode == 6)
-                        f.t->fnPayloadU(f.t, f.application, bytes("A", 1, true, 320));
+                        tunnelUpStreamPayload(f.t, f.application, bytes("A", 1, true, 320));
                     else
                     {
                         f.boundary = 7;
                         f.action   = 5;
-                        f.t->fnResumeD(f.t, f.carrier);
+                        tunnelDownStreamResume(f.t, f.carrier);
                     }
                     twfRequire(f.requests == 1 && ! ls->first_payload_due && wloopNTimers(f.env.loop) == 0 &&
                                    f.up_len == 26 + (mode == 5 ? 0
                                                      : udp     ? 2 + 1
                                                                : 1),
                                "due header duplicated, failed to combine, or failed Resume");
-                    f.t->fnResumeD(f.t, f.carrier);
+                    tunnelDownStreamResume(f.t, f.carrier);
                     twfRequire(f.requests == 1, "duplicate Resume repeated request");
+                    if (! udp)
+                        requireTcpBypassed();
                 }
             }
             end();
@@ -1172,12 +1275,13 @@ static void testNestedClients(void)
     memset(domain, 'a', 255);
     domain[255] = 0;
     begin(false, domain, 128, 0, false);
-    f.t->fnFinU(f.t, f.application);
+    tunnelUpStreamFin(f.t, f.application);
     lineDestroy(f.application);
     lineUnref(f.application);
     twfLinePoolTeardown(&f.lines);
     tunnel_t *inner = vlessclientTunnelCreate(&f.node);
     twfRequire(inner != NULL, "nested client construction failed");
+    inner->chain_index   = 3;
     inner->lstate_offset = f.t->lstate_size;
     inner->chain         = f.chain;
     tunnelBind(f.t, inner);
@@ -1186,18 +1290,23 @@ static void testNestedClients(void)
     f.chain->line_pools[0] = f.lines.pools[0];
     f.application = f.carrier = twfLinePoolCreateLine(&f.lines);
     lineRef(f.application);
-    f.t->fnInitU(f.t, f.application);
+    tunnelUpStreamInit(f.t, f.application);
     uint32_t length = 1024 * 1024;
     uint8_t *data   = memoryAllocate(length);
     memset(data, 'x', length);
-    f.t->fnPayloadU(f.t, f.application, bytes(data, length, false, 320));
+    tunnelUpStreamPayload(f.t, f.application, bytes(data, length, false, 320));
     twfRequire(f.requests == 1 && f.deliveries_up == 0 && ! f.last_splice && f.up_len == length + 556 &&
                    memcmp(f.up + 556, data, length) == 0,
                "nested first requests split or truncated body");
     memoryFree(data);
     sbuf_t *later = bytes("later", 5, true, 320);
-    f.t->fnPayloadU(f.t, f.application, later);
+    tunnelUpStreamPayload(f.t, f.application, later);
     twfRequire(f.last == later && f.last_splice == (bool) WW_HAVE_SPLICE, "nested later TCP lost splice identity");
+    tunnelDownStreamPayload(inner, f.application, bytes("\0\0\0\0R", 5, true, 320));
+    requireTcpBypassed();
+    twfRequire(! tunnelIsActiveForLine(inner, f.application) && f.down_len == 1 && f.down[0] == 'R',
+               "nested responses did not retire both TCP clients");
+    twfRequireLineStateZeroed(f.application, inner, "inner TCP client retained state");
     end();
     inner->onDestroy(inner, wwLifecycleStartupRollback());
 }

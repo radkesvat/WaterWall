@@ -225,8 +225,9 @@ is reused in place when its headroom fits all headers. Otherwise a best-fit ordi
 buffer is allocated; any resident prefix and private-pipe body are copied in order.
 Empty TCP input does not trigger a request. Empty VLESS UDP datagrams are dropped locally.
 
-Transport `Est` reaches the live application once, independently of protocol data and
-Pause. If the request remains unsent, its first-payload deadline starts at that Est.
+Every direct TCP transport `Est` reaches the live application, including repeats,
+independently of protocol data and Pause. UDP carrier Est maps to its application
+once. If the request remains unsent, its first-payload deadline starts at the first Est.
 `settings.first-payload-timeout-ms` defaults to **400**, accepts integers from **0** to
 **4,294,967,295**, and rejects other types and ranges. Zero disables deliberate waiting.
 Paused time counts. Expiry sends one header-only request when transport output is
@@ -237,6 +238,11 @@ One ordinary output does not promise one syscall, TCP packet, or TLS record.
 
 Direct TCP and per-datagram upstream forwarding do not wait for Est or Resume and do
 not keep application output queues. VLESS downstream parsing validates version 0 and consumes exactly the response header and its addons, at most 257 bytes. Nonempty addons are skipped with a warning. Outbound input never waits for this response.
+
+Once the TCP request has been submitted, the complete response header has been
+consumed, and retained/reentrant input has drained, the node destroys its local
+line state and permanently bypasses itself for that line. Later callbacks pass
+directly between its neighbors. Completing only the request or response is insufficient.
 
 UDP application lines remain borrowed UDP-facing lines. The client creates one dependent,
 owned TCP carrier on the application's worker and maps Est, Pause/Resume and Finish to

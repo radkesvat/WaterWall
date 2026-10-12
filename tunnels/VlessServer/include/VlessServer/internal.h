@@ -13,6 +13,8 @@ void vlessserverCloseLineFromDownstream(tunnel_t *t, line_t *l);
 void vlessserverCloseLineBidirectional(tunnel_t *t, line_t *l);
 bool vlessserverForwardResponse(tunnel_t *t, line_t *l, sbuf_t *buf);
 bool vlessserverDrainResponse(tunnel_t *t, line_t *l, bool admitted);
+/* Call after the current callback has settled any owed permission notification. */
+void vlessserverTryBypassTcp(tunnel_t *t, line_t *l);
 void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);
 bool vlessserverWrapUdpPayload(line_t *l, sbuf_t **buf_io);
 bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, sbuf_t *buf);
