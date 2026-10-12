@@ -35,10 +35,8 @@ static bool rejectFreshOpen(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
     return muxserverSendParentOutput(t, parent_l, close_frame, NULL, kMuxFlagClose);
 }
 
-static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, mux_frame_t *frame,
-                            sbuf_t *frame_buffer)
+static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, mux_frame_t *frame)
 {
-    lineReuseBuffer(parent_l, frame_buffer);
     LOGD("MuxServer: UpStreamPayload: Open frame received, cid: %u", frame->cid);
 
     muxserver_tstate_t *ts       = tunnelGetState(t);
@@ -108,7 +106,8 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
 
     if (UNLIKELY(child_ls->close_state != kMuxServerChildCloseOpen))
     {
-        lineReuseBuffer(parent_l, frame_buffer);
+        if (frame_buffer != NULL)
+            lineReuseBuffer(parent_l, frame_buffer);
         return true;
     }
 
@@ -116,7 +115,6 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
     {
     case kMuxFlagClose:
         LOGD("MuxServer: UpStreamPayload: Close frame received, cid: %u", frame->cid);
-        lineReuseBuffer(parent_l, frame_buffer);
         if (! muxserverBeginPeerCloseDrain(t, parent_l, ts, parent_ls, child_ls))
         {
             return false;
@@ -125,7 +123,6 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
 
     case kMuxFlagFlowPause:
         // LOGD("MuxServer: UpStreamPayload: FlowPause frame received, cid: %u", frame->cid);
-        lineReuseBuffer(parent_l, frame_buffer);
         if (! muxserverPauseChildSource(t, parent_l, child_ls, true, false))
         {
             return false;
@@ -134,7 +131,6 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
 
     case kMuxFlagFlowResume:
         // LOGD("MuxServer: UpStreamPayload: FlowResume frame received, cid: %u", frame->cid);
-        lineReuseBuffer(parent_l, frame_buffer);
         if (! muxserverResumeChildSource(t, parent_l, child_ls, true, false))
         {
             return false;
@@ -147,9 +143,15 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
         {
             muxserverRefreshChildIdle(t, child_ls);
         }
-        if (child_ls->paused)
+        if (child_ls->paused || bufferqueueGetBufCount(&child_ls->pending_child_data) != 0)
         {
-            return muxserverQueueChildPayload(t, parent_l, ts, parent_ls, child_ls, frame_buffer);
+            lineRef(child_l);
+            const bool parent_alive = muxserverQueueChildPayload(t, parent_l, ts, parent_ls, child_ls, frame_buffer);
+            if (parent_alive && lineIsAlive(child_l) && child_ls->is_child && child_ls->parent == parent_ls &&
+                child_ls->close_state == kMuxServerChildCloseOpen && ! child_ls->paused)
+                discard muxserverDrainAttachedChild(t, parent_l, parent_ls, child_l, child_ls);
+            lineUnref(child_l);
+            return lineIsAlive(parent_l);
         }
         if (! lineCallWithRefWithBuf(child_l, tunnelNextUpStreamPayload, t, frame_buffer))
         {
@@ -159,7 +161,6 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
 
     default:
         // LOGD("MuxServer: UpStreamPayload: Unknown frame type received, cid: %u", frame->cid);
-        lineReuseBuffer(parent_l, frame_buffer);
         break;
     }
     return true;
@@ -187,101 +188,95 @@ static void processParentPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
     muxserver_tstate_t *ts        = tunnelGetState(t);
     muxserver_lstate_t *parent_ls = lineGetState(parent_l, t);
 
-    // Parent storage may coalesce; exact frame reads below restore the wire boundaries, including empty Data.
+    // Append before callbacks so nested input follows every older carrier byte.
     if (UNLIKELY(! splicestreamPush(parent_ls->parent_state->read_stream, buf)))
     {
         handleOverFlow(t, parent_l);
         return;
     }
 
-    while (parent_ls->parent_state != NULL && ! parent_ls->parent_finishing &&
+    while (lineIsAlive(parent_l) && parent_ls->parent_state != NULL && ! parent_ls->parent_finishing &&
            ! ts->worker_states[lineGetWID(parent_l)].quiescing)
     {
-        mux_frame_t             frame  = {0};
-        const mux_peek_result_t result = muxPeekCompleteFrame(parent_ls->parent_state->read_stream, &frame);
-        if (UNLIKELY(result == kMuxPeekInvalidLength))
+        muxserver_parent_state_t *state  = parent_ls->parent_state;
+        splice_stream_t          *stream = state->read_stream;
+        if (! state->reading_frame)
         {
-            LOGW("MuxServer: invalid frame payload length %u (maximum %u)",
-                 (unsigned int) frame.length,
-                 (unsigned int) kMuxMaxDataFrameLength);
-            muxserverHandleParentLoss(t, parent_l, true);
-            return;
-        }
-        if (result == kMuxPeekNeedMore)
-        {
-            break;
+            const mux_peek_result_t result = muxPeekFrameHeader(stream, &state->read_frame);
+            if (UNLIKELY(result == kMuxPeekInvalidLength))
+            {
+                LOGW("MuxServer: invalid frame payload length %u (maximum %u)",
+                     (unsigned int) state->read_frame.length,
+                     (unsigned int) kMuxMaxDataFrameLength);
+                muxserverHandleParentLoss(t, parent_l, true);
+                return;
+            }
+            if (result == kMuxPeekNeedMore)
+                break;
+            state->reading_frame  = true;
+            state->read_remaining = state->read_frame.length;
+            state->discard_frame  = false;
         }
 
+        mux_frame_t         frame    = state->read_frame;
+        muxserver_lstate_t *child_ls = muxserverFindChildByConnectionId(parent_ls, frame.cid);
+        if (frame.flags == kMuxFlagData && (child_ls == NULL || child_ls->close_state != kMuxServerChildCloseOpen))
+            state->discard_frame = true;
+        const uint32_t count = (uint32_t) min(splicestreamBodyBytes(stream), (size_t) state->read_remaining);
+        if (count == 0 && state->read_remaining != 0)
+            break;
+        const bool finished = count == state->read_remaining;
+        const bool deliver  = frame.flags == kMuxFlagData && ! state->discard_frame && count != 0;
+
+        // Publish all progress before delivery: nested input may complete this
+        // frame, process siblings, or destroy either exact line.
+        state->read_remaining -= count;
+        state->reading_frame = ! finished;
+        if (deliver)
+        {
+            sbuf_t *body = splicestreamMoveFrameChunk(
+                stream, bufferpoolGetSpliceBuffer(lineGetBufferPool(parent_l)), count, finished);
+            if (! processFrameForChild(t, parent_l, &frame, body, ts, parent_ls, child_ls))
+                return;
+            continue;
+        }
+
+        // Missing/closed children and empty DATA produce no child callback.
+        // Controls are applied only at the end of their declared body.
+        splicestreamDiscardFrameChunk(stream, count, finished);
+        if (! finished || frame.flags == kMuxFlagData)
+            continue;
         if (frame.flags == kMuxFlagPing || frame.flags == kMuxFlagPong)
         {
-            sbuf_t *control = muxReadFrameBody(parent_ls->parent_state->read_stream, &frame, false);
             if (! ts->keepalive || frame.flags == kMuxFlagPong)
-            {
-                lineReuseBuffer(parent_l, control);
                 continue;
-            }
             if (frame.length != 0)
             {
-                lineReuseBuffer(parent_l, control);
                 LOGW("MuxServer: keepalive Ping must have an empty body");
                 muxserverHandleParentLoss(t, parent_l, true);
                 return;
             }
+            sbuf_t *control = muxParentOutputControlBuffer(lineGetBufferPool(parent_l));
             muxMakeMuxFrame(control, frame.cid, kMuxFlagPong);
             if (! muxserverSendParentOutput(t, parent_l, control, NULL, kMuxFlagPong))
                 return;
             continue;
         }
 
-        muxserver_lstate_t *child_ls =
-            frame.flags == kMuxFlagOpen ? NULL : muxserverFindChildByConnectionId(parent_ls, frame.cid);
-        const bool retain = frame.flags == kMuxFlagData && child_ls != NULL && child_ls->paused &&
-                            child_ls->close_state == kMuxServerChildCloseOpen;
-        const bool forward_splice = frame.flags == kMuxFlagData && child_ls != NULL && ! child_ls->paused &&
-                                    child_ls->close_state == kMuxServerChildCloseOpen;
-        sbuf_t *frame_buffer = muxReadFrameBody(parent_ls->parent_state->read_stream, &frame, retain || forward_splice);
         if (frame.flags == kMuxFlagOpen)
         {
-            if (! handleOpenFrame(t, parent_l, parent_ls, &frame, frame_buffer))
-            {
-                // The child Init was re-entrant and tore down the parent line (and its
-                // line state). Both parent_l and parent_ls are now invalid, so we must
-                // stop touching them immediately instead of looping back.
+            if (! handleOpenFrame(t, parent_l, parent_ls, &frame))
                 return;
-            }
             continue;
         }
 
-        if (! child_ls)
-        {
-            // LOGD("MuxServer: UpStreamPayload: No child line state found for cid: %u", frame.cid);
-            lineReuseBuffer(parent_l, frame_buffer);
-            continue;
-        }
-
-        lineRef(parent_l);
-        if (! processFrameForChild(t, parent_l, &frame, frame_buffer, ts, parent_ls, child_ls))
-        {
-            lineUnref(parent_l);
+        if (child_ls != NULL && ! processFrameForChild(t, parent_l, &frame, NULL, ts, parent_ls, child_ls))
             return;
-        }
-
-        if (! lineIsAlive(parent_l))
-        {
-            LOGD("MuxServer: UpStreamPayload: Parent line is not alive, stopping processing for cid: %u", frame.cid);
-            lineUnref(parent_l);
-            return;
-        }
-        lineUnref(parent_l);
     }
 
-    // Only the incomplete remainder counts toward the limit. A single batch may legally carry far more than
-    // kMuxMaxBufferedFrameLength bytes of complete frames, and those must be drained rather than judged an overflow.
-    if (parent_ls->parent_state != NULL && isOverFlow(parent_ls->parent_state->read_stream))
-    {
+    // Ready DATA chunks drain before checking the retained carrier suffix.
+    if (lineIsAlive(parent_l) && parent_ls->parent_state != NULL && isOverFlow(parent_ls->parent_state->read_stream))
         handleOverFlow(t, parent_l);
-        return;
-    }
 }
 
 void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)

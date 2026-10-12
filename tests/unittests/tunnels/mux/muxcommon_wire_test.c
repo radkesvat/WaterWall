@@ -337,16 +337,16 @@ static void testCompleteFrameParsing(buffer_pool_t *pool)
     mux_frame_t      decoded;
 
     pushBytes(pool, stream, wire, kMuxFrameLength - 1U);
-    require(muxPeekCompleteFrame(stream, &decoded) == kMuxPeekNeedMore, "an incomplete header was consumed");
+    require(muxPeekFrameHeader(stream, &decoded) == kMuxPeekNeedMore, "an incomplete header was consumed");
     require(splicestreamLength(stream) == kMuxFrameLength - 1U, "incomplete header changed stream length");
 
     pushBytes(pool, stream, wire + kMuxFrameLength - 1U, 3U);
-    require(muxPeekCompleteFrame(stream, &decoded) == kMuxPeekNeedMore, "an incomplete payload was consumed");
+    require(muxPeekFrameHeader(stream, &decoded) == kMuxPeekReady, "complete header waited for its body");
     require(splicestreamLength(stream) == kMuxFrameLength + 2U, "incomplete payload changed stream length");
 
     pushBytes(pool, stream, wire + kMuxFrameLength + 2U, 2U);
     sbuf_t *complete =
-        (muxPeekCompleteFrame(stream, &decoded) == kMuxPeekReady ? muxReadFrameBody(stream, &decoded, false) : NULL);
+        (muxPeekFrameHeader(stream, &decoded) == kMuxPeekReady ? muxReadFrameBody(stream, &decoded, false) : NULL);
     require(complete != NULL, "a complete fragmented frame was not returned");
     require(splicestreamLength(stream) == 0, "complete frame was not consumed exactly");
     require(decoded.length == ARRAY_SIZE(payload), "decoded frame length is wrong");
@@ -360,7 +360,7 @@ static void testCompleteFrameParsing(buffer_pool_t *pool)
     muxSetMuxFrameHeader(&wire_header, 0, kTestCid, kMuxFlagFlowPause);
     pushBytes(pool, stream, (const uint8_t *) &wire_header, kMuxFrameLength);
     complete =
-        (muxPeekCompleteFrame(stream, &decoded) == kMuxPeekReady ? muxReadFrameBody(stream, &decoded, false) : NULL);
+        (muxPeekFrameHeader(stream, &decoded) == kMuxPeekReady ? muxReadFrameBody(stream, &decoded, false) : NULL);
     require(complete != NULL, "an exact zero-length frame was not returned");
     require(decoded.length == 0 && decoded.flags == kMuxFlagFlowPause, "zero-length frame decoded incorrectly");
     bufferpoolReuseBuffer(pool, complete);
@@ -448,7 +448,7 @@ static void testSpliceMuxPaths(buffer_pool_t *pool)
         splicestreamPush(stream, wire);
 
         mux_frame_t frame;
-        require(muxPeekCompleteFrame(stream, &frame) == kMuxPeekReady && frame.length == 41 && frame.cid == kTestCid,
+        require(muxPeekFrameHeader(stream, &frame) == kMuxPeekReady && frame.length == 41 && frame.cid == kTestCid,
                 "could not peek splice-backed Mux frame");
         sbuf_t *forward = muxReadFrameBody(stream, &frame, true);
         require(forward == wire && (forward->flags & kSbufFlagSplice) != 0,
@@ -465,7 +465,7 @@ static void testSpliceMuxPaths(buffer_pool_t *pool)
         splicestreamPush(stream, wire);
 
         mux_frame_t frame;
-        require(muxPeekCompleteFrame(stream, &frame) == kMuxPeekReady, "could not peek queued splice-backed Mux frame");
+        require(muxPeekFrameHeader(stream, &frame) == kMuxPeekReady, "could not peek queued splice-backed Mux frame");
         sbuf_t *queued = muxReadFrameBody(stream, &frame, false);
         require((queued->flags & kSbufFlagSplice) == 0, "queued Mux frame extraction retained a private pipe");
         require(sbufGetLength(queued) == 53, "queued splice-backed Mux frame has the wrong payload length");
@@ -741,7 +741,7 @@ static void testQueuedFrameExtraction(buffer_pool_t *pool)
             }
             splicestreamPush(stream, input);
             mux_frame_t frame;
-            require(muxPeekCompleteFrame(stream, &frame) == kMuxPeekReady && frame.length == length &&
+            require(muxPeekFrameHeader(stream, &frame) == kMuxPeekReady && frame.length == length &&
                         frame.cid == kTestCid && splicestreamLength(stream) == length + kMuxFrameLength,
                     "frame peek consumed bytes or decoded the wrong header");
             sbuf_t *read = muxReadFrameBody(stream, &frame, false);
@@ -770,7 +770,7 @@ static void testQueuedFrameExtraction(buffer_pool_t *pool)
     sbufSetLength(input, 4097 + kMuxFrameLength);
     memoryCopy(sbufGetMutablePtr(input), &wire, kMuxFrameLength);
     splicestreamPush(stream, input);
-    require(muxPeekCompleteFrame(stream, &frame) == kMuxPeekReady, "could not peek an already suitable whole frame");
+    require(muxPeekFrameHeader(stream, &frame) == kMuxPeekReady, "could not peek an already suitable whole frame");
     sbuf_t *read = muxReadFrameBody(stream, &frame, false);
     require(sbufGetLength(read) == 4097, "queued whole medium frame has wrong length");
     bufferpoolReuseBuffer(pool, read);
@@ -881,13 +881,11 @@ static void testHeaderPeekBoundaries(buffer_pool_t *pool)
             splice_stream_t *stream = splicestreamCreate(pool, kMuxFrameLength);
             pushBytes(pool, stream, wire, split);
             mux_frame_t frame;
-            require(muxPeekCompleteFrame(stream, &frame) == kMuxPeekNeedMore, "partial header was decoded");
+            require(muxPeekFrameHeader(stream, &frame) == kMuxPeekNeedMore, "partial header was decoded");
             pushBytes(pool, stream, wire + split, kMuxFrameLength - split);
-            const mux_peek_result_t expected = length > kMuxMaxDataFrameLength ? kMuxPeekInvalidLength
-                                               : length == 0                   ? kMuxPeekReady
-                                                                               : kMuxPeekNeedMore;
+            const mux_peek_result_t expected = length > kMuxMaxDataFrameLength ? kMuxPeekInvalidLength : kMuxPeekReady;
             for (unsigned peek = 0; peek < 4; ++peek)
-                require(muxPeekCompleteFrame(stream, &frame) == expected && frame.length == length &&
+                require(muxPeekFrameHeader(stream, &frame) == expected && frame.length == length &&
                             frame.cid == kTestCid && splicestreamLength(stream) == kMuxFrameLength,
                         "repeated peek truncated length, consumed bytes, or waited for forbidden body");
             splicestreamDestroy(stream);
@@ -1017,7 +1015,7 @@ static void testMaximumMixedFrame(buffer_pool_t *pool, bool mixed)
         offset += count;
     }
     mux_frame_t frame;
-    require(muxPeekCompleteFrame(stream, &frame) == kMuxPeekReady && frame.length == length,
+    require(muxPeekFrameHeader(stream, &frame) == kMuxPeekReady && frame.length == length,
             "maximum mixed frame not ready");
     sbuf_t *body = muxReadFrameBody(stream, &frame, true);
     require((body->flags & kSbufFlagSplice) == 0 && sbufGetLength(body) == length &&
@@ -1025,7 +1023,7 @@ static void testMaximumMixedFrame(buffer_pool_t *pool, bool mixed)
             "maximum slot-pressure fallback lost ordinary storage, length or padding");
     for (uint32_t i = 0; i < length; ++i)
         require(sbufGetMutablePtr(body)[i] == patternByte(i), "maximum mixed-frame fallback corrupted bytes");
-    require(splicestreamLength(stream) == 3 && muxPeekCompleteFrame(stream, &frame) == kMuxPeekNeedMore,
+    require(splicestreamLength(stream) == 3 && muxPeekFrameHeader(stream, &frame) == kMuxPeekNeedMore,
             "maximum mixed extraction consumed the next partial header");
     bufferpoolReuseBuffer(pool, body);
     splicestreamDestroy(stream);

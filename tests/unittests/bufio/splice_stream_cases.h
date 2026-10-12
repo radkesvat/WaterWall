@@ -93,6 +93,74 @@ static void streamCheckCharge(const splice_stream_t *s)
     require(charge == splicestreamCharge(s), "active-head mutation left stale stream charge");
 }
 
+static void testSpliceStreamChunks(buffer_pool_t *pool)
+{
+    for (unsigned mode = 0; mode < (WW_HAVE_SPLICE ? 2U : 1U); ++mode)
+        for (unsigned discard_body = 0; discard_body < 2; ++discard_body)
+        {
+            splice_stream_t *s          = splicestreamCreate(pool, 8);
+            sbuf_t          *outputs[3] = {NULL};
+            sbuf_t          *input;
+#if WW_HAVE_SPLICE
+            if (mode != 0)
+                input = makeSpliceTestBuffer(pool, (const uint8_t *) "HEADER01", 8, (const uint8_t *) "abcd", 4);
+            else
+#endif
+                input = streamTestBytes(pool, "HEADER01abcd", 12);
+            require(splicestreamPush(s, input), "partial frame push failed");
+            for (unsigned chunk = 0; chunk < 2; ++chunk)
+            {
+#if WW_HAVE_SPLICE
+                streamProbe     = true;
+                streamReadBytes = 0;
+#endif
+                if (discard_body)
+                    splicestreamDiscardFrameChunk(s, 2, false);
+                else
+                    outputs[chunk] = splicestreamMoveFrameChunk(s, bufferpoolGetSpliceBuffer(pool), 2, false);
+#if WW_HAVE_SPLICE
+                streamProbe = false;
+                require(streamReadBytes == 0, "partial body move/discard materialized pipe bytes");
+                if (mode != 0 && ! discard_body)
+                    require(sbufIsSplice(outputs[chunk]), "partial pipe body lost splice representation");
+#endif
+                streamCheckCharge(s);
+                require(splicestreamLength(s) == 10U - 2U * chunk && splicestreamBodyBytes(s) == 2U - 2U * chunk &&
+                            memoryEqual(splicestreamPeekHeader(s), "HEADER01", 8),
+                        "partial body consumption discarded its cached header");
+            }
+            require(splicestreamCharge(s) == 0, "exhausted partial input retained an allocation charge");
+
+        /* More body and a following frame arrive only after the first
+         * chunks have been transferred. Push must retain the old header. */
+#if WW_HAVE_SPLICE
+            if (mode != 0)
+                input = makeSpliceTestBuffer(pool, NULL, 0, (const uint8_t *) "efHEADER02tail", 14);
+            else
+#endif
+                input = streamTestBytes(pool, "efHEADER02tail", 14);
+            require(splicestreamPush(s, input), "remaining body push failed");
+            require(splicestreamLength(s) == 22 && splicestreamBodyBytes(s) == 14 &&
+                        memoryEqual(splicestreamPeekHeader(s), "HEADER01", 8),
+                    "new input overwrote a partial frame's cached header");
+            if (discard_body)
+                splicestreamDiscardFrameChunk(s, 2, true);
+            else
+                outputs[2] = splicestreamMoveFrameChunk(s, bufferpoolGetSpliceBuffer(pool), 2, true);
+            streamCheckCharge(s);
+            require(splicestreamLength(s) == 12 && splicestreamBodyBytes(s) == 4 &&
+                        memoryEqual(splicestreamPeekHeader(s), "HEADER02", 8),
+                    "final chunk consumed or misplaced the following frame");
+            streamCheckBytes(pool, splicestreamMoveFrame(s, NULL, 4), "tail", 4);
+            require(splicestreamLength(s) == 0 && splicestreamCharge(s) == 0,
+                    "chunked extraction left bytes or stream charge");
+            splicestreamDestroy(s);
+            if (! discard_body)
+                for (unsigned chunk = 0; chunk < 3; ++chunk)
+                    streamCheckBytes(pool, outputs[chunk], "abcdef" + 2 * chunk, 2);
+        }
+}
+
 static void testSpliceStreamDiscard(buffer_pool_t *pool)
 {
     const uint8_t wire[] = "HEADER01bodyHEADER02tailHEADER03";
@@ -243,6 +311,7 @@ static void testSpliceStreamContracts(void)
     testSpliceStreamResidentRanges();
 #endif
     pool_fixture_t f = poolFixtureCreate(32768, 4096, 64, 64);
+    testSpliceStreamChunks(f.pool);
     testSpliceStreamDiscard(f.pool);
 
     const uint8_t wire[] = "HEADER01bodyNEXTHEADtail";

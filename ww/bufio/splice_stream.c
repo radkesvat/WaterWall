@@ -160,14 +160,18 @@ static inline void streamAssertFrame(const splice_stream_t *s, const sbuf_t *des
     discard bytes;
 }
 
-static void streamFinishFrame(splice_stream_t *s, uint32_t bytes)
+static void streamConsumeChunk(splice_stream_t *s, uint32_t bytes, bool finish_frame)
 {
-    s->total -= (size_t) s->header_size + bytes;
-    s->header_filled = 0;
-    streamFillHeader(s);
+    s->total -= bytes;
+    if (finish_frame)
+    {
+        s->total -= s->header_size;
+        s->header_filled = 0;
+        streamFillHeader(s);
+    }
 }
 
-static sbuf_t *streamMoveBody(splice_stream_t *s, sbuf_t *dest, uint32_t bytes)
+static sbuf_t *streamMoveBody(splice_stream_t *s, sbuf_t *dest, uint32_t bytes, bool finish_frame)
 {
     const uint16_t padding   = bufferpoolGetLargeBufferPadding(s->pool);
     uint32_t       remaining = bytes;
@@ -179,11 +183,16 @@ static sbuf_t *streamMoveBody(splice_stream_t *s, sbuf_t *dest, uint32_t bytes)
         remaining -= count;
         streamRecycleEmptyHead(s);
     }
-    streamFinishFrame(s, bytes);
+    streamConsumeChunk(s, bytes, finish_frame);
     return dest;
 }
 
 sbuf_t *splicestreamMoveFrame(splice_stream_t *s, sbuf_t *dest, uint32_t bytes)
+{
+    return splicestreamMoveFrameChunk(s, dest, bytes, true);
+}
+
+sbuf_t *splicestreamMoveFrameChunk(splice_stream_t *s, sbuf_t *dest, uint32_t bytes, bool finish_frame)
 {
     streamAssertFrame(s, dest, bytes);
     const uint16_t padding    = bufferpoolGetLargeBufferPadding(s->pool);
@@ -196,7 +205,7 @@ sbuf_t *splicestreamMoveFrame(splice_stream_t *s, sbuf_t *dest, uint32_t bytes)
         if (dest != NULL)
             bufferpoolReuseBuffer(s->pool, dest);
         dest = streamDetachHead(s);
-        streamFinishFrame(s, bytes);
+        streamConsumeChunk(s, bytes, finish_frame);
         return dest;
     }
     uint32_t remaining = bytes - head_bytes;
@@ -219,7 +228,7 @@ sbuf_t *splicestreamMoveFrame(splice_stream_t *s, sbuf_t *dest, uint32_t bytes)
     }
     if (dest == NULL)
         dest = bufferpoolGetBestFit(s->pool, bytes, padding);
-    return streamMoveBody(s, dest, bytes);
+    return streamMoveBody(s, dest, bytes, finish_frame);
 }
 
 void splicestreamMoveFrameToOrdinary(splice_stream_t *s, sbuf_t *dest, uint32_t bytes)
@@ -230,7 +239,7 @@ void splicestreamMoveFrameToOrdinary(splice_stream_t *s, sbuf_t *dest, uint32_t 
         LOGF("SpliceStream: insufficient ordinary destination");
         abortProgramNow(1);
     }
-    discard streamMoveBody(s, dest, bytes);
+    discard streamMoveBody(s, dest, bytes, true);
 }
 
 static void streamDiscardPipe(splice_stream_t *s, sbuf_t *source, uint32_t bytes)
@@ -291,6 +300,11 @@ static void streamDiscardPipe(splice_stream_t *s, sbuf_t *source, uint32_t bytes
 
 void splicestreamDiscardFrame(splice_stream_t *s, uint32_t bytes)
 {
+    splicestreamDiscardFrameChunk(s, bytes, true);
+}
+
+void splicestreamDiscardFrameChunk(splice_stream_t *s, uint32_t bytes, bool finish_frame)
+{
     streamAssertFrame(s, NULL, bytes);
     uint32_t remaining = bytes;
     while (remaining != 0)
@@ -304,7 +318,7 @@ void splicestreamDiscardFrame(splice_stream_t *s, uint32_t bytes)
         remaining -= count;
         streamRecycleEmptyHead(s);
     }
-    streamFinishFrame(s, bytes);
+    streamConsumeChunk(s, bytes, finish_frame);
 }
 
 void splicestreamDestroy(splice_stream_t *s)

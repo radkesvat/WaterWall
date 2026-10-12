@@ -1,18 +1,22 @@
 # Mux udp boundaries probe
 
 
-Exercises the mux udp boundaries probe scenario with the topology in this directory.
+Exercises UdpOverTcp datagram framing over Mux byte streams with the topology in this directory.
 
 Configured nodes and onward edges (`next`; listeners/connectors form the OS transport boundaries):
 
-- `udp-ingress`: `UdpListener` → `mux-client`
+- `udp-ingress`: `UdpListener` → `udp-framing-client`
+- `udp-framing-client`: `UdpOverTcpClient` → `mux-client`
 - `mux-client`: `MuxClient` → `tcp-out`
 - `tcp-out`: `TcpConnector` (terminal or independently bound endpoint)
 - `tcp-in`: `TcpListener` → `mux-server`
-- `mux-server`: `MuxServer` → `udp-egress`
+- `mux-server`: `MuxServer` → `udp-framing-server`
+- `udp-framing-server`: `UdpOverTcpServer` → `udp-egress`
 - `udp-egress`: `UdpConnector` (terminal or independently bound endpoint)
 
 Scenario choices: `mux-client.mode="fixed-connections-count"`, `mux-client.per-worker-connections-count=1`. These values define the workload/edge case and are not tuning advice.
+
+The probe uses nonempty datagrams, matching UdpOverTcp's supported input contract.
 
 The [probe](probe.py) describes the exchange and its byte/order/exit assertions. It runs against the private copy made by the probe runner.
 

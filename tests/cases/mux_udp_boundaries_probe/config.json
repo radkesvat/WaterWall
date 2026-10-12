@@ -5,6 +5,12 @@
       "name": "udp-ingress",
       "type": "UdpListener",
       "settings": {"address": "127.0.0.1", "port": 26790},
+      "next": "udp-framing-client"
+    },
+    {
+      "name": "udp-framing-client",
+      "type": "UdpOverTcpClient",
+      "settings": {},
       "next": "mux-client"
     },
     {
@@ -28,6 +34,12 @@
       "name": "mux-server",
       "type": "MuxServer",
       "settings": {"memory-high-watermark-percent": 99, "memory-low-watermark-percent": 98, "memory-reserve": 0},
+      "next": "udp-framing-server"
+    },
+    {
+      "name": "udp-framing-server",
+      "type": "UdpOverTcpServer",
+      "settings": {},
       "next": "udp-egress"
     },
     {

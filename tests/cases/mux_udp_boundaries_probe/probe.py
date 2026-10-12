@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check direct UDP/MUX frame boundaries across a real TCP carrier in both directions."""
+"""Check UdpOverTcp datagram framing over MUX byte streams across a real TCP carrier in both directions."""
 
 import contextlib
 import socket
@@ -24,7 +24,7 @@ def wait_for_listener() -> None:
 
 
 def response(payload: bytes) -> bytes:
-    return b"" if not payload else b"\xff" + payload[::-1] + b"\x00"
+    return b"\xff" + payload[::-1] + b"\x00"
 
 
 def require_no_datagram(sock: socket.socket) -> None:
@@ -48,11 +48,10 @@ def main() -> None:
 
         wait_for_listener()
 
-        # The first child opens with an empty payload: OPEN must still be
-        # followed by a distinct zero-length DATA frame and a UDP send.
+        # Each UDP association has its own UdpOverTcp-framed Mux child stream.
         peers = {}
         for index, client in enumerate(clients):
-            first = b"" if index == 0 else b"ready"
+            first = b"ready-zero" if index == 0 else b"ready-one"
             client.sendto(first, INGRESS)
             actual, peer = service.recvfrom(65535)
             assert actual == first, "initial datagram changed"
@@ -62,8 +61,8 @@ def main() -> None:
             assert client.recvfrom(65535)[0] == response(first), "initial reply changed"
 
         payloads = [
-            [b"", b"A\x00B", bytes(range(256)) * 200, b"client-zero-tail", b""],
-            [b"", b"other-child", b"Z" * 8000, b"\x00", b""],
+            [b"first", b"A\x00B", bytes(range(256)) * 200, b"client-zero-tail", b"last"],
+            [b"one", b"other-child", b"Z" * 8000, b"\x00", b"tail"],
         ]
         for position in range(len(payloads[0])):
             for index, client in enumerate(clients):
@@ -88,7 +87,7 @@ def main() -> None:
         for sock in [service, *clients]:
             require_no_datagram(sock)
 
-    print("MUX preserved separate and empty UDP payloads in both directions")
+    print("UdpOverTcp preserved UDP datagrams over MUX streams in both directions")
 
 
 if __name__ == "__main__":

@@ -376,10 +376,14 @@ type, independent of RAM profile, buffer sizes and requested or granted pipe
 capacity. A maximum frame occupies 1,048,584 wire bytes; a preceding Open adds
 another eight bytes (1,048,592 total). Decoding rejects a larger declaration as
 soon as all eight header bytes arrive, even for unknown CIDs or types, and closes
-only that parent through normal parent-loss cleanup. Permitted frames wait for
-the complete body; unknown frames consume their declared body and empty Data
-still produces one delivery. Complete frames drain before the incomplete
-remainder is checked against **1,048,584 bytes**, including its cached header.
+only that parent through normal parent-loss cleanup. After a valid Data header,
+the decoder delivers available body bytes incrementally; it does not wait for the
+whole frame. Data for an unknown or closed CID is discarded incrementally. Empty
+Data is consumed without a child Payload callback. Other frame bodies are also
+consumed incrementally, but control effects wait until their declared bodies end.
+Available body bytes and completed controls drain before retained incomplete
+input is checked against **1,048,584 bytes**, including its cached header.
+Bytes not yet received do not count as retained input.
 
 Header size: `8 bytes`
 
@@ -413,7 +417,7 @@ than forwarding a truncated encoding.
 
 For payload, `MuxClient` adds the 8-byte header before sending data on the parent line.
 
-For replies, it reads complete frames from the parent line, looks up the child by `cid`, strips the header, and forwards the payload to that child.
+For replies, it validates the parent frame header, looks up the child by `cid`, and forwards available Data body chunks to that child in byte order.
 
 ### Pause and resume behavior
 
@@ -439,8 +443,8 @@ rechecking after each callback. Multiple closes may be needed; unrelieved pressu
 
 Logical queue length remains the sum of application payload bytes and drives the `FlowResume` threshold.
 `FlowPause` follows the local child pause state, independently of queue length.
-Zero-length `Data` is valid wire input: it adds no logical payload activity, but a retained zero-length frame has a
-positive allocation charge and therefore advances every applicable hard queue budget.
+Zero-length `Data` is valid wire input but is consumed without a child callback or queued buffer.
+It adds no logical payload activity.
 
 The queue-capacity charge is a policy budget, not exact kernel memory or whole-process RSS. Allocator caches, queue-ring
 storage, and the buffer pools' fixed baseline may remain allocated outside a particular live queue's charge.
@@ -507,7 +511,7 @@ child lines, so their true source owners remain responsible for enumerating and 
 
 ### Buffering and overflow handling
 
-Replies from the parent transport are accumulated in a read stream until complete MUX frames are available.
+Replies wait only for a complete header or more body bytes. Available Data passes incrementally to the child or its bounded queue; other body bytes are consumed without delivery.
 
 Current overflow limit:
 
@@ -540,40 +544,39 @@ borrowed children may outlive the MUX worker hook; their state and exact queue a
 their source owners send Finish. Final instance destruction requires both ownership and detached accounting to be
 empty. Ordinary connection loss and ordered peer Close retain their normal backpressure-driven drain behavior.
 
-## Frame boundaries and UDP
+## Byte streams and UDP
 
-The parent receive accumulator uses a dedicated fixed-header splice stream.
-It physically caches only the eight-byte header and extracts exactly the declared
-body after it is complete. Bodies may split one source pipe or combine several
-pipes while preserving FIFO order and independent ownership. The next header is
-cached only after the current body is consumed. Child callbacks receive only the
-body; paused-child queues preserve one entry and callback per Data frame.
+Each child is an ordered byte stream. Neither the original Payload callback
+boundary nor the MUX Data frame boundary is part of the child contract. A frame
+may produce several nonempty child Payload callbacks as its body arrives. For
+example, a frame declaring 64 KiB can deliver its first available 4 KiB without
+waiting for the other 60 KiB. Later frames on the same parent still follow the
+current frame's remaining bytes.
 
-Zero-length child payloads are valid: the encoder emits a `Data` frame with an
-eight-byte header and no body. The decoder delivers an empty payload; this is
-neither EOF nor `Close`. Empty frames remain separate through paused-child
-queues even when their total logical byte count is zero. They still incur the
-existing queue-capacity charge and do not count as nonempty idle activity.
+The parent receive accumulator caches only the eight-byte header. It tracks the
+remaining Data body length, extracts available chunks with independent ownership,
+and gathers the next header only after the current body is consumed. Paused
+children retain those chunks in FIFO order under the existing queue budgets.
+A child that closes during delivery receives no more bytes; the parser discards
+that frame's remaining body before interpreting another header. Already delivered
+prefixes stay delivered if the parent fails. Accepted queued chunks retain the
+normal detached-drain behavior, even when the frame's suffix never arrived.
 
-MUX preserves its wire-frame boundaries, not every original callback or UDP
-datagram boundary. Both encoders put a payload of at most `1,048,576` bytes in one
-`Data` frame and split larger payloads into several frames. The receiver does
-not reassemble the original callback boundary. A transform on the child side
-can also change payload boundaries before framing or after decoding.
+Zero-length child payloads still encode as a Data header with no body. The
+receiver consumes that frame without creating a child Payload callback or queue
+entry; it means neither EOF nor Close and does not refresh child idle activity.
 
-For UDP traffic, use explicit `UdpOverTcpClient`/`UdpOverTcpServer` framing
-around the byte-stream portion of the chain rather than relying on an unusual
-direct UDP/MUX arrangement:
+For UDP traffic, use explicit `UdpOverTcpClient`/`UdpOverTcpServer` framing on the
+child sides of MUX:
 
 ```text
 client: UdpListener -> UdpOverTcpClient -> MuxClient -> TcpConnector
 server: TcpListener -> MuxServer -> UdpOverTcpServer -> UdpConnector
 ```
 
-Direct UDP adapters next to MUX can retain datagrams that arrive intact and fit
-one `Data` frame, but this is not general boundary protection across arbitrary
-chains. The UDP framing pair has its own limits: currently it requires nonempty
-datagrams. Its restriction does not change MUX's support for empty `Data`.
+Direct UDP adapters next to MUX cannot rely on datagram boundaries. The
+UdpOverTcp pair currently requires nonempty datagrams; MUX stream delivery does
+not provide a representation for an empty datagram.
 
 ### Splice retention and large batches
 
@@ -594,10 +597,13 @@ capacity does not force a valid retained source into ordinary storage.
 
 `parent-buffer-limit` (512 MiB by default) covers incoming frame assembly plus
 all attached child queues. The stream counter remains separate from the child
-aggregate, and their sum is checked at stable return boundaries. Complete frames
-in a coalesced delivery drain first, even if its temporary charge exceeds the
-limit. Cached header bytes count toward the independent 1,048,584-byte incomplete
-frame bound, but the header cache and stream/queue metadata carry no sbuf charge.
+aggregate, and their sum is checked at stable return boundaries. Available Data
+chunks and complete controls in a coalesced delivery drain first, even if its
+temporary charge exceeds the limit. A paused child retains chunks as they arrive,
+so one Data frame may create several charged queue entries. Cached header bytes
+count toward the independent 1,048,584-byte incomplete-input bound until the body
+ends, but the header cache and stream/queue metadata carry no sbuf charge.
+The declared body bytes still missing from the transport carry no retention charge.
 Active splice-head body consumption reduces logical capacity and its charge;
 prefix consumption and ordinary cursor movement do not reduce capacity.
 

@@ -74,8 +74,8 @@ typedef enum mux_peek_result_e
 } mux_peek_result_t;
 
 /** No I/O or consumption. Reject an oversized length as soon as the header is
- * complete, for every frame type, before waiting for the body. */
-WW_EXPORT mux_peek_result_t muxPeekCompleteFrame(const splice_stream_t *stream, mux_frame_t *frame);
+ * complete, for every frame type. Ready does not require any body bytes. */
+WW_EXPORT mux_peek_result_t muxPeekFrameHeader(const splice_stream_t *stream, mux_frame_t *frame);
 /** Consume header and exact body. Returns only the owned body with onward
  * padding; optional splice assembly may return a complete ordinary fallback. */
 WW_EXPORT sbuf_t *muxReadFrameBody(splice_stream_t *stream, const mux_frame_t *frame, bool prefer_splice);
@@ -84,7 +84,9 @@ WW_EXPORT sbuf_t *muxReadFrameBody(splice_stream_t *stream, const mux_frame_t *f
  * Consume one child payload and encode it as one or more MUX DATA frames.
  * An empty payload produces one zero-length DATA frame. Payloads larger than
  * kMuxMaxDataFrameLength are split; decoding does not restore their original
- * callback boundary. MUX framing is not a general datagram-framing contract.
+ * callback boundary. Child delivery is an ordered byte stream: receivers may
+ * split or combine DATA bodies and ignore empty DATA. Datagram boundaries
+ * require explicit framing such as UdpOverTcp on the child sides.
  *
  * Large splice inputs must use muxEncodeSpliceBatch instead.
  * The input buffer is consumed on every result. On in-place success,

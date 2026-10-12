@@ -52,6 +52,15 @@ bool splicestreamCompact(splice_stream_t *stream);
  */
 sbuf_t *splicestreamMoveFrame(splice_stream_t *stream, sbuf_t *destination, uint32_t bytes);
 
+/* Move exactly bytes available body bytes with the same ownership, destination
+ * and representation rules as MoveFrame. A complete cached header is required,
+ * but the entire declared frame body need not have arrived. Unless finish_frame
+ * is true, keep that header cached and gather no following header. The caller
+ * tracks the declared body length and marks only its final chunk complete.
+ * Length continues to include the cached header until that final chunk.
+ */
+sbuf_t *splicestreamMoveFrameChunk(splice_stream_t *stream, sbuf_t *destination, uint32_t bytes, bool finish_frame);
+
 /* Same caller preconditions, into caller-owned sufficient empty ordinary storage.
  * Destination representation/space is checked fatally before consumption;
  * never grows/replaces destination.
@@ -65,3 +74,9 @@ void splicestreamMoveFrameToOrdinary(splice_stream_t *stream, sbuf_t *destinatio
  * Only after the complete body is consumed may the next header refill.
  */
 void splicestreamDiscardFrame(splice_stream_t *stream, uint32_t bytes);
+
+/* Discard available body bytes, retaining the cached header until finish_frame.
+ * Same chunk-completion preconditions as MoveFrameChunk and discard behavior as
+ * DiscardFrame. No following header is gathered before the final chunk.
+ */
+void splicestreamDiscardFrameChunk(splice_stream_t *stream, uint32_t bytes, bool finish_frame);

@@ -82,7 +82,7 @@ bool muxTryComputeEncodedLength(uint32_t payload_length, bool prepend_open, uint
     return true;
 }
 
-mux_peek_result_t muxPeekCompleteFrame(const splice_stream_t *stream, mux_frame_t *frame)
+mux_peek_result_t muxPeekFrameHeader(const splice_stream_t *stream, mux_frame_t *frame)
 {
     const uint8_t *header = splicestreamPeekHeader(stream);
     if (header == NULL)
@@ -90,7 +90,7 @@ mux_peek_result_t muxPeekCompleteFrame(const splice_stream_t *stream, mux_frame_
     muxDecodeFrameHeader(header, frame);
     if (UNLIKELY(frame->length > kMuxMaxDataFrameLength))
         return kMuxPeekInvalidLength;
-    return splicestreamBodyBytes(stream) >= frame->length ? kMuxPeekReady : kMuxPeekNeedMore;
+    return kMuxPeekReady;
 }
 
 sbuf_t *muxReadFrameBody(splice_stream_t *stream, const mux_frame_t *frame, bool prefer_splice)

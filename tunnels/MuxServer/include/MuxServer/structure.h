@@ -50,8 +50,12 @@ typedef struct muxserver_parent_state_s
     muxserver_lstate_t          *local_hold_tail;
     uint32_t                     local_hold_count;
     mux_parent_output_t          output;
-    unsigned                     receive_depth;     // Defer aggregate enforcement until complete frames drain.
+    unsigned                     receive_depth;     // Defer aggregate enforcement until available input drains.
     bool                         receive_enforcing; // Close callbacks may re-enter parser/admission.
+    mux_frame_t                  read_frame;        // Header remains cached while its body is consumed incrementally.
+    mux_length_t                 read_remaining;
+    bool                         reading_frame;
+    bool                         discard_frame; // A missing/closed child cannot acquire the remainder of this frame.
     splice_stream_t             *read_stream;
     muxserver_child_map_t        child_map;
     muxserver_rejection_bucket_t rejection_bucket;
@@ -108,7 +112,7 @@ struct muxserver_lstate_s
     struct muxserver_lstate_s *detached_next;      // child-only detached owner registry link
     muxserver_lstate_t        *local_hold_prev;
     muxserver_lstate_t        *local_hold_next;
-    buffer_queue_t             pending_child_data; // decoded frames kept separate, including empty Data, while paused
+    buffer_queue_t             pending_child_data; // ordered decoded byte chunks retained while paused
     size_t    pending_child_queue_charge; // child: own retained resource charge; parent: attached-child aggregate
     mux_cid_t connection_id;              // unique connection id, used for multiplexing
     muxserver_child_close_state_t close_state; // child: monotonic ordered-close/drain state
