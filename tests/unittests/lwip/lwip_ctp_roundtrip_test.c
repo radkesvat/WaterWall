@@ -352,9 +352,9 @@ int main(void)
     tunnel_t *nodes[]           = {source, resolver, ctp, wire, ptc, echo};
     for (unsigned i = 0; i < 6; ++i)
     {
-        nodes[i]->chain         = chain;
-        nodes[i]->lstate_offset = chain->sum_line_state_size;
-        chain->sum_line_state_size += nodes[i]->lstate_size;
+        nodes[i]->chain = chain;
+        // Resolver bypass must clear only its own bit in this synthetic chain.
+        tunnelDefaultOnIndex(nodes[i], (uint16_t) i, &chain->sum_line_state_size);
     }
     tunnelchainFinalize(chain);
     CHECK(chain->finalized);
