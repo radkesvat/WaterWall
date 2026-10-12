@@ -7,5 +7,17 @@ void trojanserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
         return;
     assert(ls->line_kind != kTrojanServerLineKindUdpRemote);
     ls->prev_paused = true;
-    trojanserverPump(t, l);
+    if (trojanserverIsUdp(ls))
+    {
+        trojanserverPump(t, l);
+        return;
+    }
+    /* Retain the latest state until branch selection supplies an initialized target. */
+    if (! ls->next_initialized)
+        return;
+    ls->next_pause_sent = true;
+    if (ls->branch == kTrojanServerBranchFallback)
+        tunnelUpStreamPause(trojanserverSelectedUpstream(t, ls), l);
+    else
+        tunnelNextUpStreamPause(t, l);
 }

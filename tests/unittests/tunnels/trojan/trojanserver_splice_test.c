@@ -288,6 +288,19 @@ static void act(unsigned boundary, line_t *l)
             }
         }
     }
+    if (action == 14)
+    {
+        for (unsigned repeat = 0; repeat < 2; ++repeat)
+        {
+            tunnelUpStreamPause(f.t, l);
+            tunnelDownStreamPause(f.t, l);
+        }
+        for (unsigned repeat = 0; repeat < 2; ++repeat)
+        {
+            tunnelUpStreamResume(f.t, l);
+            tunnelDownStreamResume(f.t, l);
+        }
+    }
 }
 static void capture(tunnel_t *t, line_t *l, sbuf_t *b)
 {
@@ -784,6 +797,28 @@ static void testReentrancy(void)
         tunnelDownStreamEst(f.t, f.line);
         twfRequire(f.ests == 3, "completed TCP or fallback suppressed repeated Est");
         end();
+        begin(fallback, false, 128);
+        request_length = request(wire, 0, false);
+        if (fallback)
+            wire[0] = 'x';
+        f.boundary = 1;
+        f.action   = 14;
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire, request_length, true, 320));
+        twfRequire(f.pauses == 4 && f.resumes == 4, "active TCP/fallback suppressed repeated Pause/Resume in Init");
+        end();
+        for (unsigned resumed = 0; resumed < 2; ++resumed)
+        {
+            begin(fallback, false, 128);
+            tunnelUpStreamPause(f.t, f.line);
+            if (resumed)
+                tunnelUpStreamResume(f.t, f.line);
+            request_length = request(wire, 0, false);
+            if (fallback)
+                wire[0] = 'x';
+            tunnelUpStreamPayload(f.t, f.line, bytes(wire, request_length, true, 320));
+            twfRequire(f.pauses == (resumed ? 0U : 1U), "branch Init lost or replayed stale pre-Init Pause");
+            end();
+        }
         for (unsigned boundary = 1; boundary <= 6; ++boundary)
         {
             for (unsigned action = 7; action <= 8; ++action)
@@ -1367,21 +1402,23 @@ static void testRetentionAndIndependentDelay(void)
         end();
     }
 
-    twfSetCase("new input cannot release delayed fallback backlog through Pause");
+    twfSetCase("delayed fallback honors its delay and FIFO without waiting for Resume");
     begin(true, false, 128);
     ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
     tunnelUpStreamPayload(f.t, f.line, bytes("A", 1, true, 320));
     tunnelDownStreamPause(f.t, f.line);
     tunnelUpStreamPayload(f.t, f.line, bytes("B", 1, true, 320));
     fallbackFinishDriveDelayedTask();
-    twfRequire(f.calls_fallback == 0 && ! g_fallback_finish_task.pending, "independent delayed backlog crossed Pause");
+    twfRequire(f.calls_fallback == 1 && f.replay_len == 2 && memcmp(f.replay, "AB", 2) == 0 &&
+                   ! g_fallback_finish_task.pending,
+               "Pause stopped or reordered the due fallback batch");
     tunnelUpStreamPayload(f.t, f.line, bytes("C", 1, true, 320));
-    twfRequire(f.calls_fallback == 0 && ! g_fallback_finish_task.pending, "new input relabeled older delayed backlog");
+    twfRequire(f.calls_fallback == 1 && g_fallback_finish_task.pending, "Pause stopped scheduling the next batch");
     tunnelDownStreamResume(f.t, f.line);
-    twfRequire(g_fallback_finish_task.pending && f.calls_fallback == 0, "Resume skipped intentional delay");
+    twfRequire(g_fallback_finish_task.pending && f.calls_fallback == 1, "Resume skipped intentional delay");
     fallbackFinishDriveDelayedTask();
-    twfRequire(f.calls_fallback == 1 && f.replay_len == 3 && memcmp(f.replay, "ABC", 3) == 0,
-               "delayed Resume lost replay ordering");
+    twfRequire(f.calls_fallback == 2 && f.replay_len == 3 && memcmp(f.replay, "ABC", 3) == 0,
+               "advisory Resume lost replay ordering");
     end();
     memoryFree(wire);
 }

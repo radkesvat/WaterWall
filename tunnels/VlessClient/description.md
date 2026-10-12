@@ -219,7 +219,7 @@ Response format:
 
 `Init` prepares the destination and starts the next node without emitting a request.
 The first eligible application payload may arrive before transport `Est`, during its
-callback, or while Pause is recorded. It is sent immediately with the complete request
+callback, or after Pause. It is sent immediately with the complete request
 in one ordinary buffer, including one UDP frame header when applicable. Ordinary input
 is reused in place when its headroom fits all headers. Otherwise a best-fit ordinary
 buffer is allocated; any resident prefix and private-pipe body are copied in order.
@@ -230,10 +230,13 @@ independently of protocol data and Pause. UDP carrier Est maps to its applicatio
 once. If the request remains unsent, its first-payload deadline starts at the first Est.
 `settings.first-payload-timeout-ms` defaults to **400**, accepts integers from **0** to
 **4,294,967,295**, and rejects other types and ranges. Zero disables deliberate waiting.
-Paused time counts. Expiry sends one header-only request when transport output is
-writable; while paused it retains only a due obligation until Resume. An eligible
-payload arriving first cancels that timer and sends the combined output. Duplicate
-Est/Resume cannot repeat the request or reset its deadline. Finish cancels the timer.
+Paused time counts. On direct TCP, expiry sends one header-only request even after
+Pause; all Pause/Resume notifications pass through, including duplicates, without
+retaining consumer-pause state. On an owned UDP carrier, the client is the exact-line
+head and retains producer control: an idle header due during carrier Pause waits for
+Resume. An eligible payload arriving first cancels the timer and sends the combined
+output. Duplicate Est/Resume cannot repeat the request or reset its deadline. Finish
+cancels the timer.
 One ordinary output does not promise one syscall, TCP packet, or TLS record.
 
 Direct TCP and per-datagram upstream forwarding do not wait for Est or Resume and do

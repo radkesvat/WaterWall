@@ -25,7 +25,8 @@ bool vlessserverDrainResponse(tunnel_t *t, line_t *l, bool admitted)
     }
     lineRef(l);
     ls->response_dispatching = true;
-    while (admitted || ! ls->response_paused)
+    bool tcp = ls->phase == kVlessServerPhaseTcpConnecting || ls->phase == kVlessServerPhaseTcpEstablished;
+    while (tcp || admitted || ! ls->response_paused)
     {
         sbuf_t *out = bufferqueuePopFront(&ls->pending_down);
         if (out == NULL)
@@ -100,8 +101,8 @@ bool vlessserverForwardResponse(tunnel_t *t, line_t *l, sbuf_t *buf)
         vlessserverCloseLineBidirectional(t, l);
         return false;
     }
-    /* A newly admitted reply can include its required response header. A
-     * preexisting delayed FIFO remains an independent Pause-aware drain. */
+    /* TCP ordering storage drains through advisory Pause. The UDP association
+     * still controls its independent response producer; admitted replies complete. */
     return vlessserverDrainResponse(t, l, ! has_older);
 }
 

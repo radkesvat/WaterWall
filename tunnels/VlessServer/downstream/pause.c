@@ -21,10 +21,5 @@ void vlessserverTunnelDownStreamPause(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->phase == kVlessServerPhaseFallback)
-    {
-        ls->fallback_payload_paused = true;
-    }
-
     tunnelPrevDownStreamPause(t, l);
 }

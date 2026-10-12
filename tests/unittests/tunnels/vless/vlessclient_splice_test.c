@@ -519,6 +519,23 @@ static void testTcp(bool pipe)
 {
     twfSetCase("opaque TCP identity, early FIFO and nested receive");
     begin(false, "127.0.0.1", 65536, 0, true);
+    for (unsigned repeat = 0; repeat < 2; ++repeat)
+    {
+        tunnelUpStreamResume(f.t, f.application);
+        tunnelDownStreamResume(f.t, f.carrier);
+    }
+    for (unsigned repeat = 0; repeat < 2; ++repeat)
+    {
+        tunnelUpStreamPause(f.t, f.application);
+        tunnelDownStreamPause(f.t, f.carrier);
+    }
+    for (unsigned repeat = 0; repeat < 2; ++repeat)
+    {
+        tunnelUpStreamResume(f.t, f.application);
+        tunnelDownStreamResume(f.t, f.carrier);
+    }
+    twfRequire(f.pauses == 4 && f.resumes == 8 && f.requests == 0,
+               "TCP suppressed repeatable advisory notifications or emitted an early request");
     tunnelUpStreamPayload(f.t, f.application, bytes("A", 1, pipe, 320));
     tunnelUpStreamPayload(f.t, f.application, bytes("B", 1, pipe, 320));
     tunnelDownStreamPayload(f.t, f.application, bytes("\0\0X", 3, false, 320));
@@ -1154,14 +1171,17 @@ static void testTimers(void)
         end();
     }
 
-    twfSetCase("deadline cancellation, paused due work, early dispatch and quiescence");
-    begin(false, "127.0.0.1", 128, 1, false);
-    establish();
-    twfRequire(f.ests == 2 && f.requests == 0 && wloopNTimers(f.env.loop) == 0,
-               "zero timeout emitted idle header through Pause or withheld Est");
-    tunnelDownStreamResume(f.t, f.carrier);
-    twfRequire(f.requests == 1, "zero timeout due header stranded on Resume");
-    end();
+    twfSetCase("TCP advisory Pause and UDP carrier control preserve idle-header deadlines");
+    for (unsigned udp = 0; udp < 2; ++udp)
+    {
+        begin(udp, "127.0.0.1", 128, 1, false);
+        establish();
+        twfRequire(f.ests == (udp ? 1U : 2U) && f.requests == (udp ? 0U : 1U) && wloopNTimers(f.env.loop) == 0,
+                   "zero timeout ignored the exact-line role or withheld Est");
+        tunnelDownStreamResume(f.t, f.carrier);
+        twfRequire(f.requests == 1, "Resume stranded or repeated the zero-timeout request");
+        end();
+    }
     for (unsigned udp = 0; udp < 2; ++udp)
         for (unsigned mode = 0; mode < 8; ++mode)
         {
@@ -1227,8 +1247,9 @@ static void testTimers(void)
                     twfRequire(! lineIsAlive(f.application) && f.requests == 1, "timer callback Finish leaked line");
                 else
                 {
-                    twfRequire(f.requests == 0 && ls->first_payload_due && ls->first_payload_timer == NULL,
-                               "timer sent through Pause or retained executing one-shot");
+                    twfRequire(f.requests == (udp ? 0U : 1U) && ls->first_payload_due == (udp != 0) &&
+                                   ls->first_payload_timer == NULL,
+                               "due header ignored the exact-line role or retained executing one-shot");
                     if (mode == 5)
                         tunnelDownStreamResume(f.t, f.carrier);
                     else if (mode == 6)

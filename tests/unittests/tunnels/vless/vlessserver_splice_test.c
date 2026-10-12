@@ -1263,18 +1263,23 @@ static void testRepresentationsAndPipePressure(void)
     ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
     tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
     tunnelDownStreamPause(f.t, f.line);
+    tunnelUpStreamPayload(f.t, f.line, bytes("-tail", 5, false, 320));
     fallbackFinishDriveDelayedTask();
-    twfRequire(f.calls_fallback == 0, "delayed splice replay bypassed Pause");
+    twfRequire(f.calls_fallback == 1 && f.replay_len == 10 && ! memcmp(f.replay, "probe-tail", 10) &&
+                   f.last_splice == (WW_HAVE_SPLICE != 0),
+               "due fallback replay waited for Resume, reordered its FIFO or lost its representation");
     tunnelDownStreamResume(f.t, f.line);
-    fallbackFinishDriveDelayedTask();
-    twfRequire(f.replay_len == 5 && ! memcmp(f.replay, "probe", 5), "Resume lost delayed splice replay");
+    twfRequire(! g_fallback_finish_task.pending && f.calls_fallback == 1,
+               "Resume rescheduled an already-drained fallback batch");
     end();
     begin(true, false, 128);
     ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
     tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
     tunnelDownStreamPause(f.t, f.line);
     end();
-    twfRequire(f.calls_fallback == 0, "source Finish bypassed paused pipe backlog");
+    twfRequire(f.calls_fallback == 1 && f.replay_len == 5 && ! memcmp(f.replay, "probe", 5) &&
+                   f.last_splice == (WW_HAVE_SPLICE != 0),
+               "source Finish lost the accepted paused fallback batch or its representation");
 }
 
 static void testShutdownAdmission(void)

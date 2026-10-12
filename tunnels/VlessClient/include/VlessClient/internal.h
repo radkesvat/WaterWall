@@ -18,8 +18,6 @@ void vlessclientSendDueRequest(tunnel_t *t, line_t *l);
 void vlessclientCancelFirstPayloadTimer(vlessclient_lstate_t *ls);
 void vlessclientSetNextPaused(tunnel_t *t, line_t *l, bool paused);
 
-void vlessclientSetPrevPaused(tunnel_t *t, line_t *l, bool paused);
-
 /* Shared implementation helpers; callbacks retain their directional admission. */
 bool    vlessclientSendInitialRequest(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, sbuf_t *body);
 void    vlessclientWrapUdpPayload(line_t *l, sbuf_t **buf_io);

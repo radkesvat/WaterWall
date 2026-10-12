@@ -17,8 +17,6 @@ void trojanclientSendDueRequest(tunnel_t *t, line_t *l);
 void trojanclientCancelFirstPayloadTimer(trojanclient_lstate_t *ls);
 void trojanclientSetNextPaused(tunnel_t *t, line_t *l, bool paused);
 
-void trojanclientSetPrevPaused(tunnel_t *t, line_t *l, bool paused);
-
 /* Shared implementation helpers; callbacks retain their directional admission. */
 bool    trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, sbuf_t *body);
 bool    trojanclientWrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_context_t *target);

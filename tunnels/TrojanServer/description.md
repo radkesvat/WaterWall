@@ -333,11 +333,11 @@ The fallback branch receives `Init` immediately. During normal live operation, n
 and jitter. At delay zero, accepted payload forwards synchronously, including completion under Pause. Branch Init and reentry preserve
 FIFO before newer input. The delayed FIFO is bounded to 2 MiB and 1,024 buffers per line. Downstream responses from fallback are not intentionally delayed.
 
-An upstream `Finish` does not keep the remaining intentional delay alive. If fallback can still accept payload, accepted
-queued bytes are synchronously flushed in FIFO order before fallback `Finish`. If fallback has already paused payload, the
-still-local delayed batch is discarded and fallback is closed instead of bypassing backpressure. Delay and jitter are only
-mitigations; they do not prove timing indistinguishability. Measure the deployment path and choose values that match the
-service being impersonated.
+Pause/Resume are forwarded transparently on the selected fallback path, including repeats. A due delayed batch does not
+wait for Resume. An upstream `Finish` flushes accepted queued bytes synchronously in FIFO order before fallback `Finish`,
+including when the branch has requested Pause; a branch still inside Init discards the batch instead. Delay and jitter are
+only mitigations; they do not prove timing indistinguishability. Measure the deployment path and choose values that match
+the service being impersonated.
 
 Fallback may be selected for:
 
@@ -434,11 +434,14 @@ TCP bodies remain opaque after the request. Initial parsing, branch Init and
 reentrant input retain an authoritative FIFO so older accepted bytes cannot be
 overtaken. Valid input forwards after onward Init without waiting for transport
 Est or Resume. Once normal TCP branch Init has returned, retained input has drained
-and permission notifications have settled, TrojanServer destroys and zeros its
+and any pre-Init Pause has been relayed, TrojanServer destroys and zeros its
 line state, then permanently bypasses itself for that line. Later callbacks,
 including Finish, follow the normal next/prev path directly. Authentication
 credentials remain on `line_t`; bypass does not wait for Est. TCP and fallback
 Est notifications forward promptly, including repeats and callbacks from inside Init.
+Pause/Resume also forward every notification on initialized TCP and fallback paths.
+Before branch selection, only the latest upstream pause state is retained for the
+selected branch's Init; a Resume cancels that deferred Pause.
 
 UDP associations and fallback keep TrojanServer active: they still need its
 framing, owned backend cleanup, branch selection or delayed replay.
@@ -447,9 +450,10 @@ Fallback replays the inspected resident prefix and untouched input tail exactly
 once before newer input. Init remains immediate, with the configured payload
 delay and jitter. A delayed batch is one buffer and one Payload callback; mixed
 or pipe-backed assembly uses exact movement, with complete ordinary fallback on
-pipe pressure. On source Finish, an unpaused initialized branch receives at most
-one final batch synchronously. A paused branch or a branch still inside Init
-discards the pending replay. No final callback reflects toward the finished side.
+pipe pressure. Due delayed batches do not wait for Resume. On source Finish, an
+initialized branch receives at most one final batch synchronously, even after Pause.
+A branch still inside Init discards the pending replay. No final callback reflects
+toward the finished side.
 
 A fallback may generate a local response without outbound `Est`, including a
 response immediately followed by `Finish` inside its Init or Payload callback.

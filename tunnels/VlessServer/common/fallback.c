@@ -95,8 +95,7 @@ static void vlessserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l);
 bool vlessserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls)
 {
     if (ls->phase != kVlessServerPhaseFallback || ls->fallback_close_draining || ls->branch_initializing ||
-        ls->input_dispatching || ls->fallback_payload_paused || vlessserverFallbackPendingCount(ls) == 0 ||
-        ls->fallback_delay_scheduled)
+        ls->input_dispatching || vlessserverFallbackPendingCount(ls) == 0 || ls->fallback_delay_scheduled)
     {
         return true;
     }
@@ -128,7 +127,7 @@ static void vlessserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     ls->fallback_delay_scheduled = false;
 
     if (ls->phase != kVlessServerPhaseFallback || ls->fallback_close_draining || ls->branch_initializing ||
-        ls->input_dispatching || ls->fallback_payload_paused)
+        ls->input_dispatching)
     {
         return;
     }
@@ -165,7 +164,7 @@ static void vlessserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
         return;
     ls->input_dispatching = false;
     if (ls->phase != kVlessServerPhaseFallback || ls->fallback_close_draining || ls->branch_initializing ||
-        ls->input_dispatching || ls->fallback_payload_paused)
+        ls->input_dispatching)
     {
         return;
     }
@@ -287,7 +286,7 @@ void vlessserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, vlessserver_ls
     ls->fallback_close_draining               = true;
     ls->fallback_branch_finished_during_drain = false;
 
-    if (ls->fallback_payload_paused || ls->branch_initializing)
+    if (ls->branch_initializing)
     {
         vlessserverDiscardFallbackPendingPayload(ls, pool);
     }

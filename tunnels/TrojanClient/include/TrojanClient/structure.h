@@ -86,8 +86,7 @@ typedef struct trojanclient_lstate_s
     bool next_established : 1;
     bool request_sent : 1;
     bool est_notifying : 1;
-    bool next_paused : 1; // Permission for the independent idle-header producer only.
-    bool prev_paused : 1; // Forwarded source permission, never a parser batch gate.
+    bool carrier_paused : 1; // UDP carrier-head permission for the independent idle-header producer.
     bool first_payload_due : 1;
     bool receiving : 1;
     bool header_ready : 1;

@@ -122,12 +122,13 @@ typedef struct trojanserver_lstate_s
     bool next_established : 1;
     bool prev_est_sent : 1; // Est has been sent toward prev on the client line.
 
-    /* Consumer permission is distinct from notifications sent to producers.
-     * UDP keeps next_paused/next_pause_sent per backend and counts paused backends. */
-    bool next_paused : 1;     // Next asked us to stop sending upstream payload.
-    bool prev_paused : 1;     // Prev asked us to stop sending downstream payload.
-    bool prev_pause_sent : 1; // We told prev to pause its upstream producer.
-    bool next_pause_sent : 1; // We told next to pause its downstream producer.
+    /* UDP aggregates backend pressure and maps client permission to each backend.
+     * TCP/fallback use prev_paused/next_pause_sent only to replay pre-Init state;
+     * initialized same-line notifications are always forwarded, including repeats. */
+    bool next_paused : 1;     // This UDP backend asked its association to pause.
+    bool prev_paused : 1;     // Client reply pressure, including before branch selection.
+    bool prev_pause_sent : 1; // Association pressure was sent toward the carrier source.
+    bool next_pause_sent : 1; // Current client pressure was delivered to this producer.
 
     /* Parser, authentication and delayed-fallback flags use the same group. */
     bool first_payload_seen : 1;

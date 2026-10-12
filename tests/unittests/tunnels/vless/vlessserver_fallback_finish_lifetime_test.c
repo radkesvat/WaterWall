@@ -5,8 +5,8 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseNoPendingPayload, casePendingFifoFlushAndDeadTask,
  * caseReentrantNonterminalCallbacksAreAbsorbed, caseReentrantBranchFinishIsAbsorbed,
- * caseOrdinaryDelayedBatchHonorsPause, caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake,
- * caseAlreadyPausedCloseDiscardsLocalBatch
+ * caseOrdinaryDelayedBatchIgnoresPause, caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake,
+ * caseAlreadyPausedCloseFlushesLocalBatch
  * Checks: Assertion labels include: VlessServer state survived fallback Finish; VlessServer close retained
  * an unexpected line reference; fallback did not receive one Finish; empty fallback close delivered
  * payload
@@ -214,9 +214,9 @@ static void caseReentrantBranchFinishIsAbsorbed(void)
     fixtureDestroyClosedLine(&fixture);
 }
 
-static void caseOrdinaryDelayedBatchHonorsPause(void)
+static void caseOrdinaryDelayedBatchIgnoresPause(void)
 {
-    twfSetCase("VlessServer delayed fallback batch coalesces and honors Pause Resume");
+    twfSetCase("VlessServer delayed fallback batch coalesces through advisory Pause");
 
     vlessserver_fallback_fixture_t fixture;
     fixtureSetup(&fixture);
@@ -239,20 +239,18 @@ static void caseOrdinaryDelayedBatchHonorsPause(void)
     twfRequireEqualText(
         (const char *) fixture.fallback.received, "one-two-three", "delayed fallback batch lost FIFO ordering");
     twfRequireEqualText(fixture.trace.seq, "u", "live fallback Pause was not forwarded exactly once");
-    twfRequire(! g_fallback_finish_task.pending, "paused fallback scheduled another payload from the original batch");
+    twfRequire(! g_fallback_finish_task.pending, "empty fallback batch scheduled another payload");
 
     twfRequire(vlessserverSendFallbackPayload(
                    fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "held")),
                "paused fallback payload was rejected instead of retained");
-    twfRequire(! g_fallback_finish_task.pending, "paused fallback scheduled retained bytes");
-    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "paused fallback delivered retained bytes early");
-
-    vlessserverTunnelDownStreamResume(fixture.node, fixture.line);
-    twfRequireEqualText(fixture.trace.seq, "ur", "fallback Resume was not forwarded exactly once");
-    twfRequire(g_fallback_finish_task.pending, "fallback Resume did not schedule retained bytes");
+    twfRequire(g_fallback_finish_task.pending, "advisory Pause blocked fallback scheduling");
     fallbackFinishDriveDelayedTask();
-    twfRequireEqualU32(
-        fixture.fallback.payload_calls, 2, "retained fallback bytes were not delivered once after Resume");
+    twfRequireEqualU32(fixture.fallback.payload_calls, 2, "due fallback bytes waited for Resume");
+    twfRequireEqualText(fixture.trace.seq, "uu", "repeated fallback Pause was suppressed");
+    vlessserverTunnelDownStreamResume(fixture.node, fixture.line);
+    vlessserverTunnelDownStreamResume(fixture.node, fixture.line);
+    twfRequireEqualText(fixture.trace.seq, "uurr", "repeated fallback Resume was suppressed");
     twfRequireEqualText(
         (const char *) fixture.fallback.received, "one-two-threeheld", "retained fallback bytes changed ordering");
 
@@ -279,8 +277,6 @@ static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
     twfRequire(! g_fallback_finish_task.pending, "zero-delay inline fallback admitted a delayed task");
     twfRequireEqualText(fixture.trace.seq, "u", "inline fallback Pause was not forwarded");
     twfRequire(lineIsAlive(fixture.line), "inline fallback Pause unexpectedly closed the line");
-    twfRequire(((vlessserver_lstate_t *) lineGetState(fixture.line, fixture.node))->fallback_payload_paused,
-               "inline fallback Pause was not published before returning");
 
     /* Input retained by an active dispatch is an independent backlog after return. */
     ls->input_dispatching = true;
@@ -291,9 +287,9 @@ static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
     twfRequireEqualU32(fixture.fallback.payload_calls, 1, "paused zero-delay fallback delivered retained bytes early");
 
     ls->input_dispatching = false;
-    vlessserverTunnelDownStreamResume(fixture.node, fixture.line);
-    twfRequireEqualText(fixture.trace.seq, "ur", "zero-delay fallback Resume was not forwarded");
-    twfRequire(g_fallback_finish_task.pending, "zero-delay Resume did not schedule retained bytes");
+    twfRequire(vlessserverScheduleFallbackPayloadDrain(fixture.node, fixture.line, ls),
+               "zero-delay dispatch completion did not schedule retained bytes");
+    twfRequire(g_fallback_finish_task.pending, "zero-delay retained output waited for Resume");
     twfRequireEqualU32(g_fallback_finish_task.delay_ms, 0, "zero-delay retained drain did not use zero delay");
 
     twfRequire(vlessserverSendFallbackPayload(
@@ -312,9 +308,9 @@ static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
     fixtureDestroyClosedLine(&fixture);
 }
 
-static void caseAlreadyPausedCloseDiscardsLocalBatch(void)
+static void caseAlreadyPausedCloseFlushesLocalBatch(void)
 {
-    twfSetCase("VlessServer close does not bypass an already-paused fallback");
+    twfSetCase("VlessServer close flushes an accepted batch through advisory Pause");
 
     vlessserver_fallback_fixture_t fixture;
     fixtureSetup(&fixture);
@@ -322,13 +318,14 @@ static void caseAlreadyPausedCloseDiscardsLocalBatch(void)
 
     vlessserverTunnelDownStreamPause(fixture.node, fixture.line);
     twfRequire(vlessserverSendFallbackPayload(
-                   fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "discard")),
+                   fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "final")),
                "paused fallback payload was not retained locally");
     closeFromPreviousOwner(&fixture);
 
-    twfRequireEqualU32(fixture.fallback.payload_calls, 0, "close bypassed fallback Pause with a new payload");
+    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "close discarded accepted fallback bytes during Pause");
+    twfRequireEqualText((const char *) fixture.fallback.received, "final", "close changed the accepted final batch");
     twfRequireEqualU32(fixture.fallback.finish_calls, 1, "paused fallback was not finished exactly once");
-    twfRequire(! g_fallback_finish_task.pending, "paused close retained a delayed task reference");
+    fallbackFinishDriveDelayedTask();
     releaseOwnerReference(&fixture);
     fixtureDestroyClosedLine(&fixture);
 }
@@ -339,9 +336,9 @@ int main(void)
     casePendingFifoFlushAndDeadTask();
     caseReentrantNonterminalCallbacksAreAbsorbed();
     caseReentrantBranchFinishIsAbsorbed();
-    caseOrdinaryDelayedBatchHonorsPause();
+    caseOrdinaryDelayedBatchIgnoresPause();
     caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake();
-    caseAlreadyPausedCloseDiscardsLocalBatch();
+    caseAlreadyPausedCloseFlushesLocalBatch();
 
     printf("vlessserver_fallback_finish_lifetime_test: all cases passed\n");
     return 0;

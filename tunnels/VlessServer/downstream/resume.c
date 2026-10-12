@@ -21,19 +21,5 @@ void vlessserverTunnelDownStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->phase == kVlessServerPhaseFallback)
-    {
-        ls->fallback_payload_paused = false;
-        if (UNLIKELY(! vlessserverScheduleFallbackPayloadDrain(t, l, ls)))
-        {
-            vlessserverCloseLineBidirectional(t, l);
-            return;
-        }
-        if (! lineIsAlive(l))
-        {
-            return;
-        }
-    }
-
     tunnelPrevDownStreamResume(t, l);
 }

@@ -102,6 +102,7 @@ typedef struct vlessserver_lstate_s
     bool response_sent : 1;
     bool transport_est_sent : 1;
     bool response_dispatching : 1;
+    /* Startup receiver-pressure replay and UDP producer control only. */
     bool response_paused : 1;
     /* Client-side upstream permission: current backend contribution and emitted hold. */
     bool udp_backend_paused : 1;
@@ -109,7 +110,6 @@ typedef struct vlessserver_lstate_s
     bool user_handle_recorded : 1;
     bool fallback_close_draining : 1;
     bool fallback_branch_finished_during_drain : 1;
-    bool fallback_payload_paused : 1;
     bool fallback_delay_scheduled : 1;
 } vlessserver_lstate_t;
 

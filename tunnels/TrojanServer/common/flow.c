@@ -16,33 +16,18 @@ bool trojanserverIsUdp(const trojanserver_lstate_t *ls)
 /* Steps share the pump's retained client line and reentrancy guard. Callbacks,
  * parser progress and close require Recheck; incomplete parsing and successful
  * fallback scheduling can FallThrough. */
-static pump_step_result_t notifyPausedProducers(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, bool udp,
-                                                bool next_paused)
+static pump_step_result_t notifyPausedProducers(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
 {
-    if (next_paused && ! ls->prev_pause_sent)
+    if (ls->paused_remotes != 0 && ! ls->prev_pause_sent)
     {
         ls->prev_pause_sent = true;
         tunnelPrevDownStreamPause(t, l);
         return kPumpStepRecheck;
     }
-    if (! ls->prev_paused)
-        return kPumpStepFallThrough;
-    if (udp)
-        return trojanserverNotifyRemotePermission(t, l, ls) ? kPumpStepRecheck : kPumpStepFallThrough;
-    if (ls->next_initialized && ! ls->next_pause_sent)
-    {
-        ls->next_pause_sent = true;
-        if (ls->branch == kTrojanServerBranchFallback)
-            tunnelUpStreamPause(trojanserverSelectedUpstream(t, ls), l);
-        else
-            tunnelNextUpStreamPause(t, l);
-        return kPumpStepRecheck;
-    }
-    return kPumpStepFallThrough;
+    return ls->prev_paused && trojanserverNotifyRemotePermission(t, l, ls) ? kPumpStepRecheck : kPumpStepFallThrough;
 }
 
-/* Parser/reentry input belongs to this dispatch, so Pause does not stop it.
- * Delayed fallback remains an independent producer with its own permission gate. */
+/* Parser/reentry input and ready fallback output preserve FIFO without a Pause gate. */
 static pump_step_result_t processPendingInput(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, bool udp)
 {
     if (udp)
@@ -74,34 +59,19 @@ static pump_step_result_t processPendingInput(tunnel_t *t, line_t *l, trojanserv
             return kPumpStepRecheck;
         }
     }
-    /* A scheduled fallback task runs later; continue with Resume now. */
+    /* A scheduled fallback task runs later; this dispatch has no more ready input. */
     return kPumpStepFallThrough;
 }
 
-static pump_step_result_t notifyResumedProducers(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, bool udp,
-                                                 bool next_paused)
+static pump_step_result_t notifyResumedProducers(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
 {
-    if (! next_paused && ls->prev_pause_sent)
+    if (ls->paused_remotes == 0 && ls->prev_pause_sent)
     {
         ls->prev_pause_sent = false;
         tunnelPrevDownStreamResume(t, l);
         return kPumpStepRecheck;
     }
-    if (! ls->prev_paused)
-    {
-        if (udp)
-            return trojanserverNotifyRemotePermission(t, l, ls) ? kPumpStepRecheck : kPumpStepFallThrough;
-        if (ls->next_initialized && ls->next_pause_sent)
-        {
-            ls->next_pause_sent = false;
-            if (ls->branch == kTrojanServerBranchFallback)
-                tunnelUpStreamResume(trojanserverSelectedUpstream(t, ls), l);
-            else
-                tunnelNextUpStreamResume(t, l);
-            return kPumpStepRecheck;
-        }
-    }
-    return kPumpStepFallThrough;
+    return ! ls->prev_paused && trojanserverNotifyRemotePermission(t, l, ls) ? kPumpStepRecheck : kPumpStepFallThrough;
 }
 
 void trojanserverPump(tunnel_t *t, line_t *l)
@@ -114,9 +84,8 @@ void trojanserverPump(tunnel_t *t, line_t *l)
     /* Entry gates teardown reentrancy; completed callbacks report closure through logical death. */
     while (lineIsAlive(l))
     {
-        bool udp         = trojanserverIsUdp(ls);
-        bool next_paused = udp ? ls->paused_remotes != 0 : ls->next_paused;
-        if (notifyPausedProducers(t, l, ls, udp, next_paused) == kPumpStepRecheck)
+        bool udp = trojanserverIsUdp(ls);
+        if (udp && notifyPausedProducers(t, l, ls) == kPumpStepRecheck)
             continue;
 
         /* Initial parsing chooses TCP, UDP or fallback before any queued input is delivered. */
@@ -134,7 +103,7 @@ void trojanserverPump(tunnel_t *t, line_t *l)
         if (processPendingInput(t, l, ls, udp) == kPumpStepRecheck)
             continue;
         /* Drain ready work before Resume, but let incomplete UDP frames receive more input. */
-        if (notifyResumedProducers(t, l, ls, udp, next_paused) == kPumpStepRecheck)
+        if (udp && notifyResumedProducers(t, l, ls) == kPumpStepRecheck)
             continue;
         break;
     }
@@ -144,11 +113,11 @@ void trojanserverPump(tunnel_t *t, line_t *l)
         if (ls->line_kind == kTrojanServerLineKindClient && ls->branch == kTrojanServerBranchTrojan &&
             (ls->phase == kTrojanServerPhaseTcpConnecting || ls->phase == kTrojanServerPhaseTcpEstablished))
         {
-            /* Setup input and permission notifications are settled; TCP is now transparent. */
+            /* Setup input and deferred startup notifications are settled. */
             assert(ls->next_initialized && ! ls->branch_initializing);
             assert(ls->input_head == NULL && ls->input_bytes == 0 && ls->header_filled == 0);
             assert(bufferqueueGetBufCount(&ls->pending_up) == 0);
-            assert(ls->next_paused == ls->prev_pause_sent && ls->prev_paused == ls->next_pause_sent);
+            assert(ls->prev_paused == ls->next_pause_sent);
             trojanserverLinestateDestroy(ls);
             tunnelBypassLine(t, l);
         }
@@ -205,8 +174,10 @@ void trojanserverSetNextPaused(tunnel_t *t, line_t *l, bool paused)
         trojanserverPump(t, ls->client_line);
         return;
     }
-    ls->next_paused = paused;
-    trojanserverPump(t, l);
+    if (paused)
+        tunnelPrevDownStreamPause(t, l);
+    else
+        tunnelPrevDownStreamResume(t, l);
 }
 
 bool trojanserverQueuePayload(buffer_queue_t *queue, sbuf_t **buf)

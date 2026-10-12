@@ -26,25 +26,19 @@ void vlessserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
+    if (ls->phase == kVlessServerPhaseTcpConnecting || ls->phase == kVlessServerPhaseTcpEstablished)
+    {
+        tunnelNextUpStreamResume(t, l);
+        return;
+    }
+
     if (bufferqueueGetBufCount(&ls->pending_down) != 0 && ! vlessserverDrainResponse(t, l, false))
     {
         return;
     }
     ls = lineGetState(l, t);
     if (ls->response_paused)
-    {
-        vlessserverTryBypassTcp(t, l);
         return;
-    }
-
-    if (ls->phase == kVlessServerPhaseTcpConnecting || ls->phase == kVlessServerPhaseTcpEstablished)
-    {
-        /* A drained response may make TCP transparent, but this Resume still
-         * belongs to next unless a newer Pause superseded it above. */
-        if (lineCallWithRef(l, tunnelNextUpStreamResume, t))
-            vlessserverTryBypassTcp(t, l);
-        return;
-    }
 
     if (ls->phase == kVlessServerPhaseUdpConnecting || ls->phase == kVlessServerPhaseUdpEstablished)
     {

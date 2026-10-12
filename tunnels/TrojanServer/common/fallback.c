@@ -91,7 +91,7 @@ bool trojanserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, trojanserv
     }
 
     trojanserver_tstate_t *ts = tunnelGetState(t);
-    if (ts->fallback_intentional_delay_ms == 0 || ls->next_paused)
+    if (ts->fallback_intentional_delay_ms == 0)
         return true;
     uint32_t delay_ms = fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms);
 
@@ -114,7 +114,7 @@ static void trojanserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     /* Scheduled line tasks run only while the line is logically alive. */
     assert(ls->phase != kTrojanServerPhaseClosing);
     ls->fallback_delay_scheduled = false;
-    if (ls->branch != kTrojanServerBranchFallback || ls->next_paused || ls->pumping || ls->branch_initializing)
+    if (ls->branch != kTrojanServerBranchFallback || ls->pumping || ls->branch_initializing)
         return;
     sbuf_t *buf = trojanserverDetachFallbackPendingPayload(ls, lineGetBufferPool(l));
     if (buf == NULL)
@@ -181,7 +181,7 @@ void trojanserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, trojanserver_
     ls->fallback_close_draining               = true;
     ls->fallback_branch_finished_during_drain = false;
 
-    if (ls->next_paused || ls->branch_initializing)
+    if (ls->branch_initializing)
     {
         trojanserverDiscardFallbackPendingPayload(ls, pool);
     }
@@ -252,6 +252,12 @@ void trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls
     if (! lineIsAlive(l))
         return;
     ls->branch_initializing = false;
+    if (ls->prev_paused && ! ls->next_pause_sent)
+    {
+        tunnelUpStreamPause(t, l);
+        if (! lineIsAlive(l))
+            return;
+    }
     if (ts->fallback_intentional_delay_ms == 0)
     {
         sbuf_t *batch = trojanserverDetachFallbackPendingPayload(ls, lineGetBufferPool(l));

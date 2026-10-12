@@ -5,8 +5,8 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseNoPendingPayload, casePendingFifoFlushAndDeadTask,
  * caseReentrantNonterminalCallbacksAreAbsorbed, caseReentrantBranchFinishIsAbsorbed,
- * caseOrdinaryDelayedBatchHonorsPause, caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake,
- * caseAlreadyPausedCloseDiscardsLocalBatch, caseMixedSpliceFinalBatch; the driver lists the remaining
+ * caseOrdinaryDelayedBatchIgnoresAdvisoryPause, caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake,
+ * caseAlreadyPausedCloseFlushesLocalBatch, caseMixedSpliceFinalBatch; the driver lists the remaining
  * cases
  * Checks: Assertion labels include: TrojanServer state survived fallback Finish; TrojanServer close
  * retained an unexpected line reference; fallback did not receive one Finish; empty fallback close
@@ -220,9 +220,9 @@ static void caseReentrantBranchFinishIsAbsorbed(void)
     fixtureDestroyClosedLine(&fixture);
 }
 
-static void caseOrdinaryDelayedBatchHonorsPause(void)
+static void caseOrdinaryDelayedBatchIgnoresAdvisoryPause(void)
 {
-    twfSetCase("TrojanServer delayed fallback batch coalesces and honors Pause Resume");
+    twfSetCase("TrojanServer delayed fallback batch stays ordered through repeated advisory Pause Resume");
 
     trojanserver_fallback_fixture_t fixture;
     fixtureSetup(&fixture);
@@ -240,25 +240,24 @@ static void caseOrdinaryDelayedBatchHonorsPause(void)
                "third delayed fallback payload was rejected");
     twfRequire(g_fallback_finish_task.pending, "delayed fallback batch did not schedule one task");
 
+    trojanserverTunnelDownStreamPause(fixture.node, fixture.line);
     fallbackFinishDriveDelayedTask();
-    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "delayed batch emitted more than one Payload callback");
+    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "Pause stopped or split the due delayed batch");
     twfRequireEqualText(
         (const char *) fixture.fallback.received, "one-two-three", "delayed fallback batch lost FIFO ordering");
-    twfRequireEqualText(fixture.trace.seq, "u", "live fallback Pause was not forwarded exactly once");
-    twfRequire(! g_fallback_finish_task.pending, "paused fallback scheduled another payload from the original batch");
+    twfRequireEqualText(fixture.trace.seq, "uu", "repeated live fallback Pause was suppressed");
+    twfRequire(! g_fallback_finish_task.pending, "drained fallback batch scheduled an empty task");
 
     twfRequire(trojanserverSendFallbackPayload(
                    fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "held")),
                "paused fallback payload was rejected instead of retained");
-    twfRequire(! g_fallback_finish_task.pending, "paused fallback scheduled retained bytes");
-    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "paused fallback delivered retained bytes early");
-
-    trojanserverTunnelDownStreamResume(fixture.node, fixture.line);
-    twfRequireEqualText(fixture.trace.seq, "ur", "fallback Resume was not forwarded exactly once");
-    twfRequire(g_fallback_finish_task.pending, "fallback Resume did not schedule retained bytes");
+    twfRequire(g_fallback_finish_task.pending, "Pause stopped scheduling of retained fallback bytes");
+    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "fallback intentional delay was skipped");
     fallbackFinishDriveDelayedTask();
-    twfRequireEqualU32(
-        fixture.fallback.payload_calls, 2, "retained fallback bytes were not delivered once after Resume");
+    twfRequireEqualU32(fixture.fallback.payload_calls, 2, "due fallback bytes waited for Resume");
+    trojanserverTunnelDownStreamResume(fixture.node, fixture.line);
+    trojanserverTunnelDownStreamResume(fixture.node, fixture.line);
+    twfRequireEqualText(fixture.trace.seq, "uuurr", "repeated fallback Pause/Resume was suppressed");
     twfRequireEqualText(
         (const char *) fixture.fallback.received, "one-two-threeheld", "retained fallback bytes changed ordering");
 
@@ -285,8 +284,6 @@ static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
     twfRequire(! g_fallback_finish_task.pending, "zero-delay inline fallback admitted a delayed task");
     twfRequireEqualText(fixture.trace.seq, "u", "inline fallback Pause was not forwarded");
     twfRequire(lineIsAlive(fixture.line), "inline fallback Pause unexpectedly closed the line");
-    twfRequire(((trojanserver_lstate_t *) lineGetState(fixture.line, fixture.node))->next_paused,
-               "inline fallback Pause was not published before returning");
 
     twfRequire(trojanserverSendFallbackPayload(
                    fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "-held")),
@@ -295,7 +292,7 @@ static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
     twfRequireEqualU32(fixture.fallback.payload_calls, 2, "paused zero-delay fallback stranded admitted bytes");
 
     trojanserverTunnelDownStreamResume(fixture.node, fixture.line);
-    twfRequireEqualText(fixture.trace.seq, "ur", "zero-delay fallback Resume was not forwarded");
+    twfRequireEqualText(fixture.trace.seq, "uur", "zero-delay fallback repeated Pause/Resume was not forwarded");
     twfRequire(! g_fallback_finish_task.pending, "zero-delay Resume created an unnecessary drain");
 
     twfRequire(trojanserverSendFallbackPayload(
@@ -312,9 +309,9 @@ static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
     fixtureDestroyClosedLine(&fixture);
 }
 
-static void caseAlreadyPausedCloseDiscardsLocalBatch(void)
+static void caseAlreadyPausedCloseFlushesLocalBatch(void)
 {
-    twfSetCase("TrojanServer close does not bypass an already-paused fallback");
+    twfSetCase("TrojanServer close flushes fallback bytes despite advisory Pause");
 
     trojanserver_fallback_fixture_t fixture;
     fixtureSetup(&fixture);
@@ -326,9 +323,10 @@ static void caseAlreadyPausedCloseDiscardsLocalBatch(void)
                "paused fallback payload was not retained locally");
     closeFromPreviousOwner(&fixture);
 
-    twfRequireEqualU32(fixture.fallback.payload_calls, 0, "close bypassed fallback Pause with a new payload");
+    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "Pause discarded the final fallback batch");
+    twfRequireEqualText((const char *) fixture.fallback.received, "discard", "final fallback bytes changed");
     twfRequireEqualU32(fixture.fallback.finish_calls, 1, "paused fallback was not finished exactly once");
-    twfRequire(! g_fallback_finish_task.pending, "paused close retained a delayed task reference");
+    fallbackFinishDriveDelayedTask();
     releaseOwnerReference(&fixture);
     fixtureDestroyClosedLine(&fixture);
 }
@@ -373,15 +371,12 @@ static void caseMixedSpliceFinalBatch(void)
         if (paused)
             trojanserverTunnelDownStreamPause(fixture.node, fixture.line);
         closeFromPreviousOwner(&fixture);
-        twfRequire(fixture.fallback.payload_calls == (paused ? 0U : 1U), "source Finish crossed Pause or split batch");
+        twfRequire(fixture.fallback.payload_calls == 1, "source Finish lost or split the final batch");
         twfRequire(fixture.fallback.finish_calls == 1, "mixed fallback Finish not settled once");
-        if (! paused)
-        {
-            twfRequire(fixture.fallback.received_total_len == count + large_size, "mixed final batch truncated");
-            twfRequire(memcmp(fixture.fallback.received_prefix, prefix, count) == 0, "private prefix changed");
-            for (unsigned i = 0; i < kFallbackFinishCaptureSpan; ++i)
-                twfRequire(fixture.fallback.received_suffix[i] == 'B', "large fallback suffix changed");
-        }
+        twfRequire(fixture.fallback.received_total_len == count + large_size, "mixed final batch truncated");
+        twfRequire(memcmp(fixture.fallback.received_prefix, prefix, count) == 0, "private prefix changed");
+        for (unsigned i = 0; i < kFallbackFinishCaptureSpan; ++i)
+            twfRequire(fixture.fallback.received_suffix[i] == 'B', "large fallback suffix changed");
         twfRequireEqualText(fixture.trace.seq, paused ? "u" : "", "final batch reflected a callback");
         fallbackFinishDriveDelayedTask();
         releaseOwnerReference(&fixture);
@@ -418,9 +413,9 @@ int main(void)
     casePendingFifoFlushAndDeadTask();
     caseReentrantNonterminalCallbacksAreAbsorbed();
     caseReentrantBranchFinishIsAbsorbed();
-    caseOrdinaryDelayedBatchHonorsPause();
+    caseOrdinaryDelayedBatchIgnoresAdvisoryPause();
     caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake();
-    caseAlreadyPausedCloseDiscardsLocalBatch();
+    caseAlreadyPausedCloseFlushesLocalBatch();
     caseCanceledTaskLeavesCleanupWithOwner();
 #if WW_HAVE_SPLICE
     caseMixedSpliceFinalBatch();
