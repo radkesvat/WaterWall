@@ -70,7 +70,7 @@ void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    assert(pair->phase == kReverseClientPairUnused);
+    assert(pair->phase == kReverseClientPairConnecting || pair->phase == kReverseClientPairUnused);
     assert(pair->idle_handle != NULL);
 
     /* Invalid input closes both owned lines. Keep the allocation present to
@@ -97,8 +97,16 @@ void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         abortProgramNow(1);
     }
     reverseclient_thread_box_t *box = &ts->threadlocal_pool[wid];
-    assert(box->unused_cons_count > 0);
-    box->unused_cons_count--;
+    if (pair->phase == kReverseClientPairConnecting)
+    {
+        assert(box->connecting_cons_count > 0);
+        box->connecting_cons_count--;
+    }
+    else
+    {
+        assert(box->unused_cons_count > 0);
+        box->unused_cons_count--;
+    }
     pair->phase = kReverseClientPairActive;
     atomicIncRelaxed(&ts->reverse_cons);
     reverseclientInitiateConnectOnWorker(t, wid, false);
@@ -118,6 +126,14 @@ void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     pair->downstream_init_sent = true;
     if (! lineCallWithRef(pair->d, tunnelPrevDownStreamInit, t))
         return;
+    /* The transport can request Pause before this destination exists. Init
+     * may supersede it; replay only the request that is still pending. */
+    if (pair->pending_downstream_pause)
+    {
+        pair->pending_downstream_pause = false;
+        if (! lineCallWithRef(pair->d, tunnelPrevDownStreamPause, t))
+            return;
+    }
     if (pair->activation_payload != NULL)
     {
         buf                      = pair->activation_payload;

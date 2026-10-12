@@ -57,6 +57,7 @@ struct reverseclient_pair_s
     bool                       downstream_init_sent : 1;
     bool                       closing : 1;
     bool                        activation_dispatching : 1;
+    bool                        pending_downstream_pause : 1;
 };
 
 typedef struct reverseclient_lstate_s

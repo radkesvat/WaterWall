@@ -3,12 +3,12 @@
  * this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: testConnectingPairDrain, testActivePairDrain, testSpliceActivation, testReentrantInitClose,
- * testFinishBeforeDrainDoesNotDuplicateClose,
+ * Cases: testConnectingPairDrain, testActivePairDrain, testSpliceActivation, testStartupPause,
+ * testActivationBeforeEst, testReentrantInitClose, testFinishBeforeDrainDoesNotDuplicateClose,
  * testCanceledIdleDeliveryPreservesPairForDrain
  * Checks: Assertion labels include: ReverseClient replaced the application buffer; ReverseClient changed
- * payload representation; ReverseClient changed application bytes; ReverseClient handshake must remain
- * ordinary
+ * payload representation; ReverseClient changed application bytes; startup signal replay preserves FIFO
+ * and cleanup; activation and repeated Est preserve connection accounting
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.reverseclient_owner_drain_unit
@@ -52,6 +52,14 @@ typedef struct reverseclient_fixture_s
     unsigned int        downstream_init_count;
     unsigned int        upstream_finish_count;
     unsigned int        downstream_finish_count;
+    unsigned int        handshake_count;
+    unsigned int        upstream_pause_count;
+    unsigned int        upstream_resume_count;
+    unsigned int        downstream_pause_count;
+    unsigned int        downstream_resume_count;
+    bool                downstream_init_returned;
+    void (*during_downstream_init)(line_t *line);
+    void (*on_downstream_pause)(line_t *line);
     bool                nested_during_init;
     bool                nested_overflow;
     bool                capture_application;
@@ -108,6 +116,7 @@ static void checkPayload(line_t *line, sbuf_t *buf)
     {
         require(! sbufIsSplice(buf) && sbufGetLength(buf) == 1 && sbufReadUI8(buf) == 0x5A,
                 "ReverseClient handshake must remain ordinary");
+        ++g_fixture->handshake_count;
     }
     lineReuseBuffer(line, buf);
 }
@@ -124,6 +133,18 @@ static void nextFinish(tunnel_t *next, line_t *line)
     discard next;
     discard line;
     g_fixture->upstream_finish_count++;
+}
+
+static void nextPause(tunnel_t *next, line_t *line)
+{
+    require(next == g_fixture->next && line == g_fixture->upstream_line, "Pause used the wrong reverse line");
+    ++g_fixture->upstream_pause_count;
+}
+
+static void nextResume(tunnel_t *next, line_t *line)
+{
+    require(next == g_fixture->next && line == g_fixture->upstream_line, "Resume used the wrong reverse line");
+    ++g_fixture->upstream_resume_count;
 }
 
 static void prevInit(tunnel_t *prev, line_t *line)
@@ -160,6 +181,9 @@ static void prevInit(tunnel_t *prev, line_t *line)
         sbufSetLength(buf, size);
         reverseclientTunnelDownStreamPayload(g_fixture->reverse, g_fixture->upstream_line, buf);
     }
+    if (g_fixture->during_downstream_init)
+        g_fixture->during_downstream_init(line);
+    g_fixture->downstream_init_returned = true;
 }
 
 static void prevPayload(tunnel_t *prev, line_t *line, sbuf_t *buf)
@@ -190,6 +214,20 @@ static void prevFinish(tunnel_t *prev, line_t *line)
     g_fixture->downstream_finish_count++;
 }
 
+static void prevPause(tunnel_t *prev, line_t *line)
+{
+    require(prev == g_fixture->prev && line == g_fixture->downstream_line, "Pause used the wrong destination line");
+    ++g_fixture->downstream_pause_count;
+    if (g_fixture->on_downstream_pause)
+        g_fixture->on_downstream_pause(line);
+}
+
+static void prevResume(tunnel_t *prev, line_t *line)
+{
+    require(prev == g_fixture->prev && line == g_fixture->downstream_line, "Resume used the wrong destination line");
+    ++g_fixture->downstream_resume_count;
+}
+
 static void fixtureSetup(reverseclient_fixture_t *fixture, endpoint_behavior_e behavior)
 {
     memoryZero(fixture, sizeof(*fixture));
@@ -207,9 +245,13 @@ static void fixtureSetup(reverseclient_fixture_t *fixture, endpoint_behavior_e b
     fixture->next->fnInitU       = nextInit;
     fixture->next->fnPayloadU    = nextPayload;
     fixture->next->fnFinU        = nextFinish;
+    fixture->next->fnPauseU      = nextPause;
+    fixture->next->fnResumeU     = nextResume;
     fixture->prev->fnInitD       = prevInit;
     fixture->prev->fnPayloadD    = prevPayload;
     fixture->prev->fnFinD        = prevFinish;
+    fixture->prev->fnPauseD      = prevPause;
+    fixture->prev->fnResumeD     = prevResume;
     fixture->reverse->fnFinU     = reverseclientTunnelUpStreamFinish;
     fixture->reverse->fnFinD     = reverseclientTunnelDownStreamFinish;
     fixture->reverse->fnPayloadD = reverseclientTunnelDownStreamPayload;
@@ -426,6 +468,133 @@ static sbuf_t *activationPart(const uint8_t *bytes, uint32_t count)
     return buf;
 }
 
+static void resumeDuringDestinationInit(line_t *line)
+{
+    require(line == g_fixture->downstream_line, "destination Init used the wrong line");
+    reverseclientTunnelDownStreamResume(g_fixture->reverse, g_fixture->upstream_line);
+}
+
+static void payloadDuringReplayedPause(line_t *line)
+{
+    require(line == g_fixture->downstream_line && g_fixture->downstream_init_returned &&
+                g_fixture->delivered_buffers == 0,
+            "pending Pause was delivered before Init returned or after the initial body");
+    reverseclientTunnelDownStreamPayload(
+        g_fixture->reverse, g_fixture->upstream_line, activationPart((const uint8_t *) "last", 4));
+}
+
+static void closeDuringReplayedPause(line_t *line)
+{
+    payloadDuringReplayedPause(line);
+    reverseclient_tstate_t *ts = tunnelGetState(g_fixture->reverse);
+    atomicStoreRelaxed(&ts->stopping, true);
+    reverseclientTunnelUpStreamFinish(g_fixture->reverse, line);
+}
+
+typedef enum startup_pause_case_e
+{
+    kStartupPauseReplay,
+    kStartupPauseCancelBeforeInit,
+    kStartupPauseCancelDuringInit,
+    kStartupPauseClose
+} startup_pause_case_e;
+
+static void testStartupPause(startup_pause_case_e mode)
+{
+    reverseclient_fixture_t fixture;
+    fixtureSetup(&fixture, kEndpointEstablish);
+    fixture.capture_application = fixture.nested_during_init = true;
+    createFirstPair(&fixture);
+    reverseclientTunnelDownStreamPause(fixture.reverse, fixture.upstream_line);
+    reverseclientTunnelDownStreamPause(fixture.reverse, fixture.upstream_line);
+    require(fixture.downstream_pause_count == 0, "Pause reached the destination before Init");
+    if (mode == kStartupPauseCancelBeforeInit)
+        reverseclientTunnelDownStreamResume(fixture.reverse, fixture.upstream_line);
+    else if (mode == kStartupPauseCancelDuringInit)
+        fixture.during_downstream_init = resumeDuringDestinationInit;
+    else
+        fixture.on_downstream_pause =
+            mode == kStartupPauseClose ? closeDuringReplayedPause : payloadDuringReplayedPause;
+    require(fixture.downstream_resume_count == 0, "Resume reached the destination before Init");
+
+    const uint8_t bytes[] = {0, 0, 0, 4, 'h', 'e', 'a', 'd'};
+    reverseclientTunnelDownStreamPayload(fixture.reverse, fixture.upstream_line, activationPart(bytes, sizeof(bytes)));
+    if (mode == kStartupPauseClose)
+    {
+        require(fixture.downstream_pause_count == 1 && fixture.delivered_buffers == 0 &&
+                    reverseclientOwnedPairCount(fixture.reverse, 0) == 0 &&
+                    masterpoolGetCheckedOut(fixture.chain->masterpool_line_pool) == 0 &&
+                    fixture.upstream_finish_count == 1 && fixture.downstream_finish_count == 0,
+                "Finish from replayed Pause leaked retained input, owned lines or reflected Finish");
+    }
+    else
+    {
+        const bool replay = mode == kStartupPauseReplay;
+        require(fixture.downstream_pause_count == (replay ? 1U : 0U) &&
+                    fixture.application_length == (replay ? 12U : 8U) &&
+                    memcmp(fixture.application, "headtaillast", fixture.application_length) == 0,
+                "startup Pause was lost, replayed after Resume, or reordered admitted application data");
+        fixture.on_downstream_pause = NULL;
+        unsigned prior_resumes      = fixture.downstream_resume_count;
+        for (unsigned repeat = 0; repeat < 2; ++repeat)
+        {
+            reverseclientTunnelDownStreamPause(fixture.reverse, fixture.upstream_line);
+            reverseclientTunnelUpStreamPause(fixture.reverse, fixture.downstream_line);
+        }
+        for (unsigned repeat = 0; repeat < 2; ++repeat)
+        {
+            reverseclientTunnelDownStreamResume(fixture.reverse, fixture.upstream_line);
+            reverseclientTunnelUpStreamResume(fixture.reverse, fixture.downstream_line);
+        }
+        require(fixture.downstream_pause_count == (replay ? 3U : 2U) &&
+                    fixture.downstream_resume_count == prior_resumes + 2 && fixture.upstream_pause_count == 2 &&
+                    fixture.upstream_resume_count == 2,
+                "active Pause/Resume notifications were dropped or mapped to the wrong half");
+    }
+    quiesceAndDrain(&fixture);
+    fixtureTeardown(&fixture);
+}
+
+static void testActivationBeforeEst(bool est_between_fragments)
+{
+    reverseclient_fixture_t fixture;
+    fixtureSetup(&fixture, kEndpointLeaveConnecting);
+    fixture.capture_application = true;
+    createFirstPair(&fixture);
+    reverseclient_tstate_t     *ts      = tunnelGetState(fixture.reverse);
+    reverseclient_thread_box_t *box     = &ts->threadlocal_pool[0];
+    const uint8_t               bytes[] = {0, 0, 0, 4, 'h', 'e', 'a', 'd'};
+    uint32_t                    offset  = 0;
+    if (est_between_fragments)
+    {
+        reverseclientTunnelDownStreamPayload(fixture.reverse, fixture.upstream_line, activationPart(bytes, 2));
+        require(currentPair(&fixture)->phase == kReverseClientPairConnecting && box->connecting_cons_count == 1 &&
+                    box->unused_cons_count == 0 && fixture.downstream_init_count == 0,
+                "partial activation changed connection accounting or opened the destination");
+        reverseclientTunnelDownStreamEst(fixture.reverse, fixture.upstream_line);
+        reverseclientTunnelDownStreamEst(fixture.reverse, fixture.upstream_line);
+        require(box->connecting_cons_count == 0 && box->unused_cons_count == 1,
+                "repeated Est changed unused connection accounting");
+        offset = 2;
+    }
+    reverseclientTunnelDownStreamPayload(
+        fixture.reverse, fixture.upstream_line, activationPart(bytes + offset, sizeof(bytes) - offset));
+    require(currentPair(&fixture)->phase == kReverseClientPairActive && fixture.downstream_init_count == 1 &&
+                fixture.application_length == 4 && memcmp(fixture.application, "head", 4) == 0,
+            "activation depended on Est or lost its coalesced application body");
+    reverseclientTunnelDownStreamEst(fixture.reverse, fixture.upstream_line);
+    reverseclientTunnelDownStreamEst(fixture.reverse, fixture.upstream_line);
+    require(lineIsEstablished(fixture.upstream_line) && currentPair(&fixture)->phase == kReverseClientPairActive &&
+                box->connecting_cons_count == 1 && box->unused_cons_count == 0 &&
+                atomicLoadRelaxed(&ts->reverse_cons) == 1 && reverseclientOwnedPairCount(fixture.reverse, 0) == 1 &&
+                fixture.handshake_count == 1 && fixture.downstream_init_count == 1,
+            "late/repeated Est repeated protocol work or changed active/replacement connection accounting");
+    quiesceAndDrain(&fixture);
+    require(box->connecting_cons_count == 0 && box->unused_cons_count == 0 && atomicLoadRelaxed(&ts->reverse_cons) == 0,
+            "early activation left connection accounting after drain");
+    fixtureTeardown(&fixture);
+}
+
 static void testFragmentedActivation(uint32_t size)
 {
     reverseclient_fixture_t fixture;
@@ -613,6 +782,12 @@ int main(void)
 #endif
     testConnectingPairDrain();
     testActivePairDrain();
+    testStartupPause(kStartupPauseReplay);
+    testStartupPause(kStartupPauseCancelBeforeInit);
+    testStartupPause(kStartupPauseCancelDuringInit);
+    testStartupPause(kStartupPauseClose);
+    testActivationBeforeEst(false);
+    testActivationBeforeEst(true);
     testFragmentedActivation(4);
     testFragmentedActivation(64);
     testFragmentedActivation(4097);

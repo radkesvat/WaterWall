@@ -3,7 +3,8 @@
 void reverseclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
 {
     reverseclient_pair_t *pair = ((reverseclient_lstate_t *) lineGetState(l, t))->pair;
-    if (pair->phase == kReverseClientPairActive)
+    pair->pending_downstream_pause = false;
+    if (pair->downstream_init_sent)
     {
         tunnelPrevDownStreamResume(t, pair->d);
     }

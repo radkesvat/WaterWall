@@ -8,12 +8,12 @@ void reverseclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     reverseclient_pair_t       *pair = ((reverseclient_lstate_t *) lineGetState(l, t))->pair;
     reverseclient_thread_box_t *box  = &ts->threadlocal_pool[lineGetWID(l)];
 
+    lineMarkEstablished(l);
     if (pair->phase != kReverseClientPairConnecting)
     {
         return;
     }
 
-    lineMarkEstablished(l);
     assert(box->connecting_cons_count > 0);
     box->connecting_cons_count--;
     box->unused_cons_count++;

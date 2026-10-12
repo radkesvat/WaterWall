@@ -135,9 +135,9 @@ allocating the advertised total length. Split headers/padding and a prefix
 coalesced with application bytes are accepted. Malformed lengths close the pair;
 the existing 30-second idle deadline also covers incomplete activation.
 
-After consuming the prefix, the client removes the unused/idle entry, increments
-the active count, schedules a replacement spare, and initializes the local
-paired line toward the previous node. A destination greeting can flow immediately,
+After consuming the prefix, the client decrements the connecting or unused count,
+removes the idle entry, increments the active count, schedules a replacement
+spare, and initializes the local paired line toward the previous node. A destination greeting can flow immediately,
 even when the user has sent nothing. The activation never reaches the destination.
 Remaining application bytes are forwarded in order, and all later deliveries pass
 through directly. There is no further activation framing and no client setting for
@@ -153,7 +153,11 @@ After pairing:
 - Local side to remote side: previous node -> `ReverseClient` -> next node
 - Remote side to local side: next node -> `ReverseClient` -> previous node
 
-Pause and resume signals are also forwarded across the paired lines.
+Pause and Resume are forwarded across the paired lines, including repeats.
+Before destination Init, the latest transport Pause is remembered; Resume cancels
+it. An outstanding Pause is relayed after Init returns, before the initial body.
+Already admitted application bytes still drain in FIFO order through Pause.
+The node remains active because every delivery maps between two different lines.
 
 ### Connection lifecycle and replenishment
 
@@ -175,7 +179,11 @@ If that timeout expires, the spare connection is closed and replaced with a fres
 
 ### Establishment semantics
 
-A spare reverse connection counts as established after the next node reports downstream establishment for that outbound line. At that point it becomes part of the unused pool, ready to be assigned later.
+A connecting reverse link enters the unused pool when the next node reports Est.
+Activation may also arrive after transport Init but before Est; completing it
+moves the link directly from connecting to active. Late or repeated Est marks
+transport readiness without changing an active pair's counters or creating
+another replacement spare.
 
 ## Notes And Caveats
 

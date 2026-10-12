@@ -32,6 +32,11 @@ prefix cleanup, pipe-backed prefix consumption with an untouched application
 body, and FIFO/refusal during reentrant destination Init. Its initial body and
 queued input share the 2 MiB / 1,024-buffer budget, including exact/overflow buffer
 limits and oversized initial-body refusal.
+It also covers activation before Est, an Est between prefix fragments, and late
+or repeated Est without repeated protocol work or connection accounting changes.
+Carrier Pause waits for destination Init, a newer Resume cancels it, and replay
+preserves FIFO and cleanup through nested payload or Finish. Active repeated
+Pause/Resume notifications map to the correct half without suppressing duplicates.
 
 `waterwall.reverse_activation_workers_{1,2}_splice_{true,false}` uses both reverse
 nodes and a loopback greeting server in the namespace harness. Users receive the
