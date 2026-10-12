@@ -7,6 +7,10 @@ void testerclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     testerclient_lstate_t *ls = lineGetState(l, t);
 
     lineMarkEstablished(l);
+    if (ls->est_received)
+    {
+        return;
+    }
 
     ls->est_received = true;
     testerclientScheduleRequestSend(t, l, ls);

@@ -5,6 +5,7 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseWorkerStopDrainsOnlyItsPublishedSlots, caseRequiredStartupFailuresPropagateStartupStatus,
  * caseAcceptedQueuedTimerAdmissionClosureUsesCleanup, caseEstStopsAfterSendAdmissionClosesLine,
+ * caseRepeatedEstPreservesUdpRetrySchedule,
  * caseReportRejectionClosesOwnedLine, caseAcceptedReportCancellationLeavesOwnerDrainSafe,
  * caseFragmentedReceiverFrames, caseDatagramReceiverVerification, caseMalformedReceiverLengthClosesLine
  * Checks: Assertion labels include: SpeedTestClient teardown found a live owner slot; worker 0 did not
@@ -43,6 +44,11 @@ typedef struct speedtestclient_fixture_s
 static bool         fail_next_line_task;
 static bool         fail_next_delayed_line_task;
 static unsigned int delayed_line_task_submissions;
+static unsigned int send_task_submissions;
+static unsigned int retry_task_submissions;
+static unsigned int report_task_submissions;
+static uint32_t     retry_delay_ms;
+static bool         hold_udp_retry_timer;
 static bool         track_next_allocation;
 static void        *tracked_allocation;
 static size_t       tracked_free_count;
@@ -83,6 +89,10 @@ void __wrap_memoryFree(void *ptr)
 line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
                                                   LineTaskCancelFn on_cancel)
 {
+    if (task == speedtestclientSendTask)
+    {
+        send_task_submissions++;
+    }
     if (! fail_next_line_task)
     {
         return __real_lineScheduleTask(line, task, t, on_cancel);
@@ -102,6 +112,20 @@ line_task_submit_result_e __wrap_lineScheduleDelayedTask(line_t *const line, Lin
                                                          tunnel_t *t, LineTaskCancelFn on_cancel)
 {
     delayed_line_task_submissions += 1U;
+    if (task == speedtestclientSendTask)
+    {
+        retry_task_submissions++;
+        retry_delay_ms = delay_ms;
+        if (hold_udp_retry_timer)
+        {
+            /* Keep the real timer pending until the case makes it due. */
+            delay_ms = 60000;
+        }
+    }
+    else if (task == speedtestclientReportTask)
+    {
+        report_task_submissions++;
+    }
     if (! fail_next_delayed_line_task)
     {
         return __real_lineScheduleDelayedTask(line, task, delay_ms, t, on_cancel);
@@ -314,6 +338,72 @@ static void caseEstStopsAfterSendAdmissionClosesLine(void)
     fixtureTeardown(&fixture);
 }
 
+static void repeatEstDuringHello(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    speedtestclient_frame_t frame;
+    twfRequire(speedtestclientReadHeader(sbufGetRawPtr(buf), sbufGetLength(buf), &frame) &&
+                   frame.type == kSpeedTestClientFrameHello,
+               "unacknowledged UDP session sent a frame other than HELLO");
+    twfNextPayload(t, line, buf);
+
+    tunnelPrevDownStreamEst(t, line);
+    twfRequireEqualU32(send_task_submissions, 1, "reentrant Est queued an extra send during HELLO");
+    twfRequireEqualU32(report_task_submissions, 1, "reentrant Est queued another progress report");
+}
+
+static void caseRepeatedEstPreservesUdpRetrySchedule(void)
+{
+    twfSetCase("SpeedTestClient repeated Est preserves the UDP handshake retry schedule");
+    tosResetProcessApi(true);
+    speedtestclient_fixture_t fixture;
+    fixtureSetup(&fixture);
+
+    speedtestclient_tstate_t *state = tunnelGetState(fixture.speed);
+    state->connection_count         = 1;
+    state->mode                     = kSpeedTestClientModeUdp;
+    state->upload                   = true;
+    state->duration_ms              = 1000;
+    state->payload_size             = 256;
+    state->report_interval_ms       = 120000;
+    fixture.speed->fnEstD           = speedtestclientTunnelDownStreamEst;
+    fixture.next->fnPayloadU        = repeatEstDuringHello;
+    line_t *line                    = publishLine(&fixture, 0, true);
+
+    send_task_submissions   = 0;
+    retry_task_submissions  = 0;
+    report_task_submissions = 0;
+    hold_udp_retry_timer    = true;
+    /* Another transport node may have marked this exact line first. */
+    lineMarkEstablished(line);
+    tunnelPrevDownStreamEst(fixture.next, line);
+    tunnelPrevDownStreamEst(fixture.next, line);
+    twfRequireEqualU32(send_task_submissions, 1, "repeated Est scheduled duplicate initial sends");
+    twfRequireEqualU32(report_task_submissions, 1, "repeated Est scheduled duplicate initial reports");
+
+    tosPumpWorker(&fixture.env, 0);
+    twfRequireEqualU32(fixture.trace.next_payload, 1, "repeated Est sent HELLO before its retry deadline");
+    twfRequireEqualU32(retry_task_submissions, 1, "first HELLO armed more than one retry");
+    twfRequireEqualU32(retry_delay_ms, 250, "Est changed the UDP handshake retry interval");
+    twfRequireEqualU32(fixture.env.loops[0]->ntimers, 2, "expected one retry timer and one progress report timer");
+
+    /* Further notifications must preserve the pending retry and report. */
+    tunnelPrevDownStreamEst(fixture.next, line);
+    tosPumpWorker(&fixture.env, 0);
+    twfRequireEqualU32(fixture.trace.next_payload, 1, "repeated Est sent HELLO while its retry was pending");
+    twfRequireEqualU32(send_task_submissions, 1, "repeated Est queued another immediate send");
+    twfRequireEqualU32(retry_task_submissions, 1, "repeated Est restarted the pending retry");
+    twfRequireEqualU32(report_task_submissions, 1, "repeated Est restarted progress reporting");
+    twfRequireEqualU32(fixture.env.loops[0]->ntimers, 2, "repeated Est created an extra timer root");
+
+    workerMessagesCleanupPending(&fixture.env.workers[0]);
+    hold_udp_retry_timer = false;
+    drainWorker(&fixture, 0);
+    twfRequireEqualU32(masterpoolGetCheckedOut(fixture.line_master), 0, "UDP retry test retained its owned line");
+    twfRequireNoLeakedBuffers();
+    tosRequireNoProcessApiCall();
+    fixtureTeardown(&fixture);
+}
+
 static void caseReportRejectionClosesOwnedLine(void)
 {
     twfSetCase("SpeedTestClient report rejection closes the owned line");
@@ -515,6 +605,7 @@ int main(void)
     caseRequiredStartupFailuresPropagateStartupStatus();
     caseAcceptedQueuedTimerAdmissionClosureUsesCleanup();
     caseEstStopsAfterSendAdmissionClosesLine();
+    caseRepeatedEstPreservesUdpRetrySchedule();
     caseReportRejectionClosesOwnedLine();
     caseAcceptedReportCancellationLeavesOwnerDrainSafe();
     caseFragmentedReceiverFrames(false, false);

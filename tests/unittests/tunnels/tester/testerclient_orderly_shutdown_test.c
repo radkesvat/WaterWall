@@ -61,6 +61,7 @@ static bool         fail_next_delayed_line_task;
 static bool         forbid_delayed_line_task;
 static bool         forbid_delayed_line_task_after_refusal;
 static unsigned int delayed_line_task_submissions;
+static unsigned int request_line_task_submissions;
 
 line_task_submit_result_e __real_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
                                                   LineTaskCancelFn on_cancel);
@@ -75,6 +76,8 @@ void                      testerclientStartWorkerTestInvoke(worker_t *worker, tu
 line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
                                                   LineTaskCancelFn on_cancel)
 {
+    if (task == testerclientRequestSendTask)
+        ++request_line_task_submissions;
     if (! fail_next_line_task)
     {
         return __real_lineScheduleTask(line, task, t, on_cancel);
@@ -425,6 +428,60 @@ static void caseOwnedRequestScheduleRefusalClosesLine(void)
     twfRequireEqualU32(
         (uint32_t) masterpoolGetCheckedOut(fixture.lines.master), 0, "request refusal retained the owned line");
     fixtureTeardown(&fixture);
+}
+
+static void repeatEstDuringRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    twfNextPayload(t, l, buf);
+    tunnelPrevDownStreamEst(t, l);
+}
+
+static void caseRepeatedEstPreservesSplitRequestDelay(void)
+{
+    twfSetCase("testerclient repeated Est cannot bypass the split request delay");
+    tosResetProcessApi(true);
+    testerclient_fixture_t fixture;
+    fixtureSetup(&fixture, false);
+    mutexInit(&fixture.env.worker.control_mutex);
+    workerMessagesInit(&fixture.env.worker);
+    twfRequire(workerMessagesOpenAdmission(&fixture.env.worker), "request fixture admission did not open");
+    fixture.env.loop->status = WLOOP_STATUS_RUNNING;
+    fixture.tester->fnEstD   = testerclientTunnelDownStreamEst;
+    fixture.next->fnPayloadU = repeatEstDuringRequestPayload;
+
+    testerclient_tstate_t *ts     = tunnelGetState(fixture.tester);
+    ts->max_payload_size          = 1;
+    ts->split_payload_delay_ms    = 60000;
+    ts->split_payload_burst       = 1;
+    testerclient_lstate_t *ls     = lineGetState(fixture.line, fixture.tester);
+    ls->request_complete          = false;
+    request_line_task_submissions = delayed_line_task_submissions = 0;
+
+    /* An onward adapter may already have marked the shared line established. */
+    lineMarkEstablished(fixture.line);
+    tunnelDownStreamEst(fixture.tester, fixture.line);
+    tunnelDownStreamEst(fixture.tester, fixture.line);
+    twfRequireEqualU32(request_line_task_submissions, 1, "ordinary repeated Est scheduled another request");
+    for (unsigned i = 0; i < 8; ++i)
+        discard wloopProcessEvents(fixture.env.loop, 0);
+    twfRequireEqualU32(request_line_task_submissions, 1, "reentrant Est scheduled immediate split progress");
+    twfRequireEqualU32(fixture.trace.next_payload, 1, "reentrant Est bypassed the split request delay");
+    twfRequireEqualU32(delayed_line_task_submissions, 1, "reentrant Est created extra delayed request tasks");
+    twfRequireEqualU32(wloopNTimers(fixture.env.loop), 1, "split request did not retain exactly one timer");
+    tunnelDownStreamEst(fixture.tester, fixture.line);
+    twfRequireEqualU32(request_line_task_submissions, 1, "repeated Est replaced delayed progress with immediate work");
+    twfRequireEqualU32(twfLineRefCount(fixture.line), 2, "repeated Est retained extra request roots");
+    tosRequireNoProcessApiCall();
+
+    workerMessagesCloseAdmission(&fixture.env.worker);
+    workerMessagesDestroy(&fixture.env.worker);
+    twfRequireEqualU32(twfLineRefCount(fixture.line), 1, "canceled split request retained the owned line");
+    fixtureTeardown(&fixture);
+    tunnelDestroy(fixture.prev);
+    tunnelDestroy(fixture.tester);
+    tunnelDestroy(fixture.next);
+    twfWorkerEnvTeardown(&fixture.env);
+    mutexDestroy(&fixture.env.worker.control_mutex);
 }
 
 static void caseDelayedSplitRequestRefusalClosesLine(void)
@@ -1004,6 +1061,7 @@ int main(void)
     caseDelayedPacketStartRefusalDoesNotArmWatchdog();
     caseOwnedRequestScheduleRefusalClosesLine();
     caseDelayedSplitRequestRefusalClosesLine();
+    caseRepeatedEstPreservesSplitRequestDelay();
     casePacketResponseMismatch();
     caseStreamResponseMismatch();
     caseRefusedHandoffAborts();

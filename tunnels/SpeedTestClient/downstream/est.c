@@ -10,6 +10,10 @@ void speedtestclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
 
     lineMarkEstablished(l);
 
+    if (ls->est_received)
+    {
+        return;
+    }
     ls->est_received = true;
     if (state->target_bandwidth_bps == 0)
     {

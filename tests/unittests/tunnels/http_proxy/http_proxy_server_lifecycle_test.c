@@ -1124,7 +1124,7 @@ static void cachedTimeoutClock(tunnel_chain_t *chain, const char *get)
     wloop_t       *loop     = getWorkerLoop(0);
     hps_tstate_t  *ts       = tunnelGetState(proxy);
     const uint64_t start_ms = UINT64_C(5000000000); /* Exercise more than 32 bits. */
-    for (unsigned mode = 0; mode < 4; ++mode)
+    for (unsigned mode = 0; mode < 5; ++mode)
     {
         loop->cur_hrtime = start_ms * 1000 + 789;
         resetClient(chain);
@@ -1156,8 +1156,20 @@ static void cachedTimeoutClock(tunnel_chain_t *chain, const char *get)
                     "response header used a different clock");
             duration = ts->header_timeout;
         }
+        else if (mode == 4)
+        {
+            sendBytes(client, false, "CONNECT a:443 HTTP/1.1\r\nHost: a:443\r\n\r\n");
+            require(child && s->child_established && establishments == 1 && client_writes == 1,
+                    "CONNECT did not establish before idle timeout");
+        }
         require(s->progress_at == start_ms, "payload or Est sampled a fresh clock");
         loop->cur_hrtime = (start_ms + duration - 1) * 1000 + 999;
+        if (mode == 4)
+        {
+            tunnelDownStreamEst(proxy, child);
+            require(s->progress_at == start_ms, "repeated child Est extended the idle deadline");
+            require(establishments == 1 && client_writes == 1, "repeated child Est repeated CONNECT success");
+        }
         for (unsigned backwards = 0; backwards < 2; ++backwards)
         {
             loop->cur_time_ms = backwards ? start_ms - 3600000 : start_ms + 3600000;
@@ -1167,7 +1179,9 @@ static void cachedTimeoutClock(tunnel_chain_t *chain, const char *get)
         loop->cur_hrtime = (start_ms + duration) * 1000;
         s->timer->cb((wevent_t *) s->timer);
         require(! lineIsAlive(client) && ! child, "cached monotonic deadline did not expire");
-        require(mode == 3 ? ! received_len : strstr(received, mode == 0 ? "408" : "504") != NULL,
+        require(mode == 4   ? client_writes == 1 && closes == 1
+                : mode == 3 ? ! received_len
+                            : strstr(received, mode == 0 ? "408" : "504") != NULL,
                 "cached deadline changed HTTP timeout behavior");
         lineUnref(client);
         wloopUpdateTime(loop);
