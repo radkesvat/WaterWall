@@ -62,7 +62,10 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        tunnelPrevDownStreamPayload(t, l, buf);
+        if (! httpclientTransportQueueRawInput(t, l, buf, false))
+        {
+            failAndCloseD(t, l, ls);
+        }
         lineUnref(l);
         return;
     }
@@ -95,7 +98,7 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (! lineIsAlive(l))
+    if (! lineIsAlive(l) || ! tunnelIsActiveForLine(t, l))
     {
         lineUnref(l);
         return;

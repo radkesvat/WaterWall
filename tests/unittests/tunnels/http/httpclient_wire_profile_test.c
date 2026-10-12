@@ -3,7 +3,7 @@
  * Setup: Production constructor and callbacks, worker-zero pools, captured next-neighbour buffers,
  *        an nghttp2 peer, and fixture-owned normal lines borrowed by HttpClient.
  * Checks: Exact framing/payload bytes, settings and windows, one request stream, WebSocket/h2c
- *         settings, nested-payload FIFO order, and cleanup after first-chunk Finish.
+ *         settings, nested-payload FIFO order, custom-upgrade bypass, and reentrant Finish cleanup.
  * Limits: No TLS record, network-packet, browser traffic timing, or multi-stream equivalence claims.
  * CTest: waterwall.httpclient_wire_profile_unit
  */
@@ -44,12 +44,41 @@ typedef struct fixture_s
     size_t           wire_length, writes, peer_offset;
     bool             nested_payload, finish_first;
     bool             h2_startup_payload;
+    bool             custom_startup_reply, raw_up_reentry, raw_down_reentry, raw_down_finish;
     nghttp2_session *peer;
     size_t           received_body;
     unsigned         request_streams, end_streams;
 } fixture_t;
 
 static fixture_t *active;
+
+static sbuf_t *textPayload(fixture_t *f, const char *text)
+{
+    uint32_t length = (uint32_t) strlen(text);
+    sbuf_t  *buf    = bufferpoolGetBestFit(f->env.pool, length, kHttpClientRequiredPaddingLeft);
+    sbufSetLength(buf, length);
+    sbufWrite(buf, text, length);
+    return buf;
+}
+
+static void captureRawDown(tunnel_t *prev, line_t *line, sbuf_t *buf)
+{
+    fixture_t *f = active;
+    twfPrevPayload(prev, line, buf);
+    if (f->raw_down_finish)
+    {
+        f->raw_down_finish = false;
+        tunnelUpStreamFin(f->http, line);
+        return;
+    }
+    if (f->raw_down_reentry)
+    {
+        f->raw_down_reentry = false;
+        twfRequire(tunnelIsActiveForLine(f->http, line), "custom upgrade retired during downstream drain");
+        tunnelUpStreamPayload(f->http, line, textPayload(f, "EF"));
+        tunnelDownStreamPayload(f->http, line, textPayload(f, "tail"));
+    }
+}
 
 static void ownerFinish(tunnel_t *t, line_t *line)
 {
@@ -83,7 +112,24 @@ static void capture(tunnel_t *next, line_t *line, sbuf_t *buf)
     memoryCopy(f->wire + f->wire_length, sbufGetRawPtr(buf), length);
     f->wire_length += length;
     lineReuseBuffer(line, buf);
-    if (f->finish_first)
+    if (f->custom_startup_reply)
+    {
+        f->custom_startup_reply = false;
+        tunnelUpStreamPayload(f->http, line, textPayload(f, "Q"));
+        tunnelDownStreamPayload(
+            f->http,
+            line,
+            textPayload(f, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: unit\r\n\r\nS"));
+        twfRequire(tunnelIsActiveForLine(f->http, line), "custom upgrade retired inside its opening write");
+    }
+    else if (f->raw_up_reentry)
+    {
+        f->raw_up_reentry = false;
+        twfRequire(tunnelIsActiveForLine(f->http, line), "custom upgrade retired during upstream drain");
+        tunnelUpStreamPayload(f->http, line, textPayload(f, "GH"));
+        tunnelDownStreamPayload(f->http, line, textPayload(f, "last"));
+    }
+    else if (f->finish_first)
     {
         f->finish_first = false;
         httpclientTunnelDownStreamFinish(f->http, line);
@@ -121,11 +167,15 @@ static void setupWithStartupAction(fixture_t *f, const char *json, unsigned acti
     f->next->fnPayloadU = capture;
     tunnelBind(f->prev, f->http);
     tunnelBind(f->http, f->next);
+    f->prev->chain_index = 0;
+    f->http->chain_index = 1;
+    f->next->chain_index = 2;
     twfLinePoolSetup(&f->lines, f->http->lstate_size, 4);
     f->line = twfLinePoolCreateLine(&f->lines);
     lineRef(f->line); /* The fixture owns the line; retain allocation across reentrant owner Finish. */
     f->h2_startup_payload = action == 1;
     f->finish_first       = action == 2;
+    f->custom_startup_reply = action == 3;
     httpclientTunnelUpStreamInit(f->http, f->line);
     twfRequire(lineIsAlive(f->line) == (action != 2), "startup callback did not preserve the expected line lifetime");
 }
@@ -444,6 +494,82 @@ static void caseH2cSettings(void)
     teardown(&f);
 }
 
+static void caseCustomUpgrade(unsigned action)
+{
+    twfSetCase(action == 3   ? "HttpClient custom upgrade defers bypass until opening write returns"
+               : action == 2 ? "HttpClient custom upgrade stops after borrowed-line Finish"
+                             : "HttpClient custom upgrade drains nested FIFO and permanently bypasses");
+    fixture_t f;
+    setupWithStartupAction(
+        &f,
+        "{\"host\":\"unit.test\",\"http-version\":\"both\",\"upgrade\":true,\"upgrade-protocol\":\"unit\"}",
+        action == 3 ? 3 : 0);
+    uint8_t response[32];
+    if (action != 3)
+    {
+        resetWire(&f);
+        f.trace.capture          = response;
+        f.trace.capture_capacity = sizeof(response);
+        f.prev->fnPayloadD       = captureRawDown;
+        f.raw_down_reentry       = action == 0;
+        f.raw_up_reentry         = action == 0;
+        f.raw_down_finish        = action == 2;
+        tunnelUpStreamPause(f.http, f.line);
+        tunnelUpStreamPause(f.http, f.line);
+        tunnelDownStreamPause(f.http, f.line);
+        tunnelDownStreamPause(f.http, f.line);
+        tunnelUpStreamPayload(f.http, f.line, textPayload(&f, "AB"));
+        tunnelUpStreamPayload(f.http, f.line, textPayload(&f, "CD"));
+        tunnelDownStreamPayload(
+            f.http,
+            f.line,
+            textPayload(&f, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: unit\r\n"));
+        twfRequire(tunnelIsActiveForLine(f.http, f.line) && f.writes == 0,
+                   "custom upgrade bypassed before the complete response header");
+        tunnelDownStreamPayload(f.http, f.line, textPayload(&f, "\r\nserver"));
+    }
+    twfRequireLineStateZeroed(f.line, f.http, "custom upgrade retained state after transition");
+    twfRequire(lineIsAlive(f.line), "custom upgrade destroyed a borrowed line");
+    if (action == 2)
+    {
+        twfRequire(tunnelIsActiveForLine(f.http, f.line) && f.writes == 0 && f.trace.next_finish == 1 &&
+                       f.trace.prev_finish == 0,
+                   "custom upgrade bypassed or sent payload/Finish after reentrant Finish");
+    }
+    else
+    {
+        twfRequire(! tunnelIsActiveForLine(f.http, f.line), "custom raw upgrade did not bypass");
+        if (action == 3)
+        {
+            twfRequire(f.writes == 2 && f.wire[f.wire_length - 1] == 'Q' && f.trace.prev_payload_bytes == 1,
+                       "synchronous custom upgrade lost queued payload");
+        }
+        else
+        {
+            twfRequire(f.wire_length == 8 && memoryCompare(f.wire, "ABCDEFGH", 8) == 0 && f.trace.capture_len == 14 &&
+                           memoryCompare(response, "servertaillast", 14) == 0,
+                       "custom upgrade reordered or lost retained input");
+        }
+        f.trace.len    = 0;
+        f.trace.seq[0] = '\0';
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            tunnelUpStreamPause(f.http, f.line);
+            tunnelUpStreamResume(f.http, f.line);
+            tunnelDownStreamPause(f.http, f.line);
+            tunnelDownStreamResume(f.http, f.line);
+            tunnelDownStreamEst(f.http, f.line);
+        }
+        twfRequire(strcmp(f.trace.seq, "URureURure") == 0, "bypassed custom upgrade lost repeated notifications");
+        tunnelUpStreamPayload(f.http, f.line, textPayload(&f, "Z"));
+        twfRequire(f.wire[f.wire_length - 1] == 'Z', "bypassed custom upgrade changed later payload");
+        tunnelUpStreamFin(f.http, f.line);
+        twfRequire(f.trace.next_finish == 1 && f.trace.prev_finish == 0, "bypassed custom upgrade lost Finish");
+        twfRequireLineStateZeroed(f.line, f.http, "bypassed callbacks revived custom upgrade state");
+    }
+    teardown(&f);
+}
+
 int main(void)
 {
     twfRequire(globalstateInitializeSecureRandom() && frandGlobalInit(), "fixture random initialization failed");
@@ -461,6 +587,9 @@ int main(void)
     caseHttp2StartupReentry(true);
     caseWebSocketStartup();
     caseH2cSettings();
+    caseCustomUpgrade(0);
+    caseCustomUpgrade(2);
+    caseCustomUpgrade(3);
     frandThreadCleanup();
     frandGlobalCleanup();
     globalstateDestroySecureRandom();

@@ -32,7 +32,7 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        tunnelPrevDownStreamPayload(t, l, buf);
+        httpserverTransportQueueUpgradePayload(t, l, buf, false);
         lineUnref(l);
         return;
     }

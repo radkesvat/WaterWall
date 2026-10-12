@@ -407,6 +407,14 @@ If `upgrade-protocol` is set to a non-`h2c` value instead:
 - adds any configured `upgrade-response-headers`
 - then forwards bytes bidirectionally without further HTTP body framing
 
+After the complete `101` response and admitted raw tails have been delivered, the
+node destroys its HTTP state and permanently bypasses itself on that line. During
+that handoff, reentrant raw payload stays in FIFO order; each directional queue
+is limited to 2 MiB of allocation charge and 1,024 buffers, and overflow closes
+the line. HTTP body, HTTP/2, WebSocket and split modes remain active for framing
+or line mapping. Same-line Pause/Resume notifications are transparent and
+repeatable, including during upgrade; they do not postpone ready output.
+
 ### Data ownership at tunnel boundaries
 
 `HttpServer` forwards only request and response bodies across tunnel boundaries.

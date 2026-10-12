@@ -22,6 +22,10 @@ void httpserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
     httpserver_lstate_t *ls = lineGetState(l, t);
 
     httpserverLinestateInitialize(ls, t, l);
+    if (ts->version_mode == kHttpServerVersionModeHttp1)
+    {
+        ls->runtime_proto = kHttpServerRuntimeHttp1;
+    }
 
     if (ts->verbose)
     {
@@ -39,9 +43,8 @@ void httpserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ts->version_mode == kHttpServerVersionModeHttp1)
+    if (! tunnelIsActiveForLine(t, l) || ls->line == NULL)
     {
-        ls->runtime_proto = kHttpServerRuntimeHttp1;
         lineUnref(l);
         return;
     }
@@ -56,6 +59,5 @@ void httpserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    ls->runtime_proto = kHttpServerRuntimeUnknown;
     lineUnref(l);
 }

@@ -69,7 +69,10 @@ void httpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->runtime_proto == kHttpClientRuntimeUpgradedRaw)
     {
-        tunnelNextUpStreamPayload(t, l, buf);
+        if (! httpclientTransportQueueRawInput(t, l, buf, true))
+        {
+            failAndCloseU(t, l, ls);
+        }
         lineUnref(l);
         return;
     }

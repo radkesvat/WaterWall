@@ -376,6 +376,7 @@ For `http-version = both` plus `upgrade = true`:
 
 - if the server accepts `h2c`, Waterwall cancels the original upgraded stream `1`, opens one fresh HTTP/2 tunnel stream, and flushes any payload buffered while waiting for `101` on that tunnel stream
 - if a custom `upgrade-protocol` is accepted with `101`, the tunnel switches to raw bidirectional byte forwarding after the HTTP headers
+- after the custom-upgrade opening request and retained input in both directions settle, the tunnel destroys its line state and permanently bypasses itself; reentrant input stays in FIFO order until then
 
 The implementation uses `required_padding_left = 16` so HTTP/1.1 chunks and small tunnel frames can prepend protocol bytes efficiently with `sbufShiftLeft()` when possible. HTTP/2 DATA is emitted through nghttp2, not hand-packed into caller buffers.
 
@@ -437,6 +438,8 @@ If the response is:
   the tunnel stays in HTTP/1.1 mode and flushes buffered request payload as chunked body data
 
 Unexpected `101` replies are treated as errors.
+
+Ordinary same-line connections relay repeated `Pause`/`Resume` notifications transparently and do not wait for Resume to send ready output. Split connections retain the main/upload/download signal mapping. HTTP/1 body framing, HTTP/2, WebSocket and split connections remain active; they still require protocol handling or line ownership cleanup.
 
 ### Downstream response handling
 

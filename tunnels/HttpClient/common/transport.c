@@ -1100,9 +1100,27 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
         return false;
     }
 
+    /* A synchronous 101 must wait until the whole opening request has left this
+     * stack before raw input drains and the line state can retire. */
+    if (custom_upgrade)
+    {
+        ls->h1_write_in_progress = true;
+    }
     bool ok = sendBytesUp(t, l, header_buf, (uint32_t) offset);
     memoryFree(split_path);
     memoryFree(header_buf);
+    if (ok && custom_upgrade)
+    {
+        ls->h1_write_in_progress = false;
+        if (ls->runtime_proto == kHttpClientRuntimeUpgradedRaw)
+        {
+            return httpclientTransportFinishCustomUpgrade(t, l, ls);
+        }
+        if (ls->h1_headers_parsed)
+        {
+            return httpclientTransportFlushPendingUp(t, l, ls);
+        }
+    }
     return ok;
 }
 
@@ -2157,22 +2175,6 @@ bool httpclientTransportHandleUpgradeAccepted(tunnel_t *t, line_t *l, httpclient
     return httpclientSendHttp2Startup(t, l, ls, startup);
 }
 
-static bool httpclientTransportHandleCustomUpgradeAccepted(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
-{
-    httpclient_tstate_t *ts = tunnelGetState(t);
-
-    ls->runtime_proto = kHttpClientRuntimeUpgradedRaw;
-
-    if (ts->verbose)
-    {
-        LOGD("HttpClient: accepted HTTP/1.1 custom upgrade protocol=%s", httpclientUpgradeProtocol(ts));
-    }
-
-    discard t;
-    discard l;
-    return true;
-}
-
 bool httpclientTransportSendWebSocketData(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *payload,
                                           uint8_t opcode)
 {
@@ -2547,13 +2549,82 @@ static bool httpclientTransportDrainRawDown(tunnel_t *t, line_t *l, httpclient_l
             continue;
         }
 
-        if (! httpclientForwardDownstreamPayload(t, l, ls, buf))
+        if (! httpclientForwardDownstreamPayload(t, l, ls, buf) || ! httpclientLinestateIsActive(ls))
         {
             return false;
         }
     }
 
     return true;
+}
+
+bool httpclientTransportFinishCustomUpgrade(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
+{
+    assert(ls->runtime_proto == kHttpClientRuntimeUpgradedRaw);
+    assert(ls->split_role == kHttpClientSplitRoleNone);
+    if (ls->h1_write_in_progress)
+    {
+        return true;
+    }
+
+    ls->h1_write_in_progress = true;
+    do
+    {
+        if (! httpclientTransportDrainRawDown(t, l, ls))
+        {
+            return false;
+        }
+        while (bufferqueueGetBufCount(&ls->pending_up) > 0)
+        {
+            if (! httpclientSendRawUp(t, l, ls, bufferqueuePopFront(&ls->pending_up)))
+            {
+                return false;
+            }
+        }
+    } while (! bufferstreamIsEmpty(&ls->in_stream));
+
+    assert(ls->session == NULL && contextqueueLen(&ls->events_down) == 0);
+    assert(! ls->prev_finished && ! ls->next_finished);
+    httpclientLinestateDestroy(ls);
+    tunnelBypassLine(t, l);
+    return true;
+}
+
+bool httpclientTransportQueueRawInput(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream)
+{
+    httpclient_lstate_t *ls    = lineGetState(l, t);
+    size_t               bytes = sbufGetLength(buf);
+    if (bytes == 0)
+    {
+        lineReuseBuffer(l, buf);
+        return true;
+    }
+    size_t charge = sbufGetAllocationCharge(buf);
+    size_t count =
+        upstream ? bufferqueueGetBufCount(&ls->pending_up) : (size_t) bs_doublequeue_t_size(&ls->in_stream.q);
+    size_t pending_bytes  = upstream ? bufferqueueGetBufLen(&ls->pending_up) : bufferstreamGetBufLen(&ls->in_stream);
+    size_t pending_charge = upstream ? bufferqueueGetCharge(&ls->pending_up) : 0;
+    if (! upstream)
+    {
+        for (size_t i = 0; i < count; ++i)
+        {
+            pending_charge += sbufGetAllocationCharge(*bs_doublequeue_t_at(&ls->in_stream.q, i));
+        }
+    }
+    if (bytes > kHttpClientHttp1NestedMaxBytes || charge > kHttpClientHttp1NestedMaxCharge ||
+        count >= kHttpClientHttp1NestedMaxBuffers || pending_bytes > kHttpClientHttp1NestedMaxBytes - bytes ||
+        pending_charge > kHttpClientHttp1NestedMaxCharge - charge ||
+        (upstream && ! bufferqueueTryPushBack(&ls->pending_up, &buf)))
+    {
+        lineReuseBuffer(l, buf);
+        LOGW("HttpClient: custom upgrade input limit or queue admission failure");
+        return false;
+    }
+    if (! upstream)
+    {
+        bufferstreamPush(&ls->in_stream, buf);
+    }
+    return httpclientTransportFinishCustomUpgrade(t, l, ls);
 }
 
 static bool drainDownEvents(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
@@ -2797,26 +2868,13 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
                 httpclientValidateRequiredHeaders(header_text, ts->upgrade_response_headers))
             {
                 ls->h1_headers_parsed = true;
-
-                if (! httpclientTransportHandleCustomUpgradeAccepted(t, l, ls))
+                ls->runtime_proto     = kHttpClientRuntimeUpgradedRaw;
+                if (ts->verbose)
                 {
-                    memoryFree(header_text);
-                    return false;
+                    LOGD("HttpClient: accepted HTTP/1.1 custom upgrade protocol=%s", httpclientUpgradeProtocol(ts));
                 }
-
                 memoryFree(header_text);
-
-                if (! httpclientTransportDrainRawDown(t, l, ls))
-                {
-                    return lineIsAlive(l) ? false : true;
-                }
-
-                if (! httpclientTransportFlushPendingUp(t, l, ls))
-                {
-                    return lineIsAlive(l) ? false : true;
-                }
-
-                return true;
+                return httpclientTransportFinishCustomUpgrade(t, l, ls);
             }
 
             if (ls->runtime_proto == kHttpClientRuntimeWaitUpgrade && info.connection_upgrade &&

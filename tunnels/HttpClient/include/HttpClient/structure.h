@@ -236,6 +236,8 @@ bool httpclientTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpclient_ls
                                            bool end_stream);
 
 bool httpclientTransportFlushPendingUp(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
+bool httpclientTransportFinishCustomUpgrade(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
+bool httpclientTransportQueueRawInput(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream);
 bool httpclientTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *buf);
 bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
 bool httpclientTransportDrainHttp1ChunkedBody(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);

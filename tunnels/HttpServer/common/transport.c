@@ -2176,11 +2176,30 @@ bool httpserverTransportFlushPendingDown(tunnel_t *t, line_t *l, httpserver_lsta
     return true;
 }
 
-bool httpserverTransportDrainRawUp(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+void httpserverTransportQueueUpgradePayload(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream)
 {
-    while (! bufferstreamIsEmpty(&ls->in_stream))
+    httpserver_lstate_t *ls = lineGetState(l, t);
+    /* Raw callbacks can re-enter while 101 and the admitted tails are being sent.
+     * The original input suffix stays ahead of this bounded reentry queue. */
+    buffer_queue_t *queue  = upstream ? &ls->split_pending_up : &ls->pending_down;
+    const size_t    charge = bufferqueueGetCharge(queue);
+    if (bufferqueueGetBufCount(queue) >= kHttpServerUpgradeQueueCountLimit ||
+        charge > kHttpServerUpgradeQueueChargeLimit ||
+        sbufGetQueueCharge(buf) > kHttpServerUpgradeQueueChargeLimit - charge)
     {
-        sbuf_t *buf = bufferstreamIdealRead(&ls->in_stream);
+        lineReuseBuffer(l, buf);
+        httpserverTransportCloseBothDirections(t, l, ls);
+        return;
+    }
+    bufferqueuePushBack(queue, buf);
+}
+
+static bool httpserverTransportDrainRawUp(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+{
+    while (! bufferstreamIsEmpty(&ls->in_stream) || bufferqueueGetBufCount(&ls->split_pending_up) != 0)
+    {
+        sbuf_t *buf = ! bufferstreamIsEmpty(&ls->in_stream) ? bufferstreamIdealRead(&ls->in_stream)
+                                                            : bufferqueuePopFront(&ls->split_pending_up);
 
         if (ls->next_finished)
         {
@@ -2191,7 +2210,7 @@ bool httpserverTransportDrainRawUp(tunnel_t *t, line_t *l, httpserver_lstate_t *
         line_t *target = httpserverUpstreamTargetLine(ls, l);
         tunnelNextUpStreamPayload(t, target, buf);
 
-        if (! lineIsAlive(l))
+        if (! lineIsAlive(l) || ! httpserverLinestateIsActive(ls))
         {
             return false;
         }
@@ -2496,16 +2515,18 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
 
                 memoryFree(header_text);
 
-                if (! httpserverTransportDrainRawUp(t, l, ls))
+                do
                 {
-                    return lineIsAlive(l) ? false : true;
-                }
+                    if (! httpserverTransportDrainRawUp(t, l, ls) || ! httpserverTransportFlushPendingDown(t, l, ls))
+                    {
+                        return false;
+                    }
+                } while (bufferqueueGetBufCount(&ls->split_pending_up) != 0);
 
-                if (! httpserverTransportFlushPendingDown(t, l, ls))
-                {
-                    return lineIsAlive(l) ? false : true;
-                }
-
+                assert(ls->split_role == kHttpServerSplitRoleNone);
+                assert(! ls->prev_finished && ! ls->next_finished);
+                httpserverLinestateDestroy(ls);
+                tunnelBypassLine(t, l);
                 return true;
             }
         }

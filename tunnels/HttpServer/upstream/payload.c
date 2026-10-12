@@ -31,27 +31,7 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->runtime_proto == kHttpServerRuntimeUpgradedRaw)
     {
-        tunnelNextUpStreamPayload(t, l, buf);
-
-        if (! lineIsAlive(l))
-        {
-            lineUnref(l);
-            return;
-        }
-
-        if (! httpserverTransportFlushPendingDown(t, l, ls))
-        {
-            if (! lineIsAlive(l))
-            {
-                lineUnref(l);
-                return;
-            }
-
-            failAndCloseU(t, l, ls);
-            lineUnref(l);
-            return;
-        }
-
+        httpserverTransportQueueUpgradePayload(t, l, buf, true);
         lineUnref(l);
         return;
     }
@@ -190,6 +170,12 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    if (! tunnelIsActiveForLine(t, l))
+    {
+        lineUnref(l);
+        return;
+    }
+
     if (ls->runtime_proto == kHttpServerRuntimeHttp2)
     {
         while (! bufferstreamIsEmpty(&ls->in_stream))
@@ -215,38 +201,6 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             lineUnref(l);
             return;
         }
-        lineUnref(l);
-        return;
-    }
-
-    if (ls->runtime_proto == kHttpServerRuntimeUpgradedRaw)
-    {
-        if (! httpserverTransportDrainRawUp(t, l, ls))
-        {
-            if (! lineIsAlive(l))
-            {
-                lineUnref(l);
-                return;
-            }
-
-            failAndCloseU(t, l, ls);
-            lineUnref(l);
-            return;
-        }
-
-        if (! httpserverTransportFlushPendingDown(t, l, ls))
-        {
-            if (! lineIsAlive(l))
-            {
-                lineUnref(l);
-                return;
-            }
-
-            failAndCloseU(t, l, ls);
-            lineUnref(l);
-            return;
-        }
-
         lineUnref(l);
         return;
     }

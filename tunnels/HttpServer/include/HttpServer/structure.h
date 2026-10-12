@@ -192,6 +192,8 @@ enum
     kHttpServerBufferQueueCap    = 8,
     kHttpServerMaxHeaderBytes    = 64 * 1024,
     kHttpServerHttp2FrameBytes   = 32 * 1024,
+    kHttpServerUpgradeQueueChargeLimit = 2 * 1024 * 1024,
+    kHttpServerUpgradeQueueCountLimit  = 1024,
     kHttpServerSplitMaxBuffering = 65535 * 2,
     kHttpServerDefaultHttp1Port  = 80,
     kHttpServerDefaultHttpsPort  = 443
@@ -236,7 +238,7 @@ bool httpserverTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpserver_ls
                                            bool end_stream);
 
 bool httpserverTransportFlushPendingDown(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
-bool httpserverTransportDrainRawUp(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
+void httpserverTransportQueueUpgradePayload(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream);
 bool httpserverTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *buf);
 bool httpserverTransportDetectRuntimeProtocol(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
