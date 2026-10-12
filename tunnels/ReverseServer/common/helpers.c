@@ -67,11 +67,9 @@ static void closePair(tunnel_t *t, line_t *u, line_t *d)
     reverseserverLinestateDestroy(lineGetState(u, t));
     reverseserverLinestateDestroy(lineGetState(d, t));
     lineRef(u);
-    lineRef(d);
     tunnelPrevDownStreamFinish(t, d);
     if (lineIsAlive(u))
         tunnelNextUpStreamFinish(t, u);
-    lineUnref(d);
     lineUnref(u);
 }
 

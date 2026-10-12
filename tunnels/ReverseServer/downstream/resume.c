@@ -6,10 +6,5 @@ void reverseserverTunnelDownStreamResume(tunnel_t *t, line_t *u)
     ls->output_paused          = false;
     if (! ls->paired)
         return;
-    line_t *other = ls->d;
-    lineRef(u);
-    lineRef(other);
     reverseserverDrainPair(t, ls->u);
-    lineUnref(other);
-    lineUnref(u);
 }
