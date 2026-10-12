@@ -3,7 +3,7 @@
  * Setup: A 64-tunnel chain with shuffled link order, real line pools, and one bound
  * logical worker. The fixture owns normal lines; the chain owns its packet line.
  * Checks: default/explicit/context dispatch, consecutive skips including bits 0/63,
- * line isolation and reuse, reentrant disable, Finish destruction, packet publication
+ * line isolation and reuse, reentrant disable, repeatable Est, Finish destruction, packet publication
  * and the certified packet enqueue boundary. Nonempty line state must be zero,
  * including padding, before bypass; Debug rejects dirty state. No network or concurrency claim.
  * CTest: waterwall.tunnel_bypass_unit
@@ -202,6 +202,37 @@ static void destroyOnFinish(tunnel_t *t, line_t *line)
     lineDestroy(line); // This callback represents the fixture's normal-line owner.
 }
 
+static void markEstablished(tunnel_t *t, line_t *line)
+{
+    record(t, line, kEst, false);
+    lineMarkEstablished(line);
+}
+
+static void testRepeatedEst(tunnel_chain_t *chain, tunnel_t **path)
+{
+    line_t *line = lineCreate(chain->line_pools, 0);
+    require(! lineIsEstablished(line), "new line was already established");
+    path[0]->fnEstD   = markEstablished; // Model a listener consuming transport notifications.
+    path[1]->fnEstD   = tunnelDefaultDownStreamEst;
+    expected_tunnel   = path[0];
+    expected_line     = line;
+    expected_event    = kEst;
+    expected_upstream = false;
+
+    for (unsigned notification = 0; notification < 3; ++notification)
+    {
+        if (notification == 2)
+            tunnelBypassLine(path[1], line);
+        deliveries = 0;
+        tunnelPrevDownStreamEst(path[2], line);
+        require(deliveries == 1 && lineIsEstablished(line), "repeated Est was lost or changed establishment");
+    }
+
+    lineDestroy(line);
+    installRecorders(path[0]);
+    installRecorders(path[1]);
+}
+
 static void testBypassRequiresDestroyedState(tunnel_chain_t *chain, tunnel_t *t)
 {
     line_t  *line  = lineCreate(chain->line_pools, 0);
@@ -316,6 +347,7 @@ int main(void)
     chain->packet_lines[0] = lineCreate(chain->line_pools, 0);
 
     testBypassRequiresDestroyedState(chain, path[1]);
+    testRepeatedEst(chain, path);
 
     line_t *line  = lineCreate(chain->line_pools, 0);
     line_t *other = lineCreate(chain->line_pools, 0);

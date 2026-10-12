@@ -346,13 +346,15 @@ static inline void lineReuseBuffer(const line_t *const line, sbuf_t *b)
 }
 
 /**
- * @brief Mark a line as established.
+ * @brief Mark a line as established; repeated transport Est notifications are valid.
+ *
+ * This marker is idempotent. Tunnels must separately guard any local one-time
+ * work triggered by Est; the shared marker does not track their notification delivery.
  *
  * @param line Line instance.
  */
 static inline void lineMarkEstablished(line_t *const line)
 {
-    assert(! line->established);
     line->established = true;
 }
 
