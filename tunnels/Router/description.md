@@ -101,7 +101,25 @@ Step by step:
 6. The chosen branch (a rule `target`, or the default `next`) receives `Init`,
    and the buffered bytes are **replayed** to it — nothing is lost. From then on
    payloads flow straight through to that branch, and downstream traffic returns
-   through the router.
+   toward the previous node.
+
+Input submitted reentrantly during the selected `Init` or initial replay waits
+behind the accepted first delivery. The temporary nested-input backlog is one
+ordinary buffer with a 2 MiB logical-byte limit; overflow closes the initialized
+branch and previous side. This limit does not shrink the existing accepted first
+sniffing delivery. Replay stops immediately on Finish, even when a borrowed
+line's owner has not yet destroyed the line.
+
+After selected Init and all initial replay settle, Router destroys its line
+state and permanently bypasses itself when the route is its actual `next` link.
+This includes the default route and a rule whose resolved entry is that same
+link. Other targets keep their routing state so later callbacks reach the chosen
+branch. Destination metadata published by sniffing remains on the line.
+
+Pause and Resume are repeatable advisory signals. Once a branch is selected,
+Router forwards each signal along that path without storing consumer-pause state
+or delaying ready replay until Resume. Before selection there is no initialized
+upstream recipient. Downstream signals continue toward the previous node.
 
 With `resolve-domains` enabled, an internal `DomainResolver` runs before step 1
 and hands the line to Router only after the destination is usable — see
@@ -554,9 +572,11 @@ table.
 
 While the route is undecided, Router materializes each complete splice payload
 into ordinary memory before buffering and sniffing. The selected branch receives
-the buffered bytes intact. After route commitment, payloads pass through unchanged
-in both directions; metadata-only routing can commit during Init and preserve
-splice buffers from the first delivery. The internal DomainResolver retains its
+the buffered bytes intact. Reentrant upstream input during selected Init or
+initial replay is also materialized into the temporary ordinary backlog. Once
+startup settles, payloads pass through unchanged in both directions;
+metadata-only routing normally commits during Init and preserves splice buffers
+from the first subsequent delivery. The internal DomainResolver retains its
 splice capability when `resolve-domains` is enabled.
 
 Splice activation still requires an eligible finalized chain and `misc.splice`.

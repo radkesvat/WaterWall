@@ -72,15 +72,17 @@ typedef struct sniffrouter_tstate_s
 
 typedef struct sniffrouter_lstate_s
 {
-    sbuf_t   *pending; // bytes buffered before a routing decision is made
-    tunnel_t *target;  // selected route tunnel; NULL means normal next branch
-    uint8_t   decided; // enum sniffrouter_route_e
+    sbuf_t   *pending;   // sniff input, or later input retained during initial replay
+    tunnel_t *target;    // selected route tunnel; NULL means normal next branch
+    uint8_t   decided;   // enum sniffrouter_route_e
+    bool      replaying; // selected Init and initial FIFO replay are on the stack
 } sniffrouter_lstate_t;
 
 enum
 {
-    kTunnelStateSize = sizeof(sniffrouter_tstate_t),
-    kLineStateSize   = sizeof(sniffrouter_lstate_t),
+    kTunnelStateSize           = sizeof(sniffrouter_tstate_t),
+    kLineStateSize             = sizeof(sniffrouter_lstate_t),
+    kSniffRouterMaxReplayBytes = 2U * 1024U * 1024U,
 
     // Reverse-link handshake defaults use ReverseClient's exported handshake
     // bytes and length so SniffRouter, ReverseClient, and ReverseServer cannot

@@ -73,6 +73,7 @@ typedef struct router_lstate_s
     tunnel_t *target;  // selected rule tunnel; NULL means the default next branch
     uint8_t   route;   // enum router_route_e
     uint32_t  sniffed_attributes;
+    bool      replaying; // selected Init and its initial FIFO are still running
 } router_lstate_t;
 
 // Connection facts handed to matcher modules. Carries the line (for routing
@@ -132,6 +133,7 @@ bool routerIsKnownConditionKey(const char *key);
 // --- line state ---
 void routerLinestateInitialize(router_lstate_t *ls);
 void routerLinestateDestroy(line_t *l, router_lstate_t *ls);
+void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *target, sbuf_t *first);
 
 // --- instance lifecycle ---
 void routerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);

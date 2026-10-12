@@ -27,31 +27,45 @@ static void routerForwardPayload(tunnel_t *t, line_t *l, router_lstate_t *ls, sb
     tunnelNextUpStreamPayload(t, l, buf);
 }
 
-static void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *target, sbuf_t *first)
+void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *target, sbuf_t *first)
 {
     lineRef(l);
 
+    ls->target    = target;
+    ls->route     = target != NULL ? kRouterRouteTarget : kRouterRouteDefault;
+    ls->replaying = true;
     if (target != NULL)
     {
-        ls->target = target;
-        ls->route  = kRouterRouteTarget;
         tunnelUpStreamInit(target, l);
-        if (lineIsAlive(l))
-        {
-            tunnelUpStreamPayload(target, l, first);
-            first = NULL;
-        }
     }
     else
     {
-        ls->target = NULL;
-        ls->route  = kRouterRouteDefault;
         tunnelNextUpStreamInit(t, l);
-        if (lineIsAlive(l))
+    }
+
+    // Keep the accepted first delivery ahead of input submitted from Init/Est.
+    // Reentry appends to pending until Init and every startup handoff return.
+    while (lineIsAlive(l) && ls->replaying)
+    {
+        if (first == NULL)
         {
-            tunnelNextUpStreamPayload(t, l, first);
-            first = NULL;
+            first       = ls->pending;
+            ls->pending = NULL;
         }
+        if (first == NULL)
+        {
+            ls->replaying = false;
+            if (target == NULL || target == t->next)
+            {
+                routerLinestateDestroy(l, ls);
+                tunnelBypassLine(t, l);
+            }
+            break;
+        }
+
+        sbuf_t *out = first;
+        first       = NULL;
+        routerForwardPayload(t, l, ls, out);
     }
 
     if (first != NULL)
@@ -62,6 +76,40 @@ static void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunne
     lineUnref(l);
 }
 
+static void routerBufferReentrantPayload(tunnel_t *t, line_t *l, router_lstate_t *ls, sbuf_t *buf)
+{
+    const uint32_t limit    = 2U * 1024U * 1024U;
+    const uint32_t queued   = ls->pending != NULL ? sbufGetLength(ls->pending) : 0;
+    const uint32_t incoming = sbufGetLength(buf);
+    if (incoming > limit || queued > limit - incoming)
+    {
+        LOGE("Router: initial replay backlog exceeded its limit, closing this line");
+        // The selected branch has received Init. Settle both directions while
+        // the outer commit keeps its first delivery and line reference alive.
+        tunnel_t *target = ls->target;
+        lineRef(l);
+        lineReuseBuffer(l, buf);
+        routerLinestateDestroy(l, ls);
+        if (target != NULL)
+        {
+            tunnelUpStreamFin(target, l);
+        }
+        else
+        {
+            tunnelNextUpStreamFinish(t, l);
+        }
+        if (lineIsAlive(l))
+        {
+            tunnelPrevDownStreamFinish(t, l);
+        }
+        lineUnref(l);
+        return;
+    }
+
+    buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
+    routerBufferPendingPayload(l, ls, buf);
+}
+
 void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     router_tstate_t *ts = tunnelGetState(t);
@@ -69,6 +117,11 @@ void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->route != kRouterRouteUndecided)
     {
+        if (ls->replaying)
+        {
+            routerBufferReentrantPayload(t, l, ls, buf);
+            return;
+        }
         routerForwardPayload(t, l, ls, buf);
         return;
     }

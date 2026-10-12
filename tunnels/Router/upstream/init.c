@@ -10,26 +10,6 @@ static bool routerCanCommitRouteDuringInit(const router_tstate_t *ts)
     return ts->needed_protocols == 0 && ts->sniffing_modes == 0 && ! ts->needs_http_upgrade_attribute;
 }
 
-static void routerCommitInitialRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, const router_match_t *match)
-{
-    lineRef(l);
-
-    if (match->result == kRouterClassifyTarget)
-    {
-        ls->target = match->target;
-        ls->route  = kRouterRouteTarget;
-        tunnelUpStreamInit(match->target, l);
-    }
-    else
-    {
-        ls->target = NULL;
-        ls->route  = kRouterRouteDefault;
-        tunnelNextUpStreamInit(t, l);
-    }
-
-    lineUnref(l);
-}
-
 void routerTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     router_tstate_t *ts = tunnelGetState(t);
@@ -67,7 +47,7 @@ void routerTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    routerCommitInitialRoute(t, l, ls, &match);
+    routerCommitRoute(t, l, ls, match.result == kRouterClassifyTarget ? match.target : NULL, NULL);
 
     /*
      * Payload-dependent routing remains intentionally lazy so content-based

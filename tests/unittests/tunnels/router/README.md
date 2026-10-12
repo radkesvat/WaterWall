@@ -4,7 +4,11 @@
 private-pipe and resident-prefix-plus-pipe input: split sniffing, exact initial
 replay, opaque forwarding in both directions, metadata-only Init commitment,
 complete oversized headers, and Finish during retained input or branch callbacks.
-It also checks Router's internal DomainResolver capability. Run it in both
+It verifies direct-next bypass and zeroed state, retained off-next dispatch,
+repeatable advisory notifications, nested startup FIFO through Pause, bounded
+startup overflow, and borrowed Finish before the owner destroys the line.
+SniffRouter's configured-target upstream Est suppression remains covered even
+when that target equals next. It also checks Router's internal DomainResolver capability. Run it in both
 `linux-unit-debug` and `linux-unit-release`. The existing node-layer units cover
 both routers' metadata and whole-chain eligibility, including an unselected
 blocking branch, disabled splice and unsupported builds.

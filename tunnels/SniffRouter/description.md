@@ -35,6 +35,18 @@ conditions, or more flexible routing behavior.
 - Upstream `Init` is deferred until the first payload selects a branch. The
   buffered bytes are then replayed to the chosen branch with no loss. This is
   the same for HTTP Host and TLS SNI routing.
+- Input arriving reentrantly during the selected branch's `Init` or initial
+  replay stays behind the original bytes. This additional input is coalesced
+  into one ordinary buffer with a 2 MiB logical-byte limit; exceeding the limit
+  closes the line. The original accepted sniff batch keeps its existing size
+  behavior.
+- `Pause` and `Resume` are advisory. Once a branch is selected, every notification
+  follows that branch, including duplicates; initial replay does not wait for
+  `Resume`. Before selection there is no initialized upstream recipient.
+- After fallback `Init` and initial replay finish, the router destroys its line
+  state and permanently bypasses itself on that line. Configured route targets
+  remain active to preserve branch dispatch and their upstream `Est` suppression,
+  including a configured target equal to top-level `next`.
 
 ## Domain Matching
 
@@ -165,8 +177,9 @@ Configuration example:
 
 While the route is undecided, SniffRouter materializes each complete splice payload
 into ordinary memory before buffering and classification. Buffered bytes are
-replayed intact to the selected branch. After route commitment, payloads pass
-through unchanged in both directions. The sniff window keeps its existing meaning:
+replayed intact to the selected branch. Reentrant upstream input remains ordinary
+through selected-branch `Init` and initial replay. Once that startup work settles,
+payloads pass through unchanged in both directions. The sniff window keeps its existing meaning:
 complete headers are classified before the incomplete-input cutoff.
 
 Splice activation still requires an eligible finalized chain and `misc.splice`.
