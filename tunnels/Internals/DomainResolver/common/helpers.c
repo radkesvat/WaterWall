@@ -28,6 +28,9 @@ bool domainresolverUpdateSourcePressure(tunnel_t *t, line_t *l)
 
 bool domainresolverDrainPending(tunnel_t *t, line_t *l)
 {
+    /* A nested pressure callback may have retired this node already. */
+    if (! tunnelIsActiveForLine(t, l))
+        return true;
     domainresolver_lstate_t *ls = lineGetState(l, t);
     if (ls->phase != kDomainResolverPhaseOpen || ls->init_dispatching || ls->draining)
         return true;
@@ -45,6 +48,16 @@ bool domainresolverDrainPending(tunnel_t *t, line_t *l)
         if (bufferqueueGetBufCount(&ls->pending) == 0)
             ls->pending_source_hold = false;
         alive = domainresolverUpdateSourcePressure(t, l);
+        if (alive && tunnelIsActiveForLine(t, l) && ! ls->init_dispatching && ! ls->draining &&
+            ! ls->pending_source_hold && bufferqueueGetBufCount(&ls->pending) == 0 &&
+            ! tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l))
+        {
+            /* Next consumed its prepare state during Init. Only matched
+             * neighbour permissions remain; later callbacks can pass directly. */
+            assert(ls->source_paused == ls->next_paused && ls->read_pause_sent == ls->prev_paused);
+            domainresolverLinestateDestroy(t, l, ls);
+            tunnelBypassLine(t, l);
+        }
     }
     lineUnref(l);
     return alive;

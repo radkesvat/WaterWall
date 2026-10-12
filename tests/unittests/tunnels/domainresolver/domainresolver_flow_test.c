@@ -25,10 +25,37 @@ static size_t           wire_length;
 static unsigned         established_count, init_count, source_pause_count;
 static unsigned         held_pause_count, held_resume_count, pressure_action;
 static bool             pressure_only, initiating_source_paused;
+static bool             use_prepare_state;
+static unsigned         prepare_destroy_count;
+
+static bool prepareLine(tunnel_t *t, tunnel_t *owner, line_t *l, void *state)
+{
+    twfRequire(t == resolver && owner == t->next && state == domainresolverTunnelGetUserLineState(t, l),
+               "prepare hook received the wrong line or owner");
+    domainresolver_tstate_t *ts = tunnelGetState(t);
+    memorySet(state, 0x5A, ts->user_lstate_size);
+    return true;
+}
+
+static void destroyPreparedLine(tunnel_t *t, tunnel_t *owner, line_t *l, void *state)
+{
+    twfRequire(t == resolver && owner == t->next && state == domainresolverTunnelGetUserLineState(t, l),
+               "prepare destructor received the wrong line or owner");
+    domainresolver_tstate_t *ts = tunnelGetState(t);
+    for (uint32_t i = 0; i < ts->user_lstate_size; ++i)
+        twfRequire(((uint8_t *) state)[i] == 0x5A, "prepare state or its padding was cleared before destruction");
+    ++prepare_destroy_count;
+}
+
+static void requireBypassed(line_t *l)
+{
+    twfRequire(! tunnelIsActiveForLine(resolver, l), "settled resolver path was not bypassed");
+    twfRequireLineStateZeroed(l, resolver, "bypassed resolver retained line or embedded prepare state");
+}
 
 static void closeInitiator(line_t *l)
 {
-    domainresolverTunnelUpStreamFinish(resolver, l);
+    tunnelUpStreamFin(resolver, l);
     lineDestroy(l);
 }
 static bool isInitiatingSource(tunnel_t *t)
@@ -62,15 +89,15 @@ static sbuf_t *payload(line_t *l, char c)
 }
 static void submit(line_t *l, char c)
 {
-    domainresolverTunnelUpStreamPayload(resolver, l, payload(l, c));
+    tunnelUpStreamPayload(resolver, l, payload(l, c));
 }
 static void pauseConsumer(line_t *l)
 {
-    domainresolverTunnelDownStreamPause(resolver, l);
+    tunnelDownStreamPause(resolver, l);
 }
 static void pauseSource(line_t *l)
 {
-    domainresolverTunnelUpStreamPause(resolver, l);
+    tunnelUpStreamPause(resolver, l);
 }
 static void onPause(tunnel_t *t, line_t *l)
 {
@@ -125,10 +152,16 @@ static void onResume(tunnel_t *t, line_t *l)
         pressure_action = 0;
         closeInitiator(l);
     }
+    else if (pressure_only && pressure_action == 9)
+    {
+        pressure_action = 0;
+        resumeConsumer(l);
+        requireBypassed(l);
+    }
 }
 static void resumeConsumer(line_t *l)
 {
-    domainresolverTunnelDownStreamResume(resolver, l);
+    tunnelDownStreamResume(resolver, l);
 }
 static void noop(tunnel_t *t, line_t *l)
 {
@@ -154,12 +187,18 @@ static void onInit(tunnel_t *t, line_t *l)
 {
     discard t;
     ++init_count;
+    twfRequire(tunnelIsActiveForLine(resolver, l), "resolver bypassed before next Init returned");
+    if (use_prepare_state)
+        twfRequire(prepare_destroy_count == 0 && *(uint8_t *) domainresolverTunnelGetUserLineState(resolver, l) == 0x5A,
+                   "next Init lost its prepared state");
     if (finish_in_init)
     {
-        domainresolverTunnelDownStreamFinish(resolver, l);
+        tunnelDownStreamFin(resolver, l);
         return;
     }
-    domainresolverTunnelDownStreamEst(resolver, l);
+    tunnelDownStreamEst(resolver, l);
+    if (use_prepare_state && lineIsAlive(l))
+        twfRequire(prepare_destroy_count == 0, "resolver retired prepare state during next Init reentry");
 }
 static void onPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -186,10 +225,15 @@ static void run(bool close_now, bool literal)
     twfSetCase("DomainResolver preserves DNS FIFO across Init/Est/Pause reentry");
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, 4096, 32);
-    resolver       = tunnelCreate(NULL, sizeof(domainresolver_tstate_t), sizeof(domainresolver_lstate_t));
+    node_t node = {.type = (char *) "DomainResolver"};
+    resolver    = domainresolverTunnelCreate(&node);
+    twfRequire(resolver != NULL, "failed to create resolver");
     tunnel_t *prev = tunnelCreate(NULL, 0, 0), *next = tunnelCreate(NULL, 0, 0);
     tunnelBind(prev, resolver);
     tunnelBind(resolver, next);
+    prev->chain_index     = 0;
+    resolver->chain_index = 1;
+    next->chain_index     = 2;
     next->fnInitU    = onInit;
     prev->fnPayloadD = next->fnPayloadU = onPayload;
     prev->fnEstD                        = onEst;
@@ -199,9 +243,18 @@ static void run(bool close_now, bool literal)
     next->fnFinU                      = noop;
     domainresolver_tstate_t *ts       = tunnelGetState(resolver);
     ts->strategy                      = kDsOnlyIpV4;
+    use_prepare_state                 = true;
+    prepare_destroy_count             = 0;
+    domainresolverTunnelSetPrepareHook(resolver, next, 33, prepareLine, destroyPreparedLine);
     twf_line_pool_t lines;
     twfLinePoolSetup(&lines, resolver->lstate_size, 1);
-    line_t *line = twfLinePoolCreateLine(&lines);
+    /* The fixture keeps the pools; the chain owns only its exact packet line. */
+    tunnel_chain_t *chain       = tunnelchainCreate(1);
+    chain->contains_packet_node = true;
+    chain->packet_lines         = memoryAllocate(sizeof(line_t *));
+    chain->packet_lines[0]      = twfLinePoolCreateLine(&lines);
+    resolver->chain             = chain;
+    line_t *line                = twfLinePoolCreateLine(&lines);
     lineRef(line);
     address_context_t *dest = lineGetDestinationAddressContext(line);
     if (literal)
@@ -218,10 +271,11 @@ static void run(bool close_now, bool literal)
     inject_after_first = false;
     init_count = established_count = wire_length = source_pause_count = 0;
     dns_callback                                                      = NULL;
-    domainresolverTunnelUpStreamInit(resolver, line);
+    tunnelUpStreamInit(resolver, line);
     if (! literal)
     {
         twfRequire(init_count == 0 && dns_callback != NULL, "DNS wait reached adjacent Init");
+        twfRequire(tunnelIsActiveForLine(resolver, line), "resolver bypassed before DNS completed");
         submit(line, 'A');
         pauseSource(line);
         dns_resolved_addr_t answer = {.family = AF_INET, .addrlen = sizeof(struct sockaddr_in)};
@@ -237,11 +291,14 @@ static void run(bool close_now, bool literal)
                    "resolver did not forward Est promptly while retaining paused backlog");
         twfRequire(held_pause_count == 1 && held_resume_count == 0, "DNS/order pressure was not held exactly once");
         twfRequire(source_pause_count == 1, "DNS Init replay duplicated an already forwarded source Pause");
+        twfRequire(tunnelIsActiveForLine(resolver, line) && prepare_destroy_count == 0,
+                   "resolver retired its paused startup backlog");
         inject_after_first = ! literal;
         resumeConsumer(line);
         if (! literal)
         {
             twfRequire(wire_length == 1 && wire[0] == 'A', "DNS release passed nested Pause or reordered input");
+            twfRequire(tunnelIsActiveForLine(resolver, line), "resolver bypassed with older FIFO input retained");
             resumeConsumer(line);
             twfRequire(wire_length == 3 && memoryEqual(wire, "ABC", 3), "DNS FIFO changed after Resume");
         }
@@ -252,11 +309,42 @@ static void run(bool close_now, bool literal)
         domainresolver_lstate_t *ls = lineGetState(line, resolver);
         twfRequire(bufferqueueGetCharge(&ls->pending) == 0 && bufferqueueGetBufCount(&ls->pending) == 0,
                    "DNS drain leaked charge");
-        domainresolverTunnelUpStreamFinish(resolver, line);
+        requireBypassed(line);
+        twfRequire(prepare_destroy_count == 1, "resolver did not destroy prepare state exactly once before bypass");
+        pressure_only        = true;
+        unsigned ests_before = established_count;
+        tunnelDownStreamEst(resolver, line);
+        tunnelDownStreamEst(resolver, line);
+        twfRequire(established_count == ests_before + 2, "bypassed resolver suppressed repeated Est");
+        size_t bytes_before = wire_length;
+        submit(line, 'D');
+        tunnelDownStreamPayload(resolver, line, payload(line, 'E'));
+        twfRequire(wire_length == bytes_before + 2 && wire[bytes_before] == 'D' && wire[bytes_before + 1] == 'E',
+                   "bypassed resolver lost bidirectional payload");
+        pauseConsumer(line);
+        resumeConsumer(line);
+        twfRequire(! initiating_source_paused, "bypassed resolver lost source pressure notifications");
+        tunnelUpStreamFin(resolver, line);
         lineDestroy(line);
     }
     twfRequire(! lineIsAlive(line), "DNS close did not settle owner");
+    twfRequire(prepare_destroy_count == 1, "Finish repeated or skipped prepare-state destruction");
+    use_prepare_state = false;
     lineUnref(line);
+    if (! close_now && literal)
+    {
+        line_t *packet = chain->packet_lines[0];
+        addresscontextSetIpAddress(lineGetDestinationAddressContext(packet), "127.0.0.1");
+        addresscontextSetPort(lineGetDestinationAddressContext(packet), 80);
+        next->fnInitU = noop;
+        tunnelUpStreamInit(resolver, packet);
+        twfRequire(lineIsAlive(packet) && tunnelIsActiveForLine(resolver, packet) && prepare_destroy_count == 1,
+                   "resolver bypassed or destroyed the chain's actual packet line");
+        /* Worker-state teardown precedes the chain's final packet-line release. */
+        domainresolverLinestateDestroy(resolver, packet, lineGetState(packet, resolver));
+        twfRequire(prepare_destroy_count == 2, "packet prepare state was not destroyed exactly once");
+    }
+    tunnelchainDestroy(chain);
     twfRequireNoLeakedBuffers();
     twfLinePoolTeardown(&lines);
     tunnelDestroy(next);
@@ -269,10 +357,15 @@ static void runPressure(unsigned action)
     twfSetCase("DomainResolver holds initiating source through DNS and FIFO callback reentry");
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, 4096, 32);
-    resolver       = tunnelCreate(NULL, sizeof(domainresolver_tstate_t), sizeof(domainresolver_lstate_t));
+    node_t node = {.type = (char *) "DomainResolver"};
+    resolver    = domainresolverTunnelCreate(&node);
+    twfRequire(resolver != NULL, "failed to create resolver");
     tunnel_t *prev = tunnelCreate(NULL, 0, 0), *next = tunnelCreate(NULL, 0, 0);
     tunnelBind(prev, resolver);
     tunnelBind(resolver, next);
+    prev->chain_index     = 0;
+    resolver->chain_index = 1;
+    next->chain_index     = 2;
     next->fnInitU    = onInit;
     prev->fnPayloadD = next->fnPayloadU = onPayload;
     prev->fnEstD                        = onEst;
@@ -294,7 +387,7 @@ static void runPressure(unsigned action)
     pressure_action = action;
     finish_in_init = inject_after_first = initiating_source_paused = false;
     init_count = established_count = wire_length = source_pause_count = held_pause_count = held_resume_count = 0;
-    domainresolverTunnelUpStreamInit(resolver, line);
+    tunnelUpStreamInit(resolver, line);
     if (action == 4)
         pauseConsumer(line);
     submit(line, 'A');
@@ -337,6 +430,7 @@ static void runPressure(unsigned action)
                 if (action == 5)
                     twfRequire(held_pause_count == 2 && initiating_source_paused,
                                "Resume callback's new adjacent Pause was overwritten");
+                requireBypassed(line);
             }
         }
     }
@@ -368,7 +462,7 @@ static void onBudgetReply(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void onBudgetInit(tunnel_t *t, line_t *l)
 {
     onInit(t, l);
-    domainresolverTunnelDownStreamPayload(resolver, l, payload(l, 'R'));
+    tunnelDownStreamPayload(resolver, l, payload(l, 'R'));
 }
 
 static void onBudgetPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -401,6 +495,9 @@ static void runBudget(bool overflow, bool resolve_first)
     tunnel_t *prev = tunnelCreate(NULL, 0, 0), *next = tunnelCreate(NULL, 0, 0);
     tunnelBind(prev, resolver);
     tunnelBind(resolver, next);
+    prev->chain_index                                                = 0;
+    resolver->chain_index                                            = 1;
+    next->chain_index                                                = 2;
     prev->fnEstD                                                     = onEst;
     prev->fnPayloadD                                                 = onBudgetReply;
     prev->fnPauseD                                                   = onPause;
@@ -422,7 +519,7 @@ static void runBudget(bool overflow, bool resolve_first)
     pressure_only                                                  = true;
     pressure_action = held_pause_count = held_resume_count = init_count = established_count = 0;
     budget_wire_bytes = budget_next_finishes = budget_replies = 0;
-    domainresolverTunnelUpStreamInit(resolver, line);
+    tunnelUpStreamInit(resolver, line);
 
     const size_t   limit  = 2U * 1024U * 1024U;
     const uint32_t length = (uint32_t) (limit - sizeof(sbuf_t) - kSbufAllocationAlignment - 64U);
@@ -430,7 +527,7 @@ static void runBudget(bool overflow, bool resolve_first)
     sbufSetLength(buf, length);
     memorySet(sbufGetMutablePtr(buf), 0xA5, length);
     twfRequire(sbufGetQueueCharge(buf) == limit, "fixture must reach the exact 2 MiB charge boundary");
-    domainresolverTunnelUpStreamPayload(resolver, line, buf);
+    tunnelUpStreamPayload(resolver, line, buf);
     twfRequire(lineIsAlive(line), "valid payload above 1 MiB was refused");
     domainresolver_lstate_t *ls = lineGetState(line, resolver);
     twfRequire(bufferqueueGetCharge(&ls->pending) == limit && bufferqueueGetBufLen(&ls->pending) == length,
@@ -451,7 +548,7 @@ static void runBudget(bool overflow, bool resolve_first)
     {
         sbuf_t *empty = bufferpoolGetSmallBuffer(lineGetBufferPool(line));
         sbufSetLength(empty, 0);
-        domainresolverTunnelUpStreamPayload(resolver, line, empty);
+        tunnelUpStreamPayload(resolver, line, empty);
         twfRequire(! lineIsAlive(line) && held_resume_count == 0, "empty buffer escaped allocation-charge limit");
         twfRequire(budget_next_finishes == (resolve_first ? 1U : 0U), "overflow finished an unopened next side");
     }
@@ -460,6 +557,7 @@ static void runBudget(bool overflow, bool resolve_first)
         resumeConsumer(line);
         twfRequire(budget_wire_bytes == length && held_resume_count == 1 && bufferqueueGetCharge(&ls->pending) == 0,
                    "large DNS backlog did not drain and release source pressure");
+        requireBypassed(line);
         closeInitiator(line);
     }
     lineUnref(dns_line); // Mock delivery reference also settles after pre-resolution overflow.
@@ -478,7 +576,7 @@ int main(void)
     runBudget(false, true);
     runBudget(true, false);
     runBudget(true, true);
-    for (unsigned action = 0; action <= 8; ++action)
+    for (unsigned action = 0; action <= 9; ++action)
         runPressure(action);
     for (unsigned close_now = 0; close_now < 2; ++close_now)
         for (unsigned literal = 0; literal < 2; ++literal)

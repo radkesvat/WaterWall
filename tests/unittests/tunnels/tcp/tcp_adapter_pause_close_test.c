@@ -574,6 +574,9 @@ static void progressSetup(tcp_progress_fixture_t *fixture, bool with_resolver)
     {
         tunnelBind(neighbor, fixture->resolver);
         tunnelBind(fixture->resolver, adapter);
+        neighbor->chain_index          = 0;
+        fixture->resolver->chain_index = 1;
+        adapter->chain_index           = 2;
         fixture->resolver->chain = fixture->chain;
         adapter->fnInitU         = progressInit;
         adapter->fnFinU          = tcpconnectorTunnelUpStreamFinish;
@@ -606,7 +609,7 @@ static void progressTeardown(tcp_progress_fixture_t *fixture)
     {
         if (fixture->resolver != NULL)
         {
-            fixture->resolver->fnFinU(fixture->resolver, fixture->line);
+            tunnelUpStreamFin(fixture->resolver, fixture->line);
             twfRequireLineStateZeroed(fixture->line, fixture->resolver, "resolver state survived source Finish");
             lineDestroy(fixture->line);
         }
@@ -783,11 +786,11 @@ static void runResolverPreEstCase(bool literal)
     addresscontextSetPort(dest, 443);
     addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
     connector_dns_callback = NULL;
-    fixture.resolver->fnInitU(fixture.resolver, fixture.line);
+    tunnelUpStreamInit(fixture.resolver, fixture.line);
     sbuf_t *first = bufferpoolGetLargeBuffer(fixture.env.pool);
     sbufWrite(first, "A", 1);
     sbufSetLength(first, 1);
-    fixture.resolver->fnPayloadU(fixture.resolver, fixture.line, first);
+    tunnelUpStreamPayload(fixture.resolver, fixture.line, first);
     if (! literal)
     {
         twfRequire(fixture.init_calls == 0 && fixture.est_calls == 0 && connector_dns_callback != NULL &&
@@ -809,7 +812,7 @@ static void runResolverPreEstCase(bool literal)
     sbuf_t *second = bufferpoolGetSmallBuffer(fixture.env.pool);
     sbufWrite(second, "B", 1);
     sbufSetLength(second, 1);
-    fixture.resolver->fnPayloadU(fixture.resolver, fixture.line, second);
+    tunnelUpStreamPayload(fixture.resolver, fixture.line, second);
     twfRequire(bufferqueueGetBufCount(&ls->pause_queue) == 2, "admitted connecting payload was lost after Pause");
     tcpconnectorOnOutBoundConnected(fixture.io);
     char received[2];
@@ -857,6 +860,9 @@ static void runLateInitCase(void)
             resolver, adapter, sizeof(tcpconnector_prepared_connection_t), prepareLateInit, NULL);
         tunnelBind(neighbor, resolver);
         tunnelBind(resolver, adapter);
+        neighbor->chain_index         = 0;
+        resolver->chain_index         = 1;
+        adapter->chain_index          = 2;
         adapter->fnInitU              = tcpconnectorTunnelUpStreamInit;
         neighbor->fnFinD              = lateInitFinish;
         adapter_tstate_t   *ts        = tunnelGetState(adapter);
@@ -884,7 +890,7 @@ static void runLateInitCase(void)
         uint32_t            ios       = wloopNIOS(env.loop);
         late_init_finishes            = 0;
         // A final protocol replay can initialize this resolver prefix during drain.
-        resolver->fnInitU(resolver, line);
+        tunnelUpStreamInit(resolver, line);
         twfRequire(! lineIsAlive(line) && late_init_finishes == 1 && twfLineRefCount(line) == 1,
                    "late Init did not finish its borrowed line exactly once");
         twfRequireLineStateZeroed(line, resolver, "late Init left resolver state alive");

@@ -2,7 +2,9 @@
 
 #include "wwapi.h"
 
-/* Runs during upstream Init, before resolving the line's destination. */
+/* Runs during upstream Init, before resolving the line's destination. Embedded
+ * preparation state remains valid through next Init. Consumers must copy any
+ * data they need afterward: settled normal lines destroy it before bypass. */
 typedef bool (*domainresolver_prepare_fn)(tunnel_t *resolver, tunnel_t *owner, line_t *line, void *user_lstate);
 typedef void (*domainresolver_user_lstate_destroy_fn)(tunnel_t *resolver, tunnel_t *owner, line_t *line,
                                                       void *user_lstate);

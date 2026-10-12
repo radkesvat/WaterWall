@@ -91,6 +91,14 @@ active through drain callbacks and is released only when the FIFO is empty and t
 adjacent consumer permits sending. Reentrant Pause/Resume cannot overtake older
 input, clear another pressure reason, or resurrect work after Finish.
 
+Once next `Init` has returned, the pending FIFO is empty and local pressure
+notifications are settled, a normal line permanently bypasses this node. The
+resolver destroys and zeros its full line state first, including any embedded
+preparation storage. Nodes using that storage must consume or copy it during
+`Init`; it is unavailable afterward. Later callbacks go directly between the
+resolver's neighbors, and no later `Finish` reaches the resolver. Actual worker
+packet lines remain active.
+
 ## Notes And Caveats
 
 - This is a middle node (`.flags = kNodeFlagSupportsSplice`) that operates within a chain; it cannot be placed as a chain head or chain end.
