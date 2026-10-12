@@ -662,6 +662,7 @@ static void caseSelectionIsStableSymmetricAndPauseAware(void)
     line_t     *other = (first_choice == a1) ? a2 : a1;
     const wid_t prev  = tosSetCurrentWorker(lineGetWID(first_choice));
     streamtopacketsTunnelUpStreamPause(g_fixture.s2p, first_choice);
+    streamtopacketsTunnelUpStreamPause(g_fixture.s2p, first_choice);
     discard tosSetCurrentWorker(prev);
 
     resetObservations();
@@ -682,10 +683,20 @@ static void caseSelectionIsStableSymmetricAndPauseAware(void)
     twfRequireEqualU32(g_prev_payload_count, 0, "an all-paused pool must not deliver");
     twfRequireEqualU32(twfRecycleCount() - recycles_before, 1, "the dropped packet must be recycled once");
 
-    // Resume restores the original carrier for that flow.
+    // One Resume releases repeated Pause notifications; they are not counted holds.
     const wid_t prev_resume = tosSetCurrentWorker(lineGetWID(first_choice));
     streamtopacketsTunnelUpStreamResume(g_fixture.s2p, first_choice);
-    discard     tosSetCurrentWorker(prev_resume);
+    discard tosSetCurrentWorker(prev_resume);
+
+    resetObservations();
+    feedReturnPacket(0xC0000201U, 443, 0x0A000001U, 40000);
+    pumpAllWorkers();
+    twfRequireEqualU32(g_prev_payload_count, 1, "one Resume did not release repeated Pause notifications");
+    twfRequire(g_last_prev_line == first_choice, "Resume released the wrong carrier");
+
+    const wid_t prev_repeat_resume = tosSetCurrentWorker(lineGetWID(first_choice));
+    streamtopacketsTunnelUpStreamResume(g_fixture.s2p, first_choice);
+    discard     tosSetCurrentWorker(prev_repeat_resume);
     const wid_t prev_resume_other = tosSetCurrentWorker(lineGetWID(other));
     streamtopacketsTunnelUpStreamResume(g_fixture.s2p, other);
     discard tosSetCurrentWorker(prev_resume_other);
@@ -1255,6 +1266,22 @@ static void caseHeartbeatsEstablishAndTakeOverOwnership(void)
     twfRequireEqualU32(g_prev_payload_count, 1, "a valid heartbeat was not answered with exactly one pong");
     twfRequire(g_last_prev_line == a1, "the pong went to the wrong line");
     twfRequireEqualU32(g_next_payload_count, 0, "a heartbeat must never reach the packet chain");
+
+    // Pong is protocol control and may cross Pause without reopening return traffic.
+    resetObservations();
+    const wid_t on_paused_a1 = tosSetCurrentWorker(0);
+    streamtopacketsTunnelUpStreamPause(g_fixture.s2p, a1);
+    feedHeartbeat(a1, kSensitivePingByte);
+    discard tosSetCurrentWorker(on_paused_a1);
+    twfRequireEqualU32(g_prev_payload_count, 1, "Pause suppressed a sensitive-mode pong");
+    twfRequire(g_last_prev_line == a1, "the paused carrier's pong went to another line");
+    feedReturnPacket(0xC0000201U, 443, 0x0A000001U, 40000);
+    pumpAllWorkers();
+    twfRequireEqualU32(g_prev_payload_count, 1, "sending a pong released carrier pressure");
+    twfRequireEqualU32(g_next_payload_count, 0, "a paused carrier's heartbeat reached the packet chain");
+    const wid_t on_resumed_a1 = tosSetCurrentWorker(0);
+    streamtopacketsTunnelUpStreamResume(g_fixture.s2p, a1);
+    discard tosSetCurrentWorker(on_resumed_a1);
 
     // A heartbeat-shaped frame with the wrong fill byte is not a ping: it is just
     // an ordinary packet, so it is forwarded and never answered.

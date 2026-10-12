@@ -221,11 +221,18 @@ never used.
 
 ### Pause and resume behavior
 
+This node is an endpoint for each borrowed stream line and maps it to a separate worker packet line. It must retain
+per-carrier flow control and cannot permanently bypass itself: parsing, source ownership and return selection remain
+necessary for every packet. Repeated Pause or Resume is idempotent; Pause notifications are not counted holds.
+
 Pause is per stream line, not global:
 
 - a paused line is excluded from new flow selection, and its flows move to the remaining active lines
 - when every active line is paused, return packets are dropped rather than queued into an unbounded global buffer
 - resume makes the line selectable again, which restores its previous rendezvous winners
+
+Sensitive-mode Pong replies may still be sent on a paused stream line. Sending a Pong does not make that line
+eligible for ordinary return traffic.
 
 ### Finish behavior
 

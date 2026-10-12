@@ -710,11 +710,18 @@ void packetstostreamRecreateOutputLineTask(tunnel_t *t, line_t *packet_line)
     }
 
     ls->recreate_scheduled = false;
-    packetstostreamEnsureOutputLine(t, packet_line, ls);
+    bool    created;
+    line_t *stream_line = packetstostreamEnsureOutputLine(t, packet_line, ls, &created);
+    if (created)
+    {
+        packetstostreamResumePacketSource(t, packet_line, ls, stream_line);
+    }
 }
 
-line_t *packetstostreamEnsureOutputLine(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls)
+line_t *packetstostreamEnsureOutputLine(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls, bool *created)
 {
+    *created = false;
+
     if (ls->read_stream.pool == NULL)
     {
         packetstostreamLinestateInitialize(ls, lineGetBufferPool(packet_line));
@@ -746,7 +753,20 @@ line_t *packetstostreamEnsureOutputLine(tunnel_t *t, line_t *packet_line, packet
         return ls->line;
     }
 
+    *created = ls->line == new_line;
     return ls->line;
+}
+
+void packetstostreamResumePacketSource(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls,
+                                       line_t *stream_line)
+{
+    if (stream_line != NULL && ls->line == stream_line && lineIsAlive(stream_line) && ! ls->paused)
+    {
+        // A former stream may have paused this persistent packet producer. Est
+        // does not release that hold; repeatable Resume needs no extra latch.
+        // Callers have already settled any packet/ping held across stream Init.
+        tunnelPrevDownStreamResume(t, packet_line);
+    }
 }
 
 void packetstostreamHeartbeatTimerCallback(wtimer_t *timer)
@@ -776,7 +796,8 @@ void packetstostreamHeartbeatTimerCallback(wtimer_t *timer)
         return;
     }
 
-    line_t *stream_line = packetstostreamEnsureOutputLine(t, packet_line, ls);
+    bool    created;
+    line_t *stream_line = packetstostreamEnsureOutputLine(t, packet_line, ls, &created);
     if (stream_line == NULL)
     {
         return;
@@ -784,7 +805,10 @@ void packetstostreamHeartbeatTimerCallback(wtimer_t *timer)
 
     // A false result means the attempt was fully cleaned up by the callee, which
     // either scheduled output-line recreation or already requested shutdown.
-    discard packetstostreamSendSensitivePing(t, packet_line, ls, stream_line);
+    if (packetstostreamSendSensitivePing(t, packet_line, ls, stream_line) && created)
+    {
+        packetstostreamResumePacketSource(t, packet_line, ls, stream_line);
+    }
 }
 
 void packetstostreamTimeoutTimerCallback(wtimer_t *timer)

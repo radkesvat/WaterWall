@@ -199,6 +199,10 @@ point correct packets are read again. No input pattern can crash the node, read 
 
 ### Pause and resume behavior
 
+This node owns the stream-facing line and maps it to a separate worker packet line. It keeps endpoint flow control
+and cannot permanently bypass itself: IPv4 parsing, worker affinity and line recreation remain necessary.
+Repeated Pause or Resume is idempotent; Pause notifications are not counted holds.
+
 When the downstream side pauses the stream-facing line, `PacketsToStream` marks the packet-facing side paused and
 propagates pause back to the previous packet-side node.
 
@@ -210,6 +214,13 @@ When resume arrives:
 
 - resume is propagated back to the previous packet-side node
 - packet forwarding continues normally
+
+After creating a live, unpaused stream line, the node sends Resume to the packet source. This releases pressure left
+by an earlier stream, without waiting for another packet or Est. A Pause during the new line's Init keeps the source
+paused. Any packet or heartbeat that triggered creation is settled before this Resume can release more input.
+
+Sensitive-mode heartbeat Ping still sends while paused; Pause does not suspend the Pong deadline or reopen ordinary
+packet forwarding.
 
 ### Finish and line recreation
 

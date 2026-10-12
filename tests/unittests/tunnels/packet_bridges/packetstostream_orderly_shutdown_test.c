@@ -3,7 +3,8 @@
  * define this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: caseHealthyPingArmsTheTimer, caseTimeoutTimerFailure,
+ * Cases: packet-source recovery after stream replacement, reentrant Resume and packet ordering,
+ * caseHealthyPingArmsTheTimer, caseTimeoutTimerFailure,
  * caseDueTimeoutTimerRearmRefusalClearsSlot, caseRecreateRefusalRemainsRetryableUntilWorkerStop,
  * caseWorkerStopClosesOwnedOutputLine, casePacketWorkerStopSettlesOwnerState,
  * caseDestroyRejectsUndrainedFinalizedPacketState, caseDestroyRejectsFinalizedChainWithoutPacketLines;
@@ -101,6 +102,7 @@ typedef struct packetstostream_fixture_s
     twf_worker_env_t env;
     twf_trace_t      trace;
     tunnel_t        *p2s;
+    tunnel_t        *prev;
     tunnel_t        *next;
     tunnel_chain_t  *chain;
     line_t          *packet_line;
@@ -120,6 +122,8 @@ static void fixtureSetup(packetstostream_fixture_t *fixture)
     fixture->p2s = tunnelCreate(NULL, sizeof(packetstostream_tstate_t), sizeof(packetstostream_lstate_t));
     twfRequire(fixture->p2s != NULL, "failed to create the PacketsToStream tunnel");
     fixture->next = twfCreateNextTunnel(&fixture->trace);
+    fixture->prev = twfCreatePrevTunnel(&fixture->trace);
+    tunnelBind(fixture->prev, fixture->p2s);
     tunnelBind(fixture->p2s, fixture->next);
 
     packetstostream_tstate_t *ts = tunnelGetState(fixture->p2s);
@@ -144,6 +148,7 @@ static void fixtureSetup(packetstostream_fixture_t *fixture)
     // A live pool-backed output line, so both ordinary fixture teardown and
     // the production owner-close path exercise lineDestroy() faithfully.
     twfLinePoolSetup(&fixture->stream_line_pool, fixture->p2s->lstate_size, 4);
+    fixture->chain->line_pools[0] = fixture->stream_line_pool.pools[0];
     fixture->stream_line = twfLinePoolCreateLine(&fixture->stream_line_pool);
 
     packetstostream_lstate_t *ls = lineGetState(fixture->packet_line, fixture->p2s);
@@ -165,6 +170,13 @@ static void fixtureTeardown(packetstostream_fixture_t *fixture)
     wtimerDelete(fixture->heartbeat_timer);
     fixture->worker_timer_slot[0] = NULL;
 
+    if (fixture->timeout_timer_slot[0] != NULL)
+    {
+        weventSetUserData(fixture->timeout_timer_slot[0], NULL);
+        wtimerDelete(fixture->timeout_timer_slot[0]);
+        fixture->timeout_timer_slot[0] = NULL;
+    }
+
     packetstostream_lstate_t *ls = lineGetState(fixture->packet_line, fixture->p2s);
     packetstostreamLinestateDestroy(ls);
 
@@ -175,6 +187,213 @@ static void fixtureTeardown(packetstostream_fixture_t *fixture)
     twfLinePoolTeardown(&fixture->stream_line_pool);
     twfLineDestroy(fixture->packet_line);
     memoryFree(fixture->chain);
+}
+
+static packetstostream_fixture_t *g_flow_fixture;
+static bool                       g_packet_source_paused;
+static bool                       g_pause_during_init;
+static bool                       g_finish_during_init;
+static bool                       g_finish_during_payload;
+static bool                       g_send_on_resume;
+static bool                       g_finish_on_resume;
+
+static sbuf_t *flowPacket(uint8_t tag)
+{
+    sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(g_flow_fixture->packet_line));
+    sbufSetLength(buf, IP_HLEN + 1);
+    uint8_t *raw = sbufGetMutablePtr(buf);
+    memoryZero(raw, IP_HLEN + 1);
+    raw[0] = 0x45;
+    PUT_BE16(raw + 2, IP_HLEN + 1);
+    raw[8]       = 64;
+    raw[9]       = 0xFD;
+    raw[IP_HLEN] = tag;
+    return buf;
+}
+
+static void closeFlowOutput(void)
+{
+    line_t *stream_line = g_flow_fixture->stream_line;
+    twfRequire(stream_line != NULL, "the flow fixture must have an output line to close");
+    lineRef(stream_line);
+    // Exercise the lazy retry paths as well as the queued recreation entry point.
+    g_recreate_refusals = 1;
+    packetstostreamTunnelDownStreamFinish(g_flow_fixture->p2s, stream_line);
+    twfRequire(! lineIsAlive(stream_line), "Finish must destroy the owned normal stream");
+    lineUnref(stream_line);
+    g_flow_fixture->stream_line = NULL;
+}
+
+static void flowNextInit(tunnel_t *t, line_t *l)
+{
+    twfNextInit(t, l);
+    g_flow_fixture->stream_line = l;
+    if (g_finish_during_init)
+    {
+        g_finish_during_init = false;
+        closeFlowOutput();
+        return;
+    }
+    if (g_pause_during_init)
+    {
+        packetstostreamTunnelDownStreamPause(g_flow_fixture->p2s, l);
+        packetstostreamTunnelDownStreamPause(g_flow_fixture->p2s, l);
+    }
+}
+
+static void flowNextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    twfNextPayload(t, l, buf);
+    if (g_finish_during_payload)
+    {
+        g_finish_during_payload = false;
+        closeFlowOutput();
+    }
+}
+
+static void flowPrevPause(tunnel_t *t, line_t *l)
+{
+    twfRequire(l == g_flow_fixture->packet_line, "Pause must target the persistent packet line");
+    g_packet_source_paused = true;
+    twfPrevPause(t, l);
+}
+
+static void flowPrevResume(tunnel_t *t, line_t *l)
+{
+    twfRequire(l == g_flow_fixture->packet_line, "Resume must target the persistent packet line");
+    g_packet_source_paused = false;
+    twfPrevResume(t, l);
+    if (g_send_on_resume)
+    {
+        g_send_on_resume = false;
+        packetstostreamTunnelUpStreamPayload(g_flow_fixture->p2s, l, flowPacket('B'));
+    }
+    if (g_finish_on_resume)
+    {
+        g_finish_on_resume = false;
+        closeFlowOutput();
+    }
+}
+
+static void flowFixtureSetup(packetstostream_fixture_t *fixture)
+{
+    fixtureSetup(fixture);
+    g_flow_fixture            = fixture;
+    g_packet_source_paused    = false;
+    g_pause_during_init       = false;
+    g_finish_during_init      = false;
+    g_finish_during_payload   = false;
+    g_send_on_resume          = false;
+    g_finish_on_resume        = false;
+    fixture->next->fnInitU    = flowNextInit;
+    fixture->next->fnPayloadU = flowNextPayload;
+    fixture->prev->fnPauseD   = flowPrevPause;
+    fixture->prev->fnResumeD  = flowPrevResume;
+}
+
+static void caseReplacementReleasesPacketSource(void)
+{
+    for (unsigned int paused_init = 0; paused_init < 2; ++paused_init)
+    {
+        twfSetCase("packetstostream replacement retains only its own Pause");
+        tosResetProcessApi(true);
+        packetstostream_fixture_t fixture;
+        flowFixtureSetup(&fixture);
+        packetstostream_lstate_t *ls = lineGetState(fixture.packet_line, fixture.p2s);
+
+        packetstostreamTunnelDownStreamPause(fixture.p2s, fixture.stream_line);
+        packetstostreamTunnelDownStreamPause(fixture.p2s, fixture.stream_line);
+        packetstostreamTunnelDownStreamEst(fixture.p2s, fixture.stream_line);
+        packetstostreamTunnelDownStreamEst(fixture.p2s, fixture.stream_line);
+        twfRequire(g_packet_source_paused, "repeated Est must not release packet-source Pause");
+        closeFlowOutput();
+        twfRequire(g_packet_source_paused, "reset must not resume a source without a replacement");
+
+        g_pause_during_init    = paused_init != 0;
+        ls->recreate_scheduled = true;
+        packetstostreamRecreateOutputLineTask(fixture.p2s, fixture.packet_line);
+        twfRequire(ls->line == fixture.stream_line && fixture.stream_line != NULL,
+                   "recreation must attach the newly initialized stream");
+        twfRequire(g_packet_source_paused == (paused_init != 0),
+                   "replacement must resume only if its Init left it unpaused");
+        packetstostreamTunnelDownStreamResume(fixture.p2s, fixture.stream_line);
+        packetstostreamTunnelDownStreamResume(fixture.p2s, fixture.stream_line);
+        twfRequire(! g_packet_source_paused, "Resume must release the replacement's own Pause");
+        twfRequire(strcmp(fixture.trace.seq, paused_init ? "ueeIur" : "ueeIr") == 0,
+                   "repeated endpoint signals must be idempotent and preserve mapped Est");
+
+        fixtureTeardown(&fixture);
+        twfRequireNoLeakedBuffers();
+        tosRequireNoProcessApiCall();
+    }
+}
+
+static void caseLazyReplacementPreservesOutputOrder(void)
+{
+    for (unsigned int heartbeat = 0; heartbeat < 2; ++heartbeat)
+    {
+        twfSetCase("packetstostream settles current output before Resume releases newer packets");
+        tosResetProcessApi(true);
+        packetstostream_fixture_t fixture;
+        flowFixtureSetup(&fixture);
+        uint8_t captured[128];
+        fixture.trace.capture          = captured;
+        fixture.trace.capture_capacity = sizeof(captured);
+        packetstostreamTunnelDownStreamPause(fixture.p2s, fixture.stream_line);
+        closeFlowOutput();
+        g_send_on_resume = true;
+
+        if (heartbeat)
+        {
+            packetstostreamHeartbeatTimerCallback(fixture.heartbeat_timer);
+        }
+        else
+        {
+            packetstostreamTunnelUpStreamPayload(fixture.p2s, fixture.packet_line, flowPacket('A'));
+        }
+
+        const uint32_t first_length = heartbeat ? kHeartbeatPacketSize : IP_HLEN + 1;
+        twfRequire(strcmp(fixture.trace.seq, "uIPrP") == 0,
+                   "the active packet or ping must precede Resume and its synchronously released packet");
+        twfRequireEqualU32(
+            fixture.trace.capture_len, first_length + IP_HLEN + 1, "both complete packets must reach the replacement");
+        twfRequire(captured[IP_HLEN] == (heartbeat ? kSensitivePingByte : 'A') &&
+                       captured[first_length + IP_HLEN] == 'B',
+                   "Resume must not reorder the active output and queued packet");
+        twfRequire(! g_packet_source_paused, "lazy replacement must release the old stream's Pause");
+
+        fixtureTeardown(&fixture);
+        twfRequireNoLeakedBuffers();
+        tosRequireNoProcessApiCall();
+    }
+}
+
+static void caseReplacementCallbacksMayClose(void)
+{
+    twfSetCase("packetstostream replacement callbacks may synchronously close their owned stream");
+    tosResetProcessApi(true);
+    packetstostream_fixture_t fixture;
+    flowFixtureSetup(&fixture);
+    packetstostream_lstate_t *ls = lineGetState(fixture.packet_line, fixture.p2s);
+    packetstostreamTunnelDownStreamPause(fixture.p2s, fixture.stream_line);
+    closeFlowOutput();
+
+    g_finish_during_init = true;
+    packetstostreamTunnelUpStreamInit(fixture.p2s, fixture.packet_line);
+    twfRequire(ls->line == NULL && g_packet_source_paused, "failed Init must not resume the packet source");
+    g_finish_during_payload = true;
+    packetstostreamTunnelUpStreamPayload(fixture.p2s, fixture.packet_line, flowPacket('A'));
+    twfRequire(ls->line == NULL && g_packet_source_paused,
+               "a payload-closed replacement must not resume the packet source");
+    g_finish_on_resume = true;
+    packetstostreamTunnelUpStreamInit(fixture.p2s, fixture.packet_line);
+    twfRequire(ls->line == NULL && fixture.stream_line == NULL, "Resume must safely permit synchronous stream closure");
+    twfRequire(strcmp(fixture.trace.seq, "uIIPIr") == 0, "closed replacements must receive no later callbacks");
+    twfRequire(lineIsAlive(fixture.packet_line), "replacement closure must preserve the persistent packet line");
+
+    fixtureTeardown(&fixture);
+    twfRequireNoLeakedBuffers();
+    tosRequireNoProcessApiCall();
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +408,8 @@ static void caseHealthyPingArmsTheTimer(void)
     packetstostream_fixture_t fixture;
     fixtureSetup(&fixture);
 
+    packetstostreamTunnelDownStreamPause(fixture.p2s, fixture.stream_line);
+    packetstostreamTunnelDownStreamPause(fixture.p2s, fixture.stream_line);
     packetstostreamHeartbeatTimerCallback(fixture.heartbeat_timer);
 
     tosRequireNoProcessApiCall();
@@ -197,6 +418,7 @@ static void caseHealthyPingArmsTheTimer(void)
 
     packetstostream_lstate_t *ls = lineGetState(fixture.packet_line, fixture.p2s);
     twfRequire(ls->awaiting_pong, "a healthy ping must publish awaiting_pong");
+    twfRequire(ls->paused, "a due heartbeat must pass through Pause without releasing packet admission");
 
     weventSetUserData(fixture.timeout_timer_slot[0], NULL);
     wtimerDelete(fixture.timeout_timer_slot[0]);
@@ -633,6 +855,9 @@ int main(void)
         return 0;
     }
 
+    caseReplacementReleasesPacketSource();
+    caseLazyReplacementPreservesOutputOrder();
+    caseReplacementCallbacksMayClose();
     caseHealthyPingArmsTheTimer();
     caseTimeoutTimerFailure();
     caseDueTimeoutTimerRearmRefusalClearsSlot();

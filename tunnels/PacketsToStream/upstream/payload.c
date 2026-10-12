@@ -6,12 +6,17 @@ void packetstostreamTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     packetstostream_lstate_t *ls = lineGetState(l, t);
     line_t                   *stream_line;
+    bool                      created;
 
-    stream_line = packetstostreamEnsureOutputLine(t, l, ls);
+    stream_line = packetstostreamEnsureOutputLine(t, l, ls, &created);
 
     if (stream_line == NULL || ls->paused || sbufGetLength(buf) > kMaxAllowedPacketLength)
     {
         lineReuseBuffer(l, buf);
+        if (created)
+        {
+            packetstostreamResumePacketSource(t, l, ls, stream_line);
+        }
         return;
     }
 
@@ -23,8 +28,22 @@ void packetstostreamTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (UNLIKELY(! packetstostreamIsForwardableIpv4Packet(buf)))
     {
         lineReuseBuffer(l, buf);
+        if (created)
+        {
+            packetstostreamResumePacketSource(t, l, ls, stream_line);
+        }
         return;
     }
 
-    tunnelNextUpStreamPayload(t, stream_line, buf);
+    if (! created)
+    {
+        tunnelNextUpStreamPayload(t, stream_line, buf);
+        return;
+    }
+
+    // Resume can synchronously release newer packets; hand off this one first.
+    if (lineCallWithRefWithBuf(stream_line, tunnelNextUpStreamPayload, t, buf))
+    {
+        packetstostreamResumePacketSource(t, l, ls, stream_line);
+    }
 }

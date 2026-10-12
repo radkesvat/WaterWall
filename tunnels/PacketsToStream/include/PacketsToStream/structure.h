@@ -85,4 +85,8 @@ void packetstostreamTimeoutTimerCallback(wtimer_t *timer);
 void packetstostreamScheduleRecreateOutputLine(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls);
 void packetstostreamResetOutputLineState(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls);
 void packetstostreamCloseOutputLineAndScheduleRecreate(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls);
-line_t *packetstostreamEnsureOutputLine(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls);
+// created is true only when this call's newly initialized stream remains attached.
+// The caller must settle any current packet/ping before resuming the packet source.
+line_t *packetstostreamEnsureOutputLine(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls, bool *created);
+void    packetstostreamResumePacketSource(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls,
+                                          line_t *stream_line);
