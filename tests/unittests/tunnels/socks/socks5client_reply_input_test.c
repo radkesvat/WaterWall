@@ -68,7 +68,7 @@ static sbuf_t *spliceBytes(const void *data, uint32_t length, uint32_t prefix)
 }
 static void deliverSplice(const void *data, uint32_t length, uint32_t prefix)
 {
-    socks5clientTunnelDownStreamPayload(client, control, spliceBytes(data, length, prefix));
+    tunnelDownStreamPayload(client, control, spliceBytes(data, length, prefix));
 }
 #endif
 static void deliver(const void *data, size_t len)
@@ -80,7 +80,7 @@ static void deliver(const void *data, size_t len)
         return;
     }
 #endif
-    socks5clientTunnelDownStreamPayload(client, control, bytes(data, len));
+    tunnelDownStreamPayload(client, control, bytes(data, len));
 }
 static void noop(tunnel_t *t, line_t *l)
 {
@@ -131,7 +131,7 @@ static void down(tunnel_t *t, line_t *l, sbuf_t *b)
     lineReuseBuffer(l, b);
     if (close_body)
     {
-        socks5clientTunnelUpStreamFinish(client, l);
+        tunnelUpStreamFin(client, l);
         lineDestroy(l);
     }
     else
@@ -139,17 +139,25 @@ static void down(tunnel_t *t, line_t *l, sbuf_t *b)
         if (pause_body)
         {
             pause_body = false;
-            socks5clientTunnelUpStreamPause(client, l);
+            tunnelUpStreamPause(client, l);
         }
         if (inject_body)
         {
             inject_body = false;
-            deliver("B", 1);
+#if WW_HAVE_SPLICE
+            if (splice_replies)
+            {
+                expected_down = spliceBytes("B", 1, 0);
+                tunnelDownStreamPayload(client, control, expected_down);
+            }
+            else
+#endif
+                deliver("B", 1);
         }
         if (response_rounds)
         {
             --response_rounds;
-            socks5clientTunnelUpStreamPayload(client, l, bytes("Q", 1));
+            tunnelUpStreamPayload(client, l, bytes("Q", 1));
         }
     }
     --body_depth;
@@ -186,7 +194,7 @@ static void up(tunnel_t *t, line_t *l, sbuf_t *b)
     }
     lineReuseBuffer(l, b);
     if (close_request && command)
-        socks5clientTunnelDownStreamFinish(client, l);
+        tunnelDownStreamFin(client, l);
     else if (automatic)
     {
         if (greeting)
@@ -212,12 +220,12 @@ static void nextInit(tunnel_t *t, line_t *l)
     if (lineGetDestinationAddressContext(l)->proto_udp)
     {
         relay = l;
-        socks5clientTunnelDownStreamEst(client, l);
+        tunnelDownStreamEst(client, l);
     }
     else
     {
         control = l;
-        socks5clientTunnelDownStreamEst(client, l);
+        tunnelDownStreamEst(client, l);
     }
 }
 static void setup(bool auth, bool udp)
@@ -228,6 +236,19 @@ static void setup(bool auth, bool udp)
     next   = tunnelCreate(NULL, 0, 0);
     tunnelBind(prev, client);
     tunnelBind(client, next);
+    prev->chain_index   = 0;
+    client->chain_index = 1;
+    next->chain_index   = 2;
+    client->fnInitU     = socks5clientTunnelUpStreamInit;
+    client->fnPayloadU  = socks5clientTunnelUpStreamPayload;
+    client->fnFinU      = socks5clientTunnelUpStreamFinish;
+    client->fnPauseU    = socks5clientTunnelUpStreamPause;
+    client->fnResumeU   = socks5clientTunnelUpStreamResume;
+    client->fnEstD      = socks5clientTunnelDownStreamEst;
+    client->fnPayloadD  = socks5clientTunnelDownStreamPayload;
+    client->fnFinD      = socks5clientTunnelDownStreamFinish;
+    client->fnPauseD    = socks5clientTunnelDownStreamPause;
+    client->fnResumeD   = socks5clientTunnelDownStreamResume;
     prev->fnEstD     = est;
     prev->fnFinD     = ownerFinish;
     prev->fnPayloadD = down;
@@ -262,8 +283,9 @@ static void setup(bool auth, bool udp)
     body_depth = max_body_depth = response_rounds = read_pauses = read_resumes = 0;
     down_length = up_length = 0;
     relay                   = NULL;
-    socks5clientTunnelUpStreamInit(client, application);
-    twfRequire(established == 1 && greetings == 1, "transport Est or greeting missing");
+    tunnelUpStreamInit(client, application);
+    twfRequire(established == 1 && greetings == 1 && tunnelIsActiveForLine(client, application),
+               "transport Est or greeting missing, or client bypassed before negotiation");
 }
 static void negotiate(void)
 {
@@ -273,11 +295,17 @@ static void negotiate(void)
         deliver(auth, sizeof(auth));
     twfRequire(commands == 1, "missing CONNECT/ASSOCIATE");
 }
+static void requireTcpBypassed(void)
+{
+    twfRequire(lineIsAlive(application) && ! tunnelIsActiveForLine(client, application),
+               "settled TCP negotiation did not bypass client");
+    twfRequireLineStateZeroed(application, client, "TCP bypass retained client state");
+}
 static void teardown(void)
 {
     if (lineIsAlive(application))
     {
-        socks5clientTunnelUpStreamFinish(client, application);
+        tunnelUpStreamFin(client, application);
         lineDestroy(application);
     }
     twfRequire(twfLineRefCount(application) == 1, "temporary application reference leaked");
@@ -305,6 +333,7 @@ static void largeBody(unsigned mode)
     twfRequire(lineIsAlive(application) && down_length == 8192 &&
                    memoryEqual(downstream, wire + sizeof(command_reply), 8192),
                "complete reply body hit incomplete-handshake limit");
+    requireTcpBypassed();
     teardown();
 }
 static void nestedBodies(void)
@@ -321,44 +350,55 @@ static void nestedBodies(void)
     twfRequire(lineIsAlive(application) && down_length == 101 && downstream[0] == 'A' && up_length == 100,
                "nested replies lost bytes");
     twfRequire(max_body_depth == 1, "response reentry recursively advanced active input");
+    requireTcpBypassed();
     teardown();
 }
 static unsigned nested_entries;
 static size_t   nested_bytes;
+static bool     overflow_backlog;
 static void     fillBacklog(tunnel_t *t, line_t *l, sbuf_t *b)
 {
     discard t;
     lineReuseBuffer(l, b);
-    socks5clientTunnelUpStreamPause(client, l);
+    prev->fnPayloadD = down;
+    tunnelUpStreamPause(client, l);
     uint8_t *data = memoryAllocate(nested_bytes ? nested_bytes : 1);
     memset(data, 'B', nested_bytes ? nested_bytes : 1);
     for (unsigned i = 0; i < nested_entries && lineIsAlive(l); ++i)
         deliver(data, nested_bytes);
     memoryFree(data);
+    socks5client_lstate_t *ls = lineGetState(control, client);
+    twfRequire(lineIsAlive(application) && bufferqueueGetBufCount(&ls->pending_down) == nested_entries &&
+                   bufferqueueGetBufLen(&ls->pending_down) == nested_entries * nested_bytes,
+               "exact downstream backlog bound refused");
+    for (unsigned i = 0; i < 2000; ++i)
+        deliver(NULL, 0);
+    twfRequire(bufferqueueGetBufCount(&ls->pending_down) == nested_entries, "empty TCP consumed retained entries");
+    if (overflow_backlog)
+        deliver("X", 1);
 }
 static void boundaries(void)
 {
-    for (unsigned entries = 0; entries < 2; ++entries)
+    for (unsigned scenario = 0; scenario < 4; ++scenario)
     {
         twfSetCase("downstream retained byte/entry equality and refusal");
         setup(false, false);
         negotiate();
         prev->fnPayloadD = fillBacklog;
-        nested_entries   = entries ? kSocks5ClientMaxPendingBuffers : 1;
-        nested_bytes     = entries ? 1 : kSocks5ClientMaxPendingDownBytes;
+        nested_entries   = scenario & 1 ? kSocks5ClientMaxPendingBuffers : 1;
+        nested_bytes     = scenario & 1 ? 1 : kSocks5ClientMaxPendingDownBytes;
+        overflow_backlog = (scenario & 2) != 0;
         uint8_t wire[sizeof(command_reply) + 1];
         memoryCopy(wire, command_reply, sizeof(command_reply));
         wire[sizeof(command_reply)] = 'A';
         deliver(wire, sizeof(wire));
-        socks5client_lstate_t *ls = lineGetState(control, client);
-        twfRequire(lineIsAlive(application) && bufferqueueGetBufCount(&ls->pending_down) == nested_entries &&
-                       bufferqueueGetBufLen(&ls->pending_down) == nested_entries * nested_bytes,
-                   "exact downstream backlog bound refused");
-        for (unsigned i = 0; i < 2000; ++i)
-            deliver(NULL, 0);
-        twfRequire(bufferqueueGetBufCount(&ls->pending_down) == nested_entries, "empty TCP consumed retained entries");
-        deliver("X", 1);
-        twfRequire(! lineIsAlive(application) && finishes == 1, "downstream overflow did not settle once");
+        if (overflow_backlog)
+            twfRequire(! lineIsAlive(application) && finishes == 1, "downstream overflow did not settle once");
+        else
+            twfRequire(lineIsAlive(application) && down_length == nested_entries * nested_bytes &&
+                           bufferqueueGetBufCount(
+                               &((socks5client_lstate_t *) lineGetState(control, client))->pending_down) == 0,
+                       "bounded nested backlog did not drain through advisory Pause");
         teardown();
     }
     twfSetCase("ready reply tail is not capped as backlog");
@@ -464,7 +504,7 @@ static void rejection(void)
     {
         twfSetCase("proxy rejection disposes parser and queued application input");
         setup(scenario == 2, false);
-        socks5clientTunnelUpStreamPayload(client, application, bytes("Q", 1));
+        tunnelUpStreamPayload(client, application, bytes("Q", 1));
         if (scenario < 2)
         {
             const uint8_t bad[] = {scenario == 0 ? 4 : 5, scenario == 0 ? 0 : 0xff};
@@ -502,7 +542,7 @@ static void spliceHandshake(void)
                            ! linePrefersOrdinaryReadDownstream(application),
                        "TCP handshake permanently disabled splice reads");
             expected_up = spliceBytes("queued", 6, 2);
-            socks5clientTunnelUpStreamPayload(client, application, expected_up);
+            tunnelUpStreamPayload(client, application, expected_up);
             twfRequire(up_length == 0, "application body escaped before proxy acceptance");
 
             uint8_t wire[4 + sizeof(command_reply) + 4097];
@@ -543,12 +583,13 @@ static void spliceHandshake(void)
                            memoryEqual(downstream, wire + offset, 4097) && up_length == 6 &&
                            memoryEqual(upstream, "queued", 6) && expected_up == NULL,
                        "splice handshake changed reply tail or retained application body");
+            requireTcpBypassed();
 
             ordinary_down = false;
             expected_up   = spliceBytes("direct-up", 9, 2);
-            socks5clientTunnelUpStreamPayload(client, application, expected_up);
+            tunnelUpStreamPayload(client, application, expected_up);
             expected_down = spliceBytes("answer", 6, 3);
-            socks5clientTunnelDownStreamPayload(client, control, expected_down);
+            tunnelDownStreamPayload(client, control, expected_down);
             twfRequire(expected_up == NULL && expected_down == NULL && up_length == 15 && down_length == 4103 &&
                            memoryEqual(upstream + 6, "direct-up", 9) && memoryEqual(downstream + 4097, "answer", 6),
                        "ready splice TCP bytes changed");
@@ -562,7 +603,7 @@ static void spliceReentry(void)
     twfSetCase("nested splice authentication replies serialize behind active input");
     setup(true, false);
     expected_up = spliceBytes("Q", 1, 0);
-    socks5clientTunnelUpStreamPayload(client, application, expected_up);
+    tunnelUpStreamPayload(client, application, expected_up);
     automatic = splice_replies = true;
     const uint8_t method[]     = {5, 2};
     deliverSplice(method, sizeof(method), 0);
@@ -572,7 +613,7 @@ static void spliceReentry(void)
                "nested splice handshake repeated requests or lost queued bytes");
     teardown();
 
-    twfSetCase("ready nested splice response stays queued through Pause and Resume");
+    twfSetCase("ready nested splice response drains through advisory Pause in FIFO order");
     setup(false, false);
     negotiate();
     splice_replies = pause_body = inject_body = true;
@@ -581,13 +622,11 @@ static void spliceReentry(void)
     tail[sizeof(command_reply)] = 'A';
     deliverSplice(tail, sizeof(tail), 3);
     socks5client_lstate_t *ls = lineGetState(control, client);
-    twfRequire(down_length == 1 && read_pauses == 1 && bufferqueueGetBufCount(&ls->pending_down) == 1,
-               "nested splice backlog drained while paused");
-    expected_down = (sbuf_t *) bufferqueueFront(&ls->pending_down);
-    twfRequire(sbufIsSplice(expected_down), "ready nested splice backlog was materialized");
-    socks5clientTunnelUpStreamResume(client, application);
-    twfRequire(expected_down == NULL && down_length == 2 && memoryEqual(downstream, "AB", 2) && read_resumes == 1,
-               "splice response Resume changed ordering or representation");
+    twfRequire(expected_down == NULL && down_length == 2 && memoryEqual(downstream, "AB", 2) && read_pauses == 1 &&
+                   bufferqueueGetBufCount(&ls->pending_down) == 0 && max_body_depth == 1,
+               "nested splice response lost FIFO, representation or advisory drain");
+    tunnelUpStreamResume(client, application);
+    twfRequire(down_length == 2 && read_resumes == 1, "splice response Resume repeated payload");
     teardown();
 
     twfSetCase("splice reply tail callback closes borrowed application");
@@ -600,7 +639,7 @@ static void spliceReentry(void)
 
     twfSetCase("splice proxy rejection releases incomplete input and queued pipe");
     setup(false, false);
-    socks5clientTunnelUpStreamPayload(client, application, spliceBytes("Q", 1, 0));
+    tunnelUpStreamPayload(client, application, spliceBytes("Q", 1, 0));
     const uint8_t bad_method[] = {5, 0xff};
     deliverSplice(bad_method, 1, 0);
     deliverSplice(bad_method + 1, 1, 0);
@@ -631,13 +670,16 @@ static void spliceUdp(void)
     twfRequire(lineIsAlive(application) && relay != NULL && down_length == 0 &&
                    bufferstreamIsEmpty(&((socks5client_lstate_t *) lineGetState(control, client))->in_stream),
                "UDP control splice tail was not discarded");
+    twfRequire(tunnelIsActiveForLine(client, application) && tunnelIsActiveForLine(client, control) &&
+                   tunnelIsActiveForLine(client, relay),
+               "UDP association line was bypassed");
     requireUdpOrdinaryReads(relay);
 
-    socks5clientTunnelUpStreamPayload(client, application, spliceBytes("XY", 2, 1));
+    tunnelUpStreamPayload(client, application, spliceBytes("XY", 2, 1));
     const uint8_t encoded[] = {0, 0, 0, 1, 127, 0, 0, 1, 0, 80, 'X', 'Y'};
     twfRequire(up_length == sizeof(encoded) && memoryEqual(upstream, encoded, sizeof(encoded)),
                "UDP splice framing changed wire bytes");
-    socks5clientTunnelDownStreamPayload(client, relay, spliceBytes(encoded, sizeof(encoded), 4));
+    tunnelDownStreamPayload(client, relay, spliceBytes(encoded, sizeof(encoded), 4));
     twfRequire(down_length == 2 && memoryEqual(downstream, "XY", 2), "UDP splice decoder changed datagram bytes");
 
     for (unsigned no_headroom = 0; no_headroom < 2; ++no_headroom)
@@ -663,10 +705,10 @@ static void spliceUdp(void)
     uint8_t rejected[sizeof(encoded)];
     memoryCopy(rejected, encoded, sizeof(rejected));
     rejected[2] = 1;
-    socks5clientTunnelDownStreamPayload(client, relay, spliceBytes(rejected, sizeof(rejected), 0));
+    tunnelDownStreamPayload(client, relay, spliceBytes(rejected, sizeof(rejected), 0));
     twfRequire(lineIsAlive(application) && down_length == 2, "fragmented UDP splice datagram was forwarded");
     rejected[0] = 1;
-    socks5clientTunnelDownStreamPayload(client, relay, spliceBytes(rejected, sizeof(rejected), 0));
+    tunnelDownStreamPayload(client, relay, spliceBytes(rejected, sizeof(rejected), 0));
     twfRequire(! lineIsAlive(application) && finishes == 1, "invalid UDP splice envelope did not close association");
     teardown();
 }
@@ -705,12 +747,10 @@ int main(int argc, char **argv)
         negotiate();
         deliver(command_reply, split);
         deliver(command_reply + split, sizeof(command_reply) - split);
-        twfRequire(lineIsAlive(application) && ((socks5client_lstate_t *) lineGetState(application, client))->phase ==
-                                                   kSocks5ClientPhaseEstablished,
-                   "fragmented reply failed");
+        requireTcpBypassed();
         teardown();
     }
-    twfSetCase("nested response backlog honors Pause/Resume");
+    twfSetCase("nested response backlog drains through advisory Pause in FIFO order");
     setup(false, false);
     negotiate();
     pause_body = inject_body = true;
@@ -718,10 +758,10 @@ int main(int argc, char **argv)
     memoryCopy(tail, command_reply, sizeof(command_reply));
     tail[sizeof(command_reply)] = 'A';
     deliver(tail, sizeof(tail));
-    twfRequire(down_length == 1 && read_pauses == 1, "paused nested backlog drained");
-    socks5clientTunnelUpStreamResume(client, application);
-    twfRequire(down_length == 2 && memoryEqual(downstream, "AB", 2) && read_resumes == 1,
-               "Resume lost nested response");
+    twfRequire(down_length == 2 && memoryEqual(downstream, "AB", 2) && read_pauses == 1 && max_body_depth == 1,
+               "advisory Pause blocked nested response or changed FIFO");
+    tunnelUpStreamResume(client, application);
+    twfRequire(down_length == 2 && read_resumes == 1, "Resume repeated nested response");
     teardown();
     twfSetCase("reply callback closes borrowed application");
     setup(false, false);

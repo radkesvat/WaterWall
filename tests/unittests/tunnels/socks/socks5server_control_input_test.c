@@ -24,6 +24,8 @@ static uint8_t          captured[2 * 1024 * 1024];
 static size_t           captured_len;
 static bool             long_auth, omit_est;
 static unsigned         methods, auths, commands, inits, finishes, callback_depth, max_depth;
+static unsigned         retained_mode;
+static bool             inject_est, inject_reply_payload;
 static bool             inject_method, inject_auth, inject_init, inject_payload, close_reply, reject_auth, pause_init;
 static bool             splice_input, require_ordinary, independent_sources;
 static sbuf_t          *expected_upstream_buffer, *expected_downstream_buffer;
@@ -84,13 +86,30 @@ static sbuf_t *spliceBytes(const void *data, size_t len, size_t prefix)
 }
 static void sendBytes(const void *data, size_t len)
 {
-    socks5serverTunnelUpStreamPayload(
+    tunnelUpStreamPayload(
         server, control, splice_input ? spliceBytes(data, len, min(len / 2, (size_t) 32)) : bytes(data, len));
 }
 static void noop(tunnel_t *t, line_t *l)
 {
     discard t;
     discard l;
+}
+static void requireBypassed(line_t *l)
+{
+    twfRequire(! tunnelIsActiveForLine(server, l), "settled CONNECT remained active");
+    const uint8_t *state = lineGetState(l, server);
+    for (size_t i = 0; i < server->lstate_size; ++i)
+        twfRequire(state[i] == 0, "bypassed CONNECT retained line state");
+}
+static void established(tunnel_t *t, line_t *l)
+{
+    discard t;
+    if (inject_est)
+    {
+        inject_est = false;
+        tunnelDownStreamEst(server, l);
+        requireBypassed(l);
+    }
 }
 static void ownerFinish(tunnel_t *t, line_t *l)
 {
@@ -122,6 +141,19 @@ static void upstream(tunnel_t *t, line_t *l, sbuf_t *b)
 static void reply(tunnel_t *t, line_t *l, sbuf_t *b)
 {
     discard t;
+    if (inject_reply_payload && sbufGetLength(b) == 1)
+    {
+        uint8_t body;
+        sbufReadRangeToMemory(b, &body, sizeof(body));
+        twfRequire(commands == 1 && body == 'R', "retained body changed or preceded the success reply");
+        twfRequire(captured_len < sizeof(captured), "downstream capture overflow");
+        captured[captured_len++] = body;
+        lineReuseBuffer(l, b);
+        inject_reply_payload = false;
+        twfRequire(tunnelIsActiveForLine(server, l), "server bypassed during response FIFO delivery");
+        sendBytes("P", 1);
+        return;
+    }
     if (expected_downstream_buffer)
     {
         twfRequire(b == expected_downstream_buffer && sbufIsSplice(b), "ready downstream splice was replaced");
@@ -134,6 +166,7 @@ static void reply(tunnel_t *t, line_t *l, sbuf_t *b)
         return;
     }
     twfRequire(! sbufIsSplice(b), "generated SOCKS reply is pipe backed");
+    twfRequire(tunnelIsActiveForLine(server, l), "server bypassed before handing off its SOCKS reply");
     ++callback_depth;
     if (callback_depth > max_depth)
         max_depth = callback_depth;
@@ -153,7 +186,7 @@ static void reply(tunnel_t *t, line_t *l, sbuf_t *b)
     lineReuseBuffer(l, b);
     if (close_reply)
     {
-        socks5serverTunnelUpStreamFinish(server, l);
+        tunnelUpStreamFin(server, l);
         lineDestroy(l);
     }
     else if (method && inject_method)
@@ -184,9 +217,35 @@ static void initNext(tunnel_t *t, line_t *l)
     if (inject_init)
         sendBytes("I", 1);
     if (pause_init)
-        socks5serverTunnelDownStreamPause(server, l);
+        tunnelDownStreamPause(server, l);
+    if (retained_mode)
+    {
+        if (retained_mode == 3)
+            tunnelDownStreamEst(server, l);
+        twfRequire(lineIsAlive(l) && captured_len == 0, "request tail escaped its Init ordering barrier");
+        if (retained_mode == 2)
+            for (unsigned i = 1; i < kSocks5ServerMaxPendingBuffers; ++i)
+                sendBytes("B", 1);
+        else if (retained_mode == 3)
+        {
+            uint8_t chunk[4096];
+            memset(chunk, 'Q', sizeof(chunk));
+            splice_input = independent_sources = true;
+            for (unsigned i = 1; i < kSocks5ServerMaxPendingBytes / sizeof(chunk); ++i)
+                sendBytes(chunk, sizeof(chunk));
+        }
+        twfRequire(lineIsAlive(l) && captured_len == 0, "exact shared retention limit refused or drained");
+        if (retained_mode != 3)
+            for (unsigned i = 0; i < 2000; ++i)
+                sendBytes(NULL, 0);
+        twfRequire(lineIsAlive(l), "empty TCP input consumed budget");
+        sendBytes("X", 1);
+        twfRequire(! lineIsAlive(l) && finishes == 1, "shared retention overflow was not closed once");
+        return;
+    }
     if (! omit_est)
-        socks5serverTunnelDownStreamEst(server, l);
+        tunnelDownStreamEst(server, l);
+    twfRequire(tunnelIsActiveForLine(server, l), "server bypassed before next Init returned");
 }
 static void setupMode(bool auth, bool udp_only)
 {
@@ -197,9 +256,23 @@ static void setupMode(bool auth, bool udp_only)
     next   = tunnelCreate(NULL, 0, 0);
     tunnelBind(prev, server);
     tunnelBind(server, next);
+    prev->chain_index   = 0;
+    server->chain_index = 1;
+    next->chain_index   = 2;
+    server->fnInitU     = socks5serverTunnelUpStreamInit;
+    server->fnPayloadU  = socks5serverTunnelUpStreamPayload;
+    server->fnPayloadD  = socks5serverTunnelDownStreamPayload;
+    server->fnEstD      = socks5serverTunnelDownStreamEst;
+    server->fnFinU      = socks5serverTunnelUpStreamFinish;
+    server->fnFinD      = socks5serverTunnelDownStreamFinish;
+    server->fnPauseU    = socks5serverTunnelUpStreamPause;
+    server->fnResumeU   = socks5serverTunnelUpStreamResume;
+    server->fnPauseD    = socks5serverTunnelDownStreamPause;
+    server->fnResumeD   = socks5serverTunnelDownStreamResume;
     prev->fnPayloadD = reply;
     prev->fnFinD     = ownerFinish;
-    prev->fnEstD = prev->fnPauseD = prev->fnResumeD = noop;
+    prev->fnEstD        = established;
+    prev->fnPauseD = prev->fnResumeD                = noop;
     next->fnInitU                                   = initNext;
     next->fnPayloadU                                = upstream;
     next->fnFinU = next->fnPauseU = next->fnResumeU = noop;
@@ -214,10 +287,12 @@ static void setupMode(bool auth, bool udp_only)
     ts->auth_client_tunnel    = next;
     long_auth = omit_est = false;
     captured_len = methods = auths = commands = inits = finishes = callback_depth = max_depth = 0;
+    retained_mode                                                                             = 0;
+    inject_est = inject_reply_payload = false;
     inject_method = inject_auth = inject_init = inject_payload = close_reply = reject_auth = pause_init = false;
     splice_input = require_ordinary = false;
     expected_upstream_buffer = expected_downstream_buffer = NULL;
-    socks5serverTunnelUpStreamInit(server, control);
+    tunnelUpStreamInit(server, control);
     twfRequire(linePrefersOrdinaryReadUpstream(control) == udp_only &&
                    linePrefersOrdinaryReadDownstream(control) == udp_only,
                "TCP CONNECT or UDP-only initial read preference changed");
@@ -230,7 +305,7 @@ static void teardown(void)
 {
     if (lineIsAlive(control))
     {
-        socks5serverTunnelUpStreamFinish(server, control);
+        tunnelUpStreamFin(server, control);
         lineDestroy(control);
     }
     twfRequireEqualU32(twfLineRefCount(control), 1, "temporary reference leak");
@@ -256,6 +331,11 @@ static void reentry(bool auth)
     twfRequire(lineIsAlive(control) && methods == 1 && inits == 1 && commands == 1,
                "reentry duplicated negotiation or lost CONNECT");
     twfRequire(auths == (unsigned) auth && max_depth == 1, "parser progressed recursively");
+    requireBypassed(control);
+    twfRequire(lineIsAuthenticated(control), "bypass cleared line authentication");
+    if (auth)
+        twfRequire(stringCompare(lineGetAuthenticatedUsername(control), "u") == 0,
+                   "bypass cleared published credentials");
     teardown();
 }
 static void body(unsigned mode)
@@ -287,41 +367,30 @@ static void retainedLimits(bool entries)
     twfSetCase("retained tail and nested entries share one budget");
     setup(false);
     method(false);
-    pause_init            = true;
+    retained_mode         = entries ? 2 : 1;
     const size_t body_len = entries ? 1 : kSocks5ServerMaxPendingBytes;
     uint8_t     *data     = memoryAllocate(sizeof(request) + body_len);
     memoryCopy(data, request, sizeof(request));
     memset(data + sizeof(request), 'A', body_len);
     sendBytes(data, sizeof(request) + body_len);
     memoryFree(data);
-    twfRequire(lineIsAlive(control) && captured_len == 0,
-               "exact retained tail boundary refused or drained after Pause");
-    if (entries)
-        for (unsigned i = 1; i < kSocks5ServerMaxPendingBuffers; ++i)
-            sendBytes("B", 1);
-    twfRequire(lineIsAlive(control), "exact shared entry limit refused");
-    for (unsigned i = 0; i < 2000; ++i)
-        sendBytes(NULL, 0);
-    twfRequire(lineIsAlive(control), "empty TCP input consumed budget");
-    sendBytes("X", 1);
     twfRequire(! lineIsAlive(control) && finishes == 1, "shared retention overflow was not closed once");
     teardown();
 }
-static void pausedResume(void)
+static void advisoryPause(void)
 {
-    twfSetCase("Init Pause followed by Resume drains old tail first");
+    twfSetCase("Init Pause does not delay ordered request output");
     setup(false);
     method(false);
-    pause_init = inject_init = true;
+    pause_init = inject_init = inject_payload = true;
     uint8_t data[sizeof(request) + 1];
     memoryCopy(data, request, sizeof(request));
     data[sizeof(request)] = 'A';
     sendBytes(data, sizeof(data));
+    twfRequire(captured_len == 3 && memoryEqual(captured, "AIP", 3), "Init Pause delayed or reordered ready input");
     sendBytes("B", 1);
-    twfRequire(captured_len == 0, "paused backlog drained");
-    inject_payload = true;
-    socks5serverTunnelDownStreamResume(server, control);
-    twfRequire(captured_len == 4 && memoryEqual(captured, "AIBP", 4), "Resume/reentry lost ordering");
+    tunnelDownStreamResume(server, control);
+    twfRequire(captured_len == 4 && memoryEqual(captured, "AIPB", 4), "Resume duplicated or reordered ready input");
     teardown();
 }
 static void largeReadyTail(void)
@@ -448,8 +517,14 @@ static void admittedOrdering(void)
     sendBytes(request_tail, sizeof(request_tail));
     sendBytes("B", 1);
     twfRequire(captured_len == 2 && memoryEqual(captured, "AB", 2) && commands == 0, "pre-Est input was delayed");
-    socks5serverTunnelDownStreamEst(server, control);
+    twfRequire(tunnelIsActiveForLine(server, control), "server bypassed before its success reply");
+    inject_est = inject_reply_payload = true;
+    tunnelDownStreamPayload(server, control, bytes("R", 1));
+    tunnelDownStreamEst(server, control);
     twfRequire(commands == 1, "Est failed to send one success reply");
+    twfRequire(! inject_reply_payload && captured_len == 4 && memoryEqual(captured, "ABRP", 4),
+               "response reentry stranded or reordered upstream work before bypass");
+    requireBypassed(control);
     teardown();
     for (unsigned auth = 0; auth < 2; ++auth)
     {
@@ -490,7 +565,7 @@ static void spliceNegotiation(void)
         inject_method                   = true;
         inject_auth                     = auth != 0;
         const uint8_t greeting[]        = {5, 1, auth ? 2 : 0};
-        socks5serverTunnelUpStreamPayload(server, control, spliceBytes(greeting, 1, 0));
+        tunnelUpStreamPayload(server, control, spliceBytes(greeting, 1, 0));
         sendBytes(greeting + 1, 2);
         twfRequire(lineIsAlive(control) && methods == 1 && auths == auth && inits == 1 && commands == 1 &&
                        max_depth == 1,
@@ -535,32 +610,31 @@ static void spliceNegotiation(void)
         captured_len             = 0;
         const uint8_t opaque[]   = {'R', 'E', 'A', 'D', 'Y', 0, 'U', 'P'};
         expected_upstream_buffer = spliceBytes(opaque, sizeof(opaque), 2);
-        socks5serverTunnelUpStreamPayload(server, control, expected_upstream_buffer);
+        tunnelUpStreamPayload(server, control, expected_upstream_buffer);
         twfRequire(expected_upstream_buffer == NULL && captured_len == sizeof(opaque) &&
                        memoryEqual(captured, opaque, sizeof(opaque)),
                    "ready upstream splice bytes changed");
         captured_len               = 0;
         expected_downstream_buffer = spliceBytes(opaque, sizeof(opaque), 0);
-        socks5serverTunnelDownStreamPayload(server, control, expected_downstream_buffer);
+        tunnelDownStreamPayload(server, control, expected_downstream_buffer);
         twfRequire(expected_downstream_buffer == NULL && captured_len == sizeof(opaque) &&
                        memoryEqual(captured, opaque, sizeof(opaque)),
                    "ready downstream splice bytes changed");
         teardown();
     }
-    twfSetCase("paused splice request tail drains before later pipe backed input");
+    twfSetCase("advisory Pause preserves splice request and nested input order");
     setup(false);
     method(false);
     splice_input = true;
-    pause_init = inject_init = true;
+    pause_init = inject_init = inject_payload = true;
     uint8_t wire[sizeof(request) + 1];
     memoryCopy(wire, request, sizeof(request));
     wire[sizeof(request)] = 'A';
     sendBytes(wire, sizeof(wire));
+    twfRequire(captured_len == 3 && memoryEqual(captured, "AIP", 3), "Init Pause delayed or reordered splice input");
     sendBytes("B", 1);
-    twfRequire(captured_len == 0, "paused splice backlog drained");
-    inject_payload = true;
-    socks5serverTunnelDownStreamResume(server, control);
-    twfRequire(captured_len == 4 && memoryEqual(captured, "AIBP", 4), "splice Resume/reentry lost ordering");
+    tunnelDownStreamResume(server, control);
+    twfRequire(captured_len == 4 && memoryEqual(captured, "AIPB", 4), "Resume duplicated or reordered splice input");
     teardown();
     for (unsigned auth = 0; auth < 2; ++auth)
     {
@@ -585,25 +659,19 @@ static void spliceNegotiation(void)
     twfSetCase("splice incomplete negotiation is released on Finish");
     setup(true);
     const uint8_t partial[] = {5, 2, 2};
-    socks5serverTunnelUpStreamPayload(server, control, spliceBytes(partial, sizeof(partial), 1));
+    tunnelUpStreamPayload(server, control, spliceBytes(partial, sizeof(partial), 1));
     twfRequire(lineIsAlive(control) && methods == 0, "incomplete splice greeting advanced");
     teardown();
     twfSetCase("splice retained FIFO uses logical bytes at the exact existing limit");
     setup(false);
     method(false);
-    pause_init = true;
+    retained_mode = 3;
     uint8_t chunk[4096];
     memset(chunk, 'Q', sizeof(chunk));
     uint8_t request_tail[sizeof(request) + sizeof(chunk)];
     memoryCopy(request_tail, request, sizeof(request));
     memoryCopy(request_tail + sizeof(request), chunk, sizeof(chunk));
     sendBytes(request_tail, sizeof(request_tail));
-    splice_input = true;
-    independent_sources = true;
-    for (unsigned i = 1; i < kSocks5ServerMaxPendingBytes / sizeof(chunk); ++i)
-        sendBytes(chunk, sizeof(chunk));
-    twfRequire(lineIsAlive(control) && captured_len == 0, "exact splice pending-byte boundary refused or drained");
-    sendBytes("X", 1);
     twfRequire(! lineIsAlive(control) && finishes == 1, "splice pending-byte overflow did not close once");
     independent_sources = false;
     teardown();
@@ -657,12 +725,13 @@ static void udpControlPreferences(void)
                        linePrefersOrdinaryReadDownstream(control) == (udp_only != 0),
                    "mixed-mode method negotiation disabled TCP splice");
         const uint8_t udp_request[] = {5, 3, 0, 1, 0, 0, 0, 0, 0, 0};
-        socks5serverTunnelUpStreamPayload(server, control, spliceBytes(udp_request, sizeof(udp_request), 2));
+        tunnelUpStreamPayload(server, control, spliceBytes(udp_request, sizeof(udp_request), 2));
         twfRequire(lineIsAlive(control) && commands == 1 && inits == 0 && provider_opens == 1 &&
-                       linePrefersOrdinaryReadUpstream(control) && linePrefersOrdinaryReadDownstream(control) &&
+                       tunnelIsActiveForLine(server, control) && linePrefersOrdinaryReadUpstream(control) &&
+                       linePrefersOrdinaryReadDownstream(control) &&
                        ((socks5server_lstate_t *) lineGetState(control, server))->phase == kSocks5ServerPhaseUdpControl,
                    "UDP ASSOCIATE failed to enter ordinary control mode");
-        socks5serverTunnelUpStreamFinish(server, control);
+        tunnelUpStreamFin(server, control);
         lineDestroy(control);
         twfRequire(provider_closes == 1 && socks5server_assoc_map_t_size(ts->worker_associations) == 0,
                    "UDP control close retained its association");
@@ -686,7 +755,7 @@ int main(int argc, char **argv)
     maximumMetadataSplits();
     retainedLimits(false);
     retainedLimits(true);
-    pausedResume();
+    advisoryPause();
     largeReadyTail();
     malformed();
     reentry(false);

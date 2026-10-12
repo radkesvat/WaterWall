@@ -3,9 +3,8 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: pendingBoundary, run
- * Checks: Assertion labels include: source Pause escaped on an internal SOCKS line; source Pause preceded
- * notification publication; source Pause preceded older input admission; transport Resume released
- * source before protocol readiness
+ * Checks: Transparent repeated TCP signals, ready output through Pause, handshake/FIFO ordering,
+ * TCP retirement after setup, UDP boundary pressure, pending limits and callback-driven closure.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.socks5client_est_flow_unit; waterwall.socks5server_est_flow_unit
@@ -14,6 +13,7 @@
 #include "Socks5Server/internal.h"
 #define socksInit          socks5serverTunnelUpStreamInit
 #define socksFinish        socks5serverTunnelUpStreamFinish
+#define socksDownFinish    socks5serverTunnelDownStreamFinish
 #define socksUp            socks5serverTunnelUpStreamPayload
 #define socksDown          socks5serverTunnelDownStreamPayload
 #define socksEst           socks5serverTunnelDownStreamEst
@@ -27,6 +27,7 @@
 #include "Socks5Client/internal.h"
 #define socksInit          socks5clientTunnelUpStreamInit
 #define socksFinish        socks5clientTunnelUpStreamFinish
+#define socksDownFinish    socks5clientTunnelDownStreamFinish
 #define socksUp            socks5clientTunnelUpStreamPayload
 #define socksDown          socks5clientTunnelDownStreamPayload
 #define socksEst           socks5clientTunnelDownStreamEst
@@ -43,12 +44,38 @@ static tunnel_t *node, *prev, *next;
 static line_t   *application, *transport;
 static char      upstream[32], downstream[32];
 static size_t    up_len, down_len;
-static unsigned  est_count, greeting_count, command_count, reply_count, read_pause_count;
+static unsigned  est_count, greeting_count, command_count, reply_count, read_pause_count, read_resume_count;
+static unsigned  source_pauses, source_resumes;
+static unsigned  next_finishes;
 static bool      close_in_est, pause_in_est, reenter_data, udp_case;
 #ifndef SOCKS_EST_SERVER
-static bool     close_in_relay_pause, close_in_source_pause, reenter_source_pause;
-static unsigned source_pauses, source_resumes;
+static bool close_in_relay_pause, close_in_source_pause, reenter_source_pause, complete_in_source_pause;
 #endif
+
+static void repeatedSignals(void);
+
+static void createTunnels(void)
+{
+    node = tunnelCreate(NULL, sizeof(socksTstate), sizeof(socksLstate));
+    prev = tunnelCreate(NULL, 0, 0);
+    next = tunnelCreate(NULL, 0, 0);
+    twfRequire(node != NULL && prev != NULL && next != NULL, "SOCKS fixture tunnel allocation failed");
+    prev->chain_index = 0;
+    node->chain_index = 1;
+    next->chain_index = 2;
+    node->fnInitU     = socksInit;
+    node->fnFinU      = socksFinish;
+    node->fnFinD      = socksDownFinish;
+    node->fnPayloadU  = socksUp;
+    node->fnPayloadD  = socksDown;
+    node->fnEstD      = socksEst;
+    node->fnPauseD    = socksPause;
+    node->fnResumeD   = socksResume;
+    node->fnPauseU    = socksReceivePause;
+    node->fnResumeU   = socksReceiveResume;
+    tunnelBind(prev, node);
+    tunnelBind(node, next);
+}
 
 static sbuf_t *bytes(line_t *l, const void *data, uint32_t len)
 {
@@ -69,6 +96,13 @@ static void ownerFinish(tunnel_t *t, line_t *l)
     discard t;
     lineDestroy(l);
 }
+static void nextFinish(tunnel_t *t, line_t *l)
+{
+    discard t;
+    ++next_finishes;
+    if (! tunnelIsActiveForLine(node, l))
+        twfRequireLineStateZeroed(l, node, "Finish revived retired SOCKS state");
+}
 static void readPause(tunnel_t *t, line_t *l)
 {
     discard t;
@@ -76,43 +110,67 @@ static void readPause(tunnel_t *t, line_t *l)
     ++read_pause_count;
 #ifndef SOCKS_EST_SERVER
     if (close_in_relay_pause && lineGetDestinationAddressContext(l)->proto_udp)
-        socks5clientTunnelDownStreamFinish(node, l);
+        tunnelDownStreamFin(node, l);
 #endif
 }
 
-#ifndef SOCKS_EST_SERVER
+static void readResume(tunnel_t *t, line_t *l)
+{
+    discard t;
+    discard l;
+    ++read_resume_count;
+}
+
 static void sourcePause(tunnel_t *t, line_t *l)
 {
     discard t;
     twfRequire(l == application, "source Pause escaped on an internal SOCKS line");
     ++source_pauses;
+#ifndef SOCKS_EST_SERVER
+    if (source_pauses != 1)
+        return;
+    twfRequire(tunnelIsActiveForLine(node, l), "SOCKS retired before publishing its protocol hold");
     socksLstate *ls = lineGetState(l, node);
     twfRequire(ls->source_pause_sent, "source Pause preceded notification publication");
     if (close_in_source_pause)
     {
-        socksFinish(node, l);
+        tunnelUpStreamFin(node, l);
         lineDestroy(l);
+        return;
+    }
+    if (complete_in_source_pause)
+    {
+        tunnelDownStreamEst(node, transport);
+        const uint8_t method[] = {5, 0};
+        tunnelDownStreamPayload(node, transport, bytes(transport, method, sizeof(method)));
+        const uint8_t response[] = {5, 0, 0, 1, 127, 0, 0, 1, 0, 80};
+        tunnelDownStreamPayload(node, transport, bytes(transport, response, sizeof(response)));
+        twfRequire(! tunnelIsActiveForLine(node, l), "nested SOCKS setup did not retire before source Pause returned");
+        twfRequireLineStateZeroed(l, node, "nested retirement left SOCKS state live");
         return;
     }
     if (reenter_source_pause)
     {
         twfRequire(bufferqueueGetBufCount(&ls->pending_up) == 1, "source Pause preceded older input admission");
-        socksUp(node, l, bytes(l, "D", 1));
-        socksResume(node, transport);
-        twfRequire(source_resumes == 0, "transport Resume released source before protocol readiness");
+        tunnelUpStreamPayload(node, l, bytes(l, "D", 1));
+        tunnelDownStreamResume(node, transport);
+        twfRequire(source_resumes == (udp_case ? 0U : 1U), "transport Resume violated exact-line pressure mapping");
     }
+#endif
 }
 static void sourceResume(tunnel_t *t, line_t *l)
 {
     discard t;
     twfRequire(l == application, "source Resume escaped on an internal SOCKS line");
+#ifndef SOCKS_EST_SERVER
     socksLstate *ls = lineGetState(l, node);
-    twfRequire(! ls->source_pause_sent && ! ls->next_paused && ! ls->draining_up &&
-                   bufferqueueGetBufCount(&ls->pending_up) == 0 && ls->phase == kSocks5ClientPhaseEstablished,
-               "source resumed before protocol backlog/transport hold cleared");
+    if (udp_case)
+        twfRequire(! ls->source_pause_sent && ! ls->next_paused && ! ls->draining_up &&
+                       bufferqueueGetBufCount(&ls->pending_up) == 0 && ls->phase == kSocks5ClientPhaseEstablished,
+                   "UDP source resumed before protocol backlog/transport hold cleared");
+#endif
     ++source_resumes;
 }
-#endif
 
 static void upstreamData(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -122,7 +180,7 @@ static void upstreamData(tunnel_t *t, line_t *l, sbuf_t *buf)
 #ifndef SOCKS_EST_SERVER
     if (length >= 3 && p[0] == 5)
     {
-        twfRequire(est_count == 1, "SOCKS greeting preceded transport Est");
+        twfRequire(est_count != 0, "SOCKS greeting preceded transport Est");
         if (length <= 4)
             ++greeting_count;
         else
@@ -144,8 +202,10 @@ static void upstreamData(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (reenter_data)
     {
         reenter_data = false;
-        socksUp(node, application, bytes(application, "C", 1));
-        socksPause(node, l);
+        twfRequire(tunnelIsActiveForLine(node, application), "SOCKS retired inside its FIFO drain");
+        tunnelUpStreamPayload(node, application, bytes(application, "C", 1));
+        tunnelDownStreamPause(node, l);
+        twfRequire(tunnelIsActiveForLine(node, application), "nested FIFO input retired an active drain");
     }
 }
 
@@ -157,6 +217,7 @@ static void downstreamData(tunnel_t *t, line_t *l, sbuf_t *buf)
 #ifdef SOCKS_EST_SERVER
     if (length >= 2 && p[0] == 5)
     {
+        twfRequire(tunnelIsActiveForLine(node, l), "SOCKS server retired before protocol reply delivery");
         if (length == 10)
         {
             twfRequire(est_count == 1 && down_len == 0, "SOCKS reply order changed");
@@ -178,15 +239,18 @@ static void established(tunnel_t *t, line_t *l)
     discard t;
     twfRequire(l == application, "Est escaped on an internal line");
     ++est_count;
+    if (est_count != 1)
+        return;
+    twfRequire(tunnelIsActiveForLine(node, l), "SOCKS retired before first transport Est");
     if (close_in_est)
     {
-        socksFinish(node, l);
+        tunnelUpStreamFin(node, l);
         lineDestroy(l);
         return;
     }
     if (pause_in_est)
-        socksReceivePause(node, application);
-    socksUp(node, application, bytes(application, "B", 1));
+        tunnelUpStreamPause(node, application);
+    tunnelUpStreamPayload(node, application, bytes(application, "B", 1));
 }
 
 static void initializeNext(tunnel_t *t, line_t *l)
@@ -195,35 +259,66 @@ static void initializeNext(tunnel_t *t, line_t *l)
     transport = l;
 #ifdef SOCKS_EST_SERVER
     // A real synchronous Init may deliver backend bytes and Est before returning.
-    socksDown(node, l, bytes(l, "D", 1));
-    socksEst(node, l);
+    tunnelDownStreamPayload(node, l, bytes(l, "D", 1));
+    tunnelDownStreamEst(node, l);
+    if (lineIsAlive(l))
+    {
+        twfRequire(tunnelIsActiveForLine(node, l), "SOCKS server retired inside next Init");
+        repeatedSignals();
+    }
 #else
     if (lineGetDestinationAddressContext(l)->proto_udp)
-        socksEst(node, l);
+        tunnelDownStreamEst(node, l);
 #endif
+}
+
+static void repeatedSignals(void)
+{
+    unsigned pauses = source_pauses, resumes = source_resumes;
+    tunnelDownStreamPause(node, application);
+    tunnelDownStreamPause(node, application);
+    tunnelDownStreamResume(node, application);
+    tunnelDownStreamResume(node, application);
+    twfRequire(source_pauses == pauses + 2 && source_resumes == resumes + 2,
+               "TCP downstream Pause/Resume suppressed repeated notifications");
+    pauses  = read_pause_count;
+    resumes = read_resume_count;
+    tunnelUpStreamPause(node, application);
+    tunnelUpStreamPause(node, application);
+    tunnelUpStreamResume(node, application);
+    tunnelUpStreamResume(node, application);
+    twfRequire(read_pause_count == pauses + 2 && read_resume_count == resumes + 2,
+               "TCP upstream Pause/Resume suppressed repeated notifications");
+}
+
+static void bypassedTraffic(void)
+{
+    twfRequire(! tunnelIsActiveForLine(node, application), "settled TCP SOCKS setup did not retire");
+    twfRequireLineStateZeroed(application, node, "retired SOCKS retained protocol state");
+    size_t previous_up = up_len, previous_down = down_len;
+    tunnelUpStreamPayload(node, application, bytes(application, "Q", 1));
+    tunnelDownStreamPayload(node, application, bytes(application, "R", 1));
+    twfRequire(up_len == previous_up + 1 && upstream[previous_up] == 'Q' && down_len == previous_down + 1 &&
+                   downstream[previous_down] == 'R',
+               "retired SOCKS changed subsequent payload delivery");
+    twfRequireLineStateZeroed(application, node, "subsequent payload revived retired SOCKS state");
 }
 
 static void run(bool close_now, bool udp)
 {
-    twfSetCase("SOCKS transport Est is independent of handshake and Pause-aware FIFO release");
+    twfSetCase("SOCKS TCP advisory signals and ready FIFO release preserve UDP boundary control");
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, 4096, 300);
-    node = tunnelCreate(NULL, sizeof(socksTstate), sizeof(socksLstate));
-    prev = tunnelCreate(NULL, 0, 0);
-    next = tunnelCreate(NULL, 0, 0);
-    tunnelBind(prev, node);
-    tunnelBind(node, next);
+    createTunnels();
     prev->fnEstD     = established;
     prev->fnFinD     = ownerFinish;
     prev->fnPayloadD = downstreamData;
-    prev->fnPauseD = prev->fnResumeD = noop;
-#ifndef SOCKS_EST_SERVER
     prev->fnPauseD  = sourcePause;
     prev->fnResumeD = sourceResume;
-    source_pauses = source_resumes = 0;
-#endif
+    source_pauses = source_resumes = next_finishes = 0;
     next->fnInitU = initializeNext;
-    next->fnFinU = next->fnResumeU = noop;
+    next->fnFinU                                   = nextFinish;
+    next->fnResumeU                                = readResume;
     next->fnPauseU                 = readPause;
     next->fnPayloadU               = upstreamData;
     tunnel_chain_t *chain          = tunnelchainCreate(1);
@@ -235,7 +330,8 @@ static void run(bool close_now, bool udp)
     application = twfLinePoolCreateLine(&lines);
     lineRef(application);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(application), IP_PROTO_TCP);
-    up_len = down_len = est_count = greeting_count = command_count = reply_count = read_pause_count = 0;
+    up_len = down_len = est_count = greeting_count = command_count = reply_count                    = read_pause_count =
+        read_resume_count                                                                           = 0;
     close_in_est                                                                                    = close_now;
     pause_in_est                                                                                    = true;
     reenter_data                                                                                    = false;
@@ -244,19 +340,21 @@ static void run(bool close_now, bool udp)
 #ifdef SOCKS_EST_SERVER
     ts->no_auth       = true;
     ts->allow_connect = true;
-    socksInit(node, application);
+    tunnelUpStreamInit(node, application);
     const uint8_t method[] = {5, 1, 0};
-    socksUp(node, application, bytes(application, method, sizeof(method)));
+    tunnelUpStreamPayload(node, application, bytes(application, method, sizeof(method)));
+    twfRequire(tunnelIsActiveForLine(node, application), "SOCKS server retired before CONNECT request");
     const uint8_t request[] = {5, 1, 0, 1, 127, 0, 0, 1, 0, 80, 'A'};
-    socksUp(node, application, bytes(application, request, sizeof(request)));
+    tunnelUpStreamPayload(node, application, bytes(application, request, sizeof(request)));
     if (! close_now)
     {
-        twfRequire(est_count == 1 && reply_count == 0 && down_len == 0, "paused Est emitted command reply/body");
+        twfRequire(est_count == 1 && reply_count == 1 && down_len == 1 && downstream[0] == 'D',
+                   "advisory Pause withheld command reply or backend body");
         twfRequire(up_len == 2 && memoryEqual(upstream, "AB", 2), "Init/Est reentry overtook original request tail");
-        socksEst(node, application);
-        twfRequire(est_count == 1, "duplicate backend Est escaped");
-        socksReceiveResume(node, application);
-        twfRequire(reply_count == 1 && down_len == 1 && downstream[0] == 'D', "Resume lost reply/body order");
+        tunnelDownStreamEst(node, application);
+        twfRequire(est_count == 2 && reply_count == 1 && down_len == 1, "repeated Est changed SOCKS reply/body work");
+        bypassedTraffic();
+        repeatedSignals();
     }
 #else
     ts->target_addr_source = ts->target_port_source = kDvsConstant;
@@ -264,50 +362,84 @@ static void run(bool close_now, bool udp)
     ip_addr_t ip;
     twfRequire(ipaddr_aton("127.0.0.1", &ip), "fixture address");
     addresscontextSetIpPort(&ts->target_addr, &ip, 80);
-    socksInit(node, application);
+    tunnelUpStreamInit(node, application);
     line_t *control = transport;
-    socksUp(node, application, bytes(application, "A", 1));
+    tunnelUpStreamPayload(node, application, bytes(application, "A", 1));
     if (close_in_source_pause)
     {
         twfRequire(! lineIsAlive(application) && source_pauses == 1 && est_count == 0,
                    "source Pause close did not settle exact association");
         goto client_done;
     }
-    twfRequire(source_pauses == 1 && source_resumes == 0, "protocol wait did not stop new source work");
+    if (complete_in_source_pause)
+    {
+        twfRequire(up_len == 2 && memoryEqual(upstream, "AB", 2) && source_pauses == 1 && source_resumes == 1 &&
+                       greeting_count == 1 && command_count == 1,
+                   "nested setup lost queued input or protocol hold release");
+        bypassedTraffic();
+        repeatedSignals();
+        goto client_done;
+    }
+    twfRequire(source_pauses == 1 && source_resumes == (reenter_source_pause && ! udp ? 1U : 0U),
+               "protocol wait lost its advisory source pressure");
     twfRequire(up_len == 0 && greeting_count == 0, "application escaped before negotiation");
-    socksEst(node, control);
+    if (! udp)
+        tunnelDownStreamPause(node, control);
+    tunnelDownStreamEst(node, control);
     if (! close_now)
     {
         twfRequire(est_count == 1 && greeting_count == 1 && up_len == 0, "transport Est waited for handshake");
-        socksEst(node, control);
-        twfRequire(est_count == 1 && greeting_count == 1, "duplicate transport Est repeated greeting");
+        tunnelDownStreamEst(node, control);
+        twfRequire(est_count == (udp ? 1U : 2U) && greeting_count == 1,
+                   "repeated Est lost exact-line notification mapping or repeated greeting");
         const uint8_t method[] = {5, 0};
-        socksDown(node, control, bytes(control, method, sizeof(method)));
-        twfRequire(command_count == 1 && read_pause_count == 0, "application Pause blocked handshake progress");
-        socksPause(node, control);
+        tunnelDownStreamPayload(node, control, bytes(control, method, sizeof(method)));
+        twfRequire(tunnelIsActiveForLine(node, application), "SOCKS client retired before command reply");
+        twfRequire(command_count == 1 && read_pause_count == (udp ? 0U : 1U),
+                   "application Pause violated exact-line handshake mapping");
+        if (! udp)
+            repeatedSignals();
+        tunnelDownStreamPause(node, control);
         const uint8_t response[] = {5, 0, 0, 1, 127, 0, 0, 1, 0, 80};
-        socksDown(node, control, bytes(control, response, sizeof(response)));
+        reenter_data             = ! udp;
+        tunnelDownStreamPayload(node, control, bytes(control, response, sizeof(response)));
         if (close_in_relay_pause)
         {
             twfRequire(! lineIsAlive(application), "relay Pause Finish did not close the association");
             goto client_done;
         }
-        twfRequire(up_len == 0 && est_count == 1, "protocol completion drained through Pause or repeated Est");
-        reenter_data = true;
-        socksResume(node, control);
-        twfRequire(up_len == 1 && upstream[0] == 'A', "first drain ignored nested Pause");
-        socksResume(node, transport);
+        if (udp)
+        {
+            twfRequire(tunnelIsActiveForLine(node, application) && tunnelIsActiveForLine(node, control) &&
+                           tunnelIsActiveForLine(node, transport),
+                       "SOCKS UDP boundary retired protocol state");
+            twfRequire(up_len == 0 && est_count == 1, "UDP protocol completion ignored owned transport pressure");
+            reenter_data = true;
+            tunnelDownStreamResume(node, control);
+            twfRequire(up_len == 1 && upstream[0] == 'A', "UDP drain ignored nested Pause");
+            tunnelDownStreamResume(node, transport);
+        }
         twfRequire(up_len == (reenter_source_pause ? 4U : 3U) &&
                        memoryEqual(upstream, reenter_source_pause ? "ADBC" : "ABC", up_len),
                    "nested application input overtook FIFO");
-        twfRequire(source_pauses == 1 && source_resumes == 1, "protocol backlog lost aggregate pressure release");
+        twfRequire(source_pauses == (udp ? 1U : 6U) && source_resumes == (udp                    ? 1U
+                                                                          : reenter_source_pause ? 4U
+                                                                                                 : 3U),
+                   "protocol backlog lost local pressure release or external notifications");
+        if (! udp)
+        {
+            bypassedTraffic();
+            repeatedSignals();
+        }
     }
 client_done:
     addresscontextReset(&ts->target_addr);
 #endif
     if (lineIsAlive(application))
     {
-        socksFinish(node, application);
+        tunnelUpStreamFin(node, application);
+        if (! udp)
+            twfRequire(next_finishes == 1, "TCP Finish did not reach the next tunnel exactly once");
         lineDestroy(application);
     }
     twfRequire(! lineIsAlive(application), "Est callback close left line alive");
@@ -332,11 +464,7 @@ static void pendingBoundary(bool entries)
     twfSetCase("SOCKS pending queue accepts equality and settles one-over refusal");
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, 4096, 300);
-    node = tunnelCreate(NULL, sizeof(socksTstate), sizeof(socksLstate));
-    prev = tunnelCreate(NULL, 0, 0);
-    next = tunnelCreate(NULL, 0, 0);
-    tunnelBind(prev, node);
-    tunnelBind(node, next);
+    createTunnels();
     prev->fnFinD   = ownerFinish;
     prev->fnPauseD = prev->fnResumeD = noop;
     prev->fnPayloadD                 = discardPayload;
@@ -368,7 +496,7 @@ static void pendingBoundary(bool entries)
 #endif
         sbuf_t *buf = bufferpoolGetBestFit(env.pool, length, 300);
         sbufSetLength(buf, length);
-        socksUp(node, application, buf);
+        tunnelUpStreamPayload(node, application, buf);
     }
     twfRequire(lineIsAlive(application) && bufferqueueGetBufCount(&ls->pending_up) == count,
                "SOCKS refused exact pending boundary");
@@ -378,7 +506,7 @@ static void pendingBoundary(bool entries)
     const size_t expected_bytes = entries ? 0 : byte_limit;
 #endif
     twfRequire(bufferqueueGetBufLen(&ls->pending_up) == expected_bytes, "SOCKS pending byte accounting changed");
-    socksUp(node, application, bytes(application, "X", 1));
+    tunnelUpStreamPayload(node, application, bytes(application, "X", 1));
     twfRequire(! lineIsAlive(application), "SOCKS overflow left borrowed owner alive");
     twfRequireLineStateZeroed(application, node, "SOCKS overflow left protocol state alive");
     lineUnref(application);
@@ -399,6 +527,9 @@ int main(void)
 #ifndef SOCKS_EST_SERVER
     run(false, true);
     run(true, true);
+    complete_in_source_pause = true;
+    run(false, false);
+    complete_in_source_pause = false;
     reenter_source_pause = true;
     run(false, false);
     run(false, true);

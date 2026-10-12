@@ -18,5 +18,8 @@ that their TCP control and UDP sockets make no splice attempts.
 Native fixtures: [socks5client_reply_input_test.c](socks5client_reply_input_test.c),
 [socks5server_control_input_test.c](socks5server_control_input_test.c), and
 [socks_est_flow_test.c](socks_est_flow_test.c). They also cover Init/Est reentry,
-Pause-aware protocol backlog release, reply-before-body ordering and byte/entry refusal.
+repeatable TCP notifications, protocol-ready TCP backlog release through advisory
+Pause, reply-before-body ordering, UDP boundary pressure, and byte/entry refusal.
+TCP bypass coverage checks state destruction after setup, nested retirement,
+transparent later callbacks, and the exclusion of UDP association lines.
 The [socket fixture](../../../socks5_splice_integration.py) documents its exact CTest variants.

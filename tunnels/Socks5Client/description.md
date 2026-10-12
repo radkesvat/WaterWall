@@ -161,10 +161,15 @@ through `abortProgramNow(1)`. Downstream `Est` and payload callbacks remain supp
 - if `address` and/or `port` use `dest_context`, the incoming line destination is used as the SOCKS target source
 - if `protocol` uses `dest_context->protocol`, the incoming destination protocol is read before any configured
   address/port rewrite
-- `DownStreamEst` forwards transport readiness immediately, then starts SOCKS5 method negotiation.
+- `DownStreamEst` forwards transport readiness immediately, then starts SOCKS5 method negotiation once; repeated
+  notifications continue through TCP lines without repeating the greeting.
 - `DownStreamPayload` consumes method, auth, and command replies from the proxy.
 - `UpStreamPayload` is buffered until the SOCKS5 command succeeds.
-- a successful proxy reply releases the bounded application FIFO while the consumer is writable; Est has already been forwarded
+- a successful TCP proxy reply releases the bounded application FIFO in order without waiting for Resume;
+  Est has already been forwarded
+- TCP Pause/Resume notifications pass through immediately, including duplicates and notifications during negotiation
+- after successful TCP negotiation, all retained input/output has drained and the local source hold is released,
+  the client destroys its line state and permanently bypasses itself; later callbacks pass directly between neighbors
 - on handshake failure it destroys local state first, then closes both directions
 - in UDP mode, upstream payload is wrapped in a SOCKS5 UDP request header and sent through the UDP relay line
 - in UDP mode, downstream relay datagrams have the SOCKS5 UDP header stripped before payload is forwarded back
@@ -218,15 +223,18 @@ Source-backed metadata:
 | `required_padding_left` | `262` bytes |
 
 Transport `Est` does not mean SOCKS negotiation has succeeded. Application payload can be accepted after Init;
-the real protocol backlog is bounded at 2 MiB and 1,024 buffers. Its later release honors consumer Pause and FIFO,
-including reentrant input. The first retained application input pauses its source; the source resumes only after
-the older FIFO drains and transport pressure clears. This protocol hold does not stop handshake traffic.
-Application receive Pause does not stop the handshake's own input before readiness.
+the real protocol backlog is bounded at 2 MiB and 1,024 buffers. TCP greeting and ready application/reply output
+do not wait for Resume. The first retained application input pauses its source; the source resumes when the
+older FIFO drains. This local protocol hold is independent of transparently relayed transport pressure.
+TCP receive Pause also reaches the next adapter during negotiation; its issuer must arrange Resume or close.
 For UDP, control and relay write pressure combine; one Resume cannot clear the other's outstanding Pause.
+UDP application backlog release and the owned control greeting continue to honor that boundary pressure,
+and application receive pressure is mapped to the relay line after its Init.
+UDP application, control and relay lines remain active for framing, association ownership and pressure mapping.
 The 4,096-byte bound applies only to incomplete reply metadata; a completed reply
 may arrive with a larger application body. Nested reply processing is serialized,
 with response bytes kept in FIFO order. Necessary retained response input shares
-a 2 MiB / 1,024-buffer downstream budget and drains on receive Resume; ready TCP
+a 2 MiB / 1,024-buffer downstream budget and drains after older reply input, including through Pause; ready TCP
 forwarding stays synchronous. Empty proxy TCP input is ignored, and unused TCP tails on
 an established UDP control line are discarded. Ordering queues allocate backing
 storage on first use; UDP application and relay lines do not allocate handshake

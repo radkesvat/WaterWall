@@ -117,9 +117,7 @@ typedef struct socks5server_lstate_s
     bool input_draining : 1;
     bool next_initialized : 1;
     bool next_initializing : 1;
-    bool prev_paused : 1;
-    bool next_paused : 1;
-    bool next_read_paused : 1;
+    bool pending_read_pause : 1; // Replay only a Pause received before the next side was initialized.
     bool connect_reply_sent : 1;
     bool client_line_ref_held : 1;
     bool user_handle_recorded : 1;

@@ -282,26 +282,19 @@ bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate
         return true;
     }
 
-    /* Finish the accepted reply's opaque tail. Reentrant deliveries stay behind
-     * it; only the subsequent retained backlog waits for receive permission. */
+    /* Finish the accepted reply's opaque tail, then its reentrant FIFO. */
     while (! bufferstreamIsEmpty(&ls->in_stream))
     {
         sbuf_t *tail = bufferstreamIdealRead(&ls->in_stream);
         if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, tail))
             return false;
     }
-    while (! ls->prev_paused && bufferqueueGetBufCount(&ls->pending_down) != 0)
+    while (bufferqueueGetBufCount(&ls->pending_down) != 0)
     {
         sbuf_t *tail = bufferqueuePopFront(&ls->pending_down);
         if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, tail))
             return false;
     }
     ls->input_draining = false;
-    if (ls->prev_paused && ! ls->read_pause_sent)
-    {
-        ls->read_pause_sent = true;
-        if (! lineCallWithRef(l, tunnelNextUpStreamPause, t))
-            return false;
-    }
     return socks5clientDrainPending(t, l);
 }

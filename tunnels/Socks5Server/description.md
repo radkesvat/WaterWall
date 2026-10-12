@@ -335,9 +335,16 @@ Source-backed metadata:
 | `required_padding_left` | `262` bytes |
 
 Transport Est and the SOCKS reply are separate obligations. Init/Est reentry cannot overtake older request bytes.
-A paused client delays the success reply and response-body backlog, while Est still propagates promptly.
+TCP Pause/Resume and transport Est propagate repeatedly without suppressing duplicates. Ready success replies
+and ordered application backlogs do not wait for Resume. A Pause received before next Init is replayed once
+that side is initialized; a Resume before replay cancels it. UDP association boundaries retain their existing signal mapping.
 Necessary request/reply ordering queues retain at most 1 MiB and 1,024 buffers per direction; ready direct payloads
 remain synchronous. Reply admission is published before callbacks so nested data cannot precede the reply.
+
+After a CONNECT success reply has been handed off and next Init, startup Pause replay, and all request/reply
+ordering work have finished, the server destroys its local state and permanently bypasses itself on that TCP
+line. Published line credentials remain available. Later callbacks, including Finish, go directly to adjacent
+active nodes. UDP control, client, and remote lines remain active for association handling.
 
 Control input advances in one synchronous parser scope. Nested deliveries follow
 older input; method/authentication state and identity are published before reply

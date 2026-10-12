@@ -206,9 +206,9 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
                     return false;
                 }
                 ls->next_initializing = false;
-                if (ls->prev_paused && ! ls->next_read_paused)
+                if (ls->pending_read_pause)
                 {
-                    ls->next_read_paused = true;
+                    ls->pending_read_pause = false;
                     if (UNLIKELY(! lineCallWithRef(l, tunnelNextUpStreamPause, t)))
                         return false;
                 }
@@ -275,13 +275,6 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
             break;
         if (ls->phase == kSocks5ServerPhaseConnectWaitEst || ls->phase == kSocks5ServerPhaseTcpEstablished)
         {
-            if (ls->next_paused && (bufferstreamGetBufLen(&ls->in_stream) > kSocks5ServerMaxPendingBytes ||
-                                    bufferqueueGetBufLen(&ls->pending_up) >
-                                        kSocks5ServerMaxPendingBytes - bufferstreamGetBufLen(&ls->in_stream)))
-            {
-                socks5serverCloseControlLineBidirectional(t, l);
-                return false;
-            }
             ls->input_draining = false;
             return socks5serverDrainControl(t, l);
         }
