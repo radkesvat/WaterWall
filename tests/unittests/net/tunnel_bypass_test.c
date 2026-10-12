@@ -3,10 +3,9 @@
  * Setup: A 64-tunnel chain with shuffled link order, real line pools, and one bound
  * logical worker. The fixture owns normal lines; the chain owns its packet line.
  * Checks: default/explicit/context dispatch, consecutive skips including bits 0/63,
- * line isolation and reuse, reentrant disable, repeatable Est, Finish destruction, packet publication
- * and the certified packet enqueue boundary. Nonempty line state must be zero,
- * including padding, before bypass; Debug rejects dirty state. No network or concurrency claim.
- * CTest: waterwall.tunnel_bypass_unit
+ * line isolation and reuse, reentrant disable, repeatable Est and advisory Pause/Resume, Finish destruction, packet
+ * publication and the certified packet enqueue boundary. Nonempty line state must be zero, including padding, before
+ * bypass; Debug rejects dirty state. No network or concurrency claim. CTest: waterwall.tunnel_bypass_unit
  */
 #include "wwapi.h"
 
@@ -233,6 +232,49 @@ static void testRepeatedEst(tunnel_chain_t *chain, tunnel_t **path)
     installRecorders(path[1]);
 }
 
+static void testAdvisoryPauseResume(tunnel_chain_t *chain, tunnel_t **path)
+{
+    line_t *line = lineCreate(chain->line_pools, 0);
+    for (unsigned i = 1; i <= 2; ++i)
+    {
+        path[i]->fnPauseU   = tunnelDefaultUpStreamPause;
+        path[i]->fnPauseD   = tunnelDefaultDownStreamPause;
+        path[i]->fnResumeU  = tunnelDefaultUpStreamResume;
+        path[i]->fnResumeD  = tunnelDefaultDownStreamResume;
+        path[i]->fnPayloadU = tunnelDefaultUpStreamPayload;
+        path[i]->fnPayloadD = tunnelDefaultDownStreamPayload;
+    }
+
+    // Resume need not follow Pause, repeats reach the receiver, and Pause is no payload gate.
+    const unsigned events[] = {kResume, kResume, kPause, kPause, kPayload, kResume, kResume, kPayload};
+    expected_line           = line;
+    for (unsigned up = 0; up < 2; ++up)
+    {
+        for (unsigned i = 0; i < ARRAY_SIZE(events); ++i)
+        {
+            expected_event = events[i];
+            // Pressure runs opposite to the payload it asks the source to stop producing.
+            expected_upstream = events[i] == kPayload ? up == 0 : up != 0;
+            expected_tunnel   = path[expected_upstream ? 3 : 0];
+            tunnel_t *sender  = path[expected_upstream ? 0 : 3];
+            deliveries        = 0;
+            if (events[i] == kPayload)
+                (expected_upstream ? tunnelNextUpStreamPayload
+                                   : tunnelPrevDownStreamPayload)(sender, line, makePayload());
+            else if (events[i] == kPause)
+                (up ? tunnelNextUpStreamPause : tunnelPrevDownStreamPause)(sender, line);
+            else
+                (up ? tunnelNextUpStreamResume : tunnelPrevDownStreamResume)(sender, line);
+            require(deliveries == 1, "transparent defaults lost an advisory signal or payload");
+        }
+    }
+
+    require(line->active_tunnels_mask == UINT64_MAX, "transparent notification forwarding bypassed an active tunnel");
+    lineDestroy(line);
+    installRecorders(path[1]);
+    installRecorders(path[2]);
+}
+
 static void testBypassRequiresDestroyedState(tunnel_chain_t *chain, tunnel_t *t)
 {
     line_t  *line  = lineCreate(chain->line_pools, 0);
@@ -348,6 +390,7 @@ int main(void)
 
     testBypassRequiresDestroyedState(chain, path[1]);
     testRepeatedEst(chain, path);
+    testAdvisoryPauseResume(chain, path);
 
     line_t *line  = lineCreate(chain->line_pools, 0);
     line_t *other = lineCreate(chain->line_pools, 0);

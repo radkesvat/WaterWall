@@ -33,7 +33,8 @@ typedef struct line_user_auth_s
 /*
     The line struct represents a connection, it has two ends ( Down-end < --------- > Up-end)
 
-    if for example a write on the Down-end blocks, it pauses the Up-end and vice versa
+    A blocked write on the Down-end emits advisory Pause toward the Up-end source, and vice versa.
+    There is no global paused state here; receivers keep their own limits and endpoint producer control.
 
     each context creation will increase refc on the line, so the line will never gets destroyed
     before the contexts that reference it. Every decrement is an acquire-release operation, so

@@ -75,6 +75,20 @@ typedef void (*TunnelFlowRoutineInit)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutinePayload)(tunnel_t *, line_t *line, sbuf_t *payload);
 typedef void (*TunnelFlowRoutineEst)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutineFin)(tunnel_t *, line_t *line);
+/*
+ * Pause/Resume are repeatable advisory notifications, not counted holds or a
+ * core Payload gate. Ordinary middle tunnels use the forwarding defaults and
+ * may deliver due scheduled output without waiting for Resume. Adapters and
+ * exact-line heads/tails control their producers; SpeedLimit also combines its
+ * local hold with consumer pressure. Every receiver retains its hard limits.
+ *
+ * A middle tunnel originating Pause must arrange its own Resume or close even
+ * if no further input arrives. An advisory Resume may override another node's
+ * Pause; it does not prove all consumers writable or all queues empty. FIFO,
+ * protocol ordering, line lifetime and Finish rules still apply to every send.
+ * Dispatch preserves registered handlers and never infers line roles from a
+ * tunnel's chain position. Transparent forwarding does not retire line state.
+ */
 typedef void (*TunnelFlowRoutinePause)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutineResume)(tunnel_t *, line_t *line);
 typedef splice_retcode_t (*TunnelFlowRoutineSplice)(tunnel_t *, line_t *line, int pipe_fd, size_t len);
@@ -113,13 +127,13 @@ struct tunnel_s
     TunnelFlowRoutineFin fnFinU;
     // Handle Finish from next: clean up local line state and never send a callback back toward next.
     TunnelFlowRoutineFin fnFinD;
-    // Handle backpressure from prev: stop downstream payload to prev until upstream Resume.
+    // Receive repeatable advisory Pause from prev; ordinary middle tunnels forward toward next.
     TunnelFlowRoutinePause fnPauseU;
-    // Handle backpressure from next: stop upstream payload to next until downstream Resume.
+    // Receive repeatable advisory Pause from next; ordinary middle tunnels forward toward prev.
     TunnelFlowRoutinePause fnPauseD;
-    // Handle prev becoming writable again; downstream payload to prev may resume.
+    // Receive repeatable advisory Resume from prev; ordinary middle tunnels forward toward next.
     TunnelFlowRoutineResume fnResumeU;
-    // Handle next becoming writable again; upstream payload to next may resume.
+    // Receive repeatable advisory Resume from next; ordinary middle tunnels forward toward prev.
     TunnelFlowRoutineResume fnResumeD;
     // Handle an upstream establishment notification; onward notification goes toward next.
     TunnelFlowRoutineEst fnEstU;
@@ -660,7 +674,7 @@ static inline void tunnelUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *p
 }
 
 /**
- * @brief Pauses the upstream line.
+ * @brief Delivers a repeatable advisory Pause upstream.
  *
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -672,7 +686,7 @@ static inline void tunnelUpStreamPause(tunnel_t *self, line_t *line)
 }
 
 /**
- * @brief Resumes the upstream line.
+ * @brief Delivers a repeatable advisory Resume upstream.
  *
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -733,7 +747,7 @@ static inline void tunnelDownStreamPayload(tunnel_t *self, line_t *line, sbuf_t 
 }
 
 /**
- * @brief Pauses the downstream line.
+ * @brief Delivers a repeatable advisory Pause downstream.
  *
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -745,7 +759,7 @@ static inline void tunnelDownStreamPause(tunnel_t *self, line_t *line)
 }
 
 /**
- * @brief Resumes the downstream line.
+ * @brief Delivers a repeatable advisory Resume downstream.
  *
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -802,7 +816,7 @@ static inline void tunnelNextUpStreamPayload(tunnel_t *self, line_t *line, sbuf_
 }
 
 /**
- * @brief Pauses the next upstream line.
+ * @brief Delivers a repeatable advisory Pause toward next.
  *
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -813,7 +827,7 @@ static inline void tunnelNextUpStreamPause(tunnel_t *self, line_t *line)
 }
 
 /**
- * @brief Resumes the next upstream line.
+ * @brief Delivers a repeatable advisory Resume toward next.
  *
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -869,7 +883,7 @@ static inline void tunnelPrevDownStreamPayload(tunnel_t *self, line_t *line, sbu
 }
 
 /**
- * @brief Pauses the prev downstream line.
+ * @brief Delivers a repeatable advisory Pause toward prev.
  *
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -880,7 +894,7 @@ static inline void tunnelPrevDownStreamPause(tunnel_t *self, line_t *line)
 }
 
 /**
- * @brief Resumes the prev downstream line.
+ * @brief Delivers a repeatable advisory Resume toward prev.
  *
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.

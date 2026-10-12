@@ -110,9 +110,11 @@ These guardrails do not replace the mandatory guide reading:
 9. Every autonomous normal-line owner must inventory and drain its lines while the
    required loops, chains, tunnel state, and pools remain alive. Termination has one
    coordinator; a shutdown request is not cleanup.
-10. Pause stops new source work and backlog drains. Transforms relay it and may
-    complete bounded admitted input. Follow Part 2 for FIFO admission, receiver
-    tolerance and protocol-storage bounds.
+10. Pause/Resume are repeatable advisory notifications. Ordinary middle nodes
+    relay them transparently; due scheduled output need not wait for Resume.
+    Adapters, exact-line heads/tails and SpeedLimit retain producer control.
+    Every node retains its own hard limits, FIFO and protocol obligations. See
+    [Part 2](WaterWall-Docs/docs/05-devguides/part2-lines-and-callbacks.mdx#flow-control-roles-and-admission).
 11. Tunnel constructors may return `NULL`; check before assigning callbacks or
     accessing state. External callback roots must close admission and quiesce before
     their reachable state is reclaimed.
