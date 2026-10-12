@@ -3,11 +3,10 @@
  * define this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: caseInitializationFails, caseRejectedPauseFallsBackInlineAcrossReentrantLineDeath,
- * caseMtuConfigurationAndOutput
- * Checks: Assertion labels include: TcpOverUdpClient submitted an unexpected line task; TcpOverUdpClient
- * submitted the queued Pause against the wrong line or tunnel; TcpOverUdpClient queued Pause
- * unexpectedly installed cancellation work; a KCP handle survived the failure path
+ * Cases: caseInitializationFails, casePauseAfterAdmissionClosesReentrantly,
+ * caseAdvisorySignalsAndAckOnlyResume, caseMtuConfigurationAndOutput
+ * Checks: Resource settlement, advisory signal relay, post-admission pressure callbacks,
+ * ACK-only Resume, and configured KCP/FEC packet bounds.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.tcpoverudpclient_line_failure_test_unit
@@ -46,11 +45,6 @@ static int32_t g_live_timers       = 0;
 static int32_t g_live_fec_encoders = 0;
 static int32_t g_live_fec_decoders = 0;
 
-static bool      g_reject_pause_submission;
-static tunnel_t *g_expected_schedule_tunnel;
-static line_t   *g_expected_schedule_line;
-static uint32_t  g_pause_schedule_calls;
-
 ikcpcb *__real_ikcp_create(IUINT32 conv, void *user);
 ikcpcb *__wrap_ikcp_create(IUINT32 conv, void *user);
 
@@ -61,22 +55,6 @@ tcpoverudp_fec_encoder_t *__real_tcpoverudpFecEncoderCreate(uint8_t data_shards,
 tcpoverudp_fec_encoder_t *__wrap_tcpoverudpFecEncoderCreate(uint8_t data_shards, uint8_t parity_shards);
 tcpoverudp_fec_decoder_t *__real_tcpoverudpFecDecoderCreate(uint8_t data_shards, uint8_t parity_shards);
 tcpoverudp_fec_decoder_t *__wrap_tcpoverudpFecDecoderCreate(uint8_t data_shards, uint8_t parity_shards);
-
-line_task_submit_result_e __wrap_lineScheduleTask(line_t *line, LineTaskFnNoBuf task, tunnel_t *t,
-                                                  LineTaskCancelFn on_cancel);
-
-line_task_submit_result_e __wrap_lineScheduleTask(line_t *line, LineTaskFnNoBuf task, tunnel_t *t,
-                                                  LineTaskCancelFn on_cancel)
-{
-    twfRequire(g_reject_pause_submission, "TcpOverUdpClient submitted an unexpected line task");
-    twfRequire(line == g_expected_schedule_line && t == g_expected_schedule_tunnel && task != NULL,
-               "TcpOverUdpClient submitted the queued Pause against the wrong line or tunnel");
-    twfRequire(on_cancel == NULL, "TcpOverUdpClient queued Pause unexpectedly installed cancellation work");
-    lineRef(line);
-    lineUnref(line);
-    ++g_pause_schedule_calls;
-    return kLineTaskSubmitRejectedSettled;
-}
 
 // ikcp_release() is not wrapped, so the live-handle counter is decremented through the release seam below.
 void __real_ikcp_release(ikcpcb *kcp);
@@ -203,6 +181,8 @@ typedef struct tcpoverudp_fixture_s
 {
     twf_worker_env_t env;
     twf_trace_t      trace;
+    master_pool_t   *context_master;
+    generic_pool_t  *contexts;
     tunnel_t        *prev;
     tunnel_t        *kcp;
     tunnel_t        *next;
@@ -212,6 +192,9 @@ static void fixtureSetup(tcpoverudp_fixture_t *fixture, bool fec_enabled)
 {
     memoryZero(&fixture->trace, sizeof(fixture->trace));
     twfWorkerEnvSetup(&fixture->env, kTestLargeBufferSize, kFrameHeaderLength);
+    fixture->context_master = masterpoolCreateWithCapacity(8);
+    fixture->contexts = genericpoolCreateWithDefaultAllocatorAndCapacity(fixture->context_master, sizeof(context_t), 8);
+    GSTATE.shortcut_context_pools = &fixture->contexts;
 
     g_live_kcp_handles  = 0;
     g_live_timers       = 0;
@@ -226,7 +209,15 @@ static void fixtureSetup(tcpoverudp_fixture_t *fixture, bool fec_enabled)
     tunnelBind(fixture->prev, fixture->kcp);
     tunnelBind(fixture->kcp, fixture->next);
 
+    fixture->prev->chain_index = 0;
+    fixture->kcp->chain_index  = 1;
+    fixture->next->chain_index = 2;
     fixture->kcp->fnInitU = &tcpoverudpclientTunnelUpStreamInit;
+    fixture->kcp->fnFinU       = &tcpoverudpclientTunnelUpStreamFinish;
+    fixture->kcp->fnPayloadU   = &tcpoverudpclientTunnelUpStreamPayload;
+    fixture->kcp->fnPayloadD   = &tcpoverudpclientTunnelDownStreamPayload;
+    fixture->kcp->fnPauseD     = &tcpoverudpclientTunnelDownStreamPause;
+    fixture->kcp->fnResumeD    = &tcpoverudpclientTunnelDownStreamResume;
 
     tcpoverudpclient_tstate_t *ts = tunnelGetState(fixture->kcp);
 
@@ -253,6 +244,10 @@ static void fixtureTeardown(tcpoverudp_fixture_t *fixture)
     tunnelDestroy(fixture->prev);
     tunnelDestroy(fixture->kcp);
     tunnelDestroy(fixture->next);
+    GSTATE.shortcut_context_pools = NULL;
+    genericpoolDestroy(fixture->contexts);
+    masterpoolMakeEmpty(fixture->context_master);
+    masterpoolDestroy(fixture->context_master);
 }
 
 static void caseInitializationFails(tcpoverudp_injection_t injection, bool fec_enabled, const char *case_name)
@@ -300,85 +295,160 @@ static void caseInitializationFails(tcpoverudp_injection_t injection, bool fec_e
     fixtureTeardown(&fixture);
 }
 
-static tcpoverudp_fixture_t *g_pause_fixture;
-static uint32_t              g_inline_pause_calls;
+static tcpoverudp_fixture_t *g_pressure_fixture;
+static line_t               *g_pressure_line;
+static uint32_t              g_pressure_calls;
 
-static void clientOwnerClosesReentrantlyOnPause(tunnel_t *prev, line_t *line)
+static void clientOwnerClosesOnPressure(tunnel_t *prev, line_t *line)
 {
-    tcpoverudp_fixture_t *fixture = g_pause_fixture;
-    twfRequire(fixture != NULL && prev == fixture->prev && line == g_expected_schedule_line,
-               "TcpOverUdpClient called Pause on an unexpected previous-side line");
-
-    ++g_inline_pause_calls;
-    twfRecord(&fixture->trace, 'u');
+    tcpoverudp_fixture_t *fixture = g_pressure_fixture;
+    twfRequire(fixture != NULL && prev == fixture->prev && line == g_pressure_line,
+               "TcpOverUdpClient called pressure on an unexpected previous-side line");
+    tcpoverudpclient_lstate_t *ls = lineGetState(line, fixture->kcp);
+    ++g_pressure_calls;
+    const bool destroy_line = ls->source_paused;
+    if (ls->source_paused)
+    {
+        twfRequire(ikcp_waitsnd(ls->k_handle) == 3,
+                   "Pause reached the source before the original payload was fully admitted");
+    }
+    else
+    {
+        twfRequire(ikcp_waitsnd(ls->k_handle) == 0, "Resume preceded cumulative acknowledgement");
+    }
 
     tcpoverudpclient_tstate_t *state = tunnelGetState(fixture->kcp);
     atomicStoreRelaxed(&state->stopping, true);
-    tcpoverudpclientTunnelUpStreamFinish(fixture->kcp, line);
-
+    tunnelNextUpStreamFinish(prev, line);
     twfRequire(lineIsAlive(line), "the borrowed TcpOverUdpClient line died before its owner reclaimed it");
-    twfRequireLineStateZeroed(
-        line, fixture->kcp, "TcpOverUdpClient left line state alive during the re-entrant Finish");
-    lineDestroy(line);
+    twfRequireLineStateZeroed(line, fixture->kcp, "TcpOverUdpClient kept state alive during reentrant Finish");
+    if (destroy_line)
+    {
+        lineDestroy(line);
+    }
 }
 
-static void caseRejectedPauseFallsBackInlineAcrossReentrantLineDeath(void)
+static void casePauseAfterAdmissionClosesReentrantly(void)
 {
-    twfSetCase("TcpOverUdpClient queued Pause rejection with re-entrant owner close");
-
+    twfSetCase("TcpOverUdpClient post-admission Pause with reentrant owner close");
     tcpoverudp_fixture_t fixture;
     fixtureSetup(&fixture, false);
-
     twf_line_pool_t line_pool;
     twfLinePoolSetup(&line_pool, fixture.kcp->lstate_size, 1);
     line_t *line = twfLinePoolCreateLine(&line_pool);
-
-    tcpoverudpclientTunnelUpStreamInit(fixture.kcp, line);
-    tcpoverudpclient_lstate_t *ls = lineGetState(line, fixture.kcp);
-    twfRequire(ls->k_handle != NULL && ls->k_timer != NULL,
-               "TcpOverUdpClient did not initialize the rejection-case line");
-    twfRequireEqualU32(fixture.trace.next_init, 1, "TcpOverUdpClient did not initialize its next neighbor");
-
+    tunnelNextUpStreamInit(fixture.prev, line);
     tcpoverudpclient_tstate_t *state = tunnelGetState(fixture.kcp);
     state->kcp_send_buffer_limit     = 1;
-    twfRequire(ikcp_send(ls->k_handle, "x", 1) == 1, "TcpOverUdpClient could not prime its KCP send queue");
-    twfRequire(ikcp_waitsnd(ls->k_handle) > state->kcp_send_buffer_limit,
-               "TcpOverUdpClient did not reach the queued-Pause threshold");
+    fixture.prev->fnPauseD           = clientOwnerClosesOnPressure;
+    g_pressure_fixture               = &fixture;
+    g_pressure_line                  = line;
+    g_pressure_calls                 = 0;
 
     sbuf_t *input = bufferpoolGetLargeBuffer(fixture.env.pool);
-    twfRequire(input != NULL, "failed to allocate the TcpOverUdpClient input buffer");
-    sbufSetLength(input, 3);
+    sbufSetLength(input, (uint32_t) tcpoverudpclientGetKcpWriteMtu(state) + 1U);
+    memoryZero(sbufGetMutablePtr(input), sbufGetLength(input));
+    tunnelNextUpStreamPayload(fixture.prev, line, input);
 
-    fixture.prev->fnPauseD     = clientOwnerClosesReentrantlyOnPause;
-    g_pause_fixture            = &fixture;
-    g_expected_schedule_tunnel = fixture.kcp;
-    g_expected_schedule_line   = line;
-    g_pause_schedule_calls     = 0;
-    g_inline_pause_calls       = 0;
-    g_reject_pause_submission  = true;
-    const uint32_t recycled    = twfRecycleCount();
-
-    tcpoverudpclientTunnelUpStreamPayload(fixture.kcp, line, input);
-
-    g_reject_pause_submission  = false;
-    g_expected_schedule_line   = NULL;
-    g_expected_schedule_tunnel = NULL;
-    g_pause_fixture            = NULL;
-
-    twfRequireEqualU32(g_pause_schedule_calls, 1, "TcpOverUdpClient did not reject exactly one queued Pause");
-    twfRequireEqualU32(g_inline_pause_calls, 1, "TcpOverUdpClient did not run the inline Pause fallback once");
-    twfRequireEqualU32(
-        fixture.trace.next_finish, 1, "TcpOverUdpClient did not finish its initialized next side during re-entry");
-    twfRequireEqualU32(
-        twfRecycleCount(), recycled + 1U, "TcpOverUdpClient did not settle only its still-local input buffer");
-    twfRequireLastRecycle(
-        input, fixture.env.pool, "TcpOverUdpClient did not recycle input through the pool captured before re-entry");
+    twfRequireEqualU32(g_pressure_calls, 1, "the admitted burst did not synchronously request one Pause");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "reentrant Finish did not close the next side exactly once");
     requireNoLiveKcpResources();
     twfRequireNoLeakedBuffers();
-
+    g_pressure_fixture = NULL;
+    g_pressure_line    = NULL;
     twfLinePoolTeardown(&line_pool);
     twfWorkerEnvTeardown(&fixture.env);
     fixtureTeardown(&fixture);
+}
+
+static void caseAdvisorySignalsAndAckOnlyResume(void)
+{
+    for (unsigned close_on_resume = 0; close_on_resume < 2; ++close_on_resume)
+    {
+        twfSetCase(close_on_resume ? "TcpOverUdpClient ACK-only Resume with owner close"
+                                   : "TcpOverUdpClient repeated advisory signals and ACK-only Resume");
+        tcpoverudp_fixture_t fixture;
+        fixtureSetup(&fixture, false);
+        twf_line_pool_t line_pool;
+        twfLinePoolSetup(&line_pool, fixture.kcp->lstate_size, 1);
+        line_t *line = twfLinePoolCreateLine(&line_pool);
+        tunnelNextUpStreamInit(fixture.prev, line);
+        tcpoverudpclient_tstate_t *state = tunnelGetState(fixture.kcp);
+        tcpoverudpclient_lstate_t *ls    = lineGetState(line, fixture.kcp);
+        state->kcp_send_buffer_limit     = 1;
+
+        tunnelNextUpStreamPause(fixture.prev, line);
+        tunnelNextUpStreamPause(fixture.prev, line);
+        tunnelPrevDownStreamPause(fixture.next, line);
+        tunnelPrevDownStreamPause(fixture.next, line);
+        twfRequireEqualText(fixture.trace.seq, "IUUuu", "repeated Pause was suppressed");
+        tcpoverudpclientKcpLoopIntervalCallback(ls->k_timer);
+        twfRequire(fixture.trace.next_payload > 0, "scheduled KCP output waited for Resume");
+        twfRequire(! ls->source_paused, "received Pause changed our own-pressure latch");
+
+        sbuf_t *input = bufferpoolGetLargeBuffer(fixture.env.pool);
+        sbufSetLength(input, (uint32_t) tcpoverudpclientGetKcpWriteMtu(state) + 1U);
+        memoryZero(sbufGetMutablePtr(input), sbufGetLength(input));
+        tunnelNextUpStreamPayload(fixture.prev, line, input);
+        twfRequire(ls->source_paused, "KCP backlog did not establish its own source hold");
+        twfRequire(tcpoverudpclientUpdateKcp(ls, true), "KCP data flush destroyed a live line");
+        const uint32_t output_before_ack = fixture.trace.next_payload;
+        const uint32_t events_before_ack = fixture.trace.len;
+        const uint32_t next_sequence     = ls->k_handle->snd_nxt;
+        twfRequire(next_sequence > 0, "ACK fixture has no transmitted segments");
+
+        if (close_on_resume)
+        {
+            fixture.prev->fnResumeD = clientOwnerClosesOnPressure;
+            g_pressure_fixture      = &fixture;
+            g_pressure_line         = line;
+            g_pressure_calls        = 0;
+        }
+
+        sbuf_t *ack = bufferpoolGetSmallBuffer(fixture.env.pool);
+        sbufSetLength(ack, 24);
+        uint8_t *bytes = sbufGetMutablePtr(ack);
+        memoryZero(bytes, 24);
+        bytes[4] = 82; // ACK: no PUSH input or outgoing acknowledgement needed.
+        bytes[6] = 128;
+        for (unsigned i = 0; i < 4; ++i)
+        {
+            bytes[12 + i] = (uint8_t) ((next_sequence - 1U) >> (8U * i));
+            bytes[16 + i] = (uint8_t) (next_sequence >> (8U * i));
+        }
+        tunnelPrevDownStreamPayload(fixture.next, line, ack);
+        twfRequireEqualU32(fixture.trace.next_payload,
+                           output_before_ack,
+                           "ACK-only input unexpectedly needed outbound packet progress");
+        if (close_on_resume)
+        {
+            twfRequireEqualU32(g_pressure_calls, 1, "ACK-only input did not emit Resume before closure");
+            twfRequireEqualU32(fixture.trace.next_finish, 1, "Resume reentry did not finish exactly once");
+            twfRequire(lineIsAlive(line), "borrowed line unexpectedly died after Resume Finish");
+            twfRequireLineStateZeroed(line, fixture.kcp, "Resume Finish left KCP state alive");
+            lineDestroy(line);
+            g_pressure_fixture = NULL;
+            g_pressure_line    = NULL;
+        }
+        else
+        {
+            twfRequire(! ls->source_paused, "ACK-only input left the source paused");
+            twfRequireEqualU32(fixture.trace.len, events_before_ack + 1U, "ACK-only input emitted extra callbacks");
+            twfRequire(fixture.trace.seq[events_before_ack] == 'r', "ACK-only input did not resume the source");
+            const uint32_t relay_start = fixture.trace.len;
+            tunnelNextUpStreamResume(fixture.prev, line);
+            tunnelNextUpStreamResume(fixture.prev, line);
+            tunnelPrevDownStreamResume(fixture.next, line);
+            tunnelPrevDownStreamResume(fixture.next, line);
+            twfRequireEqualText(fixture.trace.seq + relay_start, "RRrr", "repeated Resume was suppressed");
+            tcpoverudpclientLinestateDestroy(ls);
+            lineDestroy(line);
+        }
+        requireNoLiveKcpResources();
+        twfRequireNoLeakedBuffers();
+        twfLinePoolTeardown(&line_pool);
+        twfWorkerEnvTeardown(&fixture.env);
+        fixtureTeardown(&fixture);
+    }
 }
 
 static uint32_t g_mtu_output_count;
@@ -461,12 +531,6 @@ static void caseMtuConfigurationAndOutput(void)
 
             tcpoverudp_fixture_t fixture;
             fixtureSetup(&fixture, fec != 0);
-            master_pool_t  *context_master = masterpoolCreateWithCapacity(8);
-            generic_pool_t *contexts =
-                genericpoolCreateWithDefaultAllocatorAndCapacity(context_master, sizeof(context_t), 8);
-            twfRequire(contexts != NULL, "context pool allocation failed");
-            GSTATE.shortcut_context_pools = &contexts;
-
             tunnelDestroy(fixture.kcp);
             fixture.kcp = configured;
             tunnelBind(fixture.prev, fixture.kcp);
@@ -506,10 +570,6 @@ static void caseMtuConfigurationAndOutput(void)
             tcpoverudpclientLinestateDestroy(ls);
             twfLineDestroy(line);
             requireNoLiveKcpResources();
-            GSTATE.shortcut_context_pools = NULL;
-            genericpoolDestroy(contexts);
-            masterpoolMakeEmpty(context_master);
-            masterpoolDestroy(context_master);
             twfWorkerEnvTeardown(&fixture.env);
             fixtureTeardown(&fixture);
             CORE_DEFAULT_MTU = 68;
@@ -525,7 +585,8 @@ int main(void)
     caseInitializationFails(kInjectKcpTimer, false, "KCP interval timer creation fails");
     caseInitializationFails(kInjectFecEncoder, true, "FEC encoder creation fails");
     caseInitializationFails(kInjectFecDecoder, true, "FEC decoder creation fails");
-    caseRejectedPauseFallsBackInlineAcrossReentrantLineDeath();
+    casePauseAfterAdmissionClosesReentrantly();
+    caseAdvisorySignalsAndAckOnlyResume();
 
     printf("tcpoverudpclient_line_failure_test: all cases passed\n");
     return 0;

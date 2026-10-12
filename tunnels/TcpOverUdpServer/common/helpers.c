@@ -87,14 +87,21 @@ bool tcpoverudpserverUpdateKcp(tcpoverudpserver_lstate_t *ls, bool flush)
         contextDestroy(c);
     }
 
-    while (lineIsAlive(l) && ls->k_handle != NULL && contextqueueLen(&ls->cq_u) > 0)
+    // Reconcile only after KCP and its output callbacks settle, including ACK-only input.
+    if (lineIsAlive(l) && ls->k_handle != NULL && ls->can_upstream)
     {
-        context_t *c = contextqueuePop(&ls->cq_u);
-        if (ls->can_upstream)
+        const int queued = ikcp_waitsnd(ls->k_handle);
+        const int limit  = tcpoverudpserverGetKcpSendBufferLimit(ls);
+        if (! ls->source_paused && queued > limit)
         {
-            contextApplyOnNextTunnelU(c, t);
+            ls->source_paused = true;
+            tunnelNextUpStreamPause(t, l);
         }
-        contextDestroy(c);
+        else if (ls->source_paused && queued < limit)
+        {
+            ls->source_paused = false;
+            tunnelNextUpStreamResume(t, l);
+        }
     }
     ret = lineIsAlive(l) && ls->k_handle != NULL;
 
@@ -164,13 +171,6 @@ int tcpoverudpserverKUdpOutput(const char *data, int len, ikcpcb *kcp, void *use
 
     assert(ls != NULL && ls->k_handle != NULL && ls->line != NULL && lineIsAlive(ls->line));
     line_t *l = ls->line;
-
-    if (ls->write_paused && ikcp_waitsnd(ls->k_handle) < tcpoverudpserverGetKcpSendBufferLimit(ls))
-    {
-        ls->write_paused = false;
-        context_t *ctx   = contextCreateResume(l);
-        contextqueuePush(&ls->cq_u, ctx);
-    }
 
     if (ls->fec_encoder != NULL)
     {

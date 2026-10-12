@@ -230,9 +230,11 @@ If no data is received for too long:
 
 ### Backpressure behavior
 
-If the KCP send queue grows beyond `kcp-send-buffer-limit`, `TcpOverUdpClient` schedules a pause toward the previous side. When that setting is `0`, the limit is derived from the current KCP windows. Once the KCP queue drains enough, it schedules a resume.
+Pause and Resume are repeatable advisory signals and are forwarded transparently. Ready data, retransmissions, acknowledgements and due pings do not wait for Resume.
 
-This is how the tunnel prevents unbounded growth while the packet path is congested.
+After admitting the complete input and settling KCP packet output, the node compares its send queue with `kcp-send-buffer-limit`. Crossing above that threshold requests Pause toward the previous side; falling below it releases that local hold with Resume. When the setting is `0`, the threshold is derived from the current KCP windows. ACK-only input can release the hold without another outgoing packet. Notifications are sent synchronously after KCP processing, preserving input order and safe reentrant Finish handling.
+
+This setting is a soft segment-count threshold, not a hard memory or admission limit. KCP windows and the receive timeout remain in force. The node cannot bypass itself: every payload still needs KCP/FEC processing, and its reliability and timeout state remain necessary.
 
 ## Notes And Caveats
 

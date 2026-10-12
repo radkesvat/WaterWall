@@ -77,18 +77,17 @@ bool tcpoverudpserverLinestateInitialize(tcpoverudpserver_lstate_t *ls, line_t *
         }
     }
 
-    *ls = (tcpoverudpserver_lstate_t) {.k_handle     = k_handle,
-                                       .k_timer      = k_timer,
-                                       .fec_encoder  = fec_encoder,
-                                       .fec_decoder  = fec_decoder,
-                                       .tunnel       = t,
-                                       .line         = l,
-                                       .last_recv    = wloopNowMS(getWorkerLoop(lineGetWID(l))),
-                                       .cq_d         = contextqueueCreate(),
-                                       .cq_u         = contextqueueCreate(),
-                                       .write_paused = false,
-                                       .can_upstream = true,
-                                       .ping_sent    = true};
+    *ls = (tcpoverudpserver_lstate_t) {.k_handle      = k_handle,
+                                       .k_timer       = k_timer,
+                                       .fec_encoder   = fec_encoder,
+                                       .fec_decoder   = fec_decoder,
+                                       .tunnel        = t,
+                                       .line          = l,
+                                       .last_recv     = wloopNowMS(getWorkerLoop(lineGetWID(l))),
+                                       .cq_d          = contextqueueCreate(),
+                                       .source_paused = false,
+                                       .can_upstream  = true,
+                                       .ping_sent     = true};
 
     // published only after the line state is committed, so the timer callback can never observe a partial state
     weventSetUserData(k_timer, ls);
@@ -106,7 +105,6 @@ void tcpoverudpserverLinestateDestroy(tcpoverudpserver_lstate_t *ls)
     weventSetUserData(ls->k_timer, NULL);
     wtimerDelete(ls->k_timer);
 
-    contextqueueDestroy(&ls->cq_u);
     contextqueueDestroy(&ls->cq_d);
 
     tcpoverudpFecEncoderDestroy(&ls->fec_encoder);

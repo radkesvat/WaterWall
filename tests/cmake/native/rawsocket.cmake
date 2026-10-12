@@ -498,7 +498,6 @@ foreach(tcpoverudp_side Client Server)
       "-Wl,--wrap=tcpoverudpFecDecoderCreate"
       "-Wl,--wrap=tcpoverudpFecEncoderDestroy"
       "-Wl,--wrap=tcpoverudpFecDecoderDestroy"
-      "-Wl,--wrap=lineScheduleTask"
     )
     target_link_libraries(${tcpoverudp_test} PRIVATE ww)
     add_dependencies(waterwall_unit_tests ${tcpoverudp_test})

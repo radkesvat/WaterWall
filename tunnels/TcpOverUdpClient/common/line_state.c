@@ -84,9 +84,8 @@ bool tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
                                        .tunnel         = t,
                                        .line           = l,
                                        .last_recv      = wloopNowMS(getWorkerLoop(lineGetWID(l))),
-                                       .cq_d           = contextqueueCreate(),
                                        .cq_u           = contextqueueCreate(),
-                                       .write_paused   = false,
+                                       .source_paused  = false,
                                        .can_downstream = true,
                                        .ping_sent      = true};
 
@@ -108,7 +107,6 @@ void tcpoverudpclientLinestateDestroy(tcpoverudpclient_lstate_t *ls)
     wtimerDelete(ls->k_timer);
 
     contextqueueDestroy(&ls->cq_u);
-    contextqueueDestroy(&ls->cq_d);
 
     tcpoverudpFecEncoderDestroy(&ls->fec_encoder);
     tcpoverudpFecDecoderDestroy(&ls->fec_decoder);

@@ -35,8 +35,7 @@ typedef struct tcpoverudpclient_lstate_s
     tcpoverudp_fec_decoder_t *fec_decoder;    // optional fec decoder
     uint64_t                  last_recv;      // last received timestamp
     context_queue_t           cq_u;           // context queue upstream
-    context_queue_t           cq_d;           // context queue downstream
-    bool                      write_paused;   // write pause state
+    bool                      source_paused;  // our KCP send-queue pressure
     bool                      can_downstream; // can downstream data
     bool                      ping_sent;      // ping sent state
 

@@ -227,7 +227,21 @@ Idle handling is the same basic model as the client side:
 
 ### Backpressure behavior
 
-If the KCP send queue grows beyond `kcp-send-buffer-limit`, `TcpOverUdpServer` schedules a pause toward the next side. When that setting is `0`, the limit is derived from the current KCP windows. When queued KCP data drops back below the threshold, it schedules resume.
+Pause and Resume are repeatable advisory notifications. Received signals pass
+through, except toward the already-finished stream side during close-frame
+flushing. KCP data, acknowledgements, retransmissions and due pings do not wait
+for Resume; KCP windows and timers still control protocol progress.
+
+After an admitted stream payload is encoded and KCP output settles, a send queue
+above `kcp-send-buffer-limit` triggers one Pause toward the next side. When the
+queue falls below that threshold, the node releases its own pressure with Resume,
+including when an incoming ACK drains it without producing another packet. When
+the setting is `0`, the threshold comes from the current KCP windows. This is an
+advisory threshold in KCP segments, not a hard admission limit.
+
+The node remains active for the entire line: every payload needs KCP and optional
+FEC processing, and the session retains its timers and close protocol. It cannot
+bypass itself after setup.
 
 ## Notes And Caveats
 
