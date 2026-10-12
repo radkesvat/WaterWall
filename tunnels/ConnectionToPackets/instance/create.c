@@ -138,6 +138,44 @@ static bool ctpLoadOptionalInteger(const cJSON *settings, const char *key, int64
     return true;
 }
 
+static bool ctpLoadTarget(ctp_tstate_t *ts, const cJSON *settings)
+{
+    const cJSON *port_json = cJSON_GetObjectItemCaseSensitive(settings, "port");
+    int64_t      port      = 0;
+    if (port_json != NULL &&
+        ! (cJSON_IsString(port_json) && stringCompare(port_json->valuestring, "dest_context->port") == 0) &&
+        ! jsonGetIntegerInRange(port_json, 1, UINT16_MAX, &port))
+    {
+        LOGF("JSON Error: ConnectionToPackets->settings->port must be an integer in [1, 65535] or "
+             "\"dest_context->port\"");
+        return false;
+    }
+
+    const char               *address = NULL;
+    const json_value_status_t status  = jsonGetObjectNonEmptyString(settings, "target-address", &address);
+    if (status == kJsonValueInvalid || (status == kJsonValuePresent && stringLength(address) > UINT8_MAX))
+    {
+        LOGF("JSON Error: ConnectionToPackets->settings->target-address must be a string of 1..255 bytes");
+        return false;
+    }
+
+    if (status == kJsonValuePresent && stringCompare(address, "dest_context->address") != 0)
+    {
+        if (! addresscontextSetIpAddress(&ts->target_addr, address))
+        {
+            addresscontextDomainSet(&ts->target_addr, address, (uint8_t) stringLength(address));
+        }
+        else if (! addresscontextIsIpv4(&ts->target_addr))
+        {
+            LOGF("JSON Error: ConnectionToPackets->settings->target-address must be IPv4 or a domain; "
+                 "this node emits IPv4 only");
+            return false;
+        }
+    }
+    addresscontextSetPort(&ts->target_addr, (uint16_t) port);
+    return true;
+}
+
 bool ctpLoadSettings(ctp_tstate_t *ts, const cJSON *settings)
 {
     if (! checkJsonIsObjectAndHasChild(settings))
@@ -219,7 +257,7 @@ bool ctpLoadSettings(ctp_tstate_t *ts, const cJSON *settings)
     }
     ts->max_pending_bytes = (uint32_t) max_pending_bytes;
 
-    return true;
+    return ctpLoadTarget(ts, settings);
 }
 
 tunnel_t *ctpTunnelCreate(node_t *node)

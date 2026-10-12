@@ -36,6 +36,7 @@ void ctpTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
     ctpDestroyLwipResources(t);
 
     ctpDestroyInternalDomainResolver(ts);
+    addresscontextReset(&ts->target_addr);
 
     ctpFlowRegistryDestroy(ts);
 

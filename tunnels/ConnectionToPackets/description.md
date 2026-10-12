@@ -35,7 +35,19 @@ scope and still requires an OS routing or VPN mechanism.
 
 ## Topologies
 
-The smallest rootless end-to-end topology is a direct composition with `PacketsToConnection`:
+For a fixed destination, configure `target-address` and `port` on `ConnectionToPackets`:
+
+```text
+TcpListener -> ConnectionToPackets -> packet transport
+```
+
+A direct rootless end-to-end path needs no packet transport:
+
+```text
+TcpListener -> ConnectionToPackets -> PacketsToConnection -> TcpUdpConnector -> destination
+```
+
+For destinations selected separately for each connection, let a preceding node supply the destination context:
 
 ```text
 TcpListener -> Socks5Server -> ConnectionToPackets
@@ -91,6 +103,7 @@ The contract is enforced at both ends:
 
 - `domain-strategy` accepts only `only-ipv4`, so an AAAA-only domain fails DNS with a name in the message instead of
   resolving to an address this node then has to reject
+- a literal IPv6 `target-address` is a configuration error
 - a destination that is nonetheless IPv6 closes that one line with an explicit error
 
 Enabled lwIP IPv6 support is unchanged. Nodes on one worker share its engine; this bridge still accepts only IPv4.
@@ -133,6 +146,8 @@ input reassembly are separate responsibilities.
 | Setting | Required | Default | Meaning |
 | --- | --- | --- | --- |
 | `source-ipv4` | yes | none | Virtual IPv4 source assigned to the per-worker lwIP netifs and to every actively opened PCB. There is deliberately no default, because a silently chosen address would eventually collide with a real one. Must not be `0.0.0.0`, a loopback, multicast, or broadcast address. |
+| `target-address` | no | `dest_context->address` | IPv4 address or domain to connect to. The exact string `dest_context->address` keeps the incoming destination address. A configured address overrides only that address. Literal IPv6 is rejected. |
+| `port` | no | `dest_context->port` | Integer destination port in `1` .. `65535`, or the exact string `dest_context->port` to keep the incoming destination port. |
 | `mtu` | no | core `misc.mtu` | Raw IP MTU of the virtual netifs. Valid range `576` .. `9000`. TCP derives its send MSS from it; UDP fragments above it. An inherited core value outside the range is a configuration error, not something to round into range. Core `misc.mtu` is itself validated as a whole number in `68` .. `65535` before it is stored, so it can no longer wrap into a different MTU or into zero. |
 | `domain-strategy` | no | `only-ipv4` | `only-ipv4` is the only accepted value. Every other strategy can hand this node an address it cannot use: the two IPv6 ones directly, `prefer-ipv4` through its AAAA-only fallback, and `accept-dns-returned-order` by preferring neither family. |
 | `tcp-connect-timeout-ms` | no | `30000` | Deadline for the active TCP open. On expiry the line is closed toward the previous node. |
@@ -166,9 +181,30 @@ Protocol selection is deliberately identical to `TcpUdpConnector`, so both nodes
 - otherwise an exact source-context protocol is used
 - a missing or ambiguous protocol rejects that one line
 
-The destination address and port come from the line's destination context. A domain is resolved by an internal
-`DomainResolver` inserted directly in front of this node during chaining, so the emitted packet already carries the
-resolved IP.
+`target-address` and `port` select the destination independently. Omit either field, or use its exact
+`dest_context->...` value, to keep that part of the incoming destination context. `source-ipv4` remains the virtual
+source of emitted packets; it does not select the destination.
+
+The internal `DomainResolver` applies these settings once in its prepare hook, before DNS. A configured domain is
+resolved just like an incoming domain; the node consumes the resolved address without reapplying the settings.
+The destination must have an address and nonzero port before a flow can open. A plain `TcpListener` supplies the
+source TCP protocol, so fixed forwarding does not require SOCKS:
+
+```json
+{
+  "name": "connection-to-packets",
+  "type": "ConnectionToPackets",
+  "settings": {
+    "source-ipv4": "10.90.0.1",
+    "target-address": "example.com",
+    "port": 443
+  },
+  "next": "packets-to-connection"
+}
+```
+
+This node configuration fits the direct rootless path above. Replace `next` with the entry of your packet transport
+when the packet path runs to another host.
 
 There is no fake DNS here. Preserving the original domain for policy decisions on the remote `PacketsToConnection` side
 would need a separate metadata protocol and is not part of this node.

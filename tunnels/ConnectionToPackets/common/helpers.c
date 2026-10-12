@@ -272,9 +272,22 @@ bool ctpDomainResolverPrepare(tunnel_t *resolver, tunnel_t *owner, line_t *l, vo
         return false;
     }
 
-    if (! addresscontextHasPort(dest_ctx))
+    /* Address replacement resets the context, so retain its selected protocol
+     * and port first. Dynamic address and port choices are independent. */
+    const uint16_t port = ts->target_addr.port != 0 ? ts->target_addr.port : dest_ctx->port;
+    if (port == 0)
     {
         LOGE("ConnectionToPackets: destination port is not initialized");
+        return false;
+    }
+
+    if (addresscontextIsIpType(&ts->target_addr) || addresscontextIsDomain(&ts->target_addr))
+    {
+        addresscontextCopy(dest_ctx, &ts->target_addr);
+    }
+    else if (! addresscontextIsIpType(dest_ctx) && ! addresscontextIsDomain(dest_ctx))
+    {
+        LOGE("ConnectionToPackets: destination address is not initialized");
         return false;
     }
 
@@ -282,6 +295,7 @@ bool ctpDomainResolverPrepare(tunnel_t *resolver, tunnel_t *owner, line_t *l, vo
 
     // Selecting here rather than in Init means DNS already runs with the right
     // protocol and strategy, and Init only has to consume the result.
+    addresscontextSetPort(dest_ctx, port);
     addresscontextSetOnlyProtocol(dest_ctx, protocol);
     addresscontextSetDomainStrategy(dest_ctx, (enum domain_strategy) ts->domain_strategy);
     return true;

@@ -1,22 +1,20 @@
 # Connection to packets tcp bridge roundtrip
 
 
-Exercises the connection to packets tcp bridge roundtrip scenario with the topology in this directory.
+Exercises a fixed destination selected by ConnectionToPackets from JSON. TcpListener supplies only the incoming TCP source context; no SOCKS node or other node supplies its destination. The internal resolver must prepare the configured IPv4 address and port before the bridge opens the flow.
 
 Configured nodes and onward edges (`next`; listeners/connectors form the OS transport boundaries):
 
-- `tester-client`: `TesterClient` → `socks5-client`
-- `socks5-client`: `Socks5Client` → `proxy-connector`
+- `tester-client`: `TesterClient` → `proxy-connector`
 - `proxy-connector`: `TcpConnector` (terminal or independently bound endpoint)
-- `proxy-listener`: `TcpListener` → `socks5-server`
-- `socks5-server`: `Socks5Server` → `connection-to-packets`
+- `proxy-listener`: `TcpListener` → `connection-to-packets`
 - `connection-to-packets`: `ConnectionToPackets` → `packets-to-connection`
 - `packets-to-connection`: `PacketsToConnection` → `target-connector`
 - `target-connector`: `TcpConnector` (terminal or independently bound endpoint)
 - `target-listener`: `TcpListener` → `tester-server`
 - `tester-server`: `TesterServer` (terminal or independently bound endpoint)
 
-Scenario choices: `connection-to-packets.mtu=1500`. These values define the workload/edge case and are not tuning advice.
+Scenario choices: `connection-to-packets.target-address=10.90.0.2`, `connection-to-packets.port=9001`, `connection-to-packets.mtu=1500`. The separate multiworker TCP and UDP bridge cases retain dynamic SOCKS destination coverage. These values define the workload/edge case and are not tuning advice.
 
 CTest selections and overrides:
 

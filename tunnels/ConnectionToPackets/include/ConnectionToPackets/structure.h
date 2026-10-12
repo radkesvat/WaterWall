@@ -534,6 +534,8 @@ typedef struct ctp_tstate_s
     uint32_t         drain_bytes;
     uint32_t         drain_count;
 
+    /* An unset address or zero port inherits that field from the line. */
+    address_context_t target_addr;
     ip4_addr_t source_ip;
     uint32_t   mtu;
     uint32_t   connect_timeout_ms;
