@@ -240,7 +240,7 @@ bool tlsclientUpdateSourcePressure(tunnel_t *t, line_t *l)
     {
         return true;
     }
-    bool paused = ls->shaping_wire_paused || ls->shaping_producer_paused || ls->plaintext_producer_paused;
+    bool paused = ls->shaping_producer_paused || ls->plaintext_producer_paused;
     if (paused == ls->source_paused)
     {
         return true;
@@ -338,13 +338,8 @@ bool tlsclientDrainShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls, 
         return false;
     }
 
-    if (ls->shaping_wire_paused)
-    {
-        return tlsclientUpdateShapingBackpressure(t, l, ls);
-    }
-
     uint64_t now_ms = wloopNowMS(getWorkerLoop(lineGetWID(l)));
-    while (! ls->shaping_wire_paused)
+    while (true)
     {
         sbuf_t *record = tlsrecordshapingOutputQueuePopReady(&ls->shaping_output, now_ms, force);
         if (record == NULL)
@@ -443,8 +438,7 @@ bool tlsclientScheduleShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *l
         return tlsclientTryRetireShaping(t, l, ls);
     }
 
-    if (ls->shaping_output_timer != NULL || ls->shaping_wire_paused ||
-        tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
+    if (ls->shaping_output_timer != NULL || tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
     {
         return true;
     }
@@ -485,11 +479,6 @@ bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
     bool                shape_output = ts->record_shaping.enabled && ! ls->shaping_retired && ls->handshake_completed &&
                         SSL_version(ls->ssl) == TLS1_3_VERSION;
 
-    if (ls->shaping_retired && ls->shaping_wire_paused)
-    {
-        return true;
-    }
-
     while (true)
     {
         sbuf_t *ssl_buf = tlsbufferbioTake(wbio);
@@ -516,10 +505,6 @@ bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
             if (ls->tunnel != t || ls->resources_released || ls->wbio != wbio)
             {
                 return false;
-            }
-            if (ls->shaping_retired && ls->shaping_wire_paused)
-            {
-                return true;
             }
             continue;
         }
@@ -551,11 +536,6 @@ bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
     }
 
     bool force = queued >= kTlsRecordShapingQueueHardLimit;
-    if (force && ls->shaping_wire_paused)
-    {
-        LOGW("TlsClient: record shaping queue exceeded 8 MiB while the wire side was paused");
-        return false;
-    }
     if (! tlsclientDrainShapedOutput(t, l, ls, force))
     {
         return false;

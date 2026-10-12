@@ -63,7 +63,6 @@ typedef struct tlsclient_lstate_s
     bool                            resources_released;
     bool                            post_handshake_consume_in_progress;
     bool                            upstream_finished;
-    bool                            shaping_wire_paused;
     bool                            shaping_producer_paused;
     /* Monotonic: once true, an uninitialized shaping_output is intentional. */
     bool shaping_retired;
@@ -71,7 +70,7 @@ typedef struct tlsclient_lstate_s
     bool shaping_metadata_error;
     bool verbose;
     bool transport_est_sent;
-    /* Protocol/order backlog pressure is independent of wire and shaping pressure. */
+    /* Locally originated protocol/order and shaping pressure share one source notification. */
     bool plaintext_producer_paused;
     bool source_paused;
     bool plaintext_write_in_progress;

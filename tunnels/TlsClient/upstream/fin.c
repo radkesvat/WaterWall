@@ -13,7 +13,7 @@ void tlsclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->shaping_output.initialized && ! tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
     {
-        if (! ls->shaping_wire_paused && ! tlsclientDrainShapedOutput(t, l, ls, true))
+        if (! tlsclientDrainShapedOutput(t, l, ls, true))
         {
             if (! lineIsAlive(l))
             {

@@ -2,7 +2,7 @@
 
 KeepAlive
 fixtures check ordinary and pipe bodies, fixed-header-only reads, large frame
-splitting, nested FIFO, ping/pong, Pause-aware timer production and callback-close
+splitting, nested FIFO, ping/pong, advisory Pause/Resume, due timer output and callback-close
 cleanup. Both sides also compile the actual framing and buffer sources with
 `WW_HAVE_SPLICE=0`. The `framed_{constant,port,v1,v2,keepalive,keepalive_client,keepalive_server}_splice_{true,false}`
 socket cases exercise HeaderServer modes and a TCP-connected KeepAlive pair,
@@ -18,7 +18,9 @@ late and nonempty pongs, transport Est, overlapping Pause/Resume, pending-frame
 cleanup on timeout, disabled behavior and strict settings validation. Separate
 idle items verify that a timely pong cancels only its watchdog, waiting never
 extends a reply deadline, and a tolerance shorter than the ping interval expires
-independently of probes or Resume.
+independently of probes or Resume. Due probes and ready Pong replies proceed
+during Pause. Repeated Pause/Resume relay in both directions, and nested peer
+Ping input waits behind the active reply without a separate control queue.
 The orderly-shutdown fixture checks embedded allocation and zero initialization
 for four worker slots, then exercises two client instances across two workers,
 checking independent idle tables, exact-line removal, surviving-line pings and

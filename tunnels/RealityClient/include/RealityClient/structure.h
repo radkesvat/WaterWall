@@ -54,12 +54,10 @@ typedef struct realityclient_lstate_s
     bool                        next_finished;
     bool                        terminal_closing;
     bool                        wire_alert_sent;
-    bool                        wire_paused;
     bool                        plaintext_producer_paused;
-    bool                        source_paused;
     bool                        upstream_send_in_progress;
     /* Early plaintext and reentrant input wait behind this owned active head.
-     * Completion/Resume drains are independent producers and honor wire Pause. */
+     * Authenticated completion drains it without waiting for advisory Resume. */
     sbuf_t *pending_active;
 } realityclient_lstate_t;
 
@@ -127,7 +125,7 @@ bool                              realityclientProcessDownstream(tunnel_t *t, li
 bool                              realityclientSendHandoffControl(tunnel_t *t, line_t *l, uint8_t record_kind);
 bool                              realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf);
 bool                              realityclientFlushPendingUpstream(tunnel_t *t, line_t *l);
-bool                              realityclientUpdateSourcePressure(tunnel_t *t, line_t *l);
+bool                              realityclientSetSourcePaused(tunnel_t *t, line_t *l, bool paused);
 void                              realityclientCloseLineBidirectional(tunnel_t *t, line_t *l);
 void                              realityclientFailAuthenticated(tunnel_t *t, line_t *l);
 void                              realityclientHandlePeerAlert(tunnel_t *t, line_t *l, uint8_t alert);

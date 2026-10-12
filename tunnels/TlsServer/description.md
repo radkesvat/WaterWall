@@ -207,9 +207,9 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
 
   The fallback branch still receives `Init` immediately. Only payload is delayed. This small delay exists to reduce
   timing-based active-probe fingerprints where a detector compares how quickly a plaintext probe is handed to fallback.
-  Set to `0` to disable the intentional delay. At delay zero, an active unpaused fallback with no older queued bytes or
-  scheduled drain receives payload inline. Paused fallback bytes, and bytes behind an older FIFO batch, stay FIFO and
-  Resume schedules that retained drain before later payload can overtake it. Delayed fallback payloads are delivered in
+  Set to `0` to disable the intentional delay. At delay zero, an initialized fallback with no older queued bytes or
+  scheduled drain receives payload inline, including during Pause. Retained bytes drain without waiting for Resume;
+  later input cannot overtake an older FIFO batch. Delayed fallback payloads are delivered in
   FIFO order and are bounded to 1 MiB per line; close-time behavior is described in [Fallback behavior](#fallback-behavior).
 
   This value must be calibrated against the public behavior the fallback should resemble. The important question is
@@ -272,20 +272,20 @@ capture, overhead, connection-success, and classifier measurements justify publi
 Padding is standard zero-valued TLS 1.3 `TLSInnerPlaintext` padding and adds the selected number of bytes to ciphertext,
 subject to the remaining legal TLS record capacity. Delay starts after encryption and adds up to the selected latency.
 Records stay in wire order with `release_at = max(now + delay, previous_release_at)`. Queued ciphertext is bounded to 8
-MiB per line, with producer backpressure at 6 MiB and release at 3 MiB. Pause and Resume propagation follows the
-current wire state: if draining during Resume re-enters with another wire Pause, the stale Resume is suppressed until a
-later wire Resume. After peer `close_notify` finishes the cleartext side, `TlsServer` sends no Payload, Pause, or Resume
+MiB per line, with locally originated producer Pause at 6 MiB and Resume at 3 MiB. Incoming Pause and Resume
+are relayed transparently, including duplicates. Due ciphertext drains keep their existing timing and FIFO order without
+waiting for Resume; Pause does not cancel the release timer. After peer `close_notify` finishes the cleartext side, `TlsServer` sends no Payload, Pause, or Resume
 toward it; application bytes received later or already decrypted by an outer callback are discarded. If the cleartext
 side finishes, already accepted server ciphertext and an unpadded `close_notify` drain before downstream
 `Finish`; a wire-side finish cancels and discards queued output and is propagated only toward cleartext. Timer allocation
 failure drains immediately in order.
 
 After the configured application-record scope is consumed, the current shaping queue first drains completely so no later
-TLS record can overtake delayed ciphertext. While that ordering barrier is active, the cleartext producer remains paused
-even below the normal low watermark. At an empty queue and complete write-BIO boundary, the timer and per-line shaping
-queue are released; later TLS output is forwarded directly without record parsing or shaping metadata. Ordinary wire
-Pause still applies in this direct phase. The 8 MiB limit and 6/3 MiB watermarks therefore bound only the finite active
-shaping window.
+TLS record can overtake delayed ciphertext. While that ordering barrier is active, the node retains its local shaping
+hold even below the normal low watermark; relayed Resume remains advisory. At an empty queue and complete write-BIO boundary, the timer and per-line shaping
+queue are released; later TLS output is forwarded directly without record parsing or shaping metadata, including during
+advisory Pause. The 8 MiB limit and 6/3 MiB watermarks therefore bound only the finite active shaping window. TLS record
+encryption and decryption remain active, so shaping retirement does not permanently bypass the tunnel.
 
 Record shaping can make early sizes and timings less deterministic, but it cannot remove an inner handshake round trip,
 make a burst smaller, or hide every direction and timing feature. Combine it with `MuxClient`/`MuxServer` when
@@ -333,8 +333,8 @@ protected `next` branch, and continues the normal TLS handshake.
 
 If the first bytes are clearly not TLS, `TlsServer` releases its TLS state and initializes the fallback node. With a
 nonzero configured delay, it sends the saved bytes and later live upstream batches after that delay and jitter. At delay
-zero, an active unpaused fallback with no older FIFO batch or scheduled drain receives payload inline; paused or older
-bytes remain FIFO and Resume schedules their drain before later payload can overtake them. From that point onward,
+zero, an initialized fallback with no older FIFO batch or scheduled drain receives payload inline, including during
+Pause. Retained bytes drain in FIFO order without waiting for Resume; later input cannot overtake them. From that point onward,
 payloads in both directions are passed through the fallback branch without TLS encryption or decryption.
 
 If the first bytes look like a TLS handshake record (`16 03`), OpenSSL parses the ClientHello. With `sni` configured, mismatched or absent SNI suspends the handshake and selects fallback before TLS output. Malformed ClientHello/SNI input rejected before routing stays on the TLS error path. After an SNI fallback selection, the fallback server owns TLS negotiation and its errors.
@@ -342,8 +342,11 @@ If the first bytes look like a TLS handshake record (`16 03`), OpenSSL parses th
 The fallback delay is applied only to upstream payloads during normal live operation, and delayed bytes stay in a FIFO
 bounded to 1 MiB per line. Downstream responses from fallback are not intentionally delayed. An upstream `Finish` does not
 keep the remaining intentional delay alive: accepted queued bytes are synchronously flushed in FIFO order before fallback
-`Finish` when fallback can accept payload. If fallback has already paused payload, `TlsServer` discards the still-local
-batch and closes fallback rather than bypassing backpressure. Delay and jitter are only mitigations; they do not prove
+`Finish`, including during advisory Pause. A close while fallback Init is still running discards the batch.
+Fallback routing remains active because it selects a branch outside the ordinary `next` path. Before selecting a branch,
+the latest receiver Pause is retained only for replay after that branch's Init; Resume cancels it. Once initialized,
+the selected branch receives every Pause and Resume, and these notifications do not gate output.
+Delay and jitter are only mitigations; they do not prove
 timing indistinguishability. Measure the deployment path and choose values that match the service being impersonated.
 
 SNI fallback requires a real TLS listener; a plain HTTP service can produce a fingerprintable non-TLS response to a TLS ClientHello. ALPN selection does not route to fallback. Enforce access in an inner protocol such as Trojan or VLESS authentication.

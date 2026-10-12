@@ -151,6 +151,11 @@ This matches the direction of traffic pressure:
 - backpressure on downstream replies affects the main line
 - backpressure from the service side affects the upload path
 
+The server remains an endpoint for each exact line: it borrows the two transports
+and owns the reconstructed main line. It must stay active to map payload, pressure
+and Finish between them. Its startup replay still respects next-side Pause; the
+ordinary middle-node transparency rule does not remove this producer control.
+
 ### Finish behavior
 
 If either half-connection closes after pairing:

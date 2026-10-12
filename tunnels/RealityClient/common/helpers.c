@@ -233,19 +233,18 @@ bool realityclientSendHandoffControl(tunnel_t *t, line_t *l, uint8_t record_kind
     return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, frame);
 }
 
-bool realityclientUpdateSourcePressure(tunnel_t *t, line_t *l)
+bool realityclientSetSourcePaused(tunnel_t *t, line_t *l, bool paused)
 {
     realityclient_lstate_t *ls = lineGetState(l, t);
     if (ls->terminal_closing || ls->prev_finished)
     {
         return false;
     }
-    bool paused = ls->wire_paused || ls->plaintext_producer_paused;
-    if (paused == ls->source_paused)
+    if (paused == ls->plaintext_producer_paused)
     {
         return true;
     }
-    ls->source_paused = paused;
+    ls->plaintext_producer_paused = paused;
     if (UNLIKELY(paused ? ! lineCallWithRef(l, tunnelPrevDownStreamPause, t)
                         : ! lineCallWithRef(l, tunnelPrevDownStreamResume, t)))
     {
@@ -266,7 +265,7 @@ bool realityclientFlushPendingUpstream(tunnel_t *t, line_t *l)
     realityclient_tstate_t *ts = tunnelGetState(t);
     lineRef(l);
     ls->upstream_send_in_progress = true;
-    while (! ls->wire_paused)
+    while (true)
     {
         if (ls->pending_active == NULL)
         {
@@ -313,11 +312,7 @@ bool realityclientFlushPendingUpstream(tunnel_t *t, line_t *l)
         }
     }
     ls->upstream_send_in_progress = false;
-    if (ls->pending_active == NULL && bufferqueueGetBufCount(&ls->pending_up) == 0)
-    {
-        ls->plaintext_producer_paused = false;
-    }
-    bool active = realityclientUpdateSourcePressure(t, l);
+    bool active                   = realityclientSetSourcePaused(t, l, false);
     lineUnref(l);
     return active;
 }

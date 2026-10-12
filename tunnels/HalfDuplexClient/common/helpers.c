@@ -103,14 +103,19 @@ void halfduplexclientSetPrevPaused(tunnel_t *t, line_t *main, bool paused)
     halfduplexclient_lstate_t *ls = lineGetState(main, t);
     if (ls->main_line == NULL)
         return;
-    ls->prev_paused  = paused;
     line_t *download = ls->download_line;
     if (download == NULL)
+    {
+        ls->pending_read_pause = paused;
         return;
+    }
     halfduplexclient_lstate_t *child = lineGetState(download, t);
-    if (! child->next_started || child->read_pause_sent == paused)
+    if (! child->next_started)
+    {
+        ls->pending_read_pause = paused;
         return;
-    child->read_pause_sent = paused;
+    }
+    ls->pending_read_pause = false;
     if (paused)
         tunnelNextUpStreamPause(t, download);
     else

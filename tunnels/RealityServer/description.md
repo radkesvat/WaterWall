@@ -28,6 +28,12 @@ Defaults apply only when an optional key is absent. A present optional key with 
 
 ## Behavior
 
+Pause and Resume are advisory and repeatable. RealityServer forwards them to the selected live branch:
+`destination` before authorization and protected `next` afterward. The handoff cutoff and Finish guards
+suppress callbacks toward a retired branch. Ready records do not wait for Resume. The node stays active:
+authorized traffic needs record cryptography and sequencing, while visitor traffic needs destination routing
+and branch cleanup, so neither mode can use permanent bypass.
+
 Destination handshake envelopes are tracked incrementally in bounded parser/tracker state; the complete pre-key destination flight is never retained or replayed. Unprotected TLS 1.2 records can be tracked before the cipher profile is known. The selected profile is installed when both hellos are ready, including when ClientHello arrives after an already captured ServerHello. Invalid pre-profile TLS 1.2 tracking falls back to Visitor if TLS 1.2 is selected; it does not reject a TLS 1.3 negotiation.
 
 The server does not terminate TLS. Its bounded streaming parsers observe fragmented TLS records and handshake messages without delaying their normal forwarding, recognize TLS 1.3 HelloRetryRequest, and wait for the final ServerHello. For TLS 1.2 they independently track each direction's ChangeCipherSpec, protected-record sequence, and AES-GCM explicit nonce samples. Malformed or unsupported handshakes switch to ordinary visitor behavior. Before the TLS binding, record profile, and directional session keys are ready, application-data-looking records are visitor traffic and are never tried with the password-derived root key.

@@ -136,7 +136,7 @@ typedef struct runtime_fixture_s
     tunnel_chain_t  *chain;
     tunnel_t        *client, *prev, *next;
     line_t          *main, *upload, *download;
-    unsigned         mode, init_count, est_count, pause_count, resume_count, read_pauses;
+    unsigned         mode, init_count, est_count, pause_count, resume_count, read_pauses, read_resumes;
     unsigned         upload_callbacks, download_callbacks, finishes;
     uint8_t          upload_bytes[2 * 1024 * 1024 + 64], pair_id[kHLFDPairIdSize];
     size_t           upload_length;
@@ -187,6 +187,12 @@ static void runtimeReadPause(tunnel_t *t, line_t *l)
     twfRequire(l == r.download, "application read Pause used uninitialized/wrong child");
     ++r.read_pauses;
 }
+static void runtimeReadResume(tunnel_t *t, line_t *l)
+{
+    discard t;
+    twfRequire(l == r.download, "application read Resume used uninitialized/wrong child");
+    ++r.read_resumes;
+}
 static void runtimeEstablished(tunnel_t *t, line_t *l)
 {
     discard t;
@@ -209,6 +215,11 @@ static void runtimeInitialize(tunnel_t *t, line_t *l)
         r.upload = l;
     else
         r.download = l;
+    if (r.mode == 0 && r.init_count == 1)
+    {
+        halfduplexclientTunnelUpStreamPause(r.client, r.main);
+        halfduplexclientTunnelUpStreamResume(r.client, r.main);
+    }
     if (r.mode == 8 || r.mode == 9)
     {
         if (r.init_count == 1 || r.mode == 9)
@@ -295,6 +306,7 @@ static void runRuntimeCase(unsigned mode)
     r.next->fnFinU               = runtimeChildFinish;
     r.next->fnPayloadU           = runtimeReceive;
     r.next->fnPauseU             = runtimeReadPause;
+    r.next->fnResumeU            = runtimeReadResume;
     r.chain                      = tunnelchainCreate(1);
     r.chain->sum_line_state_size = r.client->lstate_size;
     tunnelchainFinalize(r.chain);
@@ -339,6 +351,16 @@ static void runRuntimeCase(unsigned mode)
     }
     else
     {
+        if (mode == 0)
+        {
+            twfRequire(r.read_pauses == 0 && r.read_resumes == 0, "canceled pre-child Pause was replayed after Init");
+            halfduplexclientTunnelUpStreamPause(r.client, r.main);
+            halfduplexclientTunnelUpStreamPause(r.client, r.main);
+            halfduplexclientTunnelUpStreamResume(r.client, r.main);
+            halfduplexclientTunnelUpStreamResume(r.client, r.main);
+            twfRequire(r.read_pauses == 2 && r.read_resumes == 2,
+                       "application read notifications were filtered after child Init");
+        }
         if (mode == 7)
         {
             twfRequire(r.est_count == 0, "pair fabricated Est");

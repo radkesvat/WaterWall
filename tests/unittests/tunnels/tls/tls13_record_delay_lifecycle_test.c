@@ -5,8 +5,8 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: testClientImmediateRetirementAndDirectOutput, testClientDrainBarrierHoldsUntilRetirement,
  * testClientRetiresBeforeReentrantProducerResume, testClientRetirementSurvivesReentrantFinalPause,
- * testClientFinalDrainSuppressesReentrantCallbacks, testClientPausedWatermarksEmitOnePauseResumePair,
- * testClientDrainStopsAfterReentrantLineDeath, testClientReentrantPauseSuppressesStaleResume
+ * testClientFinalDrainSuppressesReentrantCallbacks, testClientAdvisorySignalsPreserveLocalWatermarks,
+ * testClientDrainStopsAfterReentrantLineDeath, testClientReadyDrainContinuesThroughReentrantPause
  * Checks: Assertion labels include: client lifecycle buffer is too small; client lifecycle state was not
  * zeroed; client lifecycle line reference leaked; invalid client lifecycle record length
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -437,22 +437,17 @@ static void testClientRetiresBeforeReentrantProducerResume(void)
     client_delay_fixture_t fixture;
     clientFixtureSetup(&fixture);
     clientUseSingleRecordScope(&fixture);
-    clientQueueRecordWithDelayAndFill(&fixture, 32, 0, 0x61);
-
+    clientQueueRecordWithDelayAndFill(&fixture, 32, 1000, 0x61);
     tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) && ls->shaping_producer_paused,
+                  "client delayed final record did not establish its local barrier");
     tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
-    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) && ls->shaping_producer_paused &&
-                      fixture.context.prev_pause == 1,
-                  "client wire-paused drain did not establish its barrier");
-
     fixture.context.write_direct_on_prev_resume = true;
-    tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
-    ls = lineGetState(fixture.line, fixture.tls);
+    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, true), "client final drain failed");
     requireClient(ls->shaping_retired && fixture.context.direct_flush_ok && fixture.context.prev_resume == 1 &&
                       fixture.context.next_payload == 2 && fixture.context.next_payload_markers[0] == 0x61 &&
                       fixture.context.next_payload_markers[1] == 0x7d && ! ls->shaping_output.initialized,
-                  "client producer Resume ran before retirement became direct");
-
+                  "client local Resume ran before retirement became direct");
     tlsclientLinestateDestroy(ls);
     clientFixtureTeardown(&fixture);
 }
@@ -461,27 +456,19 @@ static void testClientRetirementSurvivesReentrantFinalPause(void)
 {
     client_delay_fixture_t fixture;
     clientFixtureSetup(&fixture);
+    tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
     clientUseSingleRecordScope(&fixture);
     clientQueueRecordWithDelayAndFill(&fixture, 32, 0, 0x71);
-
-    tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
     tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
-    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) && ls->shaping_producer_paused,
-                  "client re-entrant Pause fixture did not establish its barrier");
-
     fixture.context.pause_on_next_payload = true;
+    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false), "client ready drain failed");
+    requireClient(ls->shaping_retired && ! ls->shaping_output.initialized && fixture.context.next_payload == 1 &&
+                      fixture.context.prev_pause == 2,
+                  "client did not retire through a reentrant advisory Pause");
     tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
-    ls = lineGetState(fixture.line, fixture.tls);
-    requireClient(ls->shaping_retired && ls->shaping_wire_paused && ! ls->shaping_output.initialized &&
-                      fixture.context.next_payload == 1 && fixture.context.prev_resume == 0,
-                  "client did not retire safely behind a re-entrant final Pause");
-
     tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
-    ls = lineGetState(fixture.line, fixture.tls);
-    requireClient(ls->shaping_retired && fixture.context.next_payload == 1 && fixture.context.prev_pause == 1 &&
-                      fixture.context.prev_resume == 1,
-                  "client did not balance the drain barrier on the later genuine wire Resume");
-
+    requireClient(fixture.context.prev_resume == 2 && fixture.context.next_payload == 1,
+                  "client repeated Resume did not relay transparently after retirement");
     tlsclientLinestateDestroy(ls);
     clientFixtureTeardown(&fixture);
 }
@@ -509,37 +496,35 @@ static void testClientFinalDrainSuppressesReentrantCallbacks(void)
     clientFixtureTeardown(&fixture);
 }
 
-static void testClientPausedWatermarksEmitOnePauseResumePair(void)
+static void testClientAdvisorySignalsPreserveLocalWatermarks(void)
 {
     client_delay_fixture_t fixture;
     clientFixtureSetup(&fixture);
     tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
-
     tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
-    requireClient(ls->shaping_wire_paused && fixture.context.prev_pause == 1,
-                  "client external Pause was not forwarded exactly once");
-
+    tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
+    requireClient(fixture.context.prev_pause == 2, "client duplicate Pause was suppressed");
     while (tlsrecordshapingOutputQueueBytes(&ls->shaping_output) < kTlsRecordShapingQueueHighWatermark)
     {
         clientQueueRecord(&fixture, 18000);
     }
     requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, false) && ls->shaping_producer_paused &&
-                      fixture.context.prev_pause == 1,
-                  "client paused drain did not record high-water backpressure without a duplicate Pause");
-
+                      fixture.context.prev_pause == 3,
+                  "client local high-water pressure was not published independently");
+    requireClient(tlsclientScheduleShapedOutput(fixture.tls, fixture.line, ls) && ls->shaping_output_timer != NULL,
+                  "client Pause blocked the ciphertext delay timer");
+    wtimer_t *timer = ls->shaping_output_timer;
+    tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
+    requireClient(ls->shaping_output_timer == timer, "client Pause canceled the ciphertext delay timer");
     tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
-    ls = lineGetState(fixture.line, fixture.tls);
-    requireClient(! ls->shaping_wire_paused && ls->shaping_producer_paused && fixture.context.prev_pause == 1 &&
-                      fixture.context.prev_resume == 0,
-                  "client external Resume broke the shaping Pause transition");
-
+    tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
+    requireClient(ls->shaping_producer_paused && fixture.context.prev_resume == 2,
+                  "client duplicate Resume was absorbed by local shaping pressure");
     tlsclientCancelShapedOutputTimer(ls);
-    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, true),
-                  "client high-water queue did not force-drain");
-    requireClient(tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output) && ! ls->shaping_producer_paused &&
-                      fixture.context.prev_pause == 1 && fixture.context.prev_resume == 1,
-                  "client low-water transition did not emit exactly one Resume");
-
+    requireClient(tlsclientDrainShapedOutput(fixture.tls, fixture.line, ls, true) &&
+                      tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output) && ! ls->shaping_producer_paused &&
+                      fixture.context.prev_resume == 3,
+                  "client local low-water transition did not release its own pressure");
     tlsclientLinestateDestroy(ls);
     clientFixtureTeardown(&fixture);
 }
@@ -559,29 +544,19 @@ static void testClientDrainStopsAfterReentrantLineDeath(void)
     clientFixtureTeardown(&fixture);
 }
 
-static void testClientReentrantPauseSuppressesStaleResume(void)
+static void testClientReadyDrainContinuesThroughReentrantPause(void)
 {
     client_delay_fixture_t fixture;
     clientFixtureSetup(&fixture);
     tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
     clientQueueRecordWithDelay(&fixture, 32, 0);
     clientQueueRecordWithDelay(&fixture, 32, 0);
-
     tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
     fixture.context.pause_on_next_payload = true;
-    tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
-
-    ls = lineGetState(fixture.line, fixture.tls);
-    requireClient(ls->shaping_wire_paused && tlsrecordshapingOutputQueueCount(&ls->shaping_output) == 1 &&
-                      fixture.context.next_payload == 1 && fixture.context.prev_pause == 1 &&
-                      fixture.context.prev_resume == 0,
-                  "client forwarded a stale Resume after a re-entrant wire Pause");
-
-    tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
-    requireClient(! ls->shaping_wire_paused && tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output) &&
-                      fixture.context.next_payload == 2 && fixture.context.prev_resume == 1,
-                  "client did not forward Resume after the later genuine wire Resume");
-
+    requireClient(tlsclientScheduleShapedOutput(fixture.tls, fixture.line, ls) &&
+                      tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output) && fixture.context.next_payload == 2 &&
+                      fixture.context.prev_pause == 2 && fixture.context.prev_resume == 0,
+                  "client ready ciphertext waited for Resume after reentrant Pause");
     tlsclientLinestateDestroy(ls);
     clientFixtureTeardown(&fixture);
 }
@@ -593,9 +568,9 @@ void tls13RecordDelayClientCases(void)
     testClientRetiresBeforeReentrantProducerResume();
     testClientRetirementSurvivesReentrantFinalPause();
     testClientFinalDrainSuppressesReentrantCallbacks();
-    testClientPausedWatermarksEmitOnePauseResumePair();
+    testClientAdvisorySignalsPreserveLocalWatermarks();
     testClientDrainStopsAfterReentrantLineDeath();
-    testClientReentrantPauseSuppressesStaleResume();
+    testClientReadyDrainContinuesThroughReentrantPause();
 }
 
 int main(void)

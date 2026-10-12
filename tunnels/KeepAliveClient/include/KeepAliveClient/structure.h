@@ -28,9 +28,6 @@ struct keepaliveclient_lstate_s
     sbuf_t            *write_active;
     bool               read_draining;
     bool               write_draining;
-    bool               write_paused;
-    bool               pong_draining;
-    uint32_t           pending_pongs;
     bool               established;
     bool               awaiting_pong;
     uint64_t           next_ping_at_ms;
@@ -52,7 +49,6 @@ enum
     kKeepAliveReadChargeLimit     = 16U * 1024U * 1024U,
     kKeepAliveMaxReentryBytes     = 8U * 1024U * 1024U,
     kKeepAliveMaxReentryBuffers   = 1024U,
-    kKeepAliveMaxPendingPongs     = 1024U,
     kKeepAliveFrameKindNormal     = 1,
     kKeepAliveFrameKindPing       = 2,
     kKeepAliveFrameKindPong       = 3,
@@ -76,10 +72,6 @@ void keepaliveclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void keepaliveclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void keepaliveclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
-void keepaliveclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void keepaliveclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
-void keepaliveclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void keepaliveclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void keepaliveclientLinestateInitialize(keepaliveclient_lstate_t *ls, line_t *l);
 void keepaliveclientLinestateDestroy(keepaliveclient_lstate_t *ls);

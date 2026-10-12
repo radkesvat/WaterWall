@@ -68,13 +68,12 @@ typedef struct tlsserver_lstate_s
     bool fallback_initializing; /* Payload admission barrier until fallback Init returns. */
     bool fallback_close_draining;
     bool fallback_branch_finished_during_drain;
-    bool fallback_payload_paused;
     bool prev_est_sent;
     bool fallback_delay_scheduled;
     bool upstream_finished;
     bool downstream_finishing;
     bool downstream_finish_deferred;
-    bool wire_paused; /* Client receiver pressure, including before branch selection. */
+    bool pending_branch_pause; /* Latest receiver Pause before selected branch Init. */
     bool shaping_producer_paused;
     /* Monotonic: once true, an uninitialized shaping_output is intentional. */
     bool shaping_retired;

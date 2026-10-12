@@ -49,7 +49,7 @@ bool tlsclientDrainPendingPlaintext(tunnel_t *t, line_t *l)
 
     lineRef(l);
     ls->plaintext_write_in_progress = true;
-    while (! ls->shaping_wire_paused && ! ls->shaping_producer_paused)
+    while (! ls->shaping_producer_paused)
     {
         if (ls->pending_plaintext == NULL)
         {

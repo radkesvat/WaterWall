@@ -57,7 +57,8 @@ static bool             measuring, fail_queue, inject_encode, inject_decode, clo
 static sbuf_t          *expected_identity;
 static bool             pause_output;
 static unsigned         encode_overflow;
-static bool             control_output_paused;
+static bool             inject_ping;
+static unsigned         up_pauses, up_resumes, down_pauses, down_resumes;
 static unsigned         pause_wire_at;
 #ifndef TEST_KEEPALIVE_SERVER
 static bool inject_pong;
@@ -140,46 +141,40 @@ static void finish(tunnel_t *t, line_t *l)
 static void closeFromOutput(line_t *l)
 {
     /* The previous endpoint owns this normal line; close toward next only. */
-    node->fnFinU(node, l);
+    tunnelUpStreamFin(node, l);
     lineDestroy(l);
 }
 
 static void pauseControlOutput(line_t *l)
 {
-    control_output_paused = true;
 #ifdef TEST_KEEPALIVE_SERVER
-    node->fnPauseU(node, l);
+    tunnelUpStreamPause(node, l);
 #else
-    node->fnPauseD(node, l);
+    tunnelDownStreamPause(node, l);
 #endif
 }
 
-static void resumeControlOutput(line_t *l)
+static void countPause(tunnel_t *t, line_t *l)
 {
-    control_output_paused = false;
-#ifdef TEST_KEEPALIVE_SERVER
-    node->fnResumeU(node, l);
-#else
-    node->fnResumeD(node, l);
-#endif
+    discard l;
+    if (t == next)
+        ++up_pauses;
+    else
+        ++down_pauses;
 }
 
-static void reblockControlResume(tunnel_t *t, line_t *l)
+static void countResume(tunnel_t *t, line_t *l)
 {
-    discard t;
-    pauseControlOutput(l);
-}
-
-static void closeControlResume(tunnel_t *t, line_t *l)
-{
-    discard t;
-    closeFromOutput(l);
+    discard l;
+    if (t == next)
+        ++up_resumes;
+    else
+        ++down_resumes;
 }
 
 static void captureWire(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
-    twfRequire(! control_output_paused, "control output crossed Pause");
     if (expected_identity != NULL)
         twfRequire(buf == expected_identity, "encoder replaced a complete splice body");
     if (require_splice)
@@ -195,6 +190,14 @@ static void captureWire(tunnel_t *t, line_t *l, sbuf_t *buf)
     lineReuseBuffer(l, buf);
     if (wire_calls == pause_wire_at)
         pauseControlOutput(l);
+    if (inject_ping)
+    {
+        inject_ping          = false;
+        const uint8_t ping[] = {0, 0, 0, 1, 2};
+        unsigned      before = wire_calls;
+        decode(node, l, ordinary(ping, sizeof(ping)));
+        twfRequire(wire_calls == before, "nested Ping reentered the active control reply");
+    }
 #ifndef TEST_KEEPALIVE_SERVER
     if (inject_pong)
     {
@@ -253,9 +256,9 @@ static void capturePlain(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (pause_output)
     {
 #ifdef TEST_KEEPALIVE_SERVER
-        node->fnPauseD(node, l);
+        tunnelDownStreamPause(node, l);
 #else
-        node->fnPauseU(node, l);
+        tunnelUpStreamPause(node, l);
 #endif
     }
     if (inject_decode)
@@ -276,7 +279,8 @@ static void setupWithSettings(const char *settings)
     measuring = inject_encode = inject_decode = close_output = require_splice = false;
     pause_output                                                              = false;
     encode_overflow                                                           = 0;
-    control_output_paused                                                     = false;
+    inject_ping                                                               = false;
+    up_pauses = up_resumes = down_pauses = down_resumes                       = 0;
     pause_wire_at                                                             = 0;
     expected_identity                                                         = NULL;
 #ifndef TEST_KEEPALIVE_SERVER
@@ -301,10 +305,14 @@ static void setupWithSettings(const char *settings)
     memoryZero(&chain, sizeof(chain));
     chain.supports_splice = WW_HAVE_SPLICE;
     node->chain           = &chain;
+    prev->chain_index     = 0;
+    node->chain_index     = 1;
+    next->chain_index     = 2;
     prev->fnFinD = next->fnFinU = finish;
     next->fnInitU               = init;
     prev->fnEstD                = noop;
-    prev->fnPauseD = prev->fnResumeD = next->fnPauseU = next->fnResumeU = noop;
+    prev->fnPauseD = next->fnPauseU = countPause;
+    prev->fnResumeD = next->fnResumeU = countResume;
 #ifdef TEST_KEEPALIVE_SERVER
     prev->fnPayloadD = captureWire;
     next->fnPayloadU = capturePlain;
@@ -315,7 +323,7 @@ static void setupWithSettings(const char *settings)
     twfLinePoolSetup(&lines, node->lstate_size, 4);
     line = twfLinePoolCreateLine(&lines);
     lineRef(line);
-    node->fnInitU(node, line);
+    tunnelUpStreamInit(node, line);
 }
 
 static void setup(void)
@@ -328,7 +336,7 @@ static void teardown(void)
     fail_queue = false;
     if (lineIsAlive(line))
     {
-        node->fnFinU(node, line);
+        tunnelUpStreamFin(node, line);
         lineDestroy(line);
     }
     twfRequireLineStateZeroed(line, node, "KeepAlive retained line state");
@@ -360,7 +368,7 @@ static void watchdogSetup(bool establish)
     setupWithSettings("{\"ping-interval\":10,\"sensitive-mode\":true,\"tolerance-ms\":30}");
     setTime(1000);
     if (establish)
-        node->fnEstD(node, line);
+        tunnelDownStreamEst(node, line);
 }
 
 static void tick(uint64_t now)
@@ -378,34 +386,30 @@ static void testFirstPingInterval(bool sensitive)
     keepaliveclient_lstate_t *ls = lineGetState(line, node);
     tick(2000);
     twfRequire(wire_calls == 0 && lineIsAlive(line), "first ping ran before transport Est");
-    node->fnEstD(node, line);
+    tunnelDownStreamEst(node, line);
     tick(2000);
     twfRequire(wire_calls == 0 && ! ls->awaiting_pong, "Est triggered an immediate first ping");
     encode(node, line, ordinary("A", 1));
     twfRequire(wire_calls == 1 && lineIsAlive(line), "waiting for the first ping blocked application data");
     setTime(2050);
-    node->fnPauseU(node, line);
-    node->fnPauseD(node, line);
-    node->fnEstD(node, line);
+    tunnelUpStreamPause(node, line);
+    tunnelDownStreamPause(node, line);
+    tunnelDownStreamEst(node, line);
     tick(2099);
     twfRequire(wire_calls == 1 && ! ls->awaiting_pong && ls->pong_deadline_ms == 0 && lineIsAlive(line),
                "first ping escaped its interval or its unsent deadline closed the line");
     tick(2100);
-    tick(2500);
-    twfRequire(wire_calls == 1 && ! ls->awaiting_pong && ls->pong_deadline_ms == 0 && lineIsAlive(line),
-               "paused unsent ping was emitted or started a reply deadline");
-    node->fnResumeD(node, line);
-    tick(3100);
     twfRequire(wire_calls == 2 && ls->awaiting_pong == sensitive && lineIsAlive(line) &&
                    memoryCompare(wire + wire_length - 5, "\0\0\0\1\2", 5) == 0,
-               "Resume lost the due first ping");
-    tick(3109);
-    twfRequire(wire_calls == 2 && lineIsAlive(line), "paused time shortened the new ping's deadline or interval");
+               "Pause delayed the due first ping");
+    tunnelDownStreamResume(node, line);
+    tick(2109);
+    twfRequire(wire_calls == 2 && lineIsAlive(line), "Resume changed the new ping's deadline or interval");
     if (! sensitive)
     {
-        tick(3199);
+        tick(2199);
         twfRequire(wire_calls == 2, "regular ping interval was shortened");
-        tick(3200);
+        tick(2200);
         twfRequire(wire_calls == 3 && lineIsAlive(line), "regular pings stopped with the watchdog disabled");
     }
     teardown();
@@ -434,7 +438,7 @@ static void testSeparatePingAndDeadlineItems(void)
 {
     setupWithSettings("{\"ping-interval\":1000,\"sensitive-mode\":true,\"tolerance-ms\":90000}");
     setTime(1000);
-    node->fnEstD(node, line);
+    tunnelDownStreamEst(node, line);
     keepaliveclient_tstate_t *ts    = tunnelGetState(node);
     keepaliveclient_lstate_t *ls    = lineGetState(line, node);
     local_idle_table_t       *table = ts->worker_states[0].idle_table;
@@ -464,9 +468,9 @@ static void testSeparatePingAndDeadlineItems(void)
 
     setupWithSettings("{\"ping-interval\":1000,\"sensitive-mode\":true,\"tolerance-ms\":100}");
     setTime(1000);
-    node->fnEstD(node, line);
+    tunnelDownStreamEst(node, line);
     tick(2000);
-    node->fnPauseD(node, line);
+    tunnelDownStreamPause(node, line);
     tick(2099);
     twfRequire(lineIsAlive(line), "short watchdog expired early");
     tick(2100);
@@ -491,7 +495,7 @@ static void testWatchdogReplies(void)
         decode(node, line, ordinary(pong + i, 1));
 #endif
     }
-    node->fnEstD(node, line); /* Repeated Est must not postpone the next ping. */
+    tunnelDownStreamEst(node, line); /* Repeated Est must not postpone the next ping. */
     tick(1019);
     twfRequire(wire_calls == 1, "timely pong accelerated the ping interval");
     tick(1020);
@@ -529,15 +533,15 @@ static void testWatchdogPauseAndEst(void)
     watchdogSetup(false);
     tick(2000);
     twfRequire(wire_calls == 0 && lineIsAlive(line), "watchdog ran before transport Est");
-    node->fnEstD(node, line);
+    tunnelDownStreamEst(node, line);
     tick(2010);
     twfRequire(wire_calls == 1, "watchdog did not start after Est");
     setTime(2020);
-    node->fnPauseD(node, line);
+    tunnelDownStreamPause(node, line);
     setTime(2030);
-    node->fnPauseD(node, line);
+    tunnelDownStreamPause(node, line);
     setTime(2035);
-    node->fnPauseU(node, line);
+    tunnelUpStreamPause(node, line);
     tick(2039);
     twfRequire(lineIsAlive(line) && wire_calls == 1, "paused watchdog expired before its deadline");
     tick(2040);
@@ -547,21 +551,21 @@ static void testWatchdogPauseAndEst(void)
     watchdogSetup(true);
     tick(1010);
     setTime(1015);
-    node->fnPauseU(node, line);
-    node->fnPauseD(node, line);
+    tunnelUpStreamPause(node, line);
+    tunnelDownStreamPause(node, line);
     const uint8_t pong[] = {0, 0, 0, 1, 3};
     decode(node, line, ordinary(pong, sizeof(pong)));
     tick(1020);
-    twfRequire(wire_calls == 1 && lineIsAlive(line), "paused watchdog emitted a new ping or lost a timely Pong");
-    setTime(2020);
-    node->fnResumeD(node, line);
-    tick(2020);
-    twfRequire(wire_calls == 2, "write Resume lost the due probe while the read direction remained paused");
-    setTime(2030);
-    node->fnPauseD(node, line);
-    tick(2049);
+    twfRequire(wire_calls == 2 && lineIsAlive(line), "Pause delayed the next ping after a timely Pong");
+    setTime(1025);
+    tunnelDownStreamResume(node, line);
+    tick(1025);
+    twfRequire(wire_calls == 2, "Resume duplicated the outstanding probe");
+    setTime(1030);
+    tunnelDownStreamPause(node, line);
+    tick(1049);
     twfRequire(lineIsAlive(line), "partial Resume shortened the watchdog deadline");
-    tick(2050);
+    tick(1050);
     twfRequire(! lineIsAlive(line) && finishes == 2, "overlapping Pause or Resume extended the watchdog deadline");
     teardown();
 }
@@ -585,17 +589,17 @@ static void testWatchdogSettings(void)
         memoryFree(config.type);
     }
     setTime(1000);
-    node->fnEstD(node, line);
-    node->fnPauseU(node, line);
-    node->fnPauseD(node, line);
+    tunnelDownStreamEst(node, line);
+    tunnelUpStreamPause(node, line);
+    tunnelDownStreamPause(node, line);
     tick(1010);
     tick(1000000);
-    twfRequire(lineIsAlive(line) && wire_calls == 0, "disabled watchdog emitted paused probes or closed the line");
-    node->fnResumeD(node, line);
-    tick(1001000);
-    twfRequire(wire_calls == 1, "Resume accumulated missed timer probes");
-    tick(1001010);
-    twfRequire(lineIsAlive(line) && wire_calls == 2, "regular probes stopped after Resume");
+    twfRequire(lineIsAlive(line) && wire_calls == 2, "Pause suppressed due probes or elapsed intervals caused a burst");
+    tunnelDownStreamResume(node, line);
+    tick(1000000);
+    twfRequire(wire_calls == 2, "Resume duplicated the latest timer probe");
+    tick(1000010);
+    twfRequire(lineIsAlive(line) && wire_calls == 3, "regular probes stopped after Resume");
     teardown();
     setup();
     const keepaliveclient_tstate_t *ts = tunnelGetState(node);
@@ -694,54 +698,41 @@ static void testEncodeCloseAndLimits(void)
     }
 }
 
-static void testPausedControlReplies(void)
+static void testAdvisoryControlReplies(void)
 {
     const uint8_t pings[] = {0, 0, 0, 1, 2, 0, 0, 0, 1, 2};
-    for (unsigned mode = 0; mode < 5; ++mode)
+    for (unsigned close = 0; close < 2; ++close)
     {
         setup();
-        pauseControlOutput(line);
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            tunnelUpStreamPause(node, line);
+            tunnelDownStreamPause(node, line);
+        }
+        twfRequire(up_pauses == 2 && down_pauses == 2, "repeated Pause did not relay transparently");
+        pause_wire_at = 1;
+        inject_ping   = true;
+        close_output  = close != 0;
         decode(node, line, ordinary(pings, sizeof(pings)));
-        twfRequire(wire_calls == 0 && lineIsAlive(line), "paused Pong replies were emitted or lost");
-        pause_wire_at                    = mode == 1 ? 1 : 0;
-        close_output                     = mode == 2;
-        TunnelFlowRoutineResume callback = mode == 3 ? reblockControlResume : mode == 4 ? closeControlResume : noop;
-#ifdef TEST_KEEPALIVE_SERVER
-        next->fnResumeU = callback;
-#else
-        prev->fnResumeD = callback;
-#endif
-        resumeControlOutput(line);
-        if (mode == 2 || mode == 4)
-            twfRequire(! lineIsAlive(line) && wire_calls == (mode == 2 ? 1U : 0U),
-                       "Pong drain continued after a payload or Resume callback closed the line");
+        if (close)
+            twfRequire(! lineIsAlive(line) && wire_calls == 1,
+                       "control reply continued after its callback closed the line");
         else
         {
-            if (mode == 1 || mode == 3)
+            twfRequire(wire_calls == 3 && wire_length == 15 &&
+                           memoryCompare(wire, "\0\0\0\1\3\0\0\0\1\3\0\0\0\1\3", 15) == 0,
+                       "Pause or nested input delayed, duplicated or lost control replies");
+            for (unsigned i = 0; i < 2; ++i)
             {
-                twfRequire(wire_calls == (mode == 1 ? 1U : 0U), "reentrant Pause did not stop Pong draining");
-#ifdef TEST_KEEPALIVE_SERVER
-                next->fnResumeU = noop;
-#else
-                prev->fnResumeD = noop;
-#endif
-                resumeControlOutput(line);
+                tunnelUpStreamResume(node, line);
+                tunnelDownStreamResume(node, line);
             }
-            twfRequire(wire_calls == 2 && wire_length == 10 && memoryCompare(wire, "\0\0\0\1\3\0\0\0\1\3", 10) == 0,
-                       "Resume reordered, duplicated or lost queued Pong replies");
+            twfRequire(up_resumes == 2 && down_resumes == 2 && wire_calls == 3,
+                       "repeated Resume failed to relay or duplicated a control reply");
+            twfRequire(tunnelIsActiveForLine(node, line), "ongoing framing was bypassed");
         }
         teardown();
     }
-
-    setup();
-    pauseControlOutput(line);
-    for (unsigned i = 0; i < 1024; ++i)
-        decode(node, line, ordinary(pings, 5));
-    twfRequire(lineIsAlive(line) && wire_calls == 0, "exact pending Pong bound was refused or emitted");
-    decode(node, line, ordinary(pings, 5));
-    twfRequire(! lineIsAlive(line) && finishes == 2 && wire_calls == 0,
-               "pending Pong overflow did not close and settle the borrowed line");
-    teardown();
 }
 
 static void testControlAndRejection(void)
@@ -754,12 +745,11 @@ static void testControlAndRejection(void)
                "ping, pong, unknown or empty normal frame changed behavior");
 #ifndef TEST_KEEPALIVE_SERVER
     setTime(1000);
-    node->fnEstD(node, line);
-    node->fnPauseD(node, line);
+    tunnelDownStreamEst(node, line);
+    tunnelDownStreamPause(node, line);
     setTime(31000);
-    twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 1, "timer ping escaped Pause");
-    node->fnResumeD(node, line);
-    twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 2, "Resume lost the due timer ping");
+    twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 2, "Pause delayed a due timer ping");
+    tunnelDownStreamResume(node, line);
     twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 2, "Resume duplicated the due timer ping");
     setTime(61000);
     twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 3, "Resume changed regular ping behavior");
@@ -883,7 +873,7 @@ static void testLargePipeFrame(void)
 
 int main(void)
 {
-    testPausedControlReplies();
+    testAdvisoryControlReplies();
 #ifndef TEST_KEEPALIVE_SERVER
     testFirstPingInterval(false);
     testFirstPingInterval(true);

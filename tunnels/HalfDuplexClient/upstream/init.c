@@ -30,7 +30,8 @@ void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *main)
     if (halfduplexclientPairAlive(t, main, upload, download))
     {
         // A Pause received before the download child existed remains effective.
-        halfduplexclientSetPrevPaused(t, main, ls->prev_paused);
+        if (ls->pending_read_pause)
+            halfduplexclientSetPrevPaused(t, main, true);
         if (halfduplexclientPairAlive(t, main, upload, download))
         {
             ls->pair_initializing = false;

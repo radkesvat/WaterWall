@@ -11,7 +11,6 @@ bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buff
         .fallback_probe                        = bufferstreamCreate(pool, 0),
         .fallback_close_draining               = false,
         .fallback_branch_finished_during_drain = false,
-        .fallback_payload_paused               = false,
         .shaping_retired                       = false,
         .verbose                               = verbose,
     };

@@ -22,8 +22,7 @@ void realityclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             realityclientCloseLineBidirectional(t, l);
             return;
         }
-        ls->plaintext_producer_paused = true;
-        if (LIKELY(realityclientUpdateSourcePressure(t, l)))
+        if (LIKELY(realityclientSetSourcePaused(t, l, true)))
         {
             discard realityclientFlushPendingUpstream(t, l);
         }

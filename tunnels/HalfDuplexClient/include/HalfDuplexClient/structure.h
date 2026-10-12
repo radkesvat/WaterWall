@@ -20,8 +20,7 @@ typedef struct halfduplexclient_lstate_s
     bool    first_packet_sent;
     bool    next_started; // This exact owned child's adjacent Init was admitted.
     bool    next_paused;  // Child permission; main stores the aggregate producer hold.
-    bool    read_pause_sent;
-    bool    prev_paused;
+    bool    pending_read_pause; // Latest application hold before the download child's Init.
     bool    source_pause_sent;
     bool    est_seen;
     bool    est_forwarded;

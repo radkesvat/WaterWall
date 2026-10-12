@@ -124,7 +124,14 @@ the download intro follows the older upload intro with the same pair ID. An admi
 input can finish through Pause. A later release of Init backlog respects aggregate
 child pressure; one child Resume cannot clear another child's outstanding Pause.
 Application read Pause received before the download child exists is applied after
-its Init. Ready payload otherwise forwards directly without a transport queue.
+its Init, unless a later Resume cancels it. Once that child is initialized, every
+application read Pause/Resume maps directly to it, including repeated notifications.
+Ready payload otherwise forwards directly without a transport queue.
+
+The client remains active for the lifetime of the pair: mapping payload, pressure
+and Finish between the borrowed main line and its owned children cannot use permanent
+same-line bypass. Aggregate child pressure and Init-backlog gating are endpoint
+responsibilities, even when this node sits in the middle of the configured chain.
 
 Before any outward Finish, all pair links and local state are detached. The client
 synchronously closes both owned children, retaining exact lines across callbacks;

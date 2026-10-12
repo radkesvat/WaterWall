@@ -80,10 +80,11 @@ limits nested retained bytes to 8 MiB, and limits retained allocation charge to
 16 MiB, attempting beneficial ordinary compaction before refusing excess charge.
 Complete frames in an admitted delivery drain before checking the 1 MiB + 5 byte
 incomplete-remainder limit. Pause is forwarded promptly and does not interrupt
-that synchronous batch. Upstream Pause delays Pong output toward `prev`; Resume
-drains at most 1,024 pending replies, stopping on reentrant Pause or Finish.
-Excess pending replies close through the normal line owner. Finish discards
-pending replies.
+that synchronous batch. Pause and Resume relay transparently, including repeats;
+ready Pong output does not wait for Resume. The parser serializes nested Ping
+input behind the active reply under its existing storage limits, without a separate
+pending-Pong queue. Framing continues for the whole connection, so this node
+remains active and cannot permanently bypass itself.
 
 Zero or oversized frame body lengths, admission failure and retained-storage overflow
 close the borrowed line through its owner. Finish releases incomplete frames,

@@ -35,15 +35,18 @@ TlsClient registers a separate completion callback; only that callback captures 
 begins takeover. Neither TLS completion nor Reality activation emits another Est. Application input may arrive after
 Init and before transport Est. Its necessary early-data/order FIFO is limited to 2 MiB and 1,024 buffers, including the
 active retained head; equality is accepted. Admission is transactional, and overflow closes this borrowed line through
-its owner. Completion and Resume drain older plaintext in FIFO order while wire output is not paused, stopping before
-the next record on Pause. Reentrant input cannot overtake the current head, and pre-ACK application data remains private.
-The first retained plaintext buffer is published before pausing the application source. Protocol/order wait and wire
-pressure share one notification latch: source Resume requires authenticated activation, an empty older plaintext FIFO,
-and cleared wire pressure. Incoming TLS and authenticated handoff records continue to make progress during this wait.
+its owner. Authenticated completion drains older plaintext in FIFO order without waiting for advisory Resume.
+Reentrant input cannot overtake the current head, and pre-ACK application data remains private.
+The first retained plaintext buffer is published before requesting source Pause. Once authenticated activation and
+FIFO completion release that local hold, the node sends its own Resume. Incoming Pause/Resume, including repeats,
+are forwarded independently; they do not gate ready output or release the local protocol hold. Incoming TLS and
+authenticated handoff records continue to make progress during the protocol wait.
+RealityClient stays active after takeover because it must encrypt, authenticate and sequence every record; it cannot
+permanently bypass itself.
 
 On upstream `Init`, `RealityClient` initializes its own line state and forwards `Init` into the internal `TlsClient`. When the TLS handshake completes, it captures the negotiated TLS version, cipher suite, client random, server random, and (for TLS 1.2) the next BoringSSL read/write record sequences while the SSL object is still available. It selects a shared record profile and derives independent client-to-server and server-to-client keys and IVs from the captured values and password-derived root key. An unsupported negotiated suite aborts takeover instead of falling back to another record shape.
 
-TLS 1.2 then follows the existing immediate release path. For TLS 1.3, `RealityClient` retains BoringSSL, enters handoff drain mode, and sends authenticated `HANDOFF_REQUEST` at client-to-server sequence `0`. While it waits for `HANDOFF_ACK`, every complete downstream record is tried as the expected ACK on a duplicate. A failed trial leaves the sequence and original bytes unchanged; the original is submitted to BoringSSL so legal `NewSessionTicket`, `KeyUpdate`, cover application data, and cover alerts remain genuine TLS. Any protocol output BoringSSL generates is sent upstream before later Reality controls. After authenticating ACK at server-to-client sequence `0`, the client releases BoringSSL, sends `HANDOFF_CONFIRM` at client-to-server sequence `1`, and releases queued application data while wire output is not paused beginning at sequence `2`. Application payload is never sent before confirmation.
+TLS 1.2 then follows the existing immediate release path. For TLS 1.3, `RealityClient` retains BoringSSL, enters handoff drain mode, and sends authenticated `HANDOFF_REQUEST` at client-to-server sequence `0`. While it waits for `HANDOFF_ACK`, every complete downstream record is tried as the expected ACK on a duplicate. A failed trial leaves the sequence and original bytes unchanged; the original is submitted to BoringSSL so legal `NewSessionTicket`, `KeyUpdate`, cover application data, and cover alerts remain genuine TLS. Any protocol output BoringSSL generates is sent upstream before later Reality controls. After authenticating ACK at server-to-client sequence `0`, the client releases BoringSSL, sends `HANDOFF_CONFIRM` at client-to-server sequence `1`, and releases queued application data beginning at sequence `2`, even during advisory Pause. Application payload is never sent before confirmation.
 
 From takeover onward, upstream payload is AEAD-encrypted and framed as TLS application-data records; downstream records are authenticated, decrypted, and forwarded as cleartext. Each direction accepts only its next implicit 64-bit sequence number. Duplicate, deleted, reordered, reflected, or cross-connection records fail authentication and close an authorized line. Counters never wrap.
 

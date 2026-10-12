@@ -33,7 +33,7 @@ typedef struct tlsclient_lifecycle_context_s
     bool      kill_on_next_finish;
     bool      saw_payload;
     bool      pause_on_upstream_payload;
-    bool      enqueue_on_upstream_payload;
+    unsigned  pending_drain_mode;
     bool      finish_on_est;
     bool      enqueue_on_source_pause;
     bool      finish_on_source_pause;
@@ -198,13 +198,63 @@ static void fakePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         context->pause_on_upstream_payload = false;
         tlsclientTunnelDownStreamPause(t->prev, l);
     }
-    if (is_upstream && context->enqueue_on_upstream_payload)
+    tlsclient_lstate_t *ls = lineGetState(l, context->takeover_tls);
+    if (is_upstream && context->pending_drain_mode != 0 && ls->plaintext_write_in_progress &&
+        ls->pending_plaintext != NULL)
     {
-        context->enqueue_on_upstream_payload = false;
-        sbuf_t *nested                       = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
+        unsigned mode               = context->pending_drain_mode - 1;
+        context->pending_drain_mode = 0;
+        requireTlsClient(sbufGetLength(ls->pending_plaintext) == 16384 && bufferqueueGetBufLen(&ls->bq) == 1 &&
+                             ls->pending_reservation.budget == &ls->pending_budget &&
+                             ls->pending_reservation.cost.bytes == 16384 &&
+                             bufferbudgetGetUsage(&ls->pending_budget).bytes == 16385 &&
+                             bufferbudgetGetUsage(&ls->pending_budget).entries == 2,
+                         "TLS active plaintext consumption was not published before the wire callback");
+        if (mode == 1)
+        {
+            tlsclientTunnelDownStreamFinish(t->prev, l);
+            return;
+        }
+
+        tlsclientTunnelDownStreamPause(t->prev, l);
+        tlsclientTunnelDownStreamPause(t->prev, l);
+        sbuf_t *nested = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
         sbufSetLength(nested, 1);
         sbufWriteUI8(nested, 'C');
         tlsclientTunnelUpStreamPayload(t->prev, l, nested);
+        requireTlsClient(sbufGetLength(ls->pending_plaintext) == 16384 && bufferqueueGetBufLen(&ls->bq) == 2,
+                         "TLS reentrant plaintext overtook its active FIFO head");
+
+        if (mode >= 4)
+        {
+            if (mode == 4)
+            {
+                uint32_t allowance =
+                    (uint32_t) (kTlsClientPendingPlaintextBytes - bufferbudgetGetUsage(&ls->pending_budget).bytes);
+                nested = bufferpoolGetBestFit(lineGetBufferPool(l), allowance, 0);
+                sbufSetLength(nested, allowance);
+                memorySet(sbufGetMutablePtr(nested), 'X', allowance);
+                tlsclientTunnelUpStreamPayload(t->prev, l, nested);
+                requireTlsClient(bufferbudgetGetUsage(&ls->pending_budget).bytes == kTlsClientPendingPlaintextBytes,
+                                 "TLS queue plus active exact byte cap refused");
+            }
+            else
+            {
+                while (bufferbudgetGetUsage(&ls->pending_budget).entries < kTlsClientPendingPlaintextBuffers)
+                {
+                    nested = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
+                    sbufSetLength(nested, 0);
+                    tlsclientTunnelUpStreamPayload(t->prev, l, nested);
+                }
+                requireTlsClient(bufferqueueGetBufCount(&ls->bq) == kTlsClientPendingPlaintextBuffers - 1,
+                                 "TLS active entry was not charged at equality");
+            }
+            nested = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
+            sbufSetLength(nested, 1);
+            sbufWriteUI8(nested, 'X');
+            tlsclientTunnelUpStreamPayload(t->prev, l, nested);
+            return;
+        }
     }
     if (is_upstream && context->finish_downstream_on_next_payload)
     {
@@ -453,10 +503,19 @@ static void testPausedShapedFinishIsSynchronous(void)
                          ! tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output),
                      "TlsClient paused Finish fixture could not queue shaped ciphertext");
 
-    ls->shaping_wire_paused = true;
+    wloop_t **saved_loops = GSTATE.shortcut_loops;
+    wloop_t  *loops[1]    = {wloopCreate(WLOOP_FLAG_AUTO_FREE, fixture.pool, 0)};
+    requireTlsClient(loops[0] != NULL, "TlsClient paused Finish fixture could not create its loop");
+    GSTATE.shortcut_loops = loops;
+    tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
+    fixture.context.pause_on_upstream_payload = true;
     tlsclientTunnelUpStreamFinish(fixture.tls, fixture.line);
 
-    requireScenario(&fixture, "U");
+    requireTlsClient(strcmp(fixture.context.events, "U") == 0 && fixture.context.upstream_payload_count == 1 &&
+                         fixture.context.source_pause_count == 1 && fixture.context.source_resume_count == 0,
+                     "TlsClient final shaped drain stalled on Pause, duplicated Finish or reflected toward its sender");
+    wloopDestroy(&loops[0]);
+    GSTATE.shortcut_loops = saved_loops;
     fixtureDestroy(&fixture);
 }
 
@@ -1344,15 +1403,18 @@ static void testOrdinaryHandshakePendingDrain(unsigned mode)
     BIO_set_mem_eof_return(ls->wbio, -1);
     fixture.context.upstream_capture = SSL_get_rbio(server);
 
-    bool close_during_drain                 = mode == 1;
     fixture.context.enqueue_on_source_pause = true;
     tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 32768, 'A'));
-    requireTlsClient(fixture.context.source_pause_count == 1 && fixture.context.source_resume_count == 0 &&
-                         bufferqueueGetBufLen(&ls->bq) == 32769 && ls->plaintext_producer_paused,
-                     "TLS retained plaintext was not published before aggregated source Pause");
+    requireTlsClient(fixture.context.source_pause_count == 2 && fixture.context.source_resume_count == 1 &&
+                         bufferqueueGetBufLen(&ls->bq) == 32769 && ls->plaintext_producer_paused && ls->source_paused,
+                     "TLS early FIFO pressure was lost while relaying nested Pause and Resume");
     tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
     tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
     tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
+    tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
+    requireTlsClient(fixture.context.source_pause_count == 4 && ! fixture.context.saw_payload &&
+                         ! ls->handshake_completed && bufferqueueGetBufLen(&ls->bq) == 32769,
+                     "TLS repeated advisory Pause was filtered or released plaintext before handshake");
     int n = SSL_connect(ls->ssl);
     requireTlsClient(n < 0 && SSL_get_error(ls->ssl, n) == SSL_ERROR_WANT_READ &&
                          transferBio(ls->wbio, SSL_get_rbio(server)),
@@ -1362,107 +1424,60 @@ static void testOrdinaryHandshakePendingDrain(unsigned mode)
                      "ordinary TLS server did not produce handshake flight");
     sbuf_t *flight = drainBioToBuffer(&fixture, SSL_get_wbio(server));
     requireTlsClient(flight != NULL, "ordinary TLS server flight missing");
+    fixture.context.pending_drain_mode       = mode + 1;
+    fixture.context.finish_on_source_resume  = mode == 2;
+    fixture.context.repause_on_source_resume = mode == 3;
     tlsclientTunnelDownStreamPayload(fixture.tls, fixture.line, flight);
-    requireTlsClient(ls->handshake_completed && ls->shaping_wire_paused && bufferqueueGetBufLen(&ls->bq) == 32769 &&
-                         ls->pending_plaintext == NULL && fixture.context.downstream_est_count == 1 &&
-                         fixture.context.handshake_ready_count == 0 && fixture.context.source_pause_count == 1 &&
-                         fixture.context.source_resume_count == 0,
-                     "ordinary TLS handshake drained early plaintext through Pause or repeated Est");
-    requireTlsClient(completeServerHandshake(server), "ordinary TLS server failed to complete handshake");
-    uint8_t plaintext[32770];
-    n = SSL_read(server, plaintext, sizeof(plaintext));
-    requireTlsClient(n < 0 && SSL_get_error(server, n) == SSL_ERROR_WANT_READ,
-                     "paused ordinary TLS handshake leaked queued plaintext");
+    requireTlsClient(fixture.context.pending_drain_mode == 0 && fixture.context.downstream_est_count == 1 &&
+                         fixture.context.handshake_ready_count == 0,
+                     "TLS handshake did not drain its early FIFO through advisory Pause");
 
-    uint32_t sends_before                             = fixture.context.upstream_payload_count;
-    fixture.context.pause_on_upstream_payload         = ! close_during_drain;
-    fixture.context.enqueue_on_upstream_payload       = ! close_during_drain;
-    fixture.context.finish_downstream_on_next_payload = close_during_drain;
-    tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
-    requireTlsClient(fixture.context.upstream_payload_count == sends_before + 1,
-                     "TLS pending drain sent another record after callback Pause or Finish");
-    if (close_during_drain)
+    if (mode == 1)
     {
-        requireTlsClient(strcmp(fixture.context.events, "D") == 0,
-                         "TLS callback close during plaintext drain duplicated Finish");
+        requireTlsClient(strcmp(fixture.context.events, "D") == 0 && fixture.context.upstream_payload_count == 2,
+                         "TLS pending drain continued after callback Finish or duplicated completion");
+    }
+    else if (mode >= 4)
+    {
+        requireTlsClient(ls->pending_plaintext == NULL && ls->pending_reservation.budget == NULL &&
+                             bufferbudgetGetUsage(&ls->pending_budget).entries == 0 &&
+                             strcmp(fixture.context.events, "UD") == 0,
+                         "TLS active overflow did not settle reservation and queued input");
+    }
+    else if (mode == 2)
+    {
+        requireTlsClient(! lineIsAlive(fixture.line) && fixture.context.source_resume_count == 2 &&
+                             strcmp(fixture.context.events, "U") == 0,
+                         "TLS source Resume close continued touching retired state");
     }
     else
     {
-        requireTlsClient(ls->pending_plaintext != NULL && sbufGetLength(ls->pending_plaintext) == 16384 &&
-                             bufferqueueGetBufLen(&ls->bq) == 2,
-                         "TLS did not retain its active head ahead of nested plaintext");
-        requireTlsClient(ls->pending_reservation.budget == &ls->pending_budget &&
-                             ls->pending_reservation.cost.bytes == 16384 &&
-                             bufferbudgetGetUsage(&ls->pending_budget).bytes == 16384 + bufferqueueGetBufLen(&ls->bq) &&
-                             bufferbudgetGetUsage(&ls->pending_budget).entries == 1 + bufferqueueGetBufCount(&ls->bq),
-                         "active plaintext consumption was not published before reentrant wire output");
-        requireTlsClient(fixture.context.source_pause_count == 1 && fixture.context.source_resume_count == 0,
-                         "TLS wire Resume released source while older plaintext remained");
-        if (mode >= 4)
-        {
-            if (mode == 4)
-            {
-                uint32_t allowance =
-                    (uint32_t) (kTlsClientPendingPlaintextBytes - bufferbudgetGetUsage(&ls->pending_budget).bytes);
-                tlsclientTunnelUpStreamPayload(
-                    fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, allowance, 'X'));
-                requireTlsClient(bufferbudgetGetUsage(&ls->pending_budget).bytes == kTlsClientPendingPlaintextBytes,
-                                 "TLS queue plus active exact byte cap refused");
-            }
-            else
-            {
-                while (bufferbudgetGetUsage(&ls->pending_budget).entries < kTlsClientPendingPlaintextBuffers)
-                    tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 0, 0));
-                requireTlsClient(bufferqueueGetBufCount(&ls->bq) == kTlsClientPendingPlaintextBuffers - 1,
-                                 "TLS active entry was not charged at equality");
-            }
-            tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 1, 'X'));
-            requireTlsClient(ls->pending_plaintext == NULL && ls->pending_reservation.budget == NULL &&
-                                 bufferbudgetGetUsage(&ls->pending_budget).entries == 0 &&
-                                 strcmp(fixture.context.events, "UD") == 0,
-                             "TLS active overflow did not settle reservation and queued input");
-            SSL_free(server);
-            SSL_CTX_free(server_ctx);
-            fixtureDestroy(&fixture);
-            return;
-        }
-        fixture.context.finish_on_source_resume  = mode == 2;
-        fixture.context.repause_on_source_resume = mode == 3;
-        tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
-        if (mode == 2)
-        {
-            requireTlsClient(! lineIsAlive(fixture.line) && fixture.context.source_resume_count == 1 &&
-                                 strcmp(fixture.context.events, "U") == 0,
-                             "TLS source Resume close continued touching retired state");
-            SSL_free(server);
-            SSL_CTX_free(server_ctx);
-            fixtureDestroy(&fixture);
-            return;
-        }
-        if (mode == 3)
-        {
-            requireTlsClient(ls->shaping_wire_paused && fixture.context.source_pause_count == 2 &&
-                                 fixture.context.source_resume_count == 1,
-                             "TLS nested Pause from source Resume was lost or duplicated");
-            tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
-        }
-        requireTlsClient(fixture.context.source_resume_count == (mode == 3 ? 2U : 1U) &&
-                             ! ls->plaintext_producer_paused && ! ls->source_paused,
-                         "TLS did not release source pressure after readiness and FIFO completion");
-        size_t received = 0;
+        requireTlsClient(ls->handshake_completed && ls->pending_plaintext == NULL &&
+                             bufferqueueGetBufCount(&ls->bq) == 0 && ! ls->plaintext_producer_paused &&
+                             ! ls->source_paused && fixture.context.source_resume_count == 2 &&
+                             fixture.context.source_pause_count == (mode == 3 ? 7U : 6U),
+                         "TLS FIFO did not finish through nested advisory Pause and release its own pressure");
+        requireTlsClient(completeServerHandshake(server), "ordinary TLS server failed to complete handshake");
+        uint8_t plaintext[32770];
+        size_t  received = 0;
         while (received < sizeof(plaintext))
         {
             n = SSL_read(server, plaintext + received, (int) (sizeof(plaintext) - received));
-            requireTlsClient(n > 0, "TLS resumed plaintext was lost at the peer");
+            requireTlsClient(n > 0, "TLS ready plaintext was lost at the peer");
             received += (size_t) n;
         }
         for (size_t i = 0; i < 32768; ++i)
         {
             requireTlsClient(plaintext[i] == 'A', "TLS reentry reordered the active plaintext head");
         }
-        requireTlsClient(plaintext[32768] == 'B' && plaintext[32769] == 'C' && ls->pending_plaintext == NULL &&
-                             bufferqueueGetBufCount(&ls->bq) == 0,
-                         "TLS pending FIFO lost/reordered older or nested plaintext");
+        requireTlsClient(plaintext[32768] == 'B' && plaintext[32769] == 'C',
+                         "TLS pending FIFO lost or reordered older and nested plaintext");
+        uint32_t sends_before = fixture.context.upstream_payload_count;
+        tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
+        tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
+        requireTlsClient(fixture.context.source_resume_count == 4 &&
+                             fixture.context.upstream_payload_count == sends_before,
+                         "TLS repeated Resume was filtered or resent drained plaintext");
         tlsclientTunnelUpStreamFinish(fixture.tls, fixture.line);
     }
     SSL_free(server);

@@ -290,15 +290,6 @@ static void replayCase(const char *sni, int version, bool fragmented, int action
     }
     else
     {
-        if (action == 1)
-        {
-            twfRequire(f.fallback.capture_len == 0, "paused fallback received payload");
-            tlsserverTunnelDownStreamResume(f.tls, f.line);
-            if (g_fallback_finish_task.pending)
-            {
-                fallbackFinishDriveDelayedTask();
-            }
-        }
         twfRequire(f.fallback.capture_len == n && memcmp(bytes, f.captured, n) == 0, "byte-exact replay");
         sendBytes(&f, (const uint8_t *) "later", 5);
         twfRequire(f.fallback.capture_len == n + 5 && memcmp(f.captured + n, "later", 5) == 0,
@@ -334,12 +325,6 @@ static void reentrantInitCase(uint32_t delay_ms, int action, bool plaintext)
     }
     else
     {
-        if (action == 4)
-        {
-            twfRequire(f.fallback.capture_len == 0 && ! g_fallback_finish_task.pending,
-                       "paused Init drained its queue");
-            tlsserverTunnelDownStreamResume(f.tls, f.line);
-        }
         if (g_fallback_finish_task.pending)
         {
             fallbackFinishDriveDelayedTask();

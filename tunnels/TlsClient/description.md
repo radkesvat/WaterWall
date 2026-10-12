@@ -243,21 +243,21 @@ capture, overhead, connection-success, and classifier measurements justify publi
 Padding is standard zero-valued TLS 1.3 `TLSInnerPlaintext` padding and adds the selected number of bytes to ciphertext,
 subject to the remaining legal TLS record capacity. Delay starts after encryption and adds up to the selected latency.
 Records stay in wire order with `release_at = max(now + delay, previous_release_at)`. Queued ciphertext is bounded to 8
-MiB per line, with producer backpressure at 6 MiB and release at 3 MiB. Pause and Resume propagation follows the
-current wire state: if draining during Resume re-enters with another wire Pause, the stale Resume is suppressed until a
-later wire Resume. If the cleartext side finishes, the timer is canceled and queued client ciphertext is synchronously
-released in FIFO order while the wire remains writable. If the wire is paused, any remainder is discarded; local state
-and upstream `Finish` are completed before the callback returns.
+MiB per line, with locally originated producer Pause at 6 MiB and Resume at 3 MiB. Incoming Pause and Resume
+are relayed transparently, including duplicates. Due ciphertext drains keep their existing timing and FIFO order without
+waiting for Resume; Pause does not cancel the release timer. If the cleartext side finishes, the timer is canceled and queued client ciphertext is synchronously
+released in FIFO order, including during advisory Pause. Local state and upstream `Finish` are completed before the
+callback returns.
 
 After the configured application-record scope is consumed, the current shaping queue first drains completely so no later
-TLS record can overtake delayed ciphertext. While that ordering barrier is active, the cleartext producer remains paused
-even below the normal low watermark. At an empty queue and complete write-BIO boundary, the timer and per-line shaping
-queue are released; later TLS output is forwarded directly without record parsing or shaping metadata. Ordinary wire
-Pause still applies in this direct phase. The 8 MiB limit and 6/3 MiB watermarks therefore bound only the finite active
-shaping window.
+TLS record can overtake delayed ciphertext. While that ordering barrier is active, the node retains its local shaping
+hold even below the normal low watermark; relayed Resume remains advisory. At an empty queue and complete write-BIO boundary, the timer and per-line shaping
+queue are released; later TLS output is forwarded directly without record parsing or shaping metadata, including during
+advisory Pause. The 8 MiB limit and 6/3 MiB watermarks therefore bound only the finite active shaping window. TLS record
+encryption and decryption remain active, so shaping retirement does not permanently bypass the tunnel.
 
-During this synchronous final drain, downstream Payload and Est are discarded, while Pause and Resume only update the
-local wire-paused state; none of those callbacks is forwarded toward the finished cleartext owner. A wire-side finish
+During this synchronous final drain, downstream Payload, Est, Pause and Resume are discarded; none of those callbacks
+is forwarded toward the finished cleartext owner. A wire-side finish
 cancels and discards queued output and is propagated only toward cleartext. Timer allocation failure drains immediately
 in order.
 
@@ -339,12 +339,12 @@ So `Est` does not mean application data is already safe to send immediately on t
 Payload is valid after adjacent Init, including before transport Est. Plaintext waiting for TLS readiness or older
 reentrant output is bounded to 2 MiB and 1,024 buffers, including the active retained head. Equality is accepted;
 transactional admission refusal closes the borrowed line through its owner and frees queued data. Handshake completion
-and Resume drain this FIFO as independent producers: wire Pause stops the drain before the next plaintext record.
-New input cannot overtake an older retained head. The separate ciphertext-shaping budgets are unchanged.
-The first retained plaintext buffer is published before notifying the cleartext source with Pause. Protocol/order wait,
-wire pressure and ciphertext-shaping pressure share one source notification latch. Resume is emitted only after TLS is
-ready, the older plaintext FIFO is empty and wire/shaping pressure has cleared. This source pressure does not pause
-incoming TLS handshake records.
+releases this FIFO through `SSL_write()` without waiting for wire Resume; genuine local shaping and ordering barriers
+still apply. New input cannot overtake the retained head. Ciphertext-shaping limits remain separate.
+The first retained plaintext buffer is published before notifying the cleartext source with Pause. Locally originated
+protocol/order and ciphertext-shaping pressure share one source notification latch and release it when their work settles.
+Incoming Pause and Resume are relayed independently, including duplicates. This source pressure does not pause incoming
+TLS handshake records.
 
 ### Upstream payload behavior
 
@@ -354,7 +354,7 @@ Before handshake completion:
 
 After handshake completion:
 
-- queued payload is flushed through `SSL_write()` in FIFO order while wire output is not paused
+- queued payload is flushed through `SSL_write()` in FIFO order without waiting for wire Resume; local shaping barriers still apply
 - new upstream payload is encrypted immediately
 - resulting TLS records are taken from the write BIO as owned buffers and forwarded upstream after the SSL call returns
 - a debug log records the negotiated TLS version, cipher, and ALPN value; it uses `alpn=<none>` when no protocol was
