@@ -56,12 +56,15 @@ also has a **1,024-frame FIFO cap**. Incoming fragments have no entry-count cap.
 The maximum complete wire frame is 65,553 bytes, and a non-OPEN frame carries at
 most 65,534 application bytes.
 
-Each decoded frame produces its own callback. Downstream Pause controls upstream
-output; upstream Pause controls downstream output. Drains stop immediately on
-Pause and preserve FIFO order across reentrant input. Resume drains older work
-before releasing the producer; an incomplete frame still permits producer Resume.
-Malformed data, admission overflow or queue/stream allocation refusal closes only
+Each decoded frame produces its own callback. Both nodes borrow the normal line
+and transform every payload, so neither can permanently bypass itself. Pause and
+Resume use transparent default forwarding in both directions, including repeated
+notifications. Complete admitted frames drain immediately without waiting for
+Resume. A pump guard per direction preserves FIFO during reentrant callbacks;
+the receive stream retains incomplete input, and the bounded output FIFO keeps
+complete encoded batches ahead of reentrant input. Each input is checked against
+the fixed retention limits before any callback for that input.
+Malformed data, retention-limit overflow or queue-capacity refusal closes only
 the borrowed connection through its owner. Finish releases queued buffers and
-pipes before forwarding away from the sender. Stream creation failure during Init
-notifies only the initialized owner side. These behaviors do not guarantee
+pipes before forwarding away from the sender. These behaviors do not guarantee
 zero-copy delivery or a throughput improvement.

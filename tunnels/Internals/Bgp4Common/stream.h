@@ -13,20 +13,12 @@ enum
     kBgpOutputEntries  = 1024
 };
 
-typedef struct bgp_permission_s
-{
-    bool paused;
-    bool pumping;
-    bool producer_paused;
-    bool notifying;
-} bgp_permission_t;
-
 typedef struct bgp_stream_s
 {
     splice_stream_t *read_stream;
     buffer_queue_t   output;
-    bgp_permission_t encode;
-    bgp_permission_t decode;
+    bool             encode_pumping;
+    bool             decode_pumping;
     bool             client;
     bool             open; // Client OPEN admitted, or server OPEN validated.
 } bgp_stream_t;
@@ -74,7 +66,7 @@ static inline bool bgpHeaderValid(const bgp_stream_t *s)
 }
 
 /* A valid incomplete frame is necessarily smaller than kBgpMaxWireFrame;
- * complete frames retained during Pause are governed by the independent budget. */
+ * input retained during reentry shares the independent receive budget. */
 static inline sbuf_t *bgpReadFrame(tunnel_t *t, line_t *l, bgp_stream_t *s, bool *valid)
 {
     *valid           = bgpHeaderValid(s);
@@ -104,92 +96,45 @@ static inline sbuf_t *bgpReadFrame(tunnel_t *t, line_t *l, bgp_stream_t *s, bool
     return body;
 }
 
-/* A notification can re-enter either direction or finish this borrowed line.
- * A reference protects storage; the stream becomes NULL on local Finish even
- * if the creator has not yet marked the borrowed line dead. */
-static inline bool bgpNotify(tunnel_t *t, line_t *l, bgp_stream_t *s, bool encode, bool pause)
-{
-    bgp_permission_t *g = encode ? &s->encode : &s->decode;
-    g->producer_paused  = pause;
-    g->notifying        = true;
-    const bool upstream = encode == s->client;
-    lineRef(l);
-    if (upstream)
-    {
-        if (pause)
-            tunnelPrevDownStreamPause(t, l);
-        else
-            tunnelPrevDownStreamResume(t, l);
-    }
-    else
-    {
-        if (pause)
-            tunnelNextUpStreamPause(t, l);
-        else
-            tunnelNextUpStreamResume(t, l);
-    }
-    const bool alive = lineIsAlive(l) && s->read_stream != NULL;
-    if (alive)
-        g->notifying = false;
-    lineUnref(l);
-    return alive;
-}
-
+/* Complete ready frames through advisory Pause. Nested input joins the FIFO;
+ * the active pump owns delivery until no complete frame remains. A reference
+ * protects storage, while read_stream detects Finish on a still-live borrowed line. */
 static inline void bgpPump(tunnel_t *t, line_t *l, bgp_stream_t *s, bool encode)
 {
-    bgp_permission_t *g = encode ? &s->encode : &s->decode;
-    if (g->pumping || g->notifying)
+    bool *pumping = encode ? &s->encode_pumping : &s->decode_pumping;
+    if (*pumping)
         return;
-    g->pumping          = true;
+    *pumping            = true;
     const bool upstream = encode == s->client;
     lineRef(l);
     for (;;)
     {
-        while (! g->paused)
+        sbuf_t *buf;
+        if (encode)
+            buf = bufferqueuePopFront(&s->output);
+        else
         {
-            sbuf_t *buf;
-            if (encode)
-                buf = bufferqueuePopFront(&s->output);
-            else
+            bool valid;
+            buf = bgpReadFrame(t, l, s, &valid);
+            if (! valid)
             {
-                bool valid;
-                buf = bgpReadFrame(t, l, s, &valid);
-                if (! valid)
-                {
-                    bgpClose(t, l, s, "invalid marker, length, type or OPEN fields");
-                    goto done;
-                }
-            }
-            if (buf == NULL)
-                break;
-            /* Pop/extract settles our bytes before transferring ownership. */
-            if (upstream)
-                tunnelNextUpStreamPayload(t, l, buf);
-            else
-                tunnelPrevDownStreamPayload(t, l, buf);
-            if (! lineIsAlive(l) || s->read_stream == NULL)
+                bgpClose(t, l, s, "invalid marker, length, type or OPEN fields");
                 goto done;
+            }
         }
-        if (g->paused == g->producer_paused)
+        if (buf == NULL)
             break;
-        /* An incomplete receive frame needs producer Resume to make progress. */
-        if (! bgpNotify(t, l, s, encode, g->paused))
+        /* Pop/extract settles our bytes before transferring ownership. */
+        if (upstream)
+            tunnelNextUpStreamPayload(t, l, buf);
+        else
+            tunnelPrevDownStreamPayload(t, l, buf);
+        if (! lineIsAlive(l) || s->read_stream == NULL)
             goto done;
     }
-    g->pumping = false;
+    *pumping = false;
 done:
     lineUnref(l);
-}
-
-static inline void bgpPermission(tunnel_t *t, line_t *l, bgp_stream_t *s, bool encode, bool pause)
-{
-    bgp_permission_t *g = encode ? &s->encode : &s->decode;
-    g->paused           = pause;
-    /* Pause takes effect immediately, including inside an outward Payload.
-     * Resume waits for the active pump to finish its older work. */
-    if (pause && ! g->producer_paused && ! g->notifying && ! bgpNotify(t, l, s, encode, true))
-        return;
-    bgpPump(t, l, s, encode);
 }
 
 static inline void bgpDecode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *buf)
@@ -260,8 +205,7 @@ static inline void bgpEncode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *in
     const uint64_t frames     = 1 + (remainder + kBgpMaxApplication - 1) / kBgpMaxApplication;
     const uint64_t wire_bytes = (uint64_t) length + frames * kBgpFramePrefix + open_length;
     const size_t   queued     = bufferqueueGetBufCount(&s->output);
-    const bool     direct =
-        frames == 1 && queued == 0 && ! s->encode.paused && ! s->encode.pumping && ! s->encode.notifying;
+    const bool     direct     = frames == 1 && queued == 0 && ! s->encode_pumping;
     if (wire_bytes > kBgpPendingBytes - bufferqueueGetBufLen(&s->output) ||
         (! direct && (frames > kBgpOutputEntries - queued || ! bufferqueueReserveExtra(&s->output, (size_t) frames))))
     {
@@ -274,7 +218,7 @@ static inline void bgpEncode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *in
         bgpPrepend(input, open, open_length);
         if (s->client)
             s->open = true;
-        s->encode.pumping = true;
+        s->encode_pumping = true;
         lineRef(l);
         if (s->client)
             tunnelNextUpStreamPayload(t, l, input);
@@ -282,7 +226,7 @@ static inline void bgpEncode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *in
             tunnelPrevDownStreamPayload(t, l, input);
         if (lineIsAlive(l) && s->read_stream != NULL)
         {
-            s->encode.pumping = false;
+            s->encode_pumping = false;
             bgpPump(t, l, s, true);
         }
         lineUnref(l);

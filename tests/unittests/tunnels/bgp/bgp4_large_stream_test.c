@@ -3,8 +3,8 @@
  * suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: testDecodeIdentity, testEncodePressure, testDirectRepresentations, testDecodeFragments,
- * testDecodePressureAndFallback, testDecoderReentry, testEncoderPipeFallback, testNotificationReentry;
+ * Cases: testDecodeIdentity, testEncodeAdvisory, testDirectRepresentations, testDecodeFragments,
+ * testDecodeAdvisoryAndFallback, testDecoderReentry, testEncoderPipeFallback, testNotificationReentry;
  * the driver lists the remaining cases
  * Checks: Assertion labels include: roundtrip changed stream bytes; encoder dropped input; truncated frame
  * header; invalid marker
@@ -59,9 +59,9 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (interruption == 1)
     {
         if (decoder_receives_upstream)
-            decoder->fnFinD(decoder, l);
+            tunnelDownStreamFin(decoder, l);
         else
-            decoder->fnFinU(decoder, l);
+            tunnelUpStreamFin(decoder, l);
         if (lineIsAlive(l))
             lineDestroy(l);
         return;
@@ -93,6 +93,12 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
     tunnelBind(client, cn);
     tunnelBind(sp, server);
     tunnelBind(server, sn);
+    cp->chain_index     = 0;
+    client->chain_index = 1;
+    cn->chain_index     = 2;
+    sp->chain_index     = 3;
+    server->chain_index = 4;
+    sn->chain_index     = 5;
     twf_line_pool_t lines;
     twfLinePoolSetup(&lines, max(client->lstate_size, server->lstate_size), 8);
     line_t *cl = twfLinePoolCreateLine(&lines), *sl = twfLinePoolCreateLine(&lines);
@@ -102,8 +108,8 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
     sp->fnFinD                = ownerFinish;
     decoder                   = reverse ? client : server;
     decoder_receives_upstream = ! reverse;
-    client->fnInitU(client, cl);
-    server->fnInitU(server, sl);
+    tunnelUpStreamInit(client, cl);
+    tunnelUpStreamInit(server, sl);
     cn->fnPayloadU = captureWire;
     sp->fnPayloadD = captureWire;
     cp->fnPayloadD = receive;
@@ -116,9 +122,9 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
         for (uint32_t i = 0; i < length; ++i)
             sbufGetMutablePtr(input)[i] = pattern(i);
         if (reverse)
-            server->fnPayloadD(server, sl, input);
+            tunnelDownStreamPayload(server, sl, input);
         else
-            client->fnPayloadU(client, cl, input);
+            tunnelUpStreamPayload(client, cl, input);
         twfRequire(wire != NULL, "encoder dropped input");
         uint32_t       offset = 0, opens = 0;
         const uint8_t *p = sbufGetRawPtr(wire);
@@ -142,21 +148,16 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
         if (fragment == 0)
         {
             if (reverse)
-                client->fnPayloadD(client, cl, encoded);
+                tunnelDownStreamPayload(client, cl, encoded);
             else
-                server->fnPayloadU(server, sl, encoded);
+                tunnelUpStreamPayload(server, sl, encoded);
             if (interruption == 1 || interruption == 2)
             {
                 twfRequire(! lineIsAlive(reverse ? cl : sl), "decoder interruption did not close through owner");
                 twfRequire(calls == (interruption == 1), "malformed frame escaped or close repeated delivery");
                 break;
             }
-            twfRequire(calls == 1, "decoder sent another callback after Pause");
-            pause_on_delivery = false;
-            if (reverse)
-                client->fnResumeU(client, cl);
-            else
-                server->fnResumeD(server, sl);
+            twfRequire(received == length, "decoder waited for Resume to complete admitted input");
         }
         else
         {
@@ -166,18 +167,18 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
                 sbuf_t  *part = sbufCreateWithPadding(n, 128);
                 sbufMoveTo(part, encoded, n);
                 if (reverse)
-                    client->fnPayloadD(client, cl, part);
+                    tunnelDownStreamPayload(client, cl, part);
                 else
-                    server->fnPayloadU(server, sl, part);
+                    tunnelUpStreamPayload(server, sl, part);
             }
             lineReuseBuffer(cl, encoded);
         }
         twfRequire(received == length, "decoder lost stream bytes");
     }
     if (lineIsAlive(cl))
-        client->fnFinU(client, cl);
+        tunnelUpStreamFin(client, cl);
     if (lineIsAlive(sl))
-        server->fnFinU(server, sl);
+        tunnelUpStreamFin(server, sl);
     twfRequireLineStateZeroed(cl, client, "client retained state after Finish");
     twfRequireLineStateZeroed(sl, server, "server retained state after Finish");
     if (lineIsAlive(cl))
@@ -267,7 +268,7 @@ typedef struct bgp_fixture_s
     line_t          *line;
     twf_trace_t      trace;
     bool             client, encode;
-    unsigned         action, deliveries, ordinary_deliveries, pauses, resumes, finishes;
+    unsigned         action, admission_mode, deliveries, ordinary_deliveries, pauses, resumes, finishes;
     size_t           length, reads_at_delivery;
     uint8_t         *bytes;
     sbuf_t          *last_buffer;
@@ -276,7 +277,8 @@ typedef struct bgp_fixture_s
 } bgp_fixture_t;
 static bgp_fixture_t *active;
 static void           fixtureSubmit(bgp_fixture_t *, sbuf_t *);
-static void           fixturePermission(bgp_fixture_t *, bool);
+static void           fixtureSignal(bgp_fixture_t *, bool);
+static void           fixtureFillAdmission(bgp_fixture_t *);
 static uint32_t       makeWire(uint8_t *, uint32_t, bool, unsigned);
 
 static sbuf_t *fixtureBytes(bgp_fixture_t *f, const void *bytes, uint32_t length, bool splice_input)
@@ -315,7 +317,7 @@ static void fixtureProducerPause(tunnel_t *t, line_t *l)
     if (active->action == 7)
     {
         active->action = 0;
-        active->t->fnFinD(active->t, l);
+        tunnelDownStreamFin(active->t, l);
     }
 }
 static void fixtureProducerResume(tunnel_t *t, line_t *l)
@@ -327,9 +329,9 @@ static void fixtureProducerResume(tunnel_t *t, line_t *l)
     unsigned action = active->action;
     active->action  = 0;
     if (action == 8)
-        fixturePermission(active, true);
+        fixtureSignal(active, true);
     if (action == 9)
-        active->t->fnFinD(active->t, l);
+        tunnelDownStreamFin(active->t, l);
 }
 static void fixtureReceive(tunnel_t *t, line_t *l, sbuf_t *b)
 {
@@ -349,10 +351,10 @@ static void fixtureReceive(tunnel_t *t, line_t *l, sbuf_t *b)
     lineReuseBuffer(l, b);
     const unsigned action = f->action;
     f->action             = 0;
-    if (action == 1 || action == 2 || action == 5)
-        fixturePermission(f, true);
+    if (action == 1 || action == 2 || action == 5 || action == 6)
+        fixtureSignal(f, true);
     if (action == 2)
-        fixturePermission(f, false);
+        fixtureSignal(f, false);
     if (action == 3 || action == 5)
     {
         uint8_t value = 0xee;
@@ -367,8 +369,10 @@ static void fixtureReceive(tunnel_t *t, line_t *l, sbuf_t *b)
     }
     if (action == 4)
     {
-        f->t->fnFinD(f->t, l);
+        tunnelDownStreamFin(f->t, l);
     }
+    if (action == 10)
+        fixtureFillAdmission(f);
 }
 static void fixtureBegin(bgp_fixture_t *f, bool client, bool encode, uint32_t large)
 {
@@ -386,6 +390,9 @@ static void fixtureBegin(bgp_fixture_t *f, bool client, bool encode, uint32_t la
     f->next                    = twfCreateNextTunnel(&f->trace);
     tunnelBind(f->prev, f->t);
     tunnelBind(f->t, f->next);
+    f->prev->chain_index      = 0;
+    f->t->chain_index         = 1;
+    f->next->chain_index      = 2;
     f->chain                  = memoryAllocateZero(sizeof(tunnel_chain_t));
     f->chain->supports_splice = WW_HAVE_SPLICE;
     f->t->chain               = f->chain;
@@ -397,13 +404,13 @@ static void fixtureBegin(bgp_fixture_t *f, bool client, bool encode, uint32_t la
     f->prev->fnPauseD = f->next->fnPauseU = fixtureProducerPause;
     f->prev->fnResumeD = f->next->fnResumeU = fixtureProducerResume;
     f->bytes                                = memoryAllocate(4U * 1024 * 1024);
-    f->t->fnInitU(f->t, f->line);
+    tunnelUpStreamInit(f->t, f->line);
 }
 static void fixtureEnd(bgp_fixture_t *f)
 {
     if (lineIsAlive(f->line))
     {
-        f->t->fnFinU(f->t, f->line);
+        tunnelUpStreamFin(f->t, f->line);
         lineDestroy(f->line);
     }
     twfRequireLineStateZeroed(f->line, f->t, "BGP teardown retained resources");
@@ -422,25 +429,25 @@ static void fixtureEnd(bgp_fixture_t *f)
 static void fixtureSubmit(bgp_fixture_t *f, sbuf_t *b)
 {
     if (f->encode == f->client)
-        f->t->fnPayloadU(f->t, f->line, b);
+        tunnelUpStreamPayload(f->t, f->line, b);
     else
-        f->t->fnPayloadD(f->t, f->line, b);
+        tunnelDownStreamPayload(f->t, f->line, b);
 }
-static void fixturePermission(bgp_fixture_t *f, bool pause)
+static void fixtureSignal(bgp_fixture_t *f, bool pause)
 {
     if (f->encode == f->client)
     {
         if (pause)
-            f->t->fnPauseD(f->t, f->line);
+            tunnelDownStreamPause(f->t, f->line);
         else
-            f->t->fnResumeD(f->t, f->line);
+            tunnelDownStreamResume(f->t, f->line);
     }
     else
     {
         if (pause)
-            f->t->fnPauseU(f->t, f->line);
+            tunnelUpStreamPause(f->t, f->line);
         else
-            f->t->fnResumeU(f->t, f->line);
+            tunnelUpStreamResume(f->t, f->line);
     }
 }
 static uint32_t makeWire(uint8_t *wire_bytes, uint32_t payload, bool open, unsigned optional)
@@ -527,7 +534,7 @@ static void testDecodeIdentity(void)
     fixtureEnd(&f);
 }
 
-static void testEncodePressure(void)
+static void testEncodeAdvisory(void)
 {
     uint8_t *data = memoryAllocate(1024 * 1024);
     for (uint32_t i = 0; i < 1024 * 1024; ++i)
@@ -543,15 +550,17 @@ static void testEncodePressure(void)
                 twfRequire(! lineIsAlive(f.line) && f.deliveries == 1, "Finish did not stop batch");
             else
             {
+                checkEncoded(&f, 1024 * 1024, action == 3 || action == 5);
                 if (action == 1 || action == 5)
                 {
-                    twfRequire(f.deliveries == 1 && f.pauses == 1 && f.resumes == 0, "encoder ignored Pause");
-                    fixturePermission(&f, true);
-                    fixturePermission(&f, false);
-                    fixturePermission(&f, false);
-                    twfRequire(f.pauses == 1 && f.resumes == 1, "duplicate or stale pressure notification");
+                    const unsigned deliveries = f.deliveries;
+                    twfRequire(f.pauses == 1 && f.resumes == 0, "encoder did not relay advisory Pause");
+                    fixtureSignal(&f, true);
+                    fixtureSignal(&f, false);
+                    fixtureSignal(&f, false);
+                    twfRequire(f.pauses == 2 && f.resumes == 2 && f.deliveries == deliveries,
+                               "duplicate signals were suppressed or Resume drained retained output");
                 }
-                checkEncoded(&f, 1024 * 1024, action == 3 || action == 5);
             }
             fixtureEnd(&f);
         }
@@ -628,7 +637,7 @@ static void testDecodeFragments(void)
         fixtureEnd(&f);
     }
 }
-static void testDecodePressureAndFallback(void)
+static void testDecodeAdvisoryAndFallback(void)
 {
     uint8_t bytes[70000];
     for (unsigned client = 0; client < 2; ++client)
@@ -640,19 +649,18 @@ static void testDecodePressureAndFallback(void)
             uint32_t n2 = makeWire(bytes + n, 99, false, 0);
             memcpy(bytes + n + n2, bytes + n, 7);
             f.action = mode == 3 ? 4 : mode == 2 ? 2 : 1;
-            fixturePermission(&f, true);
-            for (uint32_t i = 0; i < n + n2 + 7;)
-            {
-                uint32_t chunk = min(4096U, n + n2 + 7 - i);
-                fixtureSubmit(&f, fixtureBytes(&f, bytes + i, chunk, WW_HAVE_SPLICE && (i / 4096) % 2 == 0));
-                i += chunk;
-            }
+            fixtureSignal(&f, true);
             test_splice_inventory_hold_t held = {0};
             if (mode == 0)
                 held = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
             pipe_pressure = mode == 1;
             pipe_moves    = 0;
-            fixturePermission(&f, false);
+            for (uint32_t i = 0; i < n + n2 + 7 && lineIsAlive(f.line);)
+            {
+                uint32_t chunk = min(4096U, n + n2 + 7 - i);
+                fixtureSubmit(&f, fixtureBytes(&f, bytes + i, chunk, WW_HAVE_SPLICE && (i / 4096) % 2 == 0));
+                i += chunk;
+            }
             pipe_pressure = false;
             testSpliceInventoryReleaseHeld(&held);
             if (mode == 3)
@@ -661,16 +669,20 @@ static void testDecodePressureAndFallback(void)
             {
                 if (mode < 2)
                 {
-                    twfRequire(f.deliveries == 1 && f.last_pipe == -1,
-                               "decoder ignored Pause or failed ordinary fallback");
+                    twfRequire(f.ordinary_deliveries == 2,
+                               "decoder did not use ordinary fallback for both complete frames");
 #if WW_HAVE_SPLICE
                     if (mode == 1)
                         twfRequire(pipe_moves >= 2, "fallback did not follow partial pipe progress");
 #endif
-                    fixturePermission(&f, false);
                 }
-                twfRequire(f.length == 60099 && f.resumes >= 1,
-                           "decoder stranded complete frames or incomplete-header Resume");
+                twfRequire(f.length == 60099 && f.deliveries == 2 && f.pauses == 2,
+                           "decoder stranded complete frames or suppressed advisory Pause");
+                const unsigned resumes = f.resumes;
+                fixtureSignal(&f, false);
+                fixtureSignal(&f, false);
+                twfRequire(f.resumes == resumes + 2 && f.deliveries == 2,
+                           "duplicate Resume was suppressed or drained retained output");
                 for (unsigned i = 0; i < 60000; ++i)
                     twfRequire(f.bytes[i] == pattern(i), "mixed fallback changed bytes");
                 for (unsigned i = 0; i < 99; ++i)
@@ -690,7 +702,7 @@ static void testDecoderReentry(void)
         n += makeWire(wire_bytes + n, 99, false, 0);
         f.action = 6;
         fixtureSubmit(&f, fixtureBytes(&f, wire_bytes, n, false));
-        twfRequire(f.length == 200 && f.deliveries == 3 && f.bytes[199] == 0xee,
+        twfRequire(f.length == 200 && f.deliveries == 3 && f.bytes[199] == 0xee && f.pauses == 1 && f.resumes == 0,
                    "reentrant decode overtook older frames");
         for (unsigned i = 0; i < 99; ++i)
             twfRequire(f.bytes[100 + i] == pattern(i), "older frame reordered");
@@ -750,17 +762,17 @@ static void testNotificationReentry(void)
                 fixtureBegin(&f, client, encode, 8192);
                 if (action == 7)
                     f.action = action;
-                fixturePermission(&f, true);
+                fixtureSignal(&f, true);
                 if (action != 7)
                 {
                     f.action = action;
-                    fixturePermission(&f, false);
+                    fixtureSignal(&f, false);
                 }
                 if (action == 8)
                 {
                     twfRequire(lineIsAlive(f.line) && f.pauses == 2 && f.resumes == 1,
                                "reentrant Pause during producer Resume lost final permission");
-                    fixturePermission(&f, false);
+                    fixtureSignal(&f, false);
                     twfRequire(f.resumes == 2, "producer stranded after reentrant Pause");
                 }
                 else
@@ -819,6 +831,59 @@ static void testMalformed(void)
             fixtureEnd(&f);
         }
 }
+/* Reentrant input remains queued behind the active delivery. This exercises
+ * real retained-work limits without using advisory Pause as a payload gate. */
+static void fixtureFillAdmission(bgp_fixture_t *f)
+{
+    if (f->encode)
+    {
+        const unsigned mode = f->admission_mode;
+        if (mode == 0)
+        {
+            const uint32_t length = kBgpPendingBytes - 33 * kBgpFramePrefix;
+            sbuf_t        *b      = bufferpoolGetBestFit(f->env.pool, length, 128);
+            sbufSetLength(b, length);
+            fixtureSubmit(f, b);
+            twfRequire(lineIsAlive(f->line) &&
+                           bufferqueueGetBufLen(&((bgp_stream_t *) lineGetState(f->line, f->t))->output) ==
+                               kBgpPendingBytes,
+                       "exact encoded byte boundary refused");
+        }
+        else if (mode < 3)
+        {
+            const unsigned count = mode == 1 ? kBgpOutputEntries : kBgpOutputEntries - 1;
+            for (unsigned i = 0; i < count; ++i)
+                fixtureSubmit(f, fixtureBytes(f, "x", 1, false));
+            twfRequire(lineIsAlive(f->line) &&
+                           bufferqueueGetBufCount(&((bgp_stream_t *) lineGetState(f->line, f->t))->output) == count,
+                       "valid output-entry boundary refused");
+        }
+        else
+            fail_queue = true;
+        const uint32_t extra = mode == 2 ? 65535 : 1;
+        sbuf_t        *b     = bufferpoolGetBestFit(f->env.pool, extra, 128);
+        sbufSetLength(b, extra);
+        fixtureSubmit(f, b);
+    }
+    else
+    {
+        uint8_t *bytes = memoryAllocate(kBgpPendingBytes);
+        uint32_t used  = 0;
+        while (used < kBgpPendingBytes)
+        {
+            const uint32_t frame = min((uint32_t) kBgpMaxWireFrame, kBgpPendingBytes - used);
+            used += makeWire(bytes + used, frame - kBgpFramePrefix, false, 0);
+        }
+        fixtureSubmit(f, fixtureBytes(f, bytes, used, false));
+        memoryFree(bytes);
+        twfRequire(lineIsAlive(f->line) &&
+                       splicestreamLength(((bgp_stream_t *) lineGetState(f->line, f->t))->read_stream) ==
+                           kBgpPendingBytes,
+                   "exact decoder byte boundary refused");
+        fixtureSubmit(f, fixtureBytes(f, "x", 1, false));
+    }
+}
+
 static void testAdmission(void)
 {
     twfRequire(kBgpPendingBytes == 2162705 && kBgpMaxWireFrame == 65553 && kBgpOutputEntries == 1024,
@@ -828,69 +893,37 @@ static void testAdmission(void)
         {
             bgp_fixture_t f;
             fixtureBegin(&f, client, true, mode % 2 ? 65536 : 131072);
-            fixturePermission(&f, true);
-            if (mode == 0)
-            {
-                fixed_random          = 0;
-                const uint32_t length = kBgpPendingBytes - 33 * 19 - (client ? 13 : 0);
-                sbuf_t        *b      = bufferpoolGetBestFit(f.env.pool, length, 128);
-                sbufSetLength(b, length);
-                fixtureSubmit(&f, b);
-                fixed_random = -1;
-                twfRequire(bufferqueueGetBufLen(&((bgp_stream_t *) lineGetState(f.line, f.t))->output) ==
-                               kBgpPendingBytes,
-                           "exact encoded byte boundary refused");
-            }
-            else if (mode < 3)
-            {
-                unsigned count = mode == 1 ? 1024 : 1023;
-                for (unsigned i = 0; i < count; ++i)
-                    fixtureSubmit(&f, fixtureBytes(&f, "x", 1, false));
-                twfRequire(lineIsAlive(f.line), "valid output-entry boundary refused");
-            }
-            else
-                fail_queue = true;
-            uint32_t extra = mode == 2 ? 65535 : 1;
-            sbuf_t  *b     = bufferpoolGetBestFit(f.env.pool, extra, 128);
-            sbufSetLength(b, extra);
-            fixtureSubmit(&f, b);
-            twfRequire(! lineIsAlive(f.line) && f.deliveries == 0 && f.finishes == 1, "batch refusal published output");
+            fixtureSignal(&f, true);
+            f.action         = 10;
+            f.admission_mode = mode;
+            fixtureSubmit(&f, fixtureBytes(&f, "x", 1, false));
+            twfRequire(! lineIsAlive(f.line) && f.deliveries == 1 && f.finishes == 1,
+                       "reentrant output overflow escaped or delivered refused work");
             fixtureEnd(&f);
         }
     for (unsigned client = 0; client < 2; ++client)
     {
         bgp_fixture_t f;
         fixtureBegin(&f, client, false, 8192);
-        fixturePermission(&f, true);
-        uint8_t *bytes = memoryAllocate(kBgpPendingBytes);
-        uint32_t used  = 0;
-        while (used < kBgpPendingBytes)
-        {
-            uint32_t frame = min((uint32_t) kBgpMaxWireFrame, kBgpPendingBytes - used);
-            bool     open  = ! client && used == 0;
-            used += makeWire(bytes + used, frame - 19 - (open ? 13 : 0), open, 3);
-        }
-        fixtureSubmit(&f, fixtureBytes(&f, bytes, used, false));
-        memoryFree(bytes);
-        twfRequire(lineIsAlive(f.line) &&
-                       splicestreamLength(((bgp_stream_t *) lineGetState(f.line, f.t))->read_stream) ==
-                           kBgpPendingBytes,
-                   "exact decoder byte boundary refused");
-        fixtureSubmit(&f, fixtureBytes(&f, "x", 1, false));
-        twfRequire(! lineIsAlive(f.line) && f.deliveries == 0, "decoder overflow escaped");
+        fixtureSignal(&f, true);
+        f.action = 10;
+        uint8_t        bytes[64];
+        const uint32_t n = makeWire(bytes, 1, ! client, 3);
+        fixtureSubmit(&f, fixtureBytes(&f, bytes, n, false));
+        twfRequire(! lineIsAlive(f.line) && f.deliveries == 1 && f.finishes == 1,
+                   "reentrant decoder overflow escaped or delivered refused work");
         fixtureEnd(&f);
     }
 #if WW_HAVE_SPLICE
     bgp_fixture_t f;
     fixtureBegin(&f, true, false, 8192);
-    fixturePermission(&f, true);
+    fixtureSignal(&f, true);
     uint8_t  bytes[2048];
     uint32_t n = makeWire(bytes, 1500, false, 0);
     for (uint32_t i = 0; i < n; ++i)
         fixtureSubmit(&f, fixtureBytes(&f, bytes + i, 1, true));
-    twfRequire(lineIsAlive(f.line), "incoming fragments hit output entry cap");
-    fixturePermission(&f, false);
-    twfRequire(f.length == 1500, "many pipe fragments failed extraction");
+    twfRequire(lineIsAlive(f.line) && f.length == 1500 && f.resumes == 0,
+               "incoming fragments hit output entry cap or waited for Resume");
     fixtureEnd(&f);
 #endif
 }
@@ -918,9 +951,9 @@ int main(void)
     runCase(true, SPLICE_PAYLOAD_LIMIT, 65521);
     testDirectRepresentations();
     testDecodeIdentity();
-    testEncodePressure();
+    testEncodeAdvisory();
     testDecodeFragments();
-    testDecodePressureAndFallback();
+    testDecodeAdvisoryAndFallback();
     testDecoderReentry();
     testEncoderPipeFallback();
     testNotificationReentry();
