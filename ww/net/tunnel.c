@@ -83,7 +83,7 @@ tunnel_t *tunnelGetBranchEntry(tunnel_t *owner, tunnel_t *target)
 void tunnelDefaultUpStreamInit(tunnel_t *self, line_t *line)
 {
     assert(self->next != NULL);
-    self->next->fnInitU(self->next, line);
+    tunnelNextUpStreamInit(self, line);
 }
 
 // Reject upstream establishment unless the node explicitly supports it.
@@ -99,28 +99,28 @@ void tunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
 void tunnelDefaultUpStreamFin(tunnel_t *self, line_t *line)
 {
     assert(self->next != NULL);
-    self->next->fnFinU(self->next, line);
+    tunnelNextUpStreamFinish(self, line);
 }
 
 // Default upstream payload function
 void tunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
     assert(self->next != NULL);
-    self->next->fnPayloadU(self->next, line, payload);
+    tunnelNextUpStreamPayload(self, line, payload);
 }
 
 // Default upstream pause function
 void tunnelDefaultUpStreamPause(tunnel_t *self, line_t *line)
 {
     assert(self->next != NULL);
-    self->next->fnPauseU(self->next, line);
+    tunnelNextUpStreamPause(self, line);
 }
 
 // Default upstream resume function
 void tunnelDefaultUpStreamResume(tunnel_t *self, line_t *line)
 {
     assert(self->next != NULL);
-    self->next->fnResumeU(self->next, line);
+    tunnelNextUpStreamResume(self, line);
 }
 
 // Reject downstream initialization unless the node explicitly supports it.
@@ -136,35 +136,35 @@ void tunnelDefaultDownStreamInit(tunnel_t *self, line_t *line)
 void tunnelDefaultDownStreamEst(tunnel_t *self, line_t *line)
 {
     assert(self->prev != NULL);
-    self->prev->fnEstD(self->prev, line);
+    tunnelPrevDownStreamEst(self, line);
 }
 
 // Default downstream finalization function
 void tunnelDefaultDownStreamFinish(tunnel_t *self, line_t *line)
 {
     assert(self->prev != NULL);
-    self->prev->fnFinD(self->prev, line);
+    tunnelPrevDownStreamFinish(self, line);
 }
 
 // Default downstream payload function
 void tunnelDefaultDownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
     assert(self->prev != NULL);
-    self->prev->fnPayloadD(self->prev, line, payload);
+    tunnelPrevDownStreamPayload(self, line, payload);
 }
 
 // Default downstream pause function
 void tunnelDefaultDownStreamPause(tunnel_t *self, line_t *line)
 {
     assert(self->prev != NULL);
-    self->prev->fnPauseD(self->prev, line);
+    tunnelPrevDownStreamPause(self, line);
 }
 
 // Default downstream resume function
 void tunnelDefaultDownStreamResume(tunnel_t *self, line_t *line)
 {
     assert(self->prev != NULL);
-    self->prev->fnResumeD(self->prev, line);
+    tunnelPrevDownStreamResume(self, line);
 }
 
 // Default function to handle tunnel chaining

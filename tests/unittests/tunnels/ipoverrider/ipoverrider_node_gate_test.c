@@ -186,7 +186,7 @@ static void testChanceZeroSkipsEntireNodeAction(void)
     require(state->chance == 0, "root-level chance=0 was not parsed");
     require(! state->only120, "root-level only120=false was not parsed");
 
-    line_t  line = {0};
+    line_t  line = {.active_tunnels_mask = UINT64_MAX};
     sbuf_t *buf  = createIpv4TcpPacket(60);
     resetForwardingRecord();
     t->fnPayloadU(t, &line, buf);
@@ -241,8 +241,8 @@ static void testChanceGateStateIsIndependentPerWorkerAndDirection(void)
     require(state->worker_gate_count == 2, "IpOverrider did not allocate one percentage-gate slot per worker");
     require(state->worker_gates != NULL, "IpOverrider percentage-gate storage is missing");
 
-    line_t worker_zero_line = {.wid = 0};
-    line_t worker_one_line  = {.wid = 1};
+    line_t worker_zero_line = {.wid = 0, .active_tunnels_mask = UINT64_MAX};
+    line_t worker_one_line  = {.wid = 1, .active_tunnels_mask = UINT64_MAX};
 
     uint64_t worker_zero_up   = state->worker_gates[0].direction[kIpOverriderDirectionUp].state;
     uint64_t worker_zero_down = state->worker_gates[0].direction[kIpOverriderDirectionDown].state;
@@ -295,7 +295,7 @@ static void testCleanTcpRewriteComposition(void)
     bindRecordingNeighbors(t, &prev, &next);
 
     ipoverrider_tstate_t *state    = tunnelGetState(t);
-    line_t                line     = {0};
+    line_t                line     = {.active_tunnels_mask = UINT64_MAX};
     sbuf_t               *buf      = createIpv4TcpPacket(60);
     uint32_t              new_src  = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 10));
     uint32_t              new_dest = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 20));
@@ -335,7 +335,7 @@ static void testCleanUdpRewriteAndZeroChecksum(void)
     tunnel_t *next     = NULL;
     bindRecordingNeighbors(t, &prev, &next);
 
-    line_t   line     = {0};
+    line_t   line     = {.active_tunnels_mask = UINT64_MAX};
     sbuf_t  *buf      = createIpv4UdpPacket(60);
     uint32_t new_src  = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 30));
     uint32_t new_dest = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 40));
@@ -387,7 +387,7 @@ static void testExistingFullRecalculationRequestPreserved(void)
     tunnel_t *next     = NULL;
     bindRecordingNeighbors(t, &prev, &next);
 
-    line_t line = {0};
+    line_t line = {.active_tunnels_mask = UINT64_MAX};
     lineSetRecalculateChecksum(&line, true);
 
     sbuf_t  *buf      = createIpv4TcpPacket(60);
@@ -438,7 +438,7 @@ static void testOnly120GatesEntireNodeAction(void)
     ipoverrider_tstate_t *state = tunnelGetState(t);
     require(state->only120, "root-level only120=true was not parsed");
 
-    line_t line = {0};
+    line_t line = {.active_tunnels_mask = UINT64_MAX};
 
     /* Upstream oversized (121 bytes) -> skipped */
     sbuf_t *buf = createIpv4TcpPacket(121);
@@ -512,7 +512,7 @@ static void testUnchangedAddressHandling(void)
     bindRecordingNeighbors(t, &prev, &next);
 
     ipoverrider_tstate_t *state       = tunnelGetState(t);
-    line_t                line        = {0};
+    line_t                line        = {.active_tunnels_mask = UINT64_MAX};
     uint32_t              target_src  = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 10));
     uint32_t              target_dest = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 20));
 
@@ -552,7 +552,7 @@ static void testRejectionAndMalformedPackets(void)
     tunnel_t *next     = NULL;
     bindRecordingNeighbors(t, &prev, &next);
 
-    line_t line = {0};
+    line_t line = {.active_tunnels_mask = UINT64_MAX};
 
     /* 1. IPv6 packet (IPH_V = 6) - with false and true flags */
     sbuf_t *buf = sbufCreate(256);

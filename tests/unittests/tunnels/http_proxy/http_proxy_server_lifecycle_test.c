@@ -9,7 +9,7 @@
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.http_proxy_server_lifecycle_unit
- * Organization: CONNECT, HTTP forwarding, fallback and timeout cases share one server/client fixture,
+ * Organization: CONNECT, HTTP forwarding, fallback, bypass and timeout cases share one server/client fixture,
  * controlled loop time and byte/line-lifetime observers. Parser-only cases already have separate parser
  * suites.
  */
@@ -326,7 +326,7 @@ static void childPayload(tunnel_t *t, line_t *l, sbuf_t *b)
     discard t;
     require(! in_fallback_init, "Payload entered unfinished fallback Init");
     require(l == child, "request did not use owned child");
-    require(t == ((hps_lstate_t *) lineGetState(l, proxy))->session->child_entry, "wrong Payload branch");
+    require(t == (fallback_opens ? fallback : next), "wrong Payload branch");
     require(sbufGetLeftCapacity(b) >= 64, "rewritten buffer lost chain padding");
     size_t n = sbufGetLength(b);
     require(n < sizeof(sent) - sent_len, "test request capacity");
@@ -1515,6 +1515,66 @@ static void spliceRelayCases(tunnel_chain_t *chain, unsigned mode)
 }
 #endif
 
+static void bypassEntryInit(tunnel_t *t, line_t *l)
+{
+    // This helper has no line state or cleanup obligations after Init.
+    tunnelBypassLine(t, l);
+    tunnelNextUpStreamInit(t, l);
+}
+
+static void bypassEntryUnexpected(tunnel_t *t, line_t *l)
+{
+    discard t;
+    discard l;
+    require(false, "proxy called a bypassed child entry directly");
+}
+
+static void bypassEntryPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard buf;
+    bypassEntryUnexpected(t, l);
+}
+
+static void bypassChildEntry(tunnel_chain_t *chain)
+{
+    tunnel_t *entry = tunnelCreate(NULL, 0, 0);
+    require(entry != NULL, "failed to create bypassing child entry");
+    entry->chain       = chain;
+    entry->chain_index = 4;
+    entry->fnInitU     = bypassEntryInit;
+    entry->fnPayloadU  = bypassEntryPayload;
+    entry->fnPauseU    = bypassEntryUnexpected;
+    entry->fnResumeU   = bypassEntryUnexpected;
+    entry->fnFinU      = bypassEntryUnexpected;
+    tunnelBind(proxy, entry);
+    tunnelBind(entry, next);
+
+    resetClient(chain);
+    automatic_response = false;
+    sendBytes(client, false, "CONNECT 127.0.0.1:80 HTTP/1.1\r\nHost: a\r\n\r\n");
+    require(opens == 1 && child != NULL && strstr(received, "200") != NULL, "bypassing entry lost CONNECT Init/Est");
+    require(! tunnelIsActiveForLine(entry, child) && tunnelIsActiveForLine(entry, client),
+            "child entry bypass used the wrong line");
+    require(((hps_lstate_t *) lineGetState(child, proxy))->session->child_entry == entry,
+            "fixture lost its bypassed branch entry");
+    sendBytes(client, false, "after-bypass");
+    require(! stringCompare(sent, "after-bypass"), "payload failed to reach the active child tunnel");
+    httpproxyserverTunnelUpStreamPause(proxy, client);
+    require(child_pauses == 1 && producer_paused[1], "Pause failed to reach the active child tunnel");
+    httpproxyserverTunnelUpStreamResume(proxy, client);
+    require(! producer_paused[1], "Resume failed to reach the active child tunnel");
+
+    line_t *owned = child;
+    lineRef(owned);
+    clientClose();
+    require(closes == 1 && child == NULL && ! lineIsAlive(owned), "Finish failed to close the exact owned child");
+    lineUnref(owned);
+    lineUnref(client);
+    require(masterpoolGetCheckedOut(chain->masterpool_line_pool) == 0, "bypassed child leaked a line reference");
+    tunnelBind(proxy, next);
+    tunnelDestroy(entry);
+}
+
 static void runSuite(uint32_t large_size, uint32_t splice_limit)
 {
     GSTATE.flag_initialized = true;
@@ -1586,6 +1646,11 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     fallback->fnFinU     = childFinish;
     fallback->fnPauseU   = childPause;
     fallback->fnResumeU  = childResume;
+    prev->chain_index     = 0;
+    proxy->chain_index    = 1;
+    next->chain_index     = 2;
+    fallback->chain_index = 3;
+    bypassChildEntry(chain);
 #if WW_HAVE_SPLICE
     spliceRelayCases(chain, 1);
     spliceRelayCases(chain, 2);

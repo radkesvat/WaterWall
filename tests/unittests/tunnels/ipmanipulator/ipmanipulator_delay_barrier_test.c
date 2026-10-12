@@ -191,6 +191,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     t->next        = &next;
 
     atomicStoreU32Relaxed(&line.refc, 1);
+    line.active_tunnels_mask = UINT64_MAX;
     line.alive = true;
     line.wid   = 0;
 
@@ -212,6 +213,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
 
     line_t foreign_line = {0};
     atomicStoreU32Relaxed(&foreign_line.refc, 1);
+    foreign_line.active_tunnels_mask = UINT64_MAX;
     foreign_line.alive = true;
     foreign_line.wid   = 1;
 

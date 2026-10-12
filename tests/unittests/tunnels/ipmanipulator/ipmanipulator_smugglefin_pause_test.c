@@ -340,6 +340,7 @@ static void initializeLine(line_t *line, wid_t wid)
 {
     memoryZero(line, sizeof(*line));
     atomicStoreU32Relaxed(&line->refc, 1);
+    line->active_tunnels_mask = UINT64_MAX;
     line->alive = true;
     line->wid   = wid;
 }

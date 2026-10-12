@@ -501,6 +501,7 @@ static void serverFixtureInitialize(server_lifecycle_fixture_t *fixture)
     fixture->line      = memoryAllocateCacheAlignedZero(line_size);
     requireServer(fixture->line != NULL, "failed to allocate server lifecycle line");
     atomic_init(&fixture->line->refc, 1);
+    fixture->line->active_tunnels_mask = UINT64_MAX;
     fixture->line->alive = true;
     fixture->line->wid   = 0;
 
@@ -2503,6 +2504,7 @@ static void runServerSizingCase(uint16_t tls_version, const reality_v2_record_pr
     line_t *line = memoryAllocateCacheAlignedZero(sizeof(line_t) + reality->lstate_size);
     requireServer(line != NULL, "failed to allocate server sizing line");
     atomic_init(&line->refc, 1);
+    line->active_tunnels_mask = UINT64_MAX;
     line->alive = true;
     line->wid   = 0;
 

@@ -124,6 +124,7 @@ static void envSetup(test_env_t *env)
     env->line = memoryAllocateZero(sizeof(line_t));
     require(env->line != NULL, "failed to allocate test line");
     atomicStoreU32Relaxed(&env->line->refc, 1);
+    env->line->active_tunnels_mask = UINT64_MAX;
     env->line->alive = true;
     env->line->wid   = 0;
 }
@@ -338,7 +339,7 @@ static void testAddressTranslationAcrossEndpoints(test_env_t *env)
     rewrite1->next = &output;
     rewrite2->next = decoder;
 
-    line_t receiver = {.alive = true, .wid = 0, .refc = 1};
+    line_t receiver = {.alive = true, .wid = 0, .refc = 1, .active_tunnels_mask = UINT64_MAX};
     lineSetRecalculateChecksum(env->line, false);
     ipmanipulatorUpStreamPayload(encoder, env->line, makeTcpPacket(env, 97));
     require(captured_count == 1, "encoder did not emit one packet");

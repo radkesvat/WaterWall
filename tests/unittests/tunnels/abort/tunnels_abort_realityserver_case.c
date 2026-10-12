@@ -28,6 +28,7 @@ int tunnelsAbortRealityServerClosingEstCase(void)
         return kAbortCaseAllocationFailed;
     }
     atomic_init(&l->refc, 1);
+    l->active_tunnels_mask     = UINT64_MAX;
     l->alive                   = true;
     l->wid                     = 0;
     realityserver_lstate_t *ls = lineGetState(l, t);

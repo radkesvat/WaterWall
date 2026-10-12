@@ -82,7 +82,7 @@ static void installRecorders(tunnel_t *t)
 static void requireForwarded(lifecycle_callback_t callback, tunnel_t *packet_tunnel, tunnel_t *expected_tunnel,
                              callback_kind_t expected_kind, const char *message)
 {
-    line_t line = {0};
+    line_t line = {.active_tunnels_mask = UINT64_MAX};
 
     observed_kind   = kCallbackNone;
     observed_tunnel = NULL;

@@ -307,6 +307,7 @@ static void fixtureInitialize(tlsclient_lifecycle_fixture_t *fixture)
     fixture->line      = memoryAllocateCacheAlignedZero(line_size);
     requireTlsClient(fixture->line != NULL, "failed to allocate TlsClient lifecycle line");
     atomic_init(&fixture->line->refc, 1);
+    fixture->line->active_tunnels_mask = UINT64_MAX;
     fixture->line->alive = true;
     fixture->line->wid   = 0;
 

@@ -8,6 +8,7 @@
 #include "buffer_pool.h"
 #include "chain.h"
 #include "generic_pool.h"
+#include "line_types.h"
 #include "shiftbuffer.h"
 #include "wlibc.h"
 #include "wloop.h"
@@ -41,7 +42,6 @@
 
 typedef struct node_s         node_t;
 typedef struct tunnel_s       tunnel_t;
-typedef struct line_s         line_t;
 typedef struct tunnel_chain_s tunnel_chain_t;
 typedef struct tunnel_array_s tunnel_array_t;
 
@@ -556,6 +556,60 @@ static uint32_t tunnelGetCorrectAlignedLineStateSize(uint32_t size)
     return aligned_size;
 }
 
+static_assert(kMaxChainLen <= 64, "Every tunnel must fit in the line's active mask");
+
+/** Whether this tunnel still receives flow callbacks for the given line. */
+static inline bool tunnelIsActiveForLine(const tunnel_t *t, const line_t *line)
+{
+    assert(t != NULL && line != NULL);
+    assert(t->chain_index < kMaxChainLen);
+    return (line->active_tunnels_mask & (UINT64_C(1) << t->chain_index)) != 0;
+}
+
+/**
+ * Permanently bypass this tunnel for every flow callback in both directions on
+ * this line. Only the line's owner worker may call this, after indexing.
+ *
+ * The tunnel must be transparent along its next/prev links for this exact line:
+ * call its LinestateDestroy routine before bypassing. Destruction must settle
+ * buffers, timers, tasks, references and other cleanup obligations, then zero
+ * the entire aligned lstate_size region. Debug builds assert every byte is zero
+ * before clearing the bit. Bypass does not perform cleanup or deliver Finish.
+ * Line owners, endpoints, and nodes still needed for routing or flow control
+ * must remain active. Already-running callbacks are not canceled by this call.
+ * On a worker packet line, bypass applies to all packets using that line.
+ * There is no re-enable operation; only creating/reusing a line resets its mask.
+ */
+static inline void tunnelBypassLine(tunnel_t *t, line_t *line)
+{
+    assert(t != NULL && line != NULL && line->alive);
+    assert(currentThreadIsEventWorkerWID(line->wid));
+    assert(t->chain_index < kMaxChainLen);
+    assert(t->prev != NULL && t->next != NULL);
+    debugAssertZeroBuf(((uint8_t *) line->tunnels_line_state) + t->lstate_offset, t->lstate_size);
+    line->active_tunnels_mask &= ~(UINT64_C(1) << t->chain_index);
+}
+
+/* Include the supplied target in the search. Valid paths end at an active
+ * endpoint; index order is independent of next/prev traversal order. */
+static inline tunnel_t *tunnelFindActiveUpStream(tunnel_t *t, const line_t *line)
+{
+    while (! tunnelIsActiveForLine(t, line))
+    {
+        t = t->next;
+    }
+    return t;
+}
+
+static inline tunnel_t *tunnelFindActiveDownStream(tunnel_t *t, const line_t *line)
+{
+    while (! tunnelIsActiveForLine(t, line))
+    {
+        t = t->prev;
+    }
+    return t;
+}
+
 /**
  * @brief Initializes the upstream line.
  *
@@ -564,6 +618,7 @@ static uint32_t tunnelGetCorrectAlignedLineStateSize(uint32_t size)
  */
 static inline void tunnelUpStreamInit(tunnel_t *self, line_t *line)
 {
+    self = tunnelFindActiveUpStream(self, line);
     self->fnInitU(self, line);
 }
 
@@ -575,6 +630,7 @@ static inline void tunnelUpStreamInit(tunnel_t *self, line_t *line)
  */
 static inline void tunnelUpStreamEst(tunnel_t *self, line_t *line)
 {
+    self = tunnelFindActiveUpStream(self, line);
     self->fnEstU(self, line);
 }
 
@@ -586,6 +642,7 @@ static inline void tunnelUpStreamEst(tunnel_t *self, line_t *line)
  */
 static inline void tunnelUpStreamFin(tunnel_t *self, line_t *line)
 {
+    self = tunnelFindActiveUpStream(self, line);
     self->fnFinU(self, line);
 }
 
@@ -598,6 +655,7 @@ static inline void tunnelUpStreamFin(tunnel_t *self, line_t *line)
  */
 static inline void tunnelUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
+    self = tunnelFindActiveUpStream(self, line);
     self->fnPayloadU(self, line, payload);
 }
 
@@ -609,6 +667,7 @@ static inline void tunnelUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *p
  */
 static inline void tunnelUpStreamPause(tunnel_t *self, line_t *line)
 {
+    self = tunnelFindActiveUpStream(self, line);
     self->fnPauseU(self, line);
 }
 
@@ -620,6 +679,7 @@ static inline void tunnelUpStreamPause(tunnel_t *self, line_t *line)
  */
 static inline void tunnelUpStreamResume(tunnel_t *self, line_t *line)
 {
+    self = tunnelFindActiveUpStream(self, line);
     self->fnResumeU(self, line);
 }
 
@@ -631,6 +691,7 @@ static inline void tunnelUpStreamResume(tunnel_t *self, line_t *line)
  */
 static inline void tunnelDownStreamInit(tunnel_t *self, line_t *line)
 {
+    self = tunnelFindActiveDownStream(self, line);
     self->fnInitD(self, line);
 }
 
@@ -642,6 +703,7 @@ static inline void tunnelDownStreamInit(tunnel_t *self, line_t *line)
  */
 static inline void tunnelDownStreamEst(tunnel_t *self, line_t *line)
 {
+    self = tunnelFindActiveDownStream(self, line);
     self->fnEstD(self, line);
 }
 
@@ -653,6 +715,7 @@ static inline void tunnelDownStreamEst(tunnel_t *self, line_t *line)
  */
 static inline void tunnelDownStreamFin(tunnel_t *self, line_t *line)
 {
+    self = tunnelFindActiveDownStream(self, line);
     self->fnFinD(self, line);
 }
 
@@ -665,6 +728,7 @@ static inline void tunnelDownStreamFin(tunnel_t *self, line_t *line)
  */
 static inline void tunnelDownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
+    self = tunnelFindActiveDownStream(self, line);
     self->fnPayloadD(self, line, payload);
 }
 
@@ -676,6 +740,7 @@ static inline void tunnelDownStreamPayload(tunnel_t *self, line_t *line, sbuf_t 
  */
 static inline void tunnelDownStreamPause(tunnel_t *self, line_t *line)
 {
+    self = tunnelFindActiveDownStream(self, line);
     self->fnPauseD(self, line);
 }
 
@@ -687,6 +752,7 @@ static inline void tunnelDownStreamPause(tunnel_t *self, line_t *line)
  */
 static inline void tunnelDownStreamResume(tunnel_t *self, line_t *line)
 {
+    self = tunnelFindActiveDownStream(self, line);
     self->fnResumeD(self, line);
 }
 
@@ -698,7 +764,7 @@ static inline void tunnelDownStreamResume(tunnel_t *self, line_t *line)
  */
 static inline void tunnelNextUpStreamInit(tunnel_t *self, line_t *line)
 {
-    self->next->fnInitU(self->next, line);
+    tunnelUpStreamInit(self->next, line);
 }
 
 /**
@@ -709,7 +775,7 @@ static inline void tunnelNextUpStreamInit(tunnel_t *self, line_t *line)
  */
 static inline void tunnelNextUpStreamEst(tunnel_t *self, line_t *line)
 {
-    self->next->fnEstU(self->next, line);
+    tunnelUpStreamEst(self->next, line);
 }
 
 /**
@@ -720,7 +786,7 @@ static inline void tunnelNextUpStreamEst(tunnel_t *self, line_t *line)
  */
 static inline void tunnelNextUpStreamFinish(tunnel_t *self, line_t *line)
 {
-    self->next->fnFinU(self->next, line);
+    tunnelUpStreamFin(self->next, line);
 }
 
 /**
@@ -732,7 +798,7 @@ static inline void tunnelNextUpStreamFinish(tunnel_t *self, line_t *line)
  */
 static inline void tunnelNextUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
-    self->next->fnPayloadU(self->next, line, payload);
+    tunnelUpStreamPayload(self->next, line, payload);
 }
 
 /**
@@ -743,7 +809,7 @@ static inline void tunnelNextUpStreamPayload(tunnel_t *self, line_t *line, sbuf_
  */
 static inline void tunnelNextUpStreamPause(tunnel_t *self, line_t *line)
 {
-    self->next->fnPauseU(self->next, line);
+    tunnelUpStreamPause(self->next, line);
 }
 
 /**
@@ -754,7 +820,7 @@ static inline void tunnelNextUpStreamPause(tunnel_t *self, line_t *line)
  */
 static inline void tunnelNextUpStreamResume(tunnel_t *self, line_t *line)
 {
-    self->next->fnResumeU(self->next, line);
+    tunnelUpStreamResume(self->next, line);
 }
 
 /**
@@ -765,7 +831,7 @@ static inline void tunnelNextUpStreamResume(tunnel_t *self, line_t *line)
  */
 static inline void tunnelPrevDownStreamInit(tunnel_t *self, line_t *line)
 {
-    self->prev->fnInitD(self->prev, line);
+    tunnelDownStreamInit(self->prev, line);
 }
 
 /**
@@ -776,7 +842,7 @@ static inline void tunnelPrevDownStreamInit(tunnel_t *self, line_t *line)
  */
 static inline void tunnelPrevDownStreamEst(tunnel_t *self, line_t *line)
 {
-    self->prev->fnEstD(self->prev, line);
+    tunnelDownStreamEst(self->prev, line);
 }
 
 /**
@@ -787,7 +853,7 @@ static inline void tunnelPrevDownStreamEst(tunnel_t *self, line_t *line)
  */
 static inline void tunnelPrevDownStreamFinish(tunnel_t *self, line_t *line)
 {
-    self->prev->fnFinD(self->prev, line);
+    tunnelDownStreamFin(self->prev, line);
 }
 
 /**
@@ -799,7 +865,7 @@ static inline void tunnelPrevDownStreamFinish(tunnel_t *self, line_t *line)
  */
 static inline void tunnelPrevDownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
-    self->prev->fnPayloadD(self->prev, line, payload);
+    tunnelDownStreamPayload(self->prev, line, payload);
 }
 
 /**
@@ -810,7 +876,7 @@ static inline void tunnelPrevDownStreamPayload(tunnel_t *self, line_t *line, sbu
  */
 static inline void tunnelPrevDownStreamPause(tunnel_t *self, line_t *line)
 {
-    self->prev->fnPauseD(self->prev, line);
+    tunnelDownStreamPause(self->prev, line);
 }
 
 /**
@@ -821,5 +887,5 @@ static inline void tunnelPrevDownStreamPause(tunnel_t *self, line_t *line)
  */
 static inline void tunnelPrevDownStreamResume(tunnel_t *self, line_t *line)
 {
-    self->prev->fnResumeD(self->prev, line);
+    tunnelDownStreamResume(self->prev, line);
 }

@@ -37,7 +37,8 @@ bool packettunnelCanEnqueueDownstreamInline(const tunnel_t *producer, const line
     return sink != NULL && sink != producer && sink->next == producer && sink->chain == producer->chain &&
            sink->node != NULL && sink->node->layer_group == kNodeLayer3 &&
            (sink->node->flags & kNodeFlagPacketPayloadEnqueueOnly) != 0 &&
-           tunnelchainIsWorkerPacketLine(producer->chain, packet_line) && lineIsOnCurrentEventWorker(packet_line);
+           tunnelchainIsWorkerPacketLine(producer->chain, packet_line) && lineIsOnCurrentEventWorker(packet_line) &&
+           tunnelIsActiveForLine(sink, packet_line);
 }
 
 static void packettunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
@@ -158,12 +159,12 @@ bool packettunnelLifecycleAnchorBind(tunnel_t *t)
     if (anchor->direction == kPacketLifecycleAnchorPublishUpstream)
     {
         anchor->publication_tunnel   = t->next;
-        anchor->publication_callback = t->next != NULL ? t->next->fnPayloadU : NULL;
+        anchor->publication_callback = t->next != NULL && t->next->fnPayloadU != NULL ? tunnelUpStreamPayload : NULL;
     }
     else
     {
         anchor->publication_tunnel   = t->prev;
-        anchor->publication_callback = t->prev != NULL ? t->prev->fnPayloadD : NULL;
+        anchor->publication_callback = t->prev != NULL && t->prev->fnPayloadD != NULL ? tunnelDownStreamPayload : NULL;
     }
 
     return anchor->publication_tunnel != NULL && anchor->publication_callback != NULL;

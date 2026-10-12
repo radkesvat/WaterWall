@@ -218,6 +218,7 @@ static void connectionStart(session_fixture_t *f)
     f->line = memoryAllocateCacheAlignedZero(sizeof(line_t) + f->tls->lstate_size);
     require(f->line != NULL, "failed to allocate session fixture line");
     atomic_init(&f->line->refc, 1);
+    f->line->active_tunnels_mask = UINT64_MAX;
     f->line->alive     = true;
     f->line->wid       = 0;
     f->plaintext_bytes = 0;

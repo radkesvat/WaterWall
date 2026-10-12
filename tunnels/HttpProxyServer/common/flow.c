@@ -129,9 +129,9 @@ void hpsUpdatePressure(hps_session_t *s)
         else
         {
             if (want)
-                s->child_entry->fnPauseU(s->child_entry, line);
+                tunnelUpStreamPause(s->child_entry, line);
             else
-                s->child_entry->fnResumeU(s->child_entry, line);
+                tunnelUpStreamResume(s->child_entry, line);
         }
         lineUnref(line);
         s->again = true;
@@ -144,7 +144,7 @@ bool hpsDeliverPayload(hps_session_t *s, hps_direction_t d, sbuf_t *b)
     lineRef(line);
     s->progress_at = hpsNowMs(s);
     if (d == kHpsUpstream)
-        s->child_entry->fnPayloadU(s->child_entry, line, b);
+        tunnelUpStreamPayload(s->child_entry, line, b);
     else
         tunnelPrevDownStreamPayload(s->t, line, b);
     bool alive = lineIsAlive(line);

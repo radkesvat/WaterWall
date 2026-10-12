@@ -521,6 +521,7 @@ static void clientFixtureInitialize(client_lifecycle_fixture_t *fixture)
     fixture->line      = memoryAllocateCacheAlignedZero(line_size);
     requireClient(fixture->line != NULL, "failed to allocate client lifecycle line");
     atomic_init(&fixture->line->refc, 1);
+    fixture->line->active_tunnels_mask = UINT64_MAX;
     fixture->line->alive = true;
     fixture->line->wid   = 0;
 
@@ -1872,6 +1873,7 @@ static void runClientSizingCase(uint16_t tls_version, const reality_v2_record_pr
     line_t *line = memoryAllocateCacheAlignedZero(sizeof(line_t) + reality->lstate_size);
     requireClient(line != NULL, "failed to allocate client sizing line");
     atomic_init(&line->refc, 1);
+    line->active_tunnels_mask = UINT64_MAX;
     line->alive = true;
     line->wid   = 0;
 

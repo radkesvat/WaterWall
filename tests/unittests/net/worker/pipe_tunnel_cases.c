@@ -180,6 +180,7 @@ static line_t *allocateLineForTunnel(tunnel_t *owner, wid_t wid)
 {
     line_t *line = memoryAllocateCacheAlignedZero(sizeof(line_t) + tunnelGetLineStateSize(owner));
     require(line != NULL, "failed to allocate a pipe test line");
+    line->active_tunnels_mask = UINT64_MAX;
     atomicStoreU32Relaxed(&line->refc, 1);
     line->alive = true;
     line->wid   = wid;

@@ -24,6 +24,7 @@ static line_t *testLineCreate(void)
 {
     line_t *line = memoryAllocateZero(sizeof(*line));
     require(line != NULL, "failed to allocate test line");
+    line->active_tunnels_mask = UINT64_MAX;
     line->alive = true;
     return line;
 }

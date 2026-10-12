@@ -22,6 +22,13 @@ add_test(
 )
 set_tests_properties(waterwall.udpstatelesssocket_io_owner_policy PROPERTIES LABELS "unit;policy;source-policy;tunnels;udpstatelesssocket;worker;ownership")
 
+add_test(
+  NAME waterwall.tunnel_callback_dispatch_policy
+  COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tunnel_callback_dispatch_policy_test.py"
+)
+set_tests_properties(waterwall.tunnel_callback_dispatch_policy PROPERTIES
+  TIMEOUT 30 LABELS "unit;policy;source-policy;tunnels;dispatch")
+
 # Helper to append labels to a test without overwriting existing labels.
 
 # Every runner now copies its case directory into a private run directory, so

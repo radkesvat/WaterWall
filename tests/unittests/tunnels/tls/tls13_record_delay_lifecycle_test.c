@@ -254,6 +254,7 @@ static void clientFixtureSetup(client_delay_fixture_t *fixture)
     fixture->line = memoryAllocateCacheAlignedZero(sizeof(line_t) + fixture->tls->lstate_size);
     requireClient(fixture->line != NULL, "failed to allocate client lifecycle line");
     atomic_init(&fixture->line->refc, 1);
+    fixture->line->active_tunnels_mask = UINT64_MAX;
     fixture->line->alive = true;
     fixture->line->wid   = 0;
 

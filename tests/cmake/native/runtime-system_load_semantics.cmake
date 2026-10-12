@@ -230,6 +230,11 @@
 
   add_waterwall_unit_test(waterwall.line_state_index_unit line_state_index_test "unit;net;line;chain")
 
+  waterwall_add_native_executable(tunnel_bypass_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/tunnel_bypass_test.c)
+  target_link_libraries(tunnel_bypass_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests tunnel_bypass_test)
+  add_waterwall_unit_test(waterwall.tunnel_bypass_unit tunnel_bypass_test "unit;net;line;chain")
+
   waterwall_add_native_executable(chain_node_limit_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/chain_node_limit_test.c)
   target_link_libraries(chain_node_limit_test PRIVATE ww_test_support)
   target_link_libraries(chain_node_limit_test PRIVATE ww)

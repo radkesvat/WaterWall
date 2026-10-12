@@ -51,6 +51,7 @@ static line_t *testLineCreate(void)
     line_t *line = memoryAllocateZero(sizeof(*line) + sizeof(router_lstate_t));
     require(line != NULL, "failed to allocate test line");
     atomic_init(&line->refc, 1);
+    line->active_tunnels_mask = UINT64_MAX;
     line->alive = true;
     line->wid   = 0;
     return line;

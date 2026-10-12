@@ -361,19 +361,19 @@ static void pipeApplyUp(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, pip
     {
     case kPipeMessageInit:
         atomicStoreExplicit(&pair->owned_init_delivered, true, memory_order_release);
-        next->fnInitU(next, line_to);
+        tunnelUpStreamInit(next, line_to);
         break;
     case kPipeMessageEst:
-        next->fnEstU(next, line_to);
+        tunnelUpStreamEst(next, line_to);
         break;
     case kPipeMessagePayload:
-        next->fnPayloadU(next, line_to, payload);
+        tunnelUpStreamPayload(next, line_to, payload);
         break;
     case kPipeMessagePause:
-        next->fnPauseU(next, line_to);
+        tunnelUpStreamPause(next, line_to);
         break;
     case kPipeMessageResume:
-        next->fnResumeU(next, line_to);
+        tunnelUpStreamResume(next, line_to);
         break;
     case kPipeMessageFin:
         assert(false);
@@ -412,16 +412,16 @@ static void pipeApplyDown(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, p
     switch (type)
     {
     case kPipeMessageEst:
-        prev->fnEstD(prev, line_to);
+        tunnelDownStreamEst(prev, line_to);
         break;
     case kPipeMessagePayload:
-        prev->fnPayloadD(prev, line_to, payload);
+        tunnelDownStreamPayload(prev, line_to, payload);
         break;
     case kPipeMessagePause:
-        prev->fnPauseD(prev, line_to);
+        tunnelDownStreamPause(prev, line_to);
         break;
     case kPipeMessageResume:
-        prev->fnResumeD(prev, line_to);
+        tunnelDownStreamResume(prev, line_to);
         break;
     case kPipeMessageInit:
     case kPipeMessageFin:

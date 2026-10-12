@@ -169,6 +169,7 @@ static line_t *lineCreateOnWorker(uint32_t lstate_size, wid_t wid)
 
     twfRequire(l != NULL, "failed to allocate a test line");
     atomic_init(&l->refc, 1);
+    l->active_tunnels_mask = UINT64_MAX;
     l->alive = true;
     l->wid   = wid;
     return l;

@@ -178,6 +178,7 @@ static line_t *createPacketLine(wid_t wid)
     line_t *line = memoryAllocateCacheAlignedZero(sizeof(line_t));
     twfRequire(line != NULL, "failed to allocate Ping packet line");
     atomic_init(&line->refc, 1);
+    line->active_tunnels_mask = UINT64_MAX;
     line->alive = true;
     line->wid   = wid;
     return line;

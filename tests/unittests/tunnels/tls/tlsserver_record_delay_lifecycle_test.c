@@ -299,6 +299,7 @@ static void serverFixtureSetup(server_delay_fixture_t *fixture)
     fixture->line = memoryAllocateCacheAlignedZero(sizeof(line_t) + fixture->tls->lstate_size);
     requireServer(fixture->line != NULL, "failed to allocate server lifecycle line");
     atomic_init(&fixture->line->refc, 1);
+    fixture->line->active_tunnels_mask = UINT64_MAX;
     fixture->line->alive = true;
     fixture->line->wid   = 0;
 

@@ -63,7 +63,7 @@ void hpsCloseChild(hps_session_t *s, bool from_child)
     lineRef(child);
     hpsClearLineState(child, s->t);
     if (! from_child)
-        entry->fnFinU(entry, child);
+        tunnelUpStreamFin(entry, child);
     lineDestroy(child);
     lineUnref(child);
 }
@@ -128,7 +128,7 @@ void hpsCreateChild(hps_session_t *s, const char *username, const char *password
         linePreferOrdinaryReadDownstream(l);
     lineRef(l);
     s->child_initializing = true;
-    s->child_entry->fnInitU(s->child_entry, l);
+    tunnelUpStreamInit(s->child_entry, l);
     s->child_initializing = false;
     lineUnref(l);
 }
