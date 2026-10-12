@@ -129,8 +129,18 @@ bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_
             lineReuseBuffer(l, body);
         }
     }
-    trojanclientCancelFirstPayloadTimer(ls);
-    ls->request_sent = true;
+    if (ls->kind == kTrojanClientLineKindDirect)
+    {
+        /* The complete TCP request is ready. Release setup state before the
+         * handoff so nested callbacks use the transparent path immediately. */
+        trojanclientLinestateDestroy(ls);
+        tunnelBypassLine(t, l);
+    }
+    else
+    {
+        trojanclientCancelFirstPayloadTimer(ls);
+        ls->request_sent = true;
+    }
     tunnelNextUpStreamPayload(t, l, buf);
     return true;
 }

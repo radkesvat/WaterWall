@@ -221,57 +221,57 @@ static void act(unsigned boundary, line_t *l)
     f.action        = 0;
     if (action == 1 || action == 2)
     {
-        f.t->fnPauseD(f.t, l);
+        tunnelDownStreamPause(f.t, l);
         if (action == 2)
-            f.t->fnResumeD(f.t, l);
+            tunnelDownStreamResume(f.t, l);
     }
     if (action == 3 || action == 4)
     {
         f.down_paused = true;
-        f.t->fnPauseU(f.t, f.line);
+        tunnelUpStreamPause(f.t, f.line);
         if (action == 4)
         {
             f.down_paused = false;
-            f.t->fnResumeU(f.t, f.line);
+            tunnelUpStreamResume(f.t, f.line);
         }
     }
     if (action == 5)
-        f.t->fnPayloadU(f.t, f.line, bytes("C", 1, false, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes("C", 1, false, 320));
     if (action == 6)
-        f.t->fnPayloadD(f.t, l, bytes("Z", 1, true, 320));
+        tunnelDownStreamPayload(f.t, l, bytes("Z", 1, true, 320));
     if (action == 7)
     {
-        f.t->fnFinU(f.t, f.line);
+        tunnelUpStreamFin(f.t, f.line);
         twfRequire(lineIsAlive(f.line), "server destroyed borrowed client");
         lineDestroy(f.line);
     }
     if (action == 8)
-        f.t->fnFinD(f.t, l);
+        tunnelDownStreamFin(f.t, l);
     if (action == 9 && f.remote_count > 1)
     {
         line_t *target = f.remotes[1];
         if (boundary == 7 && target == l && f.remote_count > 2)
             target = f.remotes[2];
         if (lineIsAlive(target))
-            f.t->fnFinD(f.t, target);
+            tunnelDownStreamFin(f.t, target);
     }
     if (action == 10)
-        f.t->fnEstD(f.t, l);
+        tunnelDownStreamEst(f.t, l);
     if (action == 11)
     {
         sbuf_t *nested = f.nested;
         f.nested       = NULL;
-        f.t->fnPayloadU(f.t, f.line, nested);
+        tunnelUpStreamPayload(f.t, f.line, nested);
     }
     if (action == 12)
     {
         uint8_t *data = memoryAllocateZero(f.admission_bytes);
         for (unsigned i = 0; i < f.admission_entries; ++i)
-            f.t->fnPayloadU(f.t, f.line, bytes(data, f.admission_bytes, false, 320));
+            tunnelUpStreamPayload(f.t, f.line, bytes(data, f.admission_bytes, false, 320));
         twfRequire(lineIsAlive(f.line), "exact reentry retention budget rejected");
         if (f.overflow_admission)
         {
-            f.t->fnPayloadU(f.t, f.line, bytes(data, f.admission_bytes == 0 ? 0 : 1, false, 320));
+            tunnelUpStreamPayload(f.t, f.line, bytes(data, f.admission_bytes == 0 ? 0 : 1, false, 320));
             twfRequire(! lineIsAlive(f.line), "reentry retention overflow accepted");
         }
         memoryFree(data);
@@ -282,8 +282,8 @@ static void act(unsigned boundary, line_t *l)
         {
             if (f.remotes[i] != l && lineIsAlive(f.remotes[i]))
             {
-                f.t->fnPayloadD(f.t, f.remotes[i], bytes("late", 4, true, 320));
-                f.t->fnEstD(f.t, f.remotes[i]);
+                tunnelDownStreamPayload(f.t, f.remotes[i], bytes("late", 4, true, 320));
+                tunnelDownStreamEst(f.t, f.remotes[i]);
                 break;
             }
         }
@@ -370,6 +370,7 @@ static void onResume(tunnel_t *t, line_t *l)
 }
 static void onInit(tunnel_t *t, line_t *l)
 {
+    twfRequire(tunnelIsActiveForLine(f.t, l), "server bypassed before backend Init completed");
     if (t == f.fallback)
     {
         ++f.fallback_inits;
@@ -420,7 +421,7 @@ static void onInit(tunnel_t *t, line_t *l)
     act(1, l);
     if (lineIsAlive(l) && ((trojanserver_lstate_t *) lineGetState(l, f.t))->phase != kTrojanServerPhaseClosing &&
         f.auto_est)
-        f.t->fnEstD(f.t, l);
+        tunnelDownStreamEst(f.t, l);
 }
 static void begin(bool fallback, bool database, uint32_t pool)
 {
@@ -443,6 +444,10 @@ static void begin(bool fallback, bool database, uint32_t pool)
     f.prev     = twfCreatePrevTunnel(&f.trace);
     f.next     = twfCreateNextTunnel(&f.trace);
     f.fallback = twfCreateNextTunnel(&f.trace);
+    f.prev->chain_index     = 0;
+    f.t->chain_index        = 1;
+    f.next->chain_index     = 2;
+    f.fallback->chain_index = 3;
     tunnelBind(f.prev, f.t);
     tunnelBind(f.t, f.next);
     f.prev->fnPayloadD = f.next->fnPayloadU = f.fallback->fnPayloadU = capture;
@@ -466,14 +471,29 @@ static void begin(bool fallback, bool database, uint32_t pool)
     f.t->chain               = f.chain;
     f.line                   = twfLinePoolCreateLine(&f.lines);
     lineRef(f.line);
-    f.t->fnInitU(f.t, f.line);
+    tunnelUpStreamInit(f.t, f.line);
+}
+static void requireTcpBypassed(void)
+{
+    twfRequire(! tunnelIsActiveForLine(f.t, f.line), "completed TCP startup remained active");
+    twfRequireLineStateZeroed(f.line, f.t, "TCP bypass retained startup state");
+    const char *username = f.database ? "alice" : ((trojanserver_tstate_t *) tunnelGetState(f.t))->users[0].username;
+    twfRequire(lineHasAuthenticatedCredentials(f.line, username, "test") &&
+                   (username != NULL || lineGetAuthenticatedUsername(f.line) == NULL),
+               "TCP bypass lost line-owned credentials");
+    if (f.database)
+        twfRequire(lineGetCurrentUser(f.line)->user_id == 42, "TCP bypass lost database user handle");
 }
 static void end(void)
 {
     f.action = 0;
     if (lineIsAlive(f.line))
     {
-        f.t->fnFinU(f.t, f.line);
+        if (f.inits != 0 && f.remote_count == 0 && f.fallback_inits == 0)
+            requireTcpBypassed();
+        else
+            twfRequire(tunnelIsActiveForLine(f.t, f.line), "UDP, fallback or incomplete request bypassed");
+        tunnelUpStreamFin(f.t, f.line);
         lineDestroy(f.line);
     }
     if (g_fallback_finish_task.pending)
@@ -483,6 +503,7 @@ static void end(void)
     lineUnref(f.line);
     for (unsigned i = 0; i < f.remote_count; ++i)
     {
+        twfRequire(tunnelIsActiveForLine(f.t, f.remotes[i]), "owned UDP backend bypassed");
         twfRequire(! lineIsAlive(f.remotes[i]), "owned backend survived close");
         twfRequireLineStateZeroed(f.remotes[i], f.t, "backend state survived close");
         twfRequire(twfLineRefCount(f.remotes[i]) == 1, "backend reference leaked");
@@ -505,13 +526,13 @@ static void startUdp(void)
 {
     uint8_t  wire[320];
     uint32_t n = request(wire, 0, true);
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
 }
 static void datagram(uint16_t port, const void *data, uint32_t n, bool pipe)
 {
     uint8_t  wire[9000];
     uint32_t len = frame(wire, 0, port, data, n);
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, len, pipe && len <= 4096, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, len, pipe && len <= 4096, 320));
 }
 
 static void identityDatagram(const uint8_t *address, size_t length, line_t *expected)
@@ -525,7 +546,7 @@ static void identityDatagram(const uint8_t *address, size_t length, line_t *expe
     wire[length + 4]  = 'X';
     f.identity_wire   = address;
     f.expected_remote = expected;
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, (uint32_t) length + 5, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, (uint32_t) length + 5, true, 320));
 }
 
 static void testDomainAddressOwnership(void)
@@ -535,13 +556,13 @@ static void testDomainAddressOwnership(void)
     startUdp();
     uint8_t  wire[320];
     uint32_t n = frame(wire, 3, 80, "X", 1);
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
     domain_allocations = 0;
     for (unsigned i = 0; i < 2; ++i)
     {
         sbuf_t *input            = bytes(wire, n, true, 320);
         count_domain_allocations = true;
-        f.t->fnPayloadU(f.t, f.line, input);
+        tunnelUpStreamPayload(f.t, f.line, input);
         count_domain_allocations = false;
     }
     printf("TrojanServer repeated-domain allocation calls: %u\n", domain_allocations);
@@ -579,8 +600,8 @@ static void testUdpIdentity(void)
         identityDatagram(wire, sizeof(wire), NULL);
     }
     twfRequire(f.remote_count == 46, "map growth aliased a destination");
-    f.t->fnPauseD(f.t, f.remotes[0]);
-    f.t->fnFinD(f.t, f.remotes[0]);
+    tunnelDownStreamPause(f.t, f.remotes[0]);
+    tunnelDownStreamFin(f.t, f.remotes[0]);
     trojanserver_lstate_t *ls = lineGetState(f.line, f.t);
     twfRequire(trojanserver_remote_map_t_size(&ls->udp_remote_lines) == 45 && f.resumes == 1,
                "removal erased a sibling or stranded pressure");
@@ -613,9 +634,9 @@ static void testRequests(void)
         for (unsigned split = 56; split <= n + 2; ++split)
         {
             begin(false, true, 128);
-            f.t->fnPayloadU(f.t, f.line, bytes(wire, split, true, 320));
+            tunnelUpStreamPayload(f.t, f.line, bytes(wire, split, true, 320));
             if (split != n + 2)
-                f.t->fnPayloadU(f.t, f.line, bytes(wire + split, n + 2 - split, true, 320));
+                tunnelUpStreamPayload(f.t, f.line, bytes(wire + split, n + 2 - split, true, 320));
             twfRequire(f.inits == 1 && f.ests == 1 && auth_calls == 1, "request repeated authentication or Init/Est");
             twfRequire(f.up_len == 2 && memcmp(f.up, "AB", 2) == 0, "TCP request consumed body");
             twfRequire(f.parser_reads == (WW_HAVE_SPLICE ? n : 0), "TCP parser read body bytes");
@@ -623,9 +644,9 @@ static void testRequests(void)
             {
                 sbuf_t *b = bytes("opaque", 6, true, 320);
                 if (dir)
-                    f.t->fnPayloadU(f.t, f.line, b);
+                    tunnelUpStreamPayload(f.t, f.line, b);
                 else
-                    f.t->fnPayloadD(f.t, f.line, b);
+                    tunnelDownStreamPayload(f.t, f.line, b);
                 twfRequire(f.last == b, "established TCP buffer replaced");
             }
             end();
@@ -636,15 +657,19 @@ static void testRequests(void)
     sbuf_t  *b = bytes("AB", 2, true, 320);
     sbufShiftLeft(b, n);
     sbufWrite(b, wire, n);
-    f.t->fnPayloadU(f.t, f.line, b);
-    twfRequire(f.parser_reads == 0 && memcmp(f.up, "AB", 2) == 0, "resident request header read a pipe body");
+    tunnelUpStreamPayload(f.t, f.line, b);
+    /* Startup admission replaces ordinary buffers in Debug to catch stale use;
+     * only private-pipe identity survives that queue before bypass. */
+    twfRequire((! WW_HAVE_SPLICE || f.last == b) && f.last_splice == (bool) WW_HAVE_SPLICE && f.parser_reads == 0 &&
+                   memcmp(f.up, "AB", 2) == 0,
+               "resident request header replaced or read a pipe body");
     end();
     begin(false, false, 128);
     uint8_t *large = memoryAllocate(1024 * 1024 + 320);
     n              = request(large, 3, false);
     memset(large + n, 'L', 1024 * 1024);
-    f.t->fnPayloadU(f.t, f.line, bytes(large, 56, true, 320));
-    f.t->fnPayloadU(f.t, f.line, bytes(large + 56, n + 1024 * 1024 - 56, false, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(large, 56, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(large + 56, n + 1024 * 1024 - 56, false, 320));
     twfRequire(f.up_len == 1024 * 1024 && f.up[0] == 'L' && f.up[f.up_len - 1] == 'L', "coalesced 1 MiB body rejected");
     memoryFree(large);
     end();
@@ -658,11 +683,12 @@ static void testCredentialSnapshots(void)
         begin(true, false, 128);
         uint8_t  wire[320];
         uint32_t n = request(wire, 0, false);
-        f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
-        trojanserver_lstate_t *ls = lineGetState(f.line, f.t);
-        twfRequire(lineIsAlive(f.line) && f.inits == 1 && f.fallback_inits == 0 && ls->auth_password != NULL &&
-                       (ls->auth_username == NULL) == (bare != 0),
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
+        twfRequire(lineIsAlive(f.line) && f.inits == 1 && f.fallback_inits == 0 &&
+                       lineHasAuthenticatedCredentials(f.line, bare ? NULL : "alice", "test") &&
+                       (lineGetAuthenticatedUsername(f.line) == NULL) == (bare != 0),
                    "local credential snapshot lost identity or optional username");
+        requireTcpBypassed();
         end();
     }
 }
@@ -675,7 +701,7 @@ static void testAuthentication(void)
     for (unsigned length = 0; length < 56; ++length)
     {
         begin(true, false, 128);
-        f.t->fnPayloadU(f.t, f.line, bytes(wire, length, true, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire, length, true, 320));
         twfRequire(f.fallback_inits == 1 && f.inits == 0 && f.replay_len == length &&
                        memcmp(f.replay, wire, length) == 0,
                    "segmented credential did not replay exact probe");
@@ -706,7 +732,7 @@ static void testAuthentication(void)
         }
         if (fault == 8)
             ((trojanserver_tstate_t *) tunnelGetState(f.t))->allow_connect = false;
-        f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
         if (fault < 4)
             twfRequire(f.fallback_inits == 1 && f.replay_len == n && memcmp(f.replay, wire, n) == 0,
                        "unauthenticated replay lost bytes");
@@ -716,9 +742,9 @@ static void testAuthentication(void)
     }
     begin(true, true, 128);
     n = request(wire, 0, false);
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, 56, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, 56, true, 320));
     twfRequire(auth_calls == 1 && f.inits == 0, "exact hash was not authenticated once");
-    f.t->fnPayloadU(f.t, f.line, bytes("x", 1, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes("x", 1, true, 320));
     twfRequire(! lineIsAlive(f.line) && f.fallback_inits == 0, "late bad CRLF fell back after authentication");
     end();
 }
@@ -738,7 +764,7 @@ static void testReentrancy(void)
                 wire[n++] = 'A';
             f.boundary = boundary;
             f.action   = 5;
-            f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+            tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
             if (g_fallback_finish_task.pending)
                 fallbackFinishDriveDelayedTask();
             if (fallback)
@@ -747,6 +773,17 @@ static void testReentrancy(void)
                 twfRequire(f.up_len == 2 && memcmp(f.up, "AC", 2) == 0, "TCP Init/Est input overtook body");
             end();
         }
+        begin(fallback, false, 128);
+        uint32_t request_length = request(wire, 0, false);
+        if (fallback)
+            wire[0] = 'x';
+        f.boundary = 2;
+        f.action   = 10;
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire, request_length, true, 320));
+        twfRequire(f.ests == 2, "active TCP or fallback suppressed reentrant Est");
+        tunnelDownStreamEst(f.t, f.line);
+        twfRequire(f.ests == 3, "completed TCP or fallback suppressed repeated Est");
+        end();
         for (unsigned boundary = 1; boundary <= 6; ++boundary)
         {
             for (unsigned action = 7; action <= 8; ++action)
@@ -759,16 +796,21 @@ static void testReentrancy(void)
                     wire[n++] = 'A';
                 f.boundary = boundary;
                 f.action   = action;
-                f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+                tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
                 if (boundary == 4)
-                    f.t->fnPayloadD(f.t, f.line, bytes("reply", 5, true, 320));
+                    tunnelDownStreamPayload(f.t, f.line, bytes("reply", 5, true, 320));
                 if (boundary >= 5)
                 {
-                    f.t->fnPauseD(f.t, f.line);
+                    tunnelDownStreamPause(f.t, f.line);
                     if (boundary == 6)
-                        f.t->fnResumeD(f.t, f.line);
+                        tunnelDownStreamResume(f.t, f.line);
                 }
                 twfRequire(! lineIsAlive(f.line), "callback death left client alive");
+                if (! fallback && boundary <= 3)
+                {
+                    twfRequire(tunnelIsActiveForLine(f.t, f.line), "unfinished TCP startup bypassed during Finish");
+                    twfRequireLineStateZeroed(f.line, f.t, "early TCP Finish retained startup state");
+                }
                 if (boundary == 1)
                     twfRequire(f.calls_up == 0 && f.calls_fallback == 0, "Init close submitted replay/body");
                 end();
@@ -782,16 +824,19 @@ static void testReentrancy(void)
         wire[n++]  = 'A';
         f.boundary = 1;
         f.action   = action;
-        f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
-        f.t->fnPayloadU(f.t, f.line, bytes("B", 1, true, 320));
-        f.t->fnPayloadD(f.t, f.line, bytes("R", 1, true, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
+        requireTcpBypassed();
+        if (action == 1 || action == 3)
+            twfRequire(f.pauses == 1, "TCP bypass discarded pending startup Pause");
+        tunnelUpStreamPayload(f.t, f.line, bytes("B", 1, true, 320));
+        tunnelDownStreamPayload(f.t, f.line, bytes("R", 1, true, 320));
         if (action == 1)
             twfRequire(f.up_len == 2, "Init Pause stopped admitted TCP");
         if (action == 3)
             twfRequire(f.down_len == 1, "reply Pause stopped admitted TCP");
         f.down_paused = false;
-        f.t->fnResumeU(f.t, f.line);
-        f.t->fnResumeD(f.t, f.line);
+        tunnelUpStreamResume(f.t, f.line);
+        tunnelDownStreamResume(f.t, f.line);
         twfRequire(f.up_len == 2 && memcmp(f.up, "AB", 2) == 0 && f.down_len == 1, "Resume stranded TCP FIFO");
         end();
     }
@@ -808,9 +853,9 @@ static void testUdpFrames(void)
         {
             begin(false, true, 128);
             startUdp();
-            f.t->fnPayloadU(f.t, f.line, bytes(wire, split, true, 320));
+            tunnelUpStreamPayload(f.t, f.line, bytes(wire, split, true, 320));
             twfRequire(f.calls_up == 0, "partial UDP frame emitted");
-            f.t->fnPayloadU(f.t, f.line, bytes(wire + split, n - split, true, 320));
+            tunnelUpStreamPayload(f.t, f.line, bytes(wire + split, n - split, true, 320));
             twfRequire(f.calls_up == 1 && f.up_len == 2 && memcmp(f.up, "AB", 2) == 0 && f.ports[0] == 443,
                        "UDP split lost destination or bytes");
             if (f.last_splice)
@@ -827,7 +872,7 @@ static void testUdpFrames(void)
             for (unsigned off = 0; off < n;)
             {
                 unsigned count = min(2048U, n - off);
-                f.t->fnPayloadU(f.t, f.line, bytes(wire + off, count, true, 320));
+                tunnelUpStreamPayload(f.t, f.line, bytes(wire + off, count, true, 320));
                 off += count;
             }
             twfRequire(f.calls_up == 1 && f.up_len == size && memcmp(f.up, payload, size) == 0,
@@ -839,7 +884,7 @@ static void testUdpFrames(void)
     startUdp();
     uint32_t n = frame(wire, 0, 443, payload, 1500);
     for (unsigned i = 0; i < n; ++i)
-        f.t->fnPayloadU(f.t, f.line, bytes(wire + i, 1, false, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire + i, 1, false, 320));
     twfRequire(f.calls_up == 1 && f.up_len == 1500, "input fragment count incorrectly limited");
     end();
     for (unsigned fault = 0; fault < 5; ++fault)
@@ -865,7 +910,7 @@ static void testUdpFrames(void)
             wire[7] = 32;
             wire[8] = 1;
         }
-        f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
         twfRequire(! lineIsAlive(f.line) && f.fallback_inits == 0, "malformed UDP survived or fell back");
         end();
     }
@@ -877,23 +922,23 @@ static void testUdpPressure(void)
     startUdp();
     datagram(1001, "A", 1, true);
     datagram(1002, "B", 1, true);
-    f.t->fnPauseD(f.t, f.remotes[0]);
-    f.t->fnPauseD(f.t, f.remotes[1]);
-    f.t->fnPauseD(f.t, f.remotes[0]);
+    tunnelDownStreamPause(f.t, f.remotes[0]);
+    tunnelDownStreamPause(f.t, f.remotes[1]);
+    tunnelDownStreamPause(f.t, f.remotes[0]);
     datagram(1002, "C", 1, true);
     datagram(1001, "D", 1, true);
     twfRequire(f.calls_up == 4 && f.pauses == 1, "backend Pause stopped input or contributions repeated");
-    f.t->fnResumeD(f.t, f.remotes[1]);
-    f.t->fnResumeD(f.t, f.remotes[1]);
+    tunnelDownStreamResume(f.t, f.remotes[1]);
+    tunnelDownStreamResume(f.t, f.remotes[1]);
     twfRequire(f.calls_up == 4 && f.resumes == 0, "one Resume overrode another backend Pause");
-    f.t->fnFinD(f.t, f.remotes[0]);
+    tunnelDownStreamFin(f.t, f.remotes[0]);
     twfRequire(f.calls_up == 4 && memcmp(f.up, "ABCD", 4) == 0 && f.resumes == 1,
                "closing paused backend stranded input");
     twfRequire(f.ports[2] == 1002 && f.ports[3] == 1001, "destination order changed");
     f.down_paused = true;
-    f.t->fnPauseU(f.t, f.line);
+    tunnelUpStreamPause(f.t, f.line);
     unsigned count = f.calls_down;
-    f.t->fnPayloadD(f.t, f.remotes[1], bytes("R", 1, true, 0));
+    tunnelDownStreamPayload(f.t, f.remotes[1], bytes("R", 1, true, 0));
     f.boundary = 1;
     f.action   = 6;
     datagram(1003, "E", 1, true);
@@ -903,7 +948,7 @@ static void testUdpPressure(void)
             twfRequire(((trojanserver_lstate_t *) lineGetState(f.remotes[i], f.t))->next_pause_sent,
                        "new initialized backend missed client source Pause");
     f.down_paused = false;
-    f.t->fnResumeU(f.t, f.line);
+    tunnelUpStreamResume(f.t, f.line);
     twfRequire(f.calls_down == 2 && f.down[11] == 'R' && f.down[23] == 'Z', "shared reply FIFO reordered backends");
     end();
     for (unsigned close_first = 0; close_first < 2; ++close_first)
@@ -913,14 +958,14 @@ static void testUdpPressure(void)
         f.auto_est = false;
         datagram(1001, "A", 1, true);
         datagram(1002, "B", 1, true);
-        f.t->fnPayloadD(f.t, f.remotes[0], bytes("X", 1, true, 320));
-        f.t->fnPayloadD(f.t, f.remotes[1], bytes("Y", 1, true, 320));
-        f.t->fnEstD(f.t, f.remotes[1]);
+        tunnelDownStreamPayload(f.t, f.remotes[0], bytes("X", 1, true, 320));
+        tunnelDownStreamPayload(f.t, f.remotes[1], bytes("Y", 1, true, 320));
+        tunnelDownStreamEst(f.t, f.remotes[1]);
         twfRequire(f.calls_down == 2 && f.down[11] == 'X' && f.ests == 1, "backend replies waited for Est");
         if (close_first)
-            f.t->fnFinD(f.t, f.remotes[0]);
+            tunnelDownStreamFin(f.t, f.remotes[0]);
         else
-            f.t->fnEstD(f.t, f.remotes[0]);
+            tunnelDownStreamEst(f.t, f.remotes[0]);
         twfRequire(f.calls_down == 2 && f.down[f.down_len - 1] == 'Y', "pre-Est close/Est stranded replies");
         end();
     }
@@ -930,7 +975,7 @@ static void testUdpPressure(void)
     f.action   = 1;
     datagram(1001, "A", 1, true);
     twfRequire(f.calls_up == 1, "backend Init Pause stranded admitted datagram");
-    f.t->fnResumeD(f.t, f.remotes[0]);
+    tunnelDownStreamResume(f.t, f.remotes[0]);
     twfRequire(f.calls_up == 1 && f.up[0] == 'A', "selected body lost on Resume");
     end();
 }
@@ -945,9 +990,9 @@ static void testFallback(void)
         ts->fallback_intentional_delay_jitter_ms = 1;
         uint8_t probe[2048];
         memset(probe, 'x', sizeof(probe));
-        f.t->fnPayloadU(f.t, f.line, bytes(probe, sizeof(probe), true, 320));
-        f.t->fnPayloadU(f.t, f.line, bytes(probe, sizeof(probe), true, 320));
-        f.t->fnPayloadU(f.t, f.line, bytes(probe, sizeof(probe), false, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes(probe, sizeof(probe), true, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes(probe, sizeof(probe), true, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes(probe, sizeof(probe), false, 320));
         twfRequire(f.fallback_inits == 1 && f.calls_fallback == 0 && g_fallback_finish_task.pending,
                    "fallback delay not retained");
         twfRequire(g_fallback_finish_task.delay_ms >= 6 && g_fallback_finish_task.delay_ms <= 8,
@@ -965,7 +1010,7 @@ static void testFallback(void)
     begin(true, false, 128);
     ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
     g_fallback_finish_task.refuse                                                  = true;
-    f.t->fnPayloadU(f.t, f.line, bytes("probe", 5, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
     twfRequire(! lineIsAlive(f.line), "task refusal did not close fallback");
     end();
 }
@@ -974,9 +1019,9 @@ static bool local_reply_pipe;
 static void localFallbackReplyAndFinish(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     capture(t, l, buf);
-    f.t->fnPayloadD(f.t, l, bytes("response", 8, local_reply_pipe, 320));
+    tunnelDownStreamPayload(f.t, l, bytes("response", 8, local_reply_pipe, 320));
     if (lineIsAlive(l))
-        f.t->fnFinD(f.t, l);
+        tunnelDownStreamFin(f.t, l);
 }
 
 static void testFallbackLocalReplies(void)
@@ -993,7 +1038,7 @@ static void testFallbackLocalReplies(void)
                 local_reply_pipe       = pipe != 0;
                 f.fallback->fnPayloadU = localFallbackReplyAndFinish;
                 ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = delayed ? 7 : 0;
-                f.t->fnPayloadU(f.t, f.line, bytes("probe", 5, pipe != 0, 320));
+                tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, pipe != 0, 320));
                 if (delayed)
                     fallbackFinishDriveDelayedTask();
                 twfRequire(f.down_len == 8 && memcmp(f.down, "response", 8) == 0,
@@ -1012,13 +1057,13 @@ static void testFallbackLocalReplies(void)
             continue;
         begin(true, false, 128);
         f.auto_est = false;
-        f.t->fnPayloadU(f.t, f.line, bytes("probe", 5, true, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
         f.down_paused = true;
-        f.t->fnPauseU(f.t, f.line);
+        tunnelUpStreamPause(f.t, f.line);
         f.boundary = 4;
         f.action   = action;
-        f.t->fnPayloadD(f.t, f.line, bytes("A", 1, true, 320));
-        f.t->fnPayloadD(f.t, f.line, bytes("B", 1, false, 320));
+        tunnelDownStreamPayload(f.t, f.line, bytes("A", 1, true, 320));
+        tunnelDownStreamPayload(f.t, f.line, bytes("B", 1, false, 320));
         twfRequire(f.ests == 0 && f.down_len == (action == 6 ? 3U : 2U) &&
                        memcmp(f.down, action == 6 ? "AZB" : "AB", f.down_len) == 0,
                    "fallback admitted replies stalled or reordered");
@@ -1032,7 +1077,7 @@ static void testFallbackLocalReplies(void)
     f.fallback->fnPayloadU = localFallbackReplyAndFinish;
     f.boundary             = 4;
     f.action               = 7;
-    f.t->fnPayloadU(f.t, f.line, bytes("probe", 5, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
     twfRequire(f.down_len == 8 && ! lineIsAlive(f.line) && f.branch_finishes == 1 && f.finishes == 0,
                "source close during fallback reply was not settled once");
     end();
@@ -1047,11 +1092,11 @@ static void testLimitsAndFailures(void)
         {
             begin(true, false, pool ? 131072 : 128);
             ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
-            f.t->fnPayloadU(f.t, f.line, bytes("", 0, false, 320));
+            tunnelUpStreamPayload(f.t, f.line, bytes("", 0, false, 320));
             /* The empty first replay occupies one retained entry. */
             uint32_t count = entries ? 1023 : 1;
             for (uint32_t i = 0; i < count; ++i)
-                f.t->fnPayloadU(f.t, f.line, bytes(data, entries ? 0 : kTrojanServerMaxPendingBytes, false, 320));
+                tunnelUpStreamPayload(f.t, f.line, bytes(data, entries ? 0 : kTrojanServerMaxPendingBytes, false, 320));
             twfRequire(lineIsAlive(f.line), "exact delayed backlog limit rejected");
             trojanserver_lstate_t *ls = lineGetState(f.line, f.t);
             twfRequire(ls->pending_up.budget == NULL && ls->fallback_pending_up->budget == &ls->output_budget &&
@@ -1059,7 +1104,7 @@ static void testLimitsAndFailures(void)
                            bufferbudgetGetUsage(&ls->output_budget).bytes ==
                                (entries ? 0 : kTrojanServerMaxPendingBytes),
                        "fallback transition did not account the complete replay FIFO");
-            f.t->fnPayloadU(f.t, f.line, bytes(data, entries ? 0 : 1, false, 320));
+            tunnelUpStreamPayload(f.t, f.line, bytes(data, entries ? 0 : 1, false, 320));
             twfRequire(! lineIsAlive(f.line), "delayed backlog overflow accepted");
             end();
         }
@@ -1067,16 +1112,16 @@ static void testLimitsAndFailures(void)
     begin(false, false, 128);
     startUdp();
     datagram(1001, "A", 1, true);
-    f.t->fnPayloadD(f.t, f.remotes[0], bytes(data, UINT16_MAX, false, 0));
+    tunnelDownStreamPayload(f.t, f.remotes[0], bytes(data, UINT16_MAX, false, 0));
     twfRequire(f.down_len == UINT16_MAX + 11 && lineIsAlive(f.line), "valid maximum backend reply rejected");
-    f.t->fnPayloadD(f.t, f.remotes[0], bytes(data, UINT16_MAX + 1U, false, 0));
+    tunnelDownStreamPayload(f.t, f.remotes[0], bytes(data, UINT16_MAX + 1U, false, 0));
     twfRequire(! lineIsAlive(f.remotes[0]) && lineIsAlive(f.line), "oversized reply was not backend-local");
     end();
     begin(false, false, 128);
     uint32_t n = request(data, 0, false);
     sbuf_t  *b = bytes(data, n, true, 320);
     fail_queue = true;
-    f.t->fnPayloadU(f.t, f.line, b);
+    tunnelUpStreamPayload(f.t, f.line, b);
     twfRequire(! lineIsAlive(f.line), "initial queue refusal survived");
     end();
     memoryFree(data);
@@ -1094,15 +1139,15 @@ static void testBackendReentrancy(void)
             f.action   = action;
             datagram(1001, "A", 1, true);
             if (boundary == 4)
-                f.t->fnPayloadD(f.t, f.remotes[0], bytes("reply", 5, true, 320));
+                tunnelDownStreamPayload(f.t, f.remotes[0], bytes("reply", 5, true, 320));
             if (boundary >= 5)
             {
                 f.down_paused = true;
-                f.t->fnPauseU(f.t, f.line);
+                tunnelUpStreamPause(f.t, f.line);
                 if (boundary == 6)
                 {
                     f.down_paused = false;
-                    f.t->fnResumeU(f.t, f.line);
+                    tunnelUpStreamResume(f.t, f.line);
                 }
             }
             if (action == 7 || boundary <= 4)
@@ -1124,10 +1169,10 @@ static void testBackendReentrancy(void)
     f.boundary    = 5;
     f.action      = 9;
     f.down_paused = true;
-    f.t->fnPauseU(f.t, f.line);
+    tunnelUpStreamPause(f.t, f.line);
     twfRequire(! lineIsAlive(f.remotes[1]) && lineIsAlive(f.line), "fan-out sibling removal failed");
     f.down_paused = false;
-    f.t->fnResumeU(f.t, f.line);
+    tunnelUpStreamResume(f.t, f.line);
     end();
     begin(false, false, 128);
     startUdp();
@@ -1136,7 +1181,7 @@ static void testBackendReentrancy(void)
     f.boundary    = 5;
     f.action      = 4;
     f.down_paused = true;
-    f.t->fnPauseU(f.t, f.line);
+    tunnelUpStreamPause(f.t, f.line);
     twfRequire(! ((trojanserver_lstate_t *) lineGetState(f.line, f.t))->prev_paused, "nested fan-out Resume lost");
     for (unsigned i = 0; i < 2; ++i)
         twfRequire(! ((trojanserver_lstate_t *) lineGetState(f.remotes[i], f.t))->next_pause_sent,
@@ -1145,14 +1190,14 @@ static void testBackendReentrancy(void)
     begin(false, false, 128);
     startUdp();
     datagram(1001, "A", 1, true);
-    f.t->fnPauseD(f.t, f.remotes[0]);
+    tunnelDownStreamPause(f.t, f.remotes[0]);
     uint8_t  wire[32];
     uint32_t n = frame(wire, 0, 1001, "B", 1);
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, 1, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, 1, true, 320));
     unsigned resumes = f.resumes;
-    f.t->fnResumeD(f.t, f.remotes[0]);
+    tunnelDownStreamResume(f.t, f.remotes[0]);
     twfRequire(f.resumes == resumes + 1, "incomplete frame withheld producer Resume");
-    f.t->fnPayloadU(f.t, f.line, bytes(wire + 1, n - 1, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire + 1, n - 1, true, 320));
     twfRequire(f.calls_up == 2 && memcmp(f.up, "AB", 2) == 0, "incomplete frame did not recover");
     end();
     begin(false, false, 128);
@@ -1160,21 +1205,21 @@ static void testBackendReentrancy(void)
     datagram(1001, "A", 1, true);
     datagram(1002, "B", 1, true);
     f.down_paused = true;
-    f.t->fnPauseU(f.t, f.line);
-    f.t->fnPayloadD(f.t, f.remotes[0], bytes("kept", 4, true, 320));
-    f.t->fnFinD(f.t, f.remotes[0]);
+    tunnelUpStreamPause(f.t, f.line);
+    tunnelDownStreamPayload(f.t, f.remotes[0], bytes("kept", 4, true, 320));
+    tunnelDownStreamFin(f.t, f.remotes[0]);
     f.down_paused = false;
-    f.t->fnResumeU(f.t, f.line);
+    tunnelUpStreamResume(f.t, f.line);
     twfRequire(f.calls_down == 1 && memcmp(f.down + 11, "kept", 4) == 0, "ready reply did not survive backend removal");
     datagram(1003, "C", 1, true);
     f.down_paused = true;
-    f.t->fnPauseU(f.t, f.line);
-    f.t->fnPayloadD(f.t, f.remotes[1], bytes("queued", 6, true, 320));
+    tunnelUpStreamPause(f.t, f.line);
+    tunnelDownStreamPayload(f.t, f.remotes[1], bytes("queued", 6, true, 320));
     twfRequire(f.calls_down == 2, "admitted shutdown reply stalled at Pause");
     // Association close may synchronously remove an unvisited sibling.
     f.boundary = 7;
     f.action   = 9;
-    f.t->fnFinU(f.t, f.line);
+    tunnelUpStreamFin(f.t, f.line);
     lineDestroy(f.line);
     end();
 }
@@ -1189,7 +1234,7 @@ static void testClosingSiblingCallbacks(void)
     datagram(1002, "B", 1, true);
     f.boundary = 7;
     f.action   = 13;
-    f.t->fnFinU(f.t, f.line);
+    tunnelUpStreamFin(f.t, f.line);
     twfRequire(f.calls_down == 0 && f.ests == 0, "closing association reflected sibling output");
     lineDestroy(f.line);
     end();
@@ -1205,7 +1250,7 @@ static void testAdmittedBatches(void)
     startUdp();
     f.boundary = 3;
     f.action   = 1;
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, 11 * 4096, false, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, 11 * 4096, false, 320));
     trojanserver_lstate_t *ls = lineGetState(f.line, f.t);
     twfRequire(f.calls_up == 4096 && f.pauses == 1 && ls->input_bytes == 0 && ls->input_head == NULL &&
                    bufferqueueGetBufCount(&ls->pending_up) == 0,
@@ -1218,7 +1263,7 @@ static void testAdmittedBatches(void)
     uint32_t n = frame(wire, 0, 1001, "A", 1);
     n += frame(wire + n, 0, 1001, "B", 1);
     uint32_t last = frame(wire + n, 0, 1001, "C", 1);
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, 5, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, 5, true, 320));
     uint8_t nested[32];
     nested[0]            = 'C';
     uint32_t nested_len  = 1 + frame(nested + 1, 0, 1001, "D", 1);
@@ -1226,12 +1271,12 @@ static void testAdmittedBatches(void)
     f.nested             = bytes(nested, nested_len, true, 320);
     f.boundary           = 3;
     f.action             = 11;
-    f.t->fnPayloadU(f.t, f.line, bytes(wire + 5, n + last - 6, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire + 5, n + last - 6, true, 320));
     ls = lineGetState(f.line, f.t);
     twfRequire(f.calls_up == 4 && memcmp(f.up, "ABCD", 4) == 0 && ls->input_bytes == 1,
                "nested parser input overtook older records or lost incomplete suffix");
     n = frame(wire, 0, 1001, "E", 1);
-    f.t->fnPayloadU(f.t, f.line, bytes(wire + 1, n - 1, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire + 1, n - 1, true, 320));
     twfRequire(f.calls_up == 5 && memcmp(f.up, "ABCDE", 5) == 0 && ls->input_bytes == 0,
                "retained partial header blocked later input");
     end();
@@ -1243,7 +1288,7 @@ static void testAdmittedBatches(void)
     n += frame(wire + n, 0, 1002, "B", 1);
     f.boundary = 3;
     f.action   = 7;
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
     twfRequire(! lineIsAlive(f.line) && f.calls_up == 1 && f.remote_count == 1,
                "decoder emitted another callback after association close");
     end();
@@ -1252,7 +1297,7 @@ static void testAdmittedBatches(void)
     startUdp();
     f.boundary = 1;
     f.action   = 8;
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
     twfRequire(! lineIsAlive(f.line) && f.calls_up == 0 && f.remote_count == 1 && f.finishes == 1,
                "backend Init Finish silently dropped its datagram and continued the batch");
     end();
@@ -1274,7 +1319,7 @@ static void testRetentionAndIndependentDelay(void)
             f.admission_entries  = entries ? 1024 : 1;
             f.admission_bytes    = entries ? 0 : kTrojanServerMaxPendingBytes;
             f.overflow_admission = overflow;
-            f.t->fnPayloadU(f.t, f.line, bytes(wire, n, false, 320));
+            tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, false, 320));
             twfRequire(overflow ? ! lineIsAlive(f.line) : f.calls_up == f.admission_entries,
                        "branch Init retention did not settle or drain");
             end();
@@ -1289,7 +1334,7 @@ static void testRetentionAndIndependentDelay(void)
     f.admission_entries  = 1;
     f.admission_bytes    = kTrojanServerMaxWireBytes - n;
     f.overflow_admission = true;
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, n, false, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, false, 320));
     twfRequire(! lineIsAlive(f.line) && f.calls_up == 0, "wire overflow escaped selected-frame accounting");
     end();
 
@@ -1299,7 +1344,7 @@ static void testRetentionAndIndependentDelay(void)
     memset(wire + n, 'a', kTrojanServerMaxPendingBytes);
     f.boundary = 2;
     f.action   = 5;
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, n + kTrojanServerMaxPendingBytes, false, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, n + kTrojanServerMaxPendingBytes, false, 320));
     twfRequire(! lineIsAlive(f.line) && f.calls_up == 0, "Est hid retained initial body from budget");
     end();
 
@@ -1313,10 +1358,10 @@ static void testRetentionAndIndependentDelay(void)
             wire[0] = 'x';
         f.boundary = 1;
         f.action   = 6;
-        f.t->fnPayloadU(f.t, f.line, bytes(wire, n, false, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, false, 320));
         twfRequire(f.calls_down == 1 && f.down[0] == 'Z' && f.ests == 0, "synchronous Init reply waited for Est");
-        f.t->fnPauseD(f.t, f.line);
-        f.t->fnPayloadU(f.t, f.line, bytes("X", 1, true, 320));
+        tunnelDownStreamPause(f.t, f.line);
+        tunnelUpStreamPayload(f.t, f.line, bytes("X", 1, true, 320));
         twfRequire(fallback ? f.replay[f.replay_len - 1] == 'X' : f.up_len == 1,
                    "admitted TCP or inline fallback waited for Resume");
         end();
@@ -1325,14 +1370,14 @@ static void testRetentionAndIndependentDelay(void)
     twfSetCase("new input cannot release delayed fallback backlog through Pause");
     begin(true, false, 128);
     ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
-    f.t->fnPayloadU(f.t, f.line, bytes("A", 1, true, 320));
-    f.t->fnPauseD(f.t, f.line);
-    f.t->fnPayloadU(f.t, f.line, bytes("B", 1, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes("A", 1, true, 320));
+    tunnelDownStreamPause(f.t, f.line);
+    tunnelUpStreamPayload(f.t, f.line, bytes("B", 1, true, 320));
     fallbackFinishDriveDelayedTask();
     twfRequire(f.calls_fallback == 0 && ! g_fallback_finish_task.pending, "independent delayed backlog crossed Pause");
-    f.t->fnPayloadU(f.t, f.line, bytes("C", 1, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes("C", 1, true, 320));
     twfRequire(f.calls_fallback == 0 && ! g_fallback_finish_task.pending, "new input relabeled older delayed backlog");
-    f.t->fnResumeD(f.t, f.line);
+    tunnelDownStreamResume(f.t, f.line);
     twfRequire(g_fallback_finish_task.pending && f.calls_fallback == 0, "Resume skipped intentional delay");
     fallbackFinishDriveDelayedTask();
     twfRequire(f.calls_fallback == 1 && f.replay_len == 3 && memcmp(f.replay, "ABC", 3) == 0,
@@ -1362,7 +1407,7 @@ static void testPipeFallbackAndPadding(void)
                 pressure           = fault == 2;
                 immediate_pressure = fault == 3;
             }
-            f.t->fnPayloadU(f.t, f.line, part);
+            tunnelUpStreamPayload(f.t, f.line, part);
             off += count;
         }
         twfRequire(f.calls_up == 1 && f.up_len == sizeof(body) && memcmp(f.up, body, sizeof(body)) == 0 &&
@@ -1383,7 +1428,7 @@ static void testPipeFallbackAndPadding(void)
     startUdp();
     datagram(1001, "A", 1, true);
     sbuf_t *reply = bytes("body", 4, true, 0);
-    f.t->fnPayloadD(f.t, f.remotes[0], reply);
+    tunnelDownStreamPayload(f.t, f.remotes[0], reply);
     twfRequire(f.headroom >= 352 - 11 && memcmp(f.down + 11, "body", 4) == 0,
                "insufficient-pad reply lost onward headroom");
     end();
@@ -1393,7 +1438,7 @@ static void testPipeFallbackAndPadding(void)
     reply = bytes("body", 4, true, 320);
     sbufShiftLeft(reply, 3);
     sbufWrite(reply, "pre", 3);
-    f.t->fnPayloadD(f.t, f.remotes[0], reply);
+    tunnelDownStreamPayload(f.t, f.remotes[0], reply);
     twfRequire(f.down_len == 18 && memcmp(f.down + 11, "prebody", 7) == 0, "reply prepend overwrote resident prefix");
     end();
 }
@@ -1408,9 +1453,9 @@ static void testReplyFormsAndRefusal(void)
         begin(false, false, 128);
         startUdp();
         uint32_t n = frame(wire, form, 1001, "A", 1);
-        f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
         sbuf_t *reply = bytes("body", 4, true, 0);
-        f.t->fnPayloadD(f.t, f.remotes[0], reply);
+        tunnelDownStreamPayload(f.t, f.remotes[0], reply);
         n = frame(expected, form, 1001, "body", 4);
         twfRequire(f.down_len == n && memcmp(f.down, expected, n) == 0,
                    "reply address or insufficient-pad body changed");
@@ -1422,7 +1467,7 @@ static void testReplyFormsAndRefusal(void)
     sbuf_t *reply = bytes(body, sizeof(body), true, 0);
     pressure      = true;
     moves         = 0;
-    f.t->fnPayloadD(f.t, f.remotes[0], reply);
+    tunnelDownStreamPayload(f.t, f.remotes[0], reply);
     twfRequire(f.down_len == sizeof(body) + 11 && memcmp(f.down + 11, body, sizeof(body)) == 0,
                "partial reply-pipe transfer lost bytes");
 #if WW_HAVE_SPLICE
@@ -1443,7 +1488,7 @@ static void testShutdownAdmission(void)
             wire[0] = '!'; // Unauthenticated input would normally select fallback.
         wloopCloseNormalAdmission(f.env.loop);
         wloopQuiesceNormalWork(f.env.loop);
-        f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
         twfRequire(! lineIsAlive(f.line) && f.finishes == 1 && f.inits == 0 && f.fallback_inits == 0 &&
                        f.branch_finishes == 0 && f.remote_count == 0,
                    "late request started or finished an unopened branch");
@@ -1453,11 +1498,11 @@ static void testShutdownAdmission(void)
     begin(false, false, 128);
     uint8_t  wire[320];
     uint32_t n = request(wire, 0, false);
-    f.t->fnPayloadU(f.t, f.line, bytes(wire, n, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
     wloopCloseNormalAdmission(f.env.loop);
     wloopQuiesceNormalWork(f.env.loop);
-    f.t->fnPayloadU(f.t, f.line, bytes("final", 5, true, 320));
-    f.t->fnPayloadD(f.t, f.line, bytes("reply", 5, true, 320));
+    tunnelUpStreamPayload(f.t, f.line, bytes("final", 5, true, 320));
+    tunnelDownStreamPayload(f.t, f.line, bytes("reply", 5, true, 320));
     twfRequire(lineIsAlive(f.line) && f.up_len == 5 && f.down_len == 5 && f.inits == 1,
                "shutdown suppressed existing TCP forwarding");
     end();

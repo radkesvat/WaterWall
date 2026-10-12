@@ -2,7 +2,8 @@
 
 bool trojanclientAssociationAlive(tunnel_t *t, line_t *next_line, line_t *prev_line)
 {
-    if (! lineIsAlive(next_line) || ! lineIsAlive(prev_line))
+    /* A nested TCP request can retire our state while the line remains alive. */
+    if (! lineIsAlive(next_line) || ! lineIsAlive(prev_line) || ! tunnelIsActiveForLine(t, next_line))
         return false;
     trojanclient_lstate_t *ls      = lineGetState(next_line, t);
     trojanclient_lstate_t *prev_ls = lineGetState(prev_line, t);
@@ -55,8 +56,14 @@ static void firstPayloadExpired(wtimer_t *timer)
 
 void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls)
 {
-    if (ls->phase == kTrojanClientPhaseClosed || ls->next_established)
+    if (ls->phase == kTrojanClientPhaseClosed)
         return;
+    if (ls->next_established)
+    {
+        if (ls->kind == kTrojanClientLineKindDirect)
+            tunnelPrevDownStreamEst(t, l);
+        return;
+    }
     line_t *application = ls->kind == kTrojanClientLineKindUdpCarrier ? ls->application_line : l;
     lineRef(l);
     if (application != l)

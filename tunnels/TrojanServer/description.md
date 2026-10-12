@@ -433,7 +433,15 @@ Credentials and database handles are recorded before protected branch Init.
 TCP bodies remain opaque after the request. Initial parsing, branch Init and
 reentrant input retain an authoritative FIFO so older accepted bytes cannot be
 overtaken. Valid input forwards after onward Init without waiting for transport
-Est or Resume. Est is forwarded promptly once, including from inside Init.
+Est or Resume. Once normal TCP branch Init has returned, retained input has drained
+and permission notifications have settled, TrojanServer destroys and zeros its
+line state, then permanently bypasses itself for that line. Later callbacks,
+including Finish, follow the normal next/prev path directly. Authentication
+credentials remain on `line_t`; bypass does not wait for Est. TCP and fallback
+Est notifications forward promptly, including repeats and callbacks from inside Init.
+
+UDP associations and fallback keep TrojanServer active: they still need its
+framing, owned backend cleanup, branch selection or delayed replay.
 
 Fallback replays the inspected resident prefix and untouched input tail exactly
 once before newer input. Init remains immediate, with the configured payload

@@ -139,17 +139,30 @@ void trojanserverPump(tunnel_t *t, line_t *l)
         break;
     }
     if (lineIsAlive(l))
+    {
         ls->pumping = false;
+        if (ls->line_kind == kTrojanServerLineKindClient && ls->branch == kTrojanServerBranchTrojan &&
+            (ls->phase == kTrojanServerPhaseTcpConnecting || ls->phase == kTrojanServerPhaseTcpEstablished))
+        {
+            /* Setup input and permission notifications are settled; TCP is now transparent. */
+            assert(ls->next_initialized && ! ls->branch_initializing);
+            assert(ls->input_head == NULL && ls->input_bytes == 0 && ls->header_filled == 0);
+            assert(bufferqueueGetBufCount(&ls->pending_up) == 0);
+            assert(ls->next_paused == ls->prev_pause_sent && ls->prev_paused == ls->next_pause_sent);
+            trojanserverLinestateDestroy(ls);
+            tunnelBypassLine(t, l);
+        }
+    }
     lineUnref(l);
 }
 
 void trojanserverOnNextEstablished(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
 {
-    if (ls->next_established)
-        return;
-    ls->next_established = true;
     if (ls->line_kind == kTrojanServerLineKindUdpRemote)
     {
+        if (ls->next_established)
+            return;
+        ls->next_established            = true;
         ls->phase                       = kTrojanServerPhaseUdpEstablished;
         line_t                *client_l = ls->client_line;
         trojanserver_lstate_t *client   = lineGetState(client_l, t);
@@ -164,9 +177,6 @@ void trojanserverOnNextEstablished(tunnel_t *t, line_t *l, trojanserver_lstate_t
         lineUnref(l);
         return;
     }
-    if (ls->prev_est_sent)
-        return;
-    ls->prev_est_sent = true;
     if (ls->phase == kTrojanServerPhaseTcpConnecting)
         ls->phase = kTrojanServerPhaseTcpEstablished;
     /* Publish before forwarding, including synchronous Est from branch Init. */

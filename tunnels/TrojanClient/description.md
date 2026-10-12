@@ -207,8 +207,10 @@ is reused in place when its headroom fits all headers. Otherwise a best-fit ordi
 buffer is allocated; any resident prefix and private-pipe body are copied in order.
 Empty TCP input does not trigger a request. Empty Trojan UDP datagrams are valid.
 
-Transport `Est` reaches the live application once, independently of protocol data and
-Pause. If the request remains unsent, its first-payload deadline starts at that Est.
+Direct TCP transport `Est` reaches the live application promptly, including repeated
+notifications, independently of protocol data and Pause. UDP carrier establishment
+maps once to its application. If the request remains unsent, its first-payload
+deadline starts at the first Est.
 `settings.first-payload-timeout-ms` defaults to **400**, accepts integers from **0** to
 **4,294,967,295**, and rejects other types and ranges. Zero disables deliberate waiting.
 Paused time counts. Expiry sends one header-only request when transport output is
@@ -219,6 +221,12 @@ One ordinary output does not promise one syscall, TCP packet, or TLS record.
 
 Direct TCP and per-datagram upstream forwarding do not wait for Est or Resume and do
 not keep application output queues. Trojan has no success response; downstream TCP is opaque from Init.
+Once the complete initial TCP request is ready, the client destroys its setup state,
+cancels the timer and permanently bypasses itself before handing off that buffer.
+All later callbacks follow the same line directly through the neighbouring tunnels.
+Reentrant Est/Resume continuations check that the client is still active before
+accessing its state. UDP application and carrier lines remain active for framing,
+signal mapping and owned-carrier cleanup.
 
 UDP application lines remain borrowed UDP-facing lines. The client creates one dependent,
 owned TCP carrier on the application's worker and maps Est, Pause/Resume and Finish to

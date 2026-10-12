@@ -1,9 +1,9 @@
 #include "internal.h"
 
 /* Client -> selected branch: initial/UDP bytes enter the owned pending_up FIFO
- * for trojanserverPump() to parse through common/input.c. After CONNECT, synchronous
- * TCP transfers buf directly; reentrant TCP drains through processPendingInput() in
- * common/flow.c. Fallback transfers ownership to trojanserverSendFallbackPayload()
+ * for trojanserverPump() to parse through common/input.c. CONNECT bypasses this
+ * node after setup; TCP reentry before bypass joins the outer pump's FIFO.
+ * Fallback transfers ownership to trojanserverSendFallbackPayload()
  * in common/fallback.c for immediate delivery or retention behind older replay. */
 void trojanserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -44,25 +44,11 @@ void trojanserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         trojanserverPump(t, l);
         return;
     }
-    buffer_queue_t *queue = &ls->pending_up;
-    if (! ls->pumping && ! ls->branch_initializing && bufferqueueGetBufCount(queue) == 0)
-    {
-        lineRef(l);
-        ls->pumping = true;
-        tunnelNextUpStreamPayload(t, l, buf);
-        if (LIKELY(lineIsAlive(l)))
-        {
-            ls->pumping = false;
-            trojanserverPump(t, l);
-        }
-        lineUnref(l);
-        return;
-    }
-    if (UNLIKELY(! trojanserverQueuePayload(queue, &buf)))
+    assert(ls->pumping || ls->branch_initializing);
+    if (UNLIKELY(! trojanserverQueuePayload(&ls->pending_up, &buf)))
     {
         lineReuseBuffer(l, buf);
         trojanserverCloseLineBidirectional(t, l);
         return;
     }
-    trojanserverPump(t, l);
 }
