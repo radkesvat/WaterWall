@@ -248,6 +248,7 @@ void trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls
     ls->branch              = kTrojanServerBranchFallback;
     ls->next_initialized    = true;
     ls->branch_initializing = true;
+    lineMarkFallback(l);
     tunnelUpStreamInit(ts->fallback_tunnel, l);
     if (! lineIsAlive(l))
         return;

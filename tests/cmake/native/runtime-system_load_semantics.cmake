@@ -69,6 +69,14 @@
 
   add_waterwall_unit_test(waterwall.wsocket_validation_unit wsocket_validation_test "unit;net;socket;validation")
 
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    waterwall_add_native_executable(tcp_socket_diag_test SUPPORT
+      SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/tcp_socket_diag_test.c LIBRARIES ww)
+    target_link_options(tcp_socket_diag_test PRIVATE
+      "-Wl,--wrap=socket" "-Wl,--wrap=sendto" "-Wl,--wrap=recvmsg")
+    add_waterwall_unit_test(waterwall.tcp_socket_diag_unit tcp_socket_diag_test "unit;net;socket;diagnostics")
+  endif()
+
   waterwall_add_native_executable(wsocket_windows_interface_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/wsocket_windows_interface_test.c)
   target_link_libraries(wsocket_windows_interface_test PRIVATE ww_test_support)
   target_link_libraries(wsocket_windows_interface_test PRIVATE ww)

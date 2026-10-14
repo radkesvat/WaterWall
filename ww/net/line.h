@@ -33,17 +33,19 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
 {
     line_t *l = genericpoolGetItem(pools[current]);
 
-    *l = (line_t) {.refc                   = 1,
-                   .user_auths             = {0},
-                   .user_count             = 0,
-                   .wid                    = wid,
-                   .alive                  = true,
-                   .active_tunnels_mask    = UINT64_MAX,
-                   .pools                  = pools,
-                   .established            = false,
-                   .recalculate_checksum   = false,
-                   .prefer_ordinary_read_u = false,
-                   .prefer_ordinary_read_d = false,
+    *l = (line_t) {.refc                       = 1,
+                   .user_auths                 = {0},
+                   .user_count                 = 0,
+                   .wid                        = wid,
+                   .alive                      = true,
+                   .active_tunnels_mask        = UINT64_MAX,
+                   .pools                      = pools,
+                   .established                = false,
+                   .recalculate_checksum       = false,
+                   .prefer_ordinary_read_u     = false,
+                   .prefer_ordinary_read_d     = false,
+                   .fallback_mode              = false,
+                   .fallback_peer_write_closed = false,
                    // to set a port we need to know the AF family, default v4
                    .routing_context =
                        (routing_context_t) {.dest_ctx = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
@@ -368,6 +370,28 @@ static inline void lineMarkEstablished(line_t *const line)
 static inline bool lineIsEstablished(const line_t *const line)
 {
     return line->established;
+}
+
+static inline void lineMarkFallback(line_t *line)
+{
+    assert(lineIsAlive(line) && lineIsOnCurrentEventWorker(line));
+    line->fallback_mode = true;
+}
+
+static inline bool lineIsFallback(const line_t *line)
+{
+    return line->fallback_mode;
+}
+
+static inline void lineMarkFallbackPeerWriteClosed(line_t *line)
+{
+    assert(lineIsAlive(line) && lineIsOnCurrentEventWorker(line) && lineIsFallback(line));
+    line->fallback_peer_write_closed = true;
+}
+
+static inline bool lineFallbackShouldLinger(const line_t *line)
+{
+    return line->fallback_mode && line->fallback_peer_write_closed;
 }
 
 /**

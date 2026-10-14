@@ -44,6 +44,26 @@ typedef struct test_env_s
     wloop_t                   *loop;
 } test_env_t;
 
+static wio_t       *peer_shutdown_test_io;
+static bool         peer_shutdown_detection_enabled, peer_shutdown_result;
+static int          peer_shutdown_error;
+static unsigned int peer_shutdown_queries;
+bool                __wrap_tcpSocketPeerHasWriteShutdown(int fd);
+
+bool __wrap_tcpSocketPeerHasWriteShutdown(int fd)
+{
+    require(peer_shutdown_test_io != NULL && fd == wioGetFD(peer_shutdown_test_io),
+            "unexpected peer shutdown query outside its fixture");
+    require(peer_shutdown_detection_enabled && peer_shutdown_queries++ == 0,
+            "peer shutdown query ignored opt-in or repeated after EOF");
+    require(wioHasReadEOF(peer_shutdown_test_io) && ! wioHasPeerWriteShutdown(peer_shutdown_test_io) &&
+                wioGetError(peer_shutdown_test_io) == 0 && wioIsOpened(peer_shutdown_test_io) &&
+                fcntl(fd, F_GETFD) >= 0 && wioGetWriteBufSize(peer_shutdown_test_io) != 0,
+            "peer shutdown query did not precede the EOF close decision with pending output");
+    if (peer_shutdown_error != 0)
+        errno = peer_shutdown_error;
+    return peer_shutdown_result;
+}
 
 static int          read_test_fd = -1;
 static unsigned int socket_read_queries;
@@ -343,6 +363,7 @@ static wio_t *socketIO(test_env_t *env, int sockets[2])
     wio_t *io = wioGet(env->loop, sockets[0]);
     require(io != NULL && wioIsOpened(io), "failed to wrap descriptor");
     require(wioGetFD(io) == sockets[0], "new WIO did not adopt its descriptor");
+    require(! wioHasReadEOF(io) && ! wioHasPeerWriteShutdown(io), "new or reused WIO inherited peer shutdown state");
     return io;
 }
 
@@ -350,6 +371,7 @@ static void testOwnedDescriptor(test_env_t *env)
 {
     int    sockets[2];
     wio_t *io = socketIO(env, sockets);
+    wioSetPeerWriteShutdownDetection(io, true);
 #if WW_HAVE_SPLICE
     sbuf_t *pipe_buf = sbufSplicePoolGet(64);
     require(pipe_buf != NULL, "pipe inventory lease failed");
@@ -366,6 +388,7 @@ static void testOwnedDescriptor(test_env_t *env)
                 "unsupported splice checkout did not return ENOSYS");
 #endif
     require(wioClose(io) == 0 && wioGetFD(io) == -1, "WIO close did not invalidate its descriptor");
+    require(! wioHasReadEOF(io) && ! wioHasPeerWriteShutdown(io), "local close was reported as peer shutdown");
     require(wioAdd(io, NULL, WW_READ) == -1, "closed WIO accepted new watcher interest");
     requireClosed(sockets[0]);
 #if WW_HAVE_SPLICE
@@ -380,7 +403,11 @@ static void testOwnedDescriptor(test_env_t *env)
     require(wioClose(io) == 0 && fcntl(sockets[0], F_GETFD) >= 0, "repeated close affected a reused descriptor");
     wio_t *reused = wioGet(env->loop, sockets[0]);
     require(reused == io && wioGetFD(reused) == sockets[0], "closed WIO was not reusable");
+    wioSetPeerWriteShutdownDetection(reused, true);
+    reused->error = ECONNRESET;
     wioClose(reused);
+    require(! wioHasReadEOF(reused) && ! wioHasPeerWriteShutdown(reused),
+            "error close was reported as confirmed peer shutdown");
     close(sockets[1]);
 }
 
@@ -1165,6 +1192,7 @@ static void testSpliceReadConditions(void)
         memcpy(probe.data, "123456789", 9);
         weventSetUserData(io, &probe);
         wioSetCallBackClose(io, spliceClosed);
+        wioSetPeerWriteShutdownDetection(io, true);
         wioSetCallBackRead(io, mode == 3 ? NULL : spliceRead);
         require(wioEnableSplice(io) == 0 && wioRead(io) == 0, "failed to initialize read-condition fixture");
         read_test_fd              = sockets[0];
@@ -1178,11 +1206,14 @@ static void testSpliceReadConditions(void)
         {
             require(probe.closes == 1 && wioIsClosed(io) && wioGetError(io) == (mode == 1 ? ECONNRESET : 0),
                     "splice EOF/error did not follow normal read closure");
+            require(! wioHasReadEOF(io) && ! wioHasPeerWriteShutdown(io),
+                    "read reset was reported as confirmed peer shutdown");
         }
         else
         {
             require(! wioIsClosed(io) && quiesce_after_splice_read == NULL,
                     "suppressed delivery closed its source or missed the quiescence hook");
+            require(! wioHasReadEOF(io), "zero splice progress was reported as confirmed read EOF");
             if (mode == 0)
                 require(probe.received == 9, "zero splice progress discarded readable ordinary bytes");
         }
@@ -2154,11 +2185,116 @@ static void testOrdinaryLargeRead(void)
             close(sockets[1]);
             require(wloopProcessEvents(env.loop, 0) >= 0 && wioIsClosed(io),
                     "large-buffer TCP receive did not handle EOF");
+            require(wioHasReadEOF(io) && wioGetError(io) == 0, "clean stream EOF was not retained through close");
             require(socket_read_queries == 0, "ordinary TCP payload or EOF read queried socket availability");
             read_test_fd = -1;
             teardown(&env);
         }
     }
+}
+
+static unsigned int eof_close_calls;
+
+static void observeEOFClose(wio_t *io)
+{
+    ++eof_close_calls;
+    require(wioHasReadEOF(io) && wioGetError(io) == 0, "EOF close lost its clean read outcome");
+    require(wioGetFD(io) >= 0 && fcntl(wioGetFD(io), F_GETFD) >= 0, "EOF close callback lost its live descriptor");
+    require(wioGetWriteBufSize(io) == 0, "EOF close callback retained queued output");
+    require(wioHasPeerWriteShutdown(io) == peer_shutdown_result, "EOF close lost its cached peer shutdown result");
+}
+
+static void testQueuedWriteOnEOF(bool detect_shutdown, bool peer_half_closed, int diagnostic_error)
+{
+    test_env_t env;
+    setup(&env);
+    int       sockets[2];
+    wio_t    *io            = socketIO(&env, sockets);
+    const int send_capacity = 4096;
+    require(setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &send_capacity, sizeof(send_capacity)) == 0,
+            "failed to bound EOF fixture send buffer");
+    peer_shutdown_test_io           = io;
+    peer_shutdown_detection_enabled = detect_shutdown;
+    peer_shutdown_result            = peer_half_closed;
+    peer_shutdown_error             = diagnostic_error;
+    peer_shutdown_queries           = 0;
+    wioSetPeerWriteShutdownDetection(io, detect_shutdown);
+    wioSetCallBackClose(io, observeEOFClose);
+    eof_close_calls = 0;
+    require(wioRead(io) == 0, "failed to watch EOF fixture");
+
+    char   filler[4096];
+    size_t filled = 0;
+    memset(filler, 'f', sizeof(filler));
+    for (;;)
+    {
+        ssize_t sent = send(sockets[0], filler, sizeof(filler), MSG_DONTWAIT);
+        if (sent < 0)
+        {
+            require(errno == EAGAIN && filled != 0, "failed to create EOF fixture backpressure");
+            break;
+        }
+        require(sent > 0 && filled < 1024 * 1024, "EOF fixture send buffer did not fill");
+        filled += (size_t) sent;
+    }
+
+    static const char sentinel[] = "queued after EOF";
+    sbuf_t           *queued     = bufferpoolGetSmallBuffer(env.buffers);
+    sbufWrite(queued, sentinel, sizeof(sentinel));
+    sbufSetLength(queued, sizeof(sentinel));
+    require(wioWrite(io, queued) == 0 && wioGetWriteBufSize(io) == sizeof(sentinel),
+            "EOF fixture output was not queued");
+    require(shutdown(sockets[1], SHUT_WR) == 0, "failed to send fixture EOF");
+    io->revents = WW_READ;
+    EVENT_PENDING(io);
+    require(wloopProcessEvents(env.loop, 0) >= 0 && wioHasReadEOF(io), "fixture EOF was not dispatched");
+
+    require(peer_shutdown_queries == (detect_shutdown ? 1U : 0U) && wioHasPeerWriteShutdown(io) == peer_half_closed,
+            "EOF detection did not preserve its opt-in or cached result");
+    if (peer_half_closed)
+    {
+        require(wioIsClosed(io) && eof_close_calls == 1, "confirmed peer shutdown waited for queued writes");
+    }
+    else
+    {
+        require(wioIsOpened(io) && eof_close_calls == 0 && wioGetWriteBufSize(io) == sizeof(sentinel),
+                "unconfirmed peer shutdown discarded queued writes");
+        wioHandleReadEOF(io);
+        require(peer_shutdown_queries == (detect_shutdown ? 1U : 0U) && ! wioHasPeerWriteShutdown(io),
+                "repeated EOF re-queried or changed the cached diagnostic result");
+        wioReadStop(io);
+    }
+
+    size_t received = 0;
+    while (received < filled)
+    {
+        ssize_t count = recv(sockets[1], filler, min(sizeof(filler), filled - received), MSG_DONTWAIT);
+        require(count > 0, "EOF fixture lost already-sent bytes");
+        for (ssize_t i = 0; i < count; ++i)
+            require(filler[i] == 'f', "queued output overtook existing socket bytes");
+        received += (size_t) count;
+    }
+    if (! peer_half_closed)
+    {
+        io->revents = WW_WRITE;
+        EVENT_PENDING(io);
+        require(wloopProcessEvents(env.loop, 0) >= 0 && wioIsClosed(io) && eof_close_calls == 1,
+                "unconfirmed peer shutdown did not finish after its queue drained");
+        require(recv(sockets[1], filler, sizeof(filler), MSG_DONTWAIT) == sizeof(sentinel) &&
+                    memcmp(filler, sentinel, sizeof(sentinel)) == 0,
+                "unconfirmed peer shutdown changed queued output");
+    }
+    require(recv(sockets[1], filler, sizeof(filler), MSG_DONTWAIT) == 0,
+            "EOF fixture forwarded discarded output or failed to close");
+    require(wioClose(io) == 0 && eof_close_calls == 1 && peer_shutdown_queries == (detect_shutdown ? 1U : 0U),
+            "drained or repeated close re-queried peer shutdown");
+    peer_shutdown_test_io = NULL;
+    close(sockets[1]);
+    wio_t *reused = socketIO(&env, sockets);
+    require(reused == io, "EOF fixture did not recycle its WIO");
+    wioClose(reused);
+    close(sockets[1]);
+    teardown(&env);
 }
 
 static void testBufferQueueCharge(void)
@@ -2407,6 +2543,10 @@ int main(void)
     testSharedBudget();
     testBufferQueueCharge();
     testOrdinaryLargeRead();
+    testQueuedWriteOnEOF(false, false, 0);
+    testQueuedWriteOnEOF(true, false, EACCES);
+    testQueuedWriteOnEOF(true, false, 0);
+    testQueuedWriteOnEOF(true, true, 0);
     testPrimaryDescriptorZero();
     testPipeDescriptorZero();
     testPendingDescriptorReuse();

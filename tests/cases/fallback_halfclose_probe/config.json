@@ -1,0 +1,119 @@
+{
+  "name": "fallback-halfclose-probe",
+  "nodes": [
+    {
+      "name": "tls-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26630,
+        "nodelay": true,
+        "large-send-buffer": 4096
+      },
+      "next": "tls-server"
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "fallback-node-name": "tls-fallback",
+        "fallback-intentional-delay-ms": 0
+      },
+      "next": "tls-protected"
+    },
+    {
+      "name": "tls-protected",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 9, "fastopen": false }
+    },
+    {
+      "name": "tls-fallback",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false }
+    },
+    {
+      "name": "vless-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26631,
+        "nodelay": true,
+        "large-send-buffer": 4096
+      },
+      "next": "vless-server"
+    },
+    {
+      "name": "vless-server",
+      "type": "VlessServer",
+      "settings": {
+        "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+        "fallback-node-name": "vless-fallback",
+        "fallback-intentional-delay-ms": 0,
+        "connect": true,
+        "udp": false
+      },
+      "next": "vless-protected"
+    },
+    {
+      "name": "vless-protected",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 9, "fastopen": false }
+    },
+    {
+      "name": "vless-fallback",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false }
+    },
+    {
+      "name": "trojan-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26632,
+        "nodelay": true,
+        "large-send-buffer": 4096
+      },
+      "next": "trojan-server"
+    },
+    {
+      "name": "trojan-server",
+      "type": "TrojanServer",
+      "settings": {
+        "password": "fallback-integration-secret",
+        "fallback-node-name": "trojan-fallback",
+        "fallback-intentional-delay-ms": 0,
+        "connect": true,
+        "udp": false
+      },
+      "next": "trojan-protected"
+    },
+    {
+      "name": "trojan-protected",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 9, "fastopen": false }
+    },
+    {
+      "name": "trojan-fallback",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false }
+    },
+    {
+      "name": "ordinary-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26633,
+        "nodelay": true,
+        "large-send-buffer": 4096
+      },
+      "next": "ordinary-connector"
+    },
+    {
+      "name": "ordinary-connector",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false }
+    }
+  ]
+}

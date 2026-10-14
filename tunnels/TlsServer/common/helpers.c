@@ -1056,6 +1056,7 @@ bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 
     ls->fallback_mode         = true;
     ls->fallback_initializing = true;
+    lineMarkFallback(l);
     tlsserverDisarmHandshakeDeadline(ls);
     tlsserverLinestateRelease(ls);
 

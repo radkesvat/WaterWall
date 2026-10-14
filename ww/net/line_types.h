@@ -68,6 +68,8 @@ typedef struct line_s
     uint8_t           recalculate_checksum : 1; // used for packet tunnels
     uint8_t           prefer_ordinary_read_u : 1;
     uint8_t           prefer_ordinary_read_d : 1;
+    uint8_t           fallback_mode : 1;
+    uint8_t           fallback_peer_write_closed : 1;
     routing_context_t routing_context;
 
     generic_pool_t **pools;

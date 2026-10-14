@@ -30,6 +30,135 @@ local_idle_table_t *tcplistenerGetLineIdleTable(tcplistener_tstate_t *ts, line_t
     return tcplistenerGetWorkerIdleTable(ts);
 }
 
+#ifdef OS_LINUX
+typedef struct tcplistener_linger_s
+{
+    wio_t              *io;
+    local_idle_table_t *table;
+    local_idle_item_t  *idle;
+    uint64_t            deadline_ms;
+} tcplistener_linger_t;
+
+enum
+{
+    kFallbackLingerIdleMs  = 5000,
+    kFallbackLingerTotalMs = 30000
+};
+
+static void onLingerClose(wio_t *io)
+{
+    tcplistener_linger_t *linger = weventGetUserdata(io);
+    weventSetUserData(io, NULL);
+    wioSetCallBackRead(io, NULL);
+    wioSetCallBackWrite(io, NULL);
+    wioSetCallBackClose(io, NULL);
+    local_idle_item_t *idle = linger->idle;
+    linger->idle            = NULL;
+    if (idle != NULL)
+    {
+        bool removed = localidletableRemoveIdleItem(linger->table, idle);
+        if (! removed)
+        {
+            LOGF("TcpListener: failed to remove closing socket idle item");
+            abortProgramNow(1);
+        }
+    }
+    memoryFree(linger);
+}
+
+static void onLingerExpire(local_idle_item_t *item)
+{
+    tcplistener_linger_t *linger = item->userdata;
+    item->userdata               = NULL;
+    linger->idle                 = NULL;
+    // A pending response must not extend the terminal drain deadline.
+    wioFree(linger->io);
+}
+
+static void onLingerRead(wio_t *io, sbuf_t *buf)
+{
+    tcplistener_linger_t *linger = weventGetUserdata(io);
+    bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
+    if (linger->deadline_ms == 0)
+        return;
+
+    const uint64_t now = wloopNowMonotonicMS(weventGetLoop(io));
+    if (now >= linger->deadline_ms)
+    {
+        wioFree(io);
+        return;
+    }
+    localidletableKeepIdleItemForAtleast(
+        linger->table, linger->idle, min((uint64_t) kFallbackLingerIdleMs, linger->deadline_ms - now));
+}
+
+static void onLingerWriteComplete(wio_t *io)
+{
+    if (! wioCheckWriteComplete(io))
+        return;
+
+    wioSetCallBackWrite(io, NULL);
+    if (shutdown(wioGetFD(io), SHUT_WR) != 0)
+    {
+        wioClose(io);
+        return;
+    }
+
+    tcplistener_linger_t *linger = weventGetUserdata(io);
+    local_idle_item_t    *idle   = linger->idle;
+    linger->idle                 = NULL;
+    bool removed                 = localidletableRemoveIdleItem(linger->table, idle);
+    if (! removed)
+    {
+        LOGF("TcpListener: failed to replace draining socket idle item");
+        abortProgramNow(1);
+    }
+    const uint64_t now  = wloopNowMonotonicMS(weventGetLoop(io));
+    linger->deadline_ms = now + kFallbackLingerTotalMs;
+    linger->idle =
+        localidletableCreateItem(linger->table, tcplistenerIdleKey(io), linger, onLingerExpire, kFallbackLingerIdleMs);
+    if (linger->idle == NULL)
+    {
+        LOGF("TcpListener: duplicate half-closed socket idle item");
+        abortProgramNow(1);
+    }
+}
+#endif
+
+bool tcplistenerBeginFallbackLinger(tunnel_t *t, wio_t *io)
+{
+#ifdef OS_LINUX
+    tcplistener_tstate_t *ts = tunnelGetState(t);
+    if (atomicLoadRelaxed(&ts->stopping) || ! wloopNormalDispatchAllowed(weventGetLoop(io)) || wioIsClosed(io) ||
+        wioGetError(io) != 0)
+        return false;
+
+    // This socket context owns no line state or line reference.
+    tcplistener_linger_t *linger = memoryAllocateZero(sizeof(*linger));
+    linger->io                   = io;
+    linger->table                = tcplistenerGetWorkerIdleTable(ts);
+    linger->idle                 = localidletableCreateItem(
+        linger->table, tcplistenerIdleKey(io), linger, onLingerExpire, WIO_DEFAULT_CLOSE_TIMEOUT);
+    if (linger->idle == NULL)
+    {
+        LOGF("TcpListener: duplicate draining socket idle item");
+        abortProgramNow(1);
+    }
+    weventSetUserData(io, linger);
+    wioSetCallBackRead(io, onLingerRead);
+    wioSetCallBackClose(io, onLingerClose);
+    wioSetCallBackWrite(io, onLingerWriteComplete);
+    wioDisableSplice(io);
+    if (wioRead(io) == 0)
+        onLingerWriteComplete(io);
+    return true;
+#else
+    discard t;
+    discard io;
+    return false;
+#endif
+}
+
 static void onRecv(wio_t *io, sbuf_t *buf)
 {
     tcplistener_lstate_t *lstate = (tcplistener_lstate_t *) (weventGetUserdata(io));

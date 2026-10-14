@@ -365,6 +365,9 @@ WW_EXPORT void            *wioGetContext(wio_t *io);
 WW_EXPORT bool             wioIsOpened(wio_t *io);
 WW_EXPORT bool             wioIsConnected(wio_t *io);
 WW_EXPORT bool             wioIsClosed(wio_t *io);
+WW_EXPORT bool             wioHasReadEOF(const wio_t *io);
+WW_EXPORT bool             wioHasPeerWriteShutdown(const wio_t *io);
+WW_EXPORT void             wioSetPeerWriteShutdownDetection(wio_t *io, bool enabled);
 
 // iobuf
 // #include "hbuf.h"

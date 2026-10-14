@@ -486,6 +486,7 @@ read_ordinary:
     }
     if (UNLIKELY(nread == 0 && (io->io_type & WIO_TYPE_SOCK_DGRAM) == 0))
     {
+        wioHandleReadEOF(io);
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
         goto disconnect;
     }
@@ -999,7 +1000,8 @@ int wioClose(wio_t *io)
 
         return 0;
     }
-    if (! write_queue_empty(&io->write_queue) && io->error == 0 && io->close == 0 && io->destroy == 0)
+    if (! write_queue_empty(&io->write_queue) && io->error == 0 && io->close == 0 && io->destroy == 0 &&
+        ! io->peer_write_shutdown)
     {
         io->close = 1;
 

@@ -620,7 +620,8 @@ static void progressTeardown(tcp_progress_fixture_t *fixture)
     twfRequire(twfLineRefCount(fixture->line) == 1, "write-progress line reference leaked");
     lineUnref(fixture->line);
     twfRequireNoLeakedBuffers();
-    localidletableDestroy(fixture->tables[0]);
+    if (fixture->tables[0] != NULL)
+        localidletableDestroy(fixture->tables[0]);
     if (fixture->peer >= 0)
         close(fixture->peer);
     tunnelchainDestroy(fixture->chain);
@@ -651,6 +652,133 @@ static size_t progressReadPeer(tcp_progress_fixture_t *fixture, size_t offset, s
         }
     }
 }
+
+#ifdef TCP_PAUSE_TEST_LISTENER
+static void unexpectedLingerPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    discard t;
+    discard line;
+    discard buf;
+    twfRequire(false, "detached listener forwarded discarded input");
+}
+
+static void runFallbackLingerCase(bool queued_output, bool stopping)
+{
+    twfSetCase(stopping        ? "fallback socket drain is included in worker shutdown"
+               : queued_output ? "fallback Finish drains response before half-close and discards input"
+                               : "fallback Finish destroys line before socket linger");
+    tcp_progress_fixture_t fixture;
+    progressSetup(&fixture, false);
+    neighbor->fnPayloadU = unexpectedLingerPayload;
+    lineMarkFallback(fixture.line);
+    lineMarkFallbackPeerWriteClosed(fixture.line);
+
+    const size_t body_bytes = queued_output ? 256 * 1024 : 0;
+    if (queued_output)
+    {
+        sbuf_t *body = twfTrackAcquired(sbufCreate((uint32_t) body_bytes));
+        memorySet(sbufGetMutablePtr(body), 'A', body_bytes);
+        sbufSetLength(body, (uint32_t) body_bytes);
+        submit(fixture.line, body);
+        twfRequire(! wioCheckWriteComplete(fixture.io), "linger fixture did not retain response bytes");
+        sbuf_t *suffix = bufferpoolGetSmallBuffer(fixture.env.pool);
+        sbufWrite(suffix, "BC", 2);
+        sbufSetLength(suffix, 2);
+        submit(fixture.line, suffix);
+    }
+
+    finishLine(fixture.line);
+    twfRequire(! lineIsAlive(fixture.line) && ! wioIsClosed(fixture.io),
+               "fallback Finish did not separate line death from socket lifetime");
+    twfRequireLineStateZeroed(fixture.line, adapter, "fallback Finish retained listener line state");
+    twfRequire(twfLineRefCount(fixture.line) == 1, "socket linger retained a line reference");
+    twfRequire(localidletableGetItemCount(fixture.tables[0]) == 1,
+               "detached listener disappeared from shutdown inventory");
+
+    if (stopping)
+    {
+        const int fd = wioGetFD(fixture.io);
+        tcplistenerTunnelOnQuiesceRequest(adapter, wwLifecycleProcessShutdown());
+        tcplistenerTunnelOnWorkerQuiesce(adapter, 0, wwLifecycleProcessShutdown());
+        tcplistenerTunnelOnWorkerStop(adapter, 0, wwLifecycleProcessShutdown());
+        twfRequire(fixture.tables[0] == NULL && fcntl(fd, F_GETFD) == -1 && errno == EBADF,
+                   "worker stop retained detached socket or idle table");
+    }
+    else
+    {
+        size_t received = 0;
+        for (unsigned i = 0; i < 1024 && ! wioCheckWriteComplete(fixture.io); ++i)
+        {
+            received = progressReadPeer(&fixture, received, body_bytes);
+            discard wloopProcessEvents(fixture.env.loop, 0);
+        }
+        if (queued_output)
+        {
+            received = progressReadPeer(&fixture, received, body_bytes);
+            twfRequire(received == body_bytes + 2, "fallback half-close truncated queued response");
+        }
+        char byte;
+        twfRequire(recv(fixture.peer, &byte, 1, MSG_DONTWAIT) == 0,
+                   "listener did not send FIN after completing response output");
+        const uint32_t recycled = twfRecycleCount();
+        twfRequire(send(fixture.peer, "ignored", 7, 0) == 7, "half-closed listener stopped accepting input");
+        for (unsigned i = 0; i < 32 && twfRecycleCount() == recycled; ++i)
+            discard wloopProcessEvents(fixture.env.loop, 0);
+        twfRequire(twfRecycleCount() > recycled && ! wioIsClosed(fixture.io),
+                   "half-closed listener did not discard input while remaining open");
+        twfRequire(shutdown(fixture.peer, SHUT_WR) == 0, "failed to close linger peer sending direction");
+        for (unsigned i = 0; i < 32 && ! wioIsClosed(fixture.io); ++i)
+            discard wloopProcessEvents(fixture.env.loop, 0);
+        twfRequire(wioIsClosed(fixture.io) && weventGetUserdata(fixture.io) == NULL &&
+                       localidletableGetItemCount(fixture.tables[0]) == 0,
+                   "peer EOF retained detached socket context");
+    }
+    twfRequire(fixture.finishes == 0 && fixture.resumes == 0,
+               "detached socket called a tunnel after downstream Finish");
+    progressTeardown(&fixture);
+}
+
+static void runFallbackLingerDeadlineCase(void)
+{
+    twfSetCase("fallback input refresh cannot extend the absolute socket deadline");
+    tcp_progress_fixture_t fixture;
+    progressSetup(&fixture, false);
+    neighbor->fnPayloadU = unexpectedLingerPayload;
+    lineMarkFallback(fixture.line);
+    lineMarkFallbackPeerWriteClosed(fixture.line);
+    const uint64_t start_ms      = UINT64_C(5000000000);
+    fixture.env.loop->cur_hrtime = start_ms * 1000;
+    finishLine(fixture.line);
+    twfRequire(! lineIsAlive(fixture.line), "linger deadline fixture retained its normal line");
+
+    const int      fd        = wioGetFD(fixture.io);
+    const hash_t   key       = tcplistenerIdleKey(fixture.io);
+    const wread_cb read_cb   = wioGetCallBackRead(fixture.io);
+    const uint64_t offsets[] = {4000, 8000, 12000, 16000, 20000, 24000, 28000, 29999};
+    for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i)
+    {
+        fixture.env.loop->cur_hrtime = (start_ms + offsets[i]) * 1000 + 999;
+        sbuf_t *buf                  = bufferpoolGetSmallBuffer(fixture.env.pool);
+        sbufSetLength(buf, 1);
+        read_cb(fixture.io, buf);
+        local_idle_item_t *idle = localidletableGetIdleItemByHash(fixture.tables[0], key);
+        twfRequire(! wioIsClosed(fixture.io) && idle != NULL &&
+                       idle->expire_at_ms == start_ms + min(offsets[i] + 5000, UINT64_C(30000)),
+                   "input did not refresh inactivity within the fixed 30-second cap");
+    }
+    fixture.env.loop->cur_hrtime = (start_ms + 30000) * 1000;
+    sbuf_t *buf                  = bufferpoolGetSmallBuffer(fixture.env.pool);
+    sbufSetLength(buf, 1);
+    read_cb(fixture.io, buf);
+    twfRequire(fcntl(fd, F_GETFD) == -1 && errno == EBADF && localidletableGetItemCount(fixture.tables[0]) == 0,
+               "input at the absolute deadline kept the detached socket alive");
+    twfRequire(fixture.finishes == 0 && fixture.resumes == 0,
+               "socket deadline called a tunnel after downstream Finish");
+    wloopUpdateTime(fixture.env.loop);
+    progressTeardown(&fixture);
+}
+#endif
+
 static void runActiveWriteChargeCase(bool overflow)
 {
     twfSetCase(overflow ? "partial active WIO allocation plus adapter queue obeys exact combined hard limit"
@@ -1067,6 +1195,10 @@ int main(void)
 #endif
 #ifdef TCP_PAUSE_TEST_LISTENER
     runAcceptedInitPauseCase();
+    runFallbackLingerCase(false, false);
+    runFallbackLingerCase(true, false);
+    runFallbackLingerCase(true, true);
+    runFallbackLingerDeadlineCase();
 #endif
 #if WW_HAVE_SPLICE
     runReadPreferenceCase();

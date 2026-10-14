@@ -249,6 +249,7 @@ bool vlessserverStartFallback(tunnel_t *t, line_t *l)
     ls->header_filled       = 0;
     ls->phase               = kVlessServerPhaseFallback;
     ls->branch_initializing = true;
+    lineMarkFallback(l);
     if (! lineCallWithRef(l, tunnelUpStreamInit, ts->fallback_tunnel))
         return false;
     ls = lineGetState(l, t);

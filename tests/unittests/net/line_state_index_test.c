@@ -102,6 +102,8 @@ static void testDenseSlots(void)
         line_t *line = lineCreateForWorker(0, pools, 0);
         require(! linePrefersOrdinaryReadUpstream(line) && ! linePrefersOrdinaryReadDownstream(line),
                 "new or recycled line inherited ordinary-read preferences");
+        require(! lineIsFallback(line) && ! line->fallback_peer_write_closed,
+                "new or recycled line inherited fallback closure state");
         require(sizeof(line->refc) == sizeof(uint32_t) && atomicLoadU32Relaxed(&line->refc) == 1,
                 "new line did not start with one 32-bit reference");
         lineRef(line);
@@ -140,6 +142,8 @@ static void testDenseSlots(void)
         // prove creation clears both flags without invoking owner-only setters.
         line->prefer_ordinary_read_u = true;
         line->prefer_ordinary_read_d = true;
+        line->fallback_mode              = true;
+        line->fallback_peer_write_closed = true;
         lineDestroy(line);
         require(masterpoolGetCheckedOut(master) == 0, "dense line was not returned to its pool");
     }

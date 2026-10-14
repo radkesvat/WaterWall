@@ -76,6 +76,7 @@ add_library(ww STATIC
     base/wlsem.c
     base/quiescence_gate.c
     base/wsocket.c
+    base/tcp_socket_diag.c
     base/wsysinfo.c
     base/wproc.c
 

@@ -43,6 +43,11 @@ void tcpconnectorOnClose(wio_t *io)
         tunnel_t              *t  = ls->tunnel;
         tcpconnector_tstate_t *ts = tunnelGetState(t);
 
+        if (lineIsFallback(l) && wioHasPeerWriteShutdown(io) && wioGetError(io) == 0)
+        {
+            lineMarkFallbackPeerWriteClosed(l);
+        }
+
         local_idle_item_t *idle_item = ls->idle_handle;
         ls->idle_handle              = NULL;
         bool removed                 = localidletableRemoveIdleItem(tcpconnectorGetLineIdleTable(ts, l), idle_item);

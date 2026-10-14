@@ -836,6 +836,8 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
     {
         // Real error or stream EOF.
         io->error = record->error;
+        if (record->error == 0 && ! is_dgram)
+            wioHandleReadEOF(io);
         recordRetire(record); // recycles the still-attached sbuf
         wioClose(io);
         return;
@@ -1810,7 +1812,7 @@ int wioClose(wio_t *io)
      * serialized send stream drains. wioFree()/finalization must never defer.
      */
     if ((io->iocp_send_active != NULL || ! write_queue_empty(&io->write_queue)) && io->error == 0 && io->close == 0 &&
-        io->destroy == 0 && ! io->iocp_deferred_finalize)
+        io->destroy == 0 && ! io->iocp_deferred_finalize && ! io->peer_write_shutdown)
     {
         io->close = 1;
         wlogd("write_queue not empty, close later.");

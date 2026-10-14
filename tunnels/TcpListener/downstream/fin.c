@@ -18,9 +18,11 @@ void tcplistenerTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         abortProgramNow(1);
     }
     weventSetUserData(ls->io, NULL);
+    wioSetCallBackWrite(ls->io, NULL);
 
     tcplistenerFlushWriteQueue(ls);
-    wioClose(ls->io);
+    if (! lineFallbackShouldLinger(l) || ! tcplistenerBeginFallbackLinger(t, ls->io))
+        wioClose(ls->io);
     tcplistenerLinestateDestroy(ls);
     lineDestroy(l);
 }

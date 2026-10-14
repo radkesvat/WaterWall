@@ -1,6 +1,7 @@
 #include "wevent.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
+#include "tcp_socket_diag.h"
 #include "watomic.h"
 #include "werr.h"
 #include "wsocket.h"
@@ -137,6 +138,9 @@ void wioReady(wio_t *io)
     io->ready     = 1;
     io->connected = 0;
     io->closed    = 0;
+    io->read_eof                   = 0;
+    io->detect_peer_write_shutdown = 0;
+    io->peer_write_shutdown        = 0;
     io->accept = io->connect = io->connectex = 0;
     io->recv = io->send = 0;
     io->recvfrom = io->sendto = 0;
@@ -353,6 +357,32 @@ bool wioIsClosed(wio_t *io)
     if (io == NULL)
         return true;
     return io->ready == 0 && io->closed == 1;
+}
+
+bool wioHasReadEOF(const wio_t *io)
+{
+    return io->read_eof;
+}
+
+bool wioHasPeerWriteShutdown(const wio_t *io)
+{
+    return io->peer_write_shutdown;
+}
+
+void wioSetPeerWriteShutdownDetection(wio_t *io, bool enabled)
+{
+    assert(wioIsOpened(io) && ! io->read_eof);
+    io->detect_peer_write_shutdown = enabled;
+}
+
+void wioHandleReadEOF(wio_t *io)
+{
+    if (io->read_eof)
+        return;
+
+    io->read_eof = 1;
+    if (io->detect_peer_write_shutdown && io->error == 0)
+        io->peer_write_shutdown = tcpSocketPeerHasWriteShutdown(wioGetFD(io));
 }
 
 uint32_t wioGetID(wio_t *io)

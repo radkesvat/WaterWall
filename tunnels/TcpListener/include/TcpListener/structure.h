@@ -90,6 +90,7 @@ local_idle_table_t *tcplistenerGetLineIdleTable(tcplistener_tstate_t *ts, line_t
 void                tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate);
 void                tcplistenerOnInboundConnected(wevent_t *ev);
 void                tcplistenerOnWriteComplete(wio_t *io);
+bool                tcplistenerBeginFallbackLinger(tunnel_t *t, wio_t *io);
 
 void tcplistenerOnIdleConnectionExpire(local_idle_item_t *idle_tcp);
 

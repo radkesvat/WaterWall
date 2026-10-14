@@ -148,6 +148,9 @@ struct wio_s
     unsigned ready : 1;
     unsigned connected : 1;
     unsigned closed : 1;
+    unsigned read_eof : 1;
+    unsigned detect_peer_write_shutdown : 1;
+    unsigned peer_write_shutdown : 1;
     unsigned accept : 1;
     unsigned connect : 1;
     unsigned connectex : 1; // for ConnectEx/DisconnectEx
@@ -277,6 +280,7 @@ void wioReleaseFD(wio_t *io, bool keep_fd);
 void wioAcceptCallBack(wio_t *io);
 void wioConnectCallBack(wio_t *io);
 void wioHandleRead(wio_t *io, sbuf_t *buf);
+void wioHandleReadEOF(wio_t *io);
 void wioReadCallBack(wio_t *io, sbuf_t *buf);
 void wioWriteCallBack(wio_t *io);
 void wioCloseCallBack(wio_t *io);
