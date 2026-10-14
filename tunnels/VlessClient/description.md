@@ -1,5 +1,5 @@
 <!--
-Documentation version: 159
+Documentation version: 160
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/VlessClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VlessClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -284,7 +284,10 @@ Equality passes; overflow or parser queue refusal closes the association. There 
 retained decoded-output queue or 1,024-record limit on a synchronous batch. Fragment
 counts do not consume output slots. These are logical protocol limits, independent
 of buffer-pool size, RAM profile, and pipe capacity. Oversized local datagrams are
-dropped; malformed received frames close the association. A received zero-length UDP frame is malformed.
+dropped; malformed received frames close the association. A received length of `0` consumes only its two-byte prefix,
+delivers no datagram, and leaves the association open; parsing continues with the next frame.
+Zero-length handling matches [Xray's base VLESS reader and writers](https://github.com/XTLS/Xray-core/blob/0888beb38a9ba45440557175e71ce21cf8ba3b13/proxy/vless/encoding/addons.go).
+Empty datagrams are valid at the [UDP layer (RFC 8085 §5)](https://datatracker.ietf.org/doc/html/rfc8085#section-5).
 
 Splice requires `misc.splice`, a supported build and support from every node in the
 final chain, including internal helpers. `DomainResolver` supports splice. `TlsClient`

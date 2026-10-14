@@ -67,13 +67,7 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             tunnelPrevDownStreamPayload(t, application, body);
             continue;
         }
-        int header = vlessclientReadUdpHeader(ls);
-        if (UNLIKELY(header < 0))
-        {
-            vlessclientCloseLine(t, l, kVlessClientCloseInternal);
-            break;
-        }
-        if (header == 0 || ls->receive_bytes - ls->header_filled < ls->body_length)
+        if (! vlessclientReadUdpHeader(ls) || ls->receive_bytes - ls->header_filled < ls->body_length)
             break;
         sbuf_t *body = vlessclientExtractUdpBody(ls);
         /* Parser cursor and accounting are committed before any reentrant callback. */

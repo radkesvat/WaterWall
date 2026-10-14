@@ -103,8 +103,10 @@ bool vlessserverDrainUdpPackets(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls
         uint16_t packet_size = ((uint16_t) ls->header[0] << 8U) | ls->header[1];
         if (packet_size == 0)
         {
-            vlessserverCloseLineBidirectional(t, l);
-            return false;
+            /* Match Xray's base VLESS reader: consume empty frames without delivery. */
+            ls->input_bytes -= kVlessServerUdpHeaderLen;
+            ls->header_filled = 0;
+            continue;
         }
         if (ls->input_bytes - 2U < packet_size)
             return true;

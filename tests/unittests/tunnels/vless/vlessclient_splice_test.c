@@ -628,6 +628,48 @@ static void testUdp(bool pipe)
             end();
         }
 }
+static void testEmptyUdp(bool pipe)
+{
+    twfSetCase("empty UDP frames consume only framing and preserve association");
+    for (unsigned mixed = 0; mixed < 2; ++mixed)
+    {
+        uint8_t  wire[32] = {0, 0};
+        unsigned length   = 2;
+        length += frame(wire + length, NULL, 0);
+        length += frame(wire + length, NULL, 0);
+        if (mixed)
+        {
+            length += frame(wire + length, "A", 1);
+            length += frame(wire + length, NULL, 0);
+            length += frame(wire + length, "BC", 2);
+            length += frame(wire + length, NULL, 0);
+        }
+        for (unsigned split = 0; split <= length; ++split)
+        {
+            begin(true, "127.0.0.1", 128, 0, false);
+            establish();
+            tunnelDownStreamPayload(f.t, f.carrier, bytes(wire, split, pipe, 320));
+            twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier), "empty UDP prefix closed association");
+            tunnelDownStreamPayload(f.t, f.carrier, bytes(wire + split, length - split, pipe, 320));
+            twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier) && f.finishes == 0 &&
+                           f.transport_finishes == 0,
+                       "empty UDP frame closed association");
+            twfRequire(f.deliveries_down == (mixed ? 2U : 0U) && f.down_len == (mixed ? 3U : 0U) &&
+                           memcmp(f.down, "ABC", f.down_len) == 0,
+                       "empty UDP emitted a datagram or changed later frames");
+            vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
+            twfRequire(ls->response_complete && ls->receive_bytes == 0 && ls->receive_head == NULL &&
+                           bufferqueueGetBufCount(&ls->pending_down) == 0 && ls->header_filled == 0 &&
+                           ls->body_length == 0 && ! ls->receiving,
+                       "empty UDP retained framing or parser accounting");
+            tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\1D", 3, pipe, 320));
+            twfRequire(f.deliveries_down == (mixed ? 3U : 1U) && f.down_len == (mixed ? 4U : 1U) &&
+                           f.down[f.down_len - 1] == 'D',
+                       "empty UDP stranded later input");
+            end();
+        }
+    }
+}
 static void testPressure(void)
 {
     twfSetCase("admitted UDP batches complete through Pause with no decoded backlog");
@@ -837,8 +879,23 @@ static void testPrefixes(void)
     twfSetCase("prefixes, mixed sources, full padding and unrestricted UDP fragments");
     begin(true, "127.0.0.1", 128, 0, false);
     establish();
+    sbuf_t *b = bytes("\0\0\1A\0\0", 6, true, 320);
+    sbufShiftLeft(b, 3);
+    sbufWrite(b, "\0\0\0", 3);
+    tunnelDownStreamPayload(f.t, f.carrier, b);
+    twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier) && f.deliveries_down == 1 && f.down_len == 1 &&
+                   f.down[0] == 'A',
+               "empty UDP across resident prefix and pipe changed later frame");
+    twfRequire(! WW_HAVE_SPLICE || f.parser_reads + reads == 5, "empty UDP materialized a pipe body");
+    vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
+    twfRequire(ls->receive_bytes == 0 && ls->header_filled == 0 && ls->receive_head == NULL &&
+                   bufferqueueGetBufCount(&ls->pending_down) == 0,
+               "empty UDP prefix retained input");
+    end();
+    begin(true, "127.0.0.1", 128, 0, false);
+    establish();
     response();
-    sbuf_t *b = bytes("body", 4, true, 320);
+    b = bytes("body", 4, true, 320);
     sbufShiftLeft(b, 3);
     sbufWrite(b, "pre", 3);
     tunnelUpStreamPayload(f.t, f.application, b);
@@ -874,7 +931,7 @@ static void testPrefixes(void)
 }
 static void testMalformed(void)
 {
-    twfSetCase("invalid response and incoming empty UDP close only association");
+    twfSetCase("invalid response closes only association");
     for (unsigned udp = 0; udp < 2; ++udp)
     {
         begin(udp, "127.0.0.1", 128, 0, false);
@@ -883,12 +940,6 @@ static void testMalformed(void)
         twfRequire(! lineIsAlive(f.application) && f.down_len == 0, "invalid response survived");
         end();
     }
-    begin(true, "127.0.0.1", 128, 0, false);
-    establish();
-    response();
-    tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\0", 2, true, 320));
-    twfRequire(! lineIsAlive(f.application) && ! lineIsAlive(f.carrier), "zero incoming UDP survived");
-    end();
 }
 
 static void testNested(void)
@@ -1364,6 +1415,8 @@ int main(void)
     testResponse(true);
     testUdp(false);
     testUdp(true);
+    testEmptyUdp(false);
+    testEmptyUdp(true);
     testPressure();
     testNestedTcpRetention();
     testLimits(128);

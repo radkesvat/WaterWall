@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/VlessServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VlessServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -46,7 +46,7 @@ and other malformed authenticated requests close the protected flow. Accepted me
 The first nonempty backend reply shares one ordinary buffer with the `00 00` response header. Ordinary input with
 enough headroom is reused in place; splice-backed input or insufficient headroom uses a best-fit ordinary buffer.
 Later opaque TCP replies retain their representation where possible. UDP uses one fixed request destination and exact two-byte
-length framing, with bodies of 1..65,535 bytes. Pipe allocation or transfer pressure uses complete ordinary fallback;
+length framing, with delivered bodies of 1..65,535 bytes. Pipe allocation or transfer pressure uses complete ordinary fallback;
 not every frame is guaranteed zero-copy.
 
 | Retained obligation | Inclusive limit |
@@ -352,6 +352,11 @@ payload: length bytes
 ```
 
 The UDP destination is fixed by the initial VLESS request. Individual UDP frames do not carry per-packet addresses.
+
+A received length of `0` consumes only its two-byte prefix, delivers no datagram, and leaves the association open;
+parsing continues with the next frame. Empty or oversized local replies are dropped without closing the backend.
+Zero-length handling matches [Xray's base VLESS reader and writers](https://github.com/XTLS/Xray-core/blob/0888beb38a9ba45440557175e71ce21cf8ba3b13/proxy/vless/encoding/addons.go).
+Empty datagrams are valid at the [UDP layer (RFC 8085 §5)](https://datatracker.ietf.org/doc/html/rfc8085#section-5).
 
 ## Fallback Behavior
 

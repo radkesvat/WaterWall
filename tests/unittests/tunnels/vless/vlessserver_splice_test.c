@@ -1018,10 +1018,55 @@ static void testUdp(void)
     datagram(443, "D", 1, true);
     twfRequire(f.remote_count == 2 && f.ests == 1 && f.up[3] == 'D', "backend replacement lost Est latch or data");
     tunnelUpStreamPayload(f.t, f.line, bytes("\0\0", 2, true, 320));
-    twfRequire(! lineIsAlive(f.line), "zero-length received datagram accepted");
+    twfRequire(lineIsAlive(f.line) && f.calls_up == 4, "zero-length received frame closed or emitted a datagram");
     end();
     memoryFree(wire);
     memoryFree(body);
+}
+
+static void testUdpEmptyFrames(void)
+{
+    twfSetCase("empty UDP frames are skipped without closing or disrupting later datagrams");
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        begin(false, false, 128);
+        uint8_t  wire[320];
+        uint32_t n = request(wire, 0, true);
+        n += frame(wire + n, NULL, 0);
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, mode != 0, 320));
+        twfRequire(lineIsAlive(f.line) && f.calls_up == 0 && f.remote_count == 1 && f.down_len == 0,
+                   "initial empty UDP frame closed the association or emitted a payload");
+
+        tunnelUpStreamPayload(f.t, f.line, bytes("\0", 1, mode != 0, 320));
+        twfRequire(lineIsAlive(f.line) && f.calls_up == 0, "incomplete empty-frame header changed the association");
+        tunnelUpStreamPayload(f.t, f.line, bytes("\0\0\0", 3, mode != 0, 320));
+        twfRequire(lineIsAlive(f.line) && f.calls_up == 0, "split or consecutive empty frames emitted datagrams");
+
+        const uint8_t batch[] = {0, 0, 0, 1, 'A', 0, 0, 0, 1, 'B', 0, 0};
+        sbuf_t       *input   = bytes(batch + (mode == 2), sizeof(batch) - (mode == 2), mode != 0, 320);
+        if (mode == 2)
+        {
+            sbufShiftLeft(input, 1);
+            sbufWrite(input, batch, 1);
+        }
+        tunnelUpStreamPayload(f.t, f.line, input);
+        twfRequire(lineIsAlive(f.line) && f.calls_up == 2 && f.up_len == 2 && ! memcmp(f.up, "AB", 2) &&
+                       f.remote_count == 1 && f.finishes == 0,
+                   "empty frames disrupted nonempty UDP boundaries or order");
+        vlessserver_lstate_t *ls = lineGetState(f.line, f.t);
+        twfRequire(ls->input_bytes == 0 && ls->header_filled == 0 && ls->input_head == NULL &&
+                       bufferqueueGetBufCount(&ls->pending_up) == 0,
+                   "skipped empty frames retained parser bytes or buffers");
+
+        tunnelDownStreamFin(f.t, f.remotes[0]);
+        tunnelUpStreamPayload(f.t, f.line, bytes("\0\0", 2, mode != 0, 320));
+        twfRequire(lineIsAlive(f.line) && f.remote_count == 1 && f.calls_up == 2,
+                   "empty UDP frame recreated a closed backend");
+        datagram(443, "C", 1, mode != 0);
+        twfRequire(f.remote_count == 2 && f.calls_up == 3 && f.up_len == 3 && ! memcmp(f.up, "ABC", 3),
+                   "nonempty UDP after skipped frames could not recreate the backend");
+        end();
+    }
 }
 
 static void testReentry(void)
@@ -1343,6 +1388,7 @@ int main(void)
     testCredentialSnapshots();
     testAuthentication();
     testUdp();
+    testUdpEmptyFrames();
     testReentry();
     testFallback();
     testFallbackLocalReplies();

@@ -57,12 +57,18 @@ int vlessclientReadResponse(vlessclient_lstate_t *ls)
     return 1;
 }
 
-int vlessclientReadUdpHeader(vlessclient_lstate_t *ls)
+bool vlessclientReadUdpHeader(vlessclient_lstate_t *ls)
 {
-    if (! gatherHeader(ls))
-        return 0;
-    ls->body_length = ((uint16_t) ls->header[0] << 8U) | ls->header[1];
-    return ls->body_length == 0 ? -1 : 1;
+    while (gatherHeader(ls))
+    {
+        ls->body_length = ((uint16_t) ls->header[0] << 8U) | ls->header[1];
+        if (ls->body_length != 0)
+            return true;
+        /* Base VLESS consumes empty frames without delivering a datagram. */
+        ls->receive_bytes -= ls->header_needed;
+        ls->header_filled = 0;
+    }
+    return false;
 }
 
 sbuf_t *vlessclientTakeTcpBody(vlessclient_lstate_t *ls)
