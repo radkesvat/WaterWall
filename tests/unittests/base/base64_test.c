@@ -126,7 +126,8 @@ static void testBase64UrlDecode(void)
     for (size_t i = 0; i < ARRAY_SIZE(kVectors); ++i)
     {
         requireDecode(kVectors[i].encoded, kVectors[i].plain);
-        requireDecode(kVectors[i].padded, kVectors[i].plain);
+        if (stringCompare(kVectors[i].encoded, kVectors[i].padded) != 0)
+            requireDecode(kVectors[i].padded, kVectors[i].plain);
     }
 
     const char url_bytes[] = {(char) 0xfb, (char) 0xff, (char) 0xbf, '\0'};

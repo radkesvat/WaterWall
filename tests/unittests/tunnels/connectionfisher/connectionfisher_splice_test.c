@@ -450,7 +450,9 @@ static void testPausedBacklog(void)
 int main(void)
 {
     testStartupAndRelay(false);
-    testStartupAndRelay(WW_HAVE_SPLICE);
+#if WW_HAVE_SPLICE
+    testStartupAndRelay(true);
+#endif
     testLimitsAndClose();
 #ifndef TEST_FISHER_SERVER
     testPausedBacklog();

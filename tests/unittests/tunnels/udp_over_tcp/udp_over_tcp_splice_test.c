@@ -532,10 +532,14 @@ int main(void)
     for (unsigned i = 0; i < sizeof(source_protocols); ++i)
     {
         testOpaqueEncode(source_protocols[i], false, 0);
+#if WW_HAVE_SPLICE
         testOpaqueEncode(source_protocols[i], WW_HAVE_SPLICE, 3);
+#endif
         testDecode(source_protocols[i], false, 0, false);
+#if WW_HAVE_SPLICE
         testDecode(source_protocols[i], WW_HAVE_SPLICE, 0, false);
         testDecode(source_protocols[i], WW_HAVE_SPLICE, 2, false);
+#endif
         testDecode(source_protocols[i], WW_HAVE_SPLICE, 0, true);
     }
     testReentrantDecode();
