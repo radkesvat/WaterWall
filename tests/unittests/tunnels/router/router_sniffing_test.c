@@ -150,7 +150,8 @@ static void appendHttp2Wire(uint8_t **wire, size_t *wire_len, size_t *wire_cap, 
     *wire_len += data_len;
 }
 
-static uint32_t makeHttp2PriorKnowledgeRequest(uint8_t **out_wire, const char *authority)
+static uint32_t makeHttp2PriorKnowledgeRequests(uint8_t **out_wire, const char *first_domain, bool first_uses_host,
+                                                const char *second_authority, uint32_t *first_request_len)
 {
     nghttp2_session_callbacks *callbacks = NULL;
     nghttp2_session           *client    = NULL;
@@ -164,26 +165,45 @@ static uint32_t makeHttp2PriorKnowledgeRequest(uint8_t **out_wire, const char *a
         {(uint8_t *) ":method", (uint8_t *) "GET", 7, 3, NGHTTP2_NV_FLAG_NONE},
         {(uint8_t *) ":scheme", (uint8_t *) "http", 7, 4, NGHTTP2_NV_FLAG_NONE},
         {(uint8_t *) ":path", (uint8_t *) "/", 5, 1, NGHTTP2_NV_FLAG_NONE},
-        {(uint8_t *) ":authority", (uint8_t *) authority, 10, stringLength(authority), NGHTTP2_NV_FLAG_NONE},
+        {(uint8_t *) (first_uses_host ? "host" : ":authority"),
+         (uint8_t *) first_domain,
+         first_uses_host ? 4U : 10U,
+         stringLength(first_domain),
+         NGHTTP2_NV_FLAG_NONE},
     };
-
-    int32_t stream_id = nghttp2_submit_request(client, NULL, headers, ARRAY_SIZE(headers), NULL, NULL);
-    require(stream_id > 0, "HTTP/2 request submit failed");
 
     uint8_t *wire     = NULL;
     size_t   wire_len = 0;
     size_t   wire_cap = 0;
 
-    while (true)
+    for (unsigned int request = 0; request < (second_authority != NULL ? 2U : 1U); ++request)
     {
-        const uint8_t *data = NULL;
-        nghttp2_ssize  len  = nghttp2_session_mem_send2(client, &data);
-        require(len >= 0, "HTTP/2 client mem_send failed");
-        if (len == 0)
+        if (request == 1U)
         {
-            break;
+            headers[3] = (nghttp2_nv) {(uint8_t *) ":authority",
+                                       (uint8_t *) second_authority,
+                                       10,
+                                       stringLength(second_authority),
+                                       NGHTTP2_NV_FLAG_NONE};
         }
-        appendHttp2Wire(&wire, &wire_len, &wire_cap, data, (size_t) len);
+        int32_t stream_id = nghttp2_submit_request(client, NULL, headers, ARRAY_SIZE(headers), NULL, NULL);
+        require(stream_id > 0, "HTTP/2 request submit failed");
+
+        while (true)
+        {
+            const uint8_t *data = NULL;
+            nghttp2_ssize  len  = nghttp2_session_mem_send2(client, &data);
+            require(len >= 0, "HTTP/2 client mem_send failed");
+            if (len == 0)
+            {
+                break;
+            }
+            appendHttp2Wire(&wire, &wire_len, &wire_cap, data, (size_t) len);
+        }
+        if (request == 0U && first_request_len != NULL)
+        {
+            *first_request_len = (uint32_t) wire_len;
+        }
     }
 
     require(wire_len > 24U, "HTTP/2 prior-knowledge request did not include frames");
@@ -194,6 +214,11 @@ static uint32_t makeHttp2PriorKnowledgeRequest(uint8_t **out_wire, const char *a
 
     *out_wire = wire;
     return (uint32_t) wire_len;
+}
+
+static uint32_t makeHttp2PriorKnowledgeRequest(uint8_t **out_wire, const char *authority)
+{
+    return makeHttp2PriorKnowledgeRequests(out_wire, authority, false, NULL, NULL);
 }
 #endif
 
@@ -1186,6 +1211,38 @@ static void testTlsSniffingAcrossRecords(void)
 }
 
 #ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+static void testHttp2FirstRequestDomain(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x22;
+
+    for (unsigned int first_uses_host = 0; first_uses_host < 2U; ++first_uses_host)
+    {
+        uint8_t *wire              = NULL;
+        uint32_t first_request_len = 0;
+        uint32_t wire_len          = makeHttp2PriorKnowledgeRequests(
+            &wire, "first.example.test", first_uses_host != 0, "second.example.test", &first_request_len);
+        require(wire_len > first_request_len, "HTTP/2 fixture omitted the second request");
+        const uint32_t lengths[] = {first_request_len, wire_len};
+        for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
+        {
+            line_t *line = testLineCreate();
+            require(addresscontextSetIpAddressPortProtocol(
+                        &line->routing_context.dest_ctx, "203.0.113.22", 80, IP_PROTO_TCP),
+                    "failed to set HTTP/2 first-request destination IP");
+            router_rule_t rule = parseDestinationDomainRule("{\"destination-domain\":\"first.example.test\"}", target);
+            router_tstate_t ts = {.sniffing_modes = kRouterSniffHttp2};
+            expectMatch("HTTP/2 first request domain",
+                        classifyOneRule(&ts, &rule, line, wire, lengths[i]),
+                        kRouterClassifyTarget,
+                        target);
+            requireDomain(&line->routing_context.dest_ctx, "first.example.test");
+            routerDestinationDomainDestroy(&rule);
+            testLineDestroy(line);
+        }
+        free(wire);
+    }
+}
+
 static void testHttp2PartialPrefaceNeedsMore(void)
 {
     uint8_t  host[UINT8_MAX + 1U];
@@ -1823,6 +1880,7 @@ int main(void)
     testTlsSniffingMatchesDestinationDomain();
     testTlsSniffingAcrossRecords();
 #ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+    testHttp2FirstRequestDomain();
     testHttp2PartialPrefaceNeedsMore();
     testHttp2MalformedPayloadFallsThrough();
     testHttp2SniffingMatchesDestinationDomain();

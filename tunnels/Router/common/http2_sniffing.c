@@ -14,6 +14,8 @@ static const uint8_t kRouterHttp2Preface[kRouterHttp2PrefaceLen] = {
 
 typedef struct router_http2_sniff_ctx_s
 {
+    int32_t request_stream_id;
+    bool    request_complete;
     bool authority_seen;
     bool authority_valid;
     bool host_valid;
@@ -23,6 +25,28 @@ typedef struct router_http2_sniff_ctx_s
     uint8_t  host[UINT8_MAX + 1U];
     uint32_t host_len;
 } router_http2_sniff_ctx_t;
+
+static int routerHttp2OnBeginHeadersCallback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
+{
+    (void) session;
+    router_http2_sniff_ctx_t *ctx = user_data;
+    if (ctx->request_stream_id == 0 && frame->hd.type == NGHTTP2_HEADERS && frame->headers.cat == NGHTTP2_HCAT_REQUEST)
+    {
+        ctx->request_stream_id = frame->hd.stream_id;
+    }
+    return 0;
+}
+
+static int routerHttp2OnFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data)
+{
+    (void) session;
+    router_http2_sniff_ctx_t *ctx = user_data;
+    if (frame->hd.type == NGHTTP2_HEADERS && frame->hd.stream_id == ctx->request_stream_id)
+    {
+        ctx->request_complete = true;
+    }
+    return 0;
+}
 
 static bool routerHttp2HeaderNameEquals(const uint8_t *name, size_t namelen, const char *expected)
 {
@@ -65,6 +89,10 @@ static int routerHttp2OnHeaderCallback(nghttp2_session *session, const nghttp2_f
     }
 
     router_http2_sniff_ctx_t *ctx = user_data;
+    if (frame->hd.stream_id != ctx->request_stream_id)
+    {
+        return 0;
+    }
 
     if (routerHttp2HeaderNameEquals(name, namelen, ":authority"))
     {
@@ -128,6 +156,8 @@ generic_sniffer_result_t routerHttp2SniffDomain(const uint8_t *payload, uint32_t
     }
 
     nghttp2_session_callbacks_set_on_header_callback(callbacks, routerHttp2OnHeaderCallback);
+    nghttp2_session_callbacks_set_on_begin_headers_callback(callbacks, routerHttp2OnBeginHeadersCallback);
+    nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, routerHttp2OnFrameRecvCallback);
 
     int rc = nghttp2_session_server_new(&session, callbacks, &ctx);
     nghttp2_session_callbacks_del(callbacks);
@@ -141,6 +171,10 @@ generic_sniffer_result_t routerHttp2SniffDomain(const uint8_t *payload, uint32_t
     if (consumed < 0)
     {
         return kGenericSnifferMissing;
+    }
+    if (! ctx.request_complete)
+    {
+        return routerHttp2NeedMoreOrMissing(payload_len);
     }
 
     const uint8_t *found     = NULL;
@@ -172,5 +206,5 @@ generic_sniffer_result_t routerHttp2SniffDomain(const uint8_t *payload, uint32_t
         return kGenericSnifferFound;
     }
 
-    return routerHttp2NeedMoreOrMissing(payload_len);
+    return kGenericSnifferMissing;
 }
