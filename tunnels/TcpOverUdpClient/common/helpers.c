@@ -5,10 +5,9 @@
 static bool tcpoverudpclientQueuePacketContext(context_queue_t *queue, line_t *l, const uint8_t *packet,
                                                size_t packet_len)
 {
-    if (packet_len == 0 || packet_len > UINT32_MAX)
-    {
-        return false;
-    }
+    // Only KCP output reaches here, with at most the optional FEC envelope added.
+    assert(packet != NULL && packet_len > 0 &&
+           packet_len <= kTcpOverUdpClientKcpMaximumMtu + kTcpOverUdpFecOuterHeaderSize);
 
     buffer_pool_t *pool = lineGetBufferPool(l);
     sbuf_t        *buf  = NULL;
@@ -23,12 +22,6 @@ static bool tcpoverudpclientQueuePacketContext(context_queue_t *queue, line_t *l
     }
     else
     {
-        return false;
-    }
-
-    if (packet_len > sbufGetMaximumWriteableSize(buf))
-    {
-        lineReuseBuffer(l, buf);
         return false;
     }
 
@@ -54,10 +47,8 @@ bool tcpoverudpclientInputKcpPacket(void *ctx, const uint8_t *packet, size_t pac
 
     assert(ls != NULL && ls->k_handle != NULL);
 
-    if (packet == NULL || packet_len > INT_MAX)
-    {
-        return false;
-    }
+    // FEC validated the shard's uint16 length prefix before calling us.
+    assert(packet != NULL && packet_len <= UINT16_MAX - 2U);
 
     return ikcp_input(ls->k_handle, (const char *) packet, (long) packet_len) >= 0;
 }
@@ -69,8 +60,6 @@ bool tcpoverudpclientUpdateKcp(tcpoverudpclient_lstate_t *ls, bool flush)
     line_t   *l            = ls->line;
     tunnel_t *t            = ls->tunnel;
     uint64_t  current_time = wloopNowMS(getWorkerLoop(lineGetWID(l)));
-
-    bool ret = true;
 
     lineRef(l);
 
@@ -104,10 +93,10 @@ bool tcpoverudpclientUpdateKcp(tcpoverudpclient_lstate_t *ls, bool flush)
             tunnelPrevDownStreamResume(t, l);
         }
     }
-    ret = lineIsAlive(l) && ls->k_handle != NULL;
+    const bool alive = lineIsAlive(l) && ls->k_handle != NULL;
 
     lineUnref(l);
-    return ret;
+    return alive;
 }
 
 static uint32_t tcpoverudpclientGetNextKcpDelay(tcpoverudpclient_lstate_t *ls, uint64_t current_time)

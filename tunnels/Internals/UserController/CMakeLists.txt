@@ -17,14 +17,9 @@ add_library(UserController STATIC
                     upstream/est.c
                     upstream/fin.c
                     upstream/payload.c
-                    upstream/pause.c
-                    upstream/resume.c
                     downstream/init.c
-                    downstream/est.c
                     downstream/fin.c
                     downstream/payload.c
-                    downstream/pause.c
-                    downstream/resume.c
 )
 
 target_include_directories(UserController PRIVATE

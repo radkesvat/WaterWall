@@ -285,14 +285,12 @@ static bool parseHttp1SplitSettings(httpserver_tstate_t *ts, const cJSON *settin
 
     ts->split_upload_map   = hmap_httpserver_split_t_init();
     ts->split_download_map = hmap_httpserver_split_t_init();
-    if (UNLIKELY(! hmap_httpserver_split_t_reserve(&ts->split_upload_map, 64) ||
-                 ! hmap_httpserver_split_t_reserve(&ts->split_download_map, 64)))
-    {
-        hmap_httpserver_split_t_drop(&ts->split_upload_map);
-        hmap_httpserver_split_t_drop(&ts->split_download_map);
-        LOGF("HttpServer: failed to reserve split-session maps");
-        return false;
-    }
+    // Both fixed reservations have representable geometry; heap exhaustion is fatal.
+    const bool upload_reserved   = hmap_httpserver_split_t_reserve(&ts->split_upload_map, 64);
+    const bool download_reserved = hmap_httpserver_split_t_reserve(&ts->split_download_map, 64);
+    assert(upload_reserved && download_reserved);
+    discard upload_reserved;
+    discard download_reserved;
     if (UNLIKELY(! mutexTryInit(&ts->split_upload_map_mutex)))
     {
         hmap_httpserver_split_t_drop(&ts->split_upload_map);

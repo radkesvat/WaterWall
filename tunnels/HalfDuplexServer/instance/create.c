@@ -35,14 +35,12 @@ tunnel_t *halfduplexserverTunnelCreate(node_t *node)
     }
     ts->pending_line_maps_mutex_initialized = true;
 
-    if (UNLIKELY(! hmap_cons_t_reserve(&ts->download_line_map, kHmapCap) ||
-                 hmap_cons_t_capacity(&ts->download_line_map) < kHmapCap ||
-                 ! hmap_cons_t_reserve(&ts->upload_line_map, kHmapCap) ||
-                 hmap_cons_t_capacity(&ts->upload_line_map) < kHmapCap))
-    {
-        halfduplexserverTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
+    const bool download_reserved = hmap_cons_t_reserve(&ts->download_line_map, kHmapCap);
+    const bool upload_reserved   = hmap_cons_t_reserve(&ts->upload_line_map, kHmapCap);
+    assert(download_reserved && hmap_cons_t_capacity(&ts->download_line_map) >= kHmapCap);
+    assert(upload_reserved && hmap_cons_t_capacity(&ts->upload_line_map) >= kHmapCap);
+    discard download_reserved;
+    discard upload_reserved;
 
     tunnel_t *pipe_tunnel = pipetunnelCreate(t);
     if (! pipe_tunnel)

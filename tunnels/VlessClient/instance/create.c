@@ -4,36 +4,6 @@
 
 #include "loggers/network_logger.h"
 
-static bool vlessclientAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
-{
-    cJSON *strategy_json = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
-    if (strategy_json == NULL)
-    {
-        return false;
-    }
-
-    strategy_json->valueint    = (int) strategy;
-    strategy_json->valuedouble = (double) strategy_json->valueint;
-    return true;
-}
-
-static cJSON *vlessclientCreateDomainResolverSettings(enum domain_strategy strategy)
-{
-    cJSON *settings = cJSON_CreateObject();
-    if (settings == NULL)
-    {
-        return NULL;
-    }
-
-    if (! vlessclientAddDomainStrategySetting(settings, strategy))
-    {
-        cJSON_Delete(settings);
-        return NULL;
-    }
-
-    return settings;
-}
-
 static bool vlessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     vlessclient_tstate_t *ts = tunnelGetState(t);
@@ -43,12 +13,8 @@ static bool vlessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return true;
     }
 
-    ts->domain_resolver_settings = vlessclientCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
-    if (ts->domain_resolver_settings == NULL)
-    {
-        LOGF("VlessClient: failed to create internal DomainResolver settings");
-        return false;
-    }
+    ts->domain_resolver_settings = cJSON_CreateObject();
+    cJSON_AddNumberToObject(ts->domain_resolver_settings, "strategy", (double) ts->domain_strategy);
 
     if (! nodeConfigureChild(&ts->domain_resolver_node,
                              nodeDomainResolverGet(),
@@ -78,8 +44,7 @@ static bool parseUuid(vlessclient_tstate_t *ts, const cJSON *settings)
 {
     const cJSON *uuid_json = getJsonObjectItemByKeys(settings, "uuid", "id", "user-id");
 
-    if (uuid_json == NULL || ! cJSON_IsString(uuid_json) || uuid_json->valuestring == NULL ||
-        uuid_json->valuestring[0] == '\0')
+    if (! cJSON_IsString(uuid_json) || uuid_json->valuestring == NULL || uuid_json->valuestring[0] == '\0')
     {
         LOGF("JSON Error: VlessClient->settings->uuid (string field) is required");
         return false;

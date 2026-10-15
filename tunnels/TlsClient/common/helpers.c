@@ -43,12 +43,6 @@ void tlsclientPrintSSLError(void)
     }
     BIO_free(bio);
 }
-void tlsclientPrintSSLErrorAndAbort(void)
-{
-    tlsclientPrintSSLError();
-    abort();
-}
-
 bool tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out)
 {
     assert(pool != NULL && bio != NULL && out != NULL);
@@ -98,17 +92,6 @@ bool tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out)
     sbufSetLength(buf, (uint32_t) pending);
     *out = buf;
     return true;
-}
-
-static bool tlsclientDrainPendingRawBytes(line_t *l, BIO *bio, sbuf_t **pending_raw)
-{
-    assert(l != NULL && bio != NULL);
-    if (pending_raw == NULL)
-    {
-        return true;
-    }
-
-    return tlsclientDrainBioToBuffer(lineGetBufferPool(l), bio, pending_raw);
 }
 
 static bool tlsclientRecordHeader(const uint8_t header[kTlsClientRecordHeaderSize], size_t *record_len)
@@ -679,13 +662,7 @@ bool tlsclientTunnelDeinitAfterHandshake(tunnel_t *t, line_t *l, sbuf_t **pendin
     {
         *pending_raw = bufferstreamFullRead(&ls->takeover_stream);
     }
-    else if (! tlsclientDrainPendingRawBytes(l, SSL_get_rbio(ls->ssl), pending_raw))
-    {
-        return false;
-    }
-
     tlsclientLinestateRelease(ls);
-    ls->handshake_completed = true;
     ls->takeover_phase      = kTlsClientTakeoverPassthrough;
 
     return true;
@@ -878,16 +855,14 @@ bool tlsclientTunnelCompleteTakeover(tunnel_t *t, line_t *l)
     }
 
     tlsclientLinestateRelease(ls);
-    ls->handshake_completed = true;
     ls->takeover_phase      = kTlsClientTakeoverPassthrough;
     return true;
 }
 
-bool tlsclientConfigureSslForConnect(SSL *ssl, BIO *rbio, BIO *wbio, const char *sni,
-                                     const uint8_t *ech_grease_override_payload, size_t ech_grease_override_payload_len)
+bool tlsclientConfigureSslForConnect(SSL *ssl, const char *sni, const uint8_t *ech_grease_override_payload,
+                                     size_t ech_grease_override_payload_len)
 {
     SSL_set_connect_state(ssl);
-    SSL_set_bio(ssl, rbio, wbio);
 
     if (SSL_set_tlsext_host_name(ssl, sni) != 1)
     {
@@ -958,8 +933,7 @@ bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
         return false;
     }
 
-    if (! tlsclientConfigureSslForConnect(
-            ls->ssl, ls->rbio, ls->wbio, sni, ech_grease_override_payload, ech_grease_override_payload_len))
+    if (! tlsclientConfigureSslForConnect(ls->ssl, sni, ech_grease_override_payload, ech_grease_override_payload_len))
     {
         tlsclientLinestateDestroy(ls);
         return false;

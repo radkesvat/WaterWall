@@ -138,7 +138,7 @@ void hpsUpdatePressure(hps_session_t *s)
     }
 }
 
-bool hpsDeliverPayload(hps_session_t *s, hps_direction_t d, sbuf_t *b)
+void hpsDeliverPayload(hps_session_t *s, hps_direction_t d, sbuf_t *b)
 {
     line_t *line = d == kHpsUpstream ? s->child : s->client;
     lineRef(line);
@@ -147,9 +147,7 @@ bool hpsDeliverPayload(hps_session_t *s, hps_direction_t d, sbuf_t *b)
         tunnelUpStreamPayload(s->child_entry, line, b);
     else
         tunnelPrevDownStreamPayload(s->t, line, b);
-    bool alive = lineIsAlive(line);
     lineUnref(line);
-    return alive && hpsIsActive(s);
 }
 
 static bool flush(hps_session_t *s, hps_direction_t d)
@@ -353,8 +351,6 @@ void hpsPump(hps_session_t *s)
                 }
                 if (up->body.kind == kHpsBodyDone && ! up->output && ! down->receiving)
                 {
-                    if (! s->child_reusable)
-                        hpsCloseChild(s, false);
                     s->phase           = kHpsRequest;
                     s->final_committed = false;
                     s->again           = true;

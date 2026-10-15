@@ -87,7 +87,6 @@ bool hpsProcessRequest(hps_session_t *s)
         s->http10          = h.http10;
         s->head            = h.head;
         s->close_after     = h.close;
-        s->child_reusable  = true;
         s->upload_stopped  = false;
         s->final_committed = false;
         s->informationals  = 0;

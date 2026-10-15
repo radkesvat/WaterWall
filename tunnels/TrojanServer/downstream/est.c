@@ -9,15 +9,7 @@ void trojanserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->line_kind == kTrojanServerLineKindUdpRemote)
-    {
-        trojanserverOnNextEstablished(t, l, ls);
-        return;
-    }
-
-    if (ls->line_kind == kTrojanServerLineKindClient &&
-        (ls->phase == kTrojanServerPhaseUdpWaitPacket || ls->phase == kTrojanServerPhaseUdpConnecting ||
-         ls->phase == kTrojanServerPhaseUdpEstablished))
+    if (trojanserverIsUdp(ls))
     {
         return;
     }

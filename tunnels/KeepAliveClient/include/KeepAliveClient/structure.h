@@ -45,7 +45,6 @@ enum
     kKeepAliveFramePrefixSize     = kKeepAliveFrameLengthSize + kKeepAliveFrameTypeSize,
     kKeepAliveMaxPayloadChunkSize = 1024U * 1024U,
     kKeepAliveMaxFrameBodyLength  = kKeepAliveMaxPayloadChunkSize + kKeepAliveFrameTypeSize,
-    kKeepAliveReadOverflowLimit   = kKeepAliveMaxPayloadChunkSize + kKeepAliveFramePrefixSize,
     kKeepAliveReadChargeLimit     = 16U * 1024U * 1024U,
     kKeepAliveMaxReentryBytes     = 8U * 1024U * 1024U,
     kKeepAliveMaxReentryBuffers   = 1024U,
@@ -80,8 +79,8 @@ void keepaliveclientTrackLine(tunnel_t *t, line_t *l);
 void keepaliveclientUntrackLine(tunnel_t *t, line_t *l);
 
 bool keepaliveclientSendPingFrame(tunnel_t *t, line_t *l);
-bool keepaliveclientSendNormalFrameUpstream(tunnel_t *t, line_t *l, sbuf_t *buf);
-bool keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l);
+void keepaliveclientSendNormalFrameUpstream(tunnel_t *t, line_t *l, sbuf_t *buf);
+void keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l);
 
 void keepaliveclientCloseLineFromUpstream(tunnel_t *t, line_t *l);
 void keepaliveclientCloseLineFromDownstream(tunnel_t *t, line_t *l);

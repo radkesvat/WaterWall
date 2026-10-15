@@ -32,6 +32,12 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
         addresscontextCopy(lineGetDestinationAddressContext(l), &ts->initial_dest_context);
     }
 
+    if (ts->packet_mode && ts->packet_start_immediately)
+    {
+        // Startup owns the first send, even if Init synchronously reports Est or Resume.
+        ls->request_send_scheduled = true;
+    }
+
     if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
     {
         if (ts->packet_mode)
@@ -47,7 +53,6 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
         ls->est_received = true;
         if (ts->packet_start_delay_ms > 0)
         {
-            ls->request_send_scheduled = true;
             const line_task_submit_result_e result =
                 lineScheduleDelayedTask(l, testerclientRequestSendTask, ts->packet_start_delay_ms, t, NULL);
             if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
@@ -60,6 +65,7 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
         }
         else
         {
+            ls->request_send_scheduled = false;
             testerclientScheduleRequestSend(t, l, ls);
             /* Force-queued work cannot run before this owner callback returns,
              * so a clear latch here means synchronous admission rejection.

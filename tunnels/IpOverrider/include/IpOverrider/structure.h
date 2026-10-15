@@ -35,7 +35,6 @@ typedef struct ipoverrider_rule_s
     uint32_t       *ov_4_list;
     atomic_uint     ov_4_rr_cursor;
     uint32_t        ov_4_count;
-    bool            enabled;
     bool            support4;
     bool            support6;
 } ipoverrider_rule_t;
@@ -57,17 +56,6 @@ typedef struct ipoverrider_tstate_s
     bool                        only120;
 } ipoverrider_tstate_t;
 
-typedef struct ipoverrider_lstate_s
-{
-    int unused;
-} ipoverrider_lstate_t;
-
-enum
-{
-    kTunnelStateSize = sizeof(ipoverrider_tstate_t),
-    kLineStateSize   = sizeof(ipoverrider_lstate_t)
-};
-
 WW_EXPORT void         ipoverriderDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 WW_EXPORT tunnel_t    *ipoverriderCreate(node_t *node);
 WW_EXPORT api_result_t ipoverriderApi(tunnel_t *instance, sbuf_t *message);
@@ -75,9 +63,6 @@ WW_EXPORT api_result_t ipoverriderApi(tunnel_t *instance, sbuf_t *message);
 void ipoverriderUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 void ipoverriderDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-
-void ipoverriderLinestateInitialize(ipoverrider_lstate_t *ls);
-void ipoverriderLinestateDestroy(ipoverrider_lstate_t *ls);
 
 void ipoverriderApplyUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ipoverriderApplyDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

@@ -15,9 +15,10 @@ bool rawdeviceIsUp(const raw_device_t *rdev);
 bool rawdeviceBringUp(raw_device_t *rdev);
 void rawdeviceRequestStop(raw_device_t *rdev);
 bool rawdeviceBringDown(raw_device_t *rdev);
-/* Called from an event worker with a live handle. True transfers the buffer to
- * the device queue, not necessarily to the network. False leaves it with the
- * caller. */
+/* Called from an event worker with a live handle. The buffer must contain at
+ * least an IPv4 base header; header-only IPv4 packets are allowed. True transfers
+ * the buffer to the device queue, not necessarily to the network. False leaves
+ * it with the caller. */
 bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf);
 
 raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata);

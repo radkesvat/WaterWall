@@ -38,7 +38,8 @@ enum
     kWebSocketOpcodeBinary           = 0x2,
     kWebSocketOpcodeClose            = 0x8,
     kWebSocketOpcodePing             = 0x9,
-    kWebSocketOpcodePong             = 0xA
+    kWebSocketOpcodePong             = 0xA,
+    kWebSocketHeaderMaxBytes         = 10
 };
 
 static const char *kWebSocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -93,10 +94,7 @@ static const char *httpserverWebSocketOpcodeName(uint8_t opcode)
 
 static bool parseContentLength(const char *value, int64_t *out)
 {
-    if (value == NULL || out == NULL)
-    {
-        return false;
-    }
+    assert(value != NULL && out != NULL);
 
     while (*value == ' ' || *value == '\t')
     {
@@ -115,12 +113,12 @@ static bool parseContentLength(const char *value, int64_t *out)
         return false;
     }
 
-    while (endp != NULL && (*endp == ' ' || *endp == '\t'))
+    while (*endp == ' ' || *endp == '\t')
     {
         ++endp;
     }
 
-    if (endp == NULL || *endp != '\0')
+    if (*endp != '\0')
     {
         return false;
     }
@@ -165,10 +163,7 @@ static bool httpserverUpgradeIsCustom(const httpserver_tstate_t *ts)
 
 static bool httpserverShouldSkipExtraHeader(const char *name, bool websocket_mode)
 {
-    if (name == NULL)
-    {
-        return true;
-    }
+    assert(name != NULL);
 
     if (httpserverHeaderNameEquals(name, "content-length"))
     {
@@ -190,10 +185,7 @@ static bool httpserverShouldSkipExtraHeader(const char *name, bool websocket_mod
 
 static bool httpserverShouldSkipUpgradeExtraHeader(const char *name)
 {
-    if (name == NULL)
-    {
-        return true;
-    }
+    assert(name != NULL);
 
     return httpserverHeaderNameEquals(name, "connection") || httpserverHeaderNameEquals(name, "upgrade") ||
            httpserverHeaderNameEquals(name, "http2-settings");
@@ -201,10 +193,7 @@ static bool httpserverShouldSkipUpgradeExtraHeader(const char *name)
 
 static bool httpserverFindHeaderValue(const char *headers, const char *name, char *out, size_t out_cap)
 {
-    if (headers == NULL || name == NULL || out == NULL || out_cap == 0)
-    {
-        return false;
-    }
+    assert(headers != NULL && name != NULL && out != NULL && out_cap > 0);
 
     out[0] = '\0';
 
@@ -454,13 +443,9 @@ static bool httpserverSendRawBytesDown(tunnel_t *t, line_t *l, httpserver_lstate
     return sendBytesDown(t, l, data, len);
 }
 
-static size_t httpserverBuildWebSocketHeader(uint8_t *header, size_t cap, uint8_t opcode, uint64_t payload_len)
+static size_t httpserverBuildWebSocketHeader(uint8_t header[kWebSocketHeaderMaxBytes], uint8_t opcode,
+                                             uint64_t payload_len)
 {
-    if (cap < 2)
-    {
-        return 0;
-    }
-
     size_t off    = 0;
     header[off++] = (uint8_t) (0x80U | (opcode & 0x0FU));
 
@@ -470,20 +455,12 @@ static size_t httpserverBuildWebSocketHeader(uint8_t *header, size_t cap, uint8_
     }
     else if (payload_len <= 0xFFFFU)
     {
-        if (cap < off + 3)
-        {
-            return 0;
-        }
         header[off++] = 126U;
         header[off++] = (uint8_t) ((payload_len >> 8) & 0xFFU);
         header[off++] = (uint8_t) (payload_len & 0xFFU);
     }
     else
     {
-        if (cap < off + 9)
-        {
-            return 0;
-        }
         header[off++] = 127U;
         for (int shift = 56; shift >= 0; shift -= 8)
         {
@@ -497,12 +474,8 @@ static size_t httpserverBuildWebSocketHeader(uint8_t *header, size_t cap, uint8_
 static bool httpserverSendWebSocketControlFrame(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, uint8_t opcode,
                                                 const void *payload, uint32_t payload_len)
 {
-    uint8_t header[16];
-    size_t  header_len = httpserverBuildWebSocketHeader(header, sizeof(header), opcode, payload_len);
-    if (header_len == 0)
-    {
-        return false;
-    }
+    uint8_t header[kWebSocketHeaderMaxBytes];
+    size_t  header_len = httpserverBuildWebSocketHeader(header, opcode, payload_len);
 
     if (! httpserverSendRawBytesDown(t, l, ls, header, (uint32_t) header_len))
     {
@@ -542,7 +515,7 @@ static bool httpserverRequestEndReflectsFinish(const httpserver_lstate_t *ls)
 static bool httpserverForwardUpstreamPayload(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *buf)
 {
     line_t *target = httpserverUpstreamTargetLine(ls, l);
-    if (target == NULL || ! lineIsAlive(target))
+    if (! lineIsAlive(target))
     {
         lineReuseBuffer(l, buf);
         return false;
@@ -553,7 +526,7 @@ static bool httpserverForwardUpstreamPayload(tunnel_t *t, line_t *l, httpserver_
 static void httpserverForwardUpstreamFinish(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
     line_t *target = httpserverUpstreamTargetLine(ls, l);
-    if (target == NULL || ! lineIsAlive(target))
+    if (! lineIsAlive(target))
     {
         return;
     }
@@ -872,10 +845,7 @@ bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
 
 static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_info_t *info)
 {
-    if (headers == NULL || info == NULL)
-    {
-        return false;
-    }
+    assert(headers != NULL && info != NULL);
 
     *info = (httpserver_h1_request_info_t) {0};
 
@@ -1448,10 +1418,7 @@ static int httpserverOnHeaderCallback(nghttp2_session *session, const nghttp2_fr
 
     if (ls->h2_stream_id != 0 && frame->hd.stream_id != ls->h2_stream_id)
     {
-        if (ls->h2_reject_extra_streams)
-        {
-            nghttp2_submit_rst_stream(ls->session, NGHTTP2_FLAG_NONE, frame->hd.stream_id, NGHTTP2_REFUSED_STREAM);
-        }
+        nghttp2_submit_rst_stream(ls->session, NGHTTP2_FLAG_NONE, frame->hd.stream_id, NGHTTP2_REFUSED_STREAM);
         return 0;
     }
 
@@ -1593,10 +1560,7 @@ static int httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp2
         }
         else if (frame->hd.stream_id != ls->h2_stream_id)
         {
-            if (ls->h2_reject_extra_streams)
-            {
-                nghttp2_submit_rst_stream(ls->session, NGHTTP2_FLAG_NONE, frame->hd.stream_id, NGHTTP2_REFUSED_STREAM);
-            }
+            nghttp2_submit_rst_stream(ls->session, NGHTTP2_FLAG_NONE, frame->hd.stream_id, NGHTTP2_REFUSED_STREAM);
             return 0;
         }
 
@@ -1880,13 +1844,8 @@ bool httpserverTransportSendWebSocketData(tunnel_t *t, line_t *l, httpserver_lst
     }
 
     uint32_t payload_len = sbufGetLength(payload);
-    uint8_t  header[16];
-    size_t   header_len = httpserverBuildWebSocketHeader(header, sizeof(header), opcode, payload_len);
-    if (header_len == 0)
-    {
-        lineReuseBuffer(l, payload);
-        return false;
-    }
+    uint8_t  header[kWebSocketHeaderMaxBytes];
+    size_t   header_len = httpserverBuildWebSocketHeader(header, opcode, payload_len);
 
     if (sbufGetLeftCapacity(payload) >= header_len)
     {
@@ -2576,7 +2535,6 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
 
     ls->runtime_proto      = kHttpServerRuntimeHttp1;
     ls->h1_headers_parsed  = true;
-    ls->h1_request_chunked = info.transfer_chunked;
 
     if (info.transfer_chunked)
     {

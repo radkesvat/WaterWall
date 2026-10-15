@@ -21,12 +21,12 @@ bool tcpconnectorApplyFreeBindRandomDestIp(address_context_t *dest_ctx, uint64_t
     case IPADDR_TYPE_V6:
         // no probelm if overflows
         {
-            const uint64_t large_random = fastRand64() % outbound_ip_range;
-            uint64_t      *addr_ptr     = (uint64_t *) &dest_ctx->ip_address.u_addr.ip6;
-            addr_ptr += 1;
-
-            uint64_t calc = ntohll(*addr_ptr);
-            calc          = calc & ~(outbound_ip_range - 1ULL);
+            const bool     full_host_range = outbound_ip_range == UINT64_MAX;
+            const uint64_t host_mask       = full_host_range ? UINT64_MAX : outbound_ip_range - 1U;
+            const uint64_t large_random    = full_host_range ? fastRand64() : fastRand64() % outbound_ip_range;
+            uint64_t       calc;
+            memoryCopy(&calc, 8 + ((const char *) &dest_ctx->ip_address.u_addr.ip6), sizeof(calc));
+            calc          = ntohll(calc) & ~host_mask;
             calc          = htonll(calc + large_random);
 
             memoryCopy(8 + ((char *) &(dest_ctx->ip_address.u_addr.ip6)), &calc, sizeof(calc));

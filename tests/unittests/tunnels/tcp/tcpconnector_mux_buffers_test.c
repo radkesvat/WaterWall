@@ -3,7 +3,7 @@
  * this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: testBuffers
+ * Cases: testBuffers, testAddressSettings, testFreeBindBoundaries
  * Checks: Assertion labels include: incorrect connector send-buffer size; incorrect connector
  * receive-buffer size; incorrect destination send-buffer size; incorrect destination receive-buffer size
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -15,6 +15,143 @@
 #include "test_assert.h"
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
+
+#ifdef TCP_CONNECTOR_TEST_RANDOM_WRAP
+static uint32_t random32_value;
+static uint64_t random64_value;
+
+uint32_t __wrap_fastRand32(void);
+uint64_t __wrap_fastRand64(void);
+
+uint32_t __wrap_fastRand32(void)
+{
+    return random32_value;
+}
+
+uint64_t __wrap_fastRand64(void)
+{
+    return random64_value;
+}
+#endif
+
+static void testAddressSetting(const char *address, bool accepted, uint64_t expected_range, size_t domain_length)
+{
+    for (unsigned weighted = 0; weighted < 2; ++weighted)
+    {
+        cJSON *settings    = cJSON_CreateObject();
+        cJSON *destination = settings;
+        if (weighted)
+        {
+            cJSON *destinations = cJSON_AddArrayToObject(settings, "addresses");
+            destination         = cJSON_CreateObject();
+            require(cJSON_AddItemToArray(destinations, destination), "add destination fixture");
+            cJSON_AddNumberToObject(destination, "weight", 1);
+        }
+        cJSON_AddStringToObject(destination, "address", address);
+        cJSON_AddNumberToObject(destination, "port", 443);
+        node_t node = {
+            .name = (char *) "tcp-constructor-test", .type = (char *) "TcpConnector", .node_settings_json = settings};
+        ww_startup_context_t startup = {0};
+        wwStartupContextBegin(&startup);
+        tunnel_t           *t           = tcpconnectorTunnelCreate(&node);
+        ww_startup_result_t result      = wwStartupContextEnd(&startup);
+        const bool          constructed = t != NULL;
+        if (constructed)
+        {
+            tcpconnector_tstate_t *state = tunnelGetState(t);
+            const uint64_t range = weighted ? state->destinations[0].outbound_ip_range : state->outbound_ip_range;
+            const address_context_t *context =
+                weighted ? &state->destinations[0].constant_dest_addr : &state->constant_dest_addr;
+            if (accepted)
+            {
+                require(wwStartupSucceeded(result), "valid destination recorded a startup failure");
+                require(range == expected_range, "CIDR produced an incorrect randomization range");
+                if (domain_length != 0)
+                    require(addresscontextIsDomain(context) && context->domain_len == domain_length &&
+                                memcmp(context->domain, address, domain_length) == 0,
+                            "domain length was narrowed or domain bytes changed");
+            }
+            tcpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
+        }
+        cJSON_Delete(settings);
+        require(constructed == accepted, "constructor accepted malformed destination or rejected a valid boundary");
+    }
+}
+
+static void testAddressSettings(void)
+{
+    const char *invalid[] = {"",
+                             "192.0.2.1/not-a-prefix",
+                             "192.0.2.1/24tail",
+                             "192.0.2.1/",
+                             "192.0.2.1/-1",
+                             "192.0.2.1/33",
+                             "2001:db8::1/63",
+                             "2001:db8::1/129",
+                             "2001:db8::1/999999999999999999999"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        testCaseSet(invalid[i][0] == '\0' ? "TcpConnector empty address" : invalid[i]);
+        testAddressSetting(invalid[i], false, 0, 0);
+    }
+    const struct
+    {
+        const char *address;
+        uint64_t    range;
+    } valid[] = {{"192.0.2.1/0", UINT64_C(1) << 32},
+                 {"192.0.2.1/24", UINT64_C(1) << 8},
+                 {"192.0.2.1/32", 0},
+                 {"2001:db8::1/64", UINT64_MAX},
+                 {"2001:db8::1/65", UINT64_C(1) << 63},
+                 {"2001:db8::1/128", 1}};
+    for (size_t i = 0; i < ARRAY_SIZE(valid); ++i)
+    {
+        testCaseSet(valid[i].address);
+        testAddressSetting(valid[i].address, true, valid[i].range, 0);
+    }
+    char domain[258];
+    memset(domain, 'a', sizeof(domain));
+    for (size_t length = 255; length <= 257; ++length)
+    {
+        testCaseSet("TcpConnector domain length boundary");
+        domain[length] = '\0';
+        testAddressSetting(domain, length == 255, 0, length);
+        domain[length] = 'a';
+    }
+}
+
+#ifdef TCP_CONNECTOR_TEST_RANDOM_WRAP
+static void testFreeBindBoundaries(void)
+{
+    testCaseSet("TcpConnector IPv4 full host range");
+    address_context_t context = {0};
+    require(addresscontextSetIpAddress(&context, "192.0.2.1"), "set IPv4 fixture");
+    random32_value = UINT32_MAX;
+    require(tcpconnectorApplyFreeBindRandomDestIp(&context, UINT64_C(1) << 32), "apply IPv4 /0 range");
+    require(ntohl(context.ip_address.u_addr.ip4.addr) == UINT32_MAX, "IPv4 /0 did not include the highest host");
+
+    testCaseSet("TcpConnector IPv6 full host range");
+    const uint64_t values[] = {0, UINT64_MAX};
+    for (size_t i = 0; i < ARRAY_SIZE(values); ++i)
+    {
+        require(addresscontextSetIpAddress(&context, "2001:db8::1"), "set IPv6 fixture");
+        uint8_t prefix[8];
+        memoryCopy(prefix, &context.ip_address.u_addr.ip6, sizeof(prefix));
+        random64_value = values[i];
+        require(tcpconnectorApplyFreeBindRandomDestIp(&context, UINT64_MAX), "apply IPv6 /64 range");
+        uint64_t host;
+        memoryCopy(&host, (const uint8_t *) &context.ip_address.u_addr.ip6 + 8, sizeof(host));
+        require(ntohll(host) == values[i], "IPv6 /64 retained a base host bit or excluded the highest host");
+        require(memcmp(prefix, &context.ip_address.u_addr.ip6, sizeof(prefix)) == 0, "IPv6 /64 changed its prefix");
+    }
+
+    testCaseSet("TcpConnector IPv6 single host");
+    require(addresscontextSetIpAddress(&context, "2001:db8::1"), "set IPv6 /128 fixture");
+    ip_addr_t original = context.ip_address;
+    require(tcpconnectorApplyFreeBindRandomDestIp(&context, 1), "apply IPv6 /128 range");
+    require(memcmp(&original, &context.ip_address, sizeof(original)) == 0, "IPv6 /128 changed its only host");
+}
+#endif
 
 static void testBuffers(bool tune_enabled, bool client, bool server, unsigned send_option, unsigned recv_option,
                         int default_size)
@@ -85,5 +222,11 @@ int main(void)
         }
     }
     GSTATE.tcp_tune_enabled = false;
+    GSTATE.workers_count    = 1;
+    GSTATE.domain_strategy  = kDsPreferIpV4;
+    testAddressSettings();
+#ifdef TCP_CONNECTOR_TEST_RANDOM_WRAP
+    testFreeBindBoundaries();
+#endif
     return 0;
 }

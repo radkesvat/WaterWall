@@ -71,12 +71,9 @@ typedef struct vlessclient_lstate_s
     line_t                 *application_line; // Carrier's borrowed application line.
     line_t                 *carrier_line;     // Application's dependent TCP carrier.
     vlessclient_line_kind_t kind;
-    vlessclient_protocol_t  protocol;
     vlessclient_phase_t     phase;
 
     /* Worker-owned transport, dispatch and parser flags share storage. */
-    bool next_started : 1;
-    bool next_established : 1;
     bool request_sent : 1;
     bool est_notifying : 1;
     bool carrier_paused : 1; // UDP carrier-head permission for the independent idle-header producer.

@@ -4,10 +4,7 @@
 
 void udpovertcpserverLinestateInitialize(udpovertcpserver_lstate_t *ls, buffer_pool_t *pool)
 {
-    *ls = (udpovertcpserver_lstate_t) {
-        .read_stream = splicestreamCreate(pool, kHeaderSize),
-        .pool        = pool,
-    };
+    *ls = (udpovertcpserver_lstate_t) {.read_stream = splicestreamCreate(pool, kHeaderSize)};
 }
 
 void udpovertcpserverLinestateDestroy(udpovertcpserver_lstate_t *ls)

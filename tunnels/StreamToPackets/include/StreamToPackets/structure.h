@@ -135,7 +135,6 @@ void streamtopacketsTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void streamtopacketsLinestateInitialize(streamtopackets_lstate_t *ls, buffer_pool_t *pool);
 void streamtopacketsLinestateDestroy(streamtopackets_lstate_t *ls);
-void streamtopacketsLinestateReset(streamtopackets_lstate_t *ls);
 
 bool streamtopacketsReadStreamIsOverflowed(buffer_stream_t *read_stream);
 bool streamtopacketsTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_out);
@@ -143,7 +142,6 @@ bool streamtopacketsIsForwardableIpv4Packet(const sbuf_t *packet);
 bool streamtopacketsFrameMatchesFillByte(const sbuf_t *packet, uint8_t fill_byte);
 bool streamtopacketsValidatePacket(streamtopackets_packet_validation_level_t level, sbuf_t *packet,
                                    const char *direction);
-void streamtopacketsRecalculateChecksumIfRequested(line_t *l, sbuf_t *buf);
 bool streamtopacketsSendSensitivePong(tunnel_t *t, line_t *stream_line);
 void streamtopacketsForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_t *packet, uint64_t generation);
 

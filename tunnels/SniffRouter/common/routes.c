@@ -3,11 +3,7 @@
 
 static bool hostEndsWith(const uint8_t *host, uint32_t host_len, const char *suffix, uint32_t suffix_len)
 {
-    if (host_len < suffix_len)
-    {
-        return false;
-    }
-
+    assert(host_len >= suffix_len);
     uint32_t offset = host_len - suffix_len;
     for (uint32_t i = 0; i < suffix_len; ++i)
     {

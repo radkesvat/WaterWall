@@ -16,10 +16,7 @@ void headerserverLinestateInitialize(headerserver_lstate_t *ls, line_t *l, heade
 
 void headerserverLinestateDestroy(headerserver_lstate_t *ls)
 {
-    if (ls->phase == kHeaderServerPhaseNone)
-    {
-        return;
-    }
+    assert(ls->phase != kHeaderServerPhaseNone);
 
     bufferqueueDestroy(&ls->initial_reentry);
     bufferstreamDestroy(&ls->read_stream);

@@ -20,18 +20,7 @@ void tcplistenerTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context
         tstate->idle_tables = NULL;
     }
 
-    if (tstate->listen_address)
-    {
-        memoryFree(tstate->listen_address);
-    }
-    if (tstate->white_list_range)
-    {
-        memoryFree((void *) tstate->white_list_range);
-    }
-    if (tstate->black_list_range)
-    {
-        memoryFree((void *) tstate->black_list_range);
-    }
+    memoryFree(tstate->listen_address);
 
     tunnelDestroy(t);
 }

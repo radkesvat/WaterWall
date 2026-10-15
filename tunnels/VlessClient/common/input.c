@@ -10,7 +10,8 @@ static sbuf_t *receiveHead(vlessclient_lstate_t *ls)
 
 static void recycleEmptyHead(vlessclient_lstate_t *ls)
 {
-    if (ls->receive_head != NULL && sbufGetLength(ls->receive_head) == 0)
+    assert(ls->receive_head != NULL);
+    if (sbufGetLength(ls->receive_head) == 0)
     {
         lineReuseBuffer(ls->line, ls->receive_head);
         ls->receive_head = NULL;

@@ -112,7 +112,7 @@ There are no required tunnel-specific settings.
   Default: `30`
 
 - `kcp-send-buffer-limit` `(number)`
-  Backpressure threshold for queued KCP packets. `0` keeps the derived limit: local send window + remote window + `10`.
+  Backpressure threshold for queued KCP packets. `0` derives the limit from local send window + remote window + `10`, capped at `2147483647`.
   Default: `0`
 
 - `ping-interval-ms` `(number)`

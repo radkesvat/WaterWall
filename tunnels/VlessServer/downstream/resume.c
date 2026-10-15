@@ -15,8 +15,7 @@ void vlessserverTunnelDownStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->phase == kVlessServerPhaseUdpWaitPacket || ls->phase == kVlessServerPhaseUdpConnecting ||
-        ls->phase == kVlessServerPhaseUdpEstablished)
+    if (ls->phase == kVlessServerPhaseUdpConnecting || ls->phase == kVlessServerPhaseUdpEstablished)
     {
         return;
     }

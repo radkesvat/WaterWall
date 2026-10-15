@@ -2,13 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-static int vlessserverParseDestination(const uint8_t *buf, size_t len, address_context_t *out, size_t *consumed)
+/* The caller has gathered and validated the complete destination header. */
+static void vlessserverDecodeDestination(const uint8_t *buf, address_context_t *out)
 {
-    if (UNLIKELY(len < 3))
-    {
-        return 0;
-    }
-
     uint16_t port_be = 0;
     memoryCopy(&port_be, buf, sizeof(port_be));
     uint16_t port = be16toh(port_be);
@@ -16,59 +12,25 @@ static int vlessserverParseDestination(const uint8_t *buf, size_t len, address_c
 
     if (atyp == kVlessAtypIpv4)
     {
-        if (UNLIKELY(len < 2 + 1 + 4))
-        {
-            return 0;
-        }
-
         ip_addr_t ip = {0};
         ip.type      = IPADDR_TYPE_V4;
         memoryCopy(&ip.u_addr.ip4.addr, buf + 3, 4);
         addresscontextSetIpPort(out, &ip, port);
-        *consumed = 2 + 1 + 4;
-        return 1;
+        return;
     }
 
     if (atyp == kVlessAtypIpv6)
     {
-        if (UNLIKELY(len < 2 + 1 + 16))
-        {
-            return 0;
-        }
-
         ip_addr_t ip = {0};
         ip.type      = IPADDR_TYPE_V6;
         memoryCopy(&ip.u_addr.ip6, buf + 3, 16);
         addresscontextSetIpPort(out, &ip, port);
-        *consumed = 2 + 1 + 16;
-        return 1;
+        return;
     }
 
-    if (atyp == kVlessAtypDomain)
-    {
-        if (UNLIKELY(len < 2 + 1 + 1))
-        {
-            return 0;
-        }
-
-        uint8_t domain_len = buf[3];
-        if (UNLIKELY(domain_len == 0))
-        {
-            return -1;
-        }
-
-        if (UNLIKELY(len < (size_t) (2 + 1 + 1 + domain_len)))
-        {
-            return 0;
-        }
-
-        addresscontextDomainSet(out, (const char *) (buf + 4), domain_len);
-        addresscontextSetPort(out, port);
-        *consumed = 2 + 1 + 1 + domain_len;
-        return 1;
-    }
-
-    return -1;
+    assert(atyp == kVlessAtypDomain && buf[3] != 0);
+    addresscontextDomainSet(out, (const char *) (buf + 4), buf[3]);
+    addresscontextSetPort(out, port);
 }
 
 void vlessserverApplyDestinationContext(line_t *l, const address_context_t *target, bool udp)
@@ -132,7 +94,7 @@ static bool vlessserverStartTcpBranch(tunnel_t *t, line_t *l, const address_cont
     return vlessserverForwardInitial(t, l);
 }
 
-bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, bool reject_short_password)
+bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, bool reject_short_uuid)
 {
     /* Final replay during drain may reach a server whose branch is still unopened. */
     if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l)))))
@@ -140,7 +102,7 @@ bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_lstate_
         vlessserverCloseLineBidirectional(t, l);
         return false;
     }
-    if (reject_short_password)
+    if (reject_short_uuid)
     {
         LOGW("VlessServer: rejected segmented UUID authentication on worker %u", (unsigned int) lineGetWID(l));
         return vlessserverStartFallback(t, l);
@@ -192,10 +154,9 @@ bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_lstate_
     }
     if (! vlessserverGatherHeader(ls, needed))
         return true;
-    address_context_t target   = {0};
-    size_t            dest_len = 0;
-    int               parsed   = vlessserverParseDestination(ls->header + 19, needed - 19, &target, &dest_len);
-    if (parsed != 1 || ! addresscontextHasPort(&target))
+    address_context_t target = {0};
+    vlessserverDecodeDestination(ls->header + 19, &target);
+    if (! addresscontextHasPort(&target))
     {
         addresscontextReset(&target);
         goto malformed;

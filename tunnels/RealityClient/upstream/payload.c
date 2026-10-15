@@ -31,7 +31,7 @@ void realityclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     lineRef(l);
     ls->upstream_send_in_progress = true;
-    if (LIKELY(realityclientEncryptAndSend(t, l, buf) && lineIsAlive(l)))
+    if (LIKELY(realityclientEncryptAndSend(t, l, buf)))
     {
         ls = lineGetState(l, t);
         if (LIKELY(! ls->terminal_closing && ls->phase == kRealityClientPhaseRealityActive))

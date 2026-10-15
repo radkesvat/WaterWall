@@ -118,8 +118,7 @@ static void fixtureSetup(connectionfisher_selection_fixture_t *fixture)
     fixture->reentrant_target = fixture->reentrant_loser;
 
     connectionfisherclient_lstate_t *main_ls = lineGetState(fixture->main_line, fixture->fisher);
-    twfRequire(connectionfisherclientLinestateInitializeMain(
-                   main_ls, fixture->main_line, kConnectionFisherSelectionChildCount),
+    twfRequire(connectionfisherclientLinestateInitializeMain(main_ls, kConnectionFisherSelectionChildCount),
                "failed to initialize the selection main line");
 
     initializeChild(fixture, fixture->selected_child, 0);

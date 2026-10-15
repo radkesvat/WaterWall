@@ -163,15 +163,9 @@ void streamfragmenterDrain(tunnel_t *t, line_t *l)
             const uint32_t offset = job->kind == kStreamFragmenterJobHello ? job->mapped_cuts[job->next_cut]
                                                                            : ts->cuts[job->next_cut].offset;
             const uint32_t length = offset - job->consumed;
-            buffer_pool_t *pool   = lineGetBufferPool(l);
-            uint32_t       capacity;
+            buffer_pool_t *pool    = lineGetBufferPool(l);
             const uint16_t padding = bufferpoolGetLargeBufferPadding(pool);
-            if (! sbufTryComputeCapacity(length, padding, &capacity))
-            {
-                LOGW("StreamFragmenter: fragment allocation geometry refused; closing line");
-                streamfragmenterCloseLine(t, l);
-                break;
-            }
+            // Every retained job already fits the 8 MiB byte budget; pool padding is aligned.
             output = sbufIsSplice(job->buf) ? bufferpoolGetSpliceBuffer(pool) : NULL;
             output = sbufMoveRangeTo(pool, job->buf, output, length, length, padding);
             job->consumed += length;

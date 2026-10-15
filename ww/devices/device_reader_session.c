@@ -48,10 +48,6 @@ device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint1
     assert(reader_buffer_pool != NULL);
 
     device_reader_session_t *session = memoryAllocate(sizeof(*session));
-    if (UNLIKELY(session == NULL))
-    {
-        return NULL;
-    }
 
     master_pool_t *message_pool = masterpoolCreateWithCapacity(pool_capacity);
     if (UNLIKELY(message_pool == NULL))

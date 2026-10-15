@@ -163,13 +163,13 @@ static hash_t muxserverChildIdleKey(const line_t *child_l)
     return (hash_t) (uintptr_t) child_l;
 }
 
-static void muxserverCloseShutdownChild(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
-                                        muxserver_lstate_t *child_ls, bool notify_child_next)
+static void muxserverCloseShutdownChild(tunnel_t *t, muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls,
+                                        bool notify_child_next)
 {
     line_t *child_l = child_ls->l;
     lineRef(child_l);
     muxserverLeaveConnection(child_ls);
-    discard muxserverReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
+    muxserverReleaseParentInputForChildClose(parent_ls, child_ls);
     muxserverLinestateDestroy(t, child_ls);
     if (notify_child_next)
     {
@@ -231,7 +231,7 @@ static void muxserverOnChildIdleExpire(local_idle_item_t *item)
     assert(parent_ls != NULL);
     if (drain_expiry)
     {
-        muxserverCloseShutdownChild(t, parent_ls->l, parent_ls, child_ls, true);
+        muxserverCloseShutdownChild(t, parent_ls, child_ls, true);
         return;
     }
     muxserverCloseChildKeepParent(t, parent_ls->l, parent_ls, child_ls, true);
@@ -542,7 +542,7 @@ static void muxserverCloseChildKeepParentImpl(tunnel_t *t, line_t *parent_l, mux
 {
     if (muxserverGetWorkerState(t, child_ls->l)->quiescing)
     {
-        muxserverCloseShutdownChild(t, parent_l, parent_ls, child_ls, notify_child_next);
+        muxserverCloseShutdownChild(t, parent_ls, child_ls, notify_child_next);
         return;
     }
 
@@ -552,9 +552,9 @@ static void muxserverCloseChildKeepParentImpl(tunnel_t *t, line_t *parent_l, mux
 
     muxserverLeaveConnection(child_ls);
 
-    const bool parent_alive = muxserverReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
+    muxserverReleaseParentInputForChildClose(parent_ls, child_ls);
 
-    if (! parent_alive || parent_ls->parent_finishing || ! notify_peer)
+    if (parent_ls->parent_finishing || ! notify_peer)
     {
         // no Close frame can be written; the peer learns about the close from the dying parent connection
         muxserverLinestateDestroy(t, child_ls);
@@ -651,9 +651,8 @@ static void muxserverSubtractParentPendingChildCharge(muxserver_lstate_t *parent
     parent_ls->pending_child_queue_charge -= charge;
 }
 
-static void muxserverReleaseChildPendingCharge(tunnel_t *t, muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls)
+static void muxserverReleaseChildPendingCharge(muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls)
 {
-    discard      t;
     const size_t pending_charge = child_ls->pending_child_queue_charge;
     const size_t pending_count  = bufferqueueGetBufCount(&child_ls->pending_child_data);
     if (UNLIKELY((pending_charge == 0) != (pending_count == 0)))
@@ -710,11 +709,9 @@ bool muxserverSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxserver_lstate
  * producing for that cid; the aggregate memory bound below protects the process
  * without turning one indefinitely blocked destination into a parent-wide stall.
  */
-bool muxserverReleaseParentInputForChildClose(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
-                                              muxserver_lstate_t *child_ls)
+void muxserverReleaseParentInputForChildClose(muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls)
 {
-    muxserverReleaseChildPendingCharge(t, parent_ls, child_ls);
-    return lineIsAlive(parent_l);
+    muxserverReleaseChildPendingCharge(parent_ls, child_ls);
 }
 
 static bool muxserverChildSourcePaused(muxserver_lstate_t *child_ls)
@@ -856,7 +853,7 @@ static bool muxserverCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxs
  * insertion order; replacing on an equal size makes the stable tie-break prefer
  * the oldest attached child.
  */
-static muxserver_lstate_t *muxserverFindLargestQueuedChild(muxserver_lstate_t *parent_ls, size_t *queued_charge_out)
+static muxserver_lstate_t *muxserverFindLargestQueuedChild(muxserver_lstate_t *parent_ls)
 {
     muxserver_lstate_t *largest      = NULL;
     size_t              largest_size = 0;
@@ -871,7 +868,6 @@ static muxserver_lstate_t *muxserverFindLargestQueuedChild(muxserver_lstate_t *p
         }
     }
 
-    *queued_charge_out = largest_size;
     return largest;
 }
 
@@ -897,8 +893,7 @@ bool muxserverEnforceParentReceiveLimit(tunnel_t *t, line_t *parent_l)
             break;
         size_t  before = SIZE_MAX;
         discard muxTryParentReceiveCharge(parent_ls->pending_child_queue_charge, state->read_stream, &before);
-        size_t  victim_charge;
-        muxserver_lstate_t *victim = muxserverFindLargestQueuedChild(parent_ls, &victim_charge);
+        muxserver_lstate_t *victim = muxserverFindLargestQueuedChild(parent_ls);
         if (victim == NULL)
         {
             LOGW("MuxServer: incoming assembly cannot fit parent receive limit (incoming=%zu children=%zu limit=%u)",

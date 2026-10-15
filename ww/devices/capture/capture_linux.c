@@ -716,23 +716,10 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         return NULL;
     }
     char **capture_cidrs = memoryAllocateZero(capture_cidrs_size);
-    if (UNLIKELY(capture_cidrs == NULL))
-    {
-        LOGE("CaptureDevice: failed to allocate capture range vector");
-        close(socket_netfilter);
-        return NULL;
-    }
 
     for (uint32_t i = 0; i < capture_range_count; ++i)
     {
         capture_cidrs[i] = capturedeviceFormatCidrString(&capture_ranges[i]);
-        if (capture_cidrs[i] == NULL)
-        {
-            LOGE("CaptureDevice: failed to format capture range");
-            close(socket_netfilter);
-            capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
-            return NULL;
-        }
     }
 
     if (! netfilterSetConfig(socket_netfilter, NFQNL_CFG_CMD_BIND, queue_number, 0))
@@ -810,18 +797,8 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         return NULL;
     }
     capture_range_rule_states_t *rule_states = memoryAllocateZero(rule_states_size);
-    capture_device_t     *cdev        = memoryAllocate(sizeof(capture_device_t));
-    if (UNLIKELY(rule_states == NULL || cdev == NULL))
-    {
-        memoryFree(rule_states);
-        memoryFree(cdev);
-        bufferpoolDestroy(reader_bpool);
-        close(socket_netfilter);
-        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
-        return NULL;
-    }
-
-    char *device_name = stringDuplicate(name);
+    capture_device_t            *cdev        = memoryAllocate(sizeof(capture_device_t));
+    char                        *device_name = stringDuplicate(name);
     if (UNLIKELY(device_name == NULL))
     {
         memoryFree(rule_states);

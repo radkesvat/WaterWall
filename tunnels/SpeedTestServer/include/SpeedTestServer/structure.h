@@ -86,8 +86,6 @@ typedef struct speedtestserver_tstate_s
 typedef struct speedtestserver_lstate_s
 {
     splice_stream_t        *recv_stream;
-    tunnel_t               *tunnel;
-    line_t                 *line;
     uint32_t                stream_id;
     uint32_t                duration_ms;
     uint32_t                warmup_ms;
@@ -153,10 +151,7 @@ void     speedtestserverFormatBitrate(double bits_per_sec, char *out, size_t out
 bool     speedtestserverLogsEnabled(tunnel_t *t);
 void    speedtestserverWriteHeader(uint8_t *ptr, uint8_t type, uint16_t flags, uint32_t stream_id, uint32_t payload_len,
                                    uint64_t sequence, uint64_t timestamp_us, uint64_t aux1, uint64_t aux2);
-bool    speedtestserverReadHeader(const uint8_t *ptr, size_t len, speedtestserver_frame_t *frame);
-sbuf_t *speedtestserverCreateFrame(tunnel_t *t, line_t *l, uint8_t type, uint16_t flags, uint32_t stream_id,
-                                   uint64_t sequence, uint32_t payload_len, uint64_t timestamp_us, uint64_t aux1,
-                                   uint64_t aux2);
+bool     speedtestserverReadHeader(const uint8_t *ptr, size_t len, speedtestserver_frame_t *frame);
 void    speedtestserverFillPattern(uint8_t *ptr, uint32_t len, uint32_t stream_id, uint64_t sequence, uint16_t flags);
 bool    speedtestserverVerifyPattern(const uint8_t *ptr, uint32_t len, uint32_t stream_id, uint64_t sequence,
                                      uint16_t flags);

@@ -9,9 +9,6 @@ typedef struct tcplistener_tstate_s
 
     // These fields are read from json
     char    *listen_address;           // address to listen on
-    char   **white_list_range;         // white list of client addresses (if any)
-    char   **black_list_range;         // black list of client addresses (if any)
-    int      listen_multiport_backend; // multiport backend (iptable? sockets?)
     uint16_t listen_port_min;          // min port to listen on (minimum of the range)
     uint16_t listen_port_max;          // max port to listen on (maximum of the range)
     bool     option_tcp_no_delay;      // apply TCP no delay option on sockets

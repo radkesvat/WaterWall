@@ -11,10 +11,7 @@ void obfuscatorclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (ts->method == kObfuscatorMethodXor)
-    {
-        obfuscatorclientApplyXor(t, l, buf);
-    }
+    obfuscatorclientApplyXor(t, l, buf);
 
     if (ts->tls_record_header && ! obfuscatorclientWrapTlsRecordHeader(l, &buf))
     {

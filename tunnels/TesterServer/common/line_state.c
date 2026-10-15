@@ -19,10 +19,7 @@ void testerserverLinestateInitialize(testerserver_lstate_t *ls, buffer_pool_t *p
 
 void testerserverLinestateDestroy(testerserver_lstate_t *ls)
 {
-    if (ls->read_stream.pool != NULL)
-    {
-        bufferstreamDestroy(&ls->read_stream);
-    }
+    bufferstreamDestroy(&ls->read_stream);
     bufferqueueDestroy(&ls->response_queue);
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(testerserver_lstate_t)));

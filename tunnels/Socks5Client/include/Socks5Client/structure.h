@@ -54,7 +54,6 @@ typedef struct socks5client_lstate_s
     line_t                  *control_line;
     line_t                  *udp_line;
     address_context_t        target_addr;
-    address_context_t        relay_addr;
     buffer_stream_t          in_stream;
     // Application FIFO retained only for SOCKS negotiation or an older deferred drain.
     buffer_budget_t          pending_budget;

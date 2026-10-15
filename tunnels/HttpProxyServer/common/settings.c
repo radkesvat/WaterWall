@@ -133,7 +133,6 @@ bool hpsParseSettings(hps_tstate_t *ts, node_t *node)
     uint32_t sweep;
     return integer(json, "max-header-bytes", 32768, 1024, 65536, &ts->max_header) &&
            integer(json, "max-pending-bytes", 262144, 65536, 1048576, &ts->max_pending) &&
-           ts->max_pending >= ts->max_header &&
            integer(json, "header-timeout-ms", 15000, 1, INT32_MAX, &ts->header_timeout) &&
            integer(json, "connect-timeout-ms", 30000, 1, INT32_MAX, &ts->connect_timeout) &&
            integer(json, "idle-timeout-ms", 300000, 1, INT32_MAX, &ts->idle_timeout) &&

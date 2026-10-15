@@ -50,12 +50,6 @@ void tlsserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (! lineIsAlive(l))
-    {
-        lineUnref(l);
-        return;
-    }
-
     ls                  = lineGetState(l, t);
     bool output_pending = ls->shaping_output.initialized &&
                           ! tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output);

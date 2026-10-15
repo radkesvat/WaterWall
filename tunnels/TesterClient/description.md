@@ -14,7 +14,7 @@ It is meant for validating tunnel composition and payload integrity, not for pro
 ## What It Does
 
 - acts as a chain head and creates the test lines itself
-- waits `50 ms` after startup before creating one worker-local test line per chain worker
+- waits `100 ms` after startup before creating one worker-local test line per chain worker
 - initializes per-line state in `Init`, then drives the request side only after downstream `Est`
 - sends `11` fixed-size request chunks upstream by default
 - verifies `11` fixed-size response chunks coming back downstream by default
@@ -194,6 +194,7 @@ Packet mode with synthetic IPv4 packets:
   Non-negative startup delay used only by the immediate-start packet path.
   When `packet-start-immediately=true` and this value is greater than `0`, request sending is delayed by this many
   milliseconds after the worker packet line is initialized.
+  An `Est` or `Resume` received during upstream `Init` does not bypass this delay or schedule a second request sender.
   Default: `0`
 
 - `allow-early-response` `(boolean)`

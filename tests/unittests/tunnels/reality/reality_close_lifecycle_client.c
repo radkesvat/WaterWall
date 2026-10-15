@@ -83,9 +83,9 @@ extern bool tlsclientLinestateInitialize(struct tlsclient_lstate_s *ls, struct s
                                          const uint8_t *alpn_wire, size_t alpn_wire_len);
 extern void tlsclientLinestateDestroy(struct tlsclient_lstate_s *ls);
 extern bool tlsclientSslReadBoundaryIsClean(struct tlsclient_lstate_s *ls);
-extern bool tlsclientConfigureSslForConnect(struct ssl_st *ssl, struct bio_st *rbio, struct bio_st *wbio,
-                                            const char *sni, const uint8_t *ech_grease_override_payload,
-                                            size_t ech_grease_override_payload_len);
+extern bool tlsclientConfigureSslForConnect(struct ssl_st *ssl, const char *sni,
+                                            const uint8_t *ech_grease_override_payload,
+                                            size_t         ech_grease_override_payload_len);
 
 enum client_tls_fixture_e
 {
@@ -794,7 +794,7 @@ static void clientFixtureEnableTlsTakeover(client_lifecycle_fixture_t *fixture, 
     fixture->tls_state_initialized = true;
     tls_ls->tunnel                 = fixture->tls;
     tls_ls->line                   = fixture->line;
-    requireClient(tlsclientConfigureSslForConnect(tls_ls->ssl, tls_ls->rbio, tls_ls->wbio, "example.com", NULL, 0),
+    requireClient(tlsclientConfigureSslForConnect(tls_ls->ssl, "example.com", NULL, 0),
                   "client TLS fixture failed to configure the retained client");
     requireClient(tlsclientTunnelEnableHandshakeTakeover(fixture->tls, fixture->reality, realityclientHandshakeReady),
                   "client TLS fixture failed to enable handshake takeover");

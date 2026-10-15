@@ -36,6 +36,5 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    ls->next_started = true;
     tunnelNextUpStreamInit(t, l);
 }

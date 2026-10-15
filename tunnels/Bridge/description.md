@@ -126,7 +126,7 @@ And in the other direction:
 - downstream `pause` is forwarded as upstream `pause`
 - downstream `resume` is forwarded as upstream `resume`
 
-So `Bridge` does not modify the line. It just reroutes the callback flow through its partner.
+`Bridge` reserves no per-line state and reroutes callbacks through its partner using the same line.
 
 ### Why it helps with reverse tunnels
 

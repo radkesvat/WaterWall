@@ -87,13 +87,8 @@ static bool initializeInternalTlsClient(tunnel_t *t, node_t *node)
 
     ts->tls_settings = cJSON_Duplicate(node->node_settings_json, true);
 
-    ts->tls_node      = nodeTlsClientGet();
-    ts->tls_node.name = nodeMakeChildName(node, ".internal-tls-client");
-    if (ts->tls_node.name == NULL)
-    {
-        LOGF("RealityClient: failed to configure internal TlsClient node");
-        return false;
-    }
+    ts->tls_node                     = nodeTlsClientGet();
+    ts->tls_node.name                = nodeMakeChildName(node, ".internal-tls-client");
     ts->tls_node.hash_name           = calcHashBytes(ts->tls_node.name, stringLength(ts->tls_node.name));
     ts->tls_node.next                = stringDuplicate(node->next);
     ts->tls_node.hash_next           = node->hash_next;

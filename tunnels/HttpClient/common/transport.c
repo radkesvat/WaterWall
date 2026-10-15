@@ -24,6 +24,7 @@ typedef struct httpclient_h1_response_info_s
 enum
 {
     kHttpClientNghttp2RecvChunkBytes = 16U * 1024U,
+    kHttpClientWebSocketHeaderMaxLen = 14,
     kWebSocketOpcodeContinuation     = 0x0,
     kWebSocketOpcodeText             = 0x1,
     kWebSocketOpcodeBinary           = 0x2,
@@ -75,10 +76,7 @@ static const char *httpclientWebSocketOpcodeName(uint8_t opcode)
 
 static bool parseContentLength(const char *value, int64_t *out)
 {
-    if (value == NULL || out == NULL)
-    {
-        return false;
-    }
+    assert(value != NULL && out != NULL);
 
     while (*value == ' ' || *value == '\t')
     {
@@ -97,12 +95,12 @@ static bool parseContentLength(const char *value, int64_t *out)
         return false;
     }
 
-    while (endp != NULL && (*endp == ' ' || *endp == '\t'))
+    while (*endp == ' ' || *endp == '\t')
     {
         ++endp;
     }
 
-    if (endp == NULL || *endp != '\0')
+    if (*endp != '\0')
     {
         return false;
     }
@@ -147,10 +145,7 @@ static bool httpclientUpgradeIsCustom(const httpclient_tstate_t *ts)
 
 static bool httpclientShouldSkipExtraHeader(const char *name, bool upgrade_to_h2, bool websocket_mode)
 {
-    if (name == NULL)
-    {
-        return true;
-    }
+    assert(name != NULL);
 
     if (httpclientHeaderNameEquals(name, "host") || httpclientHeaderNameEquals(name, "user-agent") ||
         httpclientHeaderNameEquals(name, "accept") || httpclientHeaderNameEquals(name, "content-length"))
@@ -179,10 +174,7 @@ static bool httpclientShouldSkipExtraHeader(const char *name, bool upgrade_to_h2
 
 static bool httpclientShouldSkipUpgradeExtraHeader(const char *name)
 {
-    if (name == NULL)
-    {
-        return true;
-    }
+    assert(name != NULL);
 
     return httpclientHeaderNameEquals(name, "connection") || httpclientHeaderNameEquals(name, "upgrade") ||
            httpclientHeaderNameEquals(name, "http2-settings");
@@ -333,20 +325,15 @@ static void httpclientBuildWebSocketAccept(const char *key, char *out, size_t ou
     out[encoded] = '\0';
 }
 
-static bool httpclientGenerateWebSocketKey(httpclient_lstate_t *ls)
+static void httpclientGenerateWebSocketKey(httpclient_lstate_t *ls)
 {
     uint8_t raw_key[16];
     getRandomBytes(raw_key, sizeof(raw_key));
 
     int encoded = wwBase64Encode(raw_key, sizeof(raw_key), ls->websocket_key);
-    if (encoded <= 0 || encoded >= (int) sizeof(ls->websocket_key))
-    {
-        ls->websocket_key[0] = '\0';
-        return false;
-    }
+    assert(encoded == 24 && encoded < (int) sizeof(ls->websocket_key));
 
     ls->websocket_key[encoded] = '\0';
-    return true;
 }
 
 static bool sendBytesUp(tunnel_t *t, line_t *l, const void *data, uint32_t len)
@@ -454,38 +441,26 @@ static bool httpclientSendRawBytesUp(tunnel_t *t, line_t *l, httpclient_lstate_t
     return sendBytesUp(t, l, data, len);
 }
 
-static size_t httpclientBuildWebSocketHeader(uint8_t *header, size_t cap, uint8_t opcode, uint64_t payload_len,
-                                             bool masked, const uint8_t mask_key[4])
+/* Client frames are always masked; either caller reserves the maximum header. */
+static size_t httpclientBuildWebSocketHeader(uint8_t header[kHttpClientWebSocketHeaderMaxLen], uint8_t opcode,
+                                             uint64_t payload_len, const uint8_t mask_key[4])
 {
-    if (cap < 2)
-    {
-        return 0;
-    }
-
     size_t off    = 0;
     header[off++] = (uint8_t) (0x80U | (opcode & 0x0FU));
 
-    uint8_t len_byte = masked ? 0x80U : 0x00U;
+    const uint8_t len_byte = 0x80U;
     if (payload_len <= 125U)
     {
         header[off++] = (uint8_t) (len_byte | (uint8_t) payload_len);
     }
     else if (payload_len <= 0xFFFFU)
     {
-        if (cap < off + 3)
-        {
-            return 0;
-        }
         header[off++] = (uint8_t) (len_byte | 126U);
         header[off++] = (uint8_t) ((payload_len >> 8) & 0xFFU);
         header[off++] = (uint8_t) (payload_len & 0xFFU);
     }
     else
     {
-        if (cap < off + 9)
-        {
-            return 0;
-        }
         header[off++] = (uint8_t) (len_byte | 127U);
         for (int shift = 56; shift >= 0; shift -= 8)
         {
@@ -493,26 +468,15 @@ static size_t httpclientBuildWebSocketHeader(uint8_t *header, size_t cap, uint8_
         }
     }
 
-    if (masked)
-    {
-        if (cap < off + 4 || mask_key == NULL)
-        {
-            return 0;
-        }
-
-        memoryCopy(header + off, mask_key, 4);
-        off += 4;
-    }
+    memoryCopy(header + off, mask_key, 4);
+    off += 4;
 
     return off;
 }
 
 static void httpclientMaskWebSocketPayload(sbuf_t *payload, const uint8_t mask_key[4])
 {
-    if (payload == NULL || mask_key == NULL)
-    {
-        return;
-    }
+    assert(payload != NULL && mask_key != NULL);
 
     uint8_t *ptr = (uint8_t *) sbufGetMutablePtr(payload);
     uint32_t len = sbufGetLength(payload);
@@ -525,15 +489,11 @@ static void httpclientMaskWebSocketPayload(sbuf_t *payload, const uint8_t mask_k
 static bool httpclientSendWebSocketControlFrame(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, uint8_t opcode,
                                                 const void *payload, uint32_t payload_len)
 {
-    uint8_t header[16];
+    uint8_t header[kHttpClientWebSocketHeaderMaxLen];
     uint8_t mask_key[4] = {0};
     getRandomBytes(mask_key, sizeof(mask_key));
 
-    size_t header_len = httpclientBuildWebSocketHeader(header, sizeof(header), opcode, payload_len, true, mask_key);
-    if (header_len == 0)
-    {
-        return false;
-    }
+    size_t header_len = httpclientBuildWebSocketHeader(header, opcode, payload_len, mask_key);
 
     if (! httpclientSendRawBytesUp(t, l, ls, header, (uint32_t) header_len))
     {
@@ -787,7 +747,7 @@ static line_t *httpclientDownstreamTargetLine(httpclient_lstate_t *ls, line_t *f
 static bool httpclientForwardDownstreamPayload(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *buf)
 {
     line_t *target = httpclientDownstreamTargetLine(ls, l);
-    if (target == NULL || ! lineIsAlive(target))
+    if (! lineIsAlive(target))
     {
         lineReuseBuffer(l, buf);
         return false;
@@ -866,13 +826,7 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
 
     if (websocket_mode)
     {
-        if (! httpclientGenerateWebSocketKey(ls))
-        {
-            LOGE("HttpClient: failed to generate Sec-WebSocket-Key");
-            memoryFree(split_path);
-            memoryFree(header_buf);
-            return false;
-        }
+        httpclientGenerateWebSocketKey(ls);
 
         if (! stringAppendFormat(header_buf, kHttpClientMaxHeaderBytes, &offset, "Connection: Upgrade\r\n") ||
             ! stringAppendFormat(header_buf, kHttpClientMaxHeaderBytes, &offset, "Upgrade: websocket\r\n") ||
@@ -1236,10 +1190,7 @@ bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
 
 static bool parseHttp1ResponseHeaders(const char *headers, httpclient_h1_response_info_t *info)
 {
-    if (headers == NULL || info == NULL)
-    {
-        return false;
-    }
+    assert(headers != NULL && info != NULL);
 
     *info = (httpclient_h1_response_info_t) {0};
 
@@ -1492,19 +1443,6 @@ static httpclient_h2_data_item_t *httpclientH2DataItemCreate(sbuf_t *payload, bo
     *item                           = (httpclient_h2_data_item_t) {
                                   .payload = payload, .offset = 0, .end_stream = end_stream, .complete = false, .next = NULL};
     return item;
-}
-
-static void httpclientH2DataItemDestroy(line_t *line, httpclient_h2_data_item_t *item)
-{
-    if (item == NULL)
-    {
-        return;
-    }
-    if (item->payload != NULL)
-    {
-        lineReuseBuffer(line, item->payload);
-    }
-    memoryFree(item);
 }
 
 static void httpclientH2DataQueuePush(httpclient_lstate_t *ls, httpclient_h2_data_item_t *item)
@@ -1828,10 +1766,7 @@ static int httpclientOnFrameSendCallback(nghttp2_session *session, const nghttp2
 static bool httpclientSubmitHttp2RequestHeaders(httpclient_tstate_t *ts, httpclient_lstate_t *ls,
                                                 int32_t *stream_id_out)
 {
-    if (ts == NULL || ls == NULL || stream_id_out == NULL)
-    {
-        return false;
-    }
+    assert(ts != NULL && ls != NULL && stream_id_out != NULL);
 
     char authority[512];
     int  authority_len = 0;
@@ -2184,16 +2119,11 @@ bool httpclientTransportSendWebSocketData(tunnel_t *t, line_t *l, httpclient_lst
     }
 
     uint32_t payload_len = sbufGetLength(payload);
-    uint8_t  header[16];
+    uint8_t  header[kHttpClientWebSocketHeaderMaxLen];
     uint8_t  mask_key[4] = {0};
     getRandomBytes(mask_key, sizeof(mask_key));
 
-    size_t header_len = httpclientBuildWebSocketHeader(header, sizeof(header), opcode, payload_len, true, mask_key);
-    if (header_len == 0)
-    {
-        lineReuseBuffer(l, payload);
-        return false;
-    }
+    size_t header_len = httpclientBuildWebSocketHeader(header, opcode, payload_len, mask_key);
 
     httpclientMaskWebSocketPayload(payload, mask_key);
 
@@ -2881,7 +2811,6 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
                 httpclientUpgradeIsH2C(ts) && info.upgrade_h2c &&
                 httpclientValidateRequiredHeaders(header_text, ts->upgrade_response_headers))
             {
-                ls->h1_upgrade_accepted = true;
                 ls->runtime_proto       = kHttpClientRuntimeAfterUpgrade;
                 ls->h1_headers_parsed   = true;
 
@@ -2918,7 +2847,6 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
 
         ls->runtime_proto       = kHttpClientRuntimeHttp1;
         ls->h1_headers_parsed   = true;
-        ls->h1_response_chunked = info.transfer_chunked;
 
         if (ts->verbose)
         {
@@ -2937,7 +2865,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
         }
 
         bool response_has_no_body = false;
-        if (info.status_code == 204 || info.status_code == 304 || (info.status_code >= 100 && info.status_code < 200))
+        if (info.status_code == 204 || info.status_code == 304)
         {
             response_has_no_body = true;
         }
@@ -3004,12 +2932,12 @@ static bool parseChunkSizeLine(sbuf_t *line_buf, uint64_t *chunk_len)
 
     char              *endp   = NULL;
     unsigned long long parsed = strtoull(line, &endp, 16);
-    while (endp != NULL && (*endp == ' ' || *endp == '\t'))
+    while (*endp == ' ' || *endp == '\t')
     {
         ++endp;
     }
 
-    bool ok = (endp != NULL && endp != line && *endp == '\0');
+    bool ok = (endp != line && *endp == '\0');
 
     memoryFree(line);
 

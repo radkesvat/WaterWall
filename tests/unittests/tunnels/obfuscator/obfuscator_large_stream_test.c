@@ -336,10 +336,63 @@ static void testFixedRetention(bool server, uint32_t ordinary_size, uint32_t spl
     twfWorkerEnvTeardown(&env);
 }
 
+static void testPacketClonePadding(bool server)
+{
+    twfSetCase(server ? "ObfuscatorServer packet clone preserves onward padding"
+                      : "ObfuscatorClient packet clone preserves onward padding");
+    twf_worker_env_t env;
+    twfWorkerEnvSetup(&env, 8192, 128);
+    cJSON *settings = cJSON_Parse("{\"method\":\"xor\",\"xor_key\":90,\"skip\":\"none\",\"tls_record_header\":true}");
+    node_t node     = {.node_settings_json = settings};
+    tunnel_t *t     = server ? obfuscatorserverTunnelCreate(&node) : obfuscatorclientTunnelCreate(&node);
+    twfRequire(t != NULL, "packet Obfuscator construction failed");
+    twf_trace_t trace = {0};
+    tunnel_t   *next  = twfCreateNextTunnel(&trace);
+    tunnelBind(t, next);
+    next->fnPayloadU            = captureWire;
+    tunnel_chain_t *chain       = tunnelchainCreate(1);
+    chain->sum_line_state_size  = t->lstate_size;
+    chain->sum_padding_left     = 128;
+    chain->contains_packet_node = true;
+    tunnelchainFinalize(chain);
+    t->chain     = chain;
+    line_t *line = tunnelchainGetWorkerPacketLine(chain, 0);
+    twfRequire(tunnelchainIsWorkerPacketLine(chain, line), "fixture did not create the exact worker packet line");
+    tunnelUpStreamInit(t, line);
+
+    const uint32_t length = bufferpoolGetLargeBufferSize(env.pool) + 1;
+    sbuf_t        *input  = twfTrackAcquired(sbufCreateWithPadding(length, 0));
+    sbufSetLength(input, length);
+    for (uint32_t i = 0; i < length; ++i)
+        sbufGetMutablePtr(input)[i] = pattern(i);
+    wire = NULL;
+    tunnelUpStreamPayload(t, line, input);
+    twfRequire(wire != NULL && sbufGetLength(wire) == length + 5, "packet record framing changed");
+    twfRequire(sbufGetLeftCapacity(wire) >= 123, "packet clone discarded onward padding");
+    const uint8_t *bytes = sbufGetRawPtr(wire);
+    twfRequire(bytes[0] == 23 && bytes[1] == 3 && bytes[2] == 3 && (((uint32_t) bytes[3] << 8) | bytes[4]) == length,
+               "packet record header changed");
+    for (uint32_t i = 0; i < length; ++i)
+        twfRequire(bytes[i + 5] == (uint8_t) (pattern(i) ^ 90), "packet clone changed transformed bytes");
+    lineReuseBuffer(line, wire);
+    wire = NULL;
+    twfRequire(lineIsAlive(line) && line->recalculate_checksum, "packet transform changed lifecycle/checksum request");
+    tunnelUpStreamFin(t, line);
+    twfRequire(lineIsAlive(line) && trace.next_init == 1 && trace.next_finish == 1,
+               "packet lifecycle was not forwarded without destroying its line");
+    tunnelchainDestroy(chain);
+    tunnelDestroy(next);
+    tunnelDestroy(t);
+    cJSON_Delete(settings);
+    twfWorkerEnvTeardown(&env);
+}
+
 int main(void)
 {
     twfRequire(globalstateInitializeSecureRandom(), "secure random initialization failed");
     twfRequire(frandGlobalInit(), "random initialization failed");
+    testPacketClonePadding(false);
+    testPacketClonePadding(true);
     const uint32_t lengths[] = {65534, 65535, 65536, SPLICE_PAYLOAD_LIMIT};
     for (unsigned direction = 0; direction < 2; ++direction)
         for (unsigned i = 0; i < 4; ++i)

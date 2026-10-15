@@ -34,12 +34,7 @@ static const char *socks5serverAuthClientStateName(authenticationclient_state_t 
 
 static void socks5serverSanitizeUsername(const uint8_t *username, uint8_t username_len, char out[UINT8_MAX + 1U])
 {
-    if (username == NULL || username_len == 0)
-    {
-        out[0] = '\0';
-        return;
-    }
-
+    assert(username != NULL && username_len > 0);
     for (uint8_t i = 0; i < username_len; ++i)
     {
         uint8_t ch = username[i];
@@ -51,6 +46,7 @@ static void socks5serverSanitizeUsername(const uint8_t *username, uint8_t userna
 void socks5serverLogAuthRejected(tunnel_t *t, line_t *l, const uint8_t *username, uint8_t username_len,
                                  const char *reason)
 {
+    assert(l != NULL && reason != NULL);
     socks5server_tstate_t *ts = tunnelGetState(t);
 
     if (ts->verbose && username != NULL && username_len > 0)
@@ -59,12 +55,12 @@ void socks5serverLogAuthRejected(tunnel_t *t, line_t *l, const uint8_t *username
         socks5serverSanitizeUsername(username, username_len, username_text);
         LOGW("Socks5Server: rejected SOCKS5 authentication for user \"%s\" on worker %d: %s",
              username_text,
-             workerWIDForLog(l != NULL ? lineGetWID(l) : getWID()),
-             reason != NULL ? reason : "unknown");
+             workerWIDForLog(lineGetWID(l)),
+             reason);
         return;
     }
 
-    LOGW("Socks5Server: rejected SOCKS5 authentication: %s", reason != NULL ? reason : "unknown");
+    LOGW("Socks5Server: rejected SOCKS5 authentication: %s", reason);
 }
 
 bool socks5serverAuthUserFromClient(tunnel_t *t, line_t *l, const uint8_t *username, uint8_t username_len,
@@ -130,36 +126,20 @@ bool socks5serverAuthUserFromClient(tunnel_t *t, line_t *l, const uint8_t *usern
 void socks5serverStoreAuthCredentials(socks5server_lstate_t *ls, const uint8_t *username, uint8_t username_len,
                                       const uint8_t *password, uint8_t password_len)
 {
+    assert(username_len > 0 && password_len > 0);
     char *new_username = memoryAllocate((size_t) username_len + 1U);
     char *new_password = memoryAllocate((size_t) password_len + 1U);
 
-    if (username_len > 0)
-    {
-        memoryCopy(new_username, username, username_len);
-    }
+    memoryCopy(new_username, username, username_len);
     new_username[username_len] = '\0';
 
-    if (password_len > 0)
-    {
-        memoryCopy(new_password, password, password_len);
-    }
+    memoryCopy(new_password, password, password_len);
     new_password[password_len] = '\0';
 
     memoryFree(ls->auth_username);
     memoryFree(ls->auth_password);
     ls->auth_username = new_username;
     ls->auth_password = new_password;
-}
-
-void socks5serverRecordLineUser(line_t *l, socks5server_lstate_t *ls, const user_handle_t *user_handle)
-{
-    if (ls->user_handle_recorded)
-    {
-        return;
-    }
-
-    lineAddUser(l, user_handle, ls->auth_username, ls->auth_password);
-    ls->user_handle_recorded = true;
 }
 
 void socks5serverAssocEntryFreeCreds(socks5server_assoc_entry_t *entry)

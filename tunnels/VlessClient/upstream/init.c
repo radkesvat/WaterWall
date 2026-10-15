@@ -18,24 +18,21 @@ void vlessclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     vlessclientLinestateInitialize(ls, l);
     ls->tunnel   = t;
-    ls->protocol = target->proto_udp ? kVlessClientProtocolUdp : kVlessClientProtocolTcp;
-    ls->kind =
-        ls->protocol == kVlessClientProtocolUdp ? kVlessClientLineKindUdpApplication : kVlessClientLineKindDirect;
+    ls->kind     = target->proto_udp ? kVlessClientLineKindUdpApplication : kVlessClientLineKindDirect;
     addresscontextCopy(&ls->target_addr, target);
 
     if (ts->verbose)
     {
         LOGD("VlessClient: line init protocol=%s port=%u",
-             ls->protocol == kVlessClientProtocolTcp ? "tcp" : "udp",
+             ls->kind == kVlessClientLineKindDirect ? "tcp" : "udp",
              (unsigned int) target->port);
     }
 
-    if (ls->protocol == kVlessClientProtocolUdp)
+    if (ls->kind == kVlessClientLineKindUdpApplication)
     {
         vlessclientStartUdpCarrier(t, l, ls);
         return;
     }
 
-    ls->next_started = true;
     tunnelNextUpStreamInit(t, l);
 }

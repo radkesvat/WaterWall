@@ -52,13 +52,13 @@ typedef struct tlsserver_lstate_s
     wtimer_t                       *handshake_deadline_timer;
     wtimer_t                       *shaping_output_timer;
     buffer_queue_t                  pending_down;
+    buffer_budget_t                 pending_down_budget;
     buffer_queue_t                 *fallback_pending_up;
     buffer_stream_t                 fallback_probe;
     tlsrecordshaping_output_queue_t shaping_output;
     tlsrecordshaping_state_t        shaping_state;
 
     bool handshake_completed;
-    bool handshake_deadline_armed;
     bool tls_committed;
     bool fallback_probe_tls_like;
     bool sni_fallback_requested;
@@ -90,7 +90,9 @@ enum
     kLineStateSize   = sizeof(tlsserver_lstate_t),
 
     kTlsServerFallbackBufferQueueCap  = 8,
-    kTlsServerMaxFallbackPendingBytes = 1024 * 1024
+    kTlsServerMaxFallbackPendingBytes = 1024 * 1024,
+    kTlsServerPendingPlaintextBytes   = 2 * 1024 * 1024,
+    kTlsServerPendingPlaintextBuffers = 1024
 };
 
 enum sslstatus

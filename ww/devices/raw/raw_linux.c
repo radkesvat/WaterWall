@@ -238,10 +238,6 @@ WTHREAD_ROUTINE(rawLinuxWriteRoutine) // NOLINT
             bool    closed = false;
             if (! chanTryRecv(writer_channel, (void **) &b2, &closed))
             {
-                if (closed)
-                {
-                    break;
-                }
                 break;
             }
 
@@ -383,7 +379,7 @@ static bool rawdeviceShouldLogRefusal(void)
 
 bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
 {
-    assert(sbufGetLength(buf) > sizeof(struct iphdr));
+    assert(sbufGetLength(buf) >= sizeof(struct iphdr));
 
     if (UNLIKELY(! rawdeviceIsUp(rdev)))
     {
@@ -450,8 +446,6 @@ bool rawdeviceBringUp(raw_device_t *rdev)
         LOGE("RawDevice: failed to open writer channel");
         goto rollback;
     }
-
-    // wthread_error_t read_error = threadCreate(&rdev->read_thread, rdev->routine_reader, rdev);
 
     wthread_error_t error = threadCreate(&rdev->write_thread, rawdeviceWriterThreadMain, rdev);
     if (UNLIKELY(error != kWThreadErrorNone))
@@ -589,15 +583,8 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_connt
         return NULL;
     }
 
-    raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
-    if (UNLIKELY(rdev == NULL))
-    {
-        bufferpoolDestroy(writer_bpool);
-        close(rsocket);
-        return NULL;
-    }
-
-    char *device_name = stringDuplicate(name);
+    raw_device_t *rdev        = memoryAllocate(sizeof(raw_device_t));
+    char         *device_name = stringDuplicate(name);
     if (UNLIKELY(device_name == NULL))
     {
         memoryFree(rdev);

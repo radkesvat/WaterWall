@@ -24,8 +24,7 @@ typedef struct udplistener_dynamic_endpoint_s
     sockaddr_u                            bound_local_addr;
     uint16_t                              bound_local_port;
     ip_addr_t                             expected_peer_ip;
-    uint16_t                              expected_source_port;
-    bool                                  source_port_pinned;
+    uint16_t                              expected_source_port; // Zero selects the first accepted source port
     sockaddr_u                            pinned_peer_addr;
     line_t                               *line;   // Owned dynamic normal line once datagram arrives
     tunnel_t                             *tunnel; // Owning UdpListener tunnel instance
@@ -44,16 +43,15 @@ typedef struct udplistener_worker_registry_s
 
 typedef struct udplistener_tstate_s
 {
-    char                          *listen_address;           // address to listen on
-    char                          *interface_name;           // optional interface name
-    int                            fwmark;                   // optional fwmark (-1 if none)
-    vec_ipmask_t                   white_list;               // white list of client addresses (if any)
-    vec_ipmask_t                   black_list;               // black list of client addresses (if any)
-    int                            listen_multiport_backend; // multiport backend (iptable? sockets?)
-    uint16_t                       listen_port_min;          // min port to listen on (minimum of the range)
-    uint16_t                       listen_port_max;          // max port to listen on (maximum of the range)
-    int                            send_buffer_size;         // optional socket SO_SNDBUF size
-    int                            recv_buffer_size;         // optional socket SO_RCVBUF size
+    char                          *listen_address;   // address to listen on
+    char                          *interface_name;   // optional interface name
+    int                            fwmark;           // optional fwmark (-1 if none)
+    vec_ipmask_t                   white_list;       // white list of client addresses (if any)
+    vec_ipmask_t                   black_list;       // black list of client addresses (if any)
+    uint16_t                       listen_port_min;  // min port to listen on (minimum of the range)
+    uint16_t                       listen_port_max;  // max port to listen on (maximum of the range)
+    int                            send_buffer_size; // optional socket SO_SNDBUF size
+    int                            recv_buffer_size; // optional socket SO_RCVBUF size
     wid_t                          workers_count;
     udplistener_worker_registry_t *worker_registries; // worker-local dynamic endpoint registries
     atomic_bool                    dynamic_admission_open;
@@ -76,11 +74,10 @@ typedef struct udplistener_lstate_s
 
 enum
 {
-    kTunnelStateSize    = sizeof(udplistener_tstate_t),
-    kLineStateSize      = sizeof(udplistener_lstate_t),
-    kPauseQueueCapacity = 2,
-    kUdpInitExpireTime  = 30 * 1000,
-    kUdpKeepExpireTime  = 300 * 1000
+    kTunnelStateSize   = sizeof(udplistener_tstate_t),
+    kLineStateSize     = sizeof(udplistener_lstate_t),
+    kUdpInitExpireTime = 30 * 1000,
+    kUdpKeepExpireTime = 300 * 1000
 };
 
 WW_EXPORT void         udplistenerTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);

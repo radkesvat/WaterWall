@@ -10,7 +10,8 @@ static tunnel_t *tundeviceTunnelCreateFail(tunnel_t *t)
 
 static void tundevicePublishEgressPinIfNeeded(tundevice_tstate_t *state)
 {
-    if (! state->loop_protection_enabled || state->egress_pin_published)
+    assert(! state->egress_pin_published);
+    if (! state->loop_protection_enabled)
     {
         return;
     }
@@ -127,12 +128,10 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
         return tundeviceTunnelCreateFail(t);
     }
 
-    // tun creation must be done in prepair or start padding, in create method paddings are not calculated yout
-
-    // on windows we need admin to load win tun driver
+    /* Device creation waits for OnStart, after chain padding is finalized. */
+#ifdef OS_WIN
     const char *fail_msg = "Error: Loading the WireGuard driver requires administrative privileges.\n\n"
                            "Please restart Waterwall as an administrator and try again.";
-#ifdef OS_WIN
     if (! isAdmin())
     {
         if (configPolicyIsRestricted())
@@ -146,8 +145,6 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
         startupFailureRecord(1);
         return tundeviceTunnelCreateFail(t);
     }
-#else
-    discard fail_msg;
 #endif
 
     // Publish before any tunnel OnPrepare creates sockets. Route installation

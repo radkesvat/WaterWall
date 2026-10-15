@@ -23,5 +23,5 @@ void reverseclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
          lineGetWID(l),
          box->unused_cons_count,
          atomicLoadRelaxed(&ts->reverse_cons));
-    reverseclientInitiateConnectOnWorker(t, lineGetWID(l), false);
+    reverseclientInitiateConnectOnWorker(t, lineGetWID(l));
 }

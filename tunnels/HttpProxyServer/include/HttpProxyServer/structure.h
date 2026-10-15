@@ -143,6 +143,5 @@ struct hps_session_s
     bool                  response_header : 1;
     bool                  final_committed : 1;
     bool                  close_after : 1;
-    bool                  child_reusable : 1;
     bool                  upload_stopped : 1;
 };

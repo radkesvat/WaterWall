@@ -51,10 +51,8 @@ static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
     memoryFree(packet_msg);
 
     /*
-     * Rechecked after the allocation, which can wait on the pool. The gate is not
-     * a strict quiescence barrier, but narrowing the window to the call itself is
-     * what keeps an emitted packet from arriving at the next node after that
-     * node's onStop() has already run.
+     * Enter after allocation and hold admission across the callback. Shutdown
+     * closes this gate and waits for admitted callbacks before stopping next.
      */
     if (UNLIKELY(! ctpNextGateEnter(t)))
     {

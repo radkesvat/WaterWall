@@ -17,7 +17,7 @@ void tcpoverudpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     while (sbufGetLength(buf) > 0)
     {
-        int write_size = min(kcp_write_mtu, (int) sbufGetLength(buf));
+        int write_size = (int) min((uint32_t) kcp_write_mtu, sbufGetLength(buf));
 
         sbufShiftLeft(buf, kFrameHeaderLength);
         sbufWriteUI8(buf, kFrameFlagData);

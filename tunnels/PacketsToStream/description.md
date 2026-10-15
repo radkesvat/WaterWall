@@ -89,7 +89,7 @@ There are no required tunnel-specific settings in the current implementation.
 ## Packet Validation
 
 `packet-validation-level` controls validation of packets decoded from incoming downstream framed data. Upstream packets
-that `PacketsToStream` receives from the packet side are not validated before framing.
+that `PacketsToStream` receives from the packet side use only the basic framing checks before sending.
 
 Supported values:
 
@@ -156,11 +156,15 @@ Maximum packet size accepted by this node is limited by `kMaxAllowedPacketLength
 
 ### Checksum recalc behavior
 
-Before sending packet payload to the stream side:
+The packet callback takes and clears `line->recalculate_checksum` before any
+drop or stream creation callback. The saved request belongs only to that packet,
+so a dropped packet or a reentrant `Init` cannot pass it to unrelated traffic.
 
-- if `line->recalculate_checksum` is enabled and payload is IPv4,
-- full packet checksum is recalculated,
-- then the packet is forwarded raw if it is a self-consistent IPv4 packet (IPv6/malformed is dropped).
+Before sending, the node applies any saved checksum request and checks the
+same basic IPv4 framing geometry used by the decoder: version 4, a header of
+at least 20 bytes fitting within the declared total length, and a total length
+matching the buffer within `kMaxAllowedPacketLength`. IPv6 and malformed
+framing are dropped independently of `packet-validation-level`.
 
 ### Packet decoding on return path
 

@@ -40,7 +40,6 @@ typedef struct ptc_dns_mapping_s
     const char           *domain;
     uint8_t               domain_len;
     bool                  staged;
-    bool                  inserted;
 } ptc_dns_mapping_t;
 
 typedef struct ptc_fake_dns_geometry_s
@@ -245,7 +244,7 @@ static bool ptcFakeDnsEntryIsPinned(const ptc_dns_mapping_t *mappings, uint8_t m
     return false;
 }
 
-static void ptcFakeDnsDiscardStagedMappings(ptc_fake_dns_t *dns, ptc_dns_mapping_t *mappings, uint8_t mapping_count)
+static void ptcFakeDnsDiscardStagedMappings(ptc_dns_mapping_t *mappings, uint8_t mapping_count)
 {
     for (uint8_t i = 0; i < mapping_count; ++i)
     {
@@ -255,22 +254,10 @@ static void ptcFakeDnsDiscardStagedMappings(ptc_fake_dns_t *dns, ptc_dns_mapping
         {
             continue;
         }
-        if (mapping->entry == NULL)
-        {
-            continue;
-        }
-        if (mapping->inserted)
-        {
-            const ptc_fake_dns_name_key_t key = {
-                .name = mapping->entry->domain,
-                .len  = mapping->entry->domain_len,
-            };
-            discard ptc_fake_dns_name_map_t_erase(&dns->names, key);
-        }
+        assert(mapping->entry != NULL);
         memoryFree(mapping->entry->domain);
         memoryFree(mapping->entry);
-        mapping->entry    = NULL;
-        mapping->inserted = false;
+        mapping->entry = NULL;
     }
 }
 
@@ -279,9 +266,10 @@ static void ptcFakeDnsDiscardStagedMappings(ptc_fake_dns_t *dns, ptc_dns_mapping
  *
  * No existing key, record, or LRU link is changed until every new entry and
  * domain has been allocated and every new key is resident in the pre-reserved
- * map. A failed staged insertion erases only staged keys. Existing entries used
- * by this response are pinned while victims are selected, so every emitted fake
- * address remains reverse-resolvable after the whole reply is committed.
+ * map. Heap allocation is fatal on failure, and unique staged keys fit the
+ * reserved capacity. Existing entries used by this response are pinned while
+ * victims are selected, so every emitted fake address remains reverse-resolvable
+ * after the whole reply is committed.
  */
 static bool ptcFakeDnsCommitQuestions(ptc_fake_dns_t *dns, ptc_dns_question_t *questions, int question_count,
                                       ptc_dns_mapping_t *mappings, uint8_t *mapping_count_out)
@@ -378,7 +366,7 @@ static bool ptcFakeDnsCommitQuestions(ptc_fake_dns_t *dns, ptc_dns_question_t *q
             }
             if (UNLIKELY(victim == NULL))
             {
-                ptcFakeDnsDiscardStagedMappings(dns, mappings, mapping_count);
+                ptcFakeDnsDiscardStagedMappings(mappings, mapping_count);
                 return false;
             }
             mapping->victim       = victim;
@@ -404,12 +392,10 @@ static bool ptcFakeDnsCommitQuestions(ptc_fake_dns_t *dns, ptc_dns_question_t *q
             .name = mapping->entry->domain,
             .len  = mapping->entry->domain_len,
         };
-        if (UNLIKELY(! ptc_fake_dns_name_map_t_insert(&dns->names, key, mapping->entry).inserted))
-        {
-            ptcFakeDnsDiscardStagedMappings(dns, mappings, mapping_count);
-            return false;
-        }
-        mapping->inserted = true;
+        // Deduplication and lookup ran under the same lock; this key is new.
+        const bool inserted = ptc_fake_dns_name_map_t_insert(&dns->names, key, mapping->entry).inserted;
+        assert(inserted);
+        discard inserted;
     }
 
     for (uint8_t i = 0; i < mapping_count; ++i)
@@ -438,7 +424,6 @@ static bool ptcFakeDnsCommitQuestions(ptc_fake_dns_t *dns, ptc_dns_question_t *q
 
         dns->records[mapping->entry->index] = mapping->entry;
         ptcFakeDnsLruPushTail(dns, mapping->entry);
-        mapping->inserted = false;
     }
 
     /* Apply successful lookup touches only after the transaction cannot fail. */
@@ -947,13 +932,6 @@ bool ptcFakeDnsOwnsDestination(tunnel_t *t, const ip4_addr_p_t *dest)
     return dns->enabled && dest->addr == dns->listen_addr.addr;
 }
 
-bool ptcFakeDnsShouldDropFragment(const ptc_fake_dns_t *dns, const ip4_addr_p_t *dest, uint8_t protocol,
-                                  bool is_fragment)
-{
-    /* TCP shares the address but is ordinary routed traffic; only UDP belongs to fake DNS. */
-    return is_fragment && protocol == IP_PROTO_UDP && dns->enabled && dest->addr == dns->listen_addr.addr;
-}
-
 ptc_fake_dns_result_t ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_line, sbuf_t *buf,
                                                     const struct ip_hdr *iphdr, const struct udp_hdr *udphdr)
 {
@@ -1009,12 +987,7 @@ ptc_fake_dns_result_t ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_
 
     buffer_pool_t *pool       = lineGetBufferPool(packet_line);
     uint32_t       packet_cap = UDP_HLEN + max_dns_len;
-    sbuf_t        *response   = bufferpoolGetBestFit(pool, packet_cap, bufferpoolGetLargeBufferPadding(pool));
-    if (UNLIKELY(response == NULL))
-    {
-        lineReuseBuffer(packet_line, buf);
-        return (ptc_fake_dns_result_t) {.handled = true};
-    }
+    sbuf_t         *response   = bufferpoolGetBestFit(pool, packet_cap, bufferpoolGetLargeBufferPadding(pool));
     uint8_t        *packet = sbufGetMutablePtr(response);
     struct udp_hdr *rudp   = (struct udp_hdr *) packet;
     uint8_t        *rdns   = packet + UDP_HLEN;
@@ -1086,7 +1059,7 @@ bool ptcFakeDnsPublishResponseLocked(tunnel_t *t, line_t *packet_line, sbuf_t *r
                                      const ip4_addr_t *destination)
 {
     buffer_pool_t             *pool      = lineGetBufferPool(packet_line);
-    interface_route_context_t *route_ctx = ptcFindOrCreateRouteContextV4(t, lineGetWID(packet_line), NULL);
+    interface_route_context_t *route_ctx = ptcFindOrCreateRouteContextV4(t, lineGetWID(packet_line));
 
     if (UNLIKELY(route_ctx == NULL))
     {

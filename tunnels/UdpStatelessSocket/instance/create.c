@@ -25,15 +25,7 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
         return NULL;
     }
 
-    /* Tail callbacks are deliberately disabled by the head-only design decision.
-     * Keep adapterCreate's fatal guards on this side.
-     * t->fnInitU    = &udpstatelesssocketTunnelUpStreamInit;
-     * t->fnEstU     = &udpstatelesssocketTunnelUpStreamEst;
-     * t->fnFinU     = &udpstatelesssocketTunnelUpStreamFinish;
-     * t->fnPayloadU = &udpstatelesssocketTunnelUpStreamPayload;
-     * t->fnPauseU   = &udpstatelesssocketTunnelUpStreamPause;
-     * t->fnResumeU  = &udpstatelesssocketTunnelUpStreamResume;
-     */
+    /* Keep adapterCreate's fatal guards on the unsupported upstream side. */
 
     t->fnInitD    = &udpstatelesssocketTunnelDownStreamInit;
     t->fnEstD     = &udpstatelesssocketTunnelDownStreamEst;
@@ -92,11 +84,6 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
             return udpstatelesssocketTunnelCreateFail(t);
         }
         char *source_ip = stringDuplicate(source_ip_value);
-        if (source_ip == NULL)
-        {
-            LOGF("UdpStatelessSocket: failed to duplicate source-ip");
-            return udpstatelesssocketTunnelCreateFail(t);
-        }
         memoryFree(state->listen_address);
         state->listen_address       = source_ip;
         state->source_ip_configured = true;
@@ -109,11 +96,6 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
         break;
     case kJsonValuePresent:
         state->interface_name = stringDuplicate(interface_value);
-        if (state->interface_name == NULL)
-        {
-            LOGF("UdpStatelessSocket: failed to duplicate interface");
-            return udpstatelesssocketTunnelCreateFail(t);
-        }
         break;
     case kJsonValueInvalid:
         LOGF("JSON Error: UdpStatelessSocket->settings->interface (string field) : The value was empty or invalid");

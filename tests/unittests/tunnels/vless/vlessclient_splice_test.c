@@ -1466,6 +1466,7 @@ int main(void)
     testPrefixes();
     testMalformed();
     testNested();
+    TEST_RUN_CASE(testTcpBypassTransitions);
     testPreparedDestination();
     testOwnerDrain();
     puts("VlessClient wire, splice, bounds, pressure and lifetime passed");

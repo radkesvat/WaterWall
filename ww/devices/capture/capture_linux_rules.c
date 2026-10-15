@@ -457,10 +457,6 @@ bool capturedeviceSelectUnusedQueueNumber(const char *input_rules, uint16_t star
     }
 
     bool *used = memoryAllocateZero(((size_t) UINT16_MAX + 1U) * sizeof(*used));
-    if (UNLIKELY(used == NULL))
-    {
-        return false;
-    }
     capturedeviceMarkQueueOption(input_rules, "--queue-num", false, used);
     capturedeviceMarkQueueOption(input_rules, "--queue-balance", true, used);
 
@@ -646,10 +642,7 @@ void capturedeviceFreeCidrs(char **cidrs, uint32_t count)
 
     for (uint32_t i = 0; i < count; ++i)
     {
-        if (cidrs[i] != NULL)
-        {
-            memoryFree(cidrs[i]);
-        }
+        memoryFree(cidrs[i]);
     }
 
     memoryFree(cidrs);

@@ -22,12 +22,7 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
         LOGW("AuthenticationServer: GetAllUsers failed to export users database");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "users-json-export-failed");
     }
-    if (UNLIKELY(! jsonAddUint64ToObject(users_json, "server-time-ms", getTimeOfDayMS())))
-    {
-        cJSON_Delete(users_json);
-        LOGW("AuthenticationServer: GetAllUsers failed to add server time metadata");
-        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "users-json-export-failed");
-    }
+    discard jsonAddUint64ToObject(users_json, "server-time-ms", getTimeOfDayMS());
 
     char *users_json_text = cJSON_PrintUnformatted(users_json);
     if (UNLIKELY(users_json_text == NULL))

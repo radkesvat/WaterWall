@@ -86,7 +86,7 @@ There are no required tunnel-specific settings in the current implementation.
 ## Packet Validation
 
 `packet-validation-level` controls validation of packets decoded from incoming upstream framed data. Downstream packets
-that `StreamToPackets` receives from the packet side are not validated before framing.
+that `StreamToPackets` receives from the packet side use only the basic framing checks before sending.
 
 Supported values:
 
@@ -205,8 +205,13 @@ guaranteed on every step.
 
 When packet payload arrives back from the next side:
 
-- optional IPv4 checksum recalculation is applied if requested by line state
-- the packet must be a self-consistent IPv4 packet (IPv6/malformed is dropped)
+- the checksum request is taken and cleared at callback entry, before any drop;
+  any saved request is applied only to this packet before sending
+- the packet must meet the decoder's basic IPv4 framing geometry: version 4, a
+  header of at least 20 bytes fitting within the declared total length, and a
+  total length matching the buffer within `kMaxAllowedPacketLength`
+- these framing checks apply independently of `packet-validation-level`;
+  IPv6 and malformed framing are dropped
 - the same symmetric flow hash selects one carrier from the active, unpaused lines of the current generation by
   rendezvous hashing, so one flow stays on one line while that pool is unchanged and different flows spread across
   the pool

@@ -111,23 +111,13 @@ trojanserver_auth_result_t trojanserverAuthenticateHash(tunnel_t *t, line_t *l,
 
 void trojanserverRecordLineUser(line_t *l, trojanserver_lstate_t *ls, const user_handle_t *user_handle)
 {
-    if (UNLIKELY(ls->user_handle_recorded))
-    {
-        return;
-    }
-
+    assert(userHandleIsValid(user_handle) || ls->auth_password != NULL);
     if (userHandleIsValid(user_handle))
     {
         lineAddUser(l, user_handle, ls->auth_username, ls->auth_password);
     }
-    else if (ls->auth_username != NULL || ls->auth_password != NULL)
+    else
     {
         lineAddAuthenticatedCredentials(l, ls->auth_username, ls->auth_password);
     }
-    else
-    {
-        return;
-    }
-
-    ls->user_handle_recorded = true;
 }

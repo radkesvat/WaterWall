@@ -6,14 +6,8 @@ static bool domainresolverParseStrategy(domainresolver_tstate_t *ts, const cJSON
 {
     const cJSON *strategy_json = cJSON_GetObjectItemCaseSensitive(settings, "strategy");
 
-    if (strategy_json == NULL)
-    {
-        ts->strategy = GSTATE.domain_strategy;
-        return true;
-    }
-
-    if (cJSON_IsString(strategy_json) && strategy_json->valuestring != NULL &&
-        stricmp(strategy_json->valuestring, "core-settings") == 0)
+    if (strategy_json == NULL || (cJSON_IsString(strategy_json) && strategy_json->valuestring != NULL &&
+                                  stricmp(strategy_json->valuestring, "core-settings") == 0))
     {
         ts->strategy = GSTATE.domain_strategy;
         return true;
@@ -49,16 +43,8 @@ tunnel_t *domainresolverTunnelCreate(node_t *node)
     t->fnPauseD   = &domainresolverTunnelDownStreamPause;
     t->fnResumeD  = &domainresolverTunnelDownStreamResume;
 
-    t->onStop    = &domainresolverTunnelOnStop;
-    t->onDestroy = &domainresolverTunnelDestroy;
-
     domainresolver_tstate_t *ts       = tunnelGetState(t);
     const cJSON             *settings = node->node_settings_json;
-
-    ts->strategy                  = GSTATE.domain_strategy;
-    ts->verbose                   = false;
-    ts->use_line_strategy         = false;
-    ts->allow_missing_destination = false;
 
     if (settings != NULL && ! cJSON_IsObject(settings))
     {
@@ -67,14 +53,11 @@ tunnel_t *domainresolverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (settings != NULL)
+    getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+    if (! domainresolverParseStrategy(ts, settings))
     {
-        getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
-        if (! domainresolverParseStrategy(ts, settings))
-        {
-            tunnelDestroy(t);
-            return NULL;
-        }
+        tunnelDestroy(t);
+        return NULL;
     }
 
     return t;

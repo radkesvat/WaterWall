@@ -25,6 +25,11 @@
 
 #include "PacketsToStream/structure.h"
 
+#ifdef TEST_STREAM_TO_PACKETS
+// The two private structure headers declare overlapping enum names.
+bool streamtopacketsIsForwardableIpv4Packet(const sbuf_t *packet);
+#endif
+
 static int  g_failures         = 0;
 static bool g_separate_entries = false;
 
@@ -333,29 +338,36 @@ static void testFuzzRecovers(buffer_stream_t *bs, buffer_pool_t *pool)
     }
 }
 
-static void testIsForwardable(buffer_pool_t *pool)
+static void testIsForwardable(buffer_pool_t *pool, bool (*is_forwardable)(const sbuf_t *))
 {
     sbuf_t *b = bufferpoolGetSmallBuffer(pool);
     buildIpv4(sbufGetMutablePtr(b), 0, 0, 0); // placeholder, set length below
     sbufSetLength(b, 50);
     buildIpv4(sbufGetMutablePtr(b), 50, IP_PROTO_TCP, 0x33);
-    require(packetstostreamIsForwardableIpv4Packet(b), "forwardable: valid IPv4 should pass");
+    require(is_forwardable(b), "forwardable: valid IPv4 should pass");
+
+    ((uint8_t *) sbufGetMutablePtr(b))[0] = 0x44;
+    require(! is_forwardable(b), "forwardable: IHL shorter than the minimum header must fail");
+    ((uint8_t *) sbufGetMutablePtr(b))[0] = 0x4F;
+    require(! is_forwardable(b), "forwardable: IHL beyond total packet length must fail");
+    ((uint8_t *) sbufGetMutablePtr(b))[0] = 0x46;
+    require(is_forwardable(b), "forwardable: a complete IPv4 options header should pass");
 
     // Length/total-length mismatch.
     sbufSetLength(b, 50);
     buildIpv4(sbufGetMutablePtr(b), 49, IP_PROTO_TCP, 0x33);
-    require(! packetstostreamIsForwardableIpv4Packet(b), "forwardable: total-length mismatch must fail");
+    require(! is_forwardable(b), "forwardable: total-length mismatch must fail");
 
     // IPv6 version nibble.
     sbufSetLength(b, 50);
     memoryZero(sbufGetMutablePtr(b), 50);
     ((uint8_t *) sbufGetMutablePtr(b))[0] = 0x60;
-    require(! packetstostreamIsForwardableIpv4Packet(b), "forwardable: IPv6 must be dropped");
+    require(! is_forwardable(b), "forwardable: IPv6 must be dropped");
 
     // Too short to be IPv4.
     sbufSetLength(b, 10);
     ((uint8_t *) sbufGetMutablePtr(b))[0] = 0x45;
-    require(! packetstostreamIsForwardableIpv4Packet(b), "forwardable: sub-header length must fail");
+    require(! is_forwardable(b), "forwardable: sub-header length must fail");
     bufferpoolReuseBuffer(pool, b);
 
     // Oversized packet (> kMaxAllowedPacketLength) using a large buffer.
@@ -363,7 +375,7 @@ static void testIsForwardable(buffer_pool_t *pool)
     sbufSetLength(big, kMaxAllowedPacketLength + 1);
     memoryZero(sbufGetMutablePtr(big), IP_HLEN);
     ((uint8_t *) sbufGetMutablePtr(big))[0] = 0x45;
-    require(! packetstostreamIsForwardableIpv4Packet(big), "forwardable: oversized packet must fail");
+    require(! is_forwardable(big), "forwardable: oversized packet must fail");
     bufferpoolReuseBuffer(pool, big);
 }
 
@@ -390,7 +402,12 @@ int main(void)
         testFuzzRecovers(&bs, pool);
         bufferstreamEmpty(&bs);
     }
-    testIsForwardable(pool);
+    testCaseSet("PacketsToStream outgoing IPv4 framing");
+    testIsForwardable(pool, packetstostreamIsForwardableIpv4Packet);
+#ifdef TEST_STREAM_TO_PACKETS
+    testCaseSet("StreamToPackets outgoing IPv4 framing");
+    testIsForwardable(pool, streamtopacketsIsForwardableIpv4Packet);
+#endif
 
     bufferstreamDestroy(&bs);
 

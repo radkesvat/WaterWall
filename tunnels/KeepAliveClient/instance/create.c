@@ -4,8 +4,8 @@
 
 static bool keepaliveclientLoadSettings(keepaliveclient_tstate_t *ts, const cJSON *settings)
 {
-    int     ping_interval_ms = kKeepAliveDefaultPingMs;
-    int64_t tolerance_ms     = kKeepAliveDefaultToleranceMs;
+    int     ping_interval_ms;
+    int64_t tolerance_ms = kKeepAliveDefaultToleranceMs;
 
     ts->sensitive_mode = false;
     if (jsonGetObjectBoolean(settings, "sensitive-mode", &ts->sensitive_mode) == kJsonValueInvalid)
@@ -19,10 +19,7 @@ static bool keepaliveclientLoadSettings(keepaliveclient_tstate_t *ts, const cJSO
         return false;
     }
 
-    if (settings != NULL)
-    {
-        getIntFromJsonObjectOrDefault(&ping_interval_ms, settings, "ping-interval", kKeepAliveDefaultPingMs);
-    }
+    getIntFromJsonObjectOrDefault(&ping_interval_ms, settings, "ping-interval", kKeepAliveDefaultPingMs);
 
     if (ping_interval_ms < 1)
     {

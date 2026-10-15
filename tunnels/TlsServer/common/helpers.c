@@ -48,10 +48,8 @@ int tlsserverOnServername(SSL *ssl, int *ad, void *arg)
     tlsserver_tstate_t *ts = arg;
     const char         *sni;
 
-    if (ts->expected_sni == NULL)
-    {
-        return SSL_TLSEXT_ERR_OK;
-    }
+    /* This callback is installed only for a configured SNI. */
+    assert(ts->expected_sni != NULL);
 
     sni = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
 
@@ -324,8 +322,10 @@ static bool tlsserverTryRetireShaping(tunnel_t *t, line_t *l, tlsserver_lstate_t
         return true;
     }
 
-    BIO *wbio = ls->ssl != NULL ? SSL_get_wbio(ls->ssl) : NULL;
-    if (wbio == NULL || BIO_ctrl_pending(wbio) != 0)
+    assert(ls->ssl != NULL);
+    BIO *wbio = SSL_get_wbio(ls->ssl);
+    assert(wbio != NULL);
+    if (BIO_ctrl_pending(wbio) != 0)
     {
         LOGW("TlsServer: refusing to retire record shaping with pending TLS write BIO bytes");
         return false;
@@ -343,7 +343,7 @@ static bool tlsserverTryRetireShaping(tunnel_t *t, line_t *l, tlsserver_lstate_t
         LOGD("TlsServer: configured TLS 1.3 record shaping scope drained; output shaper retired");
     }
 
-    if (release_producer_pause && ! ls->upstream_finished && ! ls->downstream_finishing)
+    if (release_producer_pause)
     {
         if (! lineCallWithRef(l, tunnelNextUpStreamResume, t))
         {
@@ -584,12 +584,10 @@ bool tlsserverTryCompleteDeferredFinish(tunnel_t *t, line_t *l, tlsserver_lstate
 
 bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
+    assert(ls->ssl != NULL && ! ls->resources_released);
     tlsserver_tstate_t *ts   = tunnelGetState(t);
-    BIO                *wbio = ls->ssl != NULL ? SSL_get_wbio(ls->ssl) : NULL;
-    if (wbio == NULL)
-    {
-        return false;
-    }
+    BIO                *wbio = SSL_get_wbio(ls->ssl);
+    assert(wbio != NULL);
 
     bool shape_output = ts->record_shaping.enabled && ! ls->shaping_retired && ls->handshake_completed &&
                         SSL_version(ls->ssl) == TLS1_3_VERSION;
@@ -745,14 +743,11 @@ bool tlsserverEncryptAndSendApplicationData(tunnel_t *t, line_t *l, tlsserver_ls
 bool tlsserverFlushPendingDownQueue(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
     size_t pending_count = bufferqueueGetBufCount(&ls->pending_down);
-    if (pending_count > 0)
+    if (pending_count > 0 && ls->verbose)
     {
-        if (ls->verbose)
-        {
-            LOGD("TlsServer: worker %u flushing %u queued downstream payload buffers after handshake",
-                 (unsigned int) lineGetWID(l),
-                 (unsigned int) pending_count);
-        }
+        LOGD("TlsServer: worker %u flushing %u queued downstream payload buffers after handshake",
+             (unsigned int) lineGetWID(l),
+             (unsigned int) pending_count);
     }
 
     while (bufferqueueGetBufCount(&ls->pending_down) > 0)
@@ -829,24 +824,18 @@ static void tlsserverDiscardFallbackPendingPayload(tlsserver_lstate_t *ls, buffe
     }
 }
 
-static bool tlsserverDetachFallbackPendingPayload(tlsserver_lstate_t *ls, buffer_pool_t *pool, sbuf_t **out)
+static sbuf_t *tlsserverDetachFallbackPendingPayload(tlsserver_lstate_t *ls, buffer_pool_t *pool)
 {
-    *out = NULL;
-
     buffer_queue_t *pending = ls->fallback_pending_up;
     ls->fallback_pending_up = NULL;
     if (pending == NULL)
     {
-        return true;
+        return NULL;
     }
 
     const size_t total = bufferqueueGetBufLen(pending);
-    if (UNLIKELY(total > kTlsServerMaxFallbackPendingBytes || total > UINT32_MAX))
-    {
-        LOGE("TlsServer: invalid fallback payload batch size=%zu", total);
-        tlsserverRecycleFallbackPendingQueue(pending, pool);
-        return false;
-    }
+    /* Admission checks the batch limit before any callback or scheduled drain. */
+    assert(total <= kTlsServerMaxFallbackPendingBytes);
 
     sbuf_t *merged = bufferqueuePopFront(pending);
     if (merged != NULL)
@@ -862,8 +851,7 @@ static bool tlsserverDetachFallbackPendingPayload(tlsserver_lstate_t *ls, buffer
 
     bufferqueueDestroy(pending);
     memoryFree(pending);
-    *out = merged;
-    return true;
+    return merged;
 }
 
 static void tlsserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l);
@@ -909,23 +897,13 @@ static void tlsserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
 
     buffer_pool_t *pool     = lineGetBufferPool(l);
     tunnel_t      *fallback = ts->fallback_tunnel;
-    sbuf_t        *buf      = NULL;
-    if (UNLIKELY(! tlsserverDetachFallbackPendingPayload(ls, pool, &buf)))
-    {
-        tlsserverCloseLineFatal(t, l);
-        return;
-    }
+    sbuf_t        *buf      = tlsserverDetachFallbackPendingPayload(ls, pool);
 
     if (buf == NULL)
     {
         return;
     }
-    if (UNLIKELY(fallback == NULL))
-    {
-        bufferpoolReuseBuffer(pool, buf);
-        tlsserverCloseLineFatal(t, l);
-        return;
-    }
+    assert(fallback != NULL);
 
     tunnelUpStreamPayload(fallback, l, buf);
     if (! lineIsAlive(l))
@@ -949,11 +927,12 @@ bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls
     tlsserver_tstate_t *ts       = tunnelGetState(t);
     tunnel_t           *fallback = ts->fallback_tunnel;
 
-    if (fallback == NULL || ! ls->fallback_mode || ls->fallback_close_draining)
+    if (! ls->fallback_mode || ls->fallback_close_draining)
     {
         lineReuseBuffer(l, buf);
         return false;
     }
+    assert(fallback != NULL);
 
     if (ts->fallback_intentional_delay_ms == 0 && ! ls->fallback_initializing &&
         tlsserverFallbackPendingCount(ls) == 0 && ! ls->fallback_delay_scheduled)
@@ -985,9 +964,8 @@ bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls
 static void tlsserverHandshakeDeadlineTimerCallback(wtimer_t *timer)
 {
     tlsserver_lstate_t *ls = weventGetUserdata(timer);
-    assert(ls != NULL && ls->handshake_deadline_timer == timer && ls->handshake_deadline_armed &&
-           ! ls->handshake_completed && ! ls->fallback_mode && ls->ssl != NULL && ls->line != NULL &&
-           ls->tunnel != NULL && lineIsAlive(ls->line));
+    assert(ls != NULL && ls->handshake_deadline_timer == timer && ! ls->handshake_completed && ! ls->fallback_mode &&
+           ls->ssl != NULL && ls->line != NULL && ls->tunnel != NULL && lineIsAlive(ls->line));
 
     ls->handshake_deadline_timer = NULL;
 
@@ -997,7 +975,6 @@ static void tlsserverHandshakeDeadlineTimerCallback(wtimer_t *timer)
 
 void tlsserverDisarmHandshakeDeadline(tlsserver_lstate_t *ls)
 {
-    ls->handshake_deadline_armed = false;
     if (ls->handshake_deadline_timer == NULL)
     {
         return;
@@ -1020,9 +997,6 @@ bool tlsserverArmHandshakeDeadline(tunnel_t *t, line_t *l, tlsserver_lstate_t *l
 
     tlsserverDisarmHandshakeDeadline(ls);
 
-    ls->tunnel = t;
-    ls->line   = l;
-
     wtimer_t *timer =
         wtimerAdd(getWorkerLoop(lineGetWID(l)), tlsserverHandshakeDeadlineTimerCallback, ts->handshake_timeout_ms, 1);
 
@@ -1034,7 +1008,6 @@ bool tlsserverArmHandshakeDeadline(tunnel_t *t, line_t *l, tlsserver_lstate_t *l
     }
 
     ls->handshake_deadline_timer = timer;
-    ls->handshake_deadline_armed = true;
 
     weventSetUserData(timer, ls);
 
@@ -1045,10 +1018,7 @@ bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
     tlsserver_tstate_t *ts = tunnelGetState(t);
 
-    if (UNLIKELY(ts->fallback_tunnel == NULL))
-    {
-        return false;
-    }
+    assert(ts->fallback_tunnel != NULL && ! ls->fallback_mode);
 
     sbuf_t *first = bufferstreamFullRead(&ls->fallback_probe);
 
@@ -1128,9 +1098,9 @@ void tlsserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, tlsserver_lstate
     {
         tlsserverDiscardFallbackPendingPayload(ls, pool);
     }
-    else if (! tlsserverDetachFallbackPendingPayload(ls, pool, &buf))
+    else
     {
-        buf = NULL;
+        buf = tlsserverDetachFallbackPendingPayload(ls, pool);
     }
 
     if (buf != NULL)

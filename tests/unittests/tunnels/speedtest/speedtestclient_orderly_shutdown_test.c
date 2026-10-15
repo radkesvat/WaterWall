@@ -23,6 +23,8 @@
 #include "fixtures/failure/tunnel_orderly_shutdown_harness.h"
 #include "startup.h"
 
+#include <math.h>
+
 enum
 {
     kTestWorkers       = 2,
@@ -433,6 +435,46 @@ static void caseReportRejectionClosesOwnedLine(void)
     fixtureTeardown(&fixture);
 }
 
+static void casePacingCounterBeyondMultiplyRange(uint64_t rate, bool saturated_delay)
+{
+    twfSetCase("SpeedTestClient large byte count preserves pacing");
+    tosResetProcessApi(true);
+    speedtestclient_fixture_t fixture;
+    fixtureSetup(&fixture);
+    speedtestclient_tstate_t *state = tunnelGetState(fixture.speed);
+    state->connection_count         = 1;
+    state->mode                     = kSpeedTestClientModeTcp;
+    state->upload                   = true;
+    state->duration_ms              = 60000;
+    state->payload_size             = 256;
+    state->target_bandwidth_bps     = rate;
+    line_t                   *line  = publishLine(&fixture, 0, true);
+    speedtestclient_lstate_t *ls    = lineGetState(line, fixture.speed);
+    ls->hello_sent                  = true;
+    ls->est_received                = true;
+    ls->start_ms                    = speedtestclientNowMs() - 1000;
+    ls->measure_start_ms            = ls->start_ms;
+    ls->paced_bytes                 = UINT64_MAX / 8000000ULL + 1;
+    delayed_line_task_submissions   = 0;
+    retry_task_submissions          = 0;
+    retry_delay_ms                  = 0;
+
+    speedtestclientSendTask(fixture.speed, line);
+    twfRequireEqualU32(fixture.trace.next_payload, 0, "pacing multiplication overflow emitted DATA early");
+    twfRequireEqualU32(delayed_line_task_submissions, 1, "large byte count did not schedule one paced send");
+    twfRequire(ls->send_scheduled && retry_task_submissions == 1 && retry_delay_ms > 1000,
+               "large byte count lost its pacing deadline");
+    if (saturated_delay)
+        twfRequireEqualU32(retry_delay_ms, UINT32_MAX, "large pacing delay was not safely saturated");
+    twfRequireEqualU32(wloopNTimers(fixture.env.loops[0]), 1, "paced send did not retain one timer");
+    workerMessagesCleanupPending(&fixture.env.workers[0]);
+    drainWorker(&fixture, 0);
+    twfRequireEqualU32(masterpoolGetCheckedOut(fixture.line_master), 0, "paced send retained its owned line");
+    twfRequireNoLeakedBuffers();
+    tosRequireNoProcessApiCall();
+    fixtureTeardown(&fixture);
+}
+
 static void caseAcceptedReportCancellationLeavesOwnerDrainSafe(void)
 {
     twfSetCase("SpeedTestClient accepted report cancellation leaves owner drain safe");
@@ -598,9 +640,89 @@ static void caseMalformedReceiverLengthClosesLine(bool splice)
     fixtureTeardown(&fixture);
 }
 
+static void requireConstructorSettings(cJSON *settings, bool accepted, uint64_t bandwidth, uint32_t timeout_ms)
+{
+    node_t               node    = {.node_settings_json = settings};
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    tunnel_t                 *speed       = speedtestclientTunnelCreate(&node);
+    const ww_startup_result_t result      = wwStartupContextEnd(&startup);
+    const bool                constructed = speed != NULL;
+    if (constructed)
+    {
+        if (accepted)
+        {
+            const speedtestclient_tstate_t *state = tunnelGetState(speed);
+            twfRequire(wwStartupSucceeded(result), "valid settings recorded a startup failure");
+            twfRequire(state->target_bandwidth_bps == bandwidth && state->timeout_ms == timeout_ms,
+                       "constructor changed valid bandwidth or timeout boundary");
+        }
+        speedtestclientTunnelDestroy(speed, wwLifecycleStartupRollback());
+    }
+    cJSON_Delete(settings);
+    twfRequire(constructed == accepted, "SpeedTestClient accepted invalid numeric bounds or rejected valid settings");
+}
+
+static void caseConstructorBandwidthBounds(void)
+{
+    const struct
+    {
+        const char *key;
+        double      value;
+        bool        accepted;
+        uint64_t    expected;
+    } cases[] = {{"target-bits-per-sec", 0x1p64, false, 0},
+                 {"udp-target-bits-per-sec", 0x1p64, false, 0},
+                 {"target-megabits-per-sec", INFINITY, false, 0},
+                 {"target-bits-per-sec", NAN, false, 0},
+                 {"target-bits-per-sec", INFINITY, false, 0},
+                 {"target-bits-per-sec", 0, true, 0},
+                 {"target-bits-per-sec", 1.5, true, 2},
+                 {"target-bits-per-sec", 0x1.fffffffffffffp63, true, UINT64_MAX - UINT64_C(2047)}};
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        twfSetCase("SpeedTestClient bandwidth conversion bounds");
+        cJSON *settings = cJSON_CreateObject();
+        cJSON_AddNumberToObject(settings, cases[i].key, cases[i].value);
+        requireConstructorSettings(
+            settings, cases[i].accepted, cases[i].expected, kSpeedTestClientDefaultDurationMs + 30000);
+    }
+}
+
+static void caseConstructorTimeoutBounds(void)
+{
+    const struct
+    {
+        int      duration_ms;
+        int      warmup_ms;
+        int      timeout_ms;
+        bool     accepted;
+        uint32_t expected;
+    } cases[] = {{INT_MAX, INT_MAX, 0, false, 0},
+                 {INT_MAX, INT_MAX, INT_MAX, false, 0},
+                 {INT_MAX, 0, 0, false, 0},
+                 {INT_MAX - 30000, 0, 0, true, INT_MAX},
+                 {INT_MAX - 29999, 0, 0, false, 0},
+                 {INT_MAX - 1, 0, INT_MAX, true, INT_MAX}};
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        twfSetCase("SpeedTestClient timeout arithmetic bounds");
+        cJSON *settings = cJSON_CreateObject();
+        cJSON_AddNumberToObject(settings, "duration-ms", cases[i].duration_ms);
+        cJSON_AddNumberToObject(settings, "warmup-ms", cases[i].warmup_ms);
+        if (cases[i].timeout_ms != 0)
+            cJSON_AddNumberToObject(settings, "timeout-ms", cases[i].timeout_ms);
+        requireConstructorSettings(settings, cases[i].accepted, 0, cases[i].expected);
+    }
+}
+
 int main(void)
 {
     testSpliceInventoryInitialize(0);
+    caseConstructorBandwidthBounds();
+    caseConstructorTimeoutBounds();
+    casePacingCounterBeyondMultiplyRange(8000000, false);
+    casePacingCounterBeyondMultiplyRange(1, true);
     caseWorkerStopDrainsOnlyItsPublishedSlots();
     caseRequiredStartupFailuresPropagateStartupStatus();
     caseAcceptedQueuedTimerAdmissionClosureUsesCleanup();

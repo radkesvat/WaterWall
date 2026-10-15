@@ -40,6 +40,7 @@ static bool                       g_refuse_next_line_task;
 static bool                       g_refuse_next_delayed_task;
 static bool                       g_forbid_delayed_task;
 static unsigned int               g_delayed_task_submissions;
+static uint32_t                   g_last_delay_ms;
 
 line_task_submit_result_e __real_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
                                                   LineTaskCancelFn on_cancel);
@@ -72,6 +73,7 @@ line_task_submit_result_e __wrap_lineScheduleDelayedTask(line_t *const line, Lin
                                                          tunnel_t *t, LineTaskCancelFn on_cancel)
 {
     g_delayed_task_submissions += 1U;
+    g_last_delay_ms = delay_ms;
     if (g_refuse_next_delayed_task)
     {
         g_refuse_next_delayed_task = false;
@@ -273,6 +275,50 @@ static void fixtureCloseReceiver(speedtestserver_fixture_t *fixture)
     fixtureTeardownAfterClose(fixture);
 }
 
+static void casePacingCounterBeyondMultiplyRange(uint64_t rate, bool saturated_delay)
+{
+    twfSetCase("SpeedTestServer large byte count preserves pacing");
+    speedtestserver_fixture_t fixture;
+    fixtureSetup(&fixture);
+    master_pool_t *messages = masterpoolCreateWithCapacity(16);
+    workerMessagesInstallMasterPoolCallbacks(messages);
+    GSTATE.masterpool_messages = messages;
+    mutexInit(&fixture.env.worker.control_mutex);
+    workerMessagesInit(&fixture.env.worker);
+    twfRequire(workerMessagesOpenAdmission(&fixture.env.worker), "pacing fixture admission did not open");
+    fixture.env.loop->status = WLOOP_STATUS_RUNNING;
+
+    speedtestserver_lstate_t *ls = lineGetState(fixture.line, fixture.speed);
+    ls->hello_received           = true;
+    ls->download                 = true;
+    ls->sender_finished          = false;
+    ls->mode                     = kSpeedTestServerModeTcp;
+    ls->payload_size             = kSpeedServerTestPayloadSize;
+    ls->target_bandwidth_bps     = rate;
+    ls->start_ms                 = speedtestserverNowMs() - 1000;
+    ls->measure_start_ms         = ls->start_ms;
+    ls->measure_end_ms           = ls->start_ms + 60000;
+    ls->paced_bytes              = UINT64_MAX / 8000000ULL + 1;
+    g_delayed_task_submissions   = 0;
+    g_last_delay_ms              = 0;
+
+    speedtestserverSendTask(fixture.speed, fixture.line);
+    twfRequireEqualU32(fixture.trace.prev_payload, 0, "pacing multiplication overflow emitted DATA early");
+    twfRequireEqualU32(g_delayed_task_submissions, 1, "large byte count did not schedule one paced send");
+    twfRequire(ls->send_scheduled && g_last_delay_ms > 1000, "large byte count lost its pacing deadline");
+    if (saturated_delay)
+        twfRequireEqualU32(g_last_delay_ms, UINT32_MAX, "large pacing delay was not safely saturated");
+    twfRequireEqualU32(wloopNTimers(fixture.env.loop), 1, "paced send did not retain one timer");
+    workerMessagesCloseAdmission(&fixture.env.worker);
+    workerMessagesDestroy(&fixture.env.worker);
+    mutexDestroy(&fixture.env.worker.control_mutex);
+    twfRequireEqualU32(masterpoolGetCheckedOut(messages), 0, "paced send retained its worker message");
+    masterpoolMakeEmpty(messages);
+    masterpoolDestroy(messages);
+    GSTATE.masterpool_messages = NULL;
+    fixtureCloseReceiver(&fixture);
+}
+
 static void requireReceivedPair(const speedtestserver_lstate_t *ls, bool verify)
 {
     twfRequire(ls->receiver.bytes == 2U * kSpeedServerTestPayloadSize && ls->receiver.packets == 2,
@@ -371,6 +417,8 @@ static void caseMalformedFrameLength(bool pipe_body)
 
 int main(void)
 {
+    casePacingCounterBeyondMultiplyRange(8000000, false);
+    casePacingCounterBeyondMultiplyRange(1, true);
     caseHelloStopsAfterSendAdmissionClosesLine();
     caseReportRejectionFinishesRealOwner();
     caseOrdinaryUdpReceive(false);

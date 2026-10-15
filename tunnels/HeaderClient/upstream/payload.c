@@ -14,22 +14,6 @@ enum
     kHeaderClientProxyProtocolV2FamilyTcp4          = 0x11,
 };
 
-static uint16_t headerclientGetHeaderPort(headerclient_tstate_t *ts, line_t *l)
-{
-    switch (ts->data_mode)
-    {
-    case kHeaderClientDataModeSourcePort:
-        return lineGetSourceAddressContext(l)->port;
-
-    case kHeaderClientDataModeConstant:
-        return ts->constant_port;
-
-    default:
-        assert(false);
-        return 0;
-    }
-}
-
 static bool headerclientGetProxySocketAddresses(headerclient_tstate_t *ts, line_t *l, sockaddr_u *src_addr,
                                                 sockaddr_u *dest_addr)
 {
@@ -130,7 +114,8 @@ static uint32_t headerclientBuildHeader(headerclient_tstate_t *ts, line_t *l, ui
     {
     case kHeaderClientDataModeSourcePort:
     case kHeaderClientDataModeConstant: {
-        uint16_t port         = headerclientGetHeaderPort(ts, l);
+        uint16_t port =
+            ts->data_mode == kHeaderClientDataModeSourcePort ? lineGetSourceAddressContext(l)->port : ts->constant_port;
         uint16_t port_network = htons(port);
         memoryCopy(out, &port_network, sizeof(port_network));
         return kHeaderClientPortHeaderSize;
@@ -147,10 +132,9 @@ static uint32_t headerclientBuildHeader(headerclient_tstate_t *ts, line_t *l, ui
     }
 }
 
-static void headerclientCloseLineFromHeaderError(tunnel_t *t, line_t *l, headerclient_lstate_t *ls)
+static void headerclientCloseLineFromHeaderError(tunnel_t *t, line_t *l)
 {
     lineRef(l);
-    headerclientLinestateDestroy(ls);
     tunnelNextUpStreamFinish(t, l);
     tunnelPrevDownStreamFinish(t, l);
     lineUnref(l);
@@ -159,7 +143,6 @@ static void headerclientCloseLineFromHeaderError(tunnel_t *t, line_t *l, headerc
 void headerclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     headerclient_tstate_t *ts = tunnelGetState(t);
-    headerclient_lstate_t *ls = lineGetState(l, t);
 
     uint8_t  header[kHeaderClientMaxHeaderSize];
     uint32_t header_len = headerclientBuildHeader(ts, l, header);
@@ -167,14 +150,14 @@ void headerclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         LOGE("HeaderClient: could not build configured header");
         lineReuseBuffer(l, buf);
-        headerclientCloseLineFromHeaderError(t, l, ls);
+        headerclientCloseLineFromHeaderError(t, l);
         return;
     }
 
     assert(sbufGetLeftCapacity(buf) >= header_len);
     sbufShiftLeft(buf, header_len);
     sbufWrite(buf, header, header_len);
-    headerclientLinestateDestroy(ls);
+    /* The bypass bit is the only per-line state needed for a one-time header. */
     tunnelBypassLine(t, l);
     tunnelNextUpStreamPayload(t, l, buf);
 }

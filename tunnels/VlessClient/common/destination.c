@@ -98,10 +98,7 @@ bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l)
         addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
     }
 
-    if (uses_current_dest)
-    {
-        addresscontextReset(&current);
-    }
+    addresscontextReset(&current);
 
     if (ts->resolve_domains)
     {

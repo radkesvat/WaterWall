@@ -13,10 +13,7 @@ void tcpconnectorTunnelUpStreamResume(tunnel_t *t, line_t *l)
         if (lstate->io != NULL)
         {
             tcpconnectorApplyReadPreference(lstate);
-            if (UNLIKELY(wioRead(lstate->io) != 0))
-            {
-                return;
-            }
+            discard wioRead(lstate->io);
         }
     }
 }

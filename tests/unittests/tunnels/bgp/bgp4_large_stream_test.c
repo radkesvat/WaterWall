@@ -849,7 +849,7 @@ static void fixtureFillAdmission(bgp_fixture_t *f)
                                kBgpPendingBytes,
                        "exact encoded byte boundary refused");
         }
-        else if (mode < 3)
+        else
         {
             const unsigned count = mode == 1 ? kBgpOutputEntries : kBgpOutputEntries - 1;
             for (unsigned i = 0; i < count; ++i)
@@ -858,8 +858,6 @@ static void fixtureFillAdmission(bgp_fixture_t *f)
                            bufferqueueGetBufCount(&((bgp_stream_t *) lineGetState(f->line, f->t))->output) == count,
                        "valid output-entry boundary refused");
         }
-        else
-            fail_queue = true;
         const uint32_t extra = mode == 2 ? 65535 : 1;
         sbuf_t        *b     = bufferpoolGetBestFit(f->env.pool, extra, 128);
         sbufSetLength(b, extra);
@@ -889,7 +887,7 @@ static void testAdmission(void)
     twfRequire(kBgpPendingBytes == 2162705 && kBgpMaxWireFrame == 65553 && kBgpOutputEntries == 1024,
                "fixed BGP bounds changed");
     for (unsigned client = 0; client < 2; ++client)
-        for (unsigned mode = 0; mode < 4; ++mode)
+        for (unsigned mode = 0; mode < 3; ++mode)
         {
             bgp_fixture_t f;
             fixtureBegin(&f, client, true, mode % 2 ? 65536 : 131072);

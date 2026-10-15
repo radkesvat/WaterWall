@@ -478,6 +478,71 @@ static tunnel_t *createMtuTunnel(const char *json)
     return t;
 }
 
+static void caseAutomaticSendBufferLimit(void)
+{
+    twfSetCase("automatic KCP pressure limit stays positive for a maximum send window");
+    tunnel_t *configured = createMtuTunnel("{\"mtu\":1500,\"kcp-send-window\":2147483647}");
+    twfRequire(configured != NULL, "maximum positive KCP window was rejected");
+    tcpoverudpclient_tstate_t *ts     = tunnelGetState(configured);
+    ikcpcb                     handle = {.snd_wnd = (IUINT32) ts->kcp_send_window, .rmt_wnd = 128};
+    tcpoverudpclient_lstate_t  ls     = {.tunnel = configured, .k_handle = &handle};
+    twfRequire(tcpoverudpclientGetKcpSendBufferLimit(&ls) == INT_MAX,
+               "automatic pressure limit wrapped at the maximum configured window");
+    handle.snd_wnd = INT_MAX - 138U;
+    twfRequire(tcpoverudpclientGetKcpSendBufferLimit(&ls) == INT_MAX, "exact automatic limit changed");
+    handle.snd_wnd = INT_MAX - 139U;
+    twfRequire(tcpoverudpclientGetKcpSendBufferLimit(&ls) == INT_MAX - 1, "near-maximum automatic limit changed");
+    handle.snd_wnd = 128;
+    twfRequire(tcpoverudpclientGetKcpSendBufferLimit(&ls) == 266, "ordinary automatic limit changed");
+    handle.snd_wnd            = INT_MAX;
+    ts->kcp_send_buffer_limit = 7;
+    twfRequire(tcpoverudpclientGetKcpSendBufferLimit(&ls) == 7, "explicit positive limit was not preserved");
+    tunnelDestroy(configured);
+}
+
+static void caseFecShardBounds(void)
+{
+    static const struct
+    {
+        int  data, parity;
+        bool valid;
+    } cases[] = {{1, 254, true},
+                 {254, 1, true},
+                 {1, 255, false},
+                 {255, 1, false},
+                 {INT_MAX, 1, false},
+                 {1, INT_MAX, false},
+                 {INT_MAX, INT_MAX, false},
+                 {0, 1, false},
+                 {1, 0, false}};
+    for (unsigned enabled = 0; enabled < 2; ++enabled)
+        for (unsigned i = 0; i < ARRAY_SIZE(cases); ++i)
+        {
+            char label[128], json[192];
+            snprintf(
+                label, sizeof(label), "FEC enabled=%u, data=%d, parity=%d", enabled, cases[i].data, cases[i].parity);
+            twfSetCase(label);
+            snprintf(json,
+                     sizeof(json),
+                     "{\"mtu\":1500,\"fec\":%s,\"fec-data-shards\":%d,\"fec-parity-shards\":%d}",
+                     enabled ? "true" : "false",
+                     cases[i].data,
+                     cases[i].parity);
+            tunnel_t  *created  = createMtuTunnel(json);
+            const bool accepted = created != NULL;
+            if (created != NULL)
+            {
+                const tcpoverudpclient_tstate_t *ts = tunnelGetState(created);
+                twfRequire(ts->fec_enabled == (bool) enabled, "FEC enabled setting changed");
+                if (enabled && cases[i].valid)
+                    twfRequire(ts->fec_data_shards == cases[i].data && ts->fec_parity_shards == cases[i].parity,
+                               "valid 255-shard boundary was altered");
+                tunnelDestroy(created);
+            }
+            twfRequire(accepted == (! enabled || cases[i].valid), "FEC shard count validation changed");
+        }
+}
+
 static void caseMtuConfigurationAndOutput(void)
 {
     twfSetCase("instance MTU settings, lazy KCP handles and output bounds");
@@ -581,6 +646,8 @@ static void caseMtuConfigurationAndOutput(void)
 
 int main(void)
 {
+    caseAutomaticSendBufferLimit();
+    caseFecShardBounds();
     caseMtuConfigurationAndOutput();
     caseInitializationFails(kInjectKcpTimer, false, "KCP interval timer creation fails");
     caseInitializationFails(kInjectFecEncoder, true, "FEC encoder creation fails");

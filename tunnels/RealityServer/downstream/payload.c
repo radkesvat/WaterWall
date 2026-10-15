@@ -95,8 +95,7 @@ static void realityserverHandlePendingDestinationPayload(tunnel_t *t, line_t *l,
         }
 
         lineRef(l);
-        bool alive = realityserverObserveDownstreamHandshake(t, l, data + offset, chunk_len);
-        if (! alive || ! lineIsAlive(l))
+        if (! realityserverObserveDownstreamHandshake(t, l, data + offset, chunk_len))
         {
             bufferpoolReuseBuffer(pool, buf);
             lineUnref(l);

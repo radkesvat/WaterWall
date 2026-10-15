@@ -4,10 +4,7 @@
 
 static bool parseSplitPlacement(const char *value, httpclient_split_placement_t *out, const char *field_name)
 {
-    if (value == NULL || out == NULL)
-    {
-        return false;
-    }
+    assert(value != NULL && out != NULL);
 
     static const char *const query_aliases[]  = {"query", "query-parameter", "query-param", "param"};
     static const char *const header_aliases[] = {"header", "http-header"};
@@ -126,10 +123,7 @@ static bool parseHttp1TransportMode(httpclient_tstate_t *ts, const cJSON *settin
 
 static bool parseHttpMethod(httpclient_tstate_t *ts, const cJSON *settings)
 {
-    if (! getStringFromJsonObjectOrDefault(&ts->method, settings, "method", "POST"))
-    {
-        // default applied
-    }
+    getStringFromJsonObjectOrDefault(&ts->method, settings, "method", "POST");
 
     ts->method_enum = httpMethodEnum(ts->method);
     if (ts->method_enum == kHttpCustomMethod)
@@ -144,11 +138,8 @@ static bool parseHttpMethod(httpclient_tstate_t *ts, const cJSON *settings)
 static bool parseSplitMethod(char **dest, enum http_method *method_enum, const cJSON *root, const cJSON *side,
                              const char *root_key, const char *side_key, const char *def, const char *log_name)
 {
-    if (side != NULL && getStringFromJsonObject(dest, side, side_key))
-    {
-        ;
-    }
-    else if (! getStringFromJsonObject(dest, root, root_key))
+    if ((side == NULL || ! getStringFromJsonObject(dest, side, side_key)) &&
+        ! getStringFromJsonObject(dest, root, root_key))
     {
         *dest = stringDuplicate(def);
     }

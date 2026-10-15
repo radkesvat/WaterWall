@@ -193,6 +193,7 @@ static packetstostream_fixture_t *g_flow_fixture;
 static bool                       g_packet_source_paused;
 static bool                       g_pause_during_init;
 static bool                       g_finish_during_init;
+static bool                       g_send_during_init;
 static bool                       g_finish_during_payload;
 static bool                       g_send_on_resume;
 static bool                       g_finish_on_resume;
@@ -239,6 +240,13 @@ static void flowNextInit(tunnel_t *t, line_t *l)
         packetstostreamTunnelDownStreamPause(g_flow_fixture->p2s, l);
         packetstostreamTunnelDownStreamPause(g_flow_fixture->p2s, l);
     }
+    if (g_send_during_init)
+    {
+        g_send_during_init = false;
+        sbuf_t *packet     = flowPacket('B');
+        PUT_BE16((uint8_t *) sbufGetMutablePtr(packet) + 10, 0x1234);
+        packetstostreamTunnelUpStreamPayload(g_flow_fixture->p2s, g_flow_fixture->packet_line, packet);
+    }
 }
 
 static void flowNextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -282,6 +290,7 @@ static void flowFixtureSetup(packetstostream_fixture_t *fixture)
     g_packet_source_paused    = false;
     g_pause_during_init       = false;
     g_finish_during_init      = false;
+    g_send_during_init        = false;
     g_finish_during_payload   = false;
     g_send_on_resume          = false;
     g_finish_on_resume        = false;
@@ -289,6 +298,86 @@ static void flowFixtureSetup(packetstostream_fixture_t *fixture)
     fixture->next->fnPayloadU = flowNextPayload;
     fixture->prev->fnPauseD   = flowPrevPause;
     fixture->prev->fnResumeD  = flowPrevResume;
+}
+
+static void caseDroppedPacketConsumesChecksumRequest(void)
+{
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        twfSetCase(mode == 0   ? "packetstostream oversized drop consumes checksum request"
+                   : mode == 1 ? "packetstostream paused drop consumes checksum request"
+                               : "packetstostream failed Init consumes checksum request");
+        tosResetProcessApi(true);
+        packetstostream_fixture_t fixture;
+        flowFixtureSetup(&fixture);
+        uint8_t captured[IP_HLEN + 1];
+        fixture.trace.capture          = captured;
+        fixture.trace.capture_capacity = sizeof(captured);
+
+        sbuf_t *dropped;
+        if (mode == 0)
+        {
+            dropped = bufferpoolGetLargeBuffer(lineGetBufferPool(fixture.packet_line));
+            sbufSetLength(dropped, kMaxAllowedPacketLength + 1);
+            memoryZero(sbufGetMutablePtr(dropped), sbufGetLength(dropped));
+        }
+        else
+        {
+            dropped = flowPacket('A');
+            if (mode == 1)
+                packetstostreamTunnelDownStreamPause(fixture.p2s, fixture.stream_line);
+            else
+            {
+                closeFlowOutput();
+                g_finish_during_init = true;
+            }
+        }
+        lineSetRecalculateChecksum(fixture.packet_line, true);
+        packetstostreamTunnelUpStreamPayload(fixture.p2s, fixture.packet_line, dropped);
+        const bool pending_after_drop = lineGetRecalculateChecksum(fixture.packet_line);
+        twfRequireEqualU32(fixture.trace.capture_len, 0, "the refused packet was forwarded");
+        if (mode == 1)
+            packetstostreamTunnelDownStreamResume(fixture.p2s, fixture.stream_line);
+
+        sbuf_t *next = flowPacket('B');
+        PUT_BE16((uint8_t *) sbufGetMutablePtr(next) + 10, 0x1234);
+        packetstostreamTunnelUpStreamPayload(fixture.p2s, fixture.packet_line, next);
+        twfRequireEqualU32(fixture.trace.capture_len, sizeof(captured), "the next packet was not forwarded");
+        twfRequire(GET_BE16(captured + 10) == 0x1234,
+                   "a dropped packet's checksum request modified the next unflagged packet");
+        twfRequire(! pending_after_drop && ! lineGetRecalculateChecksum(fixture.packet_line),
+                   "a refused packet retained its checksum request");
+        fixtureTeardown(&fixture);
+        twfRequireNoLeakedBuffers();
+        tosRequireNoProcessApiCall();
+    }
+}
+
+static void caseInitReentryKeepsChecksumRequestOnItsPacket(void)
+{
+    twfSetCase("packetstostream Init reentry cannot steal the current packet's checksum request");
+    tosResetProcessApi(true);
+    packetstostream_fixture_t fixture;
+    flowFixtureSetup(&fixture);
+    uint8_t captured[2 * (IP_HLEN + 1)];
+    fixture.trace.capture          = captured;
+    fixture.trace.capture_capacity = sizeof(captured);
+    closeFlowOutput();
+    g_send_during_init = true;
+
+    sbuf_t *packet = flowPacket('A');
+    PUT_BE16((uint8_t *) sbufGetMutablePtr(packet) + 10, 0x1234);
+    lineSetRecalculateChecksum(fixture.packet_line, true);
+    packetstostreamTunnelUpStreamPayload(fixture.p2s, fixture.packet_line, packet);
+    twfRequireEqualU32(fixture.trace.capture_len, sizeof(captured), "Init reentry did not deliver both packets");
+    twfRequire(captured[IP_HLEN] == 'B' && captured[2 * IP_HLEN + 1] == 'A', "unexpected reentrant packet order");
+    twfRequire(GET_BE16(captured + 10) == 0x1234, "Init reentry consumed another packet's checksum request");
+    twfRequire(inet_chksum(captured + IP_HLEN + 1, IP_HLEN) == 0,
+               "the original flagged packet was forwarded without checksum repair");
+    twfRequire(! lineGetRecalculateChecksum(fixture.packet_line), "the checksum request survived delivery");
+    fixtureTeardown(&fixture);
+    twfRequireNoLeakedBuffers();
+    tosRequireNoProcessApiCall();
 }
 
 static void caseReplacementReleasesPacketSource(void)
@@ -855,6 +944,8 @@ int main(void)
         return 0;
     }
 
+    caseInitReentryKeepsChecksumRequestOnItsPacket();
+    caseDroppedPacketConsumesChecksumRequest();
     caseReplacementReleasesPacketSource();
     caseLazyReplacementPreservesOutputOrder();
     caseReplacementCallbacksMayClose();

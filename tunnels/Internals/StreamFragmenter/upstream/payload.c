@@ -11,10 +11,8 @@ static bool commitHello(tunnel_t *t, line_t *l)
     const uint32_t length  = streamfragmenterTlsRewriteLength(job->buf, job->cuts, ts);
     buffer_pool_t *pool    = lineGetBufferPool(l);
     const uint16_t padding = bufferpoolGetLargeBufferPadding(pool);
-    uint32_t       capacity;
-    if (! sbufTryComputeCapacity(length, padding, &capacity))
-        return false;
 
+    // The validated hello plus at most 64 added headers fits kStreamFragmenterMaxRewrite.
     sbuf_t *replacement = bufferpoolGetBestFit(pool, length, padding);
     sbufSetLength(replacement, length);
     buffer_budget_reservation_t replacement_reservation = {0};
@@ -24,13 +22,10 @@ static bool commitHello(tunnel_t *t, line_t *l)
         return false;
     }
     uint32_t *mapped = memoryAllocateZero(sizeof(uint32_t) * ts->cut_count);
-    if (! streamfragmenterTlsRewrite(job->buf, job->cuts, ts, replacement, mapped))
-    {
-        memoryFree(mapped);
-        bufferbudgetReservationRelease(&replacement_reservation);
-        lineReuseBuffer(l, replacement);
-        return false;
-    }
+    // GetBestFit supplied the exact rewrite's required capacity; no input changed in between.
+    const bool rewritten = streamfragmenterTlsRewrite(job->buf, job->cuts, ts, replacement, mapped);
+    assert(rewritten);
+    discard rewritten;
 
     streamfragmenterCancelAssemblyTimer(ls);
     ls->protocol     = kStreamFragmenterOpaque;
@@ -56,9 +51,7 @@ static bool growCandidate(tunnel_t *t, line_t *l, streamfragmenter_job_t *job, u
 
     buffer_pool_t *pool    = lineGetBufferPool(l);
     const uint16_t padding = bufferpoolGetLargeBufferPadding(pool);
-    uint32_t       capacity;
-    if (! sbufTryComputeCapacity(target, padding, &capacity))
-        return false;
+    // Growth stays within MaxWire, with already-aligned padding from the line's pool.
     sbuf_t        *replacement = bufferpoolGetBestFit(pool, target, padding);
     const uint32_t length = sbufGetLength(job->buf);
     sbufSetLength(replacement, length);
@@ -147,12 +140,7 @@ static bool startCandidate(tunnel_t *t, line_t *l, uint64_t now)
     const streamfragmenter_tstate_t *ts      = tunnelGetState(t);
     buffer_pool_t                   *pool    = lineGetBufferPool(l);
     const uint16_t                   padding = bufferpoolGetLargeBufferPadding(pool);
-    uint32_t                         capacity;
-    if (! sbufTryComputeCapacity(4096, padding, &capacity))
-        return false;
-    sbuf_t *accumulator = bufferpoolTryGetBestFit(pool, 4096, padding);
-    if (accumulator == NULL)
-        return false;
+    sbuf_t                          *accumulator = bufferpoolGetBestFit(pool, 4096, padding);
     if (! streamfragmenterEnqueue(t, l, accumulator, 0, kStreamFragmenterJobCandidate))
     {
         lineReuseBuffer(l, accumulator);

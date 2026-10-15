@@ -6,6 +6,5 @@ void testerserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
     testerserver_lstate_t *ls = lineGetState(l, t);
 
-    discard t;
     ls->response_paused = true;
 }

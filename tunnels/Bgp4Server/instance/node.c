@@ -20,7 +20,7 @@ node_t nodeBgp4ServerGet(void)
                   .node_manager_config   = NULL,
                   .instance              = NULL,
                   .flags                 = kNodeFlagSupportsSplice,
-                  .required_padding_left = kBgp4ServerFramePrefixSize,
+                  .required_padding_left = kBgpFramePrefix,
                   .layer_group           = kNodeLayer4,
                   .layer_group_next_node = kNodeLayer4,
                   .layer_group_prev_node = kNodeLayer4,

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Socks5Client.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Socks5Client.mdx, and all files must keep the same documentation version.
 -->
 
@@ -54,6 +54,8 @@ Accepted address keys:
 - `address`
 - `target-address`
 - `target`
+
+Configured domain names must be 1 to 255 bytes long. Longer names are rejected during node creation.
 
 Accepted credential keys:
 

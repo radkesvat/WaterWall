@@ -154,7 +154,7 @@ void ptcOwnedLineUnregister(ptc_lstate_t *ls)
  * no search is needed. The previous linear association made both admission and
  * teardown quadratic in the number of retained payloads.
  */
-static size_t ptcFrontPauseAckIndex(const ptc_lstate_t *ls)
+size_t ptcFrontPauseAckIndexOf(const ptc_lstate_t *ls)
 {
     const size_t records = (size_t) sbuf_ack_queue_t_size(&ls->ack_queue);
     const size_t paused  = bufferqueueGetBufCount((buffer_queue_t *) (uintptr_t) &ls->pause_queue);
@@ -167,11 +167,6 @@ sbuf_ack_t *ptcPauseAckRecordAt(ptc_lstate_t *ls, size_t index)
 {
     assert(index < (size_t) sbuf_ack_queue_t_size(&ls->ack_queue));
     return sbuf_ack_queue_t_at_mut(&ls->ack_queue, (isize_t) index);
-}
-
-size_t ptcFrontPauseAckIndexOf(const ptc_lstate_t *ls)
-{
-    return ptcFrontPauseAckIndex(ls);
 }
 
 void ptcReserveWriteSlots(ptc_lstate_t *ls)
@@ -250,7 +245,7 @@ void ptcPauseQueuePushBack(ptc_lstate_t *ls, sbuf_t *buf)
         abortProgramNow(1);
     }
 
-    assert(ptcFrontPauseAckIndex(ls) + bufferqueueGetBufCount(&ls->pause_queue) ==
+    assert(ptcFrontPauseAckIndexOf(ls) + bufferqueueGetBufCount(&ls->pause_queue) ==
            (size_t) sbuf_ack_queue_t_size(&ls->ack_queue));
     sbuf_ack_queue_t_back_mut(&ls->ack_queue)->buf = buf;
 }
@@ -264,7 +259,7 @@ void ptcPauseQueuePushFront(ptc_lstate_t *ls, sbuf_t *buf)
         abortProgramNow(1);
     }
 
-    ptcPauseAckRecordAt(ls, ptcFrontPauseAckIndex(ls))->buf = buf;
+    ptcPauseAckRecordAt(ls, ptcFrontPauseAckIndexOf(ls))->buf = buf;
 }
 
 bool ptcRequiredControlRefusedLocked(ptc_lstate_t *ls, const char *operation)
@@ -716,10 +711,7 @@ static void ptcCloseOwnedLine(tunnel_t *t, line_t *l, bool graceful_tcp, bool fi
     discard entered;
     if (ls->kind == kPtcLineKindTcp && ls->tcp_pcb != NULL)
     {
-        bool                               drain_aborted = false;
-        const ptc_tcp_drain_adopt_result_t adopted =
-            graceful_tcp ? ptcTcpDrainAdoptLocked(t, ls, &drain_aborted) : kPtcTcpDrainFailed;
-        discard drain_aborted;
+        const ptc_tcp_drain_adopt_result_t adopted = graceful_tcp ? ptcTcpDrainAdoptLocked(t, ls) : kPtcTcpDrainFailed;
 
         if (adopted != kPtcTcpDrainAdopted)
         {

@@ -166,8 +166,7 @@ static bool speedtestserverFramePayloadLengthValid(tunnel_t *t, line_t *l, const
     case kSpeedTestServerFrameHello:
         return frame->payload_len == kSpeedTestServerHelloSize;
     case kSpeedTestServerFrameData:
-        return ls->hello_received && ls->upload && frame->payload_len > 0 && frame->payload_len <= ls->payload_size &&
-               (ls->mode != kSpeedTestServerModeUdp || frame->payload_len <= kSpeedTestServerMaxUdpPayloadSize);
+        return ls->hello_received && ls->upload && frame->payload_len > 0 && frame->payload_len <= ls->payload_size;
     case kSpeedTestServerFrameEnd:
         return ls->hello_received && ls->upload && frame->payload_len == 0;
     default:
@@ -206,26 +205,18 @@ static sbuf_t *speedtestserverAllocBuffer(line_t *l, uint32_t len)
         buf = sbufCreateWithPadding(len, bufferpoolGetLargeBufferPadding(pool));
     }
 
-    if (sbufGetMaximumWriteableSize(buf) < len)
-    {
-        buf = sbufReserveSpace(buf, len);
-    }
+    assert(sbufGetMaximumWriteableSize(buf) >= len);
     sbufSetLength(buf, len);
     return buf;
 }
 
-sbuf_t *speedtestserverCreateFrame(tunnel_t *t, line_t *l, uint8_t type, uint16_t flags, uint32_t stream_id,
-                                   uint64_t sequence, uint32_t payload_len, uint64_t timestamp_us, uint64_t aux1,
-                                   uint64_t aux2)
+static sbuf_t *speedtestserverCreateFrame(tunnel_t *t, line_t *l, uint8_t type, uint16_t flags, uint32_t stream_id,
+                                          uint64_t sequence, uint32_t payload_len, uint64_t timestamp_us, uint64_t aux1,
+                                          uint64_t aux2)
 {
-    if (payload_len > UINT32_MAX - kSpeedTestServerFrameHeaderSize)
-    {
-        if (speedtestserverLogsEnabled(t))
-        {
-            LOGE("SpeedTestServer: frame payload is too large");
-        }
-        return NULL;
-    }
+    discard t;
+    /* DATA sizes are validated in settings/HELLO; control bodies are fixed and smaller. */
+    assert(payload_len <= kSpeedTestServerMaxPayloadSize);
 
     sbuf_t *buf = speedtestserverAllocBuffer(l, kSpeedTestServerFrameHeaderSize + payload_len);
     speedtestserverWriteHeader(
@@ -270,21 +261,12 @@ bool speedtestserverVerifyPattern(const uint8_t *ptr, uint32_t len, uint32_t str
 
 static bool speedtestserverSendFrame(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    if (buf == NULL)
-    {
-        speedtestserverFailLine(t, l, "protocol frame size is not representable");
-        return false;
-    }
-
     return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
 }
 
 static bool speedtestserverReadHelloPayload(speedtestserver_lstate_t *ls, const speedtestserver_frame_t *frame)
 {
-    if (frame->payload_len < kSpeedTestServerHelloSize)
-    {
-        return false;
-    }
+    assert(frame->payload_len == kSpeedTestServerHelloSize);
 
     ls->duration_ms          = speedtestserverReadU32(frame->payload + 0);
     ls->warmup_ms            = speedtestserverReadU32(frame->payload + 4);
@@ -335,10 +317,6 @@ static bool speedtestserverSendReport(tunnel_t *t, line_t *l, speedtestserver_ls
                                                  speedtestserverNowUs(),
                                                  stats->bytes,
                                                  stats->lost_packets);
-        if (buf == NULL)
-        {
-            return false;
-        }
         speedtestserverWriteReportPayload(sbufGetMutablePtr(buf) + kSpeedTestServerFrameHeaderSize, stats, duration_us);
         if (! speedtestserverSendFrame(t, l, buf))
         {
@@ -375,14 +353,13 @@ static bool speedtestserverSendAck(tunnel_t *t, line_t *l, speedtestserver_lstat
 
 void speedtestserverScheduleSend(tunnel_t *t, line_t *l, speedtestserver_lstate_t *ls)
 {
-    discard t;
     if (ls->send_scheduled || ls->sender_finished || ls->send_paused || ! ls->hello_received)
     {
         return;
     }
 
     ls->send_scheduled                     = true;
-    const line_task_submit_result_e result = lineScheduleTask(l, speedtestserverSendTask, ls->tunnel, NULL);
+    const line_task_submit_result_e result = lineScheduleTask(l, speedtestserverSendTask, t, NULL);
     if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
     {
         ls->send_scheduled = false;
@@ -396,7 +373,7 @@ void speedtestserverScheduleSend(tunnel_t *t, line_t *l, speedtestserver_lstate_
 
 void speedtestserverScheduleReport(tunnel_t *t, line_t *l, speedtestserver_lstate_t *ls)
 {
-    if (ls->report_scheduled || ls->closing || ls->report_interval_ms == 0)
+    if (ls->report_scheduled || ls->closing)
     {
         return;
     }
@@ -422,20 +399,27 @@ static bool speedtestserverShouldWaitForPace(speedtestserver_lstate_t *ls, uint6
         return false;
     }
 
-    const uint64_t start_us    = ls->start_ms * 1000ULL;
-    const uint64_t elapsed_us  = (now_us > start_us) ? (now_us - start_us) : 0;
-    const uint64_t expected_us = (ls->paced_bytes * 8000000ULL) / ls->target_bandwidth_bps;
+    const uint64_t start_us   = ls->start_ms * 1000ULL;
+    const uint64_t elapsed_us = (now_us > start_us) ? (now_us - start_us) : 0;
+    uint64_t       expected_us;
+    if (ls->paced_bytes <= UINT64_MAX / 8000000ULL)
+    {
+        expected_us = (ls->paced_bytes * 8000000ULL) / ls->target_bandwidth_bps;
+    }
+    else
+    {
+        /* Long tests can exceed the integer product's range. Clamp before narrowing. */
+        const long double scaled_us = (long double) ls->paced_bytes * 8000000.0L / ls->target_bandwidth_bps;
+        expected_us                 = scaled_us >= 0x1p64L ? UINT64_MAX : (uint64_t) scaled_us;
+    }
 
     if (expected_us <= elapsed_us)
     {
         return false;
     }
 
-    uint64_t wait_ms = ((expected_us - elapsed_us) + 999ULL) / 1000ULL;
-    if (wait_ms == 0)
-    {
-        wait_ms = 1;
-    }
+    /* The positive difference makes this ceiling nonzero without overflowing. */
+    uint64_t wait_ms = 1 + (expected_us - elapsed_us - 1) / 1000ULL;
     if (wait_ms > UINT32_MAX)
     {
         wait_ms = UINT32_MAX;
@@ -518,8 +502,7 @@ void speedtestserverSendTask(tunnel_t *t, line_t *l)
             }
             else
             {
-                assert((delay_ms == 0 && result == kLineTaskSubmitAcceptedAsync) ||
-                       (delay_ms > 0 && result == kLineTaskSubmitTimerArmed));
+                assert(result == kLineTaskSubmitTimerArmed);
             }
             return;
         }
@@ -540,11 +523,6 @@ void speedtestserverSendTask(tunnel_t *t, line_t *l)
 
         sbuf_t *buf = speedtestserverCreateFrame(
             t, l, kSpeedTestServerFrameData, flags, ls->stream_id, sequence, ls->payload_size, now_us, 0, 0);
-        if (buf == NULL)
-        {
-            speedtestserverFailLine(t, l, "data frame size is not representable");
-            return;
-        }
         uint8_t *payload = sbufGetMutablePtr(buf) + kSpeedTestServerFrameHeaderSize;
         if (ls->verify_payload)
         {
@@ -617,8 +595,7 @@ static void speedtestserverLogInterval(tunnel_t *t, line_t *l, speedtestserver_l
     {
         uint64_t delta = ls->receiver.bytes - ls->receiver_last_report_bytes;
         speedtestserverFormatBytes(delta, bytes_buf, sizeof(bytes_buf));
-        speedtestserverFormatBitrate(
-            interval_sec > 0.0 ? (double) delta * 8.0 / interval_sec : 0.0, rate_buf, sizeof(rate_buf));
+        speedtestserverFormatBitrate((double) delta * 8.0 / interval_sec, rate_buf, sizeof(rate_buf));
         LOGI("SpeedTestServer: stream %u receiver %.2f-%.2f sec %s %s lost=%llu dup=%llu errors=%llu jitter=%.3f ms%s",
              (unsigned int) ls->stream_id,
              (double) (from_ms - ls->measure_start_ms) / 1000.0,
@@ -637,8 +614,7 @@ static void speedtestserverLogInterval(tunnel_t *t, line_t *l, speedtestserver_l
     {
         uint64_t delta = ls->sender.bytes - ls->sender_last_report_bytes;
         speedtestserverFormatBytes(delta, bytes_buf, sizeof(bytes_buf));
-        speedtestserverFormatBitrate(
-            interval_sec > 0.0 ? (double) delta * 8.0 / interval_sec : 0.0, rate_buf, sizeof(rate_buf));
+        speedtestserverFormatBitrate((double) delta * 8.0 / interval_sec, rate_buf, sizeof(rate_buf));
         LOGI("SpeedTestServer: stream %u sender %.2f-%.2f sec %s %s%s",
              (unsigned int) ls->stream_id,
              (double) (from_ms - ls->measure_start_ms) / 1000.0,
@@ -689,11 +665,7 @@ static void speedtestserverHandleData(tunnel_t *t, line_t *l, const speedtestser
 {
     speedtestserver_lstate_t *ls = lineGetState(l, t);
 
-    if (! ls->hello_received)
-    {
-        speedtestserverFailLine(t, l, "received data before hello");
-        return;
-    }
+    assert(ls->hello_received);
 
     if (frame->flags & kSpeedTestServerFlagWarmup)
     {
@@ -1099,12 +1071,9 @@ void speedtestserverFailLine(tunnel_t *t, line_t *l, const char *reason)
                                              speedtestserverNowUs(),
                                              0,
                                              0);
-    if (buf != NULL)
+    if (! speedtestserverSendFrame(t, l, buf))
     {
-        if (! speedtestserverSendFrame(t, l, buf))
-        {
-            return;
-        }
+        return;
     }
 
     speedtestserverCloseLineInternal(t, l, false, true);

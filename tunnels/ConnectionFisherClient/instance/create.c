@@ -6,10 +6,7 @@ static bool connectionfisherclientLoadTries(connectionfisherclient_tstate_t *ts,
 {
     int simultaneous_tries = 2;
 
-    if (settings != NULL)
-    {
-        getIntFromJsonObjectOrDefault(&simultaneous_tries, settings, "simultaneous-tries-perline", 2);
-    }
+    getIntFromJsonObjectOrDefault(&simultaneous_tries, settings, "simultaneous-tries-perline", 2);
 
     if (simultaneous_tries < 1)
     {
@@ -42,8 +39,6 @@ tunnel_t *connectionfisherclientTunnelCreate(node_t *node)
     t->fnPayloadD = &connectionfisherclientTunnelDownStreamPayload;
     t->fnPauseD   = &connectionfisherclientTunnelDownStreamPause;
     t->fnResumeD  = &connectionfisherclientTunnelDownStreamResume;
-
-    ts->simultaneous_tries_perline = 2;
 
     if (! connectionfisherclientLoadTries(ts, node->node_settings_json))
     {

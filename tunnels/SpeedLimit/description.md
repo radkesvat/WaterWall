@@ -237,7 +237,9 @@ and releases both queues; accepted TCP bytes are never silently dropped.
 A consumer Pause stops the corresponding timer drain. The queued data stays owned
 by this node, without repeated timer polling while paused. Resume rearms the drain,
 but the source remains paused until both the local queue hold and external pressure
-have cleared. Notification callbacks can close the line safely.
+have cleared. If creating or rearming the drain timer is refused, both queues are
+released and the affected connection closes through its owner. Notification
+callbacks can close the line safely.
 
 The node advertises `kNodeFlagSupportsSplice`. Whole-buffer forwarding and queued
 payloads preserve private pipes. In `pause` mode, partial grants use `sbufMoveRangeTo()`

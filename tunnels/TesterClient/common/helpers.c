@@ -165,19 +165,6 @@ static void testerclientFillPayloadForFlow(uint8_t flow_id, sbuf_t *buf, uint8_t
     testerclientFillBytesForFlow(flow_id, ptr, payload_len, chunk_index, chunk_offset, direction);
 }
 
-static uint32_t testerclientGetExpectedPayloadLength(tunnel_t *t, uint8_t chunk_index)
-{
-    testerclient_tstate_t *ts         = tunnelGetState(t);
-    uint32_t               chunk_size = testerclientGetChunkSize(t, chunk_index);
-
-    if (! (ts->packet_mode && ts->packet_ipv4_mode))
-    {
-        return chunk_size;
-    }
-
-    return chunk_size - testerclientPacketIpv4PayloadOffset(ts);
-}
-
 static void testerclientPacketIpv4DirectionAddrs(const testerclient_tstate_t *ts, testerclient_direction_e direction,
                                                  uint32_t *src_addr, uint32_t *dest_addr)
 {
@@ -406,22 +393,30 @@ static bool testerclientVerifyPacketIpv4Transport(testerclient_tstate_t *ts, sbu
     uint16_t ip_checksum = IPH_CHKSUM(ipheader);
     calcFullPacketChecksum(packet, sbufGetLength(buf));
 
-    if (IPH_CHKSUM(ipheader) != ip_checksum)
-    {
-        return false;
-    }
+    const bool ip_checksum_matches = IPH_CHKSUM(ipheader) == ip_checksum;
+    IPH_CHKSUM_SET(ipheader, ip_checksum);
 
+    // Verification must preserve the received bytes even when either checksum is invalid.
+    uint16_t computed_transport_checksum;
     switch (ts->packet_ipv4_transport)
     {
     case kTesterClientPacketIpv4TransportTcp:
-        return ((struct tcp_hdr *) transport)->chksum == transport_checksum;
+        computed_transport_checksum            = ((struct tcp_hdr *) transport)->chksum;
+        ((struct tcp_hdr *) transport)->chksum = transport_checksum;
+        break;
     case kTesterClientPacketIpv4TransportUdp:
-        return ((struct udp_hdr *) transport)->chksum == transport_checksum;
+        computed_transport_checksum            = ((struct udp_hdr *) transport)->chksum;
+        ((struct udp_hdr *) transport)->chksum = transport_checksum;
+        break;
     case kTesterClientPacketIpv4TransportIcmp:
-        return ((struct icmp_echo_hdr *) transport)->chksum == transport_checksum;
+        computed_transport_checksum                  = ((struct icmp_echo_hdr *) transport)->chksum;
+        ((struct icmp_echo_hdr *) transport)->chksum = transport_checksum;
+        break;
     default:
         return false;
     }
+
+    return ip_checksum_matches && computed_transport_checksum == transport_checksum;
 }
 
 static bool testerclientDecodePacketIpv4(tunnel_t *t, sbuf_t *buf, testerclient_direction_e direction,
@@ -692,15 +687,6 @@ bool testerclientVerifyChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t chunk_
             return false;
         }
 
-        if (payload_len != testerclientGetExpectedPayloadLength(t, chunk_index))
-        {
-            if (bad_offset != NULL)
-            {
-                *bad_offset = payload_len;
-            }
-            return false;
-        }
-
         ptr = packet_payload;
     }
 
@@ -815,14 +801,7 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
                     if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
                     {
                         ls->request_send_scheduled = false;
-                        if (ts->packet_mode)
-                        {
-                            testerclientFail(t, l, "failed to schedule split request progress");
-                        }
-                        else
-                        {
-                            testerclientFailOwnedLine(t, l, "failed to schedule split request progress", true);
-                        }
+                        testerclientFailOwnedLine(t, l, "failed to schedule split request progress", true);
                     }
                     else
                     {
@@ -836,14 +815,7 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
                     if (UNLIKELY(result == kLineTaskSubmitRejectedSettled))
                     {
                         ls->request_send_scheduled = false;
-                        if (ts->packet_mode)
-                        {
-                            testerclientFail(t, l, "failed to schedule delayed split request progress");
-                        }
-                        else
-                        {
-                            testerclientFailOwnedLine(t, l, "failed to schedule delayed split request progress", true);
-                        }
+                        testerclientFailOwnedLine(t, l, "failed to schedule delayed split request progress", true);
                     }
                     else
                     {

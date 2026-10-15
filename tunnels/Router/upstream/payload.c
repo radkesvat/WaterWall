@@ -192,7 +192,7 @@ void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     router_match_t match = routerClassify(ts, &mctx);
     if (match.result == kRouterClassifyNeedMore)
     {
-        // A future content-based matcher may ask for more bytes; keep buffering.
+        // Keep incomplete protocol metadata for the next delivery.
         return;
     }
 

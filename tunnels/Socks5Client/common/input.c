@@ -178,18 +178,12 @@ static bool parseHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate_t *l
                 address_context_t relay_addr = {0};
                 size_t            consumed   = 0;
                 int parsed = socks5clientParseAddressBytes(reply + 3, (size_t) reply_len - 3, &relay_addr, &consumed);
+                /* getCommandReplyLength already validated the tag and complete extent. */
+                assert(parsed == 1 && consumed == (size_t) reply_len - 3);
+                discard parsed;
                 lineReuseBuffer(l, reply_buf);
 
-                if (parsed <= 0)
-                {
-                    addresscontextReset(&relay_addr);
-                    LOGE("Socks5Client: proxy sent an invalid UDP relay address");
-                    socks5clientCloseLineBidirectional(t, l);
-                    return false;
-                }
-
                 addresscontextSetOnlyProtocol(&relay_addr, IP_PROTO_UDP);
-                addresscontextCopy(&ls->relay_addr, &relay_addr);
                 ls->phase = kSocks5ClientPhaseEstablished;
 
                 bool control_alive = true;

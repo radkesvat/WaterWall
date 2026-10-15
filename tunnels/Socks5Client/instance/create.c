@@ -4,36 +4,6 @@
 
 #include "loggers/network_logger.h"
 
-static bool socks5clientAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
-{
-    cJSON *strategy_json = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
-    if (strategy_json == NULL)
-    {
-        return false;
-    }
-
-    strategy_json->valueint    = (int) strategy;
-    strategy_json->valuedouble = (double) strategy_json->valueint;
-    return true;
-}
-
-static cJSON *socks5clientCreateDomainResolverSettings(enum domain_strategy strategy)
-{
-    cJSON *settings = cJSON_CreateObject();
-    if (settings == NULL)
-    {
-        return NULL;
-    }
-
-    if (! socks5clientAddDomainStrategySetting(settings, strategy))
-    {
-        cJSON_Delete(settings);
-        return NULL;
-    }
-
-    return settings;
-}
-
 static bool socks5clientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     socks5client_tstate_t *ts = tunnelGetState(t);
@@ -43,12 +13,8 @@ static bool socks5clientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return true;
     }
 
-    ts->domain_resolver_settings = socks5clientCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
-    if (ts->domain_resolver_settings == NULL)
-    {
-        LOGF("Socks5Client: failed to create internal DomainResolver settings");
-        return false;
-    }
+    ts->domain_resolver_settings = cJSON_CreateObject();
+    cJSON_AddNumberToObject(ts->domain_resolver_settings, "strategy", (double) ts->domain_strategy);
 
     if (! nodeConfigureChild(&ts->domain_resolver_node,
                              nodeDomainResolverGet(),
@@ -90,10 +56,10 @@ static bool parseTargetAddress(socks5client_tstate_t *ts, const cJSON *settings)
     }
 
     const char *address = address_json->valuestring;
-
-    if (stringLength(address) == 0)
+    const size_t length  = stringLength(address);
+    if (length == 0 || length > UINT8_MAX)
     {
-        LOGF("JSON Error: Socks5Client->settings->target-address must not be empty");
+        LOGF("JSON Error: Socks5Client->settings->target-address must be 1..%u bytes", (unsigned int) UINT8_MAX);
         return false;
     }
 
@@ -107,7 +73,7 @@ static bool parseTargetAddress(socks5client_tstate_t *ts, const cJSON *settings)
 
     if (! addresscontextSetIpAddress(&ts->target_addr, address))
     {
-        addresscontextDomainSet(&ts->target_addr, address, (uint8_t) stringLength(address));
+        addresscontextDomainSet(&ts->target_addr, address, (uint8_t) length);
     }
 
     return true;

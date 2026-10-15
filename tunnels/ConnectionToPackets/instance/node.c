@@ -5,7 +5,7 @@
 
 /*
  * A layer-4 connection enters and raw layer-3 packets leave, so this node operates
- * across both layer groups (kNodeLayerAnything with layer_group_next_node = kNodeLayer3
+ * across both layer groups (kNodeLayer3 | kNodeLayer4 with layer_group_next_node = kNodeLayer3
  * and layer_group_prev_node = kNodeLayer4). Its fixed L3 next-edge requirement is
  * what classifies the chain as a packet chain and triggers packet line allocation.
  */

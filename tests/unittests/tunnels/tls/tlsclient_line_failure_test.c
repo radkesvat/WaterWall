@@ -3,7 +3,7 @@
  * suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: caseRealLineInitFails, caseClientHelloHelperFails
+ * Cases: caseRealLineInitFails, caseClientHelloHelperFails, caseInnerClientHelloFailureReleasesRuntimeBios
  * Checks: Assertion labels include: the failing line did not close exactly the previous side; the next
  * tunnel received Finish it never opened; the previous side was not finished exactly once; the failing
  * TlsClient line state was not zeroed
@@ -14,10 +14,10 @@
 /*
  * TlsClient line-state initialization failure injection.
  *
- * Every allocation inside tlsclientLinestateInitialize() happens before SSL_set_bio(), so the SSL object does not
- * own the detached BIOs yet and each object has to be released by its own owner. A failure there is per-line: the
- * line state must come back fully zeroed, nothing may leak, and only the previous side may be closed because the
- * next tunnel never received Init.
+ * The three SSL/BIO object allocations precede SSL_set_bio(), so partial allocation failure releases the
+ * detached objects individually. Later configuration and ECH-inner failures release the BIOs through SSL.
+ * Each failure is per-line: state must return fully zeroed, nothing may leak, and only the previous side
+ * may be closed because the next tunnel never received Init.
  *
  * Both callers are covered: the real-line upstream Init and the temporary ClientHello helper.
  */
@@ -38,14 +38,22 @@ typedef enum tlsclient_injection_e
     kInjectFirstBio,
     kInjectSecondBio,
     kInjectSsl,
-    kInjectAlps
+    kInjectAlps,
+    kInjectInnerFirstBio,
+    kInjectInnerSecondBio,
+    kInjectInnerSsl
 } tlsclient_injection_t;
 
 static tlsclient_injection_t g_injection = kInjectNothing;
 static uint32_t              g_bio_calls = 0;
+static uint32_t              g_ssl_calls;
+static bool                  g_track_runtime_bios, g_inner_failure_triggered;
+static BIO                  *g_runtime_bios[2];
 
 BIO *__real_WW_BSSL_BIO_new(const BIO_METHOD *method);
 BIO *__wrap_WW_BSSL_BIO_new(const BIO_METHOD *method);
+int  __real_WW_BSSL_BIO_free(BIO *bio);
+int  __wrap_WW_BSSL_BIO_free(BIO *bio);
 SSL *__real_WW_BSSL_SSL_new(SSL_CTX *ctx);
 SSL *__wrap_WW_BSSL_SSL_new(SSL_CTX *ctx);
 int  __real_WW_BSSL_SSL_add_application_settings(SSL *ssl, const uint8_t *proto, size_t proto_len,
@@ -65,14 +73,37 @@ BIO *__wrap_WW_BSSL_BIO_new(const BIO_METHOD *method)
     {
         return NULL;
     }
+    if ((g_injection == kInjectInnerFirstBio && g_bio_calls == 3) ||
+        (g_injection == kInjectInnerSecondBio && g_bio_calls == 4))
+    {
+        g_inner_failure_triggered = true;
+        return NULL;
+    }
 
-    return __real_WW_BSSL_BIO_new(method);
+    BIO *bio = __real_WW_BSSL_BIO_new(method);
+    if (g_track_runtime_bios && g_bio_calls <= ARRAY_SIZE(g_runtime_bios))
+        g_runtime_bios[g_bio_calls - 1] = bio;
+    return bio;
+}
+
+int __wrap_WW_BSSL_BIO_free(BIO *bio)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(g_runtime_bios); ++i)
+        if (g_runtime_bios[i] == bio)
+            g_runtime_bios[i] = NULL;
+    return __real_WW_BSSL_BIO_free(bio);
 }
 
 SSL *__wrap_WW_BSSL_SSL_new(SSL_CTX *ctx)
 {
+    ++g_ssl_calls;
     if (g_injection == kInjectSsl)
     {
+        return NULL;
+    }
+    if (g_injection == kInjectInnerSsl && g_ssl_calls == 2)
+    {
+        g_inner_failure_triggered = true;
         return NULL;
     }
     return __real_WW_BSSL_SSL_new(ctx);
@@ -90,8 +121,10 @@ int __wrap_WW_BSSL_SSL_add_application_settings(SSL *ssl, const uint8_t *proto, 
 
 static void injectionArm(tlsclient_injection_t injection)
 {
-    g_injection = injection;
-    g_bio_calls = 0;
+    g_injection               = injection;
+    g_bio_calls               = 0;
+    g_ssl_calls               = 0;
+    g_inner_failure_triggered = false;
 }
 
 static void injectionDisarm(void)
@@ -233,8 +266,38 @@ static void caseClientHelloHelperFails(tlsclient_injection_t injection, const ch
     fixtureTeardown(&fixture);
 }
 
+static void caseInnerClientHelloFailureReleasesRuntimeBios(tlsclient_injection_t injection)
+{
+    twfSetCase("ECH inner ClientHello failure releases the outer runtime BIOs");
+    tlsclient_fixture_t fixture;
+    fixtureSetup(&fixture);
+    tlsclient_tstate_t *ts                        = tunnelGetState(fixture.tls);
+    ts->ech_grease_sni_override                   = (char *) "inner.example.com";
+    ts->threadlocal_ech_grease_inner_ssl_contexts = fixture.ssl_ctx_slot;
+    line_t        *l                              = twfLineCreate(fixture.tls->lstate_size);
+    const uint32_t refs                           = twfLineRefCount(l);
+
+    injectionArm(injection);
+    g_track_runtime_bios = true;
+    tlsclientTunnelUpStreamInit(fixture.tls, l);
+    g_track_runtime_bios = false;
+    injectionDisarm();
+
+    twfRequire(g_inner_failure_triggered, "inner TLS-object failure was not exercised");
+    twfRequire(g_runtime_bios[0] == NULL && g_runtime_bios[1] == NULL,
+               "outer runtime BIOs leaked before SSL configuration");
+    twfRequireEqualText(fixture.trace.seq, "f", "inner failure notified an uninitialized next side");
+    twfRequireLineStateZeroed(l, fixture.tls, "inner failure retained outer line state");
+    twfRequireEqualU32(twfLineRefCount(l), refs, "inner failure retained a line reference");
+    twfLineDestroy(l);
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
+    caseInnerClientHelloFailureReleasesRuntimeBios(kInjectInnerFirstBio);
+    caseInnerClientHelloFailureReleasesRuntimeBios(kInjectInnerSecondBio);
+    caseInnerClientHelloFailureReleasesRuntimeBios(kInjectInnerSsl);
     caseRealLineInitFails(kInjectFirstBio, "real line: first BIO allocation fails");
     caseRealLineInitFails(kInjectSecondBio, "real line: second BIO allocation fails");
     caseRealLineInitFails(kInjectSsl, "real line: SSL allocation fails");

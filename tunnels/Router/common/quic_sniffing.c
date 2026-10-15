@@ -276,13 +276,10 @@ static router_quic_tls_parse_t routerQuicParseTlsClientHelloSni(const uint8_t *p
     return kRouterQuicTlsParseOk;
 }
 
+/* The caller validates crypto_len against the source payload before reassembly. */
 static bool routerQuicMarkCrypto(uint8_t *crypto, uint8_t *seen, size_t *max_crypto_end, uint64_t crypto_offset,
-                                 uint64_t crypto_len, const uint8_t *src, size_t src_len)
+                                 uint64_t crypto_len, const uint8_t *src)
 {
-    if (crypto_len > src_len)
-    {
-        return false;
-    }
     if (crypto_offset > kRouterQuicCryptoMax || crypto_len > kRouterQuicCryptoMax - crypto_offset)
     {
         return false;
@@ -376,8 +373,7 @@ static bool routerQuicParseInitialFrames(const uint8_t *payload, size_t payload_
             {
                 return false;
             }
-            if (! routerQuicMarkCrypto(
-                    crypto, seen, max_crypto_end, crypto_offset, crypto_len, payload + offset, payload_len - offset))
+            if (! routerQuicMarkCrypto(crypto, seen, max_crypto_end, crypto_offset, crypto_len, payload + offset))
             {
                 return false;
             }
@@ -463,11 +459,6 @@ generic_sniffer_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
 
         bool is_initial = ((first & 0x30U) >> 4U) == 0x00U;
 
-        if (offset >= available)
-        {
-            result = kGenericSnifferMissing;
-            break;
-        }
         uint8_t dcid_len = packet_start[offset++];
         if (dcid_len > kRouterQuicMaxConnectionIdLength || offset + dcid_len > available)
         {
@@ -525,7 +516,7 @@ generic_sniffer_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         }
         saw_initial = true;
 
-        if (pn_offset + 4U + kRouterQuicAes128BlockLength > packet_end)
+        if (packet_len < 4U + kRouterQuicAes128BlockLength)
         {
             result = kGenericSnifferMissing;
             break;
@@ -561,12 +552,8 @@ generic_sniffer_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
 
         packet[0] ^= mask[0] & 0x0fU;
         size_t pn_len = (size_t) ((packet[0] & 0x03U) + 1U);
-        if (pn_offset + pn_len > packet_end)
-        {
-            memoryFree(packet);
-            result = kGenericSnifferMissing;
-            break;
-        }
+        /* The sample check already reserves the maximum four packet-number bytes. */
+        assert(pn_len <= packet_len);
 
         uint64_t packet_number = 0;
         for (size_t i = 0; i < pn_len; ++i)

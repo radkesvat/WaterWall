@@ -33,7 +33,12 @@ void tlsserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             LOGD("TlsServer: worker %u queueing downstream payload until TLS handshake completes",
                  (unsigned int) lineGetWID(l));
         }
-        bufferqueuePushBack(&ls->pending_down, buf);
+        if (UNLIKELY(! bufferqueueTryPushBack(&ls->pending_down, &buf)))
+        {
+            LOGW("TlsServer: pre-handshake plaintext queue limit exceeded");
+            lineReuseBuffer(l, buf);
+            tlsserverCloseLineFatal(t, l);
+        }
         lineUnref(l);
         return;
     }

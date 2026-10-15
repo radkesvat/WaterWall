@@ -34,7 +34,7 @@ bool   hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigne
 bool   hpsQueueOutput(hps_session_t *s, hps_direction_t d, const char *data, size_t n);
 void   hpsFail(hps_session_t *s, unsigned status);
 void   hpsUpdatePressure(hps_session_t *s);
-bool   hpsDeliverPayload(hps_session_t *s, hps_direction_t d, sbuf_t *b);
+void   hpsDeliverPayload(hps_session_t *s, hps_direction_t d, sbuf_t *b);
 int    hpsReadHeader(hps_session_t *s, hps_direction_t d, char **block);
 bool   hpsRewriteHeaderOutput(hps_session_t *s, const hps_header_t *h, hps_direction_t d);
 hps_step_t hpsProcessBody(hps_session_t *s, hps_direction_t d);

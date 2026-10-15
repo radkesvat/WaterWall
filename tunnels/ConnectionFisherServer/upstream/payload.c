@@ -45,7 +45,6 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
             /* Publish the continuing route before synchronous Est/data from Init.
              * buf is older than every reentrant input in pending_up. */
             ls->phase              = kConnectionFisherServerPhaseEstablished;
-            ls->next_init_sent     = true;
             ls->init_payload_bytes = sbufGetLength(buf);
             tunnelNextUpStreamInit(t, l);
             if (UNLIKELY(! lineIsAlive(l) || ls->phase == kConnectionFisherServerPhaseClosing))

@@ -71,7 +71,7 @@ bool udplistenerDynamicEndpointOpen(tunnel_t *t, wid_t wid, const udplistener_dy
 
     udplistener_tstate_t *ts = tunnelGetState(t);
     if (! atomic_load_explicit(&ts->dynamic_admission_open, memory_order_acquire) || ts->worker_registries == NULL ||
-        wid >= ts->workers_count || ! currentThreadIsEventWorkerWID(wid))
+        wid >= ts->workers_count)
     {
         return false;
     }
@@ -141,8 +141,7 @@ bool udplistenerDynamicEndpointOpen(tunnel_t *t, wid_t wid, const udplistener_dy
     ep->bound_local_addr     = *local_addr;
     ep->bound_local_port     = local_port;
     ep->expected_peer_ip     = expected_peer_ip;
-    ep->expected_source_port = req->expected_source_port;
-    ep->source_port_pinned   = req->expected_source_port != 0;
+    ep->expected_source_port           = req->expected_source_port;
     ep->line                 = NULL;
     ep->tunnel               = t;
 
@@ -352,7 +351,7 @@ void udplistenerOnDynamicEndpointRead(wio_t *io, sbuf_t *buf)
             return;
         }
     }
-    else if (! ep->source_port_pinned)
+    else
     {
         if (peer_port == 0)
         {
@@ -360,12 +359,6 @@ void udplistenerOnDynamicEndpointRead(wio_t *io, sbuf_t *buf)
             return;
         }
         ep->expected_source_port = peer_port;
-        ep->source_port_pinned   = true;
-    }
-    else if (peer_port != ep->expected_source_port)
-    {
-        udplistenerRecycleDynamicBuffer(callback_pool, buf);
-        return;
     }
 
     ep->pinned_peer_addr = *peer_sockaddr;
@@ -375,11 +368,6 @@ void udplistenerOnDynamicEndpointRead(wio_t *io, sbuf_t *buf)
     if (line == NULL)
     {
         line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(listener)), wid);
-        if (line == NULL)
-        {
-            udplistenerRecycleDynamicBuffer(callback_pool, buf);
-            return;
-        }
 
         addresscontextFromSockAddrWithProtocol(&line->routing_context.src_ctx, peer_sockaddr, IP_PROTO_UDP);
         line->routing_context.peer_source_port = peer_port;

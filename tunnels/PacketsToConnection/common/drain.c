@@ -335,7 +335,8 @@ static err_t ptcDrainRecvCallback(void *arg, struct tcp_pcb *pcb, struct pbuf *p
         {
             pbuf_free(p);
         }
-        return ptcDrainAbortLocked(drain, "the peer reported a receive error") == kPtcDrainAborted ? ERR_ABRT : ERR_OK;
+        discard ptcDrainAbortLocked(drain, "the peer reported a receive error");
+        return ERR_ABRT;
     }
     if (p == NULL)
     {
@@ -402,10 +403,9 @@ static uint8_t *ptcDrainTakeBytes(ptc_lstate_t *ls, uint32_t total)
     return bytes;
 }
 
-ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *ls, bool *out_aborted)
+ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *ls)
 {
     ptc_tstate_t *ts = tunnelGetState(t);
-    *out_aborted     = false;
 
     if (ls->tcp_pcb == NULL)
     {
@@ -413,8 +413,8 @@ ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *l
     }
 
     const size_t queued = bufferqueueGetBufLen(&ls->pause_queue);
-    if (queued > UINT32_MAX)
-        return kPtcTcpDrainFailed;
+    /* Unwritten bytes are a suffix of the bounded pending acknowledgement records. */
+    assert(queued <= ls->pending_bytes && queued <= UINT32_MAX);
 
     if (! ptcPausedReadAccumulateLocked(ls, 0) ||
         (ls->rx_uncredited > 0 && ! ptcReturnReceiveCreditLocked(ls, ls->rx_uncredited)))
@@ -455,7 +455,7 @@ ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *l
 
     ptcDetachTcpPcbLocked(ls);
     ptcDrainInstallCallbacksLocked(drain);
-    *out_aborted = ptcDrainAdvanceLocked(drain, ptcDrainNowMs()) == kPtcDrainAborted;
+    discard ptcDrainAdvanceLocked(drain, ptcDrainNowMs());
     return kPtcTcpDrainAdopted;
 }
 

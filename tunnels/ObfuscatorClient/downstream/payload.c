@@ -16,10 +16,7 @@ void obfuscatorclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
         return;
     }
 
-    if (ts->method == kObfuscatorMethodXor)
-    {
-        obfuscatorclientApplyXor(t, l, buf);
-    }
+    obfuscatorclientApplyXor(t, l, buf);
 
     if (l == tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l)))
     {

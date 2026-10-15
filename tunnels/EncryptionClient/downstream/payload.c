@@ -27,8 +27,7 @@ static int tryReadCompleteFrame(buffer_stream_t *stream, const encryptionclient_
 
     uint32_t body_len = ((uint32_t) header[3] << 8) | (uint32_t) header[4];
     if (body_len < kEncryptionNonceSize + kEncryptionTagSize ||
-        body_len > ts->max_frame_payload + kEncryptionNonceSize + kEncryptionTagSize ||
-        body_len > kEncryptionMaxTlsRecordBody)
+        body_len > ts->max_frame_payload + kEncryptionNonceSize + kEncryptionTagSize)
     {
         return kFrameReadInvalid;
     }
@@ -41,21 +40,6 @@ static int tryReadCompleteFrame(buffer_stream_t *stream, const encryptionclient_
 
     *frame_buffer = bufferstreamReadExact(stream, frame_len);
     return kFrameReadOk;
-}
-
-static bool isOverflow(buffer_stream_t *read_stream, const encryptionclient_tstate_t *ts)
-{
-    size_t max_frame = (size_t) ts->max_frame_payload + kEncryptionTagSize + kEncryptionFramePrefixSize;
-    size_t limit     = max_frame * 2;
-
-    if (bufferstreamGetBufLen(read_stream) > limit)
-    {
-        LOGW("EncryptionClient: DownStreamPayload: read stream overflow, size: %zu, limit: %zu",
-             bufferstreamGetBufLen(read_stream),
-             limit);
-        return true;
-    }
-    return false;
 }
 
 void encryptionclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -72,13 +56,12 @@ void encryptionclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
         if (read_result == kFrameReadNeedMore)
         {
-            break;
+            return;
         }
 
         if (read_result == kFrameReadInvalid)
         {
             LOGW("EncryptionClient: invalid encrypted frame received, closing line");
-            bufferstreamEmpty(&(ls->read_stream));
             encryptionclientCloseLineBidirectional(t, l);
             return;
         }
@@ -104,7 +87,6 @@ void encryptionclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
         {
             LOGW("EncryptionClient: failed to decrypt frame, closing line");
             lineReuseBuffer(l, frame_buffer);
-            bufferstreamEmpty(&(ls->read_stream));
             encryptionclientCloseLineBidirectional(t, l);
             return;
         }
@@ -116,11 +98,5 @@ void encryptionclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
         {
             return;
         }
-    }
-
-    if (isOverflow(&(ls->read_stream), ts))
-    {
-        bufferstreamEmpty(&(ls->read_stream));
-        encryptionclientCloseLineBidirectional(t, l);
     }
 }

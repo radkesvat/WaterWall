@@ -155,7 +155,7 @@ static bool bindSourceIpIfNeeded(int sockfd, int addr_type, const tcpconnector_s
     return true;
 }
 
-static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate_t *ls,
+static void tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate_t *ls,
                                      const tcpconnector_prepared_connection_t *prepared)
 {
     tcpconnector_tstate_t               *ts             = tunnelGetState(t);
@@ -171,8 +171,6 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
             goto fail;
         }
     }
-
-    // sockaddr_set_ipport(&(dest_ctx.addr), "127.0.0.1", 443);
 
     wloop_t *loop = getCurrentEventWorkerLoop();
 
@@ -285,26 +283,21 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
         ls->io = NULL;
         tcpconnectorLinestateDestroy(ls);
         tunnelPrevDownStreamFinish(t, l);
-        return false;
+        return;
     }
 
     wioSetCallBackConnect(io, tcpconnectorOnOutBoundConnected);
     wioSetCallBackClose(io, tcpconnectorOnClose);
     wioSetConnectTimeout(io, kConnectTimeoutMs);
-    // wioSetReadTimeout(lstate->io, kReadWriteTimeoutMs);
 
     // Prepared settings are consumed before connect can trigger callbacks.
-    if (UNLIKELY(wioConnect(io) != 0))
-    {
-        return false;
-    }
-
-    return true;
+    discard wioConnect(io);
+    return;
 fail:
     SAFE_CLOSESOCKET(sockfd);
     tcpconnectorLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
-    return false;
+    return;
 }
 
 bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l, void *user_lstate)
@@ -383,11 +376,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         goto fail;
     }
 
-    if (! tcpconnectorBeginConnect(t, l, ls, prepared))
-    {
-        return;
-    }
-
+    tcpconnectorBeginConnect(t, l, ls, prepared);
     return;
 
 fail:

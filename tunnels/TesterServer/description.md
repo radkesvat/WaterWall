@@ -29,6 +29,10 @@ It is meant for validating tunnel correctness and data integrity, not for servin
 The pattern is keyed by the client-selected per-flow id carried in the first request byte, not by the server's local
 worker id.
 
+The flow marker does not exempt the remaining bytes of the first chunk from verification. This matters for UDP and
+ICMP packets, whose first chunk contains additional payload bytes. Stateless packet matching rejects invalid checksums
+without repairing the packet between candidate flow ids.
+
 Current stream-mode chunk sizes are:
 
 - `1`

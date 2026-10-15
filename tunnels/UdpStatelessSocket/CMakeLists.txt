@@ -9,12 +9,6 @@ add_library(UdpStatelessSocket STATIC
                     instance/stop.c
                     common/helpers.c
                     common/line_state.c
-                    upstream/init.c
-                    upstream/est.c
-                    upstream/fin.c
-                    upstream/payload.c
-                    upstream/pause.c
-                    upstream/resume.c
                     downstream/init.c
                     downstream/est.c
                     downstream/fin.c

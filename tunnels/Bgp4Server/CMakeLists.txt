@@ -2,7 +2,6 @@ add_library(Bgp4Server STATIC
                     instance/create.c
                     instance/api.c
                     instance/node.c
-                    common/helpers.c
                     common/line_state.c
                     upstream/init.c
                     upstream/fin.c

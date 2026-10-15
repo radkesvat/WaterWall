@@ -104,23 +104,10 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
         }
         lineGetRoutingContext(line)->local_listener_port = upcb->local_port;
 
-        if (! ptc_udp_flow_map_t_insert(&route_ctx->udp_flows, key, line).inserted)
-        {
-            LOGW("PacketsToConnection: duplicate UDP flow detected while creating a line, dropping datagram");
-            // Defer normal-line teardown until this input dispatch releases its
-            // scratch state. Init was never sent, so no Finish is propagated.
-            const line_task_submit_result_e result = lineScheduleTask(line, ptcCloseLineTask, t, NULL);
-            if (result == kLineTaskSubmitRejectedSettled)
-            {
-                discard ptcRequiredControlRefusedLocked(ls, "duplicate UDP-flow close");
-            }
-            else
-            {
-                assert(result == kLineTaskSubmitAcceptedAsync);
-            }
-            pbuf_free(p);
-            return;
-        }
+        /* The owner found no matching flow and has not called any neighbour. */
+        const bool inserted = ptc_udp_flow_map_t_insert(&route_ctx->udp_flows, key, line).inserted;
+        assert(inserted);
+        discard inserted;
 
         new_flow = true;
 
@@ -159,14 +146,8 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
     pbufLargeCopyToPtr(p, sbufGetMutablePtr(buf));
     pbuf_free(p);
 
-    if (lineIsAlive(line))
-    {
-        /* UDP is intentionally lossy when the worker queue refuses admission. */
-        const line_task_submit_result_e result = lineScheduleTaskWithBuf(line, ptcDeliverPayloadTask, t, buf, NULL);
-        discard                         result;
-    }
-    else
-    {
-        lineReuseBuffer(line, buf);
-    }
+    /* Init and Payload are queued, so no neighbour can close this line here.
+     * UDP is intentionally lossy when the worker queue refuses admission. */
+    const line_task_submit_result_e result = lineScheduleTaskWithBuf(line, ptcDeliverPayloadTask, t, buf, NULL);
+    discard                         result;
 }

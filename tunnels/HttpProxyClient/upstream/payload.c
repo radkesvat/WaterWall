@@ -27,12 +27,6 @@ bool hpcUpload(tunnel_t *t, line_t *l, sbuf_t *b)
                 return false;
             }
             ls->suffix = hpcBuffer(l, 2);
-            if (! ls->suffix)
-            {
-                lineReuseBuffer(l, b);
-                hpcClose(t, l);
-                return false;
-            }
             memoryCopy(sbufGetMutablePtr(ls->suffix), "\r\n", 2);
             sbufSetLength(ls->suffix, 2);
             sbufShiftLeft(b, (uint32_t) count);

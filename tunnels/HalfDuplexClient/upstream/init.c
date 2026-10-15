@@ -10,8 +10,8 @@ void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *main)
     lineRef(upload);
     halfduplexclient_lstate_t *up = lineGetState(upload, t);
     halfduplexclientLinestateInitialize(up, main);
-    ls->upload_line = up->upload_line = upload;
-    up->next_started                  = true;
+    // Publishing a child immediately precedes its adjacent Init admission.
+    ls->upload_line = upload;
     tunnelNextUpStreamInit(t, upload);
     if (! lineIsAlive(main) || ! lineIsAlive(upload) || ls->main_line != main)
     {
@@ -23,9 +23,7 @@ void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *main)
     lineRef(download);
     halfduplexclient_lstate_t *down = lineGetState(download, t);
     halfduplexclientLinestateInitialize(down, main);
-    ls->download_line = up->download_line = down->download_line = download;
-    down->upload_line                                           = upload;
-    down->next_started                                          = true;
+    ls->download_line = download;
     tunnelNextUpStreamInit(t, download);
     if (halfduplexclientPairAlive(t, main, upload, download))
     {

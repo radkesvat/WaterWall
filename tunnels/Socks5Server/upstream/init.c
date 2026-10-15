@@ -64,7 +64,7 @@ void socks5serverTunnelUpStreamInit(tunnel_t *t, line_t *l)
             ls->auth_password = stringDuplicate(assoc->auth_password);
         }
 
-        socks5serverRecordLineUser(l, ls, &ls->user_handle);
+        lineAddUser(l, &ls->user_handle, ls->auth_username, ls->auth_password);
         return;
     }
 

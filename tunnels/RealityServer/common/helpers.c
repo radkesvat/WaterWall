@@ -43,14 +43,8 @@ static sbuf_t *realityserverDuplicateBuffer(buffer_pool_t *pool, sbuf_t *buf)
 
 static bool realityserverDeriveSessionKeys(realityserver_tstate_t *ts, realityserver_lstate_t *ls)
 {
-    if (ls->session_keys_ready)
-    {
-        return true;
-    }
-    if (! ls->tls_capture.client_ready || ! ls->tls_capture.server_ready)
-    {
-        return false;
-    }
+    assert(! ls->session_keys_ready);
+    assert(ls->tls_capture.client_ready && ls->tls_capture.server_ready);
 
     reality_v2_record_profile_t profile = {0};
     if (! realityV2SelectRecordProfile(
@@ -66,7 +60,6 @@ static bool realityserverDeriveSessionKeys(realityserver_tstate_t *ts, realityse
         return false;
     }
 
-    ls->binding_ready                      = true;
     reality_v2_session_material_t material = {0};
     if (! realityV2DeriveSessionMaterial(ts->root_key, &ls->tls_capture.binding, &material))
     {
@@ -225,8 +218,8 @@ static WCRYPTO_MUST_USE wcrypto_status_t realityserverDecryptExpectedAdapter(
 static bool realityserverExpectedControlIsPlausible(const realityserver_lstate_t *ls, const sbuf_t *record,
                                                     uint8_t expected_kind, reality_v2_record_descriptor_t *descriptor)
 {
-    if (sbufGetLength(record) < kRealityServerTlsHeaderSize ||
-        ! realityV2BuildRecordDescriptor(kRealityV2Tls13, &ls->record_profile, expected_kind, descriptor))
+    assert(sbufGetLength(record) >= kRealityServerTlsHeaderSize);
+    if (! realityV2BuildRecordDescriptor(kRealityV2Tls13, &ls->record_profile, expected_kind, descriptor))
     {
         return false;
     }
@@ -240,18 +233,12 @@ static bool realityserverExpectedControlIsPlausible(const realityserver_lstate_t
 }
 
 static bool realityserverTryExpectedControl(realityserver_tstate_t *ts, const realityserver_lstate_t *ls,
-                                            const sbuf_t *record, uint8_t expected_kind,
+                                            const sbuf_t *record, const reality_v2_record_descriptor_t *descriptor,
                                             uint8_t plaintext[kRealityV2ControlMaxInnerPlaintext])
 {
-    reality_v2_record_descriptor_t descriptor;
-    if (! realityserverExpectedControlIsPlausible(ls, record, expected_kind, &descriptor))
-    {
-        return false;
-    }
-
     uint32_t payload_offset = 0;
     uint32_t payload_len    = 0;
-    return realityV2TryDecryptExpectedRecord(&descriptor,
+    return realityV2TryDecryptExpectedRecord(descriptor,
                                              kRealityV2DirectionClientToServer,
                                              ls->c2s_recv_seq,
                                              ls->session_id,
@@ -265,7 +252,7 @@ static bool realityserverTryExpectedControl(realityserver_tstate_t *ts, const re
                                              kRealityV2ControlMaxInnerPlaintext,
                                              &payload_offset,
                                              &payload_len) &&
-           realityV2ParseControl(expected_kind, plaintext + payload_offset, payload_len);
+           realityV2ParseControl(descriptor->record_kind, plaintext + payload_offset, payload_len);
 }
 
 bool realityserverSendHandoffAckAtBoundary(tunnel_t *t, line_t *l)
@@ -336,10 +323,7 @@ static int realityserverTryReadTlsRecord(buffer_stream_t *stream, sbuf_t **recor
 
 static bool realityserverIsRealityCandidate(const realityserver_lstate_t *ls, sbuf_t *record)
 {
-    if (sbufGetLength(record) < kRealityServerTlsHeaderSize)
-    {
-        return false;
-    }
+    assert(sbufGetLength(record) >= kRealityServerTlsHeaderSize);
 
     reality_v2_record_descriptor_t descriptor;
     return realityV2ClassifyRecord(
@@ -564,11 +548,6 @@ static bool realityserverCloseDestinationForAuthorization(tunnel_t *t, line_t *l
             return false;
         }
 
-        if (! lineIsAlive(l))
-        {
-            return false;
-        }
-
         ls->closing_destination_for_authorized = false;
     }
 
@@ -775,7 +754,7 @@ static bool realityserverHandleTls13PendingRecord(tunnel_t *t, line_t *l, sbuf_t
     sbuf_t  *trial = realityserverDuplicateBuffer(pool, record);
     uint8_t  plaintext[kRealityV2ControlMaxInnerPlaintext];
     uint64_t sequence_before = ls->c2s_recv_seq;
-    bool authenticated = realityserverTryExpectedControl(ts, ls, trial, kRealityV2RecordKindHandoffRequest, plaintext);
+    bool     authenticated   = realityserverTryExpectedControl(ts, ls, trial, &request_descriptor, plaintext);
     memoryZero(plaintext, sizeof(plaintext));
     bufferpoolReuseBuffer(pool, trial);
     if (! authenticated)
@@ -842,7 +821,7 @@ static bool realityserverHandleTls13HandoffRecord(tunnel_t *t, line_t *l, sbuf_t
     sbuf_t  *trial = realityserverDuplicateBuffer(pool, record);
     uint8_t  plaintext[kRealityV2ControlMaxInnerPlaintext];
     uint64_t sequence_before = ls->c2s_recv_seq;
-    bool authenticated = realityserverTryExpectedControl(ts, ls, trial, kRealityV2RecordKindHandoffConfirm, plaintext);
+    bool     authenticated   = realityserverTryExpectedControl(ts, ls, trial, &confirm_descriptor, plaintext);
     memoryZero(plaintext, sizeof(plaintext));
     bufferpoolReuseBuffer(pool, trial);
     if (! authenticated)
@@ -854,11 +833,7 @@ static bool realityserverHandleTls13HandoffRecord(tunnel_t *t, line_t *l, sbuf_t
     assert(sequence_before == 1);
     ls->c2s_recv_seq = sequence_before + 1;
     bufferpoolReuseBuffer(pool, record);
-    if (! realityserverSwitchToAuthorized(t, l))
-    {
-        return false;
-    }
-    return true;
+    return realityserverSwitchToAuthorized(t, l);
 }
 
 bool realityserverProcessUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -1206,7 +1181,7 @@ static void realityserverTerminalClose(tunnel_t *t, line_t *l, uint8_t alert, bo
     }
 
     if (alert != kRealityV2AlertInvalid && ls->mode == kRealityServerModeAuthorized && ls->session_keys_ready &&
-        ! ls->prev_finished && ! ls->wire_alert_sent)
+        ! ls->prev_finished)
     {
         uint8_t alert_bytes[kRealityV2AlertMessageSize];
         sbuf_t *frame = NULL;
@@ -1217,7 +1192,6 @@ static void realityserverTerminalClose(tunnel_t *t, line_t *l, uint8_t alert, bo
         memoryZero(alert_bytes, sizeof(alert_bytes));
         if (built)
         {
-            ls->wire_alert_sent = true;
             tunnelPrevDownStreamPayload(t, l, frame);
             if (! lineIsAlive(l))
             {

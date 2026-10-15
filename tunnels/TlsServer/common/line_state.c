@@ -14,6 +14,12 @@ bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buff
         .shaping_retired                       = false,
         .verbose                               = verbose,
     };
+    bufferbudgetInit(
+        &ls->pending_down_budget,
+        (buffer_budget_cost_t) {kTlsServerPendingPlaintextBytes, SIZE_MAX, kTlsServerPendingPlaintextBuffers});
+    const bool attached = bufferqueueTryAttachBudget(&ls->pending_down, &ls->pending_down_budget);
+    assert(attached);
+    discard attached;
 
     if (record_shaping->enabled)
     {
@@ -106,6 +112,7 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls)
     }
 
     bufferqueueDestroy(&ls->pending_down);
+    bufferbudgetAssertEmpty(&ls->pending_down_budget);
     bufferstreamDestroy(&ls->fallback_probe);
 
     ls->handshake_completed = false;

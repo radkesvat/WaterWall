@@ -675,12 +675,8 @@ ctp_tcp_drain_adopt_result_t ctpTcpDrainAdoptLocked(tunnel_t *t, ctp_lstate_t *l
         return kCtpTcpDrainNotNeeded;
     }
 
-    // The per-line pending limit already keeps this well inside 32 bits; the
-    // check is here so a future change to that limit cannot make it wrap.
-    if (queued > (size_t) UINT32_MAX)
-    {
-        return kCtpTcpDrainFailed;
-    }
+    // Pending admission bounds the queue to 64 MiB plus 1 MiB of delivery headroom.
+    assert(queued <= UINT32_MAX);
 
     const uint32_t total = (uint32_t) queued;
 

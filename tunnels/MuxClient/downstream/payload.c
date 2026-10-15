@@ -5,10 +5,7 @@
 static bool handleCloseFrame(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, muxclient_tstate_t *ts,
                              muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls)
 {
-    line_t *child_l = child_ls->l;
-
     LOGD("MuxClient: DownStreamPayload: Close frame received, cid: %u", frame->cid);
-    discard child_l;
     return muxclientBeginPeerCloseDrain(t, parent_l, ts, parent_ls, child_ls);
 }
 

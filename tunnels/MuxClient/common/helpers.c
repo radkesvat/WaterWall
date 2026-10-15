@@ -617,7 +617,7 @@ static void muxclientCloseChildKeepParentImpl(tunnel_t *t, muxclient_tstate_t *t
     {
         line_t *child_l = child_ls->l;
         muxclientLeaveConnection(child_ls);
-        discard muxclientReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
+        muxclientReleaseParentInputForChildClose(parent_ls, child_ls);
         muxclientLinestateDestroy(child_ls);
         if (notify_child_prev)
         {
@@ -633,9 +633,9 @@ static void muxclientCloseChildKeepParentImpl(tunnel_t *t, muxclient_tstate_t *t
 
     muxclientLeaveConnection(child_ls);
 
-    const bool parent_alive = muxclientReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
+    muxclientReleaseParentInputForChildClose(parent_ls, child_ls);
 
-    if (! parent_alive || parent_ls->parent_finishing || ! notify_peer)
+    if (parent_ls->parent_finishing || ! notify_peer)
     {
         // A dying parent needs no child Close, and a peer-close drain must not echo a duplicate Close.
         muxclientLinestateDestroy(child_ls);
@@ -643,7 +643,7 @@ static void muxclientCloseChildKeepParentImpl(tunnel_t *t, muxclient_tstate_t *t
         {
             tunnelPrevDownStreamFinish(t, child_l);
         }
-        if (parent_alive && lineIsAlive(parent_l) && parent_ls->parent_state != NULL && ! parent_ls->parent_finishing &&
+        if (lineIsAlive(parent_l) && parent_ls->parent_state != NULL && ! parent_ls->parent_finishing &&
             muxclientParentShouldCloseWhenIdle(ts, parent_ls) && parent_ls->children_count == 0)
         {
             muxclientCloseIdleExhaustedParentLine(t, ts, lineGetWID(parent_l), parent_l, parent_ls);
@@ -743,9 +743,8 @@ static void muxclientSubtractParentPendingChildCharge(muxclient_lstate_t *parent
     parent_ls->pending_child_queue_charge -= charge;
 }
 
-static void muxclientReleaseChildPendingCharge(tunnel_t *t, muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls)
+static void muxclientReleaseChildPendingCharge(muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls)
 {
-    discard      t;
     const size_t pending_charge = child_ls->pending_child_queue_charge;
     const size_t pending_count  = bufferqueueGetBufCount(&child_ls->pending_child_data);
     if (UNLIKELY((pending_charge == 0) != (pending_count == 0)))
@@ -802,11 +801,9 @@ bool muxclientSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_lstate
  * producing for that cid; the aggregate memory bound below protects the process
  * without turning one indefinitely blocked destination into a parent-wide stall.
  */
-bool muxclientReleaseParentInputForChildClose(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls,
-                                              muxclient_lstate_t *child_ls)
+void muxclientReleaseParentInputForChildClose(muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls)
 {
-    muxclientReleaseChildPendingCharge(t, parent_ls, child_ls);
-    return lineIsAlive(parent_l);
+    muxclientReleaseChildPendingCharge(parent_ls, child_ls);
 }
 
 static bool muxclientChildSourcePaused(muxclient_lstate_t *child_ls)
@@ -948,7 +945,7 @@ static bool muxclientCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxc
  * insertion order; replacing on an equal size makes the stable tie-break prefer
  * the oldest attached child.
  */
-static muxclient_lstate_t *muxclientFindLargestQueuedChild(muxclient_lstate_t *parent_ls, size_t *queued_charge_out)
+static muxclient_lstate_t *muxclientFindLargestQueuedChild(muxclient_lstate_t *parent_ls)
 {
     muxclient_lstate_t *largest      = NULL;
     size_t              largest_size = 0;
@@ -963,7 +960,6 @@ static muxclient_lstate_t *muxclientFindLargestQueuedChild(muxclient_lstate_t *p
         }
     }
 
-    *queued_charge_out = largest_size;
     return largest;
 }
 
@@ -989,8 +985,7 @@ bool muxclientEnforceParentReceiveLimit(tunnel_t *t, line_t *parent_l)
             break;
         size_t  before = SIZE_MAX;
         discard muxTryParentReceiveCharge(parent_ls->pending_child_queue_charge, state->read_stream, &before);
-        size_t  victim_charge;
-        muxclient_lstate_t *victim = muxclientFindLargestQueuedChild(parent_ls, &victim_charge);
+        muxclient_lstate_t *victim = muxclientFindLargestQueuedChild(parent_ls);
         if (victim == NULL)
         {
             LOGW("MuxClient: incoming assembly cannot fit parent receive limit (incoming=%zu children=%zu limit=%u)",

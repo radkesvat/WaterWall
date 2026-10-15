@@ -15,7 +15,6 @@ add_library(HalfDuplexClient STATIC
                     downstream/payload.c
                     downstream/pause.c
                     downstream/resume.c
-                    downstream/est.c
   
 )
 

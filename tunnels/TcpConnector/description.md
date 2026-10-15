@@ -110,6 +110,8 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   - `"src_context->address"`
   - `"dest_context->address"`
 
+  Constant domain names must contain between 1 and 255 bytes.
+
   Examples:
   - `"93.184.216.34"`
   - `"2606:2800:220:1:248:1893:25c8:1946"`
@@ -257,12 +259,12 @@ Examples:
 
 This is only used for constant IP addresses, not for domains and not for `src_context` or `dest_context` lookups.
 
-Current implementation notes:
+The suffix must contain only decimal digits. Empty, malformed, and out-of-range prefixes are rejected.
 
-- IPv4 prefixes wider than `/32` are rejected.
-- IPv6 prefixes broader than `/64` are rejected.
-- A more specific prefix produces a smaller random range.
-- If the range size becomes zero or effectively one host, the destination behaves like a fixed address.
+- IPv4 supports `/0` through `/32`; `/0` randomizes all 32 address bits.
+- IPv6 supports `/64` through `/128`; `/64` randomizes all 64 host bits while preserving the network prefix.
+- More specific prefixes randomize only the remaining host bits.
+- `/32` for IPv4 and `/128` for IPv6 keep the address fixed.
 
 ### Socket creation and options
 

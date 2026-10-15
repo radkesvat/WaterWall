@@ -129,10 +129,6 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
     udpstatelesssocketRefreshLocalAddress(state->socket.io);
     state->io_wid = wloopGetWid(weventGetLoop(state->socket.io));
     assert(state->io_wid == 0);
-    /* Head-only by design. Tail role selection is intentionally disabled:
-     * state->is_chain_end = nodeIsLastInChain(t->node); */
-    state->is_chain_end = false;
-
     weventSetUserData(state->socket.io, t);
     wioSetCallBackRead(state->socket.io, udpstatelesssocketOnRecvFrom);
     wioSetCallBackClose(state->socket.io, udpstatelesssocketOnSocketClose);

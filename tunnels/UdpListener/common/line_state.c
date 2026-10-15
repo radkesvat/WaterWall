@@ -44,7 +44,6 @@ void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_
     {
 
         sockaddr_u log_localaddr = effective_local_addr;
-        sockaddrSetPort(&log_localaddr, real_localport);
 
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};

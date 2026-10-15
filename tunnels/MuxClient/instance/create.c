@@ -23,13 +23,10 @@ static bool muxclientReadMaxChildren(const cJSON *settings, uint32_t *value)
 static bool muxclientComputeFixedStorageGeometry(size_t workers_count, uint32_t fixed_connections_count,
                                                  size_t *parents_bytes_out)
 {
-    if (parents_bytes_out == NULL)
-    {
-        return false;
-    }
+    assert(parents_bytes_out != NULL && workers_count > 0 && fixed_connections_count > 0);
     *parents_bytes_out = 0;
 
-    if (workers_count == 0 || fixed_connections_count == 0 || workers_count > SIZE_MAX / fixed_connections_count)
+    if (workers_count > SIZE_MAX / fixed_connections_count)
     {
         return false;
     }

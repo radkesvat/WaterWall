@@ -10,82 +10,49 @@ enum
     kVlessAtypIpv6   = 0x03
 };
 
-static bool vlessclientAddressLength(const address_context_t *ctx, uint32_t *len_out)
+/* Target preparation validates the address before Init snapshots it for this line. */
+static uint32_t vlessclientAddressLength(const address_context_t *ctx)
 {
-    if (addresscontextIsIpType(ctx))
+    if (addresscontextIsIpv4(ctx))
     {
-        if (addresscontextIsIpv4(ctx))
-        {
-            *len_out = 2 + 1 + 4;
-            return true;
-        }
-
-        if (addresscontextIsIpv6(ctx))
-        {
-            *len_out = 2 + 1 + 16;
-            return true;
-        }
-
-        return false;
+        return 2 + 1 + 4;
     }
-
-    if (addresscontextIsDomain(ctx) && ctx->domain_len > 0)
+    if (addresscontextIsIpv6(ctx))
     {
-        *len_out = 2U + 1U + 1U + (uint32_t) ctx->domain_len;
-        return true;
+        return 2 + 1 + 16;
     }
-
-    return false;
+    assert(addresscontextIsDomain(ctx));
+    return 2U + 1U + 1U + (uint32_t) ctx->domain_len;
 }
 
-static bool vlessclientWriteDestination(uint8_t *ptr, const address_context_t *ctx, size_t *offset)
+/* The request uses the destination validated and saved during target preparation. */
+static void vlessclientWriteDestination(uint8_t *ptr, const address_context_t *ctx, size_t *offset)
 {
-    if (UNLIKELY(! addresscontextHasPort(ctx)))
-    {
-        return false;
-    }
+    assert(addresscontextHasPort(ctx));
 
     uint16_t port_be = htobe16(ctx->port);
     memoryCopy(ptr + *offset, &port_be, sizeof(port_be));
     *offset += sizeof(port_be);
 
-    if (addresscontextIsIpType(ctx))
+    if (addresscontextIsIpv4(ctx))
     {
-        if (addresscontextIsIpv4(ctx))
-        {
-            ptr[(*offset)++] = kVlessAtypIpv4;
-            memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip4.addr, 4);
-            *offset += 4;
-            return true;
-        }
-
-        if (addresscontextIsIpv6(ctx))
-        {
-            ptr[(*offset)++] = kVlessAtypIpv6;
-            memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip6, 16);
-            *offset += 16;
-            return true;
-        }
-
-        return false;
+        ptr[(*offset)++] = kVlessAtypIpv4;
+        memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip4.addr, 4);
+        *offset += 4;
+        return;
     }
-
-    if (addresscontextIsDomain(ctx) && ctx->domain_len > 0)
+    if (addresscontextIsIpv6(ctx))
     {
-        ptr[(*offset)++] = kVlessAtypDomain;
-        ptr[(*offset)++] = ctx->domain_len;
-        memoryCopy(ptr + *offset, ctx->domain, ctx->domain_len);
-        *offset += ctx->domain_len;
-        return true;
+        ptr[(*offset)++] = kVlessAtypIpv6;
+        memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip6, 16);
+        *offset += 16;
+        return;
     }
-
-    return false;
-}
-
-static uint8_t protocolToCommand(vlessclient_protocol_t protocol)
-{
-    assert(protocol == kVlessClientProtocolTcp || protocol == kVlessClientProtocolUdp);
-    return protocol == kVlessClientProtocolUdp ? kVlessCmdUdp : kVlessCmdTcp;
+    assert(addresscontextIsDomain(ctx));
+    ptr[(*offset)++] = kVlessAtypDomain;
+    ptr[(*offset)++] = ctx->domain_len;
+    memoryCopy(ptr + *offset, ctx->domain, ctx->domain_len);
+    *offset += ctx->domain_len;
 }
 
 /* Takes ownership of body on every result; first output is always ordinary. */
@@ -93,16 +60,12 @@ bool vlessclientSendInitialRequest(tunnel_t *t, line_t *l, vlessclient_lstate_t 
 {
     vlessclient_tstate_t    *ts       = tunnelGetState(t);
     const address_context_t *target   = &ls->target_addr;
-    uint32_t                 addr_len = 0;
-    if (UNLIKELY(! vlessclientAddressLength(target, &addr_len) || ! addresscontextHasPort(target)))
-    {
-        if (body != NULL)
-            lineReuseBuffer(l, body);
-        return false;
-    }
+    assert(ls->kind == kVlessClientLineKindDirect || ls->kind == kVlessClientLineKindUdpCarrier);
+    uint32_t       addr_len       = vlessclientAddressLength(target);
     uint32_t       body_len       = body == NULL ? 0 : sbufGetLength(body);
     uint32_t       header_len     = 1U + kVlessClientUuidLen + 2U + addr_len;
-    uint32_t       udp_header_len = body != NULL && ls->protocol == kVlessClientProtocolUdp ? 2U : 0U;
+    uint32_t       udp_header_len =
+        body != NULL && ls->kind == kVlessClientLineKindUdpCarrier ? kVlessClientUdpHeaderLen : 0U;
     uint64_t       total          = (uint64_t) header_len + udp_header_len + body_len;
     buffer_pool_t *pool           = lineGetBufferPool(l);
     uint16_t       padding        = bufferpoolGetLargeBufferPadding(pool);
@@ -122,10 +85,8 @@ bool vlessclientSendInitialRequest(tunnel_t *t, line_t *l, vlessclient_lstate_t 
     memoryCopy(ptr + off, ts->uuid, kVlessClientUuidLen);
     off += kVlessClientUuidLen;
     ptr[off++]   = 0;
-    ptr[off++]   = protocolToCommand(ls->protocol);
-    bool written = vlessclientWriteDestination(ptr, target, &off);
-    assert(written);
-    discard written;
+    ptr[off++]   = ls->kind == kVlessClientLineKindUdpCarrier ? kVlessCmdUdp : kVlessCmdTcp;
+    vlessclientWriteDestination(ptr, target, &off);
     if (udp_header_len != 0)
     {
         uint16_t length = htobe16((uint16_t) body_len);

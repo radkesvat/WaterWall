@@ -190,7 +190,7 @@ static bool rawdeviceShouldLogRefusal(void)
 
 bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
 {
-    assert(sbufGetLength(buf) > sizeof(struct ip_hdr));
+    assert(sbufGetLength(buf) >= sizeof(struct ip_hdr));
 
     if (UNLIKELY(! rawdeviceIsUp(rdev)))
     {
@@ -253,8 +253,6 @@ bool rawdeviceBringUp(raw_device_t *rdev)
         rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
         return false;
     }
-
-    // wthread_error_t read_error = threadCreate(&rdev->read_thread, rdev->routine_reader, rdev);
 
     wthread_error_t error = threadCreate(&rdev->write_thread, rawdeviceWriterThreadMain, rdev);
     if (UNLIKELY(error != kWThreadErrorNone))
@@ -383,15 +381,8 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_connt
         return NULL;
     }
 
-    raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
-    if (UNLIKELY(rdev == NULL))
-    {
-        bufferpoolDestroy(writer_bpool);
-        windivertClose(handle);
-        return NULL;
-    }
-
-    char *device_name = stringDuplicate(name);
+    raw_device_t *rdev        = memoryAllocate(sizeof(raw_device_t));
+    char         *device_name = stringDuplicate(name);
     if (UNLIKELY(device_name == NULL))
     {
         memoryFree(rdev);

@@ -29,7 +29,7 @@ static bool tlsclientWritePlaintextChunk(tunnel_t *t, line_t *l, sbuf_t *buf)
     tlsclient_lstate_t *ls     = lineGetState(l, t);
     int                 length = (int) min(sbufGetLength(buf), (uint32_t) SSL3_RT_MAX_PLAIN_LENGTH);
     int                 n      = SSL_write(ls->ssl, sbufGetRawPtr(buf), length);
-    if (UNLIKELY(n <= 0 || getSslStatus(ls->ssl, n) == kSslstatusFail))
+    if (UNLIKELY(n <= 0))
     {
         return false;
     }

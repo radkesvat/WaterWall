@@ -37,7 +37,7 @@ static bool parseAuthClientNode(usercontroller_tstate_t *ts, node_t *node, const
 static bool parseSettings(usercontroller_tstate_t *ts, node_t *node, const cJSON *settings)
 {
     const cJSON *auth_node_json    = cJSON_GetObjectItemCaseSensitive(settings, "auth-client-node-name");
-    int          sweep_interval_ms = kUserControllerDefaultSweepIntervalMs;
+    int          sweep_interval_ms;
 
     if (! cJSON_IsString(auth_node_json) || auth_node_json->valuestring == NULL ||
         auth_node_json->valuestring[0] == '\0')
@@ -74,19 +74,13 @@ tunnel_t *usercontrollerTunnelCreate(node_t *node)
     t->fnEstU     = &usercontrollerTunnelUpStreamEst;
     t->fnFinU     = &usercontrollerTunnelUpStreamFinish;
     t->fnPayloadU = &usercontrollerTunnelUpStreamPayload;
-    t->fnPauseU   = &usercontrollerTunnelUpStreamPause;
-    t->fnResumeU  = &usercontrollerTunnelUpStreamResume;
 
     t->fnInitD    = &usercontrollerTunnelDownStreamInit;
-    t->fnEstD     = &usercontrollerTunnelDownStreamEst;
     t->fnFinD     = &usercontrollerTunnelDownStreamFinish;
     t->fnPayloadD = &usercontrollerTunnelDownStreamPayload;
-    t->fnPauseD   = &usercontrollerTunnelDownStreamPause;
-    t->fnResumeD  = &usercontrollerTunnelDownStreamResume;
 
     t->onPrepare       = &usercontrollerTunnelOnPrepair;
     t->onStart         = &usercontrollerTunnelOnStart;
-    t->onStop          = &usercontrollerTunnelOnStop;
     t->onWorkerQuiesce = &usercontrollerTunnelOnWorkerQuiesce;
     t->onWorkerStop    = &usercontrollerTunnelOnWorkerStop;
     t->onDestroy       = &usercontrollerTunnelDestroy;
@@ -98,8 +92,6 @@ tunnel_t *usercontrollerTunnelCreate(node_t *node)
         return NULL;
     }
 
-    ts->verbose           = false;
-    ts->sweep_interval_ms = kUserControllerDefaultSweepIntervalMs;
     ts->worker_count      = getWorkersCount();
     ts->worker_states     = memoryAllocateZero(sizeof(*ts->worker_states) * ts->worker_count);
     if (! parseSettings(ts, node, settings))

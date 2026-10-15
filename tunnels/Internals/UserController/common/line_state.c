@@ -7,10 +7,8 @@ void usercontrollerLinestateInitialize(usercontroller_lstate_t *ls, bool started
     *ls = (usercontroller_lstate_t) {
         .handle            = userHandleEmpty(),
         .ip_key            = {0},
-        .authenticated     = false,
         .managed           = false,
         .registered        = false,
-        .closing           = false,
         .started_from_next = started_from_next,
     };
 }

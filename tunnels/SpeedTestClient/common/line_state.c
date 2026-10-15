@@ -9,8 +9,6 @@ void speedtestclientLinestateInitialize(speedtestclient_lstate_t *ls, tunnel_t *
 
     *ls = (speedtestclient_lstate_t) {
         .recv_stream                     = splicestreamCreate(lineGetBufferPool(l), kSpeedTestClientFrameHeaderSize),
-        .tunnel                          = t,
-        .line                            = l,
         .stream_id                       = stream_id,
         .expected_reports                = (state->upload ? 1U : 0U) + (state->download ? 1U : 0U),
         .received_reports                = 0,
@@ -41,7 +39,6 @@ void speedtestclientLinestateInitialize(speedtestclient_lstate_t *ls, tunnel_t *
         .remote_receiver_report_received = false,
         .upstream_init_sent              = false,
         .line_complete                   = false,
-        .failed                          = false,
     };
 }
 

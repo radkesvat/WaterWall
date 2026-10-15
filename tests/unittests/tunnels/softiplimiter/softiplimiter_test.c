@@ -4,7 +4,8 @@
  * topology is implied.
  * Cases: testVlessExtraction, testTrojanExtraction, testAdmissionSameIpRefs,
  * testAdmissionRejectsNewIpAtLimit, testStaleRowsArePrunedBeforeReject,
- * testPayloadCheckClosesWhenRowMissing, testTouchRefreshKeepsRowAlive
+ * testPayloadCheckClosesWhenRowMissing, testTouchRefreshKeepsRowAlive,
+ * testExpiredLineCannotReleaseReplacement, testExpiredLineCannotTouchReplacement
  * Checks: Assertion labels include: vless: expected full UUID extraction; vless: wrong UUID hash; vless:
  * short UUID should wait; vless: invalid version should reject
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -99,21 +100,26 @@ static void testAdmissionSameIpRefs(void)
 {
     softiplimiter_identity_map_t table  = softiplimiter_identity_map_t_with_capacity(4);
     softiplimiter_table_result_t result = {0};
+    uint64_t                     generation_cursor = 0;
     softiplimiter_ip_key_t       ip     = ip4(10, 0, 0, 1);
     hash_t                       id     = 1001;
 
-    require(softiplimiterTableAdmit(&table, id, &ip, 1, 1000, 100, &result), "same-ip: first admit failed");
-    require(softiplimiterTableAdmit(&table, id, &ip, 1, 1000, 101, &result), "same-ip: second admit failed");
+    require(softiplimiterTableAdmit(&table, &generation_cursor, id, &ip, 1, 1000, 100, &result),
+            "same-ip: first admit failed");
+    const uint64_t generation = result.generation;
+    require(softiplimiterTableAdmit(&table, &generation_cursor, id, &ip, 1, 1000, 101, &result),
+            "same-ip: second admit failed");
     require(result.count == 1, "same-ip: duplicate IP should count once");
+    require(generation != 0 && result.generation == generation, "same-ip: expected shared admission generation");
 
     const softiplimiter_identity_entry_t *entry = findEntry(&table, id);
     require(entry != NULL && entry->ip_count == 1, "same-ip: expected one row");
     require(entry->ips[0].refs == 2, "same-ip: expected refs=2");
 
-    softiplimiterTableRelease(&table, id, &ip, 1000, 102);
+    softiplimiterTableRelease(&table, id, &ip, generation, 1000, 102);
     entry = findEntry(&table, id);
     require(entry != NULL && entry->ips[0].refs == 1, "same-ip: first release should keep row with refs=1");
-    softiplimiterTableRelease(&table, id, &ip, 1000, 103);
+    softiplimiterTableRelease(&table, id, &ip, generation, 1000, 103);
     require(findEntry(&table, id) == NULL, "same-ip: second release should erase empty identifier");
 
     softiplimiter_identity_map_t_drop(&table);
@@ -123,12 +129,15 @@ static void testAdmissionRejectsNewIpAtLimit(void)
 {
     softiplimiter_identity_map_t table  = softiplimiter_identity_map_t_with_capacity(4);
     softiplimiter_table_result_t result = {0};
+    uint64_t                     generation_cursor = 0;
     softiplimiter_ip_key_t       ip1    = ip4(10, 0, 0, 1);
     softiplimiter_ip_key_t       ip2    = ip4(10, 0, 0, 2);
     hash_t                       id     = 1002;
 
-    require(softiplimiterTableAdmit(&table, id, &ip1, 1, 1000, 100, &result), "limit: first admit failed");
-    require(! softiplimiterTableAdmit(&table, id, &ip2, 1, 1000, 101, &result), "limit: second IP should reject");
+    require(softiplimiterTableAdmit(&table, &generation_cursor, id, &ip1, 1, 1000, 100, &result),
+            "limit: first admit failed");
+    require(! softiplimiterTableAdmit(&table, &generation_cursor, id, &ip2, 1, 1000, 101, &result),
+            "limit: second IP should reject");
     require(result.reason == kSoftIpLimiterTableLimitReached, "limit: expected limit reason");
     require(result.count == 1 && result.limit == 1, "limit: expected count=1 limit=1");
 
@@ -139,12 +148,14 @@ static void testStaleRowsArePrunedBeforeReject(void)
 {
     softiplimiter_identity_map_t table  = softiplimiter_identity_map_t_with_capacity(4);
     softiplimiter_table_result_t result = {0};
+    uint64_t                     generation_cursor = 0;
     softiplimiter_ip_key_t       ip1    = ip4(10, 0, 0, 1);
     softiplimiter_ip_key_t       ip2    = ip4(10, 0, 0, 2);
     hash_t                       id     = 1003;
 
-    require(softiplimiterTableAdmit(&table, id, &ip1, 1, 10, 100, &result), "stale: first admit failed");
-    require(softiplimiterTableAdmit(&table, id, &ip2, 1, 10, 111, &result),
+    require(softiplimiterTableAdmit(&table, &generation_cursor, id, &ip1, 1, 10, 100, &result),
+            "stale: first admit failed");
+    require(softiplimiterTableAdmit(&table, &generation_cursor, id, &ip2, 1, 10, 111, &result),
             "stale: stale row should be pruned before rejection");
     require(result.count == 1, "stale: expected one live row after prune");
 
@@ -159,17 +170,23 @@ static void testPayloadCheckClosesWhenRowMissing(void)
 {
     softiplimiter_identity_map_t table  = softiplimiter_identity_map_t_with_capacity(4);
     softiplimiter_table_result_t result = {0};
+    uint64_t                     generation_cursor = 0;
     softiplimiter_ip_key_t       ip     = ip4(10, 0, 0, 1);
     hash_t                       id     = 1004;
 
-    require(softiplimiterTableAdmit(&table, id, &ip, 1, 10, 100, &result), "payload: admit failed");
-    require(! softiplimiterTableTouch(&table, id, &ip, 1, 10, 111, &result), "payload: stale row should fail touch");
+    require(softiplimiterTableAdmit(&table, &generation_cursor, id, &ip, 1, 10, 100, &result), "payload: admit failed");
+    uint64_t generation = result.generation;
+    require(! softiplimiterTableTouch(&table, id, &ip, generation, 1, 10, 111, &result),
+            "payload: stale row should fail touch");
     require(result.reason == kSoftIpLimiterTableMissingRow, "payload: expected missing row after prune");
     require(findEntry(&table, id) == NULL, "payload: stale-only identifier should be erased");
 
-    require(softiplimiterTableAdmit(&table, id, &ip, 1, 10, 200, &result), "payload: second admit failed");
-    softiplimiterTableRelease(&table, id, &ip, 10, 201);
-    require(! softiplimiterTableTouch(&table, id, &ip, 1, 10, 202, &result), "payload: removed row should fail touch");
+    require(softiplimiterTableAdmit(&table, &generation_cursor, id, &ip, 1, 10, 200, &result),
+            "payload: second admit failed");
+    generation = result.generation;
+    softiplimiterTableRelease(&table, id, &ip, generation, 10, 201);
+    require(! softiplimiterTableTouch(&table, id, &ip, generation, 1, 10, 202, &result),
+            "payload: removed row should fail touch");
     require(result.reason == kSoftIpLimiterTableMissingRow, "payload: expected missing row after release");
 
     softiplimiter_identity_map_t_drop(&table);
@@ -179,16 +196,18 @@ static void testTouchRefreshKeepsRowAlive(void)
 {
     softiplimiter_identity_map_t table  = softiplimiter_identity_map_t_with_capacity(4);
     softiplimiter_table_result_t result = {0};
+    uint64_t                     generation_cursor = 0;
     softiplimiter_ip_key_t       ip     = ip4(10, 0, 0, 1);
     hash_t                       id     = 2001;
 
-    require(softiplimiterTableAdmit(&table, id, &ip, 1, 10, 100, &result), "refresh: admit failed");
+    require(softiplimiterTableAdmit(&table, &generation_cursor, id, &ip, 1, 10, 100, &result), "refresh: admit failed");
+    const uint64_t generation = result.generation;
 
     // Periodic touches refresh last_seen (atomic store/load round-trip) so the row
     // survives well past the raw tolerance window of 10ms.
-    require(softiplimiterTableTouch(&table, id, &ip, 1, 10, 108, &result), "refresh: touch at 108 failed");
-    require(softiplimiterTableTouch(&table, id, &ip, 1, 10, 116, &result), "refresh: touch at 116 failed");
-    require(softiplimiterTableTouch(&table, id, &ip, 1, 10, 124, &result), "refresh: touch at 124 failed");
+    require(softiplimiterTableTouch(&table, id, &ip, generation, 1, 10, 108, &result), "refresh: touch at 108 failed");
+    require(softiplimiterTableTouch(&table, id, &ip, generation, 1, 10, 116, &result), "refresh: touch at 116 failed");
+    require(softiplimiterTableTouch(&table, id, &ip, generation, 1, 10, 124, &result), "refresh: touch at 124 failed");
 
     const softiplimiter_identity_entry_t *entry = findEntry(&table, id);
     require(entry != NULL && entry->ip_count == 1, "refresh: row should remain alive after refreshes");
@@ -196,11 +215,84 @@ static void testTouchRefreshKeepsRowAlive(void)
             "refresh: last_seen should track the latest touch");
 
     // Stop refreshing: once now advances past last_seen + tolerance the row expires.
-    require(! softiplimiterTableTouch(&table, id, &ip, 1, 10, 200, &result), "refresh: stale row should expire");
+    require(! softiplimiterTableTouch(&table, id, &ip, generation, 1, 10, 200, &result),
+            "refresh: stale row should expire");
     require(result.reason == kSoftIpLimiterTableMissingRow, "refresh: expected missing row after expiry");
     require(findEntry(&table, id) == NULL, "refresh: expired-only identifier should be erased");
 
     softiplimiter_identity_map_t_drop(&table);
+}
+
+static void testExpiredLineCannotReleaseReplacement(void)
+{
+    softiplimiter_identity_map_t table             = softiplimiter_identity_map_t_with_capacity(4);
+    softiplimiter_table_result_t result            = {0};
+    uint64_t                     generation_cursor = 0;
+    softiplimiter_ip_key_t       ip                = ip4(10, 0, 0, 1);
+    const hash_t                 id                = 3001;
+
+    require(softiplimiterTableAdmit(&table, &generation_cursor, id, &ip, 1, 10, 100, &result),
+            "replacement: old admit failed");
+    const uint64_t old_generation = result.generation;
+    require(softiplimiterTableAdmit(&table, &generation_cursor, id, &ip, 1, 10, 111, &result),
+            "replacement: new admit failed");
+    const uint64_t new_generation = result.generation;
+    require(old_generation != 0 && new_generation != 0 && old_generation != new_generation,
+            "replacement: expected a new admission generation");
+    softiplimiterTableRelease(&table, id, &ip, old_generation, 10, 112);
+
+    const softiplimiter_identity_entry_t *entry = findEntry(&table, id);
+    require(entry != NULL && entry->ip_count == 1 && entry->ips[0].refs == 1,
+            "expired line release removed its replacement row");
+    require(softiplimiterTableTouch(&table, id, &ip, new_generation, 1, 10, 113, &result),
+            "replacement: new line lost admission");
+    softiplimiter_identity_map_t_drop(&table);
+}
+
+static void testExpiredLineCannotTouchReplacement(void)
+{
+    tunnel_t *t = tunnelCreate(NULL, sizeof(softiplimiter_tstate_t), sizeof(softiplimiter_lstate_t));
+    require(t != NULL, "replacement: tunnel allocation failed");
+    softiplimiter_tstate_t *ts = tunnelGetState(t);
+    require(softiplimiterTunnelstateInitialize(ts), "replacement: table initialization failed");
+    ts->simultaneous_user_limit         = 1;
+    ts->tolerance_ms                    = 10;
+    softiplimiter_table_result_t result = {0};
+    softiplimiter_ip_key_t       ip     = ip4(10, 0, 0, 1);
+    const hash_t                 id     = 3002;
+
+    rwlockWriteLock(&ts->table_lock);
+    require(softiplimiterTableAdmit(&ts->table, &ts->generation_cursor, id, &ip, 1, 10, 100, &result),
+            "replacement: old admit failed");
+    const uint64_t old_generation = result.generation;
+    require(softiplimiterTableAdmit(&ts->table, &ts->generation_cursor, id, &ip, 1, 10, 111, &result),
+            "replacement: new admit failed");
+    const uint64_t new_generation = result.generation;
+    require(old_generation != 0 && new_generation != 0 && old_generation != new_generation,
+            "replacement: expected a new admission generation");
+    require(! softiplimiterTableTouch(&ts->table, id, &ip, old_generation, 1, 10, 112, &result),
+            "expired line touch reused its replacement row");
+    rwlockWriteUnlock(&ts->table_lock);
+
+    softiplimiter_lstate_t old_line = {
+        .identifier   = id,
+        .generation   = old_generation,
+        .ip_key       = ip,
+        .admitted     = true,
+        .ip_key_valid = true,
+    };
+    require(! softiplimiterTouchLine(t, &old_line, 112, &result),
+            "expired line shared touch reused its replacement row");
+    const softiplimiter_identity_entry_t *entry = findEntry(&ts->table, id);
+    require(entry != NULL && atomicLoadU64Relaxed(&entry->ips[0].last_seen_ms) == 111,
+            "expired line touch refreshed its replacement row");
+    old_line.generation = new_generation;
+    require(softiplimiterTouchLine(t, &old_line, 113, &result), "replacement: current line shared touch failed");
+    require(atomicLoadU64Relaxed(&entry->ips[0].last_seen_ms) == 113,
+            "replacement: current line shared touch did not refresh row");
+
+    softiplimiterTunnelstateDestroy(ts);
+    tunnelDestroy(t);
 }
 
 int main(void)
@@ -213,6 +305,8 @@ int main(void)
     testStaleRowsArePrunedBeforeReject();
     testPayloadCheckClosesWhenRowMissing();
     testTouchRefreshKeepsRowAlive();
+    testExpiredLineCannotReleaseReplacement();
+    testExpiredLineCannotTouchReplacement();
 
     printf("softiplimiter_test: all checks passed\n");
     return 0;

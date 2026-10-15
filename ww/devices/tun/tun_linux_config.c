@@ -1138,16 +1138,12 @@ static bool tunDnsWriteField(tun_device_t *tdev, unsigned int field, const cJSON
 {
     if (! tunDnsSameInterface(tdev))
         return false;
-    /* Each DNS tuple has at most family, length, 16 bytes, port and name. */
+    /* Baselines were validated; requested values contain at most two servers
+     * or one domain. Each DNS tuple needs at most 20 argument slots. */
+    assert(cJSON_GetArraySize(values) <= kTunDnsMaxEntries);
     const size_t capacity = 13U + (size_t) cJSON_GetArraySize(values) * 20U;
     const char **argv     = memoryCalloc(capacity, sizeof(*argv));
-    char(*numbers)[12]    = memoryAllocate(capacity * sizeof(*numbers));
-    if (argv == NULL || numbers == NULL)
-    {
-        memoryFree(argv);
-        memoryFree(numbers);
-        return false;
-    }
+    char(*numbers)[12]         = memoryAllocate(capacity * sizeof(*numbers));
     const char *const prefix[] = {"busctl",
                                   "--system",
                                   "--no-pager",
@@ -1239,8 +1235,6 @@ static bool tunDnsCaptureBaseline(tun_device_t *tdev, const char *const *servers
 {
     assert(tdev->dns_snapshot == NULL);
     tun_dns_snapshot_t *snapshot = memoryCalloc(1, sizeof(*snapshot));
-    if (snapshot == NULL)
-        return false;
     tdev->dns_snapshot = snapshot;
     if (! tunGetIfIndexByName(tdev->name, &snapshot->ifindex))
         goto fail;

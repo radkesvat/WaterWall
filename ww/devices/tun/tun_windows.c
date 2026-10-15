@@ -1493,12 +1493,6 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu,
     }
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
-    if (UNLIKELY(tdev == NULL))
-    {
-        bufferpoolDestroy(reader_bpool);
-        bufferpoolDestroy(writer_bpool);
-        return NULL;
-    }
 
     char *device_name = stringDuplicate(name);
     if (UNLIKELY(device_name == NULL))
@@ -1566,12 +1560,6 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu,
         return NULL;
     }
     tdev->name_w = (wchar_t *) memoryAllocate(wide_bytes);
-    if (! tdev->name_w)
-    {
-        LOGE("TunDevice: Memory allocation failed!");
-        tundeviceDestroy(tdev);
-        return NULL;
-    }
 
     if (MultiByteToWideChar(CP_UTF8, 0, name, -1, (tdev->name_w), wide_size) <= 0)
     {

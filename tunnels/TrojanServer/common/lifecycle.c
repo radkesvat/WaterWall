@@ -26,8 +26,9 @@ static void trojanserverCloseLine(tunnel_t *t, line_t *l, trojanserver_close_ori
     bool      close_prev = origin != kTrojanServerCloseFromPrev;
     bool      use_target = ls->branch == kTrojanServerBranchFallback;
     tunnel_t *target     = use_target ? trojanserverSelectedUpstream(t, ls) : NULL;
+    assert(! use_target || target != NULL);
 
-    if (origin == kTrojanServerCloseFromPrev && use_target && target != NULL)
+    if (origin == kTrojanServerCloseFromPrev && use_target)
     {
         trojanserverCloseFallbackFromUpstream(t, l, ls, target);
         return;
@@ -41,7 +42,7 @@ static void trojanserverCloseLine(tunnel_t *t, line_t *l, trojanserver_close_ori
 
     if (close_next && LIKELY(lineIsAlive(l)))
     {
-        if (use_target && target != NULL)
+        if (use_target)
         {
             tunnelUpStreamFin(target, l);
         }

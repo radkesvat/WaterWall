@@ -24,10 +24,7 @@ static line_t *vlessserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l
     if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(client_l)))))
         return NULL;
 
-    if (UNLIKELY(! addresscontextHasPort(&client_ls->udp_target)))
-    {
-        return NULL;
-    }
+    assert(addresscontextHasPort(&client_ls->udp_target));
 
     line_t               *remote_l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l));
     vlessserver_lstate_t *remote_ls = lineGetState(remote_l, t);
@@ -124,24 +121,14 @@ bool vlessserverDrainUdpPackets(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls
             return false;
         }
 
-        if (ls->phase == kVlessServerPhaseUdpWaitPacket)
-        {
-            ls->phase = kVlessServerPhaseUdpConnecting;
-        }
-
         lineRef(l);
-        bool remote_alive = lineCallWithRefWithBuf(remote_l, tunnelNextUpStreamPayload, t, packet);
-        client_alive      = lineIsAlive(l);
+        discard lineCallWithRefWithBuf(remote_l, tunnelNextUpStreamPayload, t, packet);
+        client_alive = lineIsAlive(l);
         lineUnref(l);
 
         if (UNLIKELY(! client_alive || ls->tunnel != t))
         {
             return false;
-        }
-
-        if (UNLIKELY(! remote_alive))
-        {
-            continue;
         }
     }
 

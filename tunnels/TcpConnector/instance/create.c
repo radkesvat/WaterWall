@@ -218,42 +218,6 @@ static const cJSON *getDestinationArraySettings(const cJSON *settings)
     return jadresses;
 }
 
-static void configureIpv4RangeValue(uint64_t *outbound_ip_range, int prefix_length)
-{
-    if (prefix_length > 32)
-    {
-        LOGF("TcpConnector: outbound ip/subnet range is invalid");
-        startupFailureRecord(1);
-        return;
-    }
-    else if (prefix_length == 32)
-    {
-        *outbound_ip_range = 0;
-    }
-    else
-    {
-        *outbound_ip_range = (0xFFFFFFFFULL & (0x1ULL << (32 - prefix_length)));
-    }
-}
-
-static void configureIpv6RangeValue(uint64_t *outbound_ip_range, int prefix_length)
-{
-    if (64 > prefix_length)
-    {
-        LOGF("TcpConnector: outbound ip/subnet range is invalid");
-        startupFailureRecord(1);
-        return;
-    }
-    else if (prefix_length == 64)
-    {
-        *outbound_ip_range = 0xFFFFFFFFFFFFFFFFULL;
-    }
-    else
-    {
-        *outbound_ip_range = (0xFFFFFFFFFFFFFFFFULL & (0x1ULL << (128 - prefix_length)));
-    }
-}
-
 static bool parseDestinationAddress(dynamic_value_t *dest_addr_selected, address_context_t *constant_dest_addr,
                                     uint64_t *outbound_ip_range, const cJSON *settings, const char *error_path)
 {
@@ -275,55 +239,46 @@ static bool parseDestinationAddress(dynamic_value_t *dest_addr_selected, address
 
     char *address_value = dest_addr_selected->string;
     char *slash         = stringChr(address_value, '/');
+    ip_addr_t parsed_ip;
     if (slash != NULL)
     {
+        ip_addr_t parsed_mask;
+        uint8_t   prefix_length;
+        const int family = parseIPWithSubnetMaskAndPrefix(address_value, &parsed_ip, &parsed_mask, &prefix_length);
+        if ((family != 4 && family != 6) || (family == 6 && prefix_length < 64))
+        {
+            LOGF("JSON Error: %s->address must use an IPv4 prefix in [0, 32] or an IPv6 prefix in [64, 128]",
+                 error_path);
+            startupFailureRecord(1);
+            return false;
+        }
         *slash = '\0';
+        addresscontextSetIp(constant_dest_addr, &parsed_ip);
+        if (family == 4)
+        {
+            *outbound_ip_range = prefix_length == 32 ? 0 : (UINT64_C(1) << (32 - prefix_length));
+        }
+        else
+        {
+            /* UINT64_MAX represents all 64 host bits, rather than a cardinality. */
+            *outbound_ip_range = prefix_length == 64 ? UINT64_MAX : (UINT64_C(1) << (128 - prefix_length));
+        }
+        return true;
     }
 
-    if (addressIsIp(address_value))
+    if (ipaddr_aton(address_value, &parsed_ip))
     {
-        if (! addresscontextSetIpAddress(constant_dest_addr, address_value))
-        {
-            LOGF("JSON Error: %s->address (string field) : The vaule was empty or invalid", error_path);
-            return false;
-        }
-
-        if (slash != NULL)
-        {
-            int prefix_length = atoi(slash + 1);
-
-            if (prefix_length < 0)
-            {
-                LOGF("TcpConnector: outbound ip/subnet range is invalid");
-                startupFailureRecord(1);
-                return false;
-            }
-
-            if (constant_dest_addr->ip_address.type == IPADDR_TYPE_V4)
-            {
-                configureIpv4RangeValue(outbound_ip_range, prefix_length);
-            }
-            else if (constant_dest_addr->ip_address.type == IPADDR_TYPE_V6)
-            {
-                configureIpv6RangeValue(outbound_ip_range, prefix_length);
-            }
-            if (UNLIKELY(startupFailurePending()))
-            {
-                return false;
-            }
-        }
+        addresscontextSetIp(constant_dest_addr, &parsed_ip);
+        return true;
     }
-    else
+
+    const size_t domain_length = stringLength(address_value);
+    if (domain_length == 0 || domain_length > UINT8_MAX)
     {
-        if (slash != NULL)
-        {
-            LOGF("JSON Error: %s->address (string field) : CIDR suffix is only valid for IP addresses", error_path);
-            return false;
-        }
-
-        addresscontextDomainSetConstMem(constant_dest_addr, address_value, (uint8_t) stringLength(address_value));
+        LOGF("JSON Error: %s->address domain must contain 1 to %u bytes", error_path, (unsigned) UINT8_MAX);
+        return false;
     }
-
+    addresscontextDomainSetConstMem(constant_dest_addr, address_value, (uint8_t) domain_length);
     return true;
 }
 
@@ -370,14 +325,9 @@ static void cleanupDestinationArray(tcpconnector_tstate_t *state)
     state->destinations_weight_total = 0;
 }
 
-static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *settings)
+static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *settings, const cJSON *jaddresses)
 {
-    const cJSON *jaddresses = getDestinationArraySettings(settings);
-
-    if (jaddresses == NULL)
-    {
-        return false;
-    }
+    assert(jaddresses != NULL);
 
     if (! cJSON_IsArray(jaddresses) || cJSON_GetArraySize(jaddresses) <= 0)
     {
@@ -469,7 +419,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     }
     if (destination_array_settings != NULL)
     {
-        if (! parseDestinationArray(state, settings))
+        if (! parseDestinationArray(state, settings, destination_array_settings))
         {
             tcpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;

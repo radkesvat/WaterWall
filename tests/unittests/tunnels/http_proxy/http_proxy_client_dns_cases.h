@@ -250,7 +250,8 @@ static void dnsTests(void)
     representation = 0;
     dnsOpen(2, false, false, "origin.test");
     dnsStart();
-    sbuf_t *big = hpcBuffer(line, kHpcDeliveryLimit + 1);
+    buffer_pool_t *pool = lineGetBufferPool(line);
+    sbuf_t        *big  = bufferpoolGetBestFit(pool, kHpcDeliveryLimit + 1, bufferpoolGetLargeBufferPadding(pool));
     sbufSetLength(big, kHpcDeliveryLimit + 1);
     tunnelUpStreamPayload(entry, line, big);
     require(! lineIsAlive(line) && ! next_inits, "resolver overflow");

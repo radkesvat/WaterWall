@@ -3,6 +3,8 @@
 
 #include "loggers/network_logger.h"
 
+#include <openssl/pem.h>
+
 extern int tlsclientDecompressBrotliCert(SSL *ssl, CRYPTO_BUFFER **out, size_t uncompressed_len, const uint8_t *in,
                                          size_t in_len);
 
@@ -20,7 +22,7 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->onDestroy = &tlsclientTunnelDestroy;
 }
 
-static bool getandvalidateSniSetting(tlsclient_tstate_t *ts, const cJSON *settings)
+static bool getAndValidateSniSetting(tlsclient_tstate_t *ts, const cJSON *settings)
 {
     if (! getStringFromJsonObject(&(ts->sni), settings, "sni"))
     {
@@ -91,8 +93,8 @@ bool tlsclientParseAlpnSetting(tlsclient_tstate_t *ts, const cJSON *settings)
         for (int previous_index = 0; previous_index < index; ++previous_index)
         {
             const cJSON *previous = cJSON_GetArrayItem(alpns, previous_index);
-            if (previous != NULL && cJSON_IsString(previous) && previous->valuestring != NULL &&
-                stringLength(previous->valuestring) == name_len &&
+            // Earlier entries passed the same type and length validation.
+            if (stringLength(previous->valuestring) == name_len &&
                 memoryCompare(previous->valuestring, item->valuestring, name_len) == 0)
             {
                 LOGF("JSON Error: TlsClient->settings->alpns[%d] duplicates an earlier protocol", index);
@@ -164,7 +166,7 @@ static bool getAndValidateEchGreaseSniOverrideSetting(tlsclient_tstate_t *ts, co
         return false;
     }
 
-    getStringFromJsonObject(&(ts->ech_grease_sni_override), settings, "ech-sni-trick");
+    ts->ech_grease_sni_override = stringDuplicate(item->valuestring);
 
     const size_t override_len = stringLength(ts->ech_grease_sni_override);
 
@@ -196,25 +198,36 @@ static const char *getSupportedGroupsList(bool x25519mlkem768_enabled)
 static bool loadCaCertificates(SSL_CTX *ssl_ctx)
 {
     BIO *bio = BIO_new(BIO_s_mem());
-    int  n   = BIO_write(bio, cacert_bytes, (int) cacert_len);
-    assert(n == (int) cacert_len);
-    discard n;
-
-    X509 *x = NULL;
-    while (true)
+    if (bio == NULL)
+        return false;
+    if (BIO_write(bio, cacert_bytes, (int) cacert_len) != (int) cacert_len)
     {
-        x = PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL);
-        if (x == NULL)
-        {
-            break;
-        }
-        X509_STORE_add_cert(SSL_CTX_get_cert_store(ssl_ctx), x);
-        X509_free(x);
-        x = NULL;
+        BIO_free(bio);
+        return false;
     }
 
+    ERR_clear_error();
+    bool  loaded = false;
+    X509 *x;
+    while ((x = PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL)) != NULL)
+    {
+        const int added = X509_STORE_add_cert(SSL_CTX_get_cert_store(ssl_ctx), x);
+        X509_free(x);
+        if (added != 1)
+        {
+            BIO_free(bio);
+            return false;
+        }
+        loaded = true;
+    }
+
+    // PEM reports normal end-of-bundle as NO_START_LINE; other failures are not EOF.
+    const uint32_t error = ERR_peek_last_error();
+    const bool success   = loaded && ERR_GET_LIB(error) == ERR_LIB_PEM && ERR_GET_REASON(error) == PEM_R_NO_START_LINE;
+    if (success)
+        ERR_clear_error();
     BIO_free(bio);
-    return true;
+    return success;
 }
 
 static SSL_CTX *setupSslContext(const uint8_t *alpn_wire, size_t alpn_wire_len, bool verify,
@@ -262,10 +275,15 @@ static SSL_CTX *setupSslContext(const uint8_t *alpn_wire, size_t alpn_wire_len, 
     }
 
     // Enable certificate compression with brotli (Chrome supports this)
-    SSL_CTX_add_cert_compression_alg(ssl_ctx,
-                                     TLSEXT_cert_compression_brotli,
-                                     NULL /* compression not supported (same as chrome)*/,
-                                     tlsclientDecompressBrotliCert);
+    if (! SSL_CTX_add_cert_compression_alg(ssl_ctx,
+                                           TLSEXT_cert_compression_brotli,
+                                           NULL /* compression not supported (same as chrome)*/,
+                                           tlsclientDecompressBrotliCert))
+    {
+        LOGF("TlsClient: failed to configure Brotli certificate decompression");
+        SSL_CTX_free(ssl_ctx);
+        return NULL;
+    }
 
     // Enable SCT (Signed Certificate Timestamp) extension at context level
     SSL_CTX_enable_signed_cert_timestamps(ssl_ctx);
@@ -289,6 +307,7 @@ static SSL_CTX *setupSslContext(const uint8_t *alpn_wire, size_t alpn_wire_len, 
 
     if (verify && ! loadCaCertificates(ssl_ctx))
     {
+        LOGF("TlsClient: failed to load bundled CA certificates");
         SSL_CTX_free(ssl_ctx);
         return NULL;
     }
@@ -339,10 +358,8 @@ static bool tlsclientPreflightClientHello(SSL_CTX *ssl_ctx, const char *sni, con
                                           size_t ech_grease_override_payload_len, uint8_t **out_payload,
                                           size_t *out_payload_len)
 {
-    if (ssl_ctx == NULL || sni == NULL || (out_payload != NULL && out_payload_len == NULL))
-    {
-        return false;
-    }
+    assert(ssl_ctx != NULL && sni != NULL);
+    assert(out_payload == NULL || out_payload_len != NULL);
 
     if (out_payload != NULL)
     {
@@ -371,10 +388,9 @@ static bool tlsclientPreflightClientHello(SSL_CTX *ssl_ctx, const char *sni, con
         goto cleanup;
     }
 
-    /* tlsclientConfigureSslForConnect transfers both BIOs before any fallible setting. */
+    SSL_set_bio(ssl, rbio, wbio);
     ssl_owns_bios = true;
-    if (! tlsclientConfigureSslForConnect(
-            ssl, rbio, wbio, sni, ech_grease_override_payload, ech_grease_override_payload_len) ||
+    if (! tlsclientConfigureSslForConnect(ssl, sni, ech_grease_override_payload, ech_grease_override_payload_len) ||
         ! tlsclientConfigureEchForSsl(ssl))
     {
         goto cleanup;
@@ -442,11 +458,8 @@ cleanup:
  */
 static bool tlsclientPreflightConfiguredClientHello(const tlsclient_tstate_t *ts, size_t *out_wire_length)
 {
-    if (ts == NULL || ts->threadlocal_ssl_contexts == NULL || ts->threadlocal_ssl_contexts[0] == NULL ||
-        ts->sni == NULL)
-    {
-        return false;
-    }
+    assert(ts != NULL && ts->threadlocal_ssl_contexts != NULL && ts->threadlocal_ssl_contexts[0] != NULL &&
+           ts->sni != NULL);
 
     static const uint8_t kMaximumEchGreasePayload[kTlsClientMaxEchGreasePayloadLength] = {0};
 
@@ -462,11 +475,8 @@ static bool tlsclientPreflightConfiguredClientHello(const tlsclient_tstate_t *ts
                                              out_wire_length);
     }
 
-    if (ts->threadlocal_ech_grease_inner_ssl_contexts == NULL ||
-        ts->threadlocal_ech_grease_inner_ssl_contexts[0] == NULL)
-    {
-        return false;
-    }
+    assert(ts->threadlocal_ech_grease_inner_ssl_contexts != NULL &&
+           ts->threadlocal_ech_grease_inner_ssl_contexts[0] != NULL);
 
     uint8_t *inner_payload     = NULL;
     size_t   inner_payload_len = 0;
@@ -515,12 +525,12 @@ static bool createFragmenter(tunnel_t *t, node_t *node)
 
     tlsclient_tstate_t *ts = tunnelGetState(t);
     ts->fragment_settings  = cJSON_Duplicate(fragment, true);
-    if (ts->fragment_settings == NULL || ! nodeConfigureChild(&ts->fragment_node,
-                                                              nodeStreamFragmenterGet(),
-                                                              node,
-                                                              ".stream-fragmenter",
-                                                              kNodeChildLinkOwnerNext,
-                                                              ts->fragment_settings))
+    if (! nodeConfigureChild(&ts->fragment_node,
+                             nodeStreamFragmenterGet(),
+                             node,
+                             ".stream-fragmenter",
+                             kNodeChildLinkOwnerNext,
+                             ts->fragment_settings))
         return false;
     ts->fragment_tunnel = nodemanagerCreateTunnelInstance(&ts->fragment_node);
     if (ts->fragment_tunnel == NULL)
@@ -547,7 +557,7 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     tlsclient_tstate_t *ts           = tunnelGetState(t);
     const cJSON        *settings     = node->node_settings_json;
 
-    if (! getandvalidateSniSetting(ts, settings) || ! createFragmenter(t, node))
+    if (! getAndValidateSniSetting(ts, settings) || ! createFragmenter(t, node))
     {
         goto fail;
     }
@@ -574,9 +584,7 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
                                ts->verify,
                                ts->x25519mlkem768_enabled))
     {
-        tlsclientTunnelstateDestroy(ts);
-        tunnelDestroy(t);
-        return NULL;
+        goto fail;
     }
 
     if (ts->ech_grease_sni_override != NULL && ! createSslContextPool(&(ts->threadlocal_ech_grease_inner_ssl_contexts),
@@ -586,9 +594,7 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
                                                                       false,
                                                                       false))
     {
-        tlsclientTunnelstateDestroy(ts);
-        tunnelDestroy(t);
-        return NULL;
+        goto fail;
     }
 
     if (! tlsclientConfigureEchContexts(ts, settings))

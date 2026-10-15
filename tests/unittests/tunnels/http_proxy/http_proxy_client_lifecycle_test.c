@@ -926,7 +926,8 @@ static void limitsAndTimers(void)
     require(! lineIsAlive(line) && admitted == 1025, "queue entry cap");
     closeLine();
     openLine(connect_settings);
-    sbuf_t *b = hpcBuffer(line, kHpcDeliveryLimit + 1);
+    buffer_pool_t *pool = lineGetBufferPool(line);
+    sbuf_t        *b    = bufferpoolGetBestFit(pool, kHpcDeliveryLimit + 1, bufferpoolGetLargeBufferPadding(pool));
     sbufSetLength(b, kHpcDeliveryLimit + 1);
     tunnelUpStreamPayload(entry, line, b);
     require(! lineIsAlive(line), "delivery cap");

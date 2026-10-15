@@ -169,19 +169,6 @@ static void testerserverFillPayloadForFlow(uint8_t flow_id, sbuf_t *buf, uint8_t
     testerserverFillBytesForFlow(flow_id, ptr, payload_len, chunk_index, chunk_offset, direction);
 }
 
-static uint32_t testerserverGetExpectedPayloadLength(tunnel_t *t, uint8_t chunk_index)
-{
-    testerserver_tstate_t *ts         = tunnelGetState(t);
-    uint32_t               chunk_size = testerserverGetChunkSize(t, chunk_index);
-
-    if (! (ts->packet_mode && ts->packet_ipv4_mode))
-    {
-        return chunk_size;
-    }
-
-    return chunk_size - testerserverPacketIpv4PayloadOffset(ts);
-}
-
 static void testerserverPacketIpv4DirectionAddrs(const testerserver_tstate_t *ts, testerserver_direction_e direction,
                                                  uint32_t *src_addr, uint32_t *dest_addr)
 {
@@ -410,22 +397,29 @@ static bool testerserverVerifyPacketIpv4Transport(testerserver_tstate_t *ts, sbu
     uint16_t ip_checksum = IPH_CHKSUM(ipheader);
     calcFullPacketChecksum(packet, sbufGetLength(buf));
 
-    if (IPH_CHKSUM(ipheader) != ip_checksum)
-    {
-        return false;
-    }
+    // Stateless flow trials must all verify the original bytes, including a bad checksum.
+    const bool ip_checksum_matches = IPH_CHKSUM(ipheader) == ip_checksum;
+    IPH_CHKSUM_SET(ipheader, ip_checksum);
 
+    uint16_t computed_transport_checksum;
     switch (ts->packet_ipv4_transport)
     {
     case kTesterServerPacketIpv4TransportTcp:
-        return ((struct tcp_hdr *) transport)->chksum == transport_checksum;
+        computed_transport_checksum            = ((struct tcp_hdr *) transport)->chksum;
+        ((struct tcp_hdr *) transport)->chksum = transport_checksum;
+        break;
     case kTesterServerPacketIpv4TransportUdp:
-        return ((struct udp_hdr *) transport)->chksum == transport_checksum;
+        computed_transport_checksum            = ((struct udp_hdr *) transport)->chksum;
+        ((struct udp_hdr *) transport)->chksum = transport_checksum;
+        break;
     case kTesterServerPacketIpv4TransportIcmp:
-        return ((struct icmp_echo_hdr *) transport)->chksum == transport_checksum;
+        computed_transport_checksum                  = ((struct icmp_echo_hdr *) transport)->chksum;
+        ((struct icmp_echo_hdr *) transport)->chksum = transport_checksum;
+        break;
     default:
         return false;
     }
+    return ip_checksum_matches && computed_transport_checksum == transport_checksum;
 }
 
 static bool testerserverDecodePacketIpv4(tunnel_t *t, sbuf_t *buf, testerserver_direction_e direction,
@@ -639,22 +633,13 @@ bool testerserverVerifyChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t chunk_
             return false;
         }
 
-        if (payload_len != testerserverGetExpectedPayloadLength(t, chunk_index))
-        {
-            if (bad_offset != NULL)
-            {
-                *bad_offset = payload_len;
-            }
-            return false;
-        }
-
         ptr = packet_payload;
     }
 
     if (direction == kTesterServerDirectionRequest && chunk_index == 0)
     {
         ls->flow_id = testerserverDecodeFlowId(ptr[0], direction);
-        return true;
+        flow_id     = ls->flow_id;
     }
 
     for (uint32_t i = 0; i < payload_len; ++i)

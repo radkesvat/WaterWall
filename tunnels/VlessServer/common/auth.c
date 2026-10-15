@@ -46,6 +46,7 @@ static const vlessserver_user_t *vlessserverFindLocalUser(tunnel_t *t, line_t *l
 vlessserver_auth_result_t vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls,
                                                       const uint8_t uuid[kVlessServerUuidLen])
 {
+    assert(! vlessserverLineAuthenticated(ls));
     vlessserver_tstate_t *ts = tunnelGetState(t);
 
     if (ts->auth_client_tunnel == NULL)
@@ -66,11 +67,6 @@ vlessserver_auth_result_t vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vl
         memoryFree(ls->auth_password);
         ls->auth_username = name_copy;
         ls->auth_password = password_copy;
-        return kVlessServerAuthAccepted;
-    }
-
-    if (userHandleIsValid(&ls->user_handle))
-    {
         return kVlessServerAuthAccepted;
     }
 
@@ -127,23 +123,13 @@ bool vlessserverLineAuthenticated(const vlessserver_lstate_t *ls)
 
 void vlessserverRecordLineUser(line_t *l, vlessserver_lstate_t *ls)
 {
-    if (UNLIKELY(ls->user_handle_recorded))
-    {
-        return;
-    }
-
+    assert(vlessserverLineAuthenticated(ls));
     if (userHandleIsValid(&ls->user_handle))
     {
         lineAddUser(l, &ls->user_handle, ls->auth_username, ls->auth_password);
     }
-    else if (ls->auth_username != NULL || ls->auth_password != NULL)
+    else
     {
         lineAddAuthenticatedCredentials(l, ls->auth_username, ls->auth_password);
     }
-    else
-    {
-        return;
-    }
-
-    ls->user_handle_recorded = true;
 }

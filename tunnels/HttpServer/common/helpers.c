@@ -4,7 +4,8 @@
 
 static bool authorityPortIsValid(const char *port)
 {
-    if (port == NULL || port[0] == '\0')
+    assert(port != NULL);
+    if (port[0] == '\0')
     {
         return false;
     }
@@ -27,10 +28,7 @@ static bool authorityPortIsValid(const char *port)
 
 static bool authorityHostLength(const char *authority, size_t *host_len)
 {
-    if (authority == NULL || authority[0] == '\0' || host_len == NULL)
-    {
-        return false;
-    }
+    assert(authority != NULL && authority[0] != '\0' && host_len != NULL);
 
     const char *port = NULL;
     if (authority[0] == '[')

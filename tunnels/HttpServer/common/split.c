@@ -25,11 +25,12 @@ static bool splitHeaderNameEquals(const char *a, const char *b)
 
 static bool splitParseContentLength(const char *value, int64_t *out)
 {
-    while (value != NULL && (*value == ' ' || *value == '\t'))
+    assert(value != NULL && out != NULL);
+    while (*value == ' ' || *value == '\t')
     {
         ++value;
     }
-    if (value == NULL || *value == '\0')
+    if (*value == '\0')
     {
         return false;
     }
@@ -40,11 +41,11 @@ static bool splitParseContentLength(const char *value, int64_t *out)
     {
         return false;
     }
-    while (endp != NULL && (*endp == ' ' || *endp == '\t'))
+    while (*endp == ' ' || *endp == '\t')
     {
         ++endp;
     }
-    if (endp == NULL || *endp != '\0' || parsed > (unsigned long long) INT64_MAX)
+    if (*endp != '\0' || parsed > (unsigned long long) INT64_MAX)
     {
         return false;
     }

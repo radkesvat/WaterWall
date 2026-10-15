@@ -78,7 +78,6 @@ typedef struct halfduplexserver_lstate_s
     bool            startup_active;
     bool            startup_initializing;
     bool            startup_dispatching;
-    bool            next_started;
     bool            next_paused;
     bool            source_paused;
 } halfduplexserver_lstate_t;

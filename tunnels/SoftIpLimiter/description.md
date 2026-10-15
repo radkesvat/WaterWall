@@ -380,7 +380,8 @@ so the row is removed only after the last live line for that source IP is releas
 
 There is no background timer. A quiet line may sit idle longer than `tolerance-ms`; if another connection or payload
 touches the same identity and removes that quiet line's IP row, the quiet line is closed the next time it tries to send
-or receive payload.
+or receive payload. Reconnecting from the same IP creates a separate row after expiry;
+an older line cannot refresh or release that replacement row.
 
 Use a larger tolerance if clients commonly keep long idle connections open. Use a smaller tolerance if you want stale
 IP slots to be freed quickly.

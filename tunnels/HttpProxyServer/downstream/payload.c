@@ -48,13 +48,11 @@ bool hpsProcessResponse(hps_session_t *s)
         {
             s->response_header = false;
             down->body         = h.body;
-            s->child_reusable  = ! h.close && h.body.kind != kHpsBodyEof;
             s->close_after |= h.close || h.body.kind == kHpsBodyEof;
             if (up->body.kind != kHpsBodyDone)
             {
                 s->upload_stopped = true;
                 s->close_after    = true;
-                s->child_reusable = false;
                 hpsDiscardBuffer(s, &up->input);
                 hpsDiscardBuffer(s, &up->output);
                 hpsDiscardBuffer(s, &up->deferred);

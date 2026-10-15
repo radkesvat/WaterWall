@@ -51,8 +51,7 @@ bool hpcDrainUpload(tunnel_t *t, line_t *l)
     while (count-- && hpcAllowed(t, l))
     {
         sbuf_t *b = bufferqueuePopFront(&ls->pending[0]);
-        if (! b)
-            break;
+        assert(b != NULL);
         if (! hpcUpload(t, l, b))
             return false;
     }
@@ -69,8 +68,7 @@ bool hpcDrainResponse(tunnel_t *t, line_t *l)
     while (count-- && hpcAllowed(t, l))
     {
         sbuf_t *b = bufferqueuePopFront(&ls->pending[1]);
-        if (! b)
-            break;
+        assert(b != NULL);
         if (! hpcResponse(t, l, b))
             return false;
     }

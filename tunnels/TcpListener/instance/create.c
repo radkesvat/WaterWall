@@ -69,7 +69,8 @@ static void addPortListEntry(tcplistener_tstate_t *state, socket_filter_option_t
 
 static void parsePortList(tcplistener_tstate_t *state, socket_filter_option_t *filter_opt, const cJSON *port_json)
 {
-    if (! cJSON_IsArray(port_json) || cJSON_GetArraySize(port_json) <= 0)
+    assert(cJSON_IsArray(port_json));
+    if (cJSON_GetArraySize(port_json) <= 0)
     {
         failInvalidPortValue("port", -1);
     }
@@ -297,12 +298,6 @@ static void parseIpMaskList(const cJSON *settings, const char *list_name, vec_ip
 {
     const cJSON *list = cJSON_GetObjectItemCaseSensitive(settings, list_name);
     if (! cJSON_IsArray(list))
-    {
-        return;
-    }
-
-    int len = cJSON_GetArraySize(list);
-    if (len <= 0)
     {
         return;
     }

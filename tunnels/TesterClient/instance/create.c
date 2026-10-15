@@ -333,11 +333,11 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
 
     testerclient_tstate_t *ts                     = tunnelGetState(t);
     const cJSON           *settings               = node->node_settings_json;
-    int                    packet_start_delay_ms  = 0;
-    int                    chunk_count            = kTesterClientChunkCount;
-    int                    max_payload_size       = 0;
-    int                    split_payload_delay_ms = kTesterClientSplitPayloadDelayMs;
-    int                    split_payload_burst    = kTesterClientSplitPayloadBurst;
+    int                    packet_start_delay_ms;
+    int                    chunk_count;
+    int                    max_payload_size;
+    int                    split_payload_delay_ms;
+    int                    split_payload_burst;
 
     getBoolFromJsonObjectOrDefault(&ts->allow_early_response, settings, "allow-early-response", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);

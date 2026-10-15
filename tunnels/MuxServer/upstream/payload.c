@@ -139,7 +139,8 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
 
     case kMuxFlagData:
         // LOGD("MuxServer: UpStreamPayload: Data frame received, cid: %u", frame->cid);
-        if (sbufGetLength(frame_buffer) != 0 && child_ls->child_slot_reserved)
+        assert(frame_buffer != NULL && sbufGetLength(frame_buffer) != 0);
+        if (child_ls->child_slot_reserved)
         {
             muxserverRefreshChildIdle(t, child_ls);
         }

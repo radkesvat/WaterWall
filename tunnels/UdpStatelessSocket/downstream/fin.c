@@ -4,5 +4,5 @@
 
 void udpstatelesssocketTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
-    udpstatelesssocketCloseOwnedLineFromAdjacent(t, l, false);
+    udpstatelesssocketCloseOwnedLineFromAdjacent(t, l);
 }

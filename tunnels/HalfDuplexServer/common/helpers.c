@@ -54,14 +54,9 @@ void halfduplexserverReplayStartup(tunnel_t *t, line_t *main)
         else if (bufferqueueGetBufCount(&ls->startup_pending) != 0)
         {
             const size_t length = bufferqueueGetBufLen(&ls->startup_pending);
-            tail = bufferpoolTryGetBestFit(ls->startup_pool, length, bufferpoolGetLargeBufferPadding(ls->startup_pool));
-            if (tail == NULL || length > sbufGetMaximumWriteableSize(tail))
-            {
-                if (tail != NULL)
-                    bufferpoolReuseBuffer(ls->startup_pool, tail);
-                halfduplexserverAbortPair(t, main);
-                goto done;
-            }
+            assert(length <= kHalfDuplexServerStartupBytes);
+            tail = bufferpoolGetBestFit(
+                ls->startup_pool, (uint32_t) length, bufferpoolGetLargeBufferPadding(ls->startup_pool));
             sbuf_t *entry;
             while ((entry = bufferqueuePopFront(&ls->startup_pending)) != NULL)
             {

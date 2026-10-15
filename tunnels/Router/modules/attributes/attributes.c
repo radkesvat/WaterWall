@@ -8,7 +8,6 @@ router_field_parse_t routerAttributesParse(router_rule_t *rule, const cJSON *rul
     if (value == NULL)
     {
         rule->attributes.present        = false;
-        rule->attributes.count          = 0;
         rule->attributes.required_flags = 0;
         return kRouterFieldAbsent;
     }
@@ -26,7 +25,6 @@ router_field_parse_t routerAttributesParse(router_rule_t *rule, const cJSON *rul
     }
 
     rule->attributes.present        = true;
-    rule->attributes.count          = (uint32_t) cJSON_GetArraySize(value);
     rule->attributes.required_flags = 0;
 
     const cJSON *item = NULL;
@@ -63,10 +61,7 @@ bool routerAttributesMatch(const router_rule_t *rule, router_match_ctx_t *mctx)
         return true;
     }
 
-    if (rule->attributes.required_flags == 0)
-    {
-        return true;
-    }
+    assert(rule->attributes.required_flags != 0);
 
     if (mctx->line_state == NULL)
     {
@@ -80,6 +75,5 @@ bool routerAttributesMatch(const router_rule_t *rule, router_match_ctx_t *mctx)
 void routerAttributesDestroy(router_rule_t *rule)
 {
     rule->attributes.present        = false;
-    rule->attributes.count          = 0;
     rule->attributes.required_flags = 0;
 }

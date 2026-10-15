@@ -104,6 +104,8 @@ Each present rule object must contain one of:
 
 Important note: the current packet rewrite implementation only applies IPv4 changes at runtime. IPv6 values are parsed and stored, but the actual IPv6 header rewrite path is still disabled in code.
 
+The `ipv6` value must be an IPv6 address literal. Empty strings, IPv4 addresses, hostnames, and CIDR notation are rejected.
+
 For the legacy format, required fields are:
 
 - `direction` `(string)`

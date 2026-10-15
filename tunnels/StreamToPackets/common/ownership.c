@@ -100,10 +100,7 @@ static uint64_t streamtopacketsNextToken(uint64_t *counter)
 static streamtopackets_line_entry_t *streamtopacketsFindEntryLocked(streamtopackets_tstate_t *ts, const line_t *l,
                                                                     uint64_t line_id)
 {
-    if (line_id == 0)
-    {
-        return NULL;
-    }
+    assert(line_id != 0);
 
     for (streamtopackets_line_entry_t *entry = ts->lines_head; entry != NULL; entry = entry->next)
     {
@@ -334,16 +331,7 @@ static void streamtopacketsCloseEvictedLineNow(tunnel_t *t, line_t *l)
         return;
     }
 
-    ls->tracked           = false;
-    ls->active            = false;
-    ls->write_paused      = false;
-    ls->line_id           = 0;
-    ls->source_generation = 0;
-
-    if (ls->read_stream.pool != NULL)
-    {
-        streamtopacketsLinestateDestroy(ls);
-    }
+    streamtopacketsLinestateDestroy(ls);
 
     // The line is borrowed: ask its owner to close it, and never destroy it
     // here. Nothing is sent toward the packet side.
@@ -536,12 +524,8 @@ uint64_t streamtopacketsAuthorizeLine(tunnel_t *t, line_t *l)
         return 0;
     }
 
-    if (entry->status == kStreamToPacketsLineActive)
-    {
-        generation = streamtopacketsEntryStillOwnsLocked(ts, entry) ? ts->active_generation : 0;
-        rwlockWriteUnlock(&ts->lines_lock);
-        return generation;
-    }
+    // Activation sets the registry status and owner-worker active flag together.
+    assert(entry->status == kStreamToPacketsLineCandidate);
 
     if (UNLIKELY(ts->stopping))
     {

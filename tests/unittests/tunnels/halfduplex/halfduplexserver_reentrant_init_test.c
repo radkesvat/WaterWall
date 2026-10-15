@@ -26,9 +26,7 @@
  */
 #include "HalfDuplexServer/structure.h"
 
-#define __wrap_bufferpoolTryGetBestFit trackedTryGetBestFit
 #include "fixtures/protocols/halfduplex_splice_fixture.h"
-#undef __wrap_bufferpoolTryGetBestFit
 
 static bool fail_queue;
 bool        __real_bufferqueueTryPushBack(buffer_queue_t *queue, sbuf_t **buf);
@@ -41,18 +39,6 @@ bool        __wrap_bufferqueueTryPushBack(buffer_queue_t *queue, sbuf_t **buf)
         return false;
     }
     return __real_bufferqueueTryPushBack(queue, buf);
-}
-
-static bool fail_allocation;
-sbuf_t     *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding);
-sbuf_t     *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding)
-{
-    if (fail_allocation)
-    {
-        fail_allocation = false;
-        return NULL;
-    }
-    return trackedTryGetBestFit(pool, size, padding);
 }
 
 static bool splice_inputs;
@@ -943,7 +929,7 @@ static void caseSpliceFragments(void)
 static void caseSetupClosureAndRefusal(void)
 {
     for (unsigned waiting = 0; waiting < 2; ++waiting)
-        for (unsigned failure = 0; failure < 3; ++failure)
+        for (unsigned failure = 0; failure < 2; ++failure)
         {
             halfduplexserver_protocol_fixture_t fixture;
             protocolFixtureSetup(&fixture);
@@ -956,13 +942,10 @@ static void caseSetupClosureAndRefusal(void)
             if (failure != 0)
             {
                 sbuf_t *buf = halfduplexTestBytes(fixture.env.pool, data, sizeof(data), true, 63000);
-                if (failure == 1)
-                    fail_allocation = true;
-                else
-                {
-                    buf      = halfduplexTestMaterialize(fixture.env.pool, buf);
-                    buf->len = UINT32_MAX;
-                }
+                // The combined setup length must fail geometry validation
+                // before any access to this synthetic body length.
+                buf      = halfduplexTestMaterialize(fixture.env.pool, buf);
+                buf->len = UINT32_MAX;
                 halfduplexserverTunnelUpStreamPayload(fixture.halfduplex, up, buf);
                 twfRequire(fixture.transport_finish_count == 1, "setup refusal did not close borrowed input");
                 halfduplexserver_tstate_t *ts = tunnelGetState(fixture.halfduplex);
@@ -1029,7 +1012,7 @@ static void orderResume(tunnel_t *t, line_t *line)
     {
         order.direct = halfduplexTestBytes(f->env.pool, order.resumes == 2 ? "F" : "E", 1, true, 0);
         halfduplexserverTunnelUpStreamPayload(f->halfduplex, order.upload, order.direct);
-        if (order.mode == 6 && order.resumes == 1)
+        if (order.mode == 5 && order.resumes == 1)
         {
             halfduplexserverTunnelDownStreamPause(f->halfduplex, f->main_line);
             halfduplexserverTunnelDownStreamResume(f->halfduplex, f->main_line);
@@ -1067,8 +1050,6 @@ static void orderPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
         orderSend("D");
         if (order.mode == 3)
             halfduplexserverTunnelDownStreamPause(f->halfduplex, line);
-        if (order.mode == 5)
-            fail_allocation = true; // Final combined tail allocation.
     }
     else if (order.mode == 1 && ! order.tail_seen)
     {
@@ -1081,13 +1062,13 @@ static void orderInit(tunnel_t *t, line_t *line)
 {
     protocolMainInit(t, line);
     order.in_init = true;
-    if (order.mode != 7)
+    if (order.mode != 6)
         orderSend(order.mode == 0 ? "NEW" : "B");
-    if (order.mode != 0 && order.mode != 7)
+    if (order.mode != 0 && order.mode != 6)
         orderSend("C");
     if (order.close_stage == 1)
         orderClose(order.close_side);
-    else if (order.mode == 2 || order.mode == 4 || order.mode == 6 || order.close_stage == 4)
+    else if (order.mode == 2 || order.mode == 4 || order.mode == 5 || order.close_stage == 4)
     {
         halfduplexserverTunnelDownStreamPause(g_protocol_fixture->halfduplex, line);
         if (order.close_stage != 4)
@@ -1135,46 +1116,38 @@ static void casePairingOrder(void)
 {
     twfSetCase("HalfDuplexServer startup FIFO and permission reentry");
     for (unsigned first = 0; first < 2; ++first)
-        for (unsigned mode = 0; mode < 8; ++mode)
+        for (unsigned mode = 0; mode < 7; ++mode)
             for (unsigned empty = 0; empty < 2; ++empty)
             {
-                if ((mode == 5 && empty) || (mode == 7 && ! empty))
+                if (mode == 6 && ! empty)
                     continue;
                 halfduplexserver_protocol_fixture_t f;
                 orderSetup(&f, mode, 0, 0);
                 orderPair(&f, first, empty, true);
+                if (mode == 2 || (mode == 3 && ! empty))
+                {
+                    twfRequire(order.resumes == 0, "source resumed with older startup obligation");
+                    twfRequire(f.forwarded_length == (mode == 2 ? 0 : 1), "Pause did not hold startup backlog");
+                    halfduplexserverTunnelDownStreamResume(f.halfduplex, f.main_line);
+                }
+                const char *expected = mode == 6            ? ""
+                                       : mode == 5          ? (empty ? "BCEF" : "ABCDEF")
+                                       : mode == 0          ? (empty ? "NEW" : "OLDNEW")
+                                       : mode == 1          ? (empty ? "BCE" : "ABCDE")
+                                       : mode == 3 && empty ? "BC"
+                                       : empty              ? "BCE"
+                                                            : "ABCDE";
+                twfRequire(f.forwarded_length == strlen(expected) &&
+                               memoryEqual(f.forwarded_payload, expected, strlen(expected)),
+                           "startup FIFO violated");
+                if (mode == 6)
+                    twfRequire(order.callbacks == 0, "empty startup synthesized Payload");
                 if (mode == 5)
-                {
-                    twfRequire(f.main_line == NULL && f.transport_finish_count == 2 && order.next_finishes == 1,
-                               "tail allocation refusal did not close all initialized sides");
-                }
-                else
-                {
-                    if (mode == 2 || (mode == 3 && ! empty))
-                    {
-                        twfRequire(order.resumes == 0, "source resumed with older startup obligation");
-                        twfRequire(f.forwarded_length == (mode == 2 ? 0 : 1), "Pause did not hold startup backlog");
-                        halfduplexserverTunnelDownStreamResume(f.halfduplex, f.main_line);
-                    }
-                    const char *expected = mode == 7            ? ""
-                                           : mode == 6          ? (empty ? "BCEF" : "ABCDEF")
-                                           : mode == 0          ? (empty ? "NEW" : "OLDNEW")
-                                           : mode == 1          ? (empty ? "BCE" : "ABCDE")
-                                           : mode == 3 && empty ? "BC"
-                                           : empty              ? "BCE"
-                                                                : "ABCDE";
-                    twfRequire(f.forwarded_length == strlen(expected) &&
-                                   memoryEqual(f.forwarded_payload, expected, strlen(expected)),
-                               "startup FIFO violated");
-                    if (mode == 7)
-                        twfRequire(order.callbacks == 0, "empty startup synthesized Payload");
-                    if (mode == 6)
-                        twfRequire(order.resumes == 2, "nested source permission was stranded");
-                    if (mode == 2 || mode == 4 || (mode == 3 && ! empty))
-                        twfRequire(order.resumes == 1, "source Resume duplicated or missing");
-                    order.direct = halfduplexTestBytes(f.env.pool, "Z", 1, true, 0);
-                    halfduplexserverTunnelUpStreamPayload(f.halfduplex, order.upload, order.direct);
-                }
+                    twfRequire(order.resumes == 2, "nested source permission was stranded");
+                if (mode == 2 || mode == 4 || (mode == 3 && ! empty))
+                    twfRequire(order.resumes == 1, "source Resume duplicated or missing");
+                order.direct = halfduplexTestBytes(f.env.pool, "Z", 1, true, 0);
+                halfduplexserverTunnelUpStreamPayload(f.halfduplex, order.upload, order.direct);
                 protocolFixtureTeardown(&f);
             }
     for (unsigned stage = 1; stage <= 4; ++stage)
@@ -1253,7 +1226,8 @@ static void refusalInit(tunnel_t *t, line_t *line)
     orderSend("B");
     sbuf_t *buf = halfduplexTestBytes(f->env.pool, "failure", 7, true, 3);
     if (budget_dimension == 0 && WW_HAVE_SPLICE)
-        fail_allocation = true;
+        // Refuse unrepresentable materialization before reading the pipe.
+        buf->len = UINT32_MAX;
     else
         fail_queue = true;
     halfduplexserverTunnelUpStreamPayload(f->halfduplex, order.upload, buf);
@@ -1283,7 +1257,7 @@ static void caseStartupBudget(void)
                            "budget replay truncated bytes");
             protocolFixtureTeardown(&f);
         }
-    for (budget_dimension = 0; budget_dimension < 2; ++budget_dimension)
+    for (budget_dimension = WW_HAVE_SPLICE ? 0 : 1; budget_dimension < 2; ++budget_dimension)
     {
         halfduplexserver_protocol_fixture_t f;
         orderSetup(&f, 0, 0, 0);

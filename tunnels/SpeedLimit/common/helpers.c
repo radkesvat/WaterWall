@@ -266,35 +266,26 @@ uint32_t speedlimitGetRetryDelayMs(tunnel_t *t, line_t *l)
     uint64_t phase_ms = (now_ms - last_refill) % ts->recharge_interval_ms;
     uint64_t wait_ms  = (phase_ms == 0) ? ts->recharge_interval_ms : (ts->recharge_interval_ms - phase_ms);
 
-    if (tokens_units < kSpeedLimitUnitsPerByte)
+    const uint64_t missing_units = kSpeedLimitUnitsPerByte - tokens_units;
+    const uint64_t steps_needed  = 1 + (missing_units - 1) / ts->refill_units_per_step;
+    if (steps_needed > 1)
     {
-        uint64_t missing_units = kSpeedLimitUnitsPerByte - tokens_units;
-        uint64_t steps_needed  = (missing_units + ts->refill_units_per_step - 1) / ts->refill_units_per_step;
-        if (steps_needed > 1)
-        {
-            wait_ms += (steps_needed - 1) * ts->recharge_interval_ms;
-        }
+        wait_ms += (steps_needed - 1) * ts->recharge_interval_ms;
     }
 
-    if (wait_ms == 0 || wait_ms > UINT32_MAX)
-    {
-        return ts->recharge_interval_ms;
-    }
+    /* Intervals >= 1000 need one step; shorter intervals earn a byte in under 2000 ms. */
+    assert(wait_ms > 0 && wait_ms <= INT_MAX);
 
     return (uint32_t) wait_ms;
 }
 
 bool speedlimitScheduleUpstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms)
 {
-    if (delay_ms == 0)
-    {
-        delay_ms = kSpeedLimitImmediateMs;
-    }
+    assert(delay_ms > 0);
 
     if (ls->up_timer != NULL)
     {
-        wtimerReset(ls->up_timer, delay_ms);
-        return true;
+        return wtimerReset(ls->up_timer, delay_ms);
     }
 
     wtimer_t *timer = wtimerAdd(getWorkerLoop(lineGetWID(ls->line)), speedlimitUpstreamDrainTimerCallback, delay_ms, 1);
@@ -312,15 +303,11 @@ bool speedlimitScheduleUpstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms)
 
 bool speedlimitScheduleDownstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms)
 {
-    if (delay_ms == 0)
-    {
-        delay_ms = kSpeedLimitImmediateMs;
-    }
+    assert(delay_ms > 0);
 
     if (ls->down_timer != NULL)
     {
-        wtimerReset(ls->down_timer, delay_ms);
-        return true;
+        return wtimerReset(ls->down_timer, delay_ms);
     }
 
     wtimer_t *timer =

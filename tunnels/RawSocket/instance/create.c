@@ -250,9 +250,7 @@ tunnel_t *rawsocketCreate(node_t *node)
     {
         state->capture_device_name =
             rawsocketDuplicateSettingOrDefault(settings, "capture-device-name", "unnamed-capture-device");
-    }
-    if (state->capture_range_count > 0)
-    {
+
         dynamic_value_t fmode =
             parseDynamicNumericValueFromJsonObject(settings, "capture-filter-mode", 2, "source-ip", "dest-ip");
         if (fmode.status < kDvsSourceIp)

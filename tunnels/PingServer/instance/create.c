@@ -97,15 +97,9 @@ static bool pingserverLoadRequiredIpv4(uint32_t *destination, const cJSON *setti
 
 static bool pingserverLoadIdentifier(pingserver_tstate_t *state, const cJSON *settings)
 {
-    const cJSON *item = settings != NULL ? cJSON_GetObjectItemCaseSensitive(settings, "identifier") : NULL;
-    if (item == NULL)
-    {
-        state->identifier_is_random = true;
-        state->wire.identifier      = 0;
-        return true;
-    }
-
-    if (cJSON_IsString(item) && item->valuestring != NULL && stringCompare(item->valuestring, "random") == 0)
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, "identifier");
+    if (item == NULL ||
+        (cJSON_IsString(item) && item->valuestring != NULL && stringCompare(item->valuestring, "random") == 0))
     {
         state->identifier_is_random = true;
         state->wire.identifier      = 0;
@@ -170,9 +164,9 @@ tunnel_t *pingserverCreate(node_t *node)
         return NULL;
     }
 
-    int sequence_start = kPingServerDefaultSequenceStart;
-    int ttl            = kPingServerDefaultTtl;
-    int tos            = kPingServerDefaultTos;
+    int sequence_start;
+    int ttl;
+    int tos;
     if (! pingserverLoadInteger(
             &sequence_start, settings, "sequence-start", kPingServerDefaultSequenceStart, 0, UINT16_MAX) ||
         ! pingserverLoadInteger(&ttl, settings, "ttl", kPingServerDefaultTtl, 0, UINT8_MAX) ||

@@ -4,22 +4,18 @@ add_library(Bridge STATIC
                     instance/api.c
                     instance/node.c
                     instance/chain.c
-                    common/helpers.c
-                    common/line_state.c
                     upstream/init.c
                     upstream/est.c
                     upstream/fin.c
                     upstream/payload.c
                     upstream/pause.c
                     upstream/resume.c
-                    upstream/est.c
                     downstream/init.c
                     downstream/est.c
                     downstream/fin.c
                     downstream/payload.c
                     downstream/pause.c
                     downstream/resume.c
-                    downstream/est.c
   
 )
 

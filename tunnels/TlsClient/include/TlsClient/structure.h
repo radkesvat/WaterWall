@@ -177,7 +177,6 @@ bool   tlsclientSslReadBoundaryIsClean(tlsclient_lstate_t *ls);
 
 void tlsclientPrintSSLState(const SSL *ssl);
 void tlsclientPrintSSLError(void);
-void tlsclientPrintSSLErrorAndAbort(void);
 bool tlsclientConfigureTrustAnchors(SSL_CTX *ctx);
 /* Static real ECH is owned by the worker contexts; only Init and startup preflight opt in. */
 bool tlsclientConfigureEchContexts(tlsclient_tstate_t *ts, const cJSON *settings);
@@ -189,9 +188,9 @@ bool tlsclientPrepareSession(SSL *ssl);
 bool tlsclientReverifySession(SSL *ssl, const SSL_SESSION *session);
 /* BoringSSL certificate callback; arg borrows an immutable STACK_OF(X509). */
 int  tlsclientVerifyCertificateWithIntermediates(X509_STORE_CTX *ctx, void *arg);
-bool tlsclientConfigureSslForConnect(SSL *ssl, BIO *rbio, BIO *wbio, const char *sni,
-                                     const uint8_t *ech_grease_override_payload,
-                                     size_t         ech_grease_override_payload_len);
+/* The SSL object already owns its read/write BIOs. */
+bool tlsclientConfigureSslForConnect(SSL *ssl, const char *sni, const uint8_t *ech_grease_override_payload,
+                                     size_t ech_grease_override_payload_len);
 bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
                                            const uint8_t *ech_grease_override_payload,
                                            size_t ech_grease_override_payload_len, const uint8_t *alpn_wire,

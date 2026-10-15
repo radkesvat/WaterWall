@@ -224,7 +224,7 @@ void mxbTlsClientInitializeLine(mxb_fixture_t *fixture)
         "failed to initialize TlsClient composition line state");
     ls->tunnel = fixture->tls;
     ls->line   = fixture->child;
-    mxbRequire(tlsclientConfigureSslForConnect(ls->ssl, ls->rbio, ls->wbio, "localhost", NULL, 0),
+    mxbRequire(tlsclientConfigureSslForConnect(ls->ssl, "localhost", NULL, 0),
                "failed to configure the in-memory TlsClient connection");
 
     private->server  = SSL_new(private->server_ctx);

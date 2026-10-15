@@ -7,8 +7,5 @@ void udplistenerTunnelDownStreamPause(tunnel_t *t, line_t *l)
     udplistenerRequireCurrentLineWorker(l, "downstream Pause");
     udplistener_lstate_t *ls = lineGetState(l, t);
 
-    if (! ls->read_paused)
-    {
-        ls->read_paused = true;
-    }
+    ls->read_paused = true;
 }

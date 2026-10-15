@@ -66,9 +66,9 @@ static void firstPayloadExpired(wtimer_t *timer)
 
 void vlessclientOnNextEstablished(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls)
 {
-    if (ls->phase == kVlessClientPhaseClosed)
-        return;
-    if (ls->next_established)
+    assert(ls->phase != kVlessClientPhaseClosed);
+    assert(ls->kind != kVlessClientLineKindUdpApplication);
+    if (ls->phase == kVlessClientPhaseEstablished)
     {
         if (ls->kind == kVlessClientLineKindDirect)
             tunnelPrevDownStreamEst(t, l);
@@ -78,7 +78,6 @@ void vlessclientOnNextEstablished(tunnel_t *t, line_t *l, vlessclient_lstate_t *
     lineRef(l);
     if (application != l)
         lineRef(application);
-    ls->next_established = true;
     ls->phase            = kVlessClientPhaseEstablished;
     ls->est_notifying    = true;
     if (! ls->request_sent)

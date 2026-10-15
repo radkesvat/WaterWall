@@ -71,7 +71,7 @@ static void ptcReleaseAckQueue(ptc_lstate_t *ls, buffer_pool_t *pool)
             bufferpoolReuseBuffer(pool, (*i.ref).buf);
         }
         assert(ls->pending_bytes >= (*i.ref).total);
-        ls->pending_bytes = (ls->pending_bytes >= (*i.ref).total) ? (ls->pending_bytes - (*i.ref).total) : 0;
+        ls->pending_bytes -= (*i.ref).total;
     }
 
     sbuf_ack_queue_t_drop(&ls->ack_queue);

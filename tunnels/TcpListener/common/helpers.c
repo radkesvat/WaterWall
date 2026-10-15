@@ -161,16 +161,14 @@ bool tcplistenerBeginFallbackLinger(tunnel_t *t, wio_t *io)
 
 static void onRecv(wio_t *io, sbuf_t *buf)
 {
-    tcplistener_lstate_t *lstate = (tcplistener_lstate_t *) (weventGetUserdata(io));
-    if (UNLIKELY(lstate == NULL))
+    tcplistener_lstate_t *ls = weventGetUserdata(io);
+    if (UNLIKELY(ls == NULL))
     {
-        // assert(false);
         bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
-    line_t               *l  = lstate->line;
-    tunnel_t             *t  = lstate->tunnel;
-    tcplistener_lstate_t *ls = lineGetState(l, t);
+    line_t               *l  = ls->line;
+    tunnel_t             *t  = ls->tunnel;
     tcplistener_tstate_t *ts = tunnelGetState(t);
 
     tcplistenerApplyReadPreference(ls);
@@ -262,8 +260,8 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        struct sockaddr log_localaddr = *wioGetLocaladdr(io);
-        sockaddrSetPort((sockaddr_u *) &(log_localaddr), data->real_localport);
+        sockaddr_u log_localaddr = *wioGetLocaladdrU(io);
+        sockaddrSetPort(&log_localaddr, data->real_localport);
 
         LOGD("TcpListener: Accepted FD:%x  [%s] <= [%s]",
              wioGetFD(io),
@@ -301,10 +299,8 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
 
     // Init may attach this source to an already backpressured Mux parent.
     tcplistenerApplyReadPreference(ls);
-    if (! ls->read_paused && UNLIKELY(wioRead(io) != 0))
-    {
-        return;
-    }
+    if (! ls->read_paused)
+        discard wioRead(io);
 }
 
 void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate)
@@ -323,6 +319,7 @@ void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate)
     }
 }
 
+// Returns true only after draining the FIFO with the line still alive.
 static bool resumeWriteQueue(tcplistener_lstate_t *lstate)
 {
     line_t *line = lstate->line;
@@ -368,7 +365,7 @@ void tcplistenerOnWriteComplete(wio_t *io)
     line_t   *line = ls->line;
     tunnel_t *t    = ls->tunnel;
     lineRef(line);
-    if (resumeWriteQueue(ls) && lineIsAlive(line))
+    if (resumeWriteQueue(ls))
     {
         ls->write_paused     = false;
         const bool notify    = ls->queue_pause_sent;

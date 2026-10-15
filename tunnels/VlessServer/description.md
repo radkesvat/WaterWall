@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/VlessServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VlessServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -55,7 +55,6 @@ not every frame is guaranteed zero-copy.
 | Upstream Init/reentry and fallback backlog, shared | 2,097,152 logical bytes and 1,024 buffers |
 | Downstream response-header/reentry backlog | 2,097,152 logical bytes and 1,024 buffers |
 | Request/UDP parser, including cached metadata and active input | 2,162,689 logical bytes (2 MiB + 65,537) |
-| Incomplete initial request | 4,096 bytes; complete headers with body are not incomplete requests |
 
 Empty retained output buffers consume entries; incomplete UDP fragments have no 1,024-entry output cap. Equality is
 accepted; overflow or queue refusal closes the affected association and releases locally owned data. These are retention

@@ -127,7 +127,7 @@ int main(void)
         for (wid_t wid = 0; wid < 2; ++wid)
         {
             lwipTestEngineSelect(wid);
-            interface_route_context_t *route = ptcFindOrCreateRouteContextV4(instances[i], wid, NULL);
+            interface_route_context_t *route = ptcFindOrCreateRouteContextV4(instances[i], wid);
             require(route != NULL && route->netif.mtu == expected[i], "lazy netif did not use its instance snapshot");
             checkResponse(&route->netif);
         }

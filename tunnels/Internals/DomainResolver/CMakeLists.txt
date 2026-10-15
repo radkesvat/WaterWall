@@ -1,9 +1,7 @@
 add_library(DomainResolver STATIC
                     instance/create.c
-                    instance/destroy.c
                     instance/api.c
                     instance/node.c
-                    instance/stop.c
                     common/helpers.c
                     common/line_state.c
                     upstream/init.c

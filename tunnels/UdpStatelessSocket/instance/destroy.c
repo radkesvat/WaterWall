@@ -46,14 +46,8 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *
     udpstatelesssocketDnsCacheClear(state);
     mutexDestroy(&state->dns_cache_mutex);
 
-    if (state->listen_address)
-    {
-        memoryFree(state->listen_address);
-    }
-    if (state->interface_name)
-    {
-        memoryFree(state->interface_name);
-    }
+    memoryFree(state->listen_address);
+    memoryFree(state->interface_name);
 
     tunnelDestroy(t);
 }

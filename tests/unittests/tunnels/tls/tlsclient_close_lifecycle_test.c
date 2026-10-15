@@ -366,7 +366,7 @@ static void fixtureInitialize(tlsclient_lifecycle_fixture_t *fixture)
                      "failed to initialize TlsClient lifecycle line state");
     ls->tunnel = fixture->tls;
     ls->line   = fixture->line;
-    requireTlsClient(tlsclientConfigureSslForConnect(ls->ssl, ls->rbio, ls->wbio, "example.com", NULL, 0),
+    requireTlsClient(tlsclientConfigureSslForConnect(ls->ssl, "example.com", NULL, 0),
                      "failed to configure TlsClient lifecycle SSL object");
 }
 

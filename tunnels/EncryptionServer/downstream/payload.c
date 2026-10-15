@@ -22,14 +22,10 @@ static sbuf_t *encryptionserverAllocFrameBuffer(buffer_pool_t *pool, uint32_t fr
 
 static bool encryptionserverEncryptFrame(encryptionserver_tstate_t *ts, sbuf_t **buf, uint32_t plaintext_len)
 {
+    assert(plaintext_len <= kEncryptionHardMaxFramePayload);
     uint32_t ciphertext_len = plaintext_len + kEncryptionTagSize;
     uint32_t body_len       = kEncryptionNonceSize + ciphertext_len;
     uint32_t frame_len      = kEncryptionTlsHeaderSize + body_len;
-
-    if (body_len > kEncryptionMaxTlsRecordBody)
-    {
-        return false;
-    }
 
     if (sbufGetMaximumWriteableSize(*buf) < ciphertext_len)
     {
@@ -127,8 +123,5 @@ void encryptionserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
         return;
     }
 
-    if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
-    {
-        return;
-    }
+    tunnelPrevDownStreamPayload(t, l, buf);
 }

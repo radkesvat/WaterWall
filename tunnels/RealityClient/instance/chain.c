@@ -6,12 +6,7 @@ void realityclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 {
     realityclient_tstate_t *ts = tunnelGetState(t);
 
-    if (ts->tls_tunnel == NULL)
-    {
-        LOGF("RealityClient: internal TlsClient is not available");
-        startupFailureRecord(1);
-        return;
-    }
+    assert(ts->tls_tunnel != NULL);
 
     if (ts->tls_tunnel->prev != NULL && ts->tls_tunnel->prev != t)
     {

@@ -80,7 +80,7 @@ static void reverseclientReleasePairCounter(reverseclient_pair_t *pair)
 
 void reverseclientClosePair(reverseclient_pair_t *pair, reverseclient_close_origin_e origin)
 {
-    if (pair == NULL || pair->closing)
+    if (pair == NULL)
     {
         return;
     }
@@ -93,14 +93,12 @@ void reverseclientClosePair(reverseclient_pair_t *pair, reverseclient_close_orig
     const bool              finish_upstream   = pair->upstream_init_sent && origin != kReverseClientCloseFromNext;
     const bool              finish_downstream = pair->downstream_init_sent && origin != kReverseClientCloseFromPrev;
 
-    pair->closing = true;
     reverseclientUnregisterPair(pair);
 
     if (pair->idle_handle != NULL)
     {
         pair->idle_handle = NULL;
-        if (origin != kReverseClientCloseIdleExpiry &&
-            ! idletableRemoveIdleItemByHash(wid, ts->starved_connections, (hash_t) (uintptr_t) pair))
+        if (! idletableRemoveIdleItemByHash(wid, ts->starved_connections, (hash_t) (uintptr_t) pair))
         {
             LOGF("ReverseClient: failed to detach an owned pair from the idle table");
             abortProgramNow(1);
@@ -116,6 +114,7 @@ void reverseclientClosePair(reverseclient_pair_t *pair, reverseclient_close_orig
     bufferbudgetReservationRelease(&pair->activation_initial);
     bufferqueueDestroy(&pair->activation_pending);
     bufferbudgetAssertEmpty(&pair->activation_budget);
+    /* Detach both callback entry points before either neighbor can reenter close. */
     reverseclientLinestateDestroy(lineGetState(ul, t));
     reverseclientLinestateDestroy(lineGetState(dl, t));
 
@@ -140,7 +139,7 @@ void reverseclientClosePair(reverseclient_pair_t *pair, reverseclient_close_orig
     memoryFree(pair);
     if (! atomicLoadRelaxed(&ts->stopping))
     {
-        reverseclientInitiateConnectOnWorker(t, wid, false);
+        reverseclientInitiateConnectOnWorker(t, wid);
     }
 }
 
@@ -215,10 +214,8 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
     tunnelNextUpStreamPayload(t, ul, handshake);
 }
 
-void reverseclientInitiateConnectOnWorker(tunnel_t *t, wid_t wid, bool delay)
+void reverseclientInitiateConnectOnWorker(tunnel_t *t, wid_t wid)
 {
-    discard delay;
-
     reverseclient_tstate_t *ts = tunnelGetState(t);
     if (atomicLoadRelaxed(&ts->stopping))
     {
@@ -261,5 +258,5 @@ void reverseclientOnStarvedConnectionExpire(idle_item_t *idle_con)
 
     pair->idle_handle = NULL;
     LOGW("ReverseClient: an idle connection was closed");
-    reverseclientClosePair(pair, kReverseClientCloseIdleExpiry);
+    reverseclientClosePair(pair, kReverseClientCloseInternal);
 }

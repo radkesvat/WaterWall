@@ -4,7 +4,8 @@
  * backends also refuse impossible SIZE_MAX requests. Child processes must exit
  * with status 1 without atexit cleanup or blocked wrapper diagnostics.
  * Successful cases cover zero sizes, realloc preservation/free, calloc overflow,
- * aligned geometry rejection and zeroed/aligned storage.
+ * aligned geometry rejection, zeroed/aligned storage and the production crypto
+ * allocation hook's size-prefix geometry, recorded sizes and matching frees.
  * CTest: waterwall.memory_allocation_unit, waterwall.memory_allocation_bypass_unit
  */
 #include "wlibc.h"
@@ -47,6 +48,11 @@ static bool   refuse_allocations;
 static size_t allocation_calls;
 static void  *tracked_allocation;
 static size_t tracked_frees;
+static void  *last_allocation;
+
+void  *OPENSSL_memory_alloc(size_t size);
+void   OPENSSL_memory_free(void *ptr);
+size_t OPENSSL_memory_get_size(void *ptr);
 
 void *REAL_MALLOC(size_t size);
 void *REAL_CALLOC(size_t n, size_t size);
@@ -60,7 +66,8 @@ void  WRAP_FREE(void *ptr);
 void *WRAP_MALLOC(size_t size)
 {
     allocation_calls++;
-    return refuse_allocations ? NULL : REAL_MALLOC(size);
+    last_allocation = refuse_allocations ? NULL : REAL_MALLOC(size);
+    return last_allocation;
 }
 
 void *WRAP_CALLOC(size_t n, size_t size)
@@ -154,6 +161,34 @@ static void unexpectedExitCleanup(void)
     _Exit(72);
 }
 
+static void testCryptoHookGeometry(void)
+{
+    const size_t sizes[] = {0, 1, 32};
+    for (size_t i = 0; i < ARRAY_SIZE(sizes); ++i)
+    {
+        const size_t calls_before = allocation_calls;
+        void        *ptr          = OPENSSL_memory_alloc(sizes[i]);
+        require(ptr != NULL && OPENSSL_memory_get_size(ptr) == sizes[i],
+                "crypto allocation hook lost the requested size");
+        require(allocation_calls == calls_before + 1, "crypto allocation bypassed the memory manager");
+        if (sizes[i] != 0)
+            memset(ptr, 0x5a, sizes[i]);
+        tracked_allocation        = last_allocation;
+        const size_t frees_before = tracked_frees;
+        OPENSSL_memory_free(ptr);
+        require(tracked_frees == frees_before + 1, "crypto allocation hook did not free its backend allocation once");
+        tracked_allocation = NULL;
+    }
+
+    const size_t invalid[] = {SIZE_MAX - sizeof(size_t) + 1, SIZE_MAX};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        const size_t calls_before = allocation_calls;
+        require(OPENSSL_memory_alloc(invalid[i]) == NULL, "crypto allocation hook accepted size-prefix overflow");
+        require(allocation_calls == calls_before, "crypto allocation overflow reached the backend");
+    }
+}
+
 static bool blockStandardError(void)
 {
     int descriptors[2];
@@ -177,11 +212,12 @@ static void testFatalAllocation(unsigned int kind)
     require(child >= 0, "failed to fork allocation failure case");
     if (child == 0)
     {
-        void *existing = memoryAllocate(8);
-        if (atexit(unexpectedExitCleanup) != 0 || (kind < 9 && ! blockStandardError()))
+        void      *existing               = memoryAllocate(8);
+        const bool inject_backend_failure = kind < 9 || kind == 12;
+        if (atexit(unexpectedExitCleanup) != 0 || (inject_backend_failure && ! blockStandardError()))
             _Exit(74);
         alarm(3);
-        refuse_allocations              = kind < 9;
+        refuse_allocations              = inject_backend_failure;
         volatile size_t impossible_size = SIZE_MAX;
         switch (kind)
         {
@@ -221,6 +257,9 @@ static void testFatalAllocation(unsigned int kind)
         case 11:
             discard memoryReAllocate(existing, impossible_size);
             break;
+        case 12:
+            discard OPENSSL_memory_alloc(8);
+            break;
         }
         _Exit(73);
     }
@@ -235,7 +274,8 @@ int main(void)
     testCaseSet("memory_allocation_test");
     testSuccessfulAllocations();
     testZeroAndInvalidGeometry();
-    for (unsigned int kind = 0; kind < 12; ++kind)
+    testCryptoHookGeometry();
+    for (unsigned int kind = 0; kind < 13; ++kind)
         testFatalAllocation(kind);
     puts("memory_allocation_test: all cases passed");
     return 0;

@@ -1,8 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#ifdef OS_WIN
-#endif
 
 void tundeviceTunnelOnStart(tunnel_t *t)
 {

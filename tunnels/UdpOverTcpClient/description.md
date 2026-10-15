@@ -111,10 +111,12 @@ This means the previous node should treat this tunnel as packet-preserving, whil
 ### Stream buffering behavior
 
 Incoming stream bytes wait in a read stream until complete datagrams can be extracted.
-The incomplete suffix limit is `2 * kMaxAllowedUDPPacketLength = 131010` bytes.
+After complete frames drain, the 16-bit wire length leaves at most 65,536 bytes
+of incomplete input, including the two-byte header. The decoder accepts nonzero wire lengths
+through 65,535 bytes; the outbound datagram limit remains 65,505 bytes.
 
-Complete frames drain before the incomplete suffix is checked. Retained buffer charge is capped at 4 MiB,
-with beneficial compaction attempted first. Malformed frames, allocation refusal or exhausted storage close
+Retained buffer charge is capped at 4 MiB, with beneficial compaction attempted after complete frames drain.
+Malformed frames, unrepresentable storage or exhausted budgets close
 the carrier through its owner. Decoder reentry shares a 2 MiB byte limit and 4 MiB charge limit with its
 retained stream. The parser never discards arbitrary stream bytes to continue.
 

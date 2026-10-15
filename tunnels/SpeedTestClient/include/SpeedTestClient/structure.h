@@ -108,8 +108,6 @@ typedef struct speedtestclient_tstate_s
 typedef struct speedtestclient_lstate_s
 {
     splice_stream_t        *recv_stream;
-    tunnel_t               *tunnel;
-    line_t                 *line;
     uint32_t                stream_id;
     uint32_t                expected_reports;
     uint32_t                received_reports;
@@ -140,7 +138,6 @@ typedef struct speedtestclient_lstate_s
     bool                    remote_receiver_report_received;
     bool                    upstream_init_sent;
     bool                    line_complete;
-    bool                    failed;
 } speedtestclient_lstate_t;
 
 WW_EXPORT void         speedtestclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
@@ -174,10 +171,7 @@ void     speedtestclientFormatBytes(uint64_t bytes, char *out, size_t out_len);
 void     speedtestclientFormatBitrate(double bits_per_sec, char *out, size_t out_len);
 void    speedtestclientWriteHeader(uint8_t *ptr, uint8_t type, uint16_t flags, uint32_t stream_id, uint32_t payload_len,
                                    uint64_t sequence, uint64_t timestamp_us, uint64_t aux1, uint64_t aux2);
-bool    speedtestclientReadHeader(const uint8_t *ptr, size_t len, speedtestclient_frame_t *frame);
-sbuf_t *speedtestclientCreateFrame(tunnel_t *t, line_t *l, uint8_t type, uint16_t flags, uint32_t stream_id,
-                                   uint64_t sequence, uint32_t payload_len, uint64_t timestamp_us, uint64_t aux1,
-                                   uint64_t aux2);
+bool     speedtestclientReadHeader(const uint8_t *ptr, size_t len, speedtestclient_frame_t *frame);
 void    speedtestclientFillPattern(uint8_t *ptr, uint32_t len, uint32_t stream_id, uint64_t sequence, uint16_t flags);
 bool    speedtestclientVerifyPattern(const uint8_t *ptr, uint32_t len, uint32_t stream_id, uint64_t sequence,
                                      uint16_t flags);

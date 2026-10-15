@@ -32,7 +32,7 @@ static bool socks5serverAddressFromContext(const address_context_t *ctx, socks5_
         else
             return false;
     }
-    else if (addresscontextIsDomain(ctx) && ctx->domain_len != 0)
+    else if (addresscontextIsDomain(ctx))
     {
         value.kind   = kSocks5AddressDomain;
         value.length = ctx->domain_len;
@@ -64,27 +64,20 @@ sbuf_t *socks5serverCreateAuthReply(line_t *l, uint8_t status)
 
 sbuf_t *socks5serverCreateCommandReply(line_t *l, uint8_t rep, const address_context_t *ctx)
 {
-    address_context_t        zero_addr  = {0};
-    const address_context_t *reply_addr = ctx;
-
-    if (reply_addr == NULL)
+    socks5_address_t address = {.kind = kSocks5AddressIpv4, .length = 4};
+    if (ctx != NULL)
     {
-        addresscontextSetIpAddressPort(&zero_addr, "0.0.0.0", 0);
-        reply_addr = &zero_addr;
+        bool converted = socks5serverAddressFromContext(ctx, &address);
+        assert(converted);
+        discard converted;
     }
-
-    socks5_address_t address;
-    if (! socks5serverAddressFromContext(reply_addr, &address))
-        return NULL;
     const size_t addr_len = socks5AddressEncodedLength(&address);
     sbuf_t      *buf      = socks5serverAllocBuffer(l, (uint32_t) (3 + addr_len));
     uint8_t     *ptr      = sbufGetMutablePtr(buf);
     size_t       written;
-    if (! socks5AddressEncode(&address, ptr + 3, addr_len, &written))
-    {
-        lineReuseBuffer(l, buf);
-        return NULL;
-    }
+    bool         encoded = socks5AddressEncode(&address, ptr + 3, addr_len, &written);
+    assert(encoded);
+    discard encoded;
     ptr[0] = kSocks5Version;
     ptr[1] = rep;
     ptr[2] = 0;
@@ -162,8 +155,9 @@ bool socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const addre
 
     uint8_t *ptr = sbufGetMutablePtr(buf);
     size_t   written;
-    if (! socks5AddressEncode(&address, ptr + 3, addr_len, &written))
-        return false;
+    bool     encoded = socks5AddressEncode(&address, ptr + 3, addr_len, &written);
+    assert(encoded);
+    discard encoded;
     ptr[0] = ptr[1] = ptr[2] = 0;
     return true;
 }

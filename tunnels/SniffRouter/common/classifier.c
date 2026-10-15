@@ -74,55 +74,23 @@ static bool routeMatchesHost(sniffrouter_route_t *route, const uint8_t *host, ui
     return false;
 }
 
-static tunnel_t *findMatchingRoute(sniffrouter_tstate_t *ts, const uint8_t *http_host, uint32_t http_host_len,
-                                   bool http_found, const uint8_t *tls_sni, uint32_t tls_sni_len, bool tls_found,
-                                   bool reverse_found)
+/* Complete HTTP/TLS detection returns immediately, so matching sees one signal. */
+static sniffrouter_match_t classifyFoundSignal(sniffrouter_tstate_t *ts, uint8_t detection, const uint8_t *host,
+                                               uint32_t host_len)
 {
+    sniffrouter_match_t match = {.result = kSniffClassifyDefault, .target = NULL};
     for (uint32_t ri = 0; ri < ts->routes_count; ++ri)
     {
         sniffrouter_route_t *route = &ts->routes[ri];
-
-        if (http_found && (route->detection & kSniffDetectionHttp1) != 0 &&
-            routeMatchesHost(route, http_host, http_host_len))
-        {
-            return route->tunnel;
-        }
-
-        if (tls_found && (route->detection & kSniffDetectionTlsClientHello) != 0 &&
-            routeMatchesHost(route, tls_sni, tls_sni_len))
-        {
-            return route->tunnel;
-        }
-
+        if ((route->detection & detection) == 0)
+            continue;
         // Reverse detection is a binary-signature match and intentionally ignores
         // "domains": the reverse link carries no Host/SNI of its own.
-        if (reverse_found && (route->detection & kSniffDetectionReverse) != 0)
-        {
-            return route->tunnel;
-        }
-    }
-
-    return NULL;
-}
-
-static sniffrouter_match_t classifyFoundSignals(sniffrouter_tstate_t *ts, const uint8_t *http_host,
-                                                uint32_t http_host_len, bool http_found, const uint8_t *tls_sni,
-                                                uint32_t tls_sni_len, bool tls_found, bool reverse_found,
-                                                bool need_more)
-{
-    sniffrouter_match_t match = {
-        .result = kSniffClassifyDefault,
-        .target = findMatchingRoute(ts, http_host, http_host_len, http_found, tls_sni, tls_sni_len, tls_found,
-                                    reverse_found),
-    };
-
-    if (match.target != NULL)
-    {
-        match.result = kSniffClassifyTarget;
-    }
-    else if (need_more)
-    {
-        match.result = kSniffClassifyNeedMore;
+        if (detection != kSniffDetectionReverse && ! routeMatchesHost(route, host, host_len))
+            continue;
+        match.target = route->tunnel;
+        match.result = match.target != NULL ? kSniffClassifyTarget : kSniffClassifyDefault;
+        break;
     }
 
     return match;
@@ -146,7 +114,6 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
 
     const uint8_t *http_host     = NULL;
     uint32_t       http_host_len = 0;
-    bool           http_found    = false;
     bool           need_more     = false;
 
     if (http_enabled)
@@ -157,23 +124,16 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
             need_more = true;
             break;
         case kGenericSnifferFound:
-            http_found = true;
-            break;
+            // A complete HTTP Host is definitive; do not probe TLS or reverse signatures.
+            return classifyFoundSignal(ts, kSniffDetectionHttp1, http_host, http_host_len);
         case kGenericSnifferMissing:
         default:
             break;
         }
     }
 
-    if (http_found)
-    {
-        // A complete HTTP/1 Host makes TLS SNI/reverse signature checks pointless for this payload.
-        return classifyFoundSignals(ts, http_host, http_host_len, true, NULL, 0, false, false, false);
-    }
-
     const uint8_t *tls_sni     = NULL;
     uint32_t       tls_sni_len = 0;
-    bool           tls_found   = false;
     uint8_t        tls_scratch[kGenericSnifferMaxWindowBytes];
 
     if (tls_enabled)
@@ -184,32 +144,22 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
             need_more = true;
             break;
         case kGenericSnifferFound:
-            tls_found = true;
-            break;
+            // A complete TLS SNI result is definitive; do not probe reverse signatures.
+            return classifyFoundSignal(ts, kSniffDetectionTlsClientHello, tls_sni, tls_sni_len);
         case kGenericSnifferMissing:
         default:
             break;
         }
     }
 
-    if (tls_found)
-    {
-        // A complete TLS SNI result is also definitive; avoid reverse-signature probing afterward.
-        return classifyFoundSignals(ts, NULL, 0, false, tls_sni, tls_sni_len, true, false, false);
-    }
-
-    bool reverse_found = false;
-    bool reverse_incomplete = false;
-
     if (reverse_enabled)
     {
         switch (findReverseHandshake(ts, p, n))
         {
         case kSniffReverseIncomplete:
-            reverse_incomplete = true;
-            break;
+            return match;
         case kSniffReverseFound:
-            reverse_found = true;
+            match = classifyFoundSignal(ts, kSniffDetectionReverse, NULL, 0);
             break;
         case kSniffReverseMissing:
         default:
@@ -217,11 +167,7 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
         }
     }
 
-    if (reverse_incomplete)
-    {
-        return match;
-    }
-
-    return classifyFoundSignals(ts, http_host, http_host_len, http_found, tls_sni, tls_sni_len, tls_found,
-                                reverse_found, need_more);
+    if (match.target == NULL && need_more)
+        match.result = kSniffClassifyNeedMore;
+    return match;
 }

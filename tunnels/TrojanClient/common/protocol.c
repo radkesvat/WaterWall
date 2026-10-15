@@ -3,16 +3,17 @@
 static bool trojanclientAddressFromContext(const address_context_t *ctx, trojanclient_address_t *out)
 {
     trojanclient_address_t value = {.port = ctx->port};
-    if (addresscontextIsIpType(ctx))
+    if (addresscontextIsIpv4(ctx))
     {
-        if (! addresscontextIsIpv4(ctx) && ! addresscontextIsIpv6(ctx))
-            return false;
-        value.kind   = addresscontextIsIpv4(ctx) ? kTrojanClientAddressIpv4 : kTrojanClientAddressIpv6;
-        value.length = addresscontextIsIpv4(ctx) ? 4 : 16;
-        memoryCopy(value.bytes,
-                   addresscontextIsIpv4(ctx) ? (const void *) &ctx->ip_address.u_addr.ip4.addr
-                                             : (const void *) &ctx->ip_address.u_addr.ip6,
-                   value.length);
+        value.kind   = kTrojanClientAddressIpv4;
+        value.length = 4;
+        memoryCopy(value.bytes, &ctx->ip_address.u_addr.ip4.addr, value.length);
+    }
+    else if (addresscontextIsIpv6(ctx))
+    {
+        value.kind   = kTrojanClientAddressIpv6;
+        value.length = 16;
+        memoryCopy(value.bytes, &ctx->ip_address.u_addr.ip6, value.length);
     }
     else if (addresscontextIsDomain(ctx))
     {
@@ -26,24 +27,16 @@ static bool trojanclientAddressFromContext(const address_context_t *ctx, trojanc
     return true;
 }
 
-static bool trojanclientWriteAddress(uint8_t *ptr, size_t capacity, const address_context_t *ctx, size_t *offset)
+/* The caller has validated the address and reserved its complete encoded length. */
+static void trojanclientWriteAddress(uint8_t *ptr, size_t capacity, const trojanclient_address_t *address,
+                                     size_t *offset)
 {
-    trojanclient_address_t value;
-    size_t                 written;
-    if (! trojanclientAddressFromContext(ctx, &value) || *offset > capacity ||
-        ! trojanclientAddressEncode(&value, ptr + *offset, capacity - *offset, &written))
-        return false;
+    assert(*offset <= capacity);
+    size_t written = 0;
+    bool   encoded = trojanclientAddressEncode(address, ptr + *offset, capacity - *offset, &written);
+    assert(encoded);
+    discard encoded;
     *offset += written;
-    return true;
-}
-
-static bool trojanclientAddressLength(const address_context_t *ctx, uint32_t *len_out)
-{
-    trojanclient_address_t value;
-    if (! trojanclientAddressFromContext(ctx, &value))
-        return false;
-    *len_out = (uint32_t) trojanclientAddressEncodedLength(&value);
-    return true;
 }
 
 static uint8_t protocolToCommand(trojanclient_protocol_t protocol)
@@ -52,34 +45,24 @@ static uint8_t protocolToCommand(trojanclient_protocol_t protocol)
     return protocol == kTrojanClientProtocolUdp ? kTrojanCommandUdpAssociate : kTrojanCommandConnect;
 }
 
-static void fillUdpAssociateRequestTarget(address_context_t *target)
-{
-    discard addresscontextSetIpAddressPort(target, "0.0.0.0", 0);
-    addresscontextSetOnlyProtocol(target, IP_PROTO_UDP);
-}
-
 /* Takes ownership of body on every result. No callback occurs until the whole
  * request and eligible first payload occupy one ordinary, onward-padded buffer. */
 bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, sbuf_t *body)
 {
-    trojanclient_tstate_t   *ts           = tunnelGetState(t);
-    address_context_t        assoc_target = {0};
-    const address_context_t *target       = &ls->target_addr;
-    uint32_t                 addr_len = 0, udp_addr_len = 0;
-    if (ls->protocol == kTrojanClientProtocolUdp)
+    trojanclient_tstate_t *ts  = tunnelGetState(t);
+    bool                   udp = ls->protocol == kTrojanClientProtocolUdp;
+    /* UDP association requests use 0.0.0.0:0; datagrams carry the real target. */
+    trojanclient_address_t request_target = {.kind = kTrojanClientAddressIpv4, .length = 4};
+    trojanclient_address_t udp_target     = {0};
+    if (UNLIKELY((! udp && ! trojanclientAddressFromContext(&ls->target_addr, &request_target)) ||
+                 (udp && body != NULL && ! trojanclientAddressFromContext(&ls->target_addr, &udp_target))))
     {
-        fillUdpAssociateRequestTarget(&assoc_target);
-        target = &assoc_target;
-    }
-    if (UNLIKELY(! trojanclientAddressLength(target, &addr_len) ||
-                 (body != NULL && ls->protocol == kTrojanClientProtocolUdp &&
-                  ! trojanclientAddressLength(&ls->target_addr, &udp_addr_len))))
-    {
-        addresscontextReset(&assoc_target);
         if (body != NULL)
             lineReuseBuffer(l, body);
         return false;
     }
+    uint32_t       addr_len       = (uint32_t) trojanclientAddressEncodedLength(&request_target);
+    uint32_t       udp_addr_len   = udp && body != NULL ? (uint32_t) trojanclientAddressEncodedLength(&udp_target) : 0;
     uint32_t       body_len       = body == NULL ? 0 : sbufGetLength(body);
     uint32_t       header_len     = kTrojanClientPasswordHexLen + 5U + addr_len;
     uint32_t       udp_header_len = udp_addr_len == 0 ? 0 : udp_addr_len + 4U;
@@ -90,7 +73,6 @@ bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_
     sbuf_t *buf     = reuse_body ? body : bufferpoolTryGetBestFit(pool, total, padding);
     if (UNLIKELY(buf == NULL))
     {
-        addresscontextReset(&assoc_target);
         if (body != NULL)
             lineReuseBuffer(l, body);
         return false;
@@ -104,22 +86,18 @@ bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_
     ptr[off++]   = '\r';
     ptr[off++]   = '\n';
     ptr[off++]   = protocolToCommand(ls->protocol);
-    bool written = trojanclientWriteAddress(ptr, header_len, target, &off);
-    assert(written);
-    discard written;
+    trojanclientWriteAddress(ptr, header_len, &request_target, &off);
     ptr[off++] = '\r';
     ptr[off++] = '\n';
     if (udp_header_len != 0)
     {
-        written = trojanclientWriteAddress(ptr, header_len + udp_header_len, &ls->target_addr, &off);
-        assert(written);
+        trojanclientWriteAddress(ptr, header_len + udp_header_len, &udp_target, &off);
         uint16_t length = htobe16((uint16_t) body_len);
         memoryCopy(ptr + off, &length, sizeof(length));
         off += sizeof(length);
         ptr[off++] = '\r';
         ptr[off++] = '\n';
     }
-    addresscontextReset(&assoc_target);
     if (! reuse_body)
     {
         sbufSetLength(buf, (uint32_t) off);
@@ -149,19 +127,15 @@ bool trojanclientWrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_contex
 {
     sbuf_t  *buf     = *buf_io;
     uint32_t payload = sbufGetLength(buf);
-    uint32_t addr_len;
+    assert(payload <= kTrojanClientUdpMaxPacket);
 
-    if (UNLIKELY(payload > kTrojanClientUdpMaxPacket))
+    trojanclient_address_t address;
+    if (UNLIKELY(! trojanclientAddressFromContext(target, &address)))
     {
         return false;
     }
 
-    if (UNLIKELY(! trojanclientAddressLength(target, &addr_len)))
-    {
-        return false;
-    }
-
-    uint32_t header_len = addr_len + 2U + kTrojanClientCrlfLen;
+    uint32_t header_len = (uint32_t) trojanclientAddressEncodedLength(&address) + 2U + kTrojanClientCrlfLen;
 
     if (sbufGetLeftCapacity(buf) < header_len)
     {
@@ -184,10 +158,7 @@ bool trojanclientWrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_contex
     uint8_t *ptr = sbufGetMutablePtr(buf);
     size_t   off = 0;
 
-    if (UNLIKELY(! trojanclientWriteAddress(ptr, header_len, target, &off)))
-    {
-        return false;
-    }
+    trojanclientWriteAddress(ptr, header_len, &address, &off);
 
     uint16_t payload_be = htobe16((uint16_t) payload);
     memoryCopy(ptr + off, &payload_be, sizeof(payload_be));

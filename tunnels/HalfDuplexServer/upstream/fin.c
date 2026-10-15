@@ -17,13 +17,11 @@ static void closeDirectTransportPair(tunnel_t *t, line_t *current_line, bool cur
     line_t *const              main_line    = current_ls->main_line;
     line_t *const              sibling_line = current_is_download ? current_ls->upload_line : current_ls->download_line;
 
-    bool next_started = false;
     lineRef(current_line);
     if (main_line != NULL)
     {
         lineRef(main_line);
         halfduplexserver_lstate_t *main_ls = lineGetState(main_line, t);
-        next_started                       = main_ls->next_started;
         halfduplexserverLinestateDestroy(main_ls);
     }
     if (sibling_line != NULL)
@@ -46,8 +44,7 @@ static void closeDirectTransportPair(tunnel_t *t, line_t *current_line, bool cur
 
     if (main_line != NULL && lineIsAlive(main_line))
     {
-        if (next_started)
-            tunnelNextUpStreamFinish(t, main_line);
+        tunnelNextUpStreamFinish(t, main_line);
         if (lineIsAlive(main_line))
         {
             lineDestroy(main_line);

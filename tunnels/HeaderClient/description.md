@@ -12,19 +12,18 @@ It is most often used for one of two jobs:
 - passing WaterWall routing metadata to a paired `HeaderServer`
 - adding a HAProxy PROXY protocol header before traffic reaches a receiver that understands PROXY protocol
 
-`HeaderClient` does not open sockets and does not create lines. It only mutates the first upstream payload. Before handing that payload onward, it destroys and zeros its line state and permanently bypasses itself. Later callbacks go directly to the adjacent active nodes. Pause/Resume remain transparent and repeatable throughout startup.
+`HeaderClient` does not open sockets and does not create lines. It only mutates the first upstream payload. It keeps no per-line state and permanently bypasses itself before handing that payload onward. The line's active-node mask enforces the one-time behavior. Later callbacks go directly to the adjacent active nodes. Pause/Resume remain transparent and repeatable throughout startup.
 
 ## What It Does
 
 - Requires `settings.data` to choose the one-time header format.
-- Initializes local line state on upstream `Init`.
 - Immediately forwards upstream `Init` to `next`.
 - Prepends the configured header only on the first upstream payload.
 - Supports the old 2-byte WaterWall port header.
 - Supports IPv4-only HAProxy PROXY protocol v1 and v2 headers with a configured frontend IPv4 address.
 - Forwards every later upstream payload unchanged.
 - Forwards downstream payload, `Est`, `Pause`, and `Resume` unchanged.
-- Destroys local line state before bypass, or before forwarding an earlier directional `Finish`.
+- Uses the default directional `Init` and `Finish` forwarding callbacks.
 
 ## Typical Placement
 
@@ -312,7 +311,7 @@ If `HeaderServer.settings.override` is a number, the server sets a constant dest
 
 | Direction | Behavior |
 | --- | --- |
-| upstream `Init` | Initialize line state, then forward to `next`. |
+| upstream `Init` | Forward to `next`. |
 | upstream first payload | Prepend the configured header, then forward to `next`. |
 | later upstream payload | Forward unchanged to `next`. |
 | upstream pause/resume | Forward to `next`. |
@@ -323,12 +322,13 @@ If `HeaderServer.settings.override` is a number, the server sets a constant dest
 
 ## Finish Behavior
 
-Before the first upstream payload, the node handles Finish as described below. After
-bypass, Finish travels directly to the next active node in its direction.
+Before the first upstream payload, the default callbacks forward Finish in its
+received direction. After bypass, Finish travels directly to the next active node.
+The node has no per-line resources to clean up.
 
-On upstream `Finish`, `HeaderClient` destroys its local line state and forwards the finish to `next`.
+On upstream `Finish`, `HeaderClient` forwards the finish to `next`.
 
-On downstream `Finish`, it destroys local line state and forwards the finish to the previous node.
+On downstream `Finish`, it forwards the finish to the previous node.
 
 The tunnel does not call `lineDestroy()` because it does not create the line.
 
@@ -370,6 +370,6 @@ Source-backed metadata:
 
 ## Splice support
 
-The one-time header is written only into advertised real left padding, ahead of any existing prefix. The application body stays in its private pipe; subsequent upstream and all downstream payloads pass through unchanged. HeaderClient support does not imply HeaderServer support: a chain containing the unchanged HeaderServer remains in ordinary mode.
+The one-time header is written only into advertised real left padding, ahead of any existing prefix. The application body stays in its private pipe; subsequent upstream and all downstream payloads pass through unchanged. HeaderServer also supports splice: it materializes bytes while parsing its header, then preserves opaque payloads after routing completes.
 
 Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.

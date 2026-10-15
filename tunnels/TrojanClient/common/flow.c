@@ -56,9 +56,9 @@ static void firstPayloadExpired(wtimer_t *timer)
 
 void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls)
 {
-    if (ls->phase == kTrojanClientPhaseClosed)
-        return;
-    if (ls->next_established)
+    assert(ls->phase != kTrojanClientPhaseClosed);
+    assert(ls->kind != kTrojanClientLineKindUdpApplication);
+    if (ls->phase == kTrojanClientPhaseEstablished)
     {
         if (ls->kind == kTrojanClientLineKindDirect)
             tunnelPrevDownStreamEst(t, l);
@@ -68,7 +68,6 @@ void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t
     lineRef(l);
     if (application != l)
         lineRef(application);
-    ls->next_established = true;
     ls->phase            = kTrojanClientPhaseEstablished;
     ls->est_notifying    = true;
     if (! ls->request_sent)

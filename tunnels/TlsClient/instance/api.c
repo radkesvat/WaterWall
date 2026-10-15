@@ -63,12 +63,6 @@ static sbuf_t *tlsclientGenerateClientHelloForWorker(tunnel_t *instance, wid_t w
     }
     memoryFree(sni);
 
-    if (! created_ok && hello != NULL)
-    {
-        bufferpoolReuseBuffer(pool, hello);
-        hello = NULL;
-    }
-
     return created_ok ? hello : NULL;
 }
 

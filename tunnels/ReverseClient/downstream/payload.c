@@ -2,14 +2,14 @@
 
 #include "loggers/network_logger.h"
 
-static bool queueActivationPayload(reverseclient_pair_t *pair, sbuf_t *buf)
+static void queueActivationPayload(reverseclient_pair_t *pair, sbuf_t *buf)
 {
     buffer_pool_t *pool   = lineGetBufferPool(pair->u);
     const uint32_t length = sbufGetLength(buf);
     if (length == 0)
     {
         bufferpoolReuseBuffer(pool, buf);
-        return true;
+        return;
     }
     if ((uint64_t) pair->activation_reentry_bytes + length > kReverseClientPendingBytes ||
         pair->activation_reentry_buffers >= kReverseClientPendingBuffers ||
@@ -17,11 +17,10 @@ static bool queueActivationPayload(reverseclient_pair_t *pair, sbuf_t *buf)
     {
         bufferpoolReuseBuffer(pool, buf);
         reverseclientClosePair(pair, kReverseClientCloseInternal);
-        return false;
+        return;
     }
     pair->activation_reentry_bytes += length;
     ++pair->activation_reentry_buffers;
-    return true;
 }
 
 static bool consumeActivation(reverseclient_pair_t *pair, sbuf_t *buf)
@@ -63,7 +62,7 @@ void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (pair->activation_dispatching)
         {
-            discard queueActivationPayload(pair, buf);
+            queueActivationPayload(pair, buf);
             return;
         }
         tunnelPrevDownStreamPayload(t, pair->d, buf);
@@ -109,7 +108,7 @@ void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     pair->phase = kReverseClientPairActive;
     atomicIncRelaxed(&ts->reverse_cons);
-    reverseclientInitiateConnectOnWorker(t, wid, false);
+    reverseclientInitiateConnectOnWorker(t, wid);
 
     pair->activation_dispatching = true;
     if (sbufGetLength(buf) == 0)

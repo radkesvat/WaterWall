@@ -34,7 +34,7 @@ static uint32_t obfuscatorserverGetSkipLength(tunnel_t *t, sbuf_t *buf)
 
     uint32_t ip_header_length = ((uint32_t) IPH_HL(ipheader)) * 4U;
 
-    if (ip_header_length < IP_HLEN || ip_header_length > IP_HLEN_MAX || packet_length < ip_header_length)
+    if (ip_header_length < IP_HLEN || packet_length < ip_header_length)
     {
         return 0;
     }
@@ -95,20 +95,10 @@ static sbuf_t *obfuscatorserverCloneBufferWithPadding(line_t *l, sbuf_t *buf)
 {
     buffer_pool_t *pool        = lineGetBufferPool(l);
     uint32_t       payload_len = sbufGetLength(buf);
-    sbuf_t        *clone       = NULL;
-
-    if (payload_len <= bufferpoolGetSmallBufferSize(pool))
-    {
-        clone = bufferpoolGetSmallBuffer(pool);
-    }
-    else if (payload_len <= bufferpoolGetLargeBufferSize(pool))
-    {
-        clone = bufferpoolGetLargeBuffer(pool);
-    }
-    else
-    {
-        clone = sbufCreateWithPadding(payload_len, kObfuscatorTlsRecordHeaderSize);
-    }
+    assert(payload_len <= UINT16_MAX);
+    // Keep the chain's onward padding as well as room for this record header.
+    const uint16_t padding = max(bufferpoolGetLargeBufferPadding(pool), kObfuscatorTlsRecordHeaderSize);
+    sbuf_t        *clone   = bufferpoolGetBestFit(pool, payload_len, padding);
 
     sbufSetLength(clone, payload_len);
     sbufWriteBuf(clone, buf, payload_len);

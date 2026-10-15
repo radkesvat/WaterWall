@@ -40,8 +40,7 @@ void realityclientHandshakeReady(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (! tlsclientTunnelIsHandshakeCompleted(ts->tls_tunnel, l) ||
-        ! tlsclientTunnelGetHandshakeBinding(ts->tls_tunnel, l, &tls_binding))
+    if (! tlsclientTunnelGetHandshakeBinding(ts->tls_tunnel, l, &tls_binding))
     {
         LOGW("RealityClient: internal TLS handshake takeover failed");
         realityclientClearHandshakeTemporaries(&tls_binding, &reality_binding, &session_material);
@@ -102,12 +101,6 @@ void realityclientHandshakeReady(tunnel_t *t, line_t *l)
             lineUnref(l);
             return;
         }
-        if (! lineIsAlive(l))
-        {
-            lineUnref(l);
-            return;
-        }
-
         realityclientProcessDownstream(t, l, NULL);
         lineUnref(l);
         return;
@@ -143,12 +136,6 @@ void realityclientHandshakeReady(tunnel_t *t, line_t *l)
         lineUnref(l);
         return;
     }
-    if (! lineIsAlive(l))
-    {
-        lineUnref(l);
-        return;
-    }
-
     ls = lineGetState(l, t);
     if (ls->phase == kRealityClientPhaseTls13AwaitAck)
     {

@@ -44,10 +44,8 @@ void obfuscatorclientEncodeStream(tunnel_t *t, line_t *l, sbuf_t *buf)
     const uint64_t records = max(UINT64_C(1), ((uint64_t) length + 65534) / 65535);
     const uint64_t total   = length + 5 * records;
     sbuf_t        *out     = bufferpoolTryGetBestFit(pool, total, bufferpoolGetLargeBufferPadding(pool));
-    if (! out || total > sbufGetMaximumWriteableSize(out))
+    if (! out)
     {
-        if (out)
-            bufferpoolReuseBuffer(pool, out);
         bufferpoolReuseBuffer(pool, buf);
         closeStream(t, l);
         return;
@@ -76,9 +74,7 @@ void obfuscatorclientEncodeStream(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void obfuscatorclientDrainStream(tunnel_t *t, line_t *l)
 {
-    obfuscatorclient_lstate_t *ls = lineGetState(l, t);
-    if (bufferstreamGetBufLen(&ls->read_stream) < 5)
-        return;
+    obfuscatorclient_lstate_t *ls   = lineGetState(l, t);
     buffer_pool_t *pool = lineGetBufferPool(l);
     sbuf_t        *out  = NULL;
     while (bufferstreamGetBufLen(&ls->read_stream) >= 5)
@@ -95,16 +91,11 @@ static void obfuscatorclientDrainStream(tunnel_t *t, line_t *l)
         const uint32_t length = ((uint32_t) header[3] << 8) | header[4];
         if (bufferstreamGetBufLen(&ls->read_stream) < length + 5)
             break;
-        const bool first_record = out == NULL;
-        if (first_record)
+        if (out == NULL)
         {
-            out = bufferpoolTryGetBestFit(
-                pool, bufferstreamGetBufLen(&ls->read_stream), bufferpoolGetLargeBufferPadding(pool));
-            if (! out)
-            {
-                closeStream(t, l);
-                return;
-            }
+            const size_t buffered = bufferstreamGetBufLen(&ls->read_stream);
+            assert(buffered <= kObfuscatorMaxBufferedStreamBytes);
+            out = bufferpoolGetBestFit(pool, (uint32_t) buffered, bufferpoolGetLargeBufferPadding(pool));
         }
         sbuf_t *record = bufferstreamReadExact(&ls->read_stream, length + 5);
         sbufShiftRight(record, 5);
@@ -121,9 +112,7 @@ void obfuscatorclientDecodeStream(tunnel_t *t, line_t *l, sbuf_t *buf)
     obfuscatorclient_lstate_t *ls        = lineGetState(l, t);
     buffer_pool_t             *pool      = lineGetBufferPool(l);
     const uint64_t             total     = (uint64_t) bufferstreamGetBufLen(&ls->read_stream) + sbufGetLength(buf);
-    uint32_t                   capacity;
-    if (total > kObfuscatorMaxBufferedStreamBytes ||
-        ! sbufTryComputeCapacity(total, bufferpoolGetLargeBufferPadding(pool), &capacity))
+    if (total > kObfuscatorMaxBufferedStreamBytes)
     {
         bufferpoolReuseBuffer(pool, buf);
         closeStream(t, l);

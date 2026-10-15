@@ -2,11 +2,6 @@
 
 #include "wwapi.h"
 
-typedef struct keepaliveserver_tstate_s
-{
-    int unused;
-} keepaliveserver_tstate_t;
-
 typedef struct keepaliveserver_lstate_s
 {
     splice_stream_t *read_stream;
@@ -24,14 +19,13 @@ enum
     kKeepAliveServerFramePrefixSize     = kKeepAliveServerFrameLengthSize + kKeepAliveServerFrameTypeSize,
     kKeepAliveServerMaxPayloadChunkSize = 1024U * 1024U,
     kKeepAliveServerMaxFrameBodyLength  = kKeepAliveServerMaxPayloadChunkSize + kKeepAliveServerFrameTypeSize,
-    kKeepAliveServerReadOverflowLimit   = kKeepAliveServerMaxPayloadChunkSize + kKeepAliveServerFramePrefixSize,
     kKeepAliveServerReadChargeLimit     = 16U * 1024U * 1024U,
     kKeepAliveServerMaxReentryBytes     = 8U * 1024U * 1024U,
     kKeepAliveServerMaxReentryBuffers   = 1024U,
     kKeepAliveServerFrameKindNormal     = 1,
     kKeepAliveServerFrameKindPing       = 2,
     kKeepAliveServerFrameKindPong       = 3,
-    kTunnelStateSize                    = sizeof(keepaliveserver_tstate_t),
+    kTunnelStateSize                    = 0,
     kLineStateSize                      = sizeof(keepaliveserver_lstate_t)
 };
 
@@ -48,8 +42,8 @@ void keepaliveserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 void keepaliveserverLinestateInitialize(keepaliveserver_lstate_t *ls, line_t *l);
 void keepaliveserverLinestateDestroy(keepaliveserver_lstate_t *ls);
 
-bool keepaliveserverSendNormalFrameDownstream(tunnel_t *t, line_t *l, sbuf_t *buf);
-bool keepaliveserverConsumeUpstreamFrames(tunnel_t *t, line_t *l);
+void keepaliveserverSendNormalFrameDownstream(tunnel_t *t, line_t *l, sbuf_t *buf);
+void keepaliveserverConsumeUpstreamFrames(tunnel_t *t, line_t *l);
 void keepaliveserverCloseLineFromUpstream(tunnel_t *t, line_t *l);
 void keepaliveserverCloseLineFromDownstream(tunnel_t *t, line_t *l);
 void keepaliveserverCloseLineFromProtocolError(tunnel_t *t, line_t *l);

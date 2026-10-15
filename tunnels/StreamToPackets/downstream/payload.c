@@ -12,7 +12,8 @@
  */
 void streamtopacketsTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    uint64_t flow_hash = 0;
+    const bool recalculate_checksum = packettunnelTakeChecksumRequest(l);
+    uint64_t   flow_hash            = 0;
 
     if (sbufGetLength(buf) > kMaxAllowedPacketLength)
     {
@@ -20,7 +21,10 @@ void streamtopacketsTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    streamtopacketsRecalculateChecksumIfRequested(l, buf);
+    if (recalculate_checksum)
+    {
+        discard calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
+    }
 
     // The wire format is a raw concatenation of IPv4 packets; the peer recovers boundaries
     // from each packet's IPv4 total-length field. Drop anything that is not a self-consistent

@@ -133,6 +133,107 @@ static void testQueueWrite(udpconnector_lstate_t *ls, buffer_queue_t *queue, sbu
     twfRequire(udpconnectorQueueWrite(ls, queue, &buf), "fixture queue admission failed");
 }
 
+static void testDestinationSetting(const char *address, const char *port, bool accepted, uint16_t expected_port_min,
+                                   uint16_t expected_port_max)
+{
+    for (unsigned weighted = 0; weighted < 2; ++weighted)
+    {
+        cJSON *settings    = cJSON_CreateObject();
+        cJSON *destination = settings;
+        if (weighted)
+        {
+            cJSON *destinations = cJSON_AddArrayToObject(settings, "addresses");
+            destination         = cJSON_CreateObject();
+            twfRequire(cJSON_AddItemToArray(destinations, destination), "add destination fixture");
+            cJSON_AddNumberToObject(destination, "weight", 1);
+        }
+        cJSON_AddStringToObject(destination, "address", address);
+        if (port != NULL)
+            cJSON_AddStringToObject(destination, "port", port);
+        else
+            cJSON_AddNumberToObject(destination, "port", 53);
+
+        node_t node = {
+            .name = (char *) "udp-constructor-test", .type = (char *) "UdpConnector", .node_settings_json = settings};
+        ww_startup_context_t startup = {0};
+        wwStartupContextBegin(&startup);
+        tunnel_t           *t           = udpconnectorTunnelCreate(&node);
+        ww_startup_result_t result      = wwStartupContextEnd(&startup);
+        const bool          constructed = t != NULL;
+        if (constructed)
+        {
+            udpconnector_tstate_t *state = tunnelGetState(t);
+            if (accepted)
+            {
+                twfRequire(wwStartupSucceeded(result), "valid UDP destination recorded a startup failure");
+                const address_context_t *context =
+                    weighted ? &state->destinations[0].constant_dest_addr : &state->constant_dest_addr;
+                twfRequire(addresscontextIsDomain(context) && context->domain_len == strlen(address) &&
+                               memcmp(context->domain, address, strlen(address)) == 0,
+                           "UDP domain length was narrowed or domain bytes changed");
+                if (port != NULL)
+                {
+                    const dynamic_value_t *selected =
+                        weighted ? &state->destinations[0].dest_port_selected : &state->dest_port_selected;
+                    const uint16_t port_min =
+                        weighted ? state->destinations[0].random_dest_port_x : state->random_dest_port_x;
+                    const uint16_t port_max =
+                        weighted ? state->destinations[0].random_dest_port_y : state->random_dest_port_y;
+                    twfRequire(selected->status == kDvsRandom && port_min == expected_port_min &&
+                                   port_max == expected_port_max,
+                               "random UDP port range lost digits or changed its bounds");
+                }
+            }
+            udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
+        }
+        cJSON_Delete(settings);
+        twfRequire(constructed == accepted,
+                   "UDP constructor accepted malformed destination or rejected a valid boundary");
+    }
+}
+
+static void testDomainSettings(void)
+{
+    char domain[258];
+    memset(domain, 'a', sizeof(domain));
+    for (size_t length = 255; length <= 257; ++length)
+    {
+        twfSetCase("UdpConnector domain length boundary");
+        domain[length] = '\0';
+        testDestinationSetting(domain, NULL, length == 255, 0, 0);
+        domain[length] = 'a';
+    }
+    twfSetCase("UdpConnector empty address");
+    testDestinationSetting("", NULL, false, 0, 0);
+}
+
+static void testRandomPortSettings(void)
+{
+    const struct
+    {
+        const char *port;
+        uint16_t    minimum;
+        uint16_t    maximum;
+    } valid[] = {{"random(1000,2000)", 1000, 2000}, {"random(1,2)", 1, 2}, {"random(65535,65535)", 65535, 65535}};
+    for (size_t i = 0; i < ARRAY_SIZE(valid); ++i)
+    {
+        twfSetCase(valid[i].port);
+        testDestinationSetting("example.test", valid[i].port, true, valid[i].minimum, valid[i].maximum);
+    }
+    const char *invalid[] = {"random(1000,2000)tail",
+                             "random(0,2)",
+                             "random(1,65536)",
+                             "random(2,1)",
+                             "random(,2)",
+                             "random(1,)",
+                             "random(1,2"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        twfSetCase(invalid[i]);
+        testDestinationSetting("example.test", invalid[i], false, 0, 0);
+    }
+}
+
 static void prevDownStreamEst(tunnel_t *t, line_t *l)
 {
     test_fixture_t *fixture = *(test_fixture_t **) tunnelGetState(t);
@@ -1908,6 +2009,10 @@ static void testQueueAdmission(void)
 
 int main(int argc, char **argv)
 {
+    GSTATE.workers_count   = 1;
+    GSTATE.domain_strategy = kDsPreferIpV4;
+    testDomainSettings();
+    testRandomPortSettings();
     testQueueAdmission();
     (void) argc;
     (void) argv;

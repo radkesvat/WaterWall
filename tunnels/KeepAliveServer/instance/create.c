@@ -4,7 +4,7 @@
 
 tunnel_t *keepaliveserverTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(keepaliveserver_tstate_t), sizeof(keepaliveserver_lstate_t));
+    tunnel_t *t = tunnelCreate(node, 0, sizeof(keepaliveserver_lstate_t));
     if (! t)
     {
         return NULL;

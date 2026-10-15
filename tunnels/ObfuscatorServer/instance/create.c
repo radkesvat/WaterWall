@@ -6,7 +6,7 @@ tunnel_t *obfuscatorserverTunnelCreate(node_t *node)
 {
     bool stream_records = false;
     getBoolFromJsonObjectOrDefault(&stream_records, node->node_settings_json, "tls_record_header", false);
-    getBoolFromJsonObject(&stream_records, node->node_settings_json, "tls_header");
+    const bool legacy_header = getBoolFromJsonObject(&stream_records, node->node_settings_json, "tls_header");
     tunnel_t *t = stream_records
                       ? tunnelCreate(node, sizeof(obfuscatorserver_tstate_t), sizeof(obfuscatorserver_lstate_t))
                       : packettunnelCreate(node, sizeof(obfuscatorserver_tstate_t), 0);
@@ -32,10 +32,10 @@ tunnel_t *obfuscatorserverTunnelCreate(node_t *node)
     const cJSON    *settings = node->node_settings_json;
     dynamic_value_t skip     = parseDynamicNumericValueFromJsonObject(settings, "skip", 3, "none", "ipv4", "transport");
 
-    ts->method = parseDynamicNumericValueFromJsonObject(settings, "method", 1, "xor").status;
+    const uint32_t method = parseDynamicNumericValueFromJsonObject(settings, "method", 1, "xor").status;
     ts->skip   = (skip.status == kDvsEmpty) ? kObfuscatorSkipNone : skip.status;
 
-    if (ts->method == kObfuscatorMethodXor)
+    if (method == kObfuscatorMethodXor)
     {
         int i_xor_key = 0;
         if (! getIntFromJsonObject(&i_xor_key, settings, "xor_key"))
@@ -62,8 +62,8 @@ tunnel_t *obfuscatorserverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    getBoolFromJsonObjectOrDefault(&ts->tls_record_header, settings, "tls_record_header", false);
-    if (getBoolFromJsonObject(&ts->tls_record_header, settings, "tls_header"))
+    ts->tls_record_header = stream_records;
+    if (legacy_header)
     {
         LOGW("ObfuscatorServer: 'tls_header' is deprecated, use 'tls_record_header'");
     }

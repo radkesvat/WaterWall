@@ -52,13 +52,10 @@ static void speedlimitDrainDownstream(speedlimit_lstate_t *ls)
                                    (uint32_t) grant_bytes,
                                    (uint32_t) grant_bytes,
                                    bufferpoolGetLargeBufferPadding(pool));
-        // Publish the older remainder and its reduced charge before forwarding the slice.
-        if (! bufferqueueTryPushFront(&ls->down_queue, &queued_buf))
-        {
-            lineReuseBuffer(l, queued_buf);
-            speedlimitCloseLineOnDrainFailure(ls, send_buf);
-            return;
-        }
+        /* No callbacks since pop; the remainder fits the released slot and budget. */
+        const bool reinserted = bufferqueueTryPushFront(&ls->down_queue, &queued_buf);
+        assert(reinserted);
+        discard reinserted;
     }
 
     if (bufferqueueGetBufCount(&ls->down_queue) > 0)

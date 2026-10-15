@@ -45,7 +45,7 @@ static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
     {
         remote_ls->auth_password = stringDuplicate(client_ls->auth_password);
     }
-    socks5serverRecordLineUser(remote_l, remote_ls, user_handle);
+    lineAddUser(remote_l, &remote_ls->user_handle, remote_ls->auth_username, remote_ls->auth_password);
 
     if (! socks5server_remote_map_t_insert(&client_ls->udp_remote_lines, remote_key, remote_l).inserted)
         goto unpublished;

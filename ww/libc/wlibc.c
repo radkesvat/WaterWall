@@ -27,10 +27,13 @@ size_t OPENSSL_memory_get_size(void *ptr);
 
 void *OPENSSL_memory_alloc(size_t size)
 {
-    size_t *p = memoryAllocate(size + sizeof(size_t));
-    if (! p)
+    if (UNLIKELY(size > SIZE_MAX - sizeof(size_t)))
+    {
         return NULL;
-    *p = size;
+    }
+
+    size_t *p = memoryAllocate(size + sizeof(size_t));
+    *p        = size;
     return (void *) (p + 1);
 }
 

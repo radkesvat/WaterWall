@@ -4,12 +4,13 @@
 
 enum
 {
-    kVlessVersion    = 0x00,
-    kVlessCmdTcp     = 0x01,
-    kVlessCmdUdp     = 0x02,
-    kVlessAtypIpv4   = 0x01,
-    kVlessAtypDomain = 0x02,
-    kVlessAtypIpv6   = 0x03
+    kVlessVersion                = 0x00,
+    kVlessCmdTcp                 = 0x01,
+    kVlessCmdUdp                 = 0x02,
+    kVlessAtypIpv4               = 0x01,
+    kVlessAtypDomain             = 0x02,
+    kVlessAtypIpv6               = 0x03,
+    kVlessServerInitialMaxReqLen = 23 + UINT8_MAX
 };
 
 typedef enum vlessserver_line_kind_e
@@ -26,7 +27,6 @@ typedef enum vlessserver_phase_e
     kVlessServerPhaseFallback,
     kVlessServerPhaseTcpConnecting,
     kVlessServerPhaseTcpEstablished,
-    kVlessServerPhaseUdpWaitPacket,
     kVlessServerPhaseUdpConnecting,
     kVlessServerPhaseUdpEstablished,
     kVlessServerPhaseClosing
@@ -81,7 +81,7 @@ typedef struct vlessserver_lstate_s
     buffer_queue_t    pending_up;
     sbuf_t           *input_head;
     size_t            input_bytes;
-    uint8_t           header[278];
+    uint8_t           header[kVlessServerInitialMaxReqLen];
     uint16_t          header_filled;
     buffer_budget_t   upstream_budget;
     buffer_budget_t   response_budget;
@@ -107,7 +107,6 @@ typedef struct vlessserver_lstate_s
     /* Client-side upstream permission: current backend contribution and emitted hold. */
     bool udp_backend_paused : 1;
     bool udp_source_pause_sent : 1;
-    bool user_handle_recorded : 1;
     bool fallback_close_draining : 1;
     bool fallback_branch_finished_during_drain : 1;
     bool fallback_delay_scheduled : 1;
@@ -124,9 +123,7 @@ enum
     kVlessServerUdpHeaderLen           = 2,
     kVlessServerUdpMaxPacket           = UINT16_MAX,
     kVlessServerBufferQueueCap         = 8,
-    kVlessServerMaxInitialBytes        = 4096,
     kVlessServerMaxBufferedBytes       = 2 * 1024 * 1024 + 65537,
     kVlessServerMaxPendingBytes        = 2 * 1024 * 1024,
-    kVlessServerMaxPendingBuffers      = 1024,
-    kVlessServerInitialMaxReqLen       = 23 + UINT8_MAX
+    kVlessServerMaxPendingBuffers      = 1024
 };

@@ -14,10 +14,7 @@ void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     if (UNLIKELY(atomicLoadRelaxed(&state->stopping)))
     {
         tcpoverudpclientLinestateDestroy(ls);
-        if (lineIsAlive(l))
-        {
-            tunnelNextUpStreamFinish(t, l);
-        }
+        tunnelNextUpStreamFinish(t, l);
         lineUnref(l);
         return;
     }
@@ -34,10 +31,7 @@ void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     }
 
     tcpoverudpclientLinestateDestroy(ls);
-    if (lineIsAlive(l))
-    {
-        tunnelNextUpStreamFinish(t, l);
-    }
+    tunnelNextUpStreamFinish(t, l);
 
     lineUnref(l);
 }

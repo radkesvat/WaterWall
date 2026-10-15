@@ -20,28 +20,6 @@ static bool routerDeferUntilPrevious(tunnel_t *t, tunnel_chain_t *chain)
     return true;
 }
 
-static bool routerInsertDomainResolverBeforeSelf(tunnel_t *t, tunnel_chain_t *chain)
-{
-    router_tstate_t *ts       = tunnelGetState(t);
-    tunnel_t        *resolver = ts->domain_resolver_tunnel;
-
-    if (resolver == NULL)
-    {
-        LOGF("Router: internal DomainResolver tunnel was not created");
-        startupFailureRecord(1);
-        return false;
-    }
-
-    if (resolver->prev != NULL || resolver->next != NULL)
-    {
-        LOGF("Router: internal DomainResolver tunnel is already bound");
-        startupFailureRecord(1);
-        return false;
-    }
-
-    return tunnelInsertBefore(t, resolver, chain);
-}
-
 static void routerSetRuleTargetEntry(tunnel_t *t, router_rule_t *rule, tunnel_t *target)
 {
     tunnel_t *entry = tunnelGetBranchEntry(t, target);
@@ -139,7 +117,7 @@ void routerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
             return;
         }
 
-        if (! routerInsertDomainResolverBeforeSelf(t, chain))
+        if (! tunnelInsertBefore(t, ts->domain_resolver_tunnel, chain))
         {
             return;
         }

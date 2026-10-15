@@ -33,11 +33,6 @@ static void keepaliveclientRemoveIdleItem(local_idle_item_t **slot)
     discard removed;
 }
 
-static bool keepaliveclientIsPacketLine(tunnel_t *t, line_t *l)
-{
-    return tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l);
-}
-
 static bool keepaliveclientSendFrame(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t kind)
 {
     const uint32_t length = sbufGetLength(buf);
@@ -72,7 +67,7 @@ static bool keepaliveclientCheckPongDeadline(tunnel_t *t, line_t *l, uint64_t no
     return true;
 }
 
-bool keepaliveclientSendNormalFrameUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
+void keepaliveclientSendNormalFrameUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     keepaliveclient_lstate_t *ls = lineGetState(l, t);
     assert(ls->read_stream != NULL);
@@ -80,13 +75,7 @@ bool keepaliveclientSendNormalFrameUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (length == 0)
     {
         lineReuseBuffer(l, buf);
-        return true;
-    }
-    if (keepaliveclientIsPacketLine(t, l) && length > kMaxAllowedPacketLength - kKeepAliveFramePrefixSize)
-    {
-        LOGE("KeepAliveClient: packet payload exceeds kMaxAllowedPacketLength after framing");
-        lineReuseBuffer(l, buf);
-        return true;
+        return;
     }
     if (ls->write_draining)
     {
@@ -98,9 +87,9 @@ bool keepaliveclientSendNormalFrameUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             lineReuseBuffer(l, buf);
             keepaliveclientCloseLineFromProtocolError(t, l);
-            return false;
+            return;
         }
-        return true;
+        return;
     }
 
     buffer_pool_t *pool = lineGetBufferPool(l);
@@ -126,22 +115,20 @@ bool keepaliveclientSendNormalFrameUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! keepaliveclientSendFrame(t, l, frame, kKeepAliveFrameKindNormal) || ls->read_stream == NULL)
         {
             lineUnref(l);
-            return false;
+            return;
         }
         if (ls->write_active == NULL)
             ls->write_active = bufferqueuePopFront(&ls->write_reentry);
     }
     ls->write_draining = false;
     lineUnref(l);
-    return true;
 }
 
-bool keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
+void keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
 {
     keepaliveclient_tstate_t *ts = tunnelGetState(t);
     keepaliveclient_lstate_t *ls = lineGetState(l, t);
-    if (ls->read_draining)
-        return true;
+    assert(! ls->read_draining);
     ls->read_draining = true;
     lineRef(l);
     for (;;)
@@ -158,7 +145,7 @@ bool keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
             LOGW("KeepAliveClient: invalid keepalive frame length");
             keepaliveclientCloseLineFromProtocolError(t, l);
             lineUnref(l);
-            return false;
+            return;
         }
         const uint32_t bytes = body_length - kKeepAliveFrameTypeSize;
         if (splicestreamBodyBytes(ls->read_stream) < bytes)
@@ -189,23 +176,22 @@ bool keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
         if (! alive || ls->read_stream == NULL)
         {
             lineUnref(l);
-            return false;
+            return;
         }
     }
-    /* A large delivery may contain many complete frames. Bound only what remains. */
+    /* Draining leaves an incomplete validated frame; retained capacity still needs a bound. */
+    assert(splicestreamLength(ls->read_stream) < kKeepAliveMaxPayloadChunkSize + kKeepAliveFramePrefixSize);
     if (splicestreamCharge(ls->read_stream) > kKeepAliveReadChargeLimit)
         discard splicestreamCompact(ls->read_stream);
-    if (splicestreamLength(ls->read_stream) > kKeepAliveReadOverflowLimit ||
-        splicestreamCharge(ls->read_stream) > kKeepAliveReadChargeLimit)
+    if (splicestreamCharge(ls->read_stream) > kKeepAliveReadChargeLimit)
     {
         LOGW("KeepAliveClient: incomplete frame storage limit exceeded");
         keepaliveclientCloseLineFromProtocolError(t, l);
         lineUnref(l);
-        return false;
+        return;
     }
     ls->read_draining = false;
     lineUnref(l);
-    return true;
 }
 
 void keepaliveclientTrackLine(tunnel_t *t, line_t *l)

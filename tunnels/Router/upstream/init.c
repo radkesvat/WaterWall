@@ -41,20 +41,8 @@ void routerTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (match.result == kRouterClassifyNeedMore)
-    {
-        /* Defensive: routerCanCommitRouteDuringInit() excludes every current
-         * payload consumer, but keep the lazy contract if a future matcher
-         * introduces one. */
-        return;
-    }
+    /* Metadata-only rules cannot request payload. */
+    assert(match.result != kRouterClassifyNeedMore);
 
     routerCommitRoute(t, l, ls, match.result == kRouterClassifyTarget ? match.target : NULL, NULL);
-
-    /*
-     * Payload-dependent routing remains intentionally lazy so content-based
-     * matchers retain their first-payload window. Static routing commits above
-     * so handshake clients can receive their downstream establishment before
-     * producing a first upstream payload.
-     */
 }

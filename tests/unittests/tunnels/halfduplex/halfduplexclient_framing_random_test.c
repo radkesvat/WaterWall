@@ -115,12 +115,8 @@ static void initializePair(client_framing_fixture_t *fixture, client_pair_t *pai
     halfduplexclientLinestateInitialize(upload_ls, pair->main_line);
     halfduplexclientLinestateInitialize(download_ls, pair->main_line);
 
-    main_ls->upload_line       = pair->upload_line;
-    main_ls->download_line     = pair->download_line;
-    upload_ls->upload_line     = pair->upload_line;
-    upload_ls->download_line   = pair->download_line;
-    download_ls->upload_line   = pair->upload_line;
-    download_ls->download_line = pair->download_line;
+    main_ls->upload_line   = pair->upload_line;
+    main_ls->download_line = pair->download_line;
 }
 
 static void fixtureSetup(client_framing_fixture_t *fixture)

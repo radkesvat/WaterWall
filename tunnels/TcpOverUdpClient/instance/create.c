@@ -107,7 +107,7 @@ static bool tcpoverudpclientParseSettings(tcpoverudpclient_tstate_t *ts, node_t 
     ts->ping_interval_ms   = (uint32_t) ping_interval_ms;
     ts->no_recv_timeout_ms = (uint32_t) no_recv_timeout_ms;
 
-    if (ts->fec_enabled && (data_shards <= 0 || parity_shards <= 0 || data_shards + parity_shards > 255))
+    if (ts->fec_enabled && (data_shards <= 0 || parity_shards <= 0 || data_shards > 255 - parity_shards))
     {
         LOGF(
             "JSON Error: TcpOverUdpClient->settings FEC requires 1..255 total shards with positive data/parity values");
@@ -133,14 +133,6 @@ validate_mtu:;
         return false;
     }
     ts->mtu = (uint16_t) mtu;
-
-    // the KCP MTU must clear ikcp_setmtu()'s own minimum here, so a runtime rejection can only ever mean the
-    // validated tunnel state was corrupted
-    if (tcpoverudpclientGetKcpMtu(ts) < kTcpOverUdpClientKcpMinimumMtu || tcpoverudpclientGetKcpWriteMtu(ts) <= 0)
-    {
-        LOGF("TcpOverUdpClient: instance mtu is too small for IPv4/UDP/KCP/FEC overhead");
-        return false;
-    }
 
     return true;
 }

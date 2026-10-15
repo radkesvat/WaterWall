@@ -4,7 +4,7 @@
 
 tunnel_t *udpovertcpclientTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(udpovertcpclient_tstate_t), sizeof(udpovertcpclient_lstate_t));
+    tunnel_t *t = tunnelCreate(node, 0, sizeof(udpovertcpclient_lstate_t));
     if (! t)
     {
         return NULL;

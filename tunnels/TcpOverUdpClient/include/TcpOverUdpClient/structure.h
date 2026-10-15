@@ -76,11 +76,7 @@ enum tcpoverudpclient_kcpsettings_e
 
 static inline uint32_t tcpoverudpclientGetOuterFecOverhead(const tcpoverudpclient_tstate_t *ts)
 {
-    if (ts != NULL && ts->fec_enabled)
-    {
-        return kTcpOverUdpFecOuterHeaderSize;
-    }
-    return 0;
+    return ts->fec_enabled ? kTcpOverUdpFecOuterHeaderSize : 0;
 }
 
 static inline int tcpoverudpclientGetKcpMtu(const tcpoverudpclient_tstate_t *ts)
@@ -103,7 +99,8 @@ static inline int tcpoverudpclientGetKcpSendBufferLimit(const tcpoverudpclient_l
         return ts->kcp_send_buffer_limit;
     }
 
-    return (int) (ls->k_handle->snd_wnd + ls->k_handle->rmt_wnd + 10U);
+    const uint64_t limit = (uint64_t) ls->k_handle->snd_wnd + ls->k_handle->rmt_wnd + 10U;
+    return limit > INT_MAX ? INT_MAX : (int) limit;
 }
 
 WW_EXPORT tunnel_t    *tcpoverudpclientTunnelCreate(node_t *node);

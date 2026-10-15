@@ -6,9 +6,6 @@ static uint32_t normalizeAlgorithm(dynamic_value_t algorithm_dv)
 {
     switch (algorithm_dv.status)
     {
-    case kDvsEmpty:
-        return kEncryptionAlgorithmChaCha20Poly1305;
-
     case kDvsFirstOption:
     case kDvsSecondOption:
     case kDvsThirdOption:
@@ -90,15 +87,7 @@ static bool deriveKeyFromPassword(const char *password, const char *salt, uint32
     size_t password_len = stringLength(password);
     size_t salt_len     = stringLength(salt);
 
-    if (password_len == 0)
-    {
-        return false;
-    }
-
-    if (iterations == 0)
-    {
-        iterations = 1;
-    }
+    assert(password_len > 0 && iterations > 0);
 
     if (wCryptoBlake2s(
             out_key, 32, (const unsigned char *) salt, salt_len, (const unsigned char *) password, password_len) !=
@@ -208,10 +197,7 @@ cleanup:
         memoryFree(password);
     }
 
-    if (salt != NULL)
-    {
-        memoryFree(salt);
-    }
+    memoryFree(salt);
 
     if (! result)
     {

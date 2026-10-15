@@ -26,6 +26,72 @@ static uint8_t          wire[65536];
 static size_t           wire_size;
 static uint32_t         lengths[8];
 
+typedef enum startup_injection_e
+{
+    kStartupNone,
+    kStartupCompression,
+    kStartupCaBio,
+    kStartupCaWrite,
+    kStartupCaInsert,
+    kStartupCaDuplicate
+} startup_injection_t;
+
+static startup_injection_t startup_injection;
+static bool                startup_intercepted;
+
+BIO *__real_WW_BSSL_BIO_new(const BIO_METHOD *method);
+BIO *__wrap_WW_BSSL_BIO_new(const BIO_METHOD *method);
+BIO *__wrap_WW_BSSL_BIO_new(const BIO_METHOD *method)
+{
+    if (startup_injection == kStartupCaBio && ! startup_intercepted && method == BIO_s_mem())
+    {
+        startup_intercepted = true;
+        return NULL;
+    }
+    return __real_WW_BSSL_BIO_new(method);
+}
+
+int __real_WW_BSSL_BIO_write(BIO *bio, const void *data, int length);
+int __wrap_WW_BSSL_BIO_write(BIO *bio, const void *data, int length);
+int __wrap_WW_BSSL_BIO_write(BIO *bio, const void *data, int length)
+{
+    if (startup_injection == kStartupCaWrite && data == cacert_bytes)
+    {
+        startup_intercepted = true;
+        return -1;
+    }
+    return __real_WW_BSSL_BIO_write(bio, data, length);
+}
+
+int __real_WW_BSSL_X509_STORE_add_cert(X509_STORE *store, X509 *certificate);
+int __wrap_WW_BSSL_X509_STORE_add_cert(X509_STORE *store, X509 *certificate);
+int __wrap_WW_BSSL_X509_STORE_add_cert(X509_STORE *store, X509 *certificate)
+{
+    if (! startup_intercepted && (startup_injection == kStartupCaInsert || startup_injection == kStartupCaDuplicate))
+    {
+        startup_intercepted = true;
+        if (startup_injection == kStartupCaInsert)
+            return 0;
+        twfRequire(__real_WW_BSSL_X509_STORE_add_cert(store, certificate) == 1, "initial CA insertion failed");
+    }
+    return __real_WW_BSSL_X509_STORE_add_cert(store, certificate);
+}
+
+int __real_WW_BSSL_SSL_CTX_add_cert_compression_alg(SSL_CTX *ctx, uint16_t id, ssl_cert_compression_func_t compress,
+                                                    ssl_cert_decompression_func_t decompress);
+int __wrap_WW_BSSL_SSL_CTX_add_cert_compression_alg(SSL_CTX *ctx, uint16_t id, ssl_cert_compression_func_t compress,
+                                                    ssl_cert_decompression_func_t decompress);
+int __wrap_WW_BSSL_SSL_CTX_add_cert_compression_alg(SSL_CTX *ctx, uint16_t id, ssl_cert_compression_func_t compress,
+                                                    ssl_cert_decompression_func_t decompress)
+{
+    if (startup_injection == kStartupCompression)
+    {
+        startup_intercepted = true;
+        return 0;
+    }
+    return __real_WW_BSSL_SSL_CTX_add_cert_compression_alg(ctx, id, compress, decompress);
+}
+
 node_t *__wrap_nodemanagerGetConfigNodeByHash(node_manager_config_t *config, hash_t hash);
 node_t *__wrap_nodemanagerGetConfigNodeByHash(node_manager_config_t *config, hash_t hash)
 {
@@ -81,6 +147,30 @@ static void destroy(tunnel_t *t)
         t->onDestroy(t, wwLifecycleStartupRollback());
     memoryFree(tls_node.type);
     twfRequire(child_count == 0, "owned fragment helper leaked");
+}
+
+static void testStartupLibraryResults(void)
+{
+    const char *cases[] = {"certificate compression registration failure",
+                           "CA BIO allocation failure",
+                           "CA BIO write failure",
+                           "CA store insertion failure",
+                           "duplicate CA store insertion succeeds"};
+    for (startup_injection_t injection = kStartupCompression; injection <= kStartupCaDuplicate; ++injection)
+    {
+        twfSetCase(cases[injection - kStartupCompression]);
+        startup_injection   = injection;
+        startup_intercepted = false;
+        tunnel_t *created   = create("{\"sni\":\"tls.integration.test\",\"verify\":true,"
+                                     "\"fragment\":{\"mode\":\"counter\",\"count\":1,\"cuts\":[[250,0,100]]}}");
+        startup_injection   = kStartupNone;
+        const bool accepted = created != NULL;
+        destroy(created);
+        twfRequire(startup_intercepted, "startup TLS-library operation was not exercised");
+        twfRequire(accepted == (injection == kStartupCaDuplicate), "constructor ignored TLS-library result");
+        twfRequireNoLeakedBuffers();
+    }
+    twfSetCase("TlsClient fragment setup and lifecycle");
 }
 static void sourceFinish(void)
 {
@@ -203,7 +293,8 @@ int main(void)
     twfWorkerEnvSetup(&env, 32768, 64);
     buffer_pool_t *pool_slots[2] = {env.pool, env.pool};
     GSTATE.shortcut_buffer_pools = pool_slots;
-    const char *prefix           = "{\"sni\":\"tls.integration.test\",\"verify\":false";
+    testStartupLibraryResults();
+    const char *prefix = "{\"sni\":\"tls.integration.test\",\"verify\":false";
     char        json[1024];
     const char *bad[] = {"null",
                          "false",

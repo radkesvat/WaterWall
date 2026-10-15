@@ -218,6 +218,32 @@ static void testPassthrough(bool splice)
     teardown();
 }
 
+static void testEmptyInitialInput(bool trojan, bool splice)
+{
+    setup(trojan ? "trojan" : "vless", false);
+    softiplimiter_lstate_t *ls = lineGetState(line, node);
+    for (unsigned i = 0; i < 8; ++i)
+        node->fnPayloadU(node, line, input("", 0, splice, 0));
+    twfRequire(bs_doublequeue_t_is_empty(&ls->in_stream.q), "empty initial input retained buffers");
+    twfRequire(inits == 0 && payloads == 0, "empty input changed initial identity state");
+
+    uint8_t vless[17] = {0};
+    memorySet(vless + 1, 0x42, 16);
+    const char  trojan_bytes[] = "0123456789abcdef0123456789abcdef0123456789abcdef01234567\r\n";
+    const void *bytes          = trojan ? (const void *) trojan_bytes : vless;
+    uint32_t    length         = trojan ? sizeof(trojan_bytes) - 1 : sizeof(vless);
+    node->fnPayloadU(node, line, input(bytes, 1, splice, 0));
+    for (unsigned i = 0; i < 8; ++i)
+        node->fnPayloadU(node, line, input("", 0, splice, 0));
+    twfRequire(bs_doublequeue_t_size(&ls->in_stream.q) == 1 && bufferstreamGetBufLen(&ls->in_stream) == 1,
+               "empty fragmented input retained buffers");
+    twfRequire(inits == 0 && payloads == 0, "empty fragmented input completed identity");
+    node->fnPayloadU(node, line, input((const uint8_t *) bytes + 1, length - 1, splice, 0));
+    twfRequire(inits == 1 && received_length == length && memoryCompare(received, bytes, length) == 0,
+               "empty input changed subsequent identity replay");
+    teardown();
+}
+
 static void testClose(bool splice, unsigned kind)
 {
     setup("vless", true);
@@ -246,6 +272,7 @@ int main(void)
             testIdentity(trojan, splice, false, false);
             testIdentity(trojan, splice, true, false);
             testIdentity(trojan, splice, true, true);
+            testEmptyInitialInput(trojan, splice);
         }
         testPassthrough(splice);
         for (unsigned kind = 0; kind < 4; ++kind)

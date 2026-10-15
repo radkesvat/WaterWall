@@ -18,8 +18,6 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
                                  .h1_chunk_expected              = -1,
                                  .h1_body_remaining              = 0,
                                  .h1_headers_parsed              = false,
-                                 .h1_response_chunked            = false,
-                                 .h1_upgrade_accepted            = false,
                                  .h1_trailing_bytes_logged       = false,
                                  .h1_body_mode                   = kHttpClientH1BodyNone,
                                  .h2_headers_received            = false,
@@ -45,7 +43,7 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
                                  .h2_request_headers_sent        = false};
 }
 
-static void httpclientLinestateH2DataItemDestroy(line_t *line, httpclient_h2_data_item_t *item)
+void httpclientH2DataItemDestroy(line_t *line, httpclient_h2_data_item_t *item)
 {
     if (item == NULL)
     {
@@ -60,14 +58,14 @@ static void httpclientLinestateH2DataItemDestroy(line_t *line, httpclient_h2_dat
 
 void httpclientH2DataQueueDestroy(httpclient_lstate_t *ls)
 {
-    httpclientLinestateH2DataItemDestroy(ls->line, ls->h2_data_active);
+    httpclientH2DataItemDestroy(ls->line, ls->h2_data_active);
     ls->h2_data_active = NULL;
 
     httpclient_h2_data_item_t *item = ls->h2_data_head;
     while (item != NULL)
     {
         httpclient_h2_data_item_t *next = item->next;
-        httpclientLinestateH2DataItemDestroy(ls->line, item);
+        httpclientH2DataItemDestroy(ls->line, item);
         item = next;
     }
 

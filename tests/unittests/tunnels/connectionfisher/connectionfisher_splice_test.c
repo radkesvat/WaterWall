@@ -249,7 +249,7 @@ static void setup(void)
     tunnelUpStreamInit(node, main_line);
 #else
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_line, node);
-    twfRequire(connectionfisherclientLinestateInitializeMain(main_ls, main_line, 3), "initialize main line");
+    twfRequire(connectionfisherclientLinestateInitializeMain(main_ls, 3), "initialize main line");
     for (unsigned i = 0; i < 3; ++i)
     {
         children[i] = twfLinePoolCreateLine(&lines);

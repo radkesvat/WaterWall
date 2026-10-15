@@ -675,6 +675,60 @@ static void testRejectionAndMalformedPackets(void)
     cJSON_Delete(settings);
 }
 
+static void testIpv6LiteralSettings(void)
+{
+    const struct
+    {
+        const char *address;
+        bool        accepted;
+    } cases[] = {{"127.0.0.1", false}, {"2001:db8:::1", false}, {"2001:db8::1", true}};
+    for (unsigned legacy = 0; legacy < 2; ++legacy)
+    {
+        for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+        {
+            testCaseSet(cases[i].address);
+            char json[256];
+            snprintf(json,
+                     sizeof(json),
+                     legacy ? "{\"direction\":\"up\",\"mode\":\"source-ip\",\"ipv6\":\"%s\"}"
+                            : "{\"up\":{\"source-ip\":{\"ipv6\":\"%s\"}}}",
+                     cases[i].address);
+            cJSON *settings = cJSON_Parse(json);
+            require(settings != NULL, "parse IPv6 constructor fixture");
+            node_t     node        = {.node_settings_json = settings};
+            tunnel_t  *t           = ipoverriderCreate(&node);
+            const bool constructed = t != NULL;
+            if (constructed)
+            {
+                if (cases[i].accepted)
+                {
+                    const ipoverrider_tstate_t *state = tunnelGetState(t);
+                    const ipoverrider_rule_t   *rule  = &state->rules[kIpOverriderDirectionUp][kIpOverriderModeSource];
+                    struct in6_addr             expected;
+                    require(inet_pton(AF_INET6, cases[i].address, &expected) == 1, "parse expected IPv6 bytes");
+                    require(rule->support6 && memoryEqual(&rule->ov_6, &expected, sizeof(expected)),
+                            "valid IPv6 literal was not stored exactly");
+                }
+                ipoverriderDestroy(t, wwLifecycleStartupRollback());
+            }
+            cJSON_Delete(settings);
+            require(constructed == cases[i].accepted, "IPv6 setting accepted malformed or wrong-family address");
+        }
+    }
+
+    testCaseSet("IpOverrider retains IPv4 precedence when both address keys are present");
+    cJSON    *settings = cJSON_Parse("{\"up\":{\"source-ip\":{\"ipv4\":\"192.0.2.1\",\"ipv6\":\"2001:db8:::1\"}}}");
+    node_t    node     = {.node_settings_json = settings};
+    tunnel_t *t        = ipoverriderCreate(&node);
+    require(t != NULL, "IPv6 validation changed IPv4 key precedence");
+    const ipoverrider_tstate_t *state = tunnelGetState(t);
+    const ipoverrider_rule_t   *rule  = &state->rules[kIpOverriderDirectionUp][kIpOverriderModeSource];
+    require(rule->support4 && ! rule->support6 && rule->ov_4 == PP_HTONL(LWIP_MAKEU32(192, 0, 2, 1)),
+            "both address keys did not retain the IPv4 rule");
+    ipoverriderDestroy(t, wwLifecycleStartupRollback());
+    cJSON_Delete(settings);
+}
+
 int main(void)
 {
     testCaseSet("ipoverrider_node_gate_test");
@@ -686,6 +740,7 @@ int main(void)
     frandInit();
 
     checkSumInit();
+    testIpv6LiteralSettings();
     testChanceZeroSkipsEntireNodeAction();
     testChanceGateStateIsIndependentPerWorkerAndDirection();
     testCleanTcpRewriteComposition();

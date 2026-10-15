@@ -173,7 +173,7 @@ static void fixtureTeardown(muxclient_fixture_t *fixture)
         if (child_ls->parent != NULL)
         {
             muxclientLeaveConnection(child_ls);
-            discard muxclientReleaseParentInputForChildClose(fixture->mux, fixture->parent_l, parent_ls, child_ls);
+            muxclientReleaseParentInputForChildClose(parent_ls, child_ls);
         }
         muxclientLinestateDestroy(child_ls);
     }
@@ -417,7 +417,7 @@ static void destroySurvivingClientChild(muxclient_fixture_t *fixture, line_t *ch
     muxclient_lstate_t *child_ls = lineGetState(child_l, fixture->mux);
     muxclientLeaveConnection(child_ls);
     muxclient_lstate_t *parent_ls = lineGetState(fixture->parent_l, fixture->mux);
-    discard             muxclientReleaseParentInputForChildClose(fixture->mux, fixture->parent_l, parent_ls, child_ls);
+    muxclientReleaseParentInputForChildClose(parent_ls, child_ls);
     muxclientLinestateDestroy(child_ls);
     lineDestroy(child_l);
 }

@@ -91,6 +91,7 @@ void speedlimitLinestateDestroy(speedlimit_lstate_t *ls);
 uint64_t speedlimitPeekAvailableUnits(tunnel_t *t, line_t *l);
 size_t   speedlimitGrantBytes(tunnel_t *t, line_t *l, size_t requested_bytes, bool allow_partial);
 uint32_t speedlimitGetRetryDelayMs(tunnel_t *t, line_t *l);
+/* Drain scheduling requires a positive delay; false means timer admission was refused. */
 bool     speedlimitScheduleUpstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms);
 bool     speedlimitScheduleDownstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms);
 

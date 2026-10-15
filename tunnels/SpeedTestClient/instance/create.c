@@ -4,9 +4,8 @@
 
 static bool speedtestclientStringEquals(const char *value, const char *a, const char *b, const char *c)
 {
-    return (value != NULL) &&
-           ((a != NULL && stringCompare(value, a) == 0) || (b != NULL && stringCompare(value, b) == 0) ||
-            (c != NULL && stringCompare(value, c) == 0));
+    assert(value != NULL && a != NULL && b != NULL);
+    return stringCompare(value, a) == 0 || stringCompare(value, b) == 0 || (c != NULL && stringCompare(value, c) == 0);
 }
 
 static bool speedtestclientParseMode(speedtestclient_tstate_t *state, const cJSON *settings)
@@ -68,7 +67,7 @@ static bool speedtestclientParseDirection(speedtestclient_tstate_t *state, const
 static bool speedtestclientParsePositiveInt(const cJSON *settings, const char *key, int default_value, int *out,
                                             const char *json_path)
 {
-    int value = default_value;
+    int value;
     getIntFromJsonObjectOrDefault(&value, settings, key, default_value);
     if (value <= 0)
     {
@@ -82,7 +81,7 @@ static bool speedtestclientParsePositiveInt(const cJSON *settings, const char *k
 static bool speedtestclientParseNonNegativeInt(const cJSON *settings, const char *key, int default_value, int *out,
                                                const char *json_path)
 {
-    int value = default_value;
+    int value;
     getIntFromJsonObjectOrDefault(&value, settings, key, default_value);
     if (value < 0)
     {
@@ -150,9 +149,10 @@ static bool speedtestclientLoadBandwidth(speedtestclient_tstate_t *state, const 
         return true;
     }
 
-    if (value > (double) UINT64_MAX)
+    /* UINT64_MAX rounds to 2^64 as a double; reject that endpoint before casting. */
+    if (! (value >= 0.0 && value < 0x1p64))
     {
-        LOGF("SpeedTestClient: configured target bandwidth is too large");
+        LOGF("SpeedTestClient: configured target bandwidth must be finite and less than 2^64");
         return false;
     }
 
@@ -193,8 +193,8 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
     int                       warmup_ms        = 0;
     int                       interval_ms      = kSpeedTestClientDefaultIntervalMs;
     int                       start_delay_ms   = kSpeedTestClientDefaultStartDelayMs;
-    int                       timeout_ms       = 0;
-    int                       payload_size     = 0;
+    int                       timeout_ms;
+    int                       payload_size;
     int                       connection_count = 1;
 
     if (UNLIKELY(! mutexTryInit(&state->aggregate_mutex)))
@@ -251,8 +251,20 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
         return NULL;
     }
 
-    getIntFromJsonObjectOrDefault(&timeout_ms, settings, "timeout-ms", duration_ms + warmup_ms + 30000);
-    if (timeout_ms <= duration_ms + warmup_ms)
+    const int64_t total_duration_ms = (int64_t) duration_ms + warmup_ms;
+    if (! getIntFromJsonObject(&timeout_ms, settings, "timeout-ms"))
+    {
+        const int64_t default_timeout_ms = total_duration_ms + 30000;
+        if (default_timeout_ms > INT_MAX)
+        {
+            LOGF(
+                "SpeedTestClient: default timeout exceeds INT_MAX; set a representable timeout-ms or shorten the test");
+            speedtestclientTunnelDestroy(t, wwLifecycleStartupRollback());
+            return NULL;
+        }
+        timeout_ms = (int) default_timeout_ms;
+    }
+    if (timeout_ms <= total_duration_ms)
     {
         LOGF("JSON Error: SpeedTestClient->settings->timeout-ms (int field) : expected a value greater than warmup-ms "
              "+ duration-ms");

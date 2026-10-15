@@ -9,12 +9,11 @@ bool softiplimiterTunnelstateInitialize(softiplimiter_tstate_t *ts)
         return false;
     }
     ts->table = softiplimiter_identity_map_t_init();
-    if (UNLIKELY(! softiplimiter_identity_map_t_reserve(&ts->table, kSoftIpLimiterInitialTableCap)))
-    {
-        softiplimiter_identity_map_t_drop(&ts->table);
-        rwlockDestroy(&ts->table_lock);
-        return false;
-    }
+    ts->generation_cursor = 0;
+    // The fixed initial capacity cannot overflow the table's allocation geometry.
+    const bool reserved = softiplimiter_identity_map_t_reserve(&ts->table, kSoftIpLimiterInitialTableCap);
+    assert(reserved);
+    discard reserved;
     ts->identifier_mode               = kSoftIpLimiterIdentifierNone;
     ts->identification_failure_action = kSoftIpLimiterIdentificationFailurePassthrough;
     ts->tolerance_ms                  = 0;
@@ -213,12 +212,11 @@ softiplimiter_extract_result_t softiplimiterTryExtractIdentifierFromBytes(softip
             return kSoftIpLimiterExtractWait;
         }
 
-        uint8_t sha224[SHA224_DIGEST_SIZE] = {0};
-        if (UNLIKELY(! asciiHexDecodeBytes(bytes, kSoftIpLimiterTrojanPasswordLen, sha224, sizeof(sha224))))
-        {
-            memoryZero(sha224, sizeof(sha224));
-            return kSoftIpLimiterExtractInvalid;
-        }
+        // The prefix check validated all 56 hex bytes; the output is exactly 28 bytes.
+        uint8_t    sha224[SHA224_DIGEST_SIZE];
+        const bool decoded = asciiHexDecodeBytes(bytes, kSoftIpLimiterTrojanPasswordLen, sha224, sizeof(sha224));
+        assert(decoded);
+        discard decoded;
 
         *identifier_out = calcHashBytes(sha224, sizeof(sha224));
         memoryZero(sha224, sizeof(sha224));
@@ -316,7 +314,7 @@ static int softiplimiterFindIpRow(const softiplimiter_identity_entry_t *entry, c
 }
 
 static void softiplimiterTableResultSet(softiplimiter_table_result_t *result, softiplimiter_table_reason_t reason,
-                                        uint8_t count, uint8_t limit)
+                                        uint8_t count, uint8_t limit, uint64_t generation)
 {
     if (result == NULL)
     {
@@ -324,13 +322,14 @@ static void softiplimiterTableResultSet(softiplimiter_table_result_t *result, so
     }
 
     *result = (softiplimiter_table_result_t) {
-        .reason = reason,
-        .count  = count,
-        .limit  = limit,
+        .reason     = reason,
+        .count      = count,
+        .limit      = limit,
+        .generation = generation,
     };
 }
 
-bool softiplimiterTableAdmit(softiplimiter_identity_map_t *table, hash_t identifier,
+bool softiplimiterTableAdmit(softiplimiter_identity_map_t *table, uint64_t *generation_cursor, hash_t identifier,
                              const softiplimiter_ip_key_t *ip_key, uint8_t limit, uint64_t tolerance_ms,
                              uint64_t now_ms, softiplimiter_table_result_t *result)
 {
@@ -357,33 +356,39 @@ bool softiplimiterTableAdmit(softiplimiter_identity_map_t *table, hash_t identif
         softiplimiter_ip_row_t *row = &entry->ips[row_index];
         row->refs += 1U;
         atomicStoreU64Relaxed(&row->last_seen_ms, now_ms);
-        softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, entry->ip_count, limit);
+        softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, entry->ip_count, limit, row->generation);
         return true;
     }
 
     if (entry->ip_count >= limit)
     {
-        softiplimiterTableResultSet(result, kSoftIpLimiterTableLimitReached, entry->ip_count, limit);
+        softiplimiterTableResultSet(result, kSoftIpLimiterTableLimitReached, entry->ip_count, limit, 0);
         return false;
     }
 
+    if (UNLIKELY(*generation_cursor == UINT64_MAX))
+    {
+        LOGF("SoftIpLimiter: admission generation exhausted");
+        abortProgramNow(1);
+    }
     softiplimiter_ip_row_t *row = &entry->ips[entry->ip_count];
     row->ip_key                 = *ip_key;
     row->refs                   = 1;
+    row->generation             = ++*generation_cursor;
     atomicStoreU64Relaxed(&row->last_seen_ms, now_ms);
     entry->ip_count += 1U;
-    softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, entry->ip_count, limit);
+    softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, entry->ip_count, limit, row->generation);
     return true;
 }
 
 bool softiplimiterTableTouch(softiplimiter_identity_map_t *table, hash_t identifier,
-                             const softiplimiter_ip_key_t *ip_key, uint8_t limit, uint64_t tolerance_ms,
-                             uint64_t now_ms, softiplimiter_table_result_t *result)
+                             const softiplimiter_ip_key_t *ip_key, uint64_t generation, uint8_t limit,
+                             uint64_t tolerance_ms, uint64_t now_ms, softiplimiter_table_result_t *result)
 {
     softiplimiter_identity_map_t_iter it = softiplimiter_identity_map_t_find(table, identifier);
     if (it.ref == softiplimiter_identity_map_t_end(table).ref)
     {
-        softiplimiterTableResultSet(result, kSoftIpLimiterTableMissingRow, 0, limit);
+        softiplimiterTableResultSet(result, kSoftIpLimiterTableMissingRow, 0, limit, 0);
         return false;
     }
 
@@ -391,29 +396,30 @@ bool softiplimiterTableTouch(softiplimiter_identity_map_t *table, hash_t identif
     softiplimiterPruneEntry(entry, tolerance_ms, now_ms);
 
     int row_index = softiplimiterFindIpRow(entry, ip_key);
-    if (row_index < 0)
+    if (row_index < 0 || entry->ips[row_index].generation != generation)
     {
         uint8_t count = entry->ip_count;
         if (entry->ip_count == 0)
         {
             softiplimiter_identity_map_t_erase_at(table, it);
         }
-        softiplimiterTableResultSet(result, kSoftIpLimiterTableMissingRow, count, limit);
+        softiplimiterTableResultSet(result, kSoftIpLimiterTableMissingRow, count, limit, 0);
         return false;
     }
 
     atomicStoreU64Relaxed(&entry->ips[row_index].last_seen_ms, now_ms);
-    softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, entry->ip_count, limit);
+    softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, entry->ip_count, limit, generation);
     return true;
 }
 
 // Fast path for the steady-state touch: refresh last_seen for an existing,
 // non-expired row while holding only a shared (read) lock. Performs no structural
 // mutation, so many workers can refresh concurrently. Returns false when the row
-// is absent or expired, signalling the caller to retry under the exclusive lock
+// is absent, expired or replaced, signalling the caller to retry under the exclusive lock
 // where pruning, erase and rejection accounting happen.
 static bool softiplimiterTableTouchShared(softiplimiter_identity_map_t *table, hash_t identifier,
-                                          const softiplimiter_ip_key_t *ip_key, uint64_t tolerance_ms, uint64_t now_ms)
+                                          const softiplimiter_ip_key_t *ip_key, uint64_t generation,
+                                          uint64_t tolerance_ms, uint64_t now_ms)
 {
     softiplimiter_identity_map_t_iter it = softiplimiter_identity_map_t_find(table, identifier);
     if (it.ref == softiplimiter_identity_map_t_end(table).ref)
@@ -426,9 +432,9 @@ static bool softiplimiterTableTouchShared(softiplimiter_identity_map_t *table, h
     {
         if (softiplimiterIpKeyEqual(&entry->ips[i].ip_key, ip_key))
         {
-            if (softiplimiterRowExpired(&entry->ips[i], tolerance_ms, now_ms))
+            if (entry->ips[i].generation != generation || softiplimiterRowExpired(&entry->ips[i], tolerance_ms, now_ms))
             {
-                return false; // expired: exclusive path prunes the row and closes the line
+                return false; // The exclusive path prunes expired rows and reports rejection.
             }
             atomicStoreU64Relaxed(&entry->ips[i].last_seen_ms, now_ms);
             return true;
@@ -439,7 +445,8 @@ static bool softiplimiterTableTouchShared(softiplimiter_identity_map_t *table, h
 }
 
 void softiplimiterTableRelease(softiplimiter_identity_map_t *table, hash_t identifier,
-                               const softiplimiter_ip_key_t *ip_key, uint64_t tolerance_ms, uint64_t now_ms)
+                               const softiplimiter_ip_key_t *ip_key, uint64_t generation, uint64_t tolerance_ms,
+                               uint64_t now_ms)
 {
     softiplimiter_identity_map_t_iter it = softiplimiter_identity_map_t_find(table, identifier);
     if (it.ref == softiplimiter_identity_map_t_end(table).ref)
@@ -451,7 +458,7 @@ void softiplimiterTableRelease(softiplimiter_identity_map_t *table, hash_t ident
     softiplimiterPruneEntry(entry, tolerance_ms, now_ms);
 
     int row_index = softiplimiterFindIpRow(entry, ip_key);
-    if (row_index >= 0)
+    if (row_index >= 0 && entry->ips[row_index].generation == generation)
     {
         softiplimiter_ip_row_t *row = &entry->ips[row_index];
         if (row->refs > 1U)
@@ -478,19 +485,31 @@ bool softiplimiterAdmitLine(tunnel_t *t, line_t *l, softiplimiter_lstate_t *ls, 
     if (! softiplimiterBuildIpKey(l, &ls->ip_key))
     {
         ls->ip_key_valid = false;
-        softiplimiterTableResultSet(result, kSoftIpLimiterTableMissingIp, 0, ts->simultaneous_user_limit);
+        softiplimiterTableResultSet(result, kSoftIpLimiterTableMissingIp, 0, ts->simultaneous_user_limit, 0);
         return false;
     }
     ls->ip_key_valid = true;
 
+    softiplimiter_table_result_t local_result;
+    if (result == NULL)
+    {
+        result = &local_result;
+    }
     rwlockWriteLock(&ts->table_lock);
-    bool ok = softiplimiterTableAdmit(
-        &ts->table, ls->identifier, &ls->ip_key, ts->simultaneous_user_limit, ts->tolerance_ms, now_ms, result);
+    bool ok = softiplimiterTableAdmit(&ts->table,
+                                      &ts->generation_cursor,
+                                      ls->identifier,
+                                      &ls->ip_key,
+                                      ts->simultaneous_user_limit,
+                                      ts->tolerance_ms,
+                                      now_ms,
+                                      result);
     rwlockWriteUnlock(&ts->table_lock);
 
     if (ok)
     {
         ls->admitted = true;
+        ls->generation = result->generation;
     }
     return ok;
 }
@@ -502,26 +521,33 @@ bool softiplimiterTouchLine(tunnel_t *t, softiplimiter_lstate_t *ls, uint64_t no
 
     if (! ls->admitted || ! ls->ip_key_valid)
     {
-        softiplimiterTableResultSet(result, kSoftIpLimiterTableMissingRow, 0, ts->simultaneous_user_limit);
+        softiplimiterTableResultSet(result, kSoftIpLimiterTableMissingRow, 0, ts->simultaneous_user_limit, 0);
         return false;
     }
 
     // Fast path: shared read lock + atomic refresh for the common active case, so
     // concurrent workers do not serialize on the table lock for every payload.
     rwlockReadLock(&ts->table_lock);
-    bool refreshed = softiplimiterTableTouchShared(&ts->table, ls->identifier, &ls->ip_key, ts->tolerance_ms, now_ms);
+    bool refreshed = softiplimiterTableTouchShared(
+        &ts->table, ls->identifier, &ls->ip_key, ls->generation, ts->tolerance_ms, now_ms);
     rwlockReadUnlock(&ts->table_lock);
     if (LIKELY(refreshed))
     {
-        softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, 0, ts->simultaneous_user_limit);
+        softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, 0, ts->simultaneous_user_limit, ls->generation);
         return true;
     }
 
     // Slow path: exclusive lock for pruning, erase and accurate rejection result.
-    // Only reached when the row is missing or has expired (i.e. about to close).
+    // Only reached when the row is missing, expired or replaced (i.e. about to close).
     rwlockWriteLock(&ts->table_lock);
-    bool ok = softiplimiterTableTouch(
-        &ts->table, ls->identifier, &ls->ip_key, ts->simultaneous_user_limit, ts->tolerance_ms, now_ms, result);
+    bool ok = softiplimiterTableTouch(&ts->table,
+                                      ls->identifier,
+                                      &ls->ip_key,
+                                      ls->generation,
+                                      ts->simultaneous_user_limit,
+                                      ts->tolerance_ms,
+                                      now_ms,
+                                      result);
     rwlockWriteUnlock(&ts->table_lock);
 
     return ok;
@@ -536,7 +562,8 @@ void softiplimiterReleaseLine(tunnel_t *t, softiplimiter_lstate_t *ls)
 
     softiplimiter_tstate_t *ts = tunnelGetState(t);
     rwlockWriteLock(&ts->table_lock);
-    softiplimiterTableRelease(&ts->table, ls->identifier, &ls->ip_key, ts->tolerance_ms, softiplimiterNowMs());
+    softiplimiterTableRelease(
+        &ts->table, ls->identifier, &ls->ip_key, ls->generation, ts->tolerance_ms, softiplimiterNowMs());
     rwlockWriteUnlock(&ts->table_lock);
 
     ls->admitted = false;
@@ -623,7 +650,7 @@ void softiplimiterCloseLine(tunnel_t *t, line_t *l, softiplimiter_close_origin_t
     lineUnref(l);
 }
 
-static bool softiplimiterEnsureNextInitAndFlushAs(tunnel_t *t, line_t *l, softiplimiter_lstate_t *ls,
+static void softiplimiterEnsureNextInitAndFlushAs(tunnel_t *t, line_t *l, softiplimiter_lstate_t *ls,
                                                   softiplimiter_phase_t phase)
 {
     buffer_pool_t *pool    = lineGetBufferPool(l);
@@ -636,7 +663,6 @@ static bool softiplimiterEnsureNextInitAndFlushAs(tunnel_t *t, line_t *l, softip
         ls->next_init_sent = true;
         tunnelNextUpStreamInit(t, l);
     }
-    bool completed = false;
     while (lineIsAlive(l))
     {
         ls = lineGetState(l, t);
@@ -649,7 +675,6 @@ static bool softiplimiterEnsureNextInitAndFlushAs(tunnel_t *t, line_t *l, softip
         if (out == NULL)
         {
             ls->initial_forwarding = false;
-            completed              = true;
             break;
         }
         tunnelNextUpStreamPayload(t, l, out);
@@ -659,7 +684,6 @@ static bool softiplimiterEnsureNextInitAndFlushAs(tunnel_t *t, line_t *l, softip
         bufferpoolReuseBuffer(pool, first);
     }
     lineUnref(l);
-    return completed;
 }
 
 void softiplimiterHandleInitialPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -667,6 +691,11 @@ void softiplimiterHandleInitialPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     softiplimiter_tstate_t *ts = tunnelGetState(t);
     softiplimiter_lstate_t *ls = lineGetState(l, t);
 
+    if (sbufGetLength(buf) == 0)
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
     buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     bufferstreamPush(&ls->in_stream, buf);
 
@@ -689,7 +718,7 @@ void softiplimiterHandleInitialPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         else
         {
-            discard softiplimiterEnsureNextInitAndFlushAs(t, l, ls, kSoftIpLimiterPhasePassthrough);
+            softiplimiterEnsureNextInitAndFlushAs(t, l, ls, kSoftIpLimiterPhasePassthrough);
         }
         return;
     }
@@ -704,5 +733,5 @@ void softiplimiterHandleInitialPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    discard softiplimiterEnsureNextInitAndFlushAs(t, l, ls, kSoftIpLimiterPhaseEstablished);
+    softiplimiterEnsureNextInitAndFlushAs(t, l, ls, kSoftIpLimiterPhaseEstablished);
 }

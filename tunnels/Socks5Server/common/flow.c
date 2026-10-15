@@ -33,12 +33,7 @@ bool socks5serverDrainControl(tunnel_t *t, line_t *l)
     ls->control_draining = true;
     if (ls->transport_est_forwarded && ! ls->connect_reply_sent)
     {
-        sbuf_t *reply = socks5serverCreateCommandReply(l, kSocks5ReplySucceeded, NULL);
-        if (UNLIKELY(reply == NULL))
-        {
-            socks5serverCloseControlLineBidirectional(t, l);
-            return false;
-        }
+        sbuf_t *reply          = socks5serverCreateCommandReply(l, kSocks5ReplySucceeded, NULL);
         ls->phase              = kSocks5ServerPhaseTcpEstablished;
         ls->connect_reply_sent = true;
         if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply)))

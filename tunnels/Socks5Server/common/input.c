@@ -11,7 +11,7 @@ static bool socks5serverSendReplyAndClose(tunnel_t *t, line_t *l, uint8_t rep)
 /* Extract only metadata; never merge a fragmented prefix with its opaque tail. */
 static sbuf_t *socks5serverReadControlPrefix(line_t *l, socks5server_lstate_t *ls, size_t length)
 {
-    assert(length <= kSocks5ServerMaxHandshakeBytes);
+    assert(length <= kSocks5ServerMaxControlPrefixBytes);
     sbuf_t *prefix = socks5serverAllocBuffer(l, (uint32_t) length);
     sbufSetLength(prefix, 0);
     bufferstreamMoveExactBytesTo(&ls->in_stream, prefix, length);
@@ -79,7 +79,7 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
             if (selected == kSocks5NoAuthMethod)
             {
                 ls->user_handle = userHandleEmpty();
-                socks5serverRecordLineUser(l, ls, &ls->user_handle);
+                lineAddUser(l, &ls->user_handle, ls->auth_username, ls->auth_password);
             }
             if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
                 return false;
@@ -132,7 +132,7 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
             }
             ls->user_handle = user_handle;
             ls->phase       = kSocks5ServerPhaseWaitRequest;
-            socks5serverRecordLineUser(l, ls, &ls->user_handle);
+            lineAddUser(l, &ls->user_handle, ls->auth_username, ls->auth_password);
             if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
                 return false;
             continue;
@@ -242,11 +242,6 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
                 sbuf_t *reply = socks5serverCreateCommandReply(l, kSocks5ReplySucceeded, &bind_ctx);
                 addresscontextReset(&bind_ctx);
                 addresscontextReset(&target);
-                if (reply == NULL)
-                {
-                    socks5serverUnregisterUdpAssociation(t, ls);
-                    return socks5serverSendReplyAndClose(t, l, kSocks5ReplyGeneralFailure);
-                }
                 ls->phase              = kSocks5ServerPhaseUdpControl;
                 ls->connect_reply_sent = true;
                 bufferstreamEmpty(&ls->in_stream);
@@ -277,11 +272,6 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
         {
             ls->input_draining = false;
             return socks5serverDrainControl(t, l);
-        }
-        if (bufferstreamGetBufLen(&ls->in_stream) > kSocks5ServerMaxHandshakeBytes)
-        {
-            socks5serverCloseControlLineBidirectional(t, l);
-            return false;
         }
         sbuf_t *queued = bufferqueuePopFront(&ls->pending_up);
         if (queued == NULL)

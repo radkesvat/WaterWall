@@ -170,7 +170,6 @@ static void caseHandshakeDeadlineTimerFails(void)
     twfRequireEqualU32(fixture.trace.next_init, 1, "the sibling line did not open the protected branch");
 
     tlsserver_lstate_t *sibling_ls = lineGetState(sibling, fixture.tls);
-    twfRequire(sibling_ls->handshake_deadline_armed, "the sibling line did not arm its handshake deadline");
     twfRequire(sibling_ls->handshake_deadline_timer != NULL,
                "the sibling line published an armed deadline with no timer");
 
@@ -223,7 +222,6 @@ static void caseZeroTimeoutNeedsNoTimer(void)
     twfRequireEqualU32(fixture.trace.next_init, 1, "a line that needs no deadline did not open the protected branch");
 
     tlsserver_lstate_t *ls = lineGetState(l, fixture.tls);
-    twfRequire(! ls->handshake_deadline_armed, "a zero timeout still published an armed deadline");
     twfRequire(ls->handshake_deadline_timer == NULL, "a zero timeout still created a timer");
 
     tlsserverLinestateDestroy(ls);
@@ -231,8 +229,58 @@ static void caseZeroTimeoutNeedsNoTimer(void)
     fixtureTeardown(&fixture);
 }
 
+static void casePendingPlaintextLimit(unsigned dimension, bool overflow)
+{
+    twfSetCase("TlsServer pre-handshake plaintext admits equality and settles overflow");
+    tlsserver_fixture_t fixture;
+    fixtureSetup(&fixture);
+    tlsserver_tstate_t *ts   = tunnelGetState(fixture.tls);
+    ts->handshake_timeout_ms = 0;
+    line_t        *l         = twfLineCreate(fixture.tls->lstate_size);
+    const uint32_t refs      = twfLineRefCount(l);
+    tlsserverTunnelUpStreamInit(fixture.tls, l);
+    tlsserver_lstate_t *ls     = lineGetState(l, fixture.tls);
+    const unsigned      count  = dimension == 0 ? 1 : 1024;
+    const uint32_t      length = dimension == 0 ? 2 * 1024 * 1024 : dimension == 1 ? 0 : 1;
+    twfRequire(fixture.trace.next_init == 1 && ! ls->handshake_completed,
+               "backend must open before the client TLS handshake");
+    for (unsigned i = 0; i < count; ++i)
+    {
+        sbuf_t *buf = bufferpoolGetBestFit(fixture.env.pool, length, 0);
+        sbufSetLength(buf, length);
+        memorySet(sbufGetMutablePtr(buf), 0x71, length);
+        tlsserverTunnelDownStreamPayload(fixture.tls, l, buf);
+    }
+    twfRequire(fixture.trace.prev_finish == 0 && fixture.trace.next_finish == 0 &&
+                   bufferqueueGetBufLen(&ls->pending_down) == (size_t) count * length &&
+                   bufferqueueGetBufCount(&ls->pending_down) == count,
+               "exact pending plaintext limit was refused or altered");
+    if (overflow)
+    {
+        const uint32_t extra_length = dimension == 0 ? 1 : length;
+        sbuf_t        *buf          = bufferpoolGetBestFit(fixture.env.pool, extra_length, 0);
+        sbufSetLength(buf, extra_length);
+        memorySet(sbufGetMutablePtr(buf), 0x72, extra_length);
+        tlsserverTunnelDownStreamPayload(fixture.tls, l, buf);
+        twfRequireEqualText(fixture.trace.seq, "IFf", "pending plaintext overflow did not close both open sides");
+    }
+    else
+    {
+        tlsserverTunnelUpStreamFinish(fixture.tls, l);
+        twfRequireEqualText(fixture.trace.seq, "IF", "ordinary close reflected toward the finished source");
+    }
+    twfRequireLineStateZeroed(l, fixture.tls, "pending plaintext survived close");
+    twfRequireEqualU32(twfLineRefCount(l), refs, "pending plaintext retained a line reference");
+    twfRequireNoLeakedBuffers();
+    twfLineDestroy(l);
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
+    for (unsigned dimension = 0; dimension < 3; ++dimension)
+        for (unsigned overflow = 0; overflow < 2; ++overflow)
+            casePendingPlaintextLimit(dimension, overflow != 0);
     caseTlsAllocationFails(1, false);
     caseTlsAllocationFails(2, false);
     caseTlsAllocationFails(0, true);

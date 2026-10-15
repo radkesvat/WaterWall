@@ -4,5 +4,5 @@
 
 void keepaliveclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    discard keepaliveclientSendNormalFrameUpstream(t, l, buf);
+    keepaliveclientSendNormalFrameUpstream(t, l, buf);
 }

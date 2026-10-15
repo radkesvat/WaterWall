@@ -163,7 +163,7 @@ static void fixtureTeardown(muxserver_fixture_t *fixture)
     if (child_ls != NULL && child_ls->l != NULL)
     {
         muxserverLeaveConnection(child_ls);
-        discard muxserverReleaseParentInputForChildClose(fixture->mux, fixture->parent_l, parent_ls, child_ls);
+        muxserverReleaseParentInputForChildClose(parent_ls, child_ls);
         muxserverLinestateDestroy(fixture->mux, child_ls);
     }
     if (parent_ls != NULL && parent_ls->l != NULL)
@@ -358,7 +358,7 @@ static void destroyServerSibling(muxserver_fixture_t *fixture, line_t *child_l)
     muxserver_lstate_t *child_ls  = lineGetState(child_l, fixture->mux);
     muxserver_lstate_t *parent_ls = child_ls->parent;
     muxserverLeaveConnection(child_ls);
-    discard muxserverReleaseParentInputForChildClose(fixture->mux, fixture->parent_l, parent_ls, child_ls);
+    muxserverReleaseParentInputForChildClose(parent_ls, child_ls);
     muxserverLinestateDestroy(fixture->mux, child_ls);
     lineDestroy(child_l);
 }

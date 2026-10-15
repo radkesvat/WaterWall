@@ -5,16 +5,6 @@
 static const uint8_t kConnectionFisherClientPing[kConnectionFisherHandshakeLength]  = {'F', 'I', 'S', 'H', '?'};
 static const uint8_t kConnectionFisherClientReply[kConnectionFisherHandshakeLength] = {'F', 'I', 'S', 'H', '!'};
 
-static bool connectionfisherclientReadMatches(const sbuf_t *buf, const uint8_t *expected)
-{
-    if (sbufGetLength(buf) != kConnectionFisherHandshakeLength)
-    {
-        return false;
-    }
-
-    return memoryCompare(sbufGetRawPtr(buf), expected, kConnectionFisherHandshakeLength) == 0;
-}
-
 bool connectionfisherclientSendPing(tunnel_t *t, line_t *child_l)
 {
     connectionfisherclient_lstate_t *child_ls = lineGetState(child_l, t);
@@ -276,12 +266,8 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
         if (main_ls->child_count > 1)
         {
             const size_t loser_capacity = (size_t) main_ls->child_count - 1U;
-            if (UNLIKELY(loser_capacity > SIZE_MAX / sizeof(*losers)))
-            {
-                LOGW("ConnectionFisherClient: child line count is too large to snapshot losing children");
-                connectionfisherclientCloseMainLine(t, main_l);
-                goto cleanup;
-            }
+            /* Main initialization already allocated the larger child array. */
+            assert(loser_capacity <= SIZE_MAX / sizeof(*losers));
 
             losers = memoryAllocate(sizeof(*losers) * loser_capacity);
         }
@@ -353,7 +339,7 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
     {
         sbuf_t *extra = bufferstreamFullRead(&child_ls->read_stream);
 
-        if (extra != NULL && ! lineCallWithRefWithBuf(main_l, tunnelPrevDownStreamPayload, t, extra))
+        if (! lineCallWithRefWithBuf(main_l, tunnelPrevDownStreamPayload, t, extra))
         {
             goto cleanup;
         }
@@ -436,22 +422,19 @@ void connectionfisherclientHandleChildHandshakePayload(tunnel_t *t, line_t *chil
     }
 
     sbuf_t *reply = bufferstreamReadExact(&child_ls->read_stream, kConnectionFisherHandshakeLength);
-    bool    valid = connectionfisherclientReadMatches(reply, kConnectionFisherClientReply);
+    bool    valid =
+        memoryCompare(sbufGetRawPtr(reply), kConnectionFisherClientReply, kConnectionFisherHandshakeLength) == 0;
 
     lineReuseBuffer(child_l, reply);
 
     if (! valid)
     {
         LOGW("ConnectionFisherClient: child line received bytes that do not match the ConnectionFisher reply");
-        bufferstreamEmpty(&child_ls->read_stream);
         connectionfisherclientCloseChildLine(t, child_l, true);
         return;
     }
 
     child_ls->child_handshake_complete = true;
 
-    if (! connectionfisherclientSelectChild(t, child_l))
-    {
-        return;
-    }
+    discard connectionfisherclientSelectChild(t, child_l);
 }

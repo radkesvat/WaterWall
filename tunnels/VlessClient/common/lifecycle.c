@@ -6,37 +6,25 @@ static void setLineProtocol(line_t *l, uint8_t protocol)
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(l), protocol);
 }
 
-static line_t *createInternalLine(tunnel_t *t, line_t *application_l, vlessclient_line_kind_t kind)
-{
-    line_t *inner_l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(application_l));
-
-    vlessclient_lstate_t *inner_ls = lineGetState(inner_l, t);
-    vlessclientLinestateInitialize(inner_ls, inner_l);
-    inner_ls->tunnel   = t;
-    inner_ls->kind     = kind;
-    inner_ls->application_line = application_l;
-
-    return inner_l;
-}
-
 void vlessclientTunnelstateDestroy(vlessclient_tstate_t *ts)
 {
     assert(ts != NULL);
 
     addresscontextReset(&ts->target_addr);
-    memoryZero(ts->uuid, sizeof(ts->uuid));
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 
 void vlessclientStartUdpCarrier(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls)
 {
-    line_t               *carrier    = createInternalLine(t, l, kVlessClientLineKindUdpCarrier);
+    line_t               *carrier    = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
     vlessclient_lstate_t *carrier_ls = lineGetState(carrier, t);
+    vlessclientLinestateInitialize(carrier_ls, carrier);
+    carrier_ls->tunnel           = t;
+    carrier_ls->kind             = kVlessClientLineKindUdpCarrier;
+    carrier_ls->application_line = l;
     addresscontextCopy(&carrier_ls->target_addr, &ls->target_addr);
-    carrier_ls->protocol = ls->protocol;
     setLineProtocol(carrier, IP_PROTO_TCP);
-    ls->carrier_line         = carrier;
-    carrier_ls->next_started = true;
+    ls->carrier_line = carrier;
     tunnelNextUpStreamInit(t, carrier);
 }
 
@@ -45,12 +33,12 @@ void vlessclientCloseLine(tunnel_t *t, line_t *l, vlessclient_close_origin_t ori
     vlessclient_lstate_t *ls = lineGetState(l, t);
     if (ls->phase == kVlessClientPhaseClosed)
         return;
+    /* Both creation paths enter next-side Init before any callback can close the line. */
     if (ls->kind == kVlessClientLineKindDirect)
     {
-        bool next_started = ls->next_started;
         lineRef(l);
         vlessclientLinestateDestroy(ls);
-        if (next_started && origin != kVlessClientCloseFromNext)
+        if (origin != kVlessClientCloseFromNext)
             tunnelNextUpStreamFinish(t, l);
         if (lineIsAlive(l) && origin != kVlessClientCloseFromPrev)
             tunnelPrevDownStreamFinish(t, l);
@@ -63,13 +51,12 @@ void vlessclientCloseLine(tunnel_t *t, line_t *l, vlessclient_close_origin_t ori
     lineRef(application);
     lineRef(carrier);
     vlessclient_lstate_t *application_ls = lineGetState(application, t);
-    vlessclient_lstate_t *carrier_ls   = lineGetState(carrier, t);
-    bool                  next_started = carrier_ls->next_started;
+    vlessclient_lstate_t *carrier_ls     = lineGetState(carrier, t);
     application_ls->carrier_line         = NULL;
     carrier_ls->application_line         = NULL;
     vlessclientLinestateDestroy(application_ls);
     vlessclientLinestateDestroy(carrier_ls);
-    if (next_started && (from_application || origin != kVlessClientCloseFromNext))
+    if (from_application || origin != kVlessClientCloseFromNext)
         tunnelNextUpStreamFinish(t, carrier);
     if (lineIsAlive(carrier))
         lineDestroy(carrier);

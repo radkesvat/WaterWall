@@ -360,12 +360,6 @@ static void tunOffloadPostPending(tun_device_t *tdev, tun_offload_reader_t *read
         return;
     }
     tun_offload_work_t *work = memoryAllocate(sizeof(*work));
-    if (UNLIKELY(work == NULL))
-    {
-        deviceReaderSessionReleaseWork(tdev->reader_session, charge, slots);
-        LOGF("TunDevice: failed to allocate reserved offload work metadata");
-        abortProgramNow(1);
-    }
     *work = (tun_offload_work_t) {.aggregate     = reader->scratch,
                                   .plan          = reader->pending_plan,
                                   .output_charge = output_charge,
@@ -373,7 +367,7 @@ static void tunOffloadPostPending(tun_device_t *tdev, tun_offload_reader_t *read
     if (compact_checksum)
     {
         work->aggregate = bufferpoolGetBestFit(tdev->reader_buffer_pool, work->plan.ip_length, input_fit.left_padding);
-        if (UNLIKELY(work->aggregate == NULL || sbufGetAllocationCharge(work->aggregate) != input_charge))
+        if (UNLIKELY(sbufGetAllocationCharge(work->aggregate) != input_charge))
         {
             LOGF("TunDevice: ordinary checksum storage violated its reservation");
             abortProgramNow(1);
@@ -386,11 +380,6 @@ static void tunOffloadPostPending(tun_device_t *tdev, tun_offload_reader_t *read
         const uint16_t padding =
             max(bufferpoolGetLargeBufferPadding(tdev->reader_buffer_pool), (uint16_t) kTunVirtioHeaderSize);
         reader->scratch = bufferpoolGetBestFit(tdev->reader_buffer_pool, kTunOffloadPacketStorageCapacity, padding);
-        if (UNLIKELY(reader->scratch == NULL))
-        {
-            LOGF("TunDevice: failed to replace handed-off offload receive storage");
-            abortProgramNow(1);
-        }
         tdev->offload_scratch = reader->scratch;
     }
     reader->pending = false;

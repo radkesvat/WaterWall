@@ -20,57 +20,42 @@ static bool sendBufferUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static size_t addressEncodedLength(const address_context_t *ctx)
 {
-    if (addresscontextIsIpType(ctx))
-    {
-        if (addresscontextIsIpv4(ctx))
-            return 7;
-        if (addresscontextIsIpv6(ctx))
-            return 19;
-        return 0;
-    }
+    if (addresscontextIsIpv4(ctx))
+        return 7;
+    if (addresscontextIsIpv6(ctx))
+        return 19;
     return addresscontextIsDomain(ctx) ? (size_t) ctx->domain_len + 4 : 0;
 }
 
-static bool writeAddress(uint8_t *ptr, size_t capacity, const address_context_t *ctx, size_t *offset)
+/* Both callers validate the address and reserve its complete encoded length. */
+static void writeAddress(uint8_t *ptr, size_t capacity, const address_context_t *ctx, size_t *offset)
 {
-    const size_t length = addressEncodedLength(ctx);
-    if (length == 0 || *offset > capacity || length > capacity - *offset)
-        return false;
-    if (addresscontextIsIpType(ctx))
+    assert(addressEncodedLength(ctx) != 0);
+    assert(*offset <= capacity && addressEncodedLength(ctx) <= capacity - *offset);
+    discard capacity;
+    if (addresscontextIsIpv4(ctx))
     {
-        if (addresscontextIsIpv4(ctx))
-        {
-            ptr[(*offset)++] = kSocks5AddrTypeIpv4;
-            memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip4.addr, 4);
-            *offset += 4;
-        }
-        else if (addresscontextIsIpv6(ctx))
-        {
-            ptr[(*offset)++] = kSocks5AddrTypeIpv6;
-            memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip6, 16);
-            *offset += 16;
-        }
-        else
-        {
-            return false;
-        }
+        ptr[(*offset)++] = kSocks5AddrTypeIpv4;
+        memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip4.addr, 4);
+        *offset += 4;
     }
-    else if (addresscontextIsDomain(ctx))
+    else if (addresscontextIsIpv6(ctx))
     {
+        ptr[(*offset)++] = kSocks5AddrTypeIpv6;
+        memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip6, 16);
+        *offset += 16;
+    }
+    else
+    {
+        assert(addresscontextIsDomain(ctx));
         ptr[(*offset)++] = kSocks5AddrTypeDomain;
         ptr[(*offset)++] = ctx->domain_len;
         memoryCopy(ptr + *offset, ctx->domain, ctx->domain_len);
         *offset += ctx->domain_len;
     }
-    else
-    {
-        return false;
-    }
-
     uint16_t port_be = htobe16(ctx->port);
     memoryCopy(ptr + *offset, &port_be, sizeof(port_be));
     *offset += sizeof(port_be);
-    return true;
 }
 
 int socks5clientParseAddressBytes(const uint8_t *buf, size_t len, address_context_t *out, size_t *consumed)
@@ -214,7 +199,6 @@ bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_
     address_context_t      assoc_target = {0};
     address_context_t     *target       = &ls->target_addr;
     uint8_t                cmd          = protocolToCommand(ls->protocol);
-    uint32_t               addr_len     = 0;
 
     if (ls->protocol == kSocks5ClientProtocolUdp)
     {
@@ -222,34 +206,15 @@ bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_
         target = &assoc_target;
     }
 
-    if (addresscontextIsIpType(target))
+    const size_t addr_len = addressEncodedLength(target);
+    if (addr_len == 0)
     {
-        if (target->ip_address.type == IPADDR_TYPE_V4)
-        {
-            addr_len = 1 + 4 + 2;
-        }
-        else if (target->ip_address.type == IPADDR_TYPE_V6)
-        {
-            addr_len = 1 + 16 + 2;
-        }
-        else
-        {
-            LOGE("Socks5Client: unsupported IP type for destination context");
-            return false;
-        }
-    }
-    else if (addresscontextIsDomain(target))
-    {
-        addr_len = 1U + 1U + (uint32_t) target->domain_len + 2U;
-    }
-    else
-    {
-        LOGE("Socks5Client: target settings are not populated");
+        LOGE("Socks5Client: unsupported or missing destination address");
         addresscontextReset(&assoc_target);
         return false;
     }
 
-    uint32_t len = 3U + addr_len;
+    uint32_t len = 3U + (uint32_t) addr_len;
     sbuf_t  *buf = socks5clientAllocHandshakeBuffer(l, len);
     uint8_t *ptr = sbufGetMutablePtr(buf);
 
@@ -258,12 +223,7 @@ bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_
     ptr[2] = 0;
 
     size_t offset = 3;
-    if (! writeAddress(ptr, len, target, &offset))
-    {
-        lineReuseBuffer(l, buf);
-        addresscontextReset(&assoc_target);
-        return false;
-    }
+    writeAddress(ptr, len, target, &offset);
 
     ls->phase = kSocks5ClientPhaseWaitCommand;
 
@@ -312,10 +272,7 @@ bool socks5clientWrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_contex
     ptr[off++] = 0;
     ptr[off++] = 0;
     ptr[off++] = 0;
-    if (! writeAddress(ptr, header_len, target, &off))
-    {
-        return false;
-    }
+    writeAddress(ptr, header_len, target, &off);
 
     return true;
 }

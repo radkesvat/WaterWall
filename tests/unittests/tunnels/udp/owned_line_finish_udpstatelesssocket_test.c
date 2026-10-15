@@ -102,7 +102,6 @@ static void fixtureSetup(udpstateless_fixture_t *fixture, bool attach_idle_item)
 
     udpstatelesssocket_tstate_t *ts = tunnelGetState(fixture->uss);
     // The socket owns peer lines at the head; downstream Finish arrives from next.
-    ts->is_chain_end       = false;
     ts->socket.idle_tables = fixture->idle_table_slots;
 
     // Real pooled lines: lineDestroy() returns a line to line->pools[wid], so the

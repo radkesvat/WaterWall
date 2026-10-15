@@ -83,11 +83,7 @@ bool hpcResponse(tunnel_t *t, line_t *l, sbuf_t *b)
                 ls->header_started = true;
                 ls->header_at      = hpcNow(l);
             }
-            if (ls->carry_length == ts->max_header)
-            {
-                hpcClose(t, l);
-                return false;
-            }
+            assert(ls->carry_length < ts->max_header);
             ls->carry[ls->carry_length++] = *(const char *) sbufGetRawPtr(ls->active);
             consume(ls, 1);
             size_t length = ls->carry_length;
@@ -179,11 +175,6 @@ bool hpcResponse(tunnel_t *t, line_t *l, sbuf_t *b)
                 return false;
             }
             sbuf_t *out = hpcBuffer(l, used);
-            if (! out)
-            {
-                hpcClose(t, l);
-                return false;
-            }
             memoryCopy(sbufGetMutablePtr(out), sbufGetRawPtr(ls->active), used);
             sbufSetLength(out, (uint32_t) used);
             consume(ls, used);
@@ -195,11 +186,7 @@ bool hpcResponse(tunnel_t *t, line_t *l, sbuf_t *b)
             size_t limit = ls->body.chunk_phase == 3   ? kHpsTrailerLimit
                            : ls->body.chunk_phase == 2 ? 2
                                                        : kHpsChunkLineLimit;
-            if (ls->carry_length == limit)
-            {
-                hpcClose(t, l);
-                return false;
-            }
+            assert(ls->carry_length < limit);
             ls->carry[ls->carry_length++] = *(const char *) sbufGetRawPtr(ls->active);
             consume(ls, 1);
             size_t length = ls->carry_length;

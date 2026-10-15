@@ -32,8 +32,6 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     }
 
     if (! tlsclientConfigureSslForConnect(ls->ssl,
-                                          ls->rbio,
-                                          ls->wbio,
                                           ts->sni,
                                           ech_payload != NULL ? (const uint8_t *) sbufGetRawPtr(ech_payload) : NULL,
                                           ech_payload != NULL ? sbufGetLength(ech_payload) : 0))

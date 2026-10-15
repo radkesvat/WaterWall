@@ -68,9 +68,6 @@ void bridgeTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         return;
     }
 
-    if (! tunnelchainRegisterLayerRelation(
-            chain, t, kTunnelLayerSideNext, state->pair_tun, kTunnelLayerSideNext, kTunnelLayerRelationSame))
-    {
-        return;
-    }
+    discard tunnelchainRegisterLayerRelation(
+        chain, t, kTunnelLayerSideNext, state->pair_tun, kTunnelLayerSideNext, kTunnelLayerRelationSame);
 }

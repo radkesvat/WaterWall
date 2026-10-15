@@ -35,10 +35,8 @@ typedef struct usercontroller_lstate_s
 {
     user_handle_t handle;            // copy of the authenticated user handle (empty when anonymous)
     user_ip_key_t ip_key;            // connecting peer IP, used to release the IP slot on close
-    bool          authenticated;     // true when the line carried a valid user handle
     bool          managed;           // true once we reserved a connection slot for this line
     bool          registered;        // true while the worker sweep registry holds a line reference
-    bool          closing;           // set once teardown begins; sweep skips it, re-entrant closes no-op
     bool          started_from_next; // line was initiated from the next side (downstream Init); flips
                                      // the upload/download mapping for traffic accounting
 } usercontroller_lstate_t;
@@ -56,7 +54,6 @@ WW_EXPORT api_result_t usercontrollerTunnelApi(tunnel_t *instance, sbuf_t *messa
 
 void usercontrollerTunnelOnPrepair(tunnel_t *t);
 void usercontrollerTunnelOnStart(tunnel_t *t);
-void usercontrollerTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 void usercontrollerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void usercontrollerTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
@@ -64,21 +61,16 @@ void usercontrollerTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void usercontrollerTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void usercontrollerTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void usercontrollerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void usercontrollerTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void usercontrollerTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void usercontrollerTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void usercontrollerTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void usercontrollerTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void usercontrollerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void usercontrollerTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void usercontrollerTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void usercontrollerLinestateInitialize(usercontroller_lstate_t *ls, bool started_from_next);
 void usercontrollerLinestateDestroy(usercontroller_lstate_t *ls);
 
 void usercontrollerTunnelstateDestroy(usercontroller_tstate_t *ts);
-bool usercontrollerBuildIpKey(line_t *l, user_ip_key_t *out);
+void        usercontrollerBuildIpKey(line_t *l, user_ip_key_t *out);
 bool usercontrollerRegisterLine(tunnel_t *t, line_t *l, usercontroller_lstate_t *ls);
 void usercontrollerUnregisterLine(tunnel_t *t, line_t *l, usercontroller_lstate_t *ls);
 void usercontrollerWorkerClearRegistry(tunnel_t *t, wid_t wid);

@@ -135,7 +135,7 @@ static bool parseAllowedIps(const char *allowed_ips, ip_addr_t *allowed_ip_list,
 {
     char *allowed_ips_nospace = stringNewWithoutSpace(allowed_ips);
 
-    if ((allowed_ips_nospace == NULL) || (allowed_ips_nospace[0] == '\0'))
+    if (allowed_ips_nospace[0] == '\0')
     {
         memoryFree(allowed_ips_nospace);
         return false;
@@ -190,7 +190,7 @@ static bool parseEndpoint(const char *endpoint, wireguard_peer_init_data_t *peer
     char *host_ptr      = endpoint_copy;
     char *colon_ptr;
 
-    if ((endpoint_copy == NULL) || (endpoint_copy[0] == '\0'))
+    if (endpoint_copy[0] == '\0')
     {
         memoryFree(endpoint_copy);
         return false;

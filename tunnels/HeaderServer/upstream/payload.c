@@ -67,10 +67,8 @@ static bool headerserverStreamPrefixCanMatch(buffer_stream_t *stream, const uint
 
 static bool headerserverParseUint16Token(const char *value, uint16_t *out)
 {
-    if (value == NULL || value[0] == '\0')
-    {
-        return false;
-    }
+    // The v1 tokenizer supplies only nonempty tokens.
+    assert(value != NULL && value[0] != '\0');
 
     uint32_t parsed = 0;
     for (const char *p = value; *p != '\0'; ++p)
@@ -222,11 +220,9 @@ static headerserver_header_parse_result_t headerserverReadProxyProtocolV2(header
     uint8_t header[kHeaderServerProxyProtocolV2BaseHeaderSize];
     bufferstreamViewBytesAt(stream, 0, header, sizeof(header));
 
-    if (memoryCompare(header, kHeaderServerProxyProtocolV2Signature, kHeaderServerProxyProtocolV2SignatureSize) != 0)
-    {
-        LOGE("HeaderServer: invalid PROXY protocol v2 signature");
-        return kHeaderServerHeaderParseError;
-    }
+    // The dispatcher already matched the complete signature before selecting v2.
+    assert(memoryCompare(header, kHeaderServerProxyProtocolV2Signature, kHeaderServerProxyProtocolV2SignatureSize) ==
+           0);
 
     uint8_t version_command = header[12];
     if ((version_command & kHeaderServerProxyProtocolV2VersionMask) != kHeaderServerProxyProtocolV2Version)
@@ -281,11 +277,6 @@ static headerserver_header_parse_result_t headerserverReadProxyProtocolV2(header
 static headerserver_header_parse_result_t headerserverReadProxyProtocol(headerserver_lstate_t *ls, line_t *l)
 {
     buffer_stream_t *stream = &ls->read_stream;
-
-    if (bufferstreamGetBufLen(stream) == 0)
-    {
-        return kHeaderServerHeaderParseNeedMore;
-    }
 
     if (headerserverStreamPrefixCanMatch(
             stream, kHeaderServerProxyProtocolV2Signature, kHeaderServerProxyProtocolV2SignatureSize))

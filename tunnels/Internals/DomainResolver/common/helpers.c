@@ -155,13 +155,11 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
 
     if (addresscontextIsIpType(dest_ctx) || addresscontextIsDomainResolved(dest_ctx))
     {
-        ls->phase = kDomainResolverPhaseOpen;
         return true;
     }
 
     if (ts->allow_missing_destination && ! addresscontextIsDomain(dest_ctx))
     {
-        ls->phase = kDomainResolverPhaseOpen;
         return true;
     }
 

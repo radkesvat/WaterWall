@@ -53,7 +53,6 @@ void rawsocketOnStart(tunnel_t *t);
 void rawsocketOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
 void rawsocketOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context);
 
-void rawsocketExitHook(void *userdata, int sig);
 void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, wid_t wid);
 // bi-directional stream payload (upstream / downstream) to write to raw device
 void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

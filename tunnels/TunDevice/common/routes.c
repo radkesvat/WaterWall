@@ -25,24 +25,9 @@ typedef struct route_list_s
     size_t        capacity;
 } route_list_t;
 
-static int routeFamilyBits(int family)
-{
-    return family == AF_INET ? 32 : 128;
-}
-
 static int routeFamilyBytes(int family)
 {
     return family == AF_INET ? 4 : 16;
-}
-
-static bool routeTableIsOff(const char *table)
-{
-    return table == NULL || stringCompare(table, "off") == 0;
-}
-
-static bool routeTableEnablesRoutes(const char *table)
-{
-    return table != NULL && stringCompare(table, "off") != 0;
 }
 
 static bool routeTableIsValid(const char *table)
@@ -288,11 +273,8 @@ static bool routeSubtractOne(const route_cidr_t *base, const route_cidr_t *exclu
         return true;
     }
 
-    int max_bits = routeFamilyBits(base->family);
-    if (base->prefix >= max_bits)
-    {
-        return true;
-    }
+    /* An intersecting exclusion that does not contain base must be narrower. */
+    assert(base->prefix < exclude->prefix);
 
     route_cidr_t left  = *base;
     route_cidr_t right = *base;
@@ -446,11 +428,7 @@ bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings
     }
 
     state->route_table          = route_table;
-    state->system_route_enabled = system_route || routeTableEnablesRoutes(route_table);
-    if (routeTableIsOff(route_table))
-    {
-        state->system_route_enabled = false;
-    }
+    state->system_route_enabled = stringCompare(route_table, "off") != 0;
 
     // Self-traffic loop protection: keep Waterwall's own outbound connections out
     // of the TUN. Defaults to on whenever the TUN becomes a system route, and can

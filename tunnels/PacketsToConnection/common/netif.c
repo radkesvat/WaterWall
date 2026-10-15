@@ -3,6 +3,8 @@
 #include "loggers/network_logger.h"
 
 static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3);
+static err_t ptcCreateTcpListener(interface_route_context_t *route_ctx);
+static err_t ptcCreateUdpListener(interface_route_context_t *route_ctx);
 
 static void ptcEmitPacketCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
@@ -168,9 +170,8 @@ static interface_route_context_t **ptcRouteSlot(ptc_tstate_t *state, wid_t packe
     return &state->routes_v4[(uint32_t) packet_wid];
 }
 
-interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t packet_wid, const ip4_addr_t *dest_ip)
+interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t packet_wid)
 {
-    discard dest_ip;
     assert(currentThreadIsEventWorkerWID(packet_wid));
     wwLwipEngineAssertCurrent();
 
@@ -216,28 +217,21 @@ interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t pack
     netif_set_up(&cur->netif);
     netif_set_link_up(&cur->netif);
 
-    if (ptcEnsureTcpListener(cur, t, NULL, 0) != ERR_OK || ptcEnsureUdpListener(cur, t, NULL, 0) != ERR_OK)
+    if (ptcCreateTcpListener(cur) != ERR_OK || ptcCreateUdpListener(cur) != ERR_OK)
     {
         ptcDestroyRouteContext(cur);
         return NULL;
     }
 
+    /* A published route always has both wildcard listeners. */
     *slot = cur;
 
     return cur;
 }
 
-err_t ptcEnsureTcpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip,
-                           uint16_t dest_port)
+static err_t ptcCreateTcpListener(interface_route_context_t *route_ctx)
 {
-    discard t;
-    discard dest_ip;
-    discard dest_port;
-
-    if (route_ctx->tcp_pcb != NULL)
-    {
-        return ERR_OK;
-    }
+    assert(route_ctx->tcp_pcb == NULL);
 
     struct tcp_pcb *original_pcb = tcp_new_ip_type(IPADDR_TYPE_ANY);
     err_t           err          = ERR_OK;
@@ -285,17 +279,9 @@ err_t ptcEnsureTcpListener(interface_route_context_t *route_ctx, tunnel_t *t, co
     return ERR_OK;
 }
 
-err_t ptcEnsureUdpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip,
-                           uint16_t dest_port)
+static err_t ptcCreateUdpListener(interface_route_context_t *route_ctx)
 {
-    discard t;
-    discard dest_ip;
-    discard dest_port;
-
-    if (route_ctx->udp_pcb != NULL)
-    {
-        return ERR_OK;
-    }
+    assert(route_ctx->udp_pcb == NULL);
 
     struct udp_pcb *pcb = udp_new_ip_type(IPADDR_TYPE_ANY);
     err_t           err;

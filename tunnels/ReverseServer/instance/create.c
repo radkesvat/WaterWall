@@ -16,7 +16,6 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
     }
 
     t->fnInitU    = &reverseserverTunnelUpStreamInit;
-    t->fnEstU     = &reverseserverTunnelUpStreamEst;
     t->fnFinU     = &reverseserverTunnelUpStreamFinish;
     t->fnPayloadU = &reverseserverTunnelUpStreamPayload;
     t->fnPauseU   = &reverseserverTunnelUpStreamPause;

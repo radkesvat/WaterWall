@@ -2,9 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-bool connectionfisherclientLinestateInitializeMain(connectionfisherclient_lstate_t *ls, line_t *l, uint32_t child_count)
+bool connectionfisherclientLinestateInitializeMain(connectionfisherclient_lstate_t *ls, uint32_t child_count)
 {
-    discard l;
+    assert(child_count > 0);
 
     *ls = (connectionfisherclient_lstate_t) {
         .role               = kConnectionFisherClientRoleMain,
@@ -14,11 +14,6 @@ bool connectionfisherclientLinestateInitializeMain(connectionfisherclient_lstate
         .main_line          = NULL,
         .pending_up         = bufferqueueCreate(kConnectionFisherPendingQueueInitialCapacity),
     };
-
-    if (child_count == 0)
-    {
-        return true;
-    }
 
 #if WW_COMPILE_FOR_32BIT
     if (UNLIKELY(child_count > SIZE_MAX / sizeof(*ls->child_lines)))
@@ -49,37 +44,24 @@ void connectionfisherclientLinestateInitializeChild(connectionfisherclient_lstat
 
 void connectionfisherclientLinestateDestroyMain(connectionfisherclient_lstate_t *ls)
 {
-    if (ls->role != kConnectionFisherClientRoleMain)
-    {
-        return;
-    }
+    assert(ls->role == kConnectionFisherClientRoleMain);
 
     bufferqueueDestroy(&ls->pending_up);
-    if (ls->child_lines != NULL)
-    {
-        memoryFree(ls->child_lines);
-    }
+    memoryFree(ls->child_lines);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }
 
 void connectionfisherclientLinestateDestroyChild(connectionfisherclient_lstate_t *ls)
 {
-    if (ls->role != kConnectionFisherClientRoleChild)
-    {
-        return;
-    }
+    assert(ls->role == kConnectionFisherClientRoleChild);
 
-    if (ls->read_stream.pool != NULL)
-        bufferstreamDestroy(&ls->read_stream);
+    bufferstreamDestroy(&ls->read_stream);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }
 
 void connectionfisherclientRetireReadStream(connectionfisherclient_lstate_t *ls)
 {
-    if (ls->read_stream.pool != NULL)
-    {
-        assert(bufferstreamIsEmpty(&ls->read_stream));
-        bufferstreamDestroy(&ls->read_stream);
-        ls->read_stream = (buffer_stream_t) {0};
-    }
+    assert(bufferstreamIsEmpty(&ls->read_stream));
+    bufferstreamDestroy(&ls->read_stream);
+    ls->read_stream = (buffer_stream_t) {0};
 }

@@ -4,7 +4,8 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseFinishDuringFirstFinalChunkStopsRemainingOutput,
- * caseSplitFinishAbsorbsCompanionBackpressure
+ * caseSplitFinishAbsorbsCompanionBackpressure, caseSplitFailureClosesSiblingDuringFinish,
+ * caseSplitFinishClosesSiblingDuringFinalPayload
  * Checks: Assertion labels include: HttpClient sent payload after the next direction finished; split upload
  * transport received Finish twice; split download transport received Finish twice; unexpected line
  * reached the split transport finish observer
@@ -53,6 +54,8 @@ typedef struct httpclient_split_observer_s
     line_t      *download_line;
     uint32_t     upload_finish;
     uint32_t     download_finish;
+    bool         finish_download_during_upload_finish;
+    bool         finish_download_during_upload_payload;
 } httpclient_split_observer_t;
 
 typedef struct httpclient_split_fixture_s
@@ -93,6 +96,12 @@ static void pauseAndResumeClientFromNextOnFirstSplitPayload(tunnel_t *next, line
 
     if (trace->next_payload == 1)
     {
+        if (observer->finish_download_during_upload_payload)
+        {
+            observer->finish_download_during_upload_payload = false;
+            httpclientTunnelDownStreamFinish(next->prev, observer->download_line);
+            return;
+        }
         httpclientTunnelDownStreamPause(next->prev, line);
         httpclientTunnelDownStreamResume(next->prev, line);
     }
@@ -120,6 +129,12 @@ static void recordSplitTransportFinish(tunnel_t *next, line_t *line)
 
     ++trace->next_finish;
     twfRecord(trace, 'F');
+
+    if (line == observer->upload_line && observer->finish_download_during_upload_finish)
+    {
+        observer->finish_download_during_upload_finish = false;
+        httpclientTunnelDownStreamFinish(next->prev, observer->download_line);
+    }
 }
 
 static void fixtureSetup(httpclient_fixture_t *fixture)
@@ -298,9 +313,70 @@ static void caseSplitFinishAbsorbsCompanionBackpressure(void)
     splitFixtureTeardown(&fixture);
 }
 
+static void caseSplitFailureClosesSiblingDuringFinish(void)
+{
+    twfSetCase("HttpClient split failure settles a sibling Finish exactly once");
+
+    httpclient_split_fixture_t fixture;
+    splitFixtureSetup(&fixture);
+    const uint32_t               initial_main_refc = twfLineRefCount(fixture.main_line);
+    httpclient_split_observer_t *observer          = tunnelGetState(fixture.next);
+    observer->finish_download_during_upload_finish = true;
+
+    httpclient_lstate_t *upload_ls  = lineGetState(fixture.upload_line, fixture.http);
+    upload_ls->h1_write_in_progress = true;
+    sbuf_t *overflow                = bufferpoolGetBestFit(fixture.env.pool, kHttpClientHttp1NestedMaxBytes + 1U, 0);
+    sbufSetLength(overflow, kHttpClientHttp1NestedMaxBytes + 1U);
+    httpclientTunnelUpStreamPayload(fixture.http, fixture.main_line, overflow);
+
+    twfRequireEqualU32(fixture.trace.prev_finish, 1, "split failure notified the previous side more than once");
+    twfRequireEqualU32(observer->upload_finish, 1, "split failure did not finish its upload transport once");
+    twfRequireEqualU32(observer->download_finish, 0, "split failure reflected Finish toward its download sender");
+    twfRequire(lineIsAlive(fixture.main_line), "split failure destroyed the borrowed main line");
+    twfRequire(! lineIsAlive(fixture.upload_line) && ! lineIsAlive(fixture.download_line),
+               "split failure left an owned transport alive");
+    twfRequireLineStateZeroed(fixture.main_line, fixture.http, "split failure retained main state");
+    twfRequireLineStateZeroed(fixture.upload_line, fixture.http, "split failure retained upload state");
+    twfRequireLineStateZeroed(fixture.download_line, fixture.http, "split failure retained download state");
+    twfRequireEqualU32(twfLineRefCount(fixture.main_line), initial_main_refc, "split failure leaked a main reference");
+    twfRequireEqualU32(twfLineRefCount(fixture.upload_line), 1, "split failure leaked an upload reference");
+    twfRequireEqualU32(twfLineRefCount(fixture.download_line), 1, "split failure leaked a download reference");
+    splitFixtureTeardown(&fixture);
+}
+
+static void caseSplitFinishClosesSiblingDuringFinalPayload(void)
+{
+    twfSetCase("HttpClient split final payload absorbs a sibling Finish");
+
+    httpclient_split_fixture_t fixture;
+    splitFixtureSetup(&fixture);
+    const uint32_t               initial_main_refc  = twfLineRefCount(fixture.main_line);
+    httpclient_split_observer_t *observer           = tunnelGetState(fixture.next);
+    observer->finish_download_during_upload_payload = true;
+    httpclientTunnelUpStreamFinish(fixture.http, fixture.main_line);
+
+    twfRequireEqualU32(fixture.trace.prev_finish, 0, "split sibling Finish reflected toward the finished source");
+    twfRequireEqualU32(fixture.trace.next_payload, 1, "split final payload continued after sibling Finish");
+    twfRequireEqualU32(observer->upload_finish, 1, "split sibling Finish did not close upload once");
+    twfRequireEqualU32(observer->download_finish, 0, "split sibling Finish reflected toward its download sender");
+    twfRequire(lineIsAlive(fixture.main_line), "split sibling Finish destroyed the borrowed main line");
+    twfRequire(! lineIsAlive(fixture.upload_line) && ! lineIsAlive(fixture.download_line),
+               "split sibling Finish left an owned transport alive");
+    twfRequireLineStateZeroed(fixture.main_line, fixture.http, "split sibling Finish retained main state");
+    twfRequireLineStateZeroed(fixture.upload_line, fixture.http, "split sibling Finish retained upload state");
+    twfRequireLineStateZeroed(fixture.download_line, fixture.http, "split sibling Finish retained download state");
+    twfRequireEqualU32(
+        twfLineRefCount(fixture.main_line), initial_main_refc, "split sibling Finish leaked main reference");
+    twfRequireEqualU32(twfLineRefCount(fixture.upload_line), 1, "split sibling Finish leaked upload reference");
+    twfRequireEqualU32(twfLineRefCount(fixture.download_line), 1, "split sibling Finish leaked download reference");
+    splitFixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseFinishDuringFirstFinalChunkStopsRemainingOutput();
     caseSplitFinishAbsorbsCompanionBackpressure();
+    TEST_RUN_CASE(caseSplitFinishClosesSiblingDuringFinalPayload);
+    TEST_RUN_CASE(caseSplitFailureClosesSiblingDuringFinish);
     return 0;
 }

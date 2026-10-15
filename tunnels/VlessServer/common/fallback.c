@@ -145,12 +145,7 @@ static void vlessserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     {
         return;
     }
-    if (UNLIKELY(fallback == NULL))
-    {
-        bufferpoolReuseBuffer(pool, buf);
-        vlessserverCloseLineBidirectional(t, l);
-        return;
-    }
+    assert(fallback != NULL);
 
     ls->input_dispatching = true;
     tunnelUpStreamPayload(fallback, l, buf);
@@ -163,8 +158,7 @@ static void vlessserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     if (ls->tunnel != t)
         return;
     ls->input_dispatching = false;
-    if (ls->phase != kVlessServerPhaseFallback || ls->fallback_close_draining || ls->branch_initializing ||
-        ls->input_dispatching)
+    if (ls->phase != kVlessServerPhaseFallback || ls->fallback_close_draining || ls->branch_initializing)
     {
         return;
     }
@@ -179,11 +173,12 @@ bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t
     vlessserver_tstate_t *ts       = tunnelGetState(t);
     tunnel_t             *fallback = ts->fallback_tunnel;
 
-    if (fallback == NULL || ls->phase != kVlessServerPhaseFallback || ls->fallback_close_draining)
+    if (ls->phase != kVlessServerPhaseFallback || ls->fallback_close_draining)
     {
         lineReuseBuffer(l, buf);
         return false;
     }
+    assert(fallback != NULL);
 
     if (ts->fallback_intentional_delay_ms == 0 && ! ls->input_dispatching && ! ls->branch_initializing &&
         vlessserverFallbackPendingCount(ls) == 0 && ! ls->fallback_delay_scheduled)

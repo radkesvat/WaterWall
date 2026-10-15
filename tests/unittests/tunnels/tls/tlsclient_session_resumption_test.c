@@ -510,7 +510,8 @@ static void requireStandaloneFresh(SSL_CTX *context, const char *hostname, bool 
     BIO_set_mem_eof_return(wbio, -1);
     if (change_verify)
         SSL_set_verify(ssl, SSL_VERIFY_NONE, NULL);
-    require(tlsclientConfigureSslForConnect(ssl, rbio, wbio, hostname, NULL, 0) && tlsclientPrepareSession(ssl),
+    SSL_set_bio(ssl, rbio, wbio);
+    require(tlsclientConfigureSslForConnect(ssl, hostname, NULL, 0) && tlsclientPrepareSession(ssl),
             "cache mismatch did not permit a fresh handshake");
     int result = SSL_connect(ssl);
     require(SSL_get_error(ssl, result) == SSL_ERROR_WANT_READ, "isolated SSL did not emit a fresh ClientHello");

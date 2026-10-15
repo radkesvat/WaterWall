@@ -139,8 +139,9 @@ Nested encoder input stays behind the active payload under a shared 8 MiB
 logical-byte and 1,024-buffer reentry bound, counting the active suffix. The decoder serializes nested input,
 limits nested retained bytes to 8 MiB, and limits retained allocation charge to
 16 MiB, attempting beneficial ordinary compaction before refusing excess charge.
-Complete frames in an admitted delivery drain before checking the 1 MiB + 5 byte
-incomplete-remainder limit. Pause is forwarded promptly and does not interrupt
+Complete frames drain before the retained-charge check. Validated frame lengths
+guarantee an incomplete remainder smaller than 1 MiB + 5 bytes, including the header.
+Pause is forwarded promptly and does not interrupt
 that synchronous batch. Repeated Pause/Resume pass through unchanged; due pings
 and ready replies proceed without Resume. Framing and watchdog duties last for
 the whole connection, so this node remains active and cannot permanently bypass

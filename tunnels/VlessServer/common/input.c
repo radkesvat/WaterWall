@@ -52,7 +52,7 @@ sbuf_t *vlessserverExtractUdpBody(vlessserver_lstate_t *ls, uint16_t bytes)
     sbuf_t        *head    = receiveHead(ls);
     sbuf_t        *result  = NULL;
     assert(bytes == 0 || head != NULL);
-    if (bytes != 0 && head != NULL && sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
+    if (bytes != 0 && sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
     {
         result         = head;
         ls->input_head = NULL;
@@ -92,21 +92,15 @@ sbuf_t *vlessserverExtractUdpBody(vlessserver_lstate_t *ls, uint16_t bytes)
     return result;
 }
 
-bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, bool reject_short_password)
+bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, bool reject_short_uuid)
 {
     if (ls->phase == kVlessServerPhaseWaitInitial)
     {
-        if (! vlessserverHandleInitialRequest(t, l, ls, reject_short_password))
+        if (! vlessserverHandleInitialRequest(t, l, ls, reject_short_uuid))
             return false;
-        if (ls->phase == kVlessServerPhaseWaitInitial && ls->input_bytes > kVlessServerMaxInitialBytes)
-        {
-            vlessserverCloseLineBidirectional(t, l);
-            return false;
-        }
     }
 
-    if (ls->phase == kVlessServerPhaseUdpWaitPacket || ls->phase == kVlessServerPhaseUdpConnecting ||
-        ls->phase == kVlessServerPhaseUdpEstablished)
+    if (ls->phase == kVlessServerPhaseUdpConnecting || ls->phase == kVlessServerPhaseUdpEstablished)
     {
         return vlessserverDrainUdpPackets(t, l, ls);
     }

@@ -14,10 +14,7 @@ void tcpoverudpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     if (UNLIKELY(atomicLoadRelaxed(&state->stopping)))
     {
         tcpoverudpserverLinestateDestroy(ls);
-        if (lineIsAlive(l))
-        {
-            tunnelPrevDownStreamFinish(t, l);
-        }
+        tunnelPrevDownStreamFinish(t, l);
         lineUnref(l);
         return;
     }
@@ -34,10 +31,7 @@ void tcpoverudpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     }
 
     tcpoverudpserverLinestateDestroy(ls);
-    if (lineIsAlive(l))
-    {
-        tunnelPrevDownStreamFinish(t, l);
-    }
+    tunnelPrevDownStreamFinish(t, l);
 
     lineUnref(l);
 }

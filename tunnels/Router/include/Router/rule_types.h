@@ -89,7 +89,6 @@ typedef struct router_match_protocol_s
 typedef struct router_match_attributes_s
 {
     bool     present;
-    uint32_t count;
     uint32_t required_flags;
 } router_match_attributes_t;
 

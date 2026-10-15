@@ -80,15 +80,7 @@ static bool allocationFits(hps_session_t *s, const sbuf_t *replace, const sbuf_t
 static sbuf_t *hpsMakeBuffer(hps_session_t *s, size_t n)
 {
     buffer_pool_t *pool = lineGetBufferPool(s->client);
-    sbuf_t        *b    = bufferpoolTryGetBestFit(pool, n, bufferpoolGetLargeBufferPadding(pool));
-    if (b == NULL)
-        return NULL;
-    if (sbufGetMaximumWriteableSize(b) < n)
-    {
-        lineReuseBuffer(s->client, b);
-        return NULL;
-    }
-    return b;
+    return bufferpoolTryGetBestFit(pool, n, bufferpoolGetLargeBufferPadding(pool));
 }
 
 bool hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigned char *data, size_t n)

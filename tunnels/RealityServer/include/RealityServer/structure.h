@@ -133,7 +133,6 @@ typedef struct realityserver_lstate_s
     uint8_t                                     mode;
     uint8_t                                     server_gcm_nonce_policy;
     uint8_t                                     tls13_pre_request_cover_records_remaining;
-    bool                                        binding_ready;
     bool                                        session_keys_ready;
     bool                                        protected_init_sent;
     bool                                        destination_init_sent;
@@ -147,7 +146,6 @@ typedef struct realityserver_lstate_s
     bool                                        prev_finished;
     bool                                        next_finished;
     bool                                        terminal_closing;
-    bool                                        wire_alert_sent;
 } realityserver_lstate_t;
 
 enum realityserver_frame_e

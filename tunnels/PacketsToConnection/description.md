@@ -79,10 +79,9 @@ Instead, it keeps a worker-local route context for each packet worker that sends
 
 The destination IP is preserved in the packet and in the lwIP PCB tuple, but it is not used as the key for creating separate route contexts. In the current source, the IPv4 route-context lookup is keyed by packet worker id.
 
-For each worker-local pretend netif:
-
-- TCP gets one pretend wildcard listener on first TCP packet
-- UDP gets one pretend wildcard PCB on first UDP packet
+Each worker-local route is published only after its pretend netif, TCP wildcard
+listener, and UDP wildcard PCB have all been created successfully. Later packets
+reuse that complete route; listener setup is not repeated per packet.
 
 The Waterwall lwIP pretend patch lets those wildcard PCBs accept packets for arbitrary destination addresses and ports on the pretend netif while still preserving the original local destination tuple.
 

@@ -14,12 +14,6 @@ static void usercontrollerDeleteTimer(wtimer_t **timer)
     *timer = NULL;
 }
 
-void usercontrollerTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
-{
-    discard context;
-    discard t;
-}
-
 void usercontrollerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;

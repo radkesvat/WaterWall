@@ -10,9 +10,8 @@ typedef enum udpconnector_packet_peer_result_e
     kUdpConnectorPacketPeerConsumed
 } udpconnector_packet_peer_result_e;
 
-static void handleQueueOverflow(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls)
+static void handleQueueOverflow(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls)
 {
-    discard ts;
     LOGE("UdpConnector: write retention overflow, bytes: %zu, capacity charge: %zu, limit: %u",
          bufferbudgetGetUsage(&ls->write_budget).bytes,
          bufferbudgetGetUsage(&ls->write_budget).charge,
@@ -21,13 +20,12 @@ static void handleQueueOverflow(tunnel_t *t, line_t *l, udpconnector_tstate_t *t
     udpconnectorLineDetach(t, l, ls, kUdpConnectorDetachQueueOverflow);
 }
 
-static bool queueWrite(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls,
-                       buffer_queue_t *queue, sbuf_t *buf)
+static bool queueWrite(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls, buffer_queue_t *queue, sbuf_t *buf)
 {
     if (UNLIKELY(! udpconnectorQueueWrite(ls, queue, &buf)))
     {
         lineReuseBuffer(l, buf);
-        handleQueueOverflow(t, l, ts, ls);
+        handleQueueOverflow(t, l, ls);
         return false;
     }
     if (! ls->queue_pause_sent && (bufferbudgetGetUsage(&ls->write_budget).bytes >= kUdpMinPauseQueueSize ||
@@ -175,13 +173,6 @@ static bool udpconnectorFlushPacketDestinationQueue(tunnel_t *t, line_t *l, udpc
     return udpconnectorMaybeResumeQueuedSender(t, l, ls);
 }
 
-static bool udpconnectorQueuePacketForDestination(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts,
-                                                  udpconnector_lstate_t *ls, udpconnector_packet_destination_t *cache,
-                                                  sbuf_t *buf)
-{
-    return queueWrite(t, l, ts, ls, &cache->pending_queue, buf);
-}
-
 static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const char *error,
                                             const dns_resolved_addr_t *addrs, size_t naddrs)
 {
@@ -223,12 +214,7 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
                     "UdpConnector: async dns resolve failed for %s: %s",
                     request->domain,
                     error != NULL ? error : ares_strerror(status));
-        if (! udpconnectorPacketDestinationFail(t, line, ls, cache))
-        {
-            lineUnref(line);
-            udpconnectorPacketDnsRequestDestroy(request);
-            return;
-        }
+        discard udpconnectorPacketDestinationFail(t, line, ls, cache);
         lineUnref(line);
         udpconnectorPacketDnsRequestDestroy(request);
         return;
@@ -241,24 +227,14 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
                     LOG_LEVEL_ERROR,
                     "UdpConnector: async dns resolve returned no usable address for %s",
                     request->domain);
-        if (! udpconnectorPacketDestinationFail(t, line, ls, cache))
-        {
-            lineUnref(line);
-            udpconnectorPacketDnsRequestDestroy(request);
-            return;
-        }
+        discard udpconnectorPacketDestinationFail(t, line, ls, cache);
         lineUnref(line);
         udpconnectorPacketDnsRequestDestroy(request);
         return;
     }
 
     cache->has_context = true;
-    if (! udpconnectorFlushPacketDestinationQueue(t, line, ts, ls, cache))
-    {
-        lineUnref(line);
-        udpconnectorPacketDnsRequestDestroy(request);
-        return;
-    }
+    discard udpconnectorFlushPacketDestinationQueue(t, line, ts, ls, cache);
 
     lineUnref(line);
     udpconnectorPacketDnsRequestDestroy(request);
@@ -455,7 +431,7 @@ static udpconnector_packet_peer_result_e udpconnectorSelectPacketPeer(tunnel_t *
 
     if (addresscontextIsDomain(&cache->dest_ctx) && ! addresscontextIsDomainResolved(&cache->dest_ctx))
     {
-        if (! udpconnectorQueuePacketForDestination(t, l, ts, ls, cache, buf))
+        if (! queueWrite(t, l, ls, &cache->pending_queue, buf))
         {
             return kUdpConnectorPacketPeerConsumed;
         }
@@ -486,7 +462,7 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->write_paused)
     {
-        discard queueWrite(t, l, ts, ls, &ls->pause_queue, buf);
+        discard queueWrite(t, l, ls, &ls->pause_queue, buf);
         return;
     }
 

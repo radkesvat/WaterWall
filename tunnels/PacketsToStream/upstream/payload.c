@@ -4,6 +4,8 @@
 
 void packetstostreamTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    /* A drop or reentrant stream Init must not pass this packet's request onward. */
+    const bool                recalculate_checksum = packettunnelTakeChecksumRequest(l);
     packetstostream_lstate_t *ls = lineGetState(l, t);
     line_t                   *stream_line;
     bool                      created;
@@ -20,7 +22,10 @@ void packetstostreamTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    packetstostreamRecalculateChecksumIfRequested(l, buf);
+    if (recalculate_checksum)
+    {
+        discard calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
+    }
 
     // The wire format is now a raw concatenation of IPv4 packets; the peer recovers boundaries
     // from each packet's IPv4 total-length field. Drop anything that is not a self-consistent

@@ -47,17 +47,11 @@ void ctpLinestateDestroy(ctp_lstate_t *ls)
     ctpTerminalCancel(ls);
 
     /*
-     * Unconditional, and deliberately the first thing here: every path that
-     * releases this state goes through it, so this is the one place that
-     * guarantees the deadline timer and the line reference it holds cannot
-     * outlive the state the timer would read.
+     * Every state release cancels the deadline before clearing the state, so
+     * neither the timer nor its line reference can outlive the state it reads.
      */
     ctpCancelConnectDeadline(ls);
 
-    while (bufferqueueGetBufCount(&ls->pending_queue) > 0)
-    {
-        bufferpoolReuseBuffer(getWorkerBufferPool(wid), bufferqueuePopFront(&ls->pending_queue));
-    }
     bufferqueueDestroy(&ls->pending_queue);
 
 #ifdef DEBUG

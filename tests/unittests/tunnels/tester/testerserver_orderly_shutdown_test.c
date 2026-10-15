@@ -248,6 +248,103 @@ static void caseStatelessPacketRequestMismatch(void)
     fixtureTeardown(&fixture);
 }
 
+static void configurePacketTransport(testerserver_fixture_t *fixture, testerserver_packet_ipv4_transport_e transport)
+{
+    testerserver_tstate_t *ts   = tunnelGetState(fixture->tester);
+    ts->packet_ipv4_mode        = true;
+    ts->packet_ipv4_transport   = transport;
+    ts->packet_ipv4_protocol    = transport == kTesterServerPacketIpv4TransportTcp   ? IP_PROTO_TCP
+                                  : transport == kTesterServerPacketIpv4TransportUdp ? IP_PROTO_UDP
+                                                                                     : IP_PROTO_ICMP;
+    ts->packet_ipv4_ttl         = 64;
+    ts->packet_ipv4_source_addr = lwip_htonl(0xc0000201U);
+    ts->packet_ipv4_dest_addr   = lwip_htonl(0xc0000202U);
+}
+
+static void caseFirstTransportChunkVerifiesPayload(void)
+{
+    const testerserver_packet_ipv4_transport_e transports[] = {kTesterServerPacketIpv4TransportUdp,
+                                                               kTesterServerPacketIpv4TransportIcmp};
+    for (size_t i = 0; i < ARRAY_SIZE(transports); ++i)
+    {
+        twfSetCase("testerserver first transport chunk verifies bytes after its flow marker");
+        testerserver_fixture_t fixture;
+        fixtureSetup(&fixture, true, false);
+        configurePacketTransport(&fixture, transports[i]);
+        testerserver_lstate_t *ls = lineGetState(fixture.line, fixture.tester);
+        ls->flow_id               = 7;
+        sbuf_t *request           = testerserverCreatePayload(fixture.tester,
+                                                    fixture.line,
+                                                    0,
+                                                    0,
+                                                    testerserverGetChunkSize(fixture.tester, 0),
+                                                    kTesterServerDirectionRequest);
+        ls->flow_id               = 0;
+        twfRequire(testerserverVerifyChunk(
+                       fixture.tester, fixture.line, request, 0, kTesterServerDirectionRequest, NULL, NULL, NULL),
+                   "valid first transport chunk was rejected");
+        twfRequireEqualU32(ls->flow_id, 7, "first transport chunk did not learn its flow marker");
+
+        sbufGetMutablePtr(request)[IP_HLEN + sizeof(struct udp_hdr) + 1U] ^= 0x80U;
+        twfRequire(calcFullPacketChecksum(sbufGetMutablePtr(request), sbufGetLength(request)),
+                   "corrupt first-chunk checksum rebuild failed");
+        twfRequire(! testerserverVerifyChunk(
+                       fixture.tester, fixture.line, request, 0, kTesterServerDirectionRequest, NULL, NULL, NULL),
+                   "first transport chunk accepted corrupt payload after its flow marker");
+        lineReuseBuffer(fixture.line, request);
+        fixtureTeardown(&fixture);
+        twfRequireNoLeakedBuffers();
+    }
+}
+
+static void caseStatelessCorruptChecksumIsNotRepaired(void)
+{
+    const struct
+    {
+        testerserver_packet_ipv4_transport_e transport;
+        uint32_t                             checksum_offset;
+    } cases[] = {{kTesterServerPacketIpv4TransportTcp, IP_HLEN + 16U},
+                 {kTesterServerPacketIpv4TransportUdp, IP_HLEN + 6U},
+                 {kTesterServerPacketIpv4TransportIcmp, IP_HLEN + 2U}};
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        for (unsigned ip_checksum = 0; ip_checksum < 2; ++ip_checksum)
+        {
+            twfSetCase("testerserver stateless flow trials cannot repair a corrupt checksum");
+            tosResetProcessApi(true);
+            testerserver_fixture_t fixture;
+            fixtureSetup(&fixture, true, true);
+            configurePacketTransport(&fixture, cases[i].transport);
+            testerserver_lstate_t *ls      = lineGetState(fixture.line, fixture.tester);
+            ls->flow_id                    = 1;
+            ls->response_paused            = true;
+            sbuf_t        *request         = testerserverCreatePayload(fixture.tester,
+                                                        fixture.line,
+                                                        1,
+                                                        0,
+                                                        testerserverGetChunkSize(fixture.tester, 1),
+                                                        kTesterServerDirectionRequest);
+            const uint32_t checksum_offset = ip_checksum ? 10U : cases[i].checksum_offset;
+            sbufGetMutablePtr(request)[checksum_offset] ^= 0x80U;
+            ls->flow_id = 0;
+
+            uint8_t original[64];
+            twfRequire(sbufGetLength(request) <= sizeof(original), "checksum fixture exceeds snapshot capacity");
+            memoryCopy(original, sbufGetRawPtr(request), sbufGetLength(request));
+            twfRequire(! testerserverVerifyChunk(
+                           fixture.tester, fixture.line, request, 1, kTesterServerDirectionRequest, NULL, NULL, NULL),
+                       "direct verification accepted corrupt checksum");
+            twfRequire(memoryEqual(original, sbufGetRawPtr(request), sbufGetLength(request)),
+                       "rejected packet checksum verification modified its input");
+
+            testerserverTunnelUpStreamPayload(fixture.tester, fixture.line, request);
+            requireVerdictLeftNothingBehind(&fixture);
+            twfRequireEqualU32(ls->request_rx_index, 0, "corrupt checksum advanced the stateless request count");
+            fixtureTeardown(&fixture);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Packet-line task refusal is a verdict, never a packet Finish
 // ---------------------------------------------------------------------------
@@ -827,6 +924,8 @@ static void caseFinalizedPacketGeometryAborts(void)
 
 int main(void)
 {
+    caseFirstTransportChunkVerifiesPayload();
+    caseStatelessCorruptChecksumIsNotRepaired();
     caseIncompleteFinishDestroysLineState();
     casePacketRequestMismatch();
     caseStatelessPacketRequestMismatch();

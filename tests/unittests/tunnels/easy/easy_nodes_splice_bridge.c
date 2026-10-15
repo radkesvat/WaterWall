@@ -16,7 +16,7 @@
 void testBridgeAndBlackHoleSplice(bool splice)
 {
     easy_fixture_t f;
-    easySetup(&f, tunnelCreate(NULL, sizeof(bridge_tstate_t), sizeof(bridge_lstate_t)));
+    easySetup(&f, tunnelCreate(NULL, sizeof(bridge_tstate_t), 0));
     tunnel_t *pair = tunnelCreate(NULL, sizeof(bridge_tstate_t), 0);
     easyRequire(pair != NULL, "create paired Bridge");
     ((bridge_tstate_t *) tunnelGetState(f.node))->pair_tun = pair;

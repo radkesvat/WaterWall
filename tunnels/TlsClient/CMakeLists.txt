@@ -76,7 +76,6 @@ add_library(TlsClient STATIC
     downstream/payload.c
     downstream/pause.c
     downstream/resume.c
-    downstream/est.c
 )
 
 # Keep the public API entry point in its own archive object. Some unit tests

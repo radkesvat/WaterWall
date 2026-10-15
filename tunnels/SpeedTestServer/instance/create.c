@@ -28,7 +28,7 @@ tunnel_t *speedtestserverTunnelCreate(node_t *node)
 
     speedtestserver_tstate_t *state              = tunnelGetState(t);
     const cJSON              *settings           = node->node_settings_json;
-    int                       report_interval_ms = kSpeedTestServerDefaultIntervalMs;
+    int                       report_interval_ms;
 
     if (UNLIKELY(! mutexTryInit(&state->aggregate_mutex)))
     {

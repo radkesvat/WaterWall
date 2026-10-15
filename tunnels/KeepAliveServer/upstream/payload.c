@@ -29,8 +29,5 @@ void keepaliveserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (! keepaliveserverConsumeUpstreamFrames(t, l))
-    {
-        return;
-    }
+    keepaliveserverConsumeUpstreamFrames(t, l);
 }

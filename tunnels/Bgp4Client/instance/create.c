@@ -17,11 +17,8 @@ tunnel_t *bgp4clientTunnelCreate(node_t *node)
     t->fnPayloadD = &bgp4clientTunnelDownStreamPayload;
 
     bgp4client_tstate_t *ts = tunnelGetState(t);
-    if (! bgp4clientLoadSettings(ts, node->node_settings_json))
-    {
-        tunnelDestroy(t);
-        return NULL;
-    }
+    ts->as_number           = (uint16_t) fastRand();
+    ts->router_id           = fastRand() * 3U;
 
     return t;
 }

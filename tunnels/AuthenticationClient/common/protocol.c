@@ -777,16 +777,8 @@ bool authenticationclientSendAuthenticate(tunnel_t *t)
     authenticationclient_tstate_t *ts = tunnelGetState(t);
 
     cJSON *json = cJSON_CreateObject();
-    if (UNLIKELY(json == NULL))
-    {
-        return false;
-    }
-    if (UNLIKELY(! cJSON_AddStringToObject(json, "name", ts->name) ||
-                 ! cJSON_AddStringToObject(json, "secret", ts->secret)))
-    {
-        cJSON_Delete(json);
-        return false;
-    }
+    discard cJSON_AddStringToObject(json, "name", ts->name);
+    discard cJSON_AddStringToObject(json, "secret", ts->secret);
 
     return authenticationclientSendJsonRequest(t, kAuthenticationClientRequestTypeAuthenticate, json);
 }
@@ -806,12 +798,12 @@ bool authenticationclientSendGetAllUsers(tunnel_t *t)
     return authenticationclientSendRequest(t, kAuthenticationClientRequestTypeGetAllUsers, NULL, 0);
 }
 
-static bool authenticationclientAppendStatsHint(cJSON *array, user_t *user, const users_t *baseline_users)
+static void authenticationclientAppendStatsHint(cJSON *array, user_t *user, const users_t *baseline_users)
 {
     if (user == NULL || user->id == 0 || user->password == NULL || user->password[0] == '\0' ||
         ! user->sha256_pass_valid)
     {
-        return true;
+        return;
     }
 
     user_stat_t stats = {0};
@@ -831,76 +823,25 @@ static bool authenticationclientAppendStatsHint(cJSON *array, user_t *user, cons
     const uint64_t download_delta = authenticationclientCounterDelta(stats.traffic.d, baseline_stats.traffic.d);
     if (upload_delta == 0 && download_delta == 0)
     {
-        return true;
+        return;
     }
 
-    cJSON *hint = cJSON_CreateObject();
-    if (UNLIKELY(hint == NULL))
+    cJSON  *hint         = cJSON_CreateObject();
+    cJSON  *hint_stats   = cJSON_CreateObject();
+    cJSON  *hint_traffic = cJSON_CreateObject();
+    discard cJSON_AddStringToObject(hint, "password", user->password);
+
+    if (upload_delta > 0)
     {
-        return false;
+        discard jsonAddUint64ToObject(hint_traffic, "up", stats.traffic.u);
     }
-
-    if (UNLIKELY(! cJSON_AddStringToObject(hint, "password", user->password)))
+    if (download_delta > 0)
     {
-        cJSON_Delete(hint);
-        return false;
+        discard jsonAddUint64ToObject(hint_traffic, "down", stats.traffic.d);
     }
-
-    {
-        cJSON *hint_stats   = cJSON_CreateObject();
-        cJSON *hint_traffic = cJSON_CreateObject();
-        if (UNLIKELY(hint_stats == NULL || hint_traffic == NULL))
-        {
-            cJSON_Delete(hint);
-            cJSON_Delete(hint_stats);
-            cJSON_Delete(hint_traffic);
-            return false;
-        }
-
-        if (upload_delta > 0)
-        {
-            if (UNLIKELY(! jsonAddUint64ToObject(hint_traffic, "up", stats.traffic.u)))
-            {
-                cJSON_Delete(hint);
-                cJSON_Delete(hint_stats);
-                cJSON_Delete(hint_traffic);
-                return false;
-            }
-        }
-        if (download_delta > 0)
-        {
-            if (UNLIKELY(! jsonAddUint64ToObject(hint_traffic, "down", stats.traffic.d)))
-            {
-                cJSON_Delete(hint);
-                cJSON_Delete(hint_stats);
-                cJSON_Delete(hint_traffic);
-                return false;
-            }
-        }
-        if (UNLIKELY(! cJSON_AddItemToObject(hint_stats, "traffic", hint_traffic)))
-        {
-            cJSON_Delete(hint);
-            cJSON_Delete(hint_stats);
-            cJSON_Delete(hint_traffic);
-            return false;
-        }
-        hint_traffic = NULL;
-        if (UNLIKELY(! cJSON_AddItemToObject(hint, "stats", hint_stats)))
-        {
-            cJSON_Delete(hint);
-            cJSON_Delete(hint_stats);
-            return false;
-        }
-        hint_stats = NULL;
-    }
-
-    if (UNLIKELY(! cJSON_AddItemToArray(array, hint)))
-    {
-        cJSON_Delete(hint);
-        return false;
-    }
-
-    return true;
+    discard cJSON_AddItemToObject(hint_stats, "traffic", hint_traffic);
+    discard cJSON_AddItemToObject(hint, "stats", hint_stats);
+    discard cJSON_AddItemToArray(array, hint);
 }
 
 static bool authenticationclientTakeUsersSnapshots(tunnel_t *t, users_t **snapshot_out, users_t **baseline_out)
@@ -937,29 +878,17 @@ static bool authenticationclientTakeUsersSnapshots(tunnel_t *t, users_t **snapsh
 
 static cJSON *authenticationclientBuildStatsHintsJson(users_t *snapshot, const users_t *baseline)
 {
-    if (UNLIKELY(snapshot == NULL))
-    {
-        return NULL;
-    }
+    assert(snapshot != NULL);
 
     cJSON *root  = cJSON_CreateObject();
     cJSON *array = cJSON_CreateArray();
-    if (UNLIKELY(root == NULL || array == NULL || ! cJSON_AddItemToObject(root, "users", array)))
-    {
-        cJSON_Delete(root);
-        cJSON_Delete(array);
-        return NULL;
-    }
+    discard cJSON_AddItemToObject(root, "users", array);
 
     const size_t users_count = usersCount(snapshot);
     for (size_t i = 0; i < users_count; ++i)
     {
         user_t *user = usersGetAt(snapshot, i);
-        if (UNLIKELY(! authenticationclientAppendStatsHint(array, user, baseline)))
-        {
-            cJSON_Delete(root);
-            return NULL;
-        }
+        authenticationclientAppendStatsHint(array, user, baseline);
     }
 
     return root;
@@ -976,11 +905,6 @@ bool authenticationclientSendPushUserStats(tunnel_t *t)
 
     cJSON *json = authenticationclientBuildStatsHintsJson(snapshot, baseline);
     authenticationclientDestroyUsers(baseline);
-    if (UNLIKELY(json == NULL))
-    {
-        authenticationclientDestroyUsers(snapshot);
-        return false;
-    }
 
     char *text = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);

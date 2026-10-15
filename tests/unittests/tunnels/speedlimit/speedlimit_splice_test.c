@@ -439,10 +439,86 @@ static void testEmpty(void)
     teardown();
 }
 
+static void testResetRefusal(bool up, bool from_resume)
+{
+    setup(up, "pause", "per-line");
+    tokens(0);
+    submit(ordinary("A", 1));
+    twfRequire(timer() != NULL, "initial drain timer was not armed");
+    if (from_resume)
+        pauseConsumer();
+
+    discard wloopRequestQuiesce(env.loop);
+    twfRequire(! wloopNormalDispatchAllowed(env.loop), "failed to close drain timer admission");
+    if (from_resume)
+        resumeConsumer();
+    else
+        submit(ordinary("B", 1));
+
+    twfRequire(! lineIsAlive(line) && finishes == 2 && payloads == 0 && resumes == 0,
+               "refused timer reset retained the line instead of closing without output");
+    twfRequireLineStateZeroed(line, node, "refused timer reset retained queues or timers");
+    teardown();
+}
+
+static void testRetryRounding(void)
+{
+    setup(true, "pause", "per-line");
+    speedlimit_tstate_t *ts   = tunnelGetState(node);
+    ts->bytes_per_sec         = 1;
+    ts->bucket_capacity_units = kSpeedLimitUnitsPerByte;
+    ts->recharge_interval_ms  = 997;
+    ts->refill_units_per_step = 997;
+    tokens(0);
+    twfRequire(speedlimitGetRetryDelayMs(node, line) == 1994, "retry lost a partial recharge step");
+    ts->recharge_interval_ms  = INT_MAX;
+    ts->refill_units_per_step = INT_MAX;
+    twfRequire(speedlimitGetRetryDelayMs(node, line) == INT_MAX, "maximum recharge interval did not remain valid");
+    teardown();
+}
+
+static void testRateSettings(void)
+{
+    twfWorkerEnvSetup(&env, 8192, kPadding);
+    const char  *keys[]        = {"bytes-per-sec", "kilo-bytes-per-sec", "mega-bytes-per-sec"};
+    const double multipliers[] = {1.0, 1024.0, 1024.0 * 1024.0};
+    const double invalid[]     = {0.0, -1.0, 0.49, 0x1p64, INFINITY, NAN};
+    for (size_t key = 0; key < sizeof(keys) / sizeof(keys[0]); ++key)
+    {
+        for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
+        {
+            cJSON *settings = cJSON_Parse("{\"limit-mode\":\"per-line\",\"work-mode\":\"pause\"}");
+            cJSON_AddNumberToObject(settings, keys[key], invalid[i] / multipliers[key]);
+            node_t    config  = {.node_settings_json = settings};
+            tunnel_t *limiter = speedlimitTunnelCreate(&config);
+            twfRequire(limiter == NULL, "invalid or unrepresentable rate was accepted");
+            cJSON_Delete(settings);
+        }
+    }
+    const double   valid[]   = {0.5, 1.49, 1.5};
+    const uint64_t rounded[] = {1, 1, 2};
+    for (size_t i = 0; i < sizeof(valid) / sizeof(valid[0]); ++i)
+    {
+        cJSON *settings = cJSON_Parse("{\"limit-mode\":\"per-line\",\"work-mode\":\"pause\"}");
+        cJSON_AddNumberToObject(settings, "bytes-per-sec", valid[i]);
+        node_t    config  = {.node_settings_json = settings};
+        tunnel_t *limiter = speedlimitTunnelCreate(&config);
+        twfRequire(limiter != NULL && ((speedlimit_tstate_t *) tunnelGetState(limiter))->bytes_per_sec == rounded[i],
+                   "valid fractional rate changed its nearest-byte rounding");
+        tunnelDestroy(limiter);
+        cJSON_Delete(settings);
+    }
+    twfWorkerEnvTeardown(&env);
+}
+
 int main(void)
 {
+    testRateSettings();
+    testRetryRounding();
     for (unsigned up = 0; up < 2; ++up)
     {
+        testResetRefusal(up, false);
+        testResetRefusal(up, true);
         testPausedTimer(up);
         testClose(up, true);
         testClose(up, false);

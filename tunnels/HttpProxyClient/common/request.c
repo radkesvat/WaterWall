@@ -2,14 +2,9 @@
 
 sbuf_t *hpcBuffer(line_t *l, size_t n)
 {
+    assert(n <= kHpcDeliveryLimit);
     buffer_pool_t *pool = lineGetBufferPool(l);
-    sbuf_t        *b    = bufferpoolTryGetBestFit(pool, n, bufferpoolGetLargeBufferPadding(pool));
-    if (b && sbufGetMaximumWriteableSize(b) < n)
-    {
-        lineReuseBuffer(l, b);
-        return NULL;
-    }
-    return b;
+    return bufferpoolGetBestFit(pool, (uint32_t) n, bufferpoolGetLargeBufferPadding(pool));
 }
 static bool append(char *out, size_t cap, size_t *at, const char *s)
 {
@@ -36,7 +31,7 @@ static bool selectAuthority(const hpc_tstate_t *ts, line_t *l, bool prepared, hp
     {
         if (addresscontextIsDomain(dest) && ! (ts->resolve_domains && addresscontextIsDomainResolved(dest)))
         {
-            if (! dest->domain || ! dest->domain_len || stringLength(dest->domain) != dest->domain_len)
+            if (stringLength(dest->domain) != dest->domain_len)
                 return false;
             memoryCopy(host, dest->domain, dest->domain_len);
             host[dest->domain_len] = 0;
@@ -134,11 +129,6 @@ bool hpcBuildRequest(tunnel_t *t, line_t *l)
     ADD(ts->headers);
     ADD("\r\n");
     ls->request = hpcBuffer(l, at);
-    if (! ls->request)
-    {
-        ok = false;
-        goto done;
-    }
     memoryCopy(sbufGetMutablePtr(ls->request), text, at);
     sbufSetLength(ls->request, (uint32_t) at);
     addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);

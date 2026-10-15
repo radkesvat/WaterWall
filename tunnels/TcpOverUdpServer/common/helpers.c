@@ -5,10 +5,8 @@
 static bool tcpoverudpserverQueuePacketContext(context_queue_t *queue, line_t *l, const uint8_t *packet,
                                                size_t packet_len)
 {
-    if (packet_len == 0 || packet_len > UINT32_MAX)
-    {
-        return false;
-    }
+    /* KCP emits a nonempty datagram; FEC adds only its fixed outer header. */
+    assert(packet != NULL && packet_len > 0 && packet_len <= UINT32_MAX);
 
     buffer_pool_t *pool = lineGetBufferPool(l);
     sbuf_t        *buf  = NULL;
@@ -23,12 +21,6 @@ static bool tcpoverudpserverQueuePacketContext(context_queue_t *queue, line_t *l
     }
     else
     {
-        return false;
-    }
-
-    if (packet_len > sbufGetMaximumWriteableSize(buf))
-    {
-        lineReuseBuffer(l, buf);
         return false;
     }
 
@@ -54,10 +46,8 @@ bool tcpoverudpserverInputKcpPacket(void *ctx, const uint8_t *packet, size_t pac
 
     assert(ls != NULL && ls->k_handle != NULL);
 
-    if (packet == NULL || packet_len > INT_MAX)
-    {
-        return false;
-    }
+    /* The FEC decoder emits validated, uint16-sized shard contents. */
+    assert(packet != NULL && packet_len <= INT_MAX);
 
     return ikcp_input(ls->k_handle, (const char *) packet, (long) packet_len) >= 0;
 }
@@ -69,8 +59,6 @@ bool tcpoverudpserverUpdateKcp(tcpoverudpserver_lstate_t *ls, bool flush)
     line_t   *l            = ls->line;
     tunnel_t *t            = ls->tunnel;
     uint64_t  current_time = wloopNowMS(getWorkerLoop(lineGetWID(l)));
-
-    bool ret = true;
 
     lineRef(l);
 
@@ -103,10 +91,10 @@ bool tcpoverudpserverUpdateKcp(tcpoverudpserver_lstate_t *ls, bool flush)
             tunnelNextUpStreamResume(t, l);
         }
     }
-    ret = lineIsAlive(l) && ls->k_handle != NULL;
+    const bool alive = lineIsAlive(l) && ls->k_handle != NULL;
 
     lineUnref(l);
-    return ret;
+    return alive;
 }
 
 static uint32_t tcpoverudpserverGetNextKcpDelay(tcpoverudpserver_lstate_t *ls, uint64_t current_time)
@@ -174,12 +162,10 @@ int tcpoverudpserverKUdpOutput(const char *data, int len, ikcpcb *kcp, void *use
 
     if (ls->fec_encoder != NULL)
     {
-        if (! tcpoverudpFecEncodePacket(
-                ls->fec_encoder, (const uint8_t *) data, (size_t) len, tcpoverudpserverEmitOuterPacket, ls))
-        {
-            return -1;
-        }
-        return 0;
+        return tcpoverudpFecEncodePacket(
+                   ls->fec_encoder, (const uint8_t *) data, (size_t) len, tcpoverudpserverEmitOuterPacket, ls)
+                   ? 0
+                   : -1;
     }
 
     return tcpoverudpserverQueuePacketContext(&ls->cq_d, l, (const uint8_t *) data, (size_t) len) ? 0 : -1;

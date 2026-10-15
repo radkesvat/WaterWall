@@ -1,13 +1,11 @@
 #include "structure.h"
-#ifdef OS_WIN
-#endif
 
 #include "loggers/network_logger.h"
 
 static bool tundeviceDnsServerIsValidIpv4(const char *ip)
 {
     struct in_addr addr;
-    return ip != NULL && inet_pton(AF_INET, ip, &addr) == 1;
+    return inet_pton(AF_INET, ip, &addr) == 1;
 }
 
 bool tundeviceLoadDnsSettings(tundevice_tstate_t *state, const cJSON *settings)

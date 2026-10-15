@@ -6,5 +6,5 @@ void udpstatelesssocketTunnelDownStreamInit(tunnel_t *t, line_t *l)
 {
     discard t;
     discard l;
-    // This function is disabled, but this node is bidirectional, so just ignore it
+    // Borrowed transport and packet lines need no per-line state at this endpoint.
 }

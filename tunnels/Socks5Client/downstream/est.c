@@ -23,8 +23,6 @@ void socks5clientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     lineRef(l);
     if (application != l)
         lineRef(application);
-    socks5client_lstate_t *application_ls   = lineGetState(application, t);
-    application_ls->transport_est_forwarded = true;
     tunnelPrevDownStreamEst(t, application);
     if (lineIsAlive(l) && lineIsAlive(application) && tunnelIsActiveForLine(t, l))
         discard socks5clientMaybeSendGreeting(t, l);

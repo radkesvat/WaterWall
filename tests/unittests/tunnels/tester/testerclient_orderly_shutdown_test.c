@@ -62,6 +62,8 @@ static bool         forbid_delayed_line_task;
 static bool         forbid_delayed_line_task_after_refusal;
 static unsigned int delayed_line_task_submissions;
 static unsigned int request_line_task_submissions;
+static unsigned int delayed_request_submissions;
+static uint32_t     last_request_delay_ms;
 
 line_task_submit_result_e __real_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
                                                   LineTaskCancelFn on_cancel);
@@ -97,6 +99,11 @@ line_task_submit_result_e __wrap_lineScheduleDelayedTask(line_t *const line, Lin
                                                          tunnel_t *t, LineTaskCancelFn on_cancel)
 {
     delayed_line_task_submissions += 1U;
+    if (task == testerclientRequestSendTask)
+    {
+        ++delayed_request_submissions;
+        last_request_delay_ms = delay_ms;
+    }
     if (fail_next_delayed_line_task)
     {
         fail_next_delayed_line_task = false;
@@ -184,6 +191,53 @@ static sbuf_t *makeCorruptResponse(testerclient_fixture_t *fixture, uint8_t chun
     uint8_t *bytes = sbufGetMutablePtr(buf);
     bytes[sbufGetLength(buf) - 1U] ^= 0xFFU;
     return buf;
+}
+
+static void caseCorruptChecksumVerificationPreservesInput(void)
+{
+    const struct
+    {
+        testerclient_packet_ipv4_transport_e transport;
+        uint8_t                              protocol;
+        uint32_t                             checksum_offset;
+    } cases[] = {{kTesterClientPacketIpv4TransportTcp, IP_PROTO_TCP, IP_HLEN + 16U},
+                 {kTesterClientPacketIpv4TransportUdp, IP_PROTO_UDP, IP_HLEN + 6U},
+                 {kTesterClientPacketIpv4TransportIcmp, IP_PROTO_ICMP, IP_HLEN + 2U}};
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        for (unsigned ip_checksum = 0; ip_checksum < 2; ++ip_checksum)
+        {
+            twfSetCase("testerclient rejected checksum verification preserves packet bytes");
+            testerclient_fixture_t fixture;
+            fixtureSetup(&fixture, true);
+            testerclient_tstate_t *ts      = tunnelGetState(fixture.tester);
+            ts->packet_ipv4_mode           = true;
+            ts->packet_ipv4_transport      = cases[i].transport;
+            ts->packet_ipv4_protocol       = cases[i].protocol;
+            ts->packet_ipv4_ttl            = 64;
+            ts->packet_ipv4_source_addr    = lwip_htonl(0xc0000201U);
+            ts->packet_ipv4_dest_addr      = lwip_htonl(0xc0000202U);
+            sbuf_t        *response        = testerclientCreatePayload(fixture.tester,
+                                                         fixture.line,
+                                                         1,
+                                                         0,
+                                                         testerclientGetChunkSize(fixture.tester, 1),
+                                                         kTesterClientDirectionResponse);
+            const uint32_t checksum_offset = ip_checksum ? 10U : cases[i].checksum_offset;
+            sbufGetMutablePtr(response)[checksum_offset] ^= 0x80U;
+            uint8_t original[64];
+            twfRequire(sbufGetLength(response) <= sizeof(original), "checksum fixture exceeds snapshot capacity");
+            memoryCopy(original, sbufGetRawPtr(response), sbufGetLength(response));
+            twfRequire(! testerclientVerifyChunk(
+                           fixture.tester, fixture.line, response, 1, kTesterClientDirectionResponse, NULL, NULL, NULL),
+                       "client verification accepted corrupt checksum");
+            twfRequire(memoryEqual(original, sbufGetRawPtr(response), sbufGetLength(response)),
+                       "client rejected checksum verification modified its input");
+            lineReuseBuffer(fixture.line, response);
+            fixtureTeardown(&fixture);
+            twfRequireNoLeakedBuffers();
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -397,6 +451,67 @@ static void caseDelayedPacketStartRefusalDoesNotArmWatchdog(void)
 {
     twfSetCase("testerclient delayed packet request refusal does not arm watchdog");
     runPacketStartScheduleRefusal(1);
+}
+
+static void establishAndResumeDuringPacketInit(tunnel_t *t, line_t *l)
+{
+    twfNextInit(t, l);
+    tunnelPrevDownStreamEst(t, l);
+    tunnelPrevDownStreamResume(t, l);
+}
+
+static void caseSynchronousEstPreservesPacketStartDelay(void)
+{
+    twfSetCase("testerclient synchronous Est and Resume preserve packet start delay");
+    tosResetProcessApi(true);
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, 1, kTestLargeBufferSize, kTestSmallBufferSize);
+
+    twf_trace_t trace  = {0};
+    tunnel_t   *tester = tunnelCreate(NULL, sizeof(testerclient_tstate_t), sizeof(testerclient_lstate_t));
+    tunnel_t   *next   = twfCreateNextTunnel(&trace);
+    twfRequire(tester != NULL, "failed to create delayed packet-start fixture");
+    tester->fnEstD    = testerclientTunnelDownStreamEst;
+    tester->fnResumeD = testerclientTunnelDownStreamResume;
+    next->fnInitU     = establishAndResumeDuringPacketInit;
+    tunnelBind(tester, next);
+
+    tunnel_chain_t *chain           = memoryAllocateZero(sizeof(tunnel_chain_t) + sizeof(generic_pool_t *));
+    line_t         *packet_lines[1] = {twfLineCreate(tester->lstate_size)};
+    chain->workers_count            = 1;
+    chain->contains_packet_node     = true;
+    chain->finalized                = true;
+    chain->packet_lines             = packet_lines;
+    tester->chain = next->chain  = chain;
+    testerclient_tstate_t *ts    = tunnelGetState(tester);
+    ts->chunk_count              = kTestChunkCount;
+    ts->packet_mode              = true;
+    ts->packet_start_immediately = true;
+    ts->packet_start_delay_ms    = 60000;
+    ts->split_payload_burst      = kTesterClientSplitPayloadBurst;
+
+    const wid_t previous_wid      = tosSetCurrentWorker(0);
+    request_line_task_submissions = delayed_line_task_submissions = delayed_request_submissions = 0;
+    last_request_delay_ms                                                                       = 0;
+    testerclientStartWorkerTestInvoke(getWorker(0), tester);
+    tosRequireNoProcessApiCall();
+    twfRequire(lineIsEstablished(packet_lines[0]), "synchronous Est did not mark the packet line established");
+    twfRequireEqualU32(request_line_task_submissions, 0, "synchronous Est bypassed packet start delay");
+    twfRequireEqualU32(delayed_request_submissions, 1, "packet start scheduled more than one delayed request");
+    twfRequireEqualU32(last_request_delay_ms, ts->packet_start_delay_ms, "packet start changed the configured delay");
+    twfRequireEqualU32(delayed_line_task_submissions, 2, "packet start did not schedule one request and one watchdog");
+
+    workerMessagesCloseAdmission(getWorker(0));
+    workerMessagesDestroy(getWorker(0));
+    twfRequireEqualU32(twfLineRefCount(packet_lines[0]), 1, "canceled packet start retained line references");
+    testerclientTunnelOnWorkerStop(tester, 0, wwLifecycleProcessShutdown());
+    twfRequireLineStateZeroed(packet_lines[0], tester, "worker Stop left delayed packet-start state alive");
+    discard tosSetCurrentWorker(previous_wid);
+    twfLineDestroy(packet_lines[0]);
+    memoryFree(chain);
+    tunnelDestroy(next);
+    tunnelDestroy(tester);
+    tosWorkerEnvTeardown(&env);
 }
 
 static void caseOwnedRequestScheduleRefusalClosesLine(void)
@@ -1055,6 +1170,8 @@ static void casePayloadGeneratorInvariantAborts(void)
 
 int main(void)
 {
+    caseSynchronousEstPreservesPacketStartDelay();
+    caseCorruptChecksumVerificationPreservesInput();
     caseSynchronousStartRefusalPropagatesStartupStatus();
     caseAcceptedQueuedTimerAdmissionClosureUsesCleanup();
     casePacketStartRefusalDoesNotArmWatchdog();

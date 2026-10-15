@@ -15,10 +15,9 @@ enum
 typedef struct halfduplexclient_lstate_s
 {
     line_t *main_line;
-    line_t *upload_line;
+    line_t *upload_line; // Only main stores the owned child lines.
     line_t *download_line;
     bool    first_packet_sent;
-    bool    next_started; // This exact owned child's adjacent Init was admitted.
     bool    next_paused;  // Child permission; main stores the aggregate producer hold.
     bool    pending_read_pause; // Latest application hold before the download child's Init.
     bool    source_pause_sent;

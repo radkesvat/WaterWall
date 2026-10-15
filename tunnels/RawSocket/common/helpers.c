@@ -19,13 +19,6 @@ static bool rawsocketPacketIsExactIpv4(const sbuf_t *buf)
     return ipv4packetviewParse(sbufGetRawPtr(buf), length, &packet) && packet.ip_total_length == length;
 }
 
-void rawsocketExitHook(void *userdata, int sig)
-{
-    discard sig;
-    char   *cmdbuf = userdata;
-    execCmd(cmdbuf);
-}
-
 void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, wid_t wid)
 {
     // packet is correctly filtered based on src/dest ip since we told net filter system
@@ -55,11 +48,8 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
 
 void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    discard l;
-    // discard t;
     rawsocket_tstate_t *state = tunnelGetState(t);
 
-    // printIPPacketInfo("RawSocket sending", sbufGetRawPtr(buf));
     /*
      * A refused recalculation means the packet is not a shape this can checksum
      * at all - a truncated header, a length that disagrees with the buffer -

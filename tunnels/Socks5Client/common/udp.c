@@ -102,12 +102,7 @@ bool socks5clientStartUdpRelayLine(tunnel_t *t, line_t *control_l, socks5client_
     lineUnref(application_l);
     lineUnref(control_l);
 
-    if (! application_alive || ! *control_alive_out)
-    {
-        return false;
-    }
-
-    return true;
+    return application_alive && *control_alive_out;
 }
 
 bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, bool *line_alive_out)
@@ -183,7 +178,7 @@ bool socks5clientHandleUdpRelayPayload(tunnel_t *t, line_t *l, socks5client_lsta
     size_t            addr_len = 0;
     int               parsed   = socks5clientParseAddressBytes(raw + 3, len - 3, &source, &addr_len);
 
-    if (parsed <= 0 || len < (size_t) (3 + addr_len))
+    if (parsed <= 0)
     {
         addresscontextReset(&source);
         lineReuseBuffer(l, buf);

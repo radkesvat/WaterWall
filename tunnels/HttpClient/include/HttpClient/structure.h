@@ -138,8 +138,6 @@ typedef struct httpclient_lstate_s
     int64_t h1_body_remaining;
 
     bool                      h1_headers_parsed;
-    bool                      h1_response_chunked;
-    bool                      h1_upgrade_accepted;
     bool                      h1_trailing_bytes_logged;
     httpclient_h1_body_mode_t h1_body_mode;
 
@@ -216,6 +214,7 @@ void httpclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t *l);
 void httpclientLinestateDestroy(httpclient_lstate_t *ls);
 void httpclientH2DataQueueDestroy(httpclient_lstate_t *ls);
+void httpclientH2DataItemDestroy(line_t *line, httpclient_h2_data_item_t *item);
 
 sbuf_t *allocBufferForLength(line_t *l, uint32_t len);
 size_t  httpclientBuildHttp2Settings(const httpclient_tstate_t *ts,

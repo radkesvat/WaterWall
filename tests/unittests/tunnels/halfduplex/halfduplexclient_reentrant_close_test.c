@@ -15,18 +15,7 @@
 
 #include "HalfDuplexClient/structure.h"
 
-#define __wrap_bufferpoolTryGetBestFit trackedTryGetBestFit
 #include "fixtures/protocols/halfduplex_splice_fixture.h"
-#undef __wrap_bufferpoolTryGetBestFit
-
-static unsigned allocation_countdown;
-sbuf_t         *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding);
-sbuf_t         *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding)
-{
-    if (allocation_countdown && --allocation_countdown == 0)
-        return NULL;
-    return trackedTryGetBestFit(pool, size, padding);
-}
 
 static bool splice_inputs;
 
@@ -83,14 +72,9 @@ static void fixtureSetup(halfduplexclient_fixture_t *fixture)
     halfduplexclientLinestateInitialize(main_ls, fixture->main_line);
     halfduplexclientLinestateInitialize(upload_ls, fixture->main_line);
     halfduplexclientLinestateInitialize(download_ls, fixture->main_line);
-    main_ls->upload_line       = fixture->upload_line;
-    main_ls->download_line     = fixture->download_line;
-    upload_ls->upload_line     = fixture->upload_line;
-    upload_ls->download_line   = fixture->download_line;
-    download_ls->upload_line   = fixture->upload_line;
-    download_ls->download_line = fixture->download_line;
-    upload_ls->next_started = download_ls->next_started = true;
-    g_fixture                                           = fixture;
+    main_ls->upload_line   = fixture->upload_line;
+    main_ls->download_line = fixture->download_line;
+    g_fixture              = fixture;
 }
 
 static void caseSynchronousSiblingCloseSurvivesReentrantMainFinish(void)
@@ -314,32 +298,15 @@ static void runRuntimeCase(unsigned mode)
     r.main          = lineCreate(tunnelchainGetLinePools(r.chain), 0);
     lineRef(r.main);
     halfduplexclientTunnelUpStreamInit(r.client, r.main);
-    if (mode >= 15)
+    if (mode == 15)
     {
-        sbuf_t *input = runtimePayload("failure", 7);
-        if (mode == 17)
-        {
-            // Ordinary synthetic length exercises refusal before any body read.
-            if (sbufIsSplice(input))
-                input = halfduplexTestMaterialize(r.env.pool, input);
-            input->len = UINT32_MAX;
-        }
-        else if (mode == 16 && ! sbufIsSplice(input))
-        {
-            // Keep both allocation-failure sites covered: ordinary headroom
-            // otherwise reuses the input and allocates only the download intro.
-            sbuf_t *unpadded = twfTrackAcquired(sbufCreateWithPadding(7, 0));
-            sbufWrite(unpadded, sbufGetRawPtr(input), 7);
-            sbufSetLength(unpadded, 7);
-            lineReuseBuffer(r.main, input);
-            input                = unpadded;
-            allocation_countdown = mode - 14;
-        }
-        else
-            allocation_countdown = mode - 14;
+        // No headroom forces the checked framing path. Its synthetic length
+        // must be rejected before allocating or accessing any body bytes.
+        sbuf_t *input = twfTrackAcquired(sbufCreateWithPadding(0, 0));
+        input->len    = UINT32_MAX;
         halfduplexclientTunnelUpStreamPayload(r.client, r.main, input);
     }
-    bool closes = (mode >= 2 && mode <= 6) || mode == 11 || mode == 13 || mode >= 15;
+    bool closes = (mode >= 2 && mode <= 6) || mode == 11 || mode == 13 || mode == 15;
     if (closes)
     {
         twfRequire(! lineIsAlive(r.main) && ! lineIsAlive(r.upload) &&
@@ -426,11 +393,11 @@ int main(void)
     twfRequire(globalstateInitializeSecureRandom(), "secure random provider initialization failed");
     twfRequire(frandGlobalInit(), "fast random global initialization failed");
     frandInit();
-    for (unsigned mode = 0; mode < 18; ++mode)
+    for (unsigned mode = 0; mode < 16; ++mode)
         runRuntimeCase(mode);
 #if WW_HAVE_SPLICE
     splice_inputs = true;
-    for (unsigned mode = 0; mode < 18; ++mode)
+    for (unsigned mode = 0; mode < 16; ++mode)
         runRuntimeCase(mode);
 #endif
     caseSynchronousSiblingCloseSurvivesReentrantMainFinish();

@@ -19,12 +19,8 @@ static bool tundevicePacketIsExactIpv4(const sbuf_t *buf)
     return ipv4packetviewParse(sbufGetRawPtr(buf), length, &packet) && packet.ip_total_length == length;
 }
 
-static void logPacket(tun_device_t *tdev, tunnel_t *t, sbuf_t *buf, wid_t wid)
+static void logPacket(sbuf_t *buf)
 {
-
-    discard tdev;
-    discard wid;
-    discard t;
     discard buf;
 
 #if LOG_PACKET_INFO
@@ -89,7 +85,7 @@ void tundeviceOnIPPacketReceived(tun_device_t *tdev, void *userdata, sbuf_t *buf
         return;
     }
 
-    logPacket(tdev, t, buf, wid);
+    logPacket(buf);
 
     line_t *l = tunnelchainGetWorkerPacketLine(t->chain, wid);
     packettunnelLifecycleAnchorPublish(t, l, buf);
@@ -100,12 +96,6 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     tundevice_tstate_t *state = tunnelGetState(t);
     tun_device_t       *tdev  = state->tdev;
-
-    // Clear the existing checksum field before calculation
-    // IPH_CHKSUM_SET(ip_header, 0);
-
-    // // Calculate and set the checksum
-    // IPH_CHKSUM_SET(ip_header, inet_chksum(ip_header, IP_HLEN));
 
     if (UNLIKELY(! packettunnelConsumeChecksumRequest(l, buf)))
     {

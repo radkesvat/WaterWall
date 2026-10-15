@@ -1,5 +1,5 @@
 <!--
-Documentation version: 159
+Documentation version: 160
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Socks5Server.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Socks5Server.mdx, and all files must keep the same documentation version.
 -->
 
@@ -348,7 +348,7 @@ active nodes. UDP control, client, and remote lines remain active for associatio
 
 Control input advances in one synchronous parser scope. Nested deliveries follow
 older input; method/authentication state and identity are published before reply
-callbacks. The 4,096-byte limit applies to incomplete handshake metadata. A
+callbacks. Each negotiation message contains at most 513 metadata bytes. A
 complete CONNECT header followed by application bytes is accepted like separate
 deliveries; only genuinely retained application data consumes the shared ordering
 budget. Empty TCP input is ignored. After UDP ASSOCIATE, TCP control tails are

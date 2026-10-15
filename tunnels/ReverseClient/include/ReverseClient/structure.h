@@ -18,7 +18,6 @@ typedef struct reverseclient_tstate_s
 {
     idle_table_t *starved_connections;
     atomic_uint   reverse_cons;
-    atomic_uint   round_index;
     atomic_bool   stopping;
     uint8_t      *handshake_bytes;
     uint32_t      handshake_length;
@@ -54,8 +53,7 @@ struct reverseclient_pair_s
     uint8_t                     activation_header_length;
     bool                       registered : 1;
     bool                       upstream_init_sent : 1;
-    bool                       downstream_init_sent : 1;
-    bool                       closing : 1;
+    bool                        downstream_init_sent : 1;
     bool                        activation_dispatching : 1;
     bool                        pending_downstream_pause : 1;
 };
@@ -69,16 +67,13 @@ typedef enum reverseclient_close_origin_e
 {
     kReverseClientCloseInternal = 0,
     kReverseClientCloseFromNext,
-    kReverseClientCloseFromPrev,
-    kReverseClientCloseIdleExpiry
+    kReverseClientCloseFromPrev
 } reverseclient_close_origin_e;
 
 enum
 {
     kTunnelStateSize                = sizeof(reverseclient_tstate_t),
     kLineStateSize                  = sizeof(reverseclient_lstate_t),
-    kPreconnectDelayShort           = 10,
-    kPreconnectDelayLong            = 750,
     kConnectionStarvationTimeOutSec = 30,
     kReverseClientPendingBytes      = 2 * 1024 * 1024,
     kReverseClientPendingBuffers    = 1024
@@ -100,7 +95,6 @@ void reverseclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void reverseclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void reverseclientTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void reverseclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void reverseclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void reverseclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
@@ -110,7 +104,7 @@ void reverseclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void reverseclientLinestateInitialize(reverseclient_lstate_t *ls, reverseclient_pair_t *pair);
 void reverseclientLinestateDestroy(reverseclient_lstate_t *ls);
 
-void   reverseclientInitiateConnectOnWorker(tunnel_t *t, wid_t wid, bool delay);
+void   reverseclientInitiateConnectOnWorker(tunnel_t *t, wid_t wid);
 void   reverseclientOnStarvedConnectionExpire(idle_item_t *idle_con);
 void   reverseclientClosePair(reverseclient_pair_t *pair, reverseclient_close_origin_e origin);
 size_t reverseclientOwnedPairCount(tunnel_t *t, wid_t wid);

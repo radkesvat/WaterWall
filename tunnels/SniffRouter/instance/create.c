@@ -223,7 +223,7 @@ static bool loadRouteDetection(sniffrouter_route_t *route, const cJSON *route_js
         }
     }
 
-    return route->detection != 0;
+    return true;
 }
 
 static bool loadRouteTarget(sniffrouter_route_t *route, node_t *node, const cJSON *route_json, uint32_t route_index)

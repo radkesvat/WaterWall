@@ -102,7 +102,7 @@ static bool streamtopacketsValidateIpv4PacketHeader(streamtopackets_packet_valid
     }
 
     uint16_t header_len = IPH_HL_BYTES(iphdr);
-    if (header_len < IP_HLEN || header_len > IP_HLEN_MAX)
+    if (header_len < IP_HLEN)
     {
         return streamtopacketsDropInvalidPacket(level, direction, "invalid IPv4 header length");
     }
@@ -297,18 +297,6 @@ bool streamtopacketsValidatePacket(streamtopackets_packet_validation_level_t lev
     }
 }
 
-void streamtopacketsRecalculateChecksumIfRequested(line_t *l, sbuf_t *buf)
-{
-    if (LIKELY(! lineGetRecalculateChecksum(l)))
-    {
-        return;
-    }
-
-    calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
-
-    lineSetRecalculateChecksum(l, false);
-}
-
 // Light, never-trusting structural check on a candidate IPv4 header (at least IP_HLEN bytes).
 // This intentionally stays cheaper than the "loose" validation level: it only proves the head
 // could be an IPv4 packet whose declared size is internally consistent and within the pipeline
@@ -367,14 +355,8 @@ bool streamtopacketsIsForwardableIpv4Packet(const sbuf_t *packet)
         return false;
     }
 
-    const struct ip_hdr *iphdr = (const struct ip_hdr *) sbufGetRawPtr(packet);
-
-    if (UNLIKELY(IPH_V(iphdr) != 4))
-    {
-        return false;
-    }
-
-    return lwip_ntohs(IPH_LEN(iphdr)) == (uint16_t) len;
+    uint16_t total_len;
+    return streamtopacketsIpv4HeaderLooksValid(sbufGetRawPtr(packet), &total_len) && total_len == len;
 }
 
 // Extracts exactly one IPv4 packet from the stream using the IPv4 total-length field as the frame
@@ -550,14 +532,8 @@ void streamtopacketsForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_
 // the pong is itself a fully valid IPv4 packet tagged with kHeartbeatProtocol and a 0xDD payload.
 bool streamtopacketsSendSensitivePong(tunnel_t *t, line_t *stream_line)
 {
-    sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(stream_line));
-
-    if (UNLIKELY(sbufGetMaximumWriteableSize(buf) < kHeartbeatPacketSize))
-    {
-        LOGW("StreamToPackets: dropping sensitive-mode pong because the buffer is too small");
-        lineReuseBuffer(stream_line, buf);
-        return true;
-    }
+    buffer_pool_t *pool = lineGetBufferPool(stream_line);
+    sbuf_t        *buf  = bufferpoolGetBestFit(pool, kHeartbeatPacketSize, bufferpoolGetLargeBufferPadding(pool));
 
     sbufSetLength(buf, kHeartbeatPacketSize);
 

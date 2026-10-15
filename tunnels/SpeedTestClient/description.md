@@ -198,6 +198,8 @@ Server side:
 - `timeout-ms` `(integer)`
   Watchdog timeout for each generated stream. Must be greater than `warmup-ms + duration-ms`.
   Default: `warmup-ms + duration-ms + 30000`
+  The timeout must fit in `1..INT_MAX` milliseconds. If the default exceeds that range,
+  set a valid explicit timeout or shorten the test.
 
 - `connection-count` `(integer)`
   Number of parallel WaterWall lines to create.
@@ -225,6 +227,7 @@ Server side:
   Alternative pacing field expressed in megabits per second.
 
   Only one of `target-bits-per-sec`, `udp-target-bits-per-sec`, and `target-megabits-per-sec` may be configured.
+  The rate after conversion to bits per second must be finite, non-negative, and below `2^64`.
 
 - `verify-payload` `(boolean)`
   Generate and verify deterministic payload bytes at both endpoints. Default: `false`.

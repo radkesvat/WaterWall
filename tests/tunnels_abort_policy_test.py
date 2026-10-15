@@ -29,7 +29,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 201
+EXPECTED_TOTAL_ABORTS = 199
 
 
 # ---------------------------------------------------------------------------
@@ -116,18 +116,12 @@ MANIFEST = [
     ("tunnels/PacketsToStream/upstream/fin.c", "packetstostreamTunnelUpStreamFinish", 1,
      ("PacketsToStream: not supposed to receive upstream fin",),
      "impossible flow-callback stub: PacketsToStream upstream/fin.c"),
-    ("tunnels/ReverseClient/downstream/init.c", "reverseclientTunnelDownStreamInit", 1,
-     ("ReverseClient: DownStreamInit is disabled, this should not be called",),
-     "impossible flow-callback stub: ReverseClient downstream/init.c"),
     ("tunnels/ReverseClient/upstream/init.c", "reverseclientTunnelUpStreamInit", 1,
      ("ReverseClient: UpStream Init is disabled",),
      "impossible flow-callback stub: ReverseClient upstream/init.c"),
     ("tunnels/ReverseServer/downstream/est.c", "reverseserverTunnelDownStreamEst", 1,
      ("ReverseServer: Downstream Est is disabled",),
      "impossible flow-callback stub: ReverseServer downstream/est.c"),
-    ("tunnels/ReverseServer/upstream/est.c", "reverseserverTunnelUpStreamEst", 1,
-     ("reverseserverTunnelUpStreamEst: Upstream Est is disabled",),
-     "impossible flow-callback stub: ReverseServer upstream/est.c"),
     ("tunnels/Socks5Server/upstream/est.c", "socks5serverTunnelUpStreamEst", 1,
      ("Socks5Server: UpStreamEst is disabled",),
      "impossible flow-callback stub: Socks5Server upstream/est.c"),
@@ -301,6 +295,9 @@ MANIFEST = [
     ("tunnels/PacketsToConnection/common/netif.c", "ptcEmitPacketBufferAdmitted", 1,
      ("PacketsToConnection: packet line died during runtime, packet tunnel contract was violated",),
      "helper/line-state invariant: PacketsToConn admitted packet publication line died"),
+    ("tunnels/SoftIpLimiter/common/helpers.c", "softiplimiterTableAdmit", 1,
+     ("SoftIpLimiter: admission generation exhausted",),
+     "runtime identity invariant: expired admission generations must never be reused"),
     ("tunnels/TcpConnector/common/helpers.c", "tcpconnectorOnClose", 1,
      ("TcpConnector: failed to remove idle item for FD:%x",),
      "helper/line-state invariant: TcpConnector helpers remove idle table"),
@@ -366,10 +363,9 @@ MANIFEST = [
     ("tunnels/Router/common/geoip.c", "routerGeoipLookupCountry", 1,
      ("Router: GeoIP rule evaluated without an open MaxMind database",),
      "per-request evaluation invariant: Router GeoIP database was never opened"),
-    ("tunnels/Internals/DomainResolver/instance/api.c", "domainresolverTunnelSetPrepareHook", 4,
+    ("tunnels/Internals/DomainResolver/instance/api.c", "domainresolverTunnelSetPrepareHook", 3,
      ("DomainResolver: prepare hook must be configured before chaining",
-      "DomainResolver: prepare hook line state is too large",
-      "DomainResolver: internal line state is too large"),
+      "DomainResolver: prepare hook line state is too large"),
      "internal API / unsafe destruction: DomainResolver prepare-hook order and line-state arithmetic"),
     ("tunnels/UdpStatelessSocket/instance/destroy.c", "udpstatelesssocketTunnelDestroy", 1,
      ("UdpStatelessSocket: destroying with active worker-local idle table for worker %u",),

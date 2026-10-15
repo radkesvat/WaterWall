@@ -222,8 +222,7 @@ bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t
                                mux_cid_t cid, uint8_t flag);
 bool muxserverSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l,
                                  muxserver_lstate_t *child_ls);
-bool muxserverReleaseParentInputForChildClose(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
-                                              muxserver_lstate_t *child_ls);
+void muxserverReleaseParentInputForChildClose(muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls);
 bool muxserverPauseChildSource(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *child_ls, bool peer_flow,
                                bool parent_write);
 bool muxserverResumeChildSource(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *child_ls, bool peer_flow,

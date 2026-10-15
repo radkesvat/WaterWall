@@ -103,7 +103,6 @@ packet lines remain active.
 
 - This is a middle node (`.flags = kNodeFlagSupportsSplice`) that operates within a chain; it cannot be placed as a chain head or chain end.
 - It is a transparent middle node (`kNodeLayerAnything`, `SameAsPrev`/`SameAsNext`) that preserves line layer across neighbors.
-- It does not use or modify packet-line state.
 - It requires no left padding and does not touch `sbuf_t` layout.
 - It resolves only the destination address context (`dest_ctx`), not the source context.
 - A line whose destination is neither an IP address nor a valid domain is rejected.

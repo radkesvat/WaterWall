@@ -23,8 +23,7 @@ static void applicationInput(est_fixture_t *f, char byte)
 {
     vlessserver_lstate_t *ls       = lineGetState(f->line, f->node);
     uint8_t               framed[] = {0, 1, (uint8_t) byte};
-    bool udp = ls->phase == kVlessServerPhaseUdpWaitPacket || ls->phase == kVlessServerPhaseUdpConnecting ||
-               ls->phase == kVlessServerPhaseUdpEstablished;
+    bool udp = ls->phase == kVlessServerPhaseUdpConnecting || ls->phase == kVlessServerPhaseUdpEstablished;
     tunnelUpStreamPayload(f->node, f->line, estBytes(f->line, udp ? framed : framed + 2, udp ? 3 : 1));
 }
 

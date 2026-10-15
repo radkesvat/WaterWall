@@ -351,7 +351,6 @@ void udpconnectorOnSocketClose(wio_t *io);
 void udpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_udp);
 
 uint32_t                          udpconnectorSelectWeightedDestinationIndex(const udpconnector_tstate_t *ts);
-const udpconnector_destination_t *udpconnectorSelectWeightedDestination(const udpconnector_tstate_t *ts);
 void                              udpconnectorSetupDestinationAddress(const dynamic_value_t   *dest_addr_selected,
                                                                       const address_context_t *constant_dest_addr, address_context_t *dest_ctx,
                                                                       const address_context_t *original_dest_ctx, address_context_t *src_ctx);

@@ -671,8 +671,7 @@ static void testDynamicEndpointIngressPinningPauseAndFinish(void)
     sbufGetMutablePtr(payload)[0] = 0xA1;
     udplistenerOnDynamicEndpointRead(ep->wio, payload);
     twfRequire(ep->line != NULL, "legitimate source did not create a dynamic UDP client line");
-    twfRequire(ep->source_port_pinned && ep->expected_source_port == 32001,
-               "zero source-port request did not pin the first legitimate sender");
+    twfRequire(ep->expected_source_port == 32001, "zero source-port request did not pin the first legitimate sender");
     twfRequireEqualU32(fixture.accepted_init_calls, 1, "legitimate source did not initialize next exactly once");
     twfRequireEqualU32(fixture.accepted_payload_calls, 1, "legitimate source payload did not reach next");
 

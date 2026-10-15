@@ -17,12 +17,9 @@ void httpproxyclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     ls->prev_finished = true;
     lineRef(l);
     sbuf_t *last = hpcBuffer(l, 5);
-    if (last)
-    {
-        memoryCopy(sbufGetMutablePtr(last), "0\r\n\r\n", 5);
-        sbufSetLength(last, 5);
-        tunnelNextUpStreamPayload(t, l, last);
-    }
+    memoryCopy(sbufGetMutablePtr(last), "0\r\n\r\n", 5);
+    sbufSetLength(last, 5);
+    tunnelNextUpStreamPayload(t, l, last);
     if (lineIsAlive(l))
     {
         bool next_finished = ls->next_finished;

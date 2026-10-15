@@ -69,7 +69,7 @@ bool tlsclientConfigureClientHelloExtensions(SSL *ssl, const uint8_t *alpn_wire,
 }
 
 /**
- * Release a line state that failed somewhere inside tlsclientLinestateInitialize().
+ * Release a line state whose SSL/BIO allocation failed during initialization.
  *
  * SSL_set_bio() has not run yet at that point, so the SSL object does not own the detached BIOs and the normal
  * tlsclientLinestateRelease() path would leak them. Each object is therefore freed by its current owner.
@@ -125,6 +125,8 @@ bool tlsclientLinestateInitializeWithShaping(tlsclient_lstate_t *ls, SSL_CTX *sc
         return false;
     }
 
+    // From here on SSL owns both BIOs, including if later configuration fails.
+    SSL_set_bio(ls->ssl, ls->rbio, ls->wbio);
     tlsbufferbioEnableDirectWrite(ls->ssl);
     SSL_set_msg_callback(ls->ssl, tlsclientCaptureOuterClientHello);
     SSL_set_msg_callback_arg(ls->ssl, ls);
@@ -133,14 +135,14 @@ bool tlsclientLinestateInitializeWithShaping(tlsclient_lstate_t *ls, SSL_CTX *sc
                                        ls->ssl, tlsclientRecordPaddingCallback, ls, kTlsRecordShapingMaxPaddingBytes))
     {
         LOGE("Failed to install the TlsClient TLS 1.3 record padding callback");
-        tlsclientLinestateReleasePartial(ls);
+        tlsclientLinestateDestroy(ls);
         return false;
     }
 
     if (! tlsclientConfigureClientHelloExtensions(ls->ssl, alpn_wire, alpn_wire_len))
     {
         LOGE("Failed to configure TlsClient ClientHello extensions");
-        tlsclientLinestateReleasePartial(ls);
+        tlsclientLinestateDestroy(ls);
         return false;
     }
 

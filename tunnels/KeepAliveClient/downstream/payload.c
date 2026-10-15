@@ -28,8 +28,5 @@ void keepaliveclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (! keepaliveclientConsumeDownstreamFrames(t, l))
-    {
-        return;
-    }
+    keepaliveclientConsumeDownstreamFrames(t, l);
 }

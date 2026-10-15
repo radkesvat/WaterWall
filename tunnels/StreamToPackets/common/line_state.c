@@ -17,26 +17,8 @@ void streamtopacketsLinestateInitialize(streamtopackets_lstate_t *ls, buffer_poo
                                       .write_paused      = false};
 }
 
-void streamtopacketsLinestateReset(streamtopackets_lstate_t *ls)
-{
-    if (ls->read_stream.pool != NULL)
-    {
-        bufferstreamEmpty(&ls->read_stream);
-    }
-
-    ls->line_id           = 0;
-    ls->source_generation = 0;
-    ls->tracked           = false;
-    ls->active            = false;
-    ls->write_paused      = false;
-}
-
 void streamtopacketsLinestateDestroy(streamtopackets_lstate_t *ls)
 {
-    if (ls->read_stream.pool != NULL)
-    {
-        bufferstreamDestroy(&ls->read_stream);
-    }
-
+    bufferstreamDestroy(&ls->read_stream);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(streamtopackets_lstate_t)));
 }

@@ -28,14 +28,15 @@ static bool parsePositiveRateField(const cJSON *settings, const char *key, uint6
         return false;
     }
 
-    double scaled = value->valuedouble * (double) multiplier;
-    if (scaled > (double) UINT64_MAX)
+    const double rounded_rate = value->valuedouble * (double) multiplier + 0.5;
+    /* UINT64_MAX rounds to 2^64 as a double, which is outside the conversion range. */
+    if (! isfinite(rounded_rate) || rounded_rate >= 0x1p64)
     {
         LOGF("SpeedLimit: settings.%s is too large", key);
         return false;
     }
 
-    *out_rate = (uint64_t) (scaled + 0.5);
+    *out_rate = (uint64_t) rounded_rate;
     if (*out_rate == 0)
     {
         LOGF("SpeedLimit: settings.%s rounded down to 0 bytes per second", key);
@@ -136,7 +137,7 @@ static bool parseWorkMode(speedlimit_tstate_t *state, const cJSON *settings)
 
 static bool parseRechargeInterval(speedlimit_tstate_t *state, const cJSON *settings)
 {
-    int recharge_interval_ms = 0;
+    int recharge_interval_ms;
     getIntFromJsonObjectOrDefault(&recharge_interval_ms, settings, "token-recharge-rate", kSpeedLimitDefaultTickMs);
 
     if (recharge_interval_ms <= 0)

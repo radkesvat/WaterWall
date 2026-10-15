@@ -3,26 +3,17 @@
 #include "splice_stream.h"
 #include "wwapi.h"
 
-typedef struct udpovertcpclient_tstate_s
-{
-    int unused;
-} udpovertcpclient_tstate_t;
-
 typedef struct udpovertcpclient_lstate_s
 {
     splice_stream_t *read_stream;
-    buffer_pool_t   *pool;
     bool             read_draining;
 } udpovertcpclient_lstate_t;
 
 enum
 {
-    kTunnelStateSize = sizeof(udpovertcpclient_tstate_t),
-    kLineStateSize   = sizeof(udpovertcpclient_lstate_t),
     kHeaderSize      = 2, // 2 bytes for the length of the packet
     kMaxAllowedUDPPacketLength =
         65535 - 20 - 8 - kHeaderSize, // Maximum UDP packet size (shared with udp_over_tcp_server)
-    kReadOverflowLimit = kMaxAllowedUDPPacketLength * 2,
     kReadChargeLimit   = 4U * 1024U * 1024U,
     kMaxReentryBytes   = 2U * 1024U * 1024U,
 };

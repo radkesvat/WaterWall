@@ -52,17 +52,11 @@ static bool ipoverriderParseRuleIpv4(ipoverrider_rule_t *rule, const cJSON *ipv4
         if (! (cJSON_IsString(ipv4_item) && ipv4_item->valuestring != NULL))
         {
             LOGF("JSON Error: %s[%d] (string field) : each IPv4 array item must be a string", json_path, i);
-            memoryFree(rule->ov_4_list);
-            rule->ov_4_list  = NULL;
-            rule->ov_4_count = 0;
             return false;
         }
 
         if (! ipoverriderParseIpv4String(&(rule->ov_4_list[i]), ipv4_item->valuestring, ipv4_item_json_path))
         {
-            memoryFree(rule->ov_4_list);
-            rule->ov_4_list  = NULL;
-            rule->ov_4_count = 0;
             return false;
         }
     }
@@ -83,11 +77,16 @@ static bool ipoverriderParseRuleAddress(ipoverrider_rule_t *rule, const cJSON *s
     char *ipbuf = NULL;
     if (getStringFromJsonObject(&ipbuf, settings, "ipv6"))
     {
-        sockaddr_u sa;
-        rule->support6 = true;
-        sockaddrSetIpAddress(&(sa), ipbuf);
-        memoryCopy(&(rule->ov_6), &(sa.sin6.sin6_addr.s6_addr), sizeof(sa.sin6.sin6_addr.s6_addr));
+        const bool parsed = inet_pton(AF_INET6, ipbuf, &rule->ov_6) == 1;
         memoryFree(ipbuf);
+        if (! parsed)
+        {
+            LOGF("JSON Error: %s->ipv6 (string field) : expected a single IPv6 address, not CIDR or hostname",
+                 json_path);
+            return false;
+        }
+
+        rule->support6 = true;
         return true;
     }
 
@@ -103,13 +102,7 @@ static bool ipoverriderParseRule(ipoverrider_rule_t *rule, const cJSON *settings
         return false;
     }
 
-    if (! ipoverriderParseRuleAddress(rule, settings, json_path))
-    {
-        return false;
-    }
-
-    rule->enabled = true;
-    return true;
+    return ipoverriderParseRuleAddress(rule, settings, json_path);
 }
 
 static bool ipoverriderParseOnly120(ipoverrider_tstate_t *state, const cJSON *settings)

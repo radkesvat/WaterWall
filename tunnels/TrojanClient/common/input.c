@@ -57,13 +57,12 @@ int trojanclientReadUdpHeader(trojanclient_lstate_t *ls)
         }
         else
         {
-            trojanclient_address_t source;
-            bool                   valid =
-                trojanclientAddressDecode(ls->header, ls->header_filled, &source) == kTrojanClientAddressComplete &&
-                source.port != 0;
-            uint16_t n      = ls->header_needed;
+            /* Address kind and extent were validated while gathering the header.
+             * Only its port is needed here; the reply never retargets the application. */
+            uint16_t n        = ls->header_needed;
+            bool     has_port = ls->header[n - 6] != 0 || ls->header[n - 5] != 0;
             ls->body_length = ((uint16_t) ls->header[n - 4] << 8U) | ls->header[n - 3];
-            if (! valid || ls->header[n - 2] != '\r' || ls->header[n - 1] != '\n' ||
+            if (! has_port || ls->header[n - 2] != '\r' || ls->header[n - 1] != '\n' ||
                 ls->body_length > kTrojanClientUdpMaxPacket)
                 return -1;
             ls->header_ready = true;
@@ -77,17 +76,22 @@ sbuf_t *trojanclientExtractUdpBody(trojanclient_lstate_t *ls)
     buffer_pool_t *pool    = lineGetBufferPool(ls->line);
     uint16_t       padding = bufferpoolGetLargeBufferPadding(pool);
     uint32_t       bytes   = ls->body_length;
-    sbuf_t        *head    = receiveHead(ls);
+    sbuf_t        *head    = bytes == 0 ? NULL : receiveHead(ls);
     sbuf_t        *result  = NULL;
-    if (bytes != 0 && head != NULL && sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
+    assert(bytes == 0 || head != NULL);
+    if (bytes == 0)
+    {
+        result = bufferpoolGetBestFit(pool, 0, padding);
+    }
+    else if (sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
     {
         result           = head;
         ls->receive_head = NULL;
     }
     else
     {
-        bool   has_pipe = head != NULL && sbufIsSplice(head);
-        size_t range    = head == NULL ? 0 : sbufGetLength(head);
+        bool   has_pipe = sbufIsSplice(head);
+        size_t range    = sbufGetLength(head);
         c_foreach(i, ww_sbuffer_queue_t, ls->pending_down.q)
         {
             if (range >= bytes)
@@ -95,7 +99,7 @@ sbuf_t *trojanclientExtractUdpBody(trojanclient_lstate_t *ls)
             has_pipe |= sbufIsSplice(*i.ref);
             range += sbufGetLength(*i.ref);
         }
-        if (bytes != 0 && has_pipe)
+        if (has_pipe)
             result = bufferpoolGetSpliceBuffer(pool);
         if (result != NULL && sbufGetLeftCapacity(result) < padding)
         {

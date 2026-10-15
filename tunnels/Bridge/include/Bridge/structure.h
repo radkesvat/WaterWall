@@ -6,18 +6,12 @@ typedef struct bridge_tstate_s
 {
     node_t   *pair_node;
     tunnel_t *pair_tun;
-    bool      mode_upside; // if this node is last node of upstream
 } bridge_tstate_t;
-
-typedef struct bridge_lstate_s
-{
-    int unused;
-} bridge_lstate_t;
 
 enum
 {
     kTunnelStateSize = sizeof(bridge_tstate_t),
-    kLineStateSize   = sizeof(bridge_lstate_t)
+    kLineStateSize   = 0
 };
 
 WW_EXPORT tunnel_t    *bridgeTunnelCreate(node_t *node);
@@ -38,6 +32,3 @@ void bridgeTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void bridgeTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void bridgeTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void bridgeTunnelDownStreamResume(tunnel_t *t, line_t *l);
-
-void bridgeLinestateInitialize(bridge_lstate_t *ls);
-void bridgeLinestateDestroy(bridge_lstate_t *ls);

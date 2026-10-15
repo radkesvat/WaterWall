@@ -5,7 +5,6 @@ add_library(IpOverrider STATIC
                     instance/api.c
                     instance/node.c
                     common/helpers.c
-                    common/line_state.c
                     upstream/payload.c
                     downstream/payload.c
   

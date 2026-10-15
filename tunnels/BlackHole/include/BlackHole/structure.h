@@ -7,11 +7,6 @@ typedef struct blackhole_tstate_s
     uint8_t mode;
 } blackhole_tstate_t;
 
-typedef struct blackhole_lstate_s
-{
-    uint8_t unused;
-} blackhole_lstate_t;
-
 enum
 {
     kTunnelStateSize = sizeof(blackhole_tstate_t),
@@ -33,6 +28,3 @@ void blackholeTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void blackholeTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void blackholeTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void blackholeTunnelUpStreamResume(tunnel_t *t, line_t *l);
-
-void blackholeLinestateInitialize(blackhole_lstate_t *ls);
-void blackholeLinestateDestroy(blackhole_lstate_t *ls);

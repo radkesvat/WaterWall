@@ -207,8 +207,8 @@ bool muxclientSendControlFrame(tunnel_t *t, line_t *parent_l, muxclient_lstate_t
                                mux_cid_t cid, uint8_t flag);
 bool muxclientSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
                                  muxclient_lstate_t *child_ls);
-bool muxclientReleaseParentInputForChildClose(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls,
-                                              muxclient_lstate_t *child_ls);
+/* Releases queue charges and owned buffers without invoking callbacks. */
+void muxclientReleaseParentInputForChildClose(muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls);
 bool muxclientPauseChildSource(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *child_ls, bool peer_flow,
                                bool parent_write);
 bool muxclientResumeChildSource(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *child_ls, bool peer_flow,

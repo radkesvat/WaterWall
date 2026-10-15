@@ -101,11 +101,9 @@ discovery, fragmentation, or TCP MSS adjustment. The resulting carrier limit is
 Packet rejection diagnostics use the network logger at `ERROR` level and
 identify the specific validation, checksum, size, headroom, or tracking failure.
 Each drop message includes the packet length, maximum inner/carrier lengths,
-wrapper overhead, and available/required left headroom, all in bytes. Reply
-allocation/build failures also log at `ERROR` and report the request length;
-inner delivery can continue without an acknowledgement. The existing five-second
-log gate is shared by all failure reasons, directions, and workers of each node,
-so it does not emit one message per rejected packet.
+wrapper overhead, and available/required left headroom, all in bytes. The
+five-second log gate is shared by all failure reasons, directions, and workers
+of each node, so it does not emit one message per rejected packet.
 
 ## Breaking Migration From Ping Wire v1
 

@@ -124,7 +124,8 @@ static long runHandshake(uint16_t version, const char *hostname, bool verify, bo
     BIO_set_mem_eof_return(server_rbio, -1);
     BIO_set_mem_eof_return(server_wbio, -1);
 
-    require(tlsclientConfigureSslForConnect(client, client_rbio, client_wbio, hostname, NULL, 0),
+    SSL_set_bio(client, client_rbio, client_wbio);
+    require(tlsclientConfigureSslForConnect(client, hostname, NULL, 0),
             "TlsClient failed to configure the client SSL object");
     SSL_set_bio(server, server_rbio, server_wbio);
     SSL_set_accept_state(server);
@@ -341,14 +342,11 @@ static void testTrustAnchorIntermediateElision(void)
         BIO_set_mem_eof_return(client_wbio, -1);
         BIO_set_mem_eof_return(server_rbio, -1);
         BIO_set_mem_eof_return(server_wbio, -1);
-        require(tlsclientConfigureSslForConnect(client,
-                                                client_rbio,
-                                                client_wbio,
-                                                cases[i].matching_hostname ? "tls.integration.test"
-                                                                           : "unrelated.integration.test",
-                                                NULL,
-                                                0),
-                "failed to configure the TAI client connection");
+        SSL_set_bio(client, client_rbio, client_wbio);
+        require(
+            tlsclientConfigureSslForConnect(
+                client, cases[i].matching_hostname ? "tls.integration.test" : "unrelated.integration.test", NULL, 0),
+            "failed to configure the TAI client connection");
         SSL_set_bio(server, server_rbio, server_wbio);
         SSL_set_accept_state(server);
 

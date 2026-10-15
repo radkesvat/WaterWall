@@ -12,21 +12,11 @@ void ipoverriderDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
         for (uint8_t mode_index = 0; mode_index < kIpOverriderModeCount; ++mode_index)
         {
             ipoverrider_rule_t *rule = &(state->rules[direction_index][mode_index]);
-            if (rule->ov_4_list != NULL)
-            {
-                memoryFree(rule->ov_4_list);
-                rule->ov_4_list  = NULL;
-                rule->ov_4_count = 0;
-            }
+            memoryFree(rule->ov_4_list);
         }
     }
 
-    if (state->worker_gates != NULL)
-    {
-        memoryFreeAligned(state->worker_gates);
-        state->worker_gates      = NULL;
-        state->worker_gate_count = 0;
-    }
+    memoryFreeAligned(state->worker_gates);
 
     tunnelDestroy(t);
 }

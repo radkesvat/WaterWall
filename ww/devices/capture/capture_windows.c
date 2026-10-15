@@ -72,7 +72,7 @@ static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t 
 
     char  *filter = memoryAllocate(filter_len);
     size_t offset = 0;
-    if (filter == NULL || ! capturedeviceAppendFilter(filter, filter_len, &offset, "ip and ("))
+    if (! capturedeviceAppendFilter(filter, filter_len, &offset, "ip and ("))
     {
         memoryFree(filter);
         return NULL;
@@ -596,13 +596,6 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     }
 
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
-    if (UNLIKELY(cdev == NULL))
-    {
-        memoryFree(device_name);
-        memoryFree(filter);
-        bufferpoolDestroy(reader_bpool);
-        return NULL;
-    }
 
     *cdev = (capture_device_t) {.name                  = device_name,
                                 .running               = false,

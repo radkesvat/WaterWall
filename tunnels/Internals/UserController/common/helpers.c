@@ -88,15 +88,15 @@ uint64_t usercontrollerLocalTimeMS(void)
 }
 
 // Convert the connecting peer's IP into the lwIP-independent key the user object uses for IP-count
-// limits. Returns false (and leaves *out as a "no IP" key) when the line has no usable source IP.
-bool usercontrollerBuildIpKey(line_t *l, user_ip_key_t *out)
+// limits. Leaves *out as a "no IP" key when the line has no usable source IP.
+void usercontrollerBuildIpKey(line_t *l, user_ip_key_t *out)
 {
     memoryZero(out, sizeof(*out));
 
     const address_context_t *src = lineGetSourceAddressContext(l);
     if (! addresscontextIsIp(src))
     {
-        return false;
+        return;
     }
 
     const ip_addr_t *ip = &src->ip_address;
@@ -110,7 +110,6 @@ bool usercontrollerBuildIpKey(line_t *l, user_ip_key_t *out)
         out->type = 6;
         memoryCopy(out->bytes, ip->u_addr.ip6.addr, sizeof(ip->u_addr.ip6.addr));
     }
-    return true;
 }
 
 static usercontroller_worker_state_t *usercontrollerGetWorkerState(tunnel_t *t, wid_t wid)
@@ -267,15 +266,14 @@ user_admission_result_t usercontrollerTunnelTryManageLine(tunnel_t *t, line_t *l
     // Only lines that carry a valid authenticated user are subject to limits. Anonymous/no-auth lines
     // (or a caller that promotes before authentication) stay unmanaged passthroughs.
     const user_handle_t *current = lineGetCurrentUser(l);
-    if (current == NULL || ! userHandleIsValid(current))
+    if (! userHandleIsValid(current))
     {
         return kUserAdmissionOk;
     }
 
     usercontroller_tstate_t *ts = tunnelGetState(t);
 
-    ls->handle        = *current;
-    ls->authenticated = true;
+    ls->handle = *current;
     usercontrollerBuildIpKey(l, &ls->ip_key);
 
     user_admission_result_t result = authenticationclientUserTryAdmitConnection(
@@ -329,7 +327,7 @@ void usercontrollerSweepTimerCallback(wtimer_t *timer)
         }
 
         usercontroller_lstate_t *ls = lineGetState(line, t);
-        if (! ls->managed || ls->closing)
+        if (! ls->managed)
         {
             i += 1U;
             continue;
@@ -371,29 +369,22 @@ static void usercontrollerReleaseAccounting(tunnel_t *t, line_t *l, usercontroll
 //   kUserControllerCloseFromNext : next finished us -> close prev only, never touch next
 //   kUserControllerCloseInternal : our decision     -> close upstream first, then downstream
 //
-// We never send protocol bytes here, so the only re-entrancy boundary is the finish propagation
-// itself, which Waterwall guarantees is non re-entrant. lineRef keeps the line memory valid until
-// we return; `closing` collapses any re-entrant teardown into a no-op.
+// Accounting release and local-state cleanup make no neighbor callbacks. Hold the line allocation
+// across Finish propagation and recheck logical life before notifying the second side.
 void usercontrollerCloseLine(tunnel_t *t, line_t *l, usercontroller_close_origin_t origin)
 {
     usercontroller_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->closing)
-    {
-        return;
-    }
-
     bool close_next = origin != kUserControllerCloseFromNext;
     bool close_prev = origin != kUserControllerCloseFromPrev;
 
-    ls->closing = true;
     lineRef(l);
 
     usercontrollerReleaseAccounting(t, l, ls);
 
     usercontrollerLinestateDestroy(ls);
 
-    if (close_next && lineIsAlive(l))
+    if (close_next)
     {
         tunnelNextUpStreamFinish(t, l);
     }

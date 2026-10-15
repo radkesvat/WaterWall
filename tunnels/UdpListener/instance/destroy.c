@@ -21,17 +21,8 @@ void udplistenerTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context
     vec_ipmask_t_drop(&state->white_list);
     vec_ipmask_t_drop(&state->black_list);
 
-    if (state->interface_name != NULL)
-    {
-        memoryFree(state->interface_name);
-        state->interface_name = NULL;
-    }
-
-    if (state->listen_address != NULL)
-    {
-        memoryFree(state->listen_address);
-        state->listen_address = NULL;
-    }
+    memoryFree(state->interface_name);
+    memoryFree(state->listen_address);
 
     tunnelDestroy(t);
 }

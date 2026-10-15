@@ -53,18 +53,6 @@ void ctpTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         startupFailureRecord(1);
         return;
     }
-    if (resolver == NULL)
-    {
-        LOGF("ConnectionToPackets: internal DomainResolver was not created");
-        startupFailureRecord(1);
-        return;
-    }
-    if (resolver->prev != NULL || resolver->next != NULL)
-    {
-        LOGF("ConnectionToPackets: internal DomainResolver tunnel is already bound");
-        startupFailureRecord(1);
-        return;
-    }
     if (next_tunnel->prev != NULL && next_tunnel->prev != t)
     {
         LOGF("Node Map Failure: Node (%s) wanted to bind to (%s) which is already bounded by %s",

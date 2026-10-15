@@ -8,8 +8,6 @@ void speedtestserverLinestateInitialize(speedtestserver_lstate_t *ls, tunnel_t *
 
     *ls = (speedtestserver_lstate_t) {
         .recv_stream                = splicestreamCreate(lineGetBufferPool(l), kSpeedTestServerFrameHeaderSize),
-        .tunnel                     = t,
-        .line                       = l,
         .stream_id                  = 0,
         .duration_ms                = 0,
         .warmup_ms                  = 0,

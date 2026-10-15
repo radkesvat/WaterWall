@@ -760,24 +760,8 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
         return NULL;
     }
 
-    tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
-    if (UNLIKELY(tdev == NULL))
-    {
-        bufferpoolDestroy(reader_bpool);
-        bufferpoolDestroy(writer_bpool);
-        close(fd);
-        return NULL;
-    }
-
-    char *device_name = stringDuplicate(ifr.ifr_name);
-    if (UNLIKELY(device_name == NULL))
-    {
-        memoryFree(tdev);
-        bufferpoolDestroy(reader_bpool);
-        bufferpoolDestroy(writer_bpool);
-        close(fd);
-        return NULL;
-    }
+    tun_device_t *tdev        = memoryAllocate(sizeof(tun_device_t));
+    char         *device_name = stringDuplicate(ifr.ifr_name);
 
     *tdev = (tun_device_t) {.name                = device_name,
                             .routine_reader      = routineReadFromTun,

@@ -84,12 +84,7 @@ router_field_parse_t routerProtocolParse(router_rule_t *rule, const cJSON *rule_
         rule->protocol.wanted_flags |= flag;
     }
 
-    if (rule->protocol.wanted_flags == 0)
-    {
-        LOGF("Router: rule %u has an empty \"protocol\" condition", (unsigned int) rule_index);
-        routerStringListDestroy(&rule->protocol.values);
-        return kRouterFieldError;
-    }
+    assert(rule->protocol.wanted_flags != 0);
 
     rule->protocol.present = true;
     return kRouterFieldPresent;

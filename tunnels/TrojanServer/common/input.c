@@ -2,17 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static bool trojanserverDecodeSha224Hex(const uint8_t hex[kTrojanServerPasswordHexLen], uint8_t out[SHA224_DIGEST_SIZE])
-{
-    if (! asciiHexDecodeBytes(hex, kTrojanServerPasswordHexLen, out, SHA224_DIGEST_SIZE))
-    {
-        memoryZero(out, SHA224_DIGEST_SIZE);
-        return false;
-    }
-
-    return true;
-}
-
 static bool trojanserverLineAuthenticated(const trojanserver_lstate_t *ls)
 {
     return userHandleIsValid(&ls->user_handle) || ls->auth_password != NULL;
@@ -117,14 +106,12 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
         return;
     }
     uint16_t prefix = (uint16_t) min(ls->input_bytes, (size_t) 58);
-    if (! trojanserverGatherHeader(ls, prefix))
-        return;
-    bool valid = true;
-    for (uint16_t i = 0; i < min(prefix, 56); ++i)
-        valid &= asciiHexValue(ls->header[i]) >= 0;
-    valid &= prefix <= 56 || ls->header[56] == '\r';
-    valid &= prefix <= 57 || ls->header[57] == '\n';
-    if (! valid)
+    bool     gathered = trojanserverGatherHeader(ls, prefix);
+    assert(gathered);
+    discard gathered;
+    /* Short first deliveries already took fallback; cached input stays charged. */
+    assert(prefix >= kTrojanServerPasswordHexLen);
+    if ((prefix > 56 && ls->header[56] != '\r') || (prefix > 57 && ls->header[57] != '\n'))
     {
         if (trojanserverLineAuthenticated(ls))
             trojanserverCloseLineBidirectional(t, l);
@@ -132,14 +119,12 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
             trojanserverStartFallback(t, l, ls);
         return;
     }
-    /* Short first deliveries already took fallback; cached input stays charged. */
-    assert(prefix >= kTrojanServerPasswordHexLen);
     if (! trojanserverLineAuthenticated(ls))
     {
-        uint8_t                    digest[SHA224_DIGEST_SIZE] = {0};
-        trojanserver_auth_result_t result                     = trojanserverDecodeSha224Hex(ls->header, digest)
-                                                                    ? trojanserverAuthenticateHash(t, l, digest, &ls->user_handle)
-                                                                    : kTrojanServerAuthRejected;
+        uint8_t digest[SHA224_DIGEST_SIZE] = {0};
+        bool    valid_hash = asciiHexDecodeBytes(ls->header, kTrojanServerPasswordHexLen, digest, sizeof(digest));
+        trojanserver_auth_result_t result =
+            valid_hash ? trojanserverAuthenticateHash(t, l, digest, &ls->user_handle) : kTrojanServerAuthRejected;
         memoryZero(digest, sizeof(digest));
         if (result != kTrojanServerAuthAccepted)
         {
@@ -159,11 +144,7 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     trojanserver_address_t target;
     int                    parsed = trojanserverGatherAddress(ls, 59, 2, &target);
     if (parsed == 0)
-    {
-        if (ls->input_bytes > kTrojanServerMaxInitialBytes)
-            trojanserverCloseLineBidirectional(t, l);
         return;
-    }
     if (parsed < 0 || ls->header[ls->header_needed - 2] != '\r' || ls->header[ls->header_needed - 1] != '\n' ||
         (command == kTrojanCmdConnect && target.port == 0))
     {
@@ -208,7 +189,8 @@ static sbuf_t *trojanserverExtractBody(trojanserver_lstate_t *ls)
     uint32_t       bytes   = ls->body_length;
     sbuf_t        *head    = trojanserverInputHead(ls);
     sbuf_t        *result  = NULL;
-    if (bytes != 0 && head != NULL && sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
+    assert(bytes == 0 || head != NULL);
+    if (bytes != 0 && sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
     {
         result         = head;
         ls->input_head = NULL;

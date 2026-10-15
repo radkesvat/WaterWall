@@ -64,6 +64,8 @@ typedef struct softiplimiter_ip_row_s
 {
     softiplimiter_ip_key_t ip_key;
     uint32_t               refs;
+    // Immutable admission identity; replacing an expired row allocates a new generation.
+    uint64_t generation;
     // Refreshed atomically (relaxed) so the per-payload touch fast path can run
     // under a shared read lock without serializing the data plane. All structural
     // mutations (insert/prune/erase/swap-remove) stay under the exclusive write
@@ -82,6 +84,7 @@ typedef struct softiplimiter_table_result_s
     softiplimiter_table_reason_t reason;
     uint8_t                      count;
     uint8_t                      limit;
+    uint64_t                     generation; // Nonzero only for a successful admission/touch.
 } softiplimiter_table_result_t;
 
 #define i_type softiplimiter_identity_map_t
@@ -93,6 +96,7 @@ typedef struct softiplimiter_tstate_s
 {
     wrwlock_t                                     table_lock;
     softiplimiter_identity_map_t                  table;
+    uint64_t                                      generation_cursor; // Protected by table_lock's write side.
     softiplimiter_identifier_mode_t               identifier_mode;
     softiplimiter_identification_failure_action_t identification_failure_action;
     uint64_t                                      tolerance_ms;
@@ -104,6 +108,7 @@ typedef struct softiplimiter_lstate_s
 {
     buffer_stream_t        in_stream;
     hash_t                 identifier;
+    uint64_t               generation;
     softiplimiter_ip_key_t ip_key;
     softiplimiter_phase_t  phase;
     bool                   closing;
@@ -164,14 +169,17 @@ softiplimiter_extract_result_t softiplimiterTryExtractIdentifierFromStream(softi
                                                                            buffer_stream_t                *stream,
                                                                            hash_t *identifier_out);
 
-bool softiplimiterTableAdmit(softiplimiter_identity_map_t *table, hash_t identifier,
+// Mutating table helpers and the generation cursor require the tunnel's write lock.
+// Touch and Release must use the generation returned by the line's admission.
+bool softiplimiterTableAdmit(softiplimiter_identity_map_t *table, uint64_t *generation_cursor, hash_t identifier,
                              const softiplimiter_ip_key_t *ip_key, uint8_t limit, uint64_t tolerance_ms,
                              uint64_t now_ms, softiplimiter_table_result_t *result);
 bool softiplimiterTableTouch(softiplimiter_identity_map_t *table, hash_t identifier,
-                             const softiplimiter_ip_key_t *ip_key, uint8_t limit, uint64_t tolerance_ms,
-                             uint64_t now_ms, softiplimiter_table_result_t *result);
+                             const softiplimiter_ip_key_t *ip_key, uint64_t generation, uint8_t limit,
+                             uint64_t tolerance_ms, uint64_t now_ms, softiplimiter_table_result_t *result);
 void softiplimiterTableRelease(softiplimiter_identity_map_t *table, hash_t identifier,
-                               const softiplimiter_ip_key_t *ip_key, uint64_t tolerance_ms, uint64_t now_ms);
+                               const softiplimiter_ip_key_t *ip_key, uint64_t generation, uint64_t tolerance_ms,
+                               uint64_t now_ms);
 
 bool softiplimiterAdmitLine(tunnel_t *t, line_t *l, softiplimiter_lstate_t *ls, uint64_t now_ms,
                             softiplimiter_table_result_t *result);

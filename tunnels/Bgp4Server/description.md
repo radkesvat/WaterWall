@@ -15,7 +15,7 @@ Downstream payloads are wrapped as:
 16-byte marker | 2-byte body length | 1-byte BGP type | body
 ```
 
-The length is network byte order and covers the type byte plus body bytes. `settings.password` is accepted for compatibility with the old configuration shape, but it remains unused by the protocol logic.
+The length is network byte order and covers the type byte plus body bytes. `settings.password` is accepted but ignored; it provides neither encryption nor authentication.
 
 Protocol errors destroy local line state and close both directions in the usual middle-tunnel order: upstream finish first, downstream finish second. Normal directional finishes only forward the received finish direction after local cleanup. `Bgp4Server` is a layer-4 stream tunnel and does not create, destroy, or repurpose packet lines.
 

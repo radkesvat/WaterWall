@@ -7,7 +7,7 @@ void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_
 void vlessserverLinestateDestroy(vlessserver_lstate_t *ls);
 void vlessserverTunnelstateDestroy(vlessserver_tstate_t *ts);
 
-bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, bool reject_short_password);
+bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, bool reject_short_uuid);
 void vlessserverCloseLineFromUpstream(tunnel_t *t, line_t *l);
 void vlessserverCloseLineFromDownstream(tunnel_t *t, line_t *l);
 void vlessserverCloseLineBidirectional(tunnel_t *t, line_t *l);
@@ -34,5 +34,5 @@ void                      vlessserverRecordLineUser(line_t *l, vlessserver_lstat
 void                      vlessserverApplyDestinationContext(line_t *l, const address_context_t *target, bool udp);
 void                      vlessserverReconcileUdpSourcePermission(tunnel_t *t, line_t *client_l);
 bool vlessserverStartUdpBranch(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, const address_context_t *target);
-bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, bool reject_short_password);
+bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, bool reject_short_uuid);
 bool vlessserverDrainUdpPackets(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);

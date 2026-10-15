@@ -8,6 +8,6 @@ void reverseclientTunnelOnStart(tunnel_t *t)
 
     for (int i = 0; i < wc; i++)
     {
-        reverseclientInitiateConnectOnWorker(t, i, true);
+        reverseclientInitiateConnectOnWorker(t, i);
     }
 }

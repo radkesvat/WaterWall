@@ -472,21 +472,11 @@ static sbuf_t *authenticationserverPushStatsStatusResponse(
                             session->baseline_stats_revision != ts->store.stats_revision;
 
     cJSON *json = cJSON_CreateObject();
-    if (UNLIKELY(json == NULL))
-    {
-        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "stats-push-response-failed");
-    }
-
-    if (UNLIKELY(! cJSON_AddStringToObject(json, "status", "stats-updated") ||
-                 ! jsonAddUint64ToObject(json, "applied-deltas", (uint64_t) delta_count) ||
-                 (needs_pull ? cJSON_AddTrueToObject(json, "needs-pull") == NULL
-                             : cJSON_AddFalseToObject(json, "needs-pull") == NULL) ||
-                 ! jsonAddUint64ToObject(json, "config-revision", ts->store.config_revision) ||
-                 ! jsonAddUint64ToObject(json, "stats-revision", ts->store.stats_revision)))
-    {
-        cJSON_Delete(json);
-        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "stats-push-response-failed");
-    }
+    discard cJSON_AddStringToObject(json, "status", "stats-updated");
+    discard jsonAddUint64ToObject(json, "applied-deltas", (uint64_t) delta_count);
+    discard cJSON_AddBoolToObject(json, "needs-pull", needs_pull);
+    discard jsonAddUint64ToObject(json, "config-revision", ts->store.config_revision);
+    discard jsonAddUint64ToObject(json, "stats-revision", ts->store.stats_revision);
 
     char *text = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);

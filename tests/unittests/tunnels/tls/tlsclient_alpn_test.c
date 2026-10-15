@@ -1381,8 +1381,7 @@ static void testTls13AlpsAndSignatureNegotiation(void)
         memoryZero(client_state, sizeof(*client_state));
         require(tlsclientLinestateInitialize(client_state, client_context, env.pool, ts->alpn_wire, ts->alpn_wire_len),
                 "failed to initialize the ALPS client line state");
-        require(tlsclientConfigureSslForConnect(
-                    client_state->ssl, client_state->rbio, client_state->wbio, ts->sni, NULL, 0),
+        require(tlsclientConfigureSslForConnect(client_state->ssl, ts->sni, NULL, 0),
                 "failed to configure the ALPS client handshake");
         SSL *server      = SSL_new(server_context);
         BIO *server_rbio = BIO_new(BIO_s_mem());

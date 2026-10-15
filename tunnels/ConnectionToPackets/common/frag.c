@@ -580,7 +580,9 @@ static ctp_frag_entry_t *ctpFragFindOrCreateLocked(ctp_tstate_t *ts, const ctp_f
     };
     ctp_frag_map_t_result result = ctp_frag_map_t_insert(&ts->frags, *frag_key, fresh);
 
-    return result.ref != NULL ? &result.ref->second : NULL;
+    // Admission stays within the table's preallocated association capacity.
+    assert(result.ref != NULL);
+    return &result.ref->second;
 }
 
 typedef enum ctp_frag_zero_result_e

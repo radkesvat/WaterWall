@@ -615,7 +615,7 @@ static void testMalformed(void)
 {
     twfSetCase("malformed UDP is association-local");
     uint8_t wire[9000];
-    for (unsigned fault = 0; fault < 5; ++fault)
+    for (unsigned fault = 0; fault < 4; ++fault)
     {
         begin(true, "127.0.0.1", 65536, 0, false);
         establish();
@@ -628,13 +628,8 @@ static void testMalformed(void)
             wire[1] = 0;
         }
         if (fault == 2)
-        {
-            wire[5] = 0;
-            wire[6] = 0;
-        }
-        if (fault == 3)
             wire[10] = 'x';
-        if (fault == 4)
+        if (fault == 3)
         {
             wire[7] = 32;
             wire[8] = 1;
@@ -644,6 +639,22 @@ static void testMalformed(void)
                    "malformed frame survived");
         end();
     }
+
+    twfSetCase("zero UDP port is rejected for every address form and input representation");
+    const uint32_t port_offsets[] = {5, 17, 3, 257}; /* IPv4, IPv6, one-byte and 255-byte domains. */
+    for (unsigned form = 0; form < 4; ++form)
+        for (unsigned pipe = 0; pipe < 2; ++pipe)
+        {
+            begin(true, "127.0.0.1", 65536, 0, false);
+            establish();
+            uint32_t n                   = frame(wire, form, "A", 1);
+            wire[port_offsets[form]]     = 0;
+            wire[port_offsets[form] + 1] = 0;
+            tunnelDownStreamPayload(f.t, f.carrier, bytes(wire, n, pipe != 0, 320));
+            twfRequire(! lineIsAlive(f.application) && ! lineIsAlive(f.carrier) && f.deliveries_down == 0,
+                       "zero-port frame survived");
+            end();
+        }
 }
 static void testLimits(uint32_t pool_size)
 {

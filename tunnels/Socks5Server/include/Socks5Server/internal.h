@@ -46,9 +46,9 @@ bool    socks5serverValidateUdpClientAssociation(tunnel_t *t, line_t *l, socks5s
 void    socks5serverRejectUdpClientLine(tunnel_t *t, line_t *client_l);
 void    socks5serverDetachRemoteFromClient(socks5server_lstate_t *remote_ls);
 void    socks5serverUnregisterUdpAssociation(tunnel_t *t, socks5server_lstate_t *ls);
+/* ctx must be encodable when provided; NULL selects the IPv4 wildcard reply. */
 sbuf_t *socks5serverCreateCommandReply(line_t *l, uint8_t rep, const address_context_t *ctx);
 void    socks5serverAssocEntryFreeCreds(socks5server_assoc_entry_t *entry);
-void    socks5serverRecordLineUser(line_t *l, socks5server_lstate_t *ls, const user_handle_t *user_handle);
 void    socks5serverRequireCurrentLineWorker(const line_t *l, const char *callback_name);
 
 bool socks5serverDrainControl(tunnel_t *t, line_t *l);

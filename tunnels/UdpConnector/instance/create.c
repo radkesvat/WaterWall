@@ -135,14 +135,21 @@ static bool parseAddressSettings(dynamic_value_t *dest_addr_selected, address_co
 
     if (dest_addr_selected->status == kDvsConstant)
     {
-        if (addressIsIp(dest_addr_selected->string))
+        ip_addr_t parsed_ip;
+        if (ipaddr_aton(dest_addr_selected->string, &parsed_ip))
         {
-            addresscontextSetIpAddress(constant_dest_addr, dest_addr_selected->string);
+            addresscontextSetIp(constant_dest_addr, &parsed_ip);
         }
         else
         {
-            addresscontextDomainSetConstMem(
-                constant_dest_addr, dest_addr_selected->string, (uint8_t) stringLength(dest_addr_selected->string));
+            const size_t domain_length = stringLength(dest_addr_selected->string);
+            if (domain_length == 0 || domain_length > UINT8_MAX)
+            {
+                LOGF("JSON Error: %s->address (string field) : Domain length must be between 1 and 255 bytes",
+                     error_path);
+                return false;
+            }
+            addresscontextDomainSetConstMem(constant_dest_addr, dest_addr_selected->string, (uint8_t) domain_length);
         }
     }
 
@@ -157,7 +164,7 @@ static bool parseRandomPortRange(const char *port_str, dynamic_value_t *dest_por
     const char *comma = strchr(start, ',');
     const char *end   = strchr(start, ')');
 
-    if (comma == NULL || end == NULL || comma >= end)
+    if (comma == NULL || end == NULL || comma >= end || end[1] != '\0')
     {
         LOGF("JSON Error: %s->port: Invalid random port format, expected 'random(x,y)'", error_path);
         return false;
@@ -171,7 +178,7 @@ static bool parseRandomPortRange(const char *port_str, dynamic_value_t *dest_por
         return false;
     }
 
-    stringCopyN(x_str, start, x_len);
+    memoryCopy(x_str, start, x_len);
     x_str[x_len] = '\0';
 
     char   y_str[16] = {0};
@@ -182,7 +189,7 @@ static bool parseRandomPortRange(const char *port_str, dynamic_value_t *dest_por
         return false;
     }
 
-    stringCopyN(y_str, comma + 1, y_len);
+    memoryCopy(y_str, comma + 1, y_len);
     y_str[y_len] = '\0';
 
     char *x_endptr;
@@ -324,14 +331,9 @@ static void cleanupDestinationArray(udpconnector_tstate_t *state)
     state->destinations_weight_total = 0;
 }
 
-static bool parseDestinationArray(udpconnector_tstate_t *state, const cJSON *settings)
+static bool parseDestinationArray(udpconnector_tstate_t *state, const cJSON *settings, const cJSON *jaddresses)
 {
-    const cJSON *jaddresses = getDestinationArraySettings(settings);
-
-    if (jaddresses == NULL)
-    {
-        return false;
-    }
+    assert(jaddresses != NULL);
 
     if (! cJSON_IsArray(jaddresses) || cJSON_GetArraySize(jaddresses) <= 0)
     {
@@ -472,7 +474,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     }
     if (destination_array_settings != NULL)
     {
-        if (! parseDestinationArray(state, settings))
+        if (! parseDestinationArray(state, settings, destination_array_settings))
         {
             udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
             return NULL;

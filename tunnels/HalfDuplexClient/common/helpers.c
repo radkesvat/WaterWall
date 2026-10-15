@@ -55,20 +55,15 @@ void halfduplexclientClosePair(tunnel_t *t, line_t *line, bool from_prev, bool f
     line_t                    *upload   = ls->upload_line;
     line_t                    *download = ls->download_line;
     lineRef(main);
-    bool upload_started = false, download_started = false;
     if (upload != NULL)
     {
         lineRef(upload);
-        halfduplexclient_lstate_t *child = lineGetState(upload, t);
-        upload_started                   = child->next_started;
-        halfduplexclientLinestateDestroy(child);
+        halfduplexclientLinestateDestroy(lineGetState(upload, t));
     }
     if (download != NULL)
     {
         lineRef(download);
-        halfduplexclient_lstate_t *child = lineGetState(download, t);
-        download_started                 = child->next_started;
-        halfduplexclientLinestateDestroy(child);
+        halfduplexclientLinestateDestroy(lineGetState(download, t));
     }
     halfduplexclientLinestateDestroy(ls);
     // Detach the whole pair before callbacks. A received child Finish closes
@@ -77,15 +72,13 @@ void halfduplexclientClosePair(tunnel_t *t, line_t *line, bool from_prev, bool f
         lineDestroy(line);
     if (upload != NULL && lineIsAlive(upload))
     {
-        if (upload_started)
-            tunnelNextUpStreamFinish(t, upload);
+        tunnelNextUpStreamFinish(t, upload);
         if (lineIsAlive(upload))
             lineDestroy(upload);
     }
     if (download != NULL && lineIsAlive(download))
     {
-        if (download_started)
-            tunnelNextUpStreamFinish(t, download);
+        tunnelNextUpStreamFinish(t, download);
         if (lineIsAlive(download))
             lineDestroy(download);
     }
@@ -105,12 +98,6 @@ void halfduplexclientSetPrevPaused(tunnel_t *t, line_t *main, bool paused)
         return;
     line_t *download = ls->download_line;
     if (download == NULL)
-    {
-        ls->pending_read_pause = paused;
-        return;
-    }
-    halfduplexclient_lstate_t *child = lineGetState(download, t);
-    if (! child->next_started)
     {
         ls->pending_read_pause = paused;
         return;

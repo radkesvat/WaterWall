@@ -140,15 +140,12 @@ void socks5serverCloseControlLine(tunnel_t *t, line_t *l, socks5server_close_ori
     {
         sbuf_t *reply =
             final_reply != NULL ? final_reply : socks5serverCreateCommandReply(l, (uint8_t) reply_code, NULL);
-        if (reply != NULL)
+        ls->connect_reply_sent = true;
+        tunnelPrevDownStreamPayload(t, l, reply);
+        if (! lineIsAlive(l) || ls->kind != kSocks5ServerLineKindControlTcp)
         {
-            ls->connect_reply_sent = true;
-            tunnelPrevDownStreamPayload(t, l, reply);
-            if (! lineIsAlive(l) || ls->kind != kSocks5ServerLineKindControlTcp)
-            {
-                lineUnref(l);
-                return;
-            }
+            lineUnref(l);
+            return;
         }
     }
 

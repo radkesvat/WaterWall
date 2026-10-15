@@ -2,7 +2,7 @@
  * Covers: raw linux writer; the explicit inputs, callbacks and expected results below define this suite.
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
- * Cases: testRawBringDownQuiescesConcurrentWriters, testRawJoinFailureRetainsOwnership,
+ * Cases: testRawHeaderOnlyPacketIsSent, testRawBringDownQuiescesConcurrentWriters, testRawJoinFailureRetainsOwnership,
  * testRawRestartTransfersWriterPoolOwnership, testRawNotrackLifecycle,
  * testRawSendErrorPolicyEndsOnTerminalFailure, testRawPollTerminalEventFailsTheDevice,
  * testRawLinuxSendErrorClassifier, testWriterRefusalLoggingDoesNotStorm; the driver lists the remaining
@@ -137,6 +137,7 @@ typedef enum injected_poll_result_e
 
 static injected_send_result_t injected_sends[kMaxInjectedSends];
 static unsigned int           injected_send_count;
+static size_t                 expected_send_length;
 static atomic_uint            observed_send_calls;
 static injected_poll_result_t injected_poll_result;
 static atomic_bool            allow_injected_send;
@@ -224,8 +225,14 @@ int __wrap_sendmmsg(int socket_fd, struct mmsghdr *messages, unsigned int messag
         return __real_sendmmsg(socket_fd, messages, message_count, flags);
     }
 
-    discard messages;
     discard flags;
+
+    if (expected_send_length != 0)
+    {
+        require(message_count == 1 && messages[0].msg_hdr.msg_iovlen == 1 &&
+                    messages[0].msg_hdr.msg_iov[0].iov_len == expected_send_length,
+                "raw writer changed the header-only packet length");
+    }
 
     while (! atomicLoadExplicit(&allow_injected_send, memory_order_acquire))
     {
@@ -281,6 +288,7 @@ static void resetFailureInjection(void)
 {
     memoryZero(injected_sends, sizeof(injected_sends));
     injected_send_count  = 0;
+    expected_send_length = 0;
     injected_poll_result = kInjectedPollReady;
     atomicStoreRelaxed(&allow_injected_send, false);
     atomicStoreRelaxed(&observed_send_calls, 0);
@@ -632,6 +640,40 @@ static void productionWriterDeviceDestroy(raw_device_t *rdev)
     bufferpoolDestroy(rdev->writer_buffer_pool);
 }
 
+static void testRawHeaderOnlyPacketIsSent(test_env_t *env)
+{
+    testCaseSet("raw writer accepts a complete header-only IPv4 packet");
+    resetFailureInjection();
+    const injected_send_result_t sends[] = {{.result = 1}};
+    armInjectedSends(sends, ARRAY_SIZE(sends));
+    expected_send_length = sizeof(struct iphdr);
+
+    raw_device_t rdev;
+    productionWriterDeviceInit(&rdev, env, "raw-header-only");
+    require(rawdeviceBringUp(&rdev), "header-only raw writer failed to start");
+    sbuf_t *buf = bufferpoolGetSmallBuffer(env->worker_buffer_pool);
+    sbufSetLength(buf, sizeof(struct iphdr));
+    memoryZero(sbufGetMutablePtr(buf), sbufGetLength(buf));
+    struct iphdr *header = (struct iphdr *) sbufGetMutablePtr(buf);
+    header->version      = 4;
+    header->ihl          = 5;
+    header->tot_len      = htons(sizeof(*header));
+    header->ttl          = 64;
+    header->protocol     = 253;
+    header->saddr        = htonl(INADDR_LOOPBACK);
+    header->daddr        = htonl(INADDR_LOOPBACK);
+    header->check        = inet_chksum(header, sizeof(*header));
+    require(rawdeviceWrite(&rdev, buf), "raw writer refused a valid header-only IPv4 packet");
+    atomicStoreExplicit(&allow_injected_send, true, memory_order_release);
+    for (unsigned spin = 0; spin < 1000000 && atomicLoadRelaxed(&observed_send_calls) == 0; ++spin)
+        YIELD_THREAD();
+    require(atomicLoadRelaxed(&observed_send_calls) == 1, "header-only IPv4 packet did not reach the socket writer");
+    require(rawdeviceBringDown(&rdev), "header-only raw writer failed to stop");
+    require(atomicLoadRelaxed(&shutdown_request_calls) == 0, "header-only IPv4 packet requested shutdown");
+    productionWriterDeviceDestroy(&rdev);
+    testCaseSet("raw_linux_writer_test");
+}
+
 static void testRawNotrackLifecycle(test_env_t *env)
 {
     resetFailureInjection();
@@ -965,6 +1007,7 @@ int main(void)
     loggerSetHandler(logger, captureLog);
     setInternalLogger(logger);
 
+    testRawHeaderOnlyPacketIsSent(&env);
     testWriterRefusalLoggingDoesNotStorm();
     testRawWriterRefusalClassesUseFreshTlsState();
     testRawLinuxSendErrorClassifier();

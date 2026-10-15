@@ -233,10 +233,10 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
 
     testerserver_tstate_t *ts                     = tunnelGetState(t);
     const cJSON           *settings               = node->node_settings_json;
-    int                    chunk_count            = kTesterServerChunkCount;
-    int                    max_payload_size       = 0;
-    int                    split_payload_delay_ms = kTesterServerSplitPayloadDelayMs;
-    int                    split_payload_burst    = kTesterServerSplitPayloadBurst;
+    int                    chunk_count;
+    int                    max_payload_size;
+    int                    split_payload_delay_ms;
+    int                    split_payload_burst;
 
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);
     node->layer_group = ts->packet_mode ? kNodeLayer3 : kNodeLayer4;

@@ -106,6 +106,8 @@ need a `next` node.
   - `"src_context->address"`
   - `"dest_context->address"`
 
+  Constant domain names must contain between 1 and 255 bytes.
+
 - `port` `(number or string)`
   Destination port selection for the legacy single-destination form.
 
@@ -117,6 +119,8 @@ need a `next` node.
   - `"random(x,y)"`
 
   The `random(x,y)` form chooses one random port in the inclusive range `[x, y]` during line initialization.
+  Both bounds must be in `1..65535`, with `x <= y`. The complete bounds are used;
+  for example, `random(1000,2000)` selects from `1000..2000`. Text after `)` is rejected.
 
 - `addresses` `(array of objects)`
   Weighted destination list.

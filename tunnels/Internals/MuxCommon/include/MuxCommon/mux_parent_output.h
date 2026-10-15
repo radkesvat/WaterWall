@@ -73,11 +73,12 @@ static inline void muxParentOutputDestroy(mux_parent_output_t *output, buffer_po
     bufferqueueDestroy(&output->pending);
 }
 
-/* Small pooled controls must still carry the full onward chain headroom. */
+/* Controls carry the full onward chain headroom. A valid pool's large tier
+ * always satisfies this zero-payload request, so the result is non-NULL. */
 static inline sbuf_t *muxParentOutputControlBuffer(buffer_pool_t *pool)
 {
     const uint16_t padding = bufferpoolGetLargeBufferPadding(pool);
     if (bufferpoolGetSmallBufferPadding(pool) >= padding)
         return bufferpoolGetSmallBuffer(pool);
-    return bufferpoolTryGetBestFit(pool, 0, padding);
+    return bufferpoolGetBestFit(pool, 0, padding);
 }

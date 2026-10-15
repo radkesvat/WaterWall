@@ -4,10 +4,7 @@
 
 static bool routerHostEndsWith(const uint8_t *host, uint32_t host_len, const char *suffix, uint32_t suffix_len)
 {
-    if (host_len < suffix_len)
-    {
-        return false;
-    }
+    assert(host_len > suffix_len);
 
     uint32_t offset = host_len - suffix_len;
     for (uint32_t i = 0; i < suffix_len; ++i)
@@ -41,6 +38,7 @@ static bool routerHostEquals(const uint8_t *host, uint32_t host_len, const char 
 
 static bool routerDomainMatches(const char *pattern, const uint8_t *host, uint32_t host_len)
 {
+    assert(host_len != 0);
     if (stringStartsWithIgnoreCase(pattern, "geosite:"))
     {
         return false;
@@ -50,7 +48,7 @@ static bool routerDomainMatches(const char *pattern, const uint8_t *host, uint32
 
     if (pattern_len == 1U && pattern[0] == '*')
     {
-        return host_len > 0;
+        return true;
     }
 
     if (pattern_len > 2U && pattern[0] == '*' && pattern[1] == '.')
@@ -93,7 +91,7 @@ bool routerDestinationDomainMatch(const router_rule_t *rule, router_match_ctx_t 
 
     const address_context_t *dest = lineGetDestinationAddressContext(mctx->line);
 
-    // Only a domain destination can match; an IP destination has no domain here.
+    // Observed domain metadata can also accompany an IP destination.
     if (dest->domain == NULL || dest->domain_len == 0)
     {
         return false;

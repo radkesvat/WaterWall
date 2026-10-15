@@ -38,10 +38,7 @@ static udpstatelesssocket_send_request_t *udpstatelesssocketSendRequestCreate(ud
 
 static void udpstatelesssocketSendRequestReuse(udpstatelesssocket_send_request_t *request)
 {
-    if (request == NULL)
-    {
-        return;
-    }
+    assert(request != NULL);
 
     threadsafe_generic_pool_t *pool = request->pool;
     assert(pool != NULL);
@@ -64,11 +61,10 @@ local_idle_table_t *udpstatelesssocketGetLineIdleTable(udpstatelesssocket_tstate
     return udpstatelesssocketGetWorkerIdleTable(ts);
 }
 
-bool udpstatelesssocketLinestateOwnsLine(tunnel_t *t, line_t *l, udpstatelesssocket_lstate_t *ls)
+bool udpstatelesssocketLinestateOwnsLine(const udpstatelesssocket_lstate_t *ls)
 {
-    discard t;
-    discard l;
-    return ls != NULL && ls->idle_handle != NULL;
+    assert(ls != NULL);
+    return ls->idle_handle != NULL;
 }
 
 static bool udpstatelesssocketEndpointEquals(const sockaddr_u *left, const sockaddr_u *right)
@@ -103,42 +99,6 @@ static bool udpstatelesssocketIdleLineMatchesPacket(const udpstatelesssocket_lst
            udpstatelesssocketEndpointEquals(&ls->local_addr, local_addr);
 }
 
-static void udpstatelesssocketForwardPeerInit(tunnel_t *t, line_t *l, bool is_chain_end)
-{
-    if (is_chain_end)
-    {
-        tunnelPrevDownStreamInit(t, l);
-        return;
-    }
-
-    tunnelNextUpStreamInit(t, l);
-}
-
-static void udpstatelesssocketForwardPeerPayload(tunnel_t *t, udpstatelesssocket_lstate_t *ls, sbuf_t *buf)
-{
-    line_t *line         = ls->line;
-    bool    is_chain_end = ((udpstatelesssocket_tstate_t *) tunnelGetState(t))->is_chain_end;
-
-    if (is_chain_end)
-    {
-        tunnelPrevDownStreamPayload(t, line, buf);
-        return;
-    }
-
-    tunnelNextUpStreamPayload(t, line, buf);
-}
-
-static void udpstatelesssocketForwardPeerFinish(tunnel_t *t, line_t *l, bool is_chain_end)
-{
-    if (is_chain_end)
-    {
-        tunnelPrevDownStreamFinish(t, l);
-        return;
-    }
-
-    tunnelNextUpStreamFinish(t, l);
-}
-
 static void udpstatelesssocketOnIdleConnectionExpire(local_idle_item_t *idle_udp)
 {
     udpstatelesssocket_lstate_t *ls = idle_udp->userdata;
@@ -146,39 +106,35 @@ static void udpstatelesssocketOnIdleConnectionExpire(local_idle_item_t *idle_udp
 
     idle_udp->userdata = NULL;
 
-    tunnel_t                    *t            = ls->tunnel;
-    line_t                      *line         = ls->line;
-    udpstatelesssocket_tstate_t *state        = tunnelGetState(t);
-    bool                         is_chain_end = state->is_chain_end;
+    tunnel_t *t    = ls->tunnel;
+    line_t   *line = ls->line;
 
     ls->idle_handle = NULL;
     udpstatelesssocketLinestateDestroy(ls);
-    udpstatelesssocketForwardPeerFinish(t, line, is_chain_end);
+    tunnelNextUpStreamFinish(t, line);
     lineDestroy(line);
 }
 
-void udpstatelesssocketCloseOwnedLineFromAdjacent(tunnel_t *t, line_t *l, bool is_chain_end)
+void udpstatelesssocketCloseOwnedLineFromAdjacent(tunnel_t *t, line_t *l)
 {
     udpstatelesssocket_lstate_t *ls    = lineGetState(l, t);
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
-    if (! udpstatelesssocketLinestateOwnsLine(t, l, ls) || state->is_chain_end != is_chain_end)
+    if (! udpstatelesssocketLinestateOwnsLine(ls))
     {
+        // Borrowed transport/packet lines own no local resources and have no onward side to finish.
         return;
     }
 
     local_idle_item_t *idle = ls->idle_handle;
 
-    if (idle != NULL)
-    {
-        idle->userdata  = NULL;
-        ls->idle_handle = NULL;
+    idle->userdata  = NULL;
+    ls->idle_handle = NULL;
 
-        bool deleted = localidletableRemoveIdleItem(udpstatelesssocketGetLineIdleTable(state, l), idle);
-        if (! deleted)
-        {
-            LOGE("UdpStatelessSocket: failed to remove idle item for peer line");
-            abortProgramNow(1);
-        }
+    bool deleted = localidletableRemoveIdleItem(udpstatelesssocketGetLineIdleTable(state, l), idle);
+    if (! deleted)
+    {
+        LOGF("UdpStatelessSocket: failed to remove idle item for peer line");
+        abortProgramNow(1);
     }
 
     udpstatelesssocketLinestateDestroy(ls);
@@ -232,10 +188,7 @@ static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const soc
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
     wio_t                       *io    = udpstatelesssocketGetOwnerIo(state);
 
-    // Only the worker owning the socket's wio may write to it.
-    assert(currentThreadIsEventWorkerWID(state->io_wid));
-
-    if (UNLIKELY(io == NULL))
+    if (UNLIKELY(io == NULL || ! wioIsOpened(io)))
     {
         udpstatelesssocketReleaseWrittenBuffer(buf, detached_from_origin_worker);
         return;
@@ -319,16 +272,10 @@ static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *a
     discard arg3;
 
     udpstatelesssocket_send_request_t *request = (udpstatelesssocket_send_request_t *) arg1;
-    if (request == NULL)
-    {
-        return;
-    }
-
-    if (request->buf != NULL)
-    {
-        sbufDestroy(request->buf);
-        request->buf = NULL;
-    }
+    // The message either runs or cancels; only the run path detaches the buffer.
+    assert(request != NULL && request->buf != NULL);
+    sbufDestroy(request->buf);
+    request->buf = NULL;
     udpstatelesssocketSendRequestReuse(request);
 }
 
@@ -363,7 +310,6 @@ static void udpstatelesssocketHandleRecvFrom(tunnel_t *t, wio_t *io, sbuf_t *buf
              SOCKADDR_STR(&peer_addr, peeraddrstr));
     }
 
-    const bool          is_chain_end = state->is_chain_end;
     local_idle_table_t *table        = udpstatelesssocketGetWorkerIdleTable(state);
     hash_t              idle_key     = udpstatelesssocketPeerIdleKey(t, &peer_addr, &local_addr);
 
@@ -395,12 +341,7 @@ static void udpstatelesssocketHandleRecvFrom(tunnel_t *t, wio_t *io, sbuf_t *buf
 
         idle->userdata = ls;
 
-        lineRef(l);
-        udpstatelesssocketForwardPeerInit(t, l, is_chain_end);
-        bool alive = lineIsAlive(l);
-        lineUnref(l);
-
-        if (! alive)
+        if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
         {
             LOGW("UdpStatelessSocket: peer line closed during init");
             bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
@@ -425,7 +366,7 @@ static void udpstatelesssocketHandleRecvFrom(tunnel_t *t, wio_t *io, sbuf_t *buf
         return;
     }
 
-    udpstatelesssocketForwardPeerPayload(t, ls, buf);
+    tunnelNextUpStreamPayload(t, ls->line, buf);
 }
 
 void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
@@ -450,14 +391,6 @@ void udpstatelesssocketLocalThreadSocketUpStream(void *worker, void *arg1, void 
 
     udpstatelesssocket_send_request_t *request = (udpstatelesssocket_send_request_t *) arg1;
     tunnel_t                          *t       = request->tunnel;
-    udpstatelesssocket_tstate_t       *state   = tunnelGetState(t);
-    wio_t                             *io      = udpstatelesssocketGetOwnerIo(state);
-
-    if (UNLIKELY(io == NULL || ! wioIsOpened(io)))
-    {
-        udpstatelesssocketCleanupSendRequest(request, NULL, NULL, kWorkerMessageCancelAdmissionClosed);
-        return;
-    }
 
     sbuf_t *buf  = request->buf;
     request->buf = NULL;
@@ -468,7 +401,8 @@ void udpstatelesssocketLocalThreadSocketUpStream(void *worker, void *arg1, void 
 static bool udpstatelesssocketSockAddrFromResolved(const dns_resolved_addr_t *resolved, uint16_t port,
                                                    sockaddr_u *addr_out)
 {
-    if (resolved == NULL || addr_out == NULL || (resolved->family != AF_INET && resolved->family != AF_INET6) ||
+    assert(addr_out != NULL);
+    if (resolved == NULL || (resolved->family != AF_INET && resolved->family != AF_INET6) ||
         (uintmax_t) resolved->addrlen > (uintmax_t) sizeof(*addr_out))
     {
         return false;
@@ -492,10 +426,7 @@ static bool udpstatelesssocketSockAddrFromResolved(const dns_resolved_addr_t *re
 
 static void udpstatelesssocketDnsRequestDestroy(udpstatelesssocket_dns_request_t *request)
 {
-    if (request == NULL)
-    {
-        return;
-    }
+    assert(request != NULL);
 
     memoryFree(request->domain);
     memoryFree(request);
@@ -516,10 +447,7 @@ static bool udpstatelesssocketDnsCacheEntryIsFresh(const udpstatelesssocket_dns_
 bool udpstatelesssocketDnsCacheLookup(udpstatelesssocket_tstate_t *state, const char *domain, uint16_t port,
                                       int strategy, sockaddr_u *addr_out)
 {
-    if (domain == NULL)
-    {
-        return false;
-    }
+    assert(domain != NULL && addr_out != NULL);
 
     bool found = false;
 
@@ -570,10 +498,7 @@ static void udpstatelesssocketDnsCacheReclaimExpiredLocked(udpstatelesssocket_ts
 static void udpstatelesssocketDnsCacheEvictOldestLocked(udpstatelesssocket_tstate_t *state)
 {
     udpstatelesssocket_dns_cache_entry_t **slot = &state->dns_cache;
-    if (*slot == NULL)
-    {
-        return;
-    }
+    assert(*slot != NULL); // Only called when the cache is at capacity, under its mutex.
 
     while ((*slot)->next != NULL)
     {
@@ -590,10 +515,7 @@ static void udpstatelesssocketDnsCacheEvictOldestLocked(udpstatelesssocket_tstat
 void udpstatelesssocketDnsCacheStore(udpstatelesssocket_tstate_t *state, const char *domain, uint16_t port,
                                      int strategy, const sockaddr_u *peer_addr)
 {
-    if (domain == NULL || peer_addr == NULL)
-    {
-        return;
-    }
+    assert(domain != NULL && peer_addr != NULL);
 
     mutexLock(&state->dns_cache_mutex);
 
@@ -712,13 +634,14 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
     udpstatelesssocketDnsRequestDestroy(request);
 }
 
-static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *buf, const address_context_t *dest_ctx)
+static void udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *buf, const address_context_t *dest_ctx)
 {
-    if (dest_ctx->domain == NULL || ! addresscontextHasPort(dest_ctx))
+    assert(addresscontextIsDomain(dest_ctx));
+    if (! addresscontextHasPort(dest_ctx))
     {
         LOGE("UdpStatelessSocket: outbound destination domain or port is not ready");
         lineReuseBuffer(l, buf);
-        return false;
+        return;
     }
 
     udpstatelesssocket_dns_request_t *request     = memoryAllocate(sizeof(*request));
@@ -745,10 +668,8 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
                     ares_strerror(rc));
         udpstatelesssocketDnsRequestDestroy(request);
         lineReuseBuffer(l, buf);
-        return false;
+        return;
     }
-
-    return true;
 }
 
 void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -762,7 +683,7 @@ void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
 
     udpstatelesssocket_lstate_t *ls = lineGetState(l, t);
-    if (udpstatelesssocketLinestateOwnsLine(t, l, ls))
+    if (udpstatelesssocketLinestateOwnsLine(ls))
     {
         localidletableKeepIdleItemForAtleast(
             udpstatelesssocketGetLineIdleTable(state, l), ls->idle_handle, kUdpStatelessSocketKeepExpireTime);
@@ -792,7 +713,7 @@ void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             }
         }
 
-        discard udpstatelesssocketStartDnsResolve(t, l, buf, dest_ctx);
+        udpstatelesssocketStartDnsResolve(t, l, buf, dest_ctx);
         return;
     }
 

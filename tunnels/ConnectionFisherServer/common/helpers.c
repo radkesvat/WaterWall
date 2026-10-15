@@ -5,16 +5,6 @@
 static const uint8_t kConnectionFisherServerPing[kConnectionFisherServerHandshakeLength]  = {'F', 'I', 'S', 'H', '?'};
 static const uint8_t kConnectionFisherServerReply[kConnectionFisherServerHandshakeLength] = {'F', 'I', 'S', 'H', '!'};
 
-static bool connectionfisherserverReadMatches(const sbuf_t *buf, const uint8_t *expected)
-{
-    if (sbufGetLength(buf) != kConnectionFisherServerHandshakeLength)
-    {
-        return false;
-    }
-
-    return memoryCompare(sbufGetRawPtr(buf), expected, kConnectionFisherServerHandshakeLength) == 0;
-}
-
 static sbuf_t *connectionfisherserverMakeReply(line_t *l)
 {
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
@@ -27,11 +17,10 @@ static sbuf_t *connectionfisherserverMakeReply(line_t *l)
 
 void connectionfisherserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
 {
-    connectionfisherserver_lstate_t *ls         = lineGetState(l, t);
-    bool                             close_next = ls->next_init_sent;
-
+    connectionfisherserver_lstate_t *ls = lineGetState(l, t);
     if (ls->phase == kConnectionFisherServerPhaseClosing)
         return;
+    const bool close_next = ls->phase == kConnectionFisherServerPhaseEstablished;
     connectionfisherserverLinestateDestroy(ls);
 
     if (close_next)
@@ -54,7 +43,7 @@ void connectionfisherserverCloseLineFromProtocolError(tunnel_t *t, line_t *l)
     connectionfisherserver_lstate_t *ls = lineGetState(l, t);
     if (ls->phase == kConnectionFisherServerPhaseClosing)
         return;
-    bool close_next = ls->next_init_sent;
+    const bool close_next = ls->phase == kConnectionFisherServerPhaseEstablished;
     lineRef(l);
     connectionfisherserverLinestateDestroy(ls);
     if (close_next)
@@ -76,15 +65,15 @@ void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t
         return;
     }
 
-    sbuf_t *ping  = bufferstreamReadExact(&ls->in_stream, kConnectionFisherServerHandshakeLength);
-    bool    valid = connectionfisherserverReadMatches(ping, kConnectionFisherServerPing);
+    sbuf_t    *ping = bufferstreamReadExact(&ls->in_stream, kConnectionFisherServerHandshakeLength);
+    const bool valid =
+        memoryCompare(sbufGetRawPtr(ping), kConnectionFisherServerPing, kConnectionFisherServerHandshakeLength) == 0;
 
     lineReuseBuffer(l, ping);
 
     if (! valid)
     {
         LOGW("ConnectionFisherServer: received bytes that do not match the ConnectionFisher client probe");
-        bufferstreamEmpty(&ls->in_stream);
         connectionfisherserverCloseLineFromProtocolError(t, l);
         return;
     }

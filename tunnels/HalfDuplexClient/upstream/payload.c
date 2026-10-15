@@ -15,21 +15,17 @@ bool halfduplexclientForwardPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
     const uint16_t padding = bufferpoolGetLargeBufferPadding(pool);
     uint32_t       length  = sbufGetLength(buf);
     const uint64_t total   = (uint64_t) length + kHLFDIntroSize;
-    const bool     reuse   = ! sbufIsSplice(buf) && sbufGetLeftCapacity(buf) >= kHLFDIntroSize && total <= UINT32_MAX;
+    // Ordinary headroom also proves that the prepended length fits its uint32_t capacity.
+    const bool     reuse   = ! sbufIsSplice(buf) && sbufGetLeftCapacity(buf) >= kHLFDIntroSize;
     sbuf_t        *framed  = reuse ? buf : bufferpoolTryGetBestFit(pool, total, padding);
-    sbuf_t        *intro   = bufferpoolTryGetBestFit(pool, kHLFDIntroSize, padding);
-    if (framed == NULL || intro == NULL || (! reuse && total > sbufGetMaximumWriteableSize(framed)) ||
-        kHLFDIntroSize > sbufGetMaximumWriteableSize(intro))
+    if (framed == NULL)
     {
-        if (framed != NULL && framed != buf)
-            bufferpoolReuseBuffer(pool, framed);
-        if (intro != NULL)
-            bufferpoolReuseBuffer(pool, intro);
         bufferpoolReuseBuffer(pool, buf);
         halfduplexclientClosePair(t, main, false, false);
     }
     else
     {
+        sbuf_t *intro = bufferpoolGetBestFit(pool, kHLFDIntroSize, padding);
         uint8_t pair_id[kHLFDPairIdSize];
         PUT_BE64(pair_id, fastRand64());
         PUT_BE64(pair_id + kHLFDPairIdSize / 2, fastRand64());

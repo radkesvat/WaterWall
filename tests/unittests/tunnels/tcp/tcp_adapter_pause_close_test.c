@@ -26,6 +26,7 @@ typedef tcpconnector_tstate_t adapter_tstate_t;
 #endif
 
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "loggers/network_logger.h"
 #include "splice_buffer.h"
 
 #include <sys/socket.h>
@@ -163,7 +164,6 @@ static void runPauseCase(bool splice_input, bool close_line)
     ls->tunnel      = adapter;
     ls->line        = line;
     ls->io          = io;
-    ls->buffer_pool = env.pool;
 #endif
     adapter_tstate_t   *ts    = tunnelGetState(adapter);
     local_idle_table_t *table = localIdleTableCreate(env.loop);
@@ -301,7 +301,6 @@ static void runCapacityCase(void)
     ls->tunnel      = adapter;
     ls->line        = line;
     ls->io          = io;
-    ls->buffer_pool = env.pool;
 #endif
     adapter_tstate_t   *ts    = tunnelGetState(adapter);
     local_idle_table_t *table = localIdleTableCreate(env.loop);
@@ -403,7 +402,6 @@ static void runWriteCompletionCase(bool finish_queued)
     ls->tunnel      = adapter;
     ls->line        = line;
     ls->io          = io;
-    ls->buffer_pool = env.pool;
 #endif
     adapter_tstate_t   *ts    = tunnelGetState(adapter);
     local_idle_table_t *table = localIdleTableCreate(env.loop);
@@ -593,7 +591,6 @@ static void progressSetup(tcp_progress_fixture_t *fixture, bool with_resolver)
     ls->tunnel         = adapter;
     ls->line           = fixture->line;
     ls->io             = fixture->io;
-    ls->buffer_pool    = fixture->env.pool;
     fixture->tables[0] = localIdleTableCreate(fixture->env.loop);
     ls->idle_handle = localidletableCreateItem(fixture->tables[0], wioGetID(fixture->io), ls, unexpectedExpiry, 60000);
     twfRequire(ls->idle_handle != NULL, "failed to register write-progress idle item");
@@ -1038,6 +1035,20 @@ static void runLateInitCase(void)
 #endif
 
 #ifdef TCP_PAUSE_TEST_LISTENER
+static char   accepted_log[1024];
+static size_t accepted_log_length;
+
+static void captureAcceptedLog(int level, const char *message, int length)
+{
+    discard level;
+    if (length <= 0)
+        return;
+    const size_t copy = min((size_t) length, sizeof(accepted_log) - accepted_log_length - 1);
+    memoryCopy(accepted_log + accepted_log_length, message, copy);
+    accepted_log_length += copy;
+    accepted_log[accepted_log_length] = '\0';
+}
+
 void __wrap_socketacceptresultDestroy(socket_accept_result_t *result);
 void __wrap_socketacceptresultDestroy(socket_accept_result_t *result)
 {
@@ -1052,13 +1063,20 @@ static void pauseDuringInit(tunnel_t *t, line_t *line)
     tcplistenerTunnelDownStreamPause(adapter, line);
 }
 
-static void runAcceptedInitPauseCase(void)
+static void runAcceptedInitPauseCase(bool ipv6)
 {
-    twfSetCase("TcpListener preserves Pause received during accepted-line Init");
+    twfSetCase(ipv6 ? "TcpListener logs complete accepted IPv6 address and preserves Init Pause"
+                    : "TcpListener preserves Pause received during accepted-line Init");
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, 4096, 64);
-    adapter  = tunnelCreate(NULL, sizeof(adapter_tstate_t), sizeof(adapter_lstate_t));
-    neighbor = tunnelCreate(NULL, 0, 0);
+    logger_t *logger = createNetworkLogger(NULL, false);
+    twfRequire(logger != NULL, "failed to create accepted-log fixture");
+    loggerSetLevel(logger, LOG_LEVEL_DEBUG);
+    loggerSetHandler(logger, captureAcceptedLog);
+    accepted_log_length = 0;
+    accepted_log[0]     = '\0';
+    adapter             = tunnelCreate(NULL, sizeof(adapter_tstate_t), sizeof(adapter_lstate_t));
+    neighbor            = tunnelCreate(NULL, 0, 0);
     twfRequire(adapter != NULL && neighbor != NULL, "failed to create accept fixture");
     tunnelBind(adapter, neighbor);
     neighbor->fnInitU             = pauseDuringInit;
@@ -1073,7 +1091,12 @@ static void runAcceptedInitPauseCase(void)
     chain->supports_splice = WW_HAVE_SPLICE;
     int sockets[2];
     twfRequire(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0, "accept socketpair failed");
-    wio_t             *io   = wioGet(env.loop, sockets[0]);
+    wio_t     *io    = wioGet(env.loop, sockets[0]);
+    sockaddr_u local = {0};
+    twfRequire(sockaddrSetIpAddressPort(&local, ipv6 ? "2001:db8:1122:3344:5566:7788:99aa:bbcc" : "127.0.0.1", 4321) ==
+                   0,
+               "failed to build accepted local address");
+    wioSetLocaladdr(io, &local.sa, sockaddrLen(&local));
     struct sockaddr_in peer = {
         .sin_family = AF_INET, .sin_port = htons(1234), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
     wioSetPeerAddr(io, (struct sockaddr *) &peer, sizeof(peer));
@@ -1088,6 +1111,10 @@ static void runAcceptedInitPauseCase(void)
     expected_line = NULL;
     tcplistenerOnInboundConnected(&event);
     twfRequire(expected_line != NULL, "accepted line did not receive Init");
+    twfRequire(strstr(accepted_log, ipv6 ? "[2001:db8:1122:3344:5566:7788:99aa:bbcc]:1234" : "127.0.0.1:1234") != NULL,
+               "accepted debug log truncated the local address or lost the logical port");
+    twfRequire(memoryCompare(wioGetLocaladdrU(io), &local, sockaddrLen(&local)) == 0,
+               "accepted debug logging changed the socket's local address");
     adapter_lstate_t *ls = lineGetState(expected_line, adapter);
     twfRequire(ls->read_paused && ! (io->events & WW_READ), "accept restarted reads after Init Pause");
     twfRequire(! wioIsSpliceEnabled(io), "Init preference was not applied before starting reads");
@@ -1101,6 +1128,7 @@ static void runAcceptedInitPauseCase(void)
     tunnelDestroy(adapter);
     tunnelDestroy(neighbor);
     twfWorkerEnvTeardown(&env);
+    networkloggerDestroy();
 }
 #endif
 
@@ -1194,7 +1222,8 @@ int main(void)
     runResolverPreEstCase(true);
 #endif
 #ifdef TCP_PAUSE_TEST_LISTENER
-    runAcceptedInitPauseCase();
+    runAcceptedInitPauseCase(false);
+    runAcceptedInitPauseCase(true);
     runFallbackLingerCase(false, false);
     runFallbackLingerCase(true, false);
     runFallbackLingerCase(true, true);

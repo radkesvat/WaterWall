@@ -21,7 +21,6 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
     t->fnPauseU   = &reverseclientTunnelUpStreamPause;
     t->fnResumeU  = &reverseclientTunnelUpStreamResume;
 
-    t->fnInitD    = &reverseclientTunnelDownStreamInit;
     t->fnEstD     = &reverseclientTunnelDownStreamEst;
     t->fnFinD     = &reverseclientTunnelDownStreamFinish;
     t->fnPayloadD = &reverseclientTunnelDownStreamPayload;
@@ -68,8 +67,6 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
         }
         ts->min_unused_cons = (uint32_t) min_unused;
     }
-
-    // ts->min_unused_cons     = 1;
 
     /*
      * The starved-connection table is created during main-thread configuration,

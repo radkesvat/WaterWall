@@ -120,7 +120,6 @@ typedef struct socks5server_lstate_s
     bool pending_read_pause : 1; // Replay only a Pause received before the next side was initialized.
     bool connect_reply_sent : 1;
     bool client_line_ref_held : 1;
-    bool user_handle_recorded : 1;
     bool udp_first_payload_validated : 1;
     bool prev_finished : 1; // prev/downstream side already finished this control line
     bool next_finished : 1; // next/upstream side already finished this control line
@@ -128,12 +127,12 @@ typedef struct socks5server_lstate_s
 
 enum
 {
-    kTunnelStateSize               = sizeof(socks5server_tstate_t),
-    kLineStateSize                 = sizeof(socks5server_lstate_t),
-    kSocks5ServerMaxHandshakeBytes = 4096,
-    kSocks5ServerMaxPendingBytes   = 1024 * 1024,
-    kSocks5ServerMaxPendingBuffers = 1024,
-    kSocks5ServerUdpHeaderMaxLen   = 4 + 1 + UINT8_MAX + 2
+    kTunnelStateSize                   = sizeof(socks5server_tstate_t),
+    kLineStateSize                     = sizeof(socks5server_lstate_t),
+    kSocks5ServerMaxControlPrefixBytes = 3 + 2 * UINT8_MAX, // RFC 1929 username/password request.
+    kSocks5ServerMaxPendingBytes       = 1024 * 1024,
+    kSocks5ServerMaxPendingBuffers     = 1024,
+    kSocks5ServerUdpHeaderMaxLen       = 4 + 1 + UINT8_MAX + 2
 };
 
 WW_EXPORT void         socks5serverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);

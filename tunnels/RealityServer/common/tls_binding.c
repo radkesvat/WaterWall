@@ -399,7 +399,7 @@ bool realityserverTlsParserFeed(realityserver_tls_parser_t *parser, const uint8_
                 return realityserverTlsParserFail(parser);
             }
 
-            if (parser->record_type == kRealityServerTlsApplicationData && ! parser->complete)
+            if (parser->record_type == kRealityServerTlsApplicationData)
             {
                 return realityserverTlsParserFail(parser);
             }
@@ -493,10 +493,7 @@ static bool realityserverTlsRecordBoundaryTrackerFail(realityserver_tls_record_b
                                                       size_t offset, size_t *consumed)
 {
     tracker->failed = true;
-    if (consumed != NULL)
-    {
-        *consumed = offset;
-    }
+    *consumed       = offset;
     return false;
 }
 

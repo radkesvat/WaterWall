@@ -80,11 +80,8 @@ void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->request_rx_index == chunk_count)
     {
-        if (! bufferstreamIsEmpty(&ls->read_stream))
-        {
-            testerserverFail(t, l, "request stream has trailing bytes after expected sequence");
-            return;
-        }
+        // Admission capped the buffered bytes at the exact remaining sequence length.
+        assert(bufferstreamIsEmpty(&ls->read_stream));
 
         ls->response_ready = true;
         testerserverScheduleResponseSend(t, l, ls);

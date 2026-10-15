@@ -29,10 +29,10 @@ void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     ls->receive_bytes += length;
     if (ls->receiving)
         return;
-    line_t *application = ls->kind == kTrojanClientLineKindUdpCarrier ? ls->application_line : l;
+    assert(ls->kind == kTrojanClientLineKindUdpCarrier);
+    line_t *application = ls->application_line;
     lineRef(l);
-    if (application != l)
-        lineRef(application);
+    lineRef(application);
     ls->receiving = true;
     /* A nested call publishes its separately bounded FIFO entry before returning.
      * All admitted batches complete here; Pause never converts ready frames into
@@ -54,7 +54,6 @@ void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     if (trojanclientAssociationAlive(t, l, application))
         ls->receiving = false;
-    if (application != l)
-        lineUnref(application);
+    lineUnref(application);
     lineUnref(l);
 }

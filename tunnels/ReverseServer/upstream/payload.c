@@ -40,16 +40,15 @@ static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *d
     return true;
 }
 
-static bool tryPairWithRemoteUpstreamConnection(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls,
+static void tryPairWithRemoteUpstreamConnection(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls,
                                                 reverseserver_tstate_t *ts, reverseserver_thread_box_t *box)
 {
     for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
     {
         if (wid != lineGetWID(d) && atomicLoad(&ts->threadlocal_pool[wid].u_count) != 0 &&
             pipeToRemoteWorker(t, d, dls, box, ts, wid))
-            return true;
+            return;
     }
-    return false;
 }
 
 static void pairWaitingPeerOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)

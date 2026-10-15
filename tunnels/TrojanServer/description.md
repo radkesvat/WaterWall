@@ -1,5 +1,5 @@
 <!--
-Documentation version: 155
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TrojanServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TrojanServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -347,7 +347,6 @@ Fallback may be selected for:
 - invalid password hex before authentication
 - failed password lookup
 - authentication client not ready
-- an incomplete unauthenticated prefix that grows beyond the maximum initial-buffer limit
 
 Fallback is not used after the password has authenticated. Once the password is accepted, malformed Trojan command,
 address, CRLF, or UDP framing closes the Trojan line instead of replaying authenticated client bytes to the fallback
@@ -488,7 +487,7 @@ Backend-local errors outside decoding retain their local scope.
 | Initial/UDP wire input, including active head and cached headers | 2,105,607 bytes (2 MiB plus an 8,455-byte maximum frame) |
 | Temporary TCP Init/reentry ordering | 2 MiB and 1,024 buffers |
 | Delayed fallback backlog and temporary replay ordering | 2 MiB and 1,024 buffers |
-| Initial header cache | 320 actual bytes; the separate incomplete-initial limit remains 4,096 bytes |
+| Initial header cache | 320 actual bytes |
 | Incoming UDP body | 8,192 bytes |
 | Backend reply body | 65,535 bytes |
 

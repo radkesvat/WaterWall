@@ -74,6 +74,7 @@ static uint32_t g_next_payload_count;
 static line_t  *g_last_prev_line;
 static wid_t    g_last_prev_wid;
 static uint32_t g_prev_payload_count;
+static uint16_t g_last_prev_checksum;
 static uint32_t g_prev_finish_count;
 static line_t  *g_last_prev_finish_line;
 
@@ -91,8 +92,9 @@ static void recordNextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void recordPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
-    g_last_prev_line = l;
-    g_last_prev_wid  = getWID();
+    g_last_prev_line     = l;
+    g_last_prev_wid      = getWID();
+    g_last_prev_checksum = sbufGetLength(buf) >= IP_HLEN ? GET_BE16((const uint8_t *) sbufGetRawPtr(buf) + 10) : 0;
     ++g_prev_payload_count;
     lineReuseBuffer(l, buf);
 }
@@ -119,6 +121,7 @@ static void resetObservations(void)
     g_last_prev_line        = NULL;
     g_last_prev_wid         = kInvalidWID;
     g_prev_payload_count    = 0;
+    g_last_prev_checksum    = 0;
     g_prev_finish_count     = 0;
     g_last_prev_finish_line = NULL;
 }
@@ -518,6 +521,44 @@ static uint16_t sourcePortForFlowWorker(uint32_t src, uint32_t dst, wid_t wanted
 // ---------------------------------------------------------------------------
 // candidates, promotion and multi-line join
 // ---------------------------------------------------------------------------
+
+static void caseOversizedPacketConsumesChecksumRequest(void)
+{
+    twfSetCase("streamtopackets oversized drop consumes checksum request");
+    tosResetProcessApi(true);
+    fixtureSetup();
+    const uint16_t port        = sourcePortForFlowWorker(0x0A000001U, 0xC0000201U, 0);
+    line_t        *stream_line = openStreamLine("10.0.0.1", 0);
+    validateLine(stream_line, port);
+    resetObservations();
+    line_t *packet_line = g_fixture.packet_lines[0];
+
+    sbuf_t *oversized = bufferpoolGetLargeBuffer(lineGetBufferPool(packet_line));
+    sbufSetLength(oversized, kMaxAllowedPacketLength + 1);
+    memoryZero(sbufGetMutablePtr(oversized), sbufGetLength(oversized));
+    lineSetRecalculateChecksum(packet_line, true);
+    streamtopacketsTunnelDownStreamPayload(g_fixture.s2p, packet_line, oversized);
+    const bool pending_after_drop = lineGetRecalculateChecksum(packet_line);
+    twfRequireEqualU32(g_prev_payload_count, 0, "the oversized packet was forwarded");
+
+    sbuf_t *next = bufferpoolGetSmallBuffer(lineGetBufferPool(packet_line));
+    sbufSetLength(next, kTestPacketLength);
+    uint8_t *raw = sbufGetMutablePtr(next);
+    buildIpv4(raw, 0xC0000201U, 443, 0x0A000001U, port);
+    raw[32] = 0x50;
+    PUT_BE16(raw + 10, 0x1234);
+    streamtopacketsTunnelDownStreamPayload(g_fixture.s2p, packet_line, next);
+    pumpAllWorkers();
+    twfRequireEqualU32(g_prev_payload_count, 1, "the next packet was not forwarded");
+    twfRequire(g_last_prev_checksum == 0x1234,
+               "a dropped packet's checksum request modified the next unflagged packet");
+    twfRequire(! pending_after_drop && ! lineGetRecalculateChecksum(packet_line),
+               "an oversized packet retained its checksum request");
+    closeStreamLine(stream_line);
+    fixtureTeardown();
+    twfRequireNoLeakedBuffers();
+    tosRequireNoProcessApiCall();
+}
 
 static void caseCandidateIsNotSelectable(void)
 {
@@ -1364,6 +1405,7 @@ static void caseAnonymousLinesShareOneIdentity(void)
 
 int main(void)
 {
+    caseOversizedPacketConsumesChecksumRequest();
     caseStartupAdmissionIsCheckedForEveryWorker();
     caseDestroyAcceptsAnEmptyRegistry();
     caseDestroyRejectsResidualBorrowedRegistryLine();

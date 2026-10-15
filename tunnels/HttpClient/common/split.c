@@ -144,10 +144,14 @@ static void httpclientSplitCloseFromTransport(tunnel_t *t, line_t *transport_lin
     if (main_line != NULL && lineIsAlive(main_line))
     {
         httpclient_lstate_t *main_ls = lineGetState(main_line, t);
-        httpclientLinestateDestroy(main_ls);
-        if (finish_main)
+        if (main_ls->split_role == kHttpClientSplitRoleMain)
         {
-            tunnelPrevDownStreamFinish(t, main_line);
+            bool notify_main = finish_main && ! main_ls->prev_finished;
+            httpclientLinestateDestroy(main_ls);
+            if (notify_main)
+            {
+                tunnelPrevDownStreamFinish(t, main_line);
+            }
         }
     }
 
@@ -181,26 +185,55 @@ static void httpclientSplitFailMain(tunnel_t *t, line_t *main_line)
         return;
     }
 
-    httpclient_lstate_t *main_ls       = lineGetState(main_line, t);
-    line_t              *upload_line   = main_ls->split_upload_line;
-    line_t              *download_line = main_ls->split_download_line;
+    httpclient_lstate_t *main_ls = lineGetState(main_line, t);
+    if (main_ls->split_role != kHttpClientSplitRoleMain)
+    {
+        return;
+    }
+    line_t *upload_line   = main_ls->split_upload_line;
+    line_t *download_line = main_ls->split_download_line;
 
-    if (upload_line != NULL && lineIsAlive(upload_line))
+    /* A child Finish may synchronously close its sibling and clear main state. */
+    lineRef(main_line);
+    bool upload_ref_held   = upload_line != NULL && lineIsAlive(upload_line);
+    bool download_ref_held = download_line != NULL && lineIsAlive(download_line);
+    if (upload_ref_held)
     {
         lineRef(upload_line);
-        httpclientSplitDestroyCreatedLine(t, upload_line, true);
-        lineUnref(upload_line);
     }
-
-    if (download_line != NULL && lineIsAlive(download_line))
+    if (download_ref_held)
     {
         lineRef(download_line);
-        httpclientSplitDestroyCreatedLine(t, download_line, true);
-        lineUnref(download_line);
     }
 
-    httpclientLinestateDestroy(main_ls);
-    tunnelPrevDownStreamFinish(t, main_line);
+    if (upload_ref_held)
+    {
+        httpclientSplitDestroyCreatedLine(t, upload_line, true);
+    }
+    if (download_ref_held)
+    {
+        httpclientSplitDestroyCreatedLine(t, download_line, true);
+    }
+
+    if (lineIsAlive(main_line) && main_ls->split_role == kHttpClientSplitRoleMain)
+    {
+        bool notify_main = ! main_ls->prev_finished;
+        httpclientLinestateDestroy(main_ls);
+        if (notify_main)
+        {
+            tunnelPrevDownStreamFinish(t, main_line);
+        }
+    }
+
+    if (download_ref_held)
+    {
+        lineUnref(download_line);
+    }
+    if (upload_ref_held)
+    {
+        lineUnref(upload_line);
+    }
+    lineUnref(main_line);
 }
 
 void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l)
@@ -348,15 +381,26 @@ void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l)
     lineRef(l);
     ls->prev_finished = true;
 
+    /* Final bytes can close either transport; retain both before calling out. */
+    bool upload_ref_held   = upload_line != NULL && lineIsAlive(upload_line);
+    bool download_ref_held = download_line != NULL && lineIsAlive(download_line);
+    if (upload_ref_held)
+    {
+        lineRef(upload_line);
+    }
+    if (download_ref_held)
+    {
+        lineRef(download_line);
+    }
+
     // The main line was created by the upstream adapter (e.g. TcpListener), which destroys it
     // as soon as this upstream Finish returns. We therefore cannot keep the main line alive to
     // wait for the response; we must tear the whole trio down now. We must NOT send a Finish
     // back toward main's prev (it just finished us), and we must NOT lineDestroy main (we did
     // not create it) - only drop our own line state so the adapter's lineDestroy stays valid.
 
-    if (upload_line != NULL && lineIsAlive(upload_line))
+    if (upload_ref_held)
     {
-        lineRef(upload_line);
         httpclient_lstate_t *upload_ls = lineGetState(upload_line, t);
         // Upload backpressure is re-homed to main's prev, which has already finished this split trio.
         upload_ls->prev_finished = true;
@@ -365,19 +409,24 @@ void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l)
         {
             httpclientSplitDestroyCreatedLine(t, upload_line, true);
         }
-        lineUnref(upload_line);
     }
 
-    if (download_line != NULL && lineIsAlive(download_line))
+    if (download_ref_held)
     {
-        lineRef(download_line);
         httpclientSplitDestroyCreatedLine(t, download_line, true);
-        lineUnref(download_line);
     }
 
-    if (lineIsAlive(l))
+    if (lineIsAlive(l) && ls->split_role == kHttpClientSplitRoleMain)
     {
         httpclientLinestateDestroy(ls);
+    }
+    if (download_ref_held)
+    {
+        lineUnref(download_line);
+    }
+    if (upload_ref_held)
+    {
+        lineUnref(upload_line);
     }
     lineUnref(l);
 }

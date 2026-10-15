@@ -16,8 +16,7 @@ enum obfuscator_skip_parts_e
 
 typedef struct obfuscatorserver_tstate_s
 {
-    uint32_t method; // Obfuscation method
-    uint32_t skip;   // Headers that remain unobfuscated inside packet payloads
+    uint32_t skip; // Headers that remain unobfuscated inside packet payloads
 
     uint8_t xor_key; // Key for XOR obfuscation, if used
     bool    tls_record_header;

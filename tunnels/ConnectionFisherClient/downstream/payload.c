@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-void connectionfisherclientHandleChildHandshakePayload(tunnel_t *t, line_t *child_l, sbuf_t *buf);
-
 void connectionfisherclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     connectionfisherclient_lstate_t *ls = lineGetState(l, t);

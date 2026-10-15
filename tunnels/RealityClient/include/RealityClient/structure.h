@@ -53,7 +53,6 @@ typedef struct realityclient_lstate_s
     bool                        prev_finished;
     bool                        next_finished;
     bool                        terminal_closing;
-    bool                        wire_alert_sent;
     bool                        plaintext_producer_paused;
     bool                        upstream_send_in_progress;
     /* Early plaintext and reentrant input wait behind this owned active head.

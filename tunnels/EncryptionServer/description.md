@@ -48,6 +48,11 @@ Encrypted payloads are sent as TLS-like application-data records:
 
 The selected algorithm is configured locally on both peers and is not exposed in the record header.
 
+Complete received records are drained as they become available; only an incomplete
+record remains buffered between callbacks. Once its header is complete, the record
+length is checked against `max-frame-size` before waiting for the rest of the body.
+Malformed records or AEAD authentication failure close both directions.
+
 ## Node Metadata
 
 Source-backed metadata:

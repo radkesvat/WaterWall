@@ -8,14 +8,9 @@ void tcpoverudpclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     tcpoverudpclient_lstate_t *ls = lineGetState(l, t);
     assert(ls->k_handle != NULL);
 
-    if (UNLIKELY(! ls->can_downstream))
-    {
-        // re-entrant finish from next side while our UpStreamFinish is flushing the close
-        // frame; destroying the state makes that flush stop and not touch next side again
-        tcpoverudpclientLinestateDestroy(ls);
-        return;
-    }
-
+    // During our close-frame flush, retire state without reflecting Finish to prev.
+    const bool forward = ls->can_downstream;
     tcpoverudpclientLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
+    if (forward)
+        tunnelPrevDownStreamFinish(t, l);
 }

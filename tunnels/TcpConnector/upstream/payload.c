@@ -9,19 +9,18 @@ static void handleQueueOverflow(tunnel_t *t, line_t *l, tcpconnector_tstate_t *t
          bufferbudgetGetUsage(&ls->write_budget).charge,
          (unsigned) kMaxPauseQueueSize);
 
-    if (ls->io != NULL)
+    /* Payload admission established the live socket; budget operations do not call out. */
+    assert(ls->io != NULL);
+    local_idle_item_t *idle_item = ls->idle_handle;
+    ls->idle_handle              = NULL;
+    bool removed                 = localidletableRemoveIdleItem(tcpconnectorGetLineIdleTable(ts, l), idle_item);
+    if (! removed)
     {
-        local_idle_item_t *idle_item = ls->idle_handle;
-        ls->idle_handle              = NULL;
-        bool removed                 = localidletableRemoveIdleItem(tcpconnectorGetLineIdleTable(ts, l), idle_item);
-        if (! removed)
-        {
-            LOGF("TcpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
-            abortProgramNow(1);
-        }
-        weventSetUserData(ls->io, NULL);
-        wioClose(ls->io);
+        LOGF("TcpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
+        abortProgramNow(1);
     }
+    weventSetUserData(ls->io, NULL);
+    wioClose(ls->io);
 
     tcpconnectorLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);

@@ -87,7 +87,6 @@ typedef struct httpserver_lstate_s
     int64_t h1_body_remaining;
 
     bool                      h1_headers_parsed;
-    bool                      h1_request_chunked;
     bool                      h1_request_finished;
     bool                      h1_trailing_bytes_logged;
     bool                      h1_response_headers_sent;
@@ -100,8 +99,6 @@ typedef struct httpserver_lstate_s
     bool fin_sent;
     bool prev_finished;
     bool next_finished;
-
-    bool h2_reject_extra_streams;
 
     bool websocket_active;
     bool websocket_close_sent;

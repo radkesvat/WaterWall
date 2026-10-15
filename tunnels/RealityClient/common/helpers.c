@@ -352,11 +352,6 @@ static bool realityclientCompleteTls13Handoff(tunnel_t *t, line_t *l)
         }
         return false;
     }
-    if (! lineIsAlive(l))
-    {
-        return false;
-    }
-
     ls = lineGetState(l, t);
     if (ls->terminal_closing || ls->phase != kRealityClientPhaseRealityActive || ! ls->handoff_confirm_sent)
     {
@@ -368,13 +363,6 @@ static bool realityclientCompleteTls13Handoff(tunnel_t *t, line_t *l)
     {
         return false;
     }
-    if (! lineIsAlive(l))
-    {
-        return false;
-    }
-
-    ls                                 = lineGetState(l, t);
-    ls->handoff_completion_in_progress = false;
     return realityclientProcessDownstream(t, l, NULL);
 }
 
@@ -438,7 +426,6 @@ bool realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint32_t                       payload_offset                                = 0;
         uint32_t                       payload_len                                   = 0;
         bool                           ack_decrypted =
-            candidate != NULL &&
             realityV2BuildRecordDescriptor(
                 kRealityV2Tls13, &ls->record_profile, kRealityV2RecordKindHandoffAck, &ack_descriptor) &&
             realityV2TryDecryptExpectedRecord(&ack_descriptor,
@@ -455,10 +442,7 @@ bool realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
                                               sizeof(plaintext),
                                               &payload_offset,
                                               &payload_len);
-        if (candidate != NULL)
-        {
-            bufferpoolReuseBuffer(pool, candidate);
-        }
+        bufferpoolReuseBuffer(pool, candidate);
 
         if (ack_decrypted)
         {
@@ -919,7 +903,7 @@ static void realityclientSendFatalAndClose(tunnel_t *t, line_t *l)
     ls->terminal_closing = true;
     ls->phase            = kRealityClientPhaseTerminal;
 
-    if (ls->session_keys_ready && ! ls->next_finished && ! ls->wire_alert_sent)
+    if (ls->session_keys_ready && ! ls->next_finished)
     {
         uint8_t alert_bytes[kRealityV2AlertMessageSize];
         sbuf_t *frame = NULL;
@@ -934,7 +918,6 @@ static void realityclientSendFatalAndClose(tunnel_t *t, line_t *l)
         memoryZero(alert_bytes, sizeof(alert_bytes));
         if (built)
         {
-            ls->wire_alert_sent = true;
             tunnelNextUpStreamPayload(t, l, frame);
             if (! lineIsAlive(l))
             {

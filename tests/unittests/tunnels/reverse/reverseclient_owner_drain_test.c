@@ -279,7 +279,7 @@ static void fixtureSetup(reverseclient_fixture_t *fixture, endpoint_behavior_e b
 
 static void createFirstPair(reverseclient_fixture_t *fixture)
 {
-    reverseclientInitiateConnectOnWorker(fixture->reverse, 0, false);
+    reverseclientInitiateConnectOnWorker(fixture->reverse, 0);
     discard wloopProcessEvents(getWorkerLoop(0), 0);
     require(fixture->upstream_init_count == 1, "ReverseClient did not publish the first pair");
 }

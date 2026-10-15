@@ -51,19 +51,21 @@ void udpovertcpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
         }
         if (splicestreamBodyBytes(ls->read_stream) < length)
             break;
-        sbuf_t *destination = tunnelGetChain(t)->supports_splice ? bufferpoolGetSpliceBuffer(ls->pool) : NULL;
+        sbuf_t *destination =
+            tunnelGetChain(t)->supports_splice ? bufferpoolGetSpliceBuffer(lineGetBufferPool(l)) : NULL;
         sbuf_t *body        = splicestreamMoveFrame(ls->read_stream, destination, length);
-        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, body) || ls->read_stream == NULL)
+        tunnelPrevDownStreamPayload(t, l, body);
+        if (! lineIsAlive(l) || ls->read_stream == NULL)
         {
             lineUnref(l);
             return;
         }
     }
-    /* Drain complete coalesced frames before bounding the incomplete suffix. */
+    /* Draining leaves at most 65,536 bytes in an incomplete frame, including its two-byte header. */
+    assert(splicestreamLength(ls->read_stream) < kHeaderSize + UINT16_MAX);
     if (splicestreamCharge(ls->read_stream) > kReadChargeLimit)
         discard splicestreamCompact(ls->read_stream);
-    if (splicestreamLength(ls->read_stream) > kReadOverflowLimit ||
-        splicestreamCharge(ls->read_stream) > kReadChargeLimit)
+    if (splicestreamCharge(ls->read_stream) > kReadChargeLimit)
     {
         LOGW("UdpOverTcpClient: incomplete frame storage limit exceeded");
         udpovertcpclientCloseLine(t, l);

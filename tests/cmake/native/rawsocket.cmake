@@ -380,6 +380,7 @@ if(TARGET TlsClient)
   target_link_options(tlsclient_line_failure_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
     "-Wl,--wrap=WW_BSSL_BIO_new"
+    "-Wl,--wrap=WW_BSSL_BIO_free"
     "-Wl,--wrap=WW_BSSL_SSL_new"
     "-Wl,--wrap=WW_BSSL_SSL_add_application_settings"
   )
@@ -398,7 +399,8 @@ if(TARGET TlsClient)
       ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include)
     target_link_options(tlsclient_fragment_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
       "-Wl,--wrap=nodemanagerGetConfigNodeByHash" "-Wl,--wrap=nodemanagerCreateTunnelInstance"
-      "-Wl,--wrap=WW_BSSL_SSL_CTX_new")
+      "-Wl,--wrap=WW_BSSL_SSL_CTX_new" "-Wl,--wrap=WW_BSSL_BIO_new" "-Wl,--wrap=WW_BSSL_BIO_write"
+      "-Wl,--wrap=WW_BSSL_X509_STORE_add_cert" "-Wl,--wrap=WW_BSSL_SSL_CTX_add_cert_compression_alg")
     target_link_libraries(tlsclient_fragment_test PRIVATE StreamFragmenter ww ssl crypto)
     add_dependencies(waterwall_unit_tests tlsclient_fragment_test)
     add_waterwall_unit_test(waterwall.tlsclient_fragment_unit tlsclient_fragment_test

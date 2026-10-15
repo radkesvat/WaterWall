@@ -4,11 +4,12 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Checks: Assertion labels include: unused client role reserved storage; queue failure leaked ownership or
- * left flow alive
+ * left flow alive; configured domain lengths preserve the 255-byte boundary without truncation
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.socks5client_resources_unit
  */
+#include "Socks5Client/interface.h"
 #include "Socks5Client/internal.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 
@@ -44,6 +45,35 @@ static void ownerFinish(tunnel_t *t, line_t *l)
     discard t;
     lineDestroy(l);
 }
+
+static void targetAddressLengths(void)
+{
+    const size_t lengths[] = {0, 255, 256, 257};
+    for (size_t i = 0; i < sizeof(lengths) / sizeof(lengths[0]); ++i)
+    {
+        char domain[258];
+        memorySet(domain, 'd', lengths[i]);
+        domain[lengths[i]]      = '\0';
+        node_t node             = nodeSocks5ClientGet();
+        node.node_settings_json = cJSON_CreateObject();
+        cJSON_AddStringToObject(node.node_settings_json, "target-address", domain);
+        cJSON_AddNumberToObject(node.node_settings_json, "port", 80);
+        tunnel_t *client = socks5clientTunnelCreate(&node);
+        twfRequire((client != NULL) == (lengths[i] == 255), "constructor accepted an invalid domain length");
+        if (client != NULL)
+        {
+            const socks5client_tstate_t *ts = tunnelGetState(client);
+            twfRequire(addresscontextIsDomain(&ts->target_addr) && ts->target_addr.domain_len == 255 &&
+                           stringLength(ts->target_addr.domain) == 255 &&
+                           memoryEqual(ts->target_addr.domain, domain, 255),
+                       "constructor truncated the maximum-length domain");
+            socks5clientTunnelDestroy(client, wwLifecycleStartupRollback());
+        }
+        cJSON_Delete(node.node_settings_json);
+        memoryFree(node.type);
+    }
+}
+
 int main(int argc, char **argv)
 {
     bool           measure_only = argc > 1 && stringCompare(argv[1], "measure") == 0;
@@ -55,10 +85,12 @@ int main(int argc, char **argv)
                                    kRamProfileL2Memory};
     for (size_t profile = 0; profile < sizeof(profiles) / sizeof(profiles[0]); ++profile)
     {
-        twfSetCase("client role allocations and empty destruction");
         GSTATE.ram_profile = profiles[profile];
         twf_worker_env_t env;
         twfWorkerEnvSetup(&env, 8192, 300);
+        if (profile == 0 && ! measure_only)
+            TEST_RUN_CASE(targetAddressLengths);
+        twfSetCase("client role allocations and empty destruction");
         tunnel_t *client = tunnelCreate(NULL, sizeof(socks5client_tstate_t), sizeof(socks5client_lstate_t));
         tunnel_t *prev = tunnelCreate(NULL, 0, 0), *next = tunnelCreate(NULL, 0, 0);
         tunnelBind(prev, client);

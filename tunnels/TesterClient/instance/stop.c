@@ -43,10 +43,6 @@ void testerclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_c
             abortProgramNow(1);
         }
 
-        assert(currentThreadIsEventWorkerWID(wid));
-        assert(lineGetWID(packet_line) == wid);
-        assert(tunnelchainIsWorkerPacketLine(chain, packet_line));
-
         /* LinestateDestroy also clears terminal scalar state.  A null stream
          * pool means there are no pooled buffers to recycle, not that the
          * packet line state is already zero. */

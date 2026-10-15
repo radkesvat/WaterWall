@@ -222,11 +222,8 @@ void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->response_rx_index == chunk_count)
     {
-        if (! bufferstreamIsEmpty(&ls->read_stream))
-        {
-            testerclientFail(t, l, "response stream has trailing bytes after expected sequence");
-            return;
-        }
+        // Admission bounded the buffered bytes by exactly the chunks consumed above.
+        assert(bufferstreamIsEmpty(&ls->read_stream));
 
         ls->response_complete = true;
         testerclientMarkWorkerComplete(t, l);

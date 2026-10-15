@@ -386,8 +386,6 @@ bool ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings);
 void ptcFakeDnsDestroy(ptc_tstate_t *ts);
 /* True when fake DNS is enabled and this is the address it answers on. */
 bool ptcFakeDnsOwnsDestination(tunnel_t *t, const ip4_addr_p_t *dest);
-bool ptcFakeDnsShouldDropFragment(const ptc_fake_dns_t *dns, const ip4_addr_p_t *dest, uint8_t protocol,
-                                  bool is_fragment);
 
 /*
  * Optional integer settings are validated, not defaulted on error: only an
@@ -408,11 +406,7 @@ bool  ptcFakeDnsPublishResponseLocked(tunnel_t *t, line_t *packet_line, sbuf_t *
                                       const ip4_addr_t *destination);
 bool  ptcFakeDnsApplyMappedDestination(tunnel_t *t, address_context_t *dest_ctx, const ip_addr_t *ip, uint16_t port,
                                        uint8_t protocol);
-err_t ptcEnsureTcpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip,
-                           uint16_t dest_port);
-err_t ptcEnsureUdpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip,
-                           uint16_t dest_port);
-interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t packet_wid, const ip4_addr_t *dest_ip);
+interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t packet_wid);
 void                       ptcDestroyWorkerRoute(tunnel_t *t, wid_t wid);
 void                       ptcDestroyLwipResources(tunnel_t *t);
 
@@ -468,7 +462,7 @@ bool  ptcPendingBytesWouldOverflow(const ptc_tstate_t *tstate, const ptc_lstate_
 err_t ptcTcpSendCompleteCallback(void *arg, struct tcp_pcb *tpcb, u16_t len);
 err_t ptcTcpPollCallback(void *arg, struct tcp_pcb *tpcb);
 err_t ptcTcpSendFinLocked(struct tcp_pcb *pcb);
-ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *ls, bool *out_aborted);
+ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *ls);
 void                         ptcTcpDrainDestroyRoute(interface_route_context_t *route);
 
 /* Shared node allowance; never hold this mutex across stack work or allocation. */

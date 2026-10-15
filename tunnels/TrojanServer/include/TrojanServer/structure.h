@@ -135,7 +135,6 @@ typedef struct trojanserver_lstate_s
     bool short_password : 1;
     bool frame_ready : 1;
     bool frame_selected : 1;
-    bool user_handle_recorded : 1;
     bool fallback_delay_scheduled : 1;
     bool fallback_close_draining : 1;
     bool fallback_branch_finished_during_drain : 1;
@@ -182,7 +181,6 @@ enum
     kTrojanServerCrlfLen          = 2,
     kTrojanServerUdpMaxPacket     = 8192,
     kTrojanServerBufferQueueCap   = 8,
-    kTrojanServerMaxInitialBytes  = 4096,
     kTrojanServerMaxPendingBytes  = 2 * 1024 * 1024,
     kTrojanServerUdpHeaderMaxLen  = 1 + 1 + UINT8_MAX + 2 + 2 + 2,
     kTrojanServerMaxQueuedBuffers = 1024,

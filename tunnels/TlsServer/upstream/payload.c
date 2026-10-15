@@ -44,10 +44,7 @@ static void tlsserverLogHandshakeComplete(line_t *l, tlsserver_lstate_t *ls)
 static bool tlsserverPendingOutputStartsServerHello(tlsserver_lstate_t *ls)
 {
     BIO *wbio = SSL_get_wbio(ls->ssl);
-    if (wbio == NULL)
-    {
-        return false;
-    }
+    assert(wbio != NULL);
 
     uint8_t record[6];
     if (tlsbufferbioPeek(wbio, record, sizeof(record)) != sizeof(record))
@@ -272,11 +269,6 @@ static bool tlsserverReadDecryptedData(tunnel_t *t, line_t *l, tlsserver_lstate_
             {
                 LOGD("TlsServer: worker %u received TLS close_notify from peer", (unsigned int) lineGetWID(l));
             }
-            if (ls->upstream_finished)
-            {
-                return true;
-            }
-
             ls->upstream_finished = true;
             if (ls->verbose)
             {
@@ -304,12 +296,6 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->fallback_mode)
     {
-        tunnel_t *fallback = ts->fallback_tunnel;
-        if (UNLIKELY(fallback == NULL || ls->fallback_close_draining))
-        {
-            lineReuseBuffer(l, buf);
-            return;
-        }
         discard tlsserverSendFallbackPayload(t, l, ls, buf);
         return;
     }

@@ -26,16 +26,6 @@ uint32_t udpconnectorSelectWeightedDestinationIndex(const udpconnector_tstate_t 
     return ts->destinations_count - 1;
 }
 
-const udpconnector_destination_t *udpconnectorSelectWeightedDestination(const udpconnector_tstate_t *ts)
-{
-    if (ts->destinations_count == 0)
-    {
-        return NULL;
-    }
-
-    return &ts->destinations[udpconnectorSelectWeightedDestinationIndex(ts)];
-}
-
 void udpconnectorSetupDestinationAddress(const dynamic_value_t   *dest_addr_selected,
                                          const address_context_t *constant_dest_addr, address_context_t *dest_ctx,
                                          const address_context_t *original_dest_ctx, address_context_t *src_ctx)
@@ -95,18 +85,17 @@ bool udpconnectorApplyResolvedAddress(address_context_t *dest_ctx, const dns_res
 static void udpconnectorSeedPacketDestinationCache(udpconnector_tstate_t *ts, udpconnector_lstate_t *ls,
                                                    const address_context_t *dest_ctx)
 {
-    if (ts->balance_mode != kUdpConnectorBalanceModePacket || ls->packet_destinations == NULL ||
-        ls->packet_initial_destination_index >= ls->packet_destinations_count)
+    if (ts->balance_mode != kUdpConnectorBalanceModePacket)
     {
         return;
     }
 
+    assert(ls->packet_destinations != NULL);
+    assert(ls->packet_initial_destination_index < ls->packet_destinations_count);
     udpconnector_packet_destination_t *cache = &ls->packet_destinations[ls->packet_initial_destination_index];
-    if (! cache->has_context)
-    {
-        addresscontextCopy(&cache->dest_ctx, dest_ctx);
-        cache->has_context = true;
-    }
+    assert(! cache->has_context);
+    addresscontextCopy(&cache->dest_ctx, dest_ctx);
+    cache->has_context = true;
 }
 
 bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l, void *user_lstate)
@@ -271,13 +260,11 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     ls->write_paused = true;
 
     lineRef(l);
-    bool alive = true;
-    if (! ls->established)
-    {
-        ls->established = true;
-        tunnelPrevDownStreamEst(t, l);
-        alive = lineIsAlive(l);
-    }
+    // Binding setup only arms socket events; this is the first neighbor callback.
+    assert(! ls->established);
+    ls->established = true;
+    tunnelPrevDownStreamEst(t, l);
+    bool alive = lineIsAlive(l);
 
     if (alive)
     {
@@ -296,7 +283,6 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     {
         ls->queue_pause_sent = false;
         tunnelPrevDownStreamResume(t, l);
-        alive = lineIsAlive(l);
     }
     lineUnref(l);
 

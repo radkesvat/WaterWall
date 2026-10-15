@@ -176,7 +176,6 @@ static void initializeMainLineConnection(tunnel_t *t, line_t *main, sbuf_t *init
     discard attached;
     ls->startup_active       = true;
     ls->startup_initializing = true;
-    ls->next_started         = true;
     tunnelNextUpStreamInit(t, main);
     if (halfduplexserverPairAlive(t, main, upload, download))
     {
@@ -188,22 +187,21 @@ static void initializeMainLineConnection(tunnel_t *t, line_t *main, sbuf_t *init
     lineUnref(main);
 }
 
-static bool handlePipeToWorker(tunnel_t *t, line_t *l, sbuf_t *buf, wid_t target_wid, halfduplexserver_lstate_t *ls)
+static void handlePipeToWorker(tunnel_t *t, line_t *l, sbuf_t *buf, wid_t target_wid, halfduplexserver_lstate_t *ls)
 {
     halfduplexserverLinestateDestroy(ls);
     if (pipeTo(t, l, target_wid))
     {
         tunnel_t *prev_tun = t->prev;
         tunnelUpStreamPayload(prev_tun, l, buf);
-        return true;
+        return;
     }
 
     lineReuseBuffer(l, buf);
     tunnelPrevDownStreamFinish(t, l);
-    return true;
 }
 
-static bool handleUploadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_lstate_t *ls,
+static void handleUploadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_lstate_t *ls,
                                         halfduplexserver_lstate_t *download_line_ls)
 {
     line_t *download_line = download_line_ls->download_line;
@@ -216,20 +214,18 @@ static bool handleUploadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, hal
     line_t *main_line = createAndInitializeMainLine(t, l, download_line, ls, download_line_ls);
 
     initializeMainLineConnection(t, main_line, buf);
-    return true;
 }
 
-static bool handleDuplicateUploadConnection(tunnel_t *t, line_t *l, halfduplexserver_lstate_t *ls)
+static void handleDuplicateUploadConnection(tunnel_t *t, line_t *l, halfduplexserver_lstate_t *ls)
 {
     LOGW("HalfDuplexServer: duplicate upload connection closed");
     lineReuseBuffer(l, ls->buffering);
     ls->buffering = NULL;
     halfduplexserverLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
-    return true;
 }
 
-static bool handleDownloadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_lstate_t *ls,
+static void handleDownloadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_lstate_t *ls,
                                           halfduplexserver_lstate_t *upload_line_ls)
 {
     lineReuseBuffer(l, buf);
@@ -247,25 +243,23 @@ static bool handleDownloadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, h
     upload_line_ls->buffering = NULL;
 
     initializeMainLineConnection(t, main_line, buf_upline);
-    return true;
 }
 
-static bool handleDuplicateDownloadConnection(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_lstate_t *ls)
+static void handleDuplicateDownloadConnection(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_lstate_t *ls)
 {
     lineReuseBuffer(l, buf);
     LOGW("HalfDuplexServer: duplicate download connection closed");
     halfduplexserverLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
-    return true;
 }
 
-static bool handleUnknownState(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_tstate_t *ts,
+static void handleUnknownState(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_tstate_t *ts,
                                halfduplexserver_lstate_t *ls)
 {
     buf = handleBuffering(l, ls, buf);
     if (! buf)
     {
-        return true;
+        return;
     }
 
     bool                 is_upload;
@@ -275,7 +269,7 @@ static bool handleUnknownState(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexse
         lineReuseBuffer(l, buf);
         halfduplexserverLinestateDestroy(ls);
         tunnelPrevDownStreamFinish(t, l);
-        return true;
+        return;
     }
 
     const halfduplexserver_pending_decision_t decision = pendingClaim(ts, ls, pair_id, is_upload, buf);
@@ -290,41 +284,43 @@ static bool handleUnknownState(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexse
         {
             checkWaitingLimit(t, l, ts, ls);
         }
-        return true;
+        return;
 
     case kHalfDuplexServerPendingDuplicate:
         if (is_upload)
         {
-            return handleDuplicateUploadConnection(t, l, ls);
+            handleDuplicateUploadConnection(t, l, ls);
         }
-        return handleDuplicateDownloadConnection(t, l, buf, ls);
+        else
+        {
+            handleDuplicateDownloadConnection(t, l, buf, ls);
+        }
+        return;
 
     case kHalfDuplexServerPendingMatchedRemote:
-        return handlePipeToWorker(t, l, buf, decision.target_wid, ls);
+        handlePipeToWorker(t, l, buf, decision.target_wid, ls);
+        return;
 
     case kHalfDuplexServerPendingMatchedLocal:
         if (is_upload)
         {
-            return handleUploadConnectionFound(t, l, buf, ls, decision.peer);
+            handleUploadConnectionFound(t, l, buf, ls, decision.peer);
         }
-        return handleDownloadConnectionFound(t, l, buf, ls, decision.peer);
+        else
+        {
+            handleDownloadConnectionFound(t, l, buf, ls, decision.peer);
+        }
+        return;
     }
 
     assert(false);
-    return true;
 }
 
 static void handleUploadInTable(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_tstate_t *ts,
                                 halfduplexserver_lstate_t *ls)
 {
-    if (ls->buffering)
-    {
-        ls->buffering = sbufAppendMerge(lineGetBufferPool(l), ls->buffering, buf);
-    }
-    else
-    {
-        ls->buffering = buf;
-    }
+    assert(ls->buffering != NULL);
+    ls->buffering = sbufAppendMerge(lineGetBufferPool(l), ls->buffering, buf);
 
     checkWaitingLimit(t, l, ts, ls);
 }
@@ -358,14 +354,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (ls->buffering != NULL &&
             (total > sbufGetMaximumWriteableSize(ls->buffering) || sbufGetLeftCapacity(ls->buffering) < padding))
         {
-            sbuf_t *merged = bufferpoolTryGetBestFit(pool, total, padding);
-            if (merged == NULL)
-                goto setup_failure;
-            if (total > sbufGetMaximumWriteableSize(merged))
-            {
-                bufferpoolReuseBuffer(pool, merged);
-                goto setup_failure;
-            }
+            sbuf_t *merged = bufferpoolGetBestFit(pool, (uint32_t) total, padding);
             sbufConcatNoCheck(merged, ls->buffering);
             bufferpoolReuseBuffer(pool, ls->buffering);
             ls->buffering = merged;

@@ -5,6 +5,10 @@ if(TARGET PacketsToStream)
     ${CMAKE_SOURCE_DIR}/tunnels/PacketsToStream/include
   )
   target_link_libraries(packetstostream_parser_test PRIVATE PacketsToStream ww)
+  if(TARGET StreamToPackets)
+    target_link_libraries(packetstostream_parser_test PRIVATE StreamToPackets)
+    target_compile_definitions(packetstostream_parser_test PRIVATE TEST_STREAM_TO_PACKETS=1)
+  endif()
   add_dependencies(waterwall_unit_tests packetstostream_parser_test)
 
   add_waterwall_unit_test(waterwall.packetstostream_parser_unit packetstostream_parser_test "unit;tunnels;packetstostream")

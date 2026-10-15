@@ -207,10 +207,10 @@ static inline void bgpEncode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *in
     const size_t   queued     = bufferqueueGetBufCount(&s->output);
     const bool     direct     = frames == 1 && queued == 0 && ! s->encode_pumping;
     if (wire_bytes > kBgpPendingBytes - bufferqueueGetBufLen(&s->output) ||
-        (! direct && (frames > kBgpOutputEntries - queued || ! bufferqueueReserveExtra(&s->output, (size_t) frames))))
+        (! direct && frames > kBgpOutputEntries - queued))
     {
         bufferpoolReuseBuffer(pool, input);
-        bgpClose(t, l, s, "encoded byte/entry limit or queue reservation failed");
+        bgpClose(t, l, s, "encoded byte/entry limit exceeded");
         return;
     }
     if (direct)
@@ -232,6 +232,11 @@ static inline void bgpEncode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *in
         lineUnref(l);
         return;
     }
+    // The admitted output count is at most 1,024, so deque geometry is representable.
+    const bool reserved = bufferqueueReserveExtra(&s->output, (size_t) frames);
+    assert(reserved);
+    discard reserved;
+
     /* Reservation and byte/entry admission precede consumption. No callbacks
      * observe this batch until all its independently owned frames are queued. */
     for (uint64_t i = 0; i < frames; ++i)

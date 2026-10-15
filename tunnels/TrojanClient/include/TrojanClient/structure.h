@@ -82,8 +82,6 @@ typedef struct trojanclient_lstate_s
     trojanclient_phase_t     phase;
 
     /* Worker-owned transport, dispatch and parser flags share storage. */
-    bool next_started : 1;
-    bool next_established : 1;
     bool request_sent : 1;
     bool est_notifying : 1;
     bool carrier_paused : 1; // UDP carrier-head permission for the independent idle-header producer.

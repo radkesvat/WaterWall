@@ -4,7 +4,7 @@
 
 tunnel_t *bridgeTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(bridge_tstate_t), sizeof(bridge_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(bridge_tstate_t), 0);
     if (! t)
     {
         return NULL;
@@ -56,8 +56,7 @@ tunnel_t *bridgeTunnelCreate(node_t *node)
     }
     memoryFree(pair_node_name);
 
-    state->pair_node   = pair_node;
-    state->mode_upside = ! nodeHasNext(node);
+    state->pair_node = pair_node;
 
     return t;
 }

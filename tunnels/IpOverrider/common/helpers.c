@@ -26,7 +26,6 @@ static bool ipoverriderShouldApply(ipoverrider_tstate_t *state, line_t *line, co
     }
 
     const wid_t wid = lineGetWID(line);
-    assert(state->worker_gates != NULL && wid < state->worker_gate_count);
     if (UNLIKELY(state->worker_gates == NULL || wid >= state->worker_gate_count))
     {
         LOGF("IpOverrider: percentage gate accessed with invalid worker %d", workerWIDForLog(wid));
@@ -49,15 +48,8 @@ static uint32_t ipoverriderSelectIpv4(ipoverrider_rule_t *rule)
 
 static bool ipoverriderApplyRule(ipoverrider_rule_t *rule, sbuf_t *buf, ipv4_checksum_address_field_e field)
 {
-    if (! rule->enabled)
-    {
-        return true;
-    }
-
-    if (UNLIKELY(sbufGetLength(buf) < sizeof(struct ip_hdr)))
-    {
-        return false;
-    }
+    // ShouldApply established this bound; address rewrites never resize the buffer.
+    assert(sbufGetLength(buf) >= sizeof(struct ip_hdr));
 
     const struct ip_hdr *ipheader = (const struct ip_hdr *) sbufGetRawPtr(buf);
 

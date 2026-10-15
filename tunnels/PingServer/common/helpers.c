@@ -98,7 +98,6 @@ void pingserverHandleDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    lineSetRecalculateChecksum(l, false);
     tunnelPrevDownStreamPayload(t, l, buf);
 }
 
@@ -153,36 +152,24 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (state->send_replies)
     {
-        /* Clone before stripping the original; replies must echo every ICMP byte exactly. */
+        /* The validated request's exact clone satisfies the reply builder and preserves every ICMP byte. */
         sbuf_t *reply = sbufDuplicateByPool(lineGetBufferPool(l), buf);
-        if (! pingwireBuildEchoReply(
-                reply,
-                &state->wire,
-                &envelope,
-                pingwireReplyIdGeneratorNext(&state->reply_ids, wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l))))))
-        {
-            lineReuseBuffer(l, reply);
-            reply = NULL;
-            if (atomicLogRateLimiterShouldLog(&state->drop_log_limiter, kPingServerDropLogIntervalMs))
-            {
-                LOGE("PingServer: could not build an Echo Reply clone; delivering the request without an "
-                     "acknowledgement (request-bytes=%u)",
-                     (unsigned int) sbufGetLength(buf));
-            }
-        }
+        const bool reply_built = pingwireBuildEchoReply(
+            reply,
+            &state->wire,
+            &envelope,
+            pingwireReplyIdGeneratorNext(&state->reply_ids, wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)))));
+        assert(reply_built);
+        discard reply_built;
 
-        if (reply != NULL)
+        lineRef(l);
+        tunnelPrevDownStreamPayload(t, l, reply);
+        if (UNLIKELY(! lineIsAlive(l)))
         {
-            lineSetRecalculateChecksum(l, false);
-            lineRef(l);
-            tunnelPrevDownStreamPayload(t, l, reply);
-            if (UNLIKELY(! lineIsAlive(l)))
-            {
-                LOGF("PingServer: worker packet line died during generated Echo Reply callback");
-                abortProgramNow(1);
-            }
-            lineUnref(l);
+            LOGF("PingServer: worker packet line died during generated Echo Reply callback");
+            abortProgramNow(1);
         }
+        lineUnref(l);
     }
 
     if (replay == kPingWireReplayDuplicate)
@@ -191,11 +178,10 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (! pingwireStripEchoRequest(buf, &envelope))
-    {
-        pingserverDrop(t, l, buf, "incoming", "failed to strip the validated IPv4/ICMP Echo headers");
-        return;
-    }
+    /* Only the reply clone crossed a callback; the original request and its envelope are unchanged. */
+    const bool stripped = pingwireStripEchoRequest(buf, &envelope);
+    assert(stripped);
+    discard stripped;
 
     lineSetRecalculateChecksum(l, false);
     tunnelNextUpStreamPayload(t, l, buf);

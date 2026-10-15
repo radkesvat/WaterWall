@@ -8,14 +8,8 @@
 // tagged with a reserved experimentation protocol number and a constant payload fill byte.
 static sbuf_t *packetstostreamCreateHeartbeatPacket(line_t *packet_line, uint8_t fill_byte)
 {
-    sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(packet_line));
-
-    if (UNLIKELY(sbufGetMaximumWriteableSize(buf) < kHeartbeatPacketSize))
-    {
-        LOGW("PacketsToStream: dropping sensitive-mode control frame because the buffer is too small");
-        lineReuseBuffer(packet_line, buf);
-        return NULL;
-    }
+    buffer_pool_t *pool = lineGetBufferPool(packet_line);
+    sbuf_t        *buf  = bufferpoolGetBestFit(pool, kHeartbeatPacketSize, bufferpoolGetLargeBufferPadding(pool));
 
     sbufSetLength(buf, kHeartbeatPacketSize);
 
@@ -89,10 +83,6 @@ static bool packetstostreamSendSensitivePing(tunnel_t *t, line_t *packet_line, p
     packetstostream_tstate_t *ts  = tunnelGetState(t);
     const uint64_t            now = wloopNowMS(getWorkerLoop(lineGetWID(packet_line)));
     sbuf_t                   *buf = packetstostreamCreateHeartbeatPacket(packet_line, kSensitivePingByte);
-    if (buf == NULL)
-    {
-        return true;
-    }
 
     if (! packetstostreamArmTimeoutTimer(t, lineGetWID(packet_line)))
     {
@@ -229,7 +219,7 @@ static bool packetstostreamValidateIpv4PacketHeader(packetstostream_packet_valid
     }
 
     uint16_t header_len = IPH_HL_BYTES(iphdr);
-    if (header_len < IP_HLEN || header_len > IP_HLEN_MAX)
+    if (header_len < IP_HLEN)
     {
         return packetstostreamDropInvalidPacket(level, direction, "invalid IPv4 header length");
     }
@@ -424,18 +414,6 @@ bool packetstostreamValidatePacket(packetstostream_packet_validation_level_t lev
     }
 }
 
-void packetstostreamRecalculateChecksumIfRequested(line_t *l, sbuf_t *buf)
-{
-    if (LIKELY(! lineGetRecalculateChecksum(l)))
-    {
-        return;
-    }
-
-    calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
-
-    lineSetRecalculateChecksum(l, false);
-}
-
 // Light, never-trusting structural check on a candidate IPv4 header (at least IP_HLEN bytes).
 // This intentionally stays cheaper than the "loose" validation level: it only proves the head
 // could be an IPv4 packet whose declared size is internally consistent and within the pipeline
@@ -494,14 +472,8 @@ bool packetstostreamIsForwardableIpv4Packet(const sbuf_t *packet)
         return false;
     }
 
-    const struct ip_hdr *iphdr = (const struct ip_hdr *) sbufGetRawPtr(packet);
-
-    if (UNLIKELY(IPH_V(iphdr) != 4))
-    {
-        return false;
-    }
-
-    return LIKELY(lwip_ntohs(IPH_LEN(iphdr)) == (uint16_t) len);
+    uint16_t total_len;
+    return LIKELY(packetstostreamIpv4HeaderLooksValid(sbufGetRawPtr(packet), &total_len) && total_len == len);
 }
 
 // Extracts exactly one IPv4 packet from the stream using the IPv4 total-length field as the frame
@@ -845,7 +817,7 @@ void packetstostreamTimeoutTimerCallback(wtimer_t *timer)
          * Re-arm the same one-shot timer instead of clearing the slot, otherwise
          * awaiting_pong could remain stuck forever after a lost ping.
          */
-        if (! wtimerReset(timer, (remaining_ms == 0) ? 1U : remaining_ms))
+        if (! wtimerReset(timer, remaining_ms))
         {
             ts->worker_timeout_timers[wid] = NULL;
             weventSetUserData(timer, NULL);

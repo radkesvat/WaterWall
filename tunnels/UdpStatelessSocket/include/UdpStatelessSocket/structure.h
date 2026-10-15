@@ -47,7 +47,6 @@ typedef struct udpstatelesssocket_tstate_s
     bool     verbose;
 
     wid_t io_wid; // the worker id that created the io
-    bool  is_chain_end; // Always false: tail placement and callbacks are disabled by design.
 
     bool source_ip_configured;
 
@@ -80,13 +79,6 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t);
 void udpstatelesssocketTunnelOnStart(tunnel_t *t);
 void udpstatelesssocketTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
-void udpstatelesssocketTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void udpstatelesssocketTunnelUpStreamEst(tunnel_t *t, line_t *l);
-void udpstatelesssocketTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-void udpstatelesssocketTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void udpstatelesssocketTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void udpstatelesssocketTunnelUpStreamResume(tunnel_t *t, line_t *l);
-
 void udpstatelesssocketTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void udpstatelesssocketTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void udpstatelesssocketTunnelDownStreamFinish(tunnel_t *t, line_t *l);
@@ -99,10 +91,10 @@ void udpstatelesssocketLinestateInitialize(udpstatelesssocket_lstate_t *ls, line
                                            const sockaddr_u *local_addr);
 void udpstatelesssocketLinestateDestroy(udpstatelesssocket_lstate_t *ls);
 
-bool                udpstatelesssocketLinestateOwnsLine(tunnel_t *t, line_t *l, udpstatelesssocket_lstate_t *ls);
+bool                udpstatelesssocketLinestateOwnsLine(const udpstatelesssocket_lstate_t *ls);
 local_idle_table_t *udpstatelesssocketGetWorkerIdleTable(udpstatelesssocket_tstate_t *ts);
 local_idle_table_t *udpstatelesssocketGetLineIdleTable(udpstatelesssocket_tstate_t *ts, line_t *l);
-void                udpstatelesssocketCloseOwnedLineFromAdjacent(tunnel_t *t, line_t *l, bool is_chain_end);
+void                udpstatelesssocketCloseOwnedLineFromAdjacent(tunnel_t *t, line_t *l);
 void                udpstatelesssocketReleaseWrittenBuffer(sbuf_t *buf, bool detached_from_origin_worker);
 void                udpstatelesssocketDispatchToPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u *peer_addr);
 void                udpstatelesssocketOnSocketClose(wio_t *io);

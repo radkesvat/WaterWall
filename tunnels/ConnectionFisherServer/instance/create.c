@@ -4,7 +4,7 @@
 
 tunnel_t *connectionfisherserverTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(connectionfisherserver_tstate_t), sizeof(connectionfisherserver_lstate_t));
+    tunnel_t *t = tunnelCreate(node, 0, sizeof(connectionfisherserver_lstate_t));
     if (! t)
     {
         return NULL;

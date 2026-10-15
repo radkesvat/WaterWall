@@ -4,36 +4,6 @@
 
 #include "loggers/network_logger.h"
 
-static bool trojanclientAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
-{
-    cJSON *strategy_json = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
-    if (strategy_json == NULL)
-    {
-        return false;
-    }
-
-    strategy_json->valueint    = (int) strategy;
-    strategy_json->valuedouble = (double) strategy_json->valueint;
-    return true;
-}
-
-static cJSON *trojanclientCreateDomainResolverSettings(enum domain_strategy strategy)
-{
-    cJSON *settings = cJSON_CreateObject();
-    if (settings == NULL)
-    {
-        return NULL;
-    }
-
-    if (! trojanclientAddDomainStrategySetting(settings, strategy))
-    {
-        cJSON_Delete(settings);
-        return NULL;
-    }
-
-    return settings;
-}
-
 static bool trojanclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     trojanclient_tstate_t *ts = tunnelGetState(t);
@@ -43,12 +13,8 @@ static bool trojanclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return true;
     }
 
-    ts->domain_resolver_settings = trojanclientCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
-    if (ts->domain_resolver_settings == NULL)
-    {
-        LOGF("TrojanClient: failed to create internal DomainResolver settings");
-        return false;
-    }
+    ts->domain_resolver_settings = cJSON_CreateObject();
+    cJSON_AddNumberToObject(ts->domain_resolver_settings, "strategy", (double) ts->domain_strategy);
 
     if (! nodeConfigureChild(&ts->domain_resolver_node,
                              nodeDomainResolverGet(),

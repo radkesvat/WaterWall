@@ -8,7 +8,7 @@ void connectionfisherserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
 
     if (ls->phase == kConnectionFisherServerPhaseClosing)
         return;
-    if (! ls->next_init_sent)
+    if (ls->phase != kConnectionFisherServerPhaseEstablished)
     {
         ls->pending_next_pause = true;
         return;

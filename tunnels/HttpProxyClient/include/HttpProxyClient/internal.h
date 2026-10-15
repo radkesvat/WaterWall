@@ -4,6 +4,7 @@
 
 bool     hpcParseSettings(hpc_tstate_t *ts, node_t *node);
 bool     hpcBuildRequest(tunnel_t *t, line_t *l);
+/* Internal request, framing and body buffers fit within kHpcDeliveryLimit. */
 sbuf_t  *hpcBuffer(line_t *l, size_t n);
 uint64_t hpcNow(line_t *l);
 bool     hpcAllowed(tunnel_t *t, line_t *l);

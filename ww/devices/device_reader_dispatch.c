@@ -20,10 +20,6 @@ bool deviceReaderSessionEnableWorkerQueue(device_reader_session_t *session)
     const uint16_t count = getWorkersCount();
     assert(count > 0);
     device_reader_worker_queue_t *queues = memoryAllocateZero((size_t) count * sizeof(*queues));
-    if (queues == NULL)
-    {
-        return false;
-    }
     for (uint16_t i = 0; i < count; ++i)
     {
         if (! mutexTryInit(&queues[i].lock))

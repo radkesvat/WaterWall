@@ -8,7 +8,6 @@ enum
 };
 
 static atomic_log_rate_limiter_t rx_pool_exhaustion_log;
-static atomic_log_rate_limiter_t fake_dns_fragment_log;
 
 #ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
 static ptc_fragment_admission_test_hooks_t ptc_fragment_admission_test_hooks;
@@ -305,54 +304,16 @@ void ptcFragmentAdmissionTestSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
 }
 #endif
 
-static bool ptcValidateIpv4Packet(const sbuf_t *buf, const struct ip_hdr *iphdr)
-{
-    const uint32_t packet_len = sbufGetLength(buf);
-
-    if (UNLIKELY(packet_len < sizeof(struct ip_hdr) || IPH_V(iphdr) != 4))
-    {
-        return false;
-    }
-
-    const uint32_t header_len = IPH_HL_BYTES(iphdr);
-    if (UNLIKELY(header_len < sizeof(struct ip_hdr) || header_len > packet_len))
-    {
-        return false;
-    }
-
-    const uint32_t total_len = lwip_ntohs(IPH_LEN(iphdr));
-    if (UNLIKELY(total_len < header_len || total_len > packet_len))
-    {
-        return false;
-    }
-
-    return true;
-}
-
 static bool ptcPacketHasTransportHeader(const sbuf_t *buf, const struct ip_hdr *iphdr, uint32_t min_transport_len)
 {
     const uint32_t header_len = IPH_HL_BYTES(iphdr);
     return sbufGetLength(buf) >= header_len + min_transport_len;
 }
 
-/* One accepted IPv4 packet: fake DNS, routing, listener setup, then the stack. */
+/* The entry callback already validated one complete, unfragmented IPv4 datagram. */
 static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     struct ip_hdr *iphdr = (struct ip_hdr *) sbufGetMutablePtr(buf);
-    ip_addr_t      dest_ip;
-
-    if (! ptcValidateIpv4Packet(buf, iphdr))
-    {
-        lineReuseBuffer(l, buf);
-        return;
-    }
-
-    const uint16_t total_len = lwip_ntohs(IPH_LEN(iphdr));
-    if (UNLIKELY(sbufGetLength(buf) != total_len))
-    {
-        lineReuseBuffer(l, buf);
-        return;
-    }
 
     if (IPH_PROTO(iphdr) != IP_PROTO_TCP && IPH_PROTO(iphdr) != IP_PROTO_UDP)
     {
@@ -360,22 +321,7 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    ipAddrCopyFromIp4(dest_ip, iphdr->dest);
-
-    /*
-     * Fake DNS answers from a single packet, so it can only be offered whole
-     * datagrams.
-     *
-     * A fragment must never reach it. Fragment zero's UDP length describes the
-     * entire datagram and therefore exceeds that fragment's IPv4 total length,
-     * which the parser reads as malformed - and it reports the packet consumed,
-     * so reassembly could never complete. A fragment at a nonzero offset has no
-     * UDP header at all, and its first payload bytes could be misread as one.
-     */
-    const bool is_fragment = (lwip_ntohs(IPH_OFFSET(iphdr)) & (IP_MF | IP_OFFMASK)) != 0;
-
-    if (IPH_PROTO(iphdr) == IP_PROTO_UDP && ! is_fragment &&
-        ptcPacketHasTransportHeader(buf, iphdr, sizeof(struct udp_hdr)))
+    if (IPH_PROTO(iphdr) == IP_PROTO_UDP && ptcPacketHasTransportHeader(buf, iphdr, sizeof(struct udp_hdr)))
     {
         struct udp_hdr *udphdr = (struct udp_hdr *) ((uint8_t *) iphdr + IPH_HL_BYTES(iphdr));
 
@@ -397,81 +343,10 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
-    ptc_tstate_t *ts = tunnelGetState(t);
-    if (UNLIKELY(ptcFakeDnsShouldDropFragment(&ts->fake_dns, &iphdr->dest, IPH_PROTO(iphdr), is_fragment)))
-    {
-        /*
-         * Fragmented UDP addressed to the fake-DNS endpoint. Answering it would
-         * need the query to come from a real UDP PCB rather than this pre-lwIP
-         * parser, so the limitation is reported rather than hidden behind a
-         * fragment that quietly disappears.
-         *
-         * The destination port cannot be checked here: only fragment zero carries
-         * a UDP header, and reading one out of a nonzero fragment's payload bytes
-         * would be guessing. The whole fake-DNS address is therefore reserved for
-         * fragmented UDP, which is why the protocol test above matters - without
-         * it this also swallowed fragmented TCP to the same address, traffic that
-         * has nothing to do with DNS.
-         */
-        if (atomicLogRateLimiterShouldLog(&fake_dns_fragment_log, kPtcRxPoolExhaustionLogIntervalMs))
-        {
-            LOGW("PacketsToConnection: dropping a fragmented UDP packet addressed to the fake-DNS endpoint; "
-                 "fragmented UDP to that address is not supported");
-        }
-        lineReuseBuffer(l, buf);
-        return;
-    }
-
-    interface_route_context_t *route_ctx = ptcFindOrCreateRouteContextV4(t, lineGetWID(l), &dest_ip.u_addr.ip4);
+    interface_route_context_t *route_ctx = ptcFindOrCreateRouteContextV4(t, lineGetWID(l));
     if (route_ctx == NULL)
     {
         LOGW("PacketsToConnection: failed to create virtual netif for destination");
-        lineReuseBuffer(l, buf);
-        return;
-    }
-
-    /*
-     * From here on there is a netif to name, so a refusal can purge the exact
-     * reassembly key rather than leaving an incomplete prefix in the stack.
-     * Everything refused above this point has no route, and therefore no netif
-     * an earlier fragment of this datagram could have entered through.
-     */
-    ptc_fragment_key_t fragment_key;
-    const bool         tracked_fragment = ptcReadFragmentKey(buf, &fragment_key);
-
-    switch (IPH_PROTO(iphdr))
-    {
-    case IP_PROTO_TCP:
-        if (ptcEnsureTcpListener(route_ctx, t, &dest_ip, 0) != ERR_OK)
-        {
-            LOGW("PacketsToConnection: failed to create pretend TCP gateway");
-            if (tracked_fragment)
-            {
-                ptcPurgeRefusedFragmentLocked(&fragment_key, &route_ctx->netif);
-            }
-            lineReuseBuffer(l, buf);
-            return;
-        }
-        break;
-
-    case IP_PROTO_UDP:
-        if (ptcEnsureUdpListener(route_ctx, t, &dest_ip, 0) != ERR_OK)
-        {
-            LOGW("PacketsToConnection: failed to create pretend UDP gateway");
-            if (tracked_fragment)
-            {
-                ptcPurgeRefusedFragmentLocked(&fragment_key, &route_ctx->netif);
-            }
-            lineReuseBuffer(l, buf);
-            return;
-        }
-        break;
-
-    default:
-        if (tracked_fragment)
-        {
-            ptcPurgeRefusedFragmentLocked(&fragment_key, &route_ctx->netif);
-        }
         lineReuseBuffer(l, buf);
         return;
     }

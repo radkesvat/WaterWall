@@ -6,9 +6,7 @@ void reverseserverTunnelUpStreamInit(tunnel_t *t, line_t *d)
 {
     reverseserver_lstate_t *dls = lineGetState(d, t);
 
-    line_t *dl = d;
+    reverseserverLinestateInitialize(dls, NULL, d);
 
-    reverseserverLinestateInitialize(dls, NULL, dl);
-
-    tunnelPrevDownStreamEst(t, dl);
+    tunnelPrevDownStreamEst(t, d);
 }
