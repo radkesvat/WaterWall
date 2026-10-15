@@ -16,6 +16,8 @@ void routerTunnelUpStreamInit(tunnel_t *t, line_t *l)
     router_lstate_t *ls = lineGetState(l, t);
 
     routerLinestateInitialize(ls);
+    const address_context_t *dest = lineGetDestinationAddressContext(l);
+    ls->datagram_input            = dest->proto_udp && ! dest->proto_tcp && ! dest->proto_icmp && ! dest->proto_packet;
     addresscontextClearDetectedProtocols(lineGetDestinationAddressContext(l));
 
     if (! routerCanCommitRouteDuringInit(ts))

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "buffer_queue.h"
 #include "wwapi.h"
 
 #include "geosite.h"
@@ -69,11 +70,13 @@ typedef struct router_tstate_s
 
 typedef struct router_lstate_s
 {
-    sbuf_t   *pending; // bytes buffered before a routing decision is made
-    tunnel_t *target;  // selected rule tunnel; NULL means the default next branch
-    uint8_t   route;   // enum router_route_e
-    uint32_t  sniffed_attributes;
-    bool      replaying; // selected Init and its initial FIFO are still running
+    buffer_queue_t datagrams; // original UDP deliveries, separate from the sniffing view
+    sbuf_t        *pending;   // stream bytes, or a copy used only to sniff queued datagrams
+    tunnel_t      *target;    // selected rule tunnel; NULL means the default next branch
+    uint8_t        route;     // enum router_route_e
+    uint32_t       sniffed_attributes;
+    bool           replaying;      // selected Init and its initial FIFO are still running
+    bool           datagram_input; // exact incoming transport, retained across branch context rewrites
 } router_lstate_t;
 
 // Connection facts handed to matcher modules. Carries the line (for routing

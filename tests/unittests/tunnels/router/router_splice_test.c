@@ -51,6 +51,7 @@ typedef struct router_fixture_s
     bool            close_on_payload;
     bool            borrowed_close;
     bool            reenter_init;
+    bool            reenter_empty;
     bool            reenter_payload;
     bool            overflow_init;
     bool            init_running;
@@ -63,6 +64,9 @@ typedef struct router_fixture_s
     unsigned        downstream_resumes;
     unsigned        upstream_ests;
     unsigned        downstream_ests;
+    const uint8_t  *datagram_bytes[8];
+    uint32_t        datagram_lengths[8];
+    unsigned        datagram_count;
 } router_fixture_t;
 
 static router_fixture_t *fixture;
@@ -156,7 +160,11 @@ static void init(tunnel_t *t, line_t *l)
         tunnelUpStreamPayload(fixture->router, l, buf);
     }
     else if (fixture->reenter_init)
+    {
         tunnelUpStreamPayload(fixture->router, l, payload("I", 1, false, 0));
+        if (fixture->reenter_empty)
+            tunnelUpStreamPayload(fixture->router, l, payload("", 0, false, 0));
+    }
     fixture->init_running = false;
     if (fixture->close_on_init)
         tunnelDownStreamFin(fixture->router, l);
@@ -166,6 +174,27 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     require(t == fixture->expected_receiver, "payload reached the wrong route/direction");
     require(! fixture->init_running, "startup payload escaped before the selected Init returned");
+    if (fixture->datagram_count != 0)
+    {
+        require(fixture->payloads < fixture->datagram_count, "unexpected UDP replay delivery");
+        const unsigned index  = fixture->payloads;
+        const uint32_t length = fixture->datagram_lengths[index];
+        require(sbufGetLength(buf) == length, "UDP replay changed datagram boundaries");
+        require(! sbufIsSplice(buf), "UDP replay unexpectedly became splice input");
+        require(sbufGetLeftCapacity(buf) >= kOnwardPadding, "UDP replay lost onward padding");
+        require(length == 0 || memcmp(sbufGetRawPtr(buf), fixture->datagram_bytes[index], length) == 0,
+                "UDP replay changed datagram contents or order");
+        lineReuseBuffer(l, buf);
+        ++fixture->payloads;
+        if (fixture->reenter_payload)
+        {
+            fixture->reenter_payload = false;
+            tunnelUpStreamPayload(fixture->router, l, payload("P", 1, false, 0));
+        }
+        if (fixture->close_on_payload)
+            tunnelDownStreamFin(fixture->router, l);
+        return;
+    }
     if (fixture->record_startup)
     {
         const uint32_t length = sbufGetLength(buf);
@@ -567,6 +596,203 @@ static void testCapabilities(void)
     }
 }
 
+static void testSniffRouterUdpReplay(bool target, bool empty_first, unsigned close_mode, bool borrowed_close)
+{
+    router_fixture_t f;
+    setupBeforeInit(&f, true, target, true, false);
+    f.line->routing_context.dest_ctx.proto_tcp = false;
+    f.line->routing_context.dest_ctx.proto_udp = true;
+    static const uint8_t request[]             = "GET / HTTP/1.1\r\nHost: route.test\r\n\r\n";
+    const uint32_t       split                 = empty_first ? 0 : 12;
+    f.datagram_bytes[0]                        = request;
+    f.datagram_lengths[0]                      = split;
+    f.datagram_bytes[1]                        = request + split;
+    f.datagram_lengths[1]                      = sizeof(request) - 1U - split;
+    f.datagram_bytes[2]                        = (const uint8_t *) "I";
+    f.datagram_lengths[2]                      = 1;
+    f.datagram_bytes[3]                        = (const uint8_t *) "";
+    f.datagram_lengths[3]                      = 0;
+    f.datagram_bytes[4]                        = (const uint8_t *) "P";
+    f.datagram_lengths[4]                      = 1;
+    f.datagram_count                           = 5;
+    f.reenter_init = f.reenter_empty = f.reenter_payload = true;
+    f.close_on_init                                      = close_mode == 1;
+    f.close_on_payload                                   = close_mode == 2;
+    f.borrowed_close                                     = borrowed_close;
+    tunnelUpStreamInit(f.router, f.line);
+    tunnelUpStreamPayload(f.router, f.line, payload(request, split, false, 0));
+    require(f.inits == 0 && f.payloads == 0, "incomplete UDP sniff input committed early");
+    tunnelUpStreamPayload(f.router, f.line, payload(request + split, sizeof(request) - 1U - split, false, 0));
+    if (close_mode != 0)
+    {
+        require(f.finishes == 1 && f.payloads == (close_mode == 1 ? 0U : 1U),
+                "SniffRouter UDP replay continued after Finish");
+        if (borrowed_close)
+        {
+            require(f.line != NULL && lineIsAlive(f.line), "borrowed UDP Finish destroyed its owner's line");
+            const uint8_t *state = lineGetState(f.line, f.router);
+            for (uint32_t i = 0; i < f.router->lstate_size; ++i)
+                require(state[i] == 0, "borrowed UDP Finish retained line state");
+        }
+        else
+            require(f.line == NULL, "UDP Finish did not reach its owner");
+    }
+    else
+    {
+        require(f.payloads == f.datagram_count && f.inits == 1, "SniffRouter UDP replay lost a datagram");
+        requireRouteState(&f, ! target);
+    }
+    teardown(&f);
+}
+
+static void testSniffRouterUdpLimits(void)
+{
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        router_fixture_t f;
+        setupBeforeInit(&f, true, false, true, false);
+        f.line->routing_context.dest_ctx.proto_tcp = false;
+        f.line->routing_context.dest_ctx.proto_udp = true;
+        tunnelUpStreamInit(f.router, f.line);
+        line_t *line = f.line;
+        lineRef(line);
+        if (mode == 0)
+        {
+            for (unsigned i = 0; i < 1024; ++i)
+                tunnelUpStreamPayload(f.router, f.line, sbufCreateWithPadding(0, kOnwardPadding));
+            require(f.line != NULL && f.inits == 0, "SniffRouter empty UDP allowance was too small");
+            tunnelUpStreamPayload(f.router, f.line, sbufCreateWithPadding(0, kOnwardPadding));
+        }
+        else if (mode == 1)
+            tunnelUpStreamPayload(f.router, f.line, sbufCreateWithPadding(4U * 1024U * 1024U, kOnwardPadding));
+        else
+        {
+            f.overflow_init             = true;
+            static const char request[] = "GET / HTTP/1.1\r\nHost: route.test\r\n\r\n";
+            tunnelUpStreamPayload(f.router, f.line, payload(request, sizeof(request) - 1, false, 0));
+        }
+        require(f.line == NULL && ! lineIsAlive(line) && f.payloads == 0,
+                "SniffRouter UDP retention overflow did not close the owner");
+        require(f.inits == (mode == 2 ? 1U : 0U) && f.finishes == (mode == 2 ? 2U : 1U),
+                "SniffRouter UDP overflow finished an uninitialized or missing side");
+        require(atomicLoadU32Relaxed(&line->refc) == 1, "SniffRouter UDP overflow leaked a line reference");
+        const uint8_t *state = lineGetState(line, f.router);
+        for (uint32_t i = 0; i < f.router->lstate_size; ++i)
+            require(state[i] == 0, "SniffRouter UDP overflow retained line state");
+        lineUnref(line);
+        teardown(&f);
+    }
+}
+
+#ifdef ROUTER_ENABLE_QUIC_SNIFFING
+static uint32_t readQuicDatagram(const char *name, uint8_t *bytes, size_t capacity)
+{
+    char path[1024];
+    require(snprintf(path, sizeof(path), "%s/%s", ROUTER_QUIC_SNI_VECTOR_DIR, name) < (int) sizeof(path),
+            "QUIC fixture path overflow");
+    FILE *file = fopen(path, "rb");
+    require(file != NULL, "open QUIC datagram fixture");
+    const size_t length = fread(bytes, 1, capacity, file);
+    require(! ferror(file) && feof(file), "read complete QUIC datagram fixture");
+    require(fclose(file) == 0, "close QUIC datagram fixture");
+    return (uint32_t) length;
+}
+
+static void testUdpReplay(bool target, bool metadata, unsigned close_mode)
+{
+    router_fixture_t f;
+    setupBeforeInit(&f, false, target, ! metadata, false);
+    f.line->routing_context.dest_ctx.proto_tcp = false;
+    f.line->routing_context.dest_ctx.proto_udp = true;
+    router_tstate_t *ts                        = tunnelGetState(f.router);
+    ts->sniffing_modes                         = metadata ? 0 : kRouterSniffQuic;
+    uint8_t        first[2048], second[2048];
+    const uint32_t first_length  = readQuicDatagram("02_split_inside_host_part1.bin", first, sizeof(first));
+    const uint32_t second_length = readQuicDatagram("02_split_inside_host_part2.bin", second, sizeof(second));
+    unsigned       index         = 0;
+    if (! metadata)
+    {
+        f.datagram_bytes[index]     = first;
+        f.datagram_lengths[index++] = first_length;
+        f.datagram_bytes[index]     = second;
+        f.datagram_lengths[index++] = second_length;
+    }
+    f.datagram_bytes[index]     = (const uint8_t *) "I";
+    f.datagram_lengths[index++] = 1;
+    f.datagram_bytes[index]     = (const uint8_t *) "";
+    f.datagram_lengths[index++] = 0;
+    f.datagram_bytes[index]     = (const uint8_t *) "P";
+    f.datagram_lengths[index++] = 1;
+    f.datagram_count            = index;
+    f.reenter_init = f.reenter_empty = f.reenter_payload = true;
+    f.close_on_init                                      = close_mode == 1;
+    f.close_on_payload                                   = close_mode == 2;
+    tunnelUpStreamInit(f.router, f.line);
+    if (! metadata)
+    {
+        tunnelUpStreamPayload(f.router, f.line, payload(first, first_length, false, 0));
+        require(f.inits == 0 && f.payloads == 0, "partial QUIC handshake committed early");
+        tunnelUpStreamPayload(f.router, f.line, payload(second, second_length, false, 0));
+    }
+    if (close_mode != 0)
+    {
+        require(f.line == NULL && f.finishes == 1, "UDP startup Finish did not close the owner");
+        require(f.payloads == (close_mode == 1 ? 0U : 1U), "UDP replay continued after Finish");
+    }
+    else
+    {
+        require(f.payloads == f.datagram_count && f.inits == 1, "UDP replay lost a datagram");
+        requireRouteState(&f, ! target);
+    }
+    teardown(&f);
+}
+
+static void testUdpRetentionLimits(void)
+{
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        router_fixture_t f;
+        setupBeforeInit(&f, false, false, true, false);
+        f.line->routing_context.dest_ctx.proto_tcp                     = false;
+        f.line->routing_context.dest_ctx.proto_udp                     = true;
+        ((router_tstate_t *) tunnelGetState(f.router))->sniffing_modes = kRouterSniffQuic;
+        tunnelUpStreamInit(f.router, f.line);
+        line_t *line = f.line;
+        lineRef(line);
+        if (mode == 0)
+        {
+            for (unsigned i = 0; i < 1024; ++i)
+                tunnelUpStreamPayload(f.router, f.line, sbufCreateWithPadding(0, kOnwardPadding));
+            require(f.line != NULL && f.inits == 0, "empty datagrams exhausted entry allowance too soon");
+            tunnelUpStreamPayload(f.router, f.line, sbufCreateWithPadding(0, kOnwardPadding));
+        }
+        else if (mode == 1)
+        {
+            // Retained allocation, not just the empty logical payload, must be bounded.
+            tunnelUpStreamPayload(f.router, f.line, sbufCreateWithPadding(4U * 1024U * 1024U, kOnwardPadding));
+        }
+        else
+        {
+            // Close while only the first datagram and its partial sniff view are retained.
+            uint8_t        bytes[2048];
+            const uint32_t length = readQuicDatagram("02_split_inside_host_part1.bin", bytes, sizeof(bytes));
+            tunnelUpStreamPayload(f.router, f.line, payload(bytes, length, false, 0));
+            tunnelUpStreamFin(f.router, f.line);
+            lineDestroy(f.line);
+            f.line = NULL;
+        }
+        require(f.line == NULL && ! lineIsAlive(line) && f.inits == 0 && f.payloads == 0,
+                "pending UDP retention did not settle without initializing a branch");
+        require(atomicLoadU32Relaxed(&line->refc) == 1, "pending UDP retention leaked a line reference");
+        const uint8_t *state = lineGetState(line, f.router);
+        for (uint32_t i = 0; i < f.router->lstate_size; ++i)
+            require(state[i] == 0, "pending UDP retention left line state after Finish");
+        lineUnref(line);
+        teardown(&f);
+    }
+}
+#endif
+
 int main(void)
 {
     testCaseSet("router_splice_test");
@@ -611,6 +837,22 @@ int main(void)
         }
     }
     testCapabilities();
+    for (unsigned target = 0; target < 2; ++target)
+        for (unsigned empty_first = 0; empty_first < 2; ++empty_first)
+            for (unsigned close_mode = 0; close_mode < 3; ++close_mode)
+            {
+                testSniffRouterUdpReplay(target != 0, empty_first != 0, close_mode, false);
+                if (close_mode != 0)
+                    testSniffRouterUdpReplay(target != 0, empty_first != 0, close_mode, true);
+            }
+    testSniffRouterUdpLimits();
+#ifdef ROUTER_ENABLE_QUIC_SNIFFING
+    testUdpRetentionLimits();
+    for (unsigned target = 0; target < 2; ++target)
+        for (unsigned metadata = 0; metadata < 2; ++metadata)
+            for (unsigned close_mode = 0; close_mode < 3; ++close_mode)
+                testUdpReplay(target != 0, metadata != 0, close_mode);
+#endif
     worker_t                     *worker  = getWorker(0);
     const ww_lifecycle_context_t *context = wwLifecycleProcessShutdown();
     require(workerInstallApplicationQuiesceRequest(worker, context) != kWorkerQuiesceRequestUnavailable, "quiesce");

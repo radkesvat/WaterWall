@@ -18,6 +18,9 @@ if(TARGET SniffRouter AND TARGET Router)
       ${CMAKE_SOURCE_DIR}/tunnels/Router
       ${CMAKE_SOURCE_DIR}/tunnels/ReverseClient/include
     )
+    target_compile_definitions(router_splice_test PRIVATE
+      ROUTER_QUIC_SNI_VECTOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/router_quic_sni/vectors"
+    )
     target_link_libraries(router_splice_test PRIVATE SniffRouter Router ww)
     target_link_options(router_splice_test PRIVATE "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer")
     add_dependencies(waterwall_unit_tests router_splice_test)

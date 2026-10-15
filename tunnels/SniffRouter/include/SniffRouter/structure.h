@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ReverseClient/reverseclient_handshake.h"
+#include "buffer_queue.h"
 #include "wwapi.h"
 
 /*
@@ -72,17 +73,21 @@ typedef struct sniffrouter_tstate_s
 
 typedef struct sniffrouter_lstate_s
 {
-    sbuf_t   *pending;   // sniff input, or later input retained during initial replay
-    tunnel_t *target;    // selected route tunnel; NULL means normal next branch
-    uint8_t   decided;   // enum sniffrouter_route_e
-    bool      replaying; // selected Init and initial FIFO replay are on the stack
+    buffer_queue_t datagrams;      // original UDP deliveries, separate from the sniffing view
+    sbuf_t        *pending;        // stream input, or a copy used only to sniff queued datagrams
+    tunnel_t      *target;         // selected route tunnel; NULL means normal next branch
+    uint8_t        decided;        // enum sniffrouter_route_e
+    bool           replaying;      // selected Init and initial FIFO replay are on the stack
+    bool           datagram_input; // incoming transport, preserved across branch context rewrites
 } sniffrouter_lstate_t;
 
 enum
 {
-    kTunnelStateSize           = sizeof(sniffrouter_tstate_t),
-    kLineStateSize             = sizeof(sniffrouter_lstate_t),
-    kSniffRouterMaxReplayBytes = 2U * 1024U * 1024U,
+    kTunnelStateSize              = sizeof(sniffrouter_tstate_t),
+    kLineStateSize                = sizeof(sniffrouter_lstate_t),
+    kSniffRouterMaxReplayBytes    = 2U * 1024U * 1024U,
+    kSniffRouterMaxDatagramCharge = 4U * 1024U * 1024U,
+    kSniffRouterMaxDatagrams      = 1024U,
 
     // Reverse-link handshake defaults use ReverseClient's exported handshake
     // bytes and length so SniffRouter, ReverseClient, and ReverseServer cannot

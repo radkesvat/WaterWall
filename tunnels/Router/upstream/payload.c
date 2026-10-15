@@ -2,6 +2,13 @@
 
 #include "loggers/network_logger.h"
 
+enum
+{
+    kRouterPendingBytes   = 2U * 1024U * 1024U,
+    kRouterDatagramCharge = 4U * 1024U * 1024U,
+    kRouterDatagramCount  = 1024U
+};
+
 static void routerBufferPendingPayload(line_t *l, router_lstate_t *ls, sbuf_t *buf)
 {
     if (ls->pending == NULL)
@@ -27,6 +34,50 @@ static void routerForwardPayload(tunnel_t *t, line_t *l, router_lstate_t *ls, sb
     tunnelNextUpStreamPayload(t, l, buf);
 }
 
+static void routerRejectPendingPayload(tunnel_t *t, line_t *l, router_lstate_t *ls, sbuf_t *buf)
+{
+    const uint8_t route  = ls->route;
+    tunnel_t     *target = ls->target;
+    lineRef(l);
+    lineReuseBuffer(l, buf);
+    routerLinestateDestroy(l, ls);
+    if (route == kRouterRouteTarget)
+        tunnelUpStreamFin(target, l);
+    else if (route == kRouterRouteDefault)
+        tunnelNextUpStreamFinish(t, l);
+    if (lineIsAlive(l))
+        tunnelPrevDownStreamFinish(t, l);
+    lineUnref(l);
+}
+
+static bool routerQueueDatagram(tunnel_t *t, line_t *l, router_lstate_t *ls, sbuf_t **buf)
+{
+    const size_t bytes  = sbufGetLength(*buf);
+    const size_t charge = sbufGetQueueCharge(*buf);
+    if (bytes > kRouterPendingBytes || bufferqueueGetBufLen(&ls->datagrams) > kRouterPendingBytes - bytes ||
+        charge > kRouterDatagramCharge || bufferqueueGetCharge(&ls->datagrams) > kRouterDatagramCharge - charge ||
+        bufferqueueGetBufCount(&ls->datagrams) >= kRouterDatagramCount || ! bufferqueueTryPushBack(&ls->datagrams, buf))
+    {
+        LOGE("Router: pending datagrams exceeded their retention limit, closing this line");
+        routerRejectPendingPayload(t, l, ls, *buf);
+        return false;
+    }
+    return true;
+}
+
+static void routerAppendDatagramSniffView(router_lstate_t *ls, const sbuf_t *buf)
+{
+    // The queue owns buf. Copy only the inspection view; replay uses the original entries.
+    const uint32_t length     = sbufGetLength(buf);
+    const uint32_t old_length = ls->pending != NULL ? sbufGetLength(ls->pending) : 0;
+    const uint32_t total      = old_length + length; // bounded by datagram queue admission
+    if (ls->pending == NULL)
+        ls->pending = sbufCreateWithPadding(total, 0);
+    else
+        ls->pending = sbufReserveSpace(ls->pending, total);
+    sbufConcatNoCheck(ls->pending, buf);
+}
+
 void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *target, sbuf_t *first)
 {
     lineRef(l);
@@ -44,13 +95,18 @@ void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *ta
     }
 
     // Keep the accepted first delivery ahead of input submitted from Init/Est.
-    // Reentry appends to pending until Init and every startup handoff return.
+    // Reentry joins the pending FIFO until Init and every startup handoff return.
     while (lineIsAlive(l) && ls->replaying)
     {
         if (first == NULL)
         {
-            first       = ls->pending;
-            ls->pending = NULL;
+            if (ls->datagram_input)
+                first = bufferqueuePopFront(&ls->datagrams);
+            else
+            {
+                first       = ls->pending;
+                ls->pending = NULL;
+            }
         }
         if (first == NULL)
         {
@@ -78,31 +134,18 @@ void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *ta
 
 static void routerBufferReentrantPayload(tunnel_t *t, line_t *l, router_lstate_t *ls, sbuf_t *buf)
 {
-    const uint32_t limit    = 2U * 1024U * 1024U;
+    if (ls->datagram_input)
+    {
+        discard routerQueueDatagram(t, l, ls, &buf);
+        return;
+    }
+    const uint32_t limit    = kRouterPendingBytes;
     const uint32_t queued   = ls->pending != NULL ? sbufGetLength(ls->pending) : 0;
     const uint32_t incoming = sbufGetLength(buf);
     if (incoming > limit || queued > limit - incoming)
     {
         LOGE("Router: initial replay backlog exceeded its limit, closing this line");
-        // The selected branch has received Init. Settle both directions while
-        // the outer commit keeps its first delivery and line reference alive.
-        tunnel_t *target = ls->target;
-        lineRef(l);
-        lineReuseBuffer(l, buf);
-        routerLinestateDestroy(l, ls);
-        if (target != NULL)
-        {
-            tunnelUpStreamFin(target, l);
-        }
-        else
-        {
-            tunnelNextUpStreamFinish(t, l);
-        }
-        if (lineIsAlive(l))
-        {
-            tunnelPrevDownStreamFinish(t, l);
-        }
-        lineUnref(l);
+        routerRejectPendingPayload(t, l, ls, buf);
         return;
     }
 
@@ -129,7 +172,14 @@ void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     // Sniffing and pending storage use ordinary memory until the route is committed.
     buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
 
-    routerBufferPendingPayload(l, ls, buf);
+    if (ls->datagram_input)
+    {
+        if (! routerQueueDatagram(t, l, ls, &buf))
+            return;
+        routerAppendDatagramSniffView(ls, buf);
+    }
+    else
+        routerBufferPendingPayload(l, ls, buf);
 
     router_match_ctx_t mctx = {
         .router_state = ts,
@@ -158,6 +208,11 @@ void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     sbuf_t *first = ls->pending;
     ls->pending   = NULL;
+    if (ls->datagram_input)
+    {
+        lineReuseBuffer(l, first);
+        first = NULL;
+    }
 
     routerCommitRoute(t, l, ls, match.result == kRouterClassifyTarget ? match.target : NULL, first);
 }

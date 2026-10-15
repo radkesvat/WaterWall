@@ -5,13 +5,15 @@ void routerLinestateInitialize(router_lstate_t *ls)
     *ls = (router_lstate_t) {
         .pending            = NULL,
         .target             = NULL,
-        .route            = kRouterRouteUndecided,
+        .route              = kRouterRouteUndecided,
         .sniffed_attributes = 0,
     };
+    bufferqueueInitEmpty(&ls->datagrams);
 }
 
 void routerLinestateDestroy(line_t *l, router_lstate_t *ls)
 {
+    bufferqueueDestroy(&ls->datagrams);
     if (ls->pending != NULL)
     {
         lineReuseBuffer(l, ls->pending);

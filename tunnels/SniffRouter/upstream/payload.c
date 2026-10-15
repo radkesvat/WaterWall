@@ -18,18 +18,52 @@ static void bufferPendingPayload(line_t *l, sniffrouter_lstate_t *ls, sbuf_t *bu
     lineReuseBuffer(l, buf);
 }
 
-static void closeSelectedRoute(tunnel_t *t, line_t *l, sniffrouter_lstate_t *ls)
+static void closePendingRoute(tunnel_t *t, line_t *l, sniffrouter_lstate_t *ls)
 {
-    tunnel_t *target = ls->decided == kSniffRouteTarget ? ls->target : t->next;
+    const uint8_t decided = ls->decided;
+    tunnel_t     *target  = ls->decided == kSniffRouteTarget ? ls->target : t->next;
 
     lineRef(l);
     sniffrouterLinestateDestroy(l, ls);
-    tunnelUpStreamFin(target, l);
+    if (decided != kSniffRouteUndecided)
+        tunnelUpStreamFin(target, l);
     if (lineIsAlive(l))
     {
         tunnelPrevDownStreamFinish(t, l);
     }
     lineUnref(l);
+}
+
+static bool queueDatagram(tunnel_t *t, line_t *l, sniffrouter_lstate_t *ls, sbuf_t **buf)
+{
+    const size_t bytes  = sbufGetLength(*buf);
+    const size_t charge = sbufGetQueueCharge(*buf);
+    if (bytes > kSniffRouterMaxReplayBytes ||
+        bufferqueueGetBufLen(&ls->datagrams) > kSniffRouterMaxReplayBytes - bytes ||
+        charge > kSniffRouterMaxDatagramCharge ||
+        bufferqueueGetCharge(&ls->datagrams) > kSniffRouterMaxDatagramCharge - charge ||
+        bufferqueueGetBufCount(&ls->datagrams) >= kSniffRouterMaxDatagrams ||
+        ! bufferqueueTryPushBack(&ls->datagrams, buf))
+    {
+        LOGE("SniffRouter: pending datagrams exceeded their retention limit, closing this line");
+        lineReuseBuffer(l, *buf);
+        closePendingRoute(t, l, ls);
+        return false;
+    }
+    return true;
+}
+
+static void appendDatagramSniffView(sniffrouter_lstate_t *ls, const sbuf_t *buf)
+{
+    // Replay retains each queue entry; only the inspection view joins their bytes.
+    const uint32_t length     = sbufGetLength(buf);
+    const uint32_t old_length = ls->pending != NULL ? sbufGetLength(ls->pending) : 0;
+    const uint32_t total      = old_length + length; // bounded by datagram queue admission
+    if (ls->pending == NULL)
+        ls->pending = sbufCreateWithPadding(total, 0);
+    else
+        ls->pending = sbufReserveSpace(ls->pending, total);
+    sbufConcatNoCheck(ls->pending, buf);
 }
 
 static void forwardSelectedPayload(tunnel_t *t, line_t *l, sniffrouter_lstate_t *ls, sbuf_t *buf)
@@ -63,28 +97,30 @@ static void initializeSelectedRoute(tunnel_t *t, line_t *l, sniffrouter_lstate_t
 
     while (lineIsAlive(l) && ls->replaying)
     {
-        forwardSelectedPayload(t, l, ls, first);
-        first = NULL;
-        if (! lineIsAlive(l) || ! ls->replaying)
-        {
-            break;
-        }
-
-        first       = ls->pending;
-        ls->pending = NULL;
         if (first == NULL)
         {
+            if (ls->datagram_input)
+                first = bufferqueuePopFront(&ls->datagrams);
+            else
+            {
+                first       = ls->pending;
+                ls->pending = NULL;
+            }
+        }
+        if (first == NULL)
+        {
+            ls->replaying = false;
             if (ls->decided == kSniffRouteDefault)
             {
                 sniffrouterLinestateDestroy(l, ls);
                 tunnelBypassLine(t, l);
             }
-            else
-            {
-                ls->replaying = false;
-            }
             break;
         }
+
+        sbuf_t *out = first;
+        first       = NULL;
+        forwardSelectedPayload(t, l, ls, out);
     }
 
     if (first != NULL)
@@ -103,12 +139,17 @@ void sniffrouterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (ls->replaying)
         {
+            if (ls->datagram_input)
+            {
+                discard queueDatagram(t, l, ls, &buf);
+                return;
+            }
             uint32_t pending_len = ls->pending != NULL ? sbufGetLength(ls->pending) : 0;
             if (sbufGetLength(buf) > kSniffRouterMaxReplayBytes - pending_len)
             {
                 LOGE("SniffRouter: initial replay backlog exceeded its limit, closing this line");
                 lineReuseBuffer(l, buf);
-                closeSelectedRoute(t, l, ls);
+                closePendingRoute(t, l, ls);
                 return;
             }
             bufferPendingPayload(l, ls, buf);
@@ -119,7 +160,15 @@ void sniffrouterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     // Sniffing and pending storage use ordinary memory until the route is committed.
-    bufferPendingPayload(l, ls, buf);
+    if (ls->datagram_input)
+    {
+        buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
+        if (! queueDatagram(t, l, ls, &buf))
+            return;
+        appendDatagramSniffView(ls, buf);
+    }
+    else
+        bufferPendingPayload(l, ls, buf);
 
     const uint8_t *p = (const uint8_t *) sbufGetRawPtr(ls->pending);
     uint32_t       n = sbufGetLength(ls->pending);
@@ -132,6 +181,11 @@ void sniffrouterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     sbuf_t *first = ls->pending;
     ls->pending   = NULL;
+    if (ls->datagram_input)
+    {
+        lineReuseBuffer(l, first);
+        first = NULL;
+    }
 
     initializeSelectedRoute(t, l, ls, match.result == kSniffClassifyTarget ? match.target : NULL, first);
 }
