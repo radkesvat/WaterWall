@@ -301,9 +301,80 @@ generic_sniffer_result_t genericsnifferSniffHttp1UpgradeHeader(const uint8_t *pa
     return findHttpHeader(payload, payload_len, "upgrade", NULL, NULL);
 }
 
+static tls_client_hello_result_t sniffTlsClientHelloRecords(const uint8_t *payload, uint32_t payload_len,
+                                                            uint8_t scratch[kGenericSnifferMaxWindowBytes],
+                                                            tls_client_hello_view_t *hello, const uint8_t **hello_bytes)
+{
+    // Preserve the direct view, including complete oversized first deliveries.
+    // Record-rewriting callers keep using the separate single-record parser.
+    *hello_bytes                     = payload;
+    tls_client_hello_result_t result = tlsclienthelloParseRecord(payload, payload_len, hello);
+    if (result != kTlsClientHelloMalformed)
+    {
+        return result;
+    }
+
+    uint32_t offset = 0;
+    uint32_t used   = 0;
+    uint32_t needed = 4U;
+    while (offset < payload_len)
+    {
+        const uint8_t *record    = payload + offset;
+        uint32_t       available = payload_len - offset;
+        if (record[0] != 0x16U || (available >= 2U && record[1] != 0x03U) || (available >= 3U && record[2] > 0x03U))
+        {
+            return kTlsClientHelloMalformed;
+        }
+        if (available < 5U)
+        {
+            return kTlsClientHelloNeedMore;
+        }
+
+        uint32_t record_len = GET_BE16(record + 3U);
+        if (record_len == 0)
+        {
+            return kTlsClientHelloMalformed;
+        }
+        if (record_len > available - 5U)
+        {
+            return kTlsClientHelloNeedMore;
+        }
+
+        uint32_t take = min(record_len, needed - used);
+        memoryCopy(scratch + used, record + 5U, take);
+        used += take;
+        if (scratch[0] != 0x01U)
+        {
+            return kTlsClientHelloNotClientHello;
+        }
+        if (used == 4U && needed == 4U)
+        {
+            needed += GET_BE24(scratch + 1U);
+            if (needed > kGenericSnifferMaxWindowBytes)
+            {
+                return kTlsClientHelloMalformed;
+            }
+
+            uint32_t rest = min(record_len - take, needed - used);
+            memoryCopy(scratch + used, record + 5U + take, rest);
+            used += rest;
+        }
+        if (used == needed)
+        {
+            *hello_bytes = scratch;
+            return tlsclienthelloParseHandshake(scratch, used, hello);
+        }
+        offset += 5U + record_len;
+    }
+
+    return kTlsClientHelloNeedMore;
+}
+
 generic_sniffer_result_t genericsnifferSniffTlsClientHello(const uint8_t *payload, uint32_t payload_len)
 {
-    tls_client_hello_result_t result = tlsclienthelloParseRecord(payload, payload_len, NULL);
+    uint8_t                   scratch[kGenericSnifferMaxWindowBytes];
+    const uint8_t            *hello_bytes = NULL;
+    tls_client_hello_result_t result = sniffTlsClientHelloRecords(payload, payload_len, scratch, NULL, &hello_bytes);
     if (result == kTlsClientHelloNeedMore)
     {
         return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kGenericSnifferNeedMore
@@ -315,10 +386,12 @@ generic_sniffer_result_t genericsnifferSniffTlsClientHello(const uint8_t *payloa
 }
 
 generic_sniffer_result_t genericsnifferSniffTlsClientHelloSni(const uint8_t *payload, uint32_t payload_len,
+                                                              uint8_t         scratch[kGenericSnifferMaxWindowBytes],
                                                               const uint8_t **host, uint32_t *host_len)
 {
     tls_client_hello_view_t   hello  = {0};
-    tls_client_hello_result_t result = tlsclienthelloParseRecord(payload, payload_len, &hello);
+    const uint8_t            *hello_bytes = NULL;
+    tls_client_hello_result_t result = sniffTlsClientHelloRecords(payload, payload_len, scratch, &hello, &hello_bytes);
     if (result == kTlsClientHelloNeedMore)
     {
         return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kGenericSnifferNeedMore
@@ -329,7 +402,7 @@ generic_sniffer_result_t genericsnifferSniffTlsClientHelloSni(const uint8_t *pay
         return kGenericSnifferMissing;
     }
 
-    const uint8_t *value     = payload + hello.sni_name_offset;
+    const uint8_t *value     = hello_bytes + hello.sni_name_offset;
     uint32_t       value_len = hello.sni_name_length;
     genericsnifferStripHostPortAndDot(&value, &value_len);
     if (value_len == 0)

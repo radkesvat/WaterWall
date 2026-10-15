@@ -115,7 +115,7 @@ bool routerLoadSniffing(router_tstate_t *ts, const cJSON *settings)
 }
 
 typedef generic_sniffer_result_t (*router_domain_sniff_fn)(const uint8_t *payload, uint32_t payload_len,
-                                                           uint8_t scratch[UINT8_MAX + 1U],
+                                                           uint8_t         scratch[kGenericSnifferMaxWindowBytes],
                                                            const uint8_t **host, uint32_t *host_len);
 
 typedef struct router_domain_sniffer_s
@@ -149,7 +149,7 @@ static bool routerLineIsUdpOnly(line_t *line)
 #endif
 
 static generic_sniffer_result_t routerSniffAdapterHttp1Host(const uint8_t *payload, uint32_t payload_len,
-                                                            uint8_t scratch[UINT8_MAX + 1U],
+                                                            uint8_t         scratch[kGenericSnifferMaxWindowBytes],
                                                             const uint8_t **host, uint32_t *host_len)
 {
     discard scratch;
@@ -158,7 +158,7 @@ static generic_sniffer_result_t routerSniffAdapterHttp1Host(const uint8_t *paylo
 
 #ifdef ROUTER_ENABLE_HTTP2_SNIFFING
 static generic_sniffer_result_t routerSniffAdapterHttp2Domain(const uint8_t *payload, uint32_t payload_len,
-                                                              uint8_t scratch[UINT8_MAX + 1U],
+                                                              uint8_t         scratch[kGenericSnifferMaxWindowBytes],
                                                               const uint8_t **host, uint32_t *host_len)
 {
     generic_sniffer_result_t result =
@@ -172,17 +172,16 @@ static generic_sniffer_result_t routerSniffAdapterHttp2Domain(const uint8_t *pay
 #endif
 
 static generic_sniffer_result_t routerSniffAdapterTlsSni(const uint8_t *payload, uint32_t payload_len,
-                                                         uint8_t scratch[UINT8_MAX + 1U], const uint8_t **host,
-                                                         uint32_t *host_len)
+                                                         uint8_t         scratch[kGenericSnifferMaxWindowBytes],
+                                                         const uint8_t **host, uint32_t *host_len)
 {
-    discard scratch;
-    return genericsnifferSniffTlsClientHelloSni(payload, payload_len, host, host_len);
+    return genericsnifferSniffTlsClientHelloSni(payload, payload_len, scratch, host, host_len);
 }
 
 #ifdef ROUTER_ENABLE_QUIC_SNIFFING
 static generic_sniffer_result_t routerSniffAdapterQuicSni(const uint8_t *payload, uint32_t payload_len,
-                                                          uint8_t scratch[UINT8_MAX + 1U], const uint8_t **host,
-                                                          uint32_t *host_len)
+                                                          uint8_t         scratch[kGenericSnifferMaxWindowBytes],
+                                                          const uint8_t **host, uint32_t *host_len)
 {
     generic_sniffer_result_t result =
         routerQuicSniffClientHelloSni(payload, payload_len, scratch, UINT8_MAX + 1U, host_len);
@@ -297,7 +296,7 @@ static bool routerSniffDetectHttpUpgrade(router_match_ctx_t *mctx)
 
 static bool routerSniffDetectDomain(router_tstate_t *ts, router_match_ctx_t *mctx, bool *need_more)
 {
-    uint8_t scratch[UINT8_MAX + 1U];
+    uint8_t scratch[kGenericSnifferMaxWindowBytes];
 
     for (int i = 0; i < kRouterDomainSniffersCount; ++i)
     {

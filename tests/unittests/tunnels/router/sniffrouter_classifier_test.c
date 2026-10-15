@@ -159,6 +159,32 @@ int main(void)
         return 1;
     }
 
+    // Keep SNI bytes intact when a TLS record boundary falls inside the hostname.
+    uint8_t  fragmented_hello[sizeof(wildcard_hello) + 5U];
+    uint32_t split = wildcard_hello_len - 5U - 8U;
+    memoryCopy(fragmented_hello, wildcard_hello, 5U + split);
+    PUT_BE16(fragmented_hello + 3U, split);
+    memoryCopy(fragmented_hello + 5U + split, wildcard_hello, 3U);
+    PUT_BE16(fragmented_hello + 8U + split, wildcard_hello_len - 5U - split);
+    memoryCopy(fragmented_hello + 10U + split, wildcard_hello + 5U + split, wildcard_hello_len - 5U - split);
+    for (uint32_t available = 0; available < wildcard_hello_len + 5U; ++available)
+    {
+        if (expect_match("partial fragmented tls route",
+                         sniffrouterClassify(&ts, fragmented_hello, available),
+                         kSniffClassifyNeedMore,
+                         NULL) != 0)
+        {
+            return 1;
+        }
+    }
+    if (expect_match("fragmented tls wildcard route",
+                     sniffrouterClassify(&ts, fragmented_hello, wildcard_hello_len + 5U),
+                     kSniffClassifyTarget,
+                     tls_target) != 0)
+    {
+        return 1;
+    }
+
     uint8_t  wildcard_upper_hello[256];
     uint32_t wildcard_upper_len = make_client_hello(wildcard_upper_hello, "WWW.EXAMPLE.TEST");
     if (expect_match("tls wildcard case-insensitive",

@@ -1096,6 +1096,95 @@ static void testTlsSniffingMatchesDestinationDomain(void)
     testLineDestroy(line);
 }
 
+static void testTlsSniffingAcrossRecords(void)
+{
+    tunnel_t      *target = (tunnel_t *) (uintptr_t) 0x20;
+    uint8_t        hello[256];
+    uint32_t       hello_len = makeClientHello(hello, "fragment.example.test");
+    uint32_t       body_len  = hello_len - 5U;
+    const uint32_t splits[]  = {1U, 3U, body_len - 10U};
+
+    for (size_t i = 0; i < ARRAY_SIZE(splits); ++i)
+    {
+        uint32_t split = splits[i];
+        uint8_t  fragmented[sizeof(hello) + 5U];
+        memoryCopy(fragmented, hello, 5U + split);
+        PUT_BE16(fragmented + 3U, split);
+        memoryCopy(fragmented + 5U + split, hello, 3U);
+        PUT_BE16(fragmented + 8U + split, body_len - split);
+        memoryCopy(fragmented + 10U + split, hello + 5U + split, body_len - split);
+        uint32_t fragmented_len = hello_len + 5U;
+
+        uint8_t        scratch[kGenericSnifferMaxWindowBytes];
+        const uint8_t *host     = NULL;
+        uint32_t       host_len = 0;
+        require(genericsnifferSniffTlsClientHelloSni(fragmented, fragmented_len, scratch, &host, &host_len) ==
+                        kGenericSnifferFound &&
+                    host_len == stringLength("fragment.example.test") &&
+                    memoryCompare(host, "fragment.example.test", host_len) == 0,
+                "fragmented TLS SNI view did not survive return from the sniffer");
+
+        line_t *line = testLineCreate();
+        require(
+            addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "198.51.100.20", 443, IP_PROTO_TCP),
+            "failed to set fragmented TLS destination IP");
+        router_rule_t rule = parseDestinationDomainRule("{\"destination-domain\":\"fragment.example.test\"}", target);
+        rule.protocol.present      = true;
+        rule.protocol.wanted_flags = kAddressContextProtocolTls;
+        router_tstate_t ts = {.sniffing_modes = kRouterSniffTls, .needed_protocols = kAddressContextProtocolTls};
+
+        for (uint32_t available = 0; available < fragmented_len; ++available)
+        {
+            expectMatch("incomplete fragmented TLS route",
+                        classifyOneRule(&ts, &rule, line, fragmented, available),
+                        kRouterClassifyNeedMore,
+                        NULL);
+            require(line->routing_context.dest_ctx.domain == NULL,
+                    "incomplete fragmented TLS stored a destination domain");
+        }
+        expectMatch("complete fragmented TLS route",
+                    classifyOneRule(&ts, &rule, line, fragmented, fragmented_len),
+                    kRouterClassifyTarget,
+                    target);
+        requireDomain(&line->routing_context.dest_ctx, "fragment.example.test");
+        require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolTls) != 0,
+                "fragmented TLS protocol was not detected");
+        routerDestinationDomainDestroy(&rule);
+        testLineDestroy(line);
+
+        // A complete coalesced delivery must make the same routing decision.
+        line = testLineCreate();
+        rule = parseDestinationDomainRule("{\"destination-domain\":\"fragment.example.test\"}", target);
+        expectMatch("coalesced fragmented TLS route",
+                    classifyOneRule(&ts, &rule, line, fragmented, fragmented_len),
+                    kRouterClassifyTarget,
+                    target);
+        requireDomain(&line->routing_context.dest_ctx, "fragment.example.test");
+        routerDestinationDomainDestroy(&rule);
+        testLineDestroy(line);
+
+        // An interposed record of another content type cannot continue a ClientHello.
+        fragmented[5U + split] = 0x17U;
+        require(genericsnifferSniffTlsClientHello(fragmented, fragmented_len) == kGenericSnifferMissing,
+                "non-handshake continuation was detected as a TLS ClientHello");
+        fragmented[5U + split] = 0x16U;
+        PUT_BE16(fragmented + 8U + split, 0U);
+        require(genericsnifferSniffTlsClientHello(fragmented, fragmented_len) == kGenericSnifferMissing,
+                "empty handshake continuation was detected as a TLS ClientHello");
+    }
+
+    uint8_t incomplete[kGenericSnifferMaxWindowBytes] = {
+        0x16, 0x03, 0x03, 0x00, 0x01, 0x01, 0x16, 0x03, 0x03, 0x3f, 0xff};
+    require(genericsnifferSniffTlsClientHello(incomplete, sizeof(incomplete) - 1U) == kGenericSnifferNeedMore,
+            "fragmented TLS cutoff rejected input below the sniff window");
+    require(genericsnifferSniffTlsClientHello(incomplete, sizeof(incomplete)) == kGenericSnifferMissing,
+            "fragmented TLS exceeded the incomplete-input sniff window");
+
+    const uint8_t oversized[] = {0x16, 0x03, 0x03, 0x00, 0x04, 0x01, 0xff, 0xff, 0xff};
+    require(genericsnifferSniffTlsClientHello(oversized, sizeof(oversized)) == kGenericSnifferMissing,
+            "fragmented TLS accepted a handshake larger than its reassembly storage");
+}
+
 #ifdef ROUTER_ENABLE_HTTP2_SNIFFING
 static void testHttp2PartialPrefaceNeedsMore(void)
 {
@@ -1732,6 +1821,7 @@ int main(void)
     testRouterInitCommitsStaticRoute();
     testHttpSniffingMatchesDestinationDomain();
     testTlsSniffingMatchesDestinationDomain();
+    testTlsSniffingAcrossRecords();
 #ifdef ROUTER_ENABLE_HTTP2_SNIFFING
     testHttp2PartialPrefaceNeedsMore();
     testHttp2MalformedPayloadFallsThrough();

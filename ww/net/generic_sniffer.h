@@ -24,6 +24,9 @@ void                     genericsnifferStripHostPortAndDot(const uint8_t **host,
 generic_sniffer_result_t genericsnifferSniffHttp1Request(const uint8_t *payload, uint32_t payload_len);
 generic_sniffer_result_t genericsnifferSniffHttp1UpgradeHeader(const uint8_t *payload, uint32_t payload_len);
 generic_sniffer_result_t genericsnifferSniffTlsClientHello(const uint8_t *payload, uint32_t payload_len);
+/** The returned SNI borrows payload for one-record input or scratch for fragmented
+ * input. Keep both alive until the caller has consumed the returned view. */
 generic_sniffer_result_t genericsnifferSniffTlsClientHelloSni(const uint8_t *payload, uint32_t payload_len,
+                                                              uint8_t         scratch[kGenericSnifferMaxWindowBytes],
                                                               const uint8_t **host, uint32_t *host_len);
 generic_sniffer_result_t genericsnifferSniffBittorrentHandshake(const uint8_t *payload, uint32_t payload_len);

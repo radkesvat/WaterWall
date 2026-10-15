@@ -174,10 +174,11 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
     const uint8_t *tls_sni     = NULL;
     uint32_t       tls_sni_len = 0;
     bool           tls_found   = false;
+    uint8_t        tls_scratch[kGenericSnifferMaxWindowBytes];
 
     if (tls_enabled)
     {
-        switch (genericsnifferSniffTlsClientHelloSni(p, n, &tls_sni, &tls_sni_len))
+        switch (genericsnifferSniffTlsClientHelloSni(p, n, tls_scratch, &tls_sni, &tls_sni_len))
         {
         case kGenericSnifferNeedMore:
             need_more = true;
