@@ -38,6 +38,10 @@ if(TARGET SniffRouter AND TARGET Router)
     ${CMAKE_SOURCE_DIR}/tunnels/Router
   )
   target_link_libraries(router_chain_ownership_test PRIVATE SniffRouter Router ReverseClient ww)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(router_chain_ownership_test PRIVATE WW_ROUTER_LOOKUP_WRAP_TEST=1)
+    target_link_options(router_chain_ownership_test PRIVATE "-Wl,--wrap=nodemanagerGetConfigNodeByHash")
+  endif()
   add_dependencies(waterwall_unit_tests router_chain_ownership_test)
 
   add_waterwall_unit_test(

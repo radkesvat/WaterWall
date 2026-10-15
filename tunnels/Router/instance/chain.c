@@ -59,7 +59,7 @@ static void routerSetRuleTargetEntry(tunnel_t *t, router_rule_t *rule, tunnel_t 
 // per-line state slot and its downstream traffic returns through the router.
 // If the target inserts internal tunnels before itself, store that branch entry
 // as the callable route. The same target may be referenced by several rules.
-static void routerBindRuleTarget(tunnel_t *t, tunnel_chain_t *chain, router_rule_t *rule)
+static void routerBindRuleTarget(tunnel_t *t, tunnel_chain_t *chain, router_rule_t *rule, uint32_t rule_index)
 {
     tunnel_t *target = rule->target_node->instance;
     if (target == NULL)
@@ -78,6 +78,22 @@ static void routerBindRuleTarget(tunnel_t *t, tunnel_chain_t *chain, router_rule
 
     if (target->chain == chain)
     {
+        // A previous binding may have inserted private predecessors. Only the
+        // configured default or an already-bound rule target may reuse those
+        // predecessors; an arbitrary descendant belongs to another node.
+        bool bound_by_router =
+            target->prev == t || (t->node->hash_next != 0 && t->node->hash_next == rule->target_node->hash_name);
+        router_tstate_t *ts = tunnelGetState(t);
+        for (uint32_t i = 0; ! bound_by_router && i < rule_index; ++i)
+        {
+            bound_by_router = ts->rules[i].target_node == rule->target_node && ts->rules[i].target_tunnel != NULL;
+        }
+        if (! bound_by_router)
+        {
+            LOGF("Router: rule target node \"%s\" belongs to another configured branch", rule->target_node->name);
+            startupFailureRecord(1);
+            return;
+        }
         routerSetRuleTargetEntry(t, rule, target);
         return;
     }
@@ -138,7 +154,7 @@ void routerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 
     for (uint32_t i = 0; i < ts->rules_count; ++i)
     {
-        routerBindRuleTarget(t, chain, &ts->rules[i]);
+        routerBindRuleTarget(t, chain, &ts->rules[i], i);
         if (UNLIKELY(startupFailurePending()))
         {
             return;
