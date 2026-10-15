@@ -50,6 +50,15 @@ if(TARGET Router AND EXISTS "${ROUTER_GEOIP_TEST_DB}")
 endif()
 
 if(TARGET Router)
+  add_test(
+    NAME waterwall.router_geosite_generator_unit
+    COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/router_geosite_generator_test.py"
+  )
+  set_tests_properties(waterwall.router_geosite_generator_unit PROPERTIES
+    TIMEOUT 30
+    LABELS "unit;tunnels;router;geosite"
+  )
+
   waterwall_add_native_executable(router_geosite_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/router/router_geosite_test.c)
   target_include_directories(router_geosite_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/Router/include

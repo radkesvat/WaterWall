@@ -514,15 +514,19 @@ static bool geositeCollectReferencedListNames(router_tstate_t *ts, const char **
     return true;
 }
 
-static bool geositeNormalizeDomainToOwned(const char *value, char **out, uint32_t *out_len)
+static bool geositeNormalizeRuleValueToOwned(const geosite_domain_rule_t *rule, char **out, uint32_t *out_len)
 {
+    const char  *value  = rule->value;
     const size_t length = stringLength(value);
     if (UNLIKELY(length != (uint32_t) length))
         return false;
     uint32_t len = (uint32_t) length;
-    while (len > 0 && value[len - 1U] == '.')
+    if (rule->type == kGeositeDomainFull || rule->type == kGeositeDomainRootDomain)
     {
-        --len;
+        while (len > 0 && value[len - 1U] == '.')
+        {
+            --len;
+        }
     }
 
     if (len == 0)
@@ -638,7 +642,7 @@ static bool geositeCompiledListAddSetRule(router_geosite_domain_set_t *set, cons
 {
     char    *normalized = NULL;
     uint32_t len        = 0;
-    if (! geositeNormalizeDomainToOwned(rule->value, &normalized, &len))
+    if (! geositeNormalizeRuleValueToOwned(rule, &normalized, &len))
     {
         return false;
     }
@@ -655,7 +659,7 @@ static bool geositeCompiledListAddPlainRule(router_geosite_compiled_list_t *comp
 {
     char    *normalized = NULL;
     uint32_t len        = 0;
-    if (! geositeNormalizeDomainToOwned(rule->value, &normalized, &len))
+    if (! geositeNormalizeRuleValueToOwned(rule, &normalized, &len))
     {
         return false;
     }

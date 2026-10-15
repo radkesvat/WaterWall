@@ -83,6 +83,8 @@ def normalize_value(rule_type: RuleType, value: str) -> str:
         raise ValueError("empty rule value")
     if rule_type == RuleType.REGEX:
         return value
+    if rule_type == RuleType.PLAIN:
+        return value.lower()
 
     normalized = value.rstrip(".").lower()
     if not normalized:

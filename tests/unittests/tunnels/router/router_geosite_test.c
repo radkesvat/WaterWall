@@ -221,9 +221,9 @@ static const char *validGeositeJson(void)
 {
     return "{\"format\":\"waterwall-router-geosite-v1\",\"lists\":["
            "{\"name\":\"azure\",\"code\":null,\"file_path\":null,\"resource_hash\":null,\"domains\":["
-           "{\"type\":\"domain\",\"value\":\"azure.com\",\"attributes\":[{\"key\":\"test\",\"type\":\"bool\","
+           "{\"type\":\"domain\",\"value\":\"azure.com.\",\"attributes\":[{\"key\":\"test\",\"type\":\"bool\","
            "\"value\":true}]},"
-           "{\"type\":\"full\",\"value\":\"login.azure.com\",\"attributes\":[]},"
+           "{\"type\":\"full\",\"value\":\"login.azure.com.\",\"attributes\":[]},"
            "{\"type\":\"plain\",\"value\":\"cdn\",\"attributes\":[]},"
            "{\"type\":\"regex\",\"value\":\"^ignored\\\\.example$\",\"attributes\":[]},"
            "{\"type\":\"regex\",\"value\":\"^speed\\\\.[a-z]{2,6}\\\\.example$\",\"attributes\":[]},"
@@ -321,6 +321,51 @@ static void testCompiledGeositeMatchesSupportedRuleTypes(void)
     require(ts.geosite_db_path == NULL, "geosite close did not clear DB path");
 
     cJSON_Delete(settings);
+    remove(path);
+}
+
+static void testPlainPatternsPreservePunctuation(void)
+{
+    const struct
+    {
+        const char *type;
+        const char *pattern;
+        const char *matching_host;
+        const char *nonmatching_host;
+    } cases[] = {
+        {"plain", "GOOGLE.", "WWW.Google.test", "googleevil.test"},
+        {"keyword", "GOOGLE.", "WWW.Google.test", "googleevil.test"},
+        {"plain", ".", "www.example", "localhost"},
+    };
+
+    char path[256];
+    makeTestPath(path, sizeof(path), "plain_punctuation");
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        char json[256];
+        int  written =
+            snprintf(json,
+                     sizeof(json),
+                     "{\"lists\":[{\"name\":\"punctuation\",\"domains\":[{\"type\":\"%s\",\"value\":\"%s\"}]}]}",
+                     cases[i].type,
+                     cases[i].pattern);
+        require(written > 0 && (size_t) written < sizeof(json), "failed to build plain-pattern geosite JSON");
+        writeTestFile(path, json);
+
+        router_rule_t   rule     = parseDestinationDomainRule("{\"destination-domain\":\"geosite:punctuation\"}");
+        router_tstate_t ts       = geositeStateWithRule(&rule);
+        cJSON          *settings = settingsWithPath(path);
+
+        require(routerGeositeOpenIfNeeded(&ts, settings), "failed to compile plain-pattern geosite JSON");
+        require(ruleMatchesDomain(&ts, &rule, cases[i].matching_host),
+                "plain geosite pattern lost literal punctuation or case-insensitive matching");
+        require(! ruleMatchesDomain(&ts, &rule, cases[i].nonmatching_host),
+                "plain geosite pattern matched without its literal punctuation");
+
+        routerDestinationDomainDestroy(&rule);
+        routerGeositeClose(&ts);
+        cJSON_Delete(settings);
+    }
     remove(path);
 }
 
@@ -537,6 +582,7 @@ int main(void)
     testGeositeRuleRequiresPath();
     testMissingReferencedListFails();
     testCompiledGeositeMatchesSupportedRuleTypes();
+    testPlainPatternsPreservePunctuation();
     testMixedNormalAndGeositeOrSemantics();
     testRepeatedListCompilesOnceAndAttachesBothRules();
     testCompiledGeositeStcReadLookupsDoNotMutateSets();
