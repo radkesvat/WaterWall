@@ -31,15 +31,22 @@ conditions, or more flexible routing behavior.
 - The top-level `next` is the fallback upstream continuation.
 - Each route target is folded into the **same chain** during `onChain`, so it
   gets a per-line state slot and its downstream traffic returns through the
-  router to the previous node.
+  router to the previous node. Sharing a chain does not make a node inside
+  another configured branch a valid target. The default branch and repeated
+  explicit targets remain valid, including their private inserted helpers.
 - Upstream `Init` is deferred until the first payload selects a branch. The
   buffered bytes are then replayed to the chosen branch with no loss. This is
   the same for HTTP Host and TLS SNI routing.
 - Input arriving reentrantly during the selected branch's `Init` or initial
-  replay stays behind the original bytes. This additional input is coalesced
-  into one ordinary buffer with a 2 MiB logical-byte limit; exceeding the limit
-  closes the line. The original accepted sniff batch keeps its existing size
-  behavior.
+  replay stays behind the original bytes. For streams, this additional input
+  is coalesced into one ordinary buffer with a 2 MiB logical-byte limit. The
+  original accepted stream sniff batch keeps its existing size behavior.
+- UDP input is identified during `Init`, before a selected branch can change
+  its destination context. Each datagram, including an empty datagram, remains
+  a separate FIFO entry; a separate byte view supplies the sniffer. The queue
+  admits at most 2 MiB of payload, 4 MiB of buffer capacity charge, and 1,024
+  datagrams, including startup reentry. Overflow closes only initialized sides.
+  Replay preserves datagram contents, boundaries and order.
 - `Pause` and `Resume` are advisory. Once a branch is selected, every notification
   follows that branch, including duplicates; initial replay does not wait for
   `Resume`. Before selection there is no initialized upstream recipient.
@@ -64,7 +71,10 @@ HTTP/2 cleartext prefaces do not carry an HTTP/1 `Host` header, so they fall
 back to top-level `next` unless routed by some earlier tunnel.
 
 TLS SNI matching uses the same domain patterns as HTTP Host matching. The TLS
-ClientHello must arrive within the bounded sniff window.
+sniffer accepts a ClientHello split across TLS records, including splits inside
+the handshake header or SNI. Fragmented handshakes use at most 8192 bytes of
+reassembly storage. Incomplete input retains the bounded sniff window; complete
+single-record ClientHellos use direct parsing.
 
 ## Settings
 
@@ -167,8 +177,8 @@ Configuration example:
 
 - **Matching SNI**: Connections presenting a valid TLS ClientHello with an SNI matching the configured domain route to `protected-tls-server`.
 - **Default Fallback**: Connections with mismatched SNI, absent SNI, unparseable input, or plaintext HTTP on the TLS port route to top-level `next` (`nginx-fallback-connector`).
-- **Stream Replay**: Initial bytes buffered during sniffing are replayed intact to the selected branch in FIFO stream order (callback and TCP packet segmentation are not preserved).
-- **8192-byte Sniff Window**: Complete ClientHellos are parsed and classified first, even if larger than 8192 bytes. If an input remains incomplete and the accumulated prefix reaches 8192 bytes, `SniffRouter` stops waiting and selects the default `next` branch.
+- **Initial Replay**: Initial stream bytes buffered during sniffing are replayed intact in FIFO order; callback and TCP packet segmentation are not preserved. UDP replay preserves each datagram, including empty datagrams.
+- **8192-byte Sniff Window**: Complete single-record ClientHellos are parsed and classified first, even if larger than 8192 bytes. Fragmented handshakes have an 8192-byte reassembly limit. If input remains incomplete and the accumulated prefix reaches 8192 bytes, `SniffRouter` stops waiting and selects the default `next` branch.
 - **Listener-Owned Idle Timeout**: Incomplete ClientHellos below 8192 bytes remain unassigned. `SniffRouter` does not set an internal timer; the front listener's idle settings (e.g. `TcpListener`) govern the timeout.
 - **Why a Real Nginx TLS Fallback**: Routing default traffic to a real nginx HTTPS listener ensures unknown SNI handshakes, no-SNI handshakes, and plaintext HTTP receive authentic nginx responses and error pages (such as HTTP 400 "The plain HTTP request was sent to HTTPS port"), avoiding synthetic handshake rejection fingerprints.
 - See `tests/examples/vless_tls_sni_camouflage_server.json` for a complete server example.

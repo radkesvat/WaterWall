@@ -104,11 +104,15 @@ Step by step:
    toward the previous node.
 
 Input submitted reentrantly during the selected `Init` or initial replay waits
-behind the accepted first delivery. The temporary nested-input backlog is one
-ordinary buffer with a 2 MiB logical-byte limit; overflow closes the initialized
-branch and previous side. This limit does not shrink the existing accepted first
-sniffing delivery. Replay stops immediately on Finish, even when a borrowed
-line's owner has not yet destroyed the line.
+behind the accepted first delivery. For stream input, the temporary nested-input
+backlog is one ordinary buffer with a 2 MiB logical-byte limit. This limit does
+not shrink the existing accepted first sniffing delivery. UDP retains each
+datagram, including empty datagrams, in a separate FIFO and copies bytes into a
+sniffing view. The FIFO admits at most 2 MiB of payload, 4 MiB of buffer capacity
+charge, and 1,024 datagrams, including startup reentry. Overflow closes the line
+through its initialized directions. Replay preserves UDP contents, boundaries,
+and order and stops immediately on Finish, even when a borrowed line's owner has
+not yet destroyed the line.
 
 After selected Init and all initial replay settle, Router destroys its line
 state and permanently bypasses itself when the route is its actual `next` link.
@@ -131,7 +135,9 @@ Consequences worth knowing:
   node is **folded into the same chain** during `onChain` (exactly like
   [`SniffRouter`](../SniffRouter/description.md) routes), so it gets a per-line
   state slot and its **downstream** traffic flows back **through** the `Router`
-  to the previous node.
+  to the previous node. Being in the same chain does not make an arbitrary node
+  inside another configured branch a valid target. Router can reuse its default
+  branch and explicitly bound rule targets, including their private helpers.
 - **`next` is the default route, not "rule 0".** It is a normal upstream
   continuation used when no rule matches (or when no rules are configured).
 - **The decision is made once per connection.** Later payloads are forwarded to
@@ -248,6 +254,14 @@ Details:
 - `http2` applies only to TCP-only destinations and only to prior-knowledge
   cleartext HTTP/2; h2c **upgrade** requests are covered by `http1` Host
   sniffing. `quic`/`http3` applies only to UDP-only destinations.
+- HTTP/2 reads `:authority`, or the fallback `host`, only from the first
+  completed request HEADERS. Later request streams cannot replace that domain,
+  even when several requests arrive in one payload.
+- TLS protocol detection and SNI sniffing accept ClientHellos split across TLS
+  records, including splits inside the handshake header or hostname. Fragmented
+  handshakes use at most 8192 bytes of reassembly storage and retain the
+  incomplete-input sniff-window cutoff. Complete single-record input uses direct
+  parsing.
 - The first enabled sniffer that finds a name wins; the remaining sniffers are
   skipped.
 - Build requirements: `http2` needs the CMake option
