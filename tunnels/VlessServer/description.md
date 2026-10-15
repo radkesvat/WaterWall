@@ -1,5 +1,5 @@
 <!--
-Documentation version: 155
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/VlessServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VlessServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -28,7 +28,7 @@ transport-specific wrapping.
 - Supports VLESS UDP command `0x02`.
 - Rejects non-empty addons, including Vision flow addons.
 - Rejects mux, reverse, unknown commands, malformed destinations, empty domain names, and zero ports.
-- Relays transport Est promptly and combines `00 00` with the first nonempty backend reply, including a valid pre-Est reply.
+- Relays transport Est promptly and combines `00 00` with the first nonempty TCP reply or first framed UDP reply, including an empty datagram or a valid pre-Est reply.
 - Preserves any TCP body bytes that arrive in the same payload as the request header.
 - Uses VLESS UDP length framing: `uint16_be length` followed by one UDP payload.
 - Creates one internal backend UDP line for the UDP destination carried by the initial VLESS request.
@@ -43,10 +43,11 @@ Request parsing reads only the required metadata into a cache of at most 278 byt
 contain the version and all 16 UUID bytes in its **logical** length, including bytes in a private pipe; fewer than 17
 bytes, including an empty callback, takes fallback/rejection. Successful authentication is cached. Unsupported addons
 and other malformed authenticated requests close the protected flow. Accepted metadata is removed before body budgeting.
-The first nonempty backend reply shares one ordinary buffer with the `00 00` response header. Ordinary input with
+The first nonempty TCP reply or first framed UDP reply, including an empty datagram, shares one ordinary buffer with
+the `00 00` response header. Ordinary input with
 enough headroom is reused in place; splice-backed input or insufficient headroom uses a best-fit ordinary buffer.
 Later opaque TCP replies retain their representation where possible. UDP uses one fixed request destination and exact two-byte
-length framing, with delivered bodies of 1..65,535 bytes. Pipe allocation or transfer pressure uses complete ordinary fallback;
+length framing, with bodies of 0..65,535 bytes. Pipe allocation or transfer pressure uses complete ordinary fallback;
 not every frame is guaranteed zero-copy.
 
 | Retained obligation | Inclusive limit |
@@ -323,9 +324,10 @@ Response format:
 
 Every same-line TCP and fallback Est is forwarded, including repeats, independently of the response header and output
 Pause. Owned UDP backend Est maps to its client association once. The `00 00` header is sent exactly once, together with
-the complete first nonempty backend reply in one ordinary buffer, including a valid reply received before Est. For UDP,
-that buffer includes the datagram's two-byte length prefix.
-Est, Resume and empty replies never send a standalone header; there is no header-only timer. A connection that closes
+the complete first nonempty TCP reply or first framed UDP reply in one ordinary buffer, including a valid reply received
+before Est. An empty UDP reply is valid: its first combined response is `00 00 00 00`, containing the response header
+and the datagram's zero length.
+Est, Resume and empty TCP replies never send a standalone header; there is no header-only timer. A connection that closes
 without a backend reply sends no VLESS response bytes. Later replies keep the normal splice-capable forwarding path.
 This avoids a deliberate header-only write, but does not guarantee TCP packet or TLS record boundaries.
 
@@ -353,9 +355,11 @@ payload: length bytes
 
 The UDP destination is fixed by the initial VLESS request. Individual UDP frames do not carry per-packet addresses.
 
-A received length of `0` consumes only its two-byte prefix, delivers no datagram, and leaves the association open;
-parsing continues with the next frame. Empty or oversized local replies are dropped without closing the backend.
-Zero-length handling matches [Xray's base VLESS reader and writers](https://github.com/XTLS/Xray-core/blob/0888beb38a9ba45440557175e71ce21cf8ba3b13/proxy/vless/encoding/addons.go).
+A received length of `0` consumes its two-byte prefix and delivers exactly one empty UDP datagram. The association
+stays open and parsing continues with the next frame in order. Empty backend replies emit a `00 00` length prefix;
+oversized local replies are dropped without closing the backend.
+This differs from [Xray's base VLESS implementation](https://github.com/XTLS/Xray-core/blob/0888beb38a9ba45440557175e71ce21cf8ba3b13/proxy/vless/encoding/addons.go), whose writers drop empty datagrams and whose reader skips zero-length frames.
+Empty-datagram delivery requires a peer that supports it; nonempty framing is unchanged.
 Empty datagrams are valid at the [UDP layer (RFC 8085 §5)](https://datatracker.ietf.org/doc/html/rfc8085#section-5).
 
 ## Fallback Behavior

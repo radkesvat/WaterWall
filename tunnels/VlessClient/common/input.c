@@ -59,16 +59,10 @@ int vlessclientReadResponse(vlessclient_lstate_t *ls)
 
 bool vlessclientReadUdpHeader(vlessclient_lstate_t *ls)
 {
-    while (gatherHeader(ls))
-    {
-        ls->body_length = ((uint16_t) ls->header[0] << 8U) | ls->header[1];
-        if (ls->body_length != 0)
-            return true;
-        /* Base VLESS consumes empty frames without delivering a datagram. */
-        ls->receive_bytes -= ls->header_needed;
-        ls->header_filled = 0;
-    }
-    return false;
+    if (! gatherHeader(ls))
+        return false;
+    ls->body_length = ((uint16_t) ls->header[0] << 8U) | ls->header[1];
+    return true;
 }
 
 sbuf_t *vlessclientTakeTcpBody(vlessclient_lstate_t *ls)
@@ -87,10 +81,14 @@ sbuf_t *vlessclientExtractUdpBody(vlessclient_lstate_t *ls)
     buffer_pool_t *pool    = lineGetBufferPool(ls->line);
     uint16_t       padding = bufferpoolGetLargeBufferPadding(pool);
     uint32_t       bytes   = ls->body_length;
-    sbuf_t        *head    = receiveHead(ls);
+    sbuf_t        *head    = bytes == 0 ? NULL : receiveHead(ls);
     sbuf_t        *result  = NULL;
-    assert(bytes != 0 && head != NULL);
-    if (sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
+    assert(bytes == 0 || head != NULL);
+    if (bytes == 0)
+    {
+        result = bufferpoolGetBestFit(pool, 0, padding);
+    }
+    else if (sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
     {
         result           = head;
         ls->receive_head = NULL;

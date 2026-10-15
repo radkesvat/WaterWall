@@ -51,16 +51,16 @@ sbuf_t *vlessserverExtractUdpBody(vlessserver_lstate_t *ls, uint16_t bytes)
     uint16_t       padding = bufferpoolGetLargeBufferPadding(pool);
     sbuf_t        *head    = receiveHead(ls);
     sbuf_t        *result  = NULL;
-    assert(bytes != 0 && head != NULL);
-    if (sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
+    assert(bytes == 0 || head != NULL);
+    if (bytes != 0 && head != NULL && sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
     {
         result         = head;
         ls->input_head = NULL;
     }
     else
     {
-        bool   has_pipe = sbufIsSplice(head);
-        size_t range    = sbufGetLength(head);
+        bool   has_pipe = head != NULL && sbufIsSplice(head);
+        size_t range    = head == NULL ? 0 : sbufGetLength(head);
         c_foreach(i, ww_sbuffer_queue_t, ls->pending_up.q)
         {
             if (range >= bytes)
@@ -68,7 +68,7 @@ sbuf_t *vlessserverExtractUdpBody(vlessserver_lstate_t *ls, uint16_t bytes)
             has_pipe |= sbufIsSplice(*i.ref);
             range += sbufGetLength(*i.ref);
         }
-        if (has_pipe)
+        if (bytes != 0 && has_pipe)
             result = bufferpoolGetSpliceBuffer(pool);
         if (result != NULL && sbufGetLeftCapacity(result) < padding)
         {

@@ -41,7 +41,8 @@ def run(binary, udp, enabled, timeout=None, nested=False, waiting=False):
     tracer = shutil.which("strace")
     if tracer is None:
         raise RuntimeError("strace is required to verify actual splice I/O")
-    payloads = [b"a", bytes(range(256)) * 128, b"end"]
+    payloads = [b"", b"a", bytes(range(256)) * 128, b"end", b""]
+    coalesced = [b"", b"one", b"", b"two", b"three", b""]
     with RunDirectory("waterwall-vless-splice-") as directory:
         root = Path(directory)
         nodes = [
@@ -129,7 +130,7 @@ def run(binary, udp, enabled, timeout=None, nested=False, waiting=False):
                                     conn.sendall(wire[:1])
                                     conn.sendall(wire[1:])
                                 # Send coalesced frames with distinct datagram boundaries.
-                                conn.sendall(udp_frame(b"one") + udp_frame(b"two") + udp_frame(b"three"))
+                                conn.sendall(b"".join(udp_frame(payload) for payload in coalesced))
                                 assert conn.recv(1) == b"", "unexpected carrier bytes during shutdown"
                             else:
                                 assert exact(conn, len(early)) == early, "TCP outbound waited for response"
@@ -146,7 +147,7 @@ def run(binary, udp, enabled, timeout=None, nested=False, waiting=False):
                                 assert client.recv(65535) == payload, "UDP payload changed"
                                 if index == 0:
                                     trace_boundary = len((root / "splice.log").read_text())
-                            assert [client.recv(65535) for _ in range(3)] == [b"one", b"two", b"three"]
+                            assert [client.recv(65535) for _ in coalesced] == coalesced
                             # The association is still live: shutdown must drain its owned carrier.
                             process.send_signal(signal.SIGTERM)
                             assert process.wait(timeout=10) == 128 + signal.SIGTERM, "unclean UDP shutdown"

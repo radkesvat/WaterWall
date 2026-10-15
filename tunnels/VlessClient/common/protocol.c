@@ -154,7 +154,7 @@ void vlessclientWrapUdpPayload(line_t *l, sbuf_t **buf_io)
 {
     sbuf_t  *buf     = *buf_io;
     uint32_t payload = sbufGetLength(buf);
-    assert(payload > 0 && payload <= kVlessClientUdpMaxPacket);
+    assert(payload <= kVlessClientUdpMaxPacket);
     if (UNLIKELY(sbufGetLeftCapacity(buf) < kVlessClientUdpHeaderLen))
     {
         buffer_pool_t *pool    = lineGetBufferPool(l);

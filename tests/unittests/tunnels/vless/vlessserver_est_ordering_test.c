@@ -372,25 +372,43 @@ static void testPauseBeforeBranchInit(bool udp, bool close)
     }
 }
 
-static void testUdpSplitLengthPrefix(bool malformed)
+static unsigned split_udp_payload_count;
+
+static void countSplitUdpPayload(est_fixture_t *f, line_t *l)
+{
+    discard f;
+    discard l;
+    ++split_udp_payload_count;
+}
+
+static void testUdpSplitLengthPrefix(bool empty_frame)
 {
     est_fixture_t      f;
     vlessserver_user_t user;
     setupVless(&f, &user);
     f.on_init = initEst;
     sendRequest(&f, &user, true);
-    const uint8_t prefix[] = {0};
+    split_udp_payload_count = 0;
+    f.on_up                 = countSplitUdpPayload;
+    const uint8_t prefix[]  = {0};
     tunnelUpStreamPayload(f.node, f.line, estBytes(f.line, prefix, sizeof(prefix)));
     vlessserver_lstate_t *ls = lineGetState(f.line, f.node);
-    twfRequire(lineIsAlive(f.line) && f.up_len == 1 && ls->input_bytes == 1,
+    twfRequire(lineIsAlive(f.line) && f.up_len == 1 && split_udp_payload_count == 0 && ls->input_bytes == 1,
                "VlessServer did not retain an incomplete UDP length prefix");
-    if (malformed)
+    if (empty_frame)
     {
         tunnelUpStreamPayload(f.node, f.line, estBytes(f.line, prefix, sizeof(prefix)));
-        twfRequire(! lineIsAlive(f.line) && f.down_finish_count == 1 && f.up_len == 1,
-                   "VlessServer accepted a split zero-length UDP frame");
-        twfRequireLineStateZeroed(f.line, f.node, "VlessServer malformed split UDP frame retained state");
-        estFixtureDestroy(&f);
+        twfRequire(lineIsAlive(f.line) && f.down_finish_count == 0 && f.up_finish_count == 0 && f.up_len == 1 &&
+                       split_udp_payload_count == 1,
+                   "VlessServer did not deliver exactly one split empty UDP datagram");
+        twfRequire(ls->input_bytes == 0 && ls->header_filled == 0 && ls->input_head == NULL &&
+                       bufferqueueGetBufCount(&ls->pending_up) == 0,
+                   "VlessServer split empty UDP datagram retained parser input");
+        applicationInput(&f, 'B');
+        twfRequire(lineIsAlive(f.line) && split_udp_payload_count == 2 && f.up_len == 2 &&
+                       memoryCompare(f.up, "AB", 2) == 0 && ls->input_bytes == 0 && ls->header_filled == 0,
+                   "VlessServer split empty UDP datagram disrupted later input");
+        closeFixture(&f);
         return;
     }
     const uint8_t partial_body[] = {2, 'B'};

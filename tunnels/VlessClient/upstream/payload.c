@@ -6,10 +6,9 @@ void vlessclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     vlessclient_lstate_t *ls     = lineGetState(l, t);
     uint32_t              length = sbufGetLength(buf);
-    if (UNLIKELY(
-            ls->phase == kVlessClientPhaseClosed || ls->kind == kVlessClientLineKindUdpCarrier ||
-            (ls->kind == kVlessClientLineKindUdpApplication && (length > kVlessClientUdpMaxPacket || length == 0)) ||
-            (ls->kind == kVlessClientLineKindDirect && ! ls->request_sent && length == 0)))
+    if (UNLIKELY(ls->phase == kVlessClientPhaseClosed || ls->kind == kVlessClientLineKindUdpCarrier ||
+                 (ls->kind == kVlessClientLineKindUdpApplication && length > kVlessClientUdpMaxPacket) ||
+                 (ls->kind == kVlessClientLineKindDirect && ! ls->request_sent && length == 0)))
     {
         lineReuseBuffer(l, buf);
         return;

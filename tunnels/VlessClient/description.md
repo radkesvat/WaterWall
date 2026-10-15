@@ -1,5 +1,5 @@
 <!--
-Documentation version: 160
+Documentation version: 161
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/VlessClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VlessClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -223,7 +223,8 @@ callback, or after Pause. It is sent immediately with the complete request
 in one ordinary buffer, including one UDP frame header when applicable. Ordinary input
 is reused in place when its headroom fits all headers. Otherwise a best-fit ordinary
 buffer is allocated; any resident prefix and private-pipe body are copied in order.
-Empty TCP input does not trigger a request. Empty VLESS UDP datagrams are dropped locally.
+Empty TCP input does not trigger a request. An empty UDP datagram emits a `00 00` length prefix and triggers the
+initial request when it is the first application payload.
 
 Every direct TCP transport `Est` reaches the live application, including repeats,
 independently of protocol data and Pause. UDP carrier Est maps to its application
@@ -261,7 +262,7 @@ destroyed here; the application owner drains it during shutdown.
 - `TlsClient` is required for ordinary VLESS deployments, but it is not inserted automatically.
 - This implementation sends empty request addons. It accepts a non-empty response addons section (logging a warning and skipping the addons bytes) for interoperability, but it does not act on any addon.
 - Unsupported VLESS features include flow, XTLS Vision, mux, reverse, XUDP, and transport-specific wrappers.
-- UDP payloads with length `0` or greater than `65535` are dropped locally.
+- UDP payloads greater than `65535` bytes are dropped locally; empty datagrams are preserved.
 - Malformed downstream response headers or UDP frames close the affected line safely.
 - `required_padding_left` is `280`, covering the largest initial request plus a UDP length prefix.
 
@@ -278,15 +279,16 @@ capacity requires it. Receive extraction preserves full onward padding.
 | TCP body input retained only for parser reentry ordering | 2,097,152 bytes (2 MiB) |
 | TCP response assembly, including active head and cached metadata | 2,097,409 bytes (2 MiB plus 257 bytes) |
 | UDP wire assembly, including active head and cached headers | 2,162,689 bytes (2 MiB plus 65,537 bytes) |
-| UDP body | 1 through 65,535 bytes |
+| UDP body | 0 through 65,535 bytes |
 
 Equality passes; overflow or parser queue refusal closes the association. There is no
 retained decoded-output queue or 1,024-record limit on a synchronous batch. Fragment
 counts do not consume output slots. These are logical protocol limits, independent
 of buffer-pool size, RAM profile, and pipe capacity. Oversized local datagrams are
-dropped; malformed received frames close the association. A received length of `0` consumes only its two-byte prefix,
-delivers no datagram, and leaves the association open; parsing continues with the next frame.
-Zero-length handling matches [Xray's base VLESS reader and writers](https://github.com/XTLS/Xray-core/blob/0888beb38a9ba45440557175e71ce21cf8ba3b13/proxy/vless/encoding/addons.go).
+dropped; malformed received frames close the association. A received length of `0` consumes its two-byte prefix and
+delivers exactly one empty UDP datagram. The association stays open and parsing continues with the next frame in order.
+This differs from [Xray's base VLESS implementation](https://github.com/XTLS/Xray-core/blob/0888beb38a9ba45440557175e71ce21cf8ba3b13/proxy/vless/encoding/addons.go), whose writers drop empty datagrams and whose reader skips zero-length frames.
+Empty-datagram delivery requires a peer that supports it; nonempty framing is unchanged.
 Empty datagrams are valid at the [UDP layer (RFC 8085 §5)](https://datatracker.ietf.org/doc/html/rfc8085#section-5).
 
 Splice requires `misc.splice`, a supported build and support from every node in the

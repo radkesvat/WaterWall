@@ -106,6 +106,7 @@ typedef struct fixture_s
     uint8_t          up[3 * 1024 * 1024], down[3 * 1024 * 1024];
     size_t           up_len, down_len, parser_reads;
     uint32_t         deliveries_up, deliveries_down, requests, ests, finishes, transport_finishes;
+    uint32_t         down_lengths[16];
     uint32_t         pauses, resumes;
     unsigned         action, boundary;
     bool             udp, paused_up, paused_down, last_splice;
@@ -299,7 +300,11 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *b)
         if (up)
             ++f.deliveries_up;
         else
+        {
+            if (f.deliveries_down < ARRAY_SIZE(f.down_lengths))
+                f.down_lengths[f.deliveries_down] = n;
             ++f.deliveries_down;
+        }
         performAction(up ? 4 : 5);
     }
 }
@@ -608,7 +613,7 @@ static void testUdp(bool pipe)
             establish();
             unsigned n = sizes[i];
             tunnelUpStreamPayload(f.t, f.application, bytes(payload, n, pipe && n <= 4096, pad ? 320 : 0));
-            if (n == 0 || n > 65535)
+            if (n > 65535)
                 twfRequire(f.deliveries_up == 0 && lineIsAlive(f.application), "invalid local UDP closed association");
             else
             {
@@ -630,7 +635,34 @@ static void testUdp(bool pipe)
 }
 static void testEmptyUdp(bool pipe)
 {
-    twfSetCase("empty UDP frames consume only framing and preserve association");
+    twfSetCase("empty UDP requests and replies preserve datagrams and association");
+    for (unsigned pad = 0; pad < 2; ++pad)
+        for (unsigned after_est = 0; after_est < 2; ++after_est)
+        {
+            begin(true, "127.0.0.1", 128, 0, false);
+            ((vlessclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 1000;
+            if (after_est)
+                establish();
+            vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
+            twfRequire((ls->first_payload_timer != NULL) == (after_est != 0), "idle request timer setup changed");
+            tunnelUpStreamPayload(f.t, f.application, bytes("", 0, pipe, pad ? 320 : 0));
+            twfRequire(f.requests == 1 && f.up_len == 28 && f.up[18] == 2 && f.up[26] == 0 && f.up[27] == 0 &&
+                           ! f.last_splice && ls->request_sent && ls->first_payload_timer == NULL &&
+                           ! ls->first_payload_due && wloopNTimers(f.env.loop) == 0,
+                       "first empty UDP did not send one ordinary request/frame or cancel idle wait");
+            establish();
+            tunnelUpStreamPayload(f.t, f.application, bytes("", 0, pipe, pad ? 320 : 0));
+            twfRequire(f.requests == 1 && f.deliveries_up == 1 && f.up_len == 30 && f.up[28] == 0 && f.up[29] == 0,
+                       "later empty UDP was dropped or repeated request");
+            end();
+        }
+    begin(true, "127.0.0.1", 128, 0, false);
+    f.boundary = 2;
+    f.action   = 5;
+    tunnelUpStreamPayload(f.t, f.application, bytes("", 0, pipe, 0));
+    twfRequire(f.requests == 1 && f.deliveries_up == 1 && f.up_len == 31 && memcmp(f.up + 26, "\0\0\0\1C", 5) == 0,
+               "nested payload overtook first empty UDP or repeated request");
+    end();
     for (unsigned mixed = 0; mixed < 2; ++mixed)
     {
         uint8_t  wire[32] = {0, 0};
@@ -654,17 +686,20 @@ static void testEmptyUdp(bool pipe)
             twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier) && f.finishes == 0 &&
                            f.transport_finishes == 0,
                        "empty UDP frame closed association");
-            twfRequire(f.deliveries_down == (mixed ? 2U : 0U) && f.down_len == (mixed ? 3U : 0U) &&
+            const uint32_t expected[] = {0, 0, 1, 0, 2, 0};
+            unsigned       count      = mixed ? 6 : 2;
+            twfRequire(f.deliveries_down == count && f.down_len == (mixed ? 3U : 0U) &&
+                           memcmp(f.down_lengths, expected, count * sizeof(*expected)) == 0 &&
                            memcmp(f.down, "ABC", f.down_len) == 0,
-                       "empty UDP emitted a datagram or changed later frames");
+                       "empty UDP lost datagrams or changed frame order");
             vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
             twfRequire(ls->response_complete && ls->receive_bytes == 0 && ls->receive_head == NULL &&
                            bufferqueueGetBufCount(&ls->pending_down) == 0 && ls->header_filled == 0 &&
                            ls->body_length == 0 && ! ls->receiving,
                        "empty UDP retained framing or parser accounting");
             tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\1D", 3, pipe, 320));
-            twfRequire(f.deliveries_down == (mixed ? 3U : 1U) && f.down_len == (mixed ? 4U : 1U) &&
-                           f.down[f.down_len - 1] == 'D',
+            twfRequire(f.deliveries_down == count + 1 && f.down_lengths[count] == 1 &&
+                           f.down_len == (mixed ? 4U : 1U) && f.down[f.down_len - 1] == 'D',
                        "empty UDP stranded later input");
             end();
         }
@@ -681,7 +716,7 @@ static void testPressure(void)
         response();
         unsigned length = 0;
         for (unsigned i = 0; i < 1500; ++i)
-            length += frame(wire + length, "x", 1);
+            length += frame(wire + length, i % 2 ? "x" : NULL, i % 2);
         f.boundary = 5;
         f.action   = close ? 8 : 3;
         tunnelDownStreamPayload(f.t, f.carrier, bytes(wire, length, false, 320));
@@ -701,12 +736,14 @@ static void testPressure(void)
     establish();
     response();
     unsigned length = 0;
+    length += frame(wire + length, NULL, 0);
     length += frame(wire + length, "A", 1);
     length += frame(wire + length, "B", 1);
     f.boundary = 5;
     f.action   = 10;
     tunnelDownStreamPayload(f.t, f.carrier, bytes(wire, length, false, 320));
-    twfRequire(f.down_len == 3 && memcmp(f.down, "ABC", 3) == 0, "nested admitted batch overtook older input");
+    twfRequire(f.deliveries_down == 4 && f.down_lengths[0] == 0 && f.down_len == 3 && memcmp(f.down, "ABC", 3) == 0,
+               "nested admitted batch overtook empty or older input");
     end();
 }
 static void testLimits(uint32_t pool_size)
@@ -883,8 +920,9 @@ static void testPrefixes(void)
     sbufShiftLeft(b, 3);
     sbufWrite(b, "\0\0\0", 3);
     tunnelDownStreamPayload(f.t, f.carrier, b);
-    twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier) && f.deliveries_down == 1 && f.down_len == 1 &&
-                   f.down[0] == 'A',
+    const uint32_t expected_lengths[] = {0, 1, 0};
+    twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier) && f.deliveries_down == 3 && f.down_len == 1 &&
+                   f.down[0] == 'A' && memcmp(f.down_lengths, expected_lengths, sizeof(expected_lengths)) == 0,
                "empty UDP across resident prefix and pipe changed later frame");
     twfRequire(! WW_HAVE_SPLICE || f.parser_reads + reads == 5, "empty UDP materialized a pipe body");
     vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
@@ -1122,7 +1160,8 @@ static void testFirstPayload(void)
     end();
     begin(true, "127.0.0.1", 128, 0, false);
     tunnelUpStreamPayload(f.t, f.application, bytes("", 0, false, 320));
-    twfRequire(f.requests == 0, "empty UDP policy changed");
+    twfRequire(f.requests == 1 && f.up_len == 28 && f.up[26] == 0 && f.up[27] == 0,
+               "first empty UDP datagram was dropped");
     end();
 }
 

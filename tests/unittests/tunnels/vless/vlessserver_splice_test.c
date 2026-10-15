@@ -586,7 +586,8 @@ static void testFirstResponse(void)
                 twfRequire(f.ests == ! early && f.calls_down == 0, "Est emitted a standalone response header");
                 tunnelUpStreamPause(f.t, f.line);
                 tunnelUpStreamResume(f.t, f.line);
-                tunnelDownStreamPayload(f.t, backend, bytes("", 0, mode != 0, 320));
+                if (! udp)
+                    tunnelDownStreamPayload(f.t, backend, bytes("", 0, mode != 0, 320));
                 twfRequire(f.calls_down == 0, "Resume or empty input emitted a standalone response header");
                 twfRequire(tunnelIsActiveForLine(f.t, f.line), "server bypassed before its first response");
 
@@ -1010,15 +1011,18 @@ static void testUdp(void)
     }
     size_t before = f.down_len;
     tunnelDownStreamPayload(f.t, f.remotes[0], bytes(body, 0, false, 0));
+    twfRequire(f.down_len == before + 2 && ! memcmp(f.down + before, "\0\0", 2), "empty UDP reply lost its frame");
+    before = f.down_len;
     tunnelDownStreamPayload(f.t, f.remotes[0], bytes(body, 65536, false, 0));
-    twfRequire(f.down_len == before && lineIsAlive(f.remotes[0]), "invalid local replies changed drop policy");
+    twfRequire(f.down_len == before && lineIsAlive(f.remotes[0]), "oversized local reply changed drop policy");
     tunnelDownStreamPayload(f.t, f.remotes[0], bytes(body, 65535, false, 0));
     twfRequire(f.down_len == before + 65537, "maximum reply rejected");
     tunnelDownStreamFin(f.t, f.remotes[0]);
     datagram(443, "D", 1, true);
     twfRequire(f.remote_count == 2 && f.ests == 1 && f.up[3] == 'D', "backend replacement lost Est latch or data");
     tunnelUpStreamPayload(f.t, f.line, bytes("\0\0", 2, true, 320));
-    twfRequire(lineIsAlive(f.line) && f.calls_up == 4, "zero-length received frame closed or emitted a datagram");
+    twfRequire(lineIsAlive(f.line) && f.calls_up == 5 && f.up_len == 4,
+               "zero-length frame did not deliver one empty datagram");
     end();
     memoryFree(wire);
     memoryFree(body);
@@ -1026,7 +1030,7 @@ static void testUdp(void)
 
 static void testUdpEmptyFrames(void)
 {
-    twfSetCase("empty UDP frames are skipped without closing or disrupting later datagrams");
+    twfSetCase("empty UDP frames preserve datagram delivery, ordering and backend lifetime");
     for (unsigned mode = 0; mode < 3; ++mode)
     {
         begin(false, false, 128);
@@ -1034,13 +1038,15 @@ static void testUdpEmptyFrames(void)
         uint32_t n = request(wire, 0, true);
         n += frame(wire + n, NULL, 0);
         tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, mode != 0, 320));
-        twfRequire(lineIsAlive(f.line) && f.calls_up == 0 && f.remote_count == 1 && f.down_len == 0,
-                   "initial empty UDP frame closed the association or emitted a payload");
+        twfRequire(lineIsAlive(f.line) && f.calls_up == 1 && f.up_len == 0 && f.remote_count == 1 && f.down_len == 0 &&
+                       f.ports[0] == 443 && f.headroom >= bufferpoolGetLargeBufferPadding(f.env.pool),
+                   "initial empty UDP frame lost its datagram, target or padding");
 
         tunnelUpStreamPayload(f.t, f.line, bytes("\0", 1, mode != 0, 320));
-        twfRequire(lineIsAlive(f.line) && f.calls_up == 0, "incomplete empty-frame header changed the association");
+        twfRequire(lineIsAlive(f.line) && f.calls_up == 1, "incomplete empty-frame header emitted a datagram");
         tunnelUpStreamPayload(f.t, f.line, bytes("\0\0\0", 3, mode != 0, 320));
-        twfRequire(lineIsAlive(f.line) && f.calls_up == 0, "split or consecutive empty frames emitted datagrams");
+        twfRequire(lineIsAlive(f.line) && f.calls_up == 3 && f.up_len == 0,
+                   "split or consecutive empty frames lost datagrams");
 
         const uint8_t batch[] = {0, 0, 0, 1, 'A', 0, 0, 0, 1, 'B', 0, 0};
         sbuf_t       *input   = bytes(batch + (mode == 2), sizeof(batch) - (mode == 2), mode != 0, 320);
@@ -1050,23 +1056,64 @@ static void testUdpEmptyFrames(void)
             sbufWrite(input, batch, 1);
         }
         tunnelUpStreamPayload(f.t, f.line, input);
-        twfRequire(lineIsAlive(f.line) && f.calls_up == 2 && f.up_len == 2 && ! memcmp(f.up, "AB", 2) &&
+        twfRequire(lineIsAlive(f.line) && f.calls_up == 8 && f.up_len == 2 && ! memcmp(f.up, "AB", 2) &&
                        f.remote_count == 1 && f.finishes == 0,
                    "empty frames disrupted nonempty UDP boundaries or order");
         vlessserver_lstate_t *ls = lineGetState(f.line, f.t);
         twfRequire(ls->input_bytes == 0 && ls->header_filled == 0 && ls->input_head == NULL &&
                        bufferqueueGetBufCount(&ls->pending_up) == 0,
-                   "skipped empty frames retained parser bytes or buffers");
+                   "empty frames retained parser bytes or buffers");
 
         tunnelDownStreamFin(f.t, f.remotes[0]);
         tunnelUpStreamPayload(f.t, f.line, bytes("\0\0", 2, mode != 0, 320));
-        twfRequire(lineIsAlive(f.line) && f.remote_count == 1 && f.calls_up == 2,
-                   "empty UDP frame recreated a closed backend");
+        twfRequire(lineIsAlive(f.line) && f.remote_count == 2 && f.calls_up == 9 && f.up_len == 2,
+                   "empty UDP frame did not recreate its backend and deliver a datagram");
         datagram(443, "C", 1, mode != 0);
-        twfRequire(f.remote_count == 2 && f.calls_up == 3 && f.up_len == 3 && ! memcmp(f.up, "ABC", 3),
-                   "nonempty UDP after skipped frames could not recreate the backend");
+        twfRequire(f.remote_count == 2 && f.calls_up == 10 && f.up_len == 3 && ! memcmp(f.up, "ABC", 3),
+                   "nonempty UDP after empty frames lost its backend or payload");
         end();
     }
+
+    for (unsigned close = 0; close < 2; ++close)
+    {
+        begin(false, false, 128);
+        startUdp();
+        const uint8_t batch[3000] = {0};
+        f.boundary                = 3;
+        f.action                  = close ? 7 : 1;
+        tunnelUpStreamPayload(f.t, f.line, bytes(batch, sizeof(batch), false, 320));
+        twfRequire(f.calls_up == (close ? 1U : 1500U) && f.up_len == 0 && lineIsAlive(f.line) == ! close,
+                   "empty UDP batch stopped on Pause or continued after Finish");
+        end();
+    }
+}
+
+static void testEmptyUdpReplies(void)
+{
+    twfSetCase("first empty UDP reply includes response and datagram headers before or after Est");
+    for (unsigned early = 0; early < 2; ++early)
+        for (unsigned mode = 0; mode < 3; ++mode)
+        {
+            begin(false, false, 128);
+            f.auto_est = ! early;
+            startUdp();
+            line_t *backend = f.remotes[0];
+            tunnelUpStreamPause(f.t, f.line);
+            tunnelDownStreamPayload(f.t, backend, bytes("", 0, mode != 0, mode == 1 ? 320 : 0));
+            twfRequire(lineIsAlive(f.line) && lineIsAlive(backend) && f.calls_down == 1 && f.down_len == 4 &&
+                           ! memcmp(f.down, "\0\0\0\0", 4) && ! f.last_splice && f.ests == ! early,
+                       "first empty UDP reply lost combined headers, waited for Est or used a pipe body");
+            tunnelDownStreamEst(f.t, backend);
+            tunnelDownStreamEst(f.t, backend);
+            tunnelUpStreamResume(f.t, f.line);
+            twfRequire(f.ests == 1 && f.calls_down == 1 && f.down_len == 4,
+                       "Est or Resume duplicated the first empty UDP reply");
+            tunnelDownStreamPayload(f.t, backend, bytes("", 0, mode != 0, mode == 1 ? 320 : 0));
+            tunnelDownStreamPayload(f.t, backend, bytes("R", 1, mode != 0, 320));
+            twfRequire(f.calls_down == 3 && f.down_len == 9 && ! memcmp(f.down, "\0\0\0\0\0\0\0\1R", 9),
+                       "later empty or nonempty UDP reply repeated response metadata or lost ordering");
+            end();
+        }
 }
 
 static void testReentry(void)
@@ -1389,6 +1436,7 @@ int main(void)
     testAuthentication();
     testUdp();
     testUdpEmptyFrames();
+    testEmptyUdpReplies();
     testReentry();
     testFallback();
     testFallbackLocalReplies();
