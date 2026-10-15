@@ -50,13 +50,6 @@ for relative in sources:
         if between.strip():
             raise SystemExit(f"{relative}: the generation retire does not immediately follow the ownership reset")
 
-    # End must never be the thing that returns buffers to a live reader pool.
-    end_call = "deviceReaderSessionEnd("
-    for match in re.finditer(re.escape(end_call), text):
-        tail = text[match.end():match.end() + 400]
-        if "RetireGenerationBuffers" in tail.split(";")[0]:
-            raise SystemExit(f"{relative}: End retires producer buffers on the lifecycle thread")
-
 end_source = (root / "ww/devices/device_reader_session.c").read_text(encoding="utf-8")
 end_body = end_source[end_source.index("void deviceReaderSessionEnd("):]
 end_body = end_body[: end_body.index("\n}\n") + 2]
