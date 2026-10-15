@@ -1,6 +1,6 @@
 #include "tcp_socket_diag.h"
 
-#if defined(OS_LINUX) && ! defined(OS_CYGWIN)
+#if defined(OS_LINUX) && ! defined(OS_CYGWIN) && ! defined(OS_ANDROID)
 
 #include <linux/inet_diag.h>
 #include <linux/netlink.h>

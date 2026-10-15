@@ -250,7 +250,7 @@ static void tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
     }
     sockfd = -1;
 
-#ifdef OS_LINUX
+#if defined(OS_LINUX) && ! defined(OS_ANDROID)
     wioSetPeerWriteShutdownDetection(io, lineIsFallback(l));
 #endif
 
