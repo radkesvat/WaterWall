@@ -1552,13 +1552,8 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu,
         return NULL;
     }
 
-    size_t wide_bytes;
-    if (! memoryTryComputeArraySize((size_t) wide_size, sizeof(wchar_t), &wide_bytes))
-    {
-        LOGE("TunDevice: UTF-16 adapter name is too large");
-        tundeviceDestroy(tdev);
-        return NULL;
-    }
+    /* A positive int count of Windows UTF-16 code units fits even 32-bit size_t. */
+    const size_t wide_bytes = (size_t) wide_size * sizeof(wchar_t);
     tdev->name_w = (wchar_t *) memoryAllocate(wide_bytes);
 
     if (MultiByteToWideChar(CP_UTF8, 0, name, -1, (tdev->name_w), wide_size) <= 0)

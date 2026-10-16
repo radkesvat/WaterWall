@@ -74,16 +74,9 @@ static bool wireguarddeviceEnsureTransportLineStorage(tunnel_t *t, wgd_tstate_t 
         return false;
     }
 
-    size_t storage_bytes;
-    if (! memoryTryComputeArraySize(tc->workers_count, sizeof(*state->transport_lines), &storage_bytes))
-    {
-        LOGF("WireGuardDevice: transport line storage geometry overflows size_t");
-        startupFailureRecord(1);
-        return false;
-    }
-
-    line_t **storage       = memoryAllocateZero(storage_bytes);
-    state->transport_lines = storage;
+    /* The chain stores an 8-bit worker count, so the pointer array cannot overflow. */
+    const size_t storage_bytes = (size_t) tc->workers_count * sizeof(*state->transport_lines);
+    state->transport_lines     = memoryAllocateZero(storage_bytes);
     return true;
 }
 

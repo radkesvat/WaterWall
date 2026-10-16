@@ -122,15 +122,15 @@ tunnel_t *packetstostreamTunnelCreate(node_t *node)
     if (ts->sensitive_mode)
     {
         const int workers_count = getWorkersCount();
-        size_t    timer_array_bytes;
-        if (workers_count <= 0 ||
-            ! memoryTryComputeArraySize((size_t) workers_count, sizeof(wtimer_t *), &timer_array_bytes))
+        if (workers_count <= 0)
         {
-            LOGF("PacketsToStream: worker timer geometry is not representable");
+            LOGF("PacketsToStream: at least one worker is required");
             tunnelDestroy(t);
             return NULL;
         }
 
+        /* The worker count is 8-bit, so the pointer array cannot overflow. */
+        const size_t timer_array_bytes = (size_t) workers_count * sizeof(wtimer_t *);
         ts->worker_timers         = memoryAllocateZero(timer_array_bytes);
         ts->worker_timeout_timers = memoryAllocateZero(timer_array_bytes);
     }

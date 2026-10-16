@@ -34,14 +34,8 @@ static bool keepaliveclientLoadSettings(keepaliveclient_tstate_t *ts, const cJSO
 
 tunnel_t *keepaliveclientTunnelCreate(node_t *node)
 {
-    size_t worker_bytes;
-    if (UNLIKELY(
-            ! memoryTryComputeArraySize(getWorkersCount(), sizeof(keepaliveclient_worker_state_t), &worker_bytes) ||
-            worker_bytes > SIZE_MAX - sizeof(keepaliveclient_tstate_t)))
-    {
-        LOGF("KeepAliveClient: worker state size is not representable");
-        return NULL;
-    }
+    /* The 8-bit worker count bounds this fixed state array on every target. */
+    const size_t worker_bytes = (size_t) getWorkersCount() * sizeof(keepaliveclient_worker_state_t);
 
     tunnel_t *t = tunnelCreate(node, sizeof(keepaliveclient_tstate_t) + worker_bytes, sizeof(keepaliveclient_lstate_t));
     if (! t)

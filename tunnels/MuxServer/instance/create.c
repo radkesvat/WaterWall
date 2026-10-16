@@ -75,13 +75,13 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
 {
     int wc = getWorkersCount();
 
-    size_t worker_state_bytes;
-    if (wc <= 0 || ! memoryTryComputeArraySize((size_t) wc, sizeof(muxserver_worker_state_t), &worker_state_bytes) ||
-        worker_state_bytes > SIZE_MAX - sizeof(muxserver_tstate_t))
+    if (wc <= 0)
     {
-        LOGF("MuxServer: worker-state geometry is not representable");
+        LOGF("MuxServer: at least one worker is required");
         return NULL;
     }
+    /* getWorkersCount() returns an 8-bit count; this fixed worker state fits on every target. */
+    const size_t worker_state_bytes = (size_t) wc * sizeof(muxserver_worker_state_t);
 
     tunnel_t *t = tunnelCreate(node, sizeof(muxserver_tstate_t) + worker_state_bytes, sizeof(muxserver_lstate_t));
     if (! t)

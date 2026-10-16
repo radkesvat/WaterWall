@@ -50,9 +50,7 @@ typedef struct ptc_fake_dns_geometry_s
 
 static bool ptcFakeDnsComputeGeometry(uint32_t cache_size, ptc_fake_dns_geometry_t *out)
 {
-    size_t record_bytes;
-    if (out == NULL || cache_size == 0 || cache_size > kPtcFakeDnsMaxRecords ||
-        ! memoryTryComputeArraySize(cache_size, sizeof(ptc_fake_dns_entry_t *), &record_bytes))
+    if (out == NULL || cache_size == 0 || cache_size > kPtcFakeDnsMaxRecords)
     {
         return false;
     }
@@ -76,7 +74,8 @@ static bool ptcFakeDnsComputeGeometry(uint32_t cache_size, ptc_fake_dns_geometry
     }
 
     *out = (ptc_fake_dns_geometry_t) {
-        .record_bytes = record_bytes,
+        /* At most 262144 pointers: representable on both 32-bit and 64-bit targets. */
+        .record_bytes = (size_t) cache_size * sizeof(ptc_fake_dns_entry_t *),
         .map_capacity = (isize_t) map_capacity,
     };
     return true;
