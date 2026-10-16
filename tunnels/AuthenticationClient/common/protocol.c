@@ -342,7 +342,7 @@ static bool authenticationclientPendingReserve(authenticationclient_tstate_t *ts
 }
 
 static bool authenticationclientPendingAppend(authenticationclient_tstate_t *ts, uint32_t correlation_id,
-                                              uint8_t request_type, uint32_t created_at_ms)
+                                              uint8_t request_type, uint64_t created_at_ms)
 {
     if (UNLIKELY(ts->pending_count >= ts->max_pending_requests))
     {
@@ -359,7 +359,7 @@ static bool authenticationclientPendingAppend(authenticationclient_tstate_t *ts,
     return true;
 }
 
-static bool authenticationclientPendingFindTimedOutLocked(authenticationclient_tstate_t *ts, uint32_t now_ms,
+static bool authenticationclientPendingFindTimedOutLocked(authenticationclient_tstate_t *ts, uint64_t now_ms,
                                                           authenticationclient_pending_request_t *pending_out)
 {
     if (UNLIKELY(ts->request_timeout_ms == 0))
@@ -370,7 +370,7 @@ static bool authenticationclientPendingFindTimedOutLocked(authenticationclient_t
     for (uint32_t i = 0; i < ts->pending_count; ++i)
     {
         const authenticationclient_pending_request_t *pending = &ts->pending_requests[i];
-        if (UNLIKELY((uint32_t) (now_ms - pending->created_at_ms) >= ts->request_timeout_ms))
+        if (UNLIKELY(now_ms >= pending->created_at_ms + ts->request_timeout_ms))
         {
             *pending_out = *pending;
             return true;
@@ -456,6 +456,7 @@ static void authenticationclientRemovePendingById(tunnel_t *t, uint32_t correlat
         authenticationclientMarkRequestInFlightLocked(ts, request_type, false);
     }
     mutexUnlock(&ts->control_mutex);
+    authenticationclientUpdateRequestTimer(t);
 }
 
 static sbuf_t *authenticationclientCreateRequestMessage(line_t *l, uint8_t request_type, uint32_t correlation_id,
@@ -566,7 +567,7 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
     authenticationclient_tstate_t *ts                                           = tunnelGetState(t);
     uint8_t                        token[kAuthenticationClientSessionTokenSize] = {0};
     uint32_t                       correlation_id                               = 0;
-    uint32_t                       now_ms                                       = getTickMS();
+    uint64_t                       now_ms                                       = wloopNowMonotonicMS(getWorkerLoop(0));
 
     line_t *line = NULL;
 
@@ -622,6 +623,7 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
     }
     mutexUnlock(&ts->control_mutex);
 
+    authenticationclientUpdateRequestTimer(t);
     if (UNLIKELY(line == NULL))
     {
         if (ts->verbose)
@@ -680,12 +682,12 @@ static bool authenticationclientSendRequest(tunnel_t *t, uint8_t request_type, c
     return authenticationclientSendRequestWithSnapshot(t, request_type, request_data, request_data_len, NULL);
 }
 
-static bool authenticationclientCloseTimedOutControlLine(tunnel_t *t)
+bool authenticationclientCloseTimedOutControlLine(tunnel_t *t)
 {
     authenticationclient_tstate_t         *ts      = tunnelGetState(t);
     authenticationclient_pending_request_t pending = {0};
     line_t                                *line    = NULL;
-    const uint32_t                         now_ms  = getTickMS();
+    const uint64_t                         now_ms  = wloopNowMonotonicMS(getWorkerLoop(0));
 
     mutexLock(&ts->control_mutex);
     if (UNLIKELY(ts->control_line != NULL && lineIsAlive(ts->control_line) &&
@@ -701,14 +703,13 @@ static bool authenticationclientCloseTimedOutControlLine(tunnel_t *t)
         return false;
     }
 
-    LOGW("AuthenticationClient: request type %u with correlation id %u timed out after %u ms; reconnecting",
+    LOGW("AuthenticationClient: request type %u with correlation id %u timed out after %" PRIu64 " ms; reconnecting",
          (unsigned int) pending.request_type,
          (unsigned int) pending.correlation_id,
-         (unsigned int) (now_ms - pending.created_at_ms));
+         now_ms - pending.created_at_ms);
 
-    authenticationclientCloseControlLine(t, line, true);
+    authenticationclientRecoverControlLine(t, line, true);
     lineUnref(line);
-    authenticationclientScheduleReconnect(t);
     return true;
 }
 
@@ -1156,6 +1157,7 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
     }
     revision_generation = ts->remote_revision_generation;
     mutexUnlock(&ts->control_mutex);
+    authenticationclientUpdateRequestTimer(t);
 
     if (UNLIKELY(! found))
     {
@@ -1353,13 +1355,13 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
 
         if (UNLIKELY(message_body_len < kAuthenticationClientRevisionHeaderSize))
         {
-            authenticationclientCloseControlLine(t, l, true);
+            authenticationclientRecoverControlLine(t, l, true);
             return false;
         }
         if (UNLIKELY(message_body_len >
                      kAuthenticationClientMaxResponsePayload + kAuthenticationClientRevisionHeaderSize))
         {
-            authenticationclientCloseControlLine(t, l, true);
+            authenticationclientRecoverControlLine(t, l, true);
             return false;
         }
 
@@ -1380,7 +1382,7 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
         if (UNLIKELY(! authenticationclientValidateResponsePayload(payload)))
         {
             lineReuseBuffer(l, payload);
-            authenticationclientCloseControlLine(t, l, true);
+            authenticationclientRecoverControlLine(t, l, true);
             return false;
         }
 
@@ -1440,7 +1442,7 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     }
 
     mutexLock(&ts->control_mutex);
-    if (UNLIKELY(ts->stopping || ts->control_line != NULL))
+    if (UNLIKELY(! ts->started || ts->stopping || ts->control_line != NULL))
     {
         if (ts->verbose)
         {
@@ -1481,15 +1483,6 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     }
 }
 
-static void authenticationclientOpenControlLineOnWorker0(void *worker_ptr, void *arg1, void *arg2, void *arg3)
-{
-    discard worker_ptr;
-    discard arg2;
-    discard arg3;
-
-    authenticationclientOpenControlLine(arg1);
-}
-
 void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate_finish)
 {
     authenticationclient_tstate_t *ts      = tunnelGetState(t);
@@ -1505,6 +1498,7 @@ void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate
     ts->pending_count = 0;
     authenticationclientClearSessionLocked(ts);
     mutexUnlock(&ts->control_mutex);
+    authenticationclientUpdateRequestTimer(t);
     authenticationclientResetFirstUsagePushRuntime(t);
 
     if (verbose)
@@ -1522,109 +1516,6 @@ void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate
     }
 
     lineDestroy(l);
-}
-
-static void authenticationclientFailReconnectTaskAdmission(void)
-{
-    LOGF("AuthenticationClient: failed to admit required reconnect task on worker 0");
-    if (! requestProgramShutdown(1))
-    {
-        abortProgramNow(1);
-    }
-}
-
-void authenticationclientScheduleReconnect(tunnel_t *t)
-{
-    authenticationclient_tstate_t *ts              = tunnelGetState(t);
-    bool                           should_schedule = false;
-
-    // Anything that is not worker 0 itself - another event worker, lwIP, or an
-    // unregistered device thread - hands the reconnect to worker 0.
-    if (! currentThreadIsEventWorkerWID(0))
-    {
-        if (ts->verbose)
-        {
-            LOGD("AuthenticationClient: queued reconnect on worker 0 from worker %d", workerWIDForLog(getWID()));
-        }
-        if (UNLIKELY(sendWorkerMessageForceQueueWithCleanup(
-                         0, authenticationclientOpenControlLineOnWorker0, NULL, t, NULL, NULL) !=
-                     kWorkerMessageSubmitAccepted))
-        {
-            authenticationclientFailReconnectTaskAdmission();
-        }
-        return;
-    }
-
-    mutexLock(&ts->control_mutex);
-    should_schedule = ts->started && ! ts->stopping && ts->control_line == NULL;
-    mutexUnlock(&ts->control_mutex);
-    if (UNLIKELY(! should_schedule))
-    {
-        return;
-    }
-
-    if (ts->reconnect_interval_ms == 0)
-    {
-        if (ts->verbose)
-        {
-            LOGD("AuthenticationClient: reconnecting immediately");
-        }
-        authenticationclientOpenControlLine(t);
-        return;
-    }
-
-    if (UNLIKELY(ts->reconnect_timer != NULL))
-    {
-        if (ts->verbose)
-        {
-            LOGD("AuthenticationClient: reconnect timer already active; resetting to %u ms",
-                 (unsigned int) ts->reconnect_interval_ms);
-        }
-        wtimerReset(ts->reconnect_timer, ts->reconnect_interval_ms);
-        return;
-    }
-
-    ts->reconnect_timer =
-        wtimerAdd(getWorkerLoop(0), authenticationclientReconnectTimerCallback, ts->reconnect_interval_ms, 1);
-    if (UNLIKELY(ts->reconnect_timer == NULL))
-    {
-        LOGF("AuthenticationClient: failed to create reconnect timer");
-        // Category B: control_mutex is already released above and this worker-0
-        // callback owns nothing else, so request shutdown and unwind.
-        if (! requestProgramShutdown(1))
-        {
-            abortProgramNow(1);
-        }
-        return;
-    }
-    weventSetUserData(ts->reconnect_timer, t);
-
-    if (ts->verbose)
-    {
-        LOGD("AuthenticationClient: scheduled reconnect in %u ms", (unsigned int) ts->reconnect_interval_ms);
-    }
-}
-
-void authenticationclientReconnectTimerCallback(wtimer_t *timer)
-{
-    tunnel_t *t = weventGetUserdata(timer);
-    if (UNLIKELY(t == NULL))
-    {
-        return;
-    }
-
-    authenticationclient_tstate_t *ts = tunnelGetState(t);
-    if (LIKELY(ts->reconnect_timer == timer))
-    {
-        ts->reconnect_timer = NULL;
-    }
-
-    if (ts->verbose)
-    {
-        LOGD("AuthenticationClient: reconnect timer fired");
-    }
-
-    authenticationclientOpenControlLine(t);
 }
 
 void authenticationclientPingTimerCallback(wtimer_t *timer)

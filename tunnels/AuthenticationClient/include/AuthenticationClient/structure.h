@@ -5,7 +5,7 @@
 typedef struct authenticationclient_pending_request_s
 {
     uint32_t correlation_id;
-    uint32_t created_at_ms;
+    uint64_t created_at_ms;
     uint8_t  request_type;
 } authenticationclient_pending_request_t;
 
@@ -33,11 +33,15 @@ typedef struct authenticationclient_tstate_s
     bool     first_usage_push_deferred;
     bool     users_loaded;
     bool     verbose;
+    bool     reconnect_work_pending;
 
     line_t   *control_line;
     wtimer_t *ping_timer;
     wtimer_t *sync_timer;
     wtimer_t *reconnect_timer;
+    wtimer_t *request_timer;
+    uint64_t  reconnect_due_ms;
+    uint64_t  request_deadline_ms;
 
     uint8_t  token[64];
     uint32_t next_correlation_id;
@@ -143,6 +147,9 @@ void authenticationclientLinestateDestroy(authenticationclient_lstate_t *ls);
 
 void authenticationclientOpenControlLine(tunnel_t *t);
 void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate_finish);
+void authenticationclientRecoverControlLine(tunnel_t *t, line_t *l, bool propagate_finish);
+void authenticationclientUpdateRequestTimer(tunnel_t *t);
+bool authenticationclientCloseTimedOutControlLine(tunnel_t *t);
 void authenticationclientScheduleReconnect(tunnel_t *t);
 void authenticationclientReconnectTimerCallback(wtimer_t *timer);
 void authenticationclientPingTimerCallback(wtimer_t *timer);

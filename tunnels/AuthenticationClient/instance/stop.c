@@ -49,6 +49,7 @@ void authenticationclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_
     authenticationclientDeleteTimer(&ts->ping_timer);
     authenticationclientDeleteTimer(&ts->sync_timer);
     authenticationclientDeleteTimer(&ts->reconnect_timer);
+    authenticationclientDeleteTimer(&ts->request_timer);
 }
 
 void authenticationclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)

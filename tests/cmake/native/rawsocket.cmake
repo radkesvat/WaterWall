@@ -535,6 +535,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationClient)
+  waterwall_add_native_executable(authenticationclient_progress_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationclient_progress_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+  target_link_libraries(authenticationclient_progress_test PRIVATE AuthenticationClient ww)
+  target_link_options(authenticationclient_progress_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=getHRTimeUs")
+  add_dependencies(waterwall_unit_tests authenticationclient_progress_test)
+  add_waterwall_unit_test(waterwall.authenticationclient_progress_unit authenticationclient_progress_test
+    "unit;authentication;timer;worker;line")
   waterwall_add_native_executable(authenticationclient_profile_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationclient_profile_test.c)
   target_link_libraries(authenticationclient_profile_test PRIVATE AuthenticationClient ww)
   target_link_options(authenticationclient_profile_test PRIVATE "-Wl,--wrap=stringDuplicate")
