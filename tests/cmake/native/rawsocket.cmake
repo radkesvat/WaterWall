@@ -513,6 +513,17 @@ foreach(tcpoverudp_side Client Server)
 endforeach()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
+  waterwall_add_native_executable(authenticationserver_storage_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationserver_storage_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+  target_include_directories(authenticationserver_storage_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/AuthenticationServer)
+  target_link_libraries(authenticationserver_storage_test PRIVATE AuthenticationServer ww)
+  target_link_options(authenticationserver_storage_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=open" "-Wl,--wrap=fwrite" "-Wl,--wrap=fflush" "-Wl,--wrap=fclose"
+    "-Wl,--wrap=fsync" "-Wl,--wrap=fchmod" "-Wl,--wrap=rename")
+  add_dependencies(waterwall_unit_tests authenticationserver_storage_test)
+  add_waterwall_unit_test(waterwall.authenticationserver_storage_unit authenticationserver_storage_test
+    "unit;authentication;storage")
   waterwall_add_native_executable(authenticationserver_responses_test SUPPORT SOURCES
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationserver_responses_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})

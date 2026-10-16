@@ -1,0 +1,18 @@
+#pragma once
+
+#include "wwapi.h"
+
+/* One operation owns this staging path. It is never a recovery candidate. */
+typedef struct authenticationserver_private_file_s
+{
+    char *path;
+} authenticationserver_private_file_t;
+
+bool authenticationserverPrivateStage(authenticationserver_private_file_t *file, const char *destination,
+                                      const void *data, size_t length);
+/* True means replacement committed. Directory-sync failure after replacement is
+ * logged without changing that result. Consumes a successful staging file. */
+bool authenticationserverPrivatePublish(authenticationserver_private_file_t *file, const char *destination);
+void authenticationserverPrivateDiscard(authenticationserver_private_file_t *file);
+bool authenticationserverPrivateWrite(const char *destination, const void *data, size_t length);
+bool authenticationserverPrivateRestrict(const char *path);

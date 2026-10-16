@@ -6,6 +6,7 @@ add_library(AuthenticationServer STATIC
                     instance/start.c
                     instance/stop.c
                     common/database.c
+                    common/private_file.c
                     common/line_state.c
                     common/protocol.c
                     common/session.c

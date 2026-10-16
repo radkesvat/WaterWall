@@ -1,3 +1,4 @@
+#include "private_file.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -56,7 +57,7 @@ static bool authenticationserverBuildUsersJson(authenticationserver_tstate_t *ts
 
 static bool authenticationserverWriteJsonFile(const char *path, const char *json_text, size_t json_len)
 {
-    if (UNLIKELY(! writeFile(path, json_text, json_len)))
+    if (UNLIKELY(! authenticationserverPrivateWrite(path, json_text, json_len)))
     {
         LOGE("AuthenticationServer: failed to write users database file \"%s\"", path);
         return false;
@@ -421,6 +422,12 @@ static bool authenticationserverMaybeCollectNormalBackupFile(authenticationserve
         return true;
     }
 
+    if (! authenticationserverPrivateRestrict(path))
+    {
+        LOGW("AuthenticationServer: could not restrict historical backup %s", path);
+        return false;
+    }
+
     return authenticationserverBackupPathListAppend(list, path);
 }
 
@@ -578,14 +585,6 @@ static bool authenticationserverMaybeWriteNormalBackup(authenticationserver_tsta
         return false;
     }
 
-#ifdef OS_UNIX
-    if (UNLIKELY(chmod(path, S_IRUSR | S_IWUSR) != 0))
-    {
-        LOGW(
-            "AuthenticationServer: failed to restrict normal backup permissions for \"%s\": %s", path, strerror(errno));
-    }
-#endif
-
     if (UNLIKELY(! authenticationserverPruneNormalBackups(ts, prefix)))
     {
         return false;
@@ -707,13 +706,19 @@ bool authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *ts)
         return false;
     }
 
-    if (UNLIKELY(! authenticationserverWriteJsonFile(ts->backup_path, json_text, json_len)))
-    {
-        cJSON_free(json_text);
-        return false;
-    }
-
-    if (UNLIKELY(! authenticationserverWriteJsonFile(ts->db_path, json_text, json_len)))
+    authenticationserver_private_file_t primary = {0}, backup = {0};
+    /* The recovery candidate is the previous committed primary, never the
+     * proposed transaction. Only primary replacement commits the mutation. */
+    bool  committed = authenticationserverPrivateStage(&primary, ts->db_path, json_text, json_len);
+    char *previous  = committed ? readFile(ts->db_path) : NULL;
+    committed       = committed && previous != NULL &&
+                authenticationserverPrivateStage(&backup, ts->backup_path, previous, stringLength(previous)) &&
+                authenticationserverPrivatePublish(&backup, ts->backup_path) &&
+                authenticationserverPrivatePublish(&primary, ts->db_path);
+    memoryFree(previous);
+    authenticationserverPrivateDiscard(&backup);
+    authenticationserverPrivateDiscard(&primary);
+    if (! committed)
     {
         cJSON_free(json_text);
         return false;
@@ -755,6 +760,12 @@ bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
     }
 
     LOGI("AuthenticationServer: loading users database from \"%s\"", ts->db_path);
+    if ((isFile(ts->db_path) && ! authenticationserverPrivateRestrict(ts->db_path)) ||
+        (isFile(ts->backup_path) && ! authenticationserverPrivateRestrict(ts->backup_path)))
+    {
+        LOGE("AuthenticationServer: refusing database with unrestrictable permissions");
+        return false;
+    }
     if (LIKELY(authenticationserverLoadUsersFromPath(ts, ts->db_path)))
     {
         return true;
@@ -784,15 +795,6 @@ bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
     }
 
     LOGI("AuthenticationServer: recovered users database from backup \"%s\"", ts->backup_path);
-
-    if (UNLIKELY(remove(ts->backup_path) != 0))
-    {
-        LOGW("AuthenticationServer: could not remove recovered backup \"%s\": %s", ts->backup_path, strerror(errno));
-    }
-    else
-    {
-        LOGI("AuthenticationServer: removed recovered backup \"%s\"", ts->backup_path);
-    }
 
     LOGI("AuthenticationServer: recovery complete; rewrote primary users database \"%s\"", ts->db_path);
     return true;
