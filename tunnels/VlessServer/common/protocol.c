@@ -44,7 +44,8 @@ void vlessserverApplyDestinationContext(line_t *l, const address_context_t *targ
 static bool vlessserverForwardInitial(tunnel_t *t, line_t *l)
 {
     vlessserver_lstate_t *ls = lineGetState(l, t);
-    if (! vlessserverRetainActiveHead(ls) || ! bufferqueueTryAttachBudget(&ls->pending_up, &ls->upstream_budget))
+    vlessserverRetainActiveHead(ls);
+    if (! bufferqueueTryAttachBudget(&ls->pending_up, &ls->upstream_budget))
     {
         vlessserverCloseLineBidirectional(t, l);
         return false;

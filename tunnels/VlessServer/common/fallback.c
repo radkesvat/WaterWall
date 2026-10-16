@@ -220,8 +220,9 @@ bool vlessserverStartFallback(tunnel_t *t, line_t *l)
 {
     vlessserver_tstate_t *ts = tunnelGetState(t);
     vlessserver_lstate_t *ls = lineGetState(l, t);
-    if (ts->fallback_tunnel == NULL || ! vlessserverRetainActiveHead(ls))
+    if (ts->fallback_tunnel == NULL)
         goto failed;
+    vlessserverRetainActiveHead(ls);
     if (ls->header_filled != 0)
     {
         buffer_pool_t *pool   = lineGetBufferPool(l);

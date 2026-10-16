@@ -31,7 +31,7 @@ trojanserver_auth_result_t trojanserverAuthenticateHash(tunnel_t *t, line_t *l,
 void      trojanserverRecordLineUser(line_t *l, trojanserver_lstate_t *ls, const user_handle_t *user_handle);
 tunnel_t *trojanserverSelectedUpstream(tunnel_t *t, const trojanserver_lstate_t *ls);
 void      trojanserverResetHeader(trojanserver_lstate_t *ls);
-bool      trojanserverRetainActiveHead(trojanserver_lstate_t *ls);
+void      trojanserverRetainActiveHead(trojanserver_lstate_t *ls);
 void      trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);
 bool      trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);
 void      trojanserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, tunnel_t *fallback);

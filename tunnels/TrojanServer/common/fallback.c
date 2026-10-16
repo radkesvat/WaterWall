@@ -214,12 +214,12 @@ void trojanserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, trojanserver_
 void trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
 {
     trojanserver_tstate_t *ts = tunnelGetState(t);
-    if (ts->fallback_tunnel == NULL || ls->input_bytes > kTrojanServerMaxPendingBytes ||
-        ! trojanserverRetainActiveHead(ls))
+    if (ts->fallback_tunnel == NULL || ls->input_bytes > kTrojanServerMaxPendingBytes)
     {
         trojanserverCloseLineBidirectional(t, l);
         return;
     }
+    trojanserverRetainActiveHead(ls);
     if (ls->header_filled != 0)
     {
         buffer_pool_t *pool   = lineGetBufferPool(l);

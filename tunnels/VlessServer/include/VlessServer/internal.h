@@ -21,7 +21,7 @@ bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t
 bool vlessserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);
 
 bool    vlessserverGatherHeader(vlessserver_lstate_t *ls, uint16_t needed);
-bool    vlessserverRetainActiveHead(vlessserver_lstate_t *ls);
+void    vlessserverRetainActiveHead(vlessserver_lstate_t *ls);
 sbuf_t *vlessserverExtractUdpBody(vlessserver_lstate_t *ls, uint16_t bytes);
 bool    vlessserverStartFallback(tunnel_t *t, line_t *l);
 void    vlessserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, tunnel_t *fallback);

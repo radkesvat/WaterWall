@@ -83,12 +83,10 @@ void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t
     if (! bufferstreamIsEmpty(&ls->in_stream))
     {
         sbuf_t *extra = bufferstreamFullRead(&ls->in_stream);
-        if (UNLIKELY(! bufferqueueTryPushFront(&ls->pending_up, &extra)))
-        {
-            lineReuseBuffer(l, extra);
-            connectionfisherserverCloseLineFromProtocolError(t, l);
-            return;
-        }
+        /* No callback ran during handshake parsing; this ordinary tail is the
+         * sole entry, and its allocated capacity has a representable charge. */
+        assert(bufferqueueGetBufCount(&ls->pending_up) == 0);
+        bufferqueuePushFront(&ls->pending_up, extra);
     }
     connectionfisherserverRetireReadStream(ls);
     ls->phase = kConnectionFisherServerPhaseWaitPayload;

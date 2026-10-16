@@ -53,9 +53,7 @@ static void speedlimitDrainUpstream(speedlimit_lstate_t *ls)
                                    (uint32_t) grant_bytes,
                                    bufferpoolGetLargeBufferPadding(pool));
         /* No callbacks since pop; the remainder fits the released slot and budget. */
-        const bool reinserted = bufferqueueTryPushFront(&ls->up_queue, &queued_buf);
-        assert(reinserted);
-        discard reinserted;
+        bufferqueuePushFront(&ls->up_queue, queued_buf);
     }
 
     if (bufferqueueGetBufCount(&ls->up_queue) > 0)

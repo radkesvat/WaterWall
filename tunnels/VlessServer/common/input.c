@@ -34,15 +34,16 @@ bool vlessserverGatherHeader(vlessserver_lstate_t *ls, uint16_t needed)
     return true;
 }
 
-bool vlessserverRetainActiveHead(vlessserver_lstate_t *ls)
+void vlessserverRetainActiveHead(vlessserver_lstate_t *ls)
 {
     if (ls->input_head != NULL)
     {
-        if (! bufferqueueTryPushFront(&ls->pending_up, &ls->input_head))
-            return false;
+        /* Initial parsing only consumes this admitted head; no callback or new
+         * admission intervenes before restoring it to the still-unbound queue. */
+        assert(ls->pending_up.budget == NULL);
+        bufferqueuePushFront(&ls->pending_up, ls->input_head);
         ls->input_head = NULL;
     }
-    return true;
 }
 
 sbuf_t *vlessserverExtractUdpBody(vlessserver_lstate_t *ls, uint16_t bytes)

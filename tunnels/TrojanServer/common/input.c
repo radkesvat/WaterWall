@@ -80,15 +80,16 @@ void trojanserverResetHeader(trojanserver_lstate_t *ls)
     ls->selected_remote = NULL;
 }
 
-bool trojanserverRetainActiveHead(trojanserver_lstate_t *ls)
+void trojanserverRetainActiveHead(trojanserver_lstate_t *ls)
 {
     if (ls->input_head != NULL)
     {
-        if (UNLIKELY(! bufferqueueTryPushFront(&ls->pending_up, &ls->input_head)))
-            return false;
+        /* Initial parsing only consumes this admitted head; no callback or new
+         * admission intervenes before restoring it to the still-unbound queue. */
+        assert(ls->pending_up.budget == NULL);
+        bufferqueuePushFront(&ls->pending_up, ls->input_head);
         ls->input_head = NULL;
     }
-    return true;
 }
 
 void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
@@ -162,7 +163,8 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     }
     trojanserverApplyDestinationContext(l, &target, false);
     trojanserverResetHeader(ls);
-    if (! trojanserverRetainActiveHead(ls) || ls->input_bytes > kTrojanServerMaxPendingBytes ||
+    trojanserverRetainActiveHead(ls);
+    if (ls->input_bytes > kTrojanServerMaxPendingBytes ||
         ! bufferqueueTryAttachBudget(&ls->pending_up, &ls->output_budget))
     {
         trojanserverCloseLineBidirectional(t, l);
