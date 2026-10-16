@@ -91,6 +91,7 @@ add_library(ww STATIC
     devices/device_reader_dispatch.c
     devices/device_writer_channel.c
     devices/tun/tun_writer.c
+    devices/raw/raw_writer.c
     
     # Buffer I/O
     bufio/buffer_pool.c
@@ -1701,6 +1702,7 @@ if(BUILD_TESTING)
         devices/device_reader_dispatch.c
         devices/device_writer_channel.c
         devices/tun/tun_writer.c
+        devices/raw/raw_writer.c
         devices/tun/tun_linux.c
         devices/tun/tun_linux_config.c
         devices/tun/tun_linux_io.c

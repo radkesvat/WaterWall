@@ -1,23 +1,17 @@
-#include "devices/device_pool.h"
 #include "raw_private.h"
 
 #include "buffer_pool.h"
 #include "devices/device_packet_checksum.h"
 #include "global_state.h"
 #include "managers/windivert_manager.h"
-#include "master_pool.h"
 #include "raw_windows_send_policy.h"
-#include "wchan.h"
-#include "wloop.h"
-#include "worker.h"
-#include "wplatform.h"
 
 #include "loggers/internal_logger.h"
+#include "loggers/log_rate_limiter.h"
 
 enum
 {
-    kMasterMessagePoolsbufGetLeftCapacity = 64,
-    kRawWriteChannelQueueMax              = 256
+    kRawWriteQueueMax = 256
 };
 
 #ifdef ERROR_DATA_NOT_ACCEPTED
@@ -28,149 +22,228 @@ static_assert(kRawWindowsErrorHostUnreachable == ERROR_HOST_UNREACHABLE,
               "the raw writer's ERROR_HOST_UNREACHABLE value drifted from Win32");
 static_assert(kRawWindowsErrorRetry == ERROR_RETRY, "the raw writer's ERROR_RETRY value drifted from Win32");
 
+/* Each event worker owns its native operation while the writer gate is open.
+ * CloseWait transfers exclusive ownership to the lifecycle coordinator. */
+struct raw_native_writer_s
+{
+    OVERLAPPED         overlapped;
+    WINDIVERT_ADDRESS  address;
+    HANDLE             event;
+    PTP_WAIT           wait;
+    raw_writer_lane_t *lane;
+    sbuf_t            *pending_buffer;
+    log_rate_limiter_t discard_log_limiter;
+    uint64_t           oversized_packet_total;
+    uint64_t           packet_local_send_error_total;
+    uint32_t           last_discard_error;
+};
+
 typedef enum rawdevice_discard_reason_e
 {
     kRawDeviceDiscardOversized,
     kRawDeviceDiscardPacketLocalSendError
 } rawdevice_discard_reason_t;
 
-static void rawdeviceRecordDiscard(raw_device_t *rdev, rawdevice_discard_reason_t reason, unsigned long send_error)
+static void rawdeviceLogDiscards(raw_native_writer_t *native, wid_t wid, log_rate_limiter_report_t report)
 {
-    if (reason == kRawDeviceDiscardOversized)
-    {
-        rdev->oversized_packet_total++;
-    }
-    else
-    {
-        rdev->packet_local_send_error_total++;
-        rdev->last_discard_error = (uint32_t) send_error;
-    }
-
-    log_rate_limiter_report_t report = logRateLimiterRecord(&rdev->discard_log_limiter, kRawDiscardReportIntervalMs);
     if (! report.should_log)
-    {
         return;
-    }
-
-    LOGW("RawDevice: discarded %llu packet(s) over %llums "
+    LOGW("RawDevice: worker %u discarded %llu packet(s) over %llums "
          "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu, "
-         "packet-local WinDivertSend errors=%llu, last error=%u)",
+         "packet-local WinDivertSendEx errors=%llu, last error=%u)",
+         (unsigned int) wid,
          LLU(report.events),
          LLU(report.elapsed_ms),
          LLU(report.total),
          (unsigned int) kMaxAllowedPacketLength,
-         LLU(rdev->oversized_packet_total),
-         LLU(rdev->packet_local_send_error_total),
-         rdev->last_discard_error);
+         LLU(native->oversized_packet_total),
+         LLU(native->packet_local_send_error_total),
+         native->last_discard_error);
 }
 
-static void rawdeviceReportPendingDiscards(raw_device_t *rdev)
+static void rawdeviceRecordDiscard(raw_native_writer_t *native, wid_t wid, rawdevice_discard_reason_t reason,
+                                   DWORD send_error)
 {
-    log_rate_limiter_report_t report = logRateLimiterFlush(&rdev->discard_log_limiter);
-    if (! report.should_log)
+    if (reason == kRawDeviceDiscardOversized)
+        native->oversized_packet_total++;
+    else
     {
-        return;
+        native->packet_local_send_error_total++;
+        native->last_discard_error = (uint32_t) send_error;
     }
-
-    LOGW("RawDevice: discarded %llu packet(s) before writer exit "
-         "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu, "
-         "packet-local WinDivertSend errors=%llu, last error=%u)",
-         LLU(report.events),
-         LLU(report.total),
-         (unsigned int) kMaxAllowedPacketLength,
-         LLU(rdev->oversized_packet_total),
-         LLU(rdev->packet_local_send_error_total),
-         rdev->last_discard_error);
+    rawdeviceLogDiscards(native, wid, logRateLimiterRecord(&native->discard_log_limiter, kRawDiscardReportIntervalMs));
 }
 
-static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
+static VOID CALLBACK rawdeviceWriteCompleted(PTP_CALLBACK_INSTANCE instance, PVOID context, PTP_WAIT wait,
+                                             TP_WAIT_RESULT result)
 {
-    raw_device_t     *rdev = userdata;
-    sbuf_t           *buf;
-    struct wchan_s   *writer_channel = deviceWriterChannelGetConsumerChannel(&rdev->writer_channel);
-    WINDIVERT_ADDRESS addr           = {
-                  .Layer      = WINDIVERT_LAYER_NETWORK,
-                  .Outbound   = 1,
-                  .IPChecksum = 1,
-    };
-
-    while (rawLifecycleIsActive(rawLifecycleLoad(&rdev->lifecycle)))
-    {
-        if (! chanRecv(writer_channel, (void **) &buf))
-        {
-            LOGD("RawDevice: routine write will exit due to channel closed");
-            break;
-        }
-
-        uint32_t packet_len = sbufGetLength(buf);
-        if (UNLIKELY(packet_len > kMaxAllowedPacketLength))
-        {
-            rawdeviceRecordDiscard(rdev, kRawDeviceDiscardOversized, 0);
-            bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
-            continue;
-        }
-
-        /*
-         * WinDivert reads a set checksum-valid bit as an assertion that the
-         * checksum in the packet is already correct, and skips computing it.
-         * Deriving that from structure - "it is IPv4, so the IP checksum is
-         * fine" - asserts something the bytes were never asked about, and a
-         * packet a node emitted with a stale or unset checksum then leaves the
-         * host uncorrected. A cleared bit costs one driver-side computation and
-         * is always accepted, so anything unproven stays clear.
-         */
-        const device_packet_checksum_validity_t validity = deviceIpv4ChecksumValidity(sbufGetRawPtr(buf), packet_len);
-
-        addr.IPChecksum  = validity.ipv4 ? 1 : 0;
-        addr.TCPChecksum = validity.tcp ? 1 : 0;
-        addr.UDPChecksum = validity.udp ? 1 : 0;
-
-        if (! windivertSend(rdev->handle, sbufGetRawPtr(buf), packet_len, NULL, &addr))
-        {
-            const unsigned long send_error = GetLastError();
-            bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
-
-            if (rawWindowsClassifySendError(send_error) == kRawWindowsSendDiscardPacket)
-            {
-                rawdeviceRecordDiscard(rdev, kRawDeviceDiscardPacketLocalSendError, send_error);
-                continue;
-            }
-
-            LOGE("RawDevice: terminal WinDivertSend failure on device %s: error %lu", rdev->name, send_error);
-            break;
-        }
-        bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
-    }
-
-    rawdeviceReportPendingDiscards(rdev);
-    return 0;
+    discard              instance;
+    discard              wait;
+    discard              result;
+    raw_native_writer_t *native = context;
+    /* A threadpool callback is a foreign notification root. The shared helper
+     * retains its generation for the owner-worker message, including refusal. */
+    discard rawWriterNotify(native->lane);
 }
 
-static void rawdeviceNoteUnexpectedWriterExit(raw_device_t *rdev)
+static bool rawdeviceWriteFailed(raw_device_t *rdev, DWORD error)
 {
     raw_lifecycle_state_t failed_from;
     if (! rawLifecycleTransitionToFailed(&rdev->lifecycle, &failed_from))
-    {
-        return;
-    }
-
-    LOGE("RawDevice: writer thread for device %s exited unexpectedly; the device is no longer usable", rdev->name);
-
-    if (failed_from == kRawLifecycleUp && ! requestProgramShutdown(1))
-    {
-        abortProgramNow(1);
-    }
+        return false;
+    LOGE("RawDevice: terminal WinDivertSendEx failure on device %s: error %lu", rdev->name, error);
+    return failed_from == kRawLifecycleUp;
 }
 
-static WTHREAD_ROUTINE(rawdeviceWriterThreadMain) // NOLINT
+static raw_writer_batch_result_t rawdeviceWriteBatch(void *context, worker_t *worker, raw_writer_lane_t *lane,
+                                                     sbuf_t **buffers, size_t count)
 {
-    // Auxiliary device thread: it must stay unregistered and use only
-    // device-owned pools/channels, posting work to explicit event workers.
-    assert(! currentThreadHasRegisteredWID());
-    raw_device_t *rdev = userdata;
-    discard       rdev->routine_writer(rdev);
-    rawdeviceNoteUnexpectedWriterExit(rdev);
-    return 0;
+    raw_device_t        *rdev   = context;
+    raw_native_writer_t *native = &rdev->writer_states[worker->wid];
+    size_t               sent   = 0;
+    if (native->lane == NULL)
+        native->lane = lane;
+    else
+        assert(native->lane == lane);
+
+    while (sent < count && rawLifecycleIsActive(rawLifecycleLoad(&rdev->lifecycle)))
+    {
+        sbuf_t *buf        = buffers[sent];
+        DWORD   send_error = ERROR_SUCCESS;
+        if (native->pending_buffer != NULL)
+        {
+            assert(native->pending_buffer == buf);
+            DWORD completed;
+            if (! GetOverlappedResult(rdev->handle, &native->overlapped, &completed, FALSE))
+            {
+                send_error = GetLastError();
+                if (send_error == ERROR_IO_INCOMPLETE)
+                    return (raw_writer_batch_result_t) {sent, kRawWriterBatchBlocked};
+            }
+            native->pending_buffer = NULL;
+        }
+        else
+        {
+            const uint32_t packet_len = sbufGetLength(buf);
+            if (UNLIKELY(packet_len > kMaxAllowedPacketLength))
+            {
+                rawdeviceRecordDiscard(native, worker->wid, kRawDeviceDiscardOversized, 0);
+                bufferpoolReuseBuffer(worker->buffer_pool, buf);
+                sent++;
+                continue;
+            }
+
+            /* A set flag asserts the bytes already contain a valid checksum.
+             * Leave unproven checksums clear for WinDivert to calculate. */
+            const device_packet_checksum_validity_t validity =
+                deviceIpv4ChecksumValidity(sbufGetRawPtr(buf), packet_len);
+            native->address = (WINDIVERT_ADDRESS) {
+                .Layer       = WINDIVERT_LAYER_NETWORK,
+                .Outbound    = 1,
+                .IPChecksum  = validity.ipv4 ? 1 : 0,
+                .TCPChecksum = validity.tcp ? 1 : 0,
+                .UDPChecksum = validity.udp ? 1 : 0,
+            };
+            if (! ResetEvent(native->event))
+            {
+                send_error = GetLastError();
+            }
+            else
+            {
+                native->overlapped = (OVERLAPPED) {.hEvent = native->event};
+                if (! windivertSendEx(rdev->handle,
+                                      sbufGetRawPtr(buf),
+                                      packet_len,
+                                      NULL,
+                                      &native->address,
+                                      sizeof(native->address),
+                                      &native->overlapped))
+                    send_error = GetLastError();
+                if (send_error == ERROR_IO_PENDING)
+                {
+                    /* Queue ownership includes this buffer until completion.
+                     * Arm after submission: the manual-reset event preserves a
+                     * completion that raced the SendEx return. */
+                    native->pending_buffer = buf;
+                    SetThreadpoolWait(native->wait, native->event, NULL);
+                    return (raw_writer_batch_result_t) {sent, kRawWriterBatchBlocked};
+                }
+            }
+        }
+
+        bufferpoolReuseBuffer(worker->buffer_pool, buf);
+        sent++;
+        if (send_error == ERROR_SUCCESS)
+            continue;
+        if (rawWindowsClassifySendError(send_error) == kRawWindowsSendDiscardPacket)
+        {
+            rawdeviceRecordDiscard(native, worker->wid, kRawDeviceDiscardPacketLocalSendError, send_error);
+            continue;
+        }
+        if (rawdeviceWriteFailed(rdev, send_error))
+            return (raw_writer_batch_result_t) {sent, kRawWriterBatchFailed};
+        break;
+    }
+
+    /* An admitted notification can overlap stop. A pending kernel operation
+     * must remain in the FIFO until stop_worker cancels and settles it. */
+    if (native->pending_buffer != NULL)
+        return (raw_writer_batch_result_t) {sent, kRawWriterBatchBlocked};
+    /* A different worker or the lifecycle owner may already have stopped the
+     * device. Unsubmitted ownership can be discarded now. */
+    while (sent < count)
+        bufferpoolReuseBuffer(worker->buffer_pool, buffers[sent++]);
+    return (raw_writer_batch_result_t) {sent, kRawWriterBatchContinue};
+}
+
+static void rawdeviceStopWriter(void *context, wid_t wid)
+{
+    raw_device_t        *rdev   = context;
+    raw_native_writer_t *native = &rdev->writer_states[wid];
+
+    /* The helper closed and quiesced submission before calling us. Disarm and
+     * join foreign notification roots before releasing their lane association. */
+    if (native->wait != NULL)
+    {
+        SetThreadpoolWait(native->wait, NULL, NULL);
+        WaitForThreadpoolWaitCallbacks(native->wait, TRUE);
+    }
+    if (native->pending_buffer != NULL)
+    {
+        if (! CancelIoEx(rdev->handle, &native->overlapped) && GetLastError() != ERROR_NOT_FOUND)
+            LOGW("RawDevice: failed to cancel pending native write, error %lu", GetLastError());
+        DWORD completed;
+        if (! GetOverlappedResult(rdev->handle, &native->overlapped, &completed, TRUE))
+        {
+            const DWORD error = GetLastError();
+            if (error == ERROR_IO_INCOMPLETE || error == ERROR_INVALID_HANDLE)
+            {
+                LOGF("RawDevice: cannot confirm native write retirement, error %lu", error);
+                abortProgramNow(1);
+            }
+        }
+        /* Completion, including ERROR_OPERATION_ABORTED, returns kernel
+         * ownership. CloseWait will now discard the still-queued sbuf. */
+        native->pending_buffer = NULL;
+    }
+    if (native->wait != NULL)
+    {
+        CloseThreadpoolWait(native->wait);
+        native->wait = NULL;
+    }
+    if (native->event != NULL)
+    {
+        CloseHandle(native->event);
+        native->event = NULL;
+    }
+    rawdeviceLogDiscards(native, wid, logRateLimiterFlush(&native->discard_log_limiter));
+}
+
+static void rawdeviceFreeWriterStates(raw_device_t *rdev)
+{
+    memoryFree(rdev->writer_states);
+    rdev->writer_states       = NULL;
+    rdev->writer_worker_count = 0;
 }
 
 bool rawdeviceIsUp(const raw_device_t *rdev)
@@ -178,256 +251,126 @@ bool rawdeviceIsUp(const raw_device_t *rdev)
     return rdev != NULL && rawLifecycleLoad(&rdev->lifecycle) == kRawLifecycleUp;
 }
 
-/* Failure-only TLS sampler: overload and shutdown bursts do not need one log
- * record per rejected packet, and successful writes never execute this code. */
 static bool rawdeviceShouldLogRefusal(void)
 {
     static thread_local uint32_t refusal_count;
     const uint32_t               ordinal = ++refusal_count;
-
     return ordinal == 1 || (ordinal & (ordinal - 1U)) == 0;
 }
 
 bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
 {
     assert(sbufGetLength(buf) >= sizeof(struct ip_hdr));
-
     if (UNLIKELY(! rawdeviceIsUp(rdev)))
     {
         if (rawdeviceShouldLogRefusal())
-        {
             LOGE("RawDevice: write failed, device is not up");
-        }
         return false;
     }
-
-    switch (deviceWriterChannelTrySend(&rdev->writer_channel, buf))
+    switch (rawWriterTrySend(&rdev->writer, buf))
     {
-    case kDeviceWriterSendOk:
+    case kRawWriterSendOk:
         return true;
-    case kDeviceWriterSendDown:
+    case kRawWriterSendDown:
+    case kRawWriterSendClosed:
         if (rawdeviceShouldLogRefusal())
-        {
-            LOGE("RawDevice: write failed, device is down");
-        }
+            LOGE("RawDevice: write failed, output admission was closed");
         return false;
-    case kDeviceWriterSendClosed:
-        if (rawdeviceShouldLogRefusal())
-        {
-            LOGE("RawDevice: write failed, channel was closed");
-        }
-        return false;
-    case kDeviceWriterSendFull:
+    case kRawWriterSendFull:
         return false;
     }
-
     return false;
 }
 
 bool rawdeviceBringUp(raw_device_t *rdev)
 {
-    if (rdev->writer_joinable || deviceWriterChannelHasCurrent(&rdev->writer_channel))
-    {
-        LOGE("RawDevice: previous writer ownership has not been released");
-        return false;
-    }
+    discard getCurrentEventWorker();
     if (! rawLifecycleTransitionDownToStarting(&rdev->lifecycle))
     {
         LOGE("RawDevice: device cannot be started in current lifecycle state");
         return false;
     }
-
-    /*
-     * Device bring-up/creation runs on an event worker even though the reader
-     * and writer threads it manages stay unregistered. Read that worker's pool
-     * geometry once here and copy it onto the device-owned pools; the auxiliary
-     * threads never touch worker-local state themselves.
-     */
-    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
-
-    devicePoolUpdatePadding(rdev->writer_buffer_pool, worker_pool);
-
-    if (! deviceWriterChannelOpen(&rdev->writer_channel, kRawWriteChannelQueueMax))
+    rdev->writer_worker_count = getWorkersCount();
+    rdev->writer_states       = memoryAllocateZero(rdev->writer_worker_count * sizeof(rdev->writer_states[0]));
+    for (size_t i = 0; i < rdev->writer_worker_count; ++i)
     {
-        LOGE("RawDevice: failed to open writer channel");
-        rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
-        return false;
+        raw_native_writer_t *native = &rdev->writer_states[i];
+        native->event               = CreateEventW(NULL, TRUE, FALSE, NULL);
+        if (native->event == NULL)
+            goto fail;
+        native->wait = CreateThreadpoolWait(rawdeviceWriteCompleted, native, NULL);
+        if (native->wait == NULL)
+            goto fail;
     }
-
-    wthread_error_t error = threadCreate(&rdev->write_thread, rawdeviceWriterThreadMain, rdev);
-    if (UNLIKELY(error != kWThreadErrorNone))
-    {
-        LOGE("RawDevice: failed to create writer thread: error %u", error);
-        deviceWriterChannelClose(&rdev->writer_channel);
-        discard deviceWriterChannelRetireCurrent(&rdev->writer_channel);
-        rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
-        return false;
-    }
-
-    rdev->writer_joinable = true;
+    if (! rawWriterOpen(&rdev->writer, kRawWriteQueueMax, 0, rdev, rawdeviceWriteBatch, rawdeviceStopWriter))
+        goto fail;
     if (! rawLifecycleTransitionStartingToUp(&rdev->lifecycle))
     {
-        LOGE("RawDevice: writer thread failed during startup");
-        goto rollback;
+        rawWriterCloseRequest(&rdev->writer);
+        rawWriterCloseWait(&rdev->writer);
+        rawdeviceFreeWriterStates(rdev);
+        rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
+        return false;
     }
-
     LOGI("RawDevice: device %s is now up", rdev->name);
     return true;
 
-rollback:
-    rawLifecycleTransitionToStopping(&rdev->lifecycle);
-    deviceWriterChannelClose(&rdev->writer_channel);
-
-    bool rollback_ok = true;
-    if (rdev->writer_joinable)
-    {
-        if (safeThreadJoin(rdev->write_thread))
-        {
-            rdev->writer_joinable = false;
-            bufferpoolResetThreadOwnership(rdev->writer_buffer_pool);
-        }
-        else
-        {
-            LOGE("RawDevice: failed to join writer during startup rollback");
-            rollback_ok = false;
-        }
-    }
-    if (! rdev->writer_joinable && ! deviceWriterChannelRetireCurrent(&rdev->writer_channel))
-    {
-        rollback_ok = false;
-    }
-    if (rollback_ok)
-    {
-        rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
-    }
+fail:
+    LOGE("RawDevice: failed to initialize worker output, error %lu", GetLastError());
+    for (size_t i = 0; i < rdev->writer_worker_count; ++i)
+        rawdeviceStopWriter(rdev, (wid_t) i);
+    rawdeviceFreeWriterStates(rdev);
+    rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
     return false;
 }
 
 void rawdeviceRequestStop(raw_device_t *rdev)
 {
     rawLifecycleTransitionToStopping(&rdev->lifecycle);
-    deviceWriterChannelClose(&rdev->writer_channel);
+    rawWriterCloseRequest(&rdev->writer);
 }
 
 bool rawdeviceBringDown(raw_device_t *rdev)
 {
-    if (rawLifecycleLoad(&rdev->lifecycle) == kRawLifecycleDown && ! rdev->writer_joinable &&
-        ! deviceWriterChannelHasCurrent(&rdev->writer_channel))
-    {
-        LOGE("RawDevice: device is already down");
-        return true;
-    }
-
     rawdeviceRequestStop(rdev);
-
-    bool bring_down_ok = true;
-    if (rdev->writer_joinable)
-    {
-        if (safeThreadJoin(rdev->write_thread))
-        {
-            rdev->writer_joinable = false;
-            bufferpoolResetThreadOwnership(rdev->writer_buffer_pool);
-        }
-        else
-        {
-            LOGE("RawDevice: failed to join writer thread; retaining writer resources");
-            bring_down_ok = false;
-        }
-    }
-    if (! rdev->writer_joinable && ! deviceWriterChannelRetireCurrent(&rdev->writer_channel))
-    {
-        bring_down_ok = false;
-    }
-
-    if (bring_down_ok)
-    {
-        rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
-        LOGI("RawDevice: device %s is now down", rdev->name);
-    }
-
-    return bring_down_ok;
+    rawWriterCloseWait(&rdev->writer);
+    rawdeviceFreeWriterStates(rdev);
+    rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
+    return true;
 }
 
 raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata)
 {
-    discard bypass_conntrack; // Linux netfilter policy; WinDivert has no conntrack setting.
+    discard getCurrentEventWorker();
+    discard bypass_conntrack;
     if (! windivertManagerEnsureLoaded())
-    {
-        LOGE("RawDevice: failed to load WinDivert");
         return NULL;
-    }
-
     HANDLE handle = windivertOpen("false", WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_SEND_ONLY);
     if (handle == INVALID_HANDLE_VALUE)
     {
-        // Handle error
-        LOGE("RawDevice: Failed to open WinDivert handle: error %lu", GetLastError());
-        return FALSE;
-    }
-
-    /*
-     * Device bring-up/creation runs on an event worker even though the reader
-     * and writer threads it manages stay unregistered. Read that worker's pool
-     * geometry once here and copy it onto the device-owned pools; the auxiliary
-     * threads never touch worker-local state themselves.
-     */
-    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
-
-    buffer_pool_t *writer_bpool = devicePoolCreate(worker_pool, 0);
-    if (UNLIKELY(writer_bpool == NULL))
-    {
-        LOGE("RawDevice: failed to construct writer buffer pool");
-        windivertClose(handle);
+        LOGE("RawDevice: failed to open WinDivert handle: error %lu", GetLastError());
         return NULL;
     }
-
-    raw_device_t *rdev        = memoryAllocate(sizeof(raw_device_t));
-    char         *device_name = stringDuplicate(name);
-    if (UNLIKELY(device_name == NULL))
-    {
-        memoryFree(rdev);
-        bufferpoolDestroy(writer_bpool);
-        windivertClose(handle);
-        return NULL;
-    }
-
-    *rdev = (raw_device_t) {.name               = device_name,
-                            .routine_writer     = routineWriteToRaw,
-                            .handle             = handle,
-                            .mark               = mark,
-                            .userdata           = userdata,
-                            .writer_buffer_pool = writer_bpool,
-                            .writer_joinable    = false};
+    raw_device_t *rdev = memoryAllocateZero(sizeof(*rdev));
+    rdev->name         = stringDuplicate(name);
+    rdev->handle       = handle;
+    rdev->mark         = mark;
+    rdev->userdata     = userdata;
     atomic_init(&rdev->lifecycle, kRawLifecycleDown);
-    deviceWriterChannelInit(&rdev->writer_channel);
-
+    rawWriterInit(&rdev->writer);
     return rdev;
 }
 
 void rawdeviceDestroy(raw_device_t *rdev)
 {
-
-    if (rawLifecycleLoad(&rdev->lifecycle) != kRawLifecycleDown || rdev->writer_joinable ||
-        deviceWriterChannelHasCurrent(&rdev->writer_channel))
+    discard rawdeviceBringDown(rdev);
+    rawWriterDestroy(&rdev->writer);
+    windivertShutdown(rdev->handle, WINDIVERT_SHUTDOWN_BOTH);
+    if (! windivertClose(rdev->handle))
     {
-        if (! rawdeviceBringDown(rdev))
-        {
-            LOGF("RawDevice: refusing to destroy device while writer ownership remains");
-            abortProgramNow(1);
-        }
-    }
-    /*
-     * Node destruction runs after all worker and lwIP producer contexts have
-     * stopped, so retired queue generations can finally be reclaimed.
-     */
-    if (! deviceWriterChannelDestroy(&rdev->writer_channel))
-    {
-        LOGF("RawDevice: refusing to destroy a published writer generation");
+        LOGF("RawDevice: failed to close its retired WinDivert handle, error %lu", GetLastError());
         abortProgramNow(1);
     }
     memoryFree(rdev->name);
-    bufferpoolDestroy(rdev->writer_buffer_pool);
-    windivertShutdown(rdev->handle, WINDIVERT_SHUTDOWN_BOTH);
-    windivertClose(rdev->handle);
     memoryFree(rdev);
 }

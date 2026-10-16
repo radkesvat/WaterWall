@@ -15,8 +15,8 @@ typedef enum raw_linux_send_action_e
  * Raw-socket send failures are classified by what they say about the exact
  * operation:
  *
- * - EINTR retries the same operation.
- * - EAGAIN/EWOULDBLOCK waits for socket writability.
+ * - EINTR retries the same operation in a later worker callback.
+ * - EAGAIN/EWOULDBLOCK retains the suffix for a delayed nonblocking retry.
  * - kernel resource pressure and packet/destination errors discard only the
  *   first unsent message in the sendmmsg() batch.
  * - an unknown error is terminal. Retrying unknown failures is what leaves a

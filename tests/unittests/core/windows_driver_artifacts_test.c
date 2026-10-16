@@ -106,6 +106,17 @@ static BOOL WINAPI fixtureClose(HANDLE handle)
     return TRUE;
 }
 
+static BOOL WINAPI fixtureSendEx(HANDLE handle, const VOID *packet, UINT packet_len, UINT *sent, UINT64 flags,
+                                 const WINDIVERT_ADDRESS *address, UINT address_len, OVERLAPPED *overlapped)
+{
+    require(handle == (HANDLE) (uintptr_t) 456 && packet != NULL && packet_len == 20 && sent == NULL,
+            "overlapped send wrapper changed packet arguments");
+    require(flags == 0 && address != NULL && address_len == sizeof(*address) && overlapped != NULL,
+            "overlapped send wrapper changed completion arguments");
+    SetLastError(ERROR_IO_PENDING);
+    return FALSE;
+}
+
 static void WINAPI fixtureUnused(void)
 {
 }
@@ -113,7 +124,7 @@ static void WINAPI fixtureUnused(void)
 static FARPROC WINAPI fixtureExport(HMODULE module, LPCSTR name)
 {
     require(module == (HMODULE) (uintptr_t) 123, "resolving an unowned module");
-    if (missing_export && strcmp(name, "WinDivertSend") == 0)
+    if (missing_export && strcmp(name, "WinDivertSendEx") == 0)
     {
         SetLastError(ERROR_PROC_NOT_FOUND);
         return NULL;
@@ -128,6 +139,13 @@ static FARPROC WINAPI fixtureExport(HMODULE module, LPCSTR name)
     else if (strcmp(name, "WinDivertClose") == 0)
     {
         BOOL(WINAPI * function)(HANDLE) = fixtureClose;
+        _Static_assert(sizeof(function) == sizeof(proc), "Windows export pointer size mismatch");
+        memcpy(&proc, &function, sizeof(proc));
+    }
+    else if (strcmp(name, "WinDivertSendEx") == 0)
+    {
+        BOOL(WINAPI * function)(
+            HANDLE, const VOID *, UINT, UINT *, UINT64, const WINDIVERT_ADDRESS *, UINT, OVERLAPPED *) = fixtureSendEx;
         _Static_assert(sizeof(function) == sizeof(proc), "Windows export pointer size mismatch");
         memcpy(&proc, &function, sizeof(proc));
     }
@@ -309,6 +327,12 @@ int main(void)
                 wcsncmp(artifacts[kWindowsDriverWinDivertSys].path, directory, wcslen(directory)) == 0,
             "paired artifacts have different directories");
     HANDLE       handle        = windivertOpen("false", WINDIVERT_LAYER_NETWORK, 0, 0);
+    uint8_t           packet[20]    = {0};
+    WINDIVERT_ADDRESS address       = {0};
+    OVERLAPPED        overlapped    = {0};
+    require(! windivertSendEx(handle, packet, sizeof(packet), NULL, &address, sizeof(address), &overlapped) &&
+                GetLastError() == ERROR_IO_PENDING,
+            "overlapped send wrapper hid pending completion");
     unsigned int before_unload = unload_calls;
     windivertManagerShutdown();
     require(GSTATE.windivert_dll_handle != NULL && unload_calls == before_unload,

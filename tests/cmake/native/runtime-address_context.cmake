@@ -452,16 +452,18 @@
     )
 
     waterwall_add_native_executable(raw_linux_writer_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/devices/raw_linux_writer_test.c
-      ${CMAKE_SOURCE_DIR}/ww/devices/device_writer_channel.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/raw/raw_writer.c
       ${CMAKE_SOURCE_DIR}/ww/devices/raw/raw_linux.c)
   target_link_libraries(raw_linux_writer_test PRIVATE ww_test_support)
-    target_compile_definitions(raw_linux_writer_test PRIVATE DEVICE_WRITER_CHANNEL_TEST_HOOKS=1)
     target_link_options(raw_linux_writer_test PRIVATE
       "-Wl,--wrap=rawLinuxNotrackInstall"
       "-Wl,--wrap=rawLinuxNotrackRemove"
-      "-Wl,--wrap=pthread_join"
       "-Wl,--wrap=sendmmsg"
       "-Wl,--wrap=poll"
+      "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
+      "-Wl,--wrap=sendWorkerMessageTimedWithCleanup"
+      "-Wl,--wrap=bufferpoolReuseBuffer"
+      "-Wl,--wrap=sbufDestroy"
       "-Wl,--wrap=requestProgramShutdown"
       "-Wl,--wrap=abortProgramNow"
     )

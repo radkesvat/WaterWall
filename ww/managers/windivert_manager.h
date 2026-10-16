@@ -176,6 +176,10 @@ void windivertManagerShutdown(void);
 HANDLE windivertOpen(const char *filter, WINDIVERT_LAYER layer, INT16 priority, UINT64 flags);
 bool   windivertRecv(HANDLE handle, void *packet, UINT packet_len, UINT *recv_len, WINDIVERT_ADDRESS *addr);
 bool   windivertSend(HANDLE handle, const void *packet, UINT packet_len, UINT *send_len, const WINDIVERT_ADDRESS *addr);
+/* Overlapped submissions retain packet, address and OVERLAPPED storage until
+ * completion. ERROR_IO_PENDING is accepted work, not a send failure. */
+bool windivertSendEx(HANDLE handle, const void *packet, UINT packet_len, UINT *send_len, const WINDIVERT_ADDRESS *addr,
+                     UINT addr_len, OVERLAPPED *overlapped);
 bool   windivertShutdown(HANDLE handle, WINDIVERT_SHUTDOWN how);
 bool   windivertClose(HANDLE handle);
 

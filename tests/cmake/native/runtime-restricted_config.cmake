@@ -173,6 +173,18 @@
       "-Wl,--wrap=requestProgramShutdown")
     add_dependencies(waterwall_unit_tests tun_writer_test)
     add_waterwall_unit_test(waterwall.tun_writer_unit tun_writer_test "unit;net;device;lifetime;writer")
+
+    waterwall_add_native_executable(raw_writer_test SUPPORT SOURCES
+      ${WATERWALL_UNIT_SOURCE_ROOT}/devices/raw_writer_test.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/raw/raw_writer.c)
+    target_link_libraries(raw_writer_test PRIVATE ww_test_support ww)
+    target_link_options(raw_writer_test PRIVATE
+      "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
+      "-Wl,--wrap=sendWorkerMessageTimedWithCleanup"
+      "-Wl,--wrap=sbufDestroy"
+      "-Wl,--wrap=requestProgramShutdown")
+    add_dependencies(waterwall_unit_tests raw_writer_test)
+    add_waterwall_unit_test(waterwall.raw_writer_unit raw_writer_test "unit;net;device;lifetime;writer")
   endif()
 
   waterwall_add_native_executable(lwip_pretend_udp_dispatch_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/lwip/lwip_pretend_udp_dispatch_test.c)

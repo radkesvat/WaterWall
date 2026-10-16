@@ -18,6 +18,8 @@ typedef struct windivert_api_s
     BOOL(WINAPI *recv)(HANDLE handle, VOID *packet, UINT packet_len, UINT *received, WINDIVERT_ADDRESS *address);
     BOOL(WINAPI *send)(HANDLE handle, const VOID *packet, UINT packet_len, UINT *sent,
                        const WINDIVERT_ADDRESS *address);
+    BOOL(WINAPI *send_ex)(HANDLE handle, const VOID *packet, UINT packet_len, UINT *sent, UINT64 flags,
+                          const WINDIVERT_ADDRESS *address, UINT address_len, OVERLAPPED *overlapped);
     BOOL(WINAPI *shutdown)(HANDLE handle, WINDIVERT_SHUTDOWN how);
     BOOL(WINAPI *close)(HANDLE handle);
     BOOL(WINAPI *format_ipv4)(UINT32 address, char *buffer, UINT length);
@@ -91,6 +93,7 @@ bool windivertManagerEnsureLoaded(void)
     LOAD_WINDIVERT(open, "WinDivertOpen");
     LOAD_WINDIVERT(recv, "WinDivertRecv");
     LOAD_WINDIVERT(send, "WinDivertSend");
+    LOAD_WINDIVERT(send_ex, "WinDivertSendEx");
     LOAD_WINDIVERT(shutdown, "WinDivertShutdown");
     LOAD_WINDIVERT(close, "WinDivertClose");
     LOAD_WINDIVERT(format_ipv4, "WinDivertHelperFormatIPv4Address");
@@ -146,6 +149,12 @@ bool windivertRecv(HANDLE handle, void *packet, UINT packet_len, UINT *recv_len,
 bool windivertSend(HANDLE handle, const void *packet, UINT packet_len, UINT *send_len, const WINDIVERT_ADDRESS *addr)
 {
     return windivert_api.send(handle, packet, packet_len, send_len, addr) != FALSE;
+}
+
+bool windivertSendEx(HANDLE handle, const void *packet, UINT packet_len, UINT *send_len, const WINDIVERT_ADDRESS *addr,
+                     UINT addr_len, OVERLAPPED *overlapped)
+{
+    return windivert_api.send_ex(handle, packet, packet_len, send_len, 0, addr, addr_len, overlapped) != FALSE;
 }
 
 bool windivertShutdown(HANDLE handle, WINDIVERT_SHUTDOWN how)

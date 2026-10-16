@@ -213,6 +213,27 @@ When payload reaches `RawSocket` from upstream or downstream:
 
 Both upstream and downstream payload handlers write to the same raw output device.
 
+Output is queued on the submitting event worker and flushed later on that same
+worker. Each worker keeps its own FIFO and recycles completed buffers through its
+existing pool. There is no dedicated raw writer thread or writer pool, and no
+application mutex serializes native writes across workers. Device-wide limits
+remain 131,072 packets on Linux and 256 on Windows, including queued and active
+output. Each worker preserves its FIFO order; independent workers have no total
+output order.
+
+Linux flushes use up to 512 original packets in one nonblocking `sendmmsg()` call.
+A partial send retires only the sent prefix and retains the unsent suffix ahead
+of newer packets. `EINTR` yields to another deferred attempt. After `EAGAIN`, a
+1 ms worker retry checks writability with a zero-timeout `poll()`; it never waits
+inside the event worker. Resource-pressure and packet/destination errors retain
+the existing one-packet discard policy; permanent descriptor failures request
+shutdown. No timer waits for a batch to fill.
+
+Windows uses overlapped WinDivert output. A pending operation retains its original
+packet until completion; the native completion notification schedules owner-worker
+work and never borrows a worker pool. Stop closes admission, quiesces notifications,
+cancels pending writes, and waits for completion before releasing retained packets.
+
 On Linux, output bypass requires `iptables`, `iptables-save`, `ip` from
 iproute2, and permission to manage firewall rules (`CAP_NET_ADMIN`). Before
 enabling the writer, WaterWall checks IPv4 firewall and routing
@@ -234,7 +255,9 @@ filtering. Normal raw-table priority, fragment handling, and MTU limits remain
 unchanged. `bypass-conntrack=false` disables this node's capture and output
 exemptions; other administrators' rules remain independent.
 
-The writer stops and joins before its `WWRAW_NOTRACK_...` rule is removed.
+Output admission closes and admitted native writes finish before the
+`WWRAW_NOTRACK_...` rule is removed. Queued output is discarded during stop;
+a delayed callback from an old generation cannot write into a restarted device.
 Startup rollback and destruction retry pending cleanup, including commands with
 uncertain outcomes. Abrupt process death or persistent command failures can
 leave this exact-mark rule in `raw OUTPUT`; remove the rule identified by its
