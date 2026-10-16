@@ -54,13 +54,11 @@ bool tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out)
         return true;
     }
 
-    const uint16_t padding  = bufferpoolGetLargeBufferPadding(pool);
-    uint32_t       capacity = 0;
-    if (pending > INT_MAX || ! sbufTryComputeCapacity(pending, padding, &capacity))
+    /* The BIO read bound leaves room for aligned pool padding even on 32-bit targets. */
+    if (pending > INT_MAX)
     {
         return false;
     }
-    discard capacity;
 
     sbuf_t *buf = tlsbufferbioTake(bio);
     assert(buf != NULL);

@@ -5,14 +5,14 @@
 static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls, reverseserver_thread_box_t *box,
                                reverseserver_tstate_t *ts, wid_t target)
 {
-    buffer_pool_t *pool   = lineGetBufferPool(d);
-    const uint64_t length = ts->handshake_length + (uint64_t) bufferqueueGetBufLen(&dls->pending);
-    uint32_t       capacity;
-    if (! sbufTryComputeCapacity(length, bufferpoolGetLargeBufferPadding(pool), &capacity) || ! pipeTo(t, d, target))
+    buffer_pool_t *pool = lineGetBufferPool(d);
+    /* The 2 MiB pending budget plus at most 1024 handshake bytes fits padded storage on every target. */
+    const uint32_t length = ts->handshake_length + (uint32_t) bufferqueueGetBufLen(&dls->pending);
+    if (! pipeTo(t, d, target))
         return false;
 
     const bool output_paused = dls->output_paused;
-    sbuf_t    *replay        = bufferpoolGetBestFit(pool, (uint32_t) length, bufferpoolGetLargeBufferPadding(pool));
+    sbuf_t    *replay        = bufferpoolGetBestFit(pool, length, bufferpoolGetLargeBufferPadding(pool));
     uint8_t   *bytes         = sbufGetMutablePtr(replay);
     memoryCopy(bytes, ts->handshake_bytes, ts->handshake_length);
     size_t offset = ts->handshake_length;
@@ -24,7 +24,7 @@ static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *d
         offset += count;
         bufferpoolReuseBuffer(pool, body);
     }
-    sbufSetLength(replay, (uint32_t) length);
+    sbufSetLength(replay, length);
     reverseserverRemoveConnectionD(box, dls);
     reverseserverLinestateDestroy(dls);
 

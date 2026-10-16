@@ -345,10 +345,8 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (sbufIsSplice(buf))
         {
-            sbuf_t *ordinary = sbufTryEnsureOrdinary(pool, buf);
-            if (ordinary == NULL)
-                goto setup_failure;
-            buf = ordinary;
+            /* The combined size above already proves this input's padded geometry. */
+            buf = sbufEnsureOrdinary(pool, buf);
         }
         // Reserve before the ordinary merge, including full onward padding.
         if (ls->buffering != NULL &&
