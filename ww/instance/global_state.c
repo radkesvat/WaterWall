@@ -578,7 +578,7 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
         }
 
         system_load_state_t *system_load = memoryAllocateZero(sizeof(*system_load));
-        if (system_load != NULL && systemLoadSamplerTryInit(system_load))
+        if (systemLoadSamplerTryInit(system_load))
         {
             GSTATE.system_load = system_load;
             if (UNLIKELY(! systemLoadSamplerStart(system_load, getWorkerLoop(0))))
