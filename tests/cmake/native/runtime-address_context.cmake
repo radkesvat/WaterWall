@@ -339,14 +339,12 @@
       ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_session.c
       ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_budget.c
       ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_dispatch.c
-      ${CMAKE_SOURCE_DIR}/ww/devices/device_writer_channel.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_writer.c
       ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux.c
       ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_config.c
       ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_io.c)
   target_link_libraries(tun_linux_message_lifetime_test PRIVATE ww_test_support)
-    target_compile_definitions(tun_linux_message_lifetime_test PRIVATE DEVICE_WRITER_CHANNEL_TEST_HOOKS=1)
     target_link_options(tun_linux_message_lifetime_test PRIVATE
-      "-Wl,--wrap=chanTryRecv"
       "-Wl,--wrap=procRunArgvWithDeadline"
       "-Wl,--wrap=open"
       "-Wl,--wrap=ioctl"

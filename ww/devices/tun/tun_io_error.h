@@ -4,12 +4,11 @@
 #include <stdbool.h>
 
 /*
- * Shared POSIX device-I/O error policy for the TUN reader and writer threads.
+ * Shared POSIX device-I/O error policy for the TUN reader and worker writers.
  *
- * These routines run on their own threads and are the only readers/writers of
- * the device handle. When one of them returns, tundeviceNoteUnexpectedThreadExit()
- * publishes FAILED and hands the shutdown decision to worker 0. That only works
- * if a routine actually returns on a device that is gone: an error the routine
+ * The reader exit wrapper and deferred writer callback publish FAILED and hand
+ * shutdown to the coordinator after releasing their local ownership/admission.
+ * That only works if a routine stops on a device that is gone: an error the routine
  * swallows with `continue` keeps a dead device advertised as usable while every
  * packet is silently discarded, which is strictly worse than exiting, because a
  * supervisor can restart a process that exits but cannot notice one that spins.

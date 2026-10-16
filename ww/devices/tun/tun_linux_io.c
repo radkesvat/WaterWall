@@ -1,6 +1,5 @@
 #include "devices/device_flow_affinity.h"
 #include "devices/device_reader_session.h"
-#include "devices/device_writer_channel.h"
 #include "devices/tun/tun_io_error.h"
 #include "devices/tun/tun_lifecycle.h"
 #ifdef OS_LINUX
@@ -16,7 +15,6 @@
 #include "tun.h"
 #include "tun_linux_internal.h"
 #include "watomic.h"
-#include "wchan.h"
 #include "wplatform.h"
 #include "wproc.h"
 #include "wthread.h"
@@ -46,6 +44,11 @@
 #endif
 
 #include "tun_linux_private.h"
+
+#ifdef OS_LINUX
+static_assert((unsigned) kTunWriterBatchPackets <= (unsigned) kTunWriteBatchPackets,
+              "worker batch exceeds GSO record capacity");
+#endif
 
 static atomic_log_rate_limiter_t tun_write_packet_failure_log;
 
@@ -208,7 +211,7 @@ static bool tunOffloadWorkStep(device_reader_session_t *session, void *context, 
      * Delivery uses the same selected worker and FIFO as segmented input. */
     tun_device_t *device = session->device;
     assert(work->plan.action != kTunLinuxOffloadSegment || (device->gso_enabled && work->output_charge > 0));
-    const bool    intact_tcp_gso =
+    const bool intact_tcp_gso =
         work->plan.action == kTunLinuxOffloadSegment && device->trusted_checksums && work->plan.transport_assured;
     if (work->plan.action != kTunLinuxOffloadSegment || intact_tcp_gso)
     {
@@ -360,10 +363,10 @@ static void tunOffloadPostPending(tun_device_t *tdev, tun_offload_reader_t *read
         return;
     }
     tun_offload_work_t *work = memoryAllocate(sizeof(*work));
-    *work = (tun_offload_work_t) {.aggregate     = reader->scratch,
-                                  .plan          = reader->pending_plan,
-                                  .output_charge = output_charge,
-                                  .padding       = tdev->offload_output_padding[wid]};
+    *work                    = (tun_offload_work_t) {.aggregate     = reader->scratch,
+                                                     .plan          = reader->pending_plan,
+                                                     .output_charge = output_charge,
+                                                     .padding       = tdev->offload_output_padding[wid]};
     if (compact_checksum)
     {
         work->aggregate = bufferpoolGetBestFit(tdev->reader_buffer_pool, work->plan.ip_length, input_fit.left_padding);
@@ -814,17 +817,17 @@ static bool tunWriteResult(tun_device_t *tdev, ssize_t written, size_t expected,
 }
 
 /* Consumes exactly this packet, including validation refusal and device failure. */
-static bool tunWriteOrdinary(tun_device_t *tdev, sbuf_t *buf)
+static bool tunWriteOrdinary(tun_device_t *tdev, buffer_pool_t *pool, sbuf_t *buf)
 {
     if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
     {
         if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
         {
-            LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds device MTU %u",
+            LOGW("TunDevice: discarded a packet -> size %d exceeds device MTU %u",
                  sbufGetLength(buf),
                  tunDeviceMtu(tdev));
         }
-        bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
+        bufferpoolReuseBuffer(pool, buf);
         return true;
     }
     const size_t packet_length   = sbufGetLength(buf);
@@ -837,7 +840,7 @@ static bool tunWriteOrdinary(tun_device_t *tdev, sbuf_t *buf)
         if (tdev->trusted_checksums &&
             ! tunLinuxOffloadEncodeWrite(sbufGetMutablePtr(buf), (uint32_t) packet_length, metadata))
         {
-            bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
+            bufferpoolReuseBuffer(pool, buf);
             return true;
         }
 #endif
@@ -855,108 +858,70 @@ static bool tunWriteOrdinary(tun_device_t *tdev, sbuf_t *buf)
         written = write(tdev->handle, sbufGetRawPtr(buf), packet_length);
     }
     const int write_errno = written < 0 ? errno : 0;
-    bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
+    bufferpoolReuseBuffer(pool, buf);
     return tunWriteResult(tdev, written, expected_length, write_errno);
 }
 
-WTHREAD_ROUTINE(routineWriteToTun)
+/* A worker owns each batch and all its buffers until this callback returns.
+ * The writer generation gate keeps the native handle and device state alive;
+ * different workers can write concurrently without sharing their local pools. */
+bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **batch, size_t count)
 {
-    tun_device_t   *tdev    = userdata;
-    struct wchan_s *channel = deviceWriterChannelGetConsumerChannel(&tdev->writer_channel);
-#ifdef OS_LINUX
-    bool    coalesce  = tdev->gso_enabled && tdev->trusted_checksums;
-    sbuf_t *lookahead = NULL;
-    while (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+    tun_device_t  *tdev         = context;
+    buffer_pool_t *pool         = worker->buffer_pool;
+    size_t         offset       = 0;
+    bool           keep_running = true;
+    while (offset < count && tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
     {
-        sbuf_t  *batch[kTunWriteBatchPackets];
-        unsigned count = 1;
-        if (lookahead != NULL)
+#ifdef OS_LINUX
+        tun_linux_gso_write_t record;
+        const bool            coalesce =
+            tdev->gso_enabled && tdev->trusted_checksums && ! atomicLoadRelaxed(&tdev->gso_write_disabled);
+        const unsigned members =
+            coalesce ? tunLinuxGsoBuildWrite(batch + offset, (unsigned) (count - offset), tunDeviceMtu(tdev), &record)
+                     : 1;
+        if (members > 1)
         {
-            batch[0]  = lookahead;
-            lookahead = NULL;
-        }
-        else if (! chanRecv(channel, &batch[0]))
-            break;
-
-        size_t charge = sbufGetAllocationCharge(batch[0]);
-        while (coalesce && count < kTunWriteBatchPackets && charge < kTunWriteBatchCharge &&
-               tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
-        {
-            bool    closed = false;
-            sbuf_t *next;
-            if (! chanTryRecv(channel, &next, &closed))
-                break;
-            const size_t next_charge = sbufGetAllocationCharge(next);
-            if (next_charge > kTunWriteBatchCharge - charge)
+            ssize_t written;
+            do
             {
-                lookahead = next;
-                break;
-            }
-            batch[count++] = next;
-            charge += next_charge;
-        }
-        unsigned offset       = 0;
-        bool     keep_running = true;
-        while (offset < count && tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
-        {
-            tun_linux_gso_write_t record;
-            const unsigned        members =
-                coalesce ? tunLinuxGsoBuildWrite(batch + offset, count - offset, tunDeviceMtu(tdev), &record) : 1;
-            if (members == 1)
+                written = writev(tdev->handle, record.iov, (int) record.count);
+            } while (written < 0 && errno == EINTR && tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)));
+            const int write_errno = written < 0 ? errno : 0;
+            /* EINVAL rejects virtio metadata before packet injection. Only this
+             * definitive refusal can replay the unchanged originals. A short,
+             * zero or ambiguous write must never duplicate a packet. */
+            if (written < 0 && write_errno == EINVAL)
             {
-                keep_running = tunWriteOrdinary(tdev, batch[offset++]);
-            }
-            else
-            {
-                ssize_t written;
-                do
-                {
-                    written = writev(tdev->handle, record.iov, (int) record.count);
-                } while (written < 0 && errno == EINTR && tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)));
-                const int write_errno = written < 0 ? errno : 0;
-                /* Linux tun_get_user rejects virtio metadata with EINVAL before
-                 * injecting any skb. Only that definitive no-record failure is
-                 * replayable; never replay a short/zero or ambiguous result.
-                 * Keep originals intact and disable aggregation for this writer.
-                 * See Linux v5.15 drivers/net/tun.c:virtio_net_hdr_to_skb. */
-                if (written < 0 && write_errno == EINVAL)
-                {
-                    coalesce = false;
+                if (! atomicExchangeExplicit(&tdev->gso_write_disabled, true, memory_order_relaxed))
                     LOGW("TunDevice: %s rejected TCP GSO output; using ordinary packet writes", tdev->name);
-                    continue;
-                }
-                for (unsigned i = 0; i < members; ++i)
-                    bufferpoolReuseBuffer(tdev->writer_buffer_pool, batch[offset++]);
-                keep_running = tunWriteResult(tdev, written, record.length, write_errno);
+                continue;
             }
-            if (! keep_running)
-                break;
+            for (unsigned i = 0; i < members; ++i)
+                bufferpoolReuseBuffer(pool, batch[offset++]);
+            keep_running = tunWriteResult(tdev, written, record.length, write_errno);
         }
-        /* Stop and permanent failures settle all local ownership here. The
-         * coordinator drains only records still in the channel after join. */
-        while (offset < count)
-            bufferpoolReuseBuffer(tdev->writer_buffer_pool, batch[offset++]);
+        else
+#endif
+        {
+            keep_running = tunWriteOrdinary(tdev, pool, batch[offset++]);
+        }
         if (! keep_running)
             break;
     }
-    if (lookahead != NULL)
-        bufferpoolReuseBuffer(tdev->writer_buffer_pool, lookahead);
-#else
-    while (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+    while (offset < count)
+        bufferpoolReuseBuffer(pool, batch[offset++]);
+    if (! keep_running)
     {
-        sbuf_t *buf;
-        if (! chanRecv(channel, &buf))
-            break;
-        if (! tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+        tun_lifecycle_state_t failed_from;
+        if (tunLifecycleTransitionToFailed(&tdev->lifecycle, &failed_from))
         {
-            bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
-            break;
+            /* The helper publishes shutdown only after leaving its I/O gate.
+             * Startup failures remain owned by BringUp's synchronous rollback. */
+            return failed_from != kTunLifecycleUp;
         }
-        if (! tunWriteOrdinary(tdev, buf))
-            break;
     }
-#endif
-    return 0;
+    return true;
 }
 
 /* Failure-only TLS sampler. Full is ordinary bounded overload and deliberately
@@ -976,23 +941,23 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
     assert(sbufGetLength(buf) > sizeof(struct iphdr));
 #endif
 
-    switch (deviceWriterChannelTrySend(&tdev->writer_channel, buf))
+    switch (tunWriterTrySend(&tdev->writer, buf))
     {
-    case kDeviceWriterSendOk:
+    case kTunWriterSendOk:
         return true;
-    case kDeviceWriterSendDown:
+    case kTunWriterSendDown:
         if (tundeviceShouldLogRefusal())
         {
             LOGE("TunDevice: write failed, device is down");
         }
         return false;
-    case kDeviceWriterSendClosed:
+    case kTunWriterSendClosed:
         if (tundeviceShouldLogRefusal())
         {
             LOGE("TunDevice: write failed, channel was closed");
         }
         return false;
-    case kDeviceWriterSendFull:
+    case kTunWriterSendFull:
         return false;
     }
 

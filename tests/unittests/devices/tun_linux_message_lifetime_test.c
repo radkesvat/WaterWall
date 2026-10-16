@@ -16,9 +16,9 @@
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.tun_linux_message_lifetime_unit
- * Organization: Bring-up rollback, reader/writer failure and GSO/checksum handoff use the same
- * controlled TUN threads, syscall seams and buffer/session ledger. Standalone offload geometry and
- * device session contracts already have separate suites.
+ * Organization: Bring-up rollback, reader/worker-write failure and GSO/checksum handoff use the same
+ * controlled reader thread, deferred worker callbacks, syscall seams and buffer/session ledger. Standalone offload
+ * geometry and device session contracts already have separate suites.
  */
 // Queued-message lifetime coverage for the Linux TUN device.
 //
@@ -37,7 +37,6 @@
 #include "devices/tun/tun_linux_internal.h"
 #include "devices/tun/tun_linux_offload.h"
 #include "loggers/internal_logger.h"
-#include "wchan.h"
 #include "wchecksum.h"
 #include "worker_messages.h"
 
@@ -88,6 +87,9 @@ typedef struct test_env_s
 
 static captured_message_t captured_messages[kMaxCapturedMessages];
 static unsigned int       captured_message_count;
+static captured_message_t writer_messages[kMaxCapturedMessages];
+static unsigned int       writer_message_count;
+static bool               capture_writer_messages;
 static unsigned int       callback_count;
 static unsigned int       next_fake_thread = 1;
 static unsigned int       fake_thread_create_calls;
@@ -117,14 +119,11 @@ static bool               gso_feature_available;
 static char               gso_attach_name[IFNAMSIZ];
 static char               raw_attach_name[IFNAMSIZ];
 static bool               raw_attach_exclusive;
-// Reader is created first, writer second, so index 0 is the reader body and
-// index 1 the writer body. Capturing both lets a test invoke either wrapper
-// independently.
+// TUN owns one auxiliary reader thread; all output runs on event workers.
 enum
 {
     kCapturedReaderThread = 0,
-    kCapturedWriterThread = 1,
-    kMaxCapturedThreads   = 2
+    kMaxCapturedThreads   = 1
 };
 static void *(*captured_thread_routines[kMaxCapturedThreads])(void *);
 static void                    *captured_thread_args[kMaxCapturedThreads];
@@ -149,15 +148,6 @@ typedef struct tun_refusal_probe_s
     tun_device_t *tdev;
     bool          accepted;
 } tun_refusal_probe_t;
-
-#ifdef DEVICE_WRITER_CHANNEL_TEST_HOOKS
-typedef struct tun_selected_closed_probe_s
-{
-    tun_device_t *tdev;
-    atomic_bool   selected;
-    atomic_bool   resume;
-} tun_selected_closed_probe_t;
-#endif
 
 int     __real_open(const char *path, int flags, ...);
 int     __wrap_open(const char *path, int flags, ...);
@@ -340,7 +330,6 @@ static unsigned      writer_batch_settled[130], writer_batch_count, writer_batch
 static unsigned      writer_batch_calls, writer_batch_aggregates, writer_batch_max;
 static unsigned      writer_batch_fault;
 static tun_device_t *writer_batch_device;
-
 
 bool __wrap_tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_offload_plan_t *plan, uint32_t offset,
                                           uint8_t *destination, uint32_t capacity, uint32_t *length);
@@ -659,6 +648,12 @@ ssize_t __wrap_write(int fd, const void *buf, size_t count)
     return __real_write(fd, buf, count);
 }
 
+static void *stopWriterFromCoordinator(void *context)
+{
+    require(tundeviceRequestStop(context), "concurrent batch stop request");
+    return NULL;
+}
+
 ssize_t __wrap_writev(int fd, const struct iovec *iov, int iovcnt)
 {
     if (fd == tun_handle_fd && writer_batch_probe)
@@ -696,8 +691,13 @@ ssize_t __wrap_writev(int fd, const struct iovec *iov, int iovcnt)
             return -1;
         }
         writer_batch_offset += members;
-        if (writer_batch_fault == 5 || writer_batch_fault == 8 || writer_batch_offset == writer_batch_count)
-            require(tundeviceRequestStop(writer_batch_device), "batch stop request");
+        if (writer_batch_fault == 5 || writer_batch_fault == 8)
+        {
+            pthread_t stopper;
+            require(__real_pthread_create(&stopper, NULL, stopWriterFromCoordinator, writer_batch_device) == 0,
+                    "failed to start concurrent batch stop");
+            require(__real_pthread_join(stopper, NULL) == 0, "failed to join concurrent batch stop");
+        }
         if (writer_batch_calls == 1 && (writer_batch_fault == 3 || writer_batch_fault == 6 || writer_batch_fault == 8))
         {
             errno = writer_batch_fault == 3 ? EAGAIN : writer_batch_fault == 8 ? EINTR : EIO;
@@ -872,9 +872,11 @@ worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid
                                                                              WorkerMessageCleanupCallback cleanup,
                                                                              void *arg1, void *arg2, void *arg3)
 {
-    discard wid;
-    require(captured_message_count < kMaxCapturedMessages, "captured-message queue overflow");
-    captured_messages[captured_message_count++] = (captured_message_t) {
+    require(wid == 0, "TUN fixture posted to an unexpected worker");
+    captured_message_t *messages = capture_writer_messages ? writer_messages : captured_messages;
+    unsigned int       *count    = capture_writer_messages ? &writer_message_count : &captured_message_count;
+    require(*count < kMaxCapturedMessages, "captured-message queue overflow");
+    messages[(*count)++] = (captured_message_t) {
         .callback = callback,
         .cleanup  = cleanup,
         .arg1     = arg1,
@@ -1095,7 +1097,9 @@ static void envSetup(test_env_t *env)
     GSTATE.shortcut_loops        = env->loops;
     GSTATE.workers_count         = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
-    GSTATE.ram_profile = 1;
+    GSTATE.workers[0].buffer_pool = env->worker_buffer_pool;
+    GSTATE.workers[0].loop        = env->loops[0];
+    GSTATE.ram_profile            = 1;
     testWorkerBindWID(0);
 }
 
@@ -1125,6 +1129,38 @@ static void resetCapturedMessages(void)
 {
     memoryZero(captured_messages, sizeof(captured_messages));
     captured_message_count = 0;
+}
+
+static bool queueWriterPacket(tun_device_t *tdev, sbuf_t *buf)
+{
+    const bool previous     = capture_writer_messages;
+    capture_writer_messages = true;
+    const bool accepted     = tundeviceWrite(tdev, buf);
+    capture_writer_messages = previous;
+    return accepted;
+}
+
+static void runWriterMessages(void)
+{
+    const bool previous     = capture_writer_messages;
+    capture_writer_messages = true;
+    for (unsigned i = 0; i < writer_message_count; ++i)
+    {
+        captured_message_t message = writer_messages[i];
+        message.callback(getCurrentEventWorker(), message.arg1, message.arg2, message.arg3);
+    }
+    writer_message_count    = 0;
+    capture_writer_messages = previous;
+}
+
+static void cancelWriterMessages(void)
+{
+    for (unsigned i = 0; i < writer_message_count; ++i)
+    {
+        captured_message_t message = writer_messages[i];
+        message.cleanup(message.arg1, message.arg2, message.arg3, kWorkerMessageCancelTeardown);
+    }
+    writer_message_count = 0;
 }
 
 static void resetFakeThreads(unsigned int fail_on_call)
@@ -1370,14 +1406,16 @@ static void testOffloadResourceFallbacks(void)
 static void *tunRefusalWriterRoutine(void *userdata)
 {
     tun_refusal_probe_t *probe = userdata;
-    sbuf_t              *buf   = sbufCreate(64);
+    testWorkerBindWID(0);
+    sbuf_t *buf = sbufCreate(64);
     require(buf != NULL, "failed to create fresh TUN refusal helper buffer");
     sbufSetLength(buf, 64);
-    probe->accepted = tundeviceWrite(probe->tdev, buf);
+    probe->accepted = queueWriterPacket(probe->tdev, buf);
     if (! probe->accepted)
     {
         sbufDestroy(buf);
     }
+    testWorkerUnbindWID();
     return NULL;
 }
 
@@ -1390,28 +1428,21 @@ static void runFreshTunRefusalThread(tun_refusal_probe_t *probe)
     require(! probe->accepted, "TUN refusal helper unexpectedly transferred caller buffer ownership");
 }
 
-#ifdef DEVICE_WRITER_CHANNEL_TEST_HOOKS
-static void pauseTunWriterAfterGenerationSelect(device_writer_channel_t    *writer_channel,
-                                                device_writer_generation_t *generation, void *context)
+static bool discardWriterBatch(void *context, worker_t *worker, sbuf_t **buffers, size_t count)
 {
-    tun_selected_closed_probe_t *probe = context;
-    discard                      generation;
-    require(writer_channel == tunLinuxWriterChannel(probe->tdev),
-            "TUN closed-refusal hook selected the wrong writer generation");
-    atomicStoreExplicit(&probe->selected, true, memory_order_release);
-    while (! atomicLoadExplicit(&probe->resume, memory_order_acquire))
-    {
-        YIELD_THREAD();
-    }
+    discard context;
+    for (size_t i = 0; i < count; ++i)
+        bufferpoolReuseBuffer(worker->buffer_pool, buffers[i]);
+    return true;
 }
-#endif
 
-static void reopenTunWriterChannelWithCapacityOne(tun_device_t *tdev)
+static void reopenTunWriterWithCapacityOne(tun_device_t *tdev)
 {
-    device_writer_channel_t *writer_channel = tunLinuxWriterChannel(tdev);
-    deviceWriterChannelClose(writer_channel);
-    require(deviceWriterChannelRetireCurrent(writer_channel), "failed to retire synthetic TUN writer generation");
-    require(deviceWriterChannelOpen(writer_channel, 1), "failed to open synthetic capacity-one TUN writer generation");
+    tun_writer_t *writer = tunLinuxWriter(tdev);
+    tunWriterCloseRequest(writer);
+    tunWriterCloseWait(writer);
+    require(tunWriterOpen(writer, 1, SIZE_MAX, NULL, discardWriterBatch),
+            "failed to open synthetic capacity-one TUN output queue");
 }
 
 static void testTunWriterRefusalClassesUseFreshTlsState(void)
@@ -1432,43 +1463,18 @@ static void testTunWriterRefusalClassesUseFreshTlsState(void)
      * production generation with a capacity-one open one. Full is silent. */
     resetFakeThreads(0);
     tdev = createRunningDevice();
-    reopenTunWriterChannelWithCapacityOne(tdev);
+    reopenTunWriterWithCapacityOne(tdev);
     sbuf_t *prefill = sbufCreate(64);
     require(prefill != NULL, "failed to create TUN Full-refusal prefill buffer");
     sbufSetLength(prefill, 64);
-    require(tundeviceWrite(tdev, prefill), "failed to prefill capacity-one TUN writer generation");
+    require(queueWriterPacket(tdev, prefill), "failed to prefill capacity-one TUN writer generation");
     tun_refusal_probe_t full = {.tdev = tdev};
     resetTunLogCapture();
     runFreshTunRefusalThread(&full);
     require(tun_log_capture_len == 0, "TUN Full refusal emitted a diagnostic");
     require(tundeviceBringDown(tdev), "failed to bring down TUN Full-refusal fixture");
     tundeviceDestroy(tdev);
-
-#ifdef DEVICE_WRITER_CHANNEL_TEST_HOOKS
-    resetFakeThreads(0);
-    tdev = createRunningDevice();
-    reopenTunWriterChannelWithCapacityOne(tdev);
-    tun_selected_closed_probe_t selected = {.tdev = tdev, .selected = false, .resume = false};
-    deviceWriterChannelInstallAfterSelectHook(pauseTunWriterAfterGenerationSelect, &selected);
-    tun_refusal_probe_t closed = {.tdev = tdev};
-    pthread_t           thread;
-    resetTunLogCapture();
-    require(__real_pthread_create(&thread, NULL, tunRefusalWriterRoutine, &closed) == 0,
-            "failed to create fresh TUN Closed-refusal helper thread");
-    while (! atomicLoadExplicit(&selected.selected, memory_order_acquire))
-    {
-        YIELD_THREAD();
-    }
-    deviceWriterChannelClose(tunLinuxWriterChannel(tdev));
-    atomicStoreExplicit(&selected.resume, true, memory_order_release);
-    require(__real_pthread_join(thread, NULL) == 0, "failed to join TUN Closed-refusal helper thread");
-    deviceWriterChannelInstallAfterSelectHook(NULL, NULL);
-    require(! closed.accepted, "selected TUN Closed-refusal helper unexpectedly accepted caller ownership");
-    require(countTunLogSubstring("TunDevice: write failed, channel was closed") == 1,
-            "fresh TUN writer thread did not emit exactly its first Closed diagnostic");
-    require(tundeviceBringDown(tdev), "failed to bring down TUN Closed-refusal fixture");
-    tundeviceDestroy(tdev);
-#endif
+    cancelWriterMessages();
 }
 
 static void postOne(tun_device_t *tdev, sbuf_t *buf)
@@ -1562,7 +1568,7 @@ static void testClosedAndStaleDeliveriesDoNotTouchDevice(void)
 
 static void testBringUpRollsBackThreadCreationFailures(void)
 {
-    for (unsigned int failed_call = 1; failed_call <= 2; failed_call++)
+    for (unsigned int failed_call = 1; failed_call <= 1; failed_call++)
     {
         resetFakeThreads(failed_call);
         tun_device_t *tdev =
@@ -1573,8 +1579,7 @@ static void testBringUpRollsBackThreadCreationFailures(void)
         uint32_t                 failed_generation = (uint32_t) atomicLoadRelaxed(&session->generation) + 1U;
         require(! tundeviceBringUp(tdev), "bring-up unexpectedly survived a thread-creation failure");
         require(fake_thread_create_calls == failed_call, "bring-up failed on the wrong thread-creation call");
-        require(fake_thread_join_calls == (failed_call == 2 ? 1U : 0U),
-                "bring-up rollback joined the wrong number of started threads");
+        require(fake_thread_join_calls == 0, "bring-up rollback joined the wrong number of started threads");
         require(! tundeviceIsUp(tdev), "thread-creation rollback left the device up");
         require(! quiescenceGateIsActive(&session->delivery_gate),
                 "thread-creation rollback left the delivery gate open");
@@ -1610,15 +1615,8 @@ static void testThreadExitDuringStartupRollsBack(unsigned int exit_on_create_cal
         createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "startup-exit device create failed");
 
-    if (exit_on_create_call == 1)
-    {
-        tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
-    }
-    else
-    {
-        require(exit_on_create_call == 2, "invalid startup-exit injection point");
-        tunLinuxSetWriterRoutine(tdev, failingIoRoutine);
-    }
+    require(exit_on_create_call == 1, "invalid reader startup-exit injection point");
+    tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
 
     device_reader_session_t *session           = tunLinuxReaderSession(tdev);
     uint32_t                 failed_generation = (uint32_t) atomicLoadRelaxed(&session->generation) + 1U;
@@ -1642,7 +1640,7 @@ static void testThreadExitDuringStartupRollsBack(unsigned int exit_on_create_cal
 
     sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
     sbufSetLength(buf, 64);
-    require(! tundeviceWrite(tdev, buf), "startup rollback left the writer gate open");
+    require(! queueWriterPacket(tdev, buf), "startup rollback left the writer gate open");
     bufferpoolReuseBuffer(getWorkerBufferPool(0), buf);
 
     resetFakeThreads(0);
@@ -1655,72 +1653,29 @@ static void testThreadExitDuringStartupRollsBack(unsigned int exit_on_create_cal
 static void testThreadExitsDuringStartupAreNotPublishedAsUp(void)
 {
     testThreadExitDuringStartupRollsBack(1);
-    testThreadExitDuringStartupRollsBack(2);
 }
 
-// Regression: a reader/writer routine that dies on a device error left `up` set,
-// so tundeviceIsUp() kept advertising a device whose reads had silently stopped
-// and whose writes only piled into a channel nobody drains. Bring-down then had
-// to stay reachable, which is why it can no longer gate on `up` alone.
-//
-// A published device that loses either I/O thread is also process-fatal, so the
-// wrapper must request exactly one orderly shutdown and then return so worker 0
-// can join it. @p which selects the reader or the writer body.
-static void testUnexpectedThreadExitTakesTheDeviceDown(unsigned int which)
+// Reader failure closes device admission and requests shutdown exactly once.
+static void testUnexpectedThreadExitsRequestShutdownOnce(void)
 {
-    const char *side = (which == kCapturedReaderThread) ? "reader" : "writer";
-    discard     side;
-
     resetFakeThreads(0);
     resetShutdownRequests();
     tun_device_t *tdev =
         createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "unexpected-exit device create failed");
-
-    // Return immediately from the selected body instead of running the real loop.
-    if (which == kCapturedReaderThread)
-    {
-        tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
-    }
-    else
-    {
-        tunLinuxSetWriterRoutine(tdev, failingIoRoutine);
-    }
-
+    tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
     require(tundeviceBringUp(tdev), "unexpected-exit device bring-up failed");
-    require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
-
-    // Run the captured thread body inline: the wrapper sees `running` still set
-    // and must treat the return as a device failure.
-    runCapturedThreadBody(which);
-
-    require(! tundeviceIsUp(tdev), "an unexpected I/O thread exit left the device advertised as up");
-    require(tunLinuxLifecycleState(tdev) == kTunLifecycleFailed,
-            "an unexpected I/O thread exit did not publish FAILED");
-    require(shutdown_request_calls == 1, "an unexpected exit from a published device did not request shutdown once");
-    require(shutdown_request_last_code == 1, "the device failure shutdown request used the wrong exit code");
-
-    // The peer thread returning afterwards observes an already FAILED device and
-    // must not request a second shutdown.
-    runCapturedThreadBody(which == kCapturedReaderThread ? kCapturedWriterThread : kCapturedReaderThread);
-    require(shutdown_request_calls == 1, "the peer I/O thread requested a duplicate shutdown");
-
-    // The teardown must still run: `up` is now false, so a bring-down gated on it
-    // would skip both joins and leave the writer channel allocated.
-    const unsigned int joins_before = fake_thread_join_calls;
-    require(tundeviceBringDown(tdev), "bring-down after an unexpected I/O exit failed");
-    require(fake_thread_join_calls == joins_before + 2, "bring-down after a thread failure skipped its joins");
-    require(tundeviceBringDown(tdev), "a second bring-down must stay a successful no-op");
-    require(fake_thread_join_calls == joins_before + 2, "the no-op bring-down joined an already-joined thread");
-    require(shutdown_request_calls == 1, "teardown after a device failure requested shutdown again");
-
+    require(fake_thread_create_calls == 1, "TUN created an auxiliary output thread");
+    runCapturedThreadBody(kCapturedReaderThread);
+    require(! tundeviceIsUp(tdev) && tunLinuxLifecycleState(tdev) == kTunLifecycleFailed,
+            "reader exit left the device advertised as up");
+    require(shutdown_request_calls == 1 && shutdown_request_last_code == 1,
+            "reader exit did not request exactly one failure shutdown");
+    require(tundeviceBringDown(tdev), "bring-down after reader exit failed");
+    require(fake_thread_join_calls == 1, "bring-down did not join the reader exactly once");
+    require(tundeviceBringDown(tdev) && fake_thread_join_calls == 1, "repeated bring-down joined the reader again");
+    require(shutdown_request_calls == 1, "teardown requested shutdown again");
     tundeviceDestroy(tdev);
-}
-
-static void testUnexpectedThreadExitsRequestShutdownOnce(void)
-{
-    testUnexpectedThreadExitTakesTheDeviceDown(kCapturedReaderThread);
-    testUnexpectedThreadExitTakesTheDeviceDown(kCapturedWriterThread);
 }
 
 // A routine that returns because normal teardown closed/woke it is not a
@@ -1735,10 +1690,8 @@ static void testNormalStopDoesNotRequestShutdown(void)
         createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "normal-stop device create failed");
 
-    // Capture both bodies without running them, so they can return after the
-    // owner path has already taken the device down.
+    // Capture the reader without running it until device admission has closed.
     tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
-    tunLinuxSetWriterRoutine(tdev, failingIoRoutine);
     require(tundeviceBringUp(tdev), "normal-stop device bring-up failed");
     require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
 
@@ -1746,7 +1699,7 @@ static void testNormalStopDoesNotRequestShutdown(void)
     require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown, "normal bring-down did not publish DOWN");
 
     runCapturedThreadBody(kCapturedReaderThread);
-    runCapturedThreadBody(kCapturedWriterThread);
+    runWriterMessages();
 
     require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown,
             "a routine returning after a normal stop published FAILED");
@@ -1832,14 +1785,14 @@ static void testTransientReadErrorKeepsTheDeviceUp(void)
     tundeviceDestroy(tdev);
 }
 
-// Queues @p count packets for the writer thread to consume.
+// Queues packets on the current event worker without entering native I/O.
 static void queuePacketsForWriter(tun_device_t *tdev, unsigned int count)
 {
     for (unsigned int i = 0; i < count; i++)
     {
         sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
         sbufSetLength(buf, 64);
-        require(tundeviceWrite(tdev, buf), "queuing a packet for the writer failed");
+        require(queueWriterPacket(tdev, buf), "queuing a packet for the writer failed");
     }
 }
 
@@ -1858,8 +1811,6 @@ static void testPermanentWriteErrorFailsTheDevice(int io_errno, const char *labe
     resetShutdownRequests();
     resetIoInjection();
 
-    // A read callback is required: without one, bring-up creates no reader
-    // thread and the writer body would land at the reader's captured index.
     tun_device_t *tdev = createRunningReaderDevice();
     require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
 
@@ -1869,7 +1820,7 @@ static void testPermanentWriteErrorFailsTheDevice(int io_errno, const char *labe
     armDeviceWrites(writes, ARRAY_SIZE(writes));
     queuePacketsForWriter(tdev, 2);
 
-    runCapturedThreadBody(kCapturedWriterThread);
+    runWriterMessages();
 
     require(observed_write_calls == 1, "a permanent write error did not end the write routine immediately");
     require(! tundeviceIsUp(tdev), "a permanent write error left the device advertised as up");
@@ -1907,7 +1858,7 @@ static void testRecoverableWriteErrorsKeepTheDeviceUp(void)
     in_flight_check_call = 3;
     queuePacketsForWriter(tdev, ARRAY_SIZE(writes) + 1);
 
-    runCapturedThreadBody(kCapturedWriterThread);
+    runWriterMessages();
 
     require(observed_write_calls == 3, "a recoverable write error ended the write routine");
     require(in_flight_checks_run == 1, "the in-flight recoverable-error check never ran");
@@ -1945,14 +1896,14 @@ static void testInterfaceDownFailureRemainsRetryable(void)
 
     require(! tundeviceBringDown(tdev), "interface-down failure reported successful cleanup");
     require(tunLinuxLifecycleState(tdev) == kTunLifecycleStopping, "interface-down failure did not retain STOPPING");
-    require(fake_thread_join_calls == 2, "interface-down failure skipped owned thread joins");
+    require(fake_thread_join_calls == 1, "interface-down failure skipped owned thread joins");
     require(interface_down_attempts == 1, "interface-down failure did not attempt interface cleanup");
     require(! tundeviceBringUp(tdev), "bring-up was accepted while interface cleanup remained incomplete");
 
     require(tundeviceBringDown(tdev), "interface-down cleanup retry failed");
     require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown, "successful interface-down retry did not publish DOWN");
     require(interface_down_attempts == 2, "cleanup retry did not retry the interface-down operation");
-    require(fake_thread_join_calls == 2, "cleanup retry rejoined already released threads");
+    require(fake_thread_join_calls == 1, "cleanup retry rejoined already released threads");
 
     tundeviceDestroy(tdev);
 }
@@ -1971,159 +1922,56 @@ static void testJoinFailureRetainsOwnershipForRetry(void)
     fail_fake_thread_join_on_call = 0;
     require(tundeviceBringDown(tdev), "join retry did not complete retained teardown");
     require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown, "join retry did not publish DOWN");
-    require(fake_thread_join_calls == 3, "join retry did not target only the retained reader");
+    require(fake_thread_join_calls == 2, "join retry did not target only the retained reader");
 
     tundeviceDestroy(tdev);
 }
 
-typedef struct writer_race_probe_s
+static void testPendingWriterMessagesAfterStop(void)
 {
-    tun_device_t *tdev;
-    sbuf_t      **buffers;
-    unsigned int  buffer_count;
-    atomic_bool   running;
-    atomic_bool   start;
-    atomic_uint   next_buffer;
-    atomic_uint   started;
-    atomic_uint   attempts;
-} writer_race_probe_t;
-
-static void *writerRaceRoutine(void *userdata)
-{
-    writer_race_probe_t *probe = userdata;
-    atomicAddExplicit(&probe->started, 1, memory_order_release);
-
-    while (! atomicLoadExplicit(&probe->start, memory_order_acquire))
+    for (unsigned mode = 0; mode < 3; ++mode)
     {
-        YIELD_THREAD();
-    }
-
-    while (atomicLoadExplicit(&probe->running, memory_order_acquire))
-    {
-        unsigned int index = atomicAddExplicit(&probe->next_buffer, 1, memory_order_relaxed);
-        if (index >= probe->buffer_count)
+        resetFakeThreads(0);
+        resetIoInjection();
+        tun_device_t *tdev = createRunningDevice();
+        require(fake_thread_create_calls == 0, "write-only TUN created an auxiliary thread");
+        writer_batch_count = 4;
+        memoryZero(writer_batch_settled, sizeof(writer_batch_settled));
+        for (unsigned i = 0; i < writer_batch_count; ++i)
         {
-            break;
+            sbuf_t *buf = sbufCreate(64);
+            sbufSetLength(buf, 64);
+            writer_batch_buffers[i] = buf;
+            require(queueWriterPacket(tdev, buf), "pending writer enqueue failed");
         }
-
-        sbuf_t *buf = probe->buffers[index];
-        if (tundeviceWrite(probe->tdev, buf))
+        require(writer_message_count == 1, "TUN did not coalesce the worker flush token");
+        require(observed_write_calls == 0 && observed_writev_calls == 0,
+                "enqueue-only TUN callback entered native I/O");
+        writer_batch_probe = true;
+        require(tundeviceBringDown(tdev), "stop with pending worker output failed");
+        for (unsigned i = 0; i < writer_batch_count; ++i)
+            require(writer_batch_settled[i] == 1, "stop did not settle queued output exactly once");
+        if (mode == 1)
+            require(tundeviceBringUp(tdev), "restart with a stale writer token failed");
+        if (mode == 2)
         {
-            probe->buffers[index] = NULL;
+            tundeviceDestroy(tdev);
+            testWorkerUnbindWID();
+            cancelWriterMessages();
+            testWorkerBindWID(0);
         }
-        atomicAddExplicit(&probe->attempts, 1, memory_order_release);
-    }
-    return NULL;
-}
-
-static void testWriterGateQuiescesConcurrentSenders(void)
-{
-    enum
-    {
-        kWriterThreads = 4,
-        kWriterBuffers = 1024
-    };
-
-    tun_device_t  *tdev        = createRunningDevice();
-    buffer_pool_t *writer_pool = tunLinuxWriterBufferPool(tdev);
-    sbuf_t        *buffers[kWriterBuffers];
-    for (unsigned int i = 0; i < kWriterBuffers; i++)
-    {
-        buffers[i] = bufferpoolGetSmallBuffer(writer_pool);
-        sbufSetLength(buffers[i], 32);
-    }
-
-    writer_race_probe_t probe = {
-        .tdev         = tdev,
-        .buffers      = buffers,
-        .buffer_count = ARRAY_SIZE(buffers),
-        .running      = true,
-    };
-    pthread_t threads[kWriterThreads];
-    for (unsigned int i = 0; i < kWriterThreads; i++)
-    {
-        require(__real_pthread_create(&threads[i], NULL, writerRaceRoutine, &probe) == 0,
-                "failed to start a writer-gate race thread");
-    }
-
-    while (atomicLoadExplicit(&probe.started, memory_order_acquire) < kWriterThreads)
-    {
-        YIELD_THREAD();
-    }
-    atomicStoreExplicit(&probe.start, true, memory_order_release);
-    while (atomicLoadExplicit(&probe.attempts, memory_order_acquire) < kWriterThreads)
-    {
-        YIELD_THREAD();
-    }
-
-    require(tundeviceBringDown(tdev), "bring-down failed while writer-gate senders were active");
-    atomicStoreExplicit(&probe.running, false, memory_order_release);
-    for (unsigned int i = 0; i < kWriterThreads; i++)
-    {
-        require(__real_pthread_join(threads[i], NULL) == 0, "failed to join a writer-gate race thread");
-    }
-
-    require(atomicLoadExplicit(&probe.attempts, memory_order_acquire) >= kWriterThreads,
-            "writer-gate race threads did not exercise the write path");
-
-    for (unsigned int i = 0; i < kWriterBuffers; i++)
-    {
-        if (buffers[i] != NULL)
+        else
         {
-            bufferpoolReuseBuffer(writer_pool, buffers[i]);
+            runWriterMessages();
+            require(tundeviceIsUp(tdev) == (mode == 1), "stale writer token changed lifecycle");
+            tundeviceDestroy(tdev);
         }
+        for (unsigned i = 0; i < writer_batch_count; ++i)
+            require(writer_batch_settled[i] == 1, "stale token settled an output twice");
+        writer_batch_probe = false;
+        require(observed_write_calls == 0 && observed_writev_calls == 0,
+                "stale writer token wrote to a stopped or restarted device");
     }
-    tundeviceDestroy(tdev);
-}
-
-typedef struct pool_claim_probe_s
-{
-    buffer_pool_t *pool;
-    sbuf_t        *buf;
-} pool_claim_probe_t;
-
-// Stands in for the production writer thread, which claims writer_buffer_pool
-// the first time it recycles a packet it has written to the device.
-static void *writerPoolClaimRoutine(void *userdata)
-{
-    pool_claim_probe_t *probe = userdata;
-    bufferpoolReuseBuffer(probe->pool, probe->buf);
-    return NULL;
-}
-
-static void testBringDownReleasesQueuedWritesOffTheWriterThread(void)
-{
-    enum
-    {
-        kQueuedWrites = 4
-    };
-
-    resetFakeThreads(0);
-    tun_device_t *tdev = createRunningDevice();
-
-    // Bind writer_buffer_pool to a thread that is not the one running teardown,
-    // exactly as the real writer thread does on its first recycled packet.
-    pool_claim_probe_t probe = {.pool = tunLinuxWriterBufferPool(tdev),
-                                .buf  = bufferpoolGetSmallBuffer(getWorkerBufferPool(0))};
-    pthread_t          claimer;
-    require(__real_pthread_create(&claimer, NULL, writerPoolClaimRoutine, &probe) == 0,
-            "failed to start the writer-pool claim thread");
-    require(__real_pthread_join(claimer, NULL) == 0, "failed to join the writer-pool claim thread");
-
-    // Leave packets in the ring, as workers do when a device stops under load.
-    for (unsigned int i = 0; i < kQueuedWrites; i++)
-    {
-        sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
-        sbufSetLength(buf, 64);
-        require(tundeviceWrite(tdev, buf), "queuing a write before bring-down failed");
-    }
-
-    // Pre-fix this drained on the owner's thread into the writer thread's pool,
-    // which aborts the process on the buffer-pool thread check.
-    require(tundeviceBringDown(tdev), "bring-down with a non-empty writer channel failed");
-    require(! tundeviceIsUp(tdev), "device stayed up after bring-down");
-
-    tundeviceDestroy(tdev);
 }
 
 /*
@@ -2131,7 +1979,7 @@ static void testBringDownReleasesQueuedWritesOffTheWriterThread(void)
  * abort. abortProgramNow() is _Noreturn, so this runs in a forked child and the
  * parent checks the status the wrap function exits with.
  */
-static void testHandoffFailureFallsBackToHardAbort(void)
+static void testHandoffFailureFallsBackToHardAbort(bool from_writer)
 {
     // fork()/waitpid() are wrapped for the device's script-running paths, so
     // this test must reach the real ones to actually spawn a child.
@@ -2159,7 +2007,16 @@ static void testHandoffFailureFallsBackToHardAbort(void)
 
         // The wrapper requests shutdown, is refused, and must hard-abort rather
         // than let the process keep running with a dead TUN device.
-        runCapturedThreadBody(kCapturedReaderThread);
+        if (from_writer)
+        {
+            resetIoInjection();
+            const injected_io_result_t writes[] = {{.result = -1, .error = EIO}};
+            armDeviceWrites(writes, ARRAY_SIZE(writes));
+            queuePacketsForWriter(tdev, 1);
+            runWriterMessages();
+        }
+        else
+            runCapturedThreadBody(kCapturedReaderThread);
         _Exit(72); // must not be reached
     }
 
@@ -3225,7 +3082,7 @@ static void testGsoWriterFramingAndPacketOutcomes(bool gso_requested)
         sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
         sbufSetLength(buf, lengths[i]);
         memorySet(sbufGetMutablePtr(buf), (int) ('a' + i), lengths[i]);
-        require(tundeviceWrite(tdev, buf), "failed to queue a GSO-writer packet");
+        require(queueWriterPacket(tdev, buf), "failed to queue a GSO-writer packet");
     }
     const injected_io_result_t writes[] = {{.result = -1, .error = EINTR},
                                            {.result = 1510},
@@ -3234,7 +3091,7 @@ static void testGsoWriterFramingAndPacketOutcomes(bool gso_requested)
                                            {.result = -1, .error = EIO}};
     armDeviceWrites(writes, ARRAY_SIZE(writes));
 
-    runCapturedThreadBody(kCapturedWriterThread);
+    runWriterMessages();
 
     require(observed_writev_calls == 5 && observed_write_calls == 0 && largest_writev_packet == 1500,
             "GSO writer did not frame, retry, and bound writes as packet operations");
@@ -3266,7 +3123,7 @@ static void testTrustedWriterOutcomes(bool gso_requested)
         sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
         memoryCopy(sbufGetMutablePtr(buf), record + 10, 43);
         sbufSetLength(buf, 43);
-        require(tundeviceWrite(tdev, buf), "trusted writer queue");
+        require(queueWriterPacket(tdev, buf), "trusted writer queue");
     }
     const injected_io_result_t writes[] = {{.result = -1, .error = EINTR},
                                            {.result = 53},
@@ -3275,7 +3132,7 @@ static void testTrustedWriterOutcomes(bool gso_requested)
                                            {.result = -1, .error = EIO}};
     armDeviceWrites(writes, ARRAY_SIZE(writes));
     expect_trusted_write = true;
-    runCapturedThreadBody(kCapturedWriterThread);
+    runWriterMessages();
     expect_trusted_write = false;
     /* The ordinary writer case already consumed the shared rate-limited log.
      * Five exact attempts prove retry and progress past short/transient writes. */
@@ -3284,16 +3141,6 @@ static void testTrustedWriterOutcomes(bool gso_requested)
     resetIoInjection();
     require(tundeviceBringDown(tdev), "trusted writer shutdown");
     tundeviceDestroy(tdev);
-}
-
-bool __real_chanTryRecv(wchan_t *channel, void *element, bool *closed);
-bool __wrap_chanTryRecv(wchan_t *channel, void *element, bool *closed);
-bool __wrap_chanTryRecv(wchan_t *channel, void *element, bool *closed)
-{
-    const bool received = __real_chanTryRecv(channel, element, closed);
-    if (writer_batch_probe && writer_batch_fault == 7 && received)
-        require(tundeviceRequestStop(writer_batch_device), "stop during batch collection");
-    return received;
 }
 
 static void testWriterBatch(bool gso_requested, unsigned count, unsigned capacity, unsigned fault)
@@ -3334,13 +3181,15 @@ static void testWriterBatch(bool gso_requested, unsigned count, unsigned capacit
         memset(ip + 40, i, 100);
         sbufSetLength(buf, 140);
         writer_batch_buffers[i] = buf;
-        require(tundeviceWrite(tdev, buf), "batch queue refused fixture");
+        require(queueWriterPacket(tdev, buf), "batch queue refused fixture");
     }
     writer_batch_probe = true;
-    runCapturedThreadBody(kCapturedWriterThread);
+    if (fault == 7)
+        require(tundeviceRequestStop(tdev), "stop before deferred batch dispatch");
+    runWriterMessages();
     require(tundeviceBringDown(tdev), "batch bring down");
     for (unsigned i = 0; i < count; ++i)
-        require(writer_batch_settled[i] == 1, "batch or channel retained buffer after stop/join");
+        require(writer_batch_settled[i] == 1, "batch or worker queue retained buffer after stop");
     writer_batch_probe = false;
     if (fault < 5)
         require(writer_batch_offset == count, "batch lost ordered output progress");
@@ -3357,7 +3206,7 @@ static void testWriterBatch(bool gso_requested, unsigned count, unsigned capacit
     if (fault == 5 || fault == 6 || fault == 8 || fault == 9)
         require(writer_batch_calls == 1, "writer continued after stop/permanent failure");
     if (fault == 7)
-        require(writer_batch_calls == 0, "writer emitted after stop during collection");
+        require(writer_batch_calls == 0, "writer emitted after stop before dispatch");
     tundeviceDestroy(tdev);
 }
 
@@ -3522,11 +3371,11 @@ int main(void)
     testUnexpectedThreadExitsRequestShutdownOnce();
     testNormalStopDoesNotRequestShutdown();
     testPermanentIoErrorsReachTheShutdownWrapper();
-    testHandoffFailureFallsBackToHardAbort();
+    testHandoffFailureFallsBackToHardAbort(false);
+    testHandoffFailureFallsBackToHardAbort(true);
     testInterfaceDownFailureRemainsRetryable();
     testJoinFailureRetainsOwnershipForRetry();
-    testWriterGateQuiescesConcurrentSenders();
-    testBringDownReleasesQueuedWritesOffTheWriterThread();
+    testPendingWriterMessagesAfterStop();
     internaloggerDestroy();
     envTeardown(&env);
     puts("Linux TUN message lifetime tests passed");

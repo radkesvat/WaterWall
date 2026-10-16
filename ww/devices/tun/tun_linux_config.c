@@ -1,6 +1,5 @@
 #include "devices/device_flow_affinity.h"
 #include "devices/device_reader_session.h"
-#include "devices/device_writer_channel.h"
 #include "devices/tun/tun_io_error.h"
 #include "devices/tun/tun_lifecycle.h"
 #ifdef OS_LINUX

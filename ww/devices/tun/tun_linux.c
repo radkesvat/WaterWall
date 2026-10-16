@@ -1,7 +1,6 @@
 #include "devices/device_flow_affinity.h"
 #include "devices/device_pool.h"
 #include "devices/device_reader_session.h"
-#include "devices/device_writer_channel.h"
 #include "devices/tun/tun_io_error.h"
 #include "devices/tun/tun_lifecycle.h"
 #ifdef OS_LINUX
@@ -15,7 +14,6 @@
 #include "tun.h"
 #include "tun_linux_internal.h"
 #include "watomic.h"
-#include "wchan.h"
 #include "wplatform.h"
 #include "wproc.h"
 #include "wthread.h"
@@ -50,7 +48,7 @@
 bool tundeviceEnableTrustedChecksums(tun_device_t *tdev)
 {
     assert(tdev != NULL && tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown);
-    assert(! tdev->reader_joinable && ! tdev->writer_joinable);
+    assert(! tdev->reader_joinable);
     if (! tdev->checksum_offload_enabled)
     {
         return false;
@@ -129,7 +127,7 @@ bool tundeviceGetLuid(tun_device_t *tdev, uint64_t *out)
 
 static void tundeviceCloseLifetimeGates(tun_device_t *tdev)
 {
-    deviceWriterChannelClose(&tdev->writer_channel);
+    tunWriterCloseRequest(&tdev->writer);
     deviceReaderSessionEndRequest(tdev->reader_session);
 }
 
@@ -201,25 +199,12 @@ static void tundeviceDrainStopPipe(tun_device_t *tdev)
     }
 }
 
-// Unassign IP address from TUN device
 /*
- * Single place where an unexpected TUN I/O thread exit becomes process policy.
- * Keep this behaviorally identical to the tun_darwin.c and tun_windows.c copies.
- *
- * A device I/O routine that returns while the lifecycle is STARTING or UP was
- * not asked to stop: it hit a real error (poll failure, EOF, an unrecoverable
- * write). Such exits used to leave the device published as healthy while reads
- * had silently stopped and writes piled into a channel nobody drains.
- *
- * The routine has already returned, so it has released or transferred every
- * buffer it owned, and this wrapper owns no locks. That is what makes it the
- * correct point to request shutdown: requestProgramShutdown() returns, the
- * wrapper returns, and worker 0 is then free to join this thread.
- *
- * Deliberately NOT done here: closing channels, waking the peer,
- * tundeviceBringDown(), pre-down scripts, route/DNS restoration, or joining
- * threads. A device thread that did any of those would eventually join itself.
- * The lifecycle coordinator reaches all of it through the quiesce/wait hooks.
+ * An unexpected reader exit publishes device failure after all reader-owned
+ * buffers have settled. The coordinator owns cleanup and joining; this thread
+ * only requests shutdown, and must never try to join itself. Worker output
+ * publishes the same failure state from tunWriteBatch, then requests shutdown
+ * after leaving the writer admission gate.
  */
 static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, const char *which)
 {
@@ -227,7 +212,7 @@ static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, const char *wh
     if (! tunLifecycleTransitionToFailed(&tdev->lifecycle, &failed_from))
     {
         // Either normal teardown already moved the device to STOPPING (this
-        // routine returned because it was asked to), or the peer thread already
+        // routine returned because it was asked to), or a worker already
         // published the failure. Neither case logs or requests again.
         return;
     }
@@ -259,15 +244,6 @@ static WTHREAD_ROUTINE(tundeviceReaderThreadMain) // NOLINT
     return 0;
 }
 
-static WTHREAD_ROUTINE(tundeviceWriterThreadMain) // NOLINT
-{
-    assert(! currentThreadHasRegisteredWID());
-    tun_device_t *tdev = userdata;
-    discard       tdev->routine_writer(tdev);
-    tundeviceNoteUnexpectedThreadExit(tdev, "writer");
-    return 0;
-}
-
 // Bring TUN device up
 bool tundeviceBringUp(tun_device_t *tdev)
 {
@@ -279,27 +255,28 @@ bool tundeviceBringUp(tun_device_t *tdev)
 
     /*
      * Device bring-up/creation runs on an event worker even though the reader
-     * and writer threads it manages stay unregistered. Read that worker's pool
-     * geometry once here and copy it onto the device-owned pools; the auxiliary
-     * threads never touch worker-local state themselves.
+     * thread it manages stays unregistered. Read that worker's pool
+     * geometry once here and copy it onto the device-owned reader pool; the auxiliary
+     * reader never touches worker-local state itself.
      */
     buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
 
     devicePoolUpdatePadding(tdev->reader_buffer_pool, worker_pool);
 
-    devicePoolUpdatePadding(tdev->writer_buffer_pool, worker_pool);
-
-    if (! deviceWriterChannelOpen(&tdev->writer_channel, kTunWriteChannelQueueMax))
+#ifdef OS_LINUX
+    atomicStoreRelaxed(&tdev->gso_write_disabled, false);
+#endif
+    if (! tunWriterOpen(&tdev->writer, kTunWriterQueueMax, SIZE_MAX, tdev, tunWriteBatch))
     {
-        LOGE("TunDevice: failed to open writer channel");
+        LOGE("TunDevice: failed to open worker output queues");
         tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
         return false;
     }
     if (deviceReaderSessionBegin(tdev->reader_session) == 0)
     {
         LOGE("TunDevice: failed to open reader delivery generation");
-        deviceWriterChannelClose(&tdev->writer_channel);
-        discard deviceWriterChannelRetireCurrent(&tdev->writer_channel);
+        tunWriterCloseRequest(&tdev->writer);
+        tunWriterCloseWait(&tdev->writer);
         tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
         return false;
     }
@@ -311,7 +288,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
         tundeviceCloseLifetimeGates(tdev);
         deviceReaderSessionEndWait(tdev->reader_session);
         tundeviceRetireReaderGeneration(tdev);
-        discard deviceWriterChannelRetireCurrent(&tdev->writer_channel);
+        tunWriterCloseWait(&tdev->writer);
         tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
         return false;
     }
@@ -333,15 +310,6 @@ bool tundeviceBringUp(tun_device_t *tdev)
         }
     }
 
-    wthread_error_t error = threadCreate(&tdev->write_thread, tundeviceWriterThreadMain, tdev);
-    if (UNLIKELY(error != kWThreadErrorNone))
-    {
-        LOGE("TunDevice: failed to create writer thread: error %u (%s)", error, strerror((int) error));
-        goto rollback;
-    }
-
-    tdev->writer_joinable = true;
-
     if (! tunLifecycleTransitionStartingToUp(&tdev->lifecycle))
     {
         LOGE("TunDevice: an I/O thread failed during startup");
@@ -356,6 +324,7 @@ rollback:
     tundeviceCloseLifetimeGates(tdev);
     discard tundeviceSignalReaderStop(tdev);
     deviceReaderSessionEndWait(tdev->reader_session);
+    tunWriterCloseWait(&tdev->writer);
 
     bool rollback_ok = tunSetStateByName(tdev->name, false);
     if (! rollback_ok)
@@ -380,24 +349,6 @@ rollback:
     {
         tundeviceRetireReaderGeneration(tdev);
     }
-    if (tdev->writer_joinable)
-    {
-        if (safeThreadJoin(tdev->write_thread))
-        {
-            tdev->writer_joinable = false;
-            bufferpoolResetThreadOwnership(tdev->writer_buffer_pool);
-        }
-        else
-        {
-            LOGE("TunDevice: failed to join writer during startup rollback");
-            rollback_ok = false;
-        }
-    }
-
-    if (! tdev->reader_joinable && ! tdev->writer_joinable && ! deviceWriterChannelRetireCurrent(&tdev->writer_channel))
-    {
-        rollback_ok = false;
-    }
 
     if (rollback_ok)
     {
@@ -417,17 +368,17 @@ bool tundeviceRequestStop(tun_device_t *tdev)
 // Bring TUN device down
 bool tundeviceBringDown(tun_device_t *tdev)
 {
-    // A previous interface-down failure retains STOPPING after the threads and
-    // channel have been released. Keep retrying until that last owned operation
+    // A previous interface-down failure retains STOPPING after the reader and
+    // worker output queues have been released. Keep retrying until that last owned operation
     // succeeds and DOWN can be published.
-    if (tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown && ! tdev->reader_joinable && ! tdev->writer_joinable &&
-        ! deviceWriterChannelHasCurrent(&tdev->writer_channel))
+    if (tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown && ! tdev->reader_joinable)
     {
         return true;
     }
 
     bool bring_down_ok = tundeviceRequestStop(tdev);
     deviceReaderSessionEndWait(tdev->reader_session);
+    tunWriterCloseWait(&tdev->writer);
 
     if (! tunSetStateByName(tdev->name, false))
     {
@@ -455,24 +406,6 @@ bool tundeviceBringDown(tun_device_t *tdev)
     if (! tdev->reader_joinable)
     {
         tundeviceRetireReaderGeneration(tdev);
-    }
-    if (tdev->writer_joinable)
-    {
-        if (safeThreadJoin(tdev->write_thread))
-        {
-            tdev->writer_joinable = false;
-            bufferpoolResetThreadOwnership(tdev->writer_buffer_pool);
-        }
-        else
-        {
-            LOGE("TunDevice: failed to join writer thread; retaining writer resources");
-            bring_down_ok = false;
-        }
-    }
-
-    if (! tdev->reader_joinable && ! tdev->writer_joinable && ! deviceWriterChannelRetireCurrent(&tdev->writer_channel))
-    {
-        bring_down_ok = false;
     }
 
     if (bring_down_ok)
@@ -505,7 +438,7 @@ static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool checks
 {
     assert(! gso_requested || checksum_setup);
     *out_gso_enabled = false;
-    int fd = open("/dev/net/tun", O_RDWR);
+    int fd           = open("/dev/net/tun", O_RDWR);
     if (fd < 0)
     {
         *out_reason = "opening /dev/net/tun";
@@ -686,12 +619,12 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
     }
 
 #else
-    int                     fd                    = -1;
-    bool                    interface_preexisting = false;
-    bool                    gso_enabled           = false;
+    int                     fd                       = -1;
+    bool                    interface_preexisting    = false;
+    bool                    gso_enabled              = false;
     bool                    checksum_offload_enabled = false;
-    const char             *reason                = NULL;
-    int                     failure_errno         = 0;
+    const char             *reason                   = NULL;
+    int                     failure_errno            = 0;
     tun_linux_open_result_t result =
         tunLinuxOpenAttempt(name, true, gso_requested, true, mtu, &fd, &ifr, &gso_enabled, &reason, &failure_errno);
     if (result == kTunLinuxOpenOk)
@@ -737,9 +670,9 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
 
     /*
      * Device bring-up/creation runs on an event worker even though the reader
-     * and writer threads it manages stay unregistered. Read that worker's pool
-     * geometry once here and copy it onto the device-owned pools; the auxiliary
-     * threads never touch worker-local state themselves.
+     * thread it manages stays unregistered. Read that worker's pool
+     * geometry once here and copy it onto the device-owned reader pool; the auxiliary
+     * reader never touches worker-local state itself.
      */
     buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
 
@@ -751,27 +684,16 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
         return NULL;
     }
 
-    buffer_pool_t *writer_bpool = devicePoolCreate(worker_pool, mtu);
-    if (UNLIKELY(writer_bpool == NULL))
-    {
-        LOGE("TunDevice: failed to construct writer buffer pool");
-        bufferpoolDestroy(reader_bpool);
-        close(fd);
-        return NULL;
-    }
-
     tun_device_t *tdev        = memoryAllocate(sizeof(tun_device_t));
     char         *device_name = stringDuplicate(ifr.ifr_name);
 
     *tdev = (tun_device_t) {.name                = device_name,
                             .routine_reader      = routineReadFromTun,
-                            .routine_writer      = routineWriteToTun,
                             .handle              = fd,
                             .read_event_callback = cb,
                             .userdata            = userdata,
                             .reader_session      = NULL,
                             .reader_buffer_pool  = reader_bpool,
-                            .writer_buffer_pool  = writer_bpool,
                             .mtu                 = mtu,
 #ifdef OS_LINUX
                             .checksum_offload_enabled = checksum_offload_enabled,
@@ -784,19 +706,19 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
     };
     atomic_init(&tdev->lifecycle, kTunLifecycleDown);
 #ifdef OS_LINUX
+    atomic_init(&tdev->gso_write_disabled, false);
     atomic_init(&tdev->gso_generated_segments, 0);
     atomic_init(&tdev->gso_intact_aggregates, 0);
 #endif
-    deviceWriterChannelInit(&tdev->writer_channel);
+    tunWriterInit(&tdev->writer);
     tdev->reader_session = deviceReaderSessionCreate(
         RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool, fragment_policy);
     if (UNLIKELY(tdev->reader_session == NULL))
     {
         LOGE("TunDevice: failed to allocate reader session");
-        discard deviceWriterChannelDestroy(&tdev->writer_channel);
+        tunWriterDestroy(&tdev->writer);
         memoryFree(tdev->name);
         bufferpoolDestroy(tdev->reader_buffer_pool);
-        bufferpoolDestroy(tdev->writer_buffer_pool);
         close(tdev->handle);
         memoryFree(tdev);
         return NULL;
@@ -940,7 +862,6 @@ fail_after_session:
 #endif
     deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
     bufferpoolDestroy(tdev->reader_buffer_pool);
-    bufferpoolDestroy(tdev->writer_buffer_pool);
     deviceReaderSessionUnref(tdev->reader_session);
     if (tdev->handle >= 0)
     {
@@ -969,11 +890,7 @@ void tundeviceDestroy(tun_device_t *tdev)
      * Device destruction follows worker/lwIP shutdown, so no producer can
      * retain a generation pointer while retired queues are reclaimed.
      */
-    if (! deviceWriterChannelDestroy(&tdev->writer_channel))
-    {
-        LOGF("TunDevice: refusing to destroy a published writer generation");
-        abortProgramNow(1);
-    }
+    tunWriterDestroy(&tdev->writer);
     memoryFree(tdev->name);
 #ifdef OS_LINUX
     tunLinuxDnsDropSnapshot(tdev);
@@ -984,7 +901,6 @@ void tundeviceDestroy(tun_device_t *tdev)
 #endif
     deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
     bufferpoolDestroy(tdev->reader_buffer_pool);
-    bufferpoolDestroy(tdev->writer_buffer_pool);
     close(tdev->handle);
     close(tdev->linux_pipe_fds[0]);
     close(tdev->linux_pipe_fds[1]);
@@ -999,24 +915,14 @@ device_reader_session_t *tunLinuxReaderSession(tun_device_t *tdev)
     return tdev->reader_session;
 }
 
-buffer_pool_t *tunLinuxWriterBufferPool(tun_device_t *tdev)
+tun_writer_t *tunLinuxWriter(tun_device_t *tdev)
 {
-    return tdev->writer_buffer_pool;
-}
-
-device_writer_channel_t *tunLinuxWriterChannel(tun_device_t *tdev)
-{
-    return &tdev->writer_channel;
+    return &tdev->writer;
 }
 
 void tunLinuxSetReaderRoutine(tun_device_t *tdev, wthread_routine routine)
 {
     tdev->routine_reader = routine;
-}
-
-void tunLinuxSetWriterRoutine(tun_device_t *tdev, wthread_routine routine)
-{
-    tdev->routine_writer = routine;
 }
 
 tun_lifecycle_state_t tunLinuxLifecycleState(const tun_device_t *tdev)

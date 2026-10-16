@@ -64,6 +64,9 @@ bool          tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const c
 bool tundeviceLastCommandOutcomeUnknown(const tun_device_t *tdev);
 bool tundeviceDnsNeedsCleanup(const tun_device_t *tdev);
 #endif
+/* Event-worker-only, enqueue-only output. Success transfers the packet to this
+ * worker's deferred FIFO; refusal leaves ownership with the caller. Native
+ * writes and buffer recycling run later on the same worker. */
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf);
 bool tundeviceDetectDefaultInterface(tun_default_route_t *out);
 bool tundeviceDisableReversePathFiltering(const char *ifname);
