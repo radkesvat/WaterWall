@@ -24,7 +24,7 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
     }
     discard jsonAddUint64ToObject(users_json, "server-time-ms", getTimeOfDayMS());
 
-    char *users_json_text = cJSON_PrintUnformatted(users_json);
+    char *users_json_text = authenticationserverSerializeResponseJson(users_json);
     if (UNLIKELY(users_json_text == NULL))
     {
         cJSON_Delete(users_json);

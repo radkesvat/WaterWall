@@ -68,7 +68,13 @@ typedef struct authenticationserver_lstate_s
 {
     buffer_stream_t read_stream;
     buffer_queue_t  response_queue;
+    buffer_budget_t             response_budget;
+    buffer_budget_reservation_t active_response_cost;
+    sbuf_t                     *active_response;
+    buffer_pool_t              *pool;
     bool            response_paused;
+    bool                        response_draining;
+    bool                        processing_requests;
 } authenticationserver_lstate_t;
 
 enum
@@ -89,7 +95,10 @@ enum
     kAuthenticationServerMaxMessagePayload              = 16U * 1024U * 1024U,
     kAuthenticationServerMaxRequestData                 = 16U * 1024U * 1024U,
     kAuthenticationServerMaxResponsePayload             = 16U * 1024U * 1024U,
-    kAuthenticationServerMaxResponseQueue               = 16U * 1024U * 1024U,
+    kAuthenticationServerMaxResponseQueue   = 16U * 1024U * 1024U + kAuthenticationServerResponseEnvelopeHeaderSize,
+    kAuthenticationServerMaxResponseCharge  = 32U * 1024U * 1024U,
+    kAuthenticationServerMaxResponseEntries = 1024,
+    kAuthenticationServerOutputChunkSize    = 16U * 1024U,
     kAuthenticationServerResponseQueueCap               = 4,
     kAuthenticationServerMaxPasswordLength              = 1024U,
     kAuthenticationServerDefaultNormalBackupsCountLimit = 10U,
@@ -185,6 +194,8 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
     const char *module_name);
 
 bool authenticationserverUserJsonWireGuardAllowedIpsValid(const cJSON *user_json);
+/* Bounded wire serialization; caller frees with cJSON_free(). */
+char *authenticationserverSerializeResponseJson(const cJSON *json);
 
 sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
                                             const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],

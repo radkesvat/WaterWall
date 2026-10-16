@@ -81,9 +81,8 @@ sbuf_t *authenticationserverCreateResponseFrame(line_t *l, uint8_t response_type
     }
 
     const uint32_t frame_len = kAuthenticationServerResponseHeaderSize + response_data_len;
-    sbuf_t        *frame     = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
-
-    frame = sbufReserveSpace(frame, frame_len);
+    buffer_pool_t *pool      = lineGetBufferPool(l);
+    sbuf_t        *frame     = bufferpoolGetBestFit(pool, frame_len, bufferpoolGetSmallBufferPadding(pool));
     sbufSetLength(frame, frame_len);
 
     uint8_t *ptr = sbufGetMutablePtr(frame);
@@ -114,6 +113,25 @@ static bool authenticationserverResponseDataTooLarge(size_t response_data_len)
     return response_data_len > kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize;
 }
 
+char *authenticationserverSerializeResponseJson(const cJSON *json)
+{
+    /* cJSON's preallocated printer needs up to five spare bytes. No failed
+     * attempt is retained while allocating the next, capped attempt. */
+    const size_t maximum  = kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize + 6U;
+    size_t       capacity = 4096;
+    for (;;)
+    {
+        char *text = cJSON_malloc(capacity);
+        if (cJSON_PrintPreallocated((cJSON *) json, text, (int) capacity, false) &&
+            ! authenticationserverResponseDataTooLarge(stringLength(text)))
+            return text;
+        cJSON_free(text);
+        if (capacity == maximum)
+            return NULL;
+        capacity = min(capacity * 2U, maximum);
+    }
+}
+
 sbuf_t *authenticationserverCreateUserJsonResponseFrame(
     line_t *l, const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize], cJSON *user_json,
     const char *module_name)
@@ -123,7 +141,7 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-not-found");
     }
 
-    char *user_json_text = cJSON_PrintUnformatted(user_json);
+    char *user_json_text = authenticationserverSerializeResponseJson(user_json);
     cJSON_Delete(user_json);
 
     if (UNLIKELY(user_json_text == NULL))
@@ -175,60 +193,72 @@ void authenticationserverCloseLine(tunnel_t *t, line_t *l, authenticationserver_
 
 bool authenticationserverFlushResponses(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls)
 {
-    authenticationserver_tstate_t *ts = tunnelGetState(t);
-
-    if (ts->verbose && bufferqueueGetBufCount(&ls->response_queue) > 0)
+    if (ls->response_draining)
     {
-        LOGD("AuthenticationServer: flushing %u queued response message(s)",
-             (unsigned int) bufferqueueGetBufCount(&ls->response_queue));
+        return true;
     }
-
-    while (! ls->response_paused && bufferqueueGetBufCount(&ls->response_queue) > 0)
+    ls->response_draining = true;
+    while (! ls->response_paused)
     {
-        sbuf_t *response = bufferqueuePopFront(&ls->response_queue);
-        if (ts->verbose)
+        if (ls->active_response == NULL)
         {
-            LOGD("AuthenticationServer: sending queued response message bytes=%u",
-                 (unsigned int) sbufGetLength(response));
+            ls->active_response = bufferqueuePopFrontReserved(&ls->response_queue, &ls->active_response_cost);
+            if (ls->active_response == NULL)
+            {
+                break;
+            }
         }
-        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, response)))
+        sbuf_t        *backing   = ls->active_response;
+        const uint32_t remaining = sbufGetLength(backing);
+        const uint32_t length    = min(remaining, (uint32_t) kAuthenticationServerOutputChunkSize);
+        sbuf_t        *chunk;
+        if (length == remaining)
+        {
+            chunk               = backing;
+            ls->active_response = NULL;
+            bufferbudgetReservationRelease(&ls->active_response_cost);
+        }
+        else
+        {
+            chunk = bufferpoolGetBestFit(ls->pool, length, bufferpoolGetSmallBufferPadding(ls->pool));
+            sbufSetLength(chunk, length);
+            memoryCopy(sbufGetMutablePtr(chunk), sbufGetRawPtr(backing), length);
+            sbufShiftRight(backing, length);
+            bufferbudgetReservationSetBytes(&ls->active_response_cost, remaining - length);
+        }
+        /* A final tail of a large backing allocation must also be compacted;
+         * transports budget allocation charge, not just its remaining length. */
+        buffer_pool_fit_t fit;
+        const bool fits = bufferpoolQueryBestFit(ls->pool, length, bufferpoolGetSmallBufferPadding(ls->pool), &fit);
+        assert(fits);
+        discard fits;
+        if (sbufGetAllocationCharge(chunk) > fit.allocation_charge)
+        {
+            sbuf_t *small = bufferpoolGetBestFit(ls->pool, length, bufferpoolGetSmallBufferPadding(ls->pool));
+            sbufSetLength(small, length);
+            memoryCopy(sbufGetMutablePtr(small), sbufGetRawPtr(chunk), length);
+            bufferpoolReuseBuffer(ls->pool, chunk);
+            chunk = small;
+        }
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, chunk)))
         {
             return false;
         }
     }
-
+    ls->response_draining = false;
     return true;
 }
 
 static bool authenticationserverSendOrQueueResponse(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls,
                                                     sbuf_t *response)
 {
-    authenticationserver_tstate_t *ts = tunnelGetState(t);
-
-    if (UNLIKELY(ls->response_paused || bufferqueueGetBufCount(&ls->response_queue) > 0))
+    if (! bufferqueueTryPushBack(&ls->response_queue, &response))
     {
-        if (ts->verbose)
-        {
-            LOGD("AuthenticationServer: queueing response message bytes=%u paused=%s queued=%u",
-                 (unsigned int) sbufGetLength(response),
-                 boolToTrueFalse(ls->response_paused),
-                 (unsigned int) bufferqueueGetBufCount(&ls->response_queue));
-        }
-        bufferqueuePushBack(&ls->response_queue, response);
-        if (UNLIKELY(bufferqueueGetBufLen(&ls->response_queue) > kAuthenticationServerMaxResponseQueue))
-        {
-            authenticationserverCloseLine(t, l, ls, "response queue overflow");
-            return false;
-        }
-        return true;
+        lineReuseBuffer(l, response);
+        authenticationserverCloseLine(t, l, ls, "response storage limit");
+        return false;
     }
-
-    if (ts->verbose)
-    {
-        LOGD("AuthenticationServer: sending response message bytes=%u", (unsigned int) sbufGetLength(response));
-    }
-
-    return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, response);
+    return authenticationserverFlushResponses(t, l, ls);
 }
 
 static bool authenticationserverReadMessageHeader(authenticationserver_lstate_t *ls, uint32_t *message_body_len)
@@ -247,7 +277,9 @@ static bool authenticationserverReadMessageHeader(authenticationserver_lstate_t 
 
 static sbuf_t *authenticationserverCreateResponseMessage(line_t *l)
 {
-    sbuf_t *message = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
+    buffer_pool_t *pool    = lineGetBufferPool(l);
+    sbuf_t        *message = bufferpoolGetBestFit(
+        pool, kAuthenticationServerResponseEnvelopeHeaderSize, bufferpoolGetSmallBufferPadding(pool));
 
     message = sbufReserveSpace(message, kAuthenticationServerResponseEnvelopeHeaderSize);
     sbufSetLength(message, kAuthenticationServerResponseEnvelopeHeaderSize);
@@ -543,12 +575,18 @@ static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l,
 bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
+    if (ls->processing_requests)
+    {
+        return true;
+    }
+    ls->processing_requests = true;
 
     while (true)
     {
         uint32_t message_body_len = 0;
         if (! authenticationserverReadMessageHeader(ls, &message_body_len))
         {
+            ls->processing_requests = false;
             return true;
         }
 
@@ -567,6 +605,7 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
         const size_t message_len = (size_t) kAuthenticationServerMessageHeaderSize + (size_t) message_body_len;
         if (bufferstreamGetBufLen(&ls->read_stream) < message_len)
         {
+            ls->processing_requests = false;
             return true;
         }
 

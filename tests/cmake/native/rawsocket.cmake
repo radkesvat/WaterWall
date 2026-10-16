@@ -512,6 +512,17 @@ foreach(tcpoverudp_side Client Server)
   endif()
 endforeach()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
+  waterwall_add_native_executable(authenticationserver_responses_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationserver_responses_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+  target_link_libraries(authenticationserver_responses_test PRIVATE AuthenticationServer ww)
+  target_link_options(authenticationserver_responses_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  add_dependencies(waterwall_unit_tests authenticationserver_responses_test)
+  add_waterwall_unit_test(waterwall.authenticationserver_responses_unit authenticationserver_responses_test
+    "unit;authentication;buffer;line")
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationClient)
   waterwall_add_native_executable(authenticationclient_profile_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationclient_profile_test.c)
   target_link_libraries(authenticationclient_profile_test PRIVATE AuthenticationClient ww)
