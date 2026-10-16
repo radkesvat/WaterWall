@@ -941,12 +941,11 @@ static sbuf_t *pqChargedBuffer(size_t charge)
     return buf;
 }
 
-static void caseParentHardLimit(bool defaults, bool budget_refusal, bool shutdown)
+static void caseParentHardLimit(bool defaults, bool shutdown)
 {
     twfSetCase("parent output enforces inclusive allocation limit and releases backlog on local failure/Stop");
     pq_fixture_t f;
     pqSetup(&f);
-    buffer_budget_t queue_budget;
     pq_tstate_t *ts = tunnelGetState(f.mux);
     if (! defaults)
     {
@@ -973,17 +972,6 @@ static void caseParentHardLimit(bool defaults, bool budget_refusal, bool shutdow
         pqStop(f.mux, 0, wwLifecycleProcessShutdown());
         pqLoss(f.mux, f.parent_l, false); // actual borrowed-parent owner drives its Finish
 #endif
-    }
-    else if (budget_refusal)
-    {
-        pqParentResume(&f);
-        bufferqueueDestroy(&pqOutput(&f)->pending);
-        bufferqueueInitEmpty(&pqOutput(&f)->pending);
-        pqParentPause(&f);
-        bufferbudgetInit(&queue_budget, (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, 0});
-        twfRequire(bufferqueueTryAttachBudget(&pqOutput(&f)->pending, &queue_budget),
-                   "failed to attach parent output admission budget");
-        pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
     }
     else
         pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
@@ -1663,7 +1651,7 @@ static void caseSpliceParentOutput(bool paused)
 
 static void caseSpliceParentRefusal(void)
 {
-    twfSetCase("queue refusal settles the owned splice candidate and closes only its parent");
+    twfSetCase("output charge refusal settles the owned splice candidate and closes only its parent");
     pq_fixture_t f;
     pqSetup(&f);
     pqSetSpliceSinks(&f);
@@ -1672,10 +1660,8 @@ static void caseSpliceParentRefusal(void)
     lineRef(f.child_l);
     sbuf_t   *input                  = pqSplicePattern(&f, 32);
     const int fd                     = sbufSpliceMetadata(input).pipefd[0];
-    buffer_budget_t budget;
-    bufferbudgetInit(&budget, (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, 0});
-    twfRequire(bufferqueueTryAttachBudget(&pqOutput(&f)->pending, &budget),
-               "failed to attach splice output admission budget");
+    pq_tstate_t *ts                     = tunnelGetState(f.mux);
+    ts->parent_write_limit              = 1;
     pqSend(f.mux, f.child_l, input);
     twfRequireLineStateZeroed(f.parent_l, f.mux, "splice refusal left parent state retained");
     twfRequireLineStateZeroed(f.child_l, f.mux, "splice refusal left child state retained");
@@ -1790,9 +1776,9 @@ static void caseAccountedSpliceLifecycle(unsigned detach, bool discard_queue)
     fixtureTeardown(&f);
 }
 
-static void caseAccountedSpliceBudgetRefusal(void)
+static void caseAccountedSpliceLimitRefusal(void)
 {
-    twfSetCase("transactional parent budget refusal publishes no pipe cost and consumes no body");
+    twfSetCase("transactional parent charge refusal publishes no pipe cost and consumes no body");
     pq_fixture_t f;
     pqSetup(&f);
     mux_parent_output_t output = {0};
@@ -1801,10 +1787,8 @@ static void caseAccountedSpliceBudgetRefusal(void)
     sbuf_t   *buf                    = pqSplicePattern(&f, 32);
     sbuf_t   *original               = buf;
     const int fd                     = sbufSpliceMetadata(buf).pipefd[0];
-    buffer_budget_t budget;
-    bufferbudgetInit(&budget, (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, 0});
-    twfRequire(bufferqueueTryAttachBudget(&output.pending, &budget), "failed to attach splice admission budget");
-    twfRequire(! muxParentOutputEnqueue(&output, &buf, SIZE_MAX), "refused budget admitted a pipe");
+    const size_t limit                  = sbufGetQueueCharge(buf) - 1;
+    twfRequire(! muxParentOutputEnqueue(&output, &buf, limit), "exceeded charge limit admitted a pipe");
     int available = -1;
     twfRequire(buf == original && output.charge == 0 && bufferqueueGetBufCount(&output.pending) == 0 &&
                    ioctl(fd, FIONREAD, &available) == 0 && available == 32,
@@ -2279,7 +2263,7 @@ static void runParentOutputCases(void)
     for (unsigned detach = 0; detach < 3; ++detach)
         for (unsigned discard_queue = 0; discard_queue < 2; ++discard_queue)
             caseAccountedSpliceLifecycle(detach, discard_queue != 0);
-    caseAccountedSpliceBudgetRefusal();
+    caseAccountedSpliceLimitRefusal();
     for (unsigned input = 0; input < 2; ++input)
         for (unsigned complete = 0; complete < 2; ++complete)
             for (unsigned paused = 0; paused < 2; ++paused)
@@ -2306,10 +2290,9 @@ static void runParentOutputCases(void)
     caseParentGate(2000, false);
     caseParentGate(3, true);
     caseParentGateMutation();
-    caseParentHardLimit(true, false, false);
-    caseParentHardLimit(false, false, false);
-    caseParentHardLimit(true, true, false);
-    caseParentHardLimit(false, false, true);
+    caseParentHardLimit(true, false);
+    caseParentHardLimit(false, false);
+    caseParentHardLimit(false, true);
     caseParentWriteConfiguration();
     caseParentResumeConfiguration();
 }

@@ -740,9 +740,9 @@ static void caseParsedTinyFrameTransfersToDetachedAccounting(void)
     fixtureTeardown(&fixture);
 }
 
-static void caseQueueBudgetRefusalClosesOnlyClientChild(void)
+static void caseQueueLimitClosesOnlyClientChild(void)
 {
-    twfSetCase("MuxClient queue budget refusal closes only the affected borrowed child");
+    twfSetCase("MuxClient child charge limit closes only the affected borrowed child");
 
     muxclient_fixture_t fixture;
     fixtureSetup(&fixture, 32);
@@ -753,22 +753,16 @@ static void caseQueueBudgetRefusalClosesOnlyClientChild(void)
     child_ls->paused              = true;
     child_ls->open_frame_submitted = true;
 
-    bufferqueueDestroy(&child_ls->pending_child_data);
-    bufferqueueInitEmpty(&child_ls->pending_child_data);
-    buffer_budget_t budget;
-    bufferbudgetInit(&budget, (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, 0});
-    twfRequire(bufferqueueTryAttachBudget(&child_ls->pending_child_data, &budget),
-               "failed to attach child queue admission budget");
+    ts->child_buffer_limit = 1;
     twfRequire(muxclientQueueChildPayload(
                    fixture.mux, fixture.parent_l, ts, parent_ls, child_ls, makePatternPayload(&fixture, 1)),
-               "queue budget refusal tore down the client parent");
+               "child charge limit tore down the client parent");
 
-    twfRequire(lineIsAlive(fixture.parent_l), "queue budget refusal closed the client parent");
+    twfRequire(lineIsAlive(fixture.parent_l), "child charge limit closed the client parent");
     twfRequire(lineIsAlive(fixture.child_l), "MuxClient destroyed the affected borrowed child");
-    twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "queue budget refusal retained child state");
-    requireEqualCharge(
-        parent_ls->pending_child_queue_charge, 0, "queue budget refusal mutated parent charge accounting");
-    twfRequireEqualText(fixture.trace.seq, "fP", "queue budget refusal used the wrong close directions");
+    twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "child charge limit retained child state");
+    requireEqualCharge(parent_ls->pending_child_queue_charge, 0, "child charge limit mutated parent charge accounting");
+    twfRequireEqualText(fixture.trace.seq, "fP", "child charge limit used the wrong close directions");
 
     fixtureTeardown(&fixture);
 }
@@ -1698,7 +1692,7 @@ int main(void)
     caseParentBufferLimitCanBeDisabled();
     caseParsedTinyFrameUsesAllocationCharge(1, "MuxClient charges parsed one-byte Data and closes at the charge limit");
     caseParsedTinyFrameTransfersToDetachedAccounting();
-    caseQueueBudgetRefusalClosesOnlyClientChild();
+    caseQueueLimitClosesOnlyClientChild();
     caseConfiguredResumeThresholdControlsFlowResume();
     casePeerCloseWaitsForResume();
     casePeerCloseDropsLateFramesAndKeepsSiblingProgress();

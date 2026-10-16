@@ -1051,12 +1051,9 @@ bool muxclientQueueChildPayload(tunnel_t *t, line_t *parent_l, muxclient_tstate_
                                                 candidate_charge);
     }
 
-    if (UNLIKELY(! bufferqueueTryPushBack(&child_ls->pending_child_data, &buf)))
-    {
-        lineReuseBuffer(parent_l, buf);
-        return muxclientCloseChildForQueueLimit(
-            t, parent_l, ts, parent_ls, child_ls, "its child queue could not reserve another entry", candidate_charge);
-    }
+    /* This queue stays unbound. Admitted charge also bounds payload bytes and
+     * entry storage, so insertion has no remaining recoverable refusal. */
+    buf = bufferqueuePushBack(&child_ls->pending_child_data, buf);
     assert(sbufGetQueueCharge(buf) == candidate_charge);
 
     muxclientAddChildQueueCharge(child_ls, candidate_charge);

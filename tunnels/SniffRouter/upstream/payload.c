@@ -42,14 +42,14 @@ static bool queueDatagram(tunnel_t *t, line_t *l, sniffrouter_lstate_t *ls, sbuf
         bufferqueueGetBufLen(&ls->datagrams) > kSniffRouterMaxReplayBytes - bytes ||
         charge > kSniffRouterMaxDatagramCharge ||
         bufferqueueGetCharge(&ls->datagrams) > kSniffRouterMaxDatagramCharge - charge ||
-        bufferqueueGetBufCount(&ls->datagrams) >= kSniffRouterMaxDatagrams ||
-        ! bufferqueueTryPushBack(&ls->datagrams, buf))
+        bufferqueueGetBufCount(&ls->datagrams) >= kSniffRouterMaxDatagrams)
     {
         LOGE("SniffRouter: pending datagrams exceeded their retention limit, closing this line");
         lineReuseBuffer(l, *buf);
         closePendingRoute(t, l, ls);
         return false;
     }
+    *buf = bufferqueuePushBack(&ls->datagrams, *buf);
     return true;
 }
 

@@ -56,12 +56,13 @@ static bool routerQueueDatagram(tunnel_t *t, line_t *l, router_lstate_t *ls, sbu
     const size_t charge = sbufGetQueueCharge(*buf);
     if (bytes > kRouterPendingBytes || bufferqueueGetBufLen(&ls->datagrams) > kRouterPendingBytes - bytes ||
         charge > kRouterDatagramCharge || bufferqueueGetCharge(&ls->datagrams) > kRouterDatagramCharge - charge ||
-        bufferqueueGetBufCount(&ls->datagrams) >= kRouterDatagramCount || ! bufferqueueTryPushBack(&ls->datagrams, buf))
+        bufferqueueGetBufCount(&ls->datagrams) >= kRouterDatagramCount)
     {
         LOGE("Router: pending datagrams exceeded their retention limit, closing this line");
         routerRejectPendingPayload(t, l, ls, *buf);
         return false;
     }
+    *buf = bufferqueuePushBack(&ls->datagrams, *buf);
     return true;
 }
 

@@ -30,18 +30,21 @@ static inline uint64_t muxParentOutputThrottleMS(const mux_parent_output_t *outp
     return output->sources_throttled ? (now_us - output->throttle_started_us) / 1000 : 0;
 }
 
-/* Transactional admission; equality with the resource limit is permitted.
+/* Transactional admission to an unbound queue; equality with the resource limit is permitted.
  * Failure preserves the supplied candidate, queue, and all counters. Preparation
  * (including any earlier ordinary fallback) belongs to the caller. Ordinary Debug
  * replacement preserves allocation geometry; Debug checks the retained pointer
  * before publishing the precomputed cost. */
 static inline bool muxParentOutputEnqueue(mux_parent_output_t *output, sbuf_t **buf, size_t limit)
 {
+    assert(output->pending.budget == NULL);
     size_t cost;
-    if (UNLIKELY(! sbufTryGetQueueCharge(*buf, &cost) || output->charge > limit || cost > limit - output->charge ||
-                 ! bufferqueueTryPushBack(&output->pending, buf)))
+    if (UNLIKELY(! sbufTryGetQueueCharge(*buf, &cost) || output->charge > limit || cost > limit - output->charge))
         return false;
 
+    /* Charge covers payload and at least 64 bytes per entry, so admission also
+     * bounds byte totals and deque geometry on 32-bit and 64-bit targets. */
+    *buf = bufferqueuePushBack(&output->pending, *buf);
     assert(sbufGetQueueCharge(*buf) == cost);
     output->charge += cost;
     return true;

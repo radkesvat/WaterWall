@@ -1165,13 +1165,13 @@ bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
         if (bytes > kHttpClientHttp1NestedMaxBytes || charge > kHttpClientHttp1NestedMaxCharge ||
             bufferqueueGetBufCount(&ls->pending_up) >= kHttpClientHttp1NestedMaxBuffers ||
             bufferqueueGetBufLen(&ls->pending_up) > kHttpClientHttp1NestedMaxBytes - bytes ||
-            bufferqueueGetCharge(&ls->pending_up) > kHttpClientHttp1NestedMaxCharge - charge ||
-            ! bufferqueueTryPushBack(&ls->pending_up, &payload))
+            bufferqueueGetCharge(&ls->pending_up) > kHttpClientHttp1NestedMaxCharge - charge)
         {
             lineReuseBuffer(l, payload);
-            LOGW("HttpClient: nested HTTP/1 payload limit or queue admission failure");
+            LOGW("HttpClient: nested HTTP/1 payload limit exceeded");
             return false;
         }
+        bufferqueuePushBack(&ls->pending_up, payload);
         return true;
     }
 
@@ -2543,14 +2543,17 @@ bool httpclientTransportQueueRawInput(tunnel_t *t, line_t *l, sbuf_t *buf, bool 
     }
     if (bytes > kHttpClientHttp1NestedMaxBytes || charge > kHttpClientHttp1NestedMaxCharge ||
         count >= kHttpClientHttp1NestedMaxBuffers || pending_bytes > kHttpClientHttp1NestedMaxBytes - bytes ||
-        pending_charge > kHttpClientHttp1NestedMaxCharge - charge ||
-        (upstream && ! bufferqueueTryPushBack(&ls->pending_up, &buf)))
+        pending_charge > kHttpClientHttp1NestedMaxCharge - charge)
     {
         lineReuseBuffer(l, buf);
-        LOGW("HttpClient: custom upgrade input limit or queue admission failure");
+        LOGW("HttpClient: custom upgrade input limit exceeded");
         return false;
     }
-    if (! upstream)
+    if (upstream)
+    {
+        bufferqueuePushBack(&ls->pending_up, buf);
+    }
+    else
     {
         bufferstreamPush(&ls->in_stream, buf);
     }
