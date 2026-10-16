@@ -424,8 +424,8 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
                 goto poison;
             /* Reserve the full replacement, including the still-live old allocation. */
             table->retained_bytes += fit.allocation_charge;
-            sbuf_t *grown = bufferpoolTryGetBestFit(table->release_pool, need, padding);
-            if (UNLIKELY(grown == NULL || sbufGetAllocationCharge(grown) != fit.allocation_charge ||
+            sbuf_t *grown = bufferpoolGetBestFit(table->release_pool, need, padding);
+            if (UNLIKELY(sbufGetAllocationCharge(grown) != fit.allocation_charge ||
                          sbufGetMaximumWriteableSize(grown) < need || sbufGetLeftCapacity(grown) < padding))
             {
                 LOGF("Device fragment assembly: best-fit allocation geometry changed");

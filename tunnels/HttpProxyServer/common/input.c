@@ -79,8 +79,10 @@ static bool allocationFits(hps_session_t *s, const sbuf_t *replace, const sbuf_t
 
 static sbuf_t *hpsMakeBuffer(hps_session_t *s, size_t n)
 {
+    /* Callers admit at most 1 MiB of working data plus 2 MiB of delivery headroom. */
+    assert(n <= (size_t) hpsSettings(s)->max_pending + kHpsDeliveryHeadroomBytes);
     buffer_pool_t *pool = lineGetBufferPool(s->client);
-    return bufferpoolTryGetBestFit(pool, n, bufferpoolGetLargeBufferPadding(pool));
+    return bufferpoolGetBestFit(pool, (uint32_t) n, bufferpoolGetLargeBufferPadding(pool));
 }
 
 bool hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigned char *data, size_t n)
@@ -93,8 +95,6 @@ bool hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigned 
     if (! old || sbufGetMaximumWriteableSize(old) < length + n)
     {
         sbuf_t *b = hpsMakeBuffer(s, MIN_SIZE(hpsSettings(s)->max_pending, MAX_SIZE(4096, (length + n) * 2)));
-        if (! b)
-            return false;
         if (! allocationFits(s, old, b))
         {
             lineReuseBuffer(s->client, b);
@@ -127,8 +127,6 @@ bool hpsQueueOutput(hps_session_t *s, hps_direction_t d, const char *data, size_
     if (n > hpsSettings(s)->max_pending - hpsPendingBytes(s))
         return false;
     sbuf_t *b = hpsMakeBuffer(s, n);
-    if (! b)
-        return false;
     if (! allocationFits(s, NULL, b))
     {
         lineReuseBuffer(s->client, b);
@@ -219,11 +217,6 @@ hps_step_t hpsProcessBody(hps_session_t *s, hps_direction_t d)
     if (emit)
     {
         out = hpsMakeBuffer(s, used);
-        if (! out)
-        {
-            hpsFail(s, 503);
-            return kHpsStepProgress;
-        }
         memoryCopy(sbufGetMutablePtr(out), sbufGetRawPtr(dir->input), used);
         sbufSetLength(out, (uint32_t) used);
     }
@@ -291,10 +284,9 @@ void hpsAcceptPayload(hps_session_t *s, line_t *l, sbuf_t *buf, hps_direction_t 
         // Admit the allocation charge before reading the pipe so refusal returns
         // 503; the shared ensure helpers consume input before that check.
         sbuf_t *ordinary = hpsMakeBuffer(s, (size_t) length);
-        if (! ordinary || ! remainderAllocationFits(s, ordinary))
+        if (! remainderAllocationFits(s, ordinary))
         {
-            if (ordinary)
-                lineReuseBuffer(l, ordinary);
+            lineReuseBuffer(l, ordinary);
             lineReuseBuffer(l, buf);
             hpsFail(s, 503);
             return;
@@ -367,10 +359,9 @@ void hpsAcceptPayload(hps_session_t *s, line_t *l, sbuf_t *buf, hps_direction_t 
          * arbitrarily oversized carrier allocation. Working storage is charged
          * separately; this slot is at most aligned(max(small, 2*D)) plus padding. */
         sbuf_t *remainder = hpsMakeBuffer(s, (size_t) (length + older));
-        if (! remainder || ! remainderAllocationFits(s, remainder))
+        if (! remainderAllocationFits(s, remainder))
         {
-            if (remainder)
-                lineReuseBuffer(l, remainder);
+            lineReuseBuffer(l, remainder);
             lineReuseBuffer(l, buf);
             hpsFail(s, 503);
         }
