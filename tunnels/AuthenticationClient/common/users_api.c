@@ -93,7 +93,7 @@ bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA25
 
     rwlockReadLock(&ts->users_lock);
     user_t *user = ts->users != NULL ? usersLookupBySHA256(ts->users, sha256) : NULL;
-    if (user != NULL && userIsActive(user, now_ms))
+    if (user != NULL && ! userRuntimeShouldClose(user, now_ms))
     {
         found = authenticationclientSetUserHandle(ts, user, handle_out);
     }
@@ -182,7 +182,8 @@ bool authenticationclientGetUserBySHA224WithProfile(tunnel_t *t, const uint8_t s
 
     rwlockReadLock(&ts->users_lock);
     user_t *user = ts->users != NULL ? usersLookupBySHA224(ts->users, sha224) : NULL;
-    if (user != NULL && userIsActive(user, now_ms) && authenticationclientSetUserHandle(ts, user, handle_out))
+    if (user != NULL && ! userRuntimeShouldClose(user, now_ms) &&
+        authenticationclientSetUserHandle(ts, user, handle_out))
     {
         if (profile_out != NULL)
         {
@@ -244,7 +245,7 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByUUIDWithP
         {
             result = kAuthenticationClientUserLookupUserExpired;
         }
-        else if (userHasReachedLimit(user))
+        else if (userHasReachedTrafficLimit(user))
         {
             result = kAuthenticationClientUserLookupUserLimitReached;
         }
@@ -319,7 +320,7 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByWireGuard
         {
             result = kAuthenticationClientUserLookupUserExpired;
         }
-        else if (userHasReachedLimit(user))
+        else if (userHasReachedTrafficLimit(user))
         {
             result = kAuthenticationClientUserLookupUserLimitReached;
         }
@@ -438,7 +439,7 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordW
         {
             result = kAuthenticationClientUserLookupUserExpired;
         }
-        else if (userHasReachedLimit(user))
+        else if (userHasReachedTrafficLimit(user))
         {
             result = kAuthenticationClientUserLookupUserLimitReached;
         }
@@ -483,7 +484,7 @@ bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *hand
     {
         user = usersLookupByIdentifier(ts->users, handle->user_id);
     }
-    live = user != NULL && userIsActive(user, now_ms);
+    live = user != NULL && ! userRuntimeShouldClose(user, now_ms);
     rwlockReadUnlock(&ts->users_lock);
 
     return live;

@@ -158,6 +158,60 @@ static void testAbsentFields(profile_fixture_t *fixture)
     }
 }
 
+static void testEligibilityAndAdmission(profile_fixture_t *fixture)
+{
+    user_t *user    = fixture->user;
+    user->limit.ips = user->limit.devices = user->limit.cons_in = 1;
+    user->limit.cons_out                                        = 2;
+    user->limit.bandwidth                                       = (user_ud_t) {1, 1};
+    user->stats.ips = user->stats.devices = user->stats.cons_in = user->stats.cons_out = 100;
+    user->stats.speed                                                                  = (user_ud_t) {100, 100};
+    testSuccess(fixture);
+
+    user_handle_t handle = {0};
+    require(authenticationclientGetUserBySHA256(fixture->tunnel, user->sha256_pass.bytes, &handle),
+            "saved gauges blocked SHA256 lookup");
+    require(authenticationclientUserHandleIsLive(fixture->tunnel, &handle), "saved gauges blocked handle liveness");
+    user_ip_key_t first = {.type = 4, .bytes = {127, 0, 0, 1}};
+    user_ip_key_t other = {.type = 4, .bytes = {127, 0, 0, 2}};
+    require(authenticationclientUserTryAdmitConnection(fixture->tunnel, &handle, &first, 0) == kUserAdmissionOk,
+            "saved gauges blocked live admission");
+    require(authenticationclientUserTryAdmitConnection(fixture->tunnel, &handle, &other, 0) == kUserAdmissionIpLimited,
+            "distinct IP limit was bypassed");
+    require(authenticationclientUserTryAdmitConnection(fixture->tunnel, &handle, &first, 0) == kUserAdmissionOk,
+            "same IP could not share its reservation");
+    require(authenticationclientUserTryAdmitConnection(fixture->tunnel, &handle, &first, 0) ==
+                kUserAdmissionConnectionLimited,
+            "live connection limit was bypassed");
+    authenticationclientUserReleaseConnection(fixture->tunnel, &handle, &first);
+    authenticationclientUserReleaseConnection(fixture->tunnel, &handle, &first);
+    require(authenticationclientUserTryAdmitConnection(fixture->tunnel, &handle, &other, 0) == kUserAdmissionOk,
+            "release failed to restore capacity");
+    authenticationclientUserReleaseConnection(fixture->tunnel, &handle, &other);
+
+    for (unsigned refusal = 0; refusal < 3; ++refusal)
+    {
+        user->enabled               = refusal != 0;
+        user->timeinfo.expire_at_ms = refusal == 1 ? 1 : 0;
+        user->limit.traffic.u       = refusal == 2 ? 1 : 0;
+        user->stats.traffic.u       = 1;
+        require(! lookup(fixture, &handle, NULL) && ! userHandleIsValid(&handle), "ineligible profile was accepted");
+        require(! authenticationclientGetUserBySHA256(fixture->tunnel, user->sha256_pass.bytes, &handle),
+                "ineligible SHA256 was accepted");
+        userHandleSet(&handle, 7, 42);
+        require(! authenticationclientUserHandleIsLive(fixture->tunnel, &handle), "ineligible handle remained live");
+        const authenticationclient_user_lookup_result_t expected[] = {kAuthenticationClientUserLookupUserDisabled,
+                                                                      kAuthenticationClientUserLookupUserExpired,
+                                                                      kAuthenticationClientUserLookupUserLimitReached};
+        require(authenticationclientGetUserByPasswordWithResult(fixture->tunnel, fixture->password, &handle) ==
+                    expected[refusal],
+                "eligibility rejection lost its reason");
+    }
+    user->enabled               = true;
+    user->timeinfo.expire_at_ms = 0;
+    user->limit.traffic.u = user->stats.traffic.u = 0;
+}
+
 int main(void)
 {
     testCaseSet("authenticationclient_profile_test");
@@ -169,6 +223,7 @@ int main(void)
         fixtureCreate(&fixture, kind);
         testSuccess(&fixture);
         testAbsentFields(&fixture);
+        testEligibilityAndAdmission(&fixture);
         fixtureDestroy(&fixture);
     }
     wCryptoGlobalCleanup();
