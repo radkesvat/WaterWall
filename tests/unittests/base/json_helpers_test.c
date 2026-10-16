@@ -112,6 +112,75 @@ static void testJsonIntegerInRange(void)
     cJSON_Delete(obj);
 }
 
+static void testExactIntegers(void)
+{
+    static const char *const rejected[] = {"9223372036854775808",
+                                           "9223372036854775808.0",
+                                           "9.223372036854775808e18",
+                                           "1.0",
+                                           "1e3",
+                                           "9007199254740993.0",
+                                           "9007199254740993e0",
+                                           "1e-1000",
+                                           "-1",
+                                           "0.5",
+                                           "1e1000",
+                                           "18446744073709551616"};
+    for (size_t i = 0; i < ARRAY_SIZE(rejected); ++i)
+    {
+        cJSON *item = cJSON_Parse(rejected[i]);
+        require(item != NULL && cJSON_IsNumber(item), "floating point JSON parsing stopped working");
+        uint64_t value = 123;
+        require(! getUint64FromJson(&value, item) && value == 123, "inexact input changed integer identity");
+        cJSON *copy = cJSON_Duplicate(item, true);
+        require(! getUint64FromJson(&value, copy) && value == 123, "duplication lost integer invalidity");
+        cJSON_Delete(copy);
+        cJSON_Delete(item);
+    }
+    const uint64_t values[] = {0,
+                               9007199254740991ULL,
+                               9007199254740992ULL,
+                               9007199254740993ULL,
+                               INT64_MAX,
+                               (uint64_t) INT64_MAX + 1,
+                               UINT64_MAX};
+    for (size_t i = 0; i < ARRAY_SIZE(values); ++i)
+    {
+        cJSON *object = cJSON_CreateObject();
+        require(jsonAddUint64ToObject(object, "id", values[i]), "integer creation failed");
+        char    *wire   = cJSON_PrintUnformatted(object);
+        cJSON   *parsed = cJSON_Parse(wire);
+        uint64_t value  = 123;
+        require(getUint64FromJson(&value, cJSON_GetObjectItemCaseSensitive(parsed, "id")) && value == values[i],
+                "supported counter failed exact export/parse/import");
+        cJSON_Delete(parsed);
+        cJSON_free(wire);
+        cJSON_Delete(object);
+    }
+    cJSON   *item  = cJSON_Parse("9223372036854775807");
+    uint64_t value = 0;
+    require(getUint64FromJson(&value, item) && value == INT64_MAX, "INT64_MAX token was rounded");
+    cJSON_SetNumberValue(item, 9223372036854775808.0);
+    require(! getUint64FromJson(&value, item) && value == INT64_MAX, "setter retained stale validity on overflow");
+    cJSON_SetNumberValue(item, NAN);
+    require(! getUint64FromJson(&value, item), "NaN became an integer");
+    cJSON_SetNumberValue(item, 1.5);
+    require(! getUint64FromJson(&value, item), "fraction became an integer");
+    cJSON_SetNumberValue(item, 42);
+    require(getUint64FromJson(&value, item) && value == 42, "exact double setter failed");
+    cJSON_SetIntValue(item, INT64_MAX);
+    cJSON *copy = cJSON_Duplicate(item, true);
+    require(getUint64FromJson(&value, copy) && value == INT64_MAX, "duplicate lost exact INT64_MAX");
+    cJSON_Delete(copy);
+    cJSON_SetIntValue(item, 9007199254740993LL);
+    item->valueint = 9007199254740992LL; /* same double; provenance must still disagree */
+    require(! getUint64FromJson(&value, item), "direct mutation retained stale integer provenance");
+    cJSON_Delete(item);
+    item = cJSON_Parse("\"18446744073709551615\"");
+    require(getUint64FromJson(&value, item) && value == UINT64_MAX, "UINT64_MAX string was rounded");
+    cJSON_Delete(item);
+}
+
 int main(void)
 {
     testCaseSet("json_helpers_test");
@@ -134,5 +203,6 @@ int main(void)
     requireRejected("18446744073709551616");
 
     testJsonIntegerInRange();
+    testExactIntegers();
     return 0;
 }

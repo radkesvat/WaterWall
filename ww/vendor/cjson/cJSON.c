@@ -385,7 +385,8 @@ loop_end:
         return false; /* parse_error */
     }
 
-    item->valuedouble = number;
+    cJSON_SetNumberHelper(item, number);
+    item->integer_valid = false;
 
     if (integer_token)
     {
@@ -397,25 +398,12 @@ loop_end:
 
         if (errno == 0 && (unsigned char *) integer_end == after_end)
         {
-            item->valueint    = (int64_t) parsed_integer;
-            item->valuedouble = (double) item->valueint;
+            cJSON_SetInt64Value(item, (int64_t) parsed_integer);
         }
         else
         {
             item->valueint = 0;
         }
-    }
-    else if (number >= (double) LLONG_MAX)
-    {
-        item->valueint = LLONG_MAX;
-    }
-    else if (number <= (double) LLONG_MIN)
-    {
-        item->valueint = LLONG_MIN;
-    }
-    else
-    {
-        item->valueint = (int64_t) number;
     }
 
     item->type = cJSON_Number;
@@ -427,7 +415,12 @@ loop_end:
 /* don't ask me, but the original cJSON_SetNumberValue returns an integer or double */
 CJSON_PUBLIC(double) cJSON_SetNumberHelper(cJSON *object, double number)
 {
-    if (number >= (double)LLONG_MAX)
+    object->integer_valid = false;
+    if (isnan(number))
+    {
+        object->valueint = 0;
+    }
+    else if (number >= 9223372036854775808.0)
     {
         object->valueint = LLONG_MAX;
     }
@@ -440,7 +433,36 @@ CJSON_PUBLIC(double) cJSON_SetNumberHelper(cJSON *object, double number)
         object->valueint = (int64_t)number;
     }
 
+    if (isfinite(number) && number >= -9223372036854775808.0 && number < 9223372036854775808.0 &&
+        number == (double) object->valueint)
+    {
+        object->exact_integer = object->valueint;
+        object->integer_valid = true;
+    }
+
     return object->valuedouble = number;
+}
+
+CJSON_PUBLIC(int64_t) cJSON_SetInt64Value(cJSON *item, int64_t value)
+{
+    item->valueint = item->exact_integer = value;
+    item->valuedouble                    = (double) value;
+    item->integer_valid                  = true;
+    return value;
+}
+
+CJSON_PUBLIC(cJSON_bool) cJSON_GetInt64Value(const cJSON *item, int64_t *value)
+{
+    if (! cJSON_IsNumber(item) || ! item->integer_valid || item->valueint != item->exact_integer ||
+        item->valuedouble != (double) item->exact_integer)
+    {
+        return false;
+    }
+    if (value != NULL)
+    {
+        *value = item->exact_integer;
+    }
+    return true;
 }
 
 CJSON_PUBLIC(char*) cJSON_SetValuestring(cJSON *object, const char *valuestring)
@@ -608,7 +630,7 @@ static cJSON_bool print_number(const cJSON * const item, printbuffer * const out
     {
         length = sprintf((char*)number_buffer, "null");
     }
-    else if(d == (double)item->valueint)
+    else if (cJSON_GetInt64Value(item, NULL))
     {
         length = sprintf((char*)number_buffer, "%" PRId64, item->valueint);
     }
@@ -2478,23 +2500,20 @@ CJSON_PUBLIC(cJSON *) cJSON_CreateNumber(double num)
     if(item)
     {
         item->type = cJSON_Number;
-        item->valuedouble = num;
-
-        /* use saturation in case of overflow */
-        if (num >= (double)LLONG_MAX)
-        {
-            item->valueint = LLONG_MAX;
-        }
-        else if (num <= (double)LLONG_MIN)
-        {
-            item->valueint = LLONG_MIN;
-        }
-        else
-        {
-            item->valueint = (int64_t)num;
-        }
+        cJSON_SetNumberHelper(item, num);
     }
 
+    return item;
+}
+
+CJSON_PUBLIC(cJSON *) cJSON_CreateInt64(int64_t num)
+{
+    cJSON *item = cJSON_New_Item(&global_hooks);
+    if (item != NULL)
+    {
+        item->type = cJSON_Number;
+        cJSON_SetInt64Value(item, num);
+    }
     return item;
 }
 
@@ -2771,6 +2790,8 @@ CJSON_PUBLIC(cJSON *) cJSON_Duplicate(const cJSON *item, cJSON_bool recurse)
     newitem->type = item->type & (~cJSON_IsReference);
     newitem->valueint = item->valueint;
     newitem->valuedouble = item->valuedouble;
+    newitem->exact_integer = item->exact_integer;
+    newitem->integer_valid = item->integer_valid;
     if (item->valuestring)
     {
         newitem->valuestring = (char*)cJSON_strdup((unsigned char*)item->valuestring, &global_hooks);

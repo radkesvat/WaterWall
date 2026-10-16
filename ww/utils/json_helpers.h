@@ -46,8 +46,9 @@ static inline bool jsonParseUint64String(const char *value, uint64_t *dest)
 }
 
 /* Read an unsigned 64-bit integer from a JSON node. Accepts a JSON number (when
- * it is a non-negative integer that fits losslessly) or a decimal string (the
- * lossless encoding used for values above INT64_MAX). */
+ * it has exact signed-integer provenance) or a decimal string (the
+ * lossless encoding used for values above INT64_MAX). Parsed decimal/exponent
+ * spellings are floating-point values and are rejected by integer readers. */
 static inline bool getUint64FromJson(uint64_t *dest, const cJSON *json_node)
 {
     if (cJSON_IsString(json_node))
@@ -55,13 +56,13 @@ static inline bool getUint64FromJson(uint64_t *dest, const cJSON *json_node)
         return jsonParseUint64String(json_node->valuestring, dest);
     }
 
-    if (! cJSON_IsNumber(json_node) || json_node->valueint < 0 ||
-        json_node->valuedouble != (double) json_node->valueint)
+    int64_t value;
+    if (! cJSON_GetInt64Value(json_node, &value) || value < 0)
     {
         return false;
     }
 
-    *dest = (uint64_t) json_node->valueint;
+    *dest = (uint64_t) value;
     return true;
 }
 
@@ -74,12 +75,7 @@ static inline bool jsonAddUint64ToObject(cJSON *json_obj, const char *key, uint6
 
     if (value <= (uint64_t) INT64_MAX)
     {
-        item = cJSON_CreateNumber((double) (int64_t) value);
-        if (item != NULL)
-        {
-            item->valueint    = (int64_t) value;
-            item->valuedouble = (double) item->valueint;
-        }
+        item = cJSON_CreateInt64((int64_t) value);
     }
     else
     {
@@ -145,12 +141,12 @@ static inline bool jsonGetIntegerInRange(const cJSON *item, int64_t minimum, int
         return false;
     }
 
-    if (item->valuedouble != (double) item->valueint)
+    int64_t val;
+    if (! cJSON_GetInt64Value(item, &val))
     {
         return false;
     }
 
-    int64_t val = (int64_t) item->valueint;
     if (val < minimum || val > maximum)
     {
         return false;
@@ -267,10 +263,10 @@ static inline bool getDomainStrategyFromJson(const cJSON *json_value, enum domai
 {
     assert(dest != NULL);
 
-    if (cJSON_IsNumber(json_value) && json_value->valuedouble == (double) json_value->valueint &&
-        json_value->valueint >= kDsInvalid && json_value->valueint <= kDsOnlyIpV6)
+    int64_t strategy_value;
+    if (jsonGetIntegerInRange(json_value, kDsInvalid, kDsOnlyIpV6, &strategy_value))
     {
-        *dest = (enum domain_strategy) json_value->valueint;
+        *dest = (enum domain_strategy) strategy_value;
         return true;
     }
 
@@ -342,9 +338,10 @@ static inline bool getPositiveIntFromJsonObjectOrBoolDefault(int *dest, const cJ
         return true;
     }
 
-    if (cJSON_IsNumber(jvalue) && jvalue->valueint > 0 && jvalue->valuedouble == (double) jvalue->valueint)
+    int64_t integer;
+    if (jsonGetIntegerInRange(jvalue, 1, INT_MAX, &integer))
     {
-        *dest = (int) jvalue->valueint;
+        *dest = (int) integer;
         return true;
     }
 

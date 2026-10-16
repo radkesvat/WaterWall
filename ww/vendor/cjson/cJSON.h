@@ -128,6 +128,11 @@ typedef struct cJSON
     /* The item's number, if type==cJSON_Number */
     double valuedouble;
 
+    /* Exact signed integer provenance. Use the setters; direct field writes
+     * cannot establish validity. Parsed decimal/exponent tokens are floats. */
+    int64_t exact_integer;
+    int     integer_valid;
+
     /* The item's name string, if this item is the child of, or is in the list of subitems of an object. */
     char *string;
 } cJSON;
@@ -207,6 +212,10 @@ CJSON_PUBLIC(cJSON *) cJSON_CreateTrue(void);
 CJSON_PUBLIC(cJSON *) cJSON_CreateFalse(void);
 CJSON_PUBLIC(cJSON *) cJSON_CreateBool(cJSON_bool boolean);
 CJSON_PUBLIC(cJSON *) cJSON_CreateNumber(double num);
+CJSON_PUBLIC(cJSON *) cJSON_CreateInt64(int64_t num);
+/* NULL output requests a validity check only. Never changes output on refusal. */
+CJSON_PUBLIC(cJSON_bool) cJSON_GetInt64Value(const cJSON *item, int64_t *value);
+CJSON_PUBLIC(int64_t) cJSON_SetInt64Value(cJSON *item, int64_t value);
 CJSON_PUBLIC(cJSON *) cJSON_CreateString(const char *string);
 /* raw json */
 CJSON_PUBLIC(cJSON *) cJSON_CreateRaw(const char *raw);
@@ -282,13 +291,9 @@ CJSON_PUBLIC(cJSON*) cJSON_AddObjectToObject(cJSON * const object, const char * 
 CJSON_PUBLIC(cJSON*) cJSON_AddArrayToObject(cJSON * const object, const char * const name);
 
 /* When assigning an integer value, it needs to be propagated to valuedouble too. */
-#define cJSON_SetIntValue(object, number) \
-    ((object) ? ((object)->valueint = (int64_t) (number), \
-                 (object)->valuedouble = (double) (object)->valueint, \
-                 (object)->valueint) : \
-                (number))
-/* helper for the cJSON_SetNumberValue macro */
-CJSON_PUBLIC(double) cJSON_SetNumberHelper(cJSON *object, double number);
+#define cJSON_SetIntValue(object, number) ((object) ? cJSON_SetInt64Value(object, (int64_t) (number)) : (number))
+    /* helper for the cJSON_SetNumberValue macro */
+    CJSON_PUBLIC(double) cJSON_SetNumberHelper(cJSON *object, double number);
 #define cJSON_SetNumberValue(object, number) ((object != NULL) ? cJSON_SetNumberHelper(object, (double)number) : (number))
 /* Change the valuestring of a cJSON_String object, only takes effect when type of object is cJSON_String */
 CJSON_PUBLIC(char*) cJSON_SetValuestring(cJSON *object, const char *valuestring);
