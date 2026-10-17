@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -16,9 +16,9 @@ from `AuthenticationClient`.
 - acts as the upstream end of a logical request/response chain
 - loads users from `db-path` into an in-memory `users_t`
 - falls back to `db-path.backup` if the primary JSON file cannot be loaded
-- removes the backup and rewrites the primary database after successful recovery
+- restores the primary atomically while retaining the recovery backup
 - periodically saves the in-memory users database
-- writes the backup file before writing the primary database on normal saves
+- publishes the previous committed primary as recovery backup before atomically replacing the primary
 - can write hourly, daily, or weekly normal backup snapshots for operator use
 - buffers upstream bytes until a full outer request message is available
 - supports multiple request frames inside one outer message
@@ -319,286 +319,81 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
 
 ## Save Behavior
 
-Every normal save uses a backup-first write:
+Under the server state write lock, saving stages the proposed database in the primary directory, stages the
+previous committed primary as `db-path.backup`, publishes that backup, then atomically replaces `db-path`.
+Primary replacement is the commit point. Failure before it rejects `AddNewUser` and rolls its in-memory addition back;
+the recovery backup never receives that rejected proposal. History/pruning or directory-sync failures after replacement
+are logged and do not turn a committed addition into a rejected operation.
 
-1. build JSON from the current in-memory `users_t`
-2. write that JSON to `db-path.backup`
-3. write the same JSON to `db-path`
-
-For example, if `db-path` is `users.json`, the backup path is `users.json.backup`.
+All primary, recovery, history and staging outputs are private before their first secret byte: exclusive `0600`
+creation on POSIX and a protected Windows DACL granting the process user and SYSTEM access. Existing primary/recovery
+permissions are restricted when loading; permission failure rejects startup. Writes, flush, file sync and close are
+checked. Staging names are unique and are never startup recovery candidates. Cleanup removes only this operation's
+staging files. This is not a guarantee of recovery from arbitrary filesystem or power-loss failures.
 
 ## Startup Recovery
 
-Startup follows this order:
-
-1. load and parse `db-path`
-2. if that succeeds, use it as the in-memory database
-3. if it fails, try `db-path.backup`
-4. if the backup loads successfully, use it, remove the backup file, and rewrite `db-path`
-5. if both primary and backup fail, node creation fails
-
-Recovery is logged with warning and info messages so the operator can see that the primary file failed, backup recovery
-was attempted, and whether recovery completed.
+A valid primary is authoritative. If primary loading fails, the server validates `db-path.backup` and restores it
+through the same private atomic writer. The backup remains available throughout and after restoration. Historical
+snapshots are separate and are never automatic recovery candidates. If neither primary nor recovery backup is valid,
+node creation fails. A pre-existing backup has no provenance metadata proving when its contents committed.
 
 ## Logic Explanation
 
-The important mental model is that `AuthenticationServer` owns one authoritative users table, and every authenticated
-`AuthenticationClient` session has its own baseline copy of that table. A client may keep a local writable copy for
-traffic accounting, but server-side state changes only through validated request handlers. Client-supplied data is never
-allowed to replace the authoritative table unless the request type is explicitly a user-management operation.
+The server owns one authoritative table and store-level `config_revision` / `stats_revision` counters, initially 1.
+Configuration mutations bump the former; new usage batches and first-use stamps bump the latter. Independent point
+reads share the state read lock. Authentication, full pulls, saves and mutations hold its write lock.
 
-### Overall AuthenticationServer Logic
+### Control Identity And Sessions
 
-At startup, `AuthenticationServer` creates `ts->store.users`, loads the JSON database from `settings.db-path`, and falls
-back to `settings.db-path.backup` if the primary file cannot be loaded. If backup recovery succeeds, the recovered
-database becomes the in-memory table, the backup file is removed, and the primary database is rewritten in the
-normalized `{"users":[...]}` form.
+Configured `auth-clients` names must be unique. Independent client processes must use distinct names. Sessions hold
+bearer tokens, permissions, idle time and an association with their authenticated configured identity. Idle expiry
+(default 600000 ms, swept on worker 0 every 60000 ms) and replacement remove sessions but preserve the identity's
+accounting checkpoint. A valid-token request refreshes activity, including permission-denied requests.
 
-The authoritative server-side users table is `ts->store.users`. It is wrapped in `authenticationserver_users_store_t`,
-together with two server metadata revision counters:
+Initial `Authenticate` accepts `name` and `secret` in a zero-token envelope and creates an opaque accounting epoch.
+Its Session response contains 128 bytes: a 64-byte token followed by a 64-byte epoch. Each is 32 OS-secure random
+bytes encoded as lowercase hexadecimal. A reconnecting running client includes `epoch` in Authenticate to resume it.
+A missing or superseded checkpoint returns `accounting-continuity-lost`; it is never silently initialized for a retry.
+Fresh enrollment without an epoch replaces the checkpoint and invalidates previous sessions for that identity.
+`Authenticate` inside an already authenticated envelope is rejected with `already-authenticated`.
 
-- `config_revision`
-  Bumped when user configuration or metadata changes, for example `AddNewUser` or `UpdateUser`.
-- `stats_revision`
-  Bumped when usage-owned state changes, for example `UpdateUserTraficStatsDiff`, `PushUserStats` with a non-zero
-  accepted traffic delta, or the server stamping `first-usage-at-ms` for the first observed usage.
+### Usage Accounting
 
-`ts->store.users` is authoritative because it is the only table loaded from disk, periodically saved to disk, and used
-as the merge target for client updates. Requests run under the server state rwlock: independent point reads can share
-the read side, while authentication, baseline replacement, database saves, stats merges, and user mutations take the
-write side. This keeps the source of truth on the server, even when many `AuthenticationClient` sessions are active and
-reporting usage at the same time.
-
-### AuthenticationClient Handling
-
-`AuthenticationClient` credentials are control-plane credentials, not normal traffic users. They are configured in
-`settings.auth-clients`, for example:
+A client retains one immutable delta batch across connection loss. Pushes identify users by durable nonzero `id`,
+independent of passwords. The payload has exactly this supported shape:
 
 ```json
-{
-  "name": "edge-1",
-  "secret": "long-random-secret",
-  "allow-stats-push": true,
-  "allow-user-pull": true,
-  "allow-user-write": false,
-  "session-idle-timeout-ms": 600000
-}
+{"epoch":"<64 hexadecimal bytes>","sequence":1,"users":[{"id":42,"up":10,"down":0}]}
 ```
 
-An `AuthenticationClient` first sends an `Authenticate` request containing its `name` and `secret`. If the credentials
-match a configured auth client, `AuthenticationServer` creates an `authenticationserver_session_t` entry in
-`ts->sessions`. The session stores:
+`sequence` starts at 1 and advances without wrapping. Each batch has 1..4096 unique user IDs and both nonnegative
+`up` and `down` deltas per entry; at least one direction must be nonzero. Integers are plain signed-64-bit-range
+integer tokens or decimal strings through UINT64_MAX. Decimal/exponent number tokens are rejected by integer readers.
+The authenticated configured identity supplies the checkpoint key; payload fields cannot choose another identity.
 
-- the issued token
-- the client name
-- permission flags copied from the matching `auth-clients` entry
-- the configured idle timeout for that auth client
-- the last activity timestamp for this token
-- a private `baseline_users` table
-- the `baseline_config_revision` and `baseline_stats_revision` that describe that baseline
+Under one state write lock, the server validates epoch and sequence and hashes the exact payload bytes with SHA-256.
+An exact replay of the last sequence/digest is acknowledged before current-account validation. Exactly the next
+sequence validates every entry before any mutation, applies saturating traffic and missing first-use timestamps, then
+publishes its checkpoint. Older sequences, gaps, conflicting replay content, unknown IDs and duplicate IDs fail without
+partial application. Only the current epoch's session may report. Checkpoint storage is constant per configured identity;
+it contains no users-table snapshot or unbounded batch history.
 
-When the session is created, the server copies the current authoritative users table into `session->baseline_users`.
-That copy is the server-side picture of what this specific client is expected to know. Each authenticated client has a
-separate baseline copy because each client can serve different traffic and push stats at different times. One client's
-baseline must not be reused for another client, otherwise the server could calculate traffic deltas against the wrong
-previous state and either lose usage or double-count it.
+The Ok ACK JSON contains `epoch`, `sequence`, a 64-character hexadecimal `digest`, and `needs-pull: true`.
+The client validates all three batch identity fields, advances only the acknowledged subset's baseline, and pulls fresh
+authoritative totals and first-use time. Pull installation preserves local post-snapshot traffic as `G + (A - B)`.
+No full table is installed while a batch remains unresolved. Reconnect order is authenticate/resume, replay pending
+batch, validate ACK, then pull. Blocked pull/push requests coalesce until this ordering permits them.
 
-After authentication, a client can affect only its own session state plus validated changes merged into the authoritative
-users table. The session boundary is the server-side isolation mechanism. It lets many clients work independently while
-the authoritative merge still happens in one place.
+Epoch/checkpoint state is runtime-only. Accounting continuity across process crashes or restarts is not provided.
+An unresolved batch whose continuity is lost stays identifiable and stops automatic synchronization for operator
+reconciliation. With no uncertain batch, a client may enroll afresh and pull. The separate administrative
+`UpdateUserTraficStatsDiff` operation remains a raw delta and is not retry-safe.
 
-### Session And Token Behavior
-
-The `Authenticate` response returns response type `4` and exactly 64 bytes of token data. The server obtains 32 random
-bytes directly from the operating-system secure random provider and encodes them as 64 lowercase hexadecimal bytes.
-
-After authentication, the token must be sent in the outer request envelope of every request. `Authenticate` is the only
-public request type; every other module requires a valid token. This includes `ping`, user pull requests, user write
-requests, and statistics sync requests. Rejecting even ping without a valid token prevents unauthenticated clients from
-probing server liveness or protocol behavior through this tunnel.
-
-An outer request message is classified by its envelope token before the contained request frames are dispatched. If the
-token already identifies an active session, `Authenticate` is rejected inside that message with `already-authenticated`.
-This keeps session creation out of authenticated batches and keeps the session pointer for the batch stable. A client
-that needs a new token must send `Authenticate` in an unauthenticated message and use the returned token in later
-messages.
-
-The server maps a request to a session by comparing the 64-byte envelope token with the tokens stored in `ts->sessions`.
-A zero token is never a valid session token. If no matching session exists, dispatch returns `authentication-required`
-for non-public modules. If a matching session exists, dispatch checks the module permission requirements before calling
-the module handler.
-
-Sessions are in-memory runtime state. They are not persisted across process restarts. Each session has an inactivity
-timeout copied from the matching `auth-clients` entry. If that entry does not set `session-idle-timeout-ms`, the session
-uses the top-level `settings.session-idle-timeout-ms`, which defaults to 10 minutes.
-
-Every request message with a valid envelope token refreshes the session's last activity timestamp before its frames are
-dispatched. This includes lightweight requests such as `ping`, permission-denied requests, and mixed request batches.
-A request with no valid session token does not refresh any session.
-
-Worker `0` runs a forever timer every 60000 ms to expire idle sessions. The timer takes the state write lock, destroys
-each expired session's baseline table and token, and compacts `ts->sessions`. Request dispatch holds either the state
-read or write lock while it uses a session pointer, so expiry cannot destroy a session while another worker is using it.
-The last-activity timestamp itself is atomic so concurrent point-read requests can refresh it under the shared lock.
-
-After a session expires, its token is invalid. `AuthenticationClient` must reauthenticate if a request receives
-`authentication-required`, if the connection is reset, if the server restarts, or if the token has been idle longer than
-its configured timeout.
-
-### User Table Synchronization Logic
-
-The `AuthenticationClient` synchronization flow is:
-
-1. Authenticate and store the returned token.
-2. Pull the full users table with `GetAllUsers`.
-3. Keep a local client-side users table based on that pulled table.
-4. Give traffic-serving nodes, such as `Socks5Server`, pointers or handles into the local table.
-5. Let those nodes update runtime usage fields locally while serving traffic.
-6. Periodically push changed traffic-stat hints back to AuthenticationServer with `PushUserStats`.
-7. Pull the full users table again when the server reports that the client baseline is stale.
-
-The client-side table is intentionally writable by local traffic-serving code for runtime statistics. For example, a
-`UserController` node can increment `stats.traffic.up` and `stats.traffic.down` through the `AuthenticationClient`
-internal API. It must not change passwords, password hashes, identity fields, limits, enabled state, expiry fields, notes,
-or other user metadata. Server-side stats sync accepts only traffic-stat deltas; it does not accept arbitrary client-side
-user metadata changes. `first-usage-at-ms` is server-owned: the client does not send it, and the server stamps it with the
-server clock when the first meaningful usage delta is accepted for a user that does not already have it.
-
-The practical sync interval is expected to be around every 5 minutes, but that timing belongs in AuthenticationClient.
-AuthenticationServer simply accepts valid `PushUserStats` requests whenever they arrive.
-
-`GetAllUsers` is the full-table refresh operation. On success, it returns the authoritative users table plus
-`server-time-ms` response metadata, and replaces `session->baseline_users` with that returned table. It also updates the
-session's baseline revisions to the current server revisions. This is the only normal sync path that replaces a session
-baseline with a full table copy.
-
-`PushUserStats` is the partial traffic-stat merge operation. When it arrives, the server treats the request body as a
-list of traffic-stat hints, not as a replacement users table. Each hint is a user-shaped JSON object, but the server
-reads only:
-
-- `password` or `pass`
-  Used only to derive the SHA-256 password lookup key.
-- `stats.traffic.up` or `stats.traffic.u`
-  Optional current upload counter for this client.
-- `stats.traffic.down` or `stats.traffic.d`
-  Optional current download counter for this client.
-
-Other fields in a hint are ignored. They are not required, validated, merged, copied into `session->baseline_users`, or
-copied into `ts->store.users`. A hint must contain at least one traffic counter. The request may contain only users that
-changed since the last push; omitted users leave this session baseline unchanged.
-
-For each pushed hint, the server compares the present counters against `session->baseline_users`, using the user's
-SHA-256 password hash as the stable lookup key:
-
-- The user must exist in the session baseline.
-- The user must still exist in `ts->store.users`.
-- Each present traffic counter must be greater than or equal to the matching baseline counter.
-- The accepted delta for each present counter is `client_counter - baseline_counter`.
-
-Only positive or zero deltas are accepted. Backwards counters are rejected because allowing subtraction would let a
-client erase usage. Unknown users are rejected because a stats push is not a user-management operation. Duplicate user
-hints in one request are rejected so one message cannot advance the same baseline twice. This is the main safety rule:
-`AuthenticationClient` may report usage, but it may not rewrite users through the stats sync path.
-
-After the deltas are calculated, the server applies them to `ts->store.users` using saturating counter behavior and
-advances only the matching traffic counters in this session's baseline. If the authoritative user has no
-`first-usage-at-ms` and a non-zero traffic delta was accepted, the server stamps `first-usage-at-ms` with its current time
-in both the store and this session baseline. It does not replace the session baseline with the pushed payload. If any
-non-zero delta or first-usage stamp was applied, the server increments `stats_revision`.
-
-If the session baseline was already current before the push, the session's baseline revisions are advanced to the
-latest server revisions. If another client or management request changed the authoritative table first, the push can
-still succeed, but the session remains stale and the response reports `needs-pull: true`. The client must then call
-`GetAllUsers` to refresh its local table.
-
-`PushUserStats` never blindly copies the full updated authoritative table back into the session after a stats push. It
-updates only the per-user traffic counters that were present in the request. A full authoritative-table copy into the
-session happens only when the client pulls with `GetAllUsers`. This keeps stats merging narrow and makes the client
-explicitly refresh when the response says its session is stale.
-
-Revision state is store-level metadata, not per-user metadata. `user_t` does not contain a per-user sync field.
-Configuration changes increment `config_revision`; accepted stats changes increment `stats_revision`. `GetAllUsers`
-refreshes the session baseline to the returned authoritative table and its revisions.
-
-### Communication Protocol
-
-The outer request envelope is:
-
-- 4-byte body size
-- 64-byte authentication token
-- one or more request frames
-
-The token is ignored only for `Authenticate` in unauthenticated messages. All other requests use the token to find the
-session and enforce permissions. If the token already identifies a session, `Authenticate` is rejected for that message.
-The request frames themselves keep the existing frame format: request type, correlation ID, request data length, and
-request data bytes.
-
-The outer response envelope is:
-
-- 4-byte body size
-- 8-byte `config_revision`
-- 8-byte `stats_revision`
-- one or more response frames
-
-For a successful stats sync, the `PushUserStats` response body also includes a compact JSON status object with
-`config-revision`, `stats-revision`, and `needs-pull`. `AuthenticationClient` compares the returned revisions with its
-local table metadata and pulls the latest full users table with `GetAllUsers` when refresh is required.
-
-The refresh decision is revision-based:
-
-- if `server_config_revision != local_config_revision`, pull the full table
-- if `server_stats_revision != local_stats_revision` and the client needs an exact current global stats view, pull the
-  full table
-- if `needs-pull` is true after `PushUserStats`, pull the full table
-
-This split lets the client distinguish user configuration changes from pure usage changes.
-
-### User And Permission Model
-
-Normal users are the accounts authenticated for traffic usage. `AuthenticationClient` credentials and management rights
-are configured separately under `settings.auth-clients`. `user_t` does not carry management permissions for this
-protocol.
-
-Permission checks are session permissions, not user permissions:
-
-- `allow-user-pull`
-  Allows pulling users with `GetAllUsers` and user lookup modules.
-- `allow-stats-push`
-  Allows pushing usage through `PushUserStats` and `UpdateUserTraficStatsDiff`.
-- `allow-user-write`
-  Allows user management operations such as `AddNewUser` and `UpdateUser`.
-
-This keeps infrastructure credentials out of the normal users database. It also avoids giving a normal proxy user the
-ability to manage other users just because that user object was loaded into AuthenticationClient.
-
-Normal traffic-serving users can accumulate local usage stats. They must not be allowed to change
-their own password, password hashes, limits, enabled state, expiration fields, or other users through the stats path.
-Those changes belong to authenticated management requests guarded by explicit write permission.
-
-### Integration With Other Nodes
-
-Other nodes should not communicate directly with AuthenticationServer. AuthenticationServer is the upstream authority,
-and AuthenticationClient is the frontend used by traffic-serving nodes such as `Socks5Server`.
-
-`AuthenticationClient` exposes value handles for users in its local users table. Traffic-serving nodes should keep those
-handles in their own node-owned state, such as per-line tunnel state, rather than in shared `line_t` routing metadata.
-Other nodes may use those handles to:
-
-- read user configuration needed for admission decisions, such as enabled state, limits, expiry, and usage
-- update local runtime statistics, especially traffic upload/download counters
-- update transient local counters needed for enforcement, such as active connection counts, if AuthenticationClient
-  decides those are part of its local runtime model
-
-Other nodes should not use those handles to:
-
-- change passwords or password hashes
-- add or remove users
-- rewrite limits, expiry, enabled state, notes, email, or identity fields
-- send AuthenticationServer protocol frames directly
-
-All server communication should go through AuthenticationClient. That keeps token handling, session ownership,
-baseline tracking, pull decisions, and stats pushing in one component. Traffic-serving nodes only need to report usage
-by mutating the local client-side user table; AuthenticationClient later batches those changes into `PushUserStats`.
+Traffic-serving nodes use AuthenticationClient handles and copy-out APIs; they never receive borrowed user pointers.
+Credential eligibility checks enabled state, expiry and cumulative traffic. Live connection/IP admission remains local
+to one client runtime; saved gauge values do not reserve or exhaust live capacity. The protocol has no encryption of
+its own; remote chains require an authenticated protected transport.
 
 ## Request And Response Framing
 
@@ -681,19 +476,11 @@ also require `allow-user-pull`; user create/update modules require `allow-user-w
 
 ### Authenticate Module
 
-The `Authenticate` module expects request data containing a JSON object with `name` and `secret` strings:
-
-```json
-{"name":"edge-1","secret":"long-random-secret"}
-```
-
-If the credentials match an entry in `settings.auth-clients`, the server creates a session, stores a baseline copy of
-the current authoritative users table for that session, and returns response type `4` with a 64-byte session token. The
-token must be included in the request envelope for later requests.
-
-If credentials are malformed or do not match, it returns an error response frame with the same correlation ID. If the
-outer request message already carries a valid session token, `Authenticate` is not dispatched and the response data is
-`already-authenticated`.
+Request data is `{"name":"edge-1","secret":"long-random-secret"}` for fresh enrollment, or the same object
+with `"epoch":"<64 hexadecimal bytes>"` for resumption. The outer token is zero. Success returns type `4` and
+128 bytes: token then epoch, 64 hexadecimal bytes each. Later requests carry the token in their envelope.
+Malformed credentials fail, authenticated-envelope enrollment returns `already-authenticated`, and failed resumption
+returns `accounting-continuity-lost`.
 
 ### Ping Module
 
@@ -787,7 +574,7 @@ format described above. The submitted user must contain a non-zero unique `id`/`
 
 The module validates that the payload is parseable JSON, that it is a user object, that the user can be created, and
 that the new user's id, name, and password hashes do not conflict with existing users. If validation passes, the user
-is added to the in-memory database and the users file is saved immediately with the normal backup-first save behavior.
+is added to the in-memory database and the users file is saved immediately through the private atomic commit sequence.
 If that immediate save fails, the module attempts to roll back the in-memory add and returns a save error.
 
 On success it returns response type `0` and response data equal to `user-added`.
@@ -851,44 +638,18 @@ On success it returns response type `3` and response data containing the normali
 `server-time-ms` is not written to the database. `AuthenticationClient` uses it to project server-owned expiry fields onto
 the client's local clock.
 
-On success the session baseline is replaced with the returned table and the current server revisions.
+A pull returns authoritative counters and current envelope revisions without changing the accounting checkpoint.
 
 If the request contains unexpected data, or if exporting/serializing the in-memory database fails, it returns an error
 response frame with the same correlation ID.
 
 ### PushUserStats Module
 
-The `PushUserStats` module expects request data containing one or more partial user stats hints. The accepted outer
-layouts are:
-
-- an array of hint objects
-- an object with a `users` array of hint objects
-- an object map whose values are hint objects
-- one standalone hint object
-
-Each hint object must contain `password` or `pass`, and must contain at least one of `stats.traffic.up`,
-`stats.traffic.u`, `stats.traffic.down`, or `stats.traffic.d`. The upload/download values may be JSON safe integers or
-decimal strings. All other fields are ignored, even if they look like user configuration fields.
-
-The pushed hints must reference only users that exist in both the session baseline and the authoritative table. If any
-present traffic counter is lower than the session baseline counter, the request is rejected to avoid subtracting usage.
-Duplicate hints for the same password/SHA-256 key in one request are rejected.
-
-After a successful merge, only the pushed traffic counters and any server-created first-usage stamp are advanced in the
-session baseline. Omitted users and omitted upload/download counters remain unchanged in that session baseline. If the
-session was already current before the push, its baseline revisions are advanced to the latest server revisions. If another
-client changed the authoritative table first, or if this push created a new first-usage stamp that the client needs for
-expiry math, the response still succeeds but reports `needs-pull: true`, so `AuthenticationClient` can call `GetAllUsers`
-and refresh its local copy.
-
-On success it returns response type `0` and response data containing a compact JSON status object:
-
-```json
-{"status":"stats-updated","applied-deltas":2,"needs-pull":false,"config-revision":1,"stats-revision":3}
-```
-
-If the JSON is malformed, references unknown users, or contains backwards counters, it returns an error response frame
-with the same correlation ID.
+The payload is the immutable `epoch` / `sequence` / `users` delta batch described above. The complete batch is
+validated before mutation. Success returns type `0` and JSON identifying the accepted epoch, sequence and exact
+payload digest, with `needs-pull: true`. Replaying the last identical batch returns the same accounting confirmation
+without applying it again, even if an account has since changed or disappeared. Permission, epoch, sequence and
+input failures return a correlated Error response.
 
 ## Lifecycle Behavior
 
@@ -909,7 +670,16 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
 - The current outer message payload limit is 16 MiB.
 - The current request data limit is 16 MiB.
 - The current response payload limit is 16 MiB.
-- The current queued response limit is 16 MiB.
+- Queued and active responses share 1024 entries, 16 MiB plus the 20-byte envelope in logical storage, and 32 MiB
+  allocation charge. Refusal closes only that line and releases all retained storage.
+- Responses drain in FIFO order through at most 16 KiB stream chunks, preserving chain padding and nested callback
+  order. Pause gates endpoint output; active backing allocations remain charged until release.
+- Temporary construction retains at most one bounded response frame, one growing message (each at most 16 MiB plus
+  envelope), one bounded serialized JSON text (16 MiB plus five spare printer bytes), and one output chunk. Allocation
+  replacement may briefly overlap old/new storage. JSON trees, account tables, pools and transport queues are separate;
+  this budget is not a total-RSS bound.
+- Incoming request storage has the 16 MiB payload plus 68-byte envelope bound, 1024 entries and 32 MiB charge;
+  one extracted active request is separate bounded parsing scratch.
 - This node does not require left padding and does not prepend in-place.
 - This node is not a packet tunnel and does not use packet-line semantics.
 
@@ -923,10 +693,7 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
 - All keyed lookups (SHA-224, SHA-256, UUID, WireGuard public key, durable id,
   non-empty name) are average O(1); WireGuard Allowed-IP address lookup and
   range-overlap detection are O(log M) through an ordered interval index.
-- Session baseline snapshots (`GetAllUsers`, `Authenticate`) use the native
-  `usersCopy()` deep copy instead of a JSON round trip. `GetAllUsers` serializes
-  the store exactly once, for the network response, and reuses the same table
-  for the session baseline via the native copy.
+- Accounting retains only the last sequence/digest per configured client; full pulls serialize the authoritative table.
 - Pure point-read request messages (`Ping`, `GetUserBySHA-224/256`, and
   `GetUserByPassword`) share the server state read lock and may execute
   concurrently. Any message containing authentication, `GetAllUsers`, a user

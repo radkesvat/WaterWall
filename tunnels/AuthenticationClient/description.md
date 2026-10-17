@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -193,11 +193,10 @@ When pull or push is enabled, one `sync_timer` runs at the shortest enabled pull
 which jobs are due and attempts `PushUserStats` first. `GetAllUsers` is sent when revisions differ, or when the pull
 cadence is due and no fresher response has already confirmed that the server and local table revisions match.
 
-`reconnect-interval-ms` controls reconnect delay after the control transport closes. A value of `0` reconnects
-immediately on worker 0.
+`reconnect-interval-ms` controls reconnect delay after the control transport closes. A value of `0` queues a retry for a later loop turn. Repeated retry requests preserve the first positive deadline.
 
 `request-timeout-ms` closes and reconnects the control line if any request stays pending longer than the configured
-time. A value of `0` disables pending request timeout checks.
+time using an independent worker-0 deadline timer, even with ping/pull/push disabled. A value of `0` disables it.
 
 `verbose` enables focused debug logs for the control-line lifecycle, reconnect decisions, timer ticks, and
 request/response correlation flow. It does not log secrets, session tokens, passwords, or raw users JSON.
@@ -259,8 +258,9 @@ Worker 0 then:
 When the next side establishes the transport and sends downstream `Est`, the client marks the control line connected and
 sends `Authenticate` with a zero session token.
 
-When `Authenticate` returns a `Session` response, the 64-byte token becomes the active token for all later requests, and
-the client immediately sends `GetAllUsers`.
+`Authenticate` accepts `name`, `secret`, and an optional `epoch` for resumption. A Session response contains 128 bytes:
+a 64-byte token followed by a 64-byte accounting epoch, both hexadecimal OS-secure random values. The client stores
+the token, resolves any retained batch first, then pulls with `GetAllUsers`. A stale response cannot replace an enrolled epoch.
 
 ## Local Users Table
 
@@ -343,43 +343,38 @@ refresh bumped the local users generation. A miss means the user disappeared fro
 argument for these helpers is in the client's local monotonic clock domain, because expiry has already been projected
 onto that clock when the users table was installed.
 
-`authenticationclientRequestPull()` and `authenticationclientRequestPush()` do not create their own lines. If called from
-another worker, they queue a worker-0 task that tries to send the request on the current control line. If the client is
-stopped, disconnected, unauthenticated, write-paused, or already has that request type in flight, the request is simply
-not sent.
+`authenticationclientRequestPull()` and `authenticationclientRequestPush()` use the current control line. Foreign
+callers queue work to worker 0. Desired jobs coalesce while disconnected, paused or blocked by another synchronization
+operation. A pull cannot replace the baseline during an unresolved push, and a push cannot overtake an active pull.
+Credential eligibility checks enabled state, expiry and traffic quota; saved connection, IP, device and speed gauges do
+not block lookup. Live capacity is reserved separately by the atomic runtime admission helper.
 
 ## Stats Push
 
-`PushUserStats` is treated as a partial hint update. The client sends only the fields the server needs:
+The client sends immutable deltas keyed by durable user ID:
 
 ```json
-{
-  "users": [
-    {
-      "password": "user-password",
-      "stats": {
-        "traffic": {
-          "up": "12345",
-          "down": "67890"
-        }
-      }
-    }
-  ]
-}
+{"epoch":"<64 hexadecimal bytes>","sequence":1,"users":[{"id":42,"up":10,"down":0}]}
 ```
 
-Users without traffic counters in the local JSON snapshot are skipped for that push. This keeps push messages focused on
-password plus traffic stats. The server compares these counters against the session baseline created by `GetAllUsers` and
-applies only deltas. The client does not send `time.first-usage-at-ms`; when the first non-zero traffic delta arrives for a
-user whose authoritative `first-usage-at-ms` is still zero, the server stamps that field using its own clock.
+It retains the exact payload and its subset snapshot for the tunnel lifetime until an ACK matches epoch, sequence
+and SHA-256 digest. Send refusal, timeout, malformed replies and transport/session loss preserve both owners.
+Retries use the same bytes with a fresh correlation ID and the current token. Batches contain at most 4096 entries;
+only represented users/directions advance on ACK. Sequence numbers never wrap, and empty batches are not sent.
+Plain integer tokens through INT64_MAX and decimal strings through UINT64_MAX are exact; integer readers reject
+fractional, decimal/exponent, negative, nonfinite and overflowing input.
 
-`authenticationclientUserAccountTraffic()` also marks a runtime-only per-user flag on the first non-zero local traffic
-accounting while `first-usage-at-ms` is still missing. AuthClient then queues one worker-0 `PushUserStats` attempt, or
-defers one follow-up push if a stats push is already in flight, and coalesces later payload calls until the pushed usage
-is followed by a fresh `GetAllUsers` view or the send attempt fails.
+If `A` is current local traffic, `B` its acknowledged baseline and `S` the batch snapshot, ACK advances `B` to `S`
+for that subset. New traffic stays in `A`. A subsequent pull installs global counters `G + (A - B)` with baseline `G`.
+Every ACK, including a duplicate, requires a full pull so server-owned first-use time and other clients' usage arrive.
+First-use work and blocked desired pushes/pulls remain pending until they can run.
 
-If the server says `needs-pull: true`, the client requests `GetAllUsers` again to refresh the local cache and server-side
-session baseline.
+Reconnect order is Authenticate/resume epoch, replay retained batch if present, validate ACK, then full pull.
+The server retains a bounded checkpoint per configured client beyond session expiry/replacement. Independent client
+processes need different configured names. A lost/superseded epoch with an unresolved batch enters
+`kAuthenticationClientStateContinuityError`, keeps the batch, closes the transport and stops automatic synchronization
+for operator reconciliation. With no uncertain batch, fresh enrollment and pull can resume. This guarantee covers
+connection loss while both processes run; it does not provide accounting recovery across process crashes/restarts.
 
 ## Timers
 
@@ -391,14 +386,19 @@ All protocol timers live on worker 0, the same worker as the owned control line:
 the independent pull/push cadence, queues `PushUserStats` first when due, then queues `GetAllUsers` when revisions
 differ or the pull cadence is due without a fresher equal-revision response.
 
-`reconnect_timer` opens a new control line after downstream transport close.
+`reconnect_timer` preserves the first positive retry deadline, rechecking actual monotonic due time. Zero-delay
+retries use queued work, never recursive opening from Finish. A mutex-protected latch is published before queue
+submission; run or cancellation settles it once. Cancellation touches no worker-owned line, pool or timer.
 
-Timers are deleted from `onWorkerStop` for worker 0, not from `onStop`, because timer deletion must happen on the same
+`request_timer` tracks the earliest outstanding request independently of the optional jobs, publishing its deadline
+before Payload so synchronous replies/Finish are safe. Matching replies settle only their own requests.
+
+Timers are detached in `onWorkerQuiesce` for worker 0, before owner drain, because timer deletion must happen on the same
 worker event loop that owns the timer.
 
 ## Lifecycle And Line Safety
 
-The control line's `AuthenticationClient` line state contains only the downstream response read stream. It is initialized
+The control line's `AuthenticationClient` line state contains the downstream response read stream and its parser reentry guard. It is initialized
 before `tunnelNextUpStreamInit()` and destroyed before the client propagates an upstream finish or destroys the owned
 line.
 
@@ -408,7 +408,7 @@ Downstream `Finish` means the next side closed the transport. The client:
 2. Clears session token, authenticated state, in-flight flags, and pending requests.
 3. Destroys this tunnel's line state.
 4. Destroys the owned line.
-5. Schedules reconnect unless the tunnel is stopping.
+5. Preserves an unresolved usage batch and schedules reconnect unless stopping or in continuity error.
 
 When the client itself closes the control line, such as during worker-0 shutdown or malformed response handling, it
 destroys its local line state first, then sends `tunnelNextUpStreamFinish()`, then destroys the owned line if it is still
@@ -468,3 +468,6 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayerNone` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
+
+Response input retains at most 16 MiB plus its 20-byte envelope, 1024 entries and 32 MiB allocation charge.
+One extracted active response is separate bounded parsing scratch.

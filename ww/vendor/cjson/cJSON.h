@@ -4,6 +4,11 @@
  * integer-valued numbers can print through PRId64, so signed 64-bit JSON
  * integers do not need the old JavaScript-safe 53-bit string workaround.
  * Do not replace this with upstream cJSON unless that behavior is preserved.
+ * Integer extraction uses cJSON_GetInt64Value(). Plain integer tokens retain
+ * exactness; decimal/exponent tokens remain floating point. CreateInt64 and
+ * SetInt64Value preserve exact signed values, number setters validate their
+ * supplied double, and duplication carries provenance. Direct field writes
+ * cannot establish provenance; inconsistent mutations invalidate extraction.
  */
 
 /*
