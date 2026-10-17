@@ -1,4 +1,4 @@
-/* Server half of waterwall.authentication_sync_unit. */
+/* Server half shared by the paired authentication sync and ingress fixtures. */
 #include "authentication_sync_peer.h"
 #include "AuthenticationServer/structure.h"
 #include "test_assert.h"
@@ -124,4 +124,26 @@ void authTestPeerCredentials(tunnel_t *t, unsigned client, uint8_t token[64], ch
             return;
         }
     require(false, "peer session unavailable");
+}
+
+size_t authTestPeerPadUsersResponse(tunnel_t *t, size_t json_length)
+{
+    authenticationserver_tstate_t *ts   = tunnelGetState(t);
+    user_t                        *user = usersLookupByIdentifier(&ts->store.users, 42);
+    /* Keep the optional notes property present while measuring fixed overhead. */
+    require(usersSetUserNotes(&ts->store.users, user, "a"), "seed notes failed");
+    cJSON *json = usersToJson(&ts->store.users);
+    require(json != NULL, "peer users export failed");
+    discard jsonAddUint64ToObject(json, "server-time-ms", getTimeOfDayMS());
+    char   *text = authenticationserverSerializeResponseJson(json);
+    require(text != NULL && stringLength(text) < json_length, "target JSON is too small");
+    const size_t padding = json_length - stringLength(text) + 1;
+    cJSON_free(text);
+    cJSON_Delete(json);
+    char *notes = memoryAllocate(padding + 1);
+    memset(notes, 'a', padding);
+    notes[padding] = '\0';
+    require(usersSetUserNotes(&ts->store.users, user, notes), "padded notes failed");
+    memoryFree(notes);
+    return padding;
 }

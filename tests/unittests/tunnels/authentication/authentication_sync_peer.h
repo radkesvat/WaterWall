@@ -13,3 +13,4 @@ void        authTestPeerPopulate(tunnel_t *server, unsigned count);
 void        authTestPeerRemoveUser(tunnel_t *server);
 uint64_t    authTestPeerSequence(tunnel_t *server, unsigned client);
 void        authTestPeerCredentials(tunnel_t *server, unsigned client, uint8_t token[64], char epoch[65]);
+size_t      authTestPeerPadUsersResponse(tunnel_t *server, size_t json_length);

@@ -469,5 +469,9 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
 
-Response input retains at most 16 MiB plus its 20-byte envelope, 1024 entries and 32 MiB allocation charge.
-One extracted active response is separate bounded parsing scratch.
+Complete response messages drain before incomplete-input limits are checked, so a delivery may contain several
+messages. Incomplete input stays below one maximum wire message (16 MiB plus the 20-byte envelope), with at most
+1024 entries and 32 MiB allocation charge after compaction. Nested deliveries share a byte allowance of one maximum
+wire message plus 2 MiB, including the older unread suffix; fragmented storage is compacted before refusing it.
+Empty deliveries are recycled. One extracted message and a compaction destination are bounded parsing scratch;
+the current synchronous delivery, account tables and pool caches are outside the retained-input allowance.

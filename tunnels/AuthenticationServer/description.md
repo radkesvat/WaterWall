@@ -678,8 +678,11 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
   envelope), one bounded serialized JSON text (16 MiB plus five spare printer bytes), and one output chunk. Allocation
   replacement may briefly overlap old/new storage. JSON trees, account tables, pools and transport queues are separate;
   this budget is not a total-RSS bound.
-- Incoming request storage has the 16 MiB payload plus 68-byte envelope bound, 1024 entries and 32 MiB charge;
-  one extracted active request is separate bounded parsing scratch.
+- Complete request messages drain before checking incomplete-input limits; combined messages are not oversized frames.
+  Incomplete input stays below 16 MiB plus the 68-byte envelope, with at most 1024 entries and 32 MiB allocation charge
+  after compaction. Nested deliveries share one maximum wire message plus 2 MiB of bytes, including the older unread
+  suffix; fragmented storage is compacted before refusal. Empty deliveries are recycled. One extracted request and a
+  compaction destination are bounded parsing scratch; the current synchronous delivery is outside the retained bound.
 - This node does not require left padding and does not prepend in-place.
 - This node is not a packet tunnel and does not use packet-line semantics.
 

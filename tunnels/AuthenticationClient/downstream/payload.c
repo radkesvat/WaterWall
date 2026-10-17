@@ -1,31 +1,34 @@
 #include "structure.h"
 
+#include "../../Internals/AuthenticationCommon/stream.h"
+
 #include "loggers/network_logger.h"
 
 void authenticationclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     authenticationclient_lstate_t *ls = lineGetState(l, t);
-    const size_t    limit  = kAuthenticationClientMaxResponsePayload + kAuthenticationClientResponseEnvelopeHeaderSize;
-    size_t          charge = sbufGetAllocationCharge(buf);
-    const ptrdiff_t count  = bs_doublequeue_t_size(&ls->read_stream.q);
-    for (ptrdiff_t i = 0; i < count && charge <= 32U * 1024U * 1024U; ++i)
-    {
-        const size_t entry = sbufGetAllocationCharge(*bs_doublequeue_t_at(&ls->read_stream.q, i));
-        if (entry > 32U * 1024U * 1024U - charge)
-            charge = 32U * 1024U * 1024U + 1U;
-        else
-            charge += entry;
-    }
-    if (sbufGetLength(buf) > limit || bufferstreamGetBufLen(&ls->read_stream) > limit - sbufGetLength(buf) ||
-        count >= 1024 || charge > 32U * 1024U * 1024U)
+    const uint32_t                 max_message =
+        kAuthenticationClientMaxResponsePayload + kAuthenticationClientResponseEnvelopeHeaderSize;
+    if (sbufGetLength(buf) == 0)
     {
         lineReuseBuffer(l, buf);
-        authenticationclientRecoverControlLine(t, l, true);
+        return;
+    }
+    if (ls->processing_responses)
+    {
+        if (! authenticationStreamPushNested(&ls->read_stream, buf, max_message))
+        {
+            lineReuseBuffer(l, buf);
+            authenticationclientRecoverControlLine(t, l, true);
+        }
         return;
     }
 
+    /* Publish the complete delivery before callbacks: its unread suffix must
+     * precede nested input. Only incomplete input remains after the drain. */
     lineRef(l);
     bufferstreamPush(&ls->read_stream, buf);
-    discard authenticationclientProcessResponses(t, l, ls);
+    if (authenticationclientProcessResponses(t, l, ls))
+        authenticationStreamCompactIncomplete(&ls->read_stream, max_message);
     lineUnref(l);
 }

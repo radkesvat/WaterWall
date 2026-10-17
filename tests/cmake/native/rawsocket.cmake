@@ -544,6 +544,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationClient)
   add_dependencies(waterwall_unit_tests authentication_sync_test)
   # The 4097-account boundary exercises software X25519 under ASan as well.
   add_waterwall_unit_test(waterwall.authentication_sync_unit authentication_sync_test "unit;authentication;accounting;worker;line" 300)
+  waterwall_add_native_executable(authentication_ingress_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authentication_ingress_test.c
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authentication_sync_peer.c)
+  target_link_libraries(authentication_ingress_test PRIVATE AuthenticationClient AuthenticationServer ww)
+  target_link_options(authentication_ingress_test PRIVATE "-Wl,--wrap=getHRTimeUs")
+  add_dependencies(waterwall_unit_tests authentication_ingress_test)
+  add_waterwall_unit_test(waterwall.authentication_ingress_unit authentication_ingress_test
+    "unit;authentication;buffer;line" 180)
   endif()
   waterwall_add_native_executable(authenticationclient_progress_test SUPPORT SOURCES
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationclient_progress_test.c

@@ -1,3 +1,4 @@
+#include "../../Internals/AuthenticationCommon/stream.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -1250,7 +1251,7 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
             return true;
         }
 
-        sbuf_t *payload = bufferstreamReadExact(&ls->read_stream, message_len);
+        sbuf_t *payload = authenticationStreamReadExact(&ls->read_stream, (uint32_t) message_len);
         sbufShiftRight(payload, kAuthenticationClientMessageHeaderSize);
 
         const uint8_t *revision_ptr    = sbufGetRawPtr(payload);
