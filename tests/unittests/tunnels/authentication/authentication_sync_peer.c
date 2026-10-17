@@ -147,3 +147,76 @@ size_t authTestPeerPadUsersResponse(tunnel_t *t, size_t json_length)
     memoryFree(notes);
     return padding;
 }
+
+void authTestPeerPermissions(tunnel_t *t, unsigned client, bool user_write, bool stats_push)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    rwlockWriteLock(&ts->state_lock);
+    ts->auth_clients[client].allow_user_write = user_write;
+    ts->auth_clients[client].allow_stats_push = stats_push;
+    for (uint32_t i = 0; i < ts->sessions_count; ++i)
+        if (ts->sessions[i]->accounting_client == &ts->auth_clients[client])
+        {
+            ts->sessions[i]->allow_user_write = user_write;
+            ts->sessions[i]->allow_stats_push = stats_push;
+        }
+    rwlockWriteUnlock(&ts->state_lock);
+}
+
+void authTestPeerSetUser(tunnel_t *t, uint64_t id, const user_update_t *update)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    rwlockWriteLock(&ts->state_lock);
+    require(usersUpdateUser(&ts->store.users, usersLookupByIdentifier(&ts->store.users, id), update),
+            "peer user setup failed");
+    rwlockWriteUnlock(&ts->state_lock);
+}
+
+cJSON *authTestPeerUserJson(tunnel_t *t, uint64_t id)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    rwlockReadLock(&ts->state_lock);
+    cJSON *json = usersUserToJsonByIdentifier(&ts->store.users, id);
+    rwlockReadUnlock(&ts->state_lock);
+    require(json != NULL, "peer user export failed");
+    return json;
+}
+
+char *authTestPeerSnapshot(tunnel_t *t)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    rwlockReadLock(&ts->state_lock);
+    require(usersValidate(&ts->store.users), "peer indexes invalid");
+    cJSON  *json = usersToJson(&ts->store.users);
+    discard jsonAddUint64ToObject(json, "config-revision", ts->store.config_revision);
+    discard jsonAddUint64ToObject(json, "stats-revision", ts->store.stats_revision);
+    cJSON  *checkpoints = cJSON_AddArrayToObject(json, "checkpoints");
+    for (uint32_t i = 0; i < ts->auth_clients_count; ++i)
+    {
+        const authenticationserver_auth_client_t *client    = &ts->auth_clients[i];
+        char                                      epoch[65] = {0}, digest[65] = {0};
+        memoryCopy(epoch, client->accounting_epoch, 64);
+        asciiHexEncodeBytesLower(client->last_digest, sizeof(client->last_digest), (uint8_t *) digest);
+        cJSON  *checkpoint = cJSON_CreateObject();
+        discard cJSON_AddItemToArray(checkpoints, checkpoint);
+        discard cJSON_AddStringToObject(checkpoint, "epoch", epoch);
+        discard cJSON_AddStringToObject(checkpoint, "digest", digest);
+        discard jsonAddUint64ToObject(checkpoint, "sequence", client->last_sequence);
+    }
+    char *text = cJSON_PrintUnformatted(json);
+    cJSON_Delete(json);
+    rwlockReadUnlock(&ts->state_lock);
+    return text;
+}
+
+void authTestPeerInsertUser(tunnel_t *t, uint64_t id, const char *password)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    user_t                         user;
+    require(userCreate(&user, password), "peer insert construction failed");
+    userSetId(&user, id);
+    rwlockWriteLock(&ts->state_lock);
+    require(usersAddUser(&ts->store.users, &user), "peer insert failed");
+    rwlockWriteUnlock(&ts->state_lock);
+    userDestroy(&user);
+}

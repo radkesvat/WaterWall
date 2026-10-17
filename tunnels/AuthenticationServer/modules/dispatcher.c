@@ -14,7 +14,6 @@
 #include "modules/ping/ping.h"
 #include "modules/push_user_stats/push_user_stats.h"
 #include "modules/update_user/update_user.h"
-#include "modules/update_user_trafic_stats_diff/update_user_trafic_stats_diff.h"
 
 typedef struct authenticationserver_module_s
 {
@@ -92,12 +91,6 @@ static const authenticationserver_module_t kAuthenticationServerModules[] = {
         .name               = "UpdateUser",
         .handler            = authenticationserverUpdateUserHandle,
         .require_user_write = true,
-    },
-    {
-        .request_type       = kAuthenticationServerRequestTypeUpdateUserTraficStatsDiff,
-        .name               = "UpdateUserTraficStatsDiff",
-        .handler            = authenticationserverUpdateUserTraficStatsDiffHandle,
-        .require_stats_push = true,
     },
     {
         .request_type      = kAuthenticationServerRequestTypeGetAllUsers,

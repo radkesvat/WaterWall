@@ -29,6 +29,7 @@ static sbuf_t                    *held_request, *saved_ack, *saved_session;
 static bool                       hold_pull, hold_push, pause_before_session, pause_before_ack;
 static unsigned                   last_response;
 static int                        raw_response[2];
+static char                       raw_body[2][128];
 static unsigned                   refuse_create;
 static bool                       refuse_add;
 bool                              __real_usersCreate(users_t *users);
@@ -89,6 +90,9 @@ static void output(tunnel_t *t, line_t *l, sbuf_t *b)
     {
         require(sbufGetLength(b) >= 29, "raw response was truncated");
         raw_response[lineGetWID(l)] = bytes[20];
+        const uint32_t length       = min(sbufGetLength(b) - 29, (uint32_t) sizeof(raw_body[0]) - 1U);
+        memoryCopy(raw_body[lineGetWID(l)], bytes + 29, length);
+        raw_body[lineGetWID(l)][length] = 0;
         lineReuseBuffer(l, b);
         return;
     }
@@ -502,9 +506,8 @@ static void testEmptyPushDoesNotDropPull(void)
     teardown();
 }
 
-static void rawBatch(line_t *l, const uint8_t token[64], const char *text)
+static void rawRequest(line_t *l, const uint8_t token[64], uint8_t type, const void *text, uint32_t length)
 {
-    const uint32_t length  = (uint32_t) stringLength(text);
     sbuf_t        *message = bufferpoolGetBestFit(lineGetBufferPool(l), 77 + length, 0);
     sbufSetLength(message, 77 + length);
     uint8_t *bytes = sbufGetMutablePtr(message);
@@ -512,7 +515,7 @@ static void rawBatch(line_t *l, const uint8_t token[64], const char *text)
     uint32_t number = htonl(73 + length);
     memoryCopy(bytes, &number, 4);
     memoryCopy(bytes + 4, token, 64);
-    bytes[68] = kAuthenticationClientRequestTypePushUserStats;
+    bytes[68] = type;
     number    = htonl(0xFFFF);
     memoryCopy(bytes + 69, &number, 4);
     number = htonl(length);
@@ -520,6 +523,389 @@ static void rawBatch(line_t *l, const uint8_t token[64], const char *text)
     memoryCopy(bytes + 77, text, length);
     tunnelUpStreamPayload(server, l, message);
 }
+
+static void rawBatch(line_t *l, const uint8_t token[64], const char *text)
+{
+    rawRequest(l, token, kAuthenticationClientRequestTypePushUserStats, text, (uint32_t) stringLength(text));
+}
+
+static void testStaleFullObjectRejected(void)
+{
+    setup(1);
+    user_update_t initial = {.mask = kUserUpdateName | kUserUpdateStats, .name = "original", .stats.traffic.u = 100};
+    authTestPeerSetUser(server, 42, &initial);
+    authTestPeerPermissions(server, 0, true, true);
+    start(0);
+    cJSON *stale = authTestPeerUserJson(server, 42);
+    require(cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(stale, "name"), "renamed") != NULL,
+            "stale user name setup failed");
+    traffic(0, 10);
+    authenticationclientRequestPush(clients[0]);
+    require(authTestPeerStats(server, 42).traffic.u == 110, "usage fixture failed");
+    uint8_t token[64];
+    char    epoch[65];
+    authTestPeerCredentials(server, 0, token, epoch);
+    line_t *line = lineCreate(chain->line_pools, 0);
+    tunnelUpStreamInit(server, line);
+    char *before  = authTestPeerSnapshot(server);
+    char *request = cJSON_PrintUnformatted(stale);
+    rawRequest(line, token, kAuthenticationClientRequestTypeUpdateUser, request, (uint32_t) stringLength(request));
+    char *after = authTestPeerSnapshot(server);
+    require(raw_response[0] == 255 && stringCompare(before, after) == 0,
+            "stale full-object edit changed usage or protected state");
+    cJSON_free(before);
+    cJSON_free(after);
+    cJSON_free(request);
+    cJSON_Delete(stale);
+    tunnelUpStreamFin(server, line);
+    lineDestroy(line);
+    teardown();
+}
+static uint64_t jsonUnsigned(const cJSON *object, const char *key)
+{
+    uint64_t value;
+    require(getUint64FromJson(&value, cJSON_GetObjectItemCaseSensitive(object, key)), "missing exact test value");
+    return value;
+}
+
+static void expectPatchBytes(line_t *line, const uint8_t token[64], const void *request, uint32_t length, bool accepted)
+{
+    char *before    = authTestPeerSnapshot(server);
+    raw_response[0] = -1;
+    rawRequest(line, token, kAuthenticationClientRequestTypeUpdateUser, request, length);
+    char *after = authTestPeerSnapshot(server);
+    require(raw_response[0] == (accepted ? 0 : 255), "patch returned the wrong protocol result");
+    if (! accepted)
+        require(stringCompare(before, after) == 0, "rejected patch changed users, indexes, revisions or checkpoints");
+    else
+    {
+        require(stringCompare(raw_body[0], "user-updated") == 0, "patch success response changed");
+        cJSON *old = cJSON_Parse(before), *current = cJSON_Parse(after);
+        require(jsonUnsigned(current, "config-revision") == jsonUnsigned(old, "config-revision") + 1 &&
+                    jsonUnsigned(current, "stats-revision") == jsonUnsigned(old, "stats-revision") &&
+                    cJSON_Compare(cJSON_GetObjectItemCaseSensitive(current, "checkpoints"),
+                                  cJSON_GetObjectItemCaseSensitive(old, "checkpoints"),
+                                  true),
+                "patch changed accounting or did not increment configuration exactly once");
+        cJSON_Delete(old);
+        cJSON_Delete(current);
+    }
+    cJSON_free(before);
+    cJSON_free(after);
+}
+
+static void expectPatch(line_t *line, const uint8_t token[64], const char *request, bool accepted)
+{
+    expectPatchBytes(line, token, request, (uint32_t) stringLength(request), accepted);
+}
+
+static void testConfigPatches(void)
+{
+    setup(2);
+    user_update_t initial = {
+        .mask = kUserUpdateName | kUserUpdateEmail | kUserUpdateNotes | kUserUpdateTimeInfo | kUserUpdateStats |
+                kUserUpdateLimit | kUserUpdateRecordStatInterval,
+        .name     = "original",
+        .email    = "old@example.test",
+        .notes    = "keep",
+        .timeinfo = {123, 456, UINT64_MAX, UINT64_MAX},
+        .stats    = {.ips = 7, .devices = 8, .cons_in = 9, .cons_out = 10, .speed = {11, 12}, .traffic = {100, 200}},
+        .limit    = {.traffic   = {1001, 1002, 1003},
+                     .bandwidth = {1004, 1005},
+                     .ips       = 1006,
+                     .devices   = 1007,
+                     .cons_in   = 1008,
+                     .cons_out  = 1009},
+        .record_stat_interval_ms = 1234};
+    authTestPeerSetUser(server, 42, &initial);
+    user_update_t other = {.mask                  = kUserUpdateName | kUserUpdateWireGuardAllowedIps,
+                           .name                  = "taken",
+                           .wireguard_allowed_ips = "192.0.2.0/24"};
+    authTestPeerSetUser(server, 43, &other);
+    authTestPeerInsertUser(server, INT64_MAX, "high-signed");
+    authTestPeerInsertUser(server, UINT64_MAX, "high-unsigned");
+    authTestPeerPermissions(server, 0, true, true);
+    start(0);
+    uint8_t token[64];
+    char    epoch[65];
+    authTestPeerCredentials(server, 0, token, epoch);
+    line_t *line = lineCreate(chain->line_pools, 0);
+    tunnelUpStreamInit(server, line);
+
+    expectPatch(line, token, " \r\n{\"id\":42,\"name\":\"Alice\"}\t ", true);
+    expectPatch(line, token, "{\"id\":42,\"email\":\"new@example.test\"}", true);
+    expectPatch(line, token, "{\"id\":42,\"name\":\"Alice\"}", true); /* same-value assignments still revise */
+    expectPatch(line,
+                token,
+                "{\"id\":42,\"limit\":{\"traffic\":{\"total\":5000}},"
+                "\"time\":{\"expire-after-first-usage-ms\":9000}}",
+                true);
+    cJSON *json          = authTestPeerUserJson(server, 42);
+    cJSON *limit         = cJSON_GetObjectItemCaseSensitive(json, "limit");
+    cJSON *traffic_limit = cJSON_GetObjectItemCaseSensitive(limit, "traffic");
+    cJSON *bandwidth     = cJSON_GetObjectItemCaseSensitive(limit, "bandwidth");
+    cJSON *time          = cJSON_GetObjectItemCaseSensitive(json, "time");
+    require(jsonUnsigned(traffic_limit, "up") == 1001 && jsonUnsigned(traffic_limit, "down") == 1002 &&
+                jsonUnsigned(traffic_limit, "total") == 5000 && jsonUnsigned(bandwidth, "up") == 1004 &&
+                jsonUnsigned(bandwidth, "down") == 1005 && jsonUnsigned(limit, "ips") == 1006 &&
+                jsonUnsigned(limit, "devices") == 1007 && jsonUnsigned(limit, "connections-in") == 1008 &&
+                jsonUnsigned(limit, "connections-out") == 1009 && jsonUnsigned(time, "created-at-ms") == 123 &&
+                jsonUnsigned(time, "first-usage-at-ms") == 456 && jsonUnsigned(time, "expire-at-ms") == UINT64_MAX &&
+                jsonUnsigned(time, "expire-after-first-usage-ms") == 9000 &&
+                jsonUnsigned(json, "record-stat-interval-ms") == 1234 &&
+                stringCompare(cJSON_GetObjectItemCaseSensitive(json, "email")->valuestring, "new@example.test") == 0,
+            "independent or nested patches reset omitted leaves or timestamps");
+    cJSON_Delete(json);
+    user_stat_t stats = authTestPeerStats(server, 42);
+    require(stats.traffic.u == 100 && stats.traffic.d == 200 && stats.ips == 7 && stats.devices == 8 &&
+                stats.cons_in == 9 && stats.cons_out == 10 && stats.speed.u == 11 && stats.speed.d == 12,
+            "configuration patch overwrote stored statistics");
+
+    const char *invalid[] = {"{}",
+                             "{\"id\":42}",
+                             "{\"name\":\"x\"}",
+                             "{\"id\":0,\"name\":\"x\"}",
+                             "{\"id\":42,\"name\":\"x\",\"stats\":{\"traffic\":{\"up\":0}}}",
+                             "{\"id\":42,\"name\":\"x\",\"password\":\"account-0\"}",
+                             "{\"id\":42,\"name\":\"x\",\"uuid\":\"x\"}",
+                             "{\"id\":42,\"name\":\"x\",\"wireguard-publickey\":\"x\"}",
+                             "{\"id\":42,\"name\":\"x\",\"runtime\":{}}",
+                             "{\"id\":42,\"name\":\"x\",\"client-view-expires-at-ms\":0}",
+                             "{\"id\":42,\"name\":\"x\",\"created-at-ms\":0}",
+                             "{\"id\":42,\"name\":\"x\",\"time\":{\"created-at-ms\":0}}",
+                             "{\"id\":42,\"name\":\"x\",\"time\":{\"first-usage-at-ms\":0}}",
+                             "{\"id\":42,\"name\":\"x\",\"user-id\":42}",
+                             "{\"id\":42,\"Name\":\"x\"}",
+                             "{\"id\":42,\"limit.traffic.total\":0}",
+                             "{\"id\":42,\"limit\":{\"traffic\":{\"up\":1,\"other\":0}}}",
+                             "{\"id\":42,\"name\":\"x\",\"time\":{}}",
+                             "{\"id\":42,\"name\":\"x\",\"limit\":{}}",
+                             "{\"id\":42,\"name\":\"x\",\"limit\":{\"traffic\":{}}}",
+                             "{\"id\":42,\"limit\":{\"bandwidth\":{}}}",
+                             "{\"id\":42,\"name\":null}",
+                             "{\"id\":42,\"time\":null}",
+                             "{\"id\":42,\"enabled\":1}",
+                             "{\"id\":42,\"email\":false}",
+                             "{\"id\":42,\"name\":\"x\",\"name\":\"y\"}",
+                             "{\"id\":42,\"name\":\"x\",\"na\\u006de\":\"y\"}",
+                             "{\"id\":42,\"limit\":{\"ips\":1,\"ips\":2}}",
+                             "{\"id\":42,\"limit\":{\"traffic\":{\"up\":1,\"up\":2}}}",
+                             "{\"id\":42,\"time\":{\"expire-at-ms\":1,\"expire-at-ms\":2}}",
+                             "{\"id\":42,\"notes\":\"\\u0000\"}",
+                             "{\"id\":42,\"notes\":\"\xc0\xaf\"}",
+                             "{\"id\":42,\"notes\":\"x\"} trailing",
+                             "{\"id\":42,\"notes\":\"x\"}{}",
+                             "{\"id\":42.0,\"name\":\"x\"}",
+                             "{\"id\":42e0,\"name\":\"x\"}",
+                             "{\"id\":-42,\"name\":\"x\"}",
+                             "{\"id\":18446744073709551616,\"name\":\"x\"}",
+                             "{\"id\":42,\"gid\":-1}",
+                             "{\"id\":42,\"gid\":1.5}",
+                             "{\"id\":42,\"gid\":1e3}",
+                             "{\"id\":42,\"gid\":\"18446744073709551616\"}",
+                             "{\"id\":42,\"limit\":{\"ips\":9223372036854775808.0}}",
+                             "{\"id\":42,\"record-stat-interval-ms\":2147483648}",
+                             "{\"id\":42,\"name\":\"taken\",\"email\":\"bad\"}",
+                             "{\"id\":42,\"name\":\"bad\",\"wireguard-allowed-ips\":\"192.0.2.8/32\"}",
+                             "{\"id\":42,\"name\":\"bad\",\"wireguard-allowed-ips\":\"invalid\"}"};
+    for (unsigned i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
+        expectPatch(line, token, invalid[i], false);
+    static const char raw_nul[] = "{\"id\":42,\"notes\":\"x\"}\0ignored";
+    expectPatchBytes(line, token, raw_nul, sizeof(raw_nul) - 1, false);
+    expectPatch(line, token, "{\"id\":999,\"name\":\"missing\"}", false);
+    require(stringCompare(raw_body[0], "user-not-found") == 0, "unknown ID was not reported");
+    expectPatch(line, token, "{\"id\":9223372036854775807,\"gid\":9223372036854775807}", true);
+    expectPatch(line, token, "{\"id\":\"18446744073709551615\",\"gid\":\"18446744073709551615\"}", true);
+    json = authTestPeerUserJson(server, UINT64_MAX);
+    require(jsonUnsigned(json, "gid") == UINT64_MAX, "high integer was rounded");
+    cJSON_Delete(json);
+    expectPatch(line,
+                token,
+                "{\"id\":42,\"record-stat-interval-ms\":2147483647,\"gid\":99,\"enabled\":false,"
+                "\"wireguard-allowed-ips\":\"198.51.100.0/24\",\"limit\":{\"traffic\":{\"up\":11,\"down\":12},"
+                "\"bandwidth\":{\"up\":13,\"down\":14},\"ips\":15,\"devices\":16,"
+                "\"connections-in\":17,\"connections-out\":18}}",
+                true);
+    json          = authTestPeerUserJson(server, 42);
+    limit         = cJSON_GetObjectItemCaseSensitive(json, "limit");
+    traffic_limit = cJSON_GetObjectItemCaseSensitive(limit, "traffic");
+    bandwidth     = cJSON_GetObjectItemCaseSensitive(limit, "bandwidth");
+    require(jsonUnsigned(json, "gid") == 99 && jsonUnsigned(json, "record-stat-interval-ms") == INT_MAX &&
+                jsonUnsigned(traffic_limit, "up") == 11 && jsonUnsigned(traffic_limit, "down") == 12 &&
+                jsonUnsigned(traffic_limit, "total") == 5000 && jsonUnsigned(bandwidth, "up") == 13 &&
+                jsonUnsigned(bandwidth, "down") == 14 && jsonUnsigned(limit, "ips") == 15 &&
+                jsonUnsigned(limit, "devices") == 16 && jsonUnsigned(limit, "connections-in") == 17 &&
+                jsonUnsigned(limit, "connections-out") == 18 &&
+                stringCompare(cJSON_GetObjectItemCaseSensitive(json, "wireguard-allowed-ips")->valuestring,
+                              "198.51.100.0/24") == 0,
+            "accepted configuration leaves were not applied");
+    cJSON_Delete(json);
+    expectPatch(line,
+                token,
+                "{\"id\":42,\"name\":\"\",\"email\":\"\",\"notes\":\"\",\"wireguard-allowed-ips\":\"\","
+                "\"record-stat-interval-ms\":0,\"limit\":{\"traffic\":{\"up\":0,\"down\":0,\"total\":0},"
+                "\"bandwidth\":{\"up\":0,\"down\":0},\"ips\":0,\"devices\":0,\"connections-in\":0,"
+                "\"connections-out\":0},\"time\":{\"expire-at-ms\":0,\"expire-after-first-usage-ms\":0}}",
+                true);
+    json = authTestPeerUserJson(server, 42);
+    time = cJSON_GetObjectItemCaseSensitive(json, "time");
+    require(cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(json, "enabled")) &&
+                jsonUnsigned(time, "first-usage-at-ms") == 456 && jsonUnsigned(time, "created-at-ms") == 123 &&
+                ! cJSON_HasObjectItem(time, "expire-at-ms") &&
+                ! cJSON_HasObjectItem(time, "expire-after-first-usage-ms") &&
+                jsonUnsigned(json, "record-stat-interval-ms") == 0 && ! cJSON_HasObjectItem(json, "limit") &&
+                ! cJSON_HasObjectItem(json, "name") && ! cJSON_HasObjectItem(json, "email") &&
+                ! cJSON_HasObjectItem(json, "notes") && ! cJSON_HasObjectItem(json, "wireguard-allowed-ips"),
+            "explicit clears changed omitted state or did not clear selected leaves");
+    cJSON_Delete(json);
+    authTestPeerPermissions(server, 0, false, true);
+    expectPatch(line, token, "{\"id\":42,\"name\":\"denied\"}", false);
+    require(stringCompare(raw_body[0], "user-write-not-allowed") == 0, "stats permission permitted configuration edit");
+    tunnelUpStreamFin(server, line);
+    lineDestroy(line);
+    teardown();
+}
+
+static void testEditDuringAccounting(void)
+{
+    setup(1);
+    user_update_t initial = {.mask                   = kUserUpdateName | kUserUpdateStats | kUserUpdateTimeInfo,
+                             .name                   = "original",
+                             .stats.traffic.u        = 100,
+                             .timeinfo.created_at_ms = 123};
+    authTestPeerSetUser(server, 42, &initial);
+    authTestPeerPermissions(server, 0, true, true);
+    start(0);
+    uint8_t token[64];
+    char    epoch[65];
+    authTestPeerCredentials(server, 0, token, epoch);
+    line_t *line = lineCreate(chain->line_pools, 0);
+    tunnelUpStreamInit(server, line);
+    user_ip_key_t ip = {.type = 4, .bytes = {192, 0, 2, 1}};
+    require(usersTryAdmitConnectionByIdentifier(state(0)->users, 42, &ip, getTimeOfDayMS()) == kUserAdmissionOk,
+            "client reservation setup failed");
+    const uint64_t old_projection = getTimeOfDayMS() + 100000;
+    userSetClientViewExpiry(usersLookupByIdentifier(state(0)->users, 42), old_projection, true);
+    expectPatch(
+        line, token, "{\"id\":42,\"name\":\"before\",\"time\":{\"expire-at-ms\":\"18446744073709551615\"}}", true);
+    require(authTestPeerFirstUse(server) == 0, "patch created first use");
+    authenticationclientRequestPull(clients[0]);
+    user_t *user = usersLookupByIdentifier(state(0)->users, 42);
+    require(user->runtime.active_cons_out == 1 && user->runtime.ip_usage_count == 1 && user->client_view_expiry_valid &&
+                user->client_view_expires_at_ms != old_projection,
+            "configuration refresh lost runtime state or reused stale expiry projection");
+    traffic(0, 10);
+    drop_ack = 1;
+    authenticationclientRequestPush(clients[0]);
+    const uint64_t first_use = authTestPeerFirstUse(server);
+    require(first_use != 0 && state(0)->pending_batch != NULL && authTestPeerStats(server, 42).traffic.u == 110,
+            "lost-ACK edit fixture failed");
+    expectPatch(line, token, "{\"id\":42,\"name\":\"after\"}", true);
+    require(authTestPeerStats(server, 42).traffic.u == 110 && authTestPeerFirstUse(server) == first_use,
+            "name patch overwrote newer usage or first use");
+    traffic(0, 7);
+    pump(10);
+    require(state(0)->pending_batch == NULL && local(0, true) == 110 && local(0, false) == 117 &&
+                authTestPeerStats(server, 42).traffic.u == 110 && authTestPeerFirstUse(server) == first_use,
+            "edit during lost ACK changed replay identity or lost newer traffic");
+    authenticationclientRequestPush(clients[0]);
+    require(authTestPeerStats(server, 42).traffic.u == 117, "post-edit local traffic was not reportable");
+    user = usersLookupByIdentifier(state(0)->users, 42);
+    require(user->runtime.active_cons_out == 1 && user->timeinfo.created_at_ms == 123 &&
+                stringCompare(user->name, "after") == 0,
+            "patch refresh lost identity, creation metadata or active state");
+    usersReleaseConnectionByIdentifier(state(0)->users, 42, &ip);
+    require(user->runtime.active_cons_out == 0, "post-refresh reservation did not release");
+    tunnelUpStreamFin(server, line);
+    lineDestroy(line);
+    teardown();
+}
+
+static void testStrictTrafficBatches(void)
+{
+    setup(2);
+    authTestPeerPermissions(server, 0, true, true);
+    start(0);
+    uint8_t token[64];
+    char    epoch[65], text[1024];
+    authTestPeerCredentials(server, 0, token, epoch);
+    line_t *line = lineCreate(chain->line_pools, 0);
+    tunnelUpStreamInit(server, line);
+    const char *formats[] = {
+        "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"up\":1,\"down\":0}],\"speed\":5}",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"up\":1,\"down\":0,\"ips\":1}]}",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"up\":1,\"down\":0},"
+        "{\"id\":43,\"up\":1,\"down\":0,\"connections-out\":1}]}",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"up\":1,\"down\":0,\"first-usage-at-ms\":1}]}",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"up\":1,\"down\":0,\"traffic\":{\"up\":100}}]}",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"sequence\":1,\"users\":[{\"id\":42,\"up\":1,\"down\":0}]}",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"seq\\u0075ence\":1,\"users\":[{\"id\":42,\"up\":1,\"down\":0}]}",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"\\u0069d\":42,\"up\":1,\"down\":0}]}",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"up\":1}]}",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"up\":1,\"down\":0}]} trailing",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"up\":1.0,\"down\":0}]}",
+        "{\"epoch\":\"%s\",\"sequence\":1e0,\"users\":[{\"id\":42,\"up\":1,\"down\":0}]}",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"up\":1,\"down\":0},"
+        "{\"id\":43,\"up\":0,\"down\":0}]}",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"up\":1,\"down\":0}],\"other\":\"\\u0000\"}",
+        "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"up\":1,\"down\":0}],\"other\":\"\xed\xa0\x80\"}"};
+    for (unsigned i = 0; i < sizeof(formats) / sizeof(formats[0]); ++i)
+    {
+        snprintf(text, sizeof(text), formats[i], epoch);
+        char *before = authTestPeerSnapshot(server);
+        rawBatch(line, token, text);
+        char *after = authTestPeerSnapshot(server);
+        require(raw_response[0] == 255 && stringCompare(before, after) == 0,
+                "invalid/nontraffic batch mutated users, revisions or checkpoint");
+        cJSON_free(before);
+        cJSON_free(after);
+    }
+    snprintf(
+        text, sizeof(text), "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"up\":3,\"down\":0}]}", epoch);
+    rawBatch(line, token, text);
+    require(raw_response[0] == 0 && authTestPeerStats(server, 42).traffic.u == 3 &&
+                authTestPeerSequence(server, 0) == 1,
+            "rejected schema consumed expected sequence");
+    char *before = authTestPeerSnapshot(server);
+    rawBatch(line, token, text);
+    char *after = authTestPeerSnapshot(server);
+    require(raw_response[0] == 0 && stringCompare(before, after) == 0, "exact replay changed accepted batch state");
+    cJSON_free(before);
+    cJSON_free(after);
+    before              = authTestPeerSnapshot(server);
+    const char *removed = "{\"id\":42,\"password\":\"account-0\",\"stats\":{\"traffic\":{\"up\":99,\"down\":0}}}";
+    rawRequest(line, token, 8, removed, (uint32_t) stringLength(removed));
+    after = authTestPeerSnapshot(server);
+    require(raw_response[0] == 255 && stringCompare(raw_body[0], "unknown-request-type") == 0 &&
+                stringCompare(before, after) == 0,
+            "removed raw traffic opcode remained active");
+    cJSON_free(before);
+    cJSON_free(after);
+    snprintf(text,
+             sizeof(text),
+             "{\"epoch\":\"%s\",\"sequence\":2,\"users\":[{\"id\":42,\"up\":\"18446744073709551615\",\"down\":0}]}",
+             epoch);
+    authTestPeerPermissions(server, 0, true, false);
+    before = authTestPeerSnapshot(server);
+    rawBatch(line, token, text);
+    after = authTestPeerSnapshot(server);
+    require(raw_response[0] == 255 && stringCompare(raw_body[0], "stats-push-not-allowed") == 0 &&
+                stringCompare(before, after) == 0,
+            "user-write permission permitted stats push");
+    cJSON_free(before);
+    cJSON_free(after);
+    expectPatch(line, token, "{\"id\":42,\"notes\":\"write only\"}", true);
+    authTestPeerPermissions(server, 0, true, true);
+    const uint64_t first_use = authTestPeerFirstUse(server);
+    rawBatch(line, token, text);
+    require(raw_response[0] == 0 && authTestPeerStats(server, 42).traffic.u == UINT64_MAX &&
+                authTestPeerFirstUse(server) == first_use,
+            "traffic saturation or first-use preservation failed");
+    tunnelUpStreamFin(server, line);
+    lineDestroy(line);
+    teardown();
+}
+
 static void testRejectionsAndContinuity(void)
 {
     setup(1);
@@ -681,6 +1067,10 @@ int main(void)
     testCaseSet("authentication sync loss and continuity");
     require(createNetworkLogger(NULL, false) != NULL, "logger failed");
     require(globalstateInitializeSecureRandom() && wCryptoGlobalInit() == kWCryptoOk, "crypto failed");
+    testStaleFullObjectRejected();
+    testConfigPatches();
+    testEditDuringAccounting();
+    testStrictTrafficBatches();
     testLossAndOrdering();
     testRecurringPullDoesNotStarvePush();
     testRequiredPullBeforeQueuedPush();

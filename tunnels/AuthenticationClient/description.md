@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -355,7 +355,7 @@ not block lookup. Live capacity is reserved separately by the atomic runtime adm
 
 ## Stats Push
 
-The client sends immutable deltas keyed by durable user ID:
+The client synchronizes traffic bytes only, using immutable deltas keyed by durable user ID:
 
 ```json
 {"epoch":"<64 hexadecimal bytes>","sequence":1,"users":[{"id":42,"up":10,"down":0}]}
@@ -365,6 +365,9 @@ It retains the exact payload and its subset snapshot for the tunnel lifetime unt
 and SHA-256 digest. Send refusal, timeout, malformed replies and transport/session loss preserve both owners.
 Retries use the same bytes with a fresh correlation ID and the current token. Batches contain at most 4096 entries;
 only represented users/directions advance on ACK. Sequence numbers never wrap, and empty batches are not sent.
+The root has exactly `epoch`, `sequence`, `users`; each entry has exactly `id`, `up`, `down`, all required. Unknown,
+duplicate or nontraffic fields reject the request. Complete valid JSON/UTF-8, no raw/escaped NUL or trailing data,
+and an eight-container depth bound are required within the existing authentication message budget.
 Plain integer tokens through INT64_MAX and decimal strings through UINT64_MAX are exact; integer readers reject
 fractional, decimal/exponent, negative, nonfinite and overflowing input.
 
@@ -380,6 +383,20 @@ processes need different configured names. A lost/superseded epoch with an unres
 `kAuthenticationClientStateContinuityError`, keeps the batch, closes the transport and stops automatic synchronization
 for operator reconciliation. With no uncertain batch, fresh enrollment and pull can resume. This guarantee covers
 connection loss while both processes run; it does not provide accounting recovery across process crashes/restarts.
+An ACK means acceptance in server memory, not a disk save. Periodic/final database saving does not persist accounting
+checkpoints. Client restart may lose unreported usage; server restart may lose acknowledged usage since its last
+successful save and loses retry checkpoints. Shutdown does not guarantee final usage delivery.
+
+Cumulative traffic and first-use timestamps belong to the server aggregate. Remote `UpdateUser` edits select a durable
+ID and patch configuration only, preserving counters, creation/first-use metadata, credentials and runtime state.
+Configuration patches require `allow-user-write`; traffic batches require `allow-stats-push`. These permissions are
+independent. There is no remote usage-reset operation.
+
+Active outbound connections and IP reservations are local runtime admission state, not global telemetry. Stored/imported
+IP, device, connection and speed statistics are neither a reliable live global occupancy view nor admission input.
+Future connection reporting needs per-producer snapshots, ordering and expiry; speed needs measurement windows and
+freshness, with missing samples distinct from zero. Distinct-IP reporting needs identity sets, windows and deduplication
+across producers. Devices need defined identity and collection. No such reporting or reset mechanism is implemented.
 
 ## Timers
 

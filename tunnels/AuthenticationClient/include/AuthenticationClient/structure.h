@@ -108,7 +108,6 @@ enum
     kAuthenticationClientRequestTypeGetUserByPassword         = 5,
     kAuthenticationClientRequestTypeAddNewUser                = 6,
     kAuthenticationClientRequestTypeUpdateUser                = 7,
-    kAuthenticationClientRequestTypeUpdateUserTraficStatsDiff = 8,
     kAuthenticationClientRequestTypeGetAllUsers               = 9,
     kAuthenticationClientRequestTypeAuthenticate              = 10,
     kAuthenticationClientRequestTypePushUserStats             = 11,

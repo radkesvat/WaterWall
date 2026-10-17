@@ -4176,27 +4176,6 @@ bool usersAddTraffic(users_t *users, user_t *user, uint64_t upload_bytes, uint64
     return result;
 }
 
-users_update_result_t usersAddTrafficBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                              uint64_t upload_bytes, uint64_t download_bytes)
-{
-    user_t *user;
-
-    if (UNLIKELY(users == NULL || sha256 == NULL))
-    {
-        return kUsersUpdateResultInvalidArgument;
-    }
-
-    rwlockReadLock(&users->lock);
-    user = usersSHA256TableLookupLocked(users, sha256);
-    if (LIKELY(user != NULL))
-    {
-        userAddTraffic(user, upload_bytes, download_bytes);
-    }
-    rwlockReadUnlock(&users->lock);
-
-    return user != NULL ? kUsersUpdateResultOk : kUsersUpdateResultUserNotFound;
-}
-
 users_update_result_t usersAddTrafficByIdentifier(users_t *users, uint64_t id, uint64_t upload_bytes,
                                                   uint64_t download_bytes)
 {

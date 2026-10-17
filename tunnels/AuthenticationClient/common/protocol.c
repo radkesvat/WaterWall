@@ -47,8 +47,6 @@ static const char *authenticationclientRequestTypeName(uint8_t request_type)
         return "AddNewUser";
     case kAuthenticationClientRequestTypeUpdateUser:
         return "UpdateUser";
-    case kAuthenticationClientRequestTypeUpdateUserTraficStatsDiff:
-        return "UpdateUserTraficStatsDiff";
     case kAuthenticationClientRequestTypeGetAllUsers:
         return "GetAllUsers";
     case kAuthenticationClientRequestTypeAuthenticate:

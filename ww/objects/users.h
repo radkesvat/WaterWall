@@ -278,8 +278,6 @@ bool                  usersSetUserTimeInfo(users_t *users, user_t *user, const u
 bool                  usersSetUserStats(users_t *users, user_t *user, const user_stat_t *stats);
 bool                  usersSetUserRecordStatInterval(users_t *users, user_t *user, int interval_ms);
 bool                  usersAddTraffic(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes);
-users_update_result_t usersAddTrafficBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                              uint64_t upload_bytes, uint64_t download_bytes);
 users_update_result_t usersAddTrafficByIdentifier(users_t *users, uint64_t id, uint64_t upload_bytes,
                                                   uint64_t download_bytes);
 /*

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -27,7 +27,7 @@ from `AuthenticationClient`.
 
 Available modules are `Authenticate`, `ping`, `GetUserBySHA256Hex`, `GetUserBySHA256Base64`, `GetUserBySHA256`,
 `GetUserBySHA224Hex`, `GetUserBySHA224Base64`, `GetUserBySHA224`, `GetUserByPassword`, `AddNewUser`, `UpdateUser`,
-`UpdateUserTraficStatsDiff`, `GetAllUsers`, and `PushUserStats`.
+`GetAllUsers`, and `PushUserStats`.
 
 ## Typical Placement
 
@@ -306,12 +306,11 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
   metadata, not fields inside individual user objects.
 - `AddNewUser` rejects duplicate usernames, duplicate durable user ids, duplicate password-derived lookup keys, and
   overlapping `wireguard-allowed-ips`, then saves the file immediately and bumps the configuration revision.
-- `UpdateUser` uses the supplied password only to find the existing user and deliberately does not change password or
-  password hashes. It updates in-memory metadata only, bumps the configuration revision, and does not force an immediate
-  file save.
-- `UpdateUserTraficStatsDiff` uses the supplied password only to find the existing user, then adds only
-  `stats.traffic.up/down` as a delta. It bumps the statistics revision when traffic changes and does not force an
-  immediate file save.
+- `UpdateUser` selects an existing account by durable `id` and patches only explicitly supplied configuration leaves.
+  It preserves usage, creation/first-use timestamps, credentials and live reservations. Each accepted nonempty patch
+  advances the configuration revision once, including a same-value assignment, without an immediate file save.
+- `PushUserStats` is the only remote usage-reporting operation. It accepts deduplicated traffic-byte deltas and advances
+  the statistics revision when a new batch is accepted. Configuration-write and statistics-push permissions are separate.
 - Startup loading validates lookup-table consistency. A corrupted primary file can be recovered from `db-path.backup`,
   but an invalid backup cannot be repaired automatically.
 - Avoid editing both primary and backup files by hand while Waterwall is running. The periodic saver may overwrite
@@ -370,6 +369,10 @@ independent of passwords. The payload has exactly this supported shape:
 `sequence` starts at 1 and advances without wrapping. Each batch has 1..4096 unique user IDs and both nonnegative
 `up` and `down` deltas per entry; at least one direction must be nonzero. Integers are plain signed-64-bit-range
 integer tokens or decimal strings through UINT64_MAX. Decimal/exponent number tokens are rejected by integer readers.
+The root permits only `epoch`, `sequence` and `users`; each entry permits only `id`, `up` and `down`, all required.
+Unknown or duplicate decoded keys reject the entire request, including nontraffic statistics, timestamps and absolute
+traffic totals. The complete byte span must be valid JSON/UTF-8 with no trailing data, raw/escaped NUL or more than eight
+nested containers. These checks do not impose host-configuration file-size limits; authentication payload budgets apply.
 The authenticated configured identity supplies the checkpoint key; payload fields cannot choose another identity.
 
 Under one state write lock, the server validates epoch and sequence and hashes the exact payload bytes with SHA-256.
@@ -389,8 +392,12 @@ gives a waiting push priority over ordinary periodic or explicit pulls; recurrin
 
 Epoch/checkpoint state is runtime-only. Accounting continuity across process crashes or restarts is not provided.
 An unresolved batch whose continuity is lost stays identifiable and stops automatic synchronization for operator
-reconciliation. With no uncertain batch, a client may enroll afresh and pull. The separate administrative
-`UpdateUserTraficStatsDiff` operation remains a raw delta and is not retry-safe.
+reconciliation. With no uncertain batch, a client may enroll afresh and pull.
+
+An ACK confirms acceptance in server memory, not a disk save. Periodic/final database saving retains its normal
+semantics and does not save the producer checkpoint. A client restart can lose unreported usage; a server restart can
+lose acknowledged usage since its last successful save and loses its retry checkpoints. Shutdown does not guarantee
+final usage delivery. There is no accounting crash recovery or remote usage-reset operation.
 
 Traffic-serving nodes use AuthenticationClient handles and copy-out APIs; they never receive borrowed user pointers.
 Credential eligibility checks enabled state, expiry and cumulative traffic. Live connection/IP admission remains local
@@ -455,7 +462,6 @@ Request types:
 - `5`: `GetUserByPassword`
 - `6`: `AddNewUser`
 - `7`: `UpdateUser`
-- `8`: `UpdateUserTraficStatsDiff`
 - `9`: `GetAllUsers`
 - `10`: `Authenticate`
 - `11`: `PushUserStats`
@@ -473,8 +479,9 @@ Response types:
 - `255`: error
 
 `Authenticate` is public. Every other module requires a valid session token. User lookup and full-table pull modules
-also require `allow-user-pull`; user create/update modules require `allow-user-write`; traffic-stat modules require
-`allow-stats-push`.
+also require `allow-user-pull`; user create/update modules require `allow-user-write`; `PushUserStats` requires
+`allow-stats-push`. Neither write permission implies the other. Opcode `8` is unsupported and receives the ordinary
+`unknown-request-type` error.
 
 ### Authenticate Module
 
@@ -590,41 +597,63 @@ copied user. Heap exhaustion terminates the process instead of producing an erro
 
 ### UpdateUser Module
 
-The `UpdateUser` module expects request data containing a full user JSON object in the same format exported by
-`userToJson()`. The password field is used only to find the existing user by its SHA-256 password hash; password and
-password-hash values are not updated by this module because they are database lookup keys. The submitted `id`/`user-id`
-must be present, non-zero, and match the existing user found by that password hash.
+`UpdateUser` takes a configuration patch with a required nonzero exact unsigned 64-bit `id`. For example:
 
-If the user exists, the module updates the mutable user fields in memory, including name, email, notes, group ID,
-enabled state, limits, time information, stats, record-stat interval, and `wireguard-allowed-ips`. It does not trigger an
-immediate database file save; the normal periodic save timer is still responsible for persisting in-memory state later.
+```json
+{"id":42,"name":"Alice"}
+```
 
-On success it returns response type `0` and response data equal to `user-updated`.
+If an administrator read 100 bytes and a batch added 10 more, this name edit leaves 110 bytes intact. No password or
+full exported user is submitted. Omitted fields, including siblings inside nested objects, retain their stored values:
 
-If the JSON is malformed, the user does not exist, the submitted id is missing or mismatched, or the update would create
-a conflicting user name or overlapping `wireguard-allowed-ips`, it returns an error response frame with the same
-correlation ID.
+```json
+{"id":42,"limit":{"traffic":{"total":1073741824}},"time":{"expire-after-first-usage-ms":86400000}}
+```
 
-`capacity-rejected` reports an unrepresentable index-capacity request; the rejected update is not applied.
+This changes only total traffic quota and the expiry duration; upload/download quotas, other limits, absolute expiry,
+creation/first-use time and all counters stay intact.
 
-### UpdateUserTraficStatsDiff Module
+| Editable leaf | Type |
+| --- | --- |
+| `name`, `email`, `notes`, `wireguard-allowed-ips` | String; empty string clears it under existing index/CIDR rules |
+| `gid` | Exact unsigned 64-bit integer |
+| `enabled` | JSON boolean |
+| `record-stat-interval-ms` | Exact nonnegative integer through INT_MAX; no reporting scheduler is introduced |
+| `limit.traffic.up`, `.down`, `.total` | Exact unsigned 64-bit integers |
+| `limit.bandwidth.up`, `.down` | Exact unsigned 64-bit integers |
+| `limit.ips`, `.devices`, `.connections-in`, `.connections-out` | Exact unsigned 64-bit integers |
+| `time.expire-at-ms`, `.expire-after-first-usage-ms` | Exact unsigned 64-bit integers |
 
-The `UpdateUserTraficStatsDiff` module expects request data containing a full user JSON object. The password field is
-used only to find the existing user by its SHA-256 password hash. The submitted `id`/`user-id` must be present,
-non-zero, and match the existing user found by that password hash.
+Dotted paths mean nested objects. Zero clears the corresponding limit/expiry. Integer tokens through INT64_MAX and
+decimal strings through UINT64_MAX are supported; negatives, fractions, decimal/exponent tokens and overflow reject.
+At least one editable leaf is required. Null, empty supplied containers, unknown/case-variant/alias keys, duplicate
+decoded keys, malformed UTF-8, raw/escaped NUL, excessive nesting and trailing non-whitespace data reject the whole
+patch. `stats`, passwords/hashes/credentials, alternate IDs, runtime/client-view fields, creation time and first-use time
+are forbidden, including their top-level aliases. A valid field alongside a forbidden one does not apply.
 
-If the user exists, the module reads `stats.traffic.up` and `stats.traffic.down` from the supplied JSON and adds those
-values to the existing user's traffic counters. No other user fields are updated. The add operation uses the same
-saturating counter behavior as `userAddTraffic()`. If a non-zero traffic delta is accepted and the authoritative user has
-no `first-usage-at-ms` yet, the server stamps it with the current server time.
+Name and Allowed-IP indexes are prepared before commit. Unknown ID, duplicate name, invalid/overlapping CIDR and
+expected capacity refusal change no account fields, logical indexes, revisions or accounting checkpoint. Successful
+patches return type `0`, `user-updated`, and increment only `config_revision` exactly once under server write
+serialization. They edit memory without immediately saving it. Independent patches preserve one another's omitted
+fields; for the same field, the latest accepted value wins. No expected-revision precondition is required.
 
-This operation does not trigger an immediate database file save; the normal periodic save timer is still responsible
-for persisting in-memory state later.
+### Statistics Ownership
 
-On success it returns response type `0` and response data equal to `user-traffic-stats-updated`.
+| Value | Owner and current rule |
+| --- | --- |
+| Cumulative upload/download bytes | Server aggregate; remote changes use accepted deduplicated batches. Config patches preserve it. |
+| First-use timestamp | Server accounting observation, set only when missing by accepted nonzero usage. Config patches preserve it. |
+| Creation timestamp | Creation/import metadata, preserved by ordinary edits. |
+| Limits, enabled flag, expiry policy | Account configuration changed through explicit patch leaves. |
+| Active outbound connections and IP reservations | Local runtime admission state, retained/released locally; no global count is supplied. |
+| Stored/imported IP, device, connection and speed statistics | No reliable live global occupancy view and no admission source. This protocol adds no reporting of these gauges. |
 
-If the JSON is malformed, the user does not exist, or the submitted id is missing or mismatched, it returns an error
-response frame with the same correlation ID.
+Future connection telemetry needs producer scope, sample order and expiry: a later snapshot replaces an earlier one,
+so repeated samples must not be added like traffic. Speed needs a measurement window/time and freshness; stale/missing
+samples are not measured zero and compatible producer windows are required before aggregation. Distinct-IP telemetry
+needs an identity set, observation window and cross-producer deduplication; adding client counts cannot produce a
+global distinct count. Device reporting needs defined device identity and collection. Reset requires a separate policy
+for delayed usage and distributed cutoffs; no reset operation is provided here.
 
 ### GetAllUsers Module
 

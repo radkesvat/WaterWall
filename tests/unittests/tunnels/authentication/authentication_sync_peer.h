@@ -14,3 +14,8 @@ void        authTestPeerRemoveUser(tunnel_t *server);
 uint64_t    authTestPeerSequence(tunnel_t *server, unsigned client);
 void        authTestPeerCredentials(tunnel_t *server, unsigned client, uint8_t token[64], char epoch[65]);
 size_t      authTestPeerPadUsersResponse(tunnel_t *server, size_t json_length);
+void        authTestPeerPermissions(tunnel_t *server, unsigned client, bool user_write, bool stats_push);
+void        authTestPeerSetUser(tunnel_t *server, uint64_t id, const user_update_t *update);
+cJSON      *authTestPeerUserJson(tunnel_t *server, uint64_t id);
+char       *authTestPeerSnapshot(tunnel_t *server);
+void        authTestPeerInsertUser(tunnel_t *server, uint64_t id, const char *password);

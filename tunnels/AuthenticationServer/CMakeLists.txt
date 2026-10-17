@@ -15,7 +15,6 @@ add_library(AuthenticationServer STATIC
                     modules/authenticate/authenticate.c
                     modules/add_new_user/add_new_user.c
                     modules/update_user/update_user.c
-                    modules/update_user_trafic_stats_diff/update_user_trafic_stats_diff.c
                     modules/get_all_users/get_all_users.c
                     modules/push_user_stats/push_user_stats.c
                     modules/get_user_by_password/get_user_by_password.c

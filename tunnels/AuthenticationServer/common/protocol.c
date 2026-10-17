@@ -45,8 +45,6 @@ static const char *authenticationserverRequestTypeName(uint8_t request_type)
         return "AddNewUser";
     case kAuthenticationServerRequestTypeUpdateUser:
         return "UpdateUser";
-    case kAuthenticationServerRequestTypeUpdateUserTraficStatsDiff:
-        return "UpdateUserTraficStatsDiff";
     case kAuthenticationServerRequestTypeGetAllUsers:
         return "GetAllUsers";
     case kAuthenticationServerRequestTypeAuthenticate:
@@ -385,7 +383,6 @@ static bool authenticationserverRequestMutatesStore(uint8_t request_type)
     {
     case kAuthenticationServerRequestTypeAddNewUser:
     case kAuthenticationServerRequestTypeUpdateUser:
-    case kAuthenticationServerRequestTypeUpdateUserTraficStatsDiff:
     case kAuthenticationServerRequestTypePushUserStats:
         return true;
     default:

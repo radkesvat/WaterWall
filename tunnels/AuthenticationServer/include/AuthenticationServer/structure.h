@@ -115,7 +115,6 @@ enum
     kAuthenticationServerRequestTypeGetUserByPassword         = 5,
     kAuthenticationServerRequestTypeAddNewUser                = 6,
     kAuthenticationServerRequestTypeUpdateUser                = 7,
-    kAuthenticationServerRequestTypeUpdateUserTraficStatsDiff = 8,
     kAuthenticationServerRequestTypeGetAllUsers               = 9,
     kAuthenticationServerRequestTypeAuthenticate              = 10,
     kAuthenticationServerRequestTypePushUserStats             = 11,
@@ -165,11 +164,10 @@ void authenticationserverSessionExpiryTimerCallback(wtimer_t *timer);
 void authenticationserverGetRevisions(tunnel_t *t, uint64_t *config_revision, uint64_t *stats_revision);
 void authenticationserverBumpConfigRevision(tunnel_t *t);
 void authenticationserverBumpStatsRevision(tunnel_t *t);
-users_update_result_t authenticationserverUpdateUserBySHA256AndBumpConfigRevision(
-    tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE], const user_update_t *update);
-bool authenticationserverUserHasRequiredId(const user_t *user);
-const char *authenticationserverValidateUserIdentityBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                                             uint64_t expected_id);
+/* Called inside the request's state_lock write serialization. */
+users_update_result_t           authenticationserverPatchConfigAndBumpRevision(tunnel_t *t, uint64_t id,
+                                                                               const user_config_patch_t *patch);
+bool                            authenticationserverUserHasRequiredId(const user_t *user);
 authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, const char *name, const char *secret,
                                                                   const uint8_t *resume_epoch, const char **error);
 authenticationserver_session_t *authenticationserverSessionFindByTokenLocked(

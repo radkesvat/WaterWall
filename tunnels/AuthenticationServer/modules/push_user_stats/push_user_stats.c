@@ -1,5 +1,6 @@
 #include "modules/push_user_stats/push_user_stats.h"
 #include "loggers/network_logger.h"
+#include "node_builder/config_lexical.h"
 
 typedef struct stats_entry_s
 {
@@ -11,6 +12,26 @@ static int compareEntries(const void *left, const void *right)
 {
     const stats_entry_t *a = left, *b = right;
     return (a->id > b->id) - (a->id < b->id);
+}
+
+static bool hasBatchFields(const cJSON *object, bool root)
+{
+    static const char *const root_fields[]  = {"epoch", "sequence", "users"};
+    static const char *const entry_fields[] = {"id", "up", "down"};
+    const char *const       *fields         = root ? root_fields : entry_fields;
+    if (! cJSON_IsObject(object))
+        return false;
+    unsigned     count = 0;
+    const cJSON *field;
+    cJSON_ArrayForEach(field, object)
+    {
+        if (++count > 3 ||
+            (stringCompare(field->string, fields[0]) != 0 && stringCompare(field->string, fields[1]) != 0 &&
+             stringCompare(field->string, fields[2]) != 0))
+            return false;
+    }
+    /* The lexical parser rejects duplicate decoded names. */
+    return count == 3;
 }
 
 static sbuf_t *acknowledge(line_t *l, const uint8_t correlation_id[4], const authenticationserver_auth_client_t *client)
@@ -38,16 +59,36 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
 {
     authenticationserver_tstate_t      *ts       = tunnelGetState(t);
     authenticationserver_auth_client_t *client   = session->accounting_client;
-    cJSON                              *json     = cJSON_ParseWithLength((const char *) request_data, request_data_len);
+    cJSON                              *json     = configLexicalParse((const char *) request_data, request_data_len, 8);
     const cJSON                        *epoch    = cJSON_GetObjectItemCaseSensitive(json, "epoch");
     uint64_t                            sequence = 0;
     const char                         *error    = "invalid-usage-batch";
     stats_entry_t                      *entries  = NULL;
     sha256_hash_t                       digest;
-    if (! cJSON_IsObject(json) || ! cJSON_IsString(epoch) || epoch->valuestring == NULL ||
+    if (! hasBatchFields(json, true) || ! cJSON_IsString(epoch) || epoch->valuestring == NULL ||
         stringLength(epoch->valuestring) != 64 ||
         ! getUint64FromJson(&sequence, cJSON_GetObjectItemCaseSensitive(json, "sequence")) || sequence == 0)
         goto rejected;
+    const cJSON *array = cJSON_GetObjectItemCaseSensitive(json, "users");
+    const int    count = cJSON_GetArraySize(array);
+    if (! cJSON_IsArray(array) || count <= 0 || count > kAuthenticationServerMaxBatchEntries)
+        goto rejected;
+    size_t bytes;
+    if (! memoryTryComputeArraySize((size_t) count, sizeof(*entries), &bytes))
+        goto rejected;
+    entries = memoryAllocate(bytes);
+    const cJSON *entry;
+    size_t       index = 0;
+    cJSON_ArrayForEach(entry, array)
+    {
+        stats_entry_t *current = &entries[index++];
+        if (! hasBatchFields(entry, false) ||
+            ! getUint64FromJson(&current->id, cJSON_GetObjectItemCaseSensitive(entry, "id")) || current->id == 0 ||
+            ! getUint64FromJson(&current->upload, cJSON_GetObjectItemCaseSensitive(entry, "up")) ||
+            ! getUint64FromJson(&current->download, cJSON_GetObjectItemCaseSensitive(entry, "down")) ||
+            (current->upload == 0 && current->download == 0))
+            goto rejected;
+    }
     if (client == NULL || ! memoryEqual(session->accounting_epoch, client->accounting_epoch, 64) ||
         ! memoryEqual(epoch->valuestring, client->accounting_epoch, 64))
     {
@@ -66,6 +107,7 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
             error = "usage-replay-conflict";
             goto rejected;
         }
+        memoryFree(entries);
         cJSON_Delete(json);
         return acknowledge(l, correlation_id, client);
     }
@@ -74,25 +116,11 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
         error = "usage-sequence-invalid";
         goto rejected;
     }
-    const cJSON *array = cJSON_GetObjectItemCaseSensitive(json, "users");
-    const int    count = cJSON_GetArraySize(array);
-    if (! cJSON_IsArray(array) || count <= 0 || count > kAuthenticationServerMaxBatchEntries)
-        goto rejected;
-    size_t bytes;
-    if (! memoryTryComputeArraySize((size_t) count, sizeof(*entries), &bytes))
-        goto rejected;
-    entries = memoryAllocate(bytes);
-    const cJSON *entry;
-    size_t       index = 0;
-    cJSON_ArrayForEach(entry, array)
+    /* Account existence applies only to a new batch. Exact replay remains
+     * acknowledgeable after an accepted account is edited or removed. */
+    for (int i = 0; i < count; ++i)
     {
-        stats_entry_t *current = &entries[index++];
-        if (! cJSON_IsObject(entry) ||
-            ! getUint64FromJson(&current->id, cJSON_GetObjectItemCaseSensitive(entry, "id")) || current->id == 0 ||
-            ! getUint64FromJson(&current->upload, cJSON_GetObjectItemCaseSensitive(entry, "up")) ||
-            ! getUint64FromJson(&current->download, cJSON_GetObjectItemCaseSensitive(entry, "down")) ||
-            (current->upload == 0 && current->download == 0))
-            goto rejected;
+        stats_entry_t *current = &entries[i];
         current->user = usersLookupByIdentifier(&ts->store.users, current->id);
         if (current->user == NULL)
             goto rejected;
