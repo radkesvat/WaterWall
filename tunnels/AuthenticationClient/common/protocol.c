@@ -2,6 +2,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "node_builder/config_lexical.h"
 
 static void authenticationclientWriteNetworkUI32(uint8_t *dest, uint32_t value)
 {
@@ -173,105 +174,11 @@ static users_update_result_t authenticationclientAddTrafficByStableId(users_t *u
     return kUsersUpdateResultInvalidArgument;
 }
 
-static uint64_t authenticationclientSaturatingAdd(uint64_t a, uint64_t b)
+static void authenticationclientInstallClientClocks(users_t *users, uint64_t server_time_ms,
+                                                    uint64_t accounting_time_ms, uint64_t received_at_ms)
 {
-    if (UNLIKELY(UINT64_MAX - a < b))
-    {
-        return UINT64_MAX;
-    }
-    return a + b;
-}
-
-static uint64_t authenticationclientSmallestNonZero64(uint64_t a, uint64_t b)
-{
-    if (a == 0)
-    {
-        return b;
-    }
-    if (b == 0 || a < b)
-    {
-        return a;
-    }
-    return b;
-}
-
-static uint64_t authenticationclientServerExpireAt(const user_time_info_t *timeinfo)
-{
-    uint64_t expire_at_ms = 0;
-
-    if (timeinfo->expire_at_ms != USER_NO_EXPIRY)
-    {
-        expire_at_ms = timeinfo->expire_at_ms;
-    }
-    if (timeinfo->expire_after_first_usage_ms != USER_NO_EXPIRY && timeinfo->first_usage_at_ms != 0)
-    {
-        expire_at_ms = authenticationclientSmallestNonZero64(
-            expire_at_ms,
-            authenticationclientSaturatingAdd(timeinfo->first_usage_at_ms, timeinfo->expire_after_first_usage_ms));
-    }
-
-    return expire_at_ms;
-}
-
-static uint64_t authenticationclientClientViewExpireAt(const user_time_info_t *timeinfo, uint64_t server_now_ms,
-                                                       uint64_t client_now_ms)
-{
-    const uint64_t server_expire_at_ms = authenticationclientServerExpireAt(timeinfo);
-    if (server_expire_at_ms == 0)
-    {
-        return 0;
-    }
-    if (server_expire_at_ms <= server_now_ms)
-    {
-        return client_now_ms != 0 ? client_now_ms : 1U;
-    }
-    return authenticationclientSaturatingAdd(client_now_ms, server_expire_at_ms - server_now_ms);
-}
-
-static bool authenticationclientReadServerTimeMS(const cJSON *json, uint64_t *server_time_ms)
-{
-    if (UNLIKELY(server_time_ms == NULL))
-    {
-        return false;
-    }
-
-    *server_time_ms = getTimeOfDayMS();
-    if (! cJSON_IsObject(json))
-    {
-        return true;
-    }
-
-    const cJSON *item = cJSON_GetObjectItemCaseSensitive(json, "server-time-ms");
-    if (item == NULL)
-    {
-        item = cJSON_GetObjectItemCaseSensitive(json, "server_time_ms");
-    }
-    if (item == NULL || cJSON_IsNull(item))
-    {
-        return true;
-    }
-
-    return getUint64FromJson(server_time_ms, item);
-}
-
-static void authenticationclientInstallClientViewExpiry(users_t *users, uint64_t server_time_ms)
-{
-    const uint64_t client_now_ms = authenticationclientLocalTimeMS();
-    const size_t   users_count   = usersCount(users);
-
-    for (size_t i = 0; i < users_count; ++i)
-    {
-        user_t *user = usersGetAt(users, i);
-        if (UNLIKELY(user == NULL))
-        {
-            continue;
-        }
-
-        user_time_info_t timeinfo = {0};
-        userGetTimeInfo(user, &timeinfo);
-        userSetClientViewExpiry(
-            user, authenticationclientClientViewExpireAt(&timeinfo, server_time_ms, client_now_ms), true);
-    }
+    for (size_t i = 0; i < usersCount(users); ++i)
+        userInstallClientClock(usersGetAt(users, i), server_time_ms, accounting_time_ms, received_at_ms);
 }
 
 static void authenticationclientClearSessionLocked(authenticationclient_tstate_t *ts)
@@ -717,88 +624,179 @@ bool authenticationclientSendGetAllUsers(tunnel_t *t)
         mutexLock(&ts->control_mutex);
         ts->pull_requested = true;
         mutexUnlock(&ts->control_mutex);
+        authenticationclientScheduleSyncProgress(t);
     }
     return sent;
+}
+
+static int authenticationclientCompareEntries(const void *left, const void *right)
+{
+    const authenticationclient_accounting_entry_t *a = left, *b = right;
+    return (a->id > b->id) - (a->id < b->id);
+}
+
+static authenticationclient_accounting_entry_t *authenticationclientCatchupEntry(authenticationclient_tstate_t *ts,
+                                                                                 uint64_t                       id)
+{
+    const authenticationclient_accounting_entry_t key = {.id = id};
+    return ts->catchup_entries_count == 0 ? NULL
+                                          : bsearch(&key,
+                                                    ts->catchup_entries,
+                                                    ts->catchup_entries_count,
+                                                    sizeof(key),
+                                                    authenticationclientCompareEntries);
+}
+
+static bool authenticationclientEntryOwed(const authenticationclient_accounting_entry_t *entry)
+{
+    return entry->delta.u != 0 || entry->delta.d != 0 || entry->first_usage_at_ms != 0;
+}
+
+static bool authenticationclientHasCatchup(const authenticationclient_tstate_t *ts)
+{
+    for (size_t i = 0; i < ts->catchup_entries_count; ++i)
+        if (authenticationclientEntryOwed(&ts->catchup_entries[i]))
+            return true;
+    return false;
+}
+
+/* users_lock pins active and baseline tables. Generic copies deliberately omit
+ * evidence, so reporting takes explicit coherent user/traffic value snapshots. */
+static user_ud_t authenticationclientOwedTraffic(authenticationclient_tstate_t    *ts,
+                                                 const user_accounting_snapshot_t *snapshot)
+{
+    user_stat_t previous = {0};
+    user_t     *base     = usersLookupByIdentifier(ts->sync_baseline_users, snapshot->id);
+    if (base != NULL)
+        userGetStats(base, &previous);
+    return (user_ud_t) {.u = authenticationclientCounterDelta(snapshot->traffic.u, previous.traffic.u),
+                        .d = authenticationclientCounterDelta(snapshot->traffic.d, previous.traffic.d)};
+}
+
+static bool authenticationclientCaptureCatchup(tunnel_t *t)
+{
+    authenticationclient_tstate_t *ts       = tunnelGetState(t);
+    user_accounting_snapshot_t    *snapshot = NULL;
+    size_t                         count    = 0, bytes;
+    rwlockReadLock(&ts->users_lock);
+    if (! usersSnapshotAccounting(ts->users, &snapshot, &count) ||
+        ! memoryTryComputeArraySize(count, sizeof(*ts->catchup_entries), &bytes))
+    {
+        rwlockReadUnlock(&ts->users_lock);
+        memoryFree(snapshot);
+        return false;
+    }
+    authenticationclient_accounting_entry_t *entries = memoryAllocate(bytes);
+    size_t                                   owed    = 0;
+    for (size_t i = 0; i < count; ++i)
+    {
+        const user_accounting_snapshot_t       *current = &snapshot[i];
+        authenticationclient_accounting_entry_t entry   = {
+              .id                = current->id,
+              .delta             = authenticationclientOwedTraffic(ts, current),
+              .first_usage_at_ms = current->observation_pending ? current->first_usage_at_ms : 0};
+        const authenticationclient_accounting_entry_t *retained = authenticationclientCatchupEntry(ts, current->id);
+        if (retained != NULL)
+        {
+            /* Reconnect must preserve debt hidden by a saturated rebase.
+             * Visible A - B overlaps that debt, so merge without adding it twice. */
+            entry.delta.u = max(entry.delta.u, retained->delta.u);
+            entry.delta.d = max(entry.delta.d, retained->delta.d);
+        }
+        if (authenticationclientEntryOwed(&entry))
+            entries[owed++] = entry;
+    }
+    rwlockReadUnlock(&ts->users_lock);
+    memoryFree(snapshot);
+    qsort(entries, owed, sizeof(*entries), authenticationclientCompareEntries);
+    memoryFree(ts->catchup_entries);
+    ts->catchup_entries        = entries;
+    ts->catchup_entries_count  = owed;
+    ts->catchup_capture_needed = false;
+    return true;
 }
 
 static bool authenticationclientCreateUsageBatch(tunnel_t *t)
 {
     authenticationclient_tstate_t *ts       = tunnelGetState(t);
-    users_t                       *snapshot = NULL, *baseline = NULL;
+    user_accounting_snapshot_t    *snapshot = NULL;
+    size_t                         total    = 0;
     rwlockReadLock(&ts->users_lock);
-    if (ts->users_loaded)
+    if (! ts->users_loaded || ! usersSnapshotAccounting(ts->users, &snapshot, &total))
     {
-        snapshot = authenticationclientCreateUsersCopy(ts->users);
-        baseline = authenticationclientCreateUsersCopy(ts->sync_baseline_users);
-    }
-    rwlockReadUnlock(&ts->users_lock);
-    if (snapshot == NULL || baseline == NULL)
-    {
-        authenticationclientDestroyUsers(snapshot);
-        authenticationclientDestroyUsers(baseline);
+        rwlockReadUnlock(&ts->users_lock);
         return false;
     }
-    users_t *subset = memoryAllocateAligned(sizeof(*subset), 32);
-    if (! usersCreate(subset))
-    {
-        memoryFreeAligned(subset);
-        authenticationclientDestroyUsers(snapshot);
-        authenticationclientDestroyUsers(baseline);
-        return false;
-    }
-    cJSON  *root = cJSON_CreateObject(), *array = cJSON_CreateArray();
+    /* Fixed maximum geometry; ordinary allocation is fatal on heap OOM. */
+    authenticationclient_accounting_entry_t *entries =
+        memoryAllocate(kAuthenticationClientMaxBatchEntries * sizeof(*entries));
+    cJSON     *root = cJSON_CreateObject(), *array = cJSON_CreateArray();
     discard cJSON_AddStringToObject(root, "epoch", ts->accounting_epoch);
     discard jsonAddUint64ToObject(root, "sequence", ts->next_batch_sequence);
     discard cJSON_AddItemToObject(root, "users", array);
-    size_t  count    = 0;
-    bool    complete = true;
-    for (size_t i = 0; i < usersCount(snapshot); ++i)
+    size_t     count        = 0;
+    const bool catchup      = authenticationclientHasCatchup(ts);
+    bool       more_entries = false;
+    for (size_t i = 0; i < total; ++i)
     {
-        user_t     *user = usersGetAt(snapshot, i);
-        user_t     *base = usersLookupByIdentifier(baseline, userGetId(user));
-        user_stat_t current, previous = {0};
-        userGetStats(user, &current);
-        if (base != NULL)
-            userGetStats(base, &previous);
-        const uint64_t up   = authenticationclientCounterDelta(current.traffic.u, previous.traffic.u);
-        const uint64_t down = authenticationclientCounterDelta(current.traffic.d, previous.traffic.d);
-        if (up == 0 && down == 0)
+        const user_accounting_snapshot_t              *current = &snapshot[i];
+        const authenticationclient_accounting_entry_t *owed    = NULL;
+        if (catchup)
+        {
+            owed = authenticationclientCatchupEntry(ts, current->id);
+            if (owed == NULL || ! authenticationclientEntryOwed(owed))
+                continue;
+        }
+        user_ud_t delta = authenticationclientOwedTraffic(ts, current);
+        if (owed != NULL)
+        {
+            /* A saturating aggregate rebase can hide A - B. Relative debt at
+             * the cut remains known production until this batch's ACK. */
+            delta.u = max(delta.u, owed->delta.u);
+            delta.d = max(delta.d, owed->delta.d);
+        }
+        if (delta.u == 0 && delta.d == 0 && ! current->observation_pending)
             continue;
+        /* Rebased/imported bytes are never observations. All local production
+         * must pass through accounting with a valid installed clock. */
+        assert(current->first_usage_at_ms != 0);
         if (count == kAuthenticationClientMaxBatchEntries)
         {
-            mutexLock(&ts->control_mutex);
-            ts->push_requested = true;
-            mutexUnlock(&ts->control_mutex);
+            more_entries = ! catchup;
             break;
         }
-        cJSON  *entry = cJSON_CreateObject();
-        discard jsonAddUint64ToObject(entry, "id", userGetId(user));
-        discard jsonAddUint64ToObject(entry, "up", up);
-        discard jsonAddUint64ToObject(entry, "down", down);
+        entries[count++] = (authenticationclient_accounting_entry_t) {.id                = current->id,
+                                                                      .totals            = current->traffic,
+                                                                      .delta             = delta,
+                                                                      .first_usage_at_ms = current->first_usage_at_ms};
+        cJSON  *entry    = cJSON_CreateObject();
+        discard jsonAddUint64ToObject(entry, "id", current->id);
+        discard jsonAddUint64ToObject(entry, "up", delta.u);
+        discard jsonAddUint64ToObject(entry, "down", delta.d);
+        discard jsonAddUint64ToObject(entry, "first-usage-at-ms", current->first_usage_at_ms);
         discard cJSON_AddItemToArray(array, entry);
-        if (! usersAddUser(subset, user))
-        {
-            complete = false;
-            break;
-        }
-        ++count;
     }
-    char *text = complete && count != 0 ? cJSON_PrintUnformatted(root) : NULL;
+    rwlockReadUnlock(&ts->users_lock);
+    memoryFree(snapshot);
+    if (more_entries)
+    {
+        mutexLock(&ts->control_mutex);
+        ts->push_requested = true;
+        mutexUnlock(&ts->control_mutex);
+    }
+    char *text = count != 0 ? cJSON_PrintUnformatted(root) : NULL;
     cJSON_Delete(root);
-    authenticationclientDestroyUsers(snapshot);
-    authenticationclientDestroyUsers(baseline);
     if (text == NULL ||
         stringLength(text) > kAuthenticationClientMaxMessagePayload - kAuthenticationClientRequestHeaderSize)
     {
         cJSON_free(text);
-        authenticationclientDestroyUsers(subset);
+        memoryFree(entries);
         return false;
     }
-    rwlockWriteLock(&ts->users_lock);
-    ts->pending_push_users = subset;
-    rwlockWriteUnlock(&ts->users_lock);
-    /* Both immutable owners are published before any transport callback. */
-    ts->pending_batch        = text;
+    /* Publish both immutable owners before any transport callback. */
+    ts->pending_entries       = entries;
+    ts->pending_entries_count = count;
+    ts->pending_batch         = text;
     ts->pending_batch_length = (uint32_t) stringLength(text);
     return true;
 }
@@ -815,7 +813,10 @@ bool authenticationclientSendPushUserStats(tunnel_t *t)
     if (! allowed)
         return false;
     if (ts->pending_batch == NULL && ! authenticationclientCreateUsageBatch(t))
+    {
+        authenticationclientScheduleSyncProgress(t);
         return false; /* Empty batch, or refusal: baseline and traffic stay intact. */
+    }
     const bool sent = authenticationclientSendRequest(t,
                                                       kAuthenticationClientRequestTypePushUserStats,
                                                       (const uint8_t *) ts->pending_batch,
@@ -825,6 +826,7 @@ bool authenticationclientSendPushUserStats(tunnel_t *t)
         mutexLock(&ts->control_mutex);
         ts->push_requested = true;
         mutexUnlock(&ts->control_mutex);
+        authenticationclientScheduleSyncProgress(t);
     }
     return sent;
 }
@@ -844,6 +846,13 @@ void authenticationclientResumeSync(tunnel_t *t)
         discard authenticationclientSendPushUserStats(t);
     else if (required_pull)
         discard authenticationclientSendGetAllUsers(t);
+    else if (ts->catchup_capture_needed && ! authenticationclientCaptureCatchup(t))
+        authenticationclientScheduleSyncProgress(t);
+    else if (authenticationclientHasCatchup(ts))
+    {
+        discard authenticationclientSendPushUserStats(t);
+        authenticationclientScheduleSyncProgress(t);
+    }
     else
     {
         /* Ordinary pulls coalesce behind a waiting push. Every successful push
@@ -854,6 +863,7 @@ void authenticationclientResumeSync(tunnel_t *t)
         if (pull)
             discard authenticationclientSendGetAllUsers(t);
     }
+    authenticationclientScheduleSyncProgress(t);
 }
 
 static bool authenticationclientAcknowledgeUsageBatch(tunnel_t *t, const uint8_t *data, uint32_t length)
@@ -881,21 +891,36 @@ static bool authenticationclientAcknowledgeUsageBatch(tunnel_t *t, const uint8_t
     if (! valid)
         return false;
     rwlockWriteLock(&ts->users_lock);
-    users_t *snapshot = ts->pending_push_users;
-    for (size_t i = 0; i < usersCount(snapshot); ++i)
+    for (size_t i = 0; i < ts->pending_entries_count; ++i)
     {
-        user_t *sent = usersGetAt(snapshot, i);
-        user_t *base = usersLookupByIdentifier(ts->sync_baseline_users, userGetId(sent));
+        const authenticationclient_accounting_entry_t *sent = &ts->pending_entries[i];
+        user_t *base = usersLookupByIdentifier(ts->sync_baseline_users, sent->id);
         assert(base != NULL); /* Pull replacement is forbidden while unresolved. */
-        user_stat_t stats;
-        userGetStats(sent, &stats);
         rwlockWriteLock(&base->stats_lock);
-        base->stats.traffic = stats.traffic;
+        base->stats.traffic = sent->totals;
         rwlockWriteUnlock(&base->stats_lock);
+        user_t *active = usersLookupByIdentifier(ts->users, sent->id);
+        if (active != NULL)
+            userAcknowledgeObservation(active, sent->first_usage_at_ms);
+        authenticationclient_accounting_entry_t *owed = authenticationclientCatchupEntry(ts, sent->id);
+        if (owed != NULL)
+        {
+            owed->delta.u = authenticationclientCounterDelta(owed->delta.u, sent->delta.u);
+            owed->delta.d = authenticationclientCounterDelta(owed->delta.d, sent->delta.d);
+            if (owed->first_usage_at_ms == sent->first_usage_at_ms)
+                owed->first_usage_at_ms = 0;
+        }
     }
-    ts->pending_push_users = NULL;
     rwlockWriteUnlock(&ts->users_lock);
-    authenticationclientDestroyUsers(snapshot);
+    memoryFree(ts->pending_entries);
+    ts->pending_entries       = NULL;
+    ts->pending_entries_count = 0;
+    if (! authenticationclientHasCatchup(ts))
+    {
+        memoryFree(ts->catchup_entries);
+        ts->catchup_entries       = NULL;
+        ts->catchup_entries_count = 0;
+    }
     cJSON_free(ts->pending_batch);
     ts->pending_batch        = NULL;
     ts->pending_batch_length = 0;
@@ -914,17 +939,20 @@ static bool authenticationclientApplyLocalTrafficDelta(users_t *dest, users_t *o
 
 static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t *data, uint32_t data_len,
                                                      uint64_t config_revision, uint64_t stats_revision,
-                                                     uint64_t revision_generation)
+                                                     uint64_t revision_generation, uint64_t received_at_ms)
 {
     authenticationclient_tstate_t *ts             = tunnelGetState(t);
-    cJSON                         *json           = cJSON_ParseWithLength((const char *) data, data_len);
-    uint64_t                       server_time_ms = 0;
+    cJSON                         *json           = configLexicalParse((const char *) data, data_len, 8);
+    uint64_t                       server_time_ms = 0, accounting_time_ms = 0;
     if (UNLIKELY(json == NULL))
     {
         LOGW("AuthenticationClient: GetAllUsers returned invalid JSON");
         return false;
     }
-    if (UNLIKELY(! authenticationclientReadServerTimeMS(json, &server_time_ms)))
+    if (UNLIKELY(
+            ! getUint64FromJson(&server_time_ms, cJSON_GetObjectItemCaseSensitive(json, "server-time-ms")) ||
+            ! getUint64FromJson(&accounting_time_ms, cJSON_GetObjectItemCaseSensitive(json, "accounting-time-ms")) ||
+            accounting_time_ms == 0))
     {
         cJSON_Delete(json);
         LOGW("AuthenticationClient: GetAllUsers returned invalid server time metadata");
@@ -981,7 +1009,7 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
         LOGW("AuthenticationClient: failed to preserve local runtime state during GetAllUsers replacement");
         return false;
     }
-    authenticationclientInstallClientViewExpiry(new_users, server_time_ms);
+    authenticationclientInstallClientClocks(new_users, server_time_ms, accounting_time_ms, received_at_ms);
     usersResetFirstUsagePushRequests(new_users);
 
     ts->users               = new_users;
@@ -992,6 +1020,7 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
     ts->local_stats_revision      = stats_revision;
     ts->local_revision_generation = revision_generation;
     ts->users_loaded              = true;
+    ts->clock_loaded              = true;
     rwlockWriteUnlock(&ts->users_lock);
 
     mutexLock(&ts->control_mutex);
@@ -1003,6 +1032,9 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
     usersDestroy(old_users);
     memoryFreeAligned(old_users);
     authenticationclientDestroyUsers(old_baseline);
+
+    if (ts->catchup_capture_needed)
+        discard authenticationclientCaptureCatchup(t); /* Failure retains the obligation for the progress timer. */
 
     if (ts->verbose)
     {
@@ -1067,6 +1099,13 @@ static void authenticationclientHandleError(tunnel_t *t, line_t *l, uint8_t requ
     authenticationclient_tstate_t *ts = tunnelGetState(t);
     const bool                     continuity =
         length == sizeof("accounting-continuity-lost") - 1 && memoryEqual(data, "accounting-continuity-lost", length);
+    if (request_type == kAuthenticationClientRequestTypeAuthenticate && length == sizeof("authentication-failed") - 1 &&
+        memoryEqual(data, "authentication-failed", length))
+    {
+        mutexLock(&ts->control_mutex);
+        ts->auth_rejected = true;
+        mutexUnlock(&ts->control_mutex);
+    }
     const bool authentication =
         length == sizeof("authentication-required") - 1 && memoryEqual(data, "authentication-required", length);
     LOGW("AuthenticationClient: request %u failed: %.*s", request_type, (int) min(length, 128U), (const char *) data);
@@ -1094,7 +1133,8 @@ static void authenticationclientHandleError(tunnel_t *t, line_t *l, uint8_t requ
 
 static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint8_t response_type,
                                                     uint32_t correlation_id, const uint8_t *data, uint32_t data_len,
-                                                    uint64_t config_revision, uint64_t stats_revision)
+                                                    uint64_t config_revision, uint64_t stats_revision,
+                                                    uint64_t received_at_ms)
 {
     authenticationclient_tstate_t *ts           = tunnelGetState(t);
     uint8_t                        request_type = 0;
@@ -1143,6 +1183,8 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
         }
         memoryCopy(ts->token, data, 64);
         ts->authenticated  = true;
+        ts->auth_rejected          = false;
+        ts->catchup_capture_needed = true;
         ts->pull_requested = true;
         ts->pull_required  = true;
         mutexUnlock(&ts->control_mutex);
@@ -1151,7 +1193,8 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
     }
     case kAuthenticationClientRequestTypeGetAllUsers:
         if (response_type != kAuthenticationClientResponseTypeUsers || ts->pending_batch != NULL ||
-            ! authenticationclientReplaceUsersFromJson(t, data, data_len, config_revision, stats_revision, generation))
+            ! authenticationclientReplaceUsersFromJson(
+                t, data, data_len, config_revision, stats_revision, generation, received_at_ms))
         {
             authenticationclientRecoverControlLine(t, l, true);
             return;
@@ -1175,7 +1218,10 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
     default:
         break;
     }
-    authenticationclientResumeSync(t);
+    if (ts->catchup_capture_needed || authenticationclientHasCatchup(ts))
+        authenticationclientScheduleSyncProgress(t);
+    else
+        authenticationclientResumeSync(t);
 }
 
 static bool authenticationclientReadMessageHeader(authenticationclient_lstate_t *ls, uint32_t *message_body_len)
@@ -1263,7 +1309,10 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
             return true;
         }
 
-        sbuf_t *payload = authenticationStreamReadExact(&ls->read_stream, (uint32_t) message_len);
+        /* Include framing/JSON construction and subsequent lock waits in the
+         * receipt-to-install elapsed time, including a maximum-sized pull. */
+        const uint64_t received_at_ms = authenticationclientLocalTimeMS();
+        sbuf_t        *payload        = authenticationStreamReadExact(&ls->read_stream, (uint32_t) message_len);
         sbufShiftRight(payload, kAuthenticationClientMessageHeaderSize);
 
         const uint8_t *revision_ptr    = sbufGetRawPtr(payload);
@@ -1300,8 +1349,15 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
                 authenticationclientReadNetworkUI32(frame + 1 + kAuthenticationClientCorrelationIdSize);
             const uint8_t *response_data = frame + kAuthenticationClientResponseHeaderSize;
 
-            authenticationclientHandleResponseFrame(
-                t, l, response_type, correlation_id, response_data, response_data_len, config_revision, stats_revision);
+            authenticationclientHandleResponseFrame(t,
+                                                    l,
+                                                    response_type,
+                                                    correlation_id,
+                                                    response_data,
+                                                    response_data_len,
+                                                    config_revision,
+                                                    stats_revision,
+                                                    received_at_ms);
 
             const uint32_t consumed = kAuthenticationClientResponseHeaderSize + response_data_len;
             offset += consumed;
@@ -1390,6 +1446,8 @@ void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate
     ts->pending_count = 0;
     authenticationclientClearSessionLocked(ts);
     mutexUnlock(&ts->control_mutex);
+    /* Retain unacknowledged relative debt; a saturated A - B cannot rebuild it. */
+    ts->catchup_capture_needed = true;
     authenticationclientUpdateRequestTimer(t);
     authenticationclientResetFirstUsagePushRuntime(t);
 

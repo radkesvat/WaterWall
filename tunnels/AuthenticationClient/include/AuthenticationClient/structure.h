@@ -9,6 +9,14 @@ typedef struct authenticationclient_pending_request_s
     uint8_t  request_type;
 } authenticationclient_pending_request_t;
 
+typedef struct authenticationclient_accounting_entry_s
+{
+    uint64_t  id;
+    user_ud_t totals;
+    user_ud_t delta;
+    uint64_t  first_usage_at_ms;
+} authenticationclient_accounting_entry_t;
+
 typedef struct authenticationclient_tstate_s
 {
     char *name;
@@ -16,7 +24,12 @@ typedef struct authenticationclient_tstate_s
 
     users_t  *users;
     users_t  *sync_baseline_users;
-    users_t  *pending_push_users;
+    /* Worker-0 owned value snapshots; no pointers into a replaceable table. */
+    authenticationclient_accounting_entry_t *pending_entries;
+    size_t                                   pending_entries_count;
+    authenticationclient_accounting_entry_t *catchup_entries;
+    size_t                                   catchup_entries_count;
+    bool                                     catchup_capture_needed;
     wrwlock_t users_lock;
     uint64_t  users_generation;
 
@@ -25,6 +38,7 @@ typedef struct authenticationclient_tstate_s
     bool     stopping;
     bool     connected;
     bool     authenticated;
+    bool     auth_rejected;
     bool     write_paused;
     bool     auth_in_flight;
     bool     pull_in_flight;
@@ -32,6 +46,7 @@ typedef struct authenticationclient_tstate_s
     bool     first_usage_push_requested;
     bool     first_usage_push_deferred;
     bool     users_loaded;
+    bool     clock_loaded;
     bool     verbose;
     bool     reconnect_work_pending;
     bool     continuity_error;
@@ -44,6 +59,7 @@ typedef struct authenticationclient_tstate_s
     wtimer_t *sync_timer;
     wtimer_t *reconnect_timer;
     wtimer_t *request_timer;
+    wtimer_t *progress_timer;
     uint64_t  reconnect_due_ms;
     uint64_t  request_deadline_ms;
 
@@ -158,6 +174,7 @@ void authenticationclientOpenControlLine(tunnel_t *t);
 void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate_finish);
 void authenticationclientRecoverControlLine(tunnel_t *t, line_t *l, bool propagate_finish);
 void authenticationclientUpdateRequestTimer(tunnel_t *t);
+void authenticationclientScheduleSyncProgress(tunnel_t *t);
 bool authenticationclientCloseTimedOutControlLine(tunnel_t *t);
 void authenticationclientScheduleReconnect(tunnel_t *t);
 void authenticationclientReconnectTimerCallback(wtimer_t *timer);

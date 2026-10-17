@@ -61,6 +61,8 @@ typedef struct authenticationserver_tstate_s
     uint32_t                                   session_idle_timeout_ms;
     uint32_t                                   normal_backups_count_limit;
     uint64_t                                   normal_backups_last_slot;
+    uint64_t                                   accounting_anchor_ms;
+    uint64_t                                   accounting_monotonic_ms;
     authenticationserver_normal_backups_mode_t normal_backups_mode;
     bool                                       database_loaded;
     bool                                       verbose;
@@ -164,6 +166,8 @@ void authenticationserverSessionExpiryTimerCallback(wtimer_t *timer);
 void authenticationserverGetRevisions(tunnel_t *t, uint64_t *config_revision, uint64_t *stats_revision);
 void authenticationserverBumpConfigRevision(tunnel_t *t);
 void authenticationserverBumpStatsRevision(tunnel_t *t);
+void     authenticationserverInitializeAccountingClock(authenticationserver_tstate_t *ts);
+uint64_t authenticationserverAccountingTimeMS(const authenticationserver_tstate_t *ts);
 /* Called inside the request's state_lock write serialization. */
 users_update_result_t           authenticationserverPatchConfigAndBumpRevision(tunnel_t *t, uint64_t id,
                                                                                const user_config_patch_t *patch);

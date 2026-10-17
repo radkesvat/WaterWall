@@ -1,5 +1,19 @@
 #include "structure.h"
 
+void authenticationserverInitializeAccountingClock(authenticationserver_tstate_t *ts)
+{
+    ts->accounting_anchor_ms    = max(getTimeOfDayMS(), UINT64_C(1));
+    ts->accounting_monotonic_ms = getHRTimeUs() / 1000ULL;
+}
+
+uint64_t authenticationserverAccountingTimeMS(const authenticationserver_tstate_t *ts)
+{
+    assert(ts->accounting_anchor_ms != 0);
+    const uint64_t now     = getHRTimeUs() / 1000ULL;
+    const uint64_t elapsed = now > ts->accounting_monotonic_ms ? now - ts->accounting_monotonic_ms : 0;
+    return elapsed > UINT64_MAX - ts->accounting_anchor_ms ? UINT64_MAX : ts->accounting_anchor_ms + elapsed;
+}
+
 void authenticationserverGetRevisions(tunnel_t *t, uint64_t *config_revision, uint64_t *stats_revision)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);

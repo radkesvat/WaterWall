@@ -19,3 +19,8 @@ void        authTestPeerSetUser(tunnel_t *server, uint64_t id, const user_update
 cJSON      *authTestPeerUserJson(tunnel_t *server, uint64_t id);
 char       *authTestPeerSnapshot(tunnel_t *server);
 void        authTestPeerInsertUser(tunnel_t *server, uint64_t id, const char *password);
+tunnel_t   *authTestControllerCreate(tunnel_t *auth);
+line_t     *authTestControllerOpen(tunnel_t *controller, tunnel_chain_t *chain);
+void        authTestControllerPayload(tunnel_t *controller, line_t *line);
+void        authTestControllerSweep(tunnel_t *controller);
+void        authTestControllerDestroy(tunnel_t *controller);

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UserController.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UserController.mdx, and all files must keep the same documentation version.
 -->
 
@@ -120,6 +120,12 @@ When any of these conditions causes a rejection or a close, a warning is logged.
 configuration (passwords, limits, expiry, enabled state); it only updates process-local runtime usage and the synced
 cumulative traffic counters.
 
+New managed lines use AuthenticationClient cached-admission availability. Existing managed lines keep accounting,
+payload expiry checks, idle sweeps and reservation release during ordinary outages or explicit credential rejection.
+Cached quotas and reservations are local; multiple disconnected clients may overshoot aggregate quotas. Relative
+expiry starts with actual first nonzero accounted traffic, even while duration is initially zero; enabling duration
+later uses that retained age. Explicit duration and absolute-date edits recompute their components independently.
+
 ## Direction Awareness (Upload vs Download)
 
 `UserController` records, per line, which side the line was initiated from, and uses it to map traffic to the user's
@@ -140,14 +146,15 @@ otherwise identical in both directions.
 
 Live enforcement state (current outbound connection count and the set of in-use source IPs) is stored on the `user_t`
 object inside `AuthenticationClient`, in a dedicated process-local `runtime` field that is never serialized or synced to
-`AuthenticationServer`. Cumulative traffic is added to the normal `stats.traffic` counters. `UserController` never creates
-or pushes `first-usage-at-ms`; the server owns that timestamp and returns enough server-time metadata for
-`AuthenticationClient` to compute a process-local expiry deadline. All access goes through id-keyed
+`AuthenticationServer`. Cumulative traffic is added to the normal `stats.traffic` counters. The AuthenticationClient accounting helper captures
+first nonzero local traffic, records an immutable first-use estimate, and starts relative expiry immediately, including
+offline. The server merges earliest authorized observations; client monotonic age persists across ACK and refresh.
+Login, reservation, zero-byte calls and rebasing do not start or restart it. All access goes through id-keyed
 `AuthenticationClient` helpers, so `UserController` never holds a raw `user_t` pointer.
 
 During a full users-table refresh (`GetAllUsers`), matching users are found by durable user id and their process-local runtime
-connection/IP counters are moved to the refreshed user object. Expiry state is recalculated from the refreshed server
-table and the response's server-time metadata.
+connection/IP counters are moved to the refreshed user object. Runtime clock evidence and elapsed age move with those reservations. New expiry policy is projected separately
+from canonical wall/accounting clock metadata; unchanged pulls never extend an existing countdown.
 
 ## Lifecycle Behavior
 
@@ -161,7 +168,7 @@ table and the response's server-time metadata.
 
 - On upstream payload (upload) and downstream payload (download), it adds the byte count to the user's traffic counters.
   The AuthClient accounting helper internally asks for one coalesced early `PushUserStats` attempt when the first non-zero
-  local traffic arrives for a user whose cache still lacks `first-usage-at-ms`. If the user is now over quota, expired, or
+  local traffic creates an unacknowledged producer observation, independently of canonical first use. If the user is now over quota, expired, or
   disabled, it recycles the buffer and tears the line down in both directions.
 
 - A per-worker sweep timer checks open managed lines even when they are idle, so disabled, expired, removed, or

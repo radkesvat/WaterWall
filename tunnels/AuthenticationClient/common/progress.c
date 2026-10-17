@@ -10,6 +10,44 @@ static void progressFailure(const char *operation)
     }
 }
 
+static void syncProgress(wtimer_t *timer)
+{
+    tunnel_t *t = weventGetUserdata(timer);
+    if (t == NULL)
+        return;
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    ts->progress_timer                = NULL;
+    authenticationclientResumeSync(t);
+    authenticationclientScheduleSyncProgress(t);
+}
+
+void authenticationclientScheduleSyncProgress(tunnel_t *t)
+{
+    assert(currentThreadIsEventWorkerWID(0));
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    mutexLock(&ts->control_mutex);
+    const bool needed = ts->started && ! ts->stopping && ! ts->continuity_error && ts->authenticated && ts->connected &&
+                        ! ts->auth_in_flight && ! ts->pull_in_flight && ! ts->push_in_flight &&
+                        (ts->pull_required || ts->push_requested || ts->pending_batch != NULL ||
+                         ts->catchup_capture_needed || ts->catchup_entries_count != 0);
+    mutexUnlock(&ts->control_mutex);
+    if (! needed || ts->progress_timer != NULL)
+        return;
+    /* Independent of optional jobs; nonzero delay also bounds retry and
+     * synchronous fixture/reentrant transports to one continuation per turn. */
+    ts->progress_timer = wtimerAdd(getWorkerLoop(0), syncProgress, 1, 1);
+    if (ts->progress_timer != NULL)
+        weventSetUserData(ts->progress_timer, t);
+    else
+    {
+        mutexLock(&ts->control_mutex);
+        const bool stopping = ts->stopping;
+        mutexUnlock(&ts->control_mutex);
+        if (! stopping && ! wloopQuiesceRequested(getWorkerLoop(0)))
+            progressFailure("synchronization progress timer");
+    }
+}
+
 static void reconnectCancelled(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
     discard                        arg2;

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -272,7 +272,7 @@ The client keeps one active local users table. It is protected by a tunnel-level
 2. The fresh table is validated, including requiring every user to have a non-zero durable id and rejecting overlapping
    `wireguard-allowed-ips` ranges.
 3. Local unsynced traffic deltas and process-local runtime counters are carried forward by durable user id.
-4. Each user's local expiry deadline is projected from the server-owned time fields and response server-time metadata.
+4. Local first-use evidence, elapsed age and reservations migrate by ID; fresh clock metadata recomputes each expiry component.
 5. The active table pointer is swapped under the write side of the rwlock.
 6. The generation counter is incremented.
 7. The old table is destroyed after the swap.
@@ -281,8 +281,48 @@ Readers hold the read side of the same rwlock while copying JSON, copying stats,
 prevents a user pointer returned by `users_t` from becoming invalid during the operation.
 
 The table is local cache plus local counter accumulation. The server remains the source of truth for full user config,
-including optional `wireguard-allowed-ips`, and for `first-usage-at-ms`. The client never invents or pushes that
-timestamp; it only converts server expiry state into a process-local deadline used by admission and close checks.
+including optional `wireguard-allowed-ips`. The server stores canonical `first-usage-at-ms`; clients report their
+immutable first-local-traffic observations through deduplicated batches. Local expiry never waits for that report.
+
+## Cached Admission And Local Expiry
+
+`authenticationclientCanAuthenticate()` separates account admission from control-session readiness. Before the first
+valid table and clock pair, during stopping, after terminal continuity failure, or after an explicit correlated
+Authenticate `authentication-failed` response, new admissions reject. A validated successful Session clears that
+credential-rejection block; disconnects, malformed responses, timeouts and `authentication-required` do not clear it.
+`GetState()` and `IsReady()` continue to describe the control session. Password, SHA224, SHA256, UUID, exported
+WireGuard-key lookup and connection admission recheck availability under control-mutex then users-lock ordering.
+
+After initial synchronization, the last valid RAM cache has no age timeout. New and existing connections continue
+through ordinary outages/re-authentication, subject to cached enabled status, quotas, expiry and local connection/IP
+reservations. A malformed refresh retains the old cache. Credential rejection blocks new admission while existing
+streams keep accounting and cached enforcement. Every reused HTTP request is a new admission; an in-flight exchange
+or CONNECT stream continues. Administrative changes arrive with the next valid refresh.
+
+These limits are local knowledge: two disconnected clients each seeing 80 GB of a 100 GB quota may each consume
+20 GB, producing 120 GB after reconciliation. Neither quotas nor connection/IP reservations become strict global limits.
+Already-accounted usage remains acceptable after a server disablement or lower-limit edit.
+
+GetAllUsers requires canonical exact `server-time-ms` and positive `accounting-time-ms`. Missing/invalid metadata rejects
+the refresh without client-wall-clock fallback. Absolute dates use server wall time. The server accounting clock starts
+at `max(wall-ms, 1)` once, then advances by fresh server monotonic elapsed time, independently of later wall corrections.
+
+On first nonzero local upload/download, accounting samples fresh monotonic time inside the user write lock, records
+an explicit valid local origin (including zero) and a positive immutable accounting-clock estimate. Login, reservation,
+zero-byte calls and refresh rebasing never start it. Observation, counters and expiry decision share user-then-stats
+locks; a null notification output does not suppress evidence. The elapsed age survives ACK, reconnect, repeated pulls,
+omitted canonical first-use fields and duration-zero policy. Earlier canonical observations can increase age.
+
+A duration edit recomputes only relative expiry from retained age. A future imported origin remains future until reached
+or superseded by earlier real use. Absolute expiry is projected separately; an unchanged date keeps the earlier old/new
+deadline, while explicit date edits/clears recompute only that component. The earlier enabled component governs payload
+checks and the UserController sweep, including offline. Checked, saturating arithmetic never turns expired-at-zero into
+unlimited access. Generic copies/JSON exclude anchors, ages, report markers and reservations; migration uses durable ID,
+including same-ID credential changes, and retains new authoritative policy/timestamps.
+
+Cross-machine clock conversion is an estimate affected by transit/serialization delay and oscillator drift. Local
+countdowns retain elapsed age. Runtime host-suspend semantics remain unchanged; Linux CLOCK_MONOTONIC excludes suspension.
+All this state is RAM-only; no crash recovery, journal, outbox or guaranteed final delivery is provided.
 
 ## Internal API
 
@@ -315,6 +355,7 @@ Available internal operations:
 ```c
 authenticationclientGetState(t)
 authenticationclientIsReady(t)
+authenticationclientCanAuthenticate(t)
 authenticationclientUsersGeneration(t)
 authenticationclientGetUserByPassword(t, password, &handle)
 authenticationclientGetUserBySHA224(t, sha224, &handle)
@@ -355,17 +396,20 @@ not block lookup. Live capacity is reserved separately by the atomic runtime adm
 
 ## Stats Push
 
-The client synchronizes traffic bytes only, using immutable deltas keyed by durable user ID:
+The client synchronizes traffic deltas and first-use accounting observations keyed by durable user ID:
 
 ```json
-{"epoch":"<64 hexadecimal bytes>","sequence":1,"users":[{"id":42,"up":10,"down":0}]}
+{"epoch":"<64 hexadecimal bytes>","sequence":1,"users":[{"id":42,"up":10,"down":0,"first-usage-at-ms":1792252800000}]}
 ```
 
-It retains the exact payload and its subset snapshot for the tunnel lifetime until an ACK matches epoch, sequence
+It retains the exact payload and an owned snapshot of included IDs, counter totals and first-use observations for the tunnel lifetime until an ACK matches epoch, sequence
 and SHA-256 digest. Send refusal, timeout, malformed replies and transport/session loss preserve both owners.
 Retries use the same bytes with a fresh correlation ID and the current token. Batches contain at most 4096 entries;
 only represented users/directions advance on ACK. Sequence numbers never wrap, and empty batches are not sent.
-The root has exactly `epoch`, `sequence`, `users`; each entry has exactly `id`, `up`, `down`, all required. Unknown,
+ID, sequence and first-use timestamp are nonzero. Both byte deltas may be zero for an unacknowledged observation,
+including when counters saturate. ACK marks only included observations acknowledged; it retains their local origin
+and elapsed age. Later positive reports still carry the same producer timestamp.
+The root has exactly `epoch`, `sequence`, `users`; each entry has exactly `id`, `up`, `down`, `first-usage-at-ms`, all required. Unknown,
 duplicate or nontraffic fields reject the request. Complete valid JSON/UTF-8, no raw/escaped NUL or trailing data,
 and an eight-container depth bound are required within the existing authentication message budget.
 Plain integer tokens through INT64_MAX and decimal strings through UINT64_MAX are exact; integer readers reject
@@ -378,6 +422,16 @@ and other clients' usage arrive.
 First-use work and blocked desired pushes/pulls remain pending until they can run.
 
 Reconnect order is Authenticate/resume epoch, replay retained batch if present, validate ACK, then full pull.
+After that refresh, the client captures owed relative deltas and observations, including traffic during recovery,
+and automatically drains them in bounded batches with a required refresh after every ACK. This works with all optional
+intervals zero. A nonzero worker-0 progress timer yields between catch-up steps and retries resource refusals; failure
+to establish required scheduling requests orderly shutdown. Quiescence detaches the timer and does not rearm it.
+The capture is finite under continuing traffic and survives aggregate counter rebasing from other producers.
+Captured relative debt remains reportable even if a saturating rebase hides it in the visible counters. Post-cut
+traffic follows normal push settings and the first-use trigger. Another disconnect retains both the immutable pending
+batch and outstanding relative catch-up debt. After replay/refresh, recapture merges that debt with visible unacknowledged
+deltas without counting their overlap twice. Only a matching ACK consumes the represented debt; neither disconnect nor
+counter rebasing clears it. Final tunnel destruction releases this RAM state without guaranteeing delivery.
 The server retains a bounded checkpoint per configured client beyond session expiry/replacement. Independent client
 processes need different configured names. A lost/superseded epoch with an unresolved batch enters
 `kAuthenticationClientStateContinuityError`, keeps the batch, closes the transport and stops automatic synchronization
@@ -387,7 +441,7 @@ An ACK means acceptance in server memory, not a disk save. Periodic/final databa
 checkpoints. Client restart may lose unreported usage; server restart may lose acknowledged usage since its last
 successful save and loses retry checkpoints. Shutdown does not guarantee final usage delivery.
 
-Cumulative traffic and first-use timestamps belong to the server aggregate. Remote `UpdateUser` edits select a durable
+Cumulative traffic and the earliest accepted first-use timestamp belong to the server aggregate. Remote `UpdateUser` edits select a durable
 ID and patch configuration only, preserving counters, creation/first-use metadata, credentials and runtime state.
 Configuration patches require `allow-user-write`; traffic batches require `allow-stats-push`. These permissions are
 independent. There is no remote usage-reset operation.
@@ -430,7 +484,7 @@ Downstream `Finish` means the next side closed the transport. The client:
 2. Clears session token, authenticated state, in-flight flags, and pending requests.
 3. Destroys this tunnel's line state.
 4. Destroys the owned line.
-5. Preserves an unresolved usage batch and schedules reconnect unless stopping or in continuity error.
+5. Preserves an unresolved usage batch and outstanding catch-up debt, then schedules reconnect unless stopping or in continuity error.
 
 When the client itself closes the control line, such as during worker-0 shutdown or malformed response handling, it
 destroys its local line state first, then sends `tunnelNextUpStreamFinish()`, then destroys the owned line if it is still

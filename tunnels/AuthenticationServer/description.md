@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -340,7 +340,7 @@ node creation fails. A pre-existing backup has no provenance metadata proving wh
 ## Logic Explanation
 
 The server owns one authoritative table and store-level `config_revision` / `stats_revision` counters, initially 1.
-Configuration mutations bump the former; new usage batches and first-use stamps bump the latter. Independent point
+Configuration mutations bump the former; new usage batches and earliest first-use merges bump the latter. Independent point
 reads share the state read lock. Authentication, full pulls, saves and mutations hold its write lock.
 
 ### Control Identity And Sessions
@@ -363,21 +363,23 @@ A client retains one immutable delta batch across connection loss. Pushes identi
 independent of passwords. The payload has exactly this supported shape:
 
 ```json
-{"epoch":"<64 hexadecimal bytes>","sequence":1,"users":[{"id":42,"up":10,"down":0}]}
+{"epoch":"<64 hexadecimal bytes>","sequence":1,"users":[{"id":42,"up":10,"down":0,"first-usage-at-ms":1792252800000}]}
 ```
 
 `sequence` starts at 1 and advances without wrapping. Each batch has 1..4096 unique user IDs and both nonnegative
-`up` and `down` deltas per entry; at least one direction must be nonzero. Integers are plain signed-64-bit-range
+`up` and `down` deltas and a nonzero `first-usage-at-ms` per entry. Both deltas may be zero for metadata-only reports;
+a valid next-sequence report is accepted even if its first-use minimum is unchanged. Integers are plain signed-64-bit-range
 integer tokens or decimal strings through UINT64_MAX. Decimal/exponent number tokens are rejected by integer readers.
-The root permits only `epoch`, `sequence` and `users`; each entry permits only `id`, `up` and `down`, all required.
-Unknown or duplicate decoded keys reject the entire request, including nontraffic statistics, timestamps and absolute
+The root permits only `epoch`, `sequence` and `users`; each entry permits only `id`, `up`, `down` and `first-usage-at-ms`, all required.
+Unknown or duplicate decoded keys reject the entire request, including nontraffic statistics, other timestamps and absolute
 traffic totals. The complete byte span must be valid JSON/UTF-8 with no trailing data, raw/escaped NUL or more than eight
 nested containers. These checks do not impose host-configuration file-size limits; authentication payload budgets apply.
 The authenticated configured identity supplies the checkpoint key; payload fields cannot choose another identity.
 
 Under one state write lock, the server validates epoch and sequence and hashes the exact payload bytes with SHA-256.
 An exact replay of the last sequence/digest is acknowledged before current-account validation. Exactly the next
-sequence validates every entry before any mutation, applies saturating traffic and missing first-use timestamps, then
+sequence validates every entry before any mutation, samples the accounting clock once, clamps each producer observation to that time, merges the smallest nonzero
+first-use instant and applies saturating traffic, then
 publishes its checkpoint. Older sequences, gaps, conflicting replay content, unknown IDs and duplicate IDs fail without
 partial application. Only the current epoch's session may report. Checkpoint storage is constant per configured identity;
 it contains no users-table snapshot or unbounded batch history.
@@ -642,7 +644,7 @@ fields; for the same field, the latest accepted value wins. No expected-revision
 | Value | Owner and current rule |
 | --- | --- |
 | Cumulative upload/download bytes | Server aggregate; remote changes use accepted deduplicated batches. Config patches preserve it. |
-| First-use timestamp | Server accounting observation, set only when missing by accepted nonzero usage. Config patches preserve it. |
+| First-use timestamp | Earliest nonzero accounting observation from authorized producers, clamped to accounting receipt time. Config patches preserve it. |
 | Creation timestamp | Creation/import metadata, preserved by ordinary edits. |
 | Limits, enabled flag, expiry policy | Account configuration changed through explicit patch leaves. |
 | Active outbound connections and IP reservations | Local runtime admission state, retained/released locally; no global count is supplied. |
@@ -663,16 +665,28 @@ On success it returns response type `3` and response data containing the normali
 `usersToJson()`, plus response-only server-time metadata:
 
 ```json
-{"users":[...],"server-time-ms":1767225600000}
+{"users":[],"server-time-ms":1767225600000,"accounting-time-ms":1767225600000}
 ```
 
-`server-time-ms` is not written to the database. `AuthenticationClient` uses it to project server-owned expiry fields onto
+`server-time-ms` is not written to the database. `AuthenticationClient` uses it to project absolute-date expiry onto
 the client's local clock.
 
 A pull returns authoritative counters and current envelope revisions without changing the accounting checkpoint.
 
 If the request contains unexpected data, or if exporting/serializing the in-memory database fails, it returns an error
 response frame with the same correlation ID.
+
+`accounting-time-ms` is response-only runtime metadata. At instance construction the server samples
+`C0 = max(wall-ms, 1)` and fresh monotonic `M0`, then returns saturating `C0 + max(Mnow - M0, 0)`.
+Later wall corrections do not rebase this clock; neither anchor is persisted. Existing imported nonzero first-use values
+remain approximate Unix-millisecond instants in this numeric domain. Both canonical exact clock fields are required by
+AuthenticationClient; invalid metadata retains its last usable cache. Absolute dates use `server-time-ms`; first-use
+observations/durations use the accounting clock and retained client monotonic age.
+
+An authorized producer reports its immutable first-local-traffic estimate in every entry, including later positive
+reports after ACK. Reports are trusted accounting input; this adds no proof of physical first use. Earlier observations
+can shorten expiry, future estimates clamp to the single application-time accounting sample, and replay never applies
+bytes or timestamps twice. There is no receipt-time fallback for missing observation metadata.
 
 ### PushUserStats Module
 

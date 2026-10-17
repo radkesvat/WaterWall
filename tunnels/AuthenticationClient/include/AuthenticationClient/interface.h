@@ -38,6 +38,8 @@ WW_EXPORT node_t nodeAuthenticationClientGet(void);
  */
 WW_EXPORT authenticationclient_state_t authenticationclientGetState(tunnel_t *t);
 WW_EXPORT bool                         authenticationclientIsReady(tunnel_t *t);
+/* Admission from the last valid RAM cache, independently of transport state. */
+WW_EXPORT bool                         authenticationclientCanAuthenticate(tunnel_t *t);
 WW_EXPORT uint64_t                     authenticationclientUsersGeneration(tunnel_t *t);
 
 WW_EXPORT bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password, user_handle_t *handle_out);
@@ -97,8 +99,9 @@ WW_EXPORT void authenticationclientRequestPush(tunnel_t *t);
  * such as UserController. They resolve the handle against the current local
  * users table by durable user id and run the matching runtime helper.
  * They touch only process-local runtime state and cumulative traffic counters, never synced
- * configuration. now_ms is in the AuthenticationClient/UserController local-clock domain; pulled
- * server expiry fields are projected into that domain when GetAllUsers is installed.
+ * configuration. now_ms is in the local monotonic domain used for admission/sweeps.
+ * Traffic accounting samples fresh time inside the user write lock, records first
+ * local use, and enforces expiry there; the supplied sample may already be stale.
  */
 WW_EXPORT user_admission_result_t authenticationclientUserTryAdmitConnection(tunnel_t *t, const user_handle_t *handle,
                                                                              const user_ip_key_t *ip_key,

@@ -23,6 +23,7 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "users-json-export-failed");
     }
     discard jsonAddUint64ToObject(users_json, "server-time-ms", getTimeOfDayMS());
+    discard jsonAddUint64ToObject(users_json, "accounting-time-ms", authenticationserverAccountingTimeMS(ts));
 
     char *users_json_text = authenticationserverSerializeResponseJson(users_json);
     if (UNLIKELY(users_json_text == NULL))

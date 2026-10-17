@@ -289,6 +289,38 @@ static void caseWorkerStopClosesPublishedControlLineExactlyOnce(void)
     fixtureTeardown(&fixture);
 }
 
+static void caseCatchupProgressTimer(void)
+{
+    twfSetCase("authenticationclient required catch-up progress");
+    tosResetProcessApi(true);
+    authenticationclient_fixture_t fixture;
+    fixtureSetup(&fixture);
+    authenticationclient_tstate_t *ts = tunnelGetState(fixture.client);
+    ts->pull_interval_ms = ts->push_interval_ms = ts->ping_interval_ms = 0;
+    ts->connected = ts->authenticated = ts->catchup_capture_needed = true;
+    authenticationclientScheduleSyncProgress(fixture.client);
+    twfRequire(ts->progress_timer != NULL, "catch-up has no independent nonzero timer");
+    tosRequireNoProcessApiCall();
+    authenticationclientTunnelOnQuiesceRequest(fixture.client, wwLifecycleProcessShutdown());
+    authenticationclientTunnelOnWorkerQuiesce(fixture.client, 0, wwLifecycleProcessShutdown());
+    twfRequire(ts->progress_timer == NULL, "quiescence retained catch-up callback root");
+    authenticationclientScheduleSyncProgress(fixture.client);
+    twfRequire(ts->progress_timer == NULL, "quiescence rearmed catch-up");
+    fixtureTeardown(&fixture);
+
+    tosResetProcessApi(true);
+    fixtureSetup(&fixture);
+    ts            = tunnelGetState(fixture.client);
+    ts->connected = ts->authenticated = ts->catchup_capture_needed = true;
+    g_timer_fails                                                  = true;
+    authenticationclientScheduleSyncProgress(fixture.client);
+    g_timer_fails = false;
+    tosRequireAcceptedRequest(1);
+    twfRequire(ts->progress_timer == NULL && ts->catchup_capture_needed,
+               "required scheduling refusal erased work or published a timer");
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseHealthyTimersAreArmed();
@@ -297,6 +329,7 @@ int main(void)
     caseRefusedHandoffAborts();
     casePingTimerFailureStopsStartup();
     caseWorkerStopClosesPublishedControlLineExactlyOnce();
+    caseCatchupProgressTimer();
 
     printf("authenticationclient_orderly_shutdown_test: all cases passed\n");
     return 0;

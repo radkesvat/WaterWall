@@ -20,15 +20,15 @@ void authenticationclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t
 
     memoryFree(ts->pending_requests);
     cJSON_free(ts->pending_batch);
+    memoryFree(ts->pending_entries);
+    memoryFree(ts->catchup_entries);
     ts->pending_requests = NULL;
 
     rwlockWriteLock(&ts->users_lock);
     users_t *users               = ts->users;
     users_t *sync_baseline_users = ts->sync_baseline_users;
-    users_t *pending_push_users  = ts->pending_push_users;
     ts->users                    = NULL;
     ts->sync_baseline_users      = NULL;
-    ts->pending_push_users       = NULL;
     rwlockWriteUnlock(&ts->users_lock);
 
     if (LIKELY(users != NULL))
@@ -37,7 +37,6 @@ void authenticationclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t
         memoryFreeAligned(users);
     }
     authenticationclientDestroyUsersSnapshot(sync_baseline_users);
-    authenticationclientDestroyUsersSnapshot(pending_push_users);
     rwlockDestroy(&ts->users_lock);
 
     mutexDestroy(&ts->control_mutex);

@@ -59,6 +59,9 @@ static void fixtureCreate(profile_fixture_t *fixture, lookup_kind_t kind)
     authenticationclient_tstate_t *state = tunnelGetState(fixture->tunnel);
     rwlockinit(&state->users_lock);
     state->users            = &fixture->users;
+    mutexInit(&state->control_mutex);
+    state->started          = true;
+    state->clock_loaded     = true;
     state->users_loaded     = true;
     state->users_generation = 7;
     user_t user;
@@ -80,6 +83,7 @@ static void fixtureDestroy(profile_fixture_t *fixture)
     authenticationclient_tstate_t *state = tunnelGetState(fixture->tunnel);
     usersDestroy(&fixture->users);
     rwlockDestroy(&state->users_lock);
+    mutexDestroy(&state->control_mutex);
     tunnelDestroy(fixture->tunnel);
 }
 
@@ -212,6 +216,36 @@ static void testEligibilityAndAdmission(profile_fixture_t *fixture)
     user->limit.traffic.u = user->stats.traffic.u = 0;
 }
 
+static void testAdmissionAvailability(profile_fixture_t *fixture)
+{
+    authenticationclient_tstate_t *ts = tunnelGetState(fixture->tunnel);
+    require(! authenticationclientIsReady(fixture->tunnel) && authenticationclientCanAuthenticate(fixture->tunnel),
+            "loaded offline cache has wrong control/admission state");
+    for (unsigned block = 0; block < 6; ++block)
+    {
+        ts->started                                 = block != 0;
+        ts->users_loaded                            = block != 1;
+        ts->clock_loaded                            = block != 2;
+        ts->stopping                                = block == 3;
+        ts->auth_rejected                           = block == 4;
+        ts->continuity_error                        = block == 5;
+        user_handle_t                       handle  = {.generation = 7, .user_id = 42};
+        authenticationclient_user_profile_t profile = {0};
+        require(! authenticationclientCanAuthenticate(fixture->tunnel) && ! lookup(fixture, &handle, &profile) &&
+                    ! userHandleIsValid(&handle) && profile.name == NULL && profile.password == NULL,
+                "credential family bypassed availability or published stale identity");
+        handle = (user_handle_t) {.generation = 7, .user_id = 42};
+        require(! authenticationclientGetUserBySHA256(fixture->tunnel, fixture->user->sha256_pass.bytes, &handle) &&
+                    ! userHandleIsValid(&handle),
+                "SHA256 bypassed availability");
+        handle = (user_handle_t) {.generation = 7, .user_id = 42};
+        require(authenticationclientUserTryAdmitConnection(fixture->tunnel, &handle, NULL, 0) == kUserAdmissionInvalid,
+                "reservation bypassed availability");
+    }
+    ts->started = ts->users_loaded = ts->clock_loaded = true;
+    ts->stopping = ts->auth_rejected = ts->continuity_error = false;
+}
+
 int main(void)
 {
     testCaseSet("authenticationclient_profile_test");
@@ -221,6 +255,7 @@ int main(void)
     {
         profile_fixture_t fixture;
         fixtureCreate(&fixture, kind);
+        testAdmissionAvailability(&fixture);
         testSuccess(&fixture);
         testAbsentFields(&fixture);
         testEligibilityAndAdmission(&fixture);

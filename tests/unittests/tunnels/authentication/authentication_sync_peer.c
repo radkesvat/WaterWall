@@ -15,6 +15,7 @@ tunnel_t *authTestPeerCreate(uint32_t offset)
     t->fnPauseU                       = authenticationserverTunnelUpStreamPause;
     t->fnResumeU                      = authenticationserverTunnelUpStreamResume;
     authenticationserver_tstate_t *ts = tunnelGetState(t);
+    authenticationserverInitializeAccountingClock(ts);
     rwlockinit(&ts->state_lock);
     require(usersCreate(&ts->store.users), "peer users failed");
     ts->store.config_revision = ts->store.stats_revision = 1;
@@ -135,6 +136,7 @@ size_t authTestPeerPadUsersResponse(tunnel_t *t, size_t json_length)
     cJSON *json = usersToJson(&ts->store.users);
     require(json != NULL, "peer users export failed");
     discard jsonAddUint64ToObject(json, "server-time-ms", getTimeOfDayMS());
+    discard jsonAddUint64ToObject(json, "accounting-time-ms", authenticationserverAccountingTimeMS(ts));
     char   *text = authenticationserverSerializeResponseJson(json);
     require(text != NULL && stringLength(text) < json_length, "target JSON is too small");
     const size_t padding = json_length - stringLength(text) + 1;

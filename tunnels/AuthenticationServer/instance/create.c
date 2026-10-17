@@ -295,6 +295,7 @@ tunnel_t *authenticationserverTunnelCreate(node_t *node)
 
     ts->store.config_revision = 1U;
     ts->store.stats_revision  = 1U;
+    authenticationserverInitializeAccountingClock(ts);
 
     if (UNLIKELY(! usersCreate(&ts->store.users)))
     {

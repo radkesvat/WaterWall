@@ -4,7 +4,7 @@
 
 typedef struct stats_entry_s
 {
-    uint64_t id, upload, download;
+    uint64_t id, upload, download, first_usage;
     user_t  *user;
 } stats_entry_t;
 
@@ -17,21 +17,22 @@ static int compareEntries(const void *left, const void *right)
 static bool hasBatchFields(const cJSON *object, bool root)
 {
     static const char *const root_fields[]  = {"epoch", "sequence", "users"};
-    static const char *const entry_fields[] = {"id", "up", "down"};
+    static const char *const entry_fields[] = {"id", "up", "down", "first-usage-at-ms"};
     const char *const       *fields         = root ? root_fields : entry_fields;
     if (! cJSON_IsObject(object))
         return false;
     unsigned     count = 0;
+    const unsigned required = root ? 3U : 4U;
     const cJSON *field;
     cJSON_ArrayForEach(field, object)
     {
-        if (++count > 3 ||
+        if (++count > required ||
             (stringCompare(field->string, fields[0]) != 0 && stringCompare(field->string, fields[1]) != 0 &&
-             stringCompare(field->string, fields[2]) != 0))
+             stringCompare(field->string, fields[2]) != 0 && (root || stringCompare(field->string, fields[3]) != 0)))
             return false;
     }
     /* The lexical parser rejects duplicate decoded names. */
-    return count == 3;
+    return count == required;
 }
 
 static sbuf_t *acknowledge(line_t *l, const uint8_t correlation_id[4], const authenticationserver_auth_client_t *client)
@@ -86,7 +87,8 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
             ! getUint64FromJson(&current->id, cJSON_GetObjectItemCaseSensitive(entry, "id")) || current->id == 0 ||
             ! getUint64FromJson(&current->upload, cJSON_GetObjectItemCaseSensitive(entry, "up")) ||
             ! getUint64FromJson(&current->download, cJSON_GetObjectItemCaseSensitive(entry, "down")) ||
-            (current->upload == 0 && current->download == 0))
+            ! getUint64FromJson(&current->first_usage, cJSON_GetObjectItemCaseSensitive(entry, "first-usage-at-ms")) ||
+            current->first_usage == 0)
             goto rejected;
     }
     if (client == NULL || ! memoryEqual(session->accounting_epoch, client->accounting_epoch, 64) ||
@@ -132,11 +134,11 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
 
     /* state_lock serializes validation, mutation and checkpoint publication.
      * All fallible preconditions precede these infallible per-user operations. */
-    const uint64_t first_use = getTimeOfDayMS();
+    const uint64_t accounting_now = authenticationserverAccountingTimeMS(ts);
     for (int i = 0; i < count; ++i)
     {
         userAddTraffic(entries[i].user, entries[i].upload, entries[i].download);
-        userMarkFirstUsage(entries[i].user, first_use);
+        userMergeFirstUsage(entries[i].user, min(entries[i].first_usage, accounting_now));
     }
     authenticationserverBumpStatsRevision(t);
     client->last_sequence = sequence;
