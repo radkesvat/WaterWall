@@ -29,6 +29,27 @@ static sbuf_t                    *held_request, *saved_ack, *saved_session;
 static bool                       hold_pull, hold_push;
 static unsigned                   last_response;
 static int                        raw_response[2];
+static unsigned                   refuse_create;
+static bool                       refuse_add;
+bool                              __real_usersCreate(users_t *users);
+bool                              __wrap_usersCreate(users_t *users);
+bool                              __wrap_usersCreate(users_t *users)
+{
+    if (refuse_create != 0 && --refuse_create == 0)
+        return false; /* Expected table lock/resource initialization refusal. */
+    return __real_usersCreate(users);
+}
+bool __real_usersAddUser(users_t *users, const user_t *user);
+bool __wrap_usersAddUser(users_t *users, const user_t *user);
+bool __wrap_usersAddUser(users_t *users, const user_t *user)
+{
+    if (refuse_add)
+    {
+        refuse_add = false;
+        return false; /* Subset-copy refusal before any transport admission. */
+    }
+    return __real_usersAddUser(users, user);
+}
 
 static authenticationclient_tstate_t *state(unsigned i)
 {
@@ -537,6 +558,26 @@ static void testConcurrentAndSubsets(void)
         require(authTestPeerStats(server, id).traffic.u == 1, "subset ACK advanced unsent users or lost their usage");
     teardown();
 }
+static void testBatchConstructionRefusal(void)
+{
+    for (unsigned kind = 0; kind < 2; ++kind)
+    {
+        setup(1);
+        start(0);
+        traffic(0, 1);
+        if (kind == 0)
+            refuse_create = 3;
+        else
+            refuse_add = true;
+        authenticationclientRequestPush(clients[0]);
+        require(state(0)->pending_batch == NULL && local(0, true) == 0 && local(0, false) == 1,
+                "construction refusal lost traffic or advanced baseline");
+        require(refuse_create == 0 && ! refuse_add, "construction refusal was not reached");
+        authenticationclientRequestPush(clients[0]);
+        require(authTestPeerStats(server, 42).traffic.u == 1, "refusal prevented a later valid batch");
+        teardown();
+    }
+}
 int main(void)
 {
     testCaseSet("authentication sync loss and continuity");
@@ -545,6 +586,7 @@ int main(void)
     testLossAndOrdering();
     testRejectionsAndContinuity();
     testConcurrentAndSubsets();
+    testBatchConstructionRefusal();
     wCryptoGlobalCleanup();
     globalstateDestroySecureRandom();
     networkloggerDestroy();

@@ -737,18 +737,23 @@ static bool authenticationclientCreateUsageBatch(tunnel_t *t)
         authenticationclientDestroyUsers(baseline);
         return false;
     }
-    users_t   *subset  = memoryAllocateAligned(sizeof(*subset), 32);
-    const bool created = usersCreate(subset);
-    assert(created);
-    discard created;
+    users_t *subset = memoryAllocateAligned(sizeof(*subset), 32);
+    if (! usersCreate(subset))
+    {
+        memoryFreeAligned(subset);
+        authenticationclientDestroyUsers(snapshot);
+        authenticationclientDestroyUsers(baseline);
+        return false;
+    }
     cJSON  *root = cJSON_CreateObject(), *array = cJSON_CreateArray();
     discard cJSON_AddStringToObject(root, "epoch", ts->accounting_epoch);
     discard jsonAddUint64ToObject(root, "sequence", ts->next_batch_sequence);
     discard cJSON_AddItemToObject(root, "users", array);
-    size_t  count = 0;
+    size_t  count    = 0;
+    bool    complete = true;
     for (size_t i = 0; i < usersCount(snapshot); ++i)
     {
-        user_t *user = usersGetAt(snapshot, i);
+        user_t     *user = usersGetAt(snapshot, i);
         user_t     *base = usersLookupByIdentifier(baseline, userGetId(user));
         user_stat_t current, previous = {0};
         userGetStats(user, &current);
@@ -765,17 +770,19 @@ static bool authenticationclientCreateUsageBatch(tunnel_t *t)
             mutexUnlock(&ts->control_mutex);
             break;
         }
-        cJSON     *entry = cJSON_CreateObject();
-        discard    jsonAddUint64ToObject(entry, "id", userGetId(user));
-        discard    jsonAddUint64ToObject(entry, "up", up);
-        discard    jsonAddUint64ToObject(entry, "down", down);
-        discard    cJSON_AddItemToArray(array, entry);
-        const bool added = usersAddUser(subset, user);
-        assert(added);
-        discard added;
+        cJSON  *entry = cJSON_CreateObject();
+        discard jsonAddUint64ToObject(entry, "id", userGetId(user));
+        discard jsonAddUint64ToObject(entry, "up", up);
+        discard jsonAddUint64ToObject(entry, "down", down);
+        discard cJSON_AddItemToArray(array, entry);
+        if (! usersAddUser(subset, user))
+        {
+            complete = false;
+            break;
+        }
         ++count;
     }
-    char *text = count != 0 ? cJSON_PrintUnformatted(root) : NULL;
+    char *text = complete && count != 0 ? cJSON_PrintUnformatted(root) : NULL;
     cJSON_Delete(root);
     authenticationclientDestroyUsers(snapshot);
     authenticationclientDestroyUsers(baseline);
