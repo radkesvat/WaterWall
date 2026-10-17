@@ -283,10 +283,13 @@ users_update_result_t usersAddTrafficByIdentifier(users_t *users, uint64_t id, u
 /*
  * Moves process-local runtime enforcement state from matching users in src to
  * dest, keyed by durable id. The function acquires both database write locks
- * and each matched pair's stats_lock in deterministic address order; callers
+ * and each matched pair's user locks, then stats locks, in address order; callers
  * must not hold any of those locks.
  */
 bool                  usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src);
+/* Owned accounting values, captured under collection -> user -> stats locks.
+ * False on unrepresentable array geometry; heap OOM is fatal. Free with memoryFree(). */
+bool usersSnapshotAccounting(const users_t *users, user_accounting_snapshot_t **entries_out, size_t *count_out);
 users_update_result_t usersSetFirstUsageIfMissingBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                                           uint64_t first_usage_at_ms, bool *changed);
 users_update_result_t usersSetFirstUsageIfMissingByIdentifier(users_t *users, uint64_t id, uint64_t first_usage_at_ms,

@@ -4197,7 +4197,7 @@ users_update_result_t usersAddTrafficByIdentifier(users_t *users, uint64_t id, u
     return user != NULL ? kUsersUpdateResultOk : kUsersUpdateResultUserNotFound;
 }
 
-static void usersMoveRuntimeStateWithStatsLocks(user_t *dest, user_t *src)
+static void usersMoveRuntimeStateWithLocks(user_t *dest, user_t *src)
 {
     if (dest == src)
     {
@@ -4211,13 +4211,41 @@ static void usersMoveRuntimeStateWithStatsLocks(user_t *dest, user_t *src)
      * The caller's users_t write locks pin both user objects and serialize the
      * database wrapper APIs, but direct userTryAdmitConnection() and
      * userReleaseConnection() calls synchronize only through stats_lock. Lock
-     * both users in address order before moving/freeing their runtime buffers.
+     * both user locks, then both stats locks, in address order before moving
+     * time evidence and owned runtime buffers. Keep the destination policy.
      */
+    rwlockWriteLock(&first->lock);
+    rwlockWriteLock(&second->lock);
     rwlockWriteLock(&first->stats_lock);
     rwlockWriteLock(&second->stats_lock);
     userRuntimeStateMove(&dest->runtime, &src->runtime);
+    dest->client_time = src->client_time;
+    memoryZero(&src->client_time, sizeof(src->client_time));
     rwlockWriteUnlock(&second->stats_lock);
     rwlockWriteUnlock(&first->stats_lock);
+    rwlockWriteUnlock(&second->lock);
+    rwlockWriteUnlock(&first->lock);
+}
+
+bool usersSnapshotAccounting(const users_t *users, user_accounting_snapshot_t **entries_out, size_t *count_out)
+{
+    assert(users != NULL && entries_out != NULL && count_out != NULL);
+    *entries_out = NULL;
+    *count_out   = 0;
+    rwlockReadLock((wrwlock_t *) &users->lock);
+    size_t bytes;
+    if (! memoryTryComputeArraySize(users->count, sizeof(**entries_out), &bytes))
+    {
+        rwlockReadUnlock((wrwlock_t *) &users->lock);
+        return false;
+    }
+    user_accounting_snapshot_t *entries = memoryAllocate(bytes);
+    for (size_t i = 0; i < users->count; ++i)
+        userGetAccountingSnapshot(usersGetAtLocked(users, i), &entries[i]);
+    *entries_out = entries;
+    *count_out   = users->count;
+    rwlockReadUnlock((wrwlock_t *) &users->lock);
+    return true;
 }
 
 bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src)
@@ -4251,7 +4279,7 @@ bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src)
             continue;
         }
 
-        usersMoveRuntimeStateWithStatsLocks(new_user, old_user);
+        usersMoveRuntimeStateWithLocks(new_user, old_user);
     }
 
     rwlockWriteUnlock(&second->lock);

@@ -145,6 +145,27 @@ typedef struct user_runtime_stat_s
     bool             first_usage_push_requested;
 } user_runtime_stat_t;
 
+/* Client-only accounting clock and elapsed age. Guarded by user_s.lock;
+ * never persisted or included in generic copies. Zero is a valid local origin. */
+typedef struct user_client_time_s
+{
+    uint64_t accounting_anchor_ms, local_anchor_ms;
+    uint64_t first_local_ms, first_report_ms;
+    uint64_t age_ms, age_sample_ms, future_origin_ms;
+    uint64_t absolute_config_ms, absolute_deadline_ms;
+    bool     clock_valid, observed, observation_acked, age_valid, future_valid;
+    bool     absolute_expired;
+} user_client_time_t;
+
+/* A coherent, owned value snapshot; no borrowed pointers or runtime resources. */
+typedef struct user_accounting_snapshot_s
+{
+    uint64_t  id;
+    user_ud_t traffic;
+    uint64_t  first_usage_at_ms;
+    bool      observation_pending;
+} user_accounting_snapshot_t;
+
 typedef struct user_s User;
 typedef User          user_t;
 
@@ -167,12 +188,14 @@ struct user_s
     user_limit_t     limit;
     user_time_info_t timeinfo;
     /*
-     * Runtime-only client projection of server-owned expiry time. When valid,
+     * Runtime-only projection of account expiry policy and retained local age. When valid,
      * expiry checks compare against this local-clock deadline instead of the
      * persisted server-clock timeinfo fields. Never serialized or copied.
      */
     uint64_t client_view_expires_at_ms;
     bool     client_view_expiry_valid;
+    bool               client_view_expired;
+    user_client_time_t client_time;
     int      record_stat_interval_ms;
 
     ip_addr_t wireguard_allowed_ip;
@@ -277,8 +300,10 @@ user_admission_result_t userTryAdmitConnection(User *user, const user_ip_key_t *
 void                    userReleaseConnection(User *user, const user_ip_key_t *ip_key);
 /*
  * Adds traffic to the cumulative stats and reports whether the connection must now be closed.
- * first_usage_push_needed is set once, at the first non-zero traffic accounting while first_usage_at_ms
- * is still missing, so AuthenticationClient can ask the server to stamp first usage promptly.
+ * With an installed client clock, captures first nonzero traffic and enforces
+ * its local duration in the same user-then-stats write transaction. The event
+ * clock is sampled after locking; now_ms remains the generic/server fallback.
+ * The optional notification does not own or reset the observation.
  */
 bool userAccountTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint64_t now_ms,
                         bool *first_usage_push_needed);
@@ -286,6 +311,12 @@ bool userAccountTraffic(User *user, uint64_t upload_bytes, uint64_t download_byt
 bool userRuntimeShouldClose(User *user, uint64_t now_ms);
 
 void userMarkFirstUsage(User *user, uint64_t now_ms);
+/* Merge an authenticated accounting observation; unlike MarkFirstUsage, keeps
+ * the earliest nonzero instant. The caller clamps future producer estimates. */
+void userMergeFirstUsage(User *user, uint64_t first_usage_at_ms);
+void userInstallClientClock(User *user, uint64_t server_time_ms, uint64_t accounting_time_ms, uint64_t received_at_ms);
+void userGetAccountingSnapshot(User *user, user_accounting_snapshot_t *snapshot);
+void userAcknowledgeObservation(User *user, uint64_t first_usage_at_ms);
 void userAddTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes);
 void userAddSpeed(User *user, uint64_t upload_bytes_per_sec, uint64_t download_bytes_per_sec);
 void userAddConnection(User *user, bool inbound);

@@ -124,6 +124,7 @@
   if(LINUX)
     target_compile_definitions(users_runtime_migration_test PRIVATE WCRYPTO_TEST_LINKER_WRAP=1)
     target_link_options(users_runtime_migration_test PRIVATE
+      "-Wl,--wrap=getHRTimeUs"
       "-Wl,-u,wCryptoSHA224"
       "-Wl,-u,wCryptoSHA256"
       "-Wl,-u,wCryptoX25519"

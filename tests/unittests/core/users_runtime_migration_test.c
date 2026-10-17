@@ -24,6 +24,15 @@
 #include "wwapi.h"
 
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
+static atomic_bool   client_clock_test;
+static atomic_ullong client_clock_ms;
+unsigned long long   __real_getHRTimeUs(void);
+unsigned long long   __wrap_getHRTimeUs(void);
+unsigned long long   __wrap_getHRTimeUs(void)
+{
+    return atomic_load(&client_clock_test) ? atomic_load(&client_clock_ms) * 1000ULL : __real_getHRTimeUs();
+}
+
 typedef enum crypto_failure_injection_e
 {
     kCryptoFailureNone,
@@ -940,8 +949,8 @@ static WTHREAD_ROUTINE(runtimeMigrationThread)
     return 0;
 }
 
-static void requireRuntimeMigrationWaitsForStatsLock(users_t *dest, users_t *src, user_t *locked_user,
-                                                     const char *blocked_message)
+static void requireRuntimeMigrationWaitsForLock(users_t *dest, users_t *src, user_t *locked_user, bool time_lock,
+                                                const char *blocked_message)
 {
     runtime_migration_thread_context_t context = {
         .dest     = dest,
@@ -955,7 +964,8 @@ static void requireRuntimeMigrationWaitsForStatsLock(users_t *dest, users_t *src
      * A users_t write lock alone cannot synchronize direct user runtime APIs.
      * Holding either user's stats_lock must therefore stop the state move.
      */
-    rwlockWriteLock(&locked_user->stats_lock);
+    wrwlock_t *lock = time_lock ? &locked_user->lock : &locked_user->stats_lock;
+    rwlockWriteLock(lock);
     wthread_t       migration_thread;
     wthread_error_t thread_error = threadCreate(&migration_thread, runtimeMigrationThread, &context);
     require(thread_error == kWThreadErrorNone, "failed to create runtime migration thread");
@@ -965,7 +975,7 @@ static void requireRuntimeMigrationWaitsForStatsLock(users_t *dest, users_t *src
     }
     wwSleepMS(kRuntimeMigrationLockProbeMs);
     require(! atomic_load(&context.finished), blocked_message);
-    rwlockWriteUnlock(&locked_user->stats_lock);
+    rwlockWriteUnlock(lock);
 
     require(threadJoin(migration_thread) == 0, "failed to join runtime migration thread");
     require(atomic_load(&context.finished), "runtime migration thread did not finish after releasing stats_lock");
@@ -1000,17 +1010,23 @@ static void testRuntimeMigrationHonorsPerUserStatsLocks(void)
     user_t *old_user = usersLookupByIdentifier(&old_users, user_id);
     require(old_user != NULL, "failed to look up old locking-test user");
 
-    requireRuntimeMigrationWaitsForStatsLock(
-        &new_users, &old_users, old_user, "runtime migration ignored the source user's stats_lock");
+    requireRuntimeMigrationWaitsForLock(
+        &new_users, &old_users, old_user, false, "runtime migration ignored the source user's stats_lock");
     require(old_user->runtime.active_cons_out == 0, "source runtime state remained after locking-test migration");
 
     /*
      * Move the state back while locking the same object in its destination
      * role, proving that migration synchronizes both matched users.
      */
-    requireRuntimeMigrationWaitsForStatsLock(
-        &old_users, &new_users, old_user, "runtime migration ignored the destination user's stats_lock");
+    requireRuntimeMigrationWaitsForLock(
+        &old_users, &new_users, old_user, false, "runtime migration ignored the destination user's stats_lock");
     require(old_user->runtime.active_cons_out == 1, "destination runtime state was not restored after locking test");
+
+    requireRuntimeMigrationWaitsForLock(
+        &new_users, &old_users, old_user, true, "runtime migration ignored source time lock");
+    requireRuntimeMigrationWaitsForLock(
+        &old_users, &new_users, old_user, true, "runtime migration ignored destination time lock");
+    require(old_user->runtime.active_cons_out == 1, "time-lock migration lost reservation");
 
     usersReleaseConnectionByIdentifier(&old_users, user_id, &ip);
     usersDestroy(&new_users);
@@ -1297,6 +1313,197 @@ static void testTrafficStatsJsonUsesExactBytes(void)
     userDestroy(&user);
 }
 
+static void testEarliestFirstUseMerge(void)
+{
+    user_t user;
+    require(userCreate(&user, "earliest-observation"), "earliest fixture");
+    userMergeFirstUsage(&user, UINT64_MAX);
+    userMergeFirstUsage(&user, 5000);
+    userMergeFirstUsage(&user, 7000);
+    require(user.timeinfo.first_usage_at_ms == 5000, "earliest merge moved forward");
+    userMergeFirstUsage(&user, 1);
+    require(user.timeinfo.first_usage_at_ms == 1, "early merge was lost");
+    userDestroy(&user);
+}
+
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+static void testLocalFirstUseClockAndEdits(void)
+{
+    atomic_store(&client_clock_test, true);
+    atomic_store(&client_clock_ms, 0);
+    user_t user, copy;
+    require(userCreate(&user, "local-clock"), "local clock fixture");
+    user.timeinfo.expire_after_first_usage_ms = 100;
+    userInstallClientClock(&user, 10000, 5000, 0);
+    require(userTryAdmitConnection(&user, NULL, 0) == kUserAdmissionOk, "clock admission");
+    require(! userAccountTraffic(&user, 0, 0, 0, NULL) && ! user.client_time.observed,
+            "reservation or zero traffic created an observation");
+    require(! userAccountTraffic(&user, 0, 1, UINT64_MAX, NULL), "zero-origin first download expired early");
+    require(user.client_time.observed && user.client_time.first_local_ms == 0 &&
+                user.client_time.first_report_ms == 5000 && user.client_view_expires_at_ms == 100,
+            "zero-origin or null-notification accounting failed");
+    atomic_store(&client_clock_ms, 70);
+    /* A newer server sample, wall correction, delayed local parsing, and omitted
+     * canonical first use cannot make a known countdown younger. */
+    userInstallClientClock(&user, 1, 5010, 50);
+    require(user.client_view_expires_at_ms == 100 && user.client_time.age_ms == 70,
+            "delayed refresh extended the original countdown");
+    user.timeinfo.expire_after_first_usage_ms = 200;
+    userInstallClientClock(&user, UINT64_MAX, 5020, 70);
+    require(user.client_view_expires_at_ms == 200, "duration increase restarted origin");
+    user.timeinfo.expire_after_first_usage_ms = 60;
+    userInstallClientClock(&user, 1, 5020, 70);
+    require(userIsExpired(&user, 70), "duration decrease granted extra life");
+    user.timeinfo.expire_after_first_usage_ms = 0;
+    userInstallClientClock(&user, 10000, 5020, 70);
+    require(! userIsExpired(&user, UINT64_MAX), "duration clear did not remove relative expiry");
+    user.timeinfo.expire_at_ms = 10100;
+    userInstallClientClock(&user, 10000, 5020, 70);
+    require(user.client_view_expires_at_ms == 170, "absolute projection");
+    atomic_store(&client_clock_ms, 80);
+    userInstallClientClock(&user, 9000, 5030, 80);
+    require(user.client_view_expires_at_ms == 170, "unchanged absolute policy extended its deadline");
+    user.timeinfo.expire_at_ms = 10200;
+    userInstallClientClock(&user, 10000, 5030, 80);
+    require(user.client_view_expires_at_ms == 280, "explicit absolute edit did not recompute");
+    user.timeinfo.expire_at_ms                = 0;
+    user.timeinfo.expire_after_first_usage_ms = 100;
+    userInstallClientClock(&user, 10000, 5030, 80);
+    require(user.client_view_expires_at_ms == 100, "enabling relative expiry forgot unlimited use");
+    require(userCopy(&copy, &user), "runtime-free copy");
+    require(! copy.client_time.clock_valid && ! copy.client_time.observed && ! copy.client_view_expiry_valid &&
+                copy.runtime.active_cons_out == 0,
+            "generic copy leaked runtime time or reservations");
+    cJSON *json = userToJson(&user);
+    user_t parsed;
+    require(userCreateFromJson(&parsed, json), "runtime-free JSON");
+    require(! parsed.client_time.observed && ! parsed.client_time.clock_valid, "JSON leaked client clock");
+    userDestroy(&parsed);
+    cJSON_Delete(json);
+    userDestroy(&copy);
+    userReleaseConnection(&user, NULL);
+    userDestroy(&user);
+
+    atomic_store(&client_clock_ms, 0);
+    require(userCreate(&user, "future-clock"), "future fixture");
+    user.timeinfo.first_usage_at_ms           = 1100;
+    user.timeinfo.expire_after_first_usage_ms = 50;
+    userInstallClientClock(&user, 10000, 1000, 0);
+    require(! user.client_time.age_valid && user.client_time.future_valid && user.client_view_expires_at_ms == 150,
+            "future imported origin started immediately");
+    atomic_store(&client_clock_ms, 20);
+    userInstallClientClock(&user, 10000, 1005, 20);
+    require(user.client_view_expires_at_ms == 150, "repeat pull postponed future origin");
+    user.timeinfo.first_usage_at_ms = 0;
+    userInstallClientClock(&user, 10000, 1010, 20);
+    require(user.client_view_expires_at_ms == 150, "omitted import erased future origin");
+    require(! userAccountTraffic(&user, 1, 0, 0, NULL) && user.client_view_expires_at_ms == 70,
+            "real traffic did not supply earlier local origin");
+    userDestroy(&user);
+
+    atomic_store(&client_clock_ms, 0);
+    require(userCreate(&user, "edge-clock"), "edge fixture");
+    user.timeinfo.first_usage_at_ms           = 1;
+    user.timeinfo.expire_after_first_usage_ms = 1;
+    userInstallClientClock(&user, UINT64_MAX, UINT64_MAX, 0);
+    require(userIsExpired(&user, 0), "expired-at-zero became unlimited");
+    user.timeinfo.expire_after_first_usage_ms = UINT64_MAX;
+    user.timeinfo.first_usage_at_ms           = 0;
+    userInstallClientClock(&user, UINT64_MAX, UINT64_MAX, 0);
+    require(user.client_view_expires_at_ms != 0, "saturated age/deadline became unlimited");
+    require(! userAccountTraffic(&user, 1, 0, 0, NULL) && user.client_time.first_report_ms == UINT64_MAX,
+            "saturated report overflowed");
+    atomic_store(&client_clock_ms, UINT64_MAX / 1000);
+    userInstallClientClock(&user, UINT64_MAX, UINT64_MAX, 0);
+    require(userIsExpired(&user, UINT64_MAX), "saturated deadline did not expire");
+    userDestroy(&user);
+    atomic_store(&client_clock_test, false);
+}
+
+typedef struct first_traffic_context_s
+{
+    user_t     *user;
+    atomic_bool sampled, proceed;
+} first_traffic_context_t;
+
+static WTHREAD_ROUTINE(firstTrafficThread)
+{
+    first_traffic_context_t *context    = userdata;
+    const uint64_t           old_sample = getHRTimeUs() / 1000ULL;
+    atomic_store(&context->sampled, true);
+    while (! atomic_load(&context->proceed))
+        wwSleepMS(1);
+    discard userAccountTraffic(context->user, 1, 0, old_sample, NULL);
+    return 0;
+}
+
+static void testFirstUseRacesAndMigration(void)
+{
+    atomic_store(&client_clock_test, true);
+    atomic_store(&client_clock_ms, 100);
+    users_t old_users, new_users;
+    user_t  source;
+    require(usersCreate(&old_users) && usersCreate(&new_users) && userCreate(&source, "race-old"), "race fixture");
+    userSetId(&source, 42);
+    require(usersAddUser(&old_users, &source), "race old user");
+    userDestroy(&source);
+    require(userCreate(&source, "race-new"), "race changed credentials");
+    userSetId(&source, 42);
+    source.timeinfo.expire_after_first_usage_ms = 500;
+    require(usersAddUser(&new_users, &source), "race new user");
+    userDestroy(&source);
+    user_t *user = usersLookupByIdentifier(&old_users, 42);
+    userInstallClientClock(user, 10000, 5000, 100);
+    first_traffic_context_t contexts[4];
+    wthread_t               threads[4];
+    for (unsigned i = 0; i < 4; ++i)
+    {
+        contexts[i].user = user;
+        atomic_init(&contexts[i].sampled, false);
+        atomic_init(&contexts[i].proceed, false);
+        require(threadCreate(&threads[i], firstTrafficThread, &contexts[i]) == kWThreadErrorNone, "traffic thread");
+    }
+    for (unsigned i = 0; i < 4; ++i)
+        while (! atomic_load(&contexts[i].sampled))
+            wwSleepMS(1);
+    atomic_store(&client_clock_ms, 200);
+    userInstallClientClock(user, 10000, 9000, 200);
+    for (unsigned i = 0; i < 4; ++i)
+        atomic_store(&contexts[i].proceed, true);
+    for (unsigned i = 0; i < 4; ++i)
+        require(threadJoin(threads[i]) == 0, "traffic join");
+    user_accounting_snapshot_t snapshot;
+    userGetAccountingSnapshot(user, &snapshot);
+    require(snapshot.traffic.u == 4 && snapshot.first_usage_at_ms == 9000 && snapshot.observation_pending &&
+                user->client_time.first_local_ms == 200,
+            "racing stale samples corrupted first origin");
+    userAcknowledgeObservation(user, 8999);
+    require(! user->client_time.observation_acked, "uncaptured observation acknowledged");
+    userAcknowledgeObservation(user, 9000);
+    require(userTryAdmitConnection(user, NULL, 200) == kUserAdmissionOk, "race reservation");
+    require(usersMigrateRuntimeStateByIdentifier(&new_users, &old_users), "time migration");
+    user_t *next = usersLookupByIdentifier(&new_users, 42);
+    atomic_store(&client_clock_ms, 250);
+    userInstallClientClock(next, 10000, 9020, 250);
+    require(next->client_time.first_report_ms == 9000 && next->client_time.observation_acked &&
+                next->client_view_expires_at_ms == 700 && next->runtime.active_cons_out == 1 &&
+                ! user->client_time.observed && next->timeinfo.first_usage_at_ms == 0,
+            "same-ID credential change lost runtime age/evidence or overwrote authoritative time");
+    users_t other;
+    require(usersCreate(&other) && userCreate(&source, "race-new"), "different ID fixture");
+    userSetId(&source, 43);
+    require(usersAddUser(&other, &source) && usersMigrateRuntimeStateByIdentifier(&other, &new_users),
+            "different ID migration");
+    require(! usersLookupByIdentifier(&other, 43)->client_time.observed, "different ID inherited evidence");
+    userDestroy(&source);
+    usersDestroy(&other);
+    userReleaseConnection(next, NULL);
+    usersDestroy(&new_users);
+    usersDestroy(&old_users);
+    atomic_store(&client_clock_test, false);
+}
+#endif
+
 int main(void)
 {
     testCaseSet("users_runtime_migration_test");
@@ -1320,6 +1527,11 @@ int main(void)
     testRuntimeMigrationHonorsPerUserStatsLocks();
     testIdentifierLookupSurvivesPasswordChange();
     testFirstUsageSetIfMissingKeepsServerValue();
+    testEarliestFirstUseMerge();
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+    testLocalFirstUseClockAndEdits();
+    testFirstUseRacesAndMigration();
+#endif
     testClientViewExpiryOverridesServerTimeFields();
     testZeroUserLimitsAreUnlimited();
     testTotalTrafficLimitCountsUploadAndDownload();

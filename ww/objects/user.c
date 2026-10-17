@@ -6,6 +6,7 @@
 #include "objects/user_index_geometry.h"
 
 #include "utils/json_helpers.h"
+#include "wtime.h"
 
 _Static_assert(offsetof(user_t, sha224_pass) % 32U == 0, "user_t.sha224_pass must be 32-byte aligned");
 _Static_assert(offsetof(user_t, sha256_pass) % 32U == 0, "user_t.sha256_pass must be 32-byte aligned");
@@ -902,7 +903,8 @@ static bool userExpiredLocked(const User *user, uint64_t now_ms)
 {
     if (user->client_view_expiry_valid)
     {
-        return user->client_view_expires_at_ms != 0 && now_ms >= user->client_view_expires_at_ms;
+        return user->client_view_expired ||
+               (user->client_view_expires_at_ms != 0 && now_ms >= user->client_view_expires_at_ms);
     }
 
     bool expired = userLimitReached(user->timeinfo.expire_at_ms, now_ms);
@@ -1655,6 +1657,138 @@ void userMarkFirstUsage(User *user, uint64_t now_ms)
     rwlockWriteUnlock(&user->lock);
 }
 
+void userMergeFirstUsage(User *user, uint64_t first_usage_at_ms)
+{
+    assert(userObjectIsInitialized(user) && first_usage_at_ms != 0);
+    rwlockWriteLock(&user->lock);
+    if (user->timeinfo.first_usage_at_ms == 0 || first_usage_at_ms < user->timeinfo.first_usage_at_ms)
+        user->timeinfo.first_usage_at_ms = first_usage_at_ms;
+    rwlockWriteUnlock(&user->lock);
+}
+
+/* All client time operations hold the user write lock. An older sample adds
+ * no elapsed time and never rewinds the age anchor. */
+static uint64_t userClientAdvanceAgeLocked(User *user, uint64_t now)
+{
+    user_client_time_t *time = &user->client_time;
+    now                      = max(now, time->age_sample_ms);
+    if (time->age_valid)
+        time->age_ms = userSaturatingAdd(time->age_ms, userSaturatingSub(now, time->age_sample_ms));
+    if (time->future_valid && now >= time->future_origin_ms)
+    {
+        time->age_ms    = max(time->age_ms, now - time->future_origin_ms);
+        time->age_valid = true;
+    }
+    if (time->observed)
+    {
+        time->age_ms    = max(time->age_ms, userSaturatingSub(now, time->first_local_ms));
+        time->age_valid = true;
+    }
+    if (time->age_valid)
+        time->future_valid = false;
+    time->age_sample_ms = now;
+    return now;
+}
+
+static void userClientProjectExpiryLocked(User *user, uint64_t now)
+{
+    user_client_time_t *time     = &user->client_time;
+    const uint64_t      duration = user->timeinfo.expire_after_first_usage_ms;
+    uint64_t            relative = 0;
+    bool                expired  = time->absolute_expired;
+    if (duration != 0)
+    {
+        if (time->age_valid)
+        {
+            if (time->age_ms >= duration)
+            {
+                expired  = true;
+                relative = max(now, UINT64_C(1));
+            }
+            else
+                relative = userSaturatingAdd(now, duration - time->age_ms);
+        }
+        else if (time->future_valid)
+            relative = userSaturatingAdd(time->future_origin_ms, duration);
+    }
+    const uint64_t absolute         = time->absolute_deadline_ms;
+    user->client_view_expires_at_ms = absolute == 0 ? relative : relative == 0 ? absolute : min(absolute, relative);
+    user->client_view_expired       = expired;
+    user->client_view_expiry_valid  = true;
+}
+
+void userInstallClientClock(User *user, uint64_t server_time_ms, uint64_t accounting_time_ms, uint64_t received_at_ms)
+{
+    assert(userObjectIsInitialized(user) && accounting_time_ms != 0);
+    rwlockWriteLock(&user->lock);
+    user_client_time_t *time           = &user->client_time;
+    const uint64_t      now            = userClientAdvanceAgeLocked(user, max(getHRTimeUs() / 1000ULL, received_at_ms));
+    const uint64_t      elapsed        = userSaturatingSub(now, received_at_ms);
+    const uint64_t      accounting_now = userSaturatingAdd(accounting_time_ms, elapsed);
+    const uint64_t      first          = user->timeinfo.first_usage_at_ms;
+    if (first != 0)
+    {
+        if (first <= accounting_now)
+        {
+            time->age_ms       = max(time->age_ms, accounting_now - first);
+            time->age_valid    = true;
+            time->future_valid = false;
+        }
+        else if (! time->age_valid)
+        {
+            const uint64_t origin = userSaturatingAdd(now, first - accounting_now);
+            if (! time->future_valid || origin < time->future_origin_ms)
+                time->future_origin_ms = origin;
+            time->future_valid = true;
+        }
+    }
+    const uint64_t config           = user->timeinfo.expire_at_ms;
+    uint64_t       absolute         = 0;
+    bool           absolute_expired = false;
+    if (config != 0)
+    {
+        const uint64_t wall_now = userSaturatingAdd(server_time_ms, elapsed);
+        absolute_expired        = config <= wall_now;
+        absolute                = absolute_expired ? max(now, UINT64_C(1)) : userSaturatingAdd(now, config - wall_now);
+        if (time->clock_valid && config == time->absolute_config_ms)
+        {
+            absolute = min(absolute, time->absolute_deadline_ms);
+            absolute_expired |= time->absolute_expired;
+        }
+    }
+    time->absolute_config_ms   = config;
+    time->absolute_deadline_ms = absolute;
+    time->absolute_expired     = absolute_expired;
+    time->accounting_anchor_ms = accounting_time_ms;
+    time->local_anchor_ms      = received_at_ms;
+    time->clock_valid          = true;
+    userClientProjectExpiryLocked(user, now);
+    rwlockWriteUnlock(&user->lock);
+}
+
+void userGetAccountingSnapshot(User *user, user_accounting_snapshot_t *snapshot)
+{
+    assert(userObjectIsInitialized(user) && snapshot != NULL);
+    rwlockReadLock(&user->lock);
+    rwlockReadLock(&user->stats_lock);
+    *snapshot = (user_accounting_snapshot_t) {.id                = user->id,
+                                              .traffic           = user->stats.traffic,
+                                              .first_usage_at_ms = user->client_time.first_report_ms,
+                                              .observation_pending =
+                                                  user->client_time.observed && ! user->client_time.observation_acked};
+    rwlockReadUnlock(&user->stats_lock);
+    rwlockReadUnlock(&user->lock);
+}
+
+void userAcknowledgeObservation(User *user, uint64_t first_usage_at_ms)
+{
+    assert(userObjectIsInitialized(user) && first_usage_at_ms != 0);
+    rwlockWriteLock(&user->lock);
+    if (user->client_time.observed && user->client_time.first_report_ms == first_usage_at_ms)
+        user->client_time.observation_acked = true;
+    rwlockWriteUnlock(&user->lock);
+}
+
 void userAddTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes)
 {
     if (UNLIKELY(! userObjectIsInitialized(user)))
@@ -1845,19 +1979,36 @@ bool userAccountTraffic(User *user, uint64_t upload_bytes, uint64_t download_byt
         return true;
     }
 
-    rwlockReadLock(&user->lock);
+    rwlockWriteLock(&user->lock);
     rwlockWriteLock(&user->stats_lock);
+    if (user->client_time.clock_valid)
+    {
+        now_ms = userClientAdvanceAgeLocked(user, getHRTimeUs() / 1000ULL);
+        if ((upload_bytes != 0 || download_bytes != 0) && ! user->client_time.observed)
+        {
+            user_client_time_t *time = &user->client_time;
+            time->observed           = true;
+            time->first_local_ms     = now_ms;
+            time->first_report_ms =
+                userSaturatingAdd(time->accounting_anchor_ms, userSaturatingSub(now_ms, time->local_anchor_ms));
+            time->age_valid    = true;
+            time->future_valid = false;
+        }
+        userClientProjectExpiryLocked(user, now_ms);
+    }
     user->stats.traffic.u = userSaturatingAdd(user->stats.traffic.u, upload_bytes);
     user->stats.traffic.d = userSaturatingAdd(user->stats.traffic.d, download_bytes);
     if (first_usage_push_needed != NULL && (upload_bytes != 0 || download_bytes != 0) &&
-        user->timeinfo.first_usage_at_ms == 0 && ! user->runtime.first_usage_push_requested)
+        (user->client_time.clock_valid ? ! user->client_time.observation_acked
+                                       : user->timeinfo.first_usage_at_ms == 0) &&
+        ! user->runtime.first_usage_push_requested)
     {
         user->runtime.first_usage_push_requested = true;
         *first_usage_push_needed                 = true;
     }
     should_close = (! user->enabled) || userExpiredLocked(user, now_ms) || userTrafficReachedLocked(user);
     rwlockWriteUnlock(&user->stats_lock);
-    rwlockReadUnlock(&user->lock);
+    rwlockWriteUnlock(&user->lock);
     return should_close;
 }
 
@@ -1912,6 +2063,7 @@ void userSetClientViewExpiry(User *user, uint64_t expires_at_ms, bool valid)
     rwlockWriteLock(&user->lock);
     user->client_view_expires_at_ms = valid ? expires_at_ms : 0;
     user->client_view_expiry_valid  = valid;
+    user->client_view_expired       = false;
     rwlockWriteUnlock(&user->lock);
 }
 
