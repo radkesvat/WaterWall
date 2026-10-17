@@ -346,6 +346,10 @@ onto that clock when the users table was installed.
 `authenticationclientRequestPull()` and `authenticationclientRequestPush()` use the current control line. Foreign
 callers queue work to worker 0. Desired jobs coalesce while disconnected, paused or blocked by another synchronization
 operation. A pull cannot replace the baseline during an unresolved push, and a push cannot overtake an active pull.
+After authentication or a usage ACK, the required full pull completes before the next new usage batch. A retained batch
+is replayed before this pull after reconnect. Once the required pull completes, a waiting push takes precedence over
+ordinary periodic or explicit pulls, so repeated pull requests cannot indefinitely delay usage reporting. If there is
+no usage to push, an ordinary queued pull can proceed immediately.
 Credential eligibility checks enabled state, expiry and traffic quota; saved connection, IP, device and speed gauges do
 not block lookup. Live capacity is reserved separately by the atomic runtime admission helper.
 
@@ -366,7 +370,8 @@ fractional, decimal/exponent, negative, nonfinite and overflowing input.
 
 If `A` is current local traffic, `B` its acknowledged baseline and `S` the batch snapshot, ACK advances `B` to `S`
 for that subset. New traffic stays in `A`. A subsequent pull installs global counters `G + (A - B)` with baseline `G`.
-Every ACK, including a duplicate, requires a full pull so server-owned first-use time and other clients' usage arrive.
+Every ACK, including a duplicate, requires a full pull before the next new usage batch so server-owned first-use time
+and other clients' usage arrive.
 First-use work and blocked desired pushes/pulls remain pending until they can run.
 
 Reconnect order is Authenticate/resume epoch, replay retained batch if present, validate ACK, then full pull.

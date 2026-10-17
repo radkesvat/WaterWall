@@ -202,7 +202,8 @@ static void testDeadlinesAndMalformed(void)
     ts = setup();
     authenticationclientOpenControlLine(client);
     ts->connected = ts->authenticated = true;
-    ts->pull_requested                = false;
+    /* Model an authenticated session whose required initial pull completed. */
+    ts->pull_requested = ts->pull_required = false;
     twfRequire(authenticationclientSendPing(client), "first manual request failed");
     uint32_t first = last_id;
     pump(50);
@@ -218,7 +219,7 @@ static void testDeadlinesAndMalformed(void)
     ts = setup();
     authenticationclientOpenControlLine(client);
     ts->connected = ts->authenticated = true;
-    ts->pull_requested                = false;
+    ts->pull_requested = ts->pull_required = false;
     twfRequire(authenticationclientSendPing(client), "early request failed");
     pump(50);
     twfRequire(authenticationclientSendPing(client), "later request failed");

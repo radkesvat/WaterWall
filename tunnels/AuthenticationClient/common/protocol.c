@@ -284,6 +284,7 @@ static void authenticationclientClearSessionLocked(authenticationclient_tstate_t
     ts->pull_in_flight             = false;
     ts->push_in_flight             = false;
     ts->pull_requested             = true;
+    ts->pull_required              = true;
 }
 
 static void authenticationclientResetFirstUsagePushRuntime(tunnel_t *t)
@@ -433,7 +434,8 @@ static bool authenticationclientRequestMayBeSentLocked(authenticationclient_tsta
     }
     if (request_type == kAuthenticationClientRequestTypePushUserStats)
     {
-        return ! ts->push_in_flight && ! ts->pull_in_flight && ts->accounting_epoch[0] != '\0';
+        return ! ts->push_in_flight && ! ts->pull_in_flight && ts->accounting_epoch[0] != '\0' &&
+               (ts->pending_batch != NULL || ! ts->pull_required);
     }
     return true;
 }
@@ -835,16 +837,25 @@ void authenticationclientResumeSync(tunnel_t *t)
     mutexLock(&ts->control_mutex);
     const bool authenticated = ts->authenticated;
     const bool pull          = ts->pull_requested;
+    const bool required_pull = ts->pull_required;
     const bool push          = ts->push_requested;
     mutexUnlock(&ts->control_mutex);
     if (! authenticated)
         discard authenticationclientSendAuthenticate(t);
     else if (ts->pending_batch != NULL)
         discard authenticationclientSendPushUserStats(t);
-    else if (pull)
+    else if (required_pull)
         discard authenticationclientSendGetAllUsers(t);
-    else if (push)
-        discard authenticationclientSendPushUserStats(t);
+    else
+    {
+        /* Ordinary pulls coalesce behind a waiting push. Every successful push
+         * requires a refresh, so both jobs progress even when both stay due. */
+        if (push && authenticationclientSendPushUserStats(t))
+            return;
+        /* An empty/refused batch must not swallow an already requested pull. */
+        if (pull)
+            discard authenticationclientSendGetAllUsers(t);
+    }
 }
 
 static bool authenticationclientAcknowledgeUsageBatch(tunnel_t *t, const uint8_t *data, uint32_t length)
@@ -896,6 +907,7 @@ static bool authenticationclientAcknowledgeUsageBatch(tunnel_t *t, const uint8_t
     else
         ++ts->next_batch_sequence;
     ts->pull_requested = true;
+    ts->pull_required  = true;
     mutexUnlock(&ts->control_mutex);
     return true;
 }
@@ -987,6 +999,7 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
     mutexLock(&ts->control_mutex);
     ts->first_usage_push_requested = false;
     ts->first_usage_push_deferred  = false;
+    ts->pull_required              = false;
     mutexUnlock(&ts->control_mutex);
 
     usersDestroy(old_users);
@@ -1133,6 +1146,7 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
         memoryCopy(ts->token, data, 64);
         ts->authenticated  = true;
         ts->pull_requested = true;
+        ts->pull_required  = true;
         mutexUnlock(&ts->control_mutex);
         authenticationclientResumeSync(t);
         return;

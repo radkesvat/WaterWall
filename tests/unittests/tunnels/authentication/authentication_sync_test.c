@@ -26,7 +26,7 @@ static uint32_t                   last_correlation;
 static uint64_t                   captured_sequence;
 static char                      *captured_batch;
 static sbuf_t                    *held_request, *saved_ack, *saved_session;
-static bool                       hold_pull, hold_push;
+static bool                       hold_pull, hold_push, pause_before_session, pause_before_ack;
 static unsigned                   last_response;
 static int                        raw_response[2];
 static unsigned                   refuse_create;
@@ -121,6 +121,12 @@ static void output(tunnel_t *t, line_t *l, sbuf_t *b)
             sbufGetMutablePtr(b)[29] = '!';
         }
     }
+    if ((last_response == kAuthenticationClientResponseTypeSession && pause_before_session) ||
+        (last_response == kAuthenticationClientResponseTypeOk && pause_before_ack))
+    {
+        pause_before_session = pause_before_ack = false;
+        authenticationclientTunnelDownStreamPause(clients[i], l);
+    }
     tunnelDownStreamPayload(clients[i], l, b);
 }
 static void input(tunnel_t *t, line_t *l, sbuf_t *b)
@@ -195,7 +201,7 @@ static void setup(unsigned users)
     atomicStoreU64(&now_us, 100000000);
     clients[0] = clients[1] = NULL;
     drop_before = drop_ack = corrupt_ack = drop_auth = pushes = pulls = 0;
-    hold_pull = hold_push = false;
+    hold_pull = hold_push = pause_before_session = pause_before_ack = false;
     held_request = saved_ack = saved_session = NULL;
     captured_batch                           = NULL;
     captured_sequence                        = 0;
@@ -404,6 +410,98 @@ static void testLossAndOrdering(void)
     teardown();
 }
 
+static void deliverHeldRequest(void)
+{
+    require(held_request != NULL, "no request to deliver");
+    sbuf_t *request = held_request;
+    held_request    = NULL;
+    tunnelUpStreamPayload(server, state(0)->control_line, request);
+}
+
+static void testRecurringPullDoesNotStarvePush(void)
+{
+    setup(1);
+    start(0);
+    authenticationclient_tstate_t *ts = state(0);
+    ts->pull_interval_ms = ts->push_interval_ms = 1000;
+    require(authenticationclientStartSyncTimer(clients[0]), "sync timer creation failed");
+    hold_pull = true;
+    authenticationclientRequestPull(clients[0]);
+    uint64_t first_use = 0;
+    for (unsigned i = 0; i < 4; ++i)
+    {
+        require(held_request != NULL && ts->pull_in_flight, "delayed pull was not outstanding");
+        traffic(0, 10);
+        ts->last_pull_sync_ms = ts->last_push_sync_ms = getTickMS() - 1000;
+        authenticationclientSyncTimerCallback(ts->sync_timer);
+        require(ts->pull_requested && ts->push_requested && pushes == i, "timer work was not coalesced");
+        hold_pull = true;
+        deliverHeldRequest();
+        require(pushes == i + 1, "recurring pull starved a waiting usage push");
+        const uint64_t expected = (uint64_t) (i + 1) * 10;
+        require(authTestPeerStats(server, 42).traffic.u == expected && local(0, true) == expected &&
+                    local(0, false) == expected && ts->pending_batch == NULL,
+                "fair synchronization lost or duplicated traffic");
+        if (i == 0)
+            first_use = authTestPeerFirstUse(server);
+        require(first_use != 0 && authTestPeerFirstUse(server) == first_use, "later batch changed first use");
+    }
+    deliverHeldRequest();
+    require(pushes == 4 && ! ts->pull_in_flight && ! ts->push_in_flight, "synchronization did not settle");
+    teardown();
+}
+
+static void testRequiredPullBeforeQueuedPush(void)
+{
+    setup(1);
+    start(0);
+    traffic(0, 10);
+    disconnect(0);
+    pause_before_session = true;
+    pump(10);
+    require(state(0)->authenticated && state(0)->write_paused && ! state(0)->pull_in_flight,
+            "reconnect pull was not held by write pressure");
+    authenticationclientRequestPush(clients[0]);
+    hold_pull = true;
+    authenticationclientTunnelDownStreamResume(clients[0], state(0)->control_line);
+    require(pushes == 0 && state(0)->pull_in_flight, "queued push bypassed reconnect refresh");
+    deliverHeldRequest();
+    require(pushes == 1 && authTestPeerStats(server, 42).traffic.u == 10, "reconnect refresh lost queued usage");
+
+    traffic(0, 5);
+    pause_before_ack = true;
+    authenticationclientRequestPush(clients[0]);
+    require(state(0)->write_paused && ! state(0)->pull_in_flight && state(0)->pending_batch == NULL,
+            "post-ACK pull was not held by write pressure");
+    traffic(0, 7);
+    authenticationclientRequestPush(clients[0]);
+    hold_pull = true;
+    authenticationclientTunnelDownStreamResume(clients[0], state(0)->control_line);
+    require(pushes == 2 && state(0)->pull_in_flight, "queued push bypassed post-ACK refresh");
+    deliverHeldRequest();
+    require(pushes == 3 && authTestPeerStats(server, 42).traffic.u == 22 && local(0, true) == 22,
+            "post-ACK refresh lost or duplicated queued usage");
+    teardown();
+}
+
+static void testEmptyPushDoesNotDropPull(void)
+{
+    setup(1);
+    start(0);
+    hold_pull = true;
+    authenticationclientRequestPull(clients[0]);
+    authenticationclientRequestPull(clients[0]);
+    authenticationclientRequestPush(clients[0]);
+    require(state(0)->pull_requested && state(0)->push_requested, "sync requests were not queued");
+    hold_pull = true;
+    deliverHeldRequest();
+    require(pushes == 0 && held_request != NULL && state(0)->pull_in_flight && ! state(0)->push_requested,
+            "empty usage batch blocked an ordinary queued pull");
+    deliverHeldRequest();
+    require(! state(0)->pull_in_flight && ! state(0)->push_in_flight, "empty push work did not settle");
+    teardown();
+}
+
 static void rawBatch(line_t *l, const uint8_t token[64], const char *text)
 {
     const uint32_t length  = (uint32_t) stringLength(text);
@@ -584,6 +682,9 @@ int main(void)
     require(createNetworkLogger(NULL, false) != NULL, "logger failed");
     require(globalstateInitializeSecureRandom() && wCryptoGlobalInit() == kWCryptoOk, "crypto failed");
     testLossAndOrdering();
+    testRecurringPullDoesNotStarvePush();
+    testRequiredPullBeforeQueuedPush();
+    testEmptyPushDoesNotDropPull();
     testRejectionsAndContinuity();
     testConcurrentAndSubsets();
     testBatchConstructionRefusal();

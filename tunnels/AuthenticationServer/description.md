@@ -384,6 +384,8 @@ The client validates all three batch identity fields, advances only the acknowle
 authoritative totals and first-use time. Pull installation preserves local post-snapshot traffic as `G + (A - B)`.
 No full table is installed while a batch remains unresolved. Reconnect order is authenticate/resume, replay pending
 batch, validate ACK, then pull. Blocked pull/push requests coalesce until this ordering permits them.
+The client completes the required pull after authentication or each ACK before creating another usage batch. It then
+gives a waiting push priority over ordinary periodic or explicit pulls; recurring pulls cannot starve usage reporting.
 
 Epoch/checkpoint state is runtime-only. Accounting continuity across process crashes or restarts is not provided.
 An unresolved batch whose continuity is lost stays identifiable and stops automatic synchronization for operator

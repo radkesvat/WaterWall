@@ -36,6 +36,7 @@ typedef struct authenticationclient_tstate_s
     bool     reconnect_work_pending;
     bool     continuity_error;
     bool     pull_requested;
+    bool     pull_required; /* Refresh after authentication or ACK, before a new usage batch. */
     bool     push_requested;
 
     line_t   *control_line;
