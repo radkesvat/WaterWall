@@ -1514,7 +1514,7 @@ static sbuf_t *pqTinyCarrierByte(pq_fixture_t *f, uint32_t index, bool splice_in
 
 static void caseSpliceManyIncompleteFragments(bool splice_input, bool complete, bool paused_child)
 {
-    twfSetCase("tiny carrier fragments stream immediately or retain in the paused child queue");
+    twfSetCase("tiny carrier fragments stream immediately or wait in the parser for a paused child");
     pq_fixture_t f;
     pqSetup(&f);
     pqSetSpliceSinks(&f);
@@ -1533,21 +1533,149 @@ static void caseSpliceManyIncompleteFragments(bool splice_input, bool complete, 
     for (uint32_t n = 1; n <= received; ++n)
     {
         pqReceive(f.mux, f.parent_l, pqTinyCarrierByte(&f, n - 1U, splice_input));
-        twfRequire(splicestreamBodyBytes(parent->parent_state->read_stream) == 0 &&
-                       splicestreamCharge(parent->parent_state->read_stream) == 0,
-                   "available DATA fragments remained in the parent parser");
+        // A paused child's frame waits in the parser until its last byte, then queues as one entry.
+        const bool kept   = paused_child && n != payload_length;
+        const bool queued = paused_child && ! kept;
+        twfRequire(splicestreamBodyBytes(parent->parent_state->read_stream) == (kept ? n : 0) &&
+                       (kept || splicestreamCharge(parent->parent_state->read_stream) == 0),
+                   "available DATA fragments left or remained in the parent parser");
         twfRequire(pqDeliveredChildBytes == (paused_child ? 0 : n), "available bytes did not stream immediately");
-        twfRequire(bufferqueueGetBufLen(&child->pending_child_data) == (paused_child ? n : 0),
-                   "paused child lost available bytes");
+        twfRequire(bufferqueueGetBufCount(&child->pending_child_data) == (queued ? 1U : 0U) &&
+                       bufferqueueGetBufLen(&child->pending_child_data) == (queued ? n : 0),
+                   "paused child did not retain its frame as one entry");
+        if (queued && splice_input)
+        {
+            // The tiny pipes join one retained pipe without reading any body bytes.
+            const sbuf_t *entry     = bufferqueueFront(&child->pending_child_data);
+            int           available = -1;
+            twfRequire(sbufIsSplice(entry) && pqMaterializedBodyBytes == 0 &&
+                           ioctl(sbufSpliceMetadata(entry).pipefd[0], FIONREAD, &available) == 0 &&
+                           available == (int) payload_length,
+                       "paused splice frame was materialized or split across pipes");
+        }
         twfRequire(parent->pending_child_queue_charge == child->pending_child_queue_charge,
                    "streaming fragments lost aggregate queue accounting");
     }
     if (paused_child)
         pqResumeDecodedChild(&f);
     twfRequire(pqDeliveredChildBytes == received && child->pending_child_queue_charge == 0 &&
-                   parent->pending_child_queue_charge == 0,
+                   parent->pending_child_queue_charge == 0 &&
+                   splicestreamBodyBytes(parent->parent_state->read_stream) == 0,
                "available fragments did not drain before frame completion or retained charge");
     fixtureTeardown(&f);
+}
+
+// One parent read, as NIO delivers it: a private pipe while the inventory lasts, otherwise ordinary storage.
+static sbuf_t *pqCarrierRead(pq_fixture_t *f, const uint8_t *bytes, uint32_t length, bool splice_input)
+{
+    sbuf_t *buf = splice_input ? bufferpoolGetSpliceBuffer(f->env.pool) : NULL;
+    if (buf == NULL)
+    {
+        buf = bufferpoolGetLargeBuffer(f->env.pool);
+        memoryCopy(sbufGetMutablePtr(buf), bytes, length);
+        sbufSetLength(buf, length);
+        return buf;
+    }
+    for (uint32_t offset = 0; offset < length;)
+    {
+        const ssize_t n = write(sbufSpliceMetadata(buf).pipefd[1], bytes + offset, length - offset);
+        if (n < 0 && errno == EINTR)
+            continue;
+        twfRequire(n > 0, "private pipe could not hold the carrier read");
+        offset += (uint32_t) n;
+    }
+    buf->capacity = buf->l_pad + length;
+    sbufSetLength(buf, length);
+    return buf;
+}
+
+/* MSS-sized reads of maximal DATA frames for a paused child on the RAM_HIGH pool tiers
+ * (4 KiB small, 64 KiB medium, 128 KiB large). Retaining every read as its own entry
+ * charged a whole tier per read and closed the child far below its byte limit; each
+ * frame must stay in the parser until it ends and then retain as one entry near its
+ * byte cost. */
+static void casePausedSplitFramesRetainWholeEntries(bool splice_input)
+{
+    twfSetCase("paused child retains split DATA frames as one entry each and drains a kept body on Resume");
+    enum
+    {
+        kSplitFrames = 3,
+        kSplitRead   = 1448,
+        kSplitKept   = 10 * kSplitRead,
+        kSplitWire   = kMuxFrameLength + kMuxMaxDataFrameLength,
+    };
+    g_pool_size  = LARGE_BUFFER_SIZE_RAM_HIGH;
+    g_small_size = SMALL_BUFFER_SIZE;
+    pq_fixture_t f;
+    pqSetup(&f);
+    pqSetSpliceSinks(&f);
+    pq_tstate_t *ts        = tunnelGetState(f.mux);
+    pq_state_t  *parent    = lineGetState(f.parent_l, f.mux);
+    pq_state_t  *child     = lineGetState(f.child_l, f.mux);
+    const size_t payload   = (size_t) kSplitFrames * kMuxMaxDataFrameLength;
+    ts->child_buffer_limit = (uint32_t) (2U * payload);
+    child->paused          = true;
+    pqExpectedChildLength  = (uint32_t) payload + kMuxMaxDataFrameLength;
+    pqExpectSpliceChild    = -1;
+    pqExpectedPipe         = -1;
+#ifndef MUX_OUTPUT_CLIENT
+    atomicStoreRelaxed(&ts->live_children_count, 1);
+    child->child_slot_reserved = true;
+    muxserverArmChildIdle(f.mux, child);
+#endif
+
+    // kSplitFrames retained frames, then one more whose start is kept for Resume.
+    const uint32_t wire_length = (kSplitFrames + 1U) * kSplitWire;
+    uint8_t       *wire        = memoryAllocate(wire_length);
+    for (uint32_t i = 0; i < wire_length; ++i)
+    {
+        const uint32_t frame = i / kSplitWire;
+        const uint32_t at    = i % kSplitWire;
+        if (at == 0)
+            writeFrameHeader(wire + i, kMuxMaxDataFrameLength, kMuxFlagData, kTestChildCid);
+        if (at >= kMuxFrameLength)
+            wire[i] = patternByte(frame * kMuxMaxDataFrameLength + at - kMuxFrameLength);
+    }
+    const uint32_t kept_end = kSplitFrames * kSplitWire + kMuxFrameLength + kSplitKept;
+    uint32_t       pos      = 0;
+    while (pos < kept_end)
+    {
+        const uint32_t length = min((uint32_t) kSplitRead, kept_end - pos);
+        pqReceive(f.mux, f.parent_l, pqCarrierRead(&f, wire + pos, length, splice_input));
+        pos += length;
+        twfRequire(child->is_child && child->parent == parent,
+                   "split frames closed the paused child far below its byte limit");
+#ifndef MUX_OUTPUT_CLIENT
+        twfRequire(child->child_has_payload_activity, "kept bytes did not refresh the paused child's idle timeout");
+#endif
+    }
+    const size_t retained = bufferqueueGetBufLen(&child->pending_child_data);
+    twfRequire(retained == payload && bufferqueueGetBufCount(&child->pending_child_data) == kSplitFrames,
+               "split frames were not retained as one entry per frame");
+    twfRequire(child->pending_child_queue_charge * 100U <= retained * 101U &&
+                   parent->pending_child_queue_charge == child->pending_child_queue_charge,
+               "split-frame retention was charged above its bytes");
+    twfRequire(pqDeliveredChildBytes == 0 && splicestreamBodyBytes(parent->parent_state->read_stream) == kSplitKept,
+               "the incomplete frame left the parser for the paused child");
+
+    // Resume drains the retained frames, then the kept body, in stream order.
+    pqResumeDecodedChild(&f);
+    twfRequire(pqDeliveredChildBytes == payload + kSplitKept && child->pending_child_queue_charge == 0 &&
+                   splicestreamBodyBytes(parent->parent_state->read_stream) == 0,
+               "Resume did not deliver the retained frames and the kept body");
+    while (pos < wire_length)
+    {
+        const uint32_t length    = min((uint32_t) kSplitRead, wire_length - pos);
+        const uint32_t delivered = pqDeliveredChildBytes;
+        pqReceive(f.mux, f.parent_l, pqCarrierRead(&f, wire + pos, length, splice_input));
+        pos += length;
+        twfRequire(pqDeliveredChildBytes == delivered + length,
+                   "resumed child did not receive available bytes at once");
+    }
+    memoryFree(wire);
+    fixtureTeardown(&f);
+    g_pool_size  = kTestLargeBufferSize;
+    g_small_size = kTwfDefaultSmallBufferSize;
 }
 
 static void caseSpliceIncompleteCarrier(void)
@@ -2213,6 +2341,68 @@ static void caseStreamingCallbackLifetime(bool close_parent, bool queued_resume)
     fixtureTeardown(&f);
 }
 
+static uint32_t pqNestedCaptured;
+static size_t   pqNestedKept;
+
+/* On the first delivery the consumer pauses, the frame's last byte and the next frame's
+ * first byte arrive re-entrantly, and the consumer resumes before returning. */
+static void pqNestedResumeCallback(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+#ifdef MUX_OUTPUT_CLIENT
+    twfPrevPayload(t, l, buf);
+#else
+    twfNextPayload(t, l, buf);
+#endif
+    if (pqChildDeliveries(pqFixture) != 1)
+        return;
+    ((pq_state_t *) lineGetState(l, pqFixture->mux))->paused = true;
+
+    uint8_t suffix[1 + kMuxFrameLength + 1] = {0x22};
+    writeFrameHeader(suffix + 1, 3, kMuxFlagData, kTestChildCid);
+    suffix[1 + kMuxFrameLength] = 0x33;
+    pqReceiveBytes(pqFixture, suffix, sizeof(suffix));
+#ifdef MUX_OUTPUT_CLIENT
+    muxclientTunnelUpStreamResume(pqFixture->mux, l);
+#else
+    muxserverTunnelDownStreamResume(pqFixture->mux, l);
+#endif
+    pq_state_t *parent = lineGetState(pqFixture->parent_l, pqFixture->mux);
+    pqNestedCaptured   = pqFixture->trace.capture_len;
+    pqNestedKept       = splicestreamBodyBytes(parent->parent_state->read_stream);
+}
+
+/* A Resume nested in parent input leaves the kept body to the active receive loop, which
+ * delivers it after the callback returns, behind the bytes the nested drain delivered. */
+static void caseNestedResumeKeptFrame(void)
+{
+    twfSetCase("nested Resume leaves a kept DATA body to the active receive loop in stream order");
+    pq_fixture_t f;
+    pqSetup(&f);
+#ifdef MUX_OUTPUT_CLIENT
+    ((pq_state_t *) lineGetState(f.child_l, f.mux))->open_frame_submitted = true;
+    f.prev->fnPayloadD                                                    = pqNestedResumeCallback;
+#else
+    f.next->fnPayloadU = pqNestedResumeCallback;
+#endif
+    pqNestedCaptured = 0;
+    pqNestedKept     = 0;
+    uint8_t prefix[kMuxFrameLength + 1];
+    writeFrameHeader(prefix, 2, kMuxFlagData, kTestChildCid);
+    prefix[kMuxFrameLength] = 0x11;
+    pqReceiveBytes(&f, prefix, sizeof(prefix));
+    pq_state_t *parent = lineGetState(f.parent_l, f.mux);
+    twfRequire(pqNestedCaptured == 2 && pqNestedKept == 1,
+               "nested Resume parsed the kept body inside the receive loop");
+    twfRequire(f.trace.capture_len == 3 && splicestreamBodyBytes(parent->parent_state->read_stream) == 0,
+               "the active receive loop did not deliver the kept body after the callback");
+    const uint8_t rest[] = {0x44, 0x55};
+    pqReceiveBytes(&f, rest, sizeof(rest));
+    const uint8_t expected[] = {0x11, 0x22, 0x33, 0x44, 0x55};
+    twfRequire(f.trace.capture_len == sizeof(expected) && memcmp(f.capture, expected, sizeof(expected)) == 0,
+               "nested Resume changed child stream order");
+    fixtureTeardown(&f);
+}
+
 static void runParentOutputCases(void)
 {
     caseChildPauseWithoutQueuedData();
@@ -2251,6 +2441,7 @@ static void runParentOutputCases(void)
     caseStreamingCallbackLifetime(false, false);
     caseStreamingCallbackLifetime(false, true);
     caseStreamingCallbackLifetime(true, false);
+    caseNestedResumeKeptFrame();
     runReceiveLimitCases();
     runFrameLengthCases();
 #if WW_HAVE_SPLICE
@@ -2268,6 +2459,8 @@ static void runParentOutputCases(void)
         for (unsigned complete = 0; complete < 2; ++complete)
             for (unsigned paused = 0; paused < 2; ++paused)
                 caseSpliceManyIncompleteFragments(input != 0, complete != 0, paused != 0);
+    casePausedSplitFramesRetainWholeEntries(false);
+    casePausedSplitFramesRetainWholeEntries(true);
     caseSpliceParentOutput(false);
     caseSpliceParentOutput(true);
     caseSpliceParentRefusal();

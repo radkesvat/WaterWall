@@ -39,7 +39,8 @@ enum
     kTestMaxFrames       = 64
 };
 
-static uint32_t g_pool_size = kTestLargeBufferSize;
+static uint32_t g_pool_size  = kTestLargeBufferSize;
+static uint32_t g_small_size = kTwfDefaultSmallBufferSize;
 
 // ---------------------------------------------------------------------------
 // wire helpers
@@ -116,7 +117,7 @@ typedef struct muxserver_fixture_s
 static void fixtureSetup(muxserver_fixture_t *fixture, uint32_t capture_capacity)
 {
     memoryZero(&fixture->trace, sizeof(fixture->trace));
-    twfWorkerEnvSetup(&fixture->env, g_pool_size, kMuxFrameLength * 2);
+    twfWorkerEnvSetupWithSmallBuffers(&fixture->env, g_pool_size, g_small_size, kMuxFrameLength * 2);
 
     fixture->capture = memoryAllocate(capture_capacity);
     twfRequire(fixture->capture != NULL, "failed to allocate the neighbour capture buffer");
@@ -1039,7 +1040,7 @@ static void caseUnpausedFrameKeepsReceiveAllocation(void)
 
 static void caseFragmentedPausedFrameKeepsCarrierRemainder(void)
 {
-    twfSetCase("paused child retains available fragments and drains before the frame is complete");
+    twfSetCase("paused child keeps an incomplete frame in the parser and drains it on Resume before it ends");
     g_pool_size = LARGE_BUFFER_SIZE_RAM_HIGH;
     muxserver_fixture_t fixture;
     fixtureSetup(&fixture, 14097);
@@ -1062,16 +1063,19 @@ static void caseFragmentedPausedFrameKeepsCarrierRemainder(void)
     sbufSetLength(first, first_bytes);
     sbufSetLength(second, frame_bytes - first_bytes + trailing);
     muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, first);
-    twfRequire(bufferqueueGetBufLen(&child->pending_child_data) == first_bytes - kMuxFrameLength,
-               "incomplete DATA body was not transferred to the paused child queue");
+    twfRequire(bufferqueueGetBufCount(&child->pending_child_data) == 0 &&
+                   splicestreamBodyBytes(parent->parent_state->read_stream) == first_bytes - kMuxFrameLength,
+               "incomplete DATA body left the parser for the paused child queue");
     muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, second);
-    twfRequire(fixture.trace.next_payload == 0 && bufferqueueGetBufLen(&child->pending_child_data) == 14097,
-               "available fragments crossed Pause or remained in the parser");
-    twfRequire(splicestreamBodyBytes(parent->parent_state->read_stream) == 0,
-               "incomplete DATA retained available carrier bytes");
+    twfRequire(fixture.trace.next_payload == 0 && bufferqueueGetBufCount(&child->pending_child_data) == 1 &&
+                   bufferqueueGetBufLen(&child->pending_child_data) == 4097,
+               "completed frame crossed Pause or was not retained as one entry");
+    twfRequire(splicestreamBodyBytes(parent->parent_state->read_stream) == 10000,
+               "incomplete DATA for the paused child left the parser");
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
-    twfRequire(fixture.trace.next_payload_bytes == 14097 && child->pending_child_queue_charge == 0,
-               "Resume did not drain available fragments before frame completion");
+    twfRequire(fixture.trace.next_payload_bytes == 14097 && child->pending_child_queue_charge == 0 &&
+                   splicestreamBodyBytes(parent->parent_state->read_stream) == 0,
+               "Resume did not drain retained and kept bytes before frame completion");
     for (uint32_t i = 0; i < 14097; ++i)
         twfRequire(fixture.capture[i] == (i < 4097 ? (uint8_t) i : 'x'), "fragment drain changed FIFO bytes");
     fixtureTeardown(&fixture);

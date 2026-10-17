@@ -378,7 +378,9 @@ another eight bytes (1,048,592 total). Decoding rejects a larger declaration as
 soon as all eight header bytes arrive, even for unknown CIDs or types, and closes
 only that parent through normal parent-loss cleanup. After a valid Data header,
 the decoder delivers available body bytes incrementally; it does not wait for the
-whole frame. Data for an unknown or closed CID is discarded incrementally. Empty
+whole frame. For a paused child, or one with queued Data, the incomplete body
+instead stays in incoming assembly and joins that child's queue as one entry when
+the frame ends. Data for an unknown or closed CID is discarded incrementally. Empty
 Data is consumed without a child Payload callback. Other frame bodies are also
 consumed incrementally, but control effects wait until their declared bodies end.
 Available body bytes and completed controls drain before retained incomplete
@@ -511,7 +513,7 @@ child lines, so their true source owners remain responsible for enumerating and 
 
 ### Buffering and overflow handling
 
-Replies wait only for a complete header or more body bytes. Available Data passes incrementally to the child or its bounded queue; other body bytes are consumed without delivery.
+Replies wait only for a complete header or more body bytes, and for the rest of a Data frame whose child is paused or has queued Data. Available Data otherwise passes incrementally to the child; a retaining child queues the rest of each frame as one bounded entry. Other body bytes are consumed without delivery.
 
 Current overflow limit:
 
@@ -553,14 +555,18 @@ example, a frame declaring 64 KiB can deliver its first available 4 KiB without
 waiting for the other 60 KiB. Later frames on the same parent still follow the
 current frame's remaining bytes.
 
-The parent receive accumulator caches only the eight-byte header. It tracks the
+The parent receive accumulator caches the eight-byte header. It tracks the
 remaining Data body length, extracts available chunks with independent ownership,
-and gathers the next header only after the current body is consumed. Paused
-children retain those chunks in FIFO order under the existing queue budgets.
+and gathers the next header only after the current body is consumed. For a paused
+child, or one with queued Data, it keeps the incomplete body instead and queues the
+rest of the frame as one FIFO entry under the existing queue budgets. When that
+child resumes and drains its queue, the kept bytes are delivered without waiting
+for more input.
 A child that closes during delivery receives no more bytes; the parser discards
 that frame's remaining body before interpreting another header. Already delivered
-prefixes stay delivered if the parent fails. Accepted queued chunks retain the
-normal detached-drain behavior, even when the frame's suffix never arrived.
+prefixes stay delivered if the parent fails. Accepted queued entries retain the
+normal detached-drain behavior; a body still kept in the accumulator is discarded
+with the parent's incoming stream.
 
 Zero-length child payloads still encode as a Data header with no body. The
 receiver consumes that frame without creating a child Payload callback or queue
@@ -599,10 +605,11 @@ capacity does not force a valid retained source into ordinary storage.
 all attached child queues. The stream counter remains separate from the child
 aggregate, and their sum is checked at stable return boundaries. Available Data
 chunks and complete controls in a coalesced delivery drain first, even if its
-temporary charge exceeds the limit. A paused child retains chunks as they arrive,
-so one Data frame may create several charged queue entries. Cached header bytes
-count toward the independent 1,048,584-byte incomplete-input bound until the body
-ends, but the header cache and stream/queue metadata carry no sbuf charge.
+temporary charge exceeds the limit. A paused child, or one with queued Data, leaves
+an incomplete body in incoming assembly and retains the rest of the frame as one
+charged queue entry. Cached header bytes and such a body count toward the
+independent 1,048,584-byte incomplete-input bound until the body ends, but the
+header cache and stream/queue metadata carry no sbuf charge.
 The declared body bytes still missing from the transport carry no retention charge.
 Active splice-head body consumption reduces logical capacity and its charge;
 prefix consumption and ordinary cursor movement do not reduce capacity.
