@@ -33,14 +33,14 @@ static unsigned         provider_opens, provider_closes;
 static const uint8_t    request[]     = {5, 1, 0, 1, 127, 0, 0, 1, 0, 80};
 static const uint8_t    credentials[] = {1, 1, 'u', 1, 'p'};
 
-authenticationclient_state_t              __wrap_authenticationclientGetState(tunnel_t *t);
+bool                                      __wrap_authenticationclientCanAuthenticate(tunnel_t *t);
 authenticationclient_user_lookup_result_t __wrap_authenticationclientGetUserByPasswordWithResult(tunnel_t   *t,
                                                                                                  const char *password,
                                                                                                  user_handle_t *out);
-authenticationclient_state_t              __wrap_authenticationclientGetState(tunnel_t *t)
+bool                                      __wrap_authenticationclientCanAuthenticate(tunnel_t *t)
 {
     discard t;
-    return kAuthenticationClientStateReady;
+    return true;
 }
 authenticationclient_user_lookup_result_t __wrap_authenticationclientGetUserByPasswordWithResult(tunnel_t   *t,
                                                                                                  const char *password,

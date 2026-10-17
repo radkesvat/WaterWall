@@ -1,5 +1,5 @@
 <!--
-Documentation version: 160
+Documentation version: 161
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Socks5Server.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Socks5Server.mdx, and all files must keep the same documentation version.
 -->
 
@@ -22,6 +22,15 @@ This tunnel is written to fit normal Waterwall chain rules:
 - finishes destroy local state before propagating the real Waterwall close
 - in authenticated mode, `Socks5Server` creates and inserts its own internal `UserController` between itself and the
   configured next node
+
+## Cached Account Admission
+
+With AuthenticationClient, admission uses its last valid RAM table and clock basis during ordinary network outages
+and re-authentication. Cached enabled status, expiry, traffic quota and local connection/IP reservations still apply.
+No initial cache, stopping, terminal accounting-continuity failure or explicit client credential rejection blocks new
+admission. Only validated authorization clears that rejection; existing authorized traffic keeps cached enforcement and
+accounting. Offline administrative changes apply after refresh. Local allowances can overshoot aggregate limits across
+multiple disconnected clients; they are not global reservations.
 
 ## What It Does
 

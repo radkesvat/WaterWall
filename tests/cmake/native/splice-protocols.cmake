@@ -122,7 +122,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET TrojanServer)
     target_link_libraries(${trojan_server_test} PRIVATE ww)
     target_link_options(${trojan_server_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
       "-Wl,--wrap=bufferqueueTryPushBack" "-Wl,--wrap=memoryAllocate" "-Wl,--wrap=lineScheduleDelayedTask"
-      "-Wl,--wrap=authenticationclientGetState" "-Wl,--wrap=authenticationclientGetUserBySHA224WithProfile")
+      "-Wl,--wrap=authenticationclientCanAuthenticate" "-Wl,--wrap=authenticationclientGetUserBySHA224WithProfile")
     if(mode STREQUAL "no_splice")
       target_compile_definitions(${trojan_server_test} PRIVATE WW_HAVE_SPLICE=0)
     else()
@@ -142,7 +142,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET VlessServer)
     target_link_libraries(${vless_server_test} PRIVATE ww)
     target_link_options(${vless_server_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
       "-Wl,--wrap=bufferqueueTryPushBack" "-Wl,--wrap=lineScheduleDelayedTask"
-      "-Wl,--wrap=authenticationclientGetState" "-Wl,--wrap=authenticationclientGetUserByUUIDWithProfile")
+      "-Wl,--wrap=authenticationclientCanAuthenticate" "-Wl,--wrap=authenticationclientGetUserByUUIDWithProfile")
     if(mode STREQUAL "no_splice")
       target_compile_definitions(${vless_server_test} PRIVATE WW_HAVE_SPLICE=0)
     else()

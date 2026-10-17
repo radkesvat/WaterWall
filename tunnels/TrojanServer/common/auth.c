@@ -3,22 +3,6 @@
 #include "AuthenticationClient/interface.h"
 #include "loggers/network_logger.h"
 
-static const char *trojanserverAuthClientStateName(authenticationclient_state_t state)
-{
-    switch (state)
-    {
-    case kAuthenticationClientStateStopped:
-        return "authentication client stopped";
-    case kAuthenticationClientStateConnecting:
-        return "authentication client connecting";
-    case kAuthenticationClientStateAuthenticating:
-        return "authentication client not authenticated";
-    case kAuthenticationClientStateReady:
-        return "authentication client ready";
-    default:
-        return "authentication client state unknown";
-    }
-}
 
 void trojanserverSetCredentialSnapshot(trojanserver_lstate_t *ls, const char *username, const char *password)
 {
@@ -66,14 +50,13 @@ trojanserver_auth_result_t trojanserverAuthenticateHash(tunnel_t *t, line_t *l,
         return kTrojanServerAuthAccepted;
     }
 
-    authenticationclient_state_t auth_state = authenticationclientGetState(ts->auth_client_tunnel);
-    if (UNLIKELY(auth_state != kAuthenticationClientStateReady))
+    if (UNLIKELY(! authenticationclientCanAuthenticate(ts->auth_client_tunnel)))
     {
         if (ts->verbose)
         {
             LOGW("TrojanServer: authentication unavailable on worker %u: %s",
                  (unsigned int) lineGetWID(l),
-                 trojanserverAuthClientStateName(auth_state));
+                 "cached authentication unavailable");
         }
         return kTrojanServerAuthRejected;
     }

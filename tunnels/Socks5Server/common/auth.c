@@ -15,22 +15,6 @@ static bool socks5serverFieldHasNul(const uint8_t *field, size_t len)
     return false;
 }
 
-static const char *socks5serverAuthClientStateName(authenticationclient_state_t state)
-{
-    switch (state)
-    {
-    case kAuthenticationClientStateStopped:
-        return "authentication client stopped";
-    case kAuthenticationClientStateConnecting:
-        return "authentication client connecting";
-    case kAuthenticationClientStateAuthenticating:
-        return "authentication client not authenticated";
-    case kAuthenticationClientStateReady:
-        return "authentication client ready";
-    default:
-        return "authentication client state unknown";
-    }
-}
 
 static void socks5serverSanitizeUsername(const uint8_t *username, uint8_t username_len, char out[UINT8_MAX + 1U])
 {
@@ -96,10 +80,9 @@ bool socks5serverAuthUserFromClient(tunnel_t *t, line_t *l, const uint8_t *usern
         return false;
     }
 
-    authenticationclient_state_t auth_state = authenticationclientGetState(ts->auth_client_tunnel);
-    if (auth_state != kAuthenticationClientStateReady)
+    if (! authenticationclientCanAuthenticate(ts->auth_client_tunnel))
     {
-        socks5serverLogAuthRejected(t, l, username, username_len, socks5serverAuthClientStateName(auth_state));
+        socks5serverLogAuthRejected(t, l, username, username_len, "cached authentication unavailable");
         return false;
     }
 

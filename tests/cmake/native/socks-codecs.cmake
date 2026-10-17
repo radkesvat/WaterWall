@@ -29,7 +29,7 @@ if(LINUX AND TARGET Socks5Server)
     ${CMAKE_SOURCE_DIR}/tunnels/UdpListener/include
     ${CMAKE_SOURCE_DIR}/tunnels/AuthenticationClient/include)
   target_link_options(socks5server_control_input_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
-    "-Wl,--wrap=authenticationclientGetState" "-Wl,--wrap=authenticationclientGetUserByPasswordWithResult")
+    "-Wl,--wrap=authenticationclientCanAuthenticate" "-Wl,--wrap=authenticationclientGetUserByPasswordWithResult")
   target_link_libraries(socks5server_control_input_test PRIVATE Socks5Server ww)
   add_dependencies(waterwall_unit_tests socks5server_control_input_test)
   add_waterwall_unit_test(waterwall.socks5server_control_input_unit socks5server_control_input_test "unit;tunnels;socks5server;reentrant;input")

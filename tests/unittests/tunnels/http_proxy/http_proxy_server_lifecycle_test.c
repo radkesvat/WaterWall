@@ -1802,6 +1802,7 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     cJSON *user_json = cJSON_Parse("{\"id\":1001,\"password\":\"user:pass\",\"enabled\":true}");
     require(usersAddUserFromJson(&users, user_json), "test account");
     cJSON_Delete(user_json);
+    ats->started = ats->clock_loaded = true;
     ats->users        = &users;
     ats->users_loaded = ats->authenticated = true;
     ats->users_generation                  = 7;
@@ -1819,6 +1820,10 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
             "stable auth snapshot failed reuse or grew markers");
     require(lineHasAuthenticatedCredentials(child, "user", "pass"), "child raw credentials missing");
     require(lineHasAuthenticatedCredentials(child, "inherited", "value"), "inherited marker lost");
+    ats->authenticated = false;
+    sendBytes(client, false, authenticated_get);
+    require(lineIsAlive(client) && opens == 1, "loaded offline authentication rejected a new HTTP request");
+    ats->authenticated = true;
     ++ats->users_generation;
     sendBytes(client, false, authenticated_get);
     require(opens == 2 && closes == 1, "generation change reused old child");
@@ -1828,9 +1833,17 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
             "disabled account bypassed reauthentication");
     lineUnref(client);
     resetClient(chain);
+    userSetEnabled(usersLookupByIdentifier(&users, 1001), true);
     ats->authenticated = false;
+    automatic_response = false;
     sendBytes(client, false, authenticated_get);
-    require(! lineIsAlive(client) && opens == 0 && strstr(received, "503"), "unready auth opened destination");
+    require(lineIsAlive(client) && opens == 1, "loaded offline first HTTP request failed");
+    ats->auth_rejected = true;
+    sendBytes(child, true, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx");
+    require(lineIsAlive(client) && strstr(received, "200 OK"), "rejection interrupted an authorized exchange");
+    sendBytes(client, false, authenticated_get);
+    require(! lineIsAlive(client) && opens == 1 && strstr(received, "503"), "reused HTTP request bypassed rejection");
+    ats->auth_rejected = false;
     lineUnref(client);
     resetClient(chain);
     ats->authenticated = true;
@@ -1846,7 +1859,7 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     for (unsigned failure = 0; failure < 7; ++failure)
     {
         fallbackStart(chain);
-        ats->authenticated = failure != 0;
+        ats->auth_rejected = failure == 0;
         ats->users         = failure == 1 ? NULL : &users;
         userSetEnabled(account, failure != 2);
         userSetClientViewExpiry(account, 1, failure == 3);
@@ -1863,6 +1876,7 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
         clientClose();
         lineUnref(client);
     }
+    ats->auth_rejected = false;
     userSetId(account, 1001);
     userSetClientViewExpiry(account, 0, false);
     account->limit.traffic.total = 0;

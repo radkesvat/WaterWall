@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/VlessServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VlessServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -18,6 +18,15 @@ Authentication can run in either local allowlist mode or user-database mode:
 
 This node implements plain VLESS protocol handling only. It does not create TLS, REALITY, XTLS Vision, mux, reverse, or
 transport-specific wrapping.
+
+## Cached Account Admission
+
+With AuthenticationClient, admission uses its last valid RAM table and clock basis during ordinary network outages
+and re-authentication. Cached enabled status, expiry, traffic quota and local connection/IP reservations still apply.
+No initial cache, stopping, terminal accounting-continuity failure or explicit client credential rejection blocks new
+admission. Only validated authorization clears that rejection; existing authorized traffic keeps cached enforcement and
+accounting. Offline administrative changes apply after refresh. Local allowances can overshoot aggregate limits across
+multiple disconnected clients; they are not global reservations.
 
 ## What It Does
 
@@ -386,7 +395,7 @@ Fallback may be selected for:
 - invalid version byte
 - segmented UUID authentication in the first upstream payload
 - failed UUID lookup
-- authentication client not ready
+- cached authentication unavailable (unloaded, stopping, rejected or terminal continuity failure)
 
 Fallback is not used after the UUID has authenticated. Once the UUID is accepted, malformed VLESS addons, command,
 destination, or UDP framing closes the VLESS line instead of replaying authenticated client bytes to the fallback

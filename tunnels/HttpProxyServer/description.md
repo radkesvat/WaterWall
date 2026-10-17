@@ -10,6 +10,15 @@ Listener address and port belong to `TcpListener`. Ordinary requests require an 
 
 `HttpClient` and `HttpServer` carry WaterWall traffic inside HTTP framing. They do not provide this forward-proxy interface. Mixed SOCKS/HTTP ports, outbound HTTP proxy negotiation, TLS interception, Upgrade/WebSocket, and HTTP/2 or HTTP/3 proxy interfaces are unsupported. Valid extension methods such as PROPFIND are forwarded; TRACE receives 405. Authenticated `OPTIONS *` and OPTIONS with Max-Forwards zero receive a local empty response and close; forwarded OPTIONS decrements Max-Forwards.
 
+## Cached Account Admission
+
+With AuthenticationClient, admission uses its last valid RAM table and clock basis during ordinary network outages
+and re-authentication. Cached enabled status, expiry, traffic quota and local connection/IP reservations still apply.
+No initial cache, stopping, terminal accounting-continuity failure or explicit client credential rejection blocks new
+admission. Only validated authorization clears that rejection; existing authorized traffic keeps cached enforcement and
+accounting. Offline administrative changes apply after refresh. Local allowances can overshoot aggregate limits across
+multiple disconnected clients; they are not global reservations.
+
 ## Settings
 
 | Setting | Default / accepted values |
@@ -47,6 +56,9 @@ Basic `Proxy-Authorization` is checked on every HTTP request, including reused c
 Base64 must be canonical and valid. Username and password must each contain 1–255 bytes, with no NUL or control bytes; the first colon separates them. Provisioned and supplied bytes must match exactly, including UTF-8 bytes when used. No Unicode normalization or charset conversion is performed. The AuthenticationServer user's `password` field stores the complete `username:password`; its `name` is account metadata.
 
 Only tracked mode inserts an internal UserController. Do not insert another controller manually for this authentication layer. Each new outbound child carries inherited user markers, the validated value handle and credentials, and original source/listener metadata. Tracked admission, accounting, supported limits, and active revocation use the existing controller. CONNECT authenticates once before relay; tracked controller enforcement continues during relay. Local mode follows the configured chain directly and adds exactly one credentials-only marker to each new child, without creating a user handle, account record, usage report, reservation, or per-user enforcement timer. Inherited identities and independently configured policies remain in effect. Neither mode appends repeated markers to the borrowed client or a reused child.
+
+A reused TCP connection authenticates every next request against current cached admission. An already authorized
+in-flight exchange or CONNECT stream continues during credential rejection; the next HTTP request observes the block.
 
 ## Authentication fallback
 

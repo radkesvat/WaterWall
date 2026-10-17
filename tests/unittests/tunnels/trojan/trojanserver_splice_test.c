@@ -88,11 +88,11 @@ static bool bare_local_user;
 
 static unsigned              auth_calls;
 static bool                  auth_available = true, auth_match = true;
-authenticationclient_state_t __wrap_authenticationclientGetState(tunnel_t *t);
-authenticationclient_state_t __wrap_authenticationclientGetState(tunnel_t *t)
+bool                         __wrap_authenticationclientCanAuthenticate(tunnel_t *t);
+bool                         __wrap_authenticationclientCanAuthenticate(tunnel_t *t)
 {
     discard t;
-    return auth_available ? kAuthenticationClientStateReady : kAuthenticationClientStateStopped;
+    return auth_available;
 }
 bool __wrap_authenticationclientGetUserBySHA224WithProfile(tunnel_t *t, const uint8_t *hash, user_handle_t *handle,
                                                            authenticationclient_user_profile_t *profile);

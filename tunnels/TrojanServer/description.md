@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TrojanServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TrojanServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -19,6 +19,15 @@ Authentication can run in either local allowlist mode or user-database mode:
 
 This node replaces the old two-node Trojan server setup for database-backed deployments. Users no longer need to place
 separate `TrojanAuthServer` and `TrojanSocksServer` nodes in the chain.
+
+## Cached Account Admission
+
+With AuthenticationClient, admission uses its last valid RAM table and clock basis during ordinary network outages
+and re-authentication. Cached enabled status, expiry, traffic quota and local connection/IP reservations still apply.
+No initial cache, stopping, terminal accounting-continuity failure or explicit client credential rejection blocks new
+admission. Only validated authorization clears that rejection; existing authorized traffic keeps cached enforcement and
+accounting. Offline administrative changes apply after refresh. Local allowances can overshoot aggregate limits across
+multiple disconnected clients; they are not global reservations.
 
 ## What It Does
 
@@ -346,7 +355,7 @@ Fallback may be selected for:
 - invalid password CRLF before authentication
 - invalid password hex before authentication
 - failed password lookup
-- authentication client not ready
+- cached authentication unavailable (unloaded, stopping, rejected or terminal continuity failure)
 
 Fallback is not used after the password has authenticated. Once the password is accepted, malformed Trojan command,
 address, CRLF, or UDP framing closes the Trojan line instead of replaying authenticated client bytes to the fallback
@@ -517,7 +526,7 @@ speed improvements.
 - `TrojanServer` does not support HTTP/3, QUIC-based Trojan variants, or non-standard Trojan extensions.
 - `CONNECT` and `UDP ASSOCIATE` can be independently disabled, but at least one must remain enabled.
 - Bad unauthenticated probes may go to fallback; bad authenticated protocol data closes.
-- `AuthenticationClient` must be ready for password lookup. If it is not ready and fallback is configured, the original
+- `AuthenticationClient` must permit cached admission for password lookup. If unavailable and fallback is configured, the original
   unauthenticated bytes are sent to fallback. Those bytes may include the presented Trojan password hash, so choose the
   fallback service accordingly.
 - `required_padding_left` is set for UDP wrapping; do not reduce it unless the Trojan UDP header calculation changes.

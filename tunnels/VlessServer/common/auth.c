@@ -3,22 +3,6 @@
 #include "AuthenticationClient/interface.h"
 #include "loggers/network_logger.h"
 
-static const char *vlessserverAuthClientStateName(authenticationclient_state_t state)
-{
-    switch (state)
-    {
-    case kAuthenticationClientStateStopped:
-        return "authentication client stopped";
-    case kAuthenticationClientStateConnecting:
-        return "authentication client connecting";
-    case kAuthenticationClientStateAuthenticating:
-        return "authentication client not authenticated";
-    case kAuthenticationClientStateReady:
-        return "authentication client ready";
-    default:
-        return "authentication client state unknown";
-    }
-}
 
 static const vlessserver_user_t *vlessserverFindLocalUser(tunnel_t *t, line_t *l,
                                                           const uint8_t uuid[kVlessServerUuidLen])
@@ -70,14 +54,13 @@ vlessserver_auth_result_t vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vl
         return kVlessServerAuthAccepted;
     }
 
-    authenticationclient_state_t auth_state = authenticationclientGetState(ts->auth_client_tunnel);
-    if (UNLIKELY(auth_state != kAuthenticationClientStateReady))
+    if (UNLIKELY(! authenticationclientCanAuthenticate(ts->auth_client_tunnel)))
     {
         if (ts->verbose)
         {
             LOGW("VlessServer: authentication unavailable on worker %u: %s",
                  (unsigned int) lineGetWID(l),
-                 vlessserverAuthClientStateName(auth_state));
+                 "cached authentication unavailable");
         }
         return kVlessServerAuthRejected;
     }

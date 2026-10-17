@@ -14,7 +14,7 @@ hps_auth_result_t hpsEvaluateAuth(const hps_tstate_t *ts, const char *credential
                 return kHpsAuthAccepted;
         return kHpsAuthDenied;
     }
-    if (! authenticationclientIsReady(ts->auth))
+    if (! authenticationclientCanAuthenticate(ts->auth))
         return kHpsAuthUnavailable;
 
     authenticationclient_user_lookup_result_t result =
