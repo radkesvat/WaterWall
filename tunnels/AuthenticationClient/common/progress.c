@@ -5,7 +5,9 @@ static void progressFailure(const char *operation)
 {
     LOGF("AuthenticationClient: could not admit required %s", operation);
     if (! requestProgramShutdown(1))
+    {
         abortProgramNow(1);
+    }
 }
 
 static void reconnectCancelled(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
@@ -40,7 +42,7 @@ void authenticationclientScheduleReconnect(tunnel_t *t)
     authenticationclient_tstate_t *ts    = tunnelGetState(t);
     const bool                     queue = ! currentThreadIsEventWorkerWID(0) || ts->reconnect_interval_ms == 0;
     mutexLock(&ts->control_mutex);
-    const bool needed = ts->started && ! ts->stopping && ts->control_line == NULL;
+    const bool needed = ts->started && ! ts->stopping && ! ts->continuity_error && ts->control_line == NULL;
     if (! needed || (queue && ts->reconnect_work_pending))
     {
         mutexUnlock(&ts->control_mutex);

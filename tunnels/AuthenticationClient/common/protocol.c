@@ -277,21 +277,12 @@ static void authenticationclientInstallClientViewExpiry(users_t *users, uint64_t
 
 static void authenticationclientClearSessionLocked(authenticationclient_tstate_t *ts)
 {
-    users_t *pending_push_users = NULL;
-    rwlockWriteLock(&ts->users_lock);
-    pending_push_users     = ts->pending_push_users;
-    ts->pending_push_users = NULL;
-    rwlockWriteUnlock(&ts->users_lock);
-
     memoryZero(ts->token, sizeof(ts->token));
     ts->authenticated              = false;
     ts->auth_in_flight             = false;
     ts->pull_in_flight             = false;
     ts->push_in_flight             = false;
-    ts->first_usage_push_requested = false;
-    ts->first_usage_push_deferred  = false;
-
-    authenticationclientDestroyUsers(pending_push_users);
+    ts->pull_requested             = true;
 }
 
 static void authenticationclientResetFirstUsagePushRuntime(tunnel_t *t)
@@ -421,7 +412,8 @@ static void authenticationclientMarkRequestInFlightLocked(authenticationclient_t
 
 static bool authenticationclientRequestMayBeSentLocked(authenticationclient_tstate_t *ts, uint8_t request_type)
 {
-    if (UNLIKELY(ts->stopping || ! ts->connected || ts->write_paused || ts->control_line == NULL))
+    if (UNLIKELY(ts->stopping || ts->continuity_error || ! ts->connected || ts->write_paused ||
+                 ts->control_line == NULL))
     {
         return false;
     }
@@ -436,11 +428,11 @@ static bool authenticationclientRequestMayBeSentLocked(authenticationclient_tsta
     }
     if (request_type == kAuthenticationClientRequestTypeGetAllUsers)
     {
-        return ! ts->pull_in_flight;
+        return ! ts->pull_in_flight && ! ts->push_in_flight && ts->pending_batch == NULL;
     }
     if (request_type == kAuthenticationClientRequestTypePushUserStats)
     {
-        return ! ts->push_in_flight;
+        return ! ts->push_in_flight && ! ts->pull_in_flight && ts->accounting_epoch[0] != '\0';
     }
     return true;
 }
@@ -494,75 +486,8 @@ static sbuf_t *authenticationclientCreateRequestMessage(line_t *l, uint8_t reque
     return message;
 }
 
-static void authenticationclientStorePendingPushUsers(tunnel_t *t, users_t **snapshot)
-{
-    if (UNLIKELY(snapshot == NULL || *snapshot == NULL))
-    {
-        return;
-    }
-
-    authenticationclient_tstate_t *ts           = tunnelGetState(t);
-    users_t                       *old_snapshot = NULL;
-
-    rwlockWriteLock(&ts->users_lock);
-    old_snapshot           = ts->pending_push_users;
-    ts->pending_push_users = *snapshot;
-    *snapshot              = NULL;
-    rwlockWriteUnlock(&ts->users_lock);
-
-    authenticationclientDestroyUsers(old_snapshot);
-}
-
-static void authenticationclientClearPendingPushUsers(tunnel_t *t)
-{
-    authenticationclient_tstate_t *ts                 = tunnelGetState(t);
-    users_t                       *pending_push_users = NULL;
-
-    rwlockWriteLock(&ts->users_lock);
-    pending_push_users     = ts->pending_push_users;
-    ts->pending_push_users = NULL;
-    rwlockWriteUnlock(&ts->users_lock);
-
-    authenticationclientDestroyUsers(pending_push_users);
-}
-
-static void authenticationclientAcknowledgePendingPushUsers(tunnel_t *t, bool revisions_current,
-                                                            uint64_t config_revision, uint64_t stats_revision,
-                                                            uint64_t revision_generation)
-{
-    authenticationclient_tstate_t *ts           = tunnelGetState(t);
-    users_t                       *old_baseline = NULL;
-
-    rwlockWriteLock(&ts->users_lock);
-    if (LIKELY(ts->pending_push_users != NULL))
-    {
-        old_baseline            = ts->sync_baseline_users;
-        ts->sync_baseline_users = ts->pending_push_users;
-        ts->pending_push_users  = NULL;
-        if (revisions_current)
-        {
-            ts->local_config_revision     = config_revision;
-            ts->local_stats_revision      = stats_revision;
-            ts->local_revision_generation = revision_generation;
-        }
-    }
-    rwlockWriteUnlock(&ts->users_lock);
-
-    if (ts->verbose)
-    {
-        LOGD("AuthenticationClient: acknowledged PushUserStats response revisions-current=%s config-revision=%" PRIu64
-             " stats-revision=%" PRIu64 " local-generation=%" PRIu64,
-             boolToTrueFalse(revisions_current),
-             config_revision,
-             stats_revision,
-             revision_generation);
-    }
-
-    authenticationclientDestroyUsers(old_baseline);
-}
-
-static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t request_type, const uint8_t *request_data,
-                                                        uint32_t request_data_len, users_t *push_snapshot)
+static bool authenticationclientSendRequest(tunnel_t *t, uint8_t request_type, const uint8_t *request_data,
+                                            uint32_t request_data_len)
 {
     authenticationclient_tstate_t *ts                                           = tunnelGetState(t);
     uint8_t                        token[kAuthenticationClientSessionTokenSize] = {0};
@@ -587,7 +512,6 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
                  ts->control_line != NULL ? "present" : "none");
         }
         mutexUnlock(&ts->control_mutex);
-        authenticationclientDestroyUsers(push_snapshot);
         return false;
     }
 
@@ -601,15 +525,9 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
     {
         mutexUnlock(&ts->control_mutex);
         LOGW("AuthenticationClient: pending request table is full");
-        authenticationclientDestroyUsers(push_snapshot);
         return false;
     }
     authenticationclientMarkRequestInFlightLocked(ts, request_type, true);
-
-    if (request_type == kAuthenticationClientRequestTypePushUserStats)
-    {
-        authenticationclientStorePendingPushUsers(t, &push_snapshot);
-    }
 
     if (request_type != kAuthenticationClientRequestTypeAuthenticate)
     {
@@ -633,11 +551,7 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
                  (unsigned int) correlation_id);
         }
         authenticationclientRemovePendingById(t, correlation_id);
-        if (request_type == kAuthenticationClientRequestTypePushUserStats)
-        {
-            authenticationclientClearPendingPushUsers(t);
-        }
-        authenticationclientDestroyUsers(push_snapshot);
+
         return false;
     }
 
@@ -646,11 +560,7 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
     if (UNLIKELY(message == NULL))
     {
         authenticationclientRemovePendingById(t, correlation_id);
-        if (request_type == kAuthenticationClientRequestTypePushUserStats)
-        {
-            authenticationclientClearPendingPushUsers(t);
-        }
-        authenticationclientDestroyUsers(push_snapshot);
+
         lineUnref(line);
         return false;
     }
@@ -671,15 +581,8 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
              authenticationclientRequestTypeName(request_type),
              (unsigned int) correlation_id);
     }
-    authenticationclientDestroyUsers(push_snapshot);
     lineUnref(line);
     return alive;
-}
-
-static bool authenticationclientSendRequest(tunnel_t *t, uint8_t request_type, const uint8_t *request_data,
-                                            uint32_t request_data_len)
-{
-    return authenticationclientSendRequestWithSnapshot(t, request_type, request_data, request_data_len, NULL);
 }
 
 bool authenticationclientCloseTimedOutControlLine(tunnel_t *t)
@@ -780,6 +683,8 @@ bool authenticationclientSendAuthenticate(tunnel_t *t)
     cJSON *json = cJSON_CreateObject();
     discard cJSON_AddStringToObject(json, "name", ts->name);
     discard cJSON_AddStringToObject(json, "secret", ts->secret);
+    if (ts->accounting_epoch[0] != '\0')
+        discard cJSON_AddStringToObject(json, "epoch", ts->accounting_epoch);
 
     return authenticationclientSendJsonRequest(t, kAuthenticationClientRequestTypeAuthenticate, json);
 }
@@ -796,132 +701,195 @@ bool authenticationclientSendPing(tunnel_t *t)
 
 bool authenticationclientSendGetAllUsers(tunnel_t *t)
 {
-    return authenticationclientSendRequest(t, kAuthenticationClientRequestTypeGetAllUsers, NULL, 0);
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    mutexLock(&ts->control_mutex);
+    ts->pull_requested = true;
+    const bool allowed = authenticationclientRequestMayBeSentLocked(ts, kAuthenticationClientRequestTypeGetAllUsers);
+    if (allowed)
+        ts->pull_requested = false;
+    mutexUnlock(&ts->control_mutex);
+    if (! allowed)
+        return false;
+    const bool sent = authenticationclientSendRequest(t, kAuthenticationClientRequestTypeGetAllUsers, NULL, 0);
+    if (! sent)
+    {
+        mutexLock(&ts->control_mutex);
+        ts->pull_requested = true;
+        mutexUnlock(&ts->control_mutex);
+    }
+    return sent;
 }
 
-static void authenticationclientAppendStatsHint(cJSON *array, user_t *user, const users_t *baseline_users)
-{
-    if (user == NULL || user->id == 0 || user->password == NULL || user->password[0] == '\0' ||
-        ! user->sha256_pass_valid)
-    {
-        return;
-    }
-
-    user_stat_t stats = {0};
-    userGetStats(user, &stats);
-
-    user_stat_t baseline_stats = {0};
-    if (baseline_users != NULL)
-    {
-        user_t *baseline_user = authenticationclientLookupUserByStableId((users_t *) baseline_users, user);
-        if (baseline_user != NULL)
-        {
-            userGetStats(baseline_user, &baseline_stats);
-        }
-    }
-
-    const uint64_t upload_delta   = authenticationclientCounterDelta(stats.traffic.u, baseline_stats.traffic.u);
-    const uint64_t download_delta = authenticationclientCounterDelta(stats.traffic.d, baseline_stats.traffic.d);
-    if (upload_delta == 0 && download_delta == 0)
-    {
-        return;
-    }
-
-    cJSON  *hint         = cJSON_CreateObject();
-    cJSON  *hint_stats   = cJSON_CreateObject();
-    cJSON  *hint_traffic = cJSON_CreateObject();
-    discard cJSON_AddStringToObject(hint, "password", user->password);
-
-    if (upload_delta > 0)
-    {
-        discard jsonAddUint64ToObject(hint_traffic, "up", stats.traffic.u);
-    }
-    if (download_delta > 0)
-    {
-        discard jsonAddUint64ToObject(hint_traffic, "down", stats.traffic.d);
-    }
-    discard cJSON_AddItemToObject(hint_stats, "traffic", hint_traffic);
-    discard cJSON_AddItemToObject(hint, "stats", hint_stats);
-    discard cJSON_AddItemToArray(array, hint);
-}
-
-static bool authenticationclientTakeUsersSnapshots(tunnel_t *t, users_t **snapshot_out, users_t **baseline_out)
+static bool authenticationclientCreateUsageBatch(tunnel_t *t)
 {
     authenticationclient_tstate_t *ts       = tunnelGetState(t);
-    users_t                       *snapshot = NULL;
-    users_t                       *baseline = NULL;
-
+    users_t                       *snapshot = NULL, *baseline = NULL;
     rwlockReadLock(&ts->users_lock);
-    if (LIKELY(ts->users != NULL && ts->users_loaded))
+    if (ts->users_loaded)
     {
         snapshot = authenticationclientCreateUsersCopy(ts->users);
-    }
-    if (snapshot != NULL && ts->sync_baseline_users != NULL)
-    {
         baseline = authenticationclientCreateUsersCopy(ts->sync_baseline_users);
-        if (UNLIKELY(baseline == NULL))
-        {
-            authenticationclientDestroyUsers(snapshot);
-            snapshot = NULL;
-        }
     }
     rwlockReadUnlock(&ts->users_lock);
-
-    if (UNLIKELY(snapshot == NULL))
+    if (snapshot == NULL || baseline == NULL)
     {
+        authenticationclientDestroyUsers(snapshot);
+        authenticationclientDestroyUsers(baseline);
         return false;
     }
-
-    *snapshot_out = snapshot;
-    *baseline_out = baseline;
-    return true;
-}
-
-static cJSON *authenticationclientBuildStatsHintsJson(users_t *snapshot, const users_t *baseline)
-{
-    assert(snapshot != NULL);
-
-    cJSON *root  = cJSON_CreateObject();
-    cJSON *array = cJSON_CreateArray();
+    users_t   *subset  = memoryAllocateAligned(sizeof(*subset), 32);
+    const bool created = usersCreate(subset);
+    assert(created);
+    discard created;
+    cJSON  *root = cJSON_CreateObject(), *array = cJSON_CreateArray();
+    discard cJSON_AddStringToObject(root, "epoch", ts->accounting_epoch);
+    discard jsonAddUint64ToObject(root, "sequence", ts->next_batch_sequence);
     discard cJSON_AddItemToObject(root, "users", array);
-
-    const size_t users_count = usersCount(snapshot);
-    for (size_t i = 0; i < users_count; ++i)
+    size_t  count = 0;
+    for (size_t i = 0; i < usersCount(snapshot); ++i)
     {
         user_t *user = usersGetAt(snapshot, i);
-        authenticationclientAppendStatsHint(array, user, baseline);
+        user_t     *base = usersLookupByIdentifier(baseline, userGetId(user));
+        user_stat_t current, previous = {0};
+        userGetStats(user, &current);
+        if (base != NULL)
+            userGetStats(base, &previous);
+        const uint64_t up   = authenticationclientCounterDelta(current.traffic.u, previous.traffic.u);
+        const uint64_t down = authenticationclientCounterDelta(current.traffic.d, previous.traffic.d);
+        if (up == 0 && down == 0)
+            continue;
+        if (count == kAuthenticationClientMaxBatchEntries)
+        {
+            mutexLock(&ts->control_mutex);
+            ts->push_requested = true;
+            mutexUnlock(&ts->control_mutex);
+            break;
+        }
+        cJSON     *entry = cJSON_CreateObject();
+        discard    jsonAddUint64ToObject(entry, "id", userGetId(user));
+        discard    jsonAddUint64ToObject(entry, "up", up);
+        discard    jsonAddUint64ToObject(entry, "down", down);
+        discard    cJSON_AddItemToArray(array, entry);
+        const bool added = usersAddUser(subset, user);
+        assert(added);
+        discard added;
+        ++count;
     }
-
-    return root;
+    char *text = count != 0 ? cJSON_PrintUnformatted(root) : NULL;
+    cJSON_Delete(root);
+    authenticationclientDestroyUsers(snapshot);
+    authenticationclientDestroyUsers(baseline);
+    if (text == NULL ||
+        stringLength(text) > kAuthenticationClientMaxMessagePayload - kAuthenticationClientRequestHeaderSize)
+    {
+        cJSON_free(text);
+        authenticationclientDestroyUsers(subset);
+        return false;
+    }
+    rwlockWriteLock(&ts->users_lock);
+    ts->pending_push_users = subset;
+    rwlockWriteUnlock(&ts->users_lock);
+    /* Both immutable owners are published before any transport callback. */
+    ts->pending_batch        = text;
+    ts->pending_batch_length = (uint32_t) stringLength(text);
+    return true;
 }
 
 bool authenticationclientSendPushUserStats(tunnel_t *t)
 {
-    users_t *snapshot = NULL;
-    users_t *baseline = NULL;
-    if (UNLIKELY(! authenticationclientTakeUsersSnapshots(t, &snapshot, &baseline)))
-    {
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    mutexLock(&ts->control_mutex);
+    ts->push_requested = true;
+    const bool allowed = authenticationclientRequestMayBeSentLocked(ts, kAuthenticationClientRequestTypePushUserStats);
+    if (allowed)
+        ts->push_requested = false;
+    mutexUnlock(&ts->control_mutex);
+    if (! allowed)
         return false;
+    if (ts->pending_batch == NULL && ! authenticationclientCreateUsageBatch(t))
+        return false; /* Empty batch, or refusal: baseline and traffic stay intact. */
+    const bool sent = authenticationclientSendRequest(t,
+                                                      kAuthenticationClientRequestTypePushUserStats,
+                                                      (const uint8_t *) ts->pending_batch,
+                                                      ts->pending_batch_length);
+    if (! sent)
+    {
+        mutexLock(&ts->control_mutex);
+        ts->push_requested = true;
+        mutexUnlock(&ts->control_mutex);
     }
+    return sent;
+}
 
-    cJSON *json = authenticationclientBuildStatsHintsJson(snapshot, baseline);
-    authenticationclientDestroyUsers(baseline);
+void authenticationclientResumeSync(tunnel_t *t)
+{
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    mutexLock(&ts->control_mutex);
+    const bool authenticated = ts->authenticated;
+    const bool pull          = ts->pull_requested;
+    const bool push          = ts->push_requested;
+    mutexUnlock(&ts->control_mutex);
+    if (! authenticated)
+        discard authenticationclientSendAuthenticate(t);
+    else if (ts->pending_batch != NULL)
+        discard authenticationclientSendPushUserStats(t);
+    else if (pull)
+        discard authenticationclientSendGetAllUsers(t);
+    else if (push)
+        discard authenticationclientSendPushUserStats(t);
+}
 
-    char *text = cJSON_PrintUnformatted(json);
+static bool authenticationclientAcknowledgeUsageBatch(tunnel_t *t, const uint8_t *data, uint32_t length)
+{
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    if (ts->pending_batch == NULL)
+        return false;
+    cJSON        *json   = cJSON_ParseWithLength((const char *) data, length);
+    const cJSON  *epoch  = cJSON_GetObjectItemCaseSensitive(json, "epoch");
+    const cJSON  *digest = cJSON_GetObjectItemCaseSensitive(json, "digest");
+    const cJSON  *pull   = cJSON_GetObjectItemCaseSensitive(json, "needs-pull");
+    uint64_t      sequence;
+    uint8_t       decoded[32];
+    sha256_hash_t expected;
+    const bool    valid =
+        cJSON_IsObject(json) && cJSON_IsString(epoch) && epoch->valuestring != NULL &&
+        stringCompare(epoch->valuestring, ts->accounting_epoch) == 0 &&
+        getUint64FromJson(&sequence, cJSON_GetObjectItemCaseSensitive(json, "sequence")) &&
+        sequence == ts->next_batch_sequence && cJSON_IsString(digest) && digest->valuestring != NULL &&
+        stringLength(digest->valuestring) == 64 &&
+        asciiHexDecodeBytes((const uint8_t *) digest->valuestring, 64, decoded, sizeof(decoded)) &&
+        wCryptoSHA256(&expected, (const uint8_t *) ts->pending_batch, ts->pending_batch_length) == kWCryptoOk &&
+        memoryEqual(decoded, expected.bytes, sizeof(decoded)) && cJSON_IsTrue(pull);
     cJSON_Delete(json);
-    if (UNLIKELY(text == NULL))
-    {
-        authenticationclientDestroyUsers(snapshot);
+    if (! valid)
         return false;
+    rwlockWriteLock(&ts->users_lock);
+    users_t *snapshot = ts->pending_push_users;
+    for (size_t i = 0; i < usersCount(snapshot); ++i)
+    {
+        user_t *sent = usersGetAt(snapshot, i);
+        user_t *base = usersLookupByIdentifier(ts->sync_baseline_users, userGetId(sent));
+        assert(base != NULL); /* Pull replacement is forbidden while unresolved. */
+        user_stat_t stats;
+        userGetStats(sent, &stats);
+        rwlockWriteLock(&base->stats_lock);
+        base->stats.traffic = stats.traffic;
+        rwlockWriteUnlock(&base->stats_lock);
     }
-
-    bool ok = authenticationclientSendRequestWithSnapshot(t,
-                                                          kAuthenticationClientRequestTypePushUserStats,
-                                                          (const uint8_t *) text,
-                                                          (uint32_t) stringLength(text),
-                                                          snapshot);
-    cJSON_free(text);
-    return ok;
+    ts->pending_push_users = NULL;
+    rwlockWriteUnlock(&ts->users_lock);
+    authenticationclientDestroyUsers(snapshot);
+    cJSON_free(ts->pending_batch);
+    ts->pending_batch        = NULL;
+    ts->pending_batch_length = 0;
+    mutexLock(&ts->control_mutex);
+    if (ts->next_batch_sequence == UINT64_MAX)
+        ts->continuity_error = true;
+    else
+        ++ts->next_batch_sequence;
+    ts->pull_requested = true;
+    mutexUnlock(&ts->control_mutex);
+    return true;
 }
 
 static bool authenticationclientApplyLocalTrafficDelta(users_t *dest, users_t *old_users, users_t *baseline_users);
@@ -1031,20 +999,6 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
     return true;
 }
 
-static bool authenticationclientJsonBool(const uint8_t *data, uint32_t data_len, const char *name, bool def)
-{
-    cJSON *json = cJSON_ParseWithLength((const char *) data, data_len);
-    if (UNLIKELY(json == NULL))
-    {
-        return def;
-    }
-
-    const cJSON *item   = cJSON_GetObjectItemCaseSensitive(json, name);
-    bool         result = cJSON_IsBool(item) ? cJSON_IsTrue(item) : def;
-    cJSON_Delete(json);
-    return result;
-}
-
 static bool authenticationclientApplyLocalTrafficDelta(users_t *dest, users_t *old_users, users_t *baseline_users)
 {
     // Internal helper: current caller passes initialized user tables.
@@ -1088,207 +1042,120 @@ static bool authenticationclientApplyLocalTrafficDelta(users_t *dest, users_t *o
     return true;
 }
 
-static void authenticationclientHandleError(tunnel_t *t, uint8_t request_type, const uint8_t *data, uint32_t data_len)
+static void authenticationclientHandleError(tunnel_t *t, line_t *l, uint8_t request_type, const uint8_t *data,
+                                            uint32_t length)
 {
-    authenticationclient_tstate_t *ts        = tunnelGetState(t);
-    const char                    *error     = (const char *) data;
-    uint32_t                       error_len = data_len;
-
-    if (UNLIKELY(error_len > 128U))
-    {
-        error_len = 128U;
-    }
-
-    LOGW("AuthenticationClient: request type %u failed: %.*s",
-         (unsigned int) request_type,
-         (int) error_len,
-         error != NULL ? error : "");
-
-    if (request_type == kAuthenticationClientRequestTypeAuthenticate)
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    const bool                     continuity =
+        length == sizeof("accounting-continuity-lost") - 1 && memoryEqual(data, "accounting-continuity-lost", length);
+    const bool authentication =
+        length == sizeof("authentication-required") - 1 && memoryEqual(data, "authentication-required", length);
+    LOGW("AuthenticationClient: request %u failed: %.*s", request_type, (int) min(length, 128U), (const char *) data);
+    if ((continuity || request_type == kAuthenticationClientRequestTypePushUserStats) && ! authentication)
     {
         mutexLock(&ts->control_mutex);
-        authenticationclientClearSessionLocked(ts);
+        if (ts->pending_batch != NULL)
+            ts->continuity_error = true;
+        else if (continuity)
+        {
+            memoryZero(ts->accounting_epoch, sizeof(ts->accounting_epoch));
+            ts->next_batch_sequence = 1;
+        }
+        const bool stopped = ts->continuity_error;
         mutexUnlock(&ts->control_mutex);
-        return;
+        if (stopped)
+        {
+            LOGE("AuthenticationClient: accounting continuity error; retained batch requires reconciliation");
+            authenticationclientCloseControlLine(t, l, true);
+            return;
+        }
     }
-    if (request_type == kAuthenticationClientRequestTypePushUserStats)
-    {
-        authenticationclientClearPendingPushUsers(t);
-        mutexLock(&ts->control_mutex);
-        ts->first_usage_push_requested = false;
-        ts->first_usage_push_deferred  = false;
-        mutexUnlock(&ts->control_mutex);
-        authenticationclientResetFirstUsagePushRuntime(t);
-    }
-
-    if (data_len == sizeof("authentication-required") - 1U &&
-        memoryCompare(data, "authentication-required", data_len) == 0)
-    {
-        mutexLock(&ts->control_mutex);
-        authenticationclientClearSessionLocked(ts);
-        mutexUnlock(&ts->control_mutex);
-        discard authenticationclientSendAuthenticate(t);
-    }
+    authenticationclientRecoverControlLine(t, l, true);
 }
 
 static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint8_t response_type,
                                                     uint32_t correlation_id, const uint8_t *data, uint32_t data_len,
                                                     uint64_t config_revision, uint64_t stats_revision)
 {
-    discard l;
-
-    authenticationclient_tstate_t *ts                  = tunnelGetState(t);
-    uint8_t                        request_type        = 0;
-    uint64_t                       revision_generation = 0;
-    bool                           found               = false;
-
+    authenticationclient_tstate_t *ts           = tunnelGetState(t);
+    uint8_t                        request_type = 0;
     mutexLock(&ts->control_mutex);
-    found = authenticationclientPendingRemove(ts, correlation_id, &request_type);
+    const bool found = authenticationclientPendingRemove(ts, correlation_id, &request_type);
     if (found)
     {
         authenticationclientMarkRequestInFlightLocked(ts, request_type, false);
+        ts->remote_config_revision = config_revision;
+        ts->remote_stats_revision  = stats_revision;
+        if (++ts->remote_revision_generation == 0)
+            ts->remote_revision_generation = 1;
     }
-    ts->remote_config_revision = config_revision;
-    ts->remote_stats_revision  = stats_revision;
-    ts->remote_revision_generation += 1U;
-    if (ts->remote_revision_generation == 0)
-    {
-        ts->remote_revision_generation = 1U;
-    }
-    revision_generation = ts->remote_revision_generation;
+    const uint64_t generation = ts->remote_revision_generation;
     mutexUnlock(&ts->control_mutex);
     authenticationclientUpdateRequestTimer(t);
-
-    if (UNLIKELY(! found))
+    if (! found)
+        return; /* A stale correlation cannot enroll or settle accounting. */
+    if (response_type == kAuthenticationClientResponseTypeError)
     {
-        LOGW("AuthenticationClient: received response for unknown correlation id %u", (unsigned int) correlation_id);
+        authenticationclientHandleError(t, l, request_type, data, data_len);
         return;
     }
-
-    if (ts->verbose)
-    {
-        LOGD("AuthenticationClient: received %s response for %s request correlation-id=%u payload=%u "
-             "config-revision=%" PRIu64 " stats-revision=%" PRIu64,
-             authenticationclientResponseTypeName(response_type),
-             authenticationclientRequestTypeName(request_type),
-             (unsigned int) correlation_id,
-             (unsigned int) data_len,
-             config_revision,
-             stats_revision);
-    }
-
-    if (UNLIKELY(response_type == kAuthenticationClientResponseTypeError))
-    {
-        authenticationclientHandleError(t, request_type, data, data_len);
-        return;
-    }
-
     switch (request_type)
     {
-    case kAuthenticationClientRequestTypeAuthenticate:
-        if (UNLIKELY(response_type != kAuthenticationClientResponseTypeSession ||
-                     data_len != kAuthenticationClientSessionTokenSize))
+    case kAuthenticationClientRequestTypeAuthenticate: {
+        uint8_t decoded[64];
+        if (response_type != kAuthenticationClientResponseTypeSession || data_len != 128 ||
+            ! asciiHexDecodeBytes(data, 128, decoded, sizeof(decoded)))
         {
-            LOGW("AuthenticationClient: Authenticate returned an invalid session response");
+            authenticationclientRecoverControlLine(t, l, true);
             return;
         }
-
         mutexLock(&ts->control_mutex);
-        memoryCopy(ts->token, data, kAuthenticationClientSessionTokenSize);
-        ts->authenticated = true;
-        mutexUnlock(&ts->control_mutex);
-
-        LOGI("AuthenticationClient: authenticated as \"%s\"", ts->name);
-        discard authenticationclientSendGetAllUsers(t);
-        break;
-
-    case kAuthenticationClientRequestTypeGetAllUsers:
-        if (UNLIKELY(response_type != kAuthenticationClientResponseTypeUsers))
+        if (ts->accounting_epoch[0] != '\0' && ! memoryEqual(ts->accounting_epoch, data + 64, 64))
         {
-            LOGW("AuthenticationClient: GetAllUsers returned unexpected response type %u",
-                 (unsigned int) response_type);
+            ts->continuity_error = true;
+            mutexUnlock(&ts->control_mutex);
+            authenticationclientCloseControlLine(t, l, true);
             return;
         }
-        discard authenticationclientReplaceUsersFromJson(
-            t, data, data_len, config_revision, stats_revision, revision_generation);
-        break;
-
-    case kAuthenticationClientRequestTypePushUserStats: {
-        if (UNLIKELY(response_type != kAuthenticationClientResponseTypeOk))
+        if (ts->accounting_epoch[0] == '\0')
         {
-            LOGW("AuthenticationClient: PushUserStats returned unexpected response type %u",
-                 (unsigned int) response_type);
-            authenticationclientClearPendingPushUsers(t);
-            mutexLock(&ts->control_mutex);
-            ts->first_usage_push_requested = false;
-            ts->first_usage_push_deferred  = false;
-            mutexUnlock(&ts->control_mutex);
-            authenticationclientResetFirstUsagePushRuntime(t);
-            return;
+            memoryCopy(ts->accounting_epoch, data + 64, 64);
+            ts->next_batch_sequence = 1;
         }
-        const bool needs_pull = authenticationclientJsonBool(data, data_len, "needs-pull", false);
-        authenticationclientAcknowledgePendingPushUsers(
-            t, ! needs_pull, config_revision, stats_revision, revision_generation);
-        if (needs_pull)
-        {
-            mutexLock(&ts->control_mutex);
-            ts->first_usage_push_requested = false;
-            ts->first_usage_push_deferred  = false;
-            mutexUnlock(&ts->control_mutex);
-            authenticationclientResetFirstUsagePushRuntime(t);
-            if (ts->verbose)
-            {
-                LOGD("AuthenticationClient: server requested a fresh GetAllUsers after PushUserStats");
-            }
-            discard authenticationclientSendGetAllUsers(t);
-            break;
-        }
-
-        bool retry_first_usage_push = false;
-        mutexLock(&ts->control_mutex);
-        retry_first_usage_push         = ts->first_usage_push_deferred;
-        ts->first_usage_push_deferred  = false;
-        ts->first_usage_push_requested = retry_first_usage_push;
+        memoryCopy(ts->token, data, 64);
+        ts->authenticated  = true;
+        ts->pull_requested = true;
         mutexUnlock(&ts->control_mutex);
-
-        if (retry_first_usage_push)
-        {
-            if (UNLIKELY(! authenticationclientSendPushUserStats(t)))
-            {
-                mutexLock(&ts->control_mutex);
-                const bool push_in_flight = ts->push_in_flight;
-                if (push_in_flight)
-                {
-                    ts->first_usage_push_deferred = true;
-                }
-                mutexUnlock(&ts->control_mutex);
-                if (! push_in_flight)
-                {
-                    mutexLock(&ts->control_mutex);
-                    ts->first_usage_push_requested = false;
-                    ts->first_usage_push_deferred  = false;
-                    mutexUnlock(&ts->control_mutex);
-                    authenticationclientResetFirstUsagePushRuntime(t);
-                }
-            }
-        }
-        else
-        {
-            authenticationclientResetFirstUsagePushRuntime(t);
-        }
-        break;
+        authenticationclientResumeSync(t);
+        return;
     }
-
+    case kAuthenticationClientRequestTypeGetAllUsers:
+        if (response_type != kAuthenticationClientResponseTypeUsers || ts->pending_batch != NULL ||
+            ! authenticationclientReplaceUsersFromJson(t, data, data_len, config_revision, stats_revision, generation))
+        {
+            authenticationclientRecoverControlLine(t, l, true);
+            return;
+        }
+        break;
+    case kAuthenticationClientRequestTypePushUserStats:
+        if (response_type != kAuthenticationClientResponseTypeOk ||
+            ! authenticationclientAcknowledgeUsageBatch(t, data, data_len))
+        {
+            authenticationclientRecoverControlLine(t, l, true);
+            return;
+        }
+        break;
     case kAuthenticationClientRequestTypePing:
         if (response_type != kAuthenticationClientResponseTypePong)
         {
-            LOGW("AuthenticationClient: Ping returned unexpected response type %u", (unsigned int) response_type);
+            authenticationclientRecoverControlLine(t, l, true);
+            return;
         }
         break;
-
     default:
         break;
     }
+    authenticationclientResumeSync(t);
 }
 
 static bool authenticationclientReadMessageHeader(authenticationclient_lstate_t *ls, uint32_t *message_body_len)
@@ -1344,12 +1211,16 @@ static bool authenticationclientValidateResponsePayload(sbuf_t *payload)
 bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authenticationclient_lstate_t *ls)
 {
     authenticationclient_tstate_t *ts = tunnelGetState(t);
+    if (ls->processing_responses)
+        return true;
+    ls->processing_responses = true;
 
     while (true)
     {
         uint32_t message_body_len = 0;
         if (! authenticationclientReadMessageHeader(ls, &message_body_len))
         {
+            ls->processing_responses = false;
             return true;
         }
 
@@ -1368,6 +1239,7 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
         const size_t message_len = (size_t) kAuthenticationClientMessageHeaderSize + (size_t) message_body_len;
         if (bufferstreamGetBufLen(&ls->read_stream) < message_len)
         {
+            ls->processing_responses = false;
             return true;
         }
 
@@ -1442,7 +1314,7 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     }
 
     mutexLock(&ts->control_mutex);
-    if (UNLIKELY(! ts->started || ts->stopping || ts->control_line != NULL))
+    if (UNLIKELY(! ts->started || ts->stopping || ts->continuity_error || ts->control_line != NULL))
     {
         if (ts->verbose)
         {

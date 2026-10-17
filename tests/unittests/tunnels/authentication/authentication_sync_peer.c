@@ -1,0 +1,127 @@
+/* Server half of waterwall.authentication_sync_unit. */
+#include "authentication_sync_peer.h"
+#include "AuthenticationServer/structure.h"
+#include "test_assert.h"
+#define require(c, m) TEST_REQUIRE(TEST_FAILURE_EXIT, c, m)
+
+tunnel_t *authTestPeerCreate(uint32_t offset)
+{
+    tunnel_t *t = tunnelCreate(NULL, sizeof(authenticationserver_tstate_t), sizeof(authenticationserver_lstate_t));
+    require(t != NULL, "peer allocation failed");
+    t->lstate_offset                  = offset;
+    t->fnInitU                        = authenticationserverTunnelUpStreamInit;
+    t->fnPayloadU                     = authenticationserverTunnelUpStreamPayload;
+    t->fnFinU                         = authenticationserverTunnelUpStreamFinish;
+    t->fnPauseU                       = authenticationserverTunnelUpStreamPause;
+    t->fnResumeU                      = authenticationserverTunnelUpStreamResume;
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    rwlockinit(&ts->state_lock);
+    require(usersCreate(&ts->store.users), "peer users failed");
+    ts->store.config_revision = ts->store.stats_revision = 1;
+    ts->auth_clients_count                               = 2;
+    ts->auth_clients                                     = memoryCalloc(2, sizeof(*ts->auth_clients));
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        ts->auth_clients[i].name             = stringDuplicate(i == 0 ? "edge-a" : "edge-b");
+        ts->auth_clients[i].secret           = stringDuplicate("secret");
+        ts->auth_clients[i].allow_stats_push = ts->auth_clients[i].allow_user_pull = true;
+        ts->auth_clients[i].session_idle_timeout_ms                                = 1000;
+    }
+    authTestPeerPopulate(t, 1);
+    return t;
+}
+uint32_t authTestPeerLineSize(void)
+{
+    return tunnelGetCorrectAlignedLineStateSize(sizeof(authenticationserver_lstate_t));
+}
+void authTestPeerDestroy(tunnel_t *t)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    authenticationserverSessionsDestroy(ts);
+    authenticationserverAuthClientsDestroy(ts);
+    usersDestroy(&ts->store.users);
+    rwlockDestroy(&ts->state_lock);
+    tunnelDestroy(t);
+}
+user_stat_t authTestPeerStats(tunnel_t *t, uint64_t id)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    user_stat_t                    stats;
+    rwlockReadLock(&ts->state_lock);
+    user_t *user = usersLookupByIdentifier(&ts->store.users, id);
+    require(user != NULL, "peer user absent");
+    userGetStats(user, &stats);
+    rwlockReadUnlock(&ts->state_lock);
+    return stats;
+}
+uint64_t authTestPeerFirstUse(tunnel_t *t)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    user_time_info_t               info;
+    userGetTimeInfo(usersLookupByIdentifier(&ts->store.users, 42), &info);
+    return info.first_usage_at_ms;
+}
+void authTestPeerExpireSessions(tunnel_t *t)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    rwlockWriteLock(&ts->state_lock);
+    for (uint32_t i = 0; i < ts->sessions_count; ++i)
+        atomicStoreRelaxed(&ts->sessions[i]->last_activity_ms, getTickMS() - 2000);
+    rwlockWriteUnlock(&ts->state_lock);
+    authenticationserverSessionsExpireIdle(t);
+}
+void authTestPeerLoseEpoch(tunnel_t *t, unsigned client)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    rwlockWriteLock(&ts->state_lock);
+    memoryZero(ts->auth_clients[client].accounting_epoch, 64);
+    ts->auth_clients[client].last_sequence = 0;
+    rwlockWriteUnlock(&ts->state_lock);
+}
+void authTestPeerPassword(tunnel_t *t)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    rwlockWriteLock(&ts->state_lock);
+    require(usersChangePassword(&ts->store.users, usersLookupByIdentifier(&ts->store.users, 42), "changed"),
+            "password update failed");
+    authenticationserverBumpConfigRevision(t);
+    rwlockWriteUnlock(&ts->state_lock);
+}
+void authTestPeerPopulate(tunnel_t *t, unsigned count)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    for (unsigned i = 0; i < count; ++i)
+    {
+        char password[64];
+        snprintf(password, sizeof(password), "account-%u", i);
+        user_t user;
+        require(userCreate(&user, password), "peer user construction failed");
+        userSetId(&user, i + 42);
+        if (usersLookupByIdentifier(&ts->store.users, i + 42) == NULL)
+            require(usersAddUser(&ts->store.users, &user), "peer user insertion failed");
+        userDestroy(&user);
+    }
+}
+void authTestPeerRemoveUser(tunnel_t *t)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    require(usersRemoveUserByIdentifier(&ts->store.users, 42), "peer user removal failed");
+}
+uint64_t authTestPeerSequence(tunnel_t *t, unsigned client)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    return ts->auth_clients[client].last_sequence;
+}
+void authTestPeerCredentials(tunnel_t *t, unsigned client, uint8_t token[64], char epoch[65])
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    for (uint32_t i = 0; i < ts->sessions_count; ++i)
+        if (ts->sessions[i]->accounting_client == &ts->auth_clients[client])
+        {
+            memoryCopy(token, ts->sessions[i]->token, 64);
+            memoryCopy(epoch, ts->sessions[i]->accounting_epoch, 64);
+            epoch[64] = 0;
+            return;
+        }
+    require(false, "peer session unavailable");
+}

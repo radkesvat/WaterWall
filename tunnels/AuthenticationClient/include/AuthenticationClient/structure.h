@@ -34,6 +34,9 @@ typedef struct authenticationclient_tstate_s
     bool     users_loaded;
     bool     verbose;
     bool     reconnect_work_pending;
+    bool     continuity_error;
+    bool     pull_requested;
+    bool     push_requested;
 
     line_t   *control_line;
     wtimer_t *ping_timer;
@@ -44,6 +47,10 @@ typedef struct authenticationclient_tstate_s
     uint64_t  request_deadline_ms;
 
     uint8_t  token[64];
+    char     accounting_epoch[65];
+    uint64_t next_batch_sequence;
+    char    *pending_batch;
+    uint32_t pending_batch_length;
     uint32_t next_correlation_id;
     uint32_t ping_interval_ms;
     uint32_t pull_interval_ms;
@@ -70,6 +77,7 @@ typedef struct authenticationclient_tstate_s
 typedef struct authenticationclient_lstate_s
 {
     buffer_stream_t read_stream;
+    bool            processing_responses;
 } authenticationclient_lstate_t;
 
 enum
@@ -90,6 +98,7 @@ enum
     kAuthenticationClientMaxMessagePayload  = 16U * 1024U * 1024U,
     kAuthenticationClientMaxRequestData     = 16U * 1024U * 1024U,
     kAuthenticationClientMaxResponsePayload = 16U * 1024U * 1024U,
+    kAuthenticationClientMaxBatchEntries    = 4096,
 
     kAuthenticationClientRequestTypePing                      = 1,
     kAuthenticationClientRequestTypeGetUserBySHA256Hex        = 2,
@@ -160,6 +169,7 @@ bool authenticationclientSendAuthenticate(tunnel_t *t);
 bool authenticationclientSendPing(tunnel_t *t);
 bool authenticationclientSendGetAllUsers(tunnel_t *t);
 bool authenticationclientSendPushUserStats(tunnel_t *t);
+void authenticationclientResumeSync(tunnel_t *t);
 bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authenticationclient_lstate_t *ls);
 
 static inline uint64_t authenticationclientLocalTimeMS(void)

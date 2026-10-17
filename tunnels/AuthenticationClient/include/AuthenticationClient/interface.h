@@ -7,7 +7,8 @@ typedef enum authenticationclient_state_e
     kAuthenticationClientStateStopped = 0,
     kAuthenticationClientStateConnecting,
     kAuthenticationClientStateAuthenticating,
-    kAuthenticationClientStateReady
+    kAuthenticationClientStateReady,
+    kAuthenticationClientStateContinuityError
 } authenticationclient_state_t;
 
 typedef enum authenticationclient_user_lookup_result_e

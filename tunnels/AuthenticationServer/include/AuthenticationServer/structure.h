@@ -17,6 +17,9 @@ typedef struct authenticationserver_auth_client_s
     bool     allow_user_pull;
     bool     allow_user_write;
     uint32_t session_idle_timeout_ms;
+    uint8_t  accounting_epoch[64];
+    uint64_t last_sequence;
+    uint8_t  last_digest[SHA256_DIGEST_SIZE];
 } authenticationserver_auth_client_t;
 
 typedef enum authenticationserver_normal_backups_mode_e
@@ -31,12 +34,11 @@ typedef struct authenticationserver_session_s
 {
     uint8_t     token[64];
     char       *client_name;
-    users_t     baseline_users;
+    authenticationserver_auth_client_t *accounting_client;
+    uint8_t                             accounting_epoch[64];
     bool        allow_stats_push;
     bool        allow_user_pull;
-    bool        allow_user_write;
-    uint64_t    baseline_config_revision;
-    uint64_t    baseline_stats_revision;
+    bool                                allow_user_write;
     atomic_uint last_activity_ms;
     uint32_t    session_idle_timeout_ms;
 } authenticationserver_session_t;
@@ -99,6 +101,7 @@ enum
     kAuthenticationServerMaxResponseCharge  = 32U * 1024U * 1024U,
     kAuthenticationServerMaxResponseEntries = 1024,
     kAuthenticationServerOutputChunkSize    = 16U * 1024U,
+    kAuthenticationServerMaxBatchEntries    = 4096,
     kAuthenticationServerResponseQueueCap               = 4,
     kAuthenticationServerMaxPasswordLength              = 1024U,
     kAuthenticationServerDefaultNormalBackupsCountLimit = 10U,
@@ -164,13 +167,11 @@ void authenticationserverBumpConfigRevision(tunnel_t *t);
 void authenticationserverBumpStatsRevision(tunnel_t *t);
 users_update_result_t authenticationserverUpdateUserBySHA256AndBumpConfigRevision(
     tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE], const user_update_t *update);
-bool authenticationserverCopyUsersTable(users_t *dest, const users_t *src);
-bool authenticationserverSessionReplaceBaselineFromUsers(authenticationserver_session_t *session, const users_t *src,
-                                                         uint64_t config_revision, uint64_t stats_revision);
 bool authenticationserverUserHasRequiredId(const user_t *user);
 const char *authenticationserverValidateUserIdentityBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                                              uint64_t expected_id);
-authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, const char *name, const char *secret);
+authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, const char *name, const char *secret,
+                                                                  const uint8_t *resume_epoch, const char **error);
 authenticationserver_session_t *authenticationserverSessionFindByTokenLocked(
     tunnel_t *t, const uint8_t token[kAuthenticationServerSessionTokenSize]);
 void authenticationserverSessionTouch(authenticationserver_session_t *session, uint32_t now_ms);

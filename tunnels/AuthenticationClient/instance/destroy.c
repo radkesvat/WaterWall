@@ -19,6 +19,7 @@ void authenticationclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t
     authenticationclient_tstate_t *ts = tunnelGetState(t);
 
     memoryFree(ts->pending_requests);
+    cJSON_free(ts->pending_batch);
     ts->pending_requests = NULL;
 
     rwlockWriteLock(&ts->users_lock);

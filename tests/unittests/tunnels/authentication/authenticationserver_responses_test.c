@@ -147,8 +147,14 @@ static void testMaximumAndReentry(bool paused, bool finish)
     const uint32_t length  = kAuthenticationServerMaxResponsePayload + kAuthenticationServerResponseEnvelopeHeaderSize;
     sbuf_t        *message = bufferpoolGetBestFit(env.pool, length, 64);
     sbufSetLength(message, length);
+    uint8_t  header[29] = {0};
+    uint32_t number     = htonl(length - 4);
+    memoryCopy(header, &number, 4);
+    header[20] = kAuthenticationServerResponseTypeError;
+    number     = htonl(kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize);
+    memoryCopy(header + 25, &number, 4);
     for (uint32_t i = 0; i < length; ++i)
-        sbufGetMutablePtr(message)[i] = (uint8_t) (i % 251U);
+        sbufGetMutablePtr(message)[i] = i < sizeof(header) ? header[i] : (uint8_t) ('a' + i % 26U);
     twfRequire(bufferqueueTryPushBack(&ls->response_queue, &message), "one maximum legal response was refused");
     if (paused)
         tunnelUpStreamPause(server, line);
@@ -163,7 +169,8 @@ static void testMaximumAndReentry(bool paused, bool finish)
     {
         twfRequire(received_length > length, "nested response disappeared");
         for (uint32_t i = 0; i < length; ++i)
-            twfRequire(received[i] == (uint8_t) (i % 251U), "maximum response or FIFO order was corrupted");
+            twfRequire(received[i] == (i < sizeof(header) ? header[i] : (uint8_t) ('a' + i % 26U)),
+                       "maximum response or FIFO order was corrupted");
         uint32_t id;
         memoryCopy(&id, received + length + 21, 4);
         twfRequire(ntohl(id) == 999 && maximum_depth == 1, "nested Resume competed with the active drain");

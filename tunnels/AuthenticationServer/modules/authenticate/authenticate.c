@@ -33,19 +33,34 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-auth-request");
     }
 
+    const cJSON *epoch_json = cJSON_GetObjectItemCaseSensitive(json, "epoch");
+    uint8_t      decoded[32];
+    if (epoch_json != NULL &&
+        (! cJSON_IsString(epoch_json) || epoch_json->valuestring == NULL ||
+         stringLength(epoch_json->valuestring) != 64 ||
+         ! asciiHexDecodeBytes((const uint8_t *) epoch_json->valuestring, 64, decoded, sizeof(decoded))))
+    {
+        cJSON_Delete(json);
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-auth-request");
+    }
+    const char                     *error;
     authenticationserver_session_t *new_session =
-        authenticationserverSessionCreate(t, name_json->valuestring, secret_json->valuestring);
+        authenticationserverSessionCreate(t,
+                                          name_json->valuestring,
+                                          secret_json->valuestring,
+                                          epoch_json != NULL ? (const uint8_t *) epoch_json->valuestring : NULL,
+                                          &error);
     cJSON_Delete(json);
 
     if (UNLIKELY(new_session == NULL))
     {
         LOGW("AuthenticationServer: Authenticate rejected client credentials");
-        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "authentication-failed");
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, error);
     }
 
-    return authenticationserverCreateResponseFrame(l,
-                                                   kAuthenticationServerResponseTypeSession,
-                                                   correlation_id,
-                                                   new_session->token,
-                                                   kAuthenticationServerSessionTokenSize);
+    uint8_t response[128];
+    memoryCopy(response, new_session->token, 64);
+    memoryCopy(response + 64, new_session->accounting_epoch, 64);
+    return authenticationserverCreateResponseFrame(
+        l, kAuthenticationServerResponseTypeSession, correlation_id, response, sizeof(response));
 }

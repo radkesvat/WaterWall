@@ -238,6 +238,14 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
                  (unsigned int) index);
             return false;
         }
+        for (uint32_t previous = 0; previous < index; ++previous)
+        {
+            if (stringCompare(ts->auth_clients[previous].name, client->name) == 0)
+            {
+                LOGF("AuthenticationServer: auth-client names must be unique");
+                return false;
+            }
+        }
 
         if (UNLIKELY(! getStringFromJsonObject(&client->secret, client_json, "secret") || client->secret[0] == '\0'))
         {

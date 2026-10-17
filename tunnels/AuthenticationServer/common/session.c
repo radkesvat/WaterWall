@@ -24,7 +24,6 @@ static void authenticationserverSessionDestroyFields(authenticationserver_sessio
 {
     assert(session != NULL);
 
-    usersDestroy(&session->baseline_users);
     memoryFree(session->client_name);
     memoryZero(session->token, sizeof(session->token));
     memoryZero(session, sizeof(*session));
@@ -51,39 +50,14 @@ static bool authenticationserverSessionCompareExchangeLastActivity(authenticatio
     return exchanged;
 }
 
-bool authenticationserverCopyUsersTable(users_t *dest, const users_t *src)
-{
-    /*
-     * Native O(N) deep copy. This replaces the former usersToJson() ->
-     * usersClear() -> usersFeedJson() round trip: it no longer serializes the
-     * store to JSON just to duplicate it, and leaves dest unchanged on failure.
-     */
-    return usersCopy(dest, src);
-}
-
-bool authenticationserverSessionReplaceBaselineFromUsers(authenticationserver_session_t *session, const users_t *src,
-                                                         uint64_t config_revision, uint64_t stats_revision)
-{
-    assert(session != NULL && src != NULL);
-
-    if (UNLIKELY(! authenticationserverCopyUsersTable(&session->baseline_users, src)))
-    {
-        return false;
-    }
-
-    session->baseline_config_revision = config_revision;
-    session->baseline_stats_revision  = stats_revision;
-    return true;
-}
-
-static const authenticationserver_auth_client_t *authenticationserverFindAuthClient(
-    const authenticationserver_tstate_t *ts, const char *name, const char *secret)
+static authenticationserver_auth_client_t *authenticationserverFindAuthClient(authenticationserver_tstate_t *ts,
+                                                                              const char *name, const char *secret)
 {
     assert(ts != NULL && name != NULL && secret != NULL);
 
     for (uint32_t i = 0; i < ts->auth_clients_count; ++i)
     {
-        const authenticationserver_auth_client_t *client = &ts->auth_clients[i];
+        authenticationserver_auth_client_t *client = &ts->auth_clients[i];
 
         if (stringCompare(client->name, name) != 0)
         {
@@ -173,19 +147,27 @@ static bool authenticationserverEnsureSessionCapacity(authenticationserver_tstat
 
 static void authenticationserverSessionsRemoveClientLocked(authenticationserver_tstate_t *ts, const char *client_name);
 
-authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, const char *name, const char *secret)
+authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, const char *name, const char *secret,
+                                                                  const uint8_t *resume_epoch, const char **error)
 {
     assert(name != NULL && secret != NULL);
 
     authenticationserver_tstate_t            *ts     = tunnelGetState(t);
-    const authenticationserver_auth_client_t *client = authenticationserverFindAuthClient(ts, name, secret);
+    authenticationserver_auth_client_t       *client = authenticationserverFindAuthClient(ts, name, secret);
+    *error                                           = "authentication-failed";
 
     if (UNLIKELY(client == NULL))
     {
         return NULL;
     }
 
-    authenticationserverSessionsRemoveClientLocked(ts, client->name);
+    if (resume_epoch != NULL &&
+        (client->accounting_epoch[0] == 0 ||
+         ! memoryEqual(resume_epoch, client->accounting_epoch, sizeof(client->accounting_epoch))))
+    {
+        *error = "accounting-continuity-lost";
+        return NULL;
+    }
 
     if (UNLIKELY(! authenticationserverEnsureSessionCapacity(ts)))
     {
@@ -193,12 +175,6 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
     }
 
     authenticationserver_session_t *session = memoryAllocateZero(sizeof(*session));
-
-    if (UNLIKELY(! usersCreate(&session->baseline_users)))
-    {
-        memoryFree(session);
-        return NULL;
-    }
 
     if (UNLIKELY(! authenticationserverGenerateUniqueToken(t, session->token)))
     {
@@ -214,12 +190,21 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
     session->session_idle_timeout_ms = client->session_idle_timeout_ms;
     atomicStoreRelaxed(&session->last_activity_ms, getTickMS());
 
-    if (UNLIKELY(! authenticationserverSessionReplaceBaselineFromUsers(
-            session, &ts->store.users, ts->store.config_revision, ts->store.stats_revision)))
+    if (resume_epoch == NULL)
     {
-        authenticationserverSessionFree(session);
-        return NULL;
+        uint8_t epoch[64];
+        if (! authenticationserverGenerateUniqueToken(t, epoch))
+        {
+            authenticationserverSessionFree(session);
+            return NULL;
+        }
+        memoryCopy(client->accounting_epoch, epoch, sizeof(epoch));
+        client->last_sequence = 0;
+        memoryZero(client->last_digest, sizeof(client->last_digest));
     }
+    session->accounting_client = client;
+    memoryCopy(session->accounting_epoch, client->accounting_epoch, sizeof(session->accounting_epoch));
+    authenticationserverSessionsRemoveClientLocked(ts, client->name);
 
     ts->sessions[ts->sessions_count] = session;
     ts->sessions_count += 1U;

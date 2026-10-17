@@ -17,5 +17,5 @@ void authenticationclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
     }
     mutexUnlock(&ts->control_mutex);
 
-    discard authenticationclientSendAuthenticate(t);
+    authenticationclientResumeSync(t);
 }

@@ -20,7 +20,11 @@ authenticationclient_state_t authenticationclientGetState(tunnel_t *t)
     authenticationclient_state_t   state = kAuthenticationClientStateStopped;
 
     mutexLock(&ts->control_mutex);
-    if (LIKELY(ts->authenticated))
+    if (ts->continuity_error)
+    {
+        state = kAuthenticationClientStateContinuityError;
+    }
+    else if (LIKELY(ts->authenticated))
     {
         bool users_loaded = false;
 
@@ -724,6 +728,7 @@ static authenticationclient_first_usage_push_result_t authenticationclientReques
     authenticationclient_first_usage_push_result_t result = kAuthenticationClientFirstUsagePushNotReady;
 
     mutexLock(&ts->control_mutex);
+    ts->push_requested = true;
     if (ts->push_in_flight)
     {
         ts->first_usage_push_deferred = true;
