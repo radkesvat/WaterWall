@@ -100,6 +100,42 @@ typedef struct user_update_s
     int              record_stat_interval_ms;
 } user_update_t;
 
+/* Configuration-only leaves. Omitted bits preserve stored values. Selected
+ * strings must be non-NULL; an empty string clears the field. This type cannot
+ * carry credentials, usage, runtime state or creation/first-use timestamps. */
+typedef struct user_config_patch_s
+{
+    uint32_t     mask;
+    const char  *name, *email, *notes, *wireguard_allowed_ips;
+    uint64_t     gid;
+    bool         enabled;
+    int          record_stat_interval_ms;
+    user_limit_t limit;
+    uint64_t     expire_at_ms, expire_after_first_usage_ms;
+} user_config_patch_t;
+
+enum
+{
+    kUserConfigName                  = 1U << 0U,
+    kUserConfigEmail                 = 1U << 1U,
+    kUserConfigNotes                 = 1U << 2U,
+    kUserConfigWireGuardAllowedIps   = 1U << 3U,
+    kUserConfigGid                   = 1U << 4U,
+    kUserConfigEnabled               = 1U << 5U,
+    kUserConfigRecordStatInterval    = 1U << 6U,
+    kUserConfigTrafficUp             = 1U << 7U,
+    kUserConfigTrafficDown           = 1U << 8U,
+    kUserConfigTrafficTotal          = 1U << 9U,
+    kUserConfigBandwidthUp           = 1U << 10U,
+    kUserConfigBandwidthDown         = 1U << 11U,
+    kUserConfigIps                   = 1U << 12U,
+    kUserConfigDevices               = 1U << 13U,
+    kUserConfigConnectionsIn         = 1U << 14U,
+    kUserConfigConnectionsOut        = 1U << 15U,
+    kUserConfigExpireAt              = 1U << 16U,
+    kUserConfigExpireAfterFirstUsage = 1U << 17U
+};
+
 typedef enum users_add_result_e
 {
     kUsersAddResultOk = 0,
@@ -229,6 +265,9 @@ bool                  usersChangePassword(users_t *users, user_t *user, const ch
 bool                  usersUpdateUser(users_t *users, user_t *user, const user_update_t *update);
 users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                               const user_update_t *update);
+/* Failure-atomic, ID-addressed configuration edit. Holds collection ownership
+ * through commit and applies selected leaves under the user's lock. */
+users_update_result_t usersPatchConfigByIdentifier(users_t *users, uint64_t id, const user_config_patch_t *patch);
 bool                  usersSetUserName(users_t *users, user_t *user, const char *name);
 bool                  usersSetUserEmail(users_t *users, user_t *user, const char *email);
 bool                  usersSetUserNotes(users_t *users, user_t *user, const char *notes);

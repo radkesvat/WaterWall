@@ -3756,7 +3756,7 @@ static users_update_result_t usersPrepareUpdate(const user_update_t *update, cha
 
 static users_update_result_t usersApplyUpdateToExistingUserLocked(
     users_t *users, user_t *user, const user_update_t *update, char **name_copy, char **email_copy, char **notes_copy,
-    users_wireguard_allowed_ips_update_t *wireguard_allowed_ips)
+    users_wireguard_allowed_ips_update_t *wireguard_allowed_ips, const user_config_patch_t *patch)
 {
     user_t *duplicate_name;
 
@@ -3881,6 +3881,33 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
     {
         user->record_stat_interval_ms = update->record_stat_interval_ms;
     }
+    if (patch != NULL)
+    {
+        /* Merge leaves while locked: a whole timeinfo snapshot could overwrite
+         * first usage published concurrently by an accounting helper. */
+        if ((patch->mask & kUserConfigTrafficUp) != 0U)
+            user->limit.traffic.u = patch->limit.traffic.u;
+        if ((patch->mask & kUserConfigTrafficDown) != 0U)
+            user->limit.traffic.d = patch->limit.traffic.d;
+        if ((patch->mask & kUserConfigTrafficTotal) != 0U)
+            user->limit.traffic.total = patch->limit.traffic.total;
+        if ((patch->mask & kUserConfigBandwidthUp) != 0U)
+            user->limit.bandwidth.u = patch->limit.bandwidth.u;
+        if ((patch->mask & kUserConfigBandwidthDown) != 0U)
+            user->limit.bandwidth.d = patch->limit.bandwidth.d;
+        if ((patch->mask & kUserConfigIps) != 0U)
+            user->limit.ips = patch->limit.ips;
+        if ((patch->mask & kUserConfigDevices) != 0U)
+            user->limit.devices = patch->limit.devices;
+        if ((patch->mask & kUserConfigConnectionsIn) != 0U)
+            user->limit.cons_in = patch->limit.cons_in;
+        if ((patch->mask & kUserConfigConnectionsOut) != 0U)
+            user->limit.cons_out = patch->limit.cons_out;
+        if ((patch->mask & kUserConfigExpireAt) != 0U)
+            user->timeinfo.expire_at_ms = patch->expire_at_ms;
+        if ((patch->mask & kUserConfigExpireAfterFirstUsage) != 0U)
+            user->timeinfo.expire_after_first_usage_ms = patch->expire_after_first_usage_ms;
+    }
     rwlockWriteUnlock(&user->lock);
 
     /*
@@ -3943,7 +3970,7 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
     else
     {
         result = usersApplyUpdateToExistingUserLocked(
-            users, user, update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
+            users, user, update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips, NULL);
     }
     rwlockWriteUnlock(&users->lock);
 
@@ -3981,11 +4008,77 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha2
     else
     {
         result = usersApplyUpdateToExistingUserLocked(
-            users, user, update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
+            users, user, update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips, NULL);
     }
     rwlockWriteUnlock(&users->lock);
 
     usersFreeUpdateStringCopies(name_copy, email_copy, notes_copy, &wireguard_allowed_ips);
+    return result;
+}
+
+users_update_result_t usersPatchConfigByIdentifier(users_t *users, uint64_t id, const user_config_patch_t *patch)
+{
+    assert(users != NULL && patch != NULL);
+    if (id == 0 || patch->mask == 0)
+        return kUsersUpdateResultInvalidArgument;
+    if ((patch->mask & ~((1U << 18U) - 1U)) != 0U)
+        return kUsersUpdateResultUnknownFields;
+
+    /* Reuse string/CIDR preparation and the single index transaction. The
+     * shared update deliberately contains no whole-limit/time/stat assignment. */
+    user_update_t update = {0};
+    if ((patch->mask & kUserConfigName) != 0U)
+    {
+        assert(patch->name != NULL);
+        update.mask |= kUserUpdateName;
+        update.name = patch->name;
+    }
+    if ((patch->mask & kUserConfigEmail) != 0U)
+    {
+        assert(patch->email != NULL);
+        update.mask |= kUserUpdateEmail;
+        update.email = patch->email;
+    }
+    if ((patch->mask & kUserConfigNotes) != 0U)
+    {
+        assert(patch->notes != NULL);
+        update.mask |= kUserUpdateNotes;
+        update.notes = patch->notes;
+    }
+    if ((patch->mask & kUserConfigWireGuardAllowedIps) != 0U)
+    {
+        assert(patch->wireguard_allowed_ips != NULL);
+        update.mask |= kUserUpdateWireGuardAllowedIps;
+        update.wireguard_allowed_ips = patch->wireguard_allowed_ips;
+    }
+    if ((patch->mask & kUserConfigGid) != 0U)
+    {
+        update.mask |= kUserUpdateGid;
+        update.gid = patch->gid;
+    }
+    if ((patch->mask & kUserConfigEnabled) != 0U)
+    {
+        update.mask |= kUserUpdateEnabled;
+        update.enabled = patch->enabled;
+    }
+    if ((patch->mask & kUserConfigRecordStatInterval) != 0U)
+    {
+        update.mask |= kUserUpdateRecordStatInterval;
+        update.record_stat_interval_ms = patch->record_stat_interval_ms;
+    }
+    char                                *name = NULL, *email = NULL, *notes = NULL;
+    users_wireguard_allowed_ips_update_t allowed_ips;
+    users_update_result_t                result = usersPrepareUpdate(&update, &name, &email, &notes, &allowed_ips);
+    if (result != kUsersUpdateResultOk)
+        return result;
+    rwlockWriteLock(&users->lock);
+    user_t *user = usersIDTableLookupLocked(users, id);
+    result =
+        user != NULL
+            ? usersApplyUpdateToExistingUserLocked(users, user, &update, &name, &email, &notes, &allowed_ips, patch)
+            : kUsersUpdateResultUserNotFound;
+    rwlockWriteUnlock(&users->lock);
+    usersFreeUpdateStringCopies(name, email, notes, &allowed_ips);
     return result;
 }
 

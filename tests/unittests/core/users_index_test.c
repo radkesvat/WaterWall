@@ -30,6 +30,7 @@
  */
 
 #include "objects/user_index_geometry.h"
+#include "wthread.h"
 #include "wwapi.h"
 
 #include "test_assert.h"
@@ -1051,6 +1052,110 @@ static void testIndexGeometryRejection(void)
     usersDestroy(&users);
 }
 
+static void testConfigPatchIndexesAndOwnership(void)
+{
+    users_t users;
+    buildFullRangedFixture(&users);
+    user_t       *target  = addNamedUser(&users, 100, "patch-password", "patch-name");
+    user_update_t initial = {.mask          = kUserUpdateTimeInfo | kUserUpdateStats | kUserUpdateLimit,
+                             .timeinfo      = {11, 22, 33, 44},
+                             .stats.traffic = {100, 200},
+                             .limit         = {.traffic = {1, 2, 3}, .bandwidth = {4, 5}, .ips = 6}};
+    require(usersUpdateUser(&users, target, &initial), "patch setup failed");
+    user_ip_key_t key = testIpKey(192, 0, 2, 1);
+    require(usersTryAdmitConnectionByIdentifier(&users, 100, &key, 0) == kUserAdmissionTrafficLimited,
+            "setup limits were not active");
+    user_config_patch_t patch = {.mask = kUserConfigName | kUserConfigWireGuardAllowedIps | kUserConfigTrafficTotal |
+                                         kUserConfigExpireAfterFirstUsage,
+                                 .name                        = "patch-new-name",
+                                 .wireguard_allowed_ips       = "10.0.0.0/24",
+                                 .limit.traffic.total         = 999,
+                                 .expire_after_first_usage_ms = 888};
+    require(usersPatchConfigByIdentifier(&users, 100, &patch) == kUsersUpdateResultDuplicateWireGuardAllowedIps,
+            "overlapping patch was accepted");
+    require(stringCompare(target->name, "patch-name") == 0 && target->limit.traffic.total == 3 &&
+                target->timeinfo.expire_after_first_usage_ms == 44 && usersValidate(&users),
+            "failed multi-field patch published values or indexes");
+    patch.wireguard_allowed_ips = "10.1.0.0/24";
+    require(usersPatchConfigByIdentifier(&users, 100, &patch) == kUsersUpdateResultOk,
+            "patch failed to grow full Allowed-IP index");
+    ip_addr_t address = parseIp("10.1.0.9");
+    require(usersLookupByWireGuardAllowedIp(&users, &address) == target && usersValidate(&users),
+            "patch did not commit its indexes");
+    require(target->limit.traffic.u == 1 && target->limit.traffic.d == 2 && target->limit.traffic.total == 999 &&
+                target->limit.bandwidth.u == 4 && target->limit.bandwidth.d == 5 && target->limit.ips == 6 &&
+                target->timeinfo.created_at_ms == 11 && target->timeinfo.first_usage_at_ms == 22 &&
+                target->timeinfo.expire_at_ms == 33 && target->timeinfo.expire_after_first_usage_ms == 888 &&
+                target->stats.traffic.u == 100 && target->stats.traffic.d == 200,
+            "leaf patch overwrote omitted configuration or accounting");
+    patch.name                        = "";
+    patch.wireguard_allowed_ips       = "";
+    patch.limit.traffic.total         = 0;
+    patch.expire_after_first_usage_ms = 0;
+    require(usersPatchConfigByIdentifier(&users, 100, &patch) == kUsersUpdateResultOk &&
+                ! target->wireguard_allowed_ips_valid && usersLookupByWireGuardAllowedIp(&users, &address) == NULL &&
+                target->limit.traffic.total == 0 && target->timeinfo.expire_after_first_usage_ms == 0 &&
+                usersValidate(&users),
+            "explicit clears failed");
+    usersDestroy(&users);
+}
+
+typedef struct patch_first_use_s
+{
+    users_t    *users;
+    user_t     *user;
+    atomic_bool go;
+} patch_first_use_t;
+
+static WTHREAD_ROUTINE(patchExpiryConcurrently)
+{
+    patch_first_use_t *context = userdata;
+    while (! atomic_load(&context->go))
+        wwSleepMS(1);
+    user_config_patch_t patch = {.mask = kUserConfigExpireAt, .expire_at_ms = 999};
+    for (unsigned i = 0; i < 1000; ++i)
+        require(usersPatchConfigByIdentifier(context->users, 1, &patch) == kUsersUpdateResultOk,
+                "concurrent expiry patch failed");
+    return 0;
+}
+
+static WTHREAD_ROUTINE(markFirstUseConcurrently)
+{
+    patch_first_use_t *context = userdata;
+    while (! atomic_load(&context->go))
+        wwSleepMS(1);
+    for (unsigned i = 0; i < 1000; ++i)
+        userMarkFirstUsage(context->user, 777);
+    return 0;
+}
+
+static void testConfigPatchFirstUseAndRuntime(void)
+{
+    users_t users;
+    require(usersCreate(&users), "concurrent patch table failed");
+    addUser(&users, 1, "patch-first-use");
+    user_t       *user = usersLookupByIdentifier(&users, 1);
+    user_ip_key_t key  = testIpKey(192, 0, 2, 1);
+    require(usersTryAdmitConnectionByIdentifier(&users, 1, &key, 0) == kUserAdmissionOk, "runtime setup failed");
+    patch_first_use_t context = {.users = &users, .user = user};
+    atomic_init(&context.go, false);
+    wthread_t threads[2];
+    require(threadCreate(&threads[0], patchExpiryConcurrently, &context) == kWThreadErrorNone &&
+                threadCreate(&threads[1], markFirstUseConcurrently, &context) == kWThreadErrorNone,
+            "patch concurrency threads failed");
+    atomic_store(&context.go, true);
+    require(threadJoin(threads[0]) == 0 && threadJoin(threads[1]) == 0, "patch concurrency join failed");
+    user_time_info_t time;
+    userGetTimeInfo(user, &time);
+    require(time.first_usage_at_ms == 777 && time.expire_at_ms == 999 && user->runtime.active_cons_out == 1 &&
+                user->runtime.ip_usage_count == 1 && usersValidate(&users),
+            "patch lost first usage or active reservations");
+    usersReleaseConnectionByIdentifier(&users, 1, &key);
+    require(user->runtime.active_cons_out == 0 && user->runtime.ip_usage_count == 0,
+            "patched runtime reservation did not release");
+    usersDestroy(&users);
+}
+
 int main(void)
 {
     testCaseSet("users_index_test");
@@ -1079,6 +1184,8 @@ int main(void)
     testAddGrowsAllowedIpIndex();
     testRebuildLookups();
     testIndexGeometryRejection();
+    testConfigPatchIndexesAndOwnership();
+    testConfigPatchFirstUseAndRuntime();
 
     printf("users_index_test: all checks passed\n");
     return 0;
