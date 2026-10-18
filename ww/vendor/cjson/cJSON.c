@@ -98,7 +98,13 @@ typedef struct {
     const unsigned char *json;
     size_t position;
 } error;
-static error global_error = { NULL, 0 };
+/* Independent event workers parse API envelopes concurrently. Error state is
+ * per parsing thread; allocator hooks remain process-wide and startup-only. */
+#if defined(_MSC_VER)
+static __declspec(thread) error global_error = {NULL, 0};
+#else
+static _Thread_local error global_error = {NULL, 0};
+#endif
 
 #ifndef LLONG_MAX
 #define LLONG_MAX 9223372036854775807LL

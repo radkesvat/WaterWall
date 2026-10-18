@@ -3,11 +3,13 @@
  */
 
 #include "node_manager.h"
+#include "api/node_api.h"
 #include "chain.h"
 #include "global_state.h"
 #include "line.h"
 #include "loggers/internal_logger.h"
 #include "net/node_layer_solver.h"
+#include "node_builder/config_lexical.h"
 #include "node_builder/config_policy.h"
 #include "signal_manager.h"
 #include "utils/json_helpers.h"
@@ -116,6 +118,7 @@ tunnel_t *nodemanagerCreateTunnelInstance(node_t *node)
         LOGF("NodeManager: node (\"%s\") returned an instance with NULL callback \"%s\"",
              configPolicyDiagnostic(node->name),
              missing_callback);
+        nodeApiUnregister(tunnel);
         tunnelDestroy(tunnel);
         startupFailureRecord(1);
         return NULL;
@@ -880,7 +883,88 @@ node_t *nodemanagerGetConfigNodeByHash(node_manager_config_t *cfg, hash_t hash_n
 
 node_t *nodemanagerGetConfigNodeByName(node_manager_config_t *cfg, const char *name)
 {
-    return nodemanagerGetConfigNodeByHash(cfg, calcHashBytes(name, stringLength(name)));
+    node_t *node = nodemanagerGetConfigNodeByHash(cfg, calcHashBytes(name, stringLength(name)));
+    return node != NULL && strcmp(node->name, name) == 0 ? node : NULL;
+}
+
+node_api_target_status_t nodemanagerResolveApiTarget(const char *config, const char *node, tunnel_t **target,
+                                                     const char **resolved_config)
+{
+    assert(node != NULL && target != NULL);
+    *target = NULL;
+    if (resolved_config != NULL)
+        *resolved_config = NULL;
+    if (nodemanager_gstate == NULL)
+        return kNodeApiTargetNotFound;
+    size_t      matches         = 0;
+    node_t     *selected        = NULL;
+    const char *selected_config = NULL;
+    c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
+    {
+        node_manager_config_t *cfg         = *conf.ref;
+        const char            *config_name = cfg->config_file->name;
+        if (config != NULL && (config_name == NULL || strcmp(config, config_name) != 0))
+            continue;
+        /* Iterate exact names: neither hashes nor API registration determine
+         * public identity, and an unregistered duplicate still is ambiguous. */
+        c_foreach(entry, map_node_t, cfg->node_map)
+        {
+            node_t *candidate = entry.ref->second;
+            if (strcmp(candidate->name, node) == 0)
+            {
+                ++matches;
+                selected        = candidate;
+                selected_config = config_name;
+            }
+        }
+    }
+    if (matches == 0)
+        return kNodeApiTargetNotFound;
+    if (matches > 1)
+        return kNodeApiTargetAmbiguous;
+    *target = selected->instance;
+    if (resolved_config != NULL)
+        *resolved_config = selected_config;
+    return kNodeApiTargetFound;
+}
+
+static bool validateApiTargetNames(void)
+{
+    if (! nodeApiIsRequired())
+        return true;
+    c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
+    {
+        node_manager_config_t *cfg  = *conf.ref;
+        const char            *name = cfg->config_file->name;
+        if (cfg->config_file->api_selector_strings_invalid || name == NULL || name[0] == '\0' || strlen(name) > 256 ||
+            ! configLexicalCheckEncoding(name, strlen(name)))
+        {
+            LOGF("NodeManager: APIServer requires bounded nonempty logical configuration names");
+            return false;
+        }
+        c_foreach(other, vec_configs_t, nodemanager_gstate->configs)
+        {
+            node_manager_config_t *other_cfg = *other.ref;
+            if (other_cfg != cfg && other_cfg->config_file->name != NULL &&
+                strcmp(name, other_cfg->config_file->name) == 0)
+            {
+                LOGF("NodeManager: APIServer requires unique logical configuration names");
+                return false;
+            }
+        }
+        c_foreach(entry, map_node_t, cfg->node_map)
+        {
+            const node_t *candidate = entry.ref->second;
+            if (nodeApiHasRegistration(candidate->instance) &&
+                (candidate->name[0] == '\0' || strlen(candidate->name) > 256 ||
+                 ! configLexicalCheckEncoding(candidate->name, strlen(candidate->name))))
+            {
+                LOGF("NodeManager: API-visible node name exceeds its selector bound");
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 node_t *nodemanagerNewNode(void)
@@ -1042,6 +1126,11 @@ ww_startup_result_t nodemanagerStartConfigs(void)
     nodemanager_gstate->startup_started = true;
     ww_startup_context_t startup        = {0};
     wwStartupContextBegin(&startup);
+    if (! validateApiTargetNames())
+    {
+        startupFailureRecord(1);
+        return wwStartupContextEnd(&startup);
+    }
     /* All configurations have finalized padding before any prepare/start hook.
      * Admit packet-line bootstrap before starting any external reader. */
     c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
@@ -1057,6 +1146,7 @@ ww_startup_result_t nodemanagerStartConfigs(void)
         if (startupFailurePending())
             return wwStartupContextEnd(&startup);
     }
+    nodeApiFreeze();
     c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
     {
         if (startupWasStopped())
@@ -1070,6 +1160,7 @@ ww_startup_result_t nodemanagerStartConfigs(void)
 
 void nodemanagerQuiesceRequest(const ww_lifecycle_context_t *context)
 {
+    nodeApiCloseAdmission();
     if (nodemanager_gstate == NULL ||
         atomicExchangeExplicit(&nodemanager_gstate->quiesce_request_started, true, memory_order_relaxed))
     {
@@ -1240,6 +1331,7 @@ node_manager_t *nodemanagerCreate(void)
     atomicStoreRelaxed(&state->quiesce_wait_started, false);
     atomicStoreRelaxed(&state->stop_started, false);
 
+    nodeApiRegistryInitialize();
     nodemanager_gstate = state;
     return state;
 }
@@ -1252,6 +1344,7 @@ void nodemanagerDestroyNode(node_t *node)
         const ww_lifecycle_context_t *context = nodemanager_gstate != NULL && nodemanager_gstate->stop_context_set
                                                     ? &nodemanager_gstate->stop_context
                                                     : wwLifecycleStartupRollback();
+        nodeApiUnregister(t);
         t->onDestroy(t, context);
         node->instance = NULL;
     }
@@ -1332,6 +1425,7 @@ void nodemanagerDestroy(void)
         nodemanagerDestroyConfig(*conf.ref);
     }
 
+    nodeApiRegistryDestroy();
     vec_configs_t_drop(&nodemanager_gstate->configs);
     memoryFree(nodemanager_gstate);
     nodemanager_gstate = NULL;

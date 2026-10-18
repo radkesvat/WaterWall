@@ -7,6 +7,8 @@
 #include "wlibc.h"
 #include "wmutex.h"
 
+/* api_selector_strings_invalid retains raw string evidence before cJSON loses
+ * lengths. It is enforced only when the loaded process contains an APIServer. */
 typedef struct config_file_s
 {
     char         *file_path;
@@ -15,6 +17,7 @@ typedef struct config_file_s
     int           config_version;
     int           core_minimum_version;
     bool          encrypted;
+    bool          api_selector_strings_invalid;
     struct cJSON *root;
     struct cJSON *nodes;
     size_t        file_prebuffer_size;

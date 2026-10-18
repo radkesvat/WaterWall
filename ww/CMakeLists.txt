@@ -138,6 +138,10 @@ add_library(ww STATIC
     instance/worker_messages.c
     instance/wversion.c
     
+    # Explicit node operations and detached event-worker dispatch
+    api/node_api.c
+    api/dispatcher.c
+
     # Networking
     net/bound_udp_socket.c
     net/packet_tunnel.c
@@ -1690,6 +1694,7 @@ if(BUILD_TESTING)
         instance/global_state.c
         managers/signal_manager.c
         managers/node_manager.c
+        node_builder/config_file.c
         managers/windivert_manager.c
         managers/socket_manager_iptables_recovery.c
         net/adapter.c

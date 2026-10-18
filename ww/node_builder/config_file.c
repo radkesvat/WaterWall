@@ -12,6 +12,151 @@ static inline bool isJsonWhitespace(char c)
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
+/* These span helpers follow a tree already accepted by cJSON. They only retain
+ * lexical facts for API-facing fields; they neither parse a second tree nor
+ * impose the API's restrictions on unrelated configuration values. */
+static size_t apiConfigSkipWhitespace(const char *text, size_t length, size_t offset)
+{
+    while (offset < length && isJsonWhitespace(text[offset]))
+        ++offset;
+    return offset;
+}
+
+static size_t apiConfigStringEnd(const char *text, size_t length, size_t offset)
+{
+    assert(offset < length && text[offset] == '"');
+    for (++offset; offset < length; ++offset)
+    {
+        if (text[offset] == '\\')
+            ++offset;
+        else if (text[offset] == '"')
+            return offset + 1;
+    }
+    return length;
+}
+
+static size_t apiConfigValueEnd(const char *text, size_t length, size_t offset)
+{
+    if (offset == length)
+        return length;
+    if (text[offset] == '"')
+        return apiConfigStringEnd(text, length, offset);
+    if (text[offset] == '{' || text[offset] == '[')
+    {
+        size_t depth = 0;
+        for (; offset < length; ++offset)
+        {
+            if (text[offset] == '"')
+                offset = apiConfigStringEnd(text, length, offset) - 1;
+            else if (text[offset] == '{' || text[offset] == '[')
+                ++depth;
+            else if ((text[offset] == '}' || text[offset] == ']') && --depth == 0)
+                return offset + 1;
+        }
+        return length;
+    }
+    while (offset < length && ! isJsonWhitespace(text[offset]) && text[offset] != ',' && text[offset] != '}' &&
+           text[offset] != ']')
+        ++offset;
+    return offset;
+}
+
+static bool apiConfigStringValid(const char *text, size_t length)
+{
+    if (! configLexicalCheckEncodingQuiet(text, length))
+        return false;
+    for (size_t i = 0; i + 1 < length; ++i)
+    {
+        if (text[i] != '\\')
+            continue;
+        ++i;
+        if (text[i] == 'u' && length - i >= 5 && memcmp(text + i + 1, "0000", 4) == 0)
+            return false;
+    }
+    return true;
+}
+
+static bool apiConfigFieldSpan(const char *text, size_t length, size_t *cursor, size_t *key_begin, size_t *key_end,
+                               size_t *value_begin, size_t *value_end)
+{
+    size_t offset = apiConfigSkipWhitespace(text, length, *cursor);
+    if (offset < length && text[offset] == ',')
+        offset = apiConfigSkipWhitespace(text, length, offset + 1);
+    if (offset == length || text[offset] != '"')
+        return false;
+    *key_begin = offset;
+    *key_end   = apiConfigStringEnd(text, length, offset);
+    offset     = apiConfigSkipWhitespace(text, length, *key_end);
+    if (offset == length || text[offset] != ':')
+        return false;
+    *value_begin = apiConfigSkipWhitespace(text, length, offset + 1);
+    *value_end   = apiConfigValueEnd(text, length, *value_begin);
+    *cursor      = *value_end;
+    return *value_begin < *value_end;
+}
+
+static bool apiConfigInspectNode(config_file_t *state, const char *text, size_t length, const cJSON *node)
+{
+    if (! cJSON_IsObject(node))
+        return true;
+    const cJSON *type     = cJSON_GetObjectItemCaseSensitive(node, "type");
+    const bool   endpoint = cJSON_IsString(type) && strcmp(type->valuestring, "APIServer") == 0;
+    size_t       cursor   = apiConfigSkipWhitespace(text, length, 0) + 1;
+    for (const cJSON *field = node->child; field; field = field->next)
+    {
+        size_t kb, ke, vb, ve;
+        if (! apiConfigFieldSpan(text, length, &cursor, &kb, &ke, &vb, &ve))
+        {
+            state->api_selector_strings_invalid = true;
+            return ! endpoint;
+        }
+        if (strcmp(field->string, "name") == 0 &&
+            (! apiConfigStringValid(text + kb, ke - kb) || ! apiConfigStringValid(text + vb, ve - vb)))
+            state->api_selector_strings_invalid = true;
+        if (endpoint && (strcmp(field->string, "settings") == 0 || strcmp(field->string, "type") == 0) &&
+            (! apiConfigStringValid(text + kb, ke - kb) || ! configLexicalCheckEncoding(text + vb, ve - vb) ||
+             ! configLexicalCheckTokens(text + vb, ve - vb, SIZE_MAX)))
+            return false;
+    }
+    return true;
+}
+
+static bool apiConfigCaptureLexicalFacts(config_file_t *state, const char *text, size_t length, const cJSON *root)
+{
+    if (! cJSON_IsObject(root))
+        return true;
+    const cJSON *nodes  = cJSON_GetObjectItemCaseSensitive(root, "nodes");
+    size_t       cursor = apiConfigSkipWhitespace(text, length, 0) + 1;
+    for (const cJSON *field = root->child; field; field = field->next)
+    {
+        size_t kb, ke, vb, ve;
+        if (! apiConfigFieldSpan(text, length, &cursor, &kb, &ke, &vb, &ve))
+        {
+            state->api_selector_strings_invalid = true;
+            return true;
+        }
+        if (strcmp(field->string, "name") == 0 &&
+            (! apiConfigStringValid(text + kb, ke - kb) || ! apiConfigStringValid(text + vb, ve - vb)))
+            state->api_selector_strings_invalid = true;
+        if (field != nodes || ! cJSON_IsArray(nodes))
+            continue;
+        if (! apiConfigStringValid(text + kb, ke - kb))
+            state->api_selector_strings_invalid = true;
+        size_t entry_begin = vb + 1;
+        for (const cJSON *entry = nodes->child; entry; entry = entry->next)
+        {
+            entry_begin = apiConfigSkipWhitespace(text, length, entry_begin);
+            if (entry_begin < length && text[entry_begin] == ',')
+                entry_begin = apiConfigSkipWhitespace(text, length, entry_begin + 1);
+            size_t entry_end = apiConfigValueEnd(text, length, entry_begin);
+            if (! apiConfigInspectNode(state, text + entry_begin, entry_end - entry_begin, entry))
+                return false;
+            entry_begin = entry_end;
+        }
+    }
+    return true;
+}
+
 static bool appendJsonChunk(char **buffer, size_t *length, size_t *capacity, const char *src, size_t src_len)
 {
     assert(buffer != NULL);
@@ -355,13 +500,42 @@ static cJSON *parseVariablesObject(const char *json_text, const char *file_path,
     return json;
 }
 
+static bool apiConfigRawVariableSpan(const char *raw_variables, size_t raw_variables_length, const cJSON *variables,
+                                     const cJSON *value, const char **raw, size_t *raw_length)
+{
+    if (raw_variables == NULL)
+        return false;
+    size_t cursor = 1;
+    for (const cJSON *entry = variables->child; entry; entry = entry->next)
+    {
+        size_t kb, ke, vb, ve;
+        if (! apiConfigFieldSpan(raw_variables, raw_variables_length, &cursor, &kb, &ke, &vb, &ve))
+            return false;
+        if (entry == value)
+        {
+            *raw        = raw_variables + vb;
+            *raw_length = ve - vb;
+            return true;
+        }
+    }
+    return false;
+}
+
 static char *substituteVariables(const char *json_text, const cJSON *variables, const char *file_path)
 {
-    size_t input_len = stringLength(json_text);
-    size_t capacity  = input_len + 1;
-    size_t out_len   = 0;
-    bool   in_string = false;
-    bool   escaped   = false;
+    size_t      variables_begin = 0, variables_end = 0;
+    const char *variables_key   = NULL;
+    bool        variables_found = false;
+    if (variables != NULL &&
+        ! findVariablesObjectRange(json_text, &variables_begin, &variables_end, &variables_key, &variables_found))
+        return NULL;
+    const char *raw_variables        = variables_found ? json_text + variables_begin : NULL;
+    size_t      raw_variables_length = variables_found ? variables_end - variables_begin + 1 : 0;
+    size_t      input_len            = stringLength(json_text);
+    size_t      capacity             = input_len + 1;
+    size_t      out_len              = 0;
+    bool        in_string            = false;
+    bool        escaped              = false;
 
     char *output = memoryAllocate(capacity);
     if (output == NULL)
@@ -463,6 +637,27 @@ static char *substituteVariables(const char *json_text, const cJSON *variables, 
             memoryFree(variable_name);
             memoryFree(output);
             return NULL;
+        }
+
+        /* Preserve invalid string evidence through substitution: cJSON's
+         * serializer truncates decoded NUL and could otherwise turn a malformed
+         * configured API token/selector into a valid prefix. Unrelated host
+         * values retain their permissive parsing and ordinary serialization. */
+        const char *raw        = NULL;
+        size_t      raw_length = 0;
+        if (apiConfigRawVariableSpan(
+                raw_variables, raw_variables_length, variables, variable_value, &raw, &raw_length) &&
+            ! apiConfigStringValid(raw, raw_length))
+        {
+            bool append_ok = appendJsonChunk(&output, &out_len, &capacity, raw, raw_length);
+            memoryFree(variable_name);
+            if (! append_ok)
+            {
+                memoryFree(output);
+                return NULL;
+            }
+            i = placeholder_end;
+            continue;
         }
 
         char *replacement;
@@ -694,6 +889,13 @@ config_file_t *configfileParse(const char *const file_path)
     }
 
     state->root = json;
+    if (! apiConfigCaptureLexicalFacts(state, resolved_json, state->file_prebuffer_size, json))
+    {
+        LOGF("JSON Error: APIServer credentials and settings require valid exact strings");
+        memoryFree(resolved_json);
+        configfileDestroy(state);
+        return NULL;
+    }
     memoryFree(resolved_json);
 
     if (! getStringFromJsonObject((&state->name), json, "name"))

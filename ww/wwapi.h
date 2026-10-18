@@ -61,6 +61,8 @@
 #include "node_builder/config_policy.h"
 #include "node_builder/node_library.h"
 
+#include "api/dispatcher.h"
+#include "api/node_api.h"
 #include "objects/node.h"
 
 #include "utils/base64.h"

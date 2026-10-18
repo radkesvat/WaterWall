@@ -165,3 +165,14 @@ void nodemanagerDestroyConfig(node_manager_config_t *cfg);
  * @brief Destroy global node manager and all loaded configs.
  */
 void nodemanagerDestroy(void);
+
+/* API selectors only inspect declared top-level nodes. Configuration names are
+ * logical JSON names, never paths; ambiguity precedes permissions/registration. */
+typedef enum node_api_target_status_e
+{
+    kNodeApiTargetFound = 0,
+    kNodeApiTargetNotFound,
+    kNodeApiTargetAmbiguous
+} node_api_target_status_t;
+node_api_target_status_t nodemanagerResolveApiTarget(const char *config, const char *node, tunnel_t **target,
+                                                     const char **resolved_config);
