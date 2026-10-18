@@ -8,6 +8,7 @@ add_library(AuthenticationClient STATIC
                     common/line_state.c
                     common/protocol.c
                     common/progress.c
+                    common/status.c
                     common/users_api.c
                     upstream/init.c
                     upstream/fin.c

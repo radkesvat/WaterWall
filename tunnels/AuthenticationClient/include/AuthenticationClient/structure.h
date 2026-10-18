@@ -17,6 +17,62 @@ typedef struct authenticationclient_accounting_entry_s
     uint64_t  first_usage_at_ms;
 } authenticationclient_accounting_entry_t;
 
+typedef enum authenticationclient_failure_e
+{
+    kAuthenticationClientFailureNone = 0,
+    kAuthenticationClientFailureTransportClosed,
+    kAuthenticationClientFailureTimeout,
+    kAuthenticationClientFailureCredentialRejected,
+    kAuthenticationClientFailureContinuity,
+    kAuthenticationClientFailureInvalidResponse,
+    kAuthenticationClientFailureRemoteError
+} authenticationclient_failure_t;
+
+typedef enum authenticationclient_blocking_reason_e
+{
+    kAuthenticationClientBlockNone = 0,
+    kAuthenticationClientBlockStopping,
+    kAuthenticationClientBlockNotStarted,
+    kAuthenticationClientBlockContinuity,
+    kAuthenticationClientBlockCredentialRejected,
+    kAuthenticationClientBlockCacheClock
+} authenticationclient_blocking_reason_t;
+
+typedef enum authenticationclient_accounting_state_e
+{
+    kAuthenticationClientAccountingNotRequested = 0,
+    kAuthenticationClientAccountingAvailable,
+    kAuthenticationClientAccountingUnavailable
+} authenticationclient_accounting_state_t;
+
+/* Owned scalar values only; serialization never borrows live account state. */
+typedef struct authenticationclient_status_s
+{
+    authenticationclient_state_t            state;
+    authenticationclient_blocking_reason_t  blocking_reason;
+    authenticationclient_accounting_state_t accounting_state;
+    bool     started, stopping, connected, authenticated, auth_rejected, continuity_error;
+    bool     users_loaded, clock_loaded, can_authenticate, write_paused;
+    bool     auth_in_flight, pull_in_flight, push_in_flight, pull_requested, pull_required, push_requested;
+    bool     catchup_capture_needed, reconnect_queued, unresolved_batch;
+    bool     first_usage_push_requested, first_usage_push_deferred;
+    bool     retry_deadline_valid, request_deadline_valid;
+    uint64_t users_count, pending_request_count, retained_catchup_slots;
+    uint64_t batch_sequence, batch_entry_count, batch_size;
+    uint64_t retry_remaining_ms, request_remaining_ms;
+    uint64_t applied_config_revision, applied_stats_revision, applied_revision_generation;
+    uint64_t remote_config_revision, remote_stats_revision, remote_revision_generation;
+    bool     auth_success_valid, pull_success_valid, ack_success_valid;
+    uint64_t auth_success_age_ms, pull_success_age_ms, ack_success_age_ms;
+    authenticationclient_failure_t last_failure;
+    uint8_t                        last_failure_operation;
+    uint64_t                       last_failure_age_ms;
+    uint64_t                       locally_unacknowledged_upload_bytes, locally_unacknowledged_download_bytes;
+    uint64_t                       usage_user_count, first_use_observation_count;
+    uint64_t                       sampling_started_ms, sampling_finished_ms;
+    bool                           accounting_lower_bound;
+} authenticationclient_status_t;
+
 typedef struct authenticationclient_tstate_s
 {
     char *name;
@@ -85,6 +141,13 @@ typedef struct authenticationclient_tstate_s
 
     uint32_t last_pull_sync_ms;
     uint32_t last_push_sync_ms;
+
+    /* Historical monotonic facts, retained across reconnects. Zero is valid. */
+    uint64_t                       last_auth_success_ms, last_pull_success_ms, last_ack_success_ms;
+    bool                           last_auth_success_valid, last_pull_success_valid, last_ack_success_valid;
+    authenticationclient_failure_t last_failure;
+    uint8_t                        last_failure_operation;
+    uint64_t                       last_failure_ms;
 
     authenticationclient_pending_request_t *pending_requests;
     uint32_t                                pending_count;
@@ -181,6 +244,11 @@ void authenticationclientReconnectTimerCallback(wtimer_t *timer);
 void authenticationclientPingTimerCallback(wtimer_t *timer);
 bool authenticationclientStartSyncTimer(tunnel_t *t);
 void authenticationclientSyncTimerCallback(wtimer_t *timer);
+
+void authenticationclientStatusSnapshot(tunnel_t *t, bool include_accounting, size_t working_allowance,
+                                        uint64_t deadline_ms, authenticationclient_status_t *out);
+void authenticationclientRecordFailure(tunnel_t *t, authenticationclient_failure_t failure, uint8_t operation);
+bool authenticationclientRegisterApi(tunnel_t *t);
 
 bool authenticationclientSendAuthenticate(tunnel_t *t);
 bool authenticationclientSendPing(tunnel_t *t);

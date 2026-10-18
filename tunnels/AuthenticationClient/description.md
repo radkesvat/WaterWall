@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -323,6 +323,45 @@ including same-ID credential changes, and retains new authoritative policy/times
 Cross-machine clock conversion is an estimate affected by transit/serialization delay and oscillator drift. Local
 countdowns retain elapsed age. Runtime host-suspend semantics remain unchanged; Linux CLOCK_MONOTONIC excludes suspension.
 All this state is RAM-only; no crash recovery, journal, outbox or guaranteed final delivery is provided.
+
+## External Status API
+
+APIServer exposes the registered read-only `status` operation on worker 0. Its request and response content type is
+`application/json`, encoded as UTF-8. Send `{}` for basic status or `{"include_accounting":true}` for aggregate accounting.
+Unknown or duplicate fields, non-Boolean options, malformed JSON and trailing input return a bounded operation error.
+
+Basic status separates `can_authenticate` and `blocking_reason` from transport `connected`/`authenticated` and
+`sync_phase`. A valid cache can admit new traffic during an outage; explicit credential rejection can block admission
+while `users_loaded` remains true. Blocking precedence is stopping, not started, continuity error, credential rejection,
+unusable cache/clock, then none. Queue/in-flight flags, unresolved batch sequence/count/size, remaining request/retry
+limits, applied/observed revisions and success/failure history are included. `retained_catchup_slots` counts storage slots,
+including settled entries, and is not an owed-user count.
+
+When captured usage or first-use observations await their next batch, `sync_phase` is `catchup_pending`.
+Capture, required refresh and in-flight operations retain their more specific phases. An `idle` client may still have
+local traffic waiting for its next periodic push.
+
+Success ages track validated authorization, installed table/clock and committed matching usage ACK separately. They survive
+reconnect. Unknown ages are `null`; monotonic zero is valid. The bounded latest failure uses a fixed code and operation,
+never server error text. Historical failure does not imply a current admission block. ACK age describes server-memory
+acceptance, not a durable disk save.
+
+`accounting_state` is `not_requested`, `available` or `unavailable`. Only an available requested sample includes
+`locally_unacknowledged_upload_bytes`, `locally_unacknowledged_download_bytes`, `usage_user_count`,
+`first_use_observation_count`, `accounting_lower_bound`, `sampling_started_ms` and `sampling_finished_ms`. A lost ACK may mean
+the server has already applied some locally unacknowledged usage. Every unsigned 64-bit value is a decimal JSON string.
+No tokens, epoch, raw batches, account identifiers, names, passwords, hashes or IP lists are returned.
+
+Accounting merges active-minus-baseline usage, retained catch-up debt and immutable pending batches by durable ID, taking
+overlapping maxima instead of double-counting. Later traffic after the immutable batch is included; retained-only entries
+remain represented. First-use counts use explicit unacknowledged observation state and retained obligations, rather than
+assuming any batch timestamp is unacknowledged. Exhausted counters and aggregate overflow set `accounting_lower_bound`,
+including when the represented amount is zero.
+
+Sampling uses coherent per-user copies over the reported monotonic interval; traffic continues between samples. It pins
+the tables, preflights temporary storage against the handler reservation and performs bounded linear scan/radix-merge
+work with deadline checks. Insufficient allowance or elapsed deadline preserves basic status and returns accounting as
+`unavailable`. Queries never modify counters, baselines, observations, batches, retry state or synchronization scheduling.
 
 ## Internal API
 

@@ -16,6 +16,9 @@ void authenticationclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         LOGD("AuthenticationClient: downstream transport finished; reconnect=%s", boolToTrueFalse(should_reconnect));
     }
 
+    if (should_reconnect)
+        authenticationclientRecordFailure(t, kAuthenticationClientFailureTransportClosed, 0);
+
     authenticationclientCloseControlLine(t, l, false);
 
     if (LIKELY(should_reconnect))

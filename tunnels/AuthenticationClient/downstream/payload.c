@@ -19,6 +19,7 @@ void authenticationclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
         if (! authenticationStreamPushNested(&ls->read_stream, buf, max_message))
         {
             lineReuseBuffer(l, buf);
+            authenticationclientRecordFailure(t, kAuthenticationClientFailureInvalidResponse, 0);
             authenticationclientRecoverControlLine(t, l, true);
         }
         return;

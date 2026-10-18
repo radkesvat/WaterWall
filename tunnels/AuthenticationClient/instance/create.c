@@ -147,5 +147,11 @@ tunnel_t *authenticationclientTunnelCreate(node_t *node)
     }
     ts->users = users;
 
+    if (! authenticationclientRegisterApi(t))
+    {
+        authenticationclientTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+
     return t;
 }

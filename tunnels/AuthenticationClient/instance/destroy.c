@@ -1,3 +1,4 @@
+#include "api/node_api.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -17,6 +18,8 @@ void authenticationclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t
 {
     discard                        context;
     authenticationclient_tstate_t *ts = tunnelGetState(t);
+
+    nodeApiUnregister(t);
 
     memoryFree(ts->pending_requests);
     cJSON_free(ts->pending_batch);

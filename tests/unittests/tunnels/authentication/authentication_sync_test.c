@@ -1,6 +1,7 @@
 /* CTest: waterwall.authentication_sync_unit
  * Actual client/server framing, mutation and ACKs with selected deliveries lost. */
 #include "AuthenticationClient/structure.h"
+#include "api/node_api.h"
 #include "authentication_sync_peer.h"
 #include "loggers/network_logger.h"
 #include "test_assert.h"
@@ -46,6 +47,7 @@ static unsigned                   last_response;
 static int                        raw_response[2];
 static char                       raw_body[2][128];
 static bool                       refuse_snapshot;
+static void                       requireSyncPhase(const char *expected);
 bool __real_usersSnapshotAccounting(const users_t *, user_accounting_snapshot_t **, size_t *);
 bool __wrap_usersSnapshotAccounting(const users_t *users, user_accounting_snapshot_t **entries, size_t *count);
 bool __wrap_usersSnapshotAccounting(const users_t *users, user_accounting_snapshot_t **entries, size_t *count)
@@ -1169,6 +1171,7 @@ static void testConcurrentAndSubsets(void)
     setup(4097);
     start(0);
     require(authenticationclientIsReady(clients[0]), "large table pull failed");
+    require(authenticationclientRegisterApi(clients[0]), "catch-up status registration failed");
     disconnect(0);
     for (size_t i = 0; i < usersCount(state(0)->users); ++i)
         discard userAccountTraffic(usersGetAt(state(0)->users, i), 1, 0, 0, NULL);
@@ -1179,10 +1182,12 @@ static void testConcurrentAndSubsets(void)
     deliverHeldRequest();
     require(state(0)->catchup_entries_count == 4097 && state(0)->progress_timer != NULL && pushes == 0,
             "reconnect failed to capture progress through initial refresh or did not yield");
+    requireSyncPhase("catchup_pending");
     refuse_snapshot = true;
     pump(1);
     require(! refuse_snapshot && pushes == 0 && state(0)->progress_timer != NULL && local(0, true) == 0,
             "snapshot refusal lost catch-up progress trigger or advanced baseline");
+    requireSyncPhase("catchup_pending");
     hold_push = true;
     pump(1);
     require(held_request != NULL && state(0)->pending_entries_count == 4096, "bounded catch-up batch not held");
@@ -1209,7 +1214,12 @@ static void testConcurrentAndSubsets(void)
     require(usersLookupByIdentifier(state(0)->users, 42)->client_time.observation_acked &&
                 ! usersLookupByIdentifier(state(0)->users, 42 + 4096)->client_time.observation_acked,
             "ACK cleared an observation outside its bounded snapshot");
+    requireSyncPhase("refresh_required");
     pump(1); /* required post-ACK refresh */
+    require(state(0)->catchup_entries_count == 4097 && state(0)->catchup_entries[0].delta.u == 0 &&
+                state(0)->catchup_entries[0].first_usage_at_ms == 0,
+            "partial ACK did not retain settled slots beside pending catch-up");
+    requireSyncPhase("catchup_pending");
     discard userAccountTraffic(usersLookupByIdentifier(state(0)->users, 42), 100, 0, 0, NULL);
     pump(1); /* remaining captured user, despite continuing hot-account traffic */
     require(authTestPeerSequence(server, 0) == 2 && state(0)->pending_batch == NULL &&
@@ -1222,6 +1232,7 @@ static void testConcurrentAndSubsets(void)
     require(authTestPeerStats(server, 42 + 4096).traffic.u == 2, "later captured user starved");
     pump(10);
     require(authTestPeerSequence(server, 0) == 2, "catch-up chased post-cut traffic indefinitely");
+    requireSyncPhase("idle");
     teardown();
 }
 static void testBatchConstructionRefusal(void)
@@ -1265,6 +1276,12 @@ static void testCachedAdmissionAndRejection(void)
     pump(10);
     require(state(0)->auth_rejected && ! authenticationclientCanAuthenticate(clients[0]),
             "explicit rejection not latched");
+    authenticationclient_status_t rejection_status;
+    authenticationclientStatusSnapshot(clients[0], false, 0, 0, &rejection_status);
+    require(rejection_status.users_loaded && ! rejection_status.can_authenticate &&
+                rejection_status.blocking_reason == kAuthenticationClientBlockCredentialRejected &&
+                rejection_status.last_failure == kAuthenticationClientFailureCredentialRejected,
+            "status lost rejection history or conflated it with cache presence");
     require(! authenticationclientGetUserByPassword(clients[0], "account-0", &handle) && ! userHandleIsValid(&handle),
             "lookup bypassed sticky rejection");
     userHandleSet(&handle, state(0)->users_generation, 42);
@@ -1293,9 +1310,13 @@ static void testCachedAdmissionAndRejection(void)
     number = htonl(sizeof(denial) - 1);
     memoryCopy(sbufGetMutablePtr(stale) + 25, &number, 4);
     memoryCopy(sbufGetMutablePtr(stale) + 29, denial, sizeof(denial) - 1);
+    const authenticationclient_failure_t failure_before_stale      = state(0)->last_failure;
+    const uint64_t                       failure_time_before_stale = state(0)->last_failure_ms;
     tunnelDownStreamPayload(clients[0], state(0)->control_line, stale);
     require(authenticationclientCanAuthenticate(clients[0]) && ! state(0)->auth_rejected,
             "stale rejection toggled availability");
+    require(state(0)->last_failure == failure_before_stale && state(0)->last_failure_ms == failure_time_before_stale,
+            "stale rejection rewrote status history");
     authTestPeerExpireSessions(server);
     discard authenticationclientSendPing(clients[0]);
     require(! state(0)->auth_rejected && authenticationclientCanAuthenticate(clients[0]),
@@ -1410,6 +1431,7 @@ static void testCatchupInterruptionAndCaptureRefusal(void)
 {
     setup(1);
     start(0);
+    require(authenticationclientRegisterApi(clients[0]), "capture-refusal status registration failed");
     disconnect(0);
     traffic(0, 1);
     pump(10);
@@ -1428,12 +1450,14 @@ static void testCatchupInterruptionAndCaptureRefusal(void)
     require(! refuse_snapshot && state(0)->catchup_capture_needed && state(0)->progress_timer != NULL &&
                 local(0, false) == 4 && local(0, true) == 1,
             "capture refusal lost evidence or independent retry");
+    requireSyncPhase("capture_pending");
     pump(1);
     pump(1);
     require(authTestPeerStats(server, 42).traffic.u == 4 && authTestPeerSequence(server, 0) == 2 &&
                 state(0)->pending_batch == NULL &&
                 usersLookupByIdentifier(state(0)->users, 42)->client_time.first_report_ms == observation,
             "interrupted catch-up did not automatically settle exactly once");
+    requireSyncPhase("idle");
     teardown();
 }
 
@@ -1593,17 +1617,50 @@ static void testOfflineLocalQuotas(void)
 typedef struct refresh_traffic_context_s
 {
     user_handle_t handle;
-    atomic_bool   started;
+    atomic_bool   started, stop, finished;
+    atomic_uint   produced;
 } refresh_traffic_context_t;
 
 static void *trafficDuringRefresh(void *argument)
 {
     refresh_traffic_context_t *context = argument;
     atomic_store(&context->started, true);
-    for (unsigned i = 0; i < 1000; ++i)
+    for (unsigned i = 0; i < 1000000 && ! atomic_load(&context->stop); ++i)
+    {
         require(! authenticationclientUserAccountTraffic(clients[0], &context->handle, 1, 0, 0),
                 "concurrent traffic closed");
+        atomic_fetch_add(&context->produced, 1);
+    }
+    atomic_store(&context->finished, true);
     return NULL;
+}
+
+static void sampleTrafficDuringRefresh(refresh_traffic_context_t *context)
+{
+    const unsigned                 before         = atomic_load(&context->produced);
+    authenticationclient_tstate_t *ts             = state(0);
+    const uint64_t                 sequence       = ts->next_batch_sequence;
+    const bool                     pull_in_flight = ts->pull_in_flight, pull_required = ts->pull_required;
+    const bool push_requested = ts->push_requested, observation_requested = ts->first_usage_push_requested;
+    authenticationclient_status_t sample;
+    authenticationclientStatusSnapshot(
+        clients[0], true, 1024 * 1024, authenticationclientLocalTimeMS() + 1000, &sample);
+    const unsigned after = atomic_load(&context->produced);
+    require(! atomic_load(&context->finished), "traffic exhausted its finite limit before concurrent status sample");
+    /* A traffic counter commit precedes its produced notification, so one
+     * currently committing byte may be absent from the upper notification. */
+    require(sample.accounting_state == kAuthenticationClientAccountingAvailable && sample.can_authenticate &&
+                sample.locally_unacknowledged_upload_bytes >= before &&
+                sample.locally_unacknowledged_upload_bytes <= (uint64_t) after + 1 &&
+                sample.locally_unacknowledged_download_bytes == 0 && ! sample.accounting_lower_bound &&
+                sample.first_use_observation_count == 0 && sample.usage_user_count <= 1 &&
+                sample.sampling_started_ms <= sample.sampling_finished_ms,
+            "concurrent status debt escaped sampling bounds or observation state");
+    require(ts->next_batch_sequence == sequence && ts->pending_batch == NULL && ts->pending_entries_count == 0 &&
+                ts->pull_in_flight == pull_in_flight && ts->pull_required == pull_required &&
+                ts->push_requested == push_requested && ts->first_usage_push_requested == observation_requested &&
+                local(0, true) == 1,
+            "concurrent status changed baseline, batch, observation or synchronization state");
 }
 
 static void testTrafficDuringRefresh(void)
@@ -1619,24 +1676,33 @@ static void testTrafficDuringRefresh(void)
             "concurrent reservation");
     refresh_traffic_context_t context = {.handle = handle};
     atomic_init(&context.started, false);
+    atomic_init(&context.stop, false);
+    atomic_init(&context.finished, false);
+    atomic_init(&context.produced, 0);
     hold_pull = true;
     authenticationclientRequestPull(clients[0]);
     pthread_t thread;
     require(pthread_create(&thread, NULL, trafficDuringRefresh, &context) == 0, "refresh traffic thread");
-    while (! atomic_load(&context.started))
+    for (unsigned attempts = 0; attempts < 1000 && atomic_load(&context.produced) == 0; ++attempts)
         wwSleepMS(1);
+    require(atomic_load(&context.started) && atomic_load(&context.produced) != 0,
+            "refresh producer failed to start within its bounded wait");
+    sampleTrafficDuringRefresh(&context);
     deliverHeldRequest();
+    sampleTrafficDuringRefresh(&context);
     for (unsigned i = 0; i < 4; ++i)
         authenticationclientRequestPull(clients[0]);
+    atomic_store(&context.stop, true);
     pthread_join(thread, NULL);
-    require(local(0, false) == 1001 && local(0, true) == 1, "refresh lost concurrently produced deltas");
+    const uint64_t total = 1 + (uint64_t) atomic_load(&context.produced);
+    require(local(0, false) == total && local(0, true) == 1, "refresh/status lost concurrently produced deltas");
     user = usersLookupByIdentifier(state(0)->users, 42);
     require(user->client_time.first_report_ms == origin && user->client_time.observation_acked &&
                 user->runtime.active_cons_out == 1,
             "refresh lost observation/ACK state or reservation during traffic");
     authenticationclientUserReleaseConnection(clients[0], &handle, NULL);
     authenticationclientRequestPush(clients[0]);
-    require(authTestPeerStats(server, 42).traffic.u == 1001, "concurrent refresh/report reconciliation");
+    require(authTestPeerStats(server, 42).traffic.u == total, "concurrent refresh/status/report reconciliation");
     teardown();
 }
 
@@ -1698,11 +1764,213 @@ static void testOfflineFirstUseDeadline(void)
     teardown();
 }
 
+static cJSON *statusBody(const char *body, size_t allowance, enum api_result_e expected)
+{
+    const node_api_operation_t *operation = nodeApiFind(clients[0], "status");
+    require(operation != NULL && operation->read_only && operation->execution == kNodeApiSpecifiedWorker &&
+                operation->wid == 0,
+            "status descriptor contract");
+    sbuf_t *request = bufferpoolGetBestFit(pools[0], (uint32_t) strlen(body), 0);
+    sbufSetLength(request, (uint32_t) strlen(body));
+    memoryCopy(sbufGetMutablePtr(request), body, strlen(body));
+    node_api_call_context_t context = {.operation                = "status",
+                                       .principal                = "unit",
+                                       .max_response_body_size   = 4096,
+                                       .working_memory_allowance = allowance};
+    api_result_t            result  = operation->handler(clients[0], request, &context);
+    require(result.result_code == expected && result.buffer != NULL, "status result contract");
+    cJSON *json = cJSON_ParseWithLength((const char *) sbufGetRawPtr(result.buffer), sbufGetLength(result.buffer));
+    require(cJSON_IsObject(json), "status did not return JSON");
+    bufferpoolReuseBuffer(pools[0], result.buffer);
+    return json;
+}
+
+static void requireSyncPhase(const char *expected)
+{
+    cJSON       *status = statusBody("{}", 1024 * 1024, kApiResultOk);
+    const cJSON *phase  = cJSON_GetObjectItemCaseSensitive(status, "sync_phase");
+    require(cJSON_IsString(phase) && strcmp(phase->valuestring, expected) == 0,
+            "basic status synchronization phase does not match pending work");
+    require(strcmp(cJSON_GetObjectItemCaseSensitive(status, "accounting_state")->valuestring, "not_requested") == 0,
+            "basic phase lookup requested detailed accounting");
+    cJSON_Delete(status);
+}
+
+static void testStatusSnapshot(void)
+{
+    setup(1);
+    hold_pull = true;
+    start(0);
+    require(authenticationclientRegisterApi(clients[0]), "status registration failed");
+    authenticationclient_status_t snapshot;
+    authenticationclientStatusSnapshot(clients[0], false, 0, 0, &snapshot);
+    require(snapshot.authenticated && snapshot.pull_in_flight && ! snapshot.can_authenticate &&
+                snapshot.blocking_reason == kAuthenticationClientBlockCacheClock && snapshot.auth_success_valid &&
+                ! snapshot.pull_success_valid && ! snapshot.ack_success_valid &&
+                snapshot.accounting_state == kAuthenticationClientAccountingNotRequested,
+            "status conflated cache, connection and required refresh");
+    deliverHeldRequest();
+    require(state(0)->last_pull_success_valid && ! state(0)->last_ack_success_valid,
+            "pull success timestamp did not track commit");
+    disconnect(0);
+    user_handle_t handle;
+    userHandleSet(&handle, state(0)->users_generation, 42);
+    require(! authenticationclientUserAccountTraffic(clients[0], &handle, 20, 30, 100000), "offline status traffic");
+    authenticationclient_tstate_t *ts = state(0);
+    ts->pending_entries               = memoryAllocate(sizeof(*ts->pending_entries));
+    ts->pending_entries_count         = 1;
+    ts->pending_entries[0]            = (authenticationclient_accounting_entry_t) {
+                   .id = 42, .totals = {.u = 10, .d = 20}, .delta = {.u = 10, .d = 20}, .first_usage_at_ms = 1};
+    ts->pending_batch         = stringDuplicate("{\"private_batch\":true}");
+    ts->pending_batch_length  = (uint32_t) strlen(ts->pending_batch);
+    ts->catchup_entries       = memoryCalloc(3, sizeof(*ts->catchup_entries));
+    ts->catchup_entries_count = 3;
+    ts->catchup_entries[0] =
+        (authenticationclient_accounting_entry_t) {.id = 42, .delta = {.u = 15, .d = 25}, .first_usage_at_ms = 1};
+    ts->catchup_entries[1] =
+        (authenticationclient_accounting_entry_t) {.id = 99, .delta = {.u = 3, .d = 4}, .first_usage_at_ms = 1};
+    ts->catchup_entries[2].id = 100; /* Settled retained slot must not inflate owed-user count. */
+    const bool                                    push_requested = ts->push_requested;
+    const uint64_t                                sequence       = ts->next_batch_sequence;
+    const authenticationclient_accounting_entry_t pending        = ts->pending_entries[0];
+    authenticationclientStatusSnapshot(clients[0], true, 1024 * 1024, 0, &snapshot);
+    require(snapshot.can_authenticate && ! snapshot.connected && snapshot.unresolved_batch &&
+                snapshot.accounting_state == kAuthenticationClientAccountingAvailable &&
+                snapshot.locally_unacknowledged_upload_bytes == 23 &&
+                snapshot.locally_unacknowledged_download_bytes == 34 && snapshot.usage_user_count == 2 &&
+                snapshot.first_use_observation_count == 2 && ! snapshot.accounting_lower_bound,
+            "status duplicated overlapping debt or lost retained-only debt");
+    for (unsigned i = 0; i < 3; ++i)
+    {
+        cJSON       *json   = statusBody("{\"include_accounting\":true}", 1024 * 1024, kApiResultOk);
+        const cJSON *amount = cJSON_GetObjectItemCaseSensitive(json, "locally_unacknowledged_upload_bytes");
+        require(cJSON_IsString(amount) && strcmp(amount->valuestring, "23") == 0 &&
+                    cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(json, "can_authenticate")) &&
+                    cJSON_GetObjectItemCaseSensitive(json, "users") == NULL &&
+                    cJSON_GetObjectItemCaseSensitive(json, "accounting_epoch") == NULL,
+                "status amounts were inexact or private data escaped");
+        char *text = cJSON_PrintUnformatted(json);
+        require(strstr(text, "account-0") == NULL && strstr(text, "private_batch") == NULL &&
+                    strstr(text, "secret") == NULL,
+                "status leaked account or protocol contents");
+        cJSON_free(text);
+        cJSON_Delete(json);
+    }
+    require(ts->push_requested == push_requested && ts->next_batch_sequence == sequence &&
+                memcmp(&pending, ts->pending_entries, sizeof(pending)) == 0 && local(0, false) == 20 &&
+                local(0, true) == 0,
+            "status changed synchronization or baseline state");
+    user_stat_t rebased = {.traffic = {.u = 20, .d = 30}};
+    require(usersSetUserStats(ts->sync_baseline_users, usersLookupByIdentifier(ts->sync_baseline_users, 42), &rebased),
+            "status rebased-baseline setup");
+    authenticationclientStatusSnapshot(clients[0], true, 1024 * 1024, 0, &snapshot);
+    require(snapshot.locally_unacknowledged_upload_bytes == 23 && snapshot.locally_unacknowledged_download_bytes == 34,
+            "status lost immutable pending debt plus later traffic when visible delta disappeared");
+    authenticationclientStatusSnapshot(clients[0], true, 0, 0, &snapshot);
+    require(snapshot.accounting_state == kAuthenticationClientAccountingUnavailable && snapshot.can_authenticate,
+            "accounting budget refusal removed basic availability");
+    authenticationclientStatusSnapshot(clients[0], true, 1024 * 1024, authenticationclientLocalTimeMS(), &snapshot);
+    require(snapshot.accounting_state == kAuthenticationClientAccountingUnavailable,
+            "expired accounting scan did not refuse work");
+
+    /* A pending timestamp alone is not an outstanding first-use observation. */
+    user_t *active = usersLookupByIdentifier(ts->users, 42);
+    userAcknowledgeObservation(active, active->client_time.first_report_ms);
+    ts->catchup_entries[0].first_usage_at_ms = 0;
+    ts->catchup_entries[1].first_usage_at_ms = 0;
+    ts->catchup_entries[1].delta.u           = UINT64_MAX;
+    authenticationclientStatusSnapshot(clients[0], true, 1024 * 1024, 0, &snapshot);
+    require(snapshot.first_use_observation_count == 0 && snapshot.accounting_lower_bound &&
+                snapshot.locally_unacknowledged_upload_bytes == UINT64_MAX,
+            "status lost saturation or invented pending observations");
+    user_stat_t stats = {0};
+    stats.traffic.u   = UINT64_MAX;
+    require(
+        usersSetUserStats(ts->users, active, &stats) &&
+            usersSetUserStats(ts->sync_baseline_users, usersLookupByIdentifier(ts->sync_baseline_users, 42), &stats),
+        "status saturated-counter setup");
+    ts->pending_entries[0].delta  = (user_ud_t) {0};
+    ts->pending_entries[0].totals = stats.traffic;
+    ts->catchup_entries[0].delta = ts->catchup_entries[1].delta = (user_ud_t) {0};
+    authenticationclientStatusSnapshot(clients[0], true, 1024 * 1024, 0, &snapshot);
+    require(snapshot.locally_unacknowledged_upload_bytes == 0 && snapshot.accounting_lower_bound,
+            "exhausted counters reported false exact zero debt");
+    ts->auth_rejected = ts->continuity_error = ts->stopping = true;
+    authenticationclientStatusSnapshot(clients[0], false, 0, 0, &snapshot);
+    require(snapshot.blocking_reason == kAuthenticationClientBlockStopping, "status blocking precedence stopping");
+    ts->stopping = false;
+    ts->started  = false;
+    authenticationclientStatusSnapshot(clients[0], false, 0, 0, &snapshot);
+    require(snapshot.blocking_reason == kAuthenticationClientBlockNotStarted, "status blocking precedence startup");
+    ts->started = true;
+    authenticationclientStatusSnapshot(clients[0], false, 0, 0, &snapshot);
+    require(snapshot.blocking_reason == kAuthenticationClientBlockContinuity, "status blocking precedence continuity");
+    ts->continuity_error = false;
+    authenticationclientStatusSnapshot(clients[0], false, 0, 0, &snapshot);
+    require(snapshot.blocking_reason == kAuthenticationClientBlockCredentialRejected,
+            "status blocking precedence credential rejection");
+    ts->auth_rejected           = false;
+    ts->last_auth_success_ms    = 0;
+    ts->last_auth_success_valid = true;
+    authenticationclientStatusSnapshot(clients[0], false, 0, 0, &snapshot);
+    require(snapshot.auth_success_valid && snapshot.auth_success_age_ms == authenticationclientLocalTimeMS(),
+            "monotonic zero success became unknown");
+    const char *invalid[] = {"",
+                             "[]",
+                             "{} trailing",
+                             "{\"unknown\":true}",
+                             "{\"include_accounting\":1}",
+                             "{\"include_accounting\":true,\"include_accounting\":false}",
+                             "{\"include_accounting\\u0000\":true}"};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
+        cJSON_Delete(statusBody(invalid[i], 1024 * 1024, kApiResultError));
+    cJSON *basic = statusBody("{}", 1024 * 1024, kApiResultOk);
+    require(strcmp(cJSON_GetObjectItemCaseSensitive(basic, "accounting_state")->valuestring, "not_requested") == 0 &&
+                cJSON_GetObjectItemCaseSensitive(basic, "locally_unacknowledged_upload_bytes") == NULL,
+            "basic snapshot scanned or exposed detailed accounting");
+    cJSON_Delete(basic);
+    teardown();
+}
+
+static void testStatusTimeoutHistory(void)
+{
+    setup(1);
+    hold_pull = true;
+    start(0);
+    atomicAddU64(&now_us, 1001000);
+    wloopUpdateTime(loops[0]);
+    require(authenticationclientCloseTimedOutControlLine(clients[0]), "status timeout trigger failed");
+    authenticationclient_status_t snapshot;
+    authenticationclientStatusSnapshot(clients[0], false, 0, 0, &snapshot);
+    require(snapshot.last_failure == kAuthenticationClientFailureTimeout &&
+                snapshot.last_failure_operation == kAuthenticationClientRequestTypeGetAllUsers &&
+                snapshot.auth_success_valid && ! snapshot.pull_success_valid,
+            "transport cleanup overwrote timeout or fabricated pull success");
+    teardown();
+
+    setup(1);
+    start(0);
+    traffic(0, 7);
+    authenticationclientRequestPush(clients[0]);
+    authenticationclientStatusSnapshot(clients[0], false, 0, 0, &snapshot);
+    require(snapshot.ack_success_valid && snapshot.pull_success_valid && ! snapshot.unresolved_batch,
+            "status did not record committed matching ACK");
+    const uint64_t ack_time = state(0)->last_ack_success_ms;
+    disconnect(0);
+    atomicAddU64(&now_us, 7000);
+    authenticationclientStatusSnapshot(clients[0], false, 0, 0, &snapshot);
+    require(snapshot.ack_success_valid && snapshot.ack_success_age_ms == authenticationclientLocalTimeMS() - ack_time,
+            "disconnect discarded ACK success history");
+    teardown();
+}
+
 int main(void)
 {
     testCaseSet("authentication sync loss and continuity");
     require(createNetworkLogger(NULL, false) != NULL, "logger failed");
     require(globalstateInitializeSecureRandom() && wCryptoGlobalInit() == kWCryptoOk, "crypto failed");
+    testStatusSnapshot();
+    testStatusTimeoutHistory();
     testOfflineFirstUseDeadline();
 #if defined(AUTHENTICATION_SYNC_HAVE_CONTROLLER)
     testOfflineControllerExpiry();

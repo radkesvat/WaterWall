@@ -519,6 +519,7 @@ bool authenticationclientCloseTimedOutControlLine(tunnel_t *t)
          (unsigned int) pending.correlation_id,
          now_ms - pending.created_at_ms);
 
+    authenticationclientRecordFailure(t, kAuthenticationClientFailureTimeout, pending.request_type);
     authenticationclientRecoverControlLine(t, line, true);
     lineUnref(line);
     return true;
@@ -931,7 +932,13 @@ static bool authenticationclientAcknowledgeUsageBatch(tunnel_t *t, const uint8_t
         ++ts->next_batch_sequence;
     ts->pull_requested = true;
     ts->pull_required  = true;
+    ts->last_ack_success_ms    = authenticationclientLocalTimeMS();
+    ts->last_ack_success_valid = true;
+    const bool exhausted       = ts->continuity_error;
     mutexUnlock(&ts->control_mutex);
+    if (exhausted)
+        authenticationclientRecordFailure(
+            t, kAuthenticationClientFailureContinuity, kAuthenticationClientRequestTypePushUserStats);
     return true;
 }
 
@@ -1027,6 +1034,8 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
     ts->first_usage_push_requested = false;
     ts->first_usage_push_deferred  = false;
     ts->pull_required              = false;
+    ts->last_pull_success_ms       = authenticationclientLocalTimeMS();
+    ts->last_pull_success_valid    = true;
     mutexUnlock(&ts->control_mutex);
 
     usersDestroy(old_users);
@@ -1099,8 +1108,10 @@ static void authenticationclientHandleError(tunnel_t *t, line_t *l, uint8_t requ
     authenticationclient_tstate_t *ts = tunnelGetState(t);
     const bool                     continuity =
         length == sizeof("accounting-continuity-lost") - 1 && memoryEqual(data, "accounting-continuity-lost", length);
-    if (request_type == kAuthenticationClientRequestTypeAuthenticate && length == sizeof("authentication-failed") - 1 &&
-        memoryEqual(data, "authentication-failed", length))
+    const bool credential_rejected = request_type == kAuthenticationClientRequestTypeAuthenticate &&
+                                     length == sizeof("authentication-failed") - 1 &&
+                                     memoryEqual(data, "authentication-failed", length);
+    if (credential_rejected)
     {
         mutexLock(&ts->control_mutex);
         ts->auth_rejected = true;
@@ -1108,6 +1119,11 @@ static void authenticationclientHandleError(tunnel_t *t, line_t *l, uint8_t requ
     }
     const bool authentication =
         length == sizeof("authentication-required") - 1 && memoryEqual(data, "authentication-required", length);
+    authenticationclientRecordFailure(t,
+                                      continuity            ? kAuthenticationClientFailureContinuity
+                                      : credential_rejected ? kAuthenticationClientFailureCredentialRejected
+                                                            : kAuthenticationClientFailureRemoteError,
+                                      request_type);
     LOGW("AuthenticationClient: request %u failed: %.*s", request_type, (int) min(length, 128U), (const char *) data);
     if ((continuity || request_type == kAuthenticationClientRequestTypePushUserStats) && ! authentication)
     {
@@ -1123,6 +1139,7 @@ static void authenticationclientHandleError(tunnel_t *t, line_t *l, uint8_t requ
         mutexUnlock(&ts->control_mutex);
         if (stopped)
         {
+            authenticationclientRecordFailure(t, kAuthenticationClientFailureContinuity, request_type);
             LOGE("AuthenticationClient: accounting continuity error; retained batch requires reconciliation");
             authenticationclientCloseControlLine(t, l, true);
             return;
@@ -1165,6 +1182,7 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
         if (response_type != kAuthenticationClientResponseTypeSession || data_len != 128 ||
             ! asciiHexDecodeBytes(data, 128, decoded, sizeof(decoded)))
         {
+            authenticationclientRecordFailure(t, kAuthenticationClientFailureInvalidResponse, request_type);
             authenticationclientRecoverControlLine(t, l, true);
             return;
         }
@@ -1173,6 +1191,7 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
         {
             ts->continuity_error = true;
             mutexUnlock(&ts->control_mutex);
+            authenticationclientRecordFailure(t, kAuthenticationClientFailureContinuity, request_type);
             authenticationclientCloseControlLine(t, l, true);
             return;
         }
@@ -1187,6 +1206,8 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
         ts->catchup_capture_needed = true;
         ts->pull_requested = true;
         ts->pull_required  = true;
+        ts->last_auth_success_ms    = authenticationclientLocalTimeMS();
+        ts->last_auth_success_valid = true;
         mutexUnlock(&ts->control_mutex);
         authenticationclientResumeSync(t);
         return;
@@ -1196,6 +1217,7 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
             ! authenticationclientReplaceUsersFromJson(
                 t, data, data_len, config_revision, stats_revision, generation, received_at_ms))
         {
+            authenticationclientRecordFailure(t, kAuthenticationClientFailureInvalidResponse, request_type);
             authenticationclientRecoverControlLine(t, l, true);
             return;
         }
@@ -1204,6 +1226,7 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
         if (response_type != kAuthenticationClientResponseTypeOk ||
             ! authenticationclientAcknowledgeUsageBatch(t, data, data_len))
         {
+            authenticationclientRecordFailure(t, kAuthenticationClientFailureInvalidResponse, request_type);
             authenticationclientRecoverControlLine(t, l, true);
             return;
         }
@@ -1211,6 +1234,7 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
     case kAuthenticationClientRequestTypePing:
         if (response_type != kAuthenticationClientResponseTypePong)
         {
+            authenticationclientRecordFailure(t, kAuthenticationClientFailureInvalidResponse, request_type);
             authenticationclientRecoverControlLine(t, l, true);
             return;
         }
@@ -1292,12 +1316,14 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
 
         if (UNLIKELY(message_body_len < kAuthenticationClientRevisionHeaderSize))
         {
+            authenticationclientRecordFailure(t, kAuthenticationClientFailureInvalidResponse, 0);
             authenticationclientRecoverControlLine(t, l, true);
             return false;
         }
         if (UNLIKELY(message_body_len >
                      kAuthenticationClientMaxResponsePayload + kAuthenticationClientRevisionHeaderSize))
         {
+            authenticationclientRecordFailure(t, kAuthenticationClientFailureInvalidResponse, 0);
             authenticationclientRecoverControlLine(t, l, true);
             return false;
         }
@@ -1323,6 +1349,7 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
         if (UNLIKELY(! authenticationclientValidateResponsePayload(payload)))
         {
             lineReuseBuffer(l, payload);
+            authenticationclientRecordFailure(t, kAuthenticationClientFailureInvalidResponse, 0);
             authenticationclientRecoverControlLine(t, l, true);
             return false;
         }
