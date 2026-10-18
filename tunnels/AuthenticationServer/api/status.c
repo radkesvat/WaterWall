@@ -5,47 +5,47 @@
 static void status(authenticationserver_json_writer_t *w, const void *value)
 {
     const authenticationserver_status_t *s = value;
-#define TEXT(s) authenticationserverJsonText(w, s)
+#define AUTH_JSON_TEXT(s) authenticationserverJsonText(w, s)
 #define NUMBER(key, value)                                                                                             \
     do                                                                                                                 \
     {                                                                                                                  \
-        TEXT("\"" key "\":");                                                                                          \
+        AUTH_JSON_TEXT("\"" key "\":");                                                                                \
         authenticationserverJsonU64(w, value);                                                                         \
     } while (0)
-    TEXT("{\"database_loaded\":");
-    TEXT(s->database_loaded ? "true" : "false");
-    TEXT(",");
+    AUTH_JSON_TEXT("{\"database_loaded\":");
+    AUTH_JSON_TEXT(s->database_loaded ? "true" : "false");
+    AUTH_JSON_TEXT(",");
     NUMBER("user_count", s->user_count);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("configured_producer_count", s->configured_producer_count);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("session_record_count", s->session_record_count);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("config_revision", s->config_revision);
     char token[kAuthenticationServerEditTokenChars + 1];
     authenticationserverEditTokenFormat(s->instance_id, s->config_revision, token);
-    TEXT(",\"edit_token\":");
+    AUTH_JSON_TEXT(",\"edit_token\":");
     authenticationserverJsonString(w, token);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("stats_revision", s->stats_revision);
-    TEXT(",\"primary_save\":{\"last_result\":");
+    AUTH_JSON_TEXT(",\"primary_save\":{\"last_result\":");
     authenticationserverJsonString(w,
                                    s->primary_save_last_result == kAuthenticationServerSaveSuccess   ? "success"
                                    : s->primary_save_last_result == kAuthenticationServerSaveFailure ? "failure"
                                                                                                      : "not_attempted");
-    TEXT(",\"last_attempt_age_ms\":");
+    AUTH_JSON_TEXT(",\"last_attempt_age_ms\":");
     if (s->primary_save_last_attempt_valid)
         authenticationserverJsonU64(w, s->primary_save_last_attempt_age_ms);
     else
-        TEXT("null");
-    TEXT(",\"last_success_age_ms\":");
+        AUTH_JSON_TEXT("null");
+    AUTH_JSON_TEXT(",\"last_success_age_ms\":");
     if (s->primary_save_last_success_valid)
         authenticationserverJsonU64(w, s->primary_save_last_success_age_ms);
     else
-        TEXT("null");
-    TEXT("}}");
+        AUTH_JSON_TEXT("null");
+    AUTH_JSON_TEXT("}}");
 #undef NUMBER
-#undef TEXT
+#undef AUTH_JSON_TEXT
 }
 
 api_result_t authenticationserverApiStatus(tunnel_t *t, sbuf_t *message, const node_api_call_context_t *context)

@@ -48,48 +48,48 @@ static void endPage(authenticationserver_json_writer_t *w, const authentications
 
 static void summary(authenticationserver_json_writer_t *w, const user_public_summary_t *u)
 {
-#define TEXT(s) authenticationserverJsonText(w, s)
+#define AUTH_JSON_TEXT(s) authenticationserverJsonText(w, s)
 #define NUMBER(key, value)                                                                                             \
     do                                                                                                                 \
     {                                                                                                                  \
-        TEXT("\"" key "\":");                                                                                          \
+        AUTH_JSON_TEXT("\"" key "\":");                                                                                \
         authenticationserverJsonU64(w, value);                                                                         \
     } while (0)
-    TEXT("{");
+    AUTH_JSON_TEXT("{");
     NUMBER("id", u->id);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("gid", u->gid);
-    TEXT(",\"enabled\":");
-    TEXT(u->enabled ? "true" : "false");
-    TEXT(",\"name_preview\":");
+    AUTH_JSON_TEXT(",\"enabled\":");
+    AUTH_JSON_TEXT(u->enabled ? "true" : "false");
+    AUTH_JSON_TEXT(",\"name_preview\":");
     if (u->name_preview_state == kUserPublicNameInvalidEncoding)
-        TEXT("null");
+        AUTH_JSON_TEXT("null");
     else
         authenticationserverJsonString(w, u->name_preview);
-    TEXT(",\"name_preview_state\":");
+    AUTH_JSON_TEXT(",\"name_preview_state\":");
     authenticationserverJsonString(w,
                                    u->name_preview_state == kUserPublicNameComplete    ? "complete"
                                    : u->name_preview_state == kUserPublicNameTruncated ? "truncated"
                                                                                        : "invalid_encoding");
-    TEXT(",\"traffic_limit\":{");
+    AUTH_JSON_TEXT(",\"traffic_limit\":{");
     NUMBER("u", u->traffic_limit.u);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("d", u->traffic_limit.d);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("total", u->traffic_limit.total);
-    TEXT("},\"usage\":{");
+    AUTH_JSON_TEXT("},\"usage\":{");
     NUMBER("u", u->usage.u);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("d", u->usage.d);
-    TEXT("},\"time\":{");
+    AUTH_JSON_TEXT("},\"time\":{");
     NUMBER("expire_at_ms", u->expire_at_ms);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("expire_after_first_usage_ms", u->expire_after_first_usage_ms);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("first_usage_at_ms", u->first_usage_at_ms);
-    TEXT("}}");
+    AUTH_JSON_TEXT("}}");
 #undef NUMBER
-#undef TEXT
+#undef AUTH_JSON_TEXT
 }
 
 static void page(authenticationserver_json_writer_t *w, const void *value)

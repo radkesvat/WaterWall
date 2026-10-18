@@ -233,11 +233,11 @@ bool authenticationserverFlushResponses(tunnel_t *t, line_t *l, authenticationse
         discard fits;
         if (sbufGetAllocationCharge(chunk) > fit.allocation_charge)
         {
-            sbuf_t *small = bufferpoolGetBestFit(ls->pool, length, bufferpoolGetSmallBufferPadding(ls->pool));
-            sbufSetLength(small, length);
-            memoryCopy(sbufGetMutablePtr(small), sbufGetRawPtr(chunk), length);
+            sbuf_t *compact = bufferpoolGetBestFit(ls->pool, length, bufferpoolGetSmallBufferPadding(ls->pool));
+            sbufSetLength(compact, length);
+            memoryCopy(sbufGetMutablePtr(compact), sbufGetRawPtr(chunk), length);
             bufferpoolReuseBuffer(ls->pool, chunk);
-            chunk = small;
+            chunk = compact;
         }
         if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, chunk)))
         {

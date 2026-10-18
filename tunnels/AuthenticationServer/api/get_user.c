@@ -5,79 +5,79 @@ static void detail(authenticationserver_json_writer_t *w, const void *value)
 {
     const authenticationserver_user_view_t *view = value;
     const user_public_detail_t             *u    = &view->user;
-#define TEXT(s) authenticationserverJsonText(w, s)
+#define AUTH_JSON_TEXT(s) authenticationserverJsonText(w, s)
 #define NUMBER(key, value)                                                                                             \
     do                                                                                                                 \
     {                                                                                                                  \
-        TEXT("\"" key "\":");                                                                                          \
+        AUTH_JSON_TEXT("\"" key "\":");                                                                                \
         authenticationserverJsonU64(w, value);                                                                         \
     } while (0)
 #define STRING(key, value)                                                                                             \
     do                                                                                                                 \
     {                                                                                                                  \
-        TEXT("\"" key "\":");                                                                                          \
+        AUTH_JSON_TEXT("\"" key "\":");                                                                                \
         authenticationserverJsonString(w, value);                                                                      \
     } while (0)
-    TEXT("{");
+    AUTH_JSON_TEXT("{");
     NUMBER("config_revision", view->config_revision);
     char token[kAuthenticationServerEditTokenChars + 1];
     authenticationserverEditTokenFormat(view->instance_id, view->config_revision, token);
-    TEXT(",\"edit_token\":");
+    AUTH_JSON_TEXT(",\"edit_token\":");
     authenticationserverJsonString(w, token);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("stats_revision", view->stats_revision);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("accounting_time_ms", view->accounting_time_ms);
-    TEXT(",\"user\":{");
+    AUTH_JSON_TEXT(",\"user\":{");
     NUMBER("id", u->id);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("gid", u->gid);
-    TEXT(",\"enabled\":");
-    TEXT(u->enabled ? "true" : "false");
-    TEXT(",");
+    AUTH_JSON_TEXT(",\"enabled\":");
+    AUTH_JSON_TEXT(u->enabled ? "true" : "false");
+    AUTH_JSON_TEXT(",");
     STRING("name", u->name);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     STRING("email", u->email);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     STRING("notes", u->notes);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     STRING("wireguard_allowed_ips", u->wireguard_allowed_ips);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("record_stat_interval_ms", u->record_stat_interval_ms);
-    TEXT(",\"limit\":{\"traffic\":{");
+    AUTH_JSON_TEXT(",\"limit\":{\"traffic\":{");
     NUMBER("u", u->limit.traffic.u);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("d", u->limit.traffic.d);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("total", u->limit.traffic.total);
-    TEXT("},\"bandwidth\":{");
+    AUTH_JSON_TEXT("},\"bandwidth\":{");
     NUMBER("u", u->limit.bandwidth.u);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("d", u->limit.bandwidth.d);
-    TEXT("},");
+    AUTH_JSON_TEXT("},");
     NUMBER("ips", u->limit.ips);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("devices", u->limit.devices);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("cons_in", u->limit.cons_in);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("cons_out", u->limit.cons_out);
-    TEXT("},\"time\":{");
+    AUTH_JSON_TEXT("},\"time\":{");
     NUMBER("created_at_ms", u->timeinfo.created_at_ms);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("expire_at_ms", u->timeinfo.expire_at_ms);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("expire_after_first_usage_ms", u->timeinfo.expire_after_first_usage_ms);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("first_usage_at_ms", u->timeinfo.first_usage_at_ms);
-    TEXT("},\"usage\":{");
+    AUTH_JSON_TEXT("},\"usage\":{");
     NUMBER("u", u->usage.u);
-    TEXT(",");
+    AUTH_JSON_TEXT(",");
     NUMBER("d", u->usage.d);
-    TEXT("}}}");
+    AUTH_JSON_TEXT("}}}");
 #undef STRING
 #undef NUMBER
-#undef TEXT
+#undef AUTH_JSON_TEXT
 }
 
 api_result_t authenticationserverApiGetUser(tunnel_t *t, sbuf_t *message, const node_api_call_context_t *context)
