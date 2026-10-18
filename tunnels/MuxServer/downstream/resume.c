@@ -37,4 +37,8 @@ void muxserverTunnelDownStreamResume(tunnel_t *t, line_t *child_l)
     {
         discard muxserverFinalizeAttachedPeerClose(t, parent_ls->l, parent_ls, child_ls);
     }
+    else if (result == kMuxServerChildDrainReadyToFinish)
+    {
+        muxserverDeliverKeptChildData(t, parent_ls->l, child_ls);
+    }
 }

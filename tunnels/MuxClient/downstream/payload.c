@@ -9,6 +9,12 @@ static bool handleCloseFrame(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, 
     return muxclientBeginPeerCloseDrain(t, parent_l, ts, parent_ls, child_ls);
 }
 
+// Paused children retain Data, and later Data queues behind already retained bytes.
+static bool childRetainsData(muxclient_lstate_t *child_ls)
+{
+    return child_ls->paused || bufferqueueGetBufCount(&child_ls->pending_child_data) != 0;
+}
+
 static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, sbuf_t *frame_buffer,
                                  muxclient_tstate_t *ts, muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls)
 {
@@ -54,7 +60,7 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
 
     case kMuxFlagData:
         // LOGD("MuxClient: DownStreamPayload: Data frame received, cid: %u", frame->cid);
-        if (child_ls->paused || bufferqueueGetBufCount(&child_ls->pending_child_data) != 0)
+        if (childRetainsData(child_ls))
         {
             lineRef(child_l);
             const bool parent_alive = muxclientQueueChildPayload(t, parent_l, ts, parent_ls, child_ls, frame_buffer);
@@ -100,7 +106,7 @@ static void processParentPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
 
     // Append before callbacks so nested input follows every older carrier byte.
-    if (UNLIKELY(! splicestreamPush(parent_ls->parent_state->read_stream, buf)))
+    if (buf != NULL && UNLIKELY(! splicestreamPush(parent_ls->parent_state->read_stream, buf)))
     {
         handleOverFlow(t, parent_l);
         return;
@@ -138,6 +144,9 @@ static void processParentPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
             break;
         const bool finished = count == state->read_remaining;
         const bool deliver  = frame.flags == kMuxFlagData && ! state->discard_frame && count != 0;
+        // A retaining child takes the rest of this frame as one queue entry once it has arrived.
+        if (deliver && ! finished && childRetainsData(child_ls))
+            break;
 
         // Publish all progress before delivery: nested input may complete this
         // frame, process siblings, or destroy either exact line.
@@ -182,15 +191,12 @@ static void processParentPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
         handleOverFlow(t, parent_l);
 }
 
-void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
+// NULL input parses only bytes already in the stream.
+static void receiveParentInput(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 {
     muxclient_tstate_t *ts     = tunnelGetState(t);
     muxclient_lstate_t *parent = lineGetState(parent_l, t);
-    if (UNLIKELY(ts->worker_states[lineGetWID(parent_l)].quiescing || parent->parent_finishing))
-    {
-        lineReuseBuffer(parent_l, buf);
-        return;
-    }
+    assert(! ts->worker_states[lineGetWID(parent_l)].quiescing && ! parent->parent_finishing);
     lineRef(parent_l);
     ++parent->parent_state->receive_depth;
     processParentPayload(t, parent_l, buf);
@@ -202,4 +208,30 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
             discard muxclientEnforceParentReceiveLimit(t, parent_l);
     }
     lineUnref(parent_l);
+}
+
+void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
+{
+    muxclient_tstate_t *ts     = tunnelGetState(t);
+    muxclient_lstate_t *parent = lineGetState(parent_l, t);
+    if (UNLIKELY(ts->worker_states[lineGetWID(parent_l)].quiescing || parent->parent_finishing))
+    {
+        lineReuseBuffer(parent_l, buf);
+        return;
+    }
+    receiveParentInput(t, parent_l, buf);
+}
+
+void muxclientDeliverKeptChildData(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *child_ls)
+{
+    muxclient_tstate_t *ts     = tunnelGetState(t);
+    muxclient_lstate_t *parent = lineGetState(parent_l, t);
+    if (ts->worker_states[lineGetWID(parent_l)].quiescing || parent->parent_finishing)
+        return;
+    /* An active receive loop rereads the published frame after every callback and
+     * delivers kept bytes itself, so a Resume nested in parent input leaves them to it. */
+    const muxclient_parent_state_t *state = parent->parent_state;
+    if (state->receive_depth == 0 && state->reading_frame && state->read_frame.flags == kMuxFlagData &&
+        state->read_frame.cid == child_ls->connection_id && splicestreamBodyBytes(state->read_stream) != 0)
+        receiveParentInput(t, parent_l, NULL);
 }
