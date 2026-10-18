@@ -1,8 +1,10 @@
 # APIServer client example
 
-[`api_client.py`](api_client.py) is a standalone Python client for calling registered
-WaterWall node operations over TCP. It uses only Python's standard library. Run it
-from the WaterWall repository root:
+[`api_client.py`](api_client.py) is a generic Python client for calling registered
+WaterWall node operations over TCP. It uses only Python's standard library and
+shares its transport module with the [administration CLI](../client/README.md).
+Keep both `examples/` and `client/` in their sibling locations when copying the
+example. Run it from the WaterWall repository root:
 
 ```bash
 python3 tunnels/APIServer/examples/api_client.py --help
@@ -26,6 +28,7 @@ The maintained guides and walkthroughs live in **WaterWall-Docs**:
 - [API protocol](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/05-devguides/api/protocol.mdx): framing, envelopes, selectors, permissions, and results.
 - [Implementing node operations](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/05-devguides/api/node-operations.mdx): registering handlers and their execution contract.
 - [Client walkthrough](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/03-examples/api/client.mdx): server configuration and a first request.
+- [Administration CLI](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/03-examples/api/administration-cli.mdx): account commands, explicit edit tokens, pagination and password input.
 - [Managing authentication users](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/03-examples/api/authentication-users.mdx): reads, creation, account edits, and password changes.
 - [API transports](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/03-examples/api/transports.mdx): TCP, HTTP body tunnels, and TcpOverUdp.
 

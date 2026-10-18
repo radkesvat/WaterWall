@@ -4,6 +4,16 @@ add_test(NAME waterwall.api_example_client
 set_tests_properties(waterwall.api_example_client PROPERTIES
   TIMEOUT 10 LABELS "unit;test-harness;api")
 
+add_test(NAME waterwall.api_transport_client
+  COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/api_transport_test.py")
+set_tests_properties(waterwall.api_transport_client PROPERTIES
+  TIMEOUT 10 LABELS "unit;test-harness;api")
+
+add_test(NAME waterwall.api_admin_client
+  COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/api_admin_test.py")
+set_tests_properties(waterwall.api_admin_client PROPERTIES
+  TIMEOUT 10 LABELS "unit;test-harness;api")
+
 add_test(NAME waterwall.ci_artifacts_and_debugger
   COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ci_artifacts_and_debugger_test.py")
 set_tests_properties(waterwall.ci_artifacts_and_debugger PROPERTIES

@@ -13,16 +13,16 @@ whether to resubmit the desired password with the freshly read token.
 
 import argparse
 import base64
-import binascii
 import json
 import math
 import os
 from pathlib import Path
 import re
-import socket
-import struct
 import sys
 import uuid
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "client"))
+from ww_api import call, decode_result, read_exact
 
 
 # These gateway rejections occur before the selected operation can execute.
@@ -39,50 +39,6 @@ def unknown_write_outcome(operation):
     else:
         print("Update outcome unknown: read the account again before deciding whether to submit another patch.",
               file=sys.stderr)
-
-
-def read_exact(stream, length):
-    """Read a complete prefix/body; recv() boundaries are not frame boundaries."""
-    chunks = bytearray()
-    while len(chunks) < length:
-        chunk = stream.recv(length - len(chunks))
-        if not chunk:
-            raise ValueError("Connection closed before the API frame was complete.")
-        chunks.extend(chunk)
-    return bytes(chunks)
-
-
-def call(host, port, envelope, *, timeout=10.0, max_response_bytes=1024 * 1024):
-    payload = json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    if not 0 < len(payload) <= 0xFFFFFFFF:
-        raise ValueError("Request does not fit the API frame length.")
-    with socket.create_connection((host, port), timeout=timeout) as stream:
-        stream.sendall(struct.pack("!I", len(payload)) + payload)
-        length = struct.unpack("!I", read_exact(stream, 4))[0]
-        if not 0 < length <= max_response_bytes:
-            raise ValueError("Response exceeds the client's envelope limit.")
-        response = json.loads(read_exact(stream, length).decode("utf-8"))
-    if (not isinstance(response, dict) or response.get("id") != envelope["id"]
-            or "error" not in response or "result" not in response):
-        raise ValueError("Response has an unexpected request ID or shape.")
-    return response
-
-
-def decode_result(result):
-    if not isinstance(result, dict) or not isinstance(result.get("body"), str):
-        raise ValueError("Response has an invalid result body.")
-    if result.get("body_encoding") == "utf8":
-        return result["body"].encode("utf-8")
-    if result.get("body_encoding") == "base64":
-        try:
-            encoded = result["body"].encode("ascii")
-            body = base64.b64decode(encoded, validate=True)
-        except (UnicodeEncodeError, binascii.Error) as error:
-            raise ValueError("Response has invalid base64.") from error
-        if base64.b64encode(body) != encoded:
-            raise ValueError("Response has noncanonical base64.")
-        return body
-    raise ValueError("Response has an unsupported body encoding.")
 
 
 def main():
