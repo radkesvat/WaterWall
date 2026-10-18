@@ -78,3 +78,4 @@ api_result_t authenticationserverApiGetUser(tunnel_t *, sbuf_t *, const node_api
 api_result_t authenticationserverApiListUsers(tunnel_t *, sbuf_t *, const node_api_call_context_t *);
 api_result_t authenticationserverApiUpdateUser(tunnel_t *, sbuf_t *, const node_api_call_context_t *);
 api_result_t authenticationserverApiCreateUser(tunnel_t *, sbuf_t *, const node_api_call_context_t *);
+api_result_t authenticationserverApiChangeUserPassword(tunnel_t *, sbuf_t *, const node_api_call_context_t *);

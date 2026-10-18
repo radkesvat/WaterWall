@@ -160,6 +160,7 @@
       "-Wl,--wrap=wCryptoSHA224"
       "-Wl,--wrap=wCryptoSHA256"
       "-Wl,--wrap=wCryptoX25519"
+      "-Wl,--wrap=memoryFree"
       "-Wl,--wrap=memoryAllocate"
       "-Wl,--wrap=memoryReAllocate"
       "-Wl,--wrap=memoryCalloc"

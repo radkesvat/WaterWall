@@ -1,5 +1,5 @@
 <!--
-Documentation version: 158
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -734,7 +734,7 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
 ## Management API
 
 The server explicitly registers read-only `status`, `get-user` and `list-users`,
-and writable `update-user` and `create-user`, for
+and writable `update-user`, `create-user` and `change-user-password`, for
 [APIServer](APIServer.mdx). Each operation takes an `application/json` body and
 returns UTF-8 JSON. Configure an independent operator token and exact permissions
 on the gateway, for example:
@@ -749,7 +749,8 @@ permission. Every continuation must authenticate and pass the gateway allowlist.
 Read operations do not authenticate traffic users, change accounts, synchronize
 clients or trigger a database save. `update-user` conditionally edits configuration
 in memory; `create-user` creates a fresh account with a caller-supplied ID and
-password. Each write has its own explicit permission. They expose no passwords, hashes, UUID
+password; `change-user-password` conditionally replaces an existing account's
+credentials while preserving its identity and accounting. Each write has its own explicit permission. They expose no passwords, hashes, UUID
 credentials, WireGuard keys, producer secrets or session tokens.
 
 All bodies are strict JSON objects: unknown/duplicate keys, malformed UTF-8, decoded
@@ -1095,6 +1096,115 @@ IDs provide correlation, not idempotency. The caller allocates IDs and should no
 reassign an ID to another person/account; uniqueness covers the current
 collection, without a persistent history of all previously used IDs or a
 cross-crash exactly-once guarantee. The example client never retries writes.
+
+### `change-user-password`
+
+This administrator operation needs its own exact APIServer permission. A password
+administrator normally receives only `get-user` and `change-user-password` for
+this server. Monitoring, editor, creator and producer credentials gain no
+password-change access. Read the account first, then submit exactly:
+
+```json
+{
+  "id":"42",
+  "if_match":"000102030405060708090a0b0c0d0e0f0000000000000056",
+  "password":"example-only-new-secret"
+}
+```
+
+`id` is a canonical nonzero unsigned decimal string through UINT64_MAX.
+`if_match` is the current 48-character lowercase hexadecimal edit token. The
+caller chooses a nonempty UTF-8 `password`; decoded bytes are preserved without
+trimming, case folding or Unicode normalization. There is no old-password
+challenge, generation, strength/history policy or alternate `new_password`
+spelling. Reject missing/extra/duplicate keys, incorrect types, nested objects,
+null, BOM, malformed UTF-8/Unicode escapes, decoded NUL and trailing input.
+The body is limited to 32 KiB, depth one and 16 lexical values including keys,
+checked before JSON-tree allocation. Other operation/import limits are unchanged.
+
+Both instance and server-wide configuration revision must match before the ID
+is resolved. An unrelated edit or creation can produce `conflict`; statistics,
+first-use observations and exact usage replay leave the token valid. A current
+same-password assignment is accepted and advances configuration revision once.
+It is not replay success; reuse of the previous token conflicts. Disabled,
+expired and traffic-exhausted accounts remain administratively editable.
+
+Success uses the existing compact mutation schema:
+
+```json
+{
+  "id":"42",
+  "config_revision":"87",
+  "edit_token":"000102030405060708090a0b0c0d0e0f0000000000000057"
+}
+```
+
+The result names this transaction's in-memory commit, without exposing plaintext
+or derived values. It invalidates previous edit tokens and pagination cursors.
+Configuration revision UINT64_MAX refuses before mutation; the preceding final
+representable transition remains valid. The existing 256-byte acknowledgement
+and maximum-envelope proof also apply here.
+
+The server derives the same plaintext hash, SHA-224, SHA-256, UUID validity and
+WireGuard public-key values as ordinary user construction. It changes only
+credentials and their four index memberships. The account's address, ID, count,
+order, name/group/enabled/contact metadata, policy, Allowed-IP configuration,
+creation/first-use times, statistics, traffic and reservations remain intact.
+`stats_revision` and producer epochs/sequences/digests do not change.
+
+Credential uniqueness covers every valid derived identity belonging to other
+accounts; `credentials_exist` reveals no conflicting account or key. A matching
+identity already owned by the target is allowed. UUID semantics follow password
+parsing: plain-to-UUID adds the UUID identity, UUID-to-plain removes it, and
+UUID-to-another-UUID replaces it. Different case spellings of the same UUID keep
+that UUID identity: they conflict across accounts but are allowed for the same
+account. The new exact plaintext matches and a different previous plaintext no
+longer matches. Derived identities whose bytes changed stop resolving; an
+unchanged UUID identity can remain usable after a textual case change. This is
+not a blanket promise that every textual password change revokes every protocol
+identity. It adds no WireGuard integration.
+
+Preparation and credential derivation happen once before shared locking. The
+transaction tries state, collection and target configuration write locks, without
+waiting or taking the statistics lock. It uses reserved credential-index capacity
+rather than growing/rehashing maps or scanning users. The existing password must
+terminate within 32 KiB plus one terminator byte; a larger imported value returns
+`resource_limit` without change. This is an operation bound, not a database import
+restriction. Request/decoded/prepared secrets and replaced plaintext are securely
+cleaned up using the existing object-layer ownership rules.
+
+Expected node errors are `invalid_request`, `conflict`, `not_found`,
+`credentials_exist`, `busy`, `resource_limit`, `password_change_failed`,
+`response_too_large`, `timeout` and `revision_exhausted`. They use the fixed error
+body, and a returned node-operation failure guarantees this invocation did not
+commit. Budget, parsing, crypto and contention refusals can precede duplicate
+checking. The reserved ACK is rendered before commit; subsequent reply loss
+cannot roll the credentials back.
+
+Connected AuthenticationClients obtain the new table through ordinary refresh.
+Offline clients continue accepting the old credentials under cached policy until
+a valid refresh, and new credentials become available there only afterward.
+Refresh migrates pending traffic, exact batch retry bytes, first-use evidence/age,
+ACK state, expiry projections and reservations by durable ID. Existing admitted
+connections continue accounting and policy enforcement; a password change does
+not force their termination. Their original handles can still release migrated
+reservations. Success does not prove immediate global revocation or that every
+client refreshed.
+
+No immediate save occurs and primary-save history stays unchanged. Existing
+periodic/final saving later persists the change; a crash can lose unsaved work.
+There is no journal, durable request record or crash-recovery protocol.
+
+A lost/invalid reply, disconnect or post-dispatch gateway timeout leaves the
+outcome unknown. Keep the intended ID/password securely and reread the account
+for current public values and an edit token. **Redacted reads cannot prove which
+password is stored**; an advanced revision can also come from another edit.
+Explicitly decide whether to submit the same desired password with the new token.
+A successful resubmission establishes it at that transaction's commit point,
+without proving the earlier outcome or preventing later authorized changes.
+On conflict, reread and reconsider again. Never automatically fetch a token,
+replay a write or generate a different recovery password. Request IDs remain
+correlation only, with no retry-result cache or replay shortcut.
 
 ### Bounded snapshots and errors
 

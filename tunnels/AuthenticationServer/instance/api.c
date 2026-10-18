@@ -36,6 +36,13 @@ bool authenticationserverRegisterApi(tunnel_t *t)
                                                        .request_content_type  = "application/json",
                                                        .response_content_type = "application/json",
                                                        .response_encoding     = kNodeApiEncodingUtf8,
+                                                       .execution             = kNodeApiCallingWorker},
+                                                      {.name      = "change-user-password",
+                                                       .handler   = authenticationserverApiChangeUserPassword,
+                                                       .read_only = false,
+                                                       .request_content_type  = "application/json",
+                                                       .response_content_type = "application/json",
+                                                       .response_encoding     = kNodeApiEncodingUtf8,
                                                        .execution             = kNodeApiCallingWorker}};
     return nodeApiRegister(t, operations, sizeof(operations) / sizeof(*operations));
 }

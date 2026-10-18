@@ -87,6 +87,20 @@
                 ]
               }
             ]
+          },
+          {
+            "name": "password-admin",
+            "token": "2468ace013579bdf2468ace013579bdf2468ace013579bdf2468ace013579bdf",
+            "allow": [
+              {
+                "config": "api-server",
+                "node": "auth-db",
+                "operations": [
+                  "get-user",
+                  "change-user-password"
+                ]
+              }
+            ]
           }
         ]
       }
@@ -166,6 +180,20 @@
                 "operations": [
                   "get-user",
                   "create-user"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "password-admin",
+            "token": "2468ace013579bdf2468ace013579bdf2468ace013579bdf2468ace013579bdf",
+            "allow": [
+              {
+                "config": "api-server",
+                "node": "auth-db",
+                "operations": [
+                  "get-user",
+                  "change-user-password"
                 ]
               }
             ]

@@ -667,48 +667,71 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     return true;
 }
 
-static bool userPasswordHashesCreate(User *user, const char *password)
+_Static_assert(_Alignof(user_prepared_password_t) >= 32U, "credential staging must be aligned");
+_Static_assert(sizeof(user_prepared_password_t) % 32U == 0, "credential staging size must preserve alignment");
+
+bool userPreparePassword(user_prepared_password_t *prepared, const char *password, size_t password_length)
 {
     static const uint8_t wireguard_basepoint[USER_WIREGUARD_PUBLICKEY_SIZE] = {9};
-    const size_t         password_len                                       = stringLength(password);
-
-    user->hash_pass = calcHashBytes(password, password_len);
-
-    user->sha224_pass_valid         = false;
-    user->sha256_pass_valid         = false;
-    user->uuid_pass_valid           = false;
-    user->wireguard_publickey_valid = false;
-
-    memoryZero(&user->sha224_pass, sizeof(user->sha224_pass));
-    memoryZero(&user->sha256_pass, sizeof(user->sha256_pass));
-    memoryZero(user->uuid_pass, sizeof(user->uuid_pass));
-    memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
-
-    if (UNLIKELY(wCryptoSHA224(&user->sha224_pass, (const unsigned char *) password, password_len) != kWCryptoOk))
-    {
-        return false;
-    }
-    user->sha224_pass_valid = true;
-
-    if (UNLIKELY(wCryptoSHA256(&user->sha256_pass, (const unsigned char *) password, password_len) != kWCryptoOk))
-    {
-        return false;
-    }
-    user->sha256_pass_valid = true;
-
-    if (UNLIKELY(wCryptoX25519(user->wireguard_publickey, user->sha256_pass.bytes, wireguard_basepoint) != kWCryptoOk))
-    {
-        memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
-        return false;
-    }
-    user->wireguard_publickey_valid = true;
-
-    if (wwUuidParseString(password, user->uuid_pass))
-    {
-        user->uuid_pass_valid = true;
-    }
-
+    assert(prepared != NULL && password != NULL && password_length != 0);
+    memoryZero(prepared, sizeof(*prepared));
+    prepared->password = memoryAllocate(password_length + 1U);
+    memoryCopy(prepared->password, password, password_length + 1U);
+    prepared->password_length = password_length;
+    prepared->hash_pass       = calcHashBytes(prepared->password, password_length);
+    if (wCryptoSHA224(&prepared->sha224_pass, (const unsigned char *) prepared->password, password_length) !=
+        kWCryptoOk)
+        goto failure;
+    prepared->sha224_pass_valid = true;
+    if (wCryptoSHA256(&prepared->sha256_pass, (const unsigned char *) prepared->password, password_length) !=
+        kWCryptoOk)
+        goto failure;
+    prepared->sha256_pass_valid = true;
+    if (wCryptoX25519(prepared->wireguard_publickey, prepared->sha256_pass.bytes, wireguard_basepoint) != kWCryptoOk)
+        goto failure;
+    prepared->wireguard_publickey_valid = true;
+    prepared->uuid_pass_valid           = wwUuidParseString(prepared->password, prepared->uuid_pass);
     return true;
+
+failure:
+    userFreePreparedPassword(prepared);
+    return false;
+}
+
+void userFreePreparedPassword(user_prepared_password_t *prepared)
+{
+    if (prepared == NULL)
+        return;
+    if (prepared->password != NULL)
+    {
+        memorySecureZero(prepared->password, prepared->password_length + 1U);
+        memoryFree(prepared->password);
+    }
+    memorySecureZero(prepared, sizeof(*prepared));
+}
+
+void userCommitPreparedPasswordLocked(User *user, user_prepared_password_t *prepared, size_t old_password_length)
+{
+    assert(userObjectIsInitialized(user) && prepared != NULL && prepared->password != NULL);
+    if (user->password != NULL)
+    {
+        memorySecureZero(user->password, old_password_length + 1U);
+        memoryFree(user->password);
+    }
+    memorySecureZero(&user->sha224_pass, sizeof(user->sha224_pass));
+    memorySecureZero(&user->sha256_pass, sizeof(user->sha256_pass));
+    memorySecureZero(user->uuid_pass, sizeof(user->uuid_pass));
+    user->password     = prepared->password;
+    prepared->password = NULL;
+    user->hash_pass    = prepared->hash_pass;
+    user->sha224_pass  = prepared->sha224_pass;
+    user->sha256_pass  = prepared->sha256_pass;
+    memoryCopy(user->uuid_pass, prepared->uuid_pass, sizeof(user->uuid_pass));
+    memoryCopy(user->wireguard_publickey, prepared->wireguard_publickey, sizeof(user->wireguard_publickey));
+    user->sha224_pass_valid         = prepared->sha224_pass_valid;
+    user->sha256_pass_valid         = prepared->sha256_pass_valid;
+    user->uuid_pass_valid           = prepared->uuid_pass_valid;
+    user->wireguard_publickey_valid = prepared->wireguard_publickey_valid;
 }
 
 static const cJSON *userJsonGetItem(const cJSON *json_obj, const char *key)
@@ -1451,48 +1474,15 @@ void userDestroy(User *user)
 
 bool userChangePassword(User *user, const char *password)
 {
-    User  staged_hashes = {0};
-    char *copy          = NULL;
-
-    if (UNLIKELY(! userObjectIsInitialized(user) || userStringIsEmpty(password)))
-    {
+    user_prepared_password_t prepared = {0};
+    if (! userObjectIsInitialized(user) || userStringIsEmpty(password))
         return false;
-    }
-
-    if (UNLIKELY(! userPasswordHashesCreate(&staged_hashes, password)))
-    {
-        memorySecureZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
-        memorySecureZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
-        memorySecureZero(staged_hashes.uuid_pass, sizeof(staged_hashes.uuid_pass));
-        memoryZero(staged_hashes.wireguard_publickey, sizeof(staged_hashes.wireguard_publickey));
+    if (! userPreparePassword(&prepared, password, stringLength(password)))
         return false;
-    }
-
-    copy = stringDuplicate(password);
-
     rwlockWriteLock(&user->lock);
-
-    memorySecureZero(&user->sha224_pass, sizeof(user->sha224_pass));
-    memorySecureZero(&user->sha256_pass, sizeof(user->sha256_pass));
-    memorySecureZero(user->uuid_pass, sizeof(user->uuid_pass));
-    memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
-    user->hash_pass   = staged_hashes.hash_pass;
-    user->sha224_pass = staged_hashes.sha224_pass;
-    user->sha256_pass = staged_hashes.sha256_pass;
-    memoryCopy(user->uuid_pass, staged_hashes.uuid_pass, sizeof(user->uuid_pass));
-    memoryCopy(user->wireguard_publickey, staged_hashes.wireguard_publickey, sizeof(user->wireguard_publickey));
-    user->sha224_pass_valid         = staged_hashes.sha224_pass_valid;
-    user->sha256_pass_valid         = staged_hashes.sha256_pass_valid;
-    user->uuid_pass_valid           = staged_hashes.uuid_pass_valid;
-    user->wireguard_publickey_valid = staged_hashes.wireguard_publickey_valid;
-
-    userFreePassword(user->password);
-    user->password = copy;
+    userCommitPreparedPasswordLocked(user, &prepared, user->password == NULL ? 0 : stringLength(user->password));
     rwlockWriteUnlock(&user->lock);
-    memorySecureZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
-    memorySecureZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
-    memorySecureZero(staged_hashes.uuid_pass, sizeof(staged_hashes.uuid_pass));
-    memoryZero(staged_hashes.wireguard_publickey, sizeof(staged_hashes.wireguard_publickey));
+    userFreePreparedPassword(&prepared);
     return true;
 }
 

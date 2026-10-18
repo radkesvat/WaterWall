@@ -40,19 +40,6 @@ typedef struct users_wireguard_publickey_key_s
     uint8_t bytes[USER_WIREGUARD_PUBLICKEY_SIZE];
 } users_wireguard_publickey_key_t;
 
-typedef struct users_password_probe_s
-{
-    MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
-    uint8_t                                        sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
-    MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
-    uint8_t                                        uuid_pass[kWwUuidBytesLen];
-    uint8_t                                        wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
-    bool                                           sha224_pass_valid;
-    bool                                           sha256_pass_valid;
-    bool                                           uuid_pass_valid;
-    bool                                           wireguard_publickey_valid;
-} users_password_probe_t;
-
 typedef struct users_wireguard_allowed_ips_update_s
 {
     char     *copy;
@@ -85,15 +72,6 @@ static bool usersConfigDeadlineExpired(uint64_t deadline_ms)
 {
     return deadline_ms != 0 && getHRTimeUs() / 1000U >= deadline_ms;
 }
-
-_Static_assert(offsetof(users_password_probe_t, sha224_pass) % 32U == 0,
-               "users_password_probe_t.sha224_pass must be 32-byte aligned");
-_Static_assert(offsetof(users_password_probe_t, sha256_pass) % 32U == 0,
-               "users_password_probe_t.sha256_pass must be 32-byte aligned");
-_Static_assert(_Alignof(users_password_probe_t) >= 32U,
-               "users_password_probe_t storage must be at least 32-byte aligned");
-_Static_assert(sizeof(users_password_probe_t) % 32U == 0,
-               "users_password_probe_t storage size must be a 32-byte multiple");
 
 static size_t usersSHA224KeyHash(const users_sha224_key_t *key)
 {
@@ -825,71 +803,11 @@ static users_wireguard_publickey_key_t usersWireGuardPublicKeyFromBytes(
     return key;
 }
 
-static bool usersPasswordProbeCreate(users_password_probe_t *probe, const char *password,
-                                     bool derive_wireguard_publickey)
-{
-    static const uint8_t wireguard_basepoint[USER_WIREGUARD_PUBLICKEY_SIZE] = {9};
-
-    if (UNLIKELY(probe == NULL || password == NULL || password[0] == '\0'))
-    {
-        return false;
-    }
-
-    memoryZero(probe, sizeof(*probe));
-
-    const size_t password_len = stringLength(password);
-    if (UNLIKELY(wCryptoSHA224(&probe->sha224_pass, (const unsigned char *) password, password_len) != kWCryptoOk))
-    {
-        memorySecureZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
-        return false;
-    }
-    if (UNLIKELY(wCryptoSHA256(&probe->sha256_pass, (const unsigned char *) password, password_len) != kWCryptoOk))
-    {
-        memorySecureZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
-        memorySecureZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
-        return false;
-    }
-    probe->sha224_pass_valid = true;
-    probe->sha256_pass_valid = true;
-    if (derive_wireguard_publickey)
-    {
-        if (UNLIKELY(wCryptoX25519(probe->wireguard_publickey, probe->sha256_pass.bytes, wireguard_basepoint) !=
-                     kWCryptoOk))
-        {
-            memorySecureZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
-            memorySecureZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
-            memoryZero(probe->wireguard_publickey, sizeof(probe->wireguard_publickey));
-            return false;
-        }
-        probe->wireguard_publickey_valid = true;
-    }
-    if (wwUuidParseString(password, probe->uuid_pass))
-    {
-        probe->uuid_pass_valid = true;
-    }
-
-    return true;
-}
-
-static void usersPasswordProbeDestroy(users_password_probe_t *probe)
-{
-    if (UNLIKELY(probe == NULL))
-    {
-        return;
-    }
-
-    memorySecureZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
-    memorySecureZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
-    memorySecureZero(probe->uuid_pass, sizeof(probe->uuid_pass));
-    memoryZero(probe->wireguard_publickey, sizeof(probe->wireguard_publickey));
-    memoryZero(probe, sizeof(*probe));
-}
-
 #if defined(USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER)
 /*
  * Test-only instrumentation. Counts how many times the credential-snapshot wipe
  * helper runs so a unit test can prove every post-snapshot exit of
- * usersChangePasswordLocked() clears the old secret material. Never defined in
+ * usersCommitPasswordLocked() clears the old secret material. Never defined in
  * production builds.
  */
 size_t users_test_credential_snapshot_wipes = 0;
@@ -897,7 +815,7 @@ size_t users_test_credential_snapshot_wipes = 0;
 
 /*
  * Wipes the four password-derived credential snapshots that
- * usersChangePasswordLocked() captures before a user's password is overwritten.
+ * usersCommitPasswordLocked() captures before a user's password is overwritten.
  * SHA-224, SHA-256, and the UUID bytes are secret-equivalent and use
  * non-optimizable secure zeroing; the WireGuard public key is derived public
  * data and is cleared with a plain zero, matching the rest of this file. Routing
@@ -921,7 +839,7 @@ static void usersWipeCredentialSnapshot(sha224_hash_t *old_sha224, sha256_hash_t
 /*
  * Derives only the SHA-256 lookup key for a plaintext password. The hot
  * plaintext-lookup path indexes exclusively by SHA-256, so it must not pay for
- * the SHA-224/UUID/WireGuard-public-key material that usersPasswordProbeCreate()
+ * the SHA-224/UUID/WireGuard-public-key material that userPreparePassword()
  * derives for the cold password-change path. Callers securely zero *sha256 once
  * they are done with it.
  */
@@ -1202,6 +1120,7 @@ static user_t *usersSHA224TableLookupLocked(const users_t *users, const uint8_t 
 
     users_sha224_key_t      key = usersSHA224KeyFromBytes(key_bytes);
     users_sha224_map_t_iter it  = users_sha224_map_t_find(&table->map, key);
+    memorySecureZero(&key, sizeof(key));
     return it.ref != NULL ? it.ref->second : NULL;
 }
 
@@ -1216,6 +1135,7 @@ static user_t *usersSHA256TableLookupLocked(const users_t *users, const uint8_t 
 
     users_sha256_key_t      key = usersSHA256KeyFromBytes(key_bytes);
     users_sha256_map_t_iter it  = users_sha256_map_t_find(&table->map, key);
+    memorySecureZero(&key, sizeof(key));
     return it.ref != NULL ? it.ref->second : NULL;
 }
 
@@ -1230,6 +1150,7 @@ static user_t *usersUUIDTableLookupLocked(const users_t *users, const uint8_t ke
 
     users_uuid_key_t      key = usersUUIDKeyFromBytes(key_bytes);
     users_uuid_map_t_iter it  = users_uuid_map_t_find(&table->map, key);
+    memorySecureZero(&key, sizeof(key));
     return it.ref != NULL ? it.ref->second : NULL;
 }
 
@@ -1245,6 +1166,7 @@ static user_t *usersWireGuardPublicKeyTableLookupLocked(const users_t *users,
 
     users_wireguard_publickey_key_t      key = usersWireGuardPublicKeyFromBytes(key_bytes);
     users_wireguard_publickey_map_t_iter it  = users_wireguard_publickey_map_t_find(&table->map, key);
+    memorySecureZero(&key, sizeof(key));
     return it.ref != NULL ? it.ref->second : NULL;
 }
 
@@ -1450,6 +1372,7 @@ static bool usersSHA224TableEraseLocked(users_t *users, const user_t *user, cons
     }
     users_sha224_key_t      key = usersSHA224KeyFromBytes(bytes);
     users_sha224_map_t_iter it  = users_sha224_map_t_find(&users->sha224_table->map, key);
+    memorySecureZero(&key, sizeof(key));
     if (UNLIKELY(it.ref == NULL))
     {
         /* Every committed user carries a SHA-224 entry, so a missing one is a
@@ -1462,7 +1385,7 @@ static bool usersSHA224TableEraseLocked(users_t *users, const user_t *user, cons
         LOGE("Users: refusing to erase a SHA-224 entry owned by a different user");
         return false;
     }
-    users_sha224_map_t_erase_at(&users->sha224_table->map, it);
+    users_sha224_map_t_erase_entry(&users->sha224_table->map, it.ref);
     return true;
 }
 
@@ -1475,6 +1398,7 @@ static bool usersSHA256TableEraseLocked(users_t *users, const user_t *user, cons
     }
     users_sha256_key_t      key = usersSHA256KeyFromBytes(bytes);
     users_sha256_map_t_iter it  = users_sha256_map_t_find(&users->sha256_table->map, key);
+    memorySecureZero(&key, sizeof(key));
     if (UNLIKELY(it.ref == NULL))
     {
         /* Every committed user carries a SHA-256 entry, so a missing one is a
@@ -1487,7 +1411,7 @@ static bool usersSHA256TableEraseLocked(users_t *users, const user_t *user, cons
         LOGE("Users: refusing to erase a SHA-256 entry owned by a different user");
         return false;
     }
-    users_sha256_map_t_erase_at(&users->sha256_table->map, it);
+    users_sha256_map_t_erase_entry(&users->sha256_table->map, it.ref);
     return true;
 }
 
@@ -1500,6 +1424,7 @@ static bool usersUUIDTableEraseLocked(users_t *users, const user_t *user, const 
     }
     users_uuid_key_t      key = usersUUIDKeyFromBytes(bytes);
     users_uuid_map_t_iter it  = users_uuid_map_t_find(&users->uuid_table->map, key);
+    memorySecureZero(&key, sizeof(key));
     if (UNLIKELY(it.ref == NULL))
     {
         /* Callers only erase a UUID entry for a user that has one, so a miss here
@@ -1512,7 +1437,7 @@ static bool usersUUIDTableEraseLocked(users_t *users, const user_t *user, const 
         LOGE("Users: refusing to erase a UUID entry owned by a different user");
         return false;
     }
-    users_uuid_map_t_erase_at(&users->uuid_table->map, it);
+    users_uuid_map_t_erase_entry(&users->uuid_table->map, it.ref);
     return true;
 }
 
@@ -1527,6 +1452,7 @@ static bool usersWireGuardPublicKeyTableEraseLocked(users_t *users, const user_t
     users_wireguard_publickey_key_t      key = usersWireGuardPublicKeyFromBytes(bytes);
     users_wireguard_publickey_map_t_iter it =
         users_wireguard_publickey_map_t_find(&users->wireguard_publickey_table->map, key);
+    memorySecureZero(&key, sizeof(key));
     if (UNLIKELY(it.ref == NULL))
     {
         /* Callers only erase a WireGuard-key entry for a user that has one, so a
@@ -1539,7 +1465,7 @@ static bool usersWireGuardPublicKeyTableEraseLocked(users_t *users, const user_t
         LOGE("Users: refusing to erase a WireGuard public key entry owned by a different user");
         return false;
     }
-    users_wireguard_publickey_map_t_erase_at(&users->wireguard_publickey_table->map, it);
+    users_wireguard_publickey_map_t_erase_entry(&users->wireguard_publickey_table->map, it.ref);
     return true;
 }
 
@@ -2184,8 +2110,6 @@ static user_t *usersFindByNameLocked(const users_t *users, const char *name, con
 
 /* No reserve or rehash is permitted once index publication starts. Callers
  * establish unique keys and complete capacity before entering this commit. */
-static void usersCommitReservedUserLocked(users_t *users, user_t *slot)
-{
 #define USERS_INSERT_RESERVED(table_field, map_type, key_value, mapped_value)                                          \
     do                                                                                                                 \
     {                                                                                                                  \
@@ -2205,7 +2129,11 @@ static void usersCommitReservedUserLocked(users_t *users, user_t *slot)
         ++map->size;                                                                                                   \
         result.ref->first  = key;                                                                                      \
         result.ref->second = (mapped_value);                                                                           \
+        memorySecureZero(&key, sizeof(key));                                                                           \
     } while (0)
+
+static void usersCommitReservedCredentialsLocked(users_t *users, user_t *slot)
+{
     USERS_INSERT_RESERVED(sha224_table, users_sha224_map_t, usersSHA224KeyFromBytes(slot->sha224_pass.bytes), slot);
     USERS_INSERT_RESERVED(sha256_table, users_sha256_map_t, usersSHA256KeyFromBytes(slot->sha256_pass.bytes), slot);
     if (slot->uuid_pass_valid)
@@ -2215,6 +2143,11 @@ static void usersCommitReservedUserLocked(users_t *users, user_t *slot)
                               users_wireguard_publickey_map_t,
                               usersWireGuardPublicKeyFromBytes(slot->wireguard_publickey),
                               slot);
+}
+
+static void usersCommitReservedUserLocked(users_t *users, user_t *slot)
+{
+    usersCommitReservedCredentialsLocked(users, slot);
     if (slot->id != 0)
         USERS_INSERT_RESERVED(id_table, users_id_map_t, slot->id, slot);
     if (! usersNameTableInsertReservedLocked(users, slot))
@@ -2505,175 +2438,94 @@ users_add_result_t usersAddUserChecked(users_t *users, const user_t *user)
     return kUsersAddResultOk;
 }
 
-static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *user, const char *password)
+/* Both collection and target configuration ownership are required. Preparation
+ * has already derived credentials, so this performs only indexed checks. */
+static users_update_result_t usersPasswordPreflightLocked(users_t *users, user_t *user,
+                                                          const user_prepared_password_t *prepared)
 {
-    user_t                *sha224_duplicate;
-    user_t                *sha256_duplicate;
-    user_t                *uuid_duplicate;
-    user_t                *wireguard_publickey_duplicate;
-    users_password_probe_t password_probe;
-
-    if (UNLIKELY(! usersIndexOfLocked(users, user, NULL)))
-    {
-        return kUsersUpdateResultUserNotFound;
-    }
-
-    memoryZero(&password_probe, sizeof(password_probe));
-    if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password, true)))
-    {
+    user_t *duplicate;
+    if (prepared->uuid_pass_valid && (duplicate = usersUUIDTableLookupLocked(users, prepared->uuid_pass)) != NULL &&
+        duplicate != user)
+        return kUsersUpdateResultDuplicateUUID;
+    if (prepared->wireguard_publickey_valid &&
+        (duplicate = usersWireGuardPublicKeyTableLookupLocked(users, prepared->wireguard_publickey)) != NULL &&
+        duplicate != user)
+        return kUsersUpdateResultDuplicateWireGuardPublicKey;
+    if ((duplicate = usersSHA224TableLookupLocked(users, prepared->sha224_pass.bytes)) != NULL && duplicate != user)
         return kUsersUpdateResultPasswordUpdateFailed;
-    }
-    if (UNLIKELY(! password_probe.sha224_pass_valid))
-    {
-        LOGE("Users: updated password for user \"%s\" does not produce a usable SHA-224 hash",
-             usersUserNameForLog(user));
-        usersPasswordProbeDestroy(&password_probe);
+    if ((duplicate = usersSHA256TableLookupLocked(users, prepared->sha256_pass.bytes)) != NULL && duplicate != user)
         return kUsersUpdateResultPasswordUpdateFailed;
-    }
-    if (UNLIKELY(! password_probe.sha256_pass_valid))
-    {
-        LOGE("Users: updated password for user \"%s\" does not produce a usable SHA-256 hash",
-             usersUserNameForLog(user));
-        usersPasswordProbeDestroy(&password_probe);
-        return kUsersUpdateResultPasswordUpdateFailed;
-    }
 
-    if (password_probe.uuid_pass_valid)
-    {
-        uuid_duplicate = usersUUIDTableLookupLocked(users, password_probe.uuid_pass);
-        if (UNLIKELY(uuid_duplicate != NULL && uuid_duplicate != user))
-        {
-            LOGE("Users: duplicate UUID credential while updating user \"%s\"", usersUserNameForLog(user));
-            usersPasswordProbeDestroy(&password_probe);
-            return kUsersUpdateResultDuplicateUUID;
-        }
-    }
-    if (LIKELY(password_probe.wireguard_publickey_valid))
-    {
-        wireguard_publickey_duplicate =
-            usersWireGuardPublicKeyTableLookupLocked(users, password_probe.wireguard_publickey);
-        if (UNLIKELY(wireguard_publickey_duplicate != NULL && wireguard_publickey_duplicate != user))
-        {
-            LOGE("Users: duplicate WireGuard public key while updating user \"%s\"", usersUserNameForLog(user));
-            usersPasswordProbeDestroy(&password_probe);
-            return kUsersUpdateResultDuplicateWireGuardPublicKey;
-        }
-    }
+    /* Every credential map reserves for the total active count, including
+     * accounts without UUIDs. Check actual post-erase/add occupancy, never
+     * reserve or invoke an insertion that may choose to grow. */
+#define USERS_PASSWORD_CAPACITY(field, type, old_valid, new_valid)                                                     \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (users->field == NULL || users->field->map.size < (intptr_t) ! ! (old_valid))                               \
+            return kUsersUpdateResultCapacityRejected;                                                                 \
+        size_t occupancy = (size_t) users->field->map.size - (size_t) ! ! (old_valid);                                 \
+        size_t capacity  = (size_t) type##_capacity(&users->field->map);                                               \
+        if (occupancy > capacity || ((new_valid) && occupancy == capacity))                                            \
+            return kUsersUpdateResultCapacityRejected;                                                                 \
+    } while (0)
+    USERS_PASSWORD_CAPACITY(sha224_table, users_sha224_map_t, user->sha224_pass_valid, prepared->sha224_pass_valid);
+    USERS_PASSWORD_CAPACITY(sha256_table, users_sha256_map_t, user->sha256_pass_valid, prepared->sha256_pass_valid);
+    USERS_PASSWORD_CAPACITY(uuid_table, users_uuid_map_t, user->uuid_pass_valid, prepared->uuid_pass_valid);
+    USERS_PASSWORD_CAPACITY(wireguard_publickey_table,
+                            users_wireguard_publickey_map_t,
+                            user->wireguard_publickey_valid,
+                            prepared->wireguard_publickey_valid);
+#undef USERS_PASSWORD_CAPACITY
+    return kUsersUpdateResultOk;
+}
 
-    sha224_duplicate = usersSHA224TableLookupLocked(users, password_probe.sha224_pass.bytes);
-    if (UNLIKELY(sha224_duplicate != NULL && sha224_duplicate != user))
-    {
-        LOGE("Users: duplicate SHA-224 lookup key while updating user \"%s\"", usersUserNameForLog(user));
-        usersPasswordProbeDestroy(&password_probe);
-        return kUsersUpdateResultPasswordUpdateFailed;
-    }
-
-    sha256_duplicate = usersSHA256TableLookupLocked(users, password_probe.sha256_pass.bytes);
-    if (UNLIKELY(sha256_duplicate != NULL && sha256_duplicate != user))
-    {
-        LOGE("Users: duplicate SHA-256 lookup key while updating user \"%s\"", usersUserNameForLog(user));
-        usersPasswordProbeDestroy(&password_probe);
-        return kUsersUpdateResultPasswordUpdateFailed;
-    }
-    if (UNLIKELY(! usersEnsureLookupCapacityLocked(users, users->count)))
-    {
-        usersPasswordProbeDestroy(&password_probe);
-        return kUsersUpdateResultCapacityRejected;
-    }
-
-    /* Snapshot the credential keys that are about to be overwritten so they can
-     * be erased from the four credential indexes after the password changes. */
+/* No allocation, refusal, lock acquisition, or table repair is possible after
+ * the first erase. Corruption is fatal, rather than a partial update result. */
+static void usersCommitPasswordLocked(users_t *users, user_t *user, user_prepared_password_t *prepared,
+                                      size_t old_password_length)
+{
     sha224_hash_t old_sha224 = user->sha224_pass;
     sha256_hash_t old_sha256 = user->sha256_pass;
     uint8_t       old_uuid[kWwUuidBytesLen];
     uint8_t       old_wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
-    bool          old_uuid_valid      = user->uuid_pass_valid;
-    bool          old_wireguard_valid = user->wireguard_publickey_valid;
     memoryCopy(old_uuid, user->uuid_pass, sizeof(old_uuid));
     memoryCopy(old_wireguard_publickey, user->wireguard_publickey, sizeof(old_wireguard_publickey));
-
-    /*
-     * From here on every exit routes through the shared cleanup block below so
-     * the old credential snapshot is always wiped and the password probe is
-     * always destroyed exactly once, whether the password change fails, the
-     * reindex succeeds, or the reindex hits an impossible invariant failure. The
-     * result and index-update status are declared before any jump to cleanup.
-     */
-    users_update_result_t result = kUsersUpdateResultOk;
-    bool                  ok     = true;
-
-    if (UNLIKELY(! userChangePassword(user, password)))
-    {
-        result = kUsersUpdateResultPasswordUpdateFailed;
-        goto cleanup_snapshot;
-    }
-
-    /*
-     * Incrementally update only the four password-derived indexes: erase the old
-     * keys, then insert the new ones. The id/name/Allowed-IP indexes do not
-     * change. Capacity for `count` entries was reserved above and each erase
-     * frees the user's own slot before the matching insert reclaims it, so the
-     * table never grows and the capacity-free entry inserts cannot allocate; an
-     * unexpected failure is an unrecoverable invariant violation that triggers a
-     * rebuild and terminates.
-     */
-    if (! usersSHA224TableEraseLocked(users, user, old_sha224.bytes))
-    {
-        ok = false;
-    }
-    if (! usersSHA256TableEraseLocked(users, user, old_sha256.bytes))
-    {
-        ok = false;
-    }
-    if (old_uuid_valid && ! usersUUIDTableEraseLocked(users, user, old_uuid))
-    {
-        ok = false;
-    }
-    if (old_wireguard_valid && ! usersWireGuardPublicKeyTableEraseLocked(users, user, old_wireguard_publickey))
-    {
-        ok = false;
-    }
-    if (ok && ! usersSHA224TableInsertEntryLocked(users, user))
-    {
-        ok = false;
-    }
-    if (ok && ! usersSHA256TableInsertEntryLocked(users, user))
-    {
-        ok = false;
-    }
-    if (ok && ! usersUUIDTableInsertEntryLocked(users, user))
-    {
-        ok = false;
-    }
-    if (ok && ! usersWireGuardPublicKeyTableInsertEntryLocked(users, user))
-    {
-        ok = false;
-    }
-
-cleanup_snapshot:
-    /* Wipe the old secret snapshot first, then destroy the probe, for every
-     * post-snapshot path including the fatal index-invariant path below. */
+    bool ok = usersSHA224TableEraseLocked(users, user, old_sha224.bytes) &&
+              usersSHA256TableEraseLocked(users, user, old_sha256.bytes) &&
+              (! user->uuid_pass_valid || usersUUIDTableEraseLocked(users, user, old_uuid)) &&
+              (! user->wireguard_publickey_valid ||
+               usersWireGuardPublicKeyTableEraseLocked(users, user, old_wireguard_publickey));
     usersWipeCredentialSnapshot(&old_sha224, &old_sha256, old_uuid, old_wireguard_publickey);
-    usersPasswordProbeDestroy(&password_probe);
-
-    if (result != kUsersUpdateResultOk)
+    if (! ok)
     {
-        return result;
-    }
-
-    if (UNLIKELY(! ok))
-    {
-        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
-        {
-            LOGF("Users: failed to rebuild lookup tables after a password index update failure");
-            abortProgramNow(1);
-        }
-        LOGF("Users: credential index update failed while changing password for user \"%s\"",
-             usersUserNameForLog(user));
+        LOGF("Users: credential index inconsistency during password commit");
         abortProgramNow(1);
     }
+    userCommitPreparedPasswordLocked(user, prepared, old_password_length);
+    usersCommitReservedCredentialsLocked(users, user);
+}
 
-    return kUsersUpdateResultOk;
+static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *user, const char *password)
+{
+    if (! usersIndexOfLocked(users, user, NULL))
+        return kUsersUpdateResultUserNotFound;
+    user_prepared_password_t prepared = {0};
+    if (password == NULL || password[0] == '\0' || ! userPreparePassword(&prepared, password, stringLength(password)))
+        return kUsersUpdateResultPasswordUpdateFailed;
+    rwlockWriteLock(&user->lock);
+    users_update_result_t result = usersPasswordPreflightLocked(users, user, &prepared);
+    /* Preserve existing object-caller diagnostics. The bounded API's shared
+     * preflight remains silent and returns only its fixed typed outcome. */
+    if (result == kUsersUpdateResultDuplicateUUID)
+        LOGE("Users: duplicate UUID credential while updating user \"%s\"", usersUserNameForLog(user));
+    else if (result == kUsersUpdateResultDuplicateWireGuardPublicKey)
+        LOGE("Users: duplicate WireGuard public key while updating user \"%s\"", usersUserNameForLog(user));
+    if (result == kUsersUpdateResultOk)
+        usersCommitPasswordLocked(users, user, &prepared, user->password == NULL ? 0 : stringLength(user->password));
+    rwlockWriteUnlock(&user->lock);
+    userFreePreparedPassword(&prepared);
+    return result;
 }
 
 static user_t *usersLookupByPasswordLocked(users_t *users, const sha256_hash_t *sha256_key, const char *password)
@@ -4252,6 +4104,175 @@ size_t usersPreparedConfigPatchPeakBytes(const user_config_prepared_patch_t *pre
     return prepared->peak_bytes;
 }
 
+/* Password staging owns only credentials, with no native locks or user state. */
+struct user_prepared_password_change_s
+{
+    user_prepared_password_t material;
+    size_t                   owned_bytes, peak_bytes;
+};
+
+enum
+{
+    kUsersPasswordTextLimit           = 32U * 1024U,
+    kUsersPasswordPrepareScratchBytes = 256U,
+    kUsersPasswordCommitScratchBytes  = 1024U
+};
+
+/* Admits at most limit text bytes and its terminator. Inspect incrementally so
+ * imported large passwords cannot turn this operation into unbounded work. */
+static users_password_result_t usersPasswordAdmitLength(const char *password, size_t limit, uint64_t deadline_ms,
+                                                        size_t *length_out)
+{
+    assert(password != NULL && limit < SIZE_MAX && length_out != NULL);
+    for (size_t offset = 0; offset <= limit; ++offset)
+    {
+        if (offset % 256U == 0 && usersConfigDeadlineExpired(deadline_ms))
+            return kUsersPasswordTimeout;
+        if (password[offset] == '\0')
+        {
+            *length_out = offset;
+            return kUsersPasswordOk;
+        }
+    }
+    return kUsersPasswordResourceLimit;
+}
+
+users_password_result_t usersPreparePasswordChange(const char *password, size_t max_owned_bytes, uint64_t deadline_ms,
+                                                   user_prepared_password_change_t **out)
+{
+    assert(password != NULL && out != NULL);
+    *out = NULL;
+    if (password[0] == '\0')
+        return kUsersPasswordInvalidArgument;
+    if (usersConfigDeadlineExpired(deadline_ms))
+        return kUsersPasswordTimeout;
+    const size_t base    = sizeof(user_prepared_password_change_t) + 32U;
+    const size_t scratch = kUsersPasswordPrepareScratchBytes;
+    if (max_owned_bytes < base + scratch + 2U)
+        return kUsersPasswordResourceLimit;
+    size_t                  limit = min((size_t) kUsersPasswordTextLimit, max_owned_bytes - base - scratch - 1U);
+    size_t                  length;
+    users_password_result_t result = usersPasswordAdmitLength(password, limit, deadline_ms, &length);
+    if (result != kUsersPasswordOk)
+        return result;
+    user_prepared_password_change_t *prepared = memoryAllocateAlignedZero(sizeof(*prepared), 32U);
+    prepared->owned_bytes                     = base + length + 1U;
+    prepared->peak_bytes                      = prepared->owned_bytes + scratch;
+    if (! userPreparePassword(&prepared->material, password, length))
+    {
+        usersFreePreparedPasswordChange(prepared);
+        return kUsersPasswordPreparationFailed;
+    }
+    if (usersConfigDeadlineExpired(deadline_ms))
+    {
+        usersFreePreparedPasswordChange(prepared);
+        return kUsersPasswordTimeout;
+    }
+    *out = prepared;
+    return kUsersPasswordOk;
+}
+
+void usersFreePreparedPasswordChange(user_prepared_password_change_t *prepared)
+{
+    if (prepared == NULL)
+        return;
+    userFreePreparedPassword(&prepared->material);
+    memorySecureZero(prepared, sizeof(*prepared));
+    memoryFreeAligned(prepared);
+}
+
+size_t usersPreparedPasswordChangeOwnedBytes(const user_prepared_password_change_t *prepared)
+{
+    assert(prepared != NULL);
+    return prepared->owned_bytes;
+}
+
+size_t usersPreparedPasswordChangePeakBytes(const user_prepared_password_change_t *prepared)
+{
+    assert(prepared != NULL);
+    return prepared->peak_bytes;
+}
+
+size_t usersPreparedPasswordChangeCommitBytes(const user_prepared_password_change_t *prepared)
+{
+    assert(prepared != NULL);
+    discard prepared;
+    return kUsersPasswordCommitScratchBytes;
+}
+
+users_password_result_t usersTryChangePreparedPasswordByIdentifier(users_t *users, uint64_t id,
+                                                                   user_prepared_password_change_t *prepared,
+                                                                   size_t max_working_bytes, uint64_t deadline_ms,
+                                                                   users_config_precommit_fn precommit, void *context)
+{
+    assert(users != NULL && prepared != NULL && prepared->material.password != NULL);
+    if (id == 0)
+        return kUsersPasswordInvalidArgument;
+    if (max_working_bytes < kUsersPasswordCommitScratchBytes)
+        return kUsersPasswordResourceLimit;
+    if (usersConfigDeadlineExpired(deadline_ms))
+        return kUsersPasswordTimeout;
+    if (! rwlockTryWriteLock(&users->lock))
+        return kUsersPasswordBusy;
+    users_password_result_t result = kUsersPasswordNotFound;
+    user_t                 *user   = usersIDTableLookupLocked(users, id);
+    if (user == NULL)
+        goto release_collection;
+    if (! rwlockTryWriteLock(&user->lock))
+    {
+        result = kUsersPasswordBusy;
+        goto release_collection;
+    }
+    users_update_result_t preflight = usersPasswordPreflightLocked(users, user, &prepared->material);
+    switch (preflight)
+    {
+    case kUsersUpdateResultOk:
+        result = kUsersPasswordOk;
+        break;
+    case kUsersUpdateResultCapacityRejected:
+        result = kUsersPasswordResourceLimit;
+        break;
+    case kUsersUpdateResultDuplicateUUID:
+    case kUsersUpdateResultDuplicateWireGuardPublicKey:
+    case kUsersUpdateResultPasswordUpdateFailed:
+        result = kUsersPasswordCredentialsExist;
+        break;
+    default:
+        LOGF("Users: unexpected password preflight result");
+        abortProgramNow(1);
+    }
+    if (result != kUsersPasswordOk)
+        goto release_user;
+    size_t old_password_length = 0;
+    if (user->password != NULL)
+    {
+        result = usersPasswordAdmitLength(user->password, kUsersPasswordTextLimit, deadline_ms, &old_password_length);
+        if (result != kUsersPasswordOk)
+            goto release_user;
+    }
+    if (usersConfigDeadlineExpired(deadline_ms))
+    {
+        result = kUsersPasswordTimeout;
+        goto release_user;
+    }
+    if (precommit != NULL && ! precommit(context))
+    {
+        result = kUsersPasswordPrecommitRejected;
+        goto release_user;
+    }
+    if (usersConfigDeadlineExpired(deadline_ms))
+    {
+        result = kUsersPasswordTimeout;
+        goto release_user;
+    }
+    usersCommitPasswordLocked(users, user, &prepared->material, old_password_length);
+release_user:
+    rwlockWriteUnlock(&user->lock);
+release_collection:
+    rwlockWriteUnlock(&users->lock);
+    return result;
+}
+
 /* Fresh accounts own their strings and native locks throughout preparation.
  * The enclosing object is aligned because user_t contains aligned hashes. */
 struct user_prepared_creation_s
@@ -4271,8 +4292,8 @@ users_add_result_t usersPrepareNewUser(uint64_t id, const char *password, const 
         return kUsersAddResultTimeout;
     /* userChangePassword's private credential staging and CIDR scratch remain
      * charged alongside the aligned private user and owned password. */
-    const size_t base =
-        sizeof(user_prepared_creation_t) + 32U + sizeof(user_t) + kUsersConfigPreparationScratchBytes + 4U;
+    const size_t base = sizeof(user_prepared_creation_t) + 32U + sizeof(user_prepared_password_t) +
+                        kUsersConfigPreparationScratchBytes + 4U;
     if (max_owned_bytes < base)
         return kUsersAddResultResourceLimit;
     size_t password_bytes;

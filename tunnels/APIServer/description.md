@@ -1,11 +1,11 @@
 <!--
-Documentation version: 4
+Documentation version: 5
 Sync note: Keep synchronized with tunnels/APIServer/description.md and the Persian node reference.
 -->
 
 # APIServer
 
-`APIServer` exposes explicitly registered node operations over a reliable byte stream. It is a terminal node and opens no socket itself. Registered read-only operations include `AuthenticationClient.status` and `AuthenticationServer.status`, `get-user` and `list-users`; `AuthenticationServer.update-user` is a conditional write and `create-user` creates a fresh account; both require their own explicit permissions. Access uses independent static operator credentials and exact per-operation permissions.
+`APIServer` exposes explicitly registered node operations over a reliable byte stream. It is a terminal node and opens no socket itself. Registered read-only operations include `AuthenticationClient.status` and `AuthenticationServer.status`, `get-user` and `list-users`; `AuthenticationServer.update-user` is a conditional write and `create-user` creates a fresh account; `change-user-password` conditionally replaces credentials for an existing account. Each write requires its own explicit permission. Access uses independent static operator credentials and exact per-operation permissions.
 
 ## Placement
 
@@ -55,6 +55,13 @@ This example belongs to a configuration whose top-level logical `name` is `edge-
         "token": "<another distinct 64 hexadecimal characters representing 32 random bytes>",
         "allow": [
           {"config": "central", "node": "auth-db", "operations": ["get-user", "create-user"]}
+        ]
+      },
+      {
+        "name": "password-admin",
+        "token": "<separate unique 64 hexadecimal characters representing 32 random bytes>",
+        "allow": [
+          {"config": "central", "node": "auth-db", "operations": ["get-user", "change-user-password"]}
         ]
       }
     ]
@@ -272,6 +279,31 @@ new ID automatically, overwrite an account, reset its credentials or treat
 `id_exists` as proof of your earlier success. The generic client does not retry;
 outer request IDs only correlate replies. Producer credentials and
 `allow-user-write` grant no gateway creation permission.
+
+A password administrator uses a distinct token with exactly `get-user` and
+`change-user-password` permission. Existing monitor/editor/creator tokens do not
+gain this operation. Read the account, then prepare a private UTF-8 request file
+with exactly `id`, the sampled `edit_token` as `if_match`, and the chosen
+`password`. Keep the desired password in that private file rather than command
+arguments or shell history. Submit once with the existing generic client:
+
+```bash
+python3 examples/api_client.py --host 127.0.0.1 --port 9080 \
+  --client password-admin --token-file /private/path/password-admin-token \
+  --config central --node auth-db --operation change-user-password \
+  --body-file /private/path/password-change.json
+```
+
+The compact acknowledgement contains no credentials and confirms memory only.
+See [AuthenticationServer](AuthenticationServer.mdx#change-user-password) for the
+strict body, UUID identity, cached-client and preservation rules. A conflict is
+an uncommitted invocation. A lost reply, invalid reply or post-dispatch timeout
+leaves the outcome unknown: retain the intended password securely and reread for
+a current token. Public reads omit credentials, so neither an advanced revision
+nor the account's existence proves that this password was installed. Explicitly
+decide whether to resubmit the desired password with that token. A successful
+resubmission establishes it at that commit point. The client never automatically
+refreshes tokens, retries writes or generates a replacement password.
 
 ## Lifecycle And Metadata
 

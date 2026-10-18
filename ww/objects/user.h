@@ -314,6 +314,29 @@ bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_a
 bool userWireGuardAllowedIpsStringValid(const char *value);
 bool userSetWireGuardAllowedIps(User *user, const char *value);
 
+/* Owned credential staging, without user locks, accounting, or runtime state.
+ * Prepare derives each primitive once. Destroy is required on every result,
+ * including after commit transfers password ownership. This internal object
+ * helper is shared by standalone users and indexed collection transactions. */
+typedef struct user_prepared_password_s
+{
+    char                                          *password;
+    size_t                                         password_length;
+    hash_t                                         hash_pass;
+    MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
+    uint8_t                                        sha224_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
+    MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
+    uint8_t                                        uuid_pass[kWwUuidBytesLen];
+    uint8_t                                        wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
+    bool sha224_pass_valid, sha256_pass_valid, uuid_pass_valid, wireguard_publickey_valid;
+} user_prepared_password_t;
+bool userPreparePassword(user_prepared_password_t *prepared, const char *password, size_t password_length);
+void userFreePreparedPassword(user_prepared_password_t *prepared);
+/* Caller holds the user's configuration write lock. Admission has already
+ * established old_password_length; this nonfailing transfer never scans strings,
+ * acquires a lock, allocates, or touches statistics/runtime state. */
+void userCommitPreparedPasswordLocked(User *user, user_prepared_password_t *prepared, size_t old_password_length);
+
 bool userChangePassword(User *user, const char *password);
 /* Compatibility alias for userChangePassword(); prefer usersChangePassword() for database-owned users. */
 bool userSetPassword(User *user, const char *password);

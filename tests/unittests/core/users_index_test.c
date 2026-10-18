@@ -79,9 +79,8 @@ static size_t g_x25519_calls;
  * Disabled-by-default "fail on call N" control. When g_shaXXX_fail_on_call is
  * non-zero, the Nth derivation of that primitive returns kWCryptoBackendFailed
  * instead of computing; every other call passes through. The password-change
- * path derives each primitive once for the pre-snapshot probe and a second time
- * inside userChangePassword, so failing call 2 exercises the post-snapshot
- * cleanup path without disturbing the pre-snapshot derivation.
+ * path derives each primitive once in owned preparation. Failing that real
+ * preparation exercises cleanup without retaining obsolete duplicate work.
  */
 static size_t g_sha224_fail_on_call;
 static size_t g_sha256_fail_on_call;
@@ -89,6 +88,11 @@ static size_t g_x25519_fail_on_call;
 
 /* When enabled, every SHA-256 derivation returns this fixed value, which lets
  * the test synthesize an index collision between two distinct plaintexts. */
+static bool     g_force_sha224_enabled, g_force_wireguard_enabled;
+static uint8_t  g_force_sha224_value[SHA224_DIGEST_SIZE];
+static uint8_t  g_force_wireguard_value[USER_WIREGUARD_PUBLICKEY_SIZE];
+static users_t *g_password_derivation_users;
+static user_t  *g_password_derivation_user;
 static bool    g_force_sha256_enabled;
 static uint8_t g_force_sha256_value[SHA256_DIGEST_SIZE];
 
@@ -103,18 +107,40 @@ wcrypto_status_t __wrap_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY
                                       const unsigned char scalar[WCRYPTO_X25519_KEY_SIZE],
                                       const unsigned char point[WCRYPTO_X25519_KEY_SIZE]);
 
+static void passwordDerivationLocksAvailable(void)
+{
+    if (g_password_derivation_users != NULL)
+    {
+        require(rwlockTryWriteLock(&g_password_derivation_users->lock), "password derived under collection lock");
+        rwlockWriteUnlock(&g_password_derivation_users->lock);
+        require(rwlockTryWriteLock(&g_password_derivation_user->lock), "password derived under target lock");
+        rwlockWriteUnlock(&g_password_derivation_user->lock);
+    }
+}
+
 wcrypto_status_t __wrap_wCryptoSHA224(sha224_hash_t *out, const unsigned char *in, size_t inlen)
 {
+    passwordDerivationLocksAvailable();
+    if (g_password_derivation_users != NULL)
+        require((uintptr_t) out % 32U == 0, "SHA-224 output lacks aligned staging");
     g_sha224_calls += 1U;
     if (g_sha224_fail_on_call != 0U && g_sha224_calls == g_sha224_fail_on_call)
     {
         return kWCryptoBackendFailed;
+    }
+    if (g_force_sha224_enabled)
+    {
+        memoryCopy(out->bytes, g_force_sha224_value, sizeof(out->bytes));
+        return kWCryptoOk;
     }
     return __real_wCryptoSHA224(out, in, inlen);
 }
 
 wcrypto_status_t __wrap_wCryptoSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen)
 {
+    passwordDerivationLocksAvailable();
+    if (g_password_derivation_users != NULL)
+        require((uintptr_t) out % 32U == 0, "SHA-256 output lacks aligned staging");
     g_sha256_calls += 1U;
     if (g_sha256_fail_on_call != 0U && g_sha256_calls == g_sha256_fail_on_call)
     {
@@ -135,10 +161,16 @@ wcrypto_status_t __wrap_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY
                                       const unsigned char scalar[WCRYPTO_X25519_KEY_SIZE],
                                       const unsigned char point[WCRYPTO_X25519_KEY_SIZE])
 {
+    passwordDerivationLocksAvailable();
     g_x25519_calls += 1U;
     if (g_x25519_fail_on_call != 0U && g_x25519_calls == g_x25519_fail_on_call)
     {
         return kWCryptoBackendFailed;
+    }
+    if (g_force_wireguard_enabled)
+    {
+        memoryCopy(out, g_force_wireguard_value, USER_WIREGUARD_PUBLICKEY_SIZE);
+        return kWCryptoOk;
     }
     return __real_wCryptoX25519(out, scalar, point);
 }
@@ -149,6 +181,22 @@ wcrypto_status_t __wrap_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY
 /* Count core allocations without replacing their succeed-or-terminate contract. */
 static bool   g_alloc_probe_active;
 static size_t g_alloc_calls;
+static void  *g_secret_free_watch;
+static size_t g_secret_free_bytes, g_secret_wipes, g_secret_capture_bytes;
+
+void __real_memoryFree(void *ptr);
+void __wrap_memoryFree(void *ptr);
+void __wrap_memoryFree(void *ptr)
+{
+    if (ptr != NULL && ptr == g_secret_free_watch)
+    {
+        for (size_t i = 0; i < g_secret_free_bytes; ++i)
+            require(((const uint8_t *) ptr)[i] == 0, "owned password freed without secure cleanup");
+        ++g_secret_wipes;
+        g_secret_free_watch = NULL;
+    }
+    __real_memoryFree(ptr);
+}
 
 void *__real_memoryAllocate(size_t size);
 void *__real_memoryReAllocate(void *ptr, size_t size);
@@ -166,7 +214,14 @@ static void countAllocation(void)
 void *__wrap_memoryAllocate(size_t size)
 {
     countAllocation();
-    return __real_memoryAllocate(size);
+    void *ptr = __real_memoryAllocate(size);
+    if (g_secret_capture_bytes == size)
+    {
+        g_secret_free_watch    = ptr;
+        g_secret_free_bytes    = size;
+        g_secret_capture_bytes = 0;
+    }
+    return ptr;
 }
 
 void *__wrap_memoryReAllocate(void *ptr, size_t size)
@@ -647,55 +702,42 @@ static void testIncrementalPasswordChange(void)
 }
 
 #if defined(WCRYPTO_TEST_LINKER_WRAP) && defined(USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER)
-/*
- * The password probe derives the credential hashes once before the snapshot and
- * userChangePassword derives them a second time afterward. Failing SHA-224 on
- * its second call reaches the snapshot (call 1 succeeds) and then fails the
- * post-snapshot derivation, proving the snapshot is wiped and the update stays
- * atomic when the crypto backend reports failure.
- */
-static void testChangePasswordSecondPassCryptoFailureWipesSnapshot(void)
+/* The shared path derives once. Every backend refusal occurs before any
+ * credential snapshot or mutation, while success wipes one retired snapshot. */
+static void testChangePasswordPreparationFailureIsAtomic(void)
 {
     users_t users;
-    require(usersCreate(&users), "failed to create users table");
-
-    const char *old_uuid_pw = "abcdef01-2345-6789-abcd-ef0123456789";
-    uint8_t     old_uuid_bytes[kWwUuidBytesLen];
-    require(wwUuidParseString(old_uuid_pw, old_uuid_bytes), "failed to parse old UUID password");
-    addUser(&users, 1, old_uuid_pw);
-    user_t *u1 = usersLookupByIdentifier(&users, 1);
-    require(u1 != NULL, "seed user missing");
-    require(usersValidate(&users), "fixture invalid before crypto injection");
-
-    /* Reset the crypto call counters immediately before the update, then fail the
-     * second SHA-224 derivation so the first (pre-snapshot) one still succeeds. */
-    g_sha224_calls                       = 0;
-    g_sha256_calls                       = 0;
-    g_x25519_calls                       = 0;
-    g_sha224_fail_on_call                = 2;
+    require(usersCreate(&users), "password preparation failure table failed");
+    const char *old_uuid = "abcdef01-2345-6789-abcd-ef0123456789";
+    addUser(&users, 1, old_uuid);
+    user_t *target = usersLookupByIdentifier(&users, 1);
+    for (unsigned stage = 0; stage < 3; ++stage)
+    {
+        resetCounters();
+        if (stage == 0)
+            g_sha224_fail_on_call = 1;
+        if (stage == 1)
+            g_sha256_fail_on_call = 1;
+        if (stage == 2)
+            g_x25519_fail_on_call = 1;
+        users_test_credential_snapshot_wipes = 0;
+        require(! usersChangePassword(&users, target, "proposed-new-password"), "failed password crypto committed");
+        require(g_sha224_calls == 1 && g_sha256_calls == (stage >= 1) && g_x25519_calls == (stage >= 2),
+                "password preparation repeated a primitive");
+        require(users_test_credential_snapshot_wipes == 0, "preparation refusal captured retired credentials");
+        resetCounters();
+        require(usersLookupByPassword(&users, old_uuid) == target &&
+                    usersLookupByUUID(&users, target->uuid_pass) == target &&
+                    usersLookupByPassword(&users, "proposed-new-password") == NULL && usersValidate(&users),
+                "crypto refusal changed credential state");
+    }
+    resetCounters();
     users_test_credential_snapshot_wipes = 0;
-
-    bool ok = usersChangePassword(&users, u1, "proposed-new-password");
-
-    bool reached_second_derivation = (g_sha224_calls == 2U);
-    g_sha224_fail_on_call          = 0;
-
-    require(! ok, "password update unexpectedly succeeded under an injected second-pass crypto failure");
-    require(reached_second_derivation, "the second SHA-224 derivation was not reached");
-    require(users_test_credential_snapshot_wipes == 1U,
-            "a crypto-failed password update did not wipe the credential snapshot exactly once");
-
-    require(usersLookupByPassword(&users, old_uuid_pw) == u1, "old password stopped resolving after a failed update");
-    require(usersLookupByUUID(&users, old_uuid_bytes) == u1, "old UUID stopped resolving after a failed update");
-    require(usersLookupByPassword(&users, "proposed-new-password") == NULL,
-            "the proposed new password resolves after a failed update");
-    require(usersValidate(&users), "database invalid after a crypto-failed password update");
-
-    /* Reset all failure-injection state before leaving, including on success. */
-    g_sha224_fail_on_call = 0;
-    g_sha256_fail_on_call = 0;
-    g_x25519_fail_on_call = 0;
-
+    require(usersChangePassword(&users, target, "proposed-new-password"), "prepared blocking change failed");
+    require(g_sha224_calls == 1 && g_sha256_calls == 1 && g_x25519_calls == 1 &&
+                users_test_credential_snapshot_wipes == 1,
+            "blocking password change repeated crypto or missed snapshot wipe");
+    require(usersValidate(&users), "shared blocking password commit corrupted indexes");
     usersDestroy(&users);
 }
 #endif
@@ -1847,6 +1889,418 @@ static void testPreparedCreationFailureCleanup(void)
 #endif
 }
 
+static user_prepared_password_change_t *preparePassword(const char *password)
+{
+    user_prepared_password_change_t *prepared = NULL;
+    require(usersPreparePasswordChange(password, SIZE_MAX, 0, &prepared) == kUsersPasswordOk && prepared != NULL,
+            "password preparation failed");
+    require(usersPreparedPasswordChangeOwnedBytes(prepared) <= usersPreparedPasswordChangePeakBytes(prepared),
+            "password preparation omitted retained storage");
+    return prepared;
+}
+
+static void commitPasswordAndCheck(users_t *users, user_t *target, const char *password)
+{
+    sha224_hash_t old224 = target->sha224_pass;
+    sha256_hash_t old256 = target->sha256_pass;
+    uint8_t       old_uuid[kWwUuidBytesLen], old_wg[USER_WIREGUARD_PUBLICKEY_SIZE];
+    bool          old_uuid_valid = target->uuid_pass_valid;
+    memoryCopy(old_uuid, target->uuid_pass, sizeof(old_uuid));
+    memoryCopy(old_wg, target->wireguard_publickey, sizeof(old_wg));
+    resetCounters();
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+    g_password_derivation_users = users;
+    g_password_derivation_user  = target;
+#endif
+    user_prepared_password_change_t *prepared = preparePassword(password);
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+    g_password_derivation_users = NULL;
+    g_password_derivation_user  = NULL;
+    require(g_sha224_calls == 1 && g_sha256_calls == 1 && g_x25519_calls == 1,
+            "password preparation did not derive each primitive once");
+#endif
+    resetCounters();
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    size_t wipes        = g_secret_wipes;
+    g_secret_free_watch = target->password;
+    g_secret_free_bytes = stringLength(target->password) + 1U;
+    allocationCountBegin();
+#endif
+    require(usersTryChangePreparedPasswordByIdentifier(
+                users, target->id, prepared, usersPreparedPasswordChangeCommitBytes(prepared), 0, NULL, NULL) ==
+                kUsersPasswordOk,
+            "prepared password commit failed");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    require(allocationCountEnd() == 0, "password replacement allocated or grew an index");
+    require(g_secret_wipes == wipes + 1U && g_secret_free_watch == NULL, "retired plaintext was not wiped");
+#endif
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+    require(g_sha224_calls == 0 && g_sha256_calls == 0 && g_x25519_calls == 0,
+            "password commit repeated crypto under shared ownership");
+#endif
+    usersFreePreparedPasswordChange(prepared);
+    require(userPasswordMatches(target, password) && usersLookupByPassword(users, password) == target &&
+                usersLookupBySHA224(users, target->sha224_pass.bytes) == target &&
+                usersLookupBySHA256(users, target->sha256_pass.bytes) == target &&
+                usersLookupByWireGuardPublicKey(users, target->wireguard_publickey) == target &&
+                usersLookupByIdentifier(users, target->id) == target,
+            "password replacement lost a new credential or the durable ID");
+    if (memoryCompare(old224.bytes, target->sha224_pass.bytes, sizeof(old224.bytes)) != 0)
+        require(usersLookupBySHA224(users, old224.bytes) == NULL, "changed old SHA-224 still resolves");
+    if (memoryCompare(old256.bytes, target->sha256_pass.bytes, sizeof(old256.bytes)) != 0)
+        require(usersLookupBySHA256(users, old256.bytes) == NULL, "changed old SHA-256 still resolves");
+    if (memoryCompare(old_wg, target->wireguard_publickey, sizeof(old_wg)) != 0)
+        require(usersLookupByWireGuardPublicKey(users, old_wg) == NULL,
+                "changed old WireGuard identity still resolves");
+    if (old_uuid_valid &&
+        (! target->uuid_pass_valid || memoryCompare(old_uuid, target->uuid_pass, sizeof(old_uuid)) != 0))
+        require(usersLookupByUUID(users, old_uuid) == NULL, "removed old UUID still resolves");
+    if (target->uuid_pass_valid)
+        require(usersLookupByUUID(users, target->uuid_pass) == target, "new UUID identity does not resolve");
+    memorySecureZero(&old224, sizeof(old224));
+    memorySecureZero(&old256, sizeof(old256));
+    memorySecureZero(old_uuid, sizeof(old_uuid));
+    require(usersValidate(users), "prepared password commit corrupted the collection");
+}
+
+static void testPreparedPasswordSemanticsAndPreservation(void)
+{
+    users_t users;
+    require(usersCreate(&users), "password preservation table failed");
+    user_t *target = addNamedAllowedIpUser(&users, 1, "password-old", "password-name", "10.210.0.0/24");
+    addUser(&users, 2, "password-unrelated");
+    user_ip_key_t key = testIpKey(192, 0, 2, 101);
+    require(usersTryAdmitConnectionByIdentifier(&users, 1, &key, 1000) == kUserAdmissionOk,
+            "password preservation admission failed");
+    userAddTraffic(target, 123, 456);
+    userAddSpeed(target, 12, 34);
+    userSetIpCount(target, 9);
+    userSetDeviceCount(target, 8);
+    userSetEnabled(target, false);
+    target->timeinfo.created_at_ms               = 700;
+    target->timeinfo.first_usage_at_ms           = 800;
+    target->timeinfo.expire_at_ms                = 900;
+    target->timeinfo.expire_after_first_usage_ms = 100;
+    target->limit.traffic.total                  = 1;
+    target->client_time.accounting_anchor_ms     = 111;
+    target->client_time.first_report_ms          = 222;
+    target->client_time.observed                 = true;
+    target->client_view_expiry_valid             = true;
+    target->client_view_expires_at_ms            = 333;
+    const user_stat_t         stats              = target->stats;
+    const user_time_info_t    timeinfo           = target->timeinfo;
+    const user_limit_t        limit              = target->limit;
+    const user_runtime_stat_t runtime            = target->runtime;
+    const user_client_time_t  client_time        = target->client_time;
+    char *name = target->name, *email = target->email, *notes = target->notes, *range = target->wireguard_allowed_ips;
+    const size_t count = users.count, slots = users.slot_count, capacity = users.capacity;
+    user_t     **items = users.items, **blocks = users.blocks;
+    void        *id_table = users.id_table, *pointer_table = users.pointer_table, *name_table = users.name_table;
+    void        *allowed_table = users.allowed_ip_table;
+    commitPasswordAndCheck(&users, target, "  exact-\xc3\xa9-password\t ");
+    require(! userPasswordMatches(target, "password-old"), "different old plaintext still matches");
+    commitPasswordAndCheck(&users, target, "abcdef01-2345-6789-abcd-ef0123456789");
+    commitPasswordAndCheck(&users, target, "ABCDEF01-2345-6789-ABCD-EF0123456789");
+    commitPasswordAndCheck(&users, target, "00112233-4455-6677-8899-aabbccddeeff");
+    commitPasswordAndCheck(&users, target, "final-plain-password");
+    commitPasswordAndCheck(&users, target, "final-plain-password");
+    require(! target->enabled && target->name == name && target->email == email && target->notes == notes &&
+                target->wireguard_allowed_ips == range && memoryEqual(&target->stats, &stats, sizeof(stats)) &&
+                memoryEqual(&target->timeinfo, &timeinfo, sizeof(timeinfo)) &&
+                memoryEqual(&target->limit, &limit, sizeof(limit)) &&
+                memoryEqual(&target->runtime, &runtime, sizeof(runtime)) &&
+                memoryEqual(&target->client_time, &client_time, sizeof(client_time)) &&
+                target->client_view_expiry_valid && target->client_view_expires_at_ms == 333 && users.count == count &&
+                users.slot_count == slots && users.capacity == capacity && users.items == items &&
+                users.blocks == blocks && users.id_table == id_table && users.pointer_table == pointer_table &&
+                users.name_table == name_table && users.allowed_ip_table == allowed_table,
+            "password mutation changed noncredential state");
+    ip_addr_t address = parseIp("10.210.0.99");
+    require(usersLookupByWireGuardAllowedIp(&users, &address) == target, "password change lost Allowed-IP index");
+    usersReleaseConnectionByIdentifier(&users, 1, &key);
+    require(target->runtime.active_cons_out == 0 && target->runtime.ip_usage_count == 0,
+            "password rotation lost the active reservation");
+    usersDestroy(&users);
+}
+
+static void testPreparedPasswordRefusalsAndBounds(void)
+{
+    users_t users;
+    require(usersCreate(&users), "password refusal table failed");
+    addUser(&users, 1, "password-before-refusal");
+    user_t                          *target    = usersLookupByIdentifier(&users, 1);
+    char                             desired[] = "owned-password-after-refusal";
+    user_prepared_password_change_t *prepared = preparePassword(desired), *refused = (void *) 1;
+    size_t                           peak = usersPreparedPasswordChangePeakBytes(prepared);
+    require(usersPreparePasswordChange(desired, peak - 1U, 0, &refused) == kUsersPasswordResourceLimit &&
+                refused == NULL,
+            "password preparation crossed exact allowance");
+    require(usersPreparePasswordChange(desired, peak, 0, &refused) == kUsersPasswordOk && refused != NULL,
+            "password preparation refused exact allowance");
+    usersFreePreparedPasswordChange(refused);
+    desired[0]         = 'X';
+    unsigned callbacks = 0;
+    require(usersTryChangePreparedPasswordByIdentifier(
+                &users, 1, prepared, usersPreparedPasswordChangeCommitBytes(prepared) - 1U, 0, NULL, NULL) ==
+                kUsersPasswordResourceLimit,
+            "password commit crossed scratch allowance");
+    require(usersTryChangePreparedPasswordByIdentifier(&users, 999, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                kUsersPasswordNotFound,
+            "password commit accepted missing ID");
+    require(usersTryChangePreparedPasswordByIdentifier(&users, 1, prepared, SIZE_MAX, 1, NULL, NULL) ==
+                kUsersPasswordTimeout,
+            "expired password commit succeeded");
+    require(usersTryChangePreparedPasswordByIdentifier(
+                &users, 1, prepared, SIZE_MAX, 0, configPrecommitRefuse, &callbacks) ==
+                    kUsersPasswordPrecommitRejected &&
+                callbacks == 1,
+            "password precommit refusal mutated");
+    config_lock_holder_t holder;
+    wrwlock_t           *locks[] = {&users.lock, &target->lock};
+    for (size_t i = 0; i < 2; ++i)
+    {
+        configHoldStart(&holder, locks[i]);
+        require(usersTryChangePreparedPasswordByIdentifier(&users, 1, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                    kUsersPasswordBusy,
+                "password mutation waited for a held lock");
+        configHoldFinish(&holder);
+    }
+    require(userPasswordMatches(target, "password-before-refusal") && usersValidate(&users),
+            "password refusal changed published state");
+    configHoldStart(&holder, &target->stats_lock);
+    require(usersTryChangePreparedPasswordByIdentifier(&users, 1, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                kUsersPasswordOk,
+            "credentials-only transaction acquired stats lock");
+    configHoldFinish(&holder);
+    usersFreePreparedPasswordChange(prepared);
+    require(userPasswordMatches(target, "owned-password-after-refusal"), "prepared password borrowed request bytes");
+
+    /* Deliberately supply a full UUID map at its initial capacity boundary.
+     * Refusal must precede erasure of any old credential membership. */
+    users_t empty;
+    require(usersCreate(&empty), "password capacity refusal fixture failed");
+    for (uint64_t id = 1; id <= 25; ++id)
+    {
+        char uuid_password[64];
+        snprintf(uuid_password, sizeof(uuid_password), "%08" PRIx64 "-2345-6789-abcd-ef0123456789", id);
+        addUser(&empty, id, uuid_password);
+    }
+    prepared                          = preparePassword("00112233-4455-6677-8899-aabbccddeeff");
+    users_uuid_table_t *reserved_uuid = users.uuid_table;
+    users.uuid_table                  = empty.uuid_table;
+    require(usersTryChangePreparedPasswordByIdentifier(&users, 1, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                kUsersPasswordResourceLimit,
+            "password replacement grew an unreserved UUID map");
+    users.uuid_table = reserved_uuid;
+    usersFreePreparedPasswordChange(prepared);
+    usersDestroy(&empty);
+    require(userPasswordMatches(target, "owned-password-after-refusal") && usersValidate(&users),
+            "reserved-capacity refusal changed credentials or indexes");
+
+    char *huge = memoryAllocate(32770U);
+    memset(huge, 'p', 32769U);
+    huge[32769U] = '\0';
+    require(usersChangePassword(&users, target, huge), "legacy imported large password refused");
+    prepared = preparePassword("after-imported-password");
+    require(usersTryChangePreparedPasswordByIdentifier(&users, 1, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                    kUsersPasswordResourceLimit &&
+                userPasswordMatches(target, huge) && usersValidate(&users),
+            "oversized old password was inspected or mutated");
+    huge[32768U] = '\0';
+    require(usersChangePassword(&users, target, huge), "legacy exact password bound setup failed");
+    /* Unrelated imported strings must never be inspected by this path. */
+    huge[32768U] = 'p';
+    require(usersSetUserName(&users, target, huge) && usersSetUserNotes(&users, target, huge),
+            "unrelated large text setup failed");
+    require(usersTryChangePreparedPasswordByIdentifier(&users, 1, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                    kUsersPasswordOk &&
+                userPasswordMatches(target, "after-imported-password") && usersValidate(&users),
+            "exact old password bound refused or unrelated text scanned");
+    usersFreePreparedPasswordChange(prepared);
+    huge[32768U] = '\0';
+    require(usersPreparePasswordChange(huge, SIZE_MAX, 0, &prepared) == kUsersPasswordOk,
+            "maximum prepared password was refused");
+    usersFreePreparedPasswordChange(prepared);
+    huge[32768U] = 'p';
+    require(usersPreparePasswordChange(huge, SIZE_MAX, 0, &prepared) == kUsersPasswordResourceLimit && prepared == NULL,
+            "oversized prepared password was accepted");
+    memorySecureZero(huge, 32770U);
+    memoryFree(huge);
+    usersDestroy(&users);
+}
+
+static void testPreparedPasswordDuplicatesAndCleanup(void)
+{
+    users_t users;
+    require(usersCreate(&users), "password duplicate table failed");
+    addUser(&users, 1, "password-duplicate-target");
+    addUser(&users, 2, "abcdef01-2345-6789-abcd-ef0123456789");
+    user_t *target = usersLookupByIdentifier(&users, 1), *other = usersLookupByIdentifier(&users, 2);
+    for (unsigned kind = 0; kind < 5; ++kind)
+    {
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+        if (kind == 2)
+        {
+            g_force_sha224_enabled = true;
+            memoryCopy(g_force_sha224_value, other->sha224_pass.bytes, SHA224_DIGEST_SIZE);
+        }
+        if (kind == 3)
+        {
+            g_force_sha256_enabled = true;
+            memoryCopy(g_force_sha256_value, other->sha256_pass.bytes, SHA256_DIGEST_SIZE);
+            /* Keep WireGuard owned by the target so this refusal specifically
+             * reaches the otherwise masked SHA-256 collision check. */
+            g_force_wireguard_enabled = true;
+            memoryCopy(g_force_wireguard_value, target->wireguard_publickey, USER_WIREGUARD_PUBLICKEY_SIZE);
+        }
+        if (kind == 4)
+        {
+            g_force_wireguard_enabled = true;
+            memoryCopy(g_force_wireguard_value, other->wireguard_publickey, USER_WIREGUARD_PUBLICKEY_SIZE);
+        }
+#else
+        if (kind >= 2)
+            continue;
+#endif
+        user_prepared_password_change_t *prepared =
+            preparePassword(kind == 0   ? other->password
+                            : kind == 1 ? "ABCDEF01-2345-6789-ABCD-EF0123456789"
+                                        : "forced-distinct-credential-collision");
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+        g_force_sha224_enabled = g_force_sha256_enabled = g_force_wireguard_enabled = false;
+#endif
+        require(usersTryChangePreparedPasswordByIdentifier(&users, 1, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                    kUsersPasswordCredentialsExist,
+                "credential duplicate class was accepted");
+        usersFreePreparedPasswordChange(prepared);
+        require(userPasswordMatches(target, "password-duplicate-target") &&
+                    usersLookupByPassword(&users, other->password) == other && usersValidate(&users),
+                "duplicate password refusal changed an account");
+    }
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+    for (unsigned stage = 0; stage < 3; ++stage)
+    {
+        resetCounters();
+        if (stage == 0)
+            g_sha224_fail_on_call = 1;
+        if (stage == 1)
+            g_sha256_fail_on_call = 1;
+        if (stage == 2)
+            g_x25519_fail_on_call = 1;
+#if defined(USERS_TEST_ALLOC_COUNTING)
+        size_t wipes           = g_secret_wipes;
+        g_secret_capture_bytes = sizeof("password-private-failed-preparation");
+#endif
+        user_prepared_password_change_t *prepared = (void *) 1;
+        require(usersPreparePasswordChange("password-private-failed-preparation", SIZE_MAX, 0, &prepared) ==
+                        kUsersPasswordPreparationFailed &&
+                    prepared == NULL,
+                "password backend failure retained preparation");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+        require(g_secret_capture_bytes == 0 && g_secret_free_watch == NULL && g_secret_wipes == wipes + 1U,
+                "failed prepared plaintext was not wiped");
+#endif
+    }
+    resetCounters();
+#endif
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    size_t wipes                              = g_secret_wipes;
+    g_secret_capture_bytes                    = sizeof("password-owned-refused-preparation");
+    user_prepared_password_change_t *prepared = preparePassword("password-owned-refused-preparation");
+    unsigned                         calls    = 0;
+    require(usersTryChangePreparedPasswordByIdentifier(
+                &users, 1, prepared, SIZE_MAX, 0, configPrecommitRefuse, &calls) == kUsersPasswordPrecommitRejected,
+            "secret cleanup precommit refusal failed");
+    usersFreePreparedPasswordChange(prepared);
+    require(g_secret_capture_bytes == 0 && g_secret_free_watch == NULL && g_secret_wipes == wipes + 1U,
+            "refused owned password was not wiped");
+#endif
+    usersDestroy(&users);
+}
+
+static void testPreparedPasswordReservedUuidCapacity(void)
+{
+    users_t users, copy, loaded;
+    require(usersCreate(&users) && usersCreate(&copy) && usersCreate(&loaded), "password UUID boundary table failed");
+    for (uint64_t id = 1; id <= 65; ++id)
+    {
+        char password[64];
+        snprintf(password, sizeof(password), "uuid-reserved-plain-%" PRIu64, id);
+        addUser(&users, id, password);
+    }
+    require(usersCopy(&copy, &users), "password UUID boundary native copy failed");
+    cJSON *json = usersToJson(&users);
+    require(json != NULL, "password UUID boundary serialization failed");
+    require(usersFeedJson(&loaded, json), "password UUID boundary JSON feed failed");
+    cJSON_Delete(json);
+    users_t *tables[] = {&users, &copy, &loaded};
+    for (size_t table = 0; table < 3; ++table)
+        for (uint64_t id = 1; id <= 65; ++id)
+        {
+            char password[64];
+            snprintf(password, sizeof(password), "%08" PRIx64 "-2345-6789-abcd-ef0123456789", id);
+            user_prepared_password_change_t *prepared = preparePassword(password);
+#if defined(USERS_TEST_ALLOC_COUNTING)
+            allocationCountBegin();
+#endif
+            require(usersTryChangePreparedPasswordByIdentifier(tables[table], id, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                        kUsersPasswordOk,
+                    "plain-to-UUID exceeded reserved credential capacity");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+            require(allocationCountEnd() == 0, "plain-to-UUID rehashed after add/feed/copy");
+#endif
+            usersFreePreparedPasswordChange(prepared);
+        }
+    require(usersValidate(&users) && usersValidate(&copy) && usersValidate(&loaded),
+            "UUID boundary rotation corrupted indexes");
+    usersDestroy(&loaded);
+    usersDestroy(&copy);
+    usersDestroy(&users);
+}
+
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+static bool passwordExpireAfterAck(void *context)
+{
+    ++*(unsigned *) context;
+    g_creation_clock_expire_at = g_creation_clock_reads + 1U;
+    return true;
+}
+
+static void testPreparedPasswordDeadlines(void)
+{
+    users_t users;
+    require(usersCreate(&users), "password deadline table failed");
+    char *long_password = memoryAllocate(32769U);
+    memset(long_password, 'd', 32768U);
+    long_password[32768U] = '\0';
+    addUser(&users, 1, long_password);
+    user_t                          *target   = usersLookupByIdentifier(&users, 1);
+    user_prepared_password_change_t *prepared = preparePassword("password-after-deadline");
+    for (unsigned stage = 0; stage < 2; ++stage)
+    {
+        unsigned callbacks         = 0;
+        g_creation_clock_us        = UINT64_C(1000000);
+        g_creation_clock_reads     = 0;
+        g_creation_clock_expire_at = stage == 0 ? 3U : 0U;
+        require(usersTryChangePreparedPasswordByIdentifier(
+                    &users, 1, prepared, SIZE_MAX, 1500, passwordExpireAfterAck, &callbacks) == kUsersPasswordTimeout &&
+                    callbacks == stage,
+                "password deadline crossed bounded scan or final commit boundary");
+        g_creation_clock_us        = 0;
+        g_creation_clock_expire_at = 0;
+        require(userPasswordMatches(target, long_password) && usersValidate(&users),
+                "password deadline changed published credentials");
+    }
+    require(usersTryChangePreparedPasswordByIdentifier(&users, 1, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                kUsersPasswordOk,
+            "deadline-refused preparation could not be reused");
+    usersFreePreparedPasswordChange(prepared);
+    memorySecureZero(long_password, 32769U);
+    memoryFree(long_password);
+    usersDestroy(&users);
+}
+#endif
+
 int main(void)
 {
     testCaseSet("users_index_test");
@@ -1858,7 +2312,14 @@ int main(void)
     testValidationAtScaleAndCorruption();
     testIncrementalPasswordChange();
 #if defined(WCRYPTO_TEST_LINKER_WRAP) && defined(USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER)
-    testChangePasswordSecondPassCryptoFailureWipesSnapshot();
+    testChangePasswordPreparationFailureIsAtomic();
+#endif
+    testPreparedPasswordSemanticsAndPreservation();
+    testPreparedPasswordRefusalsAndBounds();
+    testPreparedPasswordDuplicatesAndCleanup();
+    testPreparedPasswordReservedUuidCapacity();
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+    testPreparedPasswordDeadlines();
 #endif
     testNativeCopy();
     testZeroCountIndexesStayEmpty();

@@ -15,6 +15,7 @@ add_library(AuthenticationServer STATIC
                     common/user_views.c
                     common/config_update.c
                     common/config_create.c
+                    common/password_change.c
                     api/request.c
                     api/response.c
                     api/status.c
@@ -24,6 +25,8 @@ add_library(AuthenticationServer STATIC
                     api/config_fields.c
                     api/create_request.c
                     api/create_user.c
+                    api/password_request.c
+                    api/change_user_password.c
                     api/update_request.c
                     api/update_user.c
                     modules/dispatcher.c

@@ -886,7 +886,7 @@ static void testRuntimeMigrationPrefersIdentifierAcrossPasswordChange(void)
     require(usersCreate(&new_users), "failed to create new id migration users table");
 
     require(userCreate(&old_source, "id-migration-old-password"), "failed to create old id migration user");
-    require(userCreate(&new_source, "id-migration-new-password"), "failed to create new id migration user");
+    require(userCreate(&new_source, "id-migration-old-password"), "failed to create new id migration user");
     userSetId(&old_source, user_id);
     userSetId(&new_source, user_id);
     old_source.limit.ips      = 1;
@@ -894,12 +894,24 @@ static void testRuntimeMigrationPrefersIdentifierAcrossPasswordChange(void)
     new_source.limit.ips      = 1;
     new_source.limit.cons_out = 2;
     memoryCopy(old_sha256, old_source.sha256_pass.bytes, sizeof(old_sha256));
-    memoryCopy(new_sha256, new_source.sha256_pass.bytes, sizeof(new_sha256));
 
     require(usersAddUser(&old_users, &old_source), "failed to add old id migration user");
     require(usersAddUser(&new_users, &new_source), "failed to add new id migration user");
     userDestroy(&new_source);
     userDestroy(&old_source);
+
+    /* A normal refreshed collection publishes the API-rotated credentials for
+     * this same durable ID before moving existing runtime reservations. */
+    user_prepared_password_change_t *prepared = NULL;
+    require(usersPreparePasswordChange("id-migration-new-password", SIZE_MAX, 0, &prepared) == kUsersPasswordOk,
+            "id migration password preparation failed");
+    require(usersTryChangePreparedPasswordByIdentifier(&new_users, user_id, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                kUsersPasswordOk,
+            "id migration password rotation failed");
+    usersFreePreparedPasswordChange(prepared);
+    user_t *rotated = usersLookupByIdentifier(&new_users, user_id);
+    require(rotated != NULL, "rotated ID missing before migration");
+    memoryCopy(new_sha256, rotated->sha256_pass.bytes, sizeof(new_sha256));
 
     user_ip_key_t ip1 = testIp(10, 1, 0, 1);
     user_ip_key_t ip2 = testIp(10, 1, 0, 2);

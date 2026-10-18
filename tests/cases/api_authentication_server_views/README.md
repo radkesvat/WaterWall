@@ -32,3 +32,14 @@ Run through `waterwall.api_authentication_server_views` with the normal namespac
 harness. It requires Linux network-namespace privileges and uses only loopback.
 All credentials are deliberate public fixture values. The shared case runner
 copies the database before startup and removes its private runtime files.
+
+A separate password administrator has only get-user/change-user-password access;
+monitor, auditor, editor, creator and producer credentials cannot rotate passwords.
+The password cases verify exact Unicode/whitespace bytes, old-password rejection,
+same-value revision increments, duplicate-credential refusal and token/cursor
+invalidation. They push and exactly replay real producer usage across rotation,
+check unchanged public configuration/accounting and use the minimum-cap gateway.
+After a discarded rotation reply, the caller rereads redacted values and explicitly
+resubmits the retained desired password with a fresh token. The original token
+conflicts, and existing protocol lookup verifies the eventual credential without
+adding a public credential-verification operation.

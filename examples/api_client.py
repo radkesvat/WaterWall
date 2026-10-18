@@ -4,9 +4,11 @@
 Tokens come from --token-env NAME or --token-file PATH. The client performs no
 automatic retries. For TcpOverUdp, connect to a local TcpListener feeding the
 production TcpOverUdpClient; this program does not implement its UDP protocol.
-For update-user, read get-user first and supply its edit_token as if_match in a
-sparse body file. A conflict requires reconsideration after a fresh read; a lost
-reply or post-dispatch gateway error requires a fresh read to resolve the outcome.
+For update-user or change-user-password, read get-user first and supply its
+edit_token as if_match in a body file. A conflict requires reconsideration after
+a fresh read. A lost reply or post-dispatch gateway error leaves the outcome
+unknown. Redacted reads cannot prove which password is stored; explicitly decide
+whether to resubmit the desired password with the freshly read token.
 """
 
 import argparse
@@ -29,9 +31,14 @@ PRE_DISPATCH_ERRORS = {"invalid_request", "invalid_encoding", "unauthorized", "f
                        "unsupported_operation", "unsupported_content_type"}
 
 
-def unknown_update_outcome():
-    print("Update outcome unknown: read the account again before deciding whether to submit another patch.",
-          file=sys.stderr)
+def unknown_write_outcome(operation):
+    if operation == "change-user-password":
+        print("Password-change outcome unknown: read the account again; public reads cannot prove which password "
+              "is stored. Explicitly decide whether to resubmit the desired password with the current edit token.",
+              file=sys.stderr)
+    else:
+        print("Update outcome unknown: read the account again before deciding whether to submit another patch.",
+              file=sys.stderr)
 
 
 def read_exact(stream, length):
@@ -119,31 +126,44 @@ def main():
                    "selector": selector, "operation": args.operation,
                    "content_type": args.content_type,
                    "body_encoding": args.body_encoding, "body": body}
-        write_attempted = args.operation == "update-user"
+        write_attempted = args.operation in {"update-user", "change-user-password"}
         response = call(args.host, args.port, request, timeout=args.timeout,
                         max_response_bytes=args.max_response_bytes)
+        if not isinstance(response, dict):
+            raise ValueError("Response has an invalid envelope.")
         if response.get("error") is not None:
             error = response["error"]
             if not isinstance(error, dict) or not isinstance(error.get("code"), str):
                 raise ValueError("Response has an invalid gateway error.")
             print("Gateway error: " + str(error.get("code", "invalid_response")), file=sys.stderr)
             if write_attempted and error["code"] not in PRE_DISPATCH_ERRORS:
-                unknown_update_outcome()
+                unknown_write_outcome(args.operation)
             return 2
         result = response.get("result")
         decoded = decode_result(result)
-        sys.stdout.buffer.write(decoded)
-        if write_attempted and result.get("code") != 0:
+        if type(result.get("code")) is not int or result["code"] not in {0, 1}:
+            raise ValueError("Response has an invalid node result code.")
+        if write_attempted:
             body = json.loads(decoded)
+            if not isinstance(body, dict):
+                raise ValueError("Response has an invalid mutation result.")
             node_error = body.get("error") if isinstance(body, dict) else None
-            if isinstance(node_error, dict) and node_error.get("code") == "conflict":
+            if result["code"] == 0:
+                if (set(body) != {"id", "config_revision", "edit_token"}
+                        or any(not isinstance(value, str) for value in body.values())):
+                    raise ValueError("Response has an invalid mutation acknowledgement.")
+            elif (set(body) != {"error"} or not isinstance(node_error, dict)
+                  or set(node_error) != {"code"} or not isinstance(node_error.get("code"), str)):
+                raise ValueError("Response has an invalid mutation error.")
+            elif node_error["code"] == "conflict":
                 print("Conflict: read the account again and reconsider the intended changes.", file=sys.stderr)
+        sys.stdout.buffer.write(decoded)
         return 0 if result.get("code") == 0 else 1
     except (OSError, ValueError) as error:
         # Do not print the request, credential, or exception's input values.
         print("API call failed (" + type(error).__name__ + ").", file=sys.stderr)
         if write_attempted:
-            unknown_update_outcome()
+            unknown_write_outcome(args.operation)
         return 2
 
 

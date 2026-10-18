@@ -513,6 +513,16 @@ foreach(tcpoverudp_side Client Server)
 endforeach()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
+  waterwall_add_native_executable(authenticationserver_password_api_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationserver_password_api_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+  target_link_libraries(authenticationserver_password_api_test PRIVATE AuthenticationServer ww)
+  target_link_options(authenticationserver_password_api_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
+    "-Wl,--wrap=wCryptoSHA224" "-Wl,--wrap=wCryptoSHA256" "-Wl,--wrap=wCryptoX25519")
+  add_dependencies(waterwall_unit_tests authenticationserver_password_api_test)
+  add_waterwall_unit_test(waterwall.authenticationserver_password_api_unit authenticationserver_password_api_test
+    "unit;authentication;api;security;ownership;concurrency;tsan")
   waterwall_add_native_executable(authenticationserver_create_api_test SUPPORT SOURCES
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationserver_create_api_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})

@@ -1,4 +1,9 @@
 # Explicit integration registrations; preserve namespace and family variants.
+add_test(NAME waterwall.api_example_client
+  COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/api_client_test.py")
+set_tests_properties(waterwall.api_example_client PROPERTIES
+  TIMEOUT 10 LABELS "unit;test-harness;api")
+
 add_test(NAME waterwall.ci_artifacts_and_debugger
   COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ci_artifacts_and_debugger_test.py")
 set_tests_properties(waterwall.ci_artifacts_and_debugger PROPERTIES

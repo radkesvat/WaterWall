@@ -19,6 +19,7 @@ TOKEN = "0123456789abcdef" * 4
 MONITOR_TOKEN = "abcdef0123456789" * 4
 EDITOR_TOKEN = "fedcba9876543210" * 4
 CREATOR_TOKEN = "13579bdf02468ace" * 4
+PASSWORD_TOKEN = "2468ace013579bdf" * 4
 LARGE_ID = "9007199254740993"
 MAX_ID = "18446744073709551615"
 USER_FIELDS = {"id", "gid", "enabled", "name", "email", "notes", "wireguard_allowed_ips",
@@ -43,18 +44,20 @@ def leaves_are_decimal(value):
         decimal(value)
 
 
-def request(identifier, operation, body=None, *, monitor=False, editor=False, creator=False):
+def request(identifier, operation, body=None, *, monitor=False, editor=False, creator=False, password_admin=False):
     return {"id": identifier,
-                "auth": {"client": "creator" if creator else "editor" if editor else "monitor" if monitor else "auditor",
-                         "token": CREATOR_TOKEN if creator else EDITOR_TOKEN if editor else MONITOR_TOKEN if monitor else TOKEN},
+                "auth": {"client": "password-admin" if password_admin else "creator" if creator else "editor" if editor else "monitor" if monitor else "auditor",
+                         "token": PASSWORD_TOKEN if password_admin else CREATOR_TOKEN if creator else EDITOR_TOKEN if editor else MONITOR_TOKEN if monitor else TOKEN},
                 "selector": {"config": "api-server", "node": "auth-db"},
                 "operation": operation, "content_type": "application/json",
                 "body_encoding": "utf8", "body": json.dumps(body if body is not None else {})}
 
 
-def query(stream, reader, identifier, operation, body=None, *, monitor=False, editor=False, creator=False, error=None,
+def query(stream, reader, identifier, operation, body=None, *, monitor=False, editor=False, creator=False,
+          password_admin=False, error=None,
           max_envelope=1024 * 1024):
-    envelope = request(identifier, operation, body, monitor=monitor, editor=editor, creator=creator)
+    envelope = request(identifier, operation, body, monitor=monitor, editor=editor, creator=creator,
+                       password_admin=password_admin)
     stream.sendall(frame(envelope))
     value = response(reader, identifier, max_envelope)
     require(value["error"] is None, "Server operation produced a gateway error")
@@ -256,6 +259,7 @@ def main():
                     "New traversal failed after configuration edit")
             conditional_edits(stream, reader, control, control_reader, token, edited)
             create_accounts(stream, reader, control, control_reader, token)
+            password_changes(stream, reader, control, control_reader, token, epoch)
             check_status(query(stream, reader, "final", "status"), 1, 7)
 
 
@@ -470,6 +474,113 @@ def create_accounts(stream, reader, control, control_reader, session_token):
             and final["stats_revision"] == before["stats_revision"]
             and {user["id"] for user in page["users"]} == {LARGE_ID, MAX_ID, "42", "43", "44", configured_id, "45"},
             "Creation read coherence, count, revisions or index publication changed")
+
+
+def password_changes(stream, reader, control, control_reader, session_token, producer_epoch):
+    before = query(stream, reader, "password-admin-read", "get-user", {"id": MAX_ID}, password_admin=True)
+    saved = check_detail(before, MAX_ID)
+    page = check_page(query(stream, reader, "password-cursor", "list-users", {"limit": 1}), 7)
+    desired = " \tNeverExposePasswordRotated-الف \n"
+    change = {"id": MAX_ID, "if_match": before["edit_token"], "password": desired}
+    for label, role in (("monitor", {"monitor": True}), ("auditor", {}),
+                        ("editor", {"editor": True}), ("creator", {"creator": True})):
+        identifier = "password-denied-" + label
+        stream.sendall(frame(request(identifier, "change-user-password", change, **role)))
+        denied = response(reader, identifier)
+        require(denied["error"]["code"] == "forbidden" and denied["result"] is None,
+                "Existing role acquired an implicit password-change permission")
+    for operation, body in (("update-user", {"id": MAX_ID, "if_match": before["edit_token"],
+                                           "patch": {"enabled": False}}),
+                            ("create-user", {"id": "46", "password": "NeverExposePasswordUnauthorized"})):
+        identifier = "password-admin-denied-" + operation
+        stream.sendall(frame(request(identifier, operation, body, password_admin=True)))
+        denied = response(reader, identifier)
+        require(denied["error"]["code"] == "forbidden" and denied["result"] is None,
+                "Password administrator gained another mutation permission")
+    with connect() as producer, producer.makefile("rb") as producer_reader:
+        envelope = request("producer-password-denied", "change-user-password", change)
+        envelope["auth"] = {"client": "fixture-writer", "token": "NeverExposeProducerSecret"}
+        producer.sendall(frame(envelope))
+        denied = response(producer_reader, "producer-password-denied")
+        require(denied["error"]["code"] == "unauthorized", "Producer credentials authorized a management write")
+
+    for label, malformed in (("empty", dict(change, password="")),
+                             ("old-password", dict(change, old_password="NeverExposePasswordBob")),
+                             ("nested", dict(change, password={"password": desired})),
+                             ("alias", {"id": MAX_ID, "if_match": before["edit_token"], "new_password": desired})):
+        query(stream, reader, "password-invalid-" + label, "change-user-password", malformed,
+              password_admin=True, error="invalid_request")
+    wrong_instance = ("1" if before["edit_token"][0] == "0" else "0") + before["edit_token"][1:]
+    query(stream, reader, "password-instance-conflict", "change-user-password", dict(change, if_match=wrong_instance),
+          password_admin=True, error="conflict")
+
+    # Statistics-only input and exact replay preserve the edit precondition.
+    batch = json.dumps({"epoch": producer_epoch,
+                        "sequence": "2", "users": [{"id": MAX_ID, "up": "5", "down": "7",
+                                                      "first-usage-at-ms": saved["time"]["first_usage_at_ms"]}]},
+                       separators=(",", ":")).encode("utf-8")
+    usage_ack, config_revision, stats_revision = protocol_request(control, control_reader, 11, 40, batch, session_token)
+    require(str(config_revision) == before["config_revision"]
+            and stats_revision == int(before["stats_revision"]) + 1,
+            "Statistics changed the password edit token or omitted its accounting revision")
+    expected = json.loads(json.dumps(saved))
+    expected["usage"]["u"] = str(int(expected["usage"]["u"]) + 5)
+    expected["usage"]["d"] = str(int(expected["usage"]["d"]) + 7)
+    with connect(29381) as small, small.makefile("rb") as small_reader:
+        ack = query(small, small_reader, "\x01" * 64, "change-user-password", change,
+                    password_admin=True, max_envelope=1024)
+    check_ack(ack, MAX_ID, before["edit_token"])
+    current = query(stream, reader, "password-after-change", "get-user", {"id": MAX_ID}, password_admin=True)
+    require(check_detail(current, MAX_ID) == expected and current["stats_revision"] == str(stats_revision)
+            and current["edit_token"] == ack["edit_token"],
+            "Password rotation changed public configuration/accounting or published the wrong token")
+    query(stream, reader, "password-stale-token", "change-user-password", change,
+          password_admin=True, error="conflict")
+    query(stream, reader, "password-stale-cursor", "list-users", {"cursor": page["next_cursor"]}, error="stale_cursor")
+    payload, _, _ = protocol_request(control, control_reader, 5, 41, desired.encode("utf-8"), session_token, expected=2)
+    require(str(json.loads(payload)["id"]) == MAX_ID, "Exact new password did not resolve its permanent account")
+    for correlation, obsolete in ((42, "NeverExposePasswordBob"), (43, desired.strip())):
+        refused, _, _ = protocol_request(control, control_reader, 5, correlation, obsolete.encode("utf-8"),
+                                         session_token, expected=255)
+        require(refused == b"user-not-found", "Changed or normalized plaintext password remained valid")
+    query(stream, reader, "password-duplicate", "change-user-password",
+          {"id": MAX_ID, "if_match": current["edit_token"], "password": "NeverExposePasswordAlice"},
+          password_admin=True, error="credentials_exist")
+    unchanged = query(stream, reader, "password-same-value", "change-user-password",
+                      dict(change, if_match=current["edit_token"]), password_admin=True)
+    check_ack(unchanged, MAX_ID, current["edit_token"])
+
+    # Losing the application reply cannot be resolved by redacted reads alone.
+    # The caller explicitly chooses to resubmit its desired password with a fresh token.
+    intended = "NeverExposePasswordUnobservedRotation"
+    lost = {"id": MAX_ID, "if_match": unchanged["edit_token"], "password": intended}
+    with connect() as abandoned, abandoned.makefile("rb") as abandoned_reader:
+        abandoned.sendall(frame(request("discarded-password-change", "change-user-password", lost,
+                                        password_admin=True)))
+        length = struct.unpack("!I", exact(abandoned_reader, 4))[0]
+        require(0 < length <= 1024, "Unbounded password-change acknowledgement")
+    reread = query(stream, reader, "password-reread-unknown", "get-user", {"id": MAX_ID}, password_admin=True)
+    require(check_detail(reread, MAX_ID) == expected, "Unknown password outcome changed public account values")
+    query(stream, reader, "password-old-precondition", "change-user-password", lost,
+          password_admin=True, error="conflict")
+    explicit = query(stream, reader, "password-explicit-resubmission", "change-user-password",
+                     dict(lost, if_match=reread["edit_token"]), password_admin=True)
+    check_ack(explicit, MAX_ID, reread["edit_token"])
+    payload, _, _ = protocol_request(control, control_reader, 5, 44, intended.encode("utf-8"), session_token, expected=2)
+    require(str(json.loads(payload)["id"]) == MAX_ID, "Explicit resubmission failed to establish the desired password")
+    refused, _, _ = protocol_request(control, control_reader, 5, 45, desired.encode("utf-8"), session_token, expected=255)
+    require(refused == b"user-not-found", "Previous different password survived explicit resubmission")
+    replay, replay_config, replay_stats = protocol_request(control, control_reader, 11, 46, batch, session_token)
+    require(replay == usage_ack and str(replay_config) == explicit["config_revision"]
+            and replay_stats == stats_revision, "Credential changes invalidated the producer epoch/digest or replayed usage")
+    final = query(stream, reader, "password-status", "status")
+    check_status(final, 1, 7)
+    details = query(stream, reader, "password-redacted-detail", "get-user", {"id": MAX_ID})
+    listing = check_page(query(stream, reader, "password-redacted-list", "list-users"), 7)
+    require(check_detail(details, MAX_ID) == expected
+            and final["edit_token"] == details["edit_token"] == listing["edit_token"] == explicit["edit_token"]
+            and final["stats_revision"] == str(stats_revision),
+            "Redacted read coherence or accounting changed after password operations")
 
 
 main()

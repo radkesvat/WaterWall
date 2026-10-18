@@ -232,7 +232,8 @@ cJSON *authTestPeerApi(tunnel_t *t, const char *operation, const char *body, enu
     const node_api_operation_t *descriptor = nodeApiFind(t, operation);
     require(descriptor != NULL && descriptor->execution == kNodeApiCallingWorker &&
                 descriptor->read_only ==
-                    (strcmp(operation, "update-user") != 0 && strcmp(operation, "create-user") != 0),
+                    (strcmp(operation, "update-user") != 0 && strcmp(operation, "create-user") != 0 &&
+                     strcmp(operation, "change-user-password") != 0),
             "peer API descriptor contract");
     const size_t length  = strlen(body);
     sbuf_t      *request = bufferpoolGetBestFit(getCurrentEventWorkerBufferPool(), (uint32_t) length, 0);

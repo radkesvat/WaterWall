@@ -1032,6 +1032,196 @@ static void testApiEditDuringOfflineCatchup(void)
     teardown();
 }
 
+static cJSON *apiPasswordWithToken(const char *token, const char *password, const char *error)
+{
+    char   *before  = authTestPeerSnapshot(server);
+    cJSON  *request = cJSON_CreateObject();
+    discard cJSON_AddStringToObject(request, "id", "42");
+    discard cJSON_AddStringToObject(request, "if_match", token);
+    discard cJSON_AddStringToObject(request, "password", password);
+    char   *text = cJSON_PrintUnformatted(request);
+    cJSON_Delete(request);
+    cJSON *response = serverApi("change-user-password", text, error == NULL ? kApiResultOk : kApiResultError);
+    cJSON_free(text);
+    char *after = authTestPeerSnapshot(server);
+    if (error != NULL)
+    {
+        const cJSON *code =
+            cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(response, "error"), "code");
+        require(cJSON_IsString(code) && strcmp(code->valuestring, error) == 0 && strcmp(before, after) == 0,
+                "password refusal changed account, revision or accounting checkpoints");
+    }
+    else
+    {
+        cJSON *old = cJSON_Parse(before), *current = cJSON_Parse(after);
+        require(jsonUnsigned(current, "config-revision") == jsonUnsigned(old, "config-revision") + 1 &&
+                    jsonUnsigned(response, "config_revision") == jsonUnsigned(current, "config-revision") &&
+                    jsonUnsigned(current, "stats-revision") == jsonUnsigned(old, "stats-revision") &&
+                    cJSON_Compare(cJSON_GetObjectItemCaseSensitive(current, "checkpoints"),
+                                  cJSON_GetObjectItemCaseSensitive(old, "checkpoints"),
+                                  true),
+                "password change advanced accounting/checkpoints or omitted its configuration revision");
+        cJSON *old_users = cJSON_GetObjectItemCaseSensitive(old, "users");
+        cJSON *new_users = cJSON_GetObjectItemCaseSensitive(current, "users");
+        require(cJSON_GetArraySize(old_users) == 1 && cJSON_GetArraySize(new_users) == 1,
+                "password change altered the account collection");
+        cJSON_DeleteItemFromObjectCaseSensitive(cJSON_GetArrayItem(old_users, 0), "password");
+        cJSON_DeleteItemFromObjectCaseSensitive(cJSON_GetArrayItem(new_users, 0), "password");
+        require(cJSON_Compare(old_users, new_users, true), "password change altered noncredential account values");
+        cJSON_Delete(old);
+        cJSON_Delete(current);
+    }
+    cJSON_free(before);
+    cJSON_free(after);
+    return response;
+}
+
+static void requireClientPassword(unsigned client, const char *accepted, const char *rejected)
+{
+    user_handle_t handle;
+    require(authenticationclientGetUserByPassword(clients[client], accepted, &handle) && handle.user_id == 42 &&
+                ! authenticationclientGetUserByPassword(clients[client], rejected, &handle),
+            "client credential cache differs from its refresh schedule");
+}
+
+static void testApiPasswordDuringOfflineCatchup(void)
+{
+    setup(1);
+    user_update_t initial = {.mask                                 = kUserUpdateStats | kUserUpdateTimeInfo,
+                             .stats.traffic.u                      = 100,
+                             .timeinfo.created_at_ms               = 123,
+                             .timeinfo.expire_after_first_usage_ms = 9000};
+    authTestPeerSetUser(server, 42, &initial);
+    start(0);
+    start(1);
+    user_handle_t handles[2];
+    user_ip_key_t ips[2] = {{.type = 4, .bytes = {192, 0, 2, 1}}, {.type = 4, .bytes = {192, 0, 2, 2}}};
+    for (unsigned i = 0; i < 2; ++i)
+        require(authenticationclientGetUserByPassword(clients[i], "account-0", &handles[i]) &&
+                    authenticationclientUserTryAdmitConnection(clients[i], &handles[i], &ips[i], 100000) ==
+                        kUserAdmissionOk,
+                "password refresh reservation setup failed");
+
+    traffic(0, 10);
+    user_t        *user        = usersLookupByIdentifier(state(0)->users, 42);
+    const uint64_t observation = user->client_time.first_report_ms, origin = user->client_time.first_local_ms;
+    const uint64_t expiry = user->client_view_expires_at_ms;
+    drop_ack              = 1;
+    authenticationclientRequestPush(clients[0]);
+    const uint64_t first_use = authTestPeerFirstUse(server);
+    require(! authenticationclientIsReady(clients[0]) && state(0)->pending_batch != NULL &&
+                authTestPeerStats(server, 42).traffic.u == 110 && authTestPeerSequence(server, 0) == 1,
+            "password change lost-ACK setup failed");
+    state(1)->reconnect_interval_ms = 30;
+    disconnect(1);
+    traffic(1, 5);
+
+    char token[49];
+    serverEditToken(token);
+    cJSON_Delete(apiPasswordWithToken(token, " rotated offline credential ", NULL));
+    cJSON_Delete(apiPasswordWithToken(token, "must not replace", "conflict"));
+    for (unsigned i = 0; i < 2; ++i)
+        requireClientPassword(i, "account-0", " rotated offline credential ");
+    traffic(0, 7);
+    traffic(1, 3);
+    pump(10);
+    pump(1);
+    pump(1);
+    require(state(0)->pending_batch == NULL && state(0)->catchup_entries_count == 0 && local(0, true) == 117 &&
+                local(0, false) == 117 && authTestPeerStats(server, 42).traffic.u == 117 &&
+                authTestPeerSequence(server, 0) == 2 && authTestPeerSequence(server, 1) == 0 &&
+                authTestPeerFirstUse(server) == first_use,
+            "password rotation lost pending/offline traffic or charged exact replay twice");
+    requireClientPassword(0, " rotated offline credential ", "account-0");
+    requireClientPassword(1, "account-0", " rotated offline credential ");
+    user = usersLookupByIdentifier(state(0)->users, 42);
+    require(user->runtime.active_cons_out == 1 && user->runtime.ip_usage_count == 1 &&
+                user->timeinfo.created_at_ms == 123 && user->client_time.first_report_ms == observation &&
+                user->client_time.first_local_ms == origin && user->client_time.observation_acked &&
+                user->client_view_expiry_valid && user->client_view_expires_at_ms <= expiry,
+            "password refresh lost reservation, first-use origin/ACK or extended expiry");
+    require(! authenticationclientUserAccountTraffic(clients[0], &handles[0], 2, 0, 100012),
+            "existing connection stopped accounting after credential refresh");
+    authenticationclientRequestPush(clients[0]);
+    require(authTestPeerStats(server, 42).traffic.u == 119, "post-refresh existing traffic was lost");
+    pump(20);
+    pump(1);
+    pump(1);
+    requireClientPassword(1, " rotated offline credential ", "account-0");
+    require(authTestPeerStats(server, 42).traffic.u == 127 && authTestPeerSequence(server, 1) == 1 &&
+                authTestPeerFirstUse(server) == first_use && state(1)->pending_batch == NULL,
+            "later client refresh lost offline debt or changed canonical first use");
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        authenticationclientRequestPull(clients[i]);
+        user = usersLookupByIdentifier(state(i)->users, 42);
+        require(local(i, false) == 127 && local(i, true) == 127 && user->runtime.active_cons_out == 1 &&
+                    user->runtime.ip_usage_count == 1 && user->client_time.observation_acked,
+                "different refresh schedules failed to converge accounting/reservations");
+        authenticationclientUserReleaseConnection(clients[i], &handles[i], &ips[i]);
+        require(user->runtime.active_cons_out == 0 && user->runtime.ip_usage_count == 0,
+                "pre-rotation handle failed to release its migrated reservation");
+    }
+    teardown();
+}
+
+static void testApiPasswordDuringHeldRefresh(void)
+{
+    setup(1);
+    user_update_t initial = {.mask                                 = kUserUpdateStats | kUserUpdateTimeInfo,
+                             .stats.traffic.u                      = 100,
+                             .timeinfo.created_at_ms               = 123,
+                             .timeinfo.expire_after_first_usage_ms = 9000};
+    authTestPeerSetUser(server, 42, &initial);
+    start(0);
+    start(1);
+    user_handle_t handle;
+    require(authenticationclientGetUserByPassword(clients[0], "account-0", &handle) &&
+                authenticationclientUserTryAdmitConnection(clients[0], &handle, NULL, 100000) == kUserAdmissionOk,
+            "held password refresh reservation failed");
+    hold_pull = true;
+    authenticationclientRequestPull(clients[0]);
+    require(held_request != NULL && state(0)->pull_in_flight, "password refresh was not held");
+    traffic(0, 9);
+    const user_t  *before      = usersLookupByIdentifier(state(0)->users, 42);
+    const uint64_t observation = before->client_time.first_report_ms, origin = before->client_time.first_local_ms;
+    authenticationclientRequestPush(clients[0]);
+    require(state(0)->push_requested && authTestPeerStats(server, 42).traffic.u == 100,
+            "traffic overtook the held refresh");
+    char token[49];
+    serverEditToken(token);
+    cJSON_Delete(apiPasswordWithToken(token, "held-refresh-credential", NULL));
+    requireClientPassword(0, "account-0", "held-refresh-credential");
+    requireClientPassword(1, "account-0", "held-refresh-credential");
+    deliverHeldRequest();
+    pump(1);
+    pump(1);
+    requireClientPassword(0, "held-refresh-credential", "account-0");
+    requireClientPassword(1, "account-0", "held-refresh-credential");
+    require(authTestPeerStats(server, 42).traffic.u == 109 && authTestPeerSequence(server, 0) == 1 &&
+                local(0, false) == 109 && state(0)->pending_batch == NULL,
+            "credential refresh lost traffic produced while the pull was in flight");
+    user_t *user = usersLookupByIdentifier(state(0)->users, 42);
+    require(user->client_time.first_report_ms == observation && user->client_time.first_local_ms == origin &&
+                user->client_time.observation_acked && user->runtime.active_cons_out == 1 &&
+                user->timeinfo.created_at_ms == 123 && user->client_view_expiry_valid,
+            "held credential refresh lost first-use evidence, reservation or expiry projection");
+    traffic(1, 4);
+    authenticationclientRequestPull(clients[1]);
+    authenticationclientRequestPush(clients[1]);
+    pump(1);
+    pump(1);
+    requireClientPassword(1, "held-refresh-credential", "account-0");
+    require(authTestPeerStats(server, 42).traffic.u == 113 && authTestPeerSequence(server, 1) == 1,
+            "later connected refresh lost its pending traffic");
+    require(! authenticationclientUserShouldClose(clients[0], &handle, 100004),
+            "credential rotation revoked an otherwise eligible existing connection");
+    authenticationclientUserReleaseConnection(clients[0], &handle, NULL);
+    user = usersLookupByIdentifier(state(0)->users, 42);
+    require(user->runtime.active_cons_out == 0, "held-refresh reservation failed to release by its original handle");
+    teardown();
+}
+
 static void testConfigPatches(void)
 {
     setup(2);
@@ -2340,6 +2530,8 @@ int main(void)
     testApiCreationDuringOfflineCatchup();
     testConfigRevisionExhaustion();
     testApiEditDuringOfflineCatchup();
+    testApiPasswordDuringOfflineCatchup();
+    testApiPasswordDuringHeldRefresh();
     testEditDuringAccounting();
     testStrictTrafficBatches();
     testLossAndOrdering();

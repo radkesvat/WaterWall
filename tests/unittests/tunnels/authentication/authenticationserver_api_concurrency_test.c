@@ -1,9 +1,13 @@
 /* CTest: waterwall.authenticationserver_api_concurrency_unit
  * Real construction/rollback, descriptor metadata, barrier-held query locks,
- * alternate calling worker, and owned reads concurrent with actual server
- * configuration/usage handlers. The fixture owns its one normal protocol line;
+ * alternate calling worker, owned reads concurrent with configuration/usage,
+ * and conditional password/configuration/creation races with indexed readers.
+ * The fixture owns its one normal protocol line;
  * API operations receive buffers only. No host network or timing oracle. */
 #include "AuthenticationServer/api.h"
+#include "AuthenticationServer/config_create.h"
+#include "AuthenticationServer/config_update.h"
+#include "AuthenticationServer/password_change.h"
 #include "api/dispatcher.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "loggers/network_logger.h"
@@ -32,22 +36,24 @@ bool __wrap_nodeApiRegister(tunnel_t *, const node_api_operation_t *, size_t);
 bool __wrap_nodeApiRegister(tunnel_t *t, const node_api_operation_t *operations, size_t count)
 {
     ++registrations;
-    twfRequire(count == 5, "AuthenticationServer did not register exactly five operations");
-    bool                     seen[5] = {false};
-    static const char *const names[] = {"status", "get-user", "list-users", "update-user", "create-user"};
+    twfRequire(count == 6, "AuthenticationServer did not register exactly six operations");
+    bool                     seen[6] = {false};
+    static const char *const names[] = {
+        "status", "get-user", "list-users", "update-user", "create-user", "change-user-password"};
     for (size_t i = 0; i < count; ++i)
     {
         twfRequire(operations[i].read_only == (strcmp(operations[i].name, "update-user") != 0 &&
-                                               strcmp(operations[i].name, "create-user") != 0) &&
+                                               strcmp(operations[i].name, "create-user") != 0 &&
+                                               strcmp(operations[i].name, "change-user-password") != 0) &&
                        operations[i].handler != NULL && operations[i].execution == kNodeApiCallingWorker &&
                        operations[i].response_encoding == kNodeApiEncodingUtf8 &&
                        strcmp(operations[i].request_content_type, "application/json") == 0 &&
                        strcmp(operations[i].response_content_type, "application/json") == 0,
                    "registered operation metadata mismatch");
         size_t match = 0;
-        while (match < 5 && strcmp(operations[i].name, names[match]) != 0)
+        while (match < 6 && strcmp(operations[i].name, names[match]) != 0)
             ++match;
-        twfRequire(match < 5 && ! seen[match], "unexpected or duplicate operation registration");
+        twfRequire(match < 6 && ! seen[match], "unexpected or duplicate operation registration");
         seen[match] = true;
     }
     if (refuse_registration)
@@ -300,6 +306,253 @@ static void unusedCompletion(void *context, uint64_t session, uint64_t request, 
     twfRequire(false, "closed-admission operation completed");
 }
 
+typedef enum mixed_write_kind_e
+{
+    kMixedPassword,
+    kMixedConfig,
+    kMixedCreate
+} mixed_write_kind_t;
+
+typedef struct mixed_writer_s
+{
+    tunnel_t                               *server;
+    mixed_write_kind_t                      kind;
+    authenticationserver_password_request_t password;
+    authenticationserver_update_request_t   config;
+    authenticationserver_create_request_t   creation;
+    node_api_call_context_t                 context;
+    sbuf_t                                 *ack;
+    wsem_t                                 *ready, *start;
+    const char                             *error;
+} mixed_writer_t;
+
+static void executeMixedWrite(mixed_writer_t *writer)
+{
+    switch (writer->kind)
+    {
+    case kMixedPassword:
+        writer->error = authenticationserverApplyConditionalPasswordChange(
+            writer->server, &writer->password, &writer->context, writer->ack, 1024U * 1024U);
+        break;
+    case kMixedConfig:
+        writer->error = authenticationserverApplyConditionalUpdate(
+            writer->server, &writer->config, &writer->context, writer->ack, 1024U * 1024U);
+        break;
+    case kMixedCreate:
+        writer->error = authenticationserverApplyCreate(
+            writer->server, &writer->creation, &writer->context, writer->ack, 1024U * 1024U);
+        break;
+    }
+}
+
+static WTHREAD_ROUTINE(mixedConditionalWriter)
+{
+    mixed_writer_t *writer = userdata;
+    semaphorePost(writer->ready);
+    twfRequire(semaphoreWait(writer->start), "mixed writer start failed");
+    executeMixedWrite(writer);
+    return 0;
+}
+
+static void prepareMixedWrite(mixed_writer_t *writer, tunnel_t *server, mixed_write_kind_t kind, const char *body)
+{
+    *writer         = (mixed_writer_t) {.server = server, .kind = kind};
+    writer->context = (node_api_call_context_t) {
+        .principal = "password-admin", .working_memory_allowance = 4U * 1024U * 1024U, .max_response_body_size = 4096};
+    buffer_pool_t *pool    = getCurrentEventWorkerBufferPool();
+    const size_t   length  = strlen(body);
+    sbuf_t        *message = bufferpoolGetBestFit(pool, (uint32_t) length, 0);
+    memoryCopy(sbufGetMutablePtr(message), body, length);
+    sbufSetLength(message, (uint32_t) length);
+    const char *error;
+    switch (kind)
+    {
+    case kMixedPassword:
+        error = authenticationserverParsePasswordChange(message, &writer->context, &writer->password);
+        break;
+    case kMixedConfig:
+        error = authenticationserverParseUpdate(message, &writer->context, &writer->config);
+        break;
+    case kMixedCreate:
+        error = authenticationserverParseCreate(message, &writer->context, &writer->creation);
+        break;
+    default:
+        error = "invalid fixture kind";
+    }
+    twfRequire(error == NULL, "mixed writer preparation failed");
+    writer->ack = bufferpoolGetBestFit(pool, 256, 0);
+}
+
+static void destroyMixedWrite(mixed_writer_t *writer)
+{
+    usersFreePreparedPasswordChange(writer->password.password);
+    usersFreePreparedConfigPatch(writer->config.patch);
+    usersFreePreparedNewUser(writer->creation.candidate);
+    bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), writer->ack);
+}
+
+typedef struct indexed_reader_s
+{
+    users_t    *users;
+    user_t     *target;
+    wsem_t      ready;
+    atomic_bool stop;
+    atomic_uint observations;
+} indexed_reader_t;
+
+static WTHREAD_ROUTINE(readCredentialIndexes)
+{
+    indexed_reader_t *reader = userdata;
+    do
+    {
+        /* Validation pins collection and individual config locks, so it sees
+         * either complete credential generation, including every index. */
+        twfRequire(usersValidate(reader->users) && usersLookupByIdentifier(reader->users, 42) == reader->target,
+                   "password transaction exposed inconsistent indexes or moved account");
+        if (atomic_fetch_add(&reader->observations, 1) == 0)
+            semaphorePost(&reader->ready);
+    } while (! atomic_load(&reader->stop));
+    return 0;
+}
+
+static void mixedCredentialTransactions(tunnel_t *server)
+{
+    authenticationserver_tstate_t *ts     = tunnelGetState(server);
+    user_t                        *stable = usersLookupByIdentifier(&ts->store.users, 42);
+    for (unsigned scenario = 0; scenario < 4; ++scenario)
+    {
+        char token[49], rotate_body[512], other_body[512], password[80];
+        authenticationserverEditTokenFormat(ts->api_instance_id, ts->store.config_revision, token);
+        snprintf(password, sizeof(password), "mixed-password-%u", scenario);
+        snprintf(rotate_body,
+                 sizeof(rotate_body),
+                 "{\"id\":\"42\",\"if_match\":\"%s\",\"password\":\"%s\"}",
+                 token,
+                 password);
+        mixed_write_kind_t other_kind;
+        if (scenario == 0)
+        {
+            other_kind = kMixedPassword;
+            snprintf(other_body,
+                     sizeof(other_body),
+                     "{\"id\":\"42\",\"if_match\":\"%s\",\"password\":\"mixed-other-password\"}",
+                     token);
+        }
+        else if (scenario == 1)
+        {
+            other_kind = kMixedConfig;
+            snprintf(other_body,
+                     sizeof(other_body),
+                     "{\"id\":\"42\",\"if_match\":\"%s\",\"patch\":{\"gid\":\"900\"}}",
+                     token);
+        }
+        else
+        {
+            other_kind = kMixedCreate;
+            snprintf(other_body,
+                     sizeof(other_body),
+                     "{\"id\":\"%u\",\"password\":\"%s\"}",
+                     200U + scenario,
+                     scenario == 3 ? password : "mixed-independent-account");
+        }
+        mixed_writer_t writers[2];
+        prepareMixedWrite(&writers[0], server, kMixedPassword, rotate_body);
+        prepareMixedWrite(&writers[1], server, other_kind, other_body);
+        wsem_t ready, start;
+        semaphoreInit(&ready, 0);
+        semaphoreInit(&start, 0);
+        indexed_reader_t reader = {.users = &ts->store.users, .target = stable};
+        atomic_init(&reader.stop, false);
+        atomic_init(&reader.observations, 0);
+        semaphoreInit(&reader.ready, 0);
+        wthread_t reader_thread, threads[2];
+        twfRequire(threadCreate(&reader_thread, readCredentialIndexes, &reader) == kWThreadErrorNone &&
+                       semaphoreWait(&reader.ready),
+                   "indexed reader barrier failed");
+        const uint64_t revision = ts->store.config_revision;
+        for (size_t i = 0; i < 2; ++i)
+        {
+            writers[i].ready = &ready;
+            writers[i].start = &start;
+            twfRequire(threadCreate(&threads[i], mixedConditionalWriter, &writers[i]) == kWThreadErrorNone,
+                       "mixed writer creation failed");
+        }
+        twfRequire(semaphoreWait(&ready) && semaphoreWait(&ready), "mixed writer readiness failed");
+        semaphorePost(&start);
+        semaphorePost(&start);
+        for (size_t i = 0; i < 2; ++i)
+            twfRequire(threadJoin(threads[i]) == 0, "mixed writer join failed");
+        atomic_store(&reader.stop, true);
+        twfRequire(threadJoin(reader_thread) == 0 && atomic_load(&reader.observations) != 0,
+                   "indexed reader failed to observe table");
+        unsigned commits = 0;
+        for (size_t i = 0; i < 2; ++i)
+        {
+            if (writers[i].error == NULL)
+                ++commits;
+            else
+                twfRequire(strcmp(writers[i].error, "busy") == 0 || strcmp(writers[i].error, "conflict") == 0 ||
+                               (scenario == 3 && strcmp(writers[i].error, "credentials_exist") == 0),
+                           "unexpected mixed writer refusal");
+        }
+        twfRequire(commits <= (scenario == 2 ? 2U : 1U) && ts->store.config_revision == revision + commits,
+                   "competing writes bypassed token or credential uniqueness");
+        /* Indexed readers can legitimately make both try-lock writers busy.
+         * Settle one actual mutation after the readers have joined, then prove
+         * the old token cannot cause a second conditional commit. */
+        if (commits == 0)
+        {
+            executeMixedWrite(&writers[0]);
+            twfRequire(writers[0].error == NULL, "uncontended password mutation failed");
+            ++commits;
+        }
+        {
+            mixed_writer_t stale;
+            prepareMixedWrite(&stale, server, kMixedPassword, rotate_body);
+            executeMixedWrite(&stale);
+            twfRequire(stale.error && strcmp(stale.error, "conflict") == 0,
+                       "old token replayed a committed password change");
+            destroyMixedWrite(&stale);
+        }
+        if (scenario == 2 && writers[1].error != NULL)
+        {
+            executeMixedWrite(&writers[1]);
+            twfRequire(writers[1].error == NULL, "independent creation after rotation was refused");
+            ++commits;
+        }
+        if (scenario == 3)
+        {
+            user_t *owner = usersLookupByPassword(&ts->store.users, password);
+            twfRequire(owner != NULL && (owner == stable || owner->id == 203) &&
+                           (usersLookupByIdentifier(&ts->store.users, 203) == NULL || owner->id == 203),
+                       "competing credential claim produced two identities");
+        }
+        twfRequire(ts->store.config_revision == revision + commits && usersValidate(&ts->store.users),
+                   "mixed transaction revision/index mismatch");
+        destroyMixedWrite(&writers[0]);
+        destroyMixedWrite(&writers[1]);
+        semaphoreDestroy(&reader.ready);
+        semaphoreDestroy(&start);
+        semaphoreDestroy(&ready);
+    }
+    /* A create committed first invalidates a pre-existing rotation token. */
+    char token[49], body[512];
+    authenticationserverEditTokenFormat(ts->api_instance_id, ts->store.config_revision, token);
+    snprintf(body, sizeof(body), "{\"id\":\"42\",\"if_match\":\"%s\",\"password\":\"stale-after-create\"}", token);
+    mixed_writer_t pending, creator;
+    prepareMixedWrite(&pending, server, kMixedPassword, body);
+    prepareMixedWrite(&creator, server, kMixedCreate, "{\"id\":\"204\",\"password\":\"create-invalidates-rotation\"}");
+    executeMixedWrite(&creator);
+    executeMixedWrite(&pending);
+    twfRequire(creator.error == NULL && pending.error != NULL && strcmp(pending.error, "conflict") == 0 &&
+                   usersLookupByPassword(&ts->store.users, "stale-after-create") == NULL &&
+                   usersLookupByIdentifier(&ts->store.users, 42) == stable && usersValidate(&ts->store.users),
+               "creation did not invalidate the prior rotation precondition");
+    destroyMixedWrite(&pending);
+    destroyMixedWrite(&creator);
+    twfRequireNoLeakedBuffers();
+}
+
 int main(void)
 {
     twfSetCase("authenticationserver API concurrency and lifecycle");
@@ -349,6 +602,7 @@ int main(void)
     testBusy(server);
     testCallingWorker(server, &env);
     testConcurrentTransactions(server);
+    mixedCredentialTransactions(server);
     authenticationserverTunnelDestroy(server, wwLifecycleStartupRollback());
     twfRequire(unregisters == 3 && ! nodeApiHasRegistration(unregistered), "destruction retained API descriptors");
     server = authenticationserverTunnelCreate(&node);

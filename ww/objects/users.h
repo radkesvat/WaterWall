@@ -294,6 +294,39 @@ size_t                usersPreparedConfigPatchPeakBytes(const user_config_prepar
  * every result. No statistics lock is acquired. Private capacity may survive a
  * refusal. The callback may be NULL. */
 typedef bool (*users_config_precommit_fn)(void *context);
+/* Credential-only preparation and failure-atomic bounded replacement. Neither
+ * the opaque preparation nor this path owns/copies a user or native lock.
+ * Preparation caps its password at 32 KiB; the try transaction separately
+ * admits the old plaintext through 32 KiB plus its terminator. No index grows,
+ * no statistics lock is acquired, and only the target's configuration is locked.
+ * Free the preparation on every result, including success. */
+typedef struct user_prepared_password_change_s user_prepared_password_change_t;
+typedef enum users_password_result_e
+{
+    kUsersPasswordOk = 0,
+    kUsersPasswordInvalidArgument,
+    kUsersPasswordBusy,
+    kUsersPasswordNotFound,
+    kUsersPasswordResourceLimit,
+    kUsersPasswordTimeout,
+    kUsersPasswordCredentialsExist,
+    kUsersPasswordPreparationFailed,
+    kUsersPasswordPrecommitRejected
+} users_password_result_t;
+users_password_result_t usersPreparePasswordChange(const char *password, size_t max_owned_bytes, uint64_t deadline_ms,
+                                                   user_prepared_password_change_t **out);
+void                    usersFreePreparedPasswordChange(user_prepared_password_change_t *prepared);
+size_t                  usersPreparedPasswordChangeOwnedBytes(const user_prepared_password_change_t *prepared);
+size_t                  usersPreparedPasswordChangePeakBytes(const user_prepared_password_change_t *prepared);
+size_t                  usersPreparedPasswordChangeCommitBytes(const user_prepared_password_change_t *prepared);
+/* max_working_bytes covers fixed commit scratch, excluding retained preparation
+ * already charged by its owner. Callback runs with collection/target write
+ * locks held, cannot reenter user/collection helpers, and can refuse before any
+ * mutation. Deadline is checked once more immediately after the callback. */
+users_password_result_t usersTryChangePreparedPasswordByIdentifier(users_t *users, uint64_t id,
+                                                                   user_prepared_password_change_t *prepared,
+                                                                   size_t max_working_bytes, uint64_t deadline_ms,
+                                                                   users_config_precommit_fn precommit, void *context);
 users_update_result_t usersTryApplyPreparedConfigByIdentifier(users_t *users, uint64_t id,
                                                               user_config_prepared_patch_t *prepared,
                                                               size_t max_growth_bytes, uint64_t deadline_ms,
