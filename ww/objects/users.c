@@ -5070,6 +5070,15 @@ void usersReleaseConnectionByIdentifier(users_t *users, uint64_t id, const user_
 bool usersAccountTrafficByIdentifier(users_t *users, uint64_t id, uint64_t upload_bytes, uint64_t download_bytes,
                                      uint64_t now_ms, bool *found, bool *first_usage_push_needed)
 {
+    return usersAccountTrafficScaledByIdentifier(
+        users, id, upload_bytes, download_bytes, kUserTrafficMultiplierScale, now_ms, found, first_usage_push_needed);
+}
+
+bool usersAccountTrafficScaledByIdentifier(users_t *users, uint64_t id, uint64_t upload_bytes, uint64_t download_bytes,
+                                           uint32_t multiplier, uint64_t now_ms, bool *found,
+                                           bool *first_usage_push_needed)
+{
+    assert(multiplier > 0 && multiplier <= kUserTrafficMultiplierMax);
     user_t *user;
     bool    should_close = true;
 
@@ -5091,7 +5100,8 @@ bool usersAccountTrafficByIdentifier(users_t *users, uint64_t id, uint64_t uploa
     user = usersIDTableLookupLocked(users, id);
     if (LIKELY(user != NULL))
     {
-        should_close = userAccountTraffic(user, upload_bytes, download_bytes, now_ms, first_usage_push_needed);
+        should_close =
+            userAccountTrafficScaled(user, upload_bytes, download_bytes, multiplier, now_ms, first_usage_push_needed);
     }
     rwlockReadUnlock(&users->lock);
 

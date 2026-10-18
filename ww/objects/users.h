@@ -388,6 +388,10 @@ void                    usersReleaseConnectionByIdentifier(users_t *users, uint6
 /* Adds traffic and returns whether the user must now be cut off; *found reports if the user existed. */
 bool usersAccountTrafficByIdentifier(users_t *users, uint64_t id, uint64_t upload_bytes, uint64_t download_bytes,
                                      uint64_t now_ms, bool *found, bool *first_usage_push_needed);
+/* Raw-byte variant using userAccountTrafficScaled() under the same collection lock. */
+bool usersAccountTrafficScaledByIdentifier(users_t *users, uint64_t id, uint64_t upload_bytes, uint64_t download_bytes,
+                                           uint32_t multiplier, uint64_t now_ms, bool *found,
+                                           bool *first_usage_push_needed);
 void usersResetFirstUsagePushRequests(users_t *users);
 void usersResetFirstUsagePushRequestByIdentifier(users_t *users, uint64_t id);
 /* True when the user no longer exists or may no longer carry traffic. */

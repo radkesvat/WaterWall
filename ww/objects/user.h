@@ -36,6 +36,12 @@
 #define USER_WIREGUARD_PUBLICKEY_SIZE        32U
 #define USER_WIREGUARD_ALLOWED_IPS_MAX_TEXT  64U
 
+enum
+{
+    kUserTrafficMultiplierScale = 1000,
+    kUserTrafficMultiplierMax   = 1000 * kUserTrafficMultiplierScale
+};
+
 typedef struct user_ud_s
 {
     uint64_t u;
@@ -181,8 +187,9 @@ typedef struct user_ip_index_s user_ip_index_t;
 /*
  * Live, process-local enforcement state. Unlike user_stat_t this is never
  * serialized, copied, or synced to AuthenticationServer; it is recreated empty
- * whenever the user object is (re)created and tracks only currently-open
- * connections for limit enforcement. Guarded by user_s.stats_lock.
+ * whenever the user object is (re)created. Tracks live connections and charged
+ * fractional-byte carry for limit enforcement. Explicit runtime migration keeps
+ * this state across database refreshes. Guarded by user_s.stats_lock.
  */
 typedef struct user_runtime_stat_s
 {
@@ -193,6 +200,9 @@ typedef struct user_runtime_stat_s
     /* Optional; NULL until the distinct-IP set is large enough to promote. */
     user_ip_index_t *ip_index;
     bool             first_usage_push_requested;
+    /* Each remainder is less than kUserTrafficMultiplierScale. */
+    uint32_t traffic_remainder_u;
+    uint32_t traffic_remainder_d;
 } user_runtime_stat_t;
 
 /* Client-only accounting clock and elapsed age. Guarded by user_s.lock;
@@ -385,6 +395,12 @@ void                    userReleaseConnection(User *user, const user_ip_key_t *i
  */
 bool userAccountTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint64_t now_ms,
                         bool *first_usage_push_needed);
+/* Charges raw bytes at multiplier/kUserTrafficMultiplierScale, retaining separate
+ * fractional upload/download carry. multiplier must be in [1, kUserTrafficMultiplierMax].
+ * First use observes raw traffic even when the charged increment is zero. The
+ * unscaled helper above uses a unit multiplier without clearing existing carry. */
+bool userAccountTrafficScaled(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint32_t multiplier,
+                              uint64_t now_ms, bool *first_usage_push_needed);
 /* True if the user may no longer carry traffic (disabled, expired, or over its traffic quota). */
 bool userRuntimeShouldClose(User *user, uint64_t now_ms);
 

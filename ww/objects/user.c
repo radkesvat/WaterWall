@@ -2166,6 +2166,34 @@ void userReleaseConnection(User *user, const user_ip_key_t *ip_key)
 bool userAccountTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint64_t now_ms,
                         bool *first_usage_push_needed)
 {
+    return userAccountTrafficScaled(
+        user, upload_bytes, download_bytes, kUserTrafficMultiplierScale, now_ms, first_usage_push_needed);
+}
+
+static uint64_t userScaleTrafficLocked(uint64_t bytes, uint32_t multiplier, uint32_t *remainder)
+{
+    assert(*remainder < kUserTrafficMultiplierScale);
+    if (multiplier == kUserTrafficMultiplierScale)
+    {
+        return bytes;
+    }
+
+    /* Splitting before multiplication keeps both intermediates portable even
+     * when raw bytes span all of uint64_t. The fractional product is < 10^9. */
+    const uint64_t whole      = bytes / kUserTrafficMultiplierScale;
+    const uint64_t fractional = (bytes % kUserTrafficMultiplierScale) * multiplier + *remainder;
+    *remainder                = (uint32_t) (fractional % kUserTrafficMultiplierScale);
+    if (whole > UINT64_MAX / multiplier)
+    {
+        return UINT64_MAX;
+    }
+    return userSaturatingAdd(whole * multiplier, fractional / kUserTrafficMultiplierScale);
+}
+
+bool userAccountTrafficScaled(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint32_t multiplier,
+                              uint64_t now_ms, bool *first_usage_push_needed)
+{
+    assert(multiplier > 0 && multiplier <= kUserTrafficMultiplierMax);
     bool should_close = false;
 
     if (first_usage_push_needed != NULL)
@@ -2195,8 +2223,12 @@ bool userAccountTraffic(User *user, uint64_t upload_bytes, uint64_t download_byt
         }
         userClientProjectExpiryLocked(user, now_ms);
     }
-    user->stats.traffic.u = userSaturatingAdd(user->stats.traffic.u, upload_bytes);
-    user->stats.traffic.d = userSaturatingAdd(user->stats.traffic.d, download_bytes);
+    const uint64_t charged_upload =
+        userScaleTrafficLocked(upload_bytes, multiplier, &user->runtime.traffic_remainder_u);
+    const uint64_t charged_download =
+        userScaleTrafficLocked(download_bytes, multiplier, &user->runtime.traffic_remainder_d);
+    user->stats.traffic.u = userSaturatingAdd(user->stats.traffic.u, charged_upload);
+    user->stats.traffic.d = userSaturatingAdd(user->stats.traffic.d, charged_download);
     if (first_usage_push_needed != NULL && (upload_bytes != 0 || download_bytes != 0) &&
         (user->client_time.clock_valid ? ! user->client_time.observation_acked
                                        : user->timeinfo.first_usage_at_ms == 0) &&

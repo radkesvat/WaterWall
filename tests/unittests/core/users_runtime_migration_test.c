@@ -1237,6 +1237,172 @@ static void testTotalTrafficLimitCountsUploadAndDownload(void)
     userDestroy(&user);
 }
 
+static void testScaledTrafficArithmeticAndLimits(void)
+{
+    const struct
+    {
+        uint32_t multiplier;
+        uint64_t raw;
+        uint64_t charged;
+        uint32_t remainder;
+    } cases[] = {{kUserTrafficMultiplierScale / 2, 1, 0, kUserTrafficMultiplierScale / 2},
+                 {kUserTrafficMultiplierScale * 3 / 2, 3, 4, kUserTrafficMultiplierScale / 2},
+                 {kUserTrafficMultiplierScale * 2, 17, 34, 0},
+                 {kUserTrafficMultiplierScale, UINT64_MAX, UINT64_MAX, 0},
+                 {kUserTrafficMultiplierScale / 2, UINT64_MAX, UINT64_MAX / 2, kUserTrafficMultiplierScale / 2},
+                 {kUserTrafficMultiplierScale * 3 / 2,
+                  UINT64_MAX / 2,
+                  UINT64_MAX / 2 + (UINT64_MAX / 2) / 2,
+                  kUserTrafficMultiplierScale / 2},
+                 {kUserTrafficMultiplierScale * 2, UINT64_MAX, UINT64_MAX, 0},
+                 {kUserTrafficMultiplierMax, UINT64_MAX, UINT64_MAX, 0},
+                 {1, UINT64_MAX, UINT64_MAX / kUserTrafficMultiplierScale, UINT64_MAX % kUserTrafficMultiplierScale}};
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        user_t user;
+        require(userCreate(&user, "scaled-arithmetic"), "scaled arithmetic fixture");
+        require(! userAccountTrafficScaled(&user, cases[i].raw, cases[i].raw, cases[i].multiplier, 0, NULL),
+                "scaled unlimited accounting unexpectedly closed");
+        require(user.stats.traffic.u == cases[i].charged && user.stats.traffic.d == cases[i].charged &&
+                    user.runtime.traffic_remainder_u == cases[i].remainder &&
+                    user.runtime.traffic_remainder_d == cases[i].remainder,
+                "scaled arithmetic overflowed or rounded incorrectly");
+        userDestroy(&user);
+    }
+
+    user_t user;
+    require(userCreate(&user, "scaled-limits"), "scaled limits fixture");
+    user.limit.traffic.total = 2;
+    require(! userAccountTrafficScaled(&user, 1, 1, kUserTrafficMultiplierScale / 2, 0, NULL) &&
+                user.stats.traffic.u == 0 && user.stats.traffic.d == 0,
+            "fractional directions shared carry or closed before charged limit");
+    require(! userAccountTrafficScaled(&user, 1, 0, kUserTrafficMultiplierScale / 2, 0, NULL) &&
+                user.stats.traffic.u == 1 && user.stats.traffic.d == 0 &&
+                user.runtime.traffic_remainder_d == kUserTrafficMultiplierScale / 2,
+            "upload carry corrupted download carry");
+    require(userAccountTrafficScaled(&user, 0, 1, kUserTrafficMultiplierScale / 2, 0, NULL) &&
+                user.stats.traffic.d == 1,
+            "combined charged limit failed to close");
+    userDestroy(&user);
+
+    require(userCreate(&user, "scaled-wrapper"), "scaled wrapper fixture");
+    require(! userAccountTrafficScaled(&user, 1, 0, kUserTrafficMultiplierScale * 3 / 2, 0, NULL),
+            "initial fractional surcharge");
+    require(! userAccountTraffic(&user, 5, 0, 0, NULL) &&
+                user.runtime.traffic_remainder_u == kUserTrafficMultiplierScale / 2,
+            "unit-factor wrapper cleared fractional carry");
+    require(! userAccountTrafficScaled(&user, 1, 0, kUserTrafficMultiplierScale * 3 / 2, 0, NULL) &&
+                user.stats.traffic.u == 8 && user.runtime.traffic_remainder_u == 0,
+            "fractional surcharge was lost across unit-factor call");
+    userDestroy(&user);
+
+    require(userCreate(&user, "scaled-saturating-total"), "scaled saturation fixture");
+    require(! userAccountTrafficScaled(&user, UINT64_MAX / 2, 0, kUserTrafficMultiplierScale * 2, 0, NULL) &&
+                user.stats.traffic.u == UINT64_MAX - 1,
+            "large nonsaturating scaled total was incorrect");
+    require(! userAccountTrafficScaled(&user, 1, 0, kUserTrafficMultiplierScale * 2, 0, NULL) &&
+                user.stats.traffic.u == UINT64_MAX,
+            "scaled cumulative total wrapped");
+    userDestroy(&user);
+}
+
+static void testScaledTrafficChunkingAndRuntimeMigration(void)
+{
+    const uint32_t multipliers[] = {1,
+                                    kUserTrafficMultiplierScale / 3,
+                                    kUserTrafficMultiplierScale / 2,
+                                    kUserTrafficMultiplierScale * 3 / 2,
+                                    kUserTrafficMultiplierMax};
+    for (size_t m = 0; m < sizeof(multipliers) / sizeof(multipliers[0]); ++m)
+    {
+        user_t chunks, combined;
+        require(userCreate(&chunks, "scaled-chunks") && userCreate(&combined, "scaled-combined"),
+                "scaled chunking fixtures");
+        for (unsigned i = 0; i < 1001; ++i)
+            discard userAccountTrafficScaled(&chunks, 7, 11, multipliers[m], 0, NULL);
+        discard userAccountTrafficScaled(&combined, 7007, 11011, multipliers[m], 0, NULL);
+        require(chunks.stats.traffic.u == combined.stats.traffic.u &&
+                    chunks.stats.traffic.d == combined.stats.traffic.d &&
+                    chunks.runtime.traffic_remainder_u == combined.runtime.traffic_remainder_u &&
+                    chunks.runtime.traffic_remainder_d == combined.runtime.traffic_remainder_d,
+                "charged amount depended on payload fragmentation");
+        userDestroy(&combined);
+        userDestroy(&chunks);
+    }
+
+    users_t old_users, new_users;
+    user_t  source, copy, parsed;
+    require(usersCreate(&old_users) && usersCreate(&new_users) && userCreate(&source, "scaled-old"),
+            "scaled migration fixtures");
+    userSetId(&source, 9310);
+    require(usersAddUser(&old_users, &source), "scaled old account");
+    userDestroy(&source);
+    require(userCreate(&source, "scaled-new"), "scaled new credentials");
+    userSetId(&source, 9310);
+    require(usersAddUser(&new_users, &source), "scaled new account");
+    userDestroy(&source);
+    bool found = false;
+    require(! usersAccountTrafficScaledByIdentifier(
+                &old_users, 9310, 1, 3, kUserTrafficMultiplierScale / 2, 0, &found, NULL) &&
+                found,
+            "scaled collection accounting failed");
+    user_t *old = usersLookupByIdentifier(&old_users, 9310);
+    require(userCopy(&copy, old), "scaled generic copy");
+    cJSON *json = userToJson(old);
+    require(json != NULL && userCreateFromJson(&parsed, json), "scaled JSON roundtrip");
+    require(copy.runtime.traffic_remainder_u == 0 && copy.runtime.traffic_remainder_d == 0 &&
+                parsed.runtime.traffic_remainder_u == 0 && parsed.runtime.traffic_remainder_d == 0,
+            "generic copy or persistence retained process-local fractional carry");
+    cJSON_Delete(json);
+    userDestroy(&parsed);
+    userDestroy(&copy);
+    require(usersMigrateRuntimeStateByIdentifier(&new_users, &old_users), "scaled runtime migration");
+    user_t *next = usersLookupByIdentifier(&new_users, 9310);
+    require(old->runtime.traffic_remainder_u == 0 && old->runtime.traffic_remainder_d == 0 &&
+                next->runtime.traffic_remainder_u == kUserTrafficMultiplierScale / 2 &&
+                next->runtime.traffic_remainder_d == kUserTrafficMultiplierScale / 2,
+            "same-ID refresh lost fractional carry across credentials change");
+    require(! usersAccountTrafficByIdentifier(&new_users, 9310, 0, 0, 0, &found, NULL) && found &&
+                next->runtime.traffic_remainder_u == kUserTrafficMultiplierScale / 2,
+            "collection unit-factor wrapper erased fractional carry");
+    require(! usersAccountTrafficScaledByIdentifier(
+                &new_users, 9310, 1, 1, kUserTrafficMultiplierScale / 2, 0, &found, NULL) &&
+                found && next->stats.traffic.u == 1 && next->stats.traffic.d == 1,
+            "accounting after refresh ignored migrated carry");
+    bool notification = true;
+    require(usersAccountTrafficScaledByIdentifier(
+                &new_users, 9311, 1, 1, kUserTrafficMultiplierScale / 2, 0, &found, &notification) &&
+                ! found && ! notification,
+            "missing user did not fail closed in scaled wrapper");
+    usersDestroy(&new_users);
+    usersDestroy(&old_users);
+}
+
+static WTHREAD_ROUTINE(scaledTrafficThread)
+{
+    user_t *user = userdata;
+    for (unsigned i = 0; i < 2001; ++i)
+        discard userAccountTrafficScaled(user, 1, 3, kUserTrafficMultiplierScale / 2, 0, NULL);
+    return 0;
+}
+
+static void testScaledTrafficConcurrentCarry(void)
+{
+    user_t user;
+    require(userCreate(&user, "scaled-concurrent"), "scaled concurrent fixture");
+    wthread_t threads[4];
+    for (unsigned i = 0; i < 4; ++i)
+        require(threadCreate(&threads[i], scaledTrafficThread, &user) == kWThreadErrorNone,
+                "scaled traffic thread creation");
+    for (unsigned i = 0; i < 4; ++i)
+        require(threadJoin(threads[i]) == 0, "scaled traffic thread join");
+    require(user.stats.traffic.u == 4002 && user.stats.traffic.d == 12006 && user.runtime.traffic_remainder_u == 0 &&
+                user.runtime.traffic_remainder_d == 0,
+            "concurrent accounting lost or duplicated fractional carry");
+    userDestroy(&user);
+}
+
 static void testFirstUsagePushRequestFlagIsOneShot(void)
 {
     users_t        users;
@@ -1438,6 +1604,34 @@ typedef struct first_traffic_context_s
     atomic_bool sampled, proceed;
 } first_traffic_context_t;
 
+static void testDiscountedFirstUseStartsBeforeWholeByteCharge(void)
+{
+    atomic_store(&client_clock_test, true);
+    atomic_store(&client_clock_ms, 50000);
+    user_t user;
+    require(userCreate(&user, "discounted-first-use"), "discounted first-use fixture");
+    user.timeinfo.expire_after_first_usage_ms = 100;
+    userInstallClientClock(&user, 100000, 10000, 50000);
+    bool push = true;
+    require(! userAccountTrafficScaled(&user, 0, 0, kUserTrafficMultiplierScale / 2, 0, &push) && ! push &&
+                ! user.client_time.observed,
+            "zero raw traffic started discounted first use");
+    require(! userAccountTrafficScaled(&user, 0, 1, kUserTrafficMultiplierScale / 2, 0, &push) && push &&
+                user.stats.traffic.d == 0 && user.runtime.traffic_remainder_d == kUserTrafficMultiplierScale / 2 &&
+                user.client_time.observed && user.client_time.first_local_ms == 50000 &&
+                user.client_time.first_report_ms == 10000 && user.client_view_expires_at_ms == 50100,
+            "discounted first traffic delayed first use until a whole byte was charged");
+    user_accounting_snapshot_t snapshot;
+    userGetAccountingSnapshot(&user, &snapshot);
+    require(snapshot.traffic.u == 0 && snapshot.traffic.d == 0 && snapshot.observation_pending &&
+                snapshot.first_usage_at_ms == 10000,
+            "zero-charge first-use observation was missing from snapshot");
+    require(! userRuntimeShouldClose(&user, 50099) && userRuntimeShouldClose(&user, 50100),
+            "discounted first-use expiry did not enforce raw-traffic origin");
+    userDestroy(&user);
+    atomic_store(&client_clock_test, false);
+}
+
 static WTHREAD_ROUTINE(firstTrafficThread)
 {
     first_traffic_context_t *context    = userdata;
@@ -1543,10 +1737,14 @@ int main(void)
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
     testLocalFirstUseClockAndEdits();
     testFirstUseRacesAndMigration();
+    testDiscountedFirstUseStartsBeforeWholeByteCharge();
 #endif
     testClientViewExpiryOverridesServerTimeFields();
     testZeroUserLimitsAreUnlimited();
     testTotalTrafficLimitCountsUploadAndDownload();
+    testScaledTrafficArithmeticAndLimits();
+    testScaledTrafficChunkingAndRuntimeMigration();
+    testScaledTrafficConcurrentCarry();
     testFirstUsagePushRequestFlagIsOneShot();
     testTrafficStatsJsonUsesExactBytes();
     wCryptoGlobalCleanup();
