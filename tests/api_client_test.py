@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location(
-    "waterwall_example_api_client", Path(__file__).resolve().parents[1] / "examples/api_client.py")
+    "waterwall_example_api_client", Path(__file__).resolve().parents[1] / "tunnels/APIServer/examples/api_client.py")
 CLIENT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CLIENT)
 
