@@ -61,6 +61,7 @@ const char *authenticationserverParseUpdate(sbuf_t *message, const node_api_call
             usersPrepareConfigPatch(&patch, allowance, context->deadline_ms, &request->patch);
         error = authenticationserverConfigUpdateError(result);
     }
+    request->audit_fields = patch.mask;
     cJSON_Delete(body);
     bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), message);
     if (authenticationserverApiExpired(context->deadline_ms))

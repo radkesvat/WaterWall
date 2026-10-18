@@ -1,4 +1,5 @@
 #include "AuthenticationServer/password_change.h"
+#include "AuthenticationServer/audit.h"
 #include "loggers/network_logger.h"
 
 const char *authenticationserverPasswordChangeError(users_password_result_t result)
@@ -90,6 +91,13 @@ const char *authenticationserverApplyConditionalPasswordChange(tunnel_t         
             /* This exact transaction already owns its complete ACK. Delivery
              * loss never rolls back the committed credentials or revision. */
             authenticationserverBumpConfigRevision(t);
+            authenticationserverAuditRecordApi(ts->audit,
+                                               context,
+                                               "change-user-password",
+                                               request->id,
+                                               ts->store.config_revision,
+                                               kAuthenticationServerAuditFieldCredentials,
+                                               NULL);
         }
         else
             error = ack.error != NULL ? ack.error : authenticationserverPasswordChangeError(result);

@@ -60,7 +60,9 @@ def page(identifier=LARGE_ID, cursor=None):
 def status():
     return {"database_loaded": True, "user_count": "3", "configured_producer_count": "1",
             "session_record_count": "0", "config_revision": "84", "stats_revision": "6", "edit_token": EDIT_TOKEN,
-            "primary_save": {"last_result": "not_attempted", "last_attempt_age_ms": None, "last_success_age_ms": None}}
+            "primary_save": {"last_result": "not_attempted", "last_attempt_age_ms": None, "last_success_age_ms": None},
+            "audit": {"enabled": False, "healthy": True, "queued_records": "0", "written_records": "0",
+                      "dropped_records": "0", "write_failures": "0", "last_error": None}}
 
 
 def reply(body, code=0):
@@ -113,6 +115,26 @@ class AdminTest(unittest.TestCase):
         self.assertEqual(envelope["content_type"], "application/json")
         self.assertEqual(envelope["body_encoding"], "utf8")
         return envelope["operation"], json.loads(envelope["body"])
+
+    def test_audit_health_is_validated_without_exposing_arbitrary_errors(self):
+        for error in (None, *sorted(CLIENT.AUDIT_ERRORS)):
+            value = status()
+            value["audit"].update(enabled=True, healthy=error is None, written_records=MAX_ID,
+                                  dropped_records="2", write_failures="1", last_error=error)
+            result, text, diagnostic, call, _ = self.invoke(["status"], [reply(value)])
+            self.assertEqual(result, 0)
+            self.assertEqual(json.loads(text)["audit"], value["audit"])
+            self.assertEqual(diagnostic, "")
+            self.assertEqual(call.call_count, 1)
+        for field, bad in (("last_error", "PRIVATE_PASSWORD_SENTINEL"), ("last_error", []),
+                           ("written_records", 1), ("dropped_records", "-1"),
+                           ("queued_records", "01"), ("healthy", 1), ("enabled", "false")):
+            value = status()
+            value["audit"][field] = bad
+            result, text, diagnostic, call, _ = self.invoke(["status"], [reply(value)])
+            self.assertEqual(result, 2)
+            self.assertEqual(text, "")
+            self.assertEqual(call.call_count, 1)
 
     def test_read_status_and_exact_large_id(self):
         for command, body, operation, expected in [

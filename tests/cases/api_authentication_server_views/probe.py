@@ -94,9 +94,12 @@ def check_ack(value, identifier, previous_token):
 
 def check_status(value, sessions, users=3):
     require(set(value) == {"database_loaded", "user_count", "configured_producer_count",
-                           "session_record_count", "config_revision", "stats_revision", "primary_save", "edit_token"},
+                           "session_record_count", "config_revision", "stats_revision", "primary_save", "edit_token", "audit"},
             "Status field allowlist changed")
     check_token(value)
+    require(value["audit"] == {"enabled": False, "healthy": True, "queued_records": "0",
+                                "written_records": "0", "dropped_records": "0", "write_failures": "0",
+                                "last_error": None}, "Disabled audit status changed")
     require(value["database_loaded"] is True and value["user_count"] == str(users)
             and value["configured_producer_count"] == "1"
             and value["session_record_count"] == str(sessions), "Incorrect server counts")

@@ -1,3 +1,4 @@
+#include "AuthenticationServer/audit.h"
 #include "AuthenticationServer/password_change.h"
 
 api_result_t authenticationserverApiChangeUserPassword(tunnel_t *t, sbuf_t *message,
@@ -6,7 +7,17 @@ api_result_t authenticationserverApiChangeUserPassword(tunnel_t *t, sbuf_t *mess
     authenticationserver_password_request_t request;
     const char                             *error = authenticationserverParsePasswordChange(message, context, &request);
     if (error != NULL)
+    {
+        authenticationserver_tstate_t *ts = tunnelGetState(t);
+        authenticationserverAuditRecordApi(ts->audit,
+                                           context,
+                                           "change-user-password",
+                                           request.id,
+                                           0,
+                                           kAuthenticationServerAuditFieldCredentials,
+                                           error);
         return authenticationserverApiError(context, error);
+    }
 
     buffer_pool_t    *pool = getCurrentEventWorkerBufferPool();
     buffer_pool_fit_t fit;
@@ -35,6 +46,14 @@ api_result_t authenticationserverApiChangeUserPassword(tunnel_t *t, sbuf_t *mess
     usersFreePreparedPasswordChange(request.password);
     if (error != NULL)
     {
+        authenticationserver_tstate_t *ts = tunnelGetState(t);
+        authenticationserverAuditRecordApi(ts->audit,
+                                           context,
+                                           "change-user-password",
+                                           request.id,
+                                           0,
+                                           kAuthenticationServerAuditFieldCredentials,
+                                           error);
         if (ack != NULL)
             bufferpoolReuseBuffer(pool, ack);
         return authenticationserverApiError(context, error);

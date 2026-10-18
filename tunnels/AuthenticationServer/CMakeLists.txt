@@ -12,6 +12,9 @@ add_library(AuthenticationServer STATIC
                     common/session.c
                     common/sync.c
                     common/status.c
+                    common/audit_config.c
+                    common/audit.c
+                    common/audit_writer.c
                     common/user_views.c
                     common/config_update.c
                     common/config_create.c

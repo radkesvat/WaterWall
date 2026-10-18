@@ -1,3 +1,4 @@
+#include "AuthenticationServer/audit.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -141,6 +142,9 @@ sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
             {
                 LOGW("AuthenticationServer: rejected request type %u without a valid session token",
                      (unsigned int) request_type);
+                if (module->require_user_write)
+                    authenticationserverAuditRecordProducer(
+                        ts->audit, NULL, module->name, 0, 0, 0, "authentication-required");
                 return authenticationserverCreateErrorResponseFrame(l, correlation_id, "authentication-required");
             }
             if (UNLIKELY(module->require_stats_push && ! session->allow_stats_push))
@@ -171,6 +175,8 @@ sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
                          module->name,
                          session->client_name != NULL ? session->client_name : "");
                 }
+                authenticationserverAuditRecordProducer(
+                    ts->audit, session->client_name, module->name, 0, 0, 0, "user-write-not-allowed");
                 return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-write-not-allowed");
             }
         }

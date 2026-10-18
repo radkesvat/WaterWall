@@ -10,6 +10,11 @@ void authenticationserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t
 
     nodeApiUnregister(t);
 
+    /* NodeManager has settled producers and registered API jobs before destroy.
+     * The writer owns only copied records and must join before logger teardown. */
+    authenticationserverAuditDestroy(ts->audit);
+    ts->audit = NULL;
+
     if (UNLIKELY(ts->database_loaded && ! authenticationserverSaveDatabase(ts)))
     {
         LOGW("AuthenticationServer: final users database save failed during destroy");

@@ -210,7 +210,7 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
         return false;
     }
 
-    int auth_clients_count = cJSON_GetArraySize(auth_clients);
+    int    auth_clients_count = cJSON_GetArraySize(auth_clients);
     size_t bytes;
     if (UNLIKELY(! memoryTryComputeArraySize((size_t) auth_clients_count, sizeof(*ts->auth_clients), &bytes)))
     {
@@ -328,6 +328,12 @@ tunnel_t *authenticationserverTunnelCreate(node_t *node)
     if (! secureRandomBytes(ts->api_instance_id, sizeof(ts->api_instance_id)) || ! authenticationserverRegisterApi(t))
     {
         LOGE("AuthenticationServer: failed to initialize registered API");
+        authenticationserverTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+
+    if (! authenticationserverAuditConfigure(t, node))
+    {
         authenticationserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }

@@ -1,4 +1,5 @@
 #include "AuthenticationServer/config_update.h"
+#include "AuthenticationServer/audit.h"
 #include "loggers/network_logger.h"
 
 const char *authenticationserverConfigUpdateError(users_update_result_t result)
@@ -99,6 +100,8 @@ const char *authenticationserverApplyConditionalUpdate(tunnel_t *t, authenticati
             /* No fallible work, snapshots or deadline checks beyond commitment.
              * The prebuilt ACK names this transaction even if delivery is late. */
             authenticationserverBumpConfigRevision(t);
+            authenticationserverAuditRecordApi(
+                ts->audit, context, "update-user", request->id, ts->store.config_revision, request->audit_fields, NULL);
         }
         else
             error = ack.error != NULL ? ack.error : authenticationserverConfigUpdateError(result);

@@ -1,4 +1,5 @@
 #include "AuthenticationServer/config_create.h"
+#include "AuthenticationServer/audit.h"
 #include "loggers/network_logger.h"
 
 const char *authenticationserverConfigCreateError(users_add_result_t result)
@@ -98,6 +99,14 @@ const char *authenticationserverApplyCreate(tunnel_t *t, authenticationserver_cr
             /* All expected failures precede publication. The ACK names this
              * exact commit even if dispatch completion or delivery is late. */
             authenticationserverBumpConfigRevision(t);
+            authenticationserverAuditRecordApi(ts->audit,
+                                               context,
+                                               "create-user",
+                                               request->id,
+                                               ts->store.config_revision,
+                                               kAuthenticationServerAuditFieldAccount |
+                                                   kAuthenticationServerAuditFieldCredentials,
+                                               NULL);
         }
         else
             error = ack.error != NULL ? ack.error : authenticationserverConfigCreateError(result);

@@ -42,6 +42,7 @@ authenticationserver_status_result_t authenticationserverStatusSnapshot(tunnel_t
             now >= ts->primary_save_last_success_ms ? now - ts->primary_save_last_success_ms : 0,
     };
     memoryCopy(sampled.instance_id, ts->api_instance_id, sizeof(sampled.instance_id));
+    authenticationserverAuditSnapshot(ts->audit, &sampled.audit);
     rwlockReadUnlock(&ts->state_lock);
     if (authenticationserverStatusDeadlineExpired(deadline_ms))
         return kAuthenticationServerStatusTimeout;

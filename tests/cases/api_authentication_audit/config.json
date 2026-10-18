@@ -1,0 +1,68 @@
+{
+  "name": "audit-fixture",
+  "nodes": [
+    {
+      "name": "accounts",
+      "type": "AuthenticationServer",
+      "settings": {
+        "db-path": "users.json",
+        "file-save-rate-ms": 60000,
+        "audit-log": {
+          "path": "administration.jsonl",
+          "max-file-size": 16384,
+          "max-files": 3
+        },
+        "auth-clients": [
+          {
+            "name": "fixture-producer",
+            "secret": "PRIVATE_PRODUCER_SECRET_SENTINEL",
+            "allow-user-write": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29380
+      },
+      "next": "api"
+    },
+    {
+      "name": "api",
+      "type": "APIServer",
+      "settings": {
+        "clients": [
+          {
+            "name": "admin",
+            "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "allow": [
+              {
+                "config": "audit-fixture",
+                "node": "accounts",
+                "operations": [
+                  "status",
+                  "get-user",
+                  "create-user",
+                  "update-user",
+                  "change-user-password"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "protocol-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29382
+      },
+      "next": "accounts"
+    }
+  ]
+}

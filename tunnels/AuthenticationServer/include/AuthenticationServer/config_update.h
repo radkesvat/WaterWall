@@ -13,6 +13,7 @@ enum
 typedef struct authenticationserver_update_request_s
 {
     uint64_t                      id, revision;
+    uint32_t                      audit_fields;
     uint8_t                       instance_id[16];
     user_config_prepared_patch_t *patch;
 } authenticationserver_update_request_t;

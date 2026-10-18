@@ -1,4 +1,5 @@
 #include "modules/update_user/update_user.h"
+#include "AuthenticationServer/audit.h"
 
 #include "loggers/network_logger.h"
 #include "node_builder/config_lexical.h"
@@ -225,20 +226,38 @@ sbuf_t *authenticationserverUpdateUserHandle(const uint8_t correlation_id[kAuthe
                                              tunnel_t *t, line_t *l, authenticationserver_session_t *session,
                                              const uint8_t *request_data, uint32_t request_data_len)
 {
-    discard             session;
-    cJSON              *json  = configLexicalParse((const char *) request_data, request_data_len, 8);
-    user_config_patch_t patch = {0};
-    uint64_t            id    = 0;
+    authenticationserver_tstate_t *ts    = tunnelGetState(t);
+    cJSON                         *json  = configLexicalParse((const char *) request_data, request_data_len, 8);
+    user_config_patch_t            patch = {0};
+    uint64_t                       id    = 0;
     if (json == NULL || ! parsePatch(json, &patch, &id))
     {
         cJSON_Delete(json);
+        authenticationserverAuditRecordProducer(ts->audit,
+                                                session != NULL ? session->client_name : NULL,
+                                                "UpdateUser",
+                                                id,
+                                                0,
+                                                patch.mask,
+                                                "invalid-update-user-request");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-update-user-request");
     }
     const users_update_result_t result = authenticationserverPatchConfigAndBumpRevision(t, id, &patch);
     cJSON_Delete(json); /* The collection has already copied every selected string. */
     if (result != kUsersUpdateResultOk)
-        return authenticationserverCreateErrorResponseFrame(
-            l, correlation_id, authenticationserverUsersUpdateResultError(result));
+    {
+        const char *error = authenticationserverUsersUpdateResultError(result);
+        authenticationserverAuditRecordProducer(
+            ts->audit, session != NULL ? session->client_name : NULL, "UpdateUser", id, 0, patch.mask, error);
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, error);
+    }
+    authenticationserverAuditRecordProducer(ts->audit,
+                                            session != NULL ? session->client_name : NULL,
+                                            "UpdateUser",
+                                            id,
+                                            ts->store.config_revision,
+                                            patch.mask,
+                                            NULL);
     static const char ok[] = "user-updated";
     return authenticationserverCreateResponseFrame(
         l, kAuthenticationServerResponseTypeOk, correlation_id, (const uint8_t *) ok, (uint32_t) (sizeof(ok) - 1U));

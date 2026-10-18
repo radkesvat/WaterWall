@@ -32,7 +32,7 @@ Append one of these commands after the connection options:
 
 | Command | Behavior |
 | --- | --- |
-| `status` | Read the AuthenticationServer status. |
+| `status` | Read server status, database-save telemetry and audit health. |
 | `users get 42` | Read account details and a current edit token. |
 | `users list --limit 50` | Read one compact summary page. |
 | `users list --all --limit 50 --max-pages 100` | Follow cursors and print one complete page per JSON line. |
@@ -76,6 +76,14 @@ token establishes that password only if that new request succeeds. For creation,
 keep the original ID; finding it does not prove that this request created it or
 that its password matches. A successful write acknowledges an in-memory change,
 not a disk save or an AuthenticationClient refresh.
+
+The `status` result always includes `audit`. When logging is disabled it reports
+`enabled: false`, `healthy: true`, zero counters and `last_error: null`. When
+enabled, inspect `healthy`, `dropped_records`, `write_failures` and `last_error`;
+`queued_records` is pending queue depth and `written_records` counts flushed
+records. Counters are process-local decimal strings. An unhealthy audit does not
+mean an account change failed: inspect the operation's actual result. Audit
+settings belong to AuthenticationServer; the CLI does not enable or rotate files.
 
 ## Output and exit status
 

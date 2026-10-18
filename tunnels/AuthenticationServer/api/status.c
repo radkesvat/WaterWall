@@ -43,6 +43,23 @@ static void status(authenticationserver_json_writer_t *w, const void *value)
         authenticationserverJsonU64(w, s->primary_save_last_success_age_ms);
     else
         AUTH_JSON_TEXT("null");
+    AUTH_JSON_TEXT("},\"audit\":{\"enabled\":");
+    AUTH_JSON_TEXT(s->audit.enabled ? "true" : "false");
+    AUTH_JSON_TEXT(",\"healthy\":");
+    AUTH_JSON_TEXT(s->audit.healthy ? "true" : "false");
+    AUTH_JSON_TEXT(",");
+    NUMBER("queued_records", s->audit.queued_records);
+    AUTH_JSON_TEXT(",");
+    NUMBER("written_records", s->audit.written_records);
+    AUTH_JSON_TEXT(",");
+    NUMBER("dropped_records", s->audit.dropped_records);
+    AUTH_JSON_TEXT(",");
+    NUMBER("write_failures", s->audit.write_failures);
+    AUTH_JSON_TEXT(",\"last_error\":");
+    if (s->audit.last_error != NULL)
+        authenticationserverJsonString(w, s->audit.last_error);
+    else
+        AUTH_JSON_TEXT("null");
     AUTH_JSON_TEXT("}}");
 #undef NUMBER
 #undef AUTH_JSON_TEXT

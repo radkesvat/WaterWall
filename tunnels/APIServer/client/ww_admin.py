@@ -35,6 +35,8 @@ NODE_ERRORS = {
     "revision_exhausted", "id_exists", "credentials_exist", "creation_failed",
     "password_change_failed",
 }
+AUDIT_ERRORS = {"open", "write", "flush", "rotate", "close", "invalid-file",
+                "queue_full", "sequence_exhausted"}
 STRING_FIELDS = {"name", "email", "notes", "wireguard_allowed_ips"}
 UINT_FIELDS = {
     "gid", "record_stat_interval_ms", "limit.traffic.u", "limit.traffic.d",
@@ -123,7 +125,11 @@ SCHEMAS = {
                "primary_save": {
                    "last_result": lambda value: value in ("not_attempted", "success", "failure"),
                    "last_attempt_age_ms": lambda value: value is None or valid_uint(value),
-                   "last_success_age_ms": lambda value: value is None or valid_uint(value)}},
+                   "last_success_age_ms": lambda value: value is None or valid_uint(value)},
+               "audit": {"enabled": BOOL, "healthy": BOOL, "queued_records": valid_uint,
+                         "written_records": valid_uint, "dropped_records": valid_uint,
+                         "write_failures": valid_uint,
+                         "last_error": lambda value: value is None or (isinstance(value, str) and value in AUDIT_ERRORS)}},
     "get-user": {**REVISION, "accounting_time_ms": valid_uint, "user": USER},
     "list-users": {**REVISION, "accounting_time_ms": valid_uint, "total_users": valid_uint,
                    "users": [SUMMARY], "next_cursor": CURSOR},
@@ -144,7 +150,7 @@ def parser():
     result.add_argument("--timeout", type=float, default=10.0, help="Seconds per API request (default: 10)")
     result.add_argument("--max-response-bytes", type=int, default=1024 * 1024)
     commands = result.add_subparsers(dest="command", required=True)
-    commands.add_parser("status", help="Read server status and save telemetry")
+    commands.add_parser("status", help="Read server status, save telemetry and audit health")
     users = commands.add_parser("users", help="Read and manage accounts")
     actions = users.add_subparsers(dest="action", required=True)
     actions.add_parser("get", help="Read permitted details and an edit token").add_argument("id")

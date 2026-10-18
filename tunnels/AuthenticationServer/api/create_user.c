@@ -1,3 +1,4 @@
+#include "AuthenticationServer/audit.h"
 #include "AuthenticationServer/config_create.h"
 
 api_result_t authenticationserverApiCreateUser(tunnel_t *t, sbuf_t *message, const node_api_call_context_t *context)
@@ -5,7 +6,18 @@ api_result_t authenticationserverApiCreateUser(tunnel_t *t, sbuf_t *message, con
     authenticationserver_create_request_t request;
     const char                           *error = authenticationserverParseCreate(message, context, &request);
     if (error != NULL)
+    {
+        authenticationserver_tstate_t *ts = tunnelGetState(t);
+        authenticationserverAuditRecordApi(ts->audit,
+                                           context,
+                                           "create-user",
+                                           request.id,
+                                           0,
+                                           kAuthenticationServerAuditFieldAccount |
+                                               kAuthenticationServerAuditFieldCredentials,
+                                           error);
         return authenticationserverApiError(context, error);
+    }
 
     buffer_pool_t    *pool = getCurrentEventWorkerBufferPool();
     buffer_pool_fit_t fit;
@@ -31,6 +43,15 @@ api_result_t authenticationserverApiCreateUser(tunnel_t *t, sbuf_t *message, con
     usersFreePreparedNewUser(request.candidate);
     if (error != NULL)
     {
+        authenticationserver_tstate_t *ts = tunnelGetState(t);
+        authenticationserverAuditRecordApi(ts->audit,
+                                           context,
+                                           "create-user",
+                                           request.id,
+                                           0,
+                                           kAuthenticationServerAuditFieldAccount |
+                                               kAuthenticationServerAuditFieldCredentials,
+                                           error);
         if (ack != NULL)
             bufferpoolReuseBuffer(pool, ack);
         return authenticationserverApiError(context, error);

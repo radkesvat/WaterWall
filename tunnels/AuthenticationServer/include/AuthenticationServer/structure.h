@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audit.h"
 #include "status.h"
 #include "wwapi.h"
 
@@ -46,6 +47,7 @@ typedef struct authenticationserver_session_s
 
 typedef struct authenticationserver_tstate_s
 {
+    authenticationserver_audit_t              *audit;
     char                                      *db_path;
     char                                      *backup_path;
     char                                      *normal_backups_path;

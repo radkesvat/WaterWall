@@ -1,5 +1,5 @@
 <!--
-Documentation version: 159
+Documentation version: 160
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -111,6 +111,105 @@ It must not have a `next` node.
   AuthenticationClient credentials and permissions. Each entry must contain non-empty `name` and `secret` strings.
   `allow-stats-push`, `allow-user-pull`, and `allow-user-write` are optional booleans and default to `false`.
   `session-idle-timeout-ms` is optional per client and defaults to the top-level session timeout.
+
+## Administrative Audit Log
+
+Omitting `audit-log` disables this feature. To enable it, add this object inside
+`settings`:
+
+```json
+"audit-log": {
+  "path": "logs/auth-admin.jsonl",
+  "max-file-size": 16777216,
+  "max-files": 7
+}
+```
+
+`path` is required and names the active file exactly; relative paths use the
+process working directory. Create its parent directory before starting WaterWall.
+`max-file-size` is an integer byte limit, default 16777216 (16 MiB), from 16384
+through 1073741824. `max-files` defaults to 7 and accepts 2 through 32, including
+the active file. Unknown keys, duplicate keys and incorrect types are rejected.
+There is no severity/log-level setting: ordinary logger filtering does not filter
+audit events.
+
+Rotation happens before appending a complete record that would exceed the size
+limit. Archives are `path.1` (newest) through `path.N-1`; the oldest is removed
+when necessary. Existing complete files are appended, not truncated on startup.
+A nonempty active file without a final newline is refused; inspect and repair it
+before restarting. The active file, archives and persistent `path.lock` sidecar
+belong to this one writer. Use a dedicated path, separate from databases, backups
+and ordinary logs, in an operator-controlled directory. When normal backups are
+enabled, an active audit filename matching `authenticationserver-*.json` is
+reserved inside `normal-backups-path`; canonical directory aliases are also
+rejected. A distinct filename such as `auth-admin.jsonl` may share that directory.
+Do not remove the lock
+sidecar or rename/rotate these files externally while the server runs. The writer
+requires regular files without link aliases, applies private permissions and
+excludes a second writer. On Unix files are owner-only (`0600`); Windows uses a
+protected ACL for the process user and SYSTEM. Startup fails if enabled audit
+logging cannot open or validate its files.
+
+The node records successful and rejected `create-user`, `update-user` and
+`change-user-password` attempts that reach their registered handlers. It also
+records the producer protocol's `AddNewUser` and `UpdateUser` outcomes, including
+permission refusals from an authenticated producer. Reads, authentication,
+traffic batches and gateway rejections before target dispatch do not create
+administrative audit records. This is an account-administration trail, not a
+complete access/security log.
+
+Each UTF-8 JSON line contains these bounded, permitted fields:
+
+| Field | Meaning |
+| --- | --- |
+| `timestamp_ms` | UTC Unix wall-clock milliseconds as a decimal string; clock adjustments can move it backward. |
+| `server_instance`, `sequence` | Process-local server identity and accepted-record order; sequence is a decimal string. Use these to distinguish restarts and ordering. |
+| `config`, `node` | Logical target configuration and node names. |
+| `source`, `actor` | `api` and authenticated API client name, or `producer` and authenticated producer name. Unavailable identity is `null`. |
+| `gateway_config`, `gateway_node` | Logical APIServer identity for API calls; `null` for producer calls. A client name alone need not be globally unique. |
+| `operation`, `user_id` | Fixed operation name and canonical decimal account ID, or `null` when parsing did not establish an ID. |
+| `outcome`, `error` | `committed` with `null` error, or `rejected` with a fixed error code. |
+| `config_revision` | Exact committed configuration revision as a decimal string; `null` for rejection. |
+| `fields` | Public configuration leaf names selected by an edit, without values; creation/password operations use `account` and/or `credentials` markers. Same-value edits can still name their selected fields. |
+| `identity_truncated` | Whether an actor/gateway label exceeded the bounded copied identity. Configured target/producer labels are validated when auditing is enabled. |
+
+Both sources use public field spelling such as `enabled`, `notes`,
+`limit.traffic.u`, `wireguard_allowed_ips` and `time.expire_at_ms`. No password,
+derived credential, producer secret, token, request body or edited field value
+is included. A successful event is queued at the actual revision commit, before
+reply delivery. Losing a reply does not change that event into a rejection.
+Producer `AddNewUser` retains its existing save-and-rollback behavior: a failed
+save followed by rollback is rejected, not committed.
+
+A fixed 256-record queue separates account operations from file output. Its short
+mutex protects bounded metadata copies only; JSON rendering, disk I/O, rotation
+and diagnostics run on one background writer. Queue-full or file failures never
+roll back account changes or turn a committed acknowledgement into failure.
+A full queue drops the new event and records degraded health. A file I/O failure
+faults the writer for this instance: uncertain/partial bytes are never followed by
+later records; queued and subsequent events are counted as dropped. Fix the
+underlying issue and restart to resume file output. Normal shutdown drains
+accepted records before freeing the writer; a previously faulted writer cannot
+recover missing records.
+
+`status.audit` is always present. It contains `enabled`, `healthy`,
+`queued_records`, `written_records`, `dropped_records`, `write_failures` and
+`last_error`. Counters are unsigned decimal strings and reset when this node is
+created. `queued_records` excludes the record currently being written;
+`written_records` counts successful append-and-flush operations. Independently
+sampled counters describe current activity rather than a transactionally frozen
+accounting equation. `healthy` stays false after a lost record or I/O failure.
+`last_error` is `null` or a fixed code: `queue_full`, `sequence_exhausted`, `open`,
+`write`, `flush`, `rotate`, `close`, or `invalid-file`. Status never exposes file
+paths, native error text or record contents. Disabled logging reports healthy,
+zero counters and a null error. The ordinary diagnostic logger also reports
+startup/runtime audit errors.
+
+Queued is not written, and flushed is not crash-durable. The audit file is not
+atomically committed with the users database, has no per-record disk-sync
+promise, no replay/recovery protocol and no tamper-evidence guarantee. Account
+API success retains its existing in-memory meaning; audit events are operational
+observations, not proof that a database save or client refresh completed.
 
 ## Database Format
 
@@ -785,6 +884,15 @@ The body is exactly `{}`. A successful body has this shape:
     "last_result": "success",
     "last_attempt_age_ms": "3200",
     "last_success_age_ms": "3200"
+  },
+  "audit": {
+    "enabled": false,
+    "healthy": true,
+    "queued_records": "0",
+    "written_records": "0",
+    "dropped_records": "0",
+    "write_failures": "0",
+    "last_error": null
   }
 }
 ```
