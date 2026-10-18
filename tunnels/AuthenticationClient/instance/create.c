@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include <math.h>
 
 static void authenticationclientInitializeCallbacks(tunnel_t *t)
 {
@@ -36,6 +37,45 @@ static bool authenticationclientReadInterval(const cJSON *settings, const char *
     return true;
 }
 
+static bool authenticationclientReadTrafficMultiplier(const cJSON *settings, uint32_t *out)
+{
+    *out                 = kUserTrafficMultiplierScale;
+    const cJSON *setting = NULL;
+    for (const cJSON *item = settings->child; item != NULL; item = item->next)
+    {
+        if (item->string == NULL || strcmp(item->string, "traffic-multiplier") != 0)
+            continue;
+        if (setting != NULL)
+        {
+            LOGE("AuthenticationClient: duplicate traffic-multiplier setting");
+            return false;
+        }
+        setting = item;
+    }
+    if (setting == NULL)
+        return true;
+
+    if (! cJSON_IsNumber(setting) || ! isfinite(setting->valuedouble) ||
+        setting->valuedouble < 1.0 / kUserTrafficMultiplierScale ||
+        setting->valuedouble > (double) kUserTrafficMultiplierMax / kUserTrafficMultiplierScale)
+    {
+        LOGE("AuthenticationClient: traffic-multiplier must be a number from 0.001 through 1000");
+        return false;
+    }
+
+    /* Convert once at startup. Reconstructing the value accepts the ordinary
+     * JSON representation of a three-decimal rate without silently rounding a
+     * finer rate. Payload accounting uses only this integer coefficient. */
+    const uint32_t multiplier = (uint32_t) (setting->valuedouble * kUserTrafficMultiplierScale + 0.5);
+    if ((double) multiplier / kUserTrafficMultiplierScale != setting->valuedouble)
+    {
+        LOGE("AuthenticationClient: traffic-multiplier supports at most three decimal places");
+        return false;
+    }
+    *out = multiplier;
+    return true;
+}
+
 static bool authenticationclientParseSettings(authenticationclient_tstate_t *ts, node_t *node)
 {
     const cJSON *settings = node->node_settings_json;
@@ -65,6 +105,9 @@ static bool authenticationclientParseSettings(authenticationclient_tstate_t *ts,
     }
 
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+
+    if (! authenticationclientReadTrafficMultiplier(settings, &ts->traffic_multiplier))
+        return false;
 
     if (UNLIKELY(
             ! authenticationclientReadInterval(

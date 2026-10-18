@@ -58,6 +58,7 @@ typedef struct authenticationclient_status_s
     bool     first_usage_push_requested, first_usage_push_deferred;
     bool     retry_deadline_valid, request_deadline_valid;
     uint64_t users_count, pending_request_count, retained_catchup_slots;
+    uint32_t traffic_multiplier; /* Fixed-point thousandths, as configured. */
     uint64_t batch_sequence, batch_entry_count, batch_size;
     uint64_t retry_remaining_ms, request_remaining_ms;
     uint64_t applied_config_revision, applied_stats_revision, applied_revision_generation;
@@ -131,6 +132,7 @@ typedef struct authenticationclient_tstate_s
     uint32_t reconnect_interval_ms;
     uint32_t request_timeout_ms;
     uint32_t max_pending_requests;
+    uint32_t traffic_multiplier; /* Immutable; new raw traffic only, in thousandths. */
 
     uint64_t remote_config_revision;
     uint64_t remote_stats_revision;

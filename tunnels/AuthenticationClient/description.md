@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -59,6 +59,7 @@ Remote authentication server chain:
     "reconnect-interval-ms": 5000,
     "request-timeout-ms": 120000,
     "max-pending-requests": 64,
+    "traffic-multiplier": 1,
     "verbose": false
   },
   "next": "auth-server-connector"
@@ -176,6 +177,7 @@ Optional settings:
   "reconnect-interval-ms": 5000,
   "request-timeout-ms": 120000,
   "max-pending-requests": 64,
+  "traffic-multiplier": 1,
   "verbose": false
 }
 ```
@@ -200,6 +202,34 @@ time using an independent worker-0 deadline timer, even with ping/pull/push disa
 
 `verbose` enables focused debug logs for the control-line lifecycle, reconnect decisions, timer ticks, and
 request/response correlation flow. It does not log secrets, session tokens, passwords, or raw users JSON.
+
+## Traffic Multiplier
+
+`traffic-multiplier` is an optional JSON number inside `settings`, defaulting to `1`. It accepts values from
+`0.001` through `1000` with up to three effective decimal places. For example, `2` charges 2 GB of quota for 1 GB
+of measured traffic, `1.5` charges 1.5 GB, and `0.5` charges 0.5 GB. Zero, negative values, strings and unsupported
+precision are rejected at startup. The value is fixed for the lifetime of this AuthenticationClient instance.
+
+The same multiplier applies to upload and download for every user and protocol referencing this instance.
+`UserController` and other traffic callers pass actual measured bytes to AuthenticationClient. The client converts each
+new measurement to charged usage exactly once, before updating local quota counters and checking limits. This also
+applies while offline. It never multiplies totals received from AuthenticationServer or already charged pending batches,
+retries, acknowledgements and catch-up debt. AuthenticationServer aggregates the reported charged bytes unchanged.
+
+Calculation uses integer arithmetic and a separate fractional remainder for each user and direction. Whole charged
+bytes are added as they accumulate, so splitting a transfer into small payloads cannot change its charge. At `0.5`, two
+one-byte uploads together charge one byte; a one-byte download keeps its own half-byte remainder. Remainders survive
+ordinary refreshes and reconnects by durable user ID, including credential changes for the same ID. They are process-local,
+excluded from database JSON and synchronization, and discarded when the user is removed or the client is destroyed.
+There is no crash recovery. Checked saturation never wraps a large charge back to a smaller counter.
+
+First-use expiry starts on the first positive measured traffic, even when a discounted charge has not yet accumulated a
+whole byte. Login and zero-byte calls do not start it. Existing expiry and reservation rules are unchanged.
+
+Account traffic totals, traffic limits, and unacknowledged byte totals in status use **charged quota bytes**, not physical
+network bytes. A combined total from clients with different multipliers cannot reconstruct actual traffic. Bandwidth,
+speed, connection/IP counts, and first-use timestamps are not multiplied. Use separate AuthenticationClient instances
+with distinct producer identities when different traffic-serving chains need different rates.
 
 ## Wire Protocol
 
@@ -271,7 +301,8 @@ The client keeps one active local users table. It is protected by a tunnel-level
 1. The response JSON is parsed into a fresh `users_t`.
 2. The fresh table is validated, including requiring every user to have a non-zero durable id and rejecting overlapping
    `wireguard-allowed-ips` ranges.
-3. Local unsynced traffic deltas and process-local runtime counters are carried forward by durable user id.
+3. Local unsynced charged traffic deltas, per-direction fractional charge remainders and process-local runtime counters
+   are carried forward by durable user id.
 4. Local first-use evidence, elapsed age and reservations migrate by ID; fresh clock metadata recomputes each expiry component.
 5. The active table pointer is swapped under the write side of the rwlock.
 6. The generation counter is incremented.
@@ -307,8 +338,8 @@ GetAllUsers requires canonical exact `server-time-ms` and positive `accounting-t
 the refresh without client-wall-clock fallback. Absolute dates use server wall time. The server accounting clock starts
 at `max(wall-ms, 1)` once, then advances by fresh server monotonic elapsed time, independently of later wall corrections.
 
-On first nonzero local upload/download, accounting samples fresh monotonic time inside the user write lock, records
-an explicit valid local origin (including zero) and a positive immutable accounting-clock estimate. Login, reservation,
+On first nonzero measured local upload/download, even when the charge rounds to zero, accounting samples fresh
+monotonic time inside the user write lock and records an explicit valid local origin (including zero) and a positive immutable accounting-clock estimate. Login, reservation,
 zero-byte calls and refresh rebasing never start it. Observation, counters and expiry decision share user-then-stats
 locks; a null notification output does not suppress evidence. The elapsed age survives ACK, reconnect, repeated pulls,
 omitted canonical first-use fields and duration-zero policy. Earlier canonical observations can increase age.
@@ -330,7 +361,8 @@ APIServer exposes the registered read-only `status` operation on worker 0. Its r
 `application/json`, encoded as UTF-8. Send `{}` for basic status or `{"include_accounting":true}` for aggregate accounting.
 Unknown or duplicate fields, non-Boolean options, malformed JSON and trailing input return a bounded operation error.
 
-Basic status separates `can_authenticate` and `blocking_reason` from transport `connected`/`authenticated` and
+Basic status includes `traffic_multiplier` as the configured exact decimal JSON number, even without accounting sampling.
+It separates `can_authenticate` and `blocking_reason` from transport `connected`/`authenticated` and
 `sync_phase`. A valid cache can admit new traffic during an outage; explicit credential rejection can block admission
 while `users_loaded` remains true. Blocking precedence is stopping, not started, continuity error, credential rejection,
 unusable cache/clock, then none. Queue/in-flight flags, unresolved batch sequence/count/size, remaining request/retry
@@ -347,7 +379,7 @@ never server error text. Historical failure does not imply a current admission b
 acceptance, not a durable disk save.
 
 `accounting_state` is `not_requested`, `available` or `unavailable`. Only an available requested sample includes
-`locally_unacknowledged_upload_bytes`, `locally_unacknowledged_download_bytes`, `usage_user_count`,
+`locally_unacknowledged_upload_bytes`, `locally_unacknowledged_download_bytes` (both in charged quota bytes), `usage_user_count`,
 `first_use_observation_count`, `accounting_lower_bound`, `sampling_started_ms` and `sampling_finished_ms`. A lost ACK may mean
 the server has already applied some locally unacknowledged usage. Every unsigned 64-bit value is a decimal JSON string.
 No tokens, epoch, raw batches, account identifiers, names, passwords, hashes or IP lists are returned.
@@ -416,7 +448,8 @@ authenticationclientRequestPush(t)
 
 `authenticationclientUserToJson()` and `authenticationclientUsersToJson()` return new `cJSON` objects owned by the
 caller. Stats are copied into caller storage. Traffic updates are applied through the handle's durable id; the caller
-never mutates a `user_t` directly.
+never mutates a `user_t` directly. Both traffic helpers accept actual measured upload/download bytes; callers must not
+pre-multiply them. Stats copy-outs contain charged usage.
 
 The live enforcement helpers resolve handles by durable id instead of rejecting them solely because a `GetAllUsers`
 refresh bumped the local users generation. A miss means the user disappeared from the refreshed table. The `now_ms`
@@ -435,7 +468,7 @@ not block lookup. Live capacity is reserved separately by the atomic runtime adm
 
 ## Stats Push
 
-The client synchronizes traffic deltas and first-use accounting observations keyed by durable user ID:
+The client synchronizes already-charged traffic deltas and first-use accounting observations keyed by durable user ID:
 
 ```json
 {"epoch":"<64 hexadecimal bytes>","sequence":1,"users":[{"id":42,"up":10,"down":0,"first-usage-at-ms":1792252800000}]}

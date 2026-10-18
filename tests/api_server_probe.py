@@ -64,7 +64,7 @@ def response(reader, identifier, max_envelope=MAX_ENVELOPE):
     return result
 
 
-def status(value, *, accounting=False):
+def status(value, *, accounting=False, multiplier=1):
     require(value["error"] is None, "Status query produced a gateway error")
     result = value["result"]
     require(result["code"] == 0, "Status handler rejected a valid request")
@@ -72,6 +72,8 @@ def status(value, *, accounting=False):
     require(result["body_encoding"] == "utf8", "Incorrect status body encoding")
     body = json.loads(result["body"])
     require(isinstance(body, dict), "Status body is not an object")
+    require(type(body.get("traffic_multiplier")) in (int, float)
+            and body["traffic_multiplier"] == multiplier, "Incorrect numeric traffic multiplier")
     require(isinstance(body.get("can_authenticate"), bool), "Status lacks admission availability")
     require(body.get("accounting_state") == ("available" if accounting else "not_requested"),
             "Incorrect status accounting availability")
@@ -125,7 +127,7 @@ def http_case():
         # Recognition above depends on the API length, with the HTTP line still open.
 
 
-def stream_case(multiconfig=False, small_limit=False):
+def stream_case(multiconfig=False, small_limit=False, multiplier=1):
     with connect() as stream, stream.makefile("rb") as reader:
         # Every interior split point of the API length prefix, then body fragments.
         for split in range(1, 4):
@@ -135,11 +137,11 @@ def stream_case(multiconfig=False, small_limit=False):
             stream.sendall(payload[split:4])
             for start in range(4, len(payload), 17):
                 stream.sendall(payload[start:start + 17])
-            status(response(reader, identifier))
+            status(response(reader, identifier), multiplier=multiplier)
         messages = [request("pipeline-" + str(i), accounting=i == 3) for i in range(4)]
         stream.sendall(b"".join(map(frame, messages)))
         for i, message in enumerate(messages):
-            status(response(reader, message["id"]), accounting=i == 3)
+            status(response(reader, message["id"]), accounting=i == 3, multiplier=multiplier)
         stream.sendall(frame(request("unqualified", config=None)))
         value = response(reader, "unqualified")
         if multiconfig:
@@ -148,9 +150,9 @@ def stream_case(multiconfig=False, small_limit=False):
             require(response(reader, "forbidden")["error"]["code"] == "forbidden",
                     "Exact target permission was not enforced")
             stream.sendall(frame(request("qualified")))
-            status(response(reader, "qualified"))
+            status(response(reader, "qualified"), multiplier=multiplier)
         else:
-            status(value)
+            status(value, multiplier=multiplier)
     if not multiconfig:
         for client, token in (("monitor", "f" * 64), ("unknown", TOKEN)):
             with connect() as stream, stream.makefile("rb") as reader:
@@ -172,4 +174,5 @@ def main(case_directory):
     if name == "api_http_status":
         http_case()
     else:
-        stream_case(name == "api_multiconfig_status", name == "api_tcp_status")
+        stream_case(name == "api_multiconfig_status", name == "api_tcp_status",
+                    multiplier=0.5 if name == "api_tcp_status" else 1)

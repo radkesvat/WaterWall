@@ -7,6 +7,7 @@
       "settings": {
         "name": "api-test-edge",
         "secret": "api-test-secret",
+        "traffic-multiplier": 0.5,
         "ping-interval-ms": 0,
         "pull-interval-ms": 0,
         "push-interval-ms": 0,

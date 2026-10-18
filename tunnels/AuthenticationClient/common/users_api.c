@@ -615,10 +615,11 @@ static void authenticationclientUsersReleaseConnectionByHandle(users_t *users, c
 
 static bool authenticationclientUsersAccountTrafficByHandle(users_t *users, const user_handle_t *handle,
                                                             uint64_t upload_bytes, uint64_t download_bytes,
-                                                            uint64_t now_ms, bool *found, bool *first_usage_push_needed)
+                                                            uint32_t multiplier, uint64_t now_ms, bool *found,
+                                                            bool *first_usage_push_needed)
 {
-    return usersAccountTrafficByIdentifier(
-        users, handle->user_id, upload_bytes, download_bytes, now_ms, found, first_usage_push_needed);
+    return usersAccountTrafficScaledByIdentifier(
+        users, handle->user_id, upload_bytes, download_bytes, multiplier, now_ms, found, first_usage_push_needed);
 }
 
 static void authenticationclientUsersResetFirstUsagePushRequestByHandle(users_t *users, const user_handle_t *handle)
@@ -789,8 +790,14 @@ static bool authenticationclientAccountTraffic(tunnel_t *t, const user_handle_t 
     {
         // AccountTraffic returns close=true when the user is gone (revoked), so a removed user's
         // traffic is rejected and the connection is torn down.
-        should_close = authenticationclientUsersAccountTrafficByHandle(
-            ts->users, handle, upload_bytes, download_bytes, now_ms, found_out, &first_usage_push_needed);
+        should_close = authenticationclientUsersAccountTrafficByHandle(ts->users,
+                                                                       handle,
+                                                                       upload_bytes,
+                                                                       download_bytes,
+                                                                       ts->traffic_multiplier,
+                                                                       now_ms,
+                                                                       found_out,
+                                                                       &first_usage_push_needed);
     }
     rwlockReadUnlock(&ts->users_lock);
 

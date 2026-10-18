@@ -6,6 +6,7 @@
 #include "loggers/network_logger.h"
 #include "test_assert.h"
 #include "wevent.h"
+#include <math.h>
 #include <pthread.h>
 #define require(c, m) TEST_REQUIRE(TEST_FAILURE_EXIT, c, m)
 
@@ -333,7 +334,7 @@ static void setup(unsigned users)
         chain->line_pools[i] = genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(
             line_master, sizeof(line_t) + client_size + authTestPeerLineSize(), 8);
 }
-static void start(unsigned i)
+static void startWithMultiplier(unsigned i, uint32_t multiplier)
 {
     tunnel_t *t = tunnelCreate(NULL, sizeof(authenticationclient_tstate_t), sizeof(authenticationclient_lstate_t));
     require(t != NULL, "client creation failed");
@@ -348,6 +349,7 @@ static void start(unsigned i)
     rwlockinit(&ts->users_lock);
     ts->users = memoryAllocateAligned(sizeof(users_t), 32);
     require(usersCreate(ts->users), "client users failed");
+    ts->traffic_multiplier    = multiplier;
     ts->name                  = stringDuplicate(i == 0 ? "edge-a" : "edge-b");
     ts->secret                = stringDuplicate("secret");
     ts->started               = true;
@@ -357,6 +359,10 @@ static void start(unsigned i)
     ts->request_timeout_ms    = 1000;
     ts->max_pending_requests  = 64;
     authenticationclientOpenControlLine(t);
+}
+static void start(unsigned i)
+{
+    startWithMultiplier(i, kUserTrafficMultiplierScale);
 }
 static void teardown(void)
 {
@@ -2325,6 +2331,280 @@ static cJSON *statusBody(const char *body, size_t allowance, enum api_result_e e
     return json;
 }
 
+static void requireMultiplierSetting(cJSON *settings, uint32_t expected)
+{
+    static char name[] = "multiplier-config", next[] = "transport";
+    node_t      node   = {.name = name, .next = next, .node_settings_json = settings};
+    tunnel_t   *client = authenticationclientTunnelCreate(&node);
+    if (expected == 0)
+        require(client == NULL, "invalid traffic multiplier was accepted");
+    else
+    {
+        require(client != NULL, "valid traffic multiplier was rejected");
+        clients[0] = client;
+        require(state(0)->traffic_multiplier == expected, "traffic multiplier was rounded or defaulted");
+        cJSON       *status     = statusBody("{}", 1024 * 1024, kApiResultOk);
+        const cJSON *multiplier = cJSON_GetObjectItemCaseSensitive(status, "traffic_multiplier");
+        require(cJSON_IsNumber(multiplier) &&
+                    multiplier->valuedouble == (double) expected / kUserTrafficMultiplierScale,
+                "status did not expose the configured multiplier as a JSON number");
+        cJSON_Delete(status);
+        authenticationclientTunnelDestroy(client, wwLifecycleStartupRollback());
+        clients[0] = NULL;
+    }
+    cJSON_Delete(settings);
+}
+
+static void testMultiplierSettings(void)
+{
+    static const struct
+    {
+        const char *json;
+        uint32_t    expected;
+    } cases[] = {
+        {NULL, 1000},        {"1", 1000},       {"0.5", 500},    {"1.5", 1500}, {"2", 2000},
+        {"0.001", 1},        {"1e-3", 1},       {"1.234", 1234}, {"0.29", 290}, {"0.999", 999},
+        {"999.999", 999999}, {"1000", 1000000}, {"0", 0},        {"-1", 0},     {"\"0.5\"", 0},
+        {"null", 0},         {"true", 0},       {"[]", 0},       {"{}", 0},     {"0.0001", 0},
+        {"0.000001", 0},     {"1000.001", 0},   {"1.2345", 0},   {"1.0001", 0}, {"1,\"traffic-multiplier\":2", 0}};
+    setup(1);
+    for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        char text[256];
+        if (cases[i].json == NULL)
+            snprintf(text, sizeof(text), "{\"name\":\"edge-a\",\"secret\":\"secret\"}");
+        else
+            snprintf(text,
+                     sizeof(text),
+                     "{\"name\":\"edge-a\",\"secret\":\"secret\",\"traffic-multiplier\":%s}",
+                     cases[i].json);
+        cJSON *settings = cJSON_Parse(text);
+        require(settings != NULL, "traffic multiplier config fixture did not parse");
+        requireMultiplierSetting(settings, cases[i].expected);
+    }
+    const double nonfinite[] = {NAN, INFINITY, -INFINITY};
+    for (unsigned i = 0; i < sizeof(nonfinite) / sizeof(nonfinite[0]); ++i)
+    {
+        cJSON  *settings = cJSON_Parse("{\"name\":\"edge-a\",\"secret\":\"secret\"}");
+        discard cJSON_AddNumberToObject(settings, "traffic-multiplier", nonfinite[i]);
+        requireMultiplierSetting(settings, 0);
+    }
+    teardown();
+}
+
+static user_stat_t localStats(unsigned i, uint64_t id)
+{
+    user_stat_t stats;
+    userGetStats(usersLookupByIdentifier(state(i)->users, id), &stats);
+    return stats;
+}
+
+static void testMultiplierFragmentAccounting(void)
+{
+    const uint32_t multipliers[] = {500, 1000, 1500, 2000};
+    for (unsigned i = 0; i < sizeof(multipliers) / sizeof(multipliers[0]); ++i)
+    {
+        setup(2);
+        startWithMultiplier(0, multipliers[i]);
+        disconnect(0);
+        user_handle_t first  = {.generation = state(0)->users_generation, .user_id = 42};
+        user_handle_t second = {.generation = state(0)->users_generation, .user_id = 43};
+        require(authenticationclientUserAddTraffic(clients[0], &second, 1, 1), "second account fractional traffic");
+        for (unsigned fragment = 0; fragment < 9; ++fragment)
+        {
+            require(authenticationclientUserAddTraffic(clients[0], &first, 1, 0), "fragmented upload");
+            if (fragment < 7)
+                require(! authenticationclientUserAccountTraffic(clients[0], &first, 0, 1, 100000),
+                        "fragmented download unexpectedly closed account");
+        }
+        const user_stat_t a = localStats(0, 42), b = localStats(0, 43);
+        require(a.traffic.u == (uint64_t) 9 * multipliers[i] / kUserTrafficMultiplierScale &&
+                    a.traffic.d == (uint64_t) 7 * multipliers[i] / kUserTrafficMultiplierScale &&
+                    b.traffic.u == multipliers[i] / kUserTrafficMultiplierScale &&
+                    b.traffic.d == multipliers[i] / kUserTrafficMultiplierScale,
+                "fragmentation or another user/direction changed charged traffic");
+        teardown();
+    }
+}
+
+static void testMultiplierOfflineQuota(void)
+{
+    const uint32_t multipliers[] = {500, 2000};
+    const uint64_t before[] = {18, 4}, final[] = {2, 1};
+    for (unsigned i = 0; i < sizeof(multipliers) / sizeof(multipliers[0]); ++i)
+    {
+        setup(1);
+        user_update_t initial = {
+            .mask = kUserUpdateStats | kUserUpdateLimit, .stats.traffic.u = 90, .limit.traffic.total = 100};
+        authTestPeerSetUser(server, 42, &initial);
+        startWithMultiplier(0, multipliers[i]);
+        require(local(0, false) == 90, "multiplier changed downloaded server total");
+        disconnect(0);
+        user_handle_t handle;
+        require(authenticationclientGetUserByPassword(clients[0], "account-0", &handle), "offline account lookup");
+        require(! authenticationclientUserAccountTraffic(clients[0], &handle, before[i], 0, 100000),
+                "charged quota closed before its limit");
+        require(authenticationclientUserAccountTraffic(clients[0], &handle, final[i], 0, 100000) &&
+                    local(0, false) == 100,
+                "offline quota did not use charged traffic");
+        require(! authenticationclientGetUserByPassword(clients[0], "account-0", &handle),
+                "charged quota permitted another offline login");
+        pump(10);
+        pump(1);
+        pump(1);
+        require(authTestPeerStats(server, 42).traffic.u == 100, "reconnect multiplied charged quota usage again");
+        teardown();
+    }
+}
+
+static void testDiscountFirstUse(void)
+{
+    for (unsigned use_add_api = 0; use_add_api < 2; ++use_add_api)
+    {
+        setup(1);
+        user_update_t update = {.mask = kUserUpdateTimeInfo, .timeinfo.expire_after_first_usage_ms = 100};
+        authTestPeerSetUser(server, 42, &update);
+        startWithMultiplier(0, 500);
+        disconnect(0);
+        user_handle_t handle = {.generation = state(0)->users_generation, .user_id = 42};
+        require(authenticationclientUserAddTraffic(clients[0], &handle, 0, 0) &&
+                    ! usersLookupByIdentifier(state(0)->users, 42)->client_time.observed,
+                "empty traffic started first-use expiry");
+        if (use_add_api)
+            require(authenticationclientUserAddTraffic(clients[0], &handle, 1, 0), "discounted first upload");
+        else
+            require(! authenticationclientUserAccountTraffic(clients[0], &handle, 0, 1, 100000),
+                    "discounted first download closed too early");
+        user_t           *user        = usersLookupByIdentifier(state(0)->users, 42);
+        const uint64_t    observation = user->client_time.first_report_ms;
+        const user_stat_t stats       = localStats(0, 42);
+        require(stats.traffic.u == 0 && stats.traffic.d == 0 && user->client_time.observed && observation != 0,
+                "rounded-zero charge lost actual first traffic");
+        atomicStoreU64(&now_us, 100101000);
+        require(authenticationclientUserShouldClose(clients[0], &handle, 100101),
+                "discounted offline first traffic did not start expiry");
+        pump(10);
+        pump(1);
+        pump(1);
+        const user_stat_t remote = authTestPeerStats(server, 42);
+        require(remote.traffic.u == 0 && remote.traffic.d == 0 && authTestPeerFirstUse(server) == observation &&
+                    authTestPeerSequence(server, 0) == 1,
+                "metadata-only discounted first use was lost or charged a byte");
+        user = usersLookupByIdentifier(state(0)->users, 42);
+        require(user->client_time.observation_acked && user->client_time.first_report_ms == observation &&
+                    authenticationclientUserShouldClose(clients[0], &handle, authenticationclientLocalTimeMS()),
+                "discounted first-use ACK restarted expiry");
+        teardown();
+    }
+}
+
+static void testMultiplierRefreshAndReplay(void)
+{
+    setup(1);
+    user_update_t initial = {.mask = kUserUpdateStats, .stats.traffic.u = 20};
+    authTestPeerSetUser(server, 42, &initial);
+    startWithMultiplier(0, 500);
+    user_handle_t handle = {.generation = state(0)->users_generation, .user_id = 42};
+    require(authenticationclientUserAddTraffic(clients[0], &handle, 3, 1), "discounted initial traffic");
+    require(localStats(0, 42).traffic.u == 21 && localStats(0, 42).traffic.d == 0,
+            "initial fractional charge was wrong");
+    drop_ack = 1;
+    authenticationclientRequestPush(clients[0]);
+    require(state(0)->pending_batch != NULL && authTestPeerStats(server, 42).traffic.u == 21,
+            "lost-ACK discounted batch did not commit");
+    require(! authenticationclientUserAccountTraffic(clients[0], &handle, 2, 2, 100000), "offline post-batch traffic");
+    pump(10);
+    pump(1);
+    pump(1);
+    require(state(0)->pending_batch == NULL && authTestPeerSequence(server, 0) == 2 &&
+                authTestPeerStats(server, 42).traffic.u == 22 && authTestPeerStats(server, 42).traffic.d == 1,
+            "replay changed charged deltas or lost post-batch traffic");
+    authenticationclientRequestPull(clients[0]);
+    require(! authenticationclientUserAccountTraffic(clients[0], &handle, 1, 1, authenticationclientLocalTimeMS()),
+            "fractional traffic after refreshed ACK");
+    require(localStats(0, 42).traffic.u == 23 && localStats(0, 42).traffic.d == 2,
+            "ACK, refresh or reconnect discarded fractional remainder");
+    authenticationclientRequestPush(clients[0]);
+    pump(1);
+    require(authTestPeerStats(server, 42).traffic.u == 23 && authTestPeerStats(server, 42).traffic.d == 2,
+            "charged remainder was multiplied again on synchronization");
+    teardown();
+}
+
+static void testMultiplierSharedServerTotals(void)
+{
+    setup(1);
+    user_update_t initial = {.mask = kUserUpdateStats, .stats.traffic.u = 100};
+    authTestPeerSetUser(server, 42, &initial);
+    startWithMultiplier(0, 500);
+    startWithMultiplier(1, 2000);
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        user_handle_t handle = {.generation = state(i)->users_generation, .user_id = 42};
+        require(authenticationclientUserAddTraffic(clients[i], &handle, 3, 5), "different-rate producer traffic");
+        authenticationclientRequestPush(clients[i]);
+    }
+    authenticationclientRequestPull(clients[0]);
+    authenticationclientRequestPull(clients[1]);
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        const user_stat_t stats = localStats(i, 42);
+        require(stats.traffic.u == 107 && stats.traffic.d == 12,
+                "client multiplied aggregate charges from another producer");
+    }
+    require(authTestPeerStats(server, 42).traffic.u == 107 && authTestPeerStats(server, 42).traffic.d == 12,
+            "different producer multipliers did not aggregate exact charges");
+    user_handle_t handle = {.generation = state(0)->users_generation, .user_id = 42};
+    require(authenticationclientUserAddTraffic(clients[0], &handle, 1, 1), "discounted remainder after remote update");
+    require(localStats(0, 42).traffic.u == 108 && localStats(0, 42).traffic.d == 13,
+            "other producer's traffic erased local fractional remainder");
+    authenticationclientRequestPush(clients[0]);
+    require(authTestPeerStats(server, 42).traffic.u == 108 && authTestPeerStats(server, 42).traffic.d == 13,
+            "discounted remainder did not synchronize as charged bytes");
+    teardown();
+}
+
+static void testDiscountConcurrentRefresh(void)
+{
+    setup(1);
+    startWithMultiplier(0, 500);
+    traffic(0, 1);
+    authenticationclientRequestPush(clients[0]);
+    require(local(0, false) == 0 && authTestPeerFirstUse(server) != 0, "concurrent discount metadata-only setup");
+    user_handle_t             handle      = {.generation = state(0)->users_generation, .user_id = 42};
+    refresh_traffic_context_t contexts[2] = {{.handle = handle}, {.handle = handle}};
+    pthread_t                 threads[2];
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        atomic_init(&contexts[i].started, false);
+        atomic_init(&contexts[i].stop, false);
+        atomic_init(&contexts[i].finished, false);
+        atomic_init(&contexts[i].produced, 0);
+        require(pthread_create(&threads[i], NULL, trafficDuringRefresh, &contexts[i]) == 0,
+                "concurrent discount traffic thread");
+    }
+    for (unsigned attempts = 0;
+         attempts < 1000 && (atomic_load(&contexts[0].produced) == 0 || atomic_load(&contexts[1].produced) == 0);
+         ++attempts)
+        wwSleepMS(1);
+    require(atomic_load(&contexts[0].produced) != 0 && atomic_load(&contexts[1].produced) != 0,
+            "both fractional traffic producers did not start");
+    for (unsigned i = 0; i < 8; ++i)
+        authenticationclientRequestPull(clients[0]);
+    for (unsigned i = 0; i < 2; ++i)
+        atomic_store(&contexts[i].stop, true);
+    for (unsigned i = 0; i < 2; ++i)
+        require(pthread_join(threads[i], NULL) == 0, "concurrent discount thread join");
+    const uint64_t raw = 1 + (uint64_t) atomic_load(&contexts[0].produced) + atomic_load(&contexts[1].produced);
+    require(local(0, false) == raw / 2, "concurrent traffic or refresh lost/doubled fractional carry");
+    require(! authenticationclientUserAccountTraffic(clients[0], &handle, 1, 0, 0) && local(0, false) == (raw + 1) / 2,
+            "concurrent refresh did not preserve the final fractional carry");
+    authenticationclientRequestPush(clients[0]);
+    require(authTestPeerStats(server, 42).traffic.u == (raw + 1) / 2,
+            "concurrent discounted charges did not reconcile exactly");
+    teardown();
+}
+
 static void requireSyncPhase(const char *expected)
 {
     cJSON       *status = statusBody("{}", 1024 * 1024, kApiResultOk);
@@ -2509,6 +2789,13 @@ int main(void)
     testCaseSet("authentication sync loss and continuity");
     require(createNetworkLogger(NULL, false) != NULL, "logger failed");
     require(globalstateInitializeSecureRandom() && wCryptoGlobalInit() == kWCryptoOk, "crypto failed");
+    testMultiplierSettings();
+    testMultiplierFragmentAccounting();
+    testMultiplierOfflineQuota();
+    testDiscountFirstUse();
+    testMultiplierRefreshAndReplay();
+    testMultiplierSharedServerTotals();
+    testDiscountConcurrentRefresh();
     testStatusSnapshot();
     testStatusTimeoutHistory();
     testOfflineFirstUseDeadline();

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 160
+Documentation version: 161
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -740,9 +740,15 @@ fields; for the same field, the latest accepted value wins. No expected-revision
 
 ### Statistics Ownership
 
+Account traffic counters and traffic limits use charged quota bytes. AuthenticationClient applies its configured
+`traffic-multiplier` to new measured bytes before reporting; AuthenticationServer never applies another multiplier.
+Other producers and database imports must also supply charged usage. At the default multiplier of `1`, charged and
+measured bytes are equal. Aggregates from different rates cannot be converted back to actual network traffic; speed
+and other nontraffic statistics keep their own units.
+
 | Value | Owner and current rule |
 | --- | --- |
-| Cumulative upload/download bytes | Server aggregate; remote changes use accepted deduplicated batches. Config patches preserve it. |
+| Cumulative charged upload/download bytes | Server aggregate; remote changes use accepted deduplicated batches. Config patches preserve it. |
 | First-use timestamp | Earliest nonzero accounting observation from authorized producers, clamped to accounting receipt time. Config patches preserve it. |
 | Creation timestamp | Creation/import metadata, preserved by ordinary edits. |
 | Limits, enabled flag, expiry policy | Account configuration changed through explicit patch leaves. |
@@ -917,13 +923,13 @@ Request `{"id":"42"}`. The result contains `config_revision`, `stats_revision`,
 | `id`, `gid`, `enabled` | Stored durable identity, group and enabled setting. |
 | `name`, `email`, `notes`, `wireguard_allowed_ips` | Complete permitted strings; absent values are empty strings. No keys or credentials are included. |
 | `record_stat_interval_ms` | Configured statistics interval. |
-| `limit.traffic.u`, `.d`, `.total` | Stored upload, download and combined byte limits. |
+| `limit.traffic.u`, `.d`, `.total` | Stored upload, download and combined limits in charged quota bytes. |
 | `limit.bandwidth.u`, `.d` | Stored configured bandwidth units. |
 | `limit.ips`, `.devices`, `.cons_in`, `.cons_out` | Stored limits; presence does not assert enforcement by every traffic node. |
 | `time.created_at_ms`, `.expire_at_ms` | Existing wall-clock creation and absolute-expiry values. |
 | `time.expire_after_first_usage_ms` | Relative-expiry duration. |
 | `time.first_usage_at_ms` | Server accounting-clock first-use observation. |
-| `usage.u`, `.d` | Cumulative usage accepted by this server. |
+| `usage.u`, `.d` | Cumulative charged usage accepted by this server. |
 
 Zero/default values are explicit and retain their existing sentinel semantics.
 `accounting_time_ms` is the current server accounting-clock reference, sampled

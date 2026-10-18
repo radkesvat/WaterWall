@@ -88,6 +88,8 @@ WW_EXPORT bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_hand
 WW_EXPORT cJSON *authenticationclientUserToJson(tunnel_t *t, const user_handle_t *handle);
 WW_EXPORT cJSON *authenticationclientUsersToJson(tunnel_t *t);
 WW_EXPORT bool   authenticationclientUserGetStats(tunnel_t *t, const user_handle_t *handle, user_stat_t *stats_out);
+/* Traffic inputs are actual measured bytes. Both accounting APIs apply this
+ * client's configured multiplier once; returned traffic stats are charged bytes. */
 WW_EXPORT bool   authenticationclientUserAddTraffic(tunnel_t *t, const user_handle_t *handle, uint64_t upload_bytes,
                                                     uint64_t download_bytes);
 
@@ -108,7 +110,8 @@ WW_EXPORT user_admission_result_t authenticationclientUserTryAdmitConnection(tun
                                                                              uint64_t             now_ms);
 WW_EXPORT void                    authenticationclientUserReleaseConnection(tunnel_t *t, const user_handle_t *handle,
                                                                             const user_ip_key_t *ip_key);
-/* Adds traffic to the user and returns whether the connection must now be closed. */
+/* Adds measured traffic at the configured rate and returns whether the connection
+ * must now be closed. First use follows raw activity even if its charge is <1 byte. */
 WW_EXPORT bool authenticationclientUserAccountTraffic(tunnel_t *t, const user_handle_t *handle, uint64_t upload_bytes,
                                                       uint64_t download_bytes, uint64_t now_ms);
 /* True when an already-open connection for this user must be closed (disabled, expired, over quota). */

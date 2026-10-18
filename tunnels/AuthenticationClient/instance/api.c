@@ -198,6 +198,9 @@ static api_result_t statusApi(tunnel_t *t, sbuf_t *message, const node_api_call_
            stateName(snapshot.state),
            blockingName(snapshot.blocking_reason),
            syncPhase(&snapshot));
+    APPEND(",\"traffic_multiplier\":%" PRIu32 ".%03" PRIu32,
+           snapshot.traffic_multiplier / kUserTrafficMultiplierScale,
+           snapshot.traffic_multiplier % kUserTrafficMultiplierScale);
     BOOL(started);
     BOOL(stopping);
     BOOL(connected);

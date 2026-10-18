@@ -214,6 +214,7 @@ void authenticationclientStatusSnapshot(tunnel_t *t, bool include_accounting, si
     out->users_loaded                = ts->users_loaded;
     out->clock_loaded                = ts->clock_loaded;
     out->users_count                 = usersCount(ts->users);
+    out->traffic_multiplier          = ts->traffic_multiplier;
     out->blocking_reason             = ts->stopping           ? kAuthenticationClientBlockStopping
                                        : ! ts->started        ? kAuthenticationClientBlockNotStarted
                                        : ts->continuity_error ? kAuthenticationClientBlockContinuity
