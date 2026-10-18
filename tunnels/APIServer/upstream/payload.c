@@ -5,7 +5,9 @@ void apiserverUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
     apiserver_lstate_t *ls = lineGetState(line, t);
     apiserver_tstate_t *ts = tunnelGetState(t);
     assert(ls->tunnel == t);
+    assert(! sbufIsSplice(payload)); /* APIServer blocks splice for the entire chain. */
     size_t bytes = sbufGetLength(payload);
+    /* Admitted callbacks and synchronous shutdown flushes can still deliver bytes. */
     if (ls->quiesced || atomic_load(&ts->stopping))
     {
         lineReuseBuffer(line, payload);
@@ -17,9 +19,8 @@ void apiserverUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
         return;
     }
     size_t charge = sbufGetAllocationCharge(payload);
-    if (sbufIsSplice(payload) || charge > SIZE_MAX - sizeof(api_input_t) ||
-        bytes > ts->limits.max_input_bytes - ls->input_bytes || ls->input_fragments >= ts->limits.max_input_fragments ||
-        ! apiserverReserve(ls, charge + sizeof(api_input_t)))
+    if (charge > SIZE_MAX - sizeof(api_input_t) || bytes > ts->limits.max_input_bytes - ls->input_bytes ||
+        ls->input_fragments >= ts->limits.max_input_fragments || ! apiserverReserve(ls, charge + sizeof(api_input_t)))
     {
         lineReuseBuffer(line, payload);
         apiserverCloseSession(t, line);
