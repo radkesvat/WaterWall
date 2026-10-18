@@ -237,11 +237,13 @@ static void releaseLine(line_t *l)
 
 static void openSettings(const char *text)
 {
+    static char gateway_name[] = "api-fixture";
     nodeApiRegistryInitialize();
     require(nodeApiRegister(&target, operations, ARRAY_SIZE(operations)), "private test operation registration");
     calls = finishes = establishments = pauses = resumes = writes = 0;
     captured_size                                                 = 0;
     node                                                          = nodeAPIServerGet();
+    node.name                                                     = gateway_name;
     node.node_settings_json                                       = cJSON_Parse(text);
     require(node.node_settings_json != NULL, "fixture settings");
     api = apiserverTunnelCreate(&node);

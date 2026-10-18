@@ -52,6 +52,8 @@ static bool startRequest(apiserver_lstate_t *ls)
                                ls->request_token,
                                r->deadline_ms,
                                r->client,
+                               nodemanagerConfigName(ls->tunnel->node->node_manager_config),
+                               ls->tunnel->node->name,
                                r->body,
                                r->body_size,
                                max(ts->limits.max_response_envelope, (size_t) kApiMinimumResultAllowance),

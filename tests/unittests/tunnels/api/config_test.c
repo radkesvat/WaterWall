@@ -2,6 +2,7 @@
  * parsing, including partial-construction cleanup; NodeManager preparation and
  * raw lexical token/name evidence have separate core fixtures.
  * CTest: waterwall.apiserver_config_unit. */
+#include "APIServer/interface.h"
 #include "APIServer/structure.h"
 
 #include "test_assert.h"
@@ -138,9 +139,23 @@ static void limitValidation(void)
     }
 }
 
+static void gatewayIdentityValidation(void)
+{
+    char too_long[258];
+    memset(too_long, 'g', sizeof(too_long) - 1);
+    too_long[sizeof(too_long) - 1] = '\0';
+    const char *invalid[]          = {NULL, "", too_long, "\xff"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        node_t node = {.name = (char *) invalid[i]};
+        require(apiserverTunnelCreate(&node) == NULL, "invalid gateway identity was admitted");
+    }
+}
+
 int main(void)
 {
     TEST_RUN_CASE(settingsValidation);
     TEST_RUN_CASE(limitValidation);
+    TEST_RUN_CASE(gatewayIdentityValidation);
     return 0;
 }

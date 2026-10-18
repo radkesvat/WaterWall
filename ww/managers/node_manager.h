@@ -176,3 +176,5 @@ typedef enum node_api_target_status_e
 } node_api_target_status_t;
 node_api_target_status_t nodemanagerResolveApiTarget(const char *config, const char *node, tunnel_t **target,
                                                      const char **resolved_config);
+/* Borrowed immutable logical name; NULL for a missing/unnamed configuration. */
+const char *nodemanagerConfigName(const node_manager_config_t *config);

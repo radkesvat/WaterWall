@@ -887,6 +887,11 @@ node_t *nodemanagerGetConfigNodeByName(node_manager_config_t *cfg, const char *n
     return node != NULL && strcmp(node->name, name) == 0 ? node : NULL;
 }
 
+const char *nodemanagerConfigName(const node_manager_config_t *config)
+{
+    return config != NULL ? config->config_file->name : NULL;
+}
+
 node_api_target_status_t nodemanagerResolveApiTarget(const char *config, const char *node, tunnel_t **target,
                                                      const char **resolved_config)
 {

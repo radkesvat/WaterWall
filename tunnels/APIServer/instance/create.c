@@ -1,8 +1,16 @@
 #include "APIServer/structure.h"
 #include "loggers/network_logger.h"
+#include "node_builder/config_lexical.h"
 
 tunnel_t *apiserverTunnelCreate(node_t *node)
 {
+    /* The gateway's own name identifies authenticated actors in node audit logs. */
+    if (node->name == NULL || node->name[0] == '\0' || strlen(node->name) > 256 ||
+        ! configLexicalCheckEncoding(node->name, strlen(node->name)))
+    {
+        LOGE("APIServer: gateway name must contain 1..256 UTF-8 bytes");
+        return NULL;
+    }
     tunnel_t *t = tunnelCreate(node, sizeof(apiserver_tstate_t), sizeof(apiserver_lstate_t));
     if (! t)
         return NULL;

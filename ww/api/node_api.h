@@ -18,6 +18,9 @@ typedef struct node_api_call_context_s
 {
     const char *operation;
     const char *principal;
+    /* Authenticated gateway identity, copied by dispatch; NULL for internal calls. */
+    const char *gateway_config;
+    const char *gateway_node;
     uint64_t    deadline_ms;
     size_t      max_response_body_size;
     size_t      working_memory_allowance;

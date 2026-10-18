@@ -622,6 +622,8 @@ int main(void)
                                 1,
                                 nodeApiNowMs() + 1000,
                                 "test",
+                                NULL,
+                                NULL,
                                 "{}",
                                 2,
                                 4096,

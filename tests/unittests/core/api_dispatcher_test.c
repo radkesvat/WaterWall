@@ -63,6 +63,9 @@ static api_result_t echoHandler(tunnel_t *instance, sbuf_t *request, const node_
     require(instance == &target && currentThreadIsEventWorker(), "handler lacked its event-worker target");
     require(strcmp(context->principal, "operator") == 0 && strcmp(context->operation, "binary") == 0,
             "detached call metadata was corrupted");
+    require(context->gateway_config != NULL && context->gateway_node != NULL &&
+                strcmp(context->gateway_config, "management") == 0 && strcmp(context->gateway_node, "api") == 0,
+            "detached gateway identity was not copied");
     require(sbufGetLength(request) == sizeof(binary_body) &&
                 memcmp(sbufGetRawPtr(request), binary_body, sizeof(binary_body)) == 0,
             "binary request bytes changed");
@@ -167,18 +170,25 @@ static void resetProbe(wid_t owner)
 
 static node_api_job_t *newJob(const node_api_operation_t *operation, uint64_t deadline)
 {
-    return nodeApiJobCreate(probe.domain,
-                            &target,
-                            operation,
-                            probe.owner,
-                            11,
-                            29,
-                            deadline,
-                            "operator",
-                            binary_body,
-                            sizeof(binary_body),
-                            131072,
-                            262144);
+    char            config[] = "management";
+    char            node[]   = "api";
+    node_api_job_t *job      = nodeApiJobCreate(probe.domain,
+                                           &target,
+                                           operation,
+                                           probe.owner,
+                                           11,
+                                           29,
+                                           deadline,
+                                           "operator",
+                                           config,
+                                           node,
+                                           binary_body,
+                                           sizeof(binary_body),
+                                           131072,
+                                           262144);
+    memset(config, 'x', sizeof(config) - 1);
+    memset(node, 'x', sizeof(node) - 1);
+    return job;
 }
 
 static void startOnWorkerOne(void *worker, void *arg1, void *arg2, void *arg3)

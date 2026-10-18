@@ -213,6 +213,8 @@ int main(void)
                                    {.type = stringDuplicate("PrivateWire")},
                                    nodeTcpOverUdpServerGet(),
                                    nodeAPIServerGet()};
+    char   gateway_name[]       = "api-fixture";
+    nodes[4].name               = gateway_name;
     nodes[1].node_settings_json = cJSON_Parse("{\"mtu\":1500}");
     nodes[3].node_settings_json = cJSON_Parse("{\"mtu\":1500}");
     nodes[4].node_settings_json = cJSON_Parse(

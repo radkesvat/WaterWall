@@ -39,14 +39,15 @@ bool nodeApiDomainTryReserve(node_api_domain_t *domain, size_t bytes);
 void nodeApiDomainRelease(node_api_domain_t *domain, size_t bytes);
 void nodeApiDomainGetUsage(node_api_domain_t *domain, size_t *bytes, size_t *jobs);
 
-/* Copies request/principal into detached storage and reserves all job working and
+/* Copies request/principal/gateway identity into detached storage and reserves all job working and
  * result capacity. Returns an owner reference, or NULL on budget/admission refusal.
  * No job contains a line or owner-local session pointer. max_result and working
  * must include complete handler allocation geometry, not just logical lengths. */
 node_api_job_t *nodeApiJobCreate(node_api_domain_t *domain, tunnel_t *target, const node_api_operation_t *operation,
                                  wid_t owner_wid, uint64_t session_token, uint64_t request_token, uint64_t deadline_ms,
-                                 const char *principal, const void *body, size_t body_size,
-                                 size_t max_response_body_size, size_t working_memory_allowance);
+                                 const char *principal, const char *gateway_config, const char *gateway_node,
+                                 const void *body, size_t body_size, size_t max_response_body_size,
+                                 size_t working_memory_allowance);
 /* Publish owner pending state first. Always queues, even on the same worker.
  * Retains the owner reference on every result; rejection cleanup may be inline. */
 node_api_dispatch_status_t nodeApiJobSubmit(node_api_job_t *job);
