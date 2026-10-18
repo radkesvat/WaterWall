@@ -167,7 +167,13 @@
   endif()
   add_dependencies(waterwall_unit_tests users_index_test)
 
-  add_waterwall_unit_test(waterwall.users_index_unit users_index_test "unit;objects;users")
+  set(users_index_timeout 120)
+  if((ENABLE_ASAN OR ENABLE_USAN) AND NOT WCRYPTO_BACKEND_OPENSSL AND NOT WCRYPTO_BACKEND_SODIUM)
+    # The 16,384-user range-growth fixture creates and validates real credentials.
+    # Instrumented software X25519 needs more time; keep the full boundary case.
+    set(users_index_timeout 600)
+  endif()
+  add_waterwall_unit_test(waterwall.users_index_unit users_index_test "unit;objects;users" ${users_index_timeout})
 
   waterwall_add_native_executable(user_public_views_test SUPPORT
     SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/core/user_public_views_test.c LIBRARIES ww)
