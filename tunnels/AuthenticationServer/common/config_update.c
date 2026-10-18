@@ -46,7 +46,7 @@ typedef struct acknowledgement_s
     const char                                  *error;
 } acknowledgement_t;
 
-static bool prepareAcknowledgement(void *arg)
+static bool prepareUpdateAcknowledgement(void *arg)
 {
     acknowledgement_t *ack = arg;
     char               token[kAuthenticationServerEditTokenChars + 1];
@@ -92,7 +92,7 @@ const char *authenticationserverApplyConditionalUpdate(tunnel_t *t, authenticati
             request->patch,
             min(growth_allowance, (size_t) kAuthenticationServerUpdateGrowthCap),
             context->deadline_ms,
-            prepareAcknowledgement,
+            prepareUpdateAcknowledgement,
             &ack);
         if (result == kUsersUpdateResultOk)
         {

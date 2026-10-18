@@ -49,7 +49,7 @@ typedef struct creation_acknowledgement_s
     const char                                  *error;
 } creation_acknowledgement_t;
 
-static bool prepareAcknowledgement(void *arg)
+static bool prepareCreateAcknowledgement(void *arg)
 {
     creation_acknowledgement_t *ack      = arg;
     const uint64_t              revision = ack->state->store.config_revision + 1;
@@ -87,8 +87,12 @@ const char *authenticationserverApplyCreate(tunnel_t *t, authenticationserver_cr
     else
     {
         creation_acknowledgement_t ack    = {.state = ts, .request = request, .call = context, .buffer = ack_buffer};
-        users_add_result_t         result = usersTryAddPreparedUser(
-            &ts->store.users, request->candidate, growth_allowance, context->deadline_ms, prepareAcknowledgement, &ack);
+        users_add_result_t         result = usersTryAddPreparedUser(&ts->store.users,
+                                                            request->candidate,
+                                                            growth_allowance,
+                                                            context->deadline_ms,
+                                                            prepareCreateAcknowledgement,
+                                                            &ack);
         if (result == kUsersAddResultOk)
         {
             /* All expected failures precede publication. The ACK names this
