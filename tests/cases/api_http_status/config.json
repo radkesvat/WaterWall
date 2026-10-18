@@ -1,0 +1,78 @@
+{
+  "name": "api-primary",
+  "nodes": [
+    {
+      "name": "auth-client",
+      "type": "AuthenticationClient",
+      "settings": {
+        "name": "api-test-edge",
+        "secret": "api-test-secret",
+        "ping-interval-ms": 0,
+        "pull-interval-ms": 0,
+        "push-interval-ms": 0,
+        "reconnect-interval-ms": 1000,
+        "request-timeout-ms": 5000
+      },
+      "next": "auth-db"
+    },
+    {
+      "name": "auth-db",
+      "type": "AuthenticationServer",
+      "settings": {
+        "db-path": "users.json",
+        "file-save-rate-ms": 60000,
+        "auth-clients": [
+          {
+            "name": "api-test-edge",
+            "secret": "api-test-secret",
+            "allow-user-pull": true,
+            "allow-stats-push": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "api-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29380
+      },
+      "next": "http-server"
+    },
+    {
+      "name": "http-server",
+      "type": "HttpServer",
+      "settings": {
+        "http-version": "1.1",
+        "http1-mode": "single",
+        "upgrade": false,
+        "host": "api.example.test",
+        "path": "/management",
+        "method": "POST"
+      },
+      "next": "management-api"
+    },
+    {
+      "name": "management-api",
+      "type": "APIServer",
+      "settings": {
+        "clients": [
+          {
+            "name": "monitor",
+            "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "allow": [
+              {
+                "config": "api-primary",
+                "node": "auth-client",
+                "operations": [
+                  "status"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

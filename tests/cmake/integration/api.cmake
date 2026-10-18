@@ -1,0 +1,11 @@
+# All API probes run on loopback inside the existing private network namespace.
+if(INCLUDE_API_SERVER AND INCLUDE_AUTHENTICATION_CLIENT AND INCLUDE_AUTHENTICATION_SERVER AND INCLUDE_TCP_LISTENER)
+  add_waterwall_probe_integration_test(waterwall.api_tcp_status api_tcp_status 30)
+  add_waterwall_probe_integration_test(waterwall.api_multiconfig_status api_multiconfig_status 30)
+  if(INCLUDE_HTTP_SERVER)
+    add_waterwall_probe_integration_test(waterwall.api_http_status api_http_status 30)
+  endif()
+  if(INCLUDE_TCP_OVER_UDP_CLIENT AND INCLUDE_TCP_OVER_UDP_SERVER AND INCLUDE_UDP_LISTENER AND INCLUDE_UDP_CONNECTOR)
+    add_waterwall_probe_integration_test(waterwall.api_tcp_over_udp_status api_tcp_over_udp_status 30)
+  endif()
+endif()

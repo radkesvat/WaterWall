@@ -1,0 +1,35 @@
+{
+  "name": "api-secondary",
+  "nodes": [
+    {
+      "name": "auth-client",
+      "type": "AuthenticationClient",
+      "settings": {
+        "name": "api-test-edge",
+        "secret": "api-test-secret",
+        "ping-interval-ms": 0,
+        "pull-interval-ms": 0,
+        "push-interval-ms": 0,
+        "reconnect-interval-ms": 1000,
+        "request-timeout-ms": 5000
+      },
+      "next": "auth-db"
+    },
+    {
+      "name": "auth-db",
+      "type": "AuthenticationServer",
+      "settings": {
+        "db-path": "secondary-users.json",
+        "file-save-rate-ms": 60000,
+        "auth-clients": [
+          {
+            "name": "api-test-edge",
+            "secret": "api-test-secret",
+            "allow-user-pull": true,
+            "allow-stats-push": true
+          }
+        ]
+      }
+    }
+  ]
+}

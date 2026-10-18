@@ -44,6 +44,10 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "AuthenticationClient/interface.h"
 #endif
 
+#ifdef INCLUDE_API_SERVER
+#include "APIServer/interface.h"
+#endif
+
 #ifdef INCLUDE_AUTHENTICATION_SERVER
 #include "AuthenticationServer/interface.h"
 #endif
@@ -395,6 +399,10 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_AUTHENTICATION_CLIENT
     USING(AuthenticationClient);
+#endif
+
+#ifdef INCLUDE_API_SERVER
+    USING(APIServer);
 #endif
 
 #ifdef INCLUDE_AUTHENTICATION_SERVER

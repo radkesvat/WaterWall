@@ -46,6 +46,7 @@ include("${CMAKE_SOURCE_DIR}/tests/cmake/TestHelpers.cmake")
 
 include("${CMAKE_SOURCE_DIR}/tests/cmake/native/lwip-engines.cmake")
 include("${CMAKE_SOURCE_DIR}/tests/cmake/native/fragmenter.cmake")
+include("${CMAKE_SOURCE_DIR}/tests/cmake/native/api.cmake")
 include("${CMAKE_SOURCE_DIR}/tests/cmake/native/http-proxy.cmake")
 include("${CMAKE_SOURCE_DIR}/tests/cmake/native/runtime.cmake")
 include("${CMAKE_SOURCE_DIR}/tests/cmake/native/codec-dependencies.cmake")

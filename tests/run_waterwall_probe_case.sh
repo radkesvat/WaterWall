@@ -90,6 +90,27 @@ fi
 
 ww_test_write_core "$generated_core_json" "$test_workers" "$TEST_RAM_PROFILE" true "$test_splice"
 
+# Multiple loaded configurations are opt-in case input. Keep names local to the
+# copied case so this cannot accidentally load host or neighbouring fixtures.
+if [[ -f "$run_dir/configs.txt" ]]; then
+  "$python_path" - "$generated_core_json" "$run_dir/configs.txt" <<'PY'
+import json
+from pathlib import Path
+import re
+import sys
+
+core_path, manifest_path = map(Path, sys.argv[1:])
+names = manifest_path.read_text(encoding="utf-8").splitlines()
+if (not names or len(names) != len(set(names))
+        or any(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.json", name) is None
+               or not (manifest_path.parent / name).is_file() for name in names)):
+    raise SystemExit("Invalid configs.txt: expected unique local JSON basenames.")
+core = json.loads(core_path.read_text(encoding="utf-8"))
+core["configs"] = names
+core_path.write_text(json.dumps(core, indent=2) + "\n", encoding="utf-8")
+PY
+fi
+
 (
   cd "$run_dir"
   exec "$binary_path" >stdout.log 2>&1

@@ -83,6 +83,7 @@ endif()
 add_subdirectory(benchmarks)
 
 include("${CMAKE_SOURCE_DIR}/tests/cmake/integration/support.cmake")
+include("${CMAKE_SOURCE_DIR}/tests/cmake/integration/api.cmake")
 include("${CMAKE_SOURCE_DIR}/tests/cmake/integration/stream-codecs.cmake")
 include("${CMAKE_SOURCE_DIR}/tests/cmake/integration/socks.cmake")
 include("${CMAKE_SOURCE_DIR}/tests/cmake/integration/trojan-vless.cmake")

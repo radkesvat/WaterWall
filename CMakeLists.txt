@@ -210,6 +210,7 @@ option(INCLUDE_TESTER_SERVER            "link TesterServer staticly to the core"
 option(INCLUDE_SPEEDTEST_CLIENT         "link SpeedTestClient staticly to the core"                                 TRUE)
 option(INCLUDE_SPEEDTEST_SERVER         "link SpeedTestServer staticly to the core"                                 TRUE)
 option(INCLUDE_AUTHENTICATION_CLIENT    "link AuthenticationClient staticly to the core"                            TRUE)
+option(INCLUDE_API_SERVER               "link APIServer statically to the core"                                      TRUE)
 option(INCLUDE_AUTHENTICATION_SERVER    "link AuthenticationServer staticly to the core"                            TRUE)
 option(INCLUDE_WIREGUARD_DEVICE         "link WireGuardDevice staticly to the core"                                 TRUE)
 option(INCLUDE_PACKET_TO_CONNECTION     "link PacketsToConnection staticly to the core"                             TRUE)
@@ -611,6 +612,12 @@ if(INCLUDE_SPEEDTEST_SERVER)
 endif()
 
 #authentication client
+if(INCLUDE_API_SERVER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_API_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/APIServer)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} APIServer)
+endif()
+
 if(INCLUDE_AUTHENTICATION_CLIENT)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_AUTHENTICATION_CLIENT=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/AuthenticationClient)
