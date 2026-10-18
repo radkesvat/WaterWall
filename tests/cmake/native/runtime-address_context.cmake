@@ -169,6 +169,11 @@
 
   add_waterwall_unit_test(waterwall.users_index_unit users_index_test "unit;objects;users")
 
+  waterwall_add_native_executable(user_public_views_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/core/user_public_views_test.c LIBRARIES ww)
+  add_dependencies(waterwall_unit_tests user_public_views_test)
+  add_waterwall_unit_test(waterwall.user_public_views_unit user_public_views_test "unit;objects;users;concurrency")
+
   waterwall_add_native_executable(socket_manager_rules_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/devices/socket_manager/socket_manager_rules_test.c)
   target_link_libraries(socket_manager_rules_test PRIVATE ww_test_support)
   target_link_libraries(socket_manager_rules_test PRIVATE ww)

@@ -4248,6 +4248,84 @@ bool usersSnapshotAccounting(const users_t *users, user_accounting_snapshot_t **
     return true;
 }
 
+static bool usersPublicDeadlineExpired(uint64_t deadline_ms)
+{
+    return deadline_ms != 0 && getHRTimeUs() / 1000U >= deadline_ms;
+}
+
+user_public_result_t usersTryCount(const users_t *users, uint64_t deadline_ms, size_t *count_out)
+{
+    assert(users != NULL && count_out != NULL);
+    *count_out = 0;
+    if (usersPublicDeadlineExpired(deadline_ms))
+        return kUserPublicTimeout;
+    if (! rwlockTryReadLock((wrwlock_t *) &users->lock))
+        return kUserPublicBusy;
+    size_t count = users->count;
+    rwlockReadUnlock((wrwlock_t *) &users->lock);
+    if (usersPublicDeadlineExpired(deadline_ms))
+        return kUserPublicTimeout;
+    *count_out = count;
+    return kUserPublicOk;
+}
+
+user_public_result_t usersCopyPublicDetailByIdentifier(const users_t *users, uint64_t id, size_t max_string_bytes,
+                                                       uint64_t deadline_ms, user_public_detail_t *out)
+{
+    assert(users != NULL && id != 0 && out != NULL);
+    memoryZero(out, sizeof(*out));
+    if (usersPublicDeadlineExpired(deadline_ms))
+        return kUserPublicTimeout;
+    if (! rwlockTryReadLock((wrwlock_t *) &users->lock))
+        return kUserPublicBusy;
+    user_t              *user = usersIDTableLookupLocked(users, id);
+    user_public_result_t result =
+        user == NULL ? kUserPublicNotFound : userCopyPublicDetail(user, max_string_bytes, deadline_ms, out);
+    rwlockReadUnlock((wrwlock_t *) &users->lock);
+    if (usersPublicDeadlineExpired(deadline_ms))
+    {
+        userPublicDetailDestroy(out);
+        result = kUserPublicTimeout;
+    }
+    return result;
+}
+
+user_public_result_t usersCopyPublicPage(const users_t *users, size_t position, size_t limit, uint64_t deadline_ms,
+                                         user_public_summary_t *entries_out, size_t *count_out, size_t *total_out)
+{
+    assert(users != NULL && limit > 0 && limit <= USER_PUBLIC_PAGE_MAX && entries_out != NULL && count_out != NULL &&
+           total_out != NULL);
+    *count_out = 0;
+    *total_out = 0;
+    memoryZero(entries_out, limit * sizeof(*entries_out));
+    if (usersPublicDeadlineExpired(deadline_ms))
+        return kUserPublicTimeout;
+    if (! rwlockTryReadLock((wrwlock_t *) &users->lock))
+        return kUserPublicBusy;
+    user_public_result_t result = kUserPublicOutOfRange;
+    size_t               count  = 0;
+    if (position > users->count)
+        goto done;
+    count = min(limit, users->count - position);
+    for (size_t i = 0; i < count; ++i)
+    {
+        result = userCopyPublicSummary(usersGetAtLocked(users, position + i), deadline_ms, &entries_out[i]);
+        if (result != kUserPublicOk)
+            goto done;
+    }
+    result = usersPublicDeadlineExpired(deadline_ms) ? kUserPublicTimeout : kUserPublicOk;
+    if (result == kUserPublicOk)
+    {
+        *count_out = count;
+        *total_out = users->count;
+    }
+done:
+    rwlockReadUnlock((wrwlock_t *) &users->lock);
+    if (result != kUserPublicOk)
+        memoryZero(entries_out, limit * sizeof(*entries_out));
+    return result;
+}
+
 bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src)
 {
     if (UNLIKELY(dest == NULL || src == NULL))

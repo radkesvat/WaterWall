@@ -79,6 +79,56 @@ typedef struct user_stat_s
     user_ud_t traffic;
 } user_stat_t;
 
+/* Owned, credential-free projections. Copy helpers never block behind writers.
+ * A zero deadline disables the monotonic deadline check. Non-OK results leave
+ * output zeroed; full-detail string storage is released by its destroy helper.
+ * Copy output storage must not contain a previous, undestroyed owned detail. */
+#define USER_PUBLIC_NAME_PREVIEW_MAX 256U
+#define USER_PUBLIC_PAGE_MAX         100U
+
+typedef enum user_public_result_e
+{
+    kUserPublicOk = 0,
+    kUserPublicBusy,
+    kUserPublicTimeout,
+    kUserPublicNotFound,
+    kUserPublicOutOfRange,
+    kUserPublicTooLarge,
+    kUserPublicInvalidEncoding
+} user_public_result_t;
+
+typedef enum user_public_name_state_e
+{
+    kUserPublicNameComplete = 0,
+    kUserPublicNameTruncated,
+    kUserPublicNameInvalidEncoding
+} user_public_name_state_t;
+
+typedef struct user_public_summary_s
+{
+    uint64_t                 id, gid;
+    bool                     enabled;
+    char                     name_preview[USER_PUBLIC_NAME_PREVIEW_MAX + 1U];
+    size_t                   name_preview_length;
+    user_public_name_state_t name_preview_state;
+    user_traffic_limit_t     traffic_limit;
+    user_ud_t                usage;
+    uint64_t                 expire_at_ms, expire_after_first_usage_ms, first_usage_at_ms;
+} user_public_summary_t;
+
+typedef struct user_public_detail_s
+{
+    uint64_t         id, gid;
+    bool             enabled;
+    char            *name, *email, *notes, *wireguard_allowed_ips;
+    uint64_t         record_stat_interval_ms;
+    user_limit_t     limit;
+    user_time_info_t timeinfo;
+    user_ud_t        usage;
+    /* Sum of string allocation sizes, including the four terminating NULs. */
+    size_t owned_string_bytes;
+} user_public_detail_t;
+
 /*
  * Compact, lwIP-independent representation of a peer IP address.
  *
@@ -235,6 +285,11 @@ bool userCreateFromJson(User *user, const cJSON *user_json);
 /* Standalone/deep-copy helpers. For users_t-owned users, prefer usersAddUser()/usersUpdateUser(). */
 bool userCopy(User *dest, const User *src);
 void userDestroy(User *user);
+
+user_public_result_t userCopyPublicSummary(const user_t *user, uint64_t deadline_ms, user_public_summary_t *out);
+user_public_result_t userCopyPublicDetail(const user_t *user, size_t max_string_bytes, uint64_t deadline_ms,
+                                          user_public_detail_t *out);
+void                 userPublicDetailDestroy(user_public_detail_t *detail);
 
 /*
  * Runtime enforcement-state lifecycle helpers. They own both the active-IP array

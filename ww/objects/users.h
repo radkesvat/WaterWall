@@ -327,6 +327,15 @@ bool usersUserExpired(users_t *users, const user_t *user, uint64_t now_ms);
 bool usersUserActive(users_t *users, const user_t *user, uint64_t now_ms);
 
 size_t        usersCount(const users_t *users);
+/* Bounded, owned public projections. No collection/user pointer escapes the
+ * protected copy. Caller supplies room for limit summaries (1..100); positions
+ * at count return an empty terminal page. Error outputs are always cleared.
+ * Detail allowance counts all string allocations, including terminating NULs. */
+user_public_result_t usersTryCount(const users_t *users, uint64_t deadline_ms, size_t *count_out);
+user_public_result_t usersCopyPublicDetailByIdentifier(const users_t *users, uint64_t id, size_t max_string_bytes,
+                                                       uint64_t deadline_ms, user_public_detail_t *out);
+user_public_result_t usersCopyPublicPage(const users_t *users, size_t position, size_t limit, uint64_t deadline_ms,
+                                         user_public_summary_t *entries_out, size_t *count_out, size_t *total_out);
 bool          usersIsEmpty(const users_t *users);
 bool          usersReserve(users_t *users, size_t capacity);
 user_t       *usersGetAt(users_t *users, size_t index);

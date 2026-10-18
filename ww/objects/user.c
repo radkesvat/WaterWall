@@ -8,6 +8,215 @@
 #include "utils/json_helpers.h"
 #include "wtime.h"
 
+static bool userPublicDeadlineExpired(uint64_t deadline_ms)
+{
+    return deadline_ms != 0 && getHRTimeUs() / 1000U >= deadline_ms;
+}
+
+/* Read only one codepoint. Stop at a terminating NUL even in an invalid
+ * sequence, so short malformed strings never cause a read past their end. */
+static user_public_result_t userPublicCodepointSize(const unsigned char *text, size_t available, size_t *size_out)
+{
+    unsigned char first = text[0];
+    size_t        size;
+    if (first < 0x80U)
+    {
+        *size_out = 1;
+        return kUserPublicOk;
+    }
+    if (first >= 0xC2U && first <= 0xDFU)
+        size = 2;
+    else if (first >= 0xE0U && first <= 0xEFU)
+        size = 3;
+    else if (first >= 0xF0U && first <= 0xF4U)
+        size = 4;
+    else
+        return kUserPublicInvalidEncoding;
+    if (size > available)
+        return kUserPublicTooLarge;
+    for (size_t i = 1; i < size; ++i)
+    {
+        unsigned char next = text[i];
+        if (next < 0x80U || next > 0xBFU ||
+            (i == 1 && ((first == 0xE0U && next < 0xA0U) || (first == 0xEDU && next > 0x9FU) ||
+                        (first == 0xF0U && next < 0x90U) || (first == 0xF4U && next > 0x8FU))))
+            return kUserPublicInvalidEncoding;
+    }
+    *size_out = size;
+    return kUserPublicOk;
+}
+
+static user_public_result_t userPublicStringSize(const char *text, size_t allowance, uint64_t deadline_ms,
+                                                 size_t *size_out)
+{
+    size_t offset = 0, next_deadline_check = 0;
+    if (text == NULL)
+    {
+        if (allowance == 0)
+            return kUserPublicTooLarge;
+        *size_out = 1;
+        return kUserPublicOk;
+    }
+    while (offset < allowance)
+    {
+        if (offset >= next_deadline_check)
+        {
+            if (userPublicDeadlineExpired(deadline_ms))
+                return kUserPublicTimeout;
+            next_deadline_check = offset + 256U;
+        }
+        if (text[offset] == '\0')
+        {
+            *size_out = offset + 1U;
+            return kUserPublicOk;
+        }
+        size_t               size;
+        user_public_result_t result =
+            userPublicCodepointSize((const unsigned char *) text + offset, allowance - offset, &size);
+        if (result != kUserPublicOk)
+            return result;
+        offset += size;
+    }
+    return kUserPublicTooLarge;
+}
+
+static user_public_result_t userPublicNamePreview(const char *name, uint64_t deadline_ms, user_public_summary_t *out)
+{
+    if (name == NULL)
+        return kUserPublicOk;
+    size_t offset = 0;
+    while (offset < USER_PUBLIC_NAME_PREVIEW_MAX && name[offset] != '\0')
+    {
+        if (userPublicDeadlineExpired(deadline_ms))
+            return kUserPublicTimeout;
+        size_t               size;
+        user_public_result_t result = userPublicCodepointSize((const unsigned char *) name + offset, 4, &size);
+        if (result != kUserPublicOk)
+        {
+            out->name_preview_state = kUserPublicNameInvalidEncoding;
+            return kUserPublicOk;
+        }
+        if (size > USER_PUBLIC_NAME_PREVIEW_MAX - offset)
+        {
+            out->name_preview_state = kUserPublicNameTruncated;
+            break;
+        }
+        offset += size;
+    }
+    if (offset == USER_PUBLIC_NAME_PREVIEW_MAX && name[offset] != '\0')
+        out->name_preview_state = kUserPublicNameTruncated;
+    memoryCopy(out->name_preview, name, offset);
+    out->name_preview[offset] = '\0';
+    out->name_preview_length  = offset;
+    return kUserPublicOk;
+}
+
+static user_public_result_t userPublicAcquire(const user_t *user, uint64_t deadline_ms)
+{
+    if (userPublicDeadlineExpired(deadline_ms))
+        return kUserPublicTimeout;
+    if (! rwlockTryReadLock((wrwlock_t *) &user->lock))
+        return kUserPublicBusy;
+    if (! rwlockTryReadLock((wrwlock_t *) &user->stats_lock))
+    {
+        rwlockReadUnlock((wrwlock_t *) &user->lock);
+        return kUserPublicBusy;
+    }
+    return kUserPublicOk;
+}
+
+static void userPublicRelease(const user_t *user)
+{
+    rwlockReadUnlock((wrwlock_t *) &user->stats_lock);
+    rwlockReadUnlock((wrwlock_t *) &user->lock);
+}
+
+user_public_result_t userCopyPublicSummary(const user_t *user, uint64_t deadline_ms, user_public_summary_t *out)
+{
+    assert(user != NULL && user->initialized && out != NULL);
+    memoryZero(out, sizeof(*out));
+    user_public_result_t result = userPublicAcquire(user, deadline_ms);
+    if (result != kUserPublicOk)
+        return result;
+    out->id                          = user->id;
+    out->gid                         = user->gid;
+    out->enabled                     = user->enabled;
+    out->traffic_limit               = user->limit.traffic;
+    out->usage                       = user->stats.traffic;
+    out->expire_at_ms                = user->timeinfo.expire_at_ms;
+    out->expire_after_first_usage_ms = user->timeinfo.expire_after_first_usage_ms;
+    out->first_usage_at_ms           = user->timeinfo.first_usage_at_ms;
+    result                           = userPublicNamePreview(user->name, deadline_ms, out);
+    if (result == kUserPublicOk && userPublicDeadlineExpired(deadline_ms))
+        result = kUserPublicTimeout;
+    userPublicRelease(user);
+    if (result != kUserPublicOk)
+        memoryZero(out, sizeof(*out));
+    return result;
+}
+
+void userPublicDetailDestroy(user_public_detail_t *detail)
+{
+    assert(detail != NULL);
+    memoryFree(detail->name);
+    memoryFree(detail->email);
+    memoryFree(detail->notes);
+    memoryFree(detail->wireguard_allowed_ips);
+    memoryZero(detail, sizeof(*detail));
+}
+
+user_public_result_t userCopyPublicDetail(const user_t *user, size_t max_string_bytes, uint64_t deadline_ms,
+                                          user_public_detail_t *out)
+{
+    assert(user != NULL && user->initialized && out != NULL);
+    memoryZero(out, sizeof(*out));
+    user_public_result_t result = userPublicAcquire(user, deadline_ms);
+    if (result != kUserPublicOk)
+        return result;
+
+    const char *strings[] = {user->name, user->email, user->notes, user->wireguard_allowed_ips};
+    size_t      sizes[4];
+    size_t      total = 0;
+    for (size_t i = 0; i < 4; ++i)
+    {
+        result = userPublicStringSize(strings[i], max_string_bytes - total, deadline_ms, &sizes[i]);
+        if (result != kUserPublicOk)
+            goto done;
+        total += sizes[i];
+    }
+    if (userPublicDeadlineExpired(deadline_ms))
+    {
+        result = kUserPublicTimeout;
+        goto done;
+    }
+    out->id                      = user->id;
+    out->gid                     = user->gid;
+    out->enabled                 = user->enabled;
+    out->record_stat_interval_ms = (uint64_t) user->record_stat_interval_ms;
+    out->limit                   = user->limit;
+    out->timeinfo                = user->timeinfo;
+    out->usage                   = user->stats.traffic;
+    out->owned_string_bytes      = total;
+    char **destinations[]        = {&out->name, &out->email, &out->notes, &out->wireguard_allowed_ips};
+    for (size_t i = 0; i < 4; ++i)
+    {
+        if (userPublicDeadlineExpired(deadline_ms))
+        {
+            result = kUserPublicTimeout;
+            goto done;
+        }
+        *destinations[i] = memoryAllocate(sizes[i]);
+        memoryCopy(*destinations[i], strings[i] != NULL ? strings[i] : "", sizes[i]);
+    }
+    if (userPublicDeadlineExpired(deadline_ms))
+        result = kUserPublicTimeout;
+done:
+    userPublicRelease(user);
+    if (result != kUserPublicOk)
+        userPublicDetailDestroy(out);
+    return result;
+}
+
 _Static_assert(offsetof(user_t, sha224_pass) % 32U == 0, "user_t.sha224_pass must be 32-byte aligned");
 _Static_assert(offsetof(user_t, sha256_pass) % 32U == 0, "user_t.sha256_pass must be 32-byte aligned");
 _Static_assert(_Alignof(user_t) >= 32U, "user_t storage must be at least 32-byte aligned");
