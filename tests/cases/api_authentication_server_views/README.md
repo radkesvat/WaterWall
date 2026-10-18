@@ -2,7 +2,8 @@
 
 Topology: `TcpListener -> APIServer` queries a separate `AuthenticationServer`;
 a second private loopback `TcpListener -> AuthenticationServer` supplies real
-`Authenticate`, `UpdateUser` and `PushUserStats` setup transactions. No
+`Authenticate`, `UpdateUser`, `PushUserStats`, password lookup and rejected
+`AddNewUser` setup transactions. No
 AuthenticationClient is required. Two event workers are active.
 
 The probe checks exact status/detail/summary schemas, credential omission, IDs
@@ -15,7 +16,14 @@ of accounting. A second APIServer with the minimum 1024-byte envelope cap accept
 an edit with a maximum-length, maximally escaped correlation ID. A committed
 reply body is discarded after its length prefix arrives; a fresh get-user resolves
 the outcome, and the old token cannot apply it twice. Existing producer edits
-remain ordered with API edits. Reads and API edits must leave save
+remain ordered with API edits. Independent creator permissions deny monitors,
+auditors, editors and producer credentials access to creation. Default, empty-config
+and fully configured creations check clean accounting, normalization, read-token
+coherence, cursor invalidation, ID-first/credential/name/range failures and exact
+IDs above 2^53. Creation also uses the minimum-cap gateway and preserves a
+committed account after discarding its response; retrying the ID returns
+`id_exists`. Existing protocol password lookup resolves the account and
+`AddNewUser` cannot replace it. Reads and API mutations must leave save
 history unattempted; the existing periodic save is set to 60 seconds, beyond the
 30-second probe deadline. Authentication protocol ACKs retain their existing
 server-memory meaning.

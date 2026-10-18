@@ -14,12 +14,16 @@ add_library(AuthenticationServer STATIC
                     common/status.c
                     common/user_views.c
                     common/config_update.c
+                    common/config_create.c
                     api/request.c
                     api/response.c
                     api/status.c
                     api/get_user.c
                     api/list_users.c
                     api/edit_token.c
+                    api/config_fields.c
+                    api/create_request.c
+                    api/create_user.c
                     api/update_request.c
                     api/update_user.c
                     modules/dispatcher.c

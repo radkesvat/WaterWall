@@ -12,7 +12,8 @@
             "name": "fixture-writer",
             "secret": "NeverExposeProducerSecret",
             "allow-user-write": true,
-            "allow-stats-push": true
+            "allow-stats-push": true,
+            "allow-user-pull": true
           }
         ]
       }
@@ -69,6 +70,20 @@
                 "operations": [
                   "get-user",
                   "update-user"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "creator",
+            "token": "13579bdf02468ace13579bdf02468ace13579bdf02468ace13579bdf02468ace",
+            "allow": [
+              {
+                "config": "api-server",
+                "node": "auth-db",
+                "operations": [
+                  "get-user",
+                  "create-user"
                 ]
               }
             ]
@@ -137,6 +152,20 @@
                 "operations": [
                   "get-user",
                   "update-user"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "creator",
+            "token": "13579bdf02468ace13579bdf02468ace13579bdf02468ace13579bdf02468ace",
+            "allow": [
+              {
+                "config": "api-server",
+                "node": "auth-db",
+                "operations": [
+                  "get-user",
+                  "create-user"
                 ]
               }
             ]

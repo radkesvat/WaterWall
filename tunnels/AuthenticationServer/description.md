@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -734,7 +734,7 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
 ## Management API
 
 The server explicitly registers read-only `status`, `get-user` and `list-users`,
-and writable `update-user`, for
+and writable `update-user` and `create-user`, for
 [APIServer](APIServer.mdx). Each operation takes an `application/json` body and
 returns UTF-8 JSON. Configure an independent operator token and exact permissions
 on the gateway, for example:
@@ -748,12 +748,13 @@ A `status` permission grants no account-read permission. `get-user` and
 permission. Every continuation must authenticate and pass the gateway allowlist.
 Read operations do not authenticate traffic users, change accounts, synchronize
 clients or trigger a database save. `update-user` conditionally edits configuration
-in memory and has its own explicit permission. They expose no passwords, hashes, UUID
+in memory; `create-user` creates a fresh account with a caller-supplied ID and
+password. Each write has its own explicit permission. They expose no passwords, hashes, UUID
 credentials, WireGuard keys, producer secrets or session tokens.
 
 All bodies are strict JSON objects: unknown/duplicate keys, malformed UTF-8, decoded
 NUL, trailing input and incorrect types are rejected. Read bodies are limited to
-4096 bytes, depth two and 16 lexical values; update bodies use the separate bounds
+4096 bytes, depth two and 16 lexical values; mutation bodies use the separate bounds
 below. All numeric result leaves, including
 IDs, revisions, counts, limits, bytes and times, are canonical unsigned decimal
 **strings**; `enabled` remains a boolean. Account IDs in requests must also be
@@ -966,6 +967,134 @@ normalized Allowed-IP strings, then decide whether another patch is appropriate.
 Never automatically fetch a fresh token and replay the old patch. Request IDs
 provide correlation, not deduplication, and there is no persistent idempotency or
 recovery record. The example client performs no automatic write retries.
+
+### `create-user`
+
+Creation requires its own exact `create-user` gateway permission. An editor's
+`update-user` permission, producer credentials and protocol `allow-user-write`
+do not grant it. A creator normally also needs `get-user` to inspect uncertain
+outcomes. The caller supplies both a unique permanent account ID and the initial
+password; no edit token is required:
+
+```json
+{
+  "id":"43",
+  "password":"example-only-secret",
+  "config":{
+    "name":"alice",
+    "enabled":false,
+    "limit":{"traffic":{"total":"100000000000"}},
+    "time":{"expire_after_first_usage_ms":"2592000000"}
+  }
+}
+```
+
+**Omitting `config`, or supplying `{}`, creates an enabled account with unlimited
+or unset zero policy limits and expiry.** Explicitly send `"enabled":false` for
+staged provisioning. Defaults preserve ordinary fresh-account construction:
+
+| Configuration leaves | Default |
+| --- | --- |
+| `name`, `email`, `notes`, `wireguard_allowed_ips` | Empty string. |
+| `gid` | `"0"`. |
+| `enabled` | `true`. |
+| `record_stat_interval_ms` | `"120000"`. |
+| `limit.traffic.u`, `.d`, `.total`; `limit.bandwidth.u`, `.d` | `"0"`. |
+| `limit.ips`, `.devices`, `.cons_in`, `.cons_out` | `"0"`. |
+| `time.expire_at_ms`, `.expire_after_first_usage_ms` | `"0"`. |
+
+These are exactly the 18 public configuration leaves accepted by `update-user`,
+with the same types, canonical integer ranges, zero meanings, name uniqueness
+and Allowed-IP normalization/overlap checks. An empty top-level `config` is
+allowed; supplied nested `limit`, `traffic`, `bandwidth` and `time` objects must
+be nonempty. Configuration cannot supply identity, password, derived keys,
+creation/first-use timestamps, usage, statistics, runtime state or checkpoints.
+Configuring a limit adds no enforcement capability to other nodes.
+
+The only root keys are required `id`, required `password` and optional `config`.
+ID is a canonical nonzero unsigned decimal string through UINT64_MAX, preserving
+values above JavaScript's exact integer range. Password is a nonempty UTF-8
+string, preserved byte-for-byte without trimming, normalization or an additional
+strength policy. Decoded NUL, malformed UTF-8, JSON numbers for integers, signs,
+leading zeros, null, unknown/duplicate keys, protocol aliases and trailing input
+are rejected. Root `if_match`, `edit_token` and `request_id` are invalid. The
+complete node body is capped at 32 KiB, lexical depth four and 64 lexical values
+including keys, checked before JSON-tree construction.
+
+Credentials are derived using the ordinary SHA-224, SHA-256 and WireGuard helpers;
+UUID identity exists only for a UUID-form password. Creation time is generated
+by the server's wall-clock constructor. Usage, first-use timestamp, runtime
+counters/reservations and client-local timing start empty or zero. Creation,
+readback and synchronization do not count as first traffic. Public responses,
+including reads, never expose the password or derived identities.
+
+Success returns exactly the ID and the revision/token of this transaction:
+
+```json
+{
+  "id":"43",
+  "config_revision":"86",
+  "edit_token":"000102030405060708090a0b0c0d0e0f0000000000000056"
+}
+```
+
+Creation increments configuration revision once, invalidating older edit tokens
+and pagination cursors; statistics revision, all existing accounts and producer
+checkpoints remain unchanged. Independent valid creations can both succeed,
+and an unrelated edit does not itself invalidate a creation request. The token
+returned by creation can be used for a subsequent conditional edit while current.
+
+Creation is create-only. Existing ID yields `id_exists`, even for an identical
+request; it never replaces an account or acknowledges a duplicate as replay.
+With the collection locked, ID is checked before other duplicate classes.
+Conflicting nonempty name yields `name_exists`; any duplicate SHA-224, SHA-256,
+UUID or WireGuard identity yields `credentials_exist`, without identifying the
+conflicting account. Different password text can share a derived identity.
+Concurrent same-ID requests can return one success and `busy` or `id_exists`;
+a later attempt with that ID returns `id_exists`.
+
+Node failures are `invalid_request`, `id_exists`, `name_exists`,
+`credentials_exist`, `invalid_allowed_ips`, `allowed_ips_overlap`, `busy`,
+`resource_limit`, `creation_failed`, `response_too_large`, `timeout` and
+`revision_exhausted`, in the usual fixed `{"error":{"code":"id_exists"}}`
+shape. Backend/crypto or native-lock initialization refusal is `creation_failed`.
+Earlier malformed-input, budget, backend or contention failures can precede
+duplicate checking. A returned node-operation failure publishes no account.
+
+Preparation, aggregate new storage/index allocation, scratch, temporary overlaps
+and the actual result-pool allocation must fit the remaining handler working
+allowance. `resource_limit` can require a larger existing APIServer
+`handler_working_memory` setting; creation has no separate 1 MiB total-growth
+limit. A name-map rehash additionally inspects stored names within a cumulative
+byte-work budget equal to the supplied working allowance. Oversized legacy names
+can therefore refuse growth; spare name-map capacity avoids this full scan.
+Checks occur between bounded reserve stages; native rehash/crypto calls are
+finite synchronous work, without a strict wall-clock latency guarantee. Capacity
+reserved before a later refusal may remain private, while account membership,
+counts, stable pointers and revisions remain unchanged. The 256-byte ACK and its
+actual pool charge are reserved and rendered before publication; it fits the
+minimum 1024-byte gateway envelope, including a maximally escaped correlation ID.
+
+Success acknowledges an **in-memory commit**. The API initiates no save and
+changes no primary-save telemetry. Ordinary periodic/final saving persists it
+later; a crash can lose an unsaved account. Producer `AddNewUser` keeps its
+existing synchronous save-and-rollback behavior. Connected AuthenticationClients
+obtain the account and credentials through normal synchronization; an offline
+client cannot admit this previously unknown account until refresh. Existing
+pending usage remains intact. Success does not prove every client has refreshed.
+
+A lost reply, disconnect, abandoned completion or post-dispatch gateway timeout
+means **outcome unknown**. Retain the original ID and intended inputs, then read
+`get-user` for that ID. If present, inspect the permitted configuration: existence
+does not prove your request created it, and redacted reads cannot prove its
+password after a competing creation. If absent, explicitly decide whether to
+retry the same ID and original inputs; the first request may still be running.
+Never automatically select another ID, replace an existing account, reset its
+credentials or interpret `id_exists` as proof of earlier success. Outer request
+IDs provide correlation, not idempotency. The caller allocates IDs and should not
+reassign an ID to another person/account; uniqueness covers the current
+collection, without a persistent history of all previously used IDs or a
+cross-crash exactly-once guarantee. The example client never retries writes.
 
 ### Bounded snapshots and errors
 

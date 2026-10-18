@@ -152,7 +152,12 @@ typedef enum users_add_result_e
     kUsersAddResultDuplicateWireGuardAllowedIps,
     /* Rejected storage/index geometry or failed native lock initialization;
      * memory-manager heap exhaustion terminates instead of returning. */
-    kUsersAddResultStorageUnavailable
+    kUsersAddResultStorageUnavailable,
+    kUsersAddResultBusy,
+    kUsersAddResultResourceLimit,
+    kUsersAddResultTimeout,
+    kUsersAddResultPrecommitRejected,
+    kUsersAddResultCreationFailed
 } users_add_result_t;
 
 typedef enum users_update_result_e
@@ -293,6 +298,24 @@ users_update_result_t usersTryApplyPreparedConfigByIdentifier(users_t *users, ui
                                                               user_config_prepared_patch_t *prepared,
                                                               size_t max_growth_bytes, uint64_t deadline_ms,
                                                               users_config_precommit_fn precommit, void *context);
+/* Fresh private accounts only: preparation derives credentials and owns all
+ * selected input before any shared lock. NULL/empty config uses userCreate()
+ * defaults. The retained/peak accounting includes aligned private storage,
+ * normalization scratch and all secret/string copies. A zero deadline is unlimited. */
+typedef struct user_prepared_creation_s user_prepared_creation_t;
+users_add_result_t usersPrepareNewUser(uint64_t id, const char *password, const user_config_patch_t *config,
+                                       size_t max_owned_bytes, uint64_t deadline_ms, user_prepared_creation_t **out);
+void               usersFreePreparedNewUser(user_prepared_creation_t *prepared);
+size_t             usersPreparedNewUserOwnedBytes(const user_prepared_creation_t *prepared);
+size_t             usersPreparedNewUserPeakBytes(const user_prepared_creation_t *prepared);
+/* ID-first duplicate classification; try-lock collection ownership only. Growth
+ * admits full new extents and unpublished-slot copy/snapshot storage together.
+ * The callback runs after slot/capacity preparation, before the final deadline
+ * check and publication, and
+ * must not call user/collection helpers. Private capacity can survive refusal.
+ * Caller frees the prepared account on every result, including success. */
+users_add_result_t usersTryAddPreparedUser(users_t *users, user_prepared_creation_t *prepared, size_t max_growth_bytes,
+                                           uint64_t deadline_ms, users_config_precommit_fn precommit, void *context);
 bool                  usersSetUserName(users_t *users, user_t *user, const char *name);
 bool                  usersSetUserEmail(users_t *users, user_t *user, const char *email);
 bool                  usersSetUserNotes(users_t *users, user_t *user, const char *notes);

@@ -1,4 +1,4 @@
-"""Exercise real server read views and conditional edits over private loopback.
+"""Exercise real server read views and account mutations over private loopback.
 
 UpdateUser and PushUserStats use a separate authenticated existing-protocol
 connection solely as setup for cursor/revision assertions. No automatic operation retries
@@ -18,6 +18,7 @@ from api_server_probe import connect, exact, frame, require, response
 TOKEN = "0123456789abcdef" * 4
 MONITOR_TOKEN = "abcdef0123456789" * 4
 EDITOR_TOKEN = "fedcba9876543210" * 4
+CREATOR_TOKEN = "13579bdf02468ace" * 4
 LARGE_ID = "9007199254740993"
 MAX_ID = "18446744073709551615"
 USER_FIELDS = {"id", "gid", "enabled", "name", "email", "notes", "wireguard_allowed_ips",
@@ -42,18 +43,18 @@ def leaves_are_decimal(value):
         decimal(value)
 
 
-def request(identifier, operation, body=None, *, monitor=False, editor=False):
+def request(identifier, operation, body=None, *, monitor=False, editor=False, creator=False):
     return {"id": identifier,
-                "auth": {"client": "editor" if editor else "monitor" if monitor else "auditor",
-                         "token": EDITOR_TOKEN if editor else MONITOR_TOKEN if monitor else TOKEN},
+                "auth": {"client": "creator" if creator else "editor" if editor else "monitor" if monitor else "auditor",
+                         "token": CREATOR_TOKEN if creator else EDITOR_TOKEN if editor else MONITOR_TOKEN if monitor else TOKEN},
                 "selector": {"config": "api-server", "node": "auth-db"},
                 "operation": operation, "content_type": "application/json",
                 "body_encoding": "utf8", "body": json.dumps(body if body is not None else {})}
 
 
-def query(stream, reader, identifier, operation, body=None, *, monitor=False, editor=False, error=None,
+def query(stream, reader, identifier, operation, body=None, *, monitor=False, editor=False, creator=False, error=None,
           max_envelope=1024 * 1024):
-    envelope = request(identifier, operation, body, monitor=monitor, editor=editor)
+    envelope = request(identifier, operation, body, monitor=monitor, editor=editor, creator=creator)
     stream.sendall(frame(envelope))
     value = response(reader, identifier, max_envelope)
     require(value["error"] is None, "Server operation produced a gateway error")
@@ -80,20 +81,20 @@ def check_token(value):
 
 def check_ack(value, identifier, previous_token):
     require(set(value) == {"id", "config_revision", "edit_token"} and value["id"] == identifier,
-            "Update acknowledgement schema changed")
+            "Mutation acknowledgement schema changed")
     decimal(value["config_revision"])
     check_token(value)
     require(value["edit_token"][:32] == previous_token[:32]
             and int(value["config_revision"]) == int(previous_token[32:], 16) + 1,
-            "Update did not publish exactly its committed revision")
+            "Mutation did not publish exactly its committed revision")
 
 
-def check_status(value, sessions):
+def check_status(value, sessions, users=3):
     require(set(value) == {"database_loaded", "user_count", "configured_producer_count",
                            "session_record_count", "config_revision", "stats_revision", "primary_save", "edit_token"},
             "Status field allowlist changed")
     check_token(value)
-    require(value["database_loaded"] is True and value["user_count"] == "3"
+    require(value["database_loaded"] is True and value["user_count"] == str(users)
             and value["configured_producer_count"] == "1"
             and value["session_record_count"] == str(sessions), "Incorrect server counts")
     for field in ("config_revision", "stats_revision"):
@@ -125,13 +126,13 @@ def check_detail(value, identifier):
     return user
 
 
-def check_page(value):
+def check_page(value, users=3):
     require(set(value) == {"config_revision", "stats_revision", "accounting_time_ms", "total_users",
                            "users", "next_cursor", "edit_token"}, "List field allowlist changed")
     check_token(value)
     for field in ("config_revision", "stats_revision", "accounting_time_ms", "total_users"):
         decimal(value[field])
-    require(value["total_users"] == "3", "Incorrect list count")
+    require(value["total_users"] == str(users), "Incorrect list count")
     require(value["next_cursor"] is None or
             re.fullmatch(r"[0-9a-f]{64}", value["next_cursor"]) is not None, "Invalid cursor representation")
     for user in value["users"]:
@@ -254,7 +255,8 @@ def main():
             require(len(restarted["users"]) == 3 and restarted["next_cursor"] is None,
                     "New traversal failed after configuration edit")
             conditional_edits(stream, reader, control, control_reader, token, edited)
-            check_status(query(stream, reader, "final", "status"), 1)
+            create_accounts(stream, reader, control, control_reader, token)
+            check_status(query(stream, reader, "final", "status"), 1, 7)
 
 
 def conditional_edits(stream, reader, control, control_reader, session_token, previous):
@@ -335,6 +337,139 @@ def conditional_edits(stream, reader, control, control_reader, session_token, pr
             and int(last["config_revision"]) == protocol_revision == int(reread["config_revision"]) + 1
             and int(last["stats_revision"]) == protocol_stats == int(reread["stats_revision"]),
             "Producer/API transaction ordering changed")
+
+
+def create_accounts(stream, reader, control, control_reader, session_token):
+    before = query(stream, reader, "before-create", "status")
+    old_page = query(stream, reader, "before-create-page", "list-users", {"limit": 1})
+    existing = {identifier: check_detail(query(stream, reader, "preserve-" + identifier,
+                                             "get-user", {"id": identifier}), identifier)
+                for identifier in (LARGE_ID, MAX_ID, "42")}
+    candidate = {"id": "43", "password": "NeverExposePasswordCreated"}
+    for label, role in (("monitor", {"monitor": True}), ("auditor", {}), ("editor", {"editor": True})):
+        correlation = label + "-denied-create"
+        stream.sendall(frame(request(correlation, "create-user", candidate, **role)))
+        denied = response(reader, correlation)
+        require(denied["error"]["code"] == "forbidden" and denied["result"] is None,
+                "Read or update permissions implicitly granted account creation")
+    with connect() as producer_api, producer_api.makefile("rb") as producer_reader:
+        envelope = request("producer-denied-create", "create-user", candidate)
+        envelope["auth"] = {"client": "fixture-writer", "token": "NeverExposeProducerSecret"}
+        producer_api.sendall(frame(envelope))
+        denied = response(producer_reader, "producer-denied-create")
+        require(denied["error"]["code"] == "unauthorized" and denied["result"] is None,
+                "Producer credentials granted gateway access")
+
+    for index, invalid in enumerate((
+            {"id": "43"}, {"id": "43", "password": ""},
+            {"id": 43, "password": "fixture"},
+            dict(candidate, if_match=before["edit_token"]),
+            dict(candidate, config={"password": "fixture"}),
+            dict(candidate, config={"limit": {}}))):
+        query(stream, reader, "invalid-create-" + str(index), "create-user", invalid,
+              creator=True, error="invalid_request")
+    unchanged = query(stream, reader, "create-refusals", "status")
+    require(unchanged == before, "Creation refusal changed state or save telemetry")
+
+    ack = query(stream, reader, "create-default", "create-user", candidate, creator=True)
+    check_ack(ack, "43", before["edit_token"])
+    detail = query(stream, reader, "created-default", "get-user", {"id": "43"}, creator=True)
+    fresh = check_detail(detail, "43")
+    require(fresh["gid"] == "0" and fresh["enabled"] is True
+            and all(fresh[field] == "" for field in ("name", "email", "notes", "wireguard_allowed_ips"))
+            and fresh["record_stat_interval_ms"] == "120000"
+            and fresh["limit"] == {"traffic": {"u": "0", "d": "0", "total": "0"},
+                                    "bandwidth": {"u": "0", "d": "0"}, "ips": "0", "devices": "0",
+                                    "cons_in": "0", "cons_out": "0"}
+            and fresh["usage"] == {"u": "0", "d": "0"}
+            and int(fresh["time"]["created_at_ms"]) > 0
+            and all(fresh["time"][field] == "0" for field in
+                    ("expire_at_ms", "expire_after_first_usage_ms", "first_usage_at_ms"))
+            and detail["edit_token"] == ack["edit_token"]
+            and detail["stats_revision"] == before["stats_revision"],
+            "Fresh account defaults, accounting, creation time or transaction token changed")
+    query(stream, reader, "create-replay", "create-user", candidate, creator=True, error="id_exists")
+    query(stream, reader, "create-id-first", "create-user",
+          {"id": "43", "password": "NeverExposePasswordAlice", "config": {"name": "Alice edited"}},
+          creator=True, error="id_exists")
+    query(stream, reader, "creation-stales-cursor", "list-users",
+          {"cursor": old_page["next_cursor"]}, error="stale_cursor")
+    query(stream, reader, "creation-stales-edit", "update-user",
+          {"id": LARGE_ID, "if_match": before["edit_token"], "patch": {"enabled": True}},
+          editor=True, error="conflict")
+
+    # The existing protocol resolves the exact supplied password, and its add
+    # collides without saving or changing the API-created identity.
+    payload, revision, stats = protocol_request(control, control_reader, 5, 20,
+                                                candidate["password"].encode("utf-8"), session_token, expected=2)
+    # The existing producer serializer keeps its numeric-or-string import schema.
+    require(str(json.loads(payload)["id"]) == "43" and str(revision) == ack["config_revision"]
+            and str(stats) == before["stats_revision"], "Created credential is unavailable to the existing protocol")
+    refusal, revision, _ = protocol_request(control, control_reader, 6, 21,
+                                            {"id": "43", "password": "NeverExposePasswordReplacement"},
+                                            session_token, expected=255)
+    require(refusal == b"user-id-exists" and str(revision) == ack["config_revision"],
+            "Producer addition replaced an API-created account or changed revision")
+
+    empty_ack = query(stream, reader, "create-empty-config", "create-user",
+                      {"id": "44", "password": "NeverExposePasswordEmptyConfig", "config": {}}, creator=True)
+    check_ack(empty_ack, "44", ack["edit_token"])
+    empty = check_detail(query(stream, reader, "empty-config-detail", "get-user", {"id": "44"}, creator=True), "44")
+    require(dict(empty, id="43", time=fresh["time"]) == fresh, "Empty config changed constructor defaults")
+
+    configured_id = "9007199254740994"
+    config = {"name": "New staged account", "email": "created@example.test", "notes": "New account note",
+              "wireguard_allowed_ips": "10.55.3.7/24", "gid": MAX_ID, "enabled": False,
+              "record_stat_interval_ms": "0",
+              "limit": {"traffic": {"u": "10", "d": "20", "total": MAX_ID},
+                        "bandwidth": {"u": "30", "d": "40"}, "ips": "50", "devices": "60",
+                        "cons_in": "70", "cons_out": "80"},
+              "time": {"expire_at_ms": "0", "expire_after_first_usage_ms": "90"}}
+    # The same compact response schema is used by updates and creation.
+    with connect(29381) as small, small.makefile("rb") as small_reader:
+        configured_ack = query(small, small_reader, "\x01" * 64, "create-user",
+                               {"id": configured_id, "password": "NeverExposePasswordConfigured", "config": config},
+                               creator=True, max_envelope=1024)
+    check_ack(configured_ack, configured_id, empty_ack["edit_token"])
+    configured = check_detail(query(stream, reader, "configured-detail", "get-user", {"id": configured_id},
+                                    creator=True), configured_id)
+    expected_config = dict(config, wireguard_allowed_ips="10.55.3.0/24")
+    require(all(configured[field] == expected_config[field] for field in config if field != "time")
+            and all(configured["time"][field] == value for field, value in config["time"].items())
+            and configured["time"]["first_usage_at_ms"] == "0" and configured["usage"] == {"u": "0", "d": "0"},
+            "Initial public configuration, Allowed-IP normalization or clean accounting changed")
+    for label, conflict, expected_error in (
+            ("name", {"name": config["name"]}, "name_exists"),
+            ("range", {"wireguard_allowed_ips": "10.55.3.128/25"}, "allowed_ips_overlap"),
+            ("invalid-range", {"wireguard_allowed_ips": "bad-range"}, "invalid_allowed_ips")):
+        query(stream, reader, "create-conflict-" + label, "create-user",
+              {"id": "45", "password": "NeverExposePasswordConflict", "config": conflict},
+              creator=True, error=expected_error)
+    query(stream, reader, "create-credentials-conflict", "create-user",
+          {"id": "45", "password": candidate["password"]}, creator=True, error="credentials_exist")
+
+    # A discarded response does not undo publication. An identical request is
+    # still create-only, and a public read cannot establish password ownership.
+    lost = {"id": "45", "password": "NeverExposePasswordLostCreation", "config": {"enabled": False}}
+    with connect() as abandoned, abandoned.makefile("rb") as abandoned_reader:
+        abandoned.sendall(frame(request("discarded-create", "create-user", lost, creator=True)))
+        length = struct.unpack("!I", exact(abandoned_reader, 4))[0]
+        require(0 < length <= 1024, "Unbounded creation acknowledgement")
+    recovered = query(stream, reader, "reread-created", "get-user", {"id": "45"}, creator=True)
+    require(check_detail(recovered, "45")["enabled"] is False
+            and int(recovered["config_revision"]) == int(configured_ack["config_revision"]) + 1,
+            "Lost creation acknowledgement removed or duplicated the committed account")
+    query(stream, reader, "lost-create-retry", "create-user", lost, creator=True, error="id_exists")
+    for identifier, saved in existing.items():
+        require(check_detail(query(stream, reader, "preserved-" + identifier, "get-user", {"id": identifier}),
+                             identifier) == saved, "Account creation changed an existing account")
+    final = query(stream, reader, "created-status", "status")
+    check_status(final, 1, 7)
+    page = check_page(query(stream, reader, "created-list", "list-users"), 7)
+    require(final["edit_token"] == recovered["edit_token"] == page["edit_token"]
+            and final["stats_revision"] == before["stats_revision"]
+            and {user["id"] for user in page["users"]} == {LARGE_ID, MAX_ID, "42", "43", "44", configured_id, "45"},
+            "Creation read coherence, count, revisions or index publication changed")
 
 
 main()

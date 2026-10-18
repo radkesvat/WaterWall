@@ -2182,6 +2182,61 @@ static user_t *usersFindByNameLocked(const users_t *users, const char *name, con
     return (found != NULL && found != exclude) ? found : NULL;
 }
 
+/* No reserve or rehash is permitted once index publication starts. Callers
+ * establish unique keys and complete capacity before entering this commit. */
+static void usersCommitReservedUserLocked(users_t *users, user_t *slot)
+{
+#define USERS_INSERT_RESERVED(table_field, map_type, key_value, mapped_value)                                          \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        map_type *map = &users->table_field->map;                                                                      \
+        if (map->size >= map_type##_capacity(map))                                                                     \
+        {                                                                                                              \
+            LOGF("Users: missing reserved insertion capacity");                                                        \
+            abortProgramNow(1);                                                                                        \
+        }                                                                                                              \
+        map_type##_key    key    = (key_value);                                                                        \
+        map_type##_result result = map_type##_bucket_insert_(map, &key);                                               \
+        if (! result.inserted)                                                                                         \
+        {                                                                                                              \
+            LOGF("Users: duplicate key during reserved insertion");                                                    \
+            abortProgramNow(1);                                                                                        \
+        }                                                                                                              \
+        ++map->size;                                                                                                   \
+        result.ref->first  = key;                                                                                      \
+        result.ref->second = (mapped_value);                                                                           \
+    } while (0)
+    USERS_INSERT_RESERVED(sha224_table, users_sha224_map_t, usersSHA224KeyFromBytes(slot->sha224_pass.bytes), slot);
+    USERS_INSERT_RESERVED(sha256_table, users_sha256_map_t, usersSHA256KeyFromBytes(slot->sha256_pass.bytes), slot);
+    if (slot->uuid_pass_valid)
+        USERS_INSERT_RESERVED(uuid_table, users_uuid_map_t, usersUUIDKeyFromBytes(slot->uuid_pass), slot);
+    if (slot->wireguard_publickey_valid)
+        USERS_INSERT_RESERVED(wireguard_publickey_table,
+                              users_wireguard_publickey_map_t,
+                              usersWireGuardPublicKeyFromBytes(slot->wireguard_publickey),
+                              slot);
+    if (slot->id != 0)
+        USERS_INSERT_RESERVED(id_table, users_id_map_t, slot->id, slot);
+    if (! usersNameTableInsertReservedLocked(users, slot))
+    {
+        LOGF("Users: duplicate name during reserved insertion");
+        abortProgramNow(1);
+    }
+    USERS_INSERT_RESERVED(pointer_table, users_pointer_map_t, (uintptr_t) slot, users->count);
+#undef USERS_INSERT_RESERVED
+    if (slot->wireguard_allowed_ips_valid)
+    {
+        users_allowed_ip_map_t *map = &users->allowed_ip_table->map;
+        if ((map->disp == 0 && map->head >= map->capacity) || ! usersAllowedIpTableInsertLocked(users, slot))
+        {
+            LOGF("Users: inconsistent reserved Allowed-IP insertion");
+            abortProgramNow(1);
+        }
+    }
+    users->items[users->count++] = slot;
+    ++users->slot_count;
+}
+
 /*
  * Commits a fully-initialized slot into the active set and every lookup index.
  *
@@ -2191,7 +2246,8 @@ static user_t *usersFindByNameLocked(const users_t *users, const char *name, con
  * would only repeat that work (recomputing SHA-224/256, the UUID form, and the
  * WireGuard key, plus every index lookup) for no benefit; they are skipped. The
  * capacity reservation and the index inserts always run, so a false return on the
- * prevalidated path reflects rejected capacity geometry or an index inconsistency.
+ * prevalidated path reflects rejected capacity geometry. Publication thereafter
+ * uses the shared reserved primitive; impossible index inconsistencies are fatal.
  */
 static bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalidated)
 {
@@ -2277,77 +2333,7 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalid
         return false;
     }
 
-    if (UNLIKELY(! usersSHA224TableInsertLocked(users, slot)))
-    {
-        return false;
-    }
-    if (UNLIKELY(! usersSHA256TableInsertLocked(users, slot)))
-    {
-        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
-        {
-            LOGF("Users: failed to restore lookup tables after an insertion failure");
-            abortProgramNow(1);
-        }
-        return false;
-    }
-    if (UNLIKELY(! usersUUIDTableInsertLocked(users, slot)))
-    {
-        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
-        {
-            LOGF("Users: failed to restore lookup tables after an insertion failure");
-            abortProgramNow(1);
-        }
-        return false;
-    }
-    if (UNLIKELY(! usersWireGuardPublicKeyTableInsertLocked(users, slot)))
-    {
-        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
-        {
-            LOGF("Users: failed to restore lookup tables after an insertion failure");
-            abortProgramNow(1);
-        }
-        return false;
-    }
-    if (UNLIKELY(! usersIDTableInsertLocked(users, slot)))
-    {
-        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
-        {
-            LOGF("Users: failed to restore lookup tables after an insertion failure");
-            abortProgramNow(1);
-        }
-        return false;
-    }
-    if (UNLIKELY(! usersNameTableInsertLocked(users, slot)))
-    {
-        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
-        {
-            LOGF("Users: failed to restore lookup tables after an insertion failure");
-            abortProgramNow(1);
-        }
-        return false;
-    }
-    if (UNLIKELY(! usersPointerTableSetLocked(users, slot, users->count)))
-    {
-        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
-        {
-            LOGF("Users: failed to restore lookup tables after an insertion failure");
-            abortProgramNow(1);
-        }
-        return false;
-    }
-    if (UNLIKELY(! usersAllowedIpTableInsertLocked(users, slot)))
-    {
-        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
-        {
-            LOGF("Users: failed to restore lookup tables after an insertion failure");
-            abortProgramNow(1);
-        }
-        return false;
-    }
-
-    users->items[users->count] = slot;
-    users->count += 1U;
-    users->slot_count += 1U;
+    usersCommitReservedUserLocked(users, slot);
     return true;
 }
 
@@ -2378,17 +2364,8 @@ static void usersDuplicateResultConsider(const users_t *users, users_duplicate_r
     }
 }
 
-static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users, const user_t *user)
+static users_add_result_t usersValidateNewUserIndexesLocked(const users_t *users, const user_t *user)
 {
-    if (UNLIKELY(user == NULL || ! user->initialized || ! user->sha224_pass_valid || ! user->sha256_pass_valid ||
-                 ! userPasswordDataValid((user_t *) user)))
-    {
-        return kUsersAddResultInvalidUser;
-    }
-    if (UNLIKELY(! usersAllowedIpUserFieldsIndexable(user)))
-    {
-        return kUsersAddResultInvalidWireGuardAllowedIps;
-    }
     /*
      * Classify duplicates through the lookup indexes instead of scanning every
      * existing user. Each index already yields the owning user, so this is
@@ -2455,6 +2432,16 @@ static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users
     }
 
     return kUsersAddResultOk;
+}
+
+static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users, const user_t *user)
+{
+    if (UNLIKELY(user == NULL || ! user->initialized || ! user->sha224_pass_valid || ! user->sha256_pass_valid ||
+                 ! userPasswordDataValid((user_t *) user)))
+        return kUsersAddResultInvalidUser;
+    if (UNLIKELY(! usersAllowedIpUserFieldsIndexable(user)))
+        return kUsersAddResultInvalidWireGuardAllowedIps;
+    return usersValidateNewUserIndexesLocked(users, user);
 }
 
 users_add_result_t usersAddUserChecked(users_t *users, const user_t *user)
@@ -3880,34 +3867,10 @@ static users_update_result_t usersPreflightConfigIndexesLocked(users_t *users, u
 
 /* Collection and user configuration write locks precede the first index erase.
  * Capacity and uniqueness are already established; no ordinary refusal follows. */
-static void usersCommitConfigUpdateLocked(users_t *users, user_t *user, const user_update_t *update, char **name_copy,
-                                          char **email_copy, char **notes_copy,
-                                          users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
-                                          const user_config_patch_t            *patch)
+static void usersApplyConfigValues(user_t *user, const user_update_t *update, char **name_copy, char **email_copy,
+                                   char **notes_copy, users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
+                                   const user_config_patch_t *patch)
 {
-    /*
-     * Erase the old name entry while the old string is still alive, before
-     * usersReplaceStringOwned() frees it. Both collection and configuration
-     * write locks are held. A false return means
-     * the old name resolved to a different user, i.e. the name index is already
-     * corrupt; that is an unrecoverable invariant violation.
-     */
-    if (UNLIKELY((update->mask & kUserUpdateName) != 0U && ! usersNameTableEraseLocked(users, user, user->name)))
-    {
-        LOGF("Users: index inconsistency during configuration commit");
-        abortProgramNow(1);
-    }
-    /*
-     * Erase the old Allowed-IP range entry while the user still carries its old
-     * range fields, before they are overwritten below.
-     */
-    if (UNLIKELY((update->mask & kUserUpdateWireGuardAllowedIps) != 0U &&
-                 ! usersAllowedIpTableEraseLocked(users, user)))
-    {
-        LOGF("Users: index inconsistency during configuration commit");
-        abortProgramNow(1);
-    }
-
     if ((update->mask & kUserUpdateName) != 0U)
     {
         usersReplaceStringOwned(&user->name, name_copy);
@@ -3977,6 +3940,37 @@ static void usersCommitConfigUpdateLocked(users_t *users, user_t *user, const us
         if ((patch->mask & kUserConfigExpireAfterFirstUsage) != 0U)
             user->timeinfo.expire_after_first_usage_ms = patch->expire_after_first_usage_ms;
     }
+}
+
+static void usersCommitConfigUpdateLocked(users_t *users, user_t *user, const user_update_t *update, char **name_copy,
+                                          char **email_copy, char **notes_copy,
+                                          users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
+                                          const user_config_patch_t            *patch)
+{
+    /*
+     * Erase the old name entry while the old string is still alive, before
+     * usersReplaceStringOwned() frees it. Both collection and configuration
+     * write locks are held. A false return means
+     * the old name resolved to a different user, i.e. the name index is already
+     * corrupt; that is an unrecoverable invariant violation.
+     */
+    if (UNLIKELY((update->mask & kUserUpdateName) != 0U && ! usersNameTableEraseLocked(users, user, user->name)))
+    {
+        LOGF("Users: index inconsistency during configuration commit");
+        abortProgramNow(1);
+    }
+    /*
+     * Erase the old Allowed-IP range entry while the user still carries its old
+     * range fields, before they are overwritten below.
+     */
+    if (UNLIKELY((update->mask & kUserUpdateWireGuardAllowedIps) != 0U &&
+                 ! usersAllowedIpTableEraseLocked(users, user)))
+    {
+        LOGF("Users: index inconsistency during configuration commit");
+        abortProgramNow(1);
+    }
+
+    usersApplyConfigValues(user, update, name_copy, email_copy, notes_copy, wireguard_allowed_ips, patch);
 
     /*
      * Insert the replacement name entry. Capacity was reserved above and the old
@@ -4256,6 +4250,322 @@ size_t usersPreparedConfigPatchPeakBytes(const user_config_prepared_patch_t *pre
 {
     assert(prepared != NULL);
     return prepared->peak_bytes;
+}
+
+/* Fresh accounts own their strings and native locks throughout preparation.
+ * The enclosing object is aligned because user_t contains aligned hashes. */
+struct user_prepared_creation_s
+{
+    user_t user;
+    size_t owned_bytes, peak_bytes, string_bytes;
+};
+
+users_add_result_t usersPrepareNewUser(uint64_t id, const char *password, const user_config_patch_t *config,
+                                       size_t max_owned_bytes, uint64_t deadline_ms, user_prepared_creation_t **out)
+{
+    assert(password != NULL && out != NULL);
+    *out = NULL;
+    if (id == 0 || password[0] == '\0')
+        return kUsersAddResultInvalidArgument;
+    if (usersConfigDeadlineExpired(deadline_ms))
+        return kUsersAddResultTimeout;
+    /* userChangePassword's private credential staging and CIDR scratch remain
+     * charged alongside the aligned private user and owned password. */
+    const size_t base =
+        sizeof(user_prepared_creation_t) + 32U + sizeof(user_t) + kUsersConfigPreparationScratchBytes + 4U;
+    if (max_owned_bytes < base)
+        return kUsersAddResultResourceLimit;
+    size_t password_bytes;
+    if (! usersConfigStringBytes(password, max_owned_bytes - base, &password_bytes))
+        return kUsersAddResultResourceLimit;
+    size_t                        peak  = base + password_bytes;
+    user_config_prepared_patch_t *patch = NULL;
+    if (config != NULL && config->mask != 0U)
+    {
+        users_update_result_t result = usersPrepareConfigPatch(config, max_owned_bytes - peak, deadline_ms, &patch);
+        if (result != kUsersUpdateResultOk)
+        {
+            if (result == kUsersUpdateResultTimeout)
+                return kUsersAddResultTimeout;
+            if (result == kUsersUpdateResultResourceLimit || result == kUsersUpdateResultCapacityRejected)
+                return kUsersAddResultResourceLimit;
+            if (result == kUsersUpdateResultInvalidWireGuardAllowedIps)
+                return kUsersAddResultInvalidWireGuardAllowedIps;
+            return kUsersAddResultInvalidArgument;
+        }
+        peak += patch->peak_bytes;
+    }
+    if (usersConfigDeadlineExpired(deadline_ms))
+    {
+        usersFreePreparedConfigPatch(patch);
+        return kUsersAddResultTimeout;
+    }
+    user_prepared_creation_t *prepared = memoryAllocateAlignedZero(sizeof(*prepared), 32U);
+    if (! userCreate(&prepared->user, password))
+    {
+        usersFreePreparedConfigPatch(patch);
+        memoryFreeAligned(prepared);
+        return kUsersAddResultCreationFailed;
+    }
+    prepared->user.id = id;
+    if (patch != NULL)
+    {
+        usersApplyConfigValues(&prepared->user,
+                               &patch->update,
+                               &patch->name,
+                               &patch->email,
+                               &patch->notes,
+                               &patch->allowed_ips,
+                               &patch->patch);
+        usersFreePreparedConfigPatch(patch);
+    }
+    prepared->string_bytes = password_bytes + stringLength(prepared->user.name) + 1U +
+                             stringLength(prepared->user.email) + 1U + stringLength(prepared->user.notes) + 1U +
+                             stringLength(prepared->user.wireguard_allowed_ips) + 1U;
+    prepared->owned_bytes = sizeof(*prepared) + 32U + prepared->string_bytes;
+    prepared->peak_bytes  = max(peak, prepared->owned_bytes);
+    if (usersConfigDeadlineExpired(deadline_ms))
+    {
+        usersFreePreparedNewUser(prepared);
+        return kUsersAddResultTimeout;
+    }
+    *out = prepared;
+    return kUsersAddResultOk;
+}
+
+void usersFreePreparedNewUser(user_prepared_creation_t *prepared)
+{
+    if (prepared == NULL)
+        return;
+    userDestroy(&prepared->user);
+    memoryFreeAligned(prepared);
+}
+
+size_t usersPreparedNewUserOwnedBytes(const user_prepared_creation_t *prepared)
+{
+    assert(prepared != NULL);
+    return prepared->owned_bytes;
+}
+
+size_t usersPreparedNewUserPeakBytes(const user_prepared_creation_t *prepared)
+{
+    assert(prepared != NULL);
+    return prepared->peak_bytes;
+}
+
+static bool usersCreationCharge(size_t *charge, size_t extent, size_t allowance)
+{
+    if (*charge > allowance || extent > allowance - *charge)
+        return false;
+    *charge += extent;
+    return true;
+}
+
+/* All arithmetic and the aggregate allocation admission precede any reserve.
+ * Charge complete new extents, including aligned-allocation back pointers. */
+static bool usersCreationGrowthGeometry(const users_t *users, const user_prepared_creation_t *prepared,
+                                        size_t allowance, bool *name_growth)
+{
+    *name_growth = false;
+    if (users->count == SIZE_MAX || users->slot_count == SIZE_MAX)
+        return false;
+    size_t charge = 0;
+    if (! usersCreationCharge(&charge, prepared->string_bytes, allowance) ||
+        ! usersCreationCharge(&charge, sizeof(user_t) + kUsersConfigPreparationScratchBytes, allowance))
+        return false;
+    const size_t count = users->count + 1U;
+    if (count > users->capacity)
+    {
+        size_t capacity = users->capacity == 0 ? kUsersBlockSize : users->capacity;
+        while (capacity < count)
+        {
+            if (capacity > SIZE_MAX / 2U)
+                return false;
+            capacity *= 2U;
+        }
+        if (capacity > SIZE_MAX / sizeof(*users->items))
+            return false;
+        size_t bytes = capacity * sizeof(*users->items);
+        if (! memoryAlignedAllocationSizeIsRepresentable(bytes, 32U) ||
+            ! usersCreationCharge(&charge, bytes + 32U, allowance))
+            return false;
+    }
+    if (users->slot_count + 1U > users->slot_capacity)
+    {
+        if (users->slot_capacity > SIZE_MAX - kUsersBlockSize || users->block_count == SIZE_MAX)
+            return false;
+        if (users->block_count == users->block_capacity)
+        {
+            size_t capacity = users->block_capacity == 0 ? (32U + sizeof(*users->blocks) - 1U) / sizeof(*users->blocks)
+                                                         : users->block_capacity * 2U;
+            if (capacity < users->block_capacity || capacity > SIZE_MAX / sizeof(*users->blocks))
+                return false;
+            size_t bytes = capacity * sizeof(*users->blocks);
+            if (! memoryAlignedAllocationSizeIsRepresentable(bytes, 32U) ||
+                ! usersCreationCharge(&charge, bytes + 32U, allowance))
+                return false;
+        }
+        const size_t bytes = kUsersBlockSize * sizeof(user_t);
+        if (! memoryAlignedAllocationSizeIsRepresentable(bytes, 32U) ||
+            ! usersCreationCharge(&charge, bytes + 32U, allowance))
+            return false;
+    }
+    const size_t capacity = max(count, (size_t) kUsersInitialTableCapacity);
+#define USERS_CHARGE_HASH(field)                                                                                       \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        assert(users->field != NULL);                                                                                  \
+        size_t buckets, extent;                                                                                        \
+        if (! userIndexHashGrowthGeometry(capacity,                                                                    \
+                                          (size_t) users->field->map.bucket_count,                                     \
+                                          sizeof(*users->field->map.table),                                            \
+                                          sizeof(*users->field->map.meta),                                             \
+                                          &buckets,                                                                    \
+                                          &extent) ||                                                                  \
+            ! usersCreationCharge(&charge, extent, allowance))                                                         \
+            return false;                                                                                              \
+        if (users->field == (void *) users->name_table && extent != 0)                                                 \
+            *name_growth = true;                                                                                       \
+    } while (0)
+    USERS_CHARGE_HASH(sha224_table);
+    USERS_CHARGE_HASH(sha256_table);
+    USERS_CHARGE_HASH(uuid_table);
+    USERS_CHARGE_HASH(wireguard_publickey_table);
+    USERS_CHARGE_HASH(id_table);
+    USERS_CHARGE_HASH(name_table);
+    USERS_CHARGE_HASH(pointer_table);
+#undef USERS_CHARGE_HASH
+    if (prepared->user.wireguard_allowed_ips_valid)
+    {
+        size_t ranges = usersAllowedIpTableSize(users->allowed_ip_table), range_capacity, extent;
+        if (ranges == SIZE_MAX ||
+            ! usersAllowedIpTableGrowthGeometry(users->allowed_ip_table, ranges + 1U, &range_capacity, &extent) ||
+            ! usersCreationCharge(&charge, extent, allowance))
+            return false;
+        if (users->allowed_ip_table == NULL &&
+            ! usersCreationCharge(&charge, sizeof(*users->allowed_ip_table), allowance))
+            return false;
+    }
+    return true;
+}
+
+/* Rehash invokes uninterruptible native name hashing. Admit every old name's
+ * complete NUL-terminated byte work before that reserve, only when it grows. */
+static users_add_result_t usersCreationInspectNames(const users_t *users, size_t allowance, uint64_t deadline_ms)
+{
+    const users_name_map_t *map       = &users->name_table->map;
+    size_t                  remaining = allowance;
+    for (isize i = 0; i < map->bucket_count; ++i)
+    {
+        if ((i & 255) == 0 && usersConfigDeadlineExpired(deadline_ms))
+            return kUsersAddResultTimeout;
+        if (map->meta[i].dist == 0)
+            continue;
+        const char *name  = map->table[i].first.name;
+        size_t      bytes = 0;
+        for (;;)
+        {
+            if (remaining == 0)
+                return kUsersAddResultResourceLimit;
+            --remaining;
+            if (name[bytes++] == '\0')
+                break;
+            if ((bytes & 1023U) == 0U && usersConfigDeadlineExpired(deadline_ms))
+                return kUsersAddResultTimeout;
+        }
+    }
+    return usersConfigDeadlineExpired(deadline_ms) ? kUsersAddResultTimeout : kUsersAddResultOk;
+}
+
+users_add_result_t usersTryAddPreparedUser(users_t *users, user_prepared_creation_t *prepared, size_t max_growth_bytes,
+                                           uint64_t deadline_ms, users_config_precommit_fn precommit, void *context)
+{
+    assert(users != NULL && prepared != NULL && prepared->user.initialized);
+    if (usersConfigDeadlineExpired(deadline_ms))
+        return kUsersAddResultTimeout;
+    if (! rwlockTryWriteLock(&users->lock))
+        return kUsersAddResultBusy;
+    const user_t      *candidate = &prepared->user;
+    users_add_result_t result;
+    user_t            *slot = NULL;
+    /* Public creation prioritizes identity; legacy checked-add retains its own
+     * duplicate precedence through the indexed validator below. */
+    if (usersIDTableLookupLocked(users, candidate->id) != NULL)
+    {
+        result = kUsersAddResultDuplicateId;
+        goto unlock;
+    }
+    result = usersValidateNewUserIndexesLocked(users, candidate);
+    if (result != kUsersAddResultOk)
+        goto unlock;
+    bool name_growth;
+    if (! usersCreationGrowthGeometry(users, prepared, max_growth_bytes, &name_growth))
+    {
+        result = kUsersAddResultResourceLimit;
+        goto unlock;
+    }
+    if (name_growth)
+    {
+        result = usersCreationInspectNames(users, max_growth_bytes, deadline_ms);
+        if (result != kUsersAddResultOk)
+            goto unlock;
+    }
+#define USERS_CREATE_RESERVE(expression)                                                                               \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (usersConfigDeadlineExpired(deadline_ms))                                                                   \
+        {                                                                                                              \
+            result = kUsersAddResultTimeout;                                                                           \
+            goto unlock;                                                                                               \
+        }                                                                                                              \
+        if (! (expression))                                                                                            \
+        {                                                                                                              \
+            result = kUsersAddResultResourceLimit;                                                                     \
+            goto unlock;                                                                                               \
+        }                                                                                                              \
+        if (usersConfigDeadlineExpired(deadline_ms))                                                                   \
+        {                                                                                                              \
+            result = kUsersAddResultTimeout;                                                                           \
+            goto unlock;                                                                                               \
+        }                                                                                                              \
+    } while (0)
+    USERS_CREATE_RESERVE(usersReserveItemsLocked(users, users->count + 1U));
+    USERS_CREATE_RESERVE(usersReserveStorageLocked(users, users->slot_count + 1U));
+    USERS_CREATE_RESERVE(usersSHA224TableEnsureCapacity(users, users->count + 1U));
+    USERS_CREATE_RESERVE(usersSHA256TableEnsureCapacity(users, users->count + 1U));
+    USERS_CREATE_RESERVE(usersUUIDTableEnsureCapacity(users, users->count + 1U));
+    USERS_CREATE_RESERVE(usersWireGuardPublicKeyTableEnsureCapacity(users, users->count + 1U));
+    USERS_CREATE_RESERVE(usersIDTableEnsureCapacity(users, users->count + 1U));
+    USERS_CREATE_RESERVE(usersNameTableEnsureCapacity(users, users->count + 1U));
+    USERS_CREATE_RESERVE(usersPointerTableEnsureCapacity(users, users->count + 1U));
+    if (candidate->wireguard_allowed_ips_valid)
+        USERS_CREATE_RESERVE(usersAllowedIpTableEnsureOneMoreRange(users));
+#undef USERS_CREATE_RESERVE
+    slot = usersStorageAtLocked(users, users->slot_count);
+    if (! userCopy(slot, candidate))
+    {
+        result = kUsersAddResultCreationFailed;
+        slot   = NULL; /* userCopy owns cleanup of partial native initialization. */
+        goto unlock;
+    }
+    if (precommit != NULL && ! precommit(context))
+    {
+        result = kUsersAddResultPrecommitRejected;
+        goto unlock;
+    }
+    if (usersConfigDeadlineExpired(deadline_ms))
+    {
+        result = kUsersAddResultTimeout;
+        goto unlock;
+    }
+    usersCommitReservedUserLocked(users, slot);
+    slot   = NULL;
+    result = kUsersAddResultOk;
+unlock:
+    if (slot != NULL)
+        userDestroy(slot);
+    rwlockWriteUnlock(&users->lock);
+    return result;
 }
 
 static users_update_result_t usersApplyPreparedConfigByIdentifier(users_t *users, uint64_t id,

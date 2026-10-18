@@ -790,6 +790,168 @@ static void testApiProtocolPatchOrdering(void)
     teardown();
 }
 
+static cJSON *apiCreate(const char *request, const char *error)
+{
+    char  *before   = authTestPeerSnapshot(server);
+    cJSON *response = serverApi("create-user", request, error == NULL ? kApiResultOk : kApiResultError);
+    char  *after    = authTestPeerSnapshot(server);
+    if (error != NULL)
+    {
+        const cJSON *code =
+            cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(response, "error"), "code");
+        require(cJSON_IsString(code) && strcmp(code->valuestring, error) == 0 && strcmp(before, after) == 0,
+                "API creation refusal changed users, indexes, revisions or checkpoints");
+    }
+    else
+    {
+        cJSON       *old = cJSON_Parse(before), *current = cJSON_Parse(after);
+        const cJSON *old_users = cJSON_GetObjectItemCaseSensitive(old, "users");
+        const cJSON *new_users = cJSON_GetObjectItemCaseSensitive(current, "users");
+        require(jsonUnsigned(current, "config-revision") == jsonUnsigned(old, "config-revision") + 1 &&
+                    jsonUnsigned(response, "config_revision") == jsonUnsigned(current, "config-revision") &&
+                    jsonUnsigned(current, "stats-revision") == jsonUnsigned(old, "stats-revision") &&
+                    cJSON_GetArraySize(new_users) == cJSON_GetArraySize(old_users) + 1 &&
+                    cJSON_Compare(cJSON_GetObjectItemCaseSensitive(current, "checkpoints"),
+                                  cJSON_GetObjectItemCaseSensitive(old, "checkpoints"),
+                                  true),
+                "API creation changed accounting/checkpoints or did not publish exactly one account/revision");
+        const cJSON *previous;
+        cJSON_ArrayForEach(previous, old_users)
+        {
+            const cJSON *candidate;
+            bool         found = false;
+            cJSON_ArrayForEach(candidate, new_users)
+            {
+                if (jsonUnsigned(candidate, "id") == jsonUnsigned(previous, "id"))
+                {
+                    require(cJSON_Compare(previous, candidate, true), "API creation changed an existing account");
+                    found = true;
+                    break;
+                }
+            }
+            require(found, "API creation removed an existing account");
+        }
+        cJSON_Delete(old);
+        cJSON_Delete(current);
+    }
+    cJSON_free(before);
+    cJSON_free(after);
+    return response;
+}
+
+static void testApiProtocolCreationOrdering(void)
+{
+    setup(1);
+    user_update_t initial = {.mask = kUserUpdateName | kUserUpdateStats, .name = "original", .stats.traffic.u = 100};
+    authTestPeerSetUser(server, 42, &initial);
+    authTestPeerPermissions(server, 0, true, true);
+    start(0);
+    uint8_t token[64];
+    char    epoch[65], old_token[49];
+    authTestPeerCredentials(server, 0, token, epoch);
+    serverEditToken(old_token);
+    line_t *line = lineCreate(chain->line_pools, 0);
+    tunnelUpStreamInit(server, line);
+
+    const char first[] = "{\"id\":\"99\",\"password\":\"api-created-secret\",\"config\":{\"name\":\"created\"}}";
+    cJSON     *ack     = apiCreate(first, NULL);
+    require(jsonUnsigned(ack, "config_revision") == 2, "creation did not publish its own revision");
+    cJSON_Delete(ack);
+    cJSON_Delete(apiPatchWithToken(old_token, "{\"notes\":\"stale\"}", "conflict"));
+    cJSON_Delete(apiCreate(first, "id_exists"));
+    cJSON_Delete(apiCreate("{\"id\":\"100\",\"password\":\"api-created-secret\"}", "credentials_exist"));
+    char      *before      = authTestPeerSnapshot(server);
+    const char duplicate[] = "{\"id\":\"99\",\"password\":\"producer-replacement\"}";
+    rawRequest(line, token, kAuthenticationClientRequestTypeAddNewUser, duplicate, sizeof(duplicate) - 1);
+    char *after = authTestPeerSnapshot(server);
+    require(raw_response[0] == 255 && strcmp(raw_body[0], "user-id-exists") == 0 && strcmp(before, after) == 0,
+            "producer add replaced an API-created identity or changed revision/checkpoint");
+    cJSON_free(before);
+    cJSON_free(after);
+
+    expectPatch(line, token, "{\"id\":99,\"notes\":\"later producer edit\"}", true);
+    ack = apiCreate("{\"id\":\"100\",\"password\":\"second-created-secret\"}", NULL);
+    require(jsonUnsigned(ack, "config_revision") == 4,
+            "independent token-free creation did not follow the real producer edit");
+    cJSON_Delete(ack);
+    cJSON *created = authTestPeerUserJson(server, 99);
+    require(strcmp(cJSON_GetObjectItemCaseSensitive(created, "notes")->valuestring, "later producer edit") == 0,
+            "later independent creation erased a producer edit");
+    cJSON_Delete(created);
+
+    traffic(0, 10);
+    authenticationclientRequestPush(clients[0]);
+    const uint64_t first_use = authTestPeerFirstUse(server), sequence = authTestPeerSequence(server, 0);
+    ack = apiCreate("{\"id\":\"101\",\"password\":\"third-created-secret\"}", NULL);
+    require(jsonUnsigned(ack, "config_revision") == 5 && sequence == 1 && authTestPeerSequence(server, 0) == sequence &&
+                authTestPeerStats(server, 42).traffic.u == 110 && authTestPeerFirstUse(server) == first_use,
+            "stats-only work prevented creation or creation changed producer accounting");
+    cJSON_Delete(ack);
+    tunnelUpStreamFin(server, line);
+    lineDestroy(line);
+    teardown();
+}
+
+static void testApiCreationDuringOfflineCatchup(void)
+{
+    setup(1);
+    user_update_t initial = {
+        .mask = kUserUpdateStats | kUserUpdateTimeInfo, .stats.traffic.u = 100, .timeinfo.created_at_ms = 123};
+    authTestPeerSetUser(server, 42, &initial);
+    start(0);
+    user_ip_key_t ip = {.type = 4, .bytes = {192, 0, 2, 1}};
+    require(usersTryAdmitConnectionByIdentifier(state(0)->users, 42, &ip, getTimeOfDayMS()) == kUserAdmissionOk,
+            "creation refresh reservation setup failed");
+    traffic(0, 10);
+    user_t        *existing = usersLookupByIdentifier(state(0)->users, 42);
+    const uint64_t origin   = existing->client_time.first_report_ms;
+    drop_ack                = 1;
+    authenticationclientRequestPush(clients[0]);
+    const uint64_t first_use = authTestPeerFirstUse(server);
+    require(! authenticationclientIsReady(clients[0]) && state(0)->pending_batch != NULL &&
+                authTestPeerStats(server, 42).traffic.u == 110,
+            "creation lost-ACK/offline setup failed");
+    cJSON_Delete(apiCreate("{\"id\":\"99\",\"password\":\" account-api-created \"}", NULL));
+    user_handle_t handle = {0};
+    require(usersLookupByIdentifier(state(0)->users, 99) == NULL &&
+                ! authenticationclientGetUserByPassword(clients[0], " account-api-created ", &handle) &&
+                ! userHandleIsValid(&handle) && state(0)->pending_batch != NULL && local(0, false) == 110,
+            "offline client admitted an unknown account or creation settled its pending debt");
+    traffic(0, 7);
+    pump(10);
+    pump(1);
+    pump(1);
+    require(state(0)->pending_batch == NULL && state(0)->catchup_entries_count == 0 && local(0, true) == 117 &&
+                local(0, false) == 117 && authTestPeerStats(server, 42).traffic.u == 117 &&
+                authTestPeerSequence(server, 0) == 2 && authTestPeerFirstUse(server) == first_use,
+            "creation refresh lost pending/offline traffic or replayed it twice");
+    require(authenticationclientGetUserByPassword(clients[0], " account-api-created ", &handle) &&
+                handle.user_id == 99 &&
+                ! authenticationclientGetUserByPassword(clients[0], "account-api-created", &handle),
+            "normal refresh omitted new credentials or normalized their exact bytes");
+    user_t *fresh = usersLookupByIdentifier(state(0)->users, 99);
+    require(fresh != NULL && fresh->timeinfo.first_usage_at_ms == 0 && fresh->stats.traffic.u == 0 &&
+                fresh->stats.traffic.d == 0 && fresh->runtime.active_cons_out == 0,
+            "creation/read/synchronization counted as fresh-account traffic");
+    existing = usersLookupByIdentifier(state(0)->users, 42);
+    require(existing->runtime.active_cons_out == 1 && existing->runtime.ip_usage_count == 1 &&
+                existing->timeinfo.created_at_ms == 123 && existing->client_time.first_report_ms == origin &&
+                existing->client_time.observation_acked,
+            "creation refresh lost existing runtime reservation, metadata or accounting observation");
+    usersReleaseConnectionByIdentifier(state(0)->users, 42, &ip);
+
+    cJSON_Delete(apiCreate("{\"id\":\"100\",\"password\":\"connected-api-created\"}", NULL));
+    require(usersLookupByIdentifier(state(0)->users, 100) == NULL,
+            "API acknowledgement implied immediate client refresh");
+    authenticationclientRequestPull(clients[0]);
+    require(authenticationclientGetUserByPassword(clients[0], "connected-api-created", &handle) &&
+                handle.user_id == 100 &&
+                usersLookupByIdentifier(state(0)->users, 100)->timeinfo.first_usage_at_ms == 0 &&
+                authTestPeerStats(server, 42).traffic.u == 117 && local(0, false) == 117,
+            "connected ordinary refresh omitted creation or changed existing/new accounting");
+    teardown();
+}
+
 static void testConfigRevisionExhaustion(void)
 {
     for (unsigned api_last = 0; api_last < 2; ++api_last)
@@ -2174,6 +2336,8 @@ int main(void)
     testStaleFullObjectRejected();
     testConfigPatches();
     testApiProtocolPatchOrdering();
+    testApiProtocolCreationOrdering();
+    testApiCreationDuringOfflineCatchup();
     testConfigRevisionExhaustion();
     testApiEditDuringOfflineCatchup();
     testEditDuringAccounting();

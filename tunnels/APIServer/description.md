@@ -1,11 +1,11 @@
 <!--
-Documentation version: 3
+Documentation version: 4
 Sync note: Keep synchronized with tunnels/APIServer/description.md and the Persian node reference.
 -->
 
 # APIServer
 
-`APIServer` exposes explicitly registered node operations over a reliable byte stream. It is a terminal node and opens no socket itself. Registered read-only operations include `AuthenticationClient.status` and `AuthenticationServer.status`, `get-user` and `list-users`; `AuthenticationServer.update-user` is an explicitly authorized conditional write. Access uses independent static operator credentials and exact per-operation permissions.
+`APIServer` exposes explicitly registered node operations over a reliable byte stream. It is a terminal node and opens no socket itself. Registered read-only operations include `AuthenticationClient.status` and `AuthenticationServer.status`, `get-user` and `list-users`; `AuthenticationServer.update-user` is a conditional write and `create-user` creates a fresh account; both require their own explicit permissions. Access uses independent static operator credentials and exact per-operation permissions.
 
 ## Placement
 
@@ -48,6 +48,13 @@ This example belongs to a configuration whose top-level logical `name` is `edge-
         "token": "<different 64 hexadecimal characters representing 32 random bytes>",
         "allow": [
           {"config": "central", "node": "auth-db", "operations": ["get-user", "update-user"]}
+        ]
+      },
+      {
+        "name": "creator",
+        "token": "<another distinct 64 hexadecimal characters representing 32 random bytes>",
+        "allow": [
+          {"config": "central", "node": "auth-db", "operations": ["get-user", "create-user"]}
         ]
       }
     ]
@@ -125,7 +132,7 @@ Successful dispatch, including a node-level error, returns:
 }
 ```
 
-The `body` above is illustrative; see [AuthenticationClient](AuthenticationClient.mdx) for its status snapshot and [AuthenticationServer](AuthenticationServer.mdx#management-api) for the server read views and conditional edit schema. Server `status` takes exactly `{}`, `get-user` takes `{"id":"42"}`, and `list-users` takes `{}` or `{"limit":50,"cursor":"<returned opaque cursor>"}`. Unsigned 64-bit values use decimal JSON strings. Every server read includes an opaque `edit_token`; `update-user` requires it as `if_match`. Server configuration changes invalidate both old edit tokens and list cursors; statistics-only changes allow continuation with newer totals. `result.code` preserves the node handler's success/error meaning. An empty handler result is an empty body with its declared content type and encoding.
+The `body` above is illustrative; see [AuthenticationClient](AuthenticationClient.mdx) for its status snapshot and [AuthenticationServer](AuthenticationServer.mdx#management-api) for server reads, conditional edits and account creation. Server `status` takes exactly `{}`, `get-user` takes `{"id":"42"}`, and `list-users` takes `{}` or `{"limit":50,"cursor":"<returned opaque cursor>"}`. Unsigned 64-bit values use decimal JSON strings. Every server read includes an opaque `edit_token`; `update-user` requires it as `if_match`. `create-user` takes a caller-supplied nonzero decimal-string `id`, nonempty `password` and optional `config`, without an edit-token precondition. Creation permission is independent of update permission. Server configuration changes invalidate both old edit tokens and list cursors; statistics-only changes allow continuation with newer totals. `result.code` preserves the node handler's success/error meaning. An empty handler result is an empty body with its declared content type and encoding.
 
 A gateway failure returns `result: null`:
 
@@ -232,6 +239,39 @@ choosing another patch, comparing normalized values where appropriate. Never
 automatically obtain a fresh token and replay the old patch. The example client
 prints conflict/outcome guidance and makes no automatic write retries; request
 IDs do not deduplicate mutations.
+
+To provision an account, separately allow `create-user` and usually `get-user`
+for a creator. Store the request in a private UTF-8 file `create.json`:
+
+```json
+{"id":"43","password":"example-only-secret","config":{"name":"alice","enabled":false}}
+```
+
+The caller supplies a permanent unique numeric ID and the initial password; no
+edit token is required. An omitted or empty `config` creates an enabled account
+with zero unlimited/unset policy limits and expiry, so send `enabled:false` for
+staging. Send the private body through the existing generic client once:
+
+```bash
+python3 examples/api_client.py --host 127.0.0.1 --port 9080 \
+  --client creator --token-file /private/path/creator-token \
+  --config central --node auth-db --operation create-user \
+  --body-file /private/path/create.json
+```
+
+The compact success body contains `id`, committed `config_revision` and
+`edit_token`, and acknowledges server memory only. Periodic/final persistence and
+client synchronization continue separately. An existing ID returns `id_exists`
+without replacement or a successful replay. A returned node-operation failure
+publishes no account; a lost reply or post-dispatch gateway timeout leaves the
+outcome unknown. Retain the original ID and inputs, then use `get-user` for that
+ID. Public configuration confirms existence, but cannot prove who created it or
+that its redacted password matches. If absent, explicitly decide whether to
+retry the same ID and inputs while the original may still run. Never choose a
+new ID automatically, overwrite an account, reset its credentials or treat
+`id_exists` as proof of your earlier success. The generic client does not retry;
+outer request IDs only correlate replies. Producer credentials and
+`allow-user-write` grant no gateway creation permission.
 
 ## Lifecycle And Metadata
 

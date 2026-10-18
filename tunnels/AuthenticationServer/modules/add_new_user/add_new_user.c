@@ -32,6 +32,14 @@ static const char *authenticationserverUsersAddResultError(users_add_result_t re
         return "user-wireguard-allowed-ips-overlap";
     case kUsersAddResultStorageUnavailable:
         return "storage-unavailable";
+    /* Bounded API-only refusals are unreachable through this blocking producer
+     * path. Keep its existing generic diagnostic if that contract changes. */
+    case kUsersAddResultBusy:
+    case kUsersAddResultResourceLimit:
+    case kUsersAddResultTimeout:
+    case kUsersAddResultPrecommitRejected:
+    case kUsersAddResultCreationFailed:
+        return "user-add-failed";
     }
 
     return "user-add-failed";

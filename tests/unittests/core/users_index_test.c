@@ -37,7 +37,40 @@
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
+#if defined(WW_SYNC_INIT_TEST_SEAM)
+static atomic_size_t g_native_init_calls, g_native_init_failure, g_native_resources;
+bool                 wSyncInitTestShouldFail(void)
+{
+    size_t call = atomic_fetch_add(&g_native_init_calls, 1U) + 1U;
+    return atomic_load(&g_native_init_failure) == call;
+}
+void wSyncInitTestResourceAcquired(void)
+{
+    atomic_fetch_add(&g_native_resources, 1U);
+}
+void wSyncInitTestResourceDestroyed(void)
+{
+    atomic_fetch_sub(&g_native_resources, 1U);
+}
+#endif
+
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
+/* Deterministic monotonic cutoffs exercise pre-publication stages without
+ * sleeping or changing the deadline contract in production. */
+static uint64_t g_creation_clock_us;
+static unsigned g_creation_clock_reads, g_creation_clock_expire_at;
+uint64_t        __real_getHRTimeUs(void);
+uint64_t        __wrap_getHRTimeUs(void);
+uint64_t        __wrap_getHRTimeUs(void)
+{
+    if (g_creation_clock_us == 0)
+        return __real_getHRTimeUs();
+    ++g_creation_clock_reads;
+    if (g_creation_clock_expire_at != 0 && g_creation_clock_reads >= g_creation_clock_expire_at)
+        return g_creation_clock_us + UINT64_C(1000000);
+    return g_creation_clock_us;
+}
+
 static size_t g_sha224_calls;
 static size_t g_sha256_calls;
 static size_t g_x25519_calls;
@@ -1045,6 +1078,18 @@ static void testIndexGeometryRejection(void)
     require(! userIndexHashCapacityIsRepresentable((size_t) PTRDIFF_MAX / 40U, 40, 2),
             "hash bucket rounding was omitted from the storage bound");
 
+    size_t buckets, extent;
+    require(userIndexHashGrowthGeometry(16, 0, 40, 2, &buckets, &extent) && buckets == 32 &&
+                extent == 32U * 40U + 33U * 2U,
+            "initial hash extent omitted value or metadata array");
+    require(userIndexHashGrowthGeometry(25, 32, 40, 2, &buckets, &extent) && buckets == 32 && extent == 0,
+            "hash geometry ignored STC's reserved-capacity early exit");
+    require(userIndexHashGrowthGeometry(26, 32, 40, 2, &buckets, &extent) && buckets == 64 &&
+                extent == 64U * 40U + 65U * 2U,
+            "hash growth geometry charged net bytes or omitted bucket rounding");
+    require(! userIndexHashGrowthGeometry(SIZE_MAX, 32, 40, 2, &buckets, &extent),
+            "unrepresentable hash growth extent accepted");
+
     users_t users;
     require(usersCreate(&users), "failed to create capacity-refusal fixture");
     require(! usersReserve(&users, SIZE_MAX), "unrepresentable user storage was accepted");
@@ -1415,6 +1460,393 @@ static void testPreparedAllowedIpGrowthBounds(void)
     usersDestroy(&users);
 }
 
+static user_prepared_creation_t *prepareNew(uint64_t id, const char *password, const user_config_patch_t *config)
+{
+    user_prepared_creation_t *prepared = NULL;
+    require(usersPrepareNewUser(id, password, config, 128U * 1024U, 0, &prepared) == kUsersAddResultOk && prepared,
+            "fresh-account preparation failed");
+    require(usersPreparedNewUserOwnedBytes(prepared) <= usersPreparedNewUserPeakBytes(prepared),
+            "fresh-account accounting omitted retained storage");
+    return prepared;
+}
+
+static bool createPrecommitCountAllocations(void *context)
+{
+    ++*(unsigned *) context;
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    allocationCountBegin();
+#endif
+    return true;
+}
+
+static void testPreparedCreationDefaultsAndIndexes(void)
+{
+    users_t users;
+    require(usersCreate(&users), "fresh-account table failed");
+    user_prepared_creation_t *prepared  = prepareNew(UINT64_MAX, "new-default-password", NULL);
+    const uint64_t            before    = getTimeOfDayMS();
+    unsigned                  callbacks = 0;
+    resetCounters();
+    require(usersTryAddPreparedUser(&users, prepared, 128U * 1024U, 0, createPrecommitCountAllocations, &callbacks) ==
+                    kUsersAddResultOk &&
+                callbacks == 1,
+            "fresh-account insertion failed");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    require(allocationCountEnd() == 0, "reserved fresh-account publication allocated");
+#endif
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+    require(g_sha224_calls == 0 && g_sha256_calls == 0 && g_x25519_calls == 0,
+            "creation repeated credential derivation under collection ownership");
+#endif
+    usersFreePreparedNewUser(prepared);
+    user_t *user = usersLookupByIdentifier(&users, UINT64_MAX);
+    require(user && ((uintptr_t) user % 32U == 0U) && user->enabled && user->gid == 0 &&
+                user->record_stat_interval_ms == USER_DEFAULT_RECORD_STAT_INTERVAL_MS && user->name[0] == 0 &&
+                user->email[0] == 0 && user->notes[0] == 0 && user->wireguard_allowed_ips[0] == 0 &&
+                user->timeinfo.created_at_ms <= before && user->timeinfo.created_at_ms != 0 &&
+                user->timeinfo.first_usage_at_ms == 0 && user->timeinfo.expire_at_ms == 0 &&
+                user->stats.traffic.u == 0 && user->stats.traffic.d == 0 && user->runtime.active_cons_out == 0 &&
+                user->runtime.ip_usage_count == 0 && ! user->client_time.clock_valid && ! user->uuid_pass_valid,
+            "fresh-account defaults or alignment changed");
+    require(usersLookupByPassword(&users, "new-default-password") == user &&
+                usersLookupBySHA224(&users, user->sha224_pass.bytes) == user &&
+                usersLookupBySHA256(&users, user->sha256_pass.bytes) == user &&
+                usersLookupByWireGuardPublicKey(&users, user->wireguard_publickey) == user && usersValidate(&users),
+            "fresh-account credential indexes incomplete");
+    char name[] = "initial-name", email[] = "initial-email", notes[] = "initial-notes", range[] = "10.190.7.81/24";
+    user_config_patch_t config = {
+        .mask                    = (1U << 18U) - 1U,
+        .name                    = name,
+        .email                   = email,
+        .notes                   = notes,
+        .wireguard_allowed_ips   = range,
+        .gid                     = UINT64_MAX,
+        .enabled                 = false,
+        .record_stat_interval_ms = INT_MAX,
+        .limit = {.traffic = {1, 2, 3}, .bandwidth = {4, 5}, .ips = 6, .devices = 7, .cons_in = 8, .cons_out = 9},
+        .expire_at_ms                = 10,
+        .expire_after_first_usage_ms = 11};
+    prepared = prepareNew(2, "00112233-4455-6677-8899-aabbccddeeff", &config);
+    memoryZero(name, sizeof(name));
+    memoryZero(email, sizeof(email));
+    memoryZero(notes, sizeof(notes));
+    memoryZero(range, sizeof(range));
+    require(usersTryAddPreparedUser(&users, prepared, 128U * 1024U, 0, NULL, NULL) == kUsersAddResultOk,
+            "configured fresh-account insertion failed");
+    usersFreePreparedNewUser(prepared);
+    user_t   *configured = usersLookupByIdentifier(&users, 2);
+    ip_addr_t address    = parseIp("10.190.7.250");
+    require(configured && ! configured->enabled && configured->gid == UINT64_MAX &&
+                configured->record_stat_interval_ms == INT_MAX &&
+                stringCompare(configured->name, "initial-name") == 0 &&
+                stringCompare(configured->email, "initial-email") == 0 &&
+                stringCompare(configured->notes, "initial-notes") == 0 &&
+                stringCompare(configured->wireguard_allowed_ips, "10.190.7.0/24") == 0 &&
+                memoryCompare(&configured->limit, &config.limit, sizeof(config.limit)) == 0 &&
+                configured->timeinfo.expire_at_ms == 10 && configured->timeinfo.expire_after_first_usage_ms == 11 &&
+                configured->timeinfo.first_usage_at_ms == 0 && configured->uuid_pass_valid &&
+                usersLookupByUUID(&users, configured->uuid_pass) == configured &&
+                usersLookupByWireGuardAllowedIp(&users, &address) == configured &&
+                usersLookupByIdentifier(&users, UINT64_MAX) == user && usersValidate(&users),
+            "configured initial state, ownership, indexes or existing pointers changed");
+    usersDestroy(&users);
+}
+
+static void testPreparedCreationRefusals(void)
+{
+    users_t users;
+    require(usersCreate(&users), "creation-refusal table failed");
+    user_t *existing =
+        addNamedAllowedIpUser(&users, 1, "00112233-4455-6677-8899-aabbccddeeff", "occupied", "10.191.0.0/24");
+    userAddTraffic(existing, 23, 41);
+    user_config_patch_t       name     = {.mask = kUserConfigName, .name = "occupied"};
+    user_prepared_creation_t *prepared = prepareNew(1, "00112233-4455-6677-8899-aabbccddeeff", &name);
+    require(usersTryAddPreparedUser(&users, prepared, SIZE_MAX, 0, NULL, NULL) == kUsersAddResultDuplicateId,
+            "public fresh-account duplicate ID did not win");
+    usersFreePreparedNewUser(prepared);
+    user_t legacy;
+    require(userCreate(&legacy, "00112233-4455-6677-8899-aabbccddeeff"), "legacy duplicate construction failed");
+    userSetId(&legacy, 1);
+    user_update_t update = {.mask = kUserUpdateName, .name = "occupied"};
+    users_t       isolated;
+    require(usersCreate(&isolated) && usersAddUser(&isolated, &legacy), "legacy-name setup failed");
+    require(usersUpdateUser(&isolated, usersGetAt(&isolated, 0), &update), "legacy-name setup update failed");
+    userDestroy(&legacy);
+    require(userCopy(&legacy, usersGetAt(&isolated, 0)), "legacy duplicate copy failed");
+    require(usersAddUserChecked(&users, &legacy) == kUsersAddResultDuplicateName,
+            "legacy checked-add duplicate precedence changed");
+    userDestroy(&legacy);
+    usersDestroy(&isolated);
+    prepared = prepareNew(2, "unique-created-password", &name);
+    require(usersTryAddPreparedUser(&users, prepared, SIZE_MAX, 0, NULL, NULL) == kUsersAddResultDuplicateName,
+            "creation duplicate name accepted");
+    usersFreePreparedNewUser(prepared);
+    prepared = prepareNew(2, "00112233-4455-6677-8899-aabbccddeeff", NULL);
+    require(usersTryAddPreparedUser(&users, prepared, SIZE_MAX, 0, NULL, NULL) == kUsersAddResultDuplicateSHA224,
+            "creation duplicate credential accepted");
+    usersFreePreparedNewUser(prepared);
+    prepared = prepareNew(2, "00112233-4455-6677-8899-AABBCCDDEEFF", NULL);
+    require(usersTryAddPreparedUser(&users, prepared, SIZE_MAX, 0, NULL, NULL) == kUsersAddResultDuplicateUUID,
+            "different password spelling with duplicate UUID identity accepted");
+    usersFreePreparedNewUser(prepared);
+    user_config_patch_t overlap = {.mask = kUserConfigWireGuardAllowedIps, .wireguard_allowed_ips = "10.191.0.5/32"};
+    prepared                    = prepareNew(2, "unique-created-password", &overlap);
+    require(usersTryAddPreparedUser(&users, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                kUsersAddResultDuplicateWireGuardAllowedIps,
+            "creation overlapping range accepted");
+    usersFreePreparedNewUser(prepared);
+    prepared = prepareNew(2, "unique-created-password", NULL);
+    require(usersTryAddPreparedUser(&users, prepared, 0, 0, NULL, NULL) == kUsersAddResultResourceLimit,
+            "creation skipped unpublished-slot aggregate charge");
+    require(usersTryAddPreparedUser(&users, prepared, SIZE_MAX, 1, NULL, NULL) == kUsersAddResultTimeout,
+            "expired creation committed");
+    config_lock_holder_t holder;
+    configHoldStart(&holder, &users.lock);
+    require(usersTryAddPreparedUser(&users, prepared, SIZE_MAX, 0, NULL, NULL) == kUsersAddResultBusy,
+            "creation waited for collection ownership");
+    configHoldFinish(&holder);
+    unsigned callbacks = 0;
+    require(usersTryAddPreparedUser(&users, prepared, SIZE_MAX, 0, configPrecommitRefuse, &callbacks) ==
+                    kUsersAddResultPrecommitRejected &&
+                callbacks == 1 && usersCount(&users) == 1 && usersValidate(&users),
+            "precommit refusal published an account");
+    /* No existing account lock is part of new-user publication. */
+    configHoldStart(&holder, &existing->lock);
+    require(usersTryAddPreparedUser(&users, prepared, SIZE_MAX, 0, NULL, NULL) == kUsersAddResultOk,
+            "creation acquired an existing account configuration lock");
+    configHoldFinish(&holder);
+    require(usersTryAddPreparedUser(&users, prepared, SIZE_MAX, 0, NULL, NULL) == kUsersAddResultDuplicateId,
+            "repeated creation was treated as successful replay");
+    usersFreePreparedNewUser(prepared);
+    require(existing->stats.traffic.u == 23 && existing->stats.traffic.d == 41 && usersValidate(&users),
+            "creation refusals changed existing usage");
+    usersDestroy(&users);
+}
+
+static void testPreparedCreationGrowthAndNameWork(void)
+{
+    user_prepared_creation_t *prepared = prepareNew(1, "growth-created-password", NULL);
+    size_t                    lower = 0, upper = 128U * 1024U;
+    /* Fresh databases keep refusal capacity outside the next trial. */
+    while (lower < upper)
+    {
+        size_t  budget = lower + (upper - lower) / 2U;
+        users_t trial;
+        require(usersCreate(&trial), "growth boundary table failed");
+        unsigned           calls  = 0;
+        users_add_result_t result = usersTryAddPreparedUser(&trial, prepared, budget, 0, configPrecommitRefuse, &calls);
+        require(result == kUsersAddResultResourceLimit || result == kUsersAddResultPrecommitRejected,
+                "growth admission returned unexpected result");
+        require(usersCount(&trial) == 0 && trial.slot_count == 0 && usersValidate(&trial),
+                "growth-boundary refusal consumed a stable slot");
+        usersDestroy(&trial);
+        if (result == kUsersAddResultResourceLimit)
+            lower = budget + 1U;
+        else
+            upper = budget;
+    }
+    require(lower > sizeof(user_t) * 64U, "aggregate creation budget omitted capacity arrays or copy scratch");
+    users_t users;
+    require(usersCreate(&users), "exact growth table failed");
+    require(usersTryAddPreparedUser(&users, prepared, lower - 1U, 0, NULL, NULL) == kUsersAddResultResourceLimit &&
+                usersTryAddPreparedUser(&users, prepared, lower, 0, NULL, NULL) == kUsersAddResultOk,
+            "exact aggregate creation budget boundary failed");
+    usersFreePreparedNewUser(prepared);
+    user_t *first = usersGetAt(&users, 0);
+    /* Cross active pointers, block pointers, multiple fixed storage blocks,
+     * complete hash extents and the Allowed-IP node array. */
+    for (uint64_t id = 2; id <= 257; ++id)
+    {
+        char password[40], range[40];
+        snprintf(password, sizeof(password), "growth-created-%" PRIu64, id);
+        snprintf(range, sizeof(range), "10.192.%u.%u/32", (unsigned) (id / 256U), (unsigned) (id % 256U));
+        user_config_patch_t initial = {.mask = kUserConfigWireGuardAllowedIps, .wireguard_allowed_ips = range};
+        prepared                    = prepareNew(id, password, &initial);
+        require(usersTryAddPreparedUser(&users, prepared, 256U * 1024U, 0, NULL, NULL) == kUsersAddResultOk,
+                "multi-structure creation growth failed");
+        usersFreePreparedNewUser(prepared);
+    }
+    require(usersLookupByIdentifier(&users, 1) == first && usersValidate(&users),
+            "creation growth moved published accounts");
+    user_config_patch_t           rename = {.mask = kUserConfigName, .name = "named-after-unnamed-growth"};
+    user_config_prepared_patch_t *patch  = prepareConfig(&rename);
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 65, patch, 0, 0, NULL, NULL) == kUsersUpdateResultOk,
+            "unnamed creations failed to reserve later name insertion");
+    usersFreePreparedConfigPatch(patch);
+    usersDestroy(&users);
+    require(usersCreate(&users), "name-work table failed");
+    char *huge = memoryAllocate(256U * 1024U + 1U);
+    memset(huge, 'n', 256U * 1024U);
+    huge[256U * 1024U] = 0;
+    addNamedUser(&users, 1, "name-work-large", huge);
+    memoryFree(huge);
+    for (uint64_t id = 2; id <= 24; ++id)
+    {
+        char password[40];
+        snprintf(password, sizeof(password), "name-work-%" PRIu64, id);
+        addUser(&users, id, password);
+    }
+    prepared = prepareNew(25, "name-work-spare", NULL);
+    require(usersTryAddPreparedUser(&users, prepared, 128U * 1024U, 0, NULL, NULL) == kUsersAddResultOk,
+            "spare name capacity unnecessarily scanned legacy names");
+    usersFreePreparedNewUser(prepared);
+    prepared = prepareNew(26, "name-work-needs-rehash", NULL);
+    require(usersTryAddPreparedUser(&users, prepared, 128U * 1024U, 0, NULL, NULL) == kUsersAddResultResourceLimit &&
+                usersCount(&users) == 25 && usersValidate(&users),
+            "name rehash escaped cumulative stored-name work bound");
+    require(usersTryAddPreparedUser(&users, prepared, 512U * 1024U, 0, NULL, NULL) == kUsersAddResultOk,
+            "admitted cumulative name rehash failed");
+    usersFreePreparedNewUser(prepared);
+    usersDestroy(&users);
+}
+
+#if defined(WCRYPTO_TEST_LINKER_WRAP) && defined(USERS_TEST_ALLOC_COUNTING)
+static bool creationExpireAtPrecommit(void *context)
+{
+    ++*(unsigned *) context;
+    g_creation_clock_expire_at = g_creation_clock_reads + 1U;
+    return true;
+}
+
+static void creationClockStart(unsigned expire_at)
+{
+    g_creation_clock_us        = UINT64_C(1000000);
+    g_creation_clock_reads     = 0;
+    g_creation_clock_expire_at = expire_at;
+}
+
+static void creationClockStop(void)
+{
+    g_creation_clock_us        = 0;
+    g_creation_clock_expire_at = 0;
+}
+
+static void testPreparedCreationDeadlines(void)
+{
+    users_t users;
+    require(usersCreate(&users), "deadline creation table failed");
+    user_prepared_creation_t *prepared  = prepareNew(1, "deadline-created-password", NULL);
+    unsigned                  callbacks = 0;
+    /* Entry, pre-items reserve, then post-items reserve. The new pointer
+     * extent remains private, while no stable slot has even been reserved. */
+    creationClockStart(3);
+    users_add_result_t result =
+        usersTryAddPreparedUser(&users, prepared, 128U * 1024U, 1500, createPrecommitCountAllocations, &callbacks);
+    creationClockStop();
+    require(result == kUsersAddResultTimeout && callbacks == 0 && g_creation_clock_reads == 3 && users.capacity == 64 &&
+                users.slot_capacity == 0 && usersCount(&users) == 0 && users.slot_count == 0 && usersValidate(&users),
+            "post-reserve expiry published data or skipped admitted private growth");
+    /* Every reserve and the initialized unpublished-slot copy has completed.
+     * The callback advances only the next clock read, the final commit check. */
+    creationClockStart(0);
+    result = usersTryAddPreparedUser(&users, prepared, 128U * 1024U, 1500, creationExpireAtPrecommit, &callbacks);
+    creationClockStop();
+    require(result == kUsersAddResultTimeout && callbacks == 1 && usersCount(&users) == 0 && users.slot_count == 0 &&
+                users.slot_capacity == 64 && usersValidate(&users),
+            "immediate precommit expiry retained an unpublished account or slot");
+    require(usersTryAddPreparedUser(&users, prepared, 128U * 1024U, 0, NULL, NULL) == kUsersAddResultOk &&
+                usersCount(&users) == 1 && users.slot_count == 1 && usersValidate(&users),
+            "deadline-refused unpublished slot was not reusable");
+    usersFreePreparedNewUser(prepared);
+    usersDestroy(&users);
+
+    require(usersCreate(&users), "name-scan deadline table failed");
+    char *name = memoryAllocate(4097);
+    memset(name, 'n', 4096);
+    name[4096] = '\0';
+    addNamedUser(&users, 1, "deadline-long-name", name);
+    memoryFree(name);
+    for (uint64_t id = 2; id <= 25; ++id)
+    {
+        char password[40];
+        snprintf(password, sizeof(password), "deadline-name-%" PRIu64, id);
+        addUser(&users, id, password);
+    }
+    prepared  = prepareNew(26, "deadline-name-growth", NULL);
+    callbacks = 0;
+    /* Entry, first metadata bucket, then the first 1024-byte name chunk.
+     * Name growth is mandatory at 26 active users with the initial 32 buckets. */
+    creationClockStart(3);
+    allocationCountBegin();
+    result = usersTryAddPreparedUser(&users, prepared, 128U * 1024U, 1500, createPrecommitCountAllocations, &callbacks);
+    size_t allocations = allocationCountEnd();
+    creationClockStop();
+    require(result == kUsersAddResultTimeout && g_creation_clock_reads == 3 && allocations == 0 && callbacks == 0 &&
+                usersCount(&users) == 25 && users.slot_count == 25 && usersValidate(&users),
+            "stored-name chunk expiry did not refuse before rehash or changed active data");
+    require(usersTryAddPreparedUser(&users, prepared, 128U * 1024U, 0, NULL, NULL) == kUsersAddResultOk &&
+                usersValidate(&users),
+            "name-scan timeout prevented a later admitted creation");
+    usersFreePreparedNewUser(prepared);
+    usersDestroy(&users);
+}
+#endif
+
+static void testPreparedCreationFailureCleanup(void)
+{
+    user_prepared_creation_t *prepared = (void *) 1;
+    require(usersPrepareNewUser(0, "valid", NULL, SIZE_MAX, 0, &prepared) == kUsersAddResultInvalidArgument &&
+                ! prepared,
+            "zero fresh account ID accepted");
+    require(usersPrepareNewUser(1, "", NULL, SIZE_MAX, 0, &prepared) == kUsersAddResultInvalidArgument && ! prepared,
+            "empty fresh account password accepted");
+    require(usersPrepareNewUser(1, "valid", NULL, SIZE_MAX, 1, &prepared) == kUsersAddResultTimeout && ! prepared,
+            "expired fresh preparation accepted");
+    prepared    = prepareNew(1, "prepare-boundary", NULL);
+    size_t peak = usersPreparedNewUserPeakBytes(prepared);
+    usersFreePreparedNewUser(prepared);
+    require(usersPrepareNewUser(1, "prepare-boundary", NULL, peak - 1U, 0, &prepared) == kUsersAddResultResourceLimit &&
+                ! prepared && usersPrepareNewUser(1, "prepare-boundary", NULL, peak, 0, &prepared) == kUsersAddResultOk,
+            "fresh preparation peak admission boundary incorrect");
+    usersFreePreparedNewUser(prepared);
+#if defined(WW_SYNC_INIT_TEST_SEAM)
+    size_t resources = atomic_load(&g_native_resources);
+    for (size_t stage = 1; stage <= 2; ++stage)
+    {
+        atomic_store(&g_native_init_failure, atomic_load(&g_native_init_calls) + stage);
+        require(usersPrepareNewUser(1, "native-failed", NULL, SIZE_MAX, 0, &prepared) ==
+                        kUsersAddResultCreationFailed &&
+                    ! prepared && atomic_load(&g_native_resources) == resources,
+                "private native-init failure leaked resources");
+        atomic_store(&g_native_init_failure, 0);
+    }
+    users_t users;
+    require(usersCreate(&users), "native failure table failed");
+    prepared  = prepareNew(1, "native-slot-failed", NULL);
+    resources = atomic_load(&g_native_resources);
+    for (size_t stage = 1; stage <= 2; ++stage)
+    {
+        atomic_store(&g_native_init_failure, atomic_load(&g_native_init_calls) + stage);
+        require(usersTryAddPreparedUser(&users, prepared, SIZE_MAX, 0, NULL, NULL) == kUsersAddResultCreationFailed &&
+                    usersCount(&users) == 0 && users.slot_count == 0 && atomic_load(&g_native_resources) == resources &&
+                    usersValidate(&users),
+                "unpublished native-init failure leaked or consumed a slot");
+        atomic_store(&g_native_init_failure, 0);
+    }
+    require(usersTryAddPreparedUser(&users, prepared, SIZE_MAX, 0, NULL, NULL) == kUsersAddResultOk,
+            "private reserved capacity was not reusable after native refusal");
+    usersFreePreparedNewUser(prepared);
+    usersDestroy(&users);
+#endif
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+    for (unsigned stage = 0; stage < 3; ++stage)
+    {
+        resetCounters();
+        if (stage == 0)
+            g_sha224_fail_on_call = 1;
+        if (stage == 1)
+            g_sha256_fail_on_call = 1;
+        if (stage == 2)
+            g_x25519_fail_on_call = 1;
+        require(usersPrepareNewUser(1, "crypto-failed", NULL, SIZE_MAX, 0, &prepared) ==
+                        kUsersAddResultCreationFailed &&
+                    ! prepared,
+                "private crypto failure misclassified or retained a candidate");
+    }
+    resetCounters();
+#endif
+}
+
 int main(void)
 {
     testCaseSet("users_index_test");
@@ -1448,7 +1880,17 @@ int main(void)
     testPreparedConfigRefusalsAndLocks();
     testPreparedNameBoundsAndCapacity();
     testPreparedAllowedIpGrowthBounds();
+    testPreparedCreationDefaultsAndIndexes();
+    testPreparedCreationRefusals();
+    testPreparedCreationGrowthAndNameWork();
+    testPreparedCreationFailureCleanup();
+#if defined(WCRYPTO_TEST_LINKER_WRAP) && defined(USERS_TEST_ALLOC_COUNTING)
+    testPreparedCreationDeadlines();
+#endif
 
+#if defined(WW_SYNC_INIT_TEST_SEAM)
+    require(atomic_load(&g_native_resources) == 0, "users index fixture leaked native resources");
+#endif
     printf("users_index_test: all checks passed\n");
     return 0;
 }
