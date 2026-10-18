@@ -50,7 +50,7 @@ typedef struct muxserver_parent_state_s
     muxserver_lstate_t          *local_hold_tail;
     uint32_t                     local_hold_count;
     mux_parent_output_t          output;
-    unsigned                     receive_depth;     // Defer aggregate enforcement until available input drains.
+    unsigned                     receive_depth;     // Nonzero defers enforcement and Resume's kept-byte reparse.
     bool                         receive_enforcing; // Close callbacks may re-enter parser/admission.
     mux_frame_t                  read_frame;        // Header remains cached while its body is consumed incrementally.
     mux_length_t                 read_remaining;
@@ -231,6 +231,8 @@ bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_
                                 muxserver_lstate_t *child_ls, sbuf_t *buf);
 muxserver_child_drain_result_t muxserverDrainAttachedChild(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
                                                            line_t *child_l, muxserver_lstate_t *child_ls);
+/* For a resumed child whose queue drained, parse the Data body the parent stream kept for it. */
+void muxserverDeliverKeptChildData(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *child_ls);
 muxserver_child_drain_result_t muxserverDrainDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lstate_t *child_ls);
 bool muxserverBeginPeerCloseDrain(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts, muxserver_lstate_t *parent_ls,
                                   muxserver_lstate_t *child_ls);

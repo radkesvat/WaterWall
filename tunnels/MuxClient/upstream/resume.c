@@ -37,4 +37,8 @@ void muxclientTunnelUpStreamResume(tunnel_t *t, line_t *child_l)
     {
         discard muxclientFinalizeAttachedPeerClose(t, parent_ls->l, tunnelGetState(t), parent_ls, child_ls);
     }
+    else if (result == kMuxClientChildDrainReadyToFinish)
+    {
+        muxclientDeliverKeptChildData(t, parent_ls->l, child_ls);
+    }
 }
