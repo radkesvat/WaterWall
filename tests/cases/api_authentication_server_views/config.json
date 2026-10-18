@@ -1,0 +1,75 @@
+{
+  "name": "api-server",
+  "nodes": [
+    {
+      "name": "auth-db",
+      "type": "AuthenticationServer",
+      "settings": {
+        "db-path": "users.json",
+        "file-save-rate-ms": 60000,
+        "auth-clients": [
+          {
+            "name": "fixture-writer",
+            "secret": "NeverExposeProducerSecret",
+            "allow-user-write": true,
+            "allow-stats-push": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "api-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29380
+      },
+      "next": "management-api"
+    },
+    {
+      "name": "management-api",
+      "type": "APIServer",
+      "settings": {
+        "clients": [
+          {
+            "name": "auditor",
+            "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "allow": [
+              {
+                "config": "api-server",
+                "node": "auth-db",
+                "operations": [
+                  "status",
+                  "get-user",
+                  "list-users"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "monitor",
+            "token": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "allow": [
+              {
+                "config": "api-server",
+                "node": "auth-db",
+                "operations": [
+                  "status"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "protocol-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29382
+      },
+      "next": "auth-db"
+    }
+  ]
+}

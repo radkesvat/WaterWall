@@ -11,8 +11,11 @@ typedef struct authenticationserver_private_file_s
 bool authenticationserverPrivateStage(authenticationserver_private_file_t *file, const char *destination,
                                       const void *data, size_t length);
 /* True means replacement committed. Directory-sync failure after replacement is
- * logged without changing that result. Consumes a successful staging file. */
-bool authenticationserverPrivatePublish(authenticationserver_private_file_t *file, const char *destination);
+ * logged without changing that result. Consumes a successful staging file.
+ * If non-NULL, published_ms receives monotonic milliseconds at replacement,
+ * before best-effort directory synchronization. Zero is a valid timestamp. */
+bool authenticationserverPrivatePublish(authenticationserver_private_file_t *file, const char *destination,
+                                        uint64_t *published_ms);
 void authenticationserverPrivateDiscard(authenticationserver_private_file_t *file);
 bool authenticationserverPrivateWrite(const char *destination, const void *data, size_t length);
 bool authenticationserverPrivateRestrict(const char *path);

@@ -11,6 +11,13 @@ add_library(AuthenticationServer STATIC
                     common/protocol.c
                     common/session.c
                     common/sync.c
+                    common/status.c
+                    common/user_views.c
+                    api/request.c
+                    api/response.c
+                    api/status.c
+                    api/get_user.c
+                    api/list_users.c
                     modules/dispatcher.c
                     modules/authenticate/authenticate.c
                     modules/add_new_user/add_new_user.c

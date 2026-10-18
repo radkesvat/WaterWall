@@ -1,3 +1,4 @@
+#include "AuthenticationServer/api.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -323,6 +324,13 @@ tunnel_t *authenticationserverTunnelCreate(node_t *node)
         return NULL;
     }
     ts->database_loaded = true;
+
+    if (! secureRandomBytes(ts->api_instance_id, sizeof(ts->api_instance_id)) || ! authenticationserverRegisterApi(t))
+    {
+        LOGE("AuthenticationServer: failed to initialize registered API");
+        authenticationserverTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
 
     return t;
 }

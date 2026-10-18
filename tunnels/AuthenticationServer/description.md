@@ -1,5 +1,5 @@
 <!--
-Documentation version: 155
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -730,6 +730,154 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
   compaction destination are bounded parsing scratch; the current synchronous delivery is outside the retained bound.
 - This node does not require left padding and does not prepend in-place.
 - This node is not a packet tunnel and does not use packet-line semantics.
+
+## Read-only Management API
+
+The server explicitly registers `status`, `get-user` and `list-users` for
+[APIServer](APIServer.mdx). Each operation takes an `application/json` body and
+returns UTF-8 JSON. Configure an independent operator token and exact permissions
+on the gateway, for example:
+
+```json
+{"config":"central","node":"auth-db","operations":["status","get-user","list-users"]}
+```
+
+A `status` permission grants no account-read permission. `get-user` and
+`list-users` apply to all accounts on the selected server; cursors carry no
+permission. Every continuation must authenticate and pass the gateway allowlist.
+These operations do not authenticate traffic users, change accounts, synchronize
+clients or trigger a database save. They expose no passwords, hashes, UUID
+credentials, WireGuard keys, producer secrets or session tokens.
+
+Bodies are strict JSON objects: unknown/duplicate keys, malformed UTF-8, decoded
+NUL, trailing input and incorrect types are rejected. Bodies are limited to
+4096 bytes, depth two and 16 lexical values. All numeric result leaves, including
+IDs, revisions, counts, limits, bytes and times, are canonical unsigned decimal
+**strings**; `enabled` remains a boolean. Account IDs in requests must also be
+canonical decimal strings, from `"1"` through `"18446744073709551615"`, with no
+sign or leading zero. This preserves IDs above JavaScript's exact integer range.
+
+### `status`
+
+The body is exactly `{}`. A successful body has this shape:
+
+```json
+{
+  "database_loaded": true,
+  "user_count": "1200",
+  "configured_producer_count": "4",
+  "session_record_count": "5",
+  "config_revision": "84",
+  "stats_revision": "1902",
+  "primary_save": {
+    "last_result": "success",
+    "last_attempt_age_ms": "3200",
+    "last_success_age_ms": "3200"
+  }
+}
+```
+
+`session_record_count` counts retained authentication sessions, not live control
+connections, traffic connections, online users or devices. Save history is
+process-local: `last_result` is `not_attempted`, `success` or `failure`. Before the
+first runtime save both ages are `null`; loading/recovery does not count as an
+attempt. Ages use monotonic elapsed milliseconds at the primary-save outcome.
+A later failure preserves the previous successful-save time. Primary replacement
+is the existing commit boundary; optional history-backup failures and subsequent
+directory-sync warnings do not turn it into a failed save or strengthen its
+power-loss guarantee.
+
+### `get-user`
+
+Request `{"id":"42"}`. The result contains `config_revision`, `stats_revision`,
+`accounting_time_ms` and `user`. The `user` field contains exactly:
+
+| Fields | Meaning |
+| --- | --- |
+| `id`, `gid`, `enabled` | Stored durable identity, group and enabled setting. |
+| `name`, `email`, `notes`, `wireguard_allowed_ips` | Complete permitted strings; absent values are empty strings. No keys or credentials are included. |
+| `record_stat_interval_ms` | Configured statistics interval. |
+| `limit.traffic.u`, `.d`, `.total` | Stored upload, download and combined byte limits. |
+| `limit.bandwidth.u`, `.d` | Stored configured bandwidth units. |
+| `limit.ips`, `.devices`, `.cons_in`, `.cons_out` | Stored limits; presence does not assert enforcement by every traffic node. |
+| `time.created_at_ms`, `.expire_at_ms` | Existing wall-clock creation and absolute-expiry values. |
+| `time.expire_after_first_usage_ms` | Relative-expiry duration. |
+| `time.first_usage_at_ms` | Server accounting-clock first-use observation. |
+| `usage.u`, `.d` | Cumulative usage accepted by this server. |
+
+Zero/default values are explicit and retain their existing sentinel semantics.
+`accounting_time_ms` is the current server accounting-clock reference, sampled
+with the revisions and account. The view computes no derived expiry/admission
+decision. Disconnected clients may retain unreported usage debt. Stored speed,
+connection, IP and device gauges are not live synchronized statistics and are
+excluded along with client-local accounting and runtime enforcement state.
+
+A missing valid ID returns `not_found`. Complete details are never truncated:
+a permitted record that exceeds the bounded operation returns `record_too_large`;
+malformed stored UTF-8 returns `invalid_record_encoding`.
+
+### `list-users`
+
+`{}` starts a traversal with a default limit of 50. `{"limit":1}` selects an
+integer limit from 1 through 100; continue with
+`{"limit":50,"cursor":"<returned opaque cursor>"}`. The limit may change between
+pages. Empty/null/malformed supplied cursors are errors.
+
+```json
+{
+  "config_revision":"84",
+  "stats_revision":"1902",
+  "accounting_time_ms":"1800000000000",
+  "total_users":"1200",
+  "users":[{
+    "id":"42","gid":"7","enabled":true,
+    "name_preview":"Alice","name_preview_state":"complete",
+    "traffic_limit":{"u":"0","d":"0","total":"1000000000"},
+    "usage":{"u":"2500","d":"8000"},
+    "time":{"expire_at_ms":"0","expire_after_first_usage_ms":"86400000","first_usage_at_ms":"1800000000000"}
+  }],
+  "next_cursor":"<returned opaque cursor>"
+}
+```
+
+Summary fields are exactly those shown; use `get-user` for other permitted
+configuration. `name_preview` ends at a complete UTF-8 codepoint within 256 bytes.
+Its state is `complete`, `truncated`, or `invalid_encoding`; an invalid inspected
+prefix produces a null preview and does not prevent traversal. The uninspected
+tail of a large name is not validated, and listing does not scan email or notes.
+
+Order follows the current collection, with no ID/name sort guarantee. Treat the
+64-character cursor as opaque and process-local. Configuration revision changes,
+including an accepted same-value edit or addition, make earlier cursors
+`stale_cursor`; restart without a cursor. Restarting/recreating a server also
+invalidates its cursors. Statistics-only changes and first-use observations do
+not invalidate them; each page may report newer usage. Pages are not a frozen
+traffic snapshot. With unchanged configuration, traversal visits each account
+once. `next_cursor: null` marks the end.
+
+The limit is an upper bound: response/memory limits can yield a smaller nonempty
+page. No successful page skips unreturned records. If one summary cannot fit,
+return `response_too_large`. Timeout/contention discards partial work rather than
+returning a partial-success cursor.
+
+### Bounded snapshots and errors
+
+Reads run on the calling event worker, acquiring the server, collection, user
+configuration and statistics read locks without waiting. Contention returns
+`busy`, including while an existing save holds the state write lock. A busy
+query does not indicate database failure. Values are copied coherently under the
+locks, then locks are released before rendering; no user pointer escapes.
+Status is constant-size, detail uses the ID index and listing inspects at most
+the requested page. Account result bodies are capped at 256 KiB, further bounded
+by gateway response/working-memory allowances and deadlines.
+
+Operation failures have a nonzero node result code and a small body such as
+`{"error":{"code":"busy"}}`; the outer gateway `error` remains null. Codes are
+`invalid_request`, `not_found`, `invalid_cursor`, `stale_cursor`, `busy`, `timeout`,
+`record_too_large`, `response_too_large` and `invalid_record_encoding`, as
+applicable. Gateway authentication, permission, timeout and encoded-envelope
+errors retain the [APIServer](APIServer.mdx) contract. Retries and restarting a
+stale traversal are caller-controlled.
 
 ## User Database Performance
 

@@ -1,0 +1,45 @@
+{
+  "users": [
+    {
+      "id": "9007199254740993",
+      "gid": "7",
+      "name": "Alice",
+      "password": "NeverExposePasswordAlice",
+      "enabled": true,
+      "email": "alice@example.test",
+      "notes": "Operator note",
+      "wireguard-allowed-ips": "10.44.0.23/32",
+      "record-stat-interval-ms": 1000,
+      "limit": {
+        "traffic": {
+          "up": 100,
+          "down": 200,
+          "total": 300
+        },
+        "bandwidth": {
+          "up": 10,
+          "down": 20
+        },
+        "ips": 4,
+        "devices": 2,
+        "connections-in": 16,
+        "connections-out": 17
+      },
+      "time": {
+        "created-at-ms": "1735689600000",
+        "expire-at-ms": "1893456000000",
+        "expire-after-first-usage-ms": "86400000"
+      }
+    },
+    {
+      "id": "18446744073709551615",
+      "name": "Bob",
+      "password": "NeverExposePasswordBob"
+    },
+    {
+      "id": 42,
+      "name": "Carol",
+      "password": "NeverExposePasswordCarol"
+    }
+  ]
+}

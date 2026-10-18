@@ -1,5 +1,6 @@
 #pragma once
 
+#include "status.h"
 #include "wwapi.h"
 
 typedef struct authenticationserver_users_store_s
@@ -54,6 +55,7 @@ typedef struct authenticationserver_tstate_s
     wtimer_t                                  *save_timer;
     wtimer_t                                  *session_expiry_timer;
     wrwlock_t                                  state_lock;
+    uint8_t                                    api_instance_id[16];
     uint32_t                                   auth_clients_count;
     uint32_t                                   sessions_count;
     uint32_t                                   sessions_capacity;
@@ -63,7 +65,12 @@ typedef struct authenticationserver_tstate_s
     uint64_t                                   normal_backups_last_slot;
     uint64_t                                   accounting_anchor_ms;
     uint64_t                                   accounting_monotonic_ms;
+    uint64_t                                   primary_save_last_attempt_ms;
+    uint64_t                                   primary_save_last_success_ms;
     authenticationserver_normal_backups_mode_t normal_backups_mode;
+    authenticationserver_save_result_t         primary_save_last_result;
+    bool                                       primary_save_last_attempt_valid;
+    bool                                       primary_save_last_success_valid;
     bool                                       database_loaded;
     bool                                       verbose;
 } authenticationserver_tstate_t;

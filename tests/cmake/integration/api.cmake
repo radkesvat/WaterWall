@@ -1,4 +1,8 @@
 # All API probes run on loopback inside the existing private network namespace.
+if(INCLUDE_API_SERVER AND INCLUDE_AUTHENTICATION_SERVER AND INCLUDE_TCP_LISTENER)
+  add_waterwall_probe_integration_test(waterwall.api_authentication_server_views api_authentication_server_views 30)
+endif()
+
 if(INCLUDE_API_SERVER AND INCLUDE_AUTHENTICATION_CLIENT AND INCLUDE_AUTHENTICATION_SERVER AND INCLUDE_TCP_LISTENER)
   add_waterwall_probe_integration_test(waterwall.api_tcp_status api_tcp_status 30)
   add_waterwall_probe_integration_test(waterwall.api_multiconfig_status api_multiconfig_status 30)

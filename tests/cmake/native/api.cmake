@@ -32,3 +32,26 @@ if(TARGET APIServer)
       "unit;api;tcpoverudp;lifetime")
   endif()
 endif()
+
+if(TARGET AuthenticationServer AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  waterwall_add_native_executable(authenticationserver_api_concurrency_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationserver_api_concurrency_test.c
+    ${CMAKE_SOURCE_DIR}/ww/bufio/splice_stream.c
+    ${CMAKE_SOURCE_DIR}/ww/bufio/splice_buffer.c
+    ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_budget.c
+    ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue.c
+    ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_stream.c
+    LIBRARIES AuthenticationServer ww
+    INCLUDES ${CMAKE_SOURCE_DIR}/tunnels/AuthenticationServer
+      ${CMAKE_SOURCE_DIR}/tunnels/AuthenticationServer/include/AuthenticationServer)
+  target_link_options(authenticationserver_api_concurrency_test PRIVATE
+    "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
+    "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolGetMediumBuffer"
+    "-Wl,--wrap=bufferpoolGetSmallBuffer" "-Wl,--wrap=bufferpoolTryGetBestFit"
+    "-Wl,--wrap=bufferpoolGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+    "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy"
+    "-Wl,--wrap=secureRandomBytes" "-Wl,--wrap=nodeApiRegister" "-Wl,--wrap=nodeApiUnregister")
+  add_dependencies(waterwall_unit_tests authenticationserver_api_concurrency_test)
+  add_waterwall_unit_test(waterwall.authenticationserver_api_concurrency_unit authenticationserver_api_concurrency_test
+    "unit;api;authentication;concurrency;lifecycle;tsan")
+endif()

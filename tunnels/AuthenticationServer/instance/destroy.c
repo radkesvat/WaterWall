@@ -1,3 +1,4 @@
+#include "api/node_api.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -6,6 +7,8 @@ void authenticationserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t
 {
     discard                        context;
     authenticationserver_tstate_t *ts = tunnelGetState(t);
+
+    nodeApiUnregister(t);
 
     if (UNLIKELY(ts->database_loaded && ! authenticationserverSaveDatabase(ts)))
     {

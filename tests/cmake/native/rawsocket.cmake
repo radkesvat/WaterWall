@@ -513,6 +513,14 @@ foreach(tcpoverudp_side Client Server)
 endforeach()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
+  waterwall_add_native_executable(authenticationserver_api_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationserver_api_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+  target_link_libraries(authenticationserver_api_test PRIVATE AuthenticationServer ww)
+  target_link_options(authenticationserver_api_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  add_dependencies(waterwall_unit_tests authenticationserver_api_test)
+  add_waterwall_unit_test(waterwall.authenticationserver_api_unit authenticationserver_api_test
+    "unit;authentication;api;security;ownership")
   waterwall_add_native_executable(authenticationserver_storage_test SUPPORT SOURCES
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationserver_storage_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
@@ -520,7 +528,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
   target_link_libraries(authenticationserver_storage_test PRIVATE AuthenticationServer ww)
   target_link_options(authenticationserver_storage_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
     "-Wl,--wrap=open" "-Wl,--wrap=fwrite" "-Wl,--wrap=fflush" "-Wl,--wrap=fclose"
-    "-Wl,--wrap=fsync" "-Wl,--wrap=fchmod" "-Wl,--wrap=rename")
+    "-Wl,--wrap=fsync" "-Wl,--wrap=fchmod" "-Wl,--wrap=rename"
+    "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=time")
   add_dependencies(waterwall_unit_tests authenticationserver_storage_test)
   add_waterwall_unit_test(waterwall.authenticationserver_storage_unit authenticationserver_storage_test
     "unit;authentication;storage")

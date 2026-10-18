@@ -5,6 +5,8 @@
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "loggers/network_logger.h"
 
+#include <pthread.h>
+
 typedef enum fault_e
 {
     kNone,
@@ -24,6 +26,29 @@ static fault_t  fault;
 static char     primary[512];
 static unsigned private_writes;
 static unsigned stage_writes, directory_syncs;
+static bool     use_test_clock;
+static uint64_t test_clock_us;
+static time_t   test_wall_time;
+static unsigned wall_time_reads;
+
+unsigned long long __real_getHRTimeUs(void);
+unsigned long long __wrap_getHRTimeUs(void);
+unsigned long long __wrap_getHRTimeUs(void)
+{
+    return use_test_clock ? test_clock_us : __real_getHRTimeUs();
+}
+
+time_t __real_time(time_t *result);
+time_t __wrap_time(time_t *result);
+time_t __wrap_time(time_t *result)
+{
+    if (! use_test_clock)
+        return __real_time(result);
+    ++wall_time_reads;
+    if (result != NULL)
+        *result = test_wall_time;
+    return test_wall_time;
+}
 
 int __real_open(const char *path, int flags, ...);
 int __wrap_open(const char *path, int flags, ...);
@@ -37,6 +62,8 @@ int __wrap_open(const char *path, int flags, ...)
         mode = (mode_t) va_arg(args, int);
         va_end(args);
         twfRequire(mode == 0600 && (flags & O_EXCL) != 0, "secret creation was not private and exclusive");
+        if (use_test_clock && strstr(path, "/authenticationserver-") != NULL)
+            test_clock_us += 30000U; /* Optional work follows the primary outcome. */
         if (fault == kOpen)
         {
             fault = kNone;
@@ -96,7 +123,13 @@ int __wrap_fsync(int fd)
 {
     struct stat info;
     twfRequire(fstat(fd, &info) == 0, "sync received invalid descriptor");
-    if (fault == kSync || (fault == kDirectorySync && S_ISDIR(info.st_mode) && ++directory_syncs == 2))
+    if (S_ISDIR(info.st_mode))
+    {
+        ++directory_syncs;
+        if (use_test_clock && directory_syncs == 2)
+            test_clock_us += 20000U; /* Primary replacement is already committed. */
+    }
+    if (fault == kSync || (fault == kDirectorySync && S_ISDIR(info.st_mode) && directory_syncs == 2))
     {
         fault = kNone;
         errno = EIO;
@@ -138,6 +171,54 @@ static void reload(authenticationserver_tstate_t *ts)
     twfRequire(authenticationserverLoadDatabase(ts), "committed database could not restart");
 }
 
+typedef struct status_lock_holder_s
+{
+    wrwlock_t  *lock;
+    wsem_t      acquired;
+    wsem_t      release;
+    atomic_bool released;
+} status_lock_holder_t;
+
+static void *holdStatusWriteLock(void *argument)
+{
+    status_lock_holder_t *holder = argument;
+    rwlockWriteLock(holder->lock);
+    semaphorePost(&holder->acquired);
+    semaphoreWait(&holder->release);
+    atomicStore(&holder->released, true);
+    rwlockWriteUnlock(holder->lock);
+    return NULL;
+}
+
+static void requireStatusBusy(tunnel_t *server, wrwlock_t *lock)
+{
+    status_lock_holder_t holder = {.lock = lock};
+    semaphoreInit(&holder.acquired, 0);
+    semaphoreInit(&holder.release, 0);
+    atomic_init(&holder.released, false);
+    pthread_t thread;
+    twfRequire(pthread_create(&thread, NULL, holdStatusWriteLock, &holder) == 0, "status lock holder creation failed");
+    semaphoreWait(&holder.acquired);
+    authenticationserver_status_t snapshot;
+    twfRequire(authenticationserverStatusSnapshot(server, 0, &snapshot) == kAuthenticationServerStatusBusy,
+               "contended status snapshot did not report busy");
+    twfRequire(! atomicLoad(&holder.released), "status query waited for lock holder release");
+    twfRequire(snapshot.user_count == 0 && snapshot.config_revision == 0 && ! snapshot.database_loaded,
+               "busy status snapshot exposed partial state");
+    semaphorePost(&holder.release);
+    twfRequire(pthread_join(thread, NULL) == 0, "status lock holder join failed");
+    semaphoreDestroy(&holder.release);
+    semaphoreDestroy(&holder.acquired);
+}
+
+static authenticationserver_status_t statusSnapshot(tunnel_t *server)
+{
+    authenticationserver_status_t snapshot;
+    twfRequire(authenticationserverStatusSnapshot(server, 0, &snapshot) == kAuthenticationServerStatusOk,
+               "status snapshot failed");
+    return snapshot;
+}
+
 static void testCommit(mode_t mask, fault_t selected)
 {
     char directory[] = "/tmp/ww-auth-storage-XXXXXX";
@@ -163,7 +244,23 @@ static void testCommit(mode_t mask, fault_t selected)
     ts->normal_backups_path = directory;
     if (selected == kHistory)
         ts->normal_backups_path = stringDuplicate("/nonexistent-waterwall-test-directory");
-    ts->normal_backups_count_limit = 10;
+    ts->normal_backups_count_limit               = 10;
+    ts->auth_clients_count                       = 4;
+    ts->sessions_count                           = 5; /* Retained records, not live connections. */
+    ts->store.config_revision                    = 84;
+    ts->store.stats_revision                     = 1902;
+    authenticationserver_status_t initial_status = statusSnapshot(server);
+    twfRequire(initial_status.database_loaded && initial_status.user_count == 1 &&
+                   initial_status.configured_producer_count == 4 && initial_status.session_record_count == 5 &&
+                   initial_status.config_revision == 84 && initial_status.stats_revision == 1902,
+               "status scalars did not describe the protected server state");
+    twfRequire(initial_status.primary_save_last_result == kAuthenticationServerSaveNotAttempted &&
+                   ! initial_status.primary_save_last_attempt_valid && ! initial_status.primary_save_last_success_valid,
+               "database load fabricated process-local save history");
+    requireStatusBusy(server, &ts->state_lock);
+    /* A fixture may access the collection lock solely to hold it from a distinct
+     * thread. Production status still obtains the count through usersTryCount. */
+    requireStatusBusy(server, &ts->store.users.lock);
     twf_line_pool_t lines;
     twfLinePoolSetup(&lines, 0, 2);
     line_t                        *line           = twfLinePoolCreateLine(&lines);
@@ -172,6 +269,9 @@ static void testCommit(mode_t mask, fault_t selected)
     static const char              addition[]     = "{\"id\":43,\"password\":\"proposed\"}";
     fault                                         = selected;
     stage_writes = directory_syncs = 0;
+    use_test_clock                 = true;
+    test_clock_us                  = 0; /* A valid outcome timestamp, never an unavailable sentinel. */
+    test_wall_time                 = 1800000000;
     rwlockWriteLock(&ts->state_lock);
     sbuf_t *response = authenticationserverDispatchRequest(kAuthenticationServerRequestTypeAddNewUser,
                                                            correlation,
@@ -188,14 +288,59 @@ static void testCommit(mode_t mask, fault_t selected)
     lineReuseBuffer(line, response);
     twfRequire((usersLookupByIdentifier(&ts->store.users, 43) != NULL) == committed,
                "in-memory rollback disagreed with disk");
-    fault = kNone;
+    authenticationserver_status_t saved_status = statusSnapshot(server);
+    twfRequire(saved_status.primary_save_last_result ==
+                       (committed ? kAuthenticationServerSaveSuccess : kAuthenticationServerSaveFailure) &&
+                   saved_status.primary_save_last_attempt_valid &&
+                   saved_status.primary_save_last_success_valid == committed && ts->primary_save_last_attempt_ms == 0 &&
+                   ts->primary_save_last_success_ms == 0,
+               "primary save telemetry disagreed with the outcome at monotonic zero");
+    twfRequire(saved_status.primary_save_last_attempt_age_ms == test_clock_us / 1000U &&
+                   (! committed || saved_status.primary_save_last_success_age_ms == test_clock_us / 1000U),
+               "postcommit directory/history work moved the primary outcome timestamp");
+    twfRequire(saved_status.config_revision == (committed ? 85U : 84U) && saved_status.stats_revision == 1902 &&
+                   saved_status.user_count == (committed ? 2U : 1U),
+               "status did not preserve the existing save/revision ordering");
+    unsigned reads_before                         = wall_time_reads;
+    unsigned writes_before                        = private_writes;
+    test_wall_time                                = 100;
+    authenticationserver_status_t after_wall_jump = statusSnapshot(server);
+    twfRequire(after_wall_jump.primary_save_last_attempt_age_ms == saved_status.primary_save_last_attempt_age_ms &&
+                   after_wall_jump.primary_save_last_success_age_ms == saved_status.primary_save_last_success_age_ms &&
+                   wall_time_reads == reads_before && private_writes == writes_before,
+               "status read used wall time or triggered persistence");
+    test_clock_us = 100000;
+    authenticationserver_status_t expired;
+    twfRequire(authenticationserverStatusSnapshot(server, 100, &expired) == kAuthenticationServerStatusTimeout &&
+                   ! expired.database_loaded && expired.user_count == 0,
+               "expired status request returned sampled state");
+    if (committed)
+    {
+        fault = kWrite;
+        twfRequire(! authenticationserverSaveDatabase(ts), "second primary-save failure was not exercised");
+        test_clock_us                               = 125000;
+        authenticationserver_status_t failed_status = statusSnapshot(server);
+        twfRequire(failed_status.primary_save_last_result == kAuthenticationServerSaveFailure &&
+                       failed_status.primary_save_last_attempt_valid && failed_status.primary_save_last_success_valid &&
+                       failed_status.primary_save_last_attempt_age_ms == 25 &&
+                       failed_status.primary_save_last_success_age_ms == 125 && ts->primary_save_last_success_ms == 0,
+                   "later failure lost the earlier successful replacement time");
+    }
+    use_test_clock                                        = false;
+    fault                                                 = kNone;
+    const authenticationserver_save_result_t last_result  = ts->primary_save_last_result;
+    const uint64_t                           last_attempt = ts->primary_save_last_attempt_ms;
     reload(ts);
+    twfRequire(ts->primary_save_last_result == last_result && ts->primary_save_last_attempt_ms == last_attempt,
+               "database reload changed runtime save telemetry");
     twfRequire((usersLookupByIdentifier(&ts->store.users, 43) != NULL) == committed,
                "restart resurrected a rejected addition");
     if (! committed && isFile(ts->backup_path))
     {
         twfRequire(remove(primary) == 0, "could not exercise recovery");
         reload(ts);
+        twfRequire(ts->primary_save_last_result == last_result && ts->primary_save_last_attempt_ms == last_attempt,
+                   "startup recovery fabricated a primary-save attempt");
         twfRequire(usersLookupByIdentifier(&ts->store.users, 42) != NULL &&
                        usersLookupByIdentifier(&ts->store.users, 43) == NULL,
                    "recovery published an uncommitted addition");

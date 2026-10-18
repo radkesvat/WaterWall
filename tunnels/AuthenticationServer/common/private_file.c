@@ -161,7 +161,8 @@ bool authenticationserverPrivateStage(authenticationserver_private_file_t *file,
     return ok;
 }
 
-bool authenticationserverPrivatePublish(authenticationserver_private_file_t *file, const char *destination)
+bool authenticationserverPrivatePublish(authenticationserver_private_file_t *file, const char *destination,
+                                        uint64_t *published_ms)
 {
     assert(file->path != NULL);
 #ifdef OS_WIN
@@ -171,6 +172,8 @@ bool authenticationserverPrivatePublish(authenticationserver_private_file_t *fil
     if (rename(file->path, destination) != 0)
         return false;
 #endif
+    if (published_ms != NULL)
+        *published_ms = getHRTimeUs() / 1000U;
     memoryFree(file->path);
     file->path = NULL;
 #ifndef OS_WIN
@@ -196,7 +199,7 @@ bool authenticationserverPrivateWrite(const char *destination, const void *data,
 {
     authenticationserver_private_file_t staged = {0};
     const bool                          ok     = authenticationserverPrivateStage(&staged, destination, data, length) &&
-                    authenticationserverPrivatePublish(&staged, destination);
+                    authenticationserverPrivatePublish(&staged, destination, NULL);
     authenticationserverPrivateDiscard(&staged);
     return ok;
 }

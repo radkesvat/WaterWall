@@ -691,6 +691,21 @@ static bool authenticationserverRewritePrimaryFromMemory(authenticationserver_ts
     return ok;
 }
 
+/* Caller holds state_lock exclusively. These facts are process-local and do
+ * not describe optional history work or stronger power-loss guarantees. */
+static void authenticationserverRecordPrimarySave(authenticationserver_tstate_t *ts, bool committed,
+                                                  uint64_t outcome_ms)
+{
+    ts->primary_save_last_result     = committed ? kAuthenticationServerSaveSuccess : kAuthenticationServerSaveFailure;
+    ts->primary_save_last_attempt_ms = outcome_ms;
+    ts->primary_save_last_attempt_valid = true;
+    if (committed)
+    {
+        ts->primary_save_last_success_ms    = outcome_ms;
+        ts->primary_save_last_success_valid = true;
+    }
+}
+
 bool authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *ts)
 {
     char  *json_text = NULL;
@@ -698,23 +713,27 @@ bool authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *ts)
 
     if (UNLIKELY(! ts->database_loaded))
     {
+        authenticationserverRecordPrimarySave(ts, false, getHRTimeUs() / 1000U);
         return false;
     }
 
     if (UNLIKELY(! authenticationserverBuildUsersJson(ts, &json_text, &json_len)))
     {
+        authenticationserverRecordPrimarySave(ts, false, getHRTimeUs() / 1000U);
         return false;
     }
 
     authenticationserver_private_file_t primary = {0}, backup = {0};
     /* The recovery candidate is the previous committed primary, never the
      * proposed transaction. Only primary replacement commits the mutation. */
-    bool  committed = authenticationserverPrivateStage(&primary, ts->db_path, json_text, json_len);
-    char *previous  = committed ? readFile(ts->db_path) : NULL;
-    committed       = committed && previous != NULL &&
+    uint64_t committed_ms = 0;
+    bool     committed    = authenticationserverPrivateStage(&primary, ts->db_path, json_text, json_len);
+    char    *previous     = committed ? readFile(ts->db_path) : NULL;
+    committed             = committed && previous != NULL &&
                 authenticationserverPrivateStage(&backup, ts->backup_path, previous, stringLength(previous)) &&
-                authenticationserverPrivatePublish(&backup, ts->backup_path) &&
-                authenticationserverPrivatePublish(&primary, ts->db_path);
+                authenticationserverPrivatePublish(&backup, ts->backup_path, NULL) &&
+                authenticationserverPrivatePublish(&primary, ts->db_path, &committed_ms);
+    authenticationserverRecordPrimarySave(ts, committed, committed ? committed_ms : getHRTimeUs() / 1000U);
     memoryFree(previous);
     authenticationserverPrivateDiscard(&backup);
     authenticationserverPrivateDiscard(&primary);

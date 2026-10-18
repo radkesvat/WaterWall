@@ -1,11 +1,11 @@
 <!--
-Documentation version: 1
+Documentation version: 2
 Sync note: Keep synchronized with tunnels/APIServer/description.md and the Persian node reference.
 -->
 
 # APIServer
 
-`APIServer` exposes explicitly registered node operations over a reliable byte stream. It is a terminal node and opens no socket itself. The initial production operation is the read-only `AuthenticationClient.status` query. Access uses independent static operator credentials and exact per-operation permissions.
+`APIServer` exposes explicitly registered node operations over a reliable byte stream. It is a terminal node and opens no socket itself. Registered read-only operations include `AuthenticationClient.status` and `AuthenticationServer.status`, `get-user` and `list-users`. Access uses independent static operator credentials and exact per-operation permissions.
 
 ## Placement
 
@@ -27,7 +27,7 @@ APIServer authenticates callers but provides no transport encryption. Bind examp
 
 ## Configuration
 
-This example belongs to a configuration whose top-level logical `name` is `edge-europe`, with an `AuthenticationClient` named `auth-client` defined in that configuration:
+This example belongs to a configuration whose top-level logical `name` is `edge-europe`, with an `AuthenticationClient` named `auth-client` defined in that configuration and an `AuthenticationServer` named `auth-db` in a loaded configuration named `central`:
 
 ```json
 {
@@ -39,7 +39,8 @@ This example belongs to a configuration whose top-level logical `name` is `edge-
         "name": "monitor",
         "token": "<64 hexadecimal characters representing 32 random bytes>",
         "allow": [
-          {"config": "edge-europe", "node": "auth-client", "operations": ["status"]}
+          {"config": "edge-europe", "node": "auth-client", "operations": ["status"]},
+          {"config": "central", "node": "auth-db", "operations": ["status", "get-user", "list-users"]}
         ]
       }
     ]
@@ -100,7 +101,7 @@ All shown fields are required except `selector.config`. Omission of the configur
 
 `id` is a nonempty correlation string of at most 64 UTF-8 bytes. It provides no deduplication or execution checkpoint. Operations are bounded to 64 bytes and content types to 128 bytes. `content_type` must match the registered operation. The outer parser rejects unknown/duplicate keys, wrong types, trailing input, malformed UTF-8, and decoded NUL in metadata or UTF-8 bodies.
 
-`body` is always a JSON string. With `body_encoding: "utf8"`, its decoded UTF-8 bytes are delivered unchanged. With `"base64"`, strict canonical base64 represents arbitrary bytes, including NUL. The gateway does not parse or normalize the node's body. The selected handler owns its command schema; `status` accepts `{}` or `{"include_accounting":true}`.
+`body` is always a JSON string. With `body_encoding: "utf8"`, its decoded UTF-8 bytes are delivered unchanged. With `"base64"`, strict canonical base64 represents arbitrary bytes, including NUL. The gateway does not parse or normalize the node's body. The selected handler owns its command schema; `AuthenticationClient.status` accepts `{}` or `{"include_accounting":true}`.
 
 Successful dispatch, including a node-level error, returns:
 
@@ -117,7 +118,7 @@ Successful dispatch, including a node-level error, returns:
 }
 ```
 
-The `body` above is illustrative; see [AuthenticationClient](AuthenticationClient.mdx) for the status snapshot. Unsigned 64-bit status values use decimal JSON strings. `result.code` preserves the node handler's success/error meaning. An empty handler result is an empty body with its declared content type and encoding.
+The `body` above is illustrative; see [AuthenticationClient](AuthenticationClient.mdx) for its status snapshot and [AuthenticationServer](AuthenticationServer.mdx#read-only-management-api) for the server read views. Server `status` takes exactly `{}`, `get-user` takes `{"id":"42"}`, and `list-users` takes `{}` or `{"limit":50,"cursor":"<returned opaque cursor>"}`. Unsigned 64-bit values use decimal JSON strings. Server configuration changes invalidate list cursors; statistics-only changes allow continuation with newer totals. `result.code` preserves the node handler's success/error meaning. An empty handler result is an empty body with its declared content type and encoding.
 
 A gateway failure returns `result: null`:
 
@@ -166,6 +167,21 @@ python3 examples/api_client.py --host 127.0.0.1 --port 9080 \
 ```
 
 Alternatively pass `--token-file /private/path/operator-token`. The default opaque status body is `{}`; `--body-file` preserves file bytes, and `--body-encoding base64` supports binary operations. The client validates response length and ID, reads complete frames, and writes the decoded result body to stdout. It makes one attempt and performs no automatic retry. Through TcpOverUdp, point this TCP client at the local TcpListener shown above.
+
+To inspect the authoritative account database, target its server explicitly:
+
+```bash
+python3 examples/api_client.py --host 127.0.0.1 --port 9080 \
+  --client monitor --token-env WATERWALL_API_TOKEN \
+  --config central --node auth-db --operation status
+```
+
+For `get-user`, put `{"id":"9007199254740993"}` in a UTF-8 body file and pass
+`--operation get-user --body-file /private/path/query.json`. For a first list page,
+use `{"limit":50}` with `--operation list-users`; subsequent body files include
+the returned opaque `cursor`. A `stale_cursor` node error requires a new traversal
+without a cursor. `busy` is a bounded sampling refusal. The example client makes
+no automatic retries; callers decide when to repeat reads or restart traversal.
 
 ## Lifecycle And Metadata
 
