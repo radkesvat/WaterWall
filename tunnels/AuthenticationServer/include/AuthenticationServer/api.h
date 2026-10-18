@@ -30,6 +30,7 @@ typedef struct authenticationserver_api_request_s
 typedef struct authenticationserver_user_view_s
 {
     uint64_t             config_revision, stats_revision, accounting_time_ms;
+    uint8_t              instance_id[16];
     user_public_detail_t user;
 } authenticationserver_user_view_t;
 
@@ -75,3 +76,4 @@ api_result_t authenticationserverApiRender(const node_api_call_context_t *contex
 api_result_t authenticationserverApiStatus(tunnel_t *, sbuf_t *, const node_api_call_context_t *);
 api_result_t authenticationserverApiGetUser(tunnel_t *, sbuf_t *, const node_api_call_context_t *);
 api_result_t authenticationserverApiListUsers(tunnel_t *, sbuf_t *, const node_api_call_context_t *);
+api_result_t authenticationserverApiUpdateUser(tunnel_t *, sbuf_t *, const node_api_call_context_t *);

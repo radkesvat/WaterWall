@@ -43,6 +43,7 @@ const char *authenticationserverCopyUserView(tunnel_t *t, uint64_t id, size_t al
         view->config_revision    = ts->store.config_revision;
         view->stats_revision     = ts->store.stats_revision;
         view->accounting_time_ms = authenticationserverAccountingTimeMS(ts);
+        memoryCopy(view->instance_id, ts->api_instance_id, sizeof(view->instance_id));
     }
     rwlockReadUnlock(&ts->state_lock);
     if (authenticationserverApiExpired(deadline_ms))

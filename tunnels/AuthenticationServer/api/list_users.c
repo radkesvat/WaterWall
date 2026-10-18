@@ -1,4 +1,5 @@
 #include "AuthenticationServer/api.h"
+#include "AuthenticationServer/edit_token.h"
 
 void authenticationserverApiCursor(const authenticationserver_page_view_t *view, size_t emitted, char cursor[65])
 {
@@ -18,6 +19,10 @@ static void beginPage(authenticationserver_json_writer_t *w, const authenticatio
 {
     authenticationserverJsonText(w, "{\"config_revision\":");
     authenticationserverJsonU64(w, view->config_revision);
+    char token[kAuthenticationServerEditTokenChars + 1];
+    authenticationserverEditTokenFormat(view->instance_id, view->config_revision, token);
+    authenticationserverJsonText(w, ",\"edit_token\":");
+    authenticationserverJsonString(w, token);
     authenticationserverJsonText(w, ",\"stats_revision\":");
     authenticationserverJsonU64(w, view->stats_revision);
     authenticationserverJsonText(w, ",\"accounting_time_ms\":");

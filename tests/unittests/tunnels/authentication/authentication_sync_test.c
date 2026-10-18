@@ -682,6 +682,194 @@ static void expectPatch(line_t *line, const uint8_t token[64], const char *reque
     expectPatchBytes(line, token, request, (uint32_t) stringLength(request), accepted);
 }
 
+static cJSON *serverApi(const char *operation, const char *request, enum api_result_e expected)
+{
+    const bool previous = in_server;
+    in_server           = true;
+    cJSON *body         = authTestPeerApi(server, operation, request, expected);
+    in_server           = previous;
+    return body;
+}
+
+static void serverEditToken(char token[49])
+{
+    cJSON       *body  = serverApi("get-user", "{\"id\":\"42\"}", kApiResultOk);
+    const cJSON *value = cJSON_GetObjectItemCaseSensitive(body, "edit_token");
+    require(cJSON_IsString(value) && strlen(value->valuestring) == 48, "peer API edit token absent");
+    memoryCopy(token, value->valuestring, 49);
+    cJSON_Delete(body);
+}
+
+static cJSON *apiPatchWithToken(const char *token, const char *patch, const char *error)
+{
+    char   *before  = authTestPeerSnapshot(server);
+    cJSON  *request = cJSON_CreateObject();
+    discard cJSON_AddStringToObject(request, "id", "42");
+    discard cJSON_AddStringToObject(request, "if_match", token);
+    cJSON  *changes = cJSON_Parse(patch);
+    require(cJSON_IsObject(changes), "invalid API patch fixture");
+    discard cJSON_AddItemToObject(request, "patch", changes);
+    char   *text = cJSON_PrintUnformatted(request);
+    cJSON_Delete(request);
+    cJSON *response = serverApi("update-user", text, error == NULL ? kApiResultOk : kApiResultError);
+    cJSON_free(text);
+    char *after = authTestPeerSnapshot(server);
+    if (error != NULL)
+    {
+        const cJSON *code =
+            cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(response, "error"), "code");
+        require(cJSON_IsString(code) && strcmp(code->valuestring, error) == 0 && strcmp(before, after) == 0,
+                "API refusal changed users, indexes, revisions or producer checkpoints");
+    }
+    else
+    {
+        cJSON *old = cJSON_Parse(before), *current = cJSON_Parse(after);
+        require(jsonUnsigned(current, "config-revision") == jsonUnsigned(old, "config-revision") + 1 &&
+                    jsonUnsigned(response, "config_revision") == jsonUnsigned(current, "config-revision") &&
+                    jsonUnsigned(current, "stats-revision") == jsonUnsigned(old, "stats-revision") &&
+                    cJSON_Compare(cJSON_GetObjectItemCaseSensitive(current, "checkpoints"),
+                                  cJSON_GetObjectItemCaseSensitive(old, "checkpoints"),
+                                  true),
+                "API patch changed accounting/checkpoint or did not increment configuration exactly once");
+        cJSON_Delete(old);
+        cJSON_Delete(current);
+    }
+    cJSON_free(before);
+    cJSON_free(after);
+    return response;
+}
+
+static cJSON *apiPatch(const char *patch, const char *error)
+{
+    char token[49];
+    serverEditToken(token);
+    return apiPatchWithToken(token, patch, error);
+}
+
+static void testApiProtocolPatchOrdering(void)
+{
+    setup(1);
+    user_update_t initial = {.mask = kUserUpdateName | kUserUpdateStats, .name = "original", .stats.traffic.u = 100};
+    authTestPeerSetUser(server, 42, &initial);
+    authTestPeerPermissions(server, 0, true, true);
+    start(0);
+    uint8_t token[64];
+    char    epoch[65], stale[49];
+    authTestPeerCredentials(server, 0, token, epoch);
+    line_t *line = lineCreate(chain->line_pools, 0);
+    tunnelUpStreamInit(server, line);
+    serverEditToken(stale);
+    expectPatch(line, token, "{\"id\":42,\"name\":\"producer-name\"}", true);
+    cJSON_Delete(apiPatchWithToken(stale, "{\"email\":\"stale@example.test\"}", "conflict"));
+    cJSON *ack = apiPatch("{\"gid\":\"7\",\"limit\":{\"traffic\":{\"total\":\"1000\"}}}", NULL);
+    require(jsonUnsigned(ack, "config_revision") == 3, "API did not follow real producer revision");
+    memoryCopy(stale, cJSON_GetObjectItemCaseSensitive(ack, "edit_token")->valuestring, sizeof(stale));
+    cJSON_Delete(ack);
+    expectPatch(line, token, "{\"id\":42,\"email\":\"producer@example.test\"}", true);
+    cJSON_Delete(apiPatchWithToken(stale, "{\"notes\":\"stale\"}", "conflict"));
+    cJSON *user = authTestPeerUserJson(server, 42);
+    require(
+        jsonUnsigned(user, "gid") == 7 &&
+            jsonUnsigned(cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(user, "limit"), "traffic"),
+                         "total") == 1000 &&
+            strcmp(cJSON_GetObjectItemCaseSensitive(user, "name")->valuestring, "producer-name") == 0 &&
+            strcmp(cJSON_GetObjectItemCaseSensitive(user, "email")->valuestring, "producer@example.test") == 0,
+        "API/producer sparse patches reset one another's omitted configuration");
+    cJSON_Delete(user);
+
+    serverEditToken(stale);
+    traffic(0, 10);
+    authenticationclientRequestPush(clients[0]);
+    const uint64_t first_use = authTestPeerFirstUse(server), sequence = authTestPeerSequence(server, 0);
+    cJSON_Delete(apiPatchWithToken(stale, "{\"notes\":\"after usage\"}", NULL));
+    require(authTestPeerStats(server, 42).traffic.u == 110 && authTestPeerFirstUse(server) == first_use &&
+                sequence == 1 && authTestPeerSequence(server, 0) == sequence,
+            "statistics-only edit-token reuse changed newer usage or producer accounting");
+    tunnelUpStreamFin(server, line);
+    lineDestroy(line);
+    teardown();
+}
+
+static void testConfigRevisionExhaustion(void)
+{
+    for (unsigned api_last = 0; api_last < 2; ++api_last)
+    {
+        setup(1);
+        authTestPeerPermissions(server, 0, true, true);
+        start(0);
+        uint8_t token[64];
+        char    epoch[65];
+        authTestPeerCredentials(server, 0, token, epoch);
+        line_t *line = lineCreate(chain->line_pools, 0);
+        tunnelUpStreamInit(server, line);
+        authTestPeerSetConfigRevision(server, UINT64_MAX - 1);
+        if (api_last)
+        {
+            cJSON *ack = apiPatch("{\"notes\":\"last edit\"}", NULL);
+            require(jsonUnsigned(ack, "config_revision") == UINT64_MAX, "API rejected final valid revision");
+            cJSON_Delete(ack);
+        }
+        else
+            expectPatch(line, token, "{\"id\":42,\"notes\":\"last edit\"}", true);
+        cJSON_Delete(apiPatch("{\"notes\":\"must refuse\"}", "revision_exhausted"));
+        expectPatch(line, token, "{\"id\":42,\"notes\":\"must refuse\"}", false);
+        require(strcmp(raw_body[0], "revision-exhausted") == 0, "protocol update did not report revision exhaustion");
+        char      *before = authTestPeerSnapshot(server);
+        const char add[]  = "{\"id\":\"99\",\"password\":\"terminal-new-account\"}";
+        rawRequest(line, token, kAuthenticationClientRequestTypeAddNewUser, add, sizeof(add) - 1);
+        char *after = authTestPeerSnapshot(server);
+        require(raw_response[0] == 255 && strcmp(raw_body[0], "revision-exhausted") == 0 && strcmp(before, after) == 0,
+                "protocol add mutated accounts or revision after exhaustion");
+        cJSON_free(before);
+        cJSON_free(after);
+        tunnelUpStreamFin(server, line);
+        lineDestroy(line);
+        teardown();
+    }
+}
+
+static void testApiEditDuringOfflineCatchup(void)
+{
+    setup(1);
+    user_update_t initial = {.mask                   = kUserUpdateName | kUserUpdateStats | kUserUpdateTimeInfo,
+                             .name                   = "original",
+                             .stats.traffic.u        = 100,
+                             .timeinfo.created_at_ms = 123};
+    authTestPeerSetUser(server, 42, &initial);
+    start(0);
+    user_ip_key_t ip = {.type = 4, .bytes = {192, 0, 2, 1}};
+    require(usersTryAdmitConnectionByIdentifier(state(0)->users, 42, &ip, getTimeOfDayMS()) == kUserAdmissionOk,
+            "API refresh reservation setup failed");
+    traffic(0, 10);
+    user_t        *user   = usersLookupByIdentifier(state(0)->users, 42);
+    const uint64_t origin = user->client_time.first_report_ms;
+    drop_ack              = 1;
+    authenticationclientRequestPush(clients[0]);
+    const uint64_t first_use = authTestPeerFirstUse(server);
+    require(first_use != 0 && state(0)->pending_batch != NULL && authTestPeerStats(server, 42).traffic.u == 110,
+            "API lost-ACK setup failed");
+    cJSON_Delete(apiPatch("{\"name\":\"after-api\",\"time\":{\"expire_after_first_usage_ms\":\"9000\"}}", NULL));
+    require(authTestPeerStats(server, 42).traffic.u == 110 && authTestPeerFirstUse(server) == first_use,
+            "API edit reset already committed traffic or first-use observation");
+    traffic(0, 7);
+    pump(10);
+    pump(1);
+    pump(1);
+    require(state(0)->pending_batch == NULL && state(0)->catchup_entries_count == 0 && local(0, true) == 117 &&
+                local(0, false) == 117 && authTestPeerStats(server, 42).traffic.u == 117 &&
+                authTestPeerSequence(server, 0) == 2 && authTestPeerFirstUse(server) == first_use,
+            "API edit plus replay/refresh lost offline catch-up or charged the same batch twice");
+    user = usersLookupByIdentifier(state(0)->users, 42);
+    require(strcmp(user->name, "after-api") == 0 && user->runtime.active_cons_out == 1 &&
+                user->runtime.ip_usage_count == 1 && user->timeinfo.created_at_ms == 123 &&
+                user->timeinfo.expire_after_first_usage_ms == 9000 && user->client_view_expiry_valid &&
+                user->client_time.first_report_ms == origin && user->client_time.observation_acked,
+            "API refresh lost configuration, runtime reservation, observation or expiry projection");
+    usersReleaseConnectionByIdentifier(state(0)->users, 42, &ip);
+    require(user->runtime.active_cons_out == 0, "API-refreshed reservation did not release");
+    teardown();
+}
+
 static void testConfigPatches(void)
 {
     setup(2);
@@ -1985,6 +2173,9 @@ int main(void)
     testObservationMergeAndMetadataOnly();
     testStaleFullObjectRejected();
     testConfigPatches();
+    testApiProtocolPatchOrdering();
+    testConfigRevisionExhaustion();
+    testApiEditDuringOfflineCatchup();
     testEditDuringAccounting();
     testStrictTrafficBatches();
     testLossAndOrdering();

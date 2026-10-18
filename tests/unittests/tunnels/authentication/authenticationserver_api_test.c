@@ -3,6 +3,7 @@
  * bounded pagination/cursors, budgets, corrupt records and side-effect freedom.
  * Contention/lifecycle and real transport transactions have separate fixtures. */
 #include "AuthenticationServer/api.h"
+#include "AuthenticationServer/edit_token.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "loggers/network_logger.h"
 
@@ -197,6 +198,108 @@ static void detail(void)
     expectString(field(u, "time"), "first_usage_at_ms", "0");
     expectString(u, "record_stat_interval_ms", "120000");
     cJSON_Delete(body);
+}
+
+static void editTokenCodec(void)
+{
+    uint8_t identity[16];
+    for (size_t i = 0; i < sizeof(identity); ++i)
+        identity[i] = (uint8_t) i;
+    char token[kAuthenticationServerEditTokenChars + 1];
+    authenticationserverEditTokenFormat(identity, 84, token);
+    twfRequire(strcmp(token, "000102030405060708090a0b0c0d0e0f0000000000000054") == 0, "noncanonical edit token");
+    uint8_t  decoded[16];
+    uint64_t revision = 0;
+    twfRequire(authenticationserverEditTokenParse(token, decoded, &revision) && revision == 84 &&
+                   memcmp(identity, decoded, sizeof(identity)) == 0,
+               "edit token failed exact round trip");
+    authenticationserverEditTokenFormat(identity, UINT64_MAX, token);
+    twfRequire(strcmp(token + 32, "ffffffffffffffff") == 0 &&
+                   authenticationserverEditTokenParse(token, decoded, &revision) && revision == UINT64_MAX,
+               "edit token lost maximum revision");
+    authenticationserverEditTokenFormat(identity, 0, token);
+    twfRequire(authenticationserverEditTokenParse(token, decoded, &revision) && revision == 0,
+               "edit token lost zero revision");
+    static const char *invalid[] = {"",
+                                    "000102030405060708090a0b0c0d0e0f000000000000005",
+                                    "000102030405060708090a0b0c0d0e0f00000000000000540",
+                                    "000102030405060708090a0b0c0d0e0F0000000000000054",
+                                    "000102030405060708090a0b0c0d0e0f000000000000005G",
+                                    " 00102030405060708090a0b0c0d0e0f0000000000000054"};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(*invalid); ++i)
+    {
+        memset(decoded, 0xa5, sizeof(decoded));
+        revision = 123;
+        twfRequire(! authenticationserverEditTokenParse(invalid[i], decoded, &revision) && revision == 123,
+                   "accepted malformed edit token or changed failed revision");
+        for (size_t j = 0; j < sizeof(decoded); ++j)
+            twfRequire(decoded[j] == 0xa5, "failed edit token changed instance identity");
+    }
+}
+
+static void expectReadTokens(const char *expected)
+{
+    static const char *operations[] = {"status", "get-user", "list-users"};
+    static const char *requests[]   = {"{}", "{\"id\":\"9007199254740993\"}", "{}"};
+    for (size_t i = 0; i < sizeof(operations) / sizeof(*operations); ++i)
+    {
+        cJSON *body = call(operations[i], requests[i], NULL);
+        expectString(body, "edit_token", expected);
+        cJSON_Delete(body);
+    }
+}
+
+static void editTokens(void)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    char                           expected[kAuthenticationServerEditTokenChars + 1];
+    authenticationserverEditTokenFormat(ts->api_instance_id, ts->store.config_revision, expected);
+    expectReadTokens(expected);
+
+    authenticationserver_status_t      status;
+    authenticationserver_user_view_t   user;
+    authenticationserver_page_view_t   page;
+    authenticationserver_api_request_t request = {.limit = 1};
+    twfRequire(authenticationserverStatusSnapshot(server, 0, &status) == kAuthenticationServerStatusOk &&
+                   authenticationserverCopyUserView(server, UINT64_C(9007199254740993), 1024 * 1024, 0, &user) ==
+                       NULL &&
+                   authenticationserverCopyPageView(server, &request, 1024 * 1024, 0, &page) == NULL,
+               "owned edit token snapshots failed");
+    rwlockWriteLock(&ts->state_lock);
+    userAddTraffic(usersLookupByIdentifier(&ts->store.users, UINT64_C(9007199254740993)), 1, 2);
+    authenticationserverBumpStatsRevision(server);
+    rwlockWriteUnlock(&ts->state_lock);
+    expectReadTokens(expected);
+
+    rwlockWriteLock(&ts->state_lock);
+    user_config_patch_t patch = {.mask = kUserConfigEnabled, .enabled = true};
+    twfRequire(authenticationserverPatchConfigAndBumpRevision(server, UINT64_C(9007199254740993), &patch) ==
+                   kUsersUpdateResultOk,
+               "same-value configuration transaction failed");
+    rwlockWriteUnlock(&ts->state_lock);
+    char changed[kAuthenticationServerEditTokenChars + 1];
+    authenticationserverEditTokenFormat(ts->api_instance_id, ts->store.config_revision, changed);
+    twfRequire(strcmp(expected, changed) != 0, "same-value edit preserved edit token");
+    expectReadTokens(changed);
+
+    /* Stand in for a recreated server with a repeated revision. Existing owned
+     * snapshots must retain the identity and revision copied before unlocking. */
+    rwlockWriteLock(&ts->state_lock);
+    ts->api_instance_id[0] ^= 1;
+    rwlockWriteUnlock(&ts->state_lock);
+    char recreated[kAuthenticationServerEditTokenChars + 1];
+    authenticationserverEditTokenFormat(ts->api_instance_id, ts->store.config_revision, recreated);
+    twfRequire(strcmp(changed, recreated) != 0, "recreated instance reused edit token");
+    expectReadTokens(recreated);
+    char owned[kAuthenticationServerEditTokenChars + 1];
+    authenticationserverEditTokenFormat(status.instance_id, status.config_revision, owned);
+    twfRequire(strcmp(expected, owned) == 0, "status retained live edit-token state");
+    authenticationserverEditTokenFormat(user.instance_id, user.config_revision, owned);
+    twfRequire(strcmp(expected, owned) == 0, "detail retained live edit-token state");
+    authenticationserverEditTokenFormat(page.instance_id, page.config_revision, owned);
+    twfRequire(strcmp(expected, owned) == 0, "page retained live edit-token state");
+    userPublicDetailDestroy(&user.user);
+    memoryFree(page.users);
 }
 
 static void continuation(char out[160], const char *cursor, size_t limit)
@@ -401,6 +504,8 @@ int main(void)
     add(UINT64_C(9007199254740993));
     parsing();
     detail();
+    editTokenCodec();
+    editTokens();
     for (uint64_t id = 1000; id < 1125; ++id)
         add(id);
     pagination();

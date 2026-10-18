@@ -2,7 +2,8 @@
  * Covers: strict API envelopes and exact response measurement/serialization.
  * Setup: real APIServer codec, immutable test-only descriptors, owned bytes.
  * Checks: malicious metadata/schema, opaque text/binary fidelity, fixed gateway
- * errors, node failures, empty and >65 KiB results, output boundary guards.
+ * errors, node failures, empty and >65 KiB results, output boundary guards and
+ * the largest conditional-edit acknowledgement within the minimum envelope cap.
  * Limits: Stream parsing, worker dispatch and transport limits are separate
  * fixtures; these calls receive one complete envelope, excluding its prefix.
  * CTest: waterwall.apiserver_codec_unit
@@ -333,6 +334,44 @@ static void responseFidelity(void)
     memoryFree(large);
 }
 
+static void maximumUpdateAcknowledgement(void)
+{
+    /* Maximum durable ID/revision width and canonical edit-token width. This
+     * fixture keeps the generic codec independent of AuthenticationServer. */
+    static const char acknowledgement[] =
+        "{\"id\":\"18446744073709551615\",\"config_revision\":\"18446744073709551615\","
+        "\"edit_token\":\"ffffffffffffffffffffffffffffffffffffffffffffffff\"}";
+    static const node_api_operation_t operation = {.name                  = "update-user",
+                                                   .read_only             = false,
+                                                   .response_content_type = "application/json",
+                                                   .response_encoding     = kNodeApiEncodingUtf8};
+    char                              request_id[65];
+    memset(request_id, 1, sizeof(request_id) - 1);
+    request_id[sizeof(request_id) - 1] = '\0';
+    cJSON *request                     = requestJson("{}");
+    cJSON_ReplaceItemInObjectCaseSensitive(request, "id", cJSON_CreateString(request_id));
+    api_request_t parsed = parseJson(request);
+    require(! parsed.error && strlen(parsed.id) == 64 && memcmp(parsed.id, request_id, 64) == 0,
+            "Maximally escaped allowed correlation ID was rejected");
+    cJSON_Delete(request);
+
+    const size_t body_size = sizeof(acknowledgement) - 1;
+    const size_t size =
+        apiserverResponseSize(parsed.id, NULL, &operation, kApiResultOk, (const uint8_t *) acknowledgement, body_size);
+    require(body_size <= 256 && size != SIZE_MAX && size <= 1024,
+            "Largest update acknowledgement exceeds the minimum gateway envelope cap");
+    require(size >= 6 * 64 + body_size, "Maximum correlation-ID escaping was omitted from the envelope size");
+    cJSON *response =
+        encodedResponse(parsed.id, NULL, &operation, kApiResultOk, (const uint8_t *) acknowledgement, body_size);
+    require(strcmp(cJSON_GetObjectItemCaseSensitive(response, "id")->valuestring, request_id) == 0,
+            "Maximum correlation ID changed during response serialization");
+    cJSON *result = cJSON_GetObjectItemCaseSensitive(response, "result");
+    require(strcmp(cJSON_GetObjectItemCaseSensitive(result, "body")->valuestring, acknowledgement) == 0,
+            "Maximum update acknowledgement changed during response serialization");
+    cJSON_Delete(response);
+    memoryFree(parsed.body);
+}
+
 static void gatewayErrors(void)
 {
     static const char *const errors[] = {"invalid_request",
@@ -371,6 +410,7 @@ int main(void)
     labelsAndTokens();
     lexicalAndEncoding();
     responseFidelity();
+    maximumUpdateAcknowledgement();
     gatewayErrors();
     puts("apiserver_codec_test: all cases passed");
     return 0;

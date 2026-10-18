@@ -1,5 +1,6 @@
 #include "AuthenticationServer/status.h"
 #include "AuthenticationServer/api.h"
+#include "AuthenticationServer/edit_token.h"
 
 static void status(authenticationserver_json_writer_t *w, const void *value)
 {
@@ -21,6 +22,10 @@ static void status(authenticationserver_json_writer_t *w, const void *value)
     NUMBER("session_record_count", s->session_record_count);
     TEXT(",");
     NUMBER("config_revision", s->config_revision);
+    char token[kAuthenticationServerEditTokenChars + 1];
+    authenticationserverEditTokenFormat(s->instance_id, s->config_revision, token);
+    TEXT(",\"edit_token\":");
+    authenticationserverJsonString(w, token);
     TEXT(",");
     NUMBER("stats_revision", s->stats_revision);
     TEXT(",\"primary_save\":{\"last_result\":");

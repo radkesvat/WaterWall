@@ -1156,6 +1156,265 @@ static void testConfigPatchFirstUseAndRuntime(void)
     usersDestroy(&users);
 }
 
+/* Bounded configuration editing uses owned input and never waits behind an
+ * acquired collection/configuration lock. Holder semaphores are the oracle. */
+typedef struct config_lock_holder_s
+{
+    wrwlock_t  *lock;
+    wsem_t      acquired, release;
+    atomic_bool held;
+    wthread_t   thread;
+} config_lock_holder_t;
+
+static WTHREAD_ROUTINE(configHoldWriter)
+{
+    config_lock_holder_t *holder = userdata;
+    rwlockWriteLock(holder->lock);
+    atomic_store(&holder->held, true);
+    semaphorePost(&holder->acquired);
+    require(semaphoreWait(&holder->release), "config writer release wait failed");
+    atomic_store(&holder->held, false);
+    rwlockWriteUnlock(holder->lock);
+    return 0;
+}
+
+static void configHoldStart(config_lock_holder_t *holder, wrwlock_t *lock)
+{
+    memoryZero(holder, sizeof(*holder));
+    holder->lock = lock;
+    atomic_init(&holder->held, false);
+    semaphoreInit(&holder->acquired, 0);
+    semaphoreInit(&holder->release, 0);
+    require(threadCreate(&holder->thread, configHoldWriter, holder) == kWThreadErrorNone,
+            "config writer creation failed");
+    require(semaphoreWait(&holder->acquired), "config writer acquisition failed");
+}
+
+static void configHoldFinish(config_lock_holder_t *holder)
+{
+    require(atomic_load(&holder->held), "config try-apply waited for lock release");
+    semaphorePost(&holder->release);
+    require(threadJoin(holder->thread) == 0, "config writer join failed");
+    semaphoreDestroy(&holder->acquired);
+    semaphoreDestroy(&holder->release);
+}
+
+static user_config_prepared_patch_t *prepareConfig(const user_config_patch_t *patch)
+{
+    user_config_prepared_patch_t *prepared = NULL;
+    require(usersPrepareConfigPatch(patch, 64U * 1024U, 0, &prepared) == kUsersUpdateResultOk && prepared != NULL,
+            "bounded preparation failed");
+    require(usersPreparedConfigPatchOwnedBytes(prepared) <= usersPreparedConfigPatchPeakBytes(prepared) &&
+                usersPreparedConfigPatchPeakBytes(prepared) <= 64U * 1024U,
+            "prepared allocation accounting invalid");
+    return prepared;
+}
+
+static bool configPrecommitRefuse(void *context)
+{
+    ++*(unsigned *) context;
+    return false;
+}
+
+static void testPreparedConfigRefusalsAndLocks(void)
+{
+    users_t users;
+    require(usersCreate(&users), "prepared config collection failed");
+    user_t *target = addNamedAllowedIpUser(&users, 1, "prepared-secret", "before", "10.60.0.0/24");
+    addNamedAllowedIpUser(&users, 2, "prepared-other", "occupied", "10.61.0.0/24");
+    char                next_name[] = "after";
+    user_config_patch_t patch = {.mask = kUserConfigName | kUserConfigWireGuardAllowedIps | kUserConfigTrafficTotal,
+                                 .name = next_name,
+                                 .wireguard_allowed_ips = "10.62.0.9/24",
+                                 .limit.traffic.total   = 987};
+    user_config_prepared_patch_t *prepared = prepareConfig(&patch);
+    next_name[0]                           = 'X';
+    size_t                        peak     = usersPreparedConfigPatchPeakBytes(prepared);
+    user_config_prepared_patch_t *refused  = (void *) 1;
+    require(usersPrepareConfigPatch(&patch, peak - 1U, 0, &refused) == kUsersUpdateResultResourceLimit &&
+                refused == NULL,
+            "preparation crossed allowance");
+    require(usersPrepareConfigPatch(&patch, SIZE_MAX, 1, &refused) == kUsersUpdateResultTimeout && refused == NULL,
+            "expired preparation accepted");
+    unsigned callbacks = 0;
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 1, prepared, 0, 0, configPrecommitRefuse, &callbacks) ==
+                    kUsersUpdateResultPrecommitRejected &&
+                callbacks == 1,
+            "precommit refusal committed values");
+    require(stringCompare(target->name, "before") == 0 && target->limit.traffic.total == 0 && usersValidate(&users),
+            "precommit refusal changed fields or indexes");
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 999, prepared, 0, 0, NULL, NULL) ==
+                kUsersUpdateResultUserNotFound,
+            "missing durable id accepted");
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 1, prepared, 0, 1, NULL, NULL) == kUsersUpdateResultTimeout,
+            "expired precommit accepted");
+    config_lock_holder_t holder;
+    wrwlock_t           *locks[] = {&users.lock, &target->lock};
+    for (size_t i = 0; i < 2; ++i)
+    {
+        configHoldStart(&holder, locks[i]);
+        require(! rwlockTryWriteLock(locks[i]), "try-write acquired writer-held lock");
+        require(usersTryApplyPreparedConfigByIdentifier(&users, 1, prepared, 0, 0, NULL, NULL) ==
+                    kUsersUpdateResultBusy,
+                "bounded config waited for writer-held lock");
+        configHoldFinish(&holder);
+        require(stringCompare(target->name, "before") == 0 && usersValidate(&users), "busy refusal changed indexes");
+    }
+    /* Configuration-only editing must remain independent of statistics locks. */
+    configHoldStart(&holder, &target->stats_lock);
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    allocationCountBegin();
+#endif
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 1, prepared, 0, 0, NULL, NULL) == kUsersUpdateResultOk,
+            "range-node reuse failed or config acquired stats lock");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    require(allocationCountEnd() == 0, "prepared range reuse or rename allocated during commit");
+#endif
+    configHoldFinish(&holder);
+    usersFreePreparedConfigPatch(prepared);
+    require(stringCompare(target->name, "after") == 0 &&
+                stringCompare(target->wireguard_allowed_ips, "10.62.0.0/24") == 0 &&
+                target->limit.traffic.total == 987 && usersValidate(&users),
+            "prepared normalized values were not committed");
+    patch.name = "occupied";
+    prepared   = prepareConfig(&patch);
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 1, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                    kUsersUpdateResultDuplicateName &&
+                stringCompare(target->name, "after") == 0 && usersValidate(&users),
+            "duplicate prepared name was not atomic");
+    usersFreePreparedConfigPatch(prepared);
+    patch.name                  = "another";
+    patch.wireguard_allowed_ips = "10.61.0.9/24";
+    prepared                    = prepareConfig(&patch);
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 1, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                    kUsersUpdateResultDuplicateWireGuardAllowedIps &&
+                stringCompare(target->name, "after") == 0 && usersValidate(&users),
+            "overlap prepared patch was not atomic");
+    usersFreePreparedConfigPatch(prepared);
+    patch.wireguard_allowed_ips = "invalid-range";
+    require(usersPrepareConfigPatch(&patch, SIZE_MAX, 0, &refused) == kUsersUpdateResultInvalidWireGuardAllowedIps &&
+                refused == NULL,
+            "invalid range did not clean partial preparation");
+    usersDestroy(&users);
+}
+
+static void testPreparedNameBoundsAndCapacity(void)
+{
+    users_t users;
+    require(usersCreate(&users), "name-bound collection failed");
+    for (uint64_t id = 1; id <= 65; ++id)
+    {
+        char password[48], name[48];
+        snprintf(password, sizeof(password), "reserved-password-%" PRIu64, id);
+        snprintf(name, sizeof(name), "reserved-name-%" PRIu64, id);
+        user_t                       *target   = addNamedUser(&users, id, password, "");
+        user_config_patch_t           patch    = {.mask = kUserConfigName, .name = name};
+        user_config_prepared_patch_t *prepared = prepareConfig(&patch);
+#if defined(USERS_TEST_ALLOC_COUNTING)
+        allocationCountBegin();
+#endif
+        require(usersTryApplyPreparedConfigByIdentifier(&users, id, prepared, 0, 0, NULL, NULL) == kUsersUpdateResultOk,
+                "unnamed-to-named at reserved boundary failed");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+        require(allocationCountEnd() == 0, "bounded name insertion rehashed table");
+#endif
+        usersFreePreparedConfigPatch(prepared);
+        patch.name = "";
+        prepared   = prepareConfig(&patch);
+#if defined(USERS_TEST_ALLOC_COUNTING)
+        allocationCountBegin();
+#endif
+        require(usersTryApplyPreparedConfigByIdentifier(&users, id, prepared, 0, 0, NULL, NULL) == kUsersUpdateResultOk,
+                "reserved name clear failed");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+        require(allocationCountEnd() == 0, "bounded name clear allocated");
+#endif
+        usersFreePreparedConfigPatch(prepared);
+        require(target->name[0] == '\0', "reserved clear not visible");
+    }
+    char *huge = memoryAllocate(32770U);
+    memset(huge, 'x', 32769U);
+    huge[32769U]   = '\0';
+    user_t *target = usersLookupByIdentifier(&users, 1);
+    require(usersSetUserName(&users, target, huge), "legacy long-name setup failed");
+    memoryFree(huge);
+    user_config_patch_t patch = {.mask = kUserConfigName | kUserConfigEnabled, .name = "short", .enabled = false};
+    user_config_prepared_patch_t *prepared = prepareConfig(&patch);
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 1, prepared, 0, 0, NULL, NULL) ==
+                    kUsersUpdateResultResourceLimit &&
+                target->enabled && stringLength(target->name) == 32769U,
+            "long old name was scanned/edited outside inspection limit");
+    usersFreePreparedConfigPatch(prepared);
+    patch.mask = kUserConfigEnabled;
+    prepared   = prepareConfig(&patch);
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 1, prepared, 0, 0, NULL, NULL) == kUsersUpdateResultOk &&
+                ! target->enabled,
+            "non-name edit inspected unrelated huge stored name");
+    usersFreePreparedConfigPatch(prepared);
+    huge = memoryAllocate(32769U);
+    memset(huge, 'x', 32768U);
+    huge[32768U] = '\0';
+    require(usersSetUserName(&users, target, huge), "maximum inspected name setup failed");
+    memoryFree(huge);
+    patch.mask = kUserConfigName;
+    prepared   = prepareConfig(&patch);
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 1, prepared, 0, 0, NULL, NULL) == kUsersUpdateResultOk &&
+                stringCompare(target->name, "short") == 0,
+            "exact old-name inspection allowance was refused");
+    usersFreePreparedConfigPatch(prepared);
+    require(usersValidate(&users), "bounded-name edits corrupted indexes");
+    usersDestroy(&users);
+}
+
+static void testPreparedAllowedIpGrowthBounds(void)
+{
+    users_t users;
+    buildFullRangedFixture(&users);
+    user_t                       *target   = addNamedUser(&users, 100, "bounded-range", "range-before");
+    user_config_patch_t           patch    = {.mask                  = kUserConfigName | kUserConfigWireGuardAllowedIps,
+                                              .name                  = "range-after",
+                                              .wireguard_allowed_ips = "10.90.0.0/24"};
+    user_config_prepared_patch_t *prepared = prepareConfig(&patch);
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 100, prepared, 0, 0, NULL, NULL) ==
+                    kUsersUpdateResultResourceLimit &&
+                stringCompare(target->name, "range-before") == 0 && ! target->wireguard_allowed_ips_valid &&
+                usersValidate(&users),
+            "range growth crossed remaining budget");
+    unsigned callbacks = 0;
+    require(usersTryApplyPreparedConfigByIdentifier(
+                &users, 100, prepared, 1024U * 1024U, 0, configPrecommitRefuse, &callbacks) ==
+                    kUsersUpdateResultPrecommitRejected &&
+                callbacks == 1 && ! target->wireguard_allowed_ips_valid && usersValidate(&users),
+            "private reserve refusal changed logical indexes");
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 100, prepared, 0, 0, NULL, NULL) == kUsersUpdateResultOk,
+            "bounded reserved range insertion failed");
+    usersFreePreparedConfigPatch(prepared);
+    usersDestroy(&users);
+
+    require(usersCreate(&users), "large range-bound collection failed");
+    for (uint64_t id = 1; id <= 16384U; ++id)
+    {
+        char password[48], cidr[48];
+        snprintf(password, sizeof(password), "range-capacity-%" PRIu64, id);
+        snprintf(cidr,
+                 sizeof(cidr),
+                 "10.%u.%u.%u/32",
+                 (unsigned) (id >> 16U),
+                 (unsigned) ((id >> 8U) & 255U),
+                 (unsigned) (id & 255U));
+        addAllowedIpUser(&users, id, password, cidr);
+    }
+    target   = addNamedUser(&users, 20000, "large-growth-target", "large-before");
+    prepared = prepareConfig(&patch);
+    require(usersTryApplyPreparedConfigByIdentifier(&users, 20000, prepared, SIZE_MAX, 0, NULL, NULL) ==
+                    kUsersUpdateResultResourceLimit &&
+                stringCompare(target->name, "large-before") == 0 && ! target->wireguard_allowed_ips_valid &&
+                usersValidate(&users),
+            "range edit exceeded hard one-MiB growth extent");
+    usersFreePreparedConfigPatch(prepared);
+    usersDestroy(&users);
+}
+
 int main(void)
 {
     testCaseSet("users_index_test");
@@ -1186,6 +1445,9 @@ int main(void)
     testIndexGeometryRejection();
     testConfigPatchIndexesAndOwnership();
     testConfigPatchFirstUseAndRuntime();
+    testPreparedConfigRefusalsAndLocks();
+    testPreparedNameBoundsAndCapacity();
+    testPreparedAllowedIpGrowthBounds();
 
     printf("users_index_test: all checks passed\n");
     return 0;

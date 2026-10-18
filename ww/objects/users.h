@@ -169,7 +169,12 @@ typedef enum users_update_result_e
     kUsersUpdateResultDuplicateUUID,
     kUsersUpdateResultDuplicateWireGuardPublicKey,
     kUsersUpdateResultDuplicateWireGuardAllowedIps,
-    kUsersUpdateResultPasswordUpdateFailed
+    kUsersUpdateResultPasswordUpdateFailed,
+    kUsersUpdateResultBusy,
+    kUsersUpdateResultResourceLimit,
+    kUsersUpdateResultTimeout,
+    kUsersUpdateResultPrecommitRejected,
+    kUsersUpdateResultRevisionExhausted
 } users_update_result_t;
 
 enum
@@ -268,6 +273,26 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha2
 /* Failure-atomic, ID-addressed configuration edit. Holds collection ownership
  * through commit and applies selected leaves under the user's lock. */
 users_update_result_t usersPatchConfigByIdentifier(users_t *users, uint64_t id, const user_config_patch_t *patch);
+typedef struct user_config_prepared_patch_s user_config_prepared_patch_t;
+/* Preparation owns selected strings and normalized routing data. The allowance
+ * covers its allocation and peak transient normalization storage/scratch. A zero
+ * deadline has no time limit. Every failure clears *out. */
+users_update_result_t usersPrepareConfigPatch(const user_config_patch_t *patch, size_t max_owned_bytes,
+                                              uint64_t deadline_ms, user_config_prepared_patch_t **out);
+void                  usersFreePreparedConfigPatch(user_config_prepared_patch_t *prepared);
+size_t                usersPreparedConfigPatchOwnedBytes(const user_config_prepared_patch_t *prepared);
+size_t                usersPreparedConfigPatchPeakBytes(const user_config_prepared_patch_t *prepared);
+/* Called with collection and target configuration write locks held, after all
+ * fallible index preparation. It must not call back into users/user helpers.
+ * False refuses before logical mutation; the caller retains its precise reason.
+ * An accepted patch transfers its selected strings; free prepared afterward on
+ * every result. No statistics lock is acquired. Private capacity may survive a
+ * refusal. The callback may be NULL. */
+typedef bool (*users_config_precommit_fn)(void *context);
+users_update_result_t usersTryApplyPreparedConfigByIdentifier(users_t *users, uint64_t id,
+                                                              user_config_prepared_patch_t *prepared,
+                                                              size_t max_growth_bytes, uint64_t deadline_ms,
+                                                              users_config_precommit_fn precommit, void *context);
 bool                  usersSetUserName(users_t *users, user_t *user, const char *name);
 bool                  usersSetUserEmail(users_t *users, user_t *user, const char *email);
 bool                  usersSetUserNotes(users_t *users, user_t *user, const char *notes);

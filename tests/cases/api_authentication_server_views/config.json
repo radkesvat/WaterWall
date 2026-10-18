@@ -58,6 +58,20 @@
                 ]
               }
             ]
+          },
+          {
+            "name": "editor",
+            "token": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+            "allow": [
+              {
+                "config": "api-server",
+                "node": "auth-db",
+                "operations": [
+                  "get-user",
+                  "update-user"
+                ]
+              }
+            ]
           }
         ]
       }
@@ -70,6 +84,66 @@
         "port": 29382
       },
       "next": "auth-db"
+    },
+    {
+      "name": "small-response-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29381
+      },
+      "next": "small-response-api"
+    },
+    {
+      "name": "small-response-api",
+      "type": "APIServer",
+      "settings": {
+        "clients": [
+          {
+            "name": "auditor",
+            "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "allow": [
+              {
+                "config": "api-server",
+                "node": "auth-db",
+                "operations": [
+                  "status",
+                  "get-user",
+                  "list-users"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "monitor",
+            "token": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "allow": [
+              {
+                "config": "api-server",
+                "node": "auth-db",
+                "operations": [
+                  "status"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "editor",
+            "token": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+            "allow": [
+              {
+                "config": "api-server",
+                "node": "auth-db",
+                "operations": [
+                  "get-user",
+                  "update-user"
+                ]
+              }
+            ]
+          }
+        ],
+        "max_response_envelope": 1024
+      }
     }
   ]
 }

@@ -1,5 +1,6 @@
 /* Server half shared by the paired authentication sync and ingress fixtures. */
 #include "authentication_sync_peer.h"
+#include "AuthenticationServer/api.h"
 #include "AuthenticationServer/structure.h"
 #include "test_assert.h"
 #define require(c, m) TEST_REQUIRE(TEST_FAILURE_EXIT, c, m)
@@ -38,6 +39,7 @@ uint32_t authTestPeerLineSize(void)
 void authTestPeerDestroy(tunnel_t *t)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
+    nodeApiUnregister(t);
     authenticationserverSessionsDestroy(ts);
     authenticationserverAuthClientsDestroy(ts);
     usersDestroy(&ts->store.users);
@@ -221,4 +223,36 @@ void authTestPeerInsertUser(tunnel_t *t, uint64_t id, const char *password)
     require(usersAddUser(&ts->store.users, &user), "peer insert failed");
     rwlockWriteUnlock(&ts->state_lock);
     userDestroy(&user);
+}
+
+cJSON *authTestPeerApi(tunnel_t *t, const char *operation, const char *body, enum api_result_e expected)
+{
+    if (! nodeApiHasRegistration(t))
+        require(authenticationserverRegisterApi(t), "peer API registration failed");
+    const node_api_operation_t *descriptor = nodeApiFind(t, operation);
+    require(descriptor != NULL && descriptor->execution == kNodeApiCallingWorker &&
+                descriptor->read_only == (strcmp(operation, "update-user") != 0),
+            "peer API descriptor contract");
+    const size_t length  = strlen(body);
+    sbuf_t      *request = bufferpoolGetBestFit(getCurrentEventWorkerBufferPool(), (uint32_t) length, 0);
+    sbufSetLength(request, (uint32_t) length);
+    memoryCopy(sbufGetMutablePtr(request), body, length);
+    node_api_call_context_t context = {.operation                = operation,
+                                       .principal                = "sync-fixture",
+                                       .max_response_body_size   = 4096,
+                                       .working_memory_allowance = 1024 * 1024};
+    api_result_t            result  = descriptor->handler(t, request, &context);
+    require(result.result_code == expected && result.buffer != NULL, "peer API result contract");
+    cJSON *json = cJSON_ParseWithLength((const char *) sbufGetRawPtr(result.buffer), sbufGetLength(result.buffer));
+    bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), result.buffer);
+    require(cJSON_IsObject(json), "peer API did not return JSON");
+    return json;
+}
+
+void authTestPeerSetConfigRevision(tunnel_t *t, uint64_t revision)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    rwlockWriteLock(&ts->state_lock);
+    ts->store.config_revision = revision;
+    rwlockWriteUnlock(&ts->state_lock);
 }

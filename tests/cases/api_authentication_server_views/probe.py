@@ -1,7 +1,7 @@
-"""Exercise real server read views over the namespace's loopback API stream.
+"""Exercise real server read views and conditional edits over private loopback.
 
 UpdateUser and PushUserStats use a separate authenticated existing-protocol
-connection solely as setup for cursor/revision assertions. No operation retries
+connection solely as setup for cursor/revision assertions. No automatic operation retries
 or host-network dependencies. CTest: waterwall.api_authentication_server_views.
 """
 
@@ -17,6 +17,7 @@ from api_server_probe import connect, exact, frame, require, response
 
 TOKEN = "0123456789abcdef" * 4
 MONITOR_TOKEN = "abcdef0123456789" * 4
+EDITOR_TOKEN = "fedcba9876543210" * 4
 LARGE_ID = "9007199254740993"
 MAX_ID = "18446744073709551615"
 USER_FIELDS = {"id", "gid", "enabled", "name", "email", "notes", "wireguard_allowed_ips",
@@ -41,15 +42,20 @@ def leaves_are_decimal(value):
         decimal(value)
 
 
-def query(stream, reader, identifier, operation, body=None, *, monitor=False, error=None):
-    envelope = {"id": identifier,
-                "auth": {"client": "monitor" if monitor else "auditor",
-                         "token": MONITOR_TOKEN if monitor else TOKEN},
+def request(identifier, operation, body=None, *, monitor=False, editor=False):
+    return {"id": identifier,
+                "auth": {"client": "editor" if editor else "monitor" if monitor else "auditor",
+                         "token": EDITOR_TOKEN if editor else MONITOR_TOKEN if monitor else TOKEN},
                 "selector": {"config": "api-server", "node": "auth-db"},
                 "operation": operation, "content_type": "application/json",
                 "body_encoding": "utf8", "body": json.dumps(body if body is not None else {})}
+
+
+def query(stream, reader, identifier, operation, body=None, *, monitor=False, editor=False, error=None,
+          max_envelope=1024 * 1024):
+    envelope = request(identifier, operation, body, monitor=monitor, editor=editor)
     stream.sendall(frame(envelope))
-    value = response(reader, identifier)
+    value = response(reader, identifier, max_envelope)
     require(value["error"] is None, "Server operation produced a gateway error")
     result = value["result"]
     require(result["content_type"] == "application/json" and result["body_encoding"] == "utf8",
@@ -65,10 +71,28 @@ def query(stream, reader, identifier, operation, body=None, *, monitor=False, er
     return decoded
 
 
+def check_token(value):
+    token = value["edit_token"]
+    require(isinstance(token, str) and re.fullmatch(r"[0-9a-f]{48}", token) is not None,
+            "Invalid edit token representation")
+    require(int(token[32:], 16) == int(value["config_revision"]), "Token/revision snapshot mismatch")
+
+
+def check_ack(value, identifier, previous_token):
+    require(set(value) == {"id", "config_revision", "edit_token"} and value["id"] == identifier,
+            "Update acknowledgement schema changed")
+    decimal(value["config_revision"])
+    check_token(value)
+    require(value["edit_token"][:32] == previous_token[:32]
+            and int(value["config_revision"]) == int(previous_token[32:], 16) + 1,
+            "Update did not publish exactly its committed revision")
+
+
 def check_status(value, sessions):
     require(set(value) == {"database_loaded", "user_count", "configured_producer_count",
-                           "session_record_count", "config_revision", "stats_revision", "primary_save"},
+                           "session_record_count", "config_revision", "stats_revision", "primary_save", "edit_token"},
             "Status field allowlist changed")
+    check_token(value)
     require(value["database_loaded"] is True and value["user_count"] == "3"
             and value["configured_producer_count"] == "1"
             and value["session_record_count"] == str(sessions), "Incorrect server counts")
@@ -79,8 +103,9 @@ def check_status(value, sessions):
 
 
 def check_detail(value, identifier):
-    require(set(value) == {"config_revision", "stats_revision", "accounting_time_ms", "user"},
+    require(set(value) == {"config_revision", "stats_revision", "accounting_time_ms", "user", "edit_token"},
             "Detail metadata changed")
+    check_token(value)
     for field in ("config_revision", "stats_revision", "accounting_time_ms"):
         decimal(value[field])
     user = value["user"]
@@ -102,7 +127,8 @@ def check_detail(value, identifier):
 
 def check_page(value):
     require(set(value) == {"config_revision", "stats_revision", "accounting_time_ms", "total_users",
-                           "users", "next_cursor"}, "List field allowlist changed")
+                           "users", "next_cursor", "edit_token"}, "List field allowlist changed")
+    check_token(value)
     for field in ("config_revision", "stats_revision", "accounting_time_ms", "total_users"):
         decimal(value[field])
     require(value["total_users"] == "3", "Incorrect list count")
@@ -141,6 +167,7 @@ def main():
         check_status(before, 0)
         full = query(stream, reader, "large-id", "get-user", {"id": LARGE_ID})
         user = check_detail(full, LARGE_ID)
+        require(full["edit_token"] == before["edit_token"], "Read token changed without a configuration edit")
         require(user["gid"] == "7" and user["name"] == "Alice"
                 and user["email"] == "alice@example.test" and user["notes"] == "Operator note"
                 and user["wireguard_allowed_ips"] == "10.44.0.23/32"
@@ -154,7 +181,9 @@ def main():
         query(stream, reader, "missing", "get-user", {"id": "123"}, error="not_found")
 
         first = check_page(query(stream, reader, "page-1", "list-users", {"limit": 1}))
+        require(first["edit_token"] == full["edit_token"], "List token differs from matching detail/status")
         require(len(first["users"]) == 1 and first["next_cursor"] is not None, "First page did not advance")
+        require(first["next_cursor"][:48] == first["edit_token"], "Edit token changed cursor representation")
         second = check_page(query(stream, reader, "page-2", "list-users",
                                   {"limit": 2, "cursor": first["next_cursor"]}))
         all_ids = [item["id"] for item in first["users"] + second["users"]]
@@ -163,16 +192,20 @@ def main():
         check_status(query(stream, reader, "unchanged", "status"), 0)
 
         for operation, body in (("get-user", {"id": LARGE_ID}),
-                                ("list-users", {"cursor": first["next_cursor"]})):
+                                ("list-users", {"cursor": first["next_cursor"]}),
+                                ("update-user", {"id": LARGE_ID, "if_match": first["edit_token"],
+                                                 "patch": {"enabled": False}})):
             identifier = "denied-" + operation
-            envelope = {"id": identifier, "auth": {"client": "monitor", "token": MONITOR_TOKEN},
-                        "selector": {"config": "api-server", "node": "auth-db"},
-                        "operation": operation, "content_type": "application/json",
-                        "body_encoding": "utf8", "body": json.dumps(body)}
-            stream.sendall(frame(envelope))
+            stream.sendall(frame(request(identifier, operation, body, monitor=True)))
             denied = response(reader, identifier)
             require(denied["error"]["code"] == "forbidden" and denied["result"] is None,
                     "Status permission granted access to account operations")
+        stream.sendall(frame(request("auditor-denied-write", "update-user",
+                                    {"id": LARGE_ID, "if_match": first["edit_token"],
+                                     "patch": {"enabled": False}})))
+        denied = response(reader, "auditor-denied-write")
+        require(denied["error"]["code"] == "forbidden" and denied["result"] is None,
+                "Read permissions granted an implicit write permission")
         check_status(query(stream, reader, "monitor-status", "status", monitor=True), 0)
 
         with connect(29382) as control, control.makefile("rb") as control_reader:
@@ -195,6 +228,7 @@ def main():
             continued = check_page(query(stream, reader, "after-usage", "list-users",
                                          {"limit": 2, "cursor": first["next_cursor"]}))
             require(continued["stats_revision"] == str(stats_revision), "Continuation hid new statistics")
+            require(continued["edit_token"] == first["edit_token"], "Usage invalidated the edit token")
             changed = next(item for item in continued["users"] if item["id"] == all_ids[1])
             require(changed["usage"] == {"u": "13", "d": "29"}, "Continuation did not include accepted usage")
             _, replay_config, replay_stats = protocol_request(control, control_reader, 11, 3, batch, token)
@@ -202,6 +236,7 @@ def main():
             replayed = check_page(query(stream, reader, "after-replay", "list-users",
                                         {"limit": 2, "cursor": first["next_cursor"]}))
             require(replayed["users"] == continued["users"], "Replay double-counted usage")
+            require(replayed["edit_token"] == first["edit_token"], "Exact replay changed the edit token")
 
             # A real configuration transaction invalidates the previous cursor.
             _, edited_config, edited_stats = protocol_request(control, control_reader, 7, 4,
@@ -209,13 +244,97 @@ def main():
             require(edited_config == config_revision + 1 and edited_stats == stats_revision,
                     "Configuration edit changed the wrong revision")
             query(stream, reader, "stale", "list-users", {"cursor": first["next_cursor"]}, error="stale_cursor")
+            query(stream, reader, "protocol-conflict", "update-user",
+                  {"id": LARGE_ID, "if_match": first["edit_token"], "patch": {"enabled": False}},
+                  editor=True, error="conflict")
             edited = query(stream, reader, "edited-user", "get-user", {"id": LARGE_ID})
             require(check_detail(edited, LARGE_ID)["name"] == "Alice edited"
                     and edited["config_revision"] == str(edited_config), "Detail missed committed edit")
             restarted = check_page(query(stream, reader, "restart", "list-users"))
             require(len(restarted["users"]) == 3 and restarted["next_cursor"] is None,
                     "New traversal failed after configuration edit")
+            conditional_edits(stream, reader, control, control_reader, token, edited)
             check_status(query(stream, reader, "final", "status"), 1)
+
+
+def conditional_edits(stream, reader, control, control_reader, session_token, previous):
+    current = query(stream, reader, "editor-read", "get-user", {"id": LARGE_ID}, editor=True)
+    saved = check_detail(current, LARGE_ID)
+    saved_maximum = check_detail(query(stream, reader, "accounting-before-edit", "get-user", {"id": MAX_ID},
+                                      editor=True), MAX_ID)
+    require(current["edit_token"] == previous["edit_token"], "Editor read an inconsistent token")
+    token = current["edit_token"]
+    wrong_instance = ("1" if token[0] == "0" else "0") + token[1:]
+    query(stream, reader, "instance-conflict", "update-user",
+          {"id": LARGE_ID, "if_match": wrong_instance, "patch": {"enabled": False}},
+          editor=True, error="conflict")
+    query(stream, reader, "protected-field", "update-user",
+          {"id": LARGE_ID, "if_match": token, "patch": {"usage": {"u": "0"}}},
+          editor=True, error="invalid_request")
+
+    acknowledgement = query(stream, reader, "conditional-edit", "update-user",
+                            {"id": LARGE_ID, "if_match": token,
+                             "patch": {"enabled": False, "limit": {"traffic": {"total": "999"}},
+                                       "time": {"expire_at_ms": "1"}}}, editor=True)
+    check_ack(acknowledgement, LARGE_ID, token)
+    after = query(stream, reader, "after-edit", "get-user", {"id": LARGE_ID}, editor=True)
+    expected = json.loads(json.dumps(saved))
+    expected["enabled"] = False
+    expected["limit"]["traffic"]["total"] = "999"
+    expected["time"]["expire_at_ms"] = "1"
+    require(check_detail(after, LARGE_ID) == expected
+            and after["stats_revision"] == current["stats_revision"]
+            and after["edit_token"] == acknowledgement["edit_token"],
+            "Sparse edit changed omitted configuration, accounting or its acknowledgement")
+    query(stream, reader, "old-token", "update-user",
+          {"id": LARGE_ID, "if_match": token, "patch": {"enabled": True}}, editor=True, error="conflict")
+
+    # Disabled, expired accounts remain editable. Same-value edits still revise.
+    same = query(stream, reader, "same-value", "update-user",
+                 {"id": LARGE_ID, "if_match": after["edit_token"], "patch": {"enabled": False}}, editor=True)
+    check_ack(same, LARGE_ID, after["edit_token"])
+    unrelated = query(stream, reader, "unrelated-account", "update-user",
+                      {"id": MAX_ID, "if_match": same["edit_token"], "patch": {"notes": "Other account edit"}},
+                      editor=True)
+    check_ack(unrelated, MAX_ID, same["edit_token"])
+    query(stream, reader, "unrelated-conflict", "update-user",
+          {"id": LARGE_ID, "if_match": same["edit_token"], "patch": {"enabled": True}},
+          editor=True, error="conflict")
+
+    # The response must fit the minimum gateway cap even with a fully escaped
+    # maximum-length request ID. Do not read details through this small endpoint.
+    with connect(29381) as small, small.makefile("rb") as small_reader:
+        compact = query(small, small_reader, "\x01" * 64, "update-user",
+                        {"id": MAX_ID, "if_match": unrelated["edit_token"],
+                         "patch": {"notes": "Bounded acknowledgement"}}, editor=True, max_envelope=1024)
+        check_ack(compact, MAX_ID, unrelated["edit_token"])
+
+    # Discard the entire result body after the prefix proves publication. The
+    # application cannot use that lost acknowledgement as its success oracle.
+    lost_request = {"id": MAX_ID, "if_match": compact["edit_token"],
+                    "patch": {"notes": "Unobserved reply committed"}}
+    with connect() as abandoned, abandoned.makefile("rb") as abandoned_reader:
+        abandoned.sendall(frame(request("discarded-result", "update-user", lost_request, editor=True)))
+        length = struct.unpack("!I", exact(abandoned_reader, 4))[0]
+        require(0 < length <= 1024, "Unbounded mutation acknowledgement")
+        # Closing both handles discards the unread result body.
+    reread = query(stream, reader, "reread-after-disconnect", "get-user", {"id": MAX_ID}, editor=True)
+    changed = check_detail(reread, MAX_ID)
+    expected_maximum = dict(saved_maximum, notes="Unobserved reply committed")
+    require(changed == expected_maximum and changed["usage"] == {"u": "13", "d": "29"}
+            and int(reread["config_revision"]) == int(compact["config_revision"]) + 1,
+            "Fresh read failed to resolve the lost update response or accounting was overwritten")
+    query(stream, reader, "lost-old-token", "update-user", lost_request, editor=True, error="conflict")
+
+    # A later authorized producer edit remains a later write under its schema.
+    _, protocol_revision, protocol_stats = protocol_request(control, control_reader, 7, 5,
+                                                            {"id": MAX_ID, "notes": "Later producer edit"},
+                                                            session_token)
+    last = query(stream, reader, "after-later-protocol", "get-user", {"id": MAX_ID}, editor=True)
+    require(check_detail(last, MAX_ID)["notes"] == "Later producer edit"
+            and int(last["config_revision"]) == protocol_revision == int(reread["config_revision"]) + 1
+            and int(last["stats_revision"]) == protocol_stats == int(reread["stats_revision"]),
+            "Producer/API transaction ordering changed")
 
 
 main()

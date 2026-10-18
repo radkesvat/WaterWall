@@ -17,6 +17,7 @@ typedef struct authenticationserver_status_s
     uint32_t                           session_record_count;
     uint64_t                           config_revision;
     uint64_t                           stats_revision;
+    uint8_t                            instance_id[16];
     authenticationserver_save_result_t primary_save_last_result;
     bool                               primary_save_last_attempt_valid;
     bool                               primary_save_last_success_valid;

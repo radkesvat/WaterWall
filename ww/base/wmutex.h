@@ -85,6 +85,10 @@ static inline bool rwlockTryReadLock(wrwlock_t *lock)
 }
 #define rwlockReadUnlock  ReleaseSRWLockShared
 #define rwlockWriteLock   AcquireSRWLockExclusive
+static inline bool rwlockTryWriteLock(wrwlock_t *lock)
+{
+    return TryAcquireSRWLockExclusive(lock) != FALSE;
+}
 #define rwlockWriteUnlock ReleaseSRWLockExclusive
 
 #define wtimed_mutex_t            HANDLE
@@ -252,6 +256,20 @@ static inline bool rwlockTryReadLock(wrwlock_t *lock)
 }
 #define rwlockReadUnlock  pthread_rwlock_unlock
 #define rwlockWriteLock   pthread_rwlock_wrlock
+static inline bool rwlockTryWriteLock(wrwlock_t *lock)
+{
+    int result = pthread_rwlock_trywrlock(lock);
+    if (result == 0)
+    {
+        return true;
+    }
+    if (result != EBUSY && result != EAGAIN)
+    {
+        /* Invalid lock usage is a programmer error, not ordinary contention. */
+        abort();
+    }
+    return false;
+}
 #define rwlockWriteUnlock pthread_rwlock_unlock
 
 #define wtimed_mutex_t         pthread_mutex_t

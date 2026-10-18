@@ -32,21 +32,21 @@ bool __wrap_nodeApiRegister(tunnel_t *, const node_api_operation_t *, size_t);
 bool __wrap_nodeApiRegister(tunnel_t *t, const node_api_operation_t *operations, size_t count)
 {
     ++registrations;
-    twfRequire(count == 3, "AuthenticationServer did not register exactly three operations");
-    bool                     seen[3] = {false};
-    static const char *const names[] = {"status", "get-user", "list-users"};
+    twfRequire(count == 4, "AuthenticationServer did not register exactly four operations");
+    bool                     seen[4] = {false};
+    static const char *const names[] = {"status", "get-user", "list-users", "update-user"};
     for (size_t i = 0; i < count; ++i)
     {
-        twfRequire(operations[i].read_only && operations[i].handler != NULL &&
-                       operations[i].execution == kNodeApiCallingWorker &&
+        twfRequire(operations[i].read_only == (strcmp(operations[i].name, "update-user") != 0) &&
+                       operations[i].handler != NULL && operations[i].execution == kNodeApiCallingWorker &&
                        operations[i].response_encoding == kNodeApiEncodingUtf8 &&
                        strcmp(operations[i].request_content_type, "application/json") == 0 &&
                        strcmp(operations[i].response_content_type, "application/json") == 0,
                    "registered operation metadata mismatch");
         size_t match = 0;
-        while (match < 3 && strcmp(operations[i].name, names[match]) != 0)
+        while (match < 4 && strcmp(operations[i].name, names[match]) != 0)
             ++match;
-        twfRequire(match < 3 && ! seen[match], "unexpected or duplicate operation registration");
+        twfRequire(match < 4 && ! seen[match], "unexpected or duplicate operation registration");
         seen[match] = true;
     }
     if (refuse_registration)

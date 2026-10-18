@@ -1,4 +1,5 @@
 #include "AuthenticationServer/api.h"
+#include "AuthenticationServer/edit_token.h"
 
 static void detail(authenticationserver_json_writer_t *w, const void *value)
 {
@@ -19,6 +20,10 @@ static void detail(authenticationserver_json_writer_t *w, const void *value)
     } while (0)
     TEXT("{");
     NUMBER("config_revision", view->config_revision);
+    char token[kAuthenticationServerEditTokenChars + 1];
+    authenticationserverEditTokenFormat(view->instance_id, view->config_revision, token);
+    TEXT(",\"edit_token\":");
+    authenticationserverJsonString(w, token);
     TEXT(",");
     NUMBER("stats_revision", view->stats_revision);
     TEXT(",");

@@ -1,3 +1,4 @@
+#include "loggers/network_logger.h"
 #include "structure.h"
 
 void authenticationserverInitializeAccountingClock(authenticationserver_tstate_t *ts)
@@ -34,6 +35,11 @@ void authenticationserverBumpConfigRevision(tunnel_t *t)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
 
+    if (ts->store.config_revision == UINT64_MAX)
+    {
+        LOGF("AuthenticationServer: configuration revision exhausted without preflight");
+        abortProgramNow(1);
+    }
     ts->store.config_revision += 1U;
 }
 
@@ -53,6 +59,8 @@ users_update_result_t authenticationserverPatchConfigAndBumpRevision(tunnel_t *t
                                                                      const user_config_patch_t *patch)
 {
     authenticationserver_tstate_t *ts     = tunnelGetState(t);
+    if (ts->store.config_revision == UINT64_MAX)
+        return kUsersUpdateResultRevisionExhausted;
     users_update_result_t          result = usersPatchConfigByIdentifier(&ts->store.users, id, patch);
 
     if (LIKELY(result == kUsersUpdateResultOk))

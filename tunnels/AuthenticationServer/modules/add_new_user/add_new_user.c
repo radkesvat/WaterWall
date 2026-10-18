@@ -46,6 +46,9 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
     user_t                         user;
     discard                        session;
 
+    if (ts->store.config_revision == UINT64_MAX)
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "revision-exhausted");
+
     if (UNLIKELY(request_data_len == 0))
     {
         LOGW("AuthenticationServer: AddNewUser received an empty JSON payload");

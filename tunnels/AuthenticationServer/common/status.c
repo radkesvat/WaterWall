@@ -25,8 +25,8 @@ authenticationserver_status_result_t authenticationserverStatusSnapshot(tunnel_t
         return counted == kUserPublicTimeout ? kAuthenticationServerStatusTimeout : kAuthenticationServerStatusBusy;
     }
 
-    const uint64_t                      now     = getHRTimeUs() / 1000U;
-    const authenticationserver_status_t sampled = {
+    const uint64_t                now     = getHRTimeUs() / 1000U;
+    authenticationserver_status_t sampled = {
         .database_loaded                 = ts->database_loaded,
         .user_count                      = user_count,
         .configured_producer_count       = ts->auth_clients_count,
@@ -41,6 +41,7 @@ authenticationserver_status_result_t authenticationserverStatusSnapshot(tunnel_t
         .primary_save_last_success_age_ms =
             now >= ts->primary_save_last_success_ms ? now - ts->primary_save_last_success_ms : 0,
     };
+    memoryCopy(sampled.instance_id, ts->api_instance_id, sizeof(sampled.instance_id));
     rwlockReadUnlock(&ts->state_lock);
     if (authenticationserverStatusDeadlineExpired(deadline_ms))
         return kAuthenticationServerStatusTimeout;

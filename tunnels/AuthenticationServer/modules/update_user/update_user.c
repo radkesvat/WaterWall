@@ -29,6 +29,13 @@ static const char *authenticationserverUsersUpdateResultError(users_update_resul
         return "user-wireguard-allowed-ips-overlap";
     case kUsersUpdateResultPasswordUpdateFailed:
         return "password-update-disabled";
+    case kUsersUpdateResultRevisionExhausted:
+        return "revision-exhausted";
+    case kUsersUpdateResultBusy:
+    case kUsersUpdateResultResourceLimit:
+    case kUsersUpdateResultTimeout:
+    case kUsersUpdateResultPrecommitRejected:
+        return "user-update-failed";
     }
 
     return "user-update-failed";

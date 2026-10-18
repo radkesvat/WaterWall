@@ -64,6 +64,28 @@ typedef struct users_wireguard_allowed_ips_update_s
     bool      valid;
 } users_wireguard_allowed_ips_update_t;
 
+struct user_config_prepared_patch_s
+{
+    user_config_patch_t                  patch;
+    user_update_t                        update;
+    char                                *name, *email, *notes;
+    users_wireguard_allowed_ips_update_t allowed_ips;
+    size_t                               owned_bytes, peak_bytes;
+};
+
+enum
+{
+    kUsersConfigOldNameLimit     = 32U * 1024U,
+    kUsersConfigRangeGrowthLimit = 1024U * 1024U,
+    /* CIDR normalization's bounded local text/address scratch. */
+    kUsersConfigPreparationScratchBytes = 512U
+};
+
+static bool usersConfigDeadlineExpired(uint64_t deadline_ms)
+{
+    return deadline_ms != 0 && getHRTimeUs() / 1000U >= deadline_ms;
+}
+
 _Static_assert(offsetof(users_password_probe_t, sha224_pass) % 32U == 0,
                "users_password_probe_t.sha224_pass must be 32-byte aligned");
 _Static_assert(offsetof(users_password_probe_t, sha256_pass) % 32U == 0,
@@ -501,18 +523,21 @@ static size_t usersAllowedIpTableSize(const users_allowed_ip_table_t *table)
  * smap's _clear() frees the node array, so rebuild/copy callers count valid
  * ranges and reserve that count after clearing.
  */
-static bool usersAllowedIpTableReserve(users_allowed_ip_table_t *table, size_t min_capacity)
+static bool usersAllowedIpTableGrowthGeometry(const users_allowed_ip_table_t *table, size_t min_capacity,
+                                              size_t *capacity_out, size_t *extent_out)
 {
-    const size_t maximum_capacity = min((size_t) INT32_MAX, (size_t) PTRDIFF_MAX / sizeof(*table->map.nodes) - 1U);
-    size_t capacity = (size_t) users_allowed_ip_map_t_capacity(&table->map);
+    const size_t maximum_capacity =
+        min((size_t) INT32_MAX, (size_t) PTRDIFF_MAX / sizeof(users_allowed_ip_map_t_node) - 1U);
+    size_t capacity = table != NULL ? (size_t) users_allowed_ip_map_t_capacity(&table->map) : 0U;
 
+    *capacity_out = capacity;
+    *extent_out   = 0;
     if (capacity >= min_capacity)
     {
         return true;
     }
     if (UNLIKELY(min_capacity > maximum_capacity))
     {
-        LOGE("Users: Allowed-IP lookup table capacity overflow");
         return false;
     }
     if (capacity < kUsersInitialTableCapacity)
@@ -530,9 +555,23 @@ static bool usersAllowedIpTableReserve(users_allowed_ip_table_t *table, size_t m
     }
     if (UNLIKELY(capacity > maximum_capacity))
     {
+        return false;
+    }
+    *capacity_out = capacity;
+    *extent_out   = (capacity + 1U) * sizeof(users_allowed_ip_map_t_node);
+    return true;
+}
+
+static bool usersAllowedIpTableReserve(users_allowed_ip_table_t *table, size_t min_capacity)
+{
+    size_t capacity, extent;
+    if (! usersAllowedIpTableGrowthGeometry(table, min_capacity, &capacity, &extent))
+    {
         LOGE("Users: Allowed-IP lookup table capacity overflow");
         return false;
     }
+    if (extent == 0)
+        return true;
     discard users_allowed_ip_map_t_reserve(&table->map, (isize) capacity);
 
     return true;
@@ -589,7 +628,7 @@ static bool usersAllowedIpTableInsertLocked(users_t *users, user_t *user)
     }
     if (UNLIKELY(! usersAllowedIpEntryFromUser(user, &key, &value)))
     {
-        LOGE("Users: user \"%s\" has an unparseable WireGuard Allowed-IP range", usersUserNameForLog(user));
+        LOGE("Users: unparseable WireGuard Allowed-IP range in index insertion");
         return false;
     }
     usersAllowedIpTableCreateIfNeeded(users);
@@ -597,7 +636,7 @@ static bool usersAllowedIpTableInsertLocked(users_t *users, user_t *user)
     users_allowed_ip_map_t_result result = users_allowed_ip_map_t_insert(&users->allowed_ip_table->map, key, value);
     if (UNLIKELY(! result.inserted && result.ref->second.user != user))
     {
-        LOGE("Users: duplicate WireGuard Allowed-IPs \"%s\"", user->wireguard_allowed_ips);
+        LOGE("Users: duplicate WireGuard Allowed-IP range in index insertion");
         return false;
     }
 
@@ -1641,7 +1680,7 @@ static bool usersNameTableEraseLocked(users_t *users, const user_t *user, const 
     }
     if (table == NULL)
     {
-        LOGE("Users: name \"%s\" to erase has no lookup table (corrupted index)", name);
+        LOGE("Users: name to erase has no lookup table (corrupted index)");
         return false;
     }
 
@@ -1651,16 +1690,34 @@ static bool usersNameTableEraseLocked(users_t *users, const user_t *user, const 
     {
         /* A non-empty name is always indexed, so a miss here is a corrupted index
          * (a borrowed name key that outlived its user); fail closed. */
-        LOGE("Users: name \"%s\" to erase is missing (corrupted index)", name);
+        LOGE("Users: name to erase is missing (corrupted index)");
         return false;
     }
     if (UNLIKELY(it.ref->second != user))
     {
-        LOGE("Users: refusing to erase name \"%s\" owned by a different user", name);
+        LOGE("Users: refusing to erase name owned by a different user");
         return false;
     }
 
-    users_name_map_t_erase_at(&table->map, it);
+    users_name_map_t_erase_entry(&table->map, it.ref);
+    return true;
+}
+
+/* Capacity and uniqueness are established before the commit point. This calls
+ * STC's no-grow bucket primitive and updates only this insertion's occupancy. */
+static bool usersNameTableInsertReservedLocked(users_t *users, user_t *user)
+{
+    if (user->name == NULL || user->name[0] == '\0')
+        return true;
+    users_name_map_t *map = &users->name_table->map;
+    assert(map->size < users_name_map_t_capacity(map));
+    users_name_key_t        key    = {.name = user->name};
+    users_name_map_t_result result = users_name_map_t_bucket_insert_(map, &key);
+    if (! result.inserted)
+        return result.ref->second == user;
+    ++map->size;
+    result.ref->first  = key;
+    result.ref->second = user;
     return true;
 }
 
@@ -3754,77 +3811,90 @@ static users_update_result_t usersPrepareUpdate(const user_update_t *update, cha
     return usersCopyUpdateStrings(update, name_copy, email_copy, notes_copy, wireguard_allowed_ips);
 }
 
-static users_update_result_t usersApplyUpdateToExistingUserLocked(
-    users_t *users, user_t *user, const user_update_t *update, char **name_copy, char **email_copy, char **notes_copy,
-    users_wireguard_allowed_ips_update_t *wireguard_allowed_ips, const user_config_patch_t *patch)
+static users_update_result_t usersPreflightConfigIndexesLocked(users_t *users, user_t *user,
+                                                               const user_update_t *update, const char *name_copy,
+                                                               const users_wireguard_allowed_ips_update_t *allowed_ips,
+                                                               bool bounded, size_t max_growth_bytes,
+                                                               uint64_t deadline_ms)
 {
-    user_t *duplicate_name;
-
+    if (usersConfigDeadlineExpired(deadline_ms))
+        return kUsersUpdateResultTimeout;
     if ((update->mask & kUserUpdateName) != 0U)
     {
-        duplicate_name = usersFindByNameLocked(users, *name_copy, user);
-        if (UNLIKELY(duplicate_name != NULL))
+        if (bounded && user->name != NULL)
         {
-            LOGE("Users: duplicate username \"%s\" in update", *name_copy);
+            size_t length = 0;
+            while (length <= kUsersConfigOldNameLimit && user->name[length] != '\0')
+                ++length;
+            if (length > kUsersConfigOldNameLimit)
+                return kUsersUpdateResultResourceLimit;
+        }
+        if (usersFindByNameLocked(users, name_copy, user) != NULL)
             return kUsersUpdateResultDuplicateName;
-        }
-        /*
-         * Reserve name-index headroom before any irreversible mutation so the
-         * post-commit insert below cannot fail on a rehash. A rename does not
-         * grow the active user count, but the table may need to rehash.
-         */
-        if (UNLIKELY(! usersNameTableEnsureCapacity(users, users->count + 1U)))
-        {
+        if (! bounded && ! usersNameTableEnsureCapacity(users, users->count))
             return kUsersUpdateResultCapacityRejected;
+        if (users->name_table == NULL)
+            return kUsersUpdateResultCapacityRejected;
+        const users_name_map_t *map       = &users->name_table->map;
+        const size_t            old_named = user->name != NULL && user->name[0] != '\0' ? 1U : 0U;
+        const size_t            new_named = name_copy != NULL && name_copy[0] != '\0' ? 1U : 0U;
+        if ((size_t) map->size < old_named)
+        {
+            LOGF("Users: invalid name index occupancy");
+            abortProgramNow(1);
         }
+        const size_t post_erase = (size_t) map->size - old_named;
+        if (post_erase > (size_t) users_name_map_t_capacity(map) ||
+            new_named > (size_t) users_name_map_t_capacity(map) - post_erase)
+            return kUsersUpdateResultCapacityRejected;
     }
     if ((update->mask & kUserUpdateWireGuardAllowedIps) != 0U)
     {
         bool    range_ok = true;
-        user_t *overlap  = usersFindWireGuardAllowedIpsOverlapLocked(users,
-                                                                    wireguard_allowed_ips->valid,
-                                                                    &wireguard_allowed_ips->ip,
-                                                                    &wireguard_allowed_ips->mask,
-                                                                    wireguard_allowed_ips->family,
-                                                                    user,
-                                                                    &range_ok);
-        if (UNLIKELY(! range_ok))
-        {
-            LOGE("Users: WireGuard allowed IPs \"%s\" are not indexable in update", wireguard_allowed_ips->copy);
+        user_t *overlap  = usersFindWireGuardAllowedIpsOverlapLocked(
+            users, allowed_ips->valid, &allowed_ips->ip, &allowed_ips->mask, allowed_ips->family, user, &range_ok);
+        if (! range_ok)
             return kUsersUpdateResultInvalidWireGuardAllowedIps;
-        }
-        if (UNLIKELY(overlap != NULL))
-        {
-            LOGE("Users: WireGuard allowed IPs \"%s\" overlap with user \"%s\" in update",
-                 wireguard_allowed_ips->copy,
-                 usersUserNameForLog(overlap));
+        if (overlap != NULL)
             return kUsersUpdateResultDuplicateWireGuardAllowedIps;
-        }
-        if (UNLIKELY(! user->wireguard_allowed_ips_valid && wireguard_allowed_ips->valid &&
-                     ! usersAllowedIpTableEnsureOneMoreRange(users)))
+        if (! user->wireguard_allowed_ips_valid && allowed_ips->valid)
         {
-            return kUsersUpdateResultCapacityRejected;
+            size_t count = usersAllowedIpTableSize(users->allowed_ip_table);
+            size_t capacity, extent;
+            if (count == SIZE_MAX ||
+                ! usersAllowedIpTableGrowthGeometry(users->allowed_ip_table, count + 1U, &capacity, &extent))
+                return kUsersUpdateResultCapacityRejected;
+            const size_t table_bytes = users->allowed_ip_table == NULL ? sizeof(*users->allowed_ip_table) : 0U;
+            if (bounded && (extent > kUsersConfigRangeGrowthLimit || extent > max_growth_bytes ||
+                            table_bytes > max_growth_bytes - extent))
+                return kUsersUpdateResultResourceLimit;
+            if (usersConfigDeadlineExpired(deadline_ms))
+                return kUsersUpdateResultTimeout;
+            usersAllowedIpTableCreateIfNeeded(users);
+            if (extent != 0)
+                discard users_allowed_ip_map_t_reserve(&users->allowed_ip_table->map, (isize) capacity);
         }
     }
-    if ((update->mask & kUserUpdatePassword) != 0U)
-    {
-        users_update_result_t result = usersChangePasswordLocked(users, user, update->password);
-        if (UNLIKELY(result != kUsersUpdateResultOk))
-        {
-            return result;
-        }
-    }
+    return usersConfigDeadlineExpired(deadline_ms) ? kUsersUpdateResultTimeout : kUsersUpdateResultOk;
+}
 
+/* Collection and user configuration write locks precede the first index erase.
+ * Capacity and uniqueness are already established; no ordinary refusal follows. */
+static void usersCommitConfigUpdateLocked(users_t *users, user_t *user, const user_update_t *update, char **name_copy,
+                                          char **email_copy, char **notes_copy,
+                                          users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
+                                          const user_config_patch_t            *patch)
+{
     /*
      * Erase the old name entry while the old string is still alive, before
-     * usersReplaceStringOwned() frees it. The users_t write lock is held, so
-     * reading user->name outside user->lock is safe here. A false return means
+     * usersReplaceStringOwned() frees it. Both collection and configuration
+     * write locks are held. A false return means
      * the old name resolved to a different user, i.e. the name index is already
      * corrupt; that is an unrecoverable invariant violation.
      */
     if (UNLIKELY((update->mask & kUserUpdateName) != 0U && ! usersNameTableEraseLocked(users, user, user->name)))
     {
-        LOGF("Users: name index inconsistency while updating user \"%s\"", usersUserNameForLog(user));
+        LOGF("Users: index inconsistency during configuration commit");
         abortProgramNow(1);
     }
     /*
@@ -3834,11 +3904,10 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
     if (UNLIKELY((update->mask & kUserUpdateWireGuardAllowedIps) != 0U &&
                  ! usersAllowedIpTableEraseLocked(users, user)))
     {
-        LOGF("Users: Allowed-IP index inconsistency while updating user \"%s\"", usersUserNameForLog(user));
+        LOGF("Users: index inconsistency during configuration commit");
         abortProgramNow(1);
     }
 
-    rwlockWriteLock(&user->lock);
     if ((update->mask & kUserUpdateName) != 0U)
     {
         usersReplaceStringOwned(&user->name, name_copy);
@@ -3908,16 +3977,15 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
         if ((patch->mask & kUserConfigExpireAfterFirstUsage) != 0U)
             user->timeinfo.expire_after_first_usage_ms = patch->expire_after_first_usage_ms;
     }
-    rwlockWriteUnlock(&user->lock);
 
     /*
      * Insert the replacement name entry. Capacity was reserved above and the old
      * entry was erased, so this cannot fail on a rehash; a failure would be an
      * unrecoverable invariant violation.
      */
-    if (UNLIKELY((update->mask & kUserUpdateName) != 0U && ! usersNameTableInsertLocked(users, user)))
+    if (UNLIKELY((update->mask & kUserUpdateName) != 0U && ! usersNameTableInsertReservedLocked(users, user)))
     {
-        LOGF("Users: failed to reinsert name index entry while updating user \"%s\"", usersUserNameForLog(user));
+        LOGF("Users: index inconsistency during configuration commit");
         abortProgramNow(1);
     }
     /*
@@ -3929,17 +3997,36 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
     if (UNLIKELY((update->mask & kUserUpdateWireGuardAllowedIps) != 0U &&
                  ! usersAllowedIpTableInsertLocked(users, user)))
     {
-        LOGF("Users: failed to reinsert Allowed-IP range while updating user \"%s\"", usersUserNameForLog(user));
+        LOGF("Users: index inconsistency during configuration commit");
         abortProgramNow(1);
     }
+}
 
+static users_update_result_t usersApplyUpdateToExistingUserLocked(
+    users_t *users, user_t *user, const user_update_t *update, char **name_copy, char **email_copy, char **notes_copy,
+    users_wireguard_allowed_ips_update_t *wireguard_allowed_ips)
+{
+    users_update_result_t result =
+        usersPreflightConfigIndexesLocked(users, user, update, *name_copy, wireguard_allowed_ips, false, SIZE_MAX, 0);
+    if (result != kUsersUpdateResultOk)
+        return result;
+    /* Credential changes own their own configuration lock. Do not call this
+     * branch while holding a configuration-only patch's target lock. */
+    if ((update->mask & kUserUpdatePassword) != 0U)
+    {
+        result = usersChangePasswordLocked(users, user, update->password);
+        if (result != kUsersUpdateResultOk)
+            return result;
+    }
+    rwlockWriteLock(&user->lock);
+    usersCommitConfigUpdateLocked(users, user, update, name_copy, email_copy, notes_copy, wireguard_allowed_ips, NULL);
+    rwlockWriteUnlock(&user->lock);
     if ((update->mask & kUserUpdateStats) != 0U)
     {
         rwlockWriteLock(&user->stats_lock);
         user->stats = update->stats;
         rwlockWriteUnlock(&user->stats_lock);
     }
-
     return kUsersUpdateResultOk;
 }
 
@@ -3970,7 +4057,7 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
     else
     {
         result = usersApplyUpdateToExistingUserLocked(
-            users, user, update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips, NULL);
+            users, user, update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
     }
     rwlockWriteUnlock(&users->lock);
 
@@ -4008,7 +4095,7 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha2
     else
     {
         result = usersApplyUpdateToExistingUserLocked(
-            users, user, update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips, NULL);
+            users, user, update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
     }
     rwlockWriteUnlock(&users->lock);
 
@@ -4016,16 +4103,13 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha2
     return result;
 }
 
-users_update_result_t usersPatchConfigByIdentifier(users_t *users, uint64_t id, const user_config_patch_t *patch)
+static users_update_result_t usersConfigPatchToUpdate(const user_config_patch_t *patch, user_update_t *out)
 {
-    assert(users != NULL && patch != NULL);
-    if (id == 0 || patch->mask == 0)
+    assert(patch != NULL && out != NULL);
+    if (patch->mask == 0)
         return kUsersUpdateResultInvalidArgument;
     if ((patch->mask & ~((1U << 18U) - 1U)) != 0U)
         return kUsersUpdateResultUnknownFields;
-
-    /* Reuse string/CIDR preparation and the single index transaction. The
-     * shared update deliberately contains no whole-limit/time/stat assignment. */
     user_update_t update = {0};
     if ((patch->mask & kUserConfigName) != 0U)
     {
@@ -4066,19 +4150,195 @@ users_update_result_t usersPatchConfigByIdentifier(users_t *users, uint64_t id, 
         update.mask |= kUserUpdateRecordStatInterval;
         update.record_stat_interval_ms = patch->record_stat_interval_ms;
     }
-    char                                *name = NULL, *email = NULL, *notes = NULL;
-    users_wireguard_allowed_ips_update_t allowed_ips;
-    users_update_result_t                result = usersPrepareUpdate(&update, &name, &email, &notes, &allowed_ips);
+    *out = update;
+    return usersValidateUpdateRequest(out);
+}
+
+/* Account before allocating, including CIDR's temporary compact input and local
+ * normalization scratch. Scans are restricted by the supplied allowance. */
+static bool usersConfigStringBytes(const char *value, size_t allowance, size_t *bytes)
+{
+    assert(value != NULL && bytes != NULL);
+    for (size_t length = 0; length < allowance; ++length)
+    {
+        if (value[length] == '\0')
+        {
+            *bytes = length + 1U;
+            return true;
+        }
+    }
+    return false;
+}
+
+users_update_result_t usersPrepareConfigPatch(const user_config_patch_t *patch, size_t max_owned_bytes,
+                                              uint64_t deadline_ms, user_config_prepared_patch_t **out)
+{
+    assert(patch != NULL && out != NULL);
+    *out = NULL;
+    if (usersConfigDeadlineExpired(deadline_ms))
+        return kUsersUpdateResultTimeout;
+    user_update_t         update;
+    users_update_result_t result = usersConfigPatchToUpdate(patch, &update);
     if (result != kUsersUpdateResultOk)
         return result;
-    rwlockWriteLock(&users->lock);
+    size_t peak = sizeof(user_config_prepared_patch_t) + kUsersConfigPreparationScratchBytes;
+    if (peak > max_owned_bytes)
+        return kUsersUpdateResultResourceLimit;
+    const char    *strings[]    = {update.name, update.email, update.notes};
+    const uint32_t masks[]      = {kUserUpdateName, kUserUpdateEmail, kUserUpdateNotes};
+    size_t         string_bytes = 0;
+    for (size_t i = 0; i < 3U; ++i)
+    {
+        if ((update.mask & masks[i]) == 0U)
+            continue;
+        size_t bytes;
+        if (! usersConfigStringBytes(strings[i], max_owned_bytes - peak, &bytes))
+            return kUsersUpdateResultResourceLimit;
+        peak += bytes;
+        string_bytes += bytes;
+    }
+    if ((update.mask & kUserUpdateWireGuardAllowedIps) != 0U)
+    {
+        size_t bytes;
+        if (! usersConfigStringBytes(update.wireguard_allowed_ips, max_owned_bytes - peak, &bytes))
+            return kUsersUpdateResultResourceLimit;
+        /* The legacy CIDR normalizer uses an int text length. */
+        if (bytes > (size_t) INT_MAX)
+            return kUsersUpdateResultResourceLimit;
+        bytes = max(bytes, (size_t) USER_WIREGUARD_ALLOWED_IPS_MAX_TEXT);
+        if (bytes > max_owned_bytes - peak)
+            return kUsersUpdateResultResourceLimit;
+        peak += bytes;
+    }
+    if (usersConfigDeadlineExpired(deadline_ms))
+        return kUsersUpdateResultTimeout;
+    user_config_prepared_patch_t *prepared = memoryAllocateZero(sizeof(*prepared));
+    prepared->patch                        = *patch;
+    prepared->update                       = update;
+    prepared->peak_bytes                   = peak;
+    result = usersPrepareUpdate(&update, &prepared->name, &prepared->email, &prepared->notes, &prepared->allowed_ips);
+    if (result != kUsersUpdateResultOk)
+    {
+        usersFreePreparedConfigPatch(prepared);
+        return result;
+    }
+    prepared->owned_bytes = sizeof(*prepared) + string_bytes;
+    if ((update.mask & kUserUpdateWireGuardAllowedIps) != 0U)
+        prepared->owned_bytes += stringLength(prepared->allowed_ips.copy) + 1U;
+    prepared->patch.name = prepared->update.name = prepared->name;
+    prepared->patch.email = prepared->update.email = prepared->email;
+    prepared->patch.notes = prepared->update.notes = prepared->notes;
+    prepared->patch.wireguard_allowed_ips = prepared->update.wireguard_allowed_ips = prepared->allowed_ips.copy;
+    if (usersConfigDeadlineExpired(deadline_ms))
+    {
+        usersFreePreparedConfigPatch(prepared);
+        return kUsersUpdateResultTimeout;
+    }
+    *out = prepared;
+    return kUsersUpdateResultOk;
+}
+
+void usersFreePreparedConfigPatch(user_config_prepared_patch_t *prepared)
+{
+    if (prepared == NULL)
+        return;
+    usersFreeUpdateStringCopies(prepared->name, prepared->email, prepared->notes, &prepared->allowed_ips);
+    memoryFree(prepared);
+}
+
+size_t usersPreparedConfigPatchOwnedBytes(const user_config_prepared_patch_t *prepared)
+{
+    assert(prepared != NULL);
+    return prepared->owned_bytes;
+}
+
+size_t usersPreparedConfigPatchPeakBytes(const user_config_prepared_patch_t *prepared)
+{
+    assert(prepared != NULL);
+    return prepared->peak_bytes;
+}
+
+static users_update_result_t usersApplyPreparedConfigByIdentifier(users_t *users, uint64_t id,
+                                                                  user_config_prepared_patch_t *prepared, bool bounded,
+                                                                  size_t max_growth_bytes, uint64_t deadline_ms,
+                                                                  users_config_precommit_fn precommit, void *context)
+{
+    assert(users != NULL && prepared != NULL);
+    if (id == 0)
+        return kUsersUpdateResultInvalidArgument;
+    if (usersConfigDeadlineExpired(deadline_ms))
+        return kUsersUpdateResultTimeout;
+    if (bounded)
+    {
+        if (! rwlockTryWriteLock(&users->lock))
+            return kUsersUpdateResultBusy;
+    }
+    else
+        rwlockWriteLock(&users->lock);
     user_t *user = usersIDTableLookupLocked(users, id);
-    result =
-        user != NULL
-            ? usersApplyUpdateToExistingUserLocked(users, user, &update, &name, &email, &notes, &allowed_ips, patch)
-            : kUsersUpdateResultUserNotFound;
+    users_update_result_t result = kUsersUpdateResultUserNotFound;
+    if (user == NULL)
+        goto unlock_collection;
+    if (bounded)
+    {
+        if (! rwlockTryWriteLock(&user->lock))
+        {
+            result = kUsersUpdateResultBusy;
+            goto unlock_collection;
+        }
+    }
+    else
+        rwlockWriteLock(&user->lock);
+    result = usersPreflightConfigIndexesLocked(
+        users, user, &prepared->update, prepared->name, &prepared->allowed_ips, bounded, max_growth_bytes, deadline_ms);
+    if (result != kUsersUpdateResultOk)
+        goto unlock_user;
+    if (precommit != NULL && ! precommit(context))
+    {
+        result = kUsersUpdateResultPrecommitRejected;
+        goto unlock_user;
+    }
+    if (usersConfigDeadlineExpired(deadline_ms))
+    {
+        result = kUsersUpdateResultTimeout;
+        goto unlock_user;
+    }
+    usersCommitConfigUpdateLocked(users,
+                                  user,
+                                  &prepared->update,
+                                  &prepared->name,
+                                  &prepared->email,
+                                  &prepared->notes,
+                                  &prepared->allowed_ips,
+                                  &prepared->patch);
+unlock_user:
+    rwlockWriteUnlock(&user->lock);
+unlock_collection:
     rwlockWriteUnlock(&users->lock);
-    usersFreeUpdateStringCopies(name, email, notes, &allowed_ips);
+    return result;
+}
+
+users_update_result_t usersTryApplyPreparedConfigByIdentifier(users_t *users, uint64_t id,
+                                                              user_config_prepared_patch_t *prepared,
+                                                              size_t max_growth_bytes, uint64_t deadline_ms,
+                                                              users_config_precommit_fn precommit, void *context)
+{
+    return usersApplyPreparedConfigByIdentifier(
+        users, id, prepared, true, max_growth_bytes, deadline_ms, precommit, context);
+}
+
+users_update_result_t usersPatchConfigByIdentifier(users_t *users, uint64_t id, const user_config_patch_t *patch)
+{
+    assert(users != NULL && patch != NULL);
+    if (id == 0)
+        return kUsersUpdateResultInvalidArgument;
+    user_config_prepared_patch_t *prepared;
+    users_update_result_t         result = usersPrepareConfigPatch(patch, SIZE_MAX, 0, &prepared);
+    if (result == kUsersUpdateResultOk)
+    {
+        result = usersApplyPreparedConfigByIdentifier(users, id, prepared, false, SIZE_MAX, 0, NULL, NULL);
+        usersFreePreparedConfigPatch(prepared);
+    }
     return result;
 }
 

@@ -4,6 +4,9 @@
 Tokens come from --token-env NAME or --token-file PATH. The client performs no
 automatic retries. For TcpOverUdp, connect to a local TcpListener feeding the
 production TcpOverUdpClient; this program does not implement its UDP protocol.
+For update-user, read get-user first and supply its edit_token as if_match in a
+sparse body file. A conflict requires reconsideration after a fresh read; a lost
+reply or post-dispatch gateway error requires a fresh read to resolve the outcome.
 """
 
 import argparse
@@ -18,6 +21,17 @@ import socket
 import struct
 import sys
 import uuid
+
+
+# These gateway rejections occur before the selected operation can execute.
+PRE_DISPATCH_ERRORS = {"invalid_request", "invalid_encoding", "unauthorized", "forbidden",
+                       "target_not_found", "ambiguous_target", "unsupported_api",
+                       "unsupported_operation", "unsupported_content_type"}
+
+
+def unknown_update_outcome():
+    print("Update outcome unknown: read the account again before deciding whether to submit another patch.",
+          file=sys.stderr)
 
 
 def read_exact(stream, length):
@@ -82,6 +96,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--max-response-bytes", type=int, default=1024 * 1024)
     args = parser.parse_args()
+    write_attempted = False
     try:
         if not math.isfinite(args.timeout) or args.timeout <= 0 or not 0 < args.max_response_bytes <= 0xFFFFFFFF:
             raise ValueError("Timeout and response limit must be finite positive values.")
@@ -104,6 +119,7 @@ def main():
                    "selector": selector, "operation": args.operation,
                    "content_type": args.content_type,
                    "body_encoding": args.body_encoding, "body": body}
+        write_attempted = args.operation == "update-user"
         response = call(args.host, args.port, request, timeout=args.timeout,
                         max_response_bytes=args.max_response_bytes)
         if response.get("error") is not None:
@@ -111,13 +127,23 @@ def main():
             if not isinstance(error, dict) or not isinstance(error.get("code"), str):
                 raise ValueError("Response has an invalid gateway error.")
             print("Gateway error: " + str(error.get("code", "invalid_response")), file=sys.stderr)
+            if write_attempted and error["code"] not in PRE_DISPATCH_ERRORS:
+                unknown_update_outcome()
             return 2
         result = response.get("result")
-        sys.stdout.buffer.write(decode_result(result))
+        decoded = decode_result(result)
+        sys.stdout.buffer.write(decoded)
+        if write_attempted and result.get("code") != 0:
+            body = json.loads(decoded)
+            node_error = body.get("error") if isinstance(body, dict) else None
+            if isinstance(node_error, dict) and node_error.get("code") == "conflict":
+                print("Conflict: read the account again and reconsider the intended changes.", file=sys.stderr)
         return 0 if result.get("code") == 0 else 1
     except (OSError, ValueError) as error:
         # Do not print the request, credential, or exception's input values.
         print("API call failed (" + type(error).__name__ + ").", file=sys.stderr)
+        if write_attempted:
+            unknown_update_outcome()
         return 2
 
 

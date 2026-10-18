@@ -1,11 +1,11 @@
 <!--
-Documentation version: 2
+Documentation version: 3
 Sync note: Keep synchronized with tunnels/APIServer/description.md and the Persian node reference.
 -->
 
 # APIServer
 
-`APIServer` exposes explicitly registered node operations over a reliable byte stream. It is a terminal node and opens no socket itself. Registered read-only operations include `AuthenticationClient.status` and `AuthenticationServer.status`, `get-user` and `list-users`. Access uses independent static operator credentials and exact per-operation permissions.
+`APIServer` exposes explicitly registered node operations over a reliable byte stream. It is a terminal node and opens no socket itself. Registered read-only operations include `AuthenticationClient.status` and `AuthenticationServer.status`, `get-user` and `list-users`; `AuthenticationServer.update-user` is an explicitly authorized conditional write. Access uses independent static operator credentials and exact per-operation permissions.
 
 ## Placement
 
@@ -41,6 +41,13 @@ This example belongs to a configuration whose top-level logical `name` is `edge-
         "allow": [
           {"config": "edge-europe", "node": "auth-client", "operations": ["status"]},
           {"config": "central", "node": "auth-db", "operations": ["status", "get-user", "list-users"]}
+        ]
+      },
+      {
+        "name": "editor",
+        "token": "<different 64 hexadecimal characters representing 32 random bytes>",
+        "allow": [
+          {"config": "central", "node": "auth-db", "operations": ["get-user", "update-user"]}
         ]
       }
     ]
@@ -118,7 +125,7 @@ Successful dispatch, including a node-level error, returns:
 }
 ```
 
-The `body` above is illustrative; see [AuthenticationClient](AuthenticationClient.mdx) for its status snapshot and [AuthenticationServer](AuthenticationServer.mdx#read-only-management-api) for the server read views. Server `status` takes exactly `{}`, `get-user` takes `{"id":"42"}`, and `list-users` takes `{}` or `{"limit":50,"cursor":"<returned opaque cursor>"}`. Unsigned 64-bit values use decimal JSON strings. Server configuration changes invalidate list cursors; statistics-only changes allow continuation with newer totals. `result.code` preserves the node handler's success/error meaning. An empty handler result is an empty body with its declared content type and encoding.
+The `body` above is illustrative; see [AuthenticationClient](AuthenticationClient.mdx) for its status snapshot and [AuthenticationServer](AuthenticationServer.mdx#management-api) for the server read views and conditional edit schema. Server `status` takes exactly `{}`, `get-user` takes `{"id":"42"}`, and `list-users` takes `{}` or `{"limit":50,"cursor":"<returned opaque cursor>"}`. Unsigned 64-bit values use decimal JSON strings. Every server read includes an opaque `edit_token`; `update-user` requires it as `if_match`. Server configuration changes invalidate both old edit tokens and list cursors; statistics-only changes allow continuation with newer totals. `result.code` preserves the node handler's success/error meaning. An empty handler result is an empty body with its declared content type and encoding.
 
 A gateway failure returns `result: null`:
 
@@ -182,6 +189,49 @@ use `{"limit":50}` with `--operation list-users`; subsequent body files include
 the returned opaque `cursor`. A `stale_cursor` node error requires a new traversal
 without a cursor. `busy` is a bounded sampling refusal. The example client makes
 no automatic retries; callers decide when to repeat reads or restart traversal.
+
+For a conditional edit, use a separately configured editor token with exactly
+`get-user` and `update-user` permissions. Keep monitoring tokens read-only. Prepare
+`lookup.json` containing `{"id":"42"}`, then read the account once:
+
+```bash
+python3 examples/api_client.py --host 127.0.0.1 --port 9080 \
+  --client editor --token-file /private/path/editor-token \
+  --config central --node auth-db --operation get-user \
+  --body-file lookup.json > account.json
+```
+
+Review that account and create only the intended sparse patch using the sampled
+token; do not copy the complete user object into `patch`:
+
+```python
+import json
+from pathlib import Path
+
+account = json.loads(Path("account.json").read_text(encoding="utf-8"))
+request = {"id": account["user"]["id"], "if_match": account["edit_token"],
+           "patch": {"enabled": False}}
+Path("update.json").write_text(json.dumps(request), encoding="utf-8")
+```
+
+Submit it once:
+
+```bash
+python3 examples/api_client.py --host 127.0.0.1 --port 9080 \
+  --client editor --token-file /private/path/editor-token \
+  --config central --node auth-db --operation update-user \
+  --body-file update.json
+```
+
+A success body contains exactly `id`, the committed `config_revision` and its
+`edit_token`. It acknowledges server memory; periodic saving and ordinary client
+refresh remain separate. A node `conflict` means no edit committed: reread and
+reconsider the intended change. A lost reply, disconnect or gateway timeout can
+follow commitment and leaves the outcome unknown. Reread the account before
+choosing another patch, comparing normalized values where appropriate. Never
+automatically obtain a fresh token and replay the old patch. The example client
+prints conflict/outcome guidance and makes no automatic write retries; request
+IDs do not deduplicate mutations.
 
 ## Lifecycle And Metadata
 

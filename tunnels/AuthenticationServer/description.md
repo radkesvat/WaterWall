@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -731,9 +731,10 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
 - This node does not require left padding and does not prepend in-place.
 - This node is not a packet tunnel and does not use packet-line semantics.
 
-## Read-only Management API
+## Management API
 
-The server explicitly registers `status`, `get-user` and `list-users` for
+The server explicitly registers read-only `status`, `get-user` and `list-users`,
+and writable `update-user`, for
 [APIServer](APIServer.mdx). Each operation takes an `application/json` body and
 returns UTF-8 JSON. Configure an independent operator token and exact permissions
 on the gateway, for example:
@@ -745,17 +746,25 @@ on the gateway, for example:
 A `status` permission grants no account-read permission. `get-user` and
 `list-users` apply to all accounts on the selected server; cursors carry no
 permission. Every continuation must authenticate and pass the gateway allowlist.
-These operations do not authenticate traffic users, change accounts, synchronize
-clients or trigger a database save. They expose no passwords, hashes, UUID
+Read operations do not authenticate traffic users, change accounts, synchronize
+clients or trigger a database save. `update-user` conditionally edits configuration
+in memory and has its own explicit permission. They expose no passwords, hashes, UUID
 credentials, WireGuard keys, producer secrets or session tokens.
 
-Bodies are strict JSON objects: unknown/duplicate keys, malformed UTF-8, decoded
-NUL, trailing input and incorrect types are rejected. Bodies are limited to
-4096 bytes, depth two and 16 lexical values. All numeric result leaves, including
+All bodies are strict JSON objects: unknown/duplicate keys, malformed UTF-8, decoded
+NUL, trailing input and incorrect types are rejected. Read bodies are limited to
+4096 bytes, depth two and 16 lexical values; update bodies use the separate bounds
+below. All numeric result leaves, including
 IDs, revisions, counts, limits, bytes and times, are canonical unsigned decimal
 **strings**; `enabled` remains a boolean. Account IDs in requests must also be
 canonical decimal strings, from `"1"` through `"18446744073709551615"`, with no
 sign or leading zero. This preserves IDs above JavaScript's exact integer range.
+
+Every successful read includes one top-level `edit_token`, sampled with its
+configuration revision. It is an opaque 48-character lowercase hexadecimal value
+binding the server instance to that revision, and is an optimistic edit
+precondition rather than an authentication credential. A list page has one token
+for the page. The existing 64-character pagination cursor remains separate.
 
 ### `status`
 
@@ -768,6 +777,7 @@ The body is exactly `{}`. A successful body has this shape:
   "configured_producer_count": "4",
   "session_record_count": "5",
   "config_revision": "84",
+  "edit_token": "000102030405060708090a0b0c0d0e0f0000000000000054",
   "stats_revision": "1902",
   "primary_save": {
     "last_result": "success",
@@ -790,7 +800,7 @@ power-loss guarantee.
 ### `get-user`
 
 Request `{"id":"42"}`. The result contains `config_revision`, `stats_revision`,
-`accounting_time_ms` and `user`. The `user` field contains exactly:
+`accounting_time_ms`, `edit_token` and `user`. The `user` field contains exactly:
 
 | Fields | Meaning |
 | --- | --- |
@@ -826,6 +836,7 @@ pages. Empty/null/malformed supplied cursors are errors.
 ```json
 {
   "config_revision":"84",
+  "edit_token":"000102030405060708090a0b0c0d0e0f0000000000000054",
   "stats_revision":"1902",
   "accounting_time_ms":"1800000000000",
   "total_users":"1200",
@@ -859,6 +870,102 @@ The limit is an upper bound: response/memory limits can yield a smaller nonempty
 page. No successful page skips unreturned records. If one summary cannot fit,
 return `response_too_large`. Timeout/contention discards partial work rather than
 returning a partial-success cursor.
+
+### `update-user`
+
+An editor needs explicit `get-user` and `update-user` permissions. Monitoring
+permissions stay read-only; producer credentials and `allow-user-write` do not
+grant access through APIServer. Read the account first and put its `edit_token`
+in `if_match`:
+
+```json
+{
+  "id":"42",
+  "if_match":"000102030405060708090a0b0c0d0e0f0000000000000054",
+  "patch":{
+    "enabled":false,
+    "limit":{"traffic":{"total":"1000000000"}},
+    "time":{"expire_at_ms":"0"}
+  }
+}
+```
+
+Exactly `id`, `if_match` and a nonempty `patch` are required. Use snake_case and
+`u`/`d` in this API; the existing producer protocol keeps its separate spellings.
+A patch contains only the intended changed leaves. Omitted fields and siblings
+remain unchanged. These leaves are editable:
+
+| Patch leaves | Accepted values |
+| --- | --- |
+| `name`, `email`, `notes`, `wireguard_allowed_ips` | UTF-8 strings; empty string clears the field. Name uniqueness and Allowed-IP validation/overlap rules still apply. |
+| `gid` | Canonical unsigned decimal string, including `"0"`. |
+| `enabled` | JSON boolean. |
+| `record_stat_interval_ms` | Canonical decimal string from `"0"` through INT_MAX. |
+| `limit.traffic.u`, `.d`, `.total`; `limit.bandwidth.u`, `.d` | Canonical unsigned decimal strings, preserving existing units. |
+| `limit.ips`, `.devices`, `.cons_in`, `.cons_out` | Canonical unsigned decimal strings. |
+| `time.expire_at_ms`, `.expire_after_first_usage_ms` | Canonical unsigned decimal strings, preserving zero sentinels and clock/duration semantics. |
+
+Unsigned values allow zero and extend through UINT64_MAX unless the interval
+range above is narrower. Signs, whitespace, leading zeros, fractions and overflow
+are invalid. Account IDs remain nonzero. Empty nested objects, null, unknown or
+duplicate keys, incorrect types and protected fields reject the whole request.
+ID changes, passwords/derived keys, creation/first-use times, usage, statistics,
+runtime reservations and accounting checkpoints cannot be patched. Do not send a
+whole `get-user` result as a patch. Disabled and expired accounts remain editable.
+Configuring a limit does not add enforcement support to other nodes.
+
+Successful acknowledgement:
+
+```json
+{
+  "id":"42",
+  "config_revision":"85",
+  "edit_token":"000102030405060708090a0b0c0d0e0f0000000000000055"
+}
+```
+
+The supplied token must match both this server instance and its current
+server-wide configuration revision. An unrelated account edit can cause
+`conflict`; a token from an earlier server instance also conflicts. Every accepted
+nonempty patch, including a same-value patch, increments the revision once and
+returns that transaction's token. Statistics pushes and exact replay leave edit
+tokens valid. Reusing an old token after success cannot apply the edit twice.
+
+The response confirms an **in-memory commit**. It does not acknowledge a disk
+save, client refresh or immediate disconnection of existing traffic. API edits
+do not initiate saves or change primary-save history. Existing periodic/final
+saving continues, and a crash can lose unsaved changes. Connected clients receive
+policy through ordinary synchronization; disconnected clients retain cached
+policy until refresh. Usage, first-use evidence, credentials, runtime state,
+accounting checkpoints and `stats_revision` are preserved. The authorized producer
+protocol continues sharing the same configuration revision; its preceding edits
+can make tokens stale, and its later edits remain later writes.
+
+Update bodies are limited to 32 KiB, four object levels and 64 lexical values.
+Preparation, index work, deadlines and allocator charge are bounded before commit.
+Renaming a record whose existing name exceeds the 32 KiB inspection allowance
+returns `resource_limit`; other edits do not inspect that name. New Allowed-IP
+index growth is capped at 1 MiB and the remaining working allowance. These are
+operation bounds, not new database import limits. Expected refusals leave account
+values, index membership and revisions unchanged; private reserved capacity may
+remain. The compact acknowledgement is prepared before mutation, is bounded to
+256 body bytes, and fits the gateway's minimum 1024-byte envelope even with a
+maximally escaped request ID.
+
+Node-result failure codes are `invalid_request`, `conflict`, `busy`, `not_found`,
+`invalid_allowed_ips`, `name_exists`, `allowed_ips_overlap`, `resource_limit`,
+`response_too_large`, `timeout` and `revision_exhausted`. A returned operation-level
+failure means this edit did not commit. `conflict` does not include a fresh token:
+reread and reconsider the intended changes. Configuration revision UINT64_MAX
+refuses further API and producer configuration mutations before changing accounts.
+
+A lost response, disconnect, late gateway timeout or other post-dispatch delivery
+failure means **outcome unknown**: the edit may already have committed. Reread
+first, compare the intended values using their normal semantics, including
+normalized Allowed-IP strings, then decide whether another patch is appropriate.
+Never automatically fetch a fresh token and replay the old patch. Request IDs
+provide correlation, not deduplication, and there is no persistent idempotency or
+recovery record. The example client performs no automatic write retries.
 
 ### Bounded snapshots and errors
 
