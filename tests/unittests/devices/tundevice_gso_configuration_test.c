@@ -19,7 +19,6 @@
 
 #include "loggers/network_logger.h"
 
-
 static void testGsoSetting(const char *json_value, bool valid, bool expected_request)
 {
     cJSON *settings =
@@ -56,7 +55,8 @@ int main(void)
     require((metadata.flags & kNodeFlagPacketPayloadEnqueueOnly) != 0, "TUN must certify enqueue-only Payload");
     require(metadata.required_padding_left == kTunVirtioHeaderSize, "Linux TUN headroom does not fit virtio header");
     require((metadata.flags & kNodeFlagSupportsTrustedPacketChecksums) != 0 &&
-                (metadata.flags & kNodeFlagTrustedPacketChecksumsActive) == 0,
+                (metadata.flags &
+                 (kNodeFlagTrustedPacketChecksumsActive | kNodeFlagTrustedPacketReceiveChecksumsActive)) == 0,
             "template must advertise capability without activating it");
     node_t   peer   = {.flags = kNodeFlagSupportsTrustedPacketChecksums, .layer_group = kNodeLayer3 | kNodeLayer4};
     node_t   other  = {.flags = kNodeFlagSupportsTrustedPacketChecksums};
@@ -84,6 +84,16 @@ int main(void)
     require(packettunnelTrustedChecksumsActive(&tun) && packettunnelTrustedChecksumsActive(&ptc) &&
                 ! packettunnelTrustedChecksumsActive(&spare),
             "pair mode escaped to another instance");
+    require(packettunnelTrustedReceiveChecksumsActive(&tun) && packettunnelTrustedReceiveChecksumsActive(&ptc),
+            "negotiated checksum mode did not retain receive trust");
+    metadata.flags &= ~kNodeFlagTrustedPacketChecksumsActive;
+    peer.flags &= ~kNodeFlagTrustedPacketChecksumsActive;
+    packettunnelActivateTrustedReceiveChecksumPair(&tun, &ptc);
+    require(packettunnelTrustedReceiveChecksumsActive(&tun) && packettunnelTrustedReceiveChecksumsActive(&ptc) &&
+                ! packettunnelTrustedReceiveChecksumsActive(&spare),
+            "receive-only pair mode escaped to another instance");
+    require(! packettunnelTrustedChecksumsActive(&tun) && ! packettunnelTrustedChecksumsActive(&ptc),
+            "receive-only pair activated partial transmit checksums");
     require((metadata.flags & (kNodeFlagChainHead | kNodeFlagChainEnd)) == (kNodeFlagChainHead | kNodeFlagChainEnd),
             "activation overwrote other node flags");
     memoryFree(metadata.type);
@@ -98,6 +108,6 @@ int main(void)
     testGsoSetting("{}", false, false);
 
     networkloggerDestroy();
-    puts("TunDevice GSO configuration tests passed");
+    puts("TunDevice GSO configuration and checksum capability tests passed");
     return 0;
 }

@@ -42,12 +42,20 @@ bool          tundeviceBringUp(tun_device_t *tdev);
 bool          tundeviceRequestStop(tun_device_t *tdev);
 bool          tundeviceBringDown(tun_device_t *tdev);
 bool          tundeviceIsUp(const tun_device_t *tdev);
-/* Select once while down, after creation fallbacks. False leaves ordinary mode.
+/* Select once while down, after creation fallbacks. False leaves ordinary TX.
  * No caller may change the selected mode after producer startup, even on stop. */
 #ifdef OS_LINUX
 bool tundeviceEnableTrustedChecksums(tun_device_t *tdev);
+/* Trust kernel input on a direct packet pair without enabling TX offload.
+ * Select only before starting producers, including in raw framing. */
+bool tundeviceEnableTrustedReceiveChecksums(tun_device_t *tdev);
 #else
 static inline bool tundeviceEnableTrustedChecksums(tun_device_t *tdev)
+{
+    (void) tdev;
+    return false;
+}
+static inline bool tundeviceEnableTrustedReceiveChecksums(tun_device_t *tdev)
 {
     (void) tdev;
     return false;

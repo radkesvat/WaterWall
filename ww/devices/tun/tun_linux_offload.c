@@ -333,37 +333,6 @@ static bool trustedPacketShape(const uint8_t *ip, uint32_t length, ipv4_packet_v
     return true;
 }
 
-bool tunLinuxOffloadValidatePacket(const uint8_t *ip, uint32_t length)
-{
-    if (length != 0 && (ip[0] >> 4U) != 4)
-    {
-        return true; /* Preserve non-IPv4 admission; the node retains its policy. */
-    }
-    ipv4_packet_view_t packet = {0};
-    if (UNLIKELY(! trustedPacketShape(ip, length, &packet)))
-    {
-        return false;
-    }
-    if (packet.fragmented || (packet.protocol != 6 && packet.protocol != 17))
-    {
-        return true;
-    }
-    uint8_t destination[4];
-    if (! selectPseudoheaderDestination(ip, packet.ip_header_length, destination))
-    {
-        return false;
-    }
-    if (packet.protocol == 17 && readNetwork16(ip + packet.transport_offset + 6) == 0)
-    {
-        return true; /* Disabled IPv4 UDP checksum, unlike TCP's valid zero. */
-    }
-    /* Match the pinned lwIP UDP checksum span: the complete IP payload, even
-     * when a shorter declared UDP length leaves a suffix. Validating only the
-     * declared prefix would certify bytes that lwIP subsequently delivers. */
-    const uint32_t sum = tcpPseudoheaderSum(ip, destination, packet.transport_length) - 6U + packet.protocol;
-    return calcGenericChecksum(ip + packet.transport_offset, packet.transport_length, sum) == 0;
-}
-
 bool tunLinuxOffloadTrustInput(const uint8_t metadata[kTunVirtioHeaderSize], const uint8_t *ip,
                                tun_linux_offload_plan_t *plan)
 {
@@ -403,10 +372,9 @@ bool tunLinuxOffloadTrustInput(const uint8_t metadata[kTunVirtioHeaderSize], con
         uint8_t destination[4];
         return selectPseudoheaderDestination(ip, packet.ip_header_length, destination);
     }
-    /* Unmarked GSO must be verified before segmentation rewrites its checksum.
-     * Ordinary input instead reaches validation after generic completion and
-     * reassembly, through tunDeliverPacket. */
-    return plan->action != kTunLinuxOffloadSegment || tunLinuxOffloadValidatePacket(ip, plan->ip_length);
+    /* Kernel TUN input is trusted on this direct pair. Unmarked bytes do not
+     * acquire offload metadata assurance merely by skipping verification. */
+    return true;
 }
 
 static void writeLittle16(uint8_t *bytes, uint16_t value)

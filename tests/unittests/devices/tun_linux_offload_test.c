@@ -567,14 +567,18 @@ static void testTrustedTransport(void)
                 putBe16(packet + 24, (uint16_t) (length - 20));
             }
             completeOracle(length, 20, protocol, kDestination);
-            packet[10] ^= 1; /* The trusted pair does not verify the IPv4 header sum. */
-            require(tunLinuxOffloadValidatePacket(packet, length), "valid ordinary checksum refused");
+            packet[10] ^= 1;
             if (payload)
-            {
                 packet[length - 1] ^= 0x40;
-                require(! tunLinuxOffloadValidatePacket(packet, length), "unmarked corruption accepted");
+            metadata(meta, 0, VIRTIO_NET_HDR_GSO_NONE, 0, 0, 0, 0);
+            require(tunLinuxOffloadPreflight(meta, packet, length, 1500, &plan) == kTunLinuxOffloadAccept,
+                    "unmarked ordinary preflight");
+            checksum_calls = 0;
+            require(tunLinuxOffloadTrustInput(meta, packet, &plan) && ! plan.transport_assured,
+                    "trusted unmarked input rejected because of checksum bytes");
+            require(checksum_calls == 0, "trusted unmarked input verified a checksum");
+            if (payload)
                 packet[length - 1] ^= 0x40;
-            }
             checksum_calls = 0;
             require(tunLinuxOffloadEncodeWrite(packet, length, meta), "partial encoding failed");
             require(checksum_calls == 0, "trusted writer verified a checksum");
@@ -592,8 +596,8 @@ static void testTrustedTransport(void)
             uint16_t completed = oracleChecksum(packet + 20, length - 20, 0, SIZE_MAX);
             if (udp && completed == 0)
                 completed = UINT16_MAX;
-            putBe16(packet + 20 + field, completed);
-            require(tunLinuxOffloadValidatePacket(packet, length), "independent partial completion incorrect");
+            tunLinuxOffloadCompleteChecksum(packet, &plan);
+            require(readBe16(packet + 20 + field) == completed, "partial completion differed from independent oracle");
             meta[0] = VIRTIO_NET_HDR_F_DATA_VALID;
             require(tunLinuxOffloadTrustInput(meta, packet, &plan) && plan.transport_assured, "verified input refused");
             meta[0] |= VIRTIO_NET_HDR_F_NEEDS_CSUM;
@@ -607,28 +611,31 @@ static void testTrustedTransport(void)
             packet[0] = 0x45;
             if (udp)
             {
+                metadata(meta, 0, VIRTIO_NET_HDR_GSO_NONE, 0, 0, 0, 0);
                 putBe16(packet + 26, 0);
-                require(tunLinuxOffloadValidatePacket(packet, length), "disabled UDP checksum rejected");
+                require(tunLinuxOffloadTrustInput(meta, packet, &plan), "disabled UDP checksum rejected");
                 putBe16(packet + 24, (uint16_t) (length - 19));
-                require(! tunLinuxOffloadValidatePacket(packet, length), "oversized UDP length certified");
+                require(! tunLinuxOffloadTrustInput(meta, packet, &plan), "oversized UDP length trusted");
             }
         }
     }
 
-    /* The pinned stack includes any IP suffix in its UDP checksum and payload.
-     * A DATA_VALID guarantee for a shorter UDP prefix cannot certify that suffix. */
+    /* A shorter UDP prefix cannot give metadata assurance to an IP suffix.
+     * The direct pair still trusts its checksum bytes without scanning them. */
     makeTcp(0, NULL, 0, NULL, 0, kTcpAck);
     packet[9] = 17;
     putBe16(packet + 2, 31);
     putBe16(packet + 24, 10);
     completeOracle(31, 20, 17, kDestination);
-    require(tunLinuxOffloadValidatePacket(packet, 31), "lwIP-compatible UDP suffix rejected");
     metadata(meta, VIRTIO_NET_HDR_F_DATA_VALID, VIRTIO_NET_HDR_GSO_NONE, 0, 0, 0, 0);
     require(tunLinuxOffloadPreflight(meta, packet, 31, 1500, &plan) == kTunLinuxOffloadAccept, "suffix preflight");
     require(tunLinuxOffloadTrustInput(meta, packet, &plan) && ! plan.transport_assured, "UDP suffix trusted as prefix");
-    require(! tunLinuxOffloadEncodeWrite(packet, 31, meta), "inexact UDP output requested offload");
     packet[30] ^= 1;
-    require(! tunLinuxOffloadValidatePacket(packet, 31), "UDP suffix corruption skipped");
+    checksum_calls = 0;
+    require(tunLinuxOffloadTrustInput(meta, packet, &plan) && ! plan.transport_assured,
+            "trusted UDP suffix rejected because of checksum bytes");
+    require(checksum_calls == 0, "trusted UDP suffix verified a checksum");
+    require(! tunLinuxOffloadEncodeWrite(packet, 31, meta), "inexact UDP output requested offload");
 
     /* Options and an odd segment size; preserve the kernel's source-route seed. */
     const uint8_t options[8]     = {131, 7, 4, 203, 0, 113, 99, 0};
@@ -637,12 +644,13 @@ static void testTrustedTransport(void)
     uint32_t      length = makeTcp(101, options, sizeof(options), tcp_options, sizeof(tcp_options), kTcpAck | kTcpPsh);
     completeOracle(length, 28, 6, final);
     packet[10] ^= 1;
-    require(tunLinuxOffloadValidatePacket(packet, length), "source-route verification");
     metadata(meta, 0, VIRTIO_NET_HDR_GSO_TCPV4, 52, 31, 0, 0);
     require(tunLinuxOffloadPreflight(meta, packet, length, 1500, &plan) == kTunLinuxOffloadAccept, "GSO preflight");
-    require(tunLinuxOffloadTrustInput(meta, packet, &plan) && ! plan.transport_assured, "unmarked valid aggregate");
     packet[length - 1] ^= 1;
-    require(! tunLinuxOffloadTrustInput(meta, packet, &plan), "corrupt original aggregate certified by rewriting");
+    checksum_calls = 0;
+    require(tunLinuxOffloadTrustInput(meta, packet, &plan) && ! plan.transport_assured,
+            "trusted unmarked aggregate rejected because of checksum bytes");
+    require(checksum_calls == 0, "trusted unmarked aggregate verified a checksum");
     packet[length - 1] ^= 1;
     require(tunLinuxOffloadEncodeWrite(packet, length, meta), "source-route writer");
     meta[1] = VIRTIO_NET_HDR_GSO_TCPV4;

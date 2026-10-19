@@ -1,5 +1,5 @@
 <!--
-Documentation version: 158
+Documentation version: 160
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketsToConnection.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketsToConnection.mdx, and all files must keep the same documentation version.
 -->
 
@@ -393,8 +393,9 @@ Source-backed metadata:
 | `required_padding_left` | `0` bytes |
 
 The checksum capability bit lets `PacketsToConnection` participate in the
-direct trusted-checksum path with an eligible adjacent `TunDevice`. The runtime
-activates that path only after the pair completes setup.
+direct trusted-checksum path with an eligible adjacent Linux `TunDevice`.
+Receive trust activates automatically during pair setup; transmit checksum
+offload additionally requires negotiated support and ready resources.
 
 ## Engine resources and lifecycle
 
@@ -420,19 +421,26 @@ pools, occupancy accounts and the process ISN secret finalize after all workers 
 
 ## Direct TunDevice checksum policy
 
-An immediately preceding Linux TunDevice can publish a trusted IPv4 checksum mode
-after successful GSO/checksum framing and storage setup. Each lazy worker netif
-reads that instance mode; other PTC netifs and ConnectionToPackets retain full
-checks even on the same engine. `gso:false`, an intervening node, any fallback,
-and other platforms retain ordinary behavior. There is no new JSON option.
+A reciprocal immediate Linux `TunDevice -> PacketsToConnection` pair
+automatically trusts incoming IPv4 header and TCP/UDP checksums in raw,
+checksum-only and GSO modes, independently of `gso`. Each lazy worker netif reads
+the published receive mode; other PTC netifs, ConnectionToPackets, interposed
+nodes and other platforms retain ordinary verification. The kernel-input trust
+assumption is described in Developer Guide Part 4. No extra setting is needed.
 
-TUN validates unmarked transport checksums and retains positive offload assurance
-privately. Active PTC netifs and fake DNS omit IPv4 header checksum verification.
-PTC keeps IPv4/header parsing, alignment copies, fragment guards and repair
-requests, while omitting repeated TCP/UDP receive sums. IPv4 output header
-checksums are still generated. Eligible transport output and TCP
-checksum-on-copy work are omitted; absent caches fall back to full pbuf checksums
-when required. Oversized output, including fake DNS replies, is checksummed before
-IP fragmentation. TUN writes complete packets as `NEEDS_CSUM` with the correct
-pseudoheader seed; fragments retain ordinary metadata. Mode is immutable through
-quiescence and owner-worker drain.
+TUN, the active PTC netif and fake DNS omit incoming IPv4 header and TCP/UDP
+checksum verification, including unmarked input. Structural parsing, exact
+lengths, metadata validation, alignment copies, fragment guards and repair
+requests remain enforced. IPv6 and UDP-Lite verification remain enabled. Positive
+offload assurance stays private to TUN work; receive trust does not mark unassured
+input as metadata-verified.
+
+Receive trust and transmit offload are independent. Raw output retains full
+software checksums and TCP checksum-on-copy. Only when Linux checksum offload and
+its resources are ready may eligible transport output and TCP checksum-on-copy
+work be omitted. Absent caches fall back to full pbuf checksums when required.
+IPv4 output header checksums are still generated. Oversized output, including
+fake DNS replies, is checksummed before IP fragmentation. In negotiated offload
+mode, TUN writes complete packets as `NEEDS_CSUM` with the correct pseudoheader
+seed; fragments retain ordinary metadata. Modes are immutable through quiescence
+and owner-worker drain.

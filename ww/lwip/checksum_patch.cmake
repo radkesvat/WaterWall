@@ -3,11 +3,13 @@ function(ww_apply_lwip_checksum_patch lwip_dir)
     ww_lwip_replace_once("${lwip_dir}/src/include/lwip/netif.h"
 [=[  u8_t ww_removing;]=]
 [=[  u8_t ww_removing;
-  /* Immutable direct-pair policy, set only by the netif initializer. */
+  /* Independent immutable direct-pair receive and transmit policies. */
+  u8_t ww_trusted_receive_checksums;
   u8_t ww_partial_transport_checksum;]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/netif.c"
 [=[  netif->flags = 0;]=]
 [=[  netif->flags = 0;
+  netif->ww_trusted_receive_checksums = 0;
   netif->ww_partial_transport_checksum = 0;]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/tcp_out.c"
 [=[#include "lwip/inet_chksum.h"]=]
@@ -187,10 +189,10 @@ function(ww_apply_lwip_checksum_patch lwip_dir)
     ww_lwip_replace_once("${lwip_dir}/src/core/tcp_in.c"
 [=[  IF__NETIF_CHECKSUM_ENABLED(inp, NETIF_CHECKSUM_CHECK_TCP) {]=]
 [=[  if (NETIF_CHECKSUM_ENABLED(inp, NETIF_CHECKSUM_CHECK_TCP) ||
-      (inp->ww_partial_transport_checksum && ip_current_is_v6())) {]=])
+      (inp->ww_trusted_receive_checksums && ip_current_is_v6())) {]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"
 [=[    IF__NETIF_CHECKSUM_ENABLED(inp, NETIF_CHECKSUM_CHECK_UDP) {]=]
 [=[    if (NETIF_CHECKSUM_ENABLED(inp, NETIF_CHECKSUM_CHECK_UDP) ||
-        (inp->ww_partial_transport_checksum &&
+        (inp->ww_trusted_receive_checksums &&
          (ip_current_is_v6() || ip_current_header_proto() == IP_PROTO_UDPLITE))) {]=])
 endfunction()

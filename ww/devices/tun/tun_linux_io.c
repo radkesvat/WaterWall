@@ -52,25 +52,10 @@ static_assert((unsigned) kTunWriterBatchPackets <= (unsigned) kTunWriteBatchPack
 
 static atomic_log_rate_limiter_t tun_write_packet_failure_log;
 
-static void tunDeliverPacketAssured(void *device, sbuf_t *buf, wid_t wid, bool assured)
-{
-    tun_device_t *tdev = device;
-#ifdef OS_LINUX
-    if (UNLIKELY(tdev->trusted_checksums && ! assured &&
-                 ! tunLinuxOffloadValidatePacket(sbufGetRawPtr(buf), sbufGetLength(buf))))
-    {
-        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
-        return;
-    }
-#else
-    discard assured;
-#endif
-    tdev->read_event_callback(tdev, tdev->userdata, buf, wid);
-}
-
 void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
 {
-    tunDeliverPacketAssured(device, buf, wid, false);
+    tun_device_t *tdev = device;
+    tdev->read_event_callback(tdev, tdev->userdata, buf, wid);
 }
 
 // Hands whatever the drain cycle has already read to the reader session. Every
@@ -233,7 +218,7 @@ static bool tunOffloadWorkStep(device_reader_session_t *session, void *context, 
         {
             atomic_fetch_add_explicit(&device->gso_intact_aggregates, 1, memory_order_relaxed);
         }
-        tunDeliverPacketAssured(session->device, output, wid, work->plan.transport_assured);
+        tunDeliverPacket(session->device, output, wid);
         return true;
     }
     while (work->next_payload_offset < work->plan.payload_length && budget->packets > 0)
@@ -278,9 +263,9 @@ static bool tunOffloadWorkStep(device_reader_session_t *session, void *context, 
         {
             tunLinuxOffloadCompleteSegment(sbufGetMutablePtr(output), built_length);
         }
-        /* Active preflight either verified the aggregate or retained positive
-         * metadata. Do not recheck an intentionally partial generated segment. */
-        tunDeliverPacketAssured(session->device, output, wid, true);
+        /* Preflight checked shape and metadata. The destination stack uses its
+         * receive policy for this generated segment. */
+        tunDeliverPacket(session->device, output, wid);
         work->next_payload_offset += payload_length;
         budget->bytes -= segment_length;
         --budget->packets;

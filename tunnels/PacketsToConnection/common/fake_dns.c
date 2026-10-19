@@ -946,7 +946,7 @@ ptc_fake_dns_result_t ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_
     uint32_t ip_total_len  = lwip_ntohs(IPH_LEN(iphdr));
     uint32_t udp_len       = lwip_ntohs(udphdr->len);
 
-    const bool trusted = packettunnelTrustedChecksumsActive(t);
+    const bool trusted = packettunnelTrustedReceiveChecksumsActive(t);
 
     if (udp_len < UDP_HLEN || ip_header_len + udp_len != ip_total_len ||
         (! trusted && inet_chksum(iphdr, (u16_t) ip_header_len) != 0))

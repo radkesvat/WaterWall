@@ -91,12 +91,13 @@ static err_t interfaceInit(struct netif *netif)
     const interface_route_context_t *route = netif->state;
     const ptc_tstate_t              *state = tunnelGetState(route->tunnel);
     netif->mtu                             = state->mtu;
-    if (packettunnelTrustedChecksumsActive(route->tunnel))
+    if (packettunnelTrustedReceiveChecksumsActive(route->tunnel))
     {
         netif->chksum_flags &=
             (uint16_t) ~(NETIF_CHECKSUM_CHECK_IP | NETIF_CHECKSUM_CHECK_TCP | NETIF_CHECKSUM_CHECK_UDP);
-        netif->ww_partial_transport_checksum = 1;
+        netif->ww_trusted_receive_checksums = 1;
     }
+    netif->ww_partial_transport_checksum = packettunnelTrustedChecksumsActive(route->tunnel);
 
     return ERR_OK;
 }

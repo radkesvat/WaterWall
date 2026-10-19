@@ -23,6 +23,9 @@ tunnel_t *packettunnelCreate(node_t *node, size_t tstate_size, size_t lstate_siz
 bool packettunnelTrustedChecksumPairEligible(const tunnel_t *source, const tunnel_t *consumer);
 void packettunnelActivateTrustedChecksumPair(tunnel_t *source, tunnel_t *consumer);
 bool packettunnelTrustedChecksumsActive(const tunnel_t *t);
+/* Direct-pair receive trust, independent of negotiated transmit offload. */
+void packettunnelActivateTrustedReceiveChecksumPair(tunnel_t *source, tunnel_t *consumer);
+bool packettunnelTrustedReceiveChecksumsActive(const tunnel_t *t);
 
 /* Exact owner-worker packet edge to an immediate certified sink. Static topology
  * and capability keep dispatch policy fixed throughout the route lifetime. */

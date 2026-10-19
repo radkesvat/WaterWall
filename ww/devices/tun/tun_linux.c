@@ -55,6 +55,13 @@ bool tundeviceEnableTrustedChecksums(tun_device_t *tdev)
     }
     assert(tdev->offload_scratch != NULL && tdev->reader_session->worker_queues != NULL);
     assert(deviceReaderSessionOutputWakeFd(tdev->reader_session) >= 0);
+    return tundeviceEnableTrustedReceiveChecksums(tdev);
+}
+
+bool tundeviceEnableTrustedReceiveChecksums(tun_device_t *tdev)
+{
+    assert(tdev != NULL && tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown);
+    assert(! tdev->reader_joinable);
     deviceFragAffinityTrustIpv4HeaderChecksum(tdev->reader_session->frag_affinity);
     tdev->trusted_checksums = true;
     return true;

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 158
+Documentation version: 160
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TunDevice.mdx, and all files must keep the same documentation version.
 -->
 
@@ -109,8 +109,8 @@ Full-route example with local ranges excluded:
 - `gso` `(boolean)`
   Request Linux TCPv4 segmentation offload. The default remains `true`;
   `false` disables segmentation while every fresh Linux device still attempts
-  checksum offload. Invalid types, including `null`, are rejected. No separate
-  checksum setting is needed. Startup logs the final active mode:
+  checksum offload. Invalid types, including `null`, are rejected. Checksum
+  offload is negotiated automatically. Startup logs the final active mode:
 
   | Active mode | Framing | Features |
   | --- | --- | --- |
@@ -248,9 +248,10 @@ When the TUN device produces a packet:
   unfinished segmentation stays ahead of later packets and continues in bounded
   callbacks, preserving flow order without blocking the worker for queue capacity
 - with ordinary TUN framing, unfragmented kernel-produced packets remain
-  trusted at this adapter boundary and are validated by their downstream
-  consumer; fragmented IPv4 packets pass the common fragment parser, which
-  validates their structure and header checksum before association
+  trusted at this adapter boundary; downstream consumers retain their validation
+  policy except for the direct receive-trust pair below. Fragmented IPv4 packets
+  pass the common fragment parser, which validates their structure and header
+  checksum before association; the direct pair omits header checksum verification
 - the TunDevice packet callback still forwards only exact IPv4 packets; ordinary
   IPv6 records reach that existing callback and follow its existing rejection
 - the packet is forwarded through the chosen adjacent tunnel using the worker's packet line
@@ -297,26 +298,30 @@ copied into an aggregate.
 
 ### Direct PacketsToConnection checksums
 
-A reciprocal immediate `TunDevice -> PacketsToConnection` pair automatically
-uses trusted IPv4 header and TCP/UDP transport checksums after Linux checksum/virtio
-framing and worker storage are ready, including checksum-only mode with `gso:false`.
-Raw fallback, non-Linux platforms, and intervening nodes retain ordinary checksums.
-No new setting is required. IPv4 header checksum verification is omitted in TUN admission,
-fragment handling, PTC and trusted writes. Structural checks, fragment policy,
-repair requests, FIFO bounds and shutdown ownership remain unchanged. Generated
-and reconstructed IPv4 headers still receive valid checksums.
+A reciprocal immediate `TunDevice -> PacketsToConnection` pair in Linux
+implicitly trusts incoming IPv4 header and TCP/UDP checksums in raw,
+checksum-only and GSO modes, independently of `gso`. No extra setting is needed.
+Non-Linux platforms and intervening nodes retain ordinary verification. The
+kernel-input trust assumption is described in Developer Guide Part 4.
 
-Supported `NEEDS_CSUM` or verified metadata lets TUN deliver complete packets
-without completing and rechecking transport sums. Unmarked transport checksums
-are verified before delivery, after reassembly when necessary; corrupt transport
-data drops.
-Contradictory metadata and partial IP fragments are rejected. The private worker
-handoff retains assurance without adding flags to buffers or packet lines.
+IPv4 header and TCP/UDP checksum verification is omitted in TUN admission,
+fragment handling, PTC and fake DNS, including unmarked input. Structural checks,
+metadata consistency, fragment policy, repair requests, FIFO bounds and shutdown
+ownership remain unchanged. Generated and reconstructed IPv4 headers still
+receive valid checksums. IPv6 and UDP-Lite verification remain enabled.
 
-On return, PTC omits transport sums only for complete packets that fit its MTU;
-TUN emits a pseudoheader seed and `NEEDS_CSUM` metadata for kernel delivery or
-forwarding. Oversized datagrams receive full checksums before fragmentation, and
-fragments use ordinary metadata. The selected mode remains fixed until destroy.
+Matching `NEEDS_CSUM` coordinates or applicable `DATA_VALID` retain positive
+assurance only in TUN-private queued work; receive trust does not manufacture
+that assurance for unmarked input. Contradictory metadata and partial IP
+fragments are rejected. Existing GSO conversion rules remain in effect.
+
+Receive trust does not enable partial transmit checksums. Raw TUN output retains
+full software checksums and checksum-on-copy. When checksum offload was actually
+negotiated and its resources are ready, PTC omits transport sums only for complete
+packets that fit its MTU; TUN emits a pseudoheader seed and `NEEDS_CSUM` metadata
+for kernel delivery or forwarding. Oversized datagrams receive full checksums
+before fragmentation, and fragments use ordinary metadata. The selected modes
+remain fixed until destroy.
 
 ### Checksum behavior
 
@@ -413,9 +418,10 @@ Source-backed metadata:
 | `required_padding_left` | 10 bytes on Linux; 0 bytes on other supported platforms |
 
 The checksum and enqueue-only bits advertise capabilities for a direct
-`TunDevice`–`PacketsToConnection` pair. Trusted-checksum handling becomes active
-only when the eligible pair completes setup; it is not implied by the static
-capability flags alone.
+`TunDevice`–`PacketsToConnection` pair. An eligible Linux pair automatically
+activates receive trust during setup, including raw mode. Transmit checksum
+offload additionally requires actual negotiated support and ready resources;
+static capability flags alone do not imply either active mode.
 
 This is the node's logical advertised left-padding requirement. Linux advertises
 it even when `"gso": false`. Allocation alignment is separate, so it does not

@@ -68,11 +68,11 @@ void tunLinuxOffloadCompleteSegment(uint8_t *ip, uint32_t ip_length);
 
 /* Active direct-pair admission. Retains assurance only in the private plan.
  * IPv4 structure is validated without verifying the header checksum.
- * Generic materialization, if still requested, is followed by ordinary validation.
- * Unmarked complete traffic receives transport validation after reassembly. */
+ * Kernel TUN input is trusted; no transport checksum is verified here.
+ * Generic materialization still occurs when requested, and unmarked bytes
+ * never acquire positive offload metadata assurance. */
 bool tunLinuxOffloadTrustInput(const uint8_t metadata[kTunVirtioHeaderSize], const uint8_t *ip,
                                tun_linux_offload_plan_t *plan);
-bool tunLinuxOffloadValidatePacket(const uint8_t *ip, uint32_t length);
 
 /* Active writer: encode supported complete TCP/UDP; fragments/other protocols
  * keep zero metadata. False rejects malformed packets without writing them. */

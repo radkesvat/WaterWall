@@ -118,7 +118,9 @@ enum node_flags
     // Packet Payload only validates and tries a device FIFO enqueue, or drops.
     // Never enters lwIP, pumps a loop, calls a tunnel, waits for capacity, writes
     // the native device, or destroys the packet line. Immutable after startup.
-    kNodeFlagPacketPayloadEnqueueOnly = (1 << 9)
+    kNodeFlagPacketPayloadEnqueueOnly = (1 << 9),
+    // Kernel receive trust on an immediate packet pair; does not enable TX offload.
+    kNodeFlagTrustedPacketReceiveChecksumsActive = (1 << 10)
 };
 
 enum node_layer_group

@@ -242,7 +242,7 @@ static uint32_t query(tunnel_t *t, line_t *line, const char *label)
     uint8_t *p   = sbufGetMutablePtr(buf);
     PUT_BE16(p + 22, 53);
     CHECK(calcFullPacketChecksum(p, sbufGetLength(buf)));
-    if (packettunnelTrustedChecksumsActive(t))
+    if (packettunnelTrustedReceiveChecksumsActive(t))
     {
         PUT_BE16(p + 26, 0x1234);
         p[10] ^= 1;
@@ -329,9 +329,11 @@ static void setup(void *worker_ptr, void *a, void *b, void *c)
         interface_route_context_t *route = ((ptc_tstate_t *) tunnelGetState(fixtures[i].ptc))->routes_v4[wid];
         CHECK(route && route->packet_wid == wid && route->engine == wwLwipRuntimeGet(wid));
         const bool trusted = packettunnelTrustedChecksumsActive(fixtures[i].ptc);
+        const bool trusted_receive = packettunnelTrustedReceiveChecksumsActive(fixtures[i].ptc);
         CHECK((route->netif.ww_partial_transport_checksum != 0) == trusted);
-        CHECK(((route->netif.chksum_flags & NETIF_CHECKSUM_CHECK_TCP) == 0) == trusted);
-        CHECK(((route->netif.chksum_flags & NETIF_CHECKSUM_CHECK_IP) == 0) == trusted);
+        CHECK((route->netif.ww_trusted_receive_checksums != 0) == trusted_receive);
+        CHECK(((route->netif.chksum_flags & NETIF_CHECKSUM_CHECK_TCP) == 0) == trusted_receive);
+        CHECK(((route->netif.chksum_flags & NETIF_CHECKSUM_CHECK_IP) == 0) == trusted_receive);
         CHECK((route->netif.chksum_flags & NETIF_CHECKSUM_GEN_IP) != 0);
     }
     CHECK(wtimerAdd(getWorkerLoop(wid), finishTimer, 1000, 1));
@@ -388,6 +390,8 @@ int main(void)
         /* Publication may occur after PTC onStart; routes must read it lazily. */
         if (i == 0)
             nodes[i].flags |= kNodeFlagTrustedPacketChecksumsActive;
+        else
+            nodes[i].flags |= kNodeFlagTrustedPacketReceiveChecksumsActive;
 #endif
     }
     for (wid_t i = 0; i < 2; ++i)

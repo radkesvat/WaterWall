@@ -48,10 +48,15 @@ void tundeviceTunnelOnStart(tunnel_t *t)
 
     /* Final topology and actual device framing are now known. Publish before
      * BringUp starts either producer; PTC routes read this lazily on workers. */
-    if (packettunnelTrustedChecksumPairEligible(t, t->next) && tundeviceEnableTrustedChecksums(state->tdev))
+    if (packettunnelTrustedChecksumPairEligible(t, t->next) && tundeviceEnableTrustedReceiveChecksums(state->tdev))
     {
-        packettunnelActivateTrustedChecksumPair(t, t->next);
-        LOGI("TunDevice: %s enabled direct-pair trusted transport checksums", state->name);
+        packettunnelActivateTrustedReceiveChecksumPair(t, t->next);
+        LOGI("TunDevice: %s enabled direct-pair trusted receive checksums", state->name);
+        if (tundeviceEnableTrustedChecksums(state->tdev))
+        {
+            packettunnelActivateTrustedChecksumPair(t, t->next);
+            LOGI("TunDevice: %s enabled direct-pair trusted transport checksums", state->name);
+        }
     }
 
     if (! tundeviceAssignIP(state->tdev, state->ip_present, (unsigned int) state->subnet_mask))

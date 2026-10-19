@@ -31,6 +31,19 @@ bool packettunnelTrustedChecksumsActive(const tunnel_t *t)
     return (t->node->flags & kNodeFlagTrustedPacketChecksumsActive) != 0;
 }
 
+void packettunnelActivateTrustedReceiveChecksumPair(tunnel_t *source, tunnel_t *consumer)
+{
+    assert(packettunnelTrustedChecksumPairEligible(source, consumer));
+    source->node->flags |= kNodeFlagTrustedPacketReceiveChecksumsActive;
+    consumer->node->flags |= kNodeFlagTrustedPacketReceiveChecksumsActive;
+}
+
+bool packettunnelTrustedReceiveChecksumsActive(const tunnel_t *t)
+{
+    return (t->node->flags & (kNodeFlagTrustedPacketChecksumsActive | kNodeFlagTrustedPacketReceiveChecksumsActive)) !=
+           0;
+}
+
 bool packettunnelCanEnqueueDownstreamInline(const tunnel_t *producer, const line_t *packet_line)
 {
     const tunnel_t *sink = producer->prev;
