@@ -10,6 +10,7 @@
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
+#include "devices/device_flow_affinity.h"
 #include "devices/tun/tun_linux_gso_limits.h"
 #include "devices/tun/tun_linux_gso_write.h"
 #include "devices/tun/tun_linux_internal.h"
@@ -46,6 +47,7 @@ enum
 
 typedef struct captured_message_s
 {
+    wid_t                        wid;
     WorkerMessageCallback        callback;
     WorkerMessageCleanupCallback cleanup;
     void                        *arg1;
@@ -96,6 +98,9 @@ static bool               gso_feature_available;
 static char               gso_attach_name[IFNAMSIZ];
 static char               raw_attach_name[IFNAMSIZ];
 static bool               raw_attach_exclusive;
+static short              requested_tun_flags[8];
+static unsigned int       requested_tun_flag_count, queue_flag_probes;
+static bool               refuse_multi_queue, record_queue_preference;
 /* Readiness callbacks and their worker notifications are separate from the
  * packet delivery FIFO. All production callbacks run as the registered owner. */
 static captured_message_t    reader_messages[kMaxCapturedMessages];
@@ -485,6 +490,16 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
     else if (request == TUNSETIFF)
     {
         struct ifreq *ifr = argument;
+        if (record_queue_preference)
+        {
+            require(requested_tun_flag_count < ARRAY_SIZE(requested_tun_flags), "too many TUN attach attempts");
+            requested_tun_flags[requested_tun_flag_count++] = ifr->ifr_flags;
+        }
+        if (refuse_multi_queue && (ifr->ifr_flags & IFF_MULTI_QUEUE) != 0)
+        {
+            errno = EOPNOTSUPP;
+            return -1;
+        }
         if ((ifr->ifr_flags & IFF_VNET_HDR) != 0)
         {
             gso_setiff_calls++;
@@ -514,6 +529,13 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
         }
         stringCopyN(ifr->ifr_name, "ww-lifetime-test", IFNAMSIZ);
         ifr->ifr_name[IFNAMSIZ - 1] = '\0';
+    }
+    else if (request == TUNGETIFF)
+    {
+        ++queue_flag_probes;
+        /* Queue-setup syscall behavior has its own fixture. This constructor
+         * fixture emulates the documented single-queue capability fallback. */
+        ((struct ifreq *) argument)->ifr_flags = IFF_TUN | IFF_NO_PI;
     }
     else if (request == TUNSETVNETHDRSZ)
     {
@@ -839,7 +861,7 @@ worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid
                                                                              WorkerMessageCleanupCallback cleanup,
                                                                              void *arg1, void *arg2, void *arg3)
 {
-    require(wid == 0, "TUN fixture posted to an unexpected worker");
+    require(wid < getWorkersCount(), "TUN fixture posted to an unexpected worker");
     const bool reader_message = opening_reader || closing_reader || callback == reader_message_callback;
     if (reader_message)
     {
@@ -859,6 +881,7 @@ worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid
                                                              : &captured_message_count;
     require(*count < kMaxCapturedMessages, "captured-message queue overflow");
     messages[(*count)++] = (captured_message_t) {
+        .wid      = wid,
         .callback = callback,
         .cleanup  = cleanup,
         .arg1     = arg1,
@@ -1036,6 +1059,9 @@ static void resetGsoSetup(void)
     memoryZero(gso_attach_name, sizeof(gso_attach_name));
     memoryZero(raw_attach_name, sizeof(raw_attach_name));
     raw_attach_exclusive      = false;
+    requested_tun_flag_count  = 0;
+    queue_flag_probes         = 0;
+    refuse_multi_queue        = false;
     gso_scratch_buffer        = NULL;
     gso_scratch_destroy_count = 0;
 }
@@ -1232,7 +1258,7 @@ static tun_device_t *createRawDevice(const char *name, bool gso_requested, uint1
 {
     const bool available  = gso_feature_available;
     gso_feature_available = false;
-    tun_device_t *tdev    = tundeviceCreate(name, gso_requested, mtu, userdata, callback, policy);
+    tun_device_t *tdev    = tundeviceCreate(name, gso_requested, true, mtu, userdata, callback, policy);
     gso_feature_available = available;
     return tdev;
 }
@@ -1267,7 +1293,7 @@ static tun_device_t *createRunningOffloadReaderDevice(TunReadEventHandle callbac
     resetReaderFixture(0);
     resetGsoSetup();
     tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, callback, kDeviceFragmentPreserve);
+        tundeviceCreate("ww-lifetime-test", gso_requested, true, 1500, NULL, callback, kDeviceFragmentPreserve);
     require(tdev != NULL, "GSO reader-device create failed");
     require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) >= 0,
             "GSO reader-device was not configured with output credits");
@@ -1283,7 +1309,7 @@ static void testChecksumOnlyNegotiation(void)
 {
     resetReaderFixture(0);
     resetGsoSetup();
-    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, true, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev != NULL, "checksum-only device create failed");
     require(gso_feature_checks == 1 && gso_setiff_calls == 1 && raw_setiff_calls == 0 && gso_header_size_calls == 1 &&
                 gso_byte_order_calls == 1 && gso_offload_calls == 1 && gso_limit_calls == 0,
@@ -1307,7 +1333,7 @@ static void testGsoNegotiationAndRawFallback(void)
             resetTunLogCapture();
             fail_gso_ioctl_request = failing_requests[i];
             tun_device_t *tdev =
-                tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
+                tundeviceCreate("ww-lifetime-test", mode != 0, true, 1500, NULL, NULL, kDeviceFragmentPreserve);
             require(tdev != NULL, "GSO setup failure did not fall back to a raw-IP descriptor");
             require(! tundeviceEnableTrustedChecksums(tdev), "fallback activated trust");
             require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) >= 0,
@@ -1323,13 +1349,13 @@ static void testGsoNegotiationAndRawFallback(void)
     resetGsoSetup();
     fail_gso_ioctl_request = TUNSETIFF;
     fail_gso_ioctl_errno   = EBUSY;
-    tun_device_t *conflict = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    tun_device_t *conflict = tundeviceCreate("ww-lifetime-test", true, true, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(conflict == NULL && raw_setiff_calls == 0,
             "exclusive GSO name conflict unexpectedly fell back onto the same TUN name");
 
     resetGsoSetup();
     resetReaderFixture(0);
-    tun_device_t *active = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    tun_device_t *active = tundeviceCreate("ww-lifetime-test", true, true, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(active != NULL && tundeviceEnableTrustedChecksums(active) &&
                 deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(active)) >= 0,
             "supported GSO descriptor did not activate offload mode");
@@ -1343,7 +1369,7 @@ static void testGsoNegotiationAndRawFallback(void)
 
     resetGsoSetup();
     fail_offload_mask = TUN_F_CSUM | TUN_F_TSO4;
-    active            = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    active            = tundeviceCreate("ww-lifetime-test", true, true, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(active && tundeviceEnableTrustedChecksums(active) && active_offload_mask == TUN_F_CSUM &&
                 tun_open_calls == 1 && gso_offload_calls == 2 && gso_limit_calls == 0 && raw_setiff_calls == 0,
             "rejected TSO upgrade did not retain checksum-only mode on the same descriptor");
@@ -1353,14 +1379,14 @@ static void testGsoNegotiationAndRawFallback(void)
     {
         resetGsoSetup();
         gso_feature_available = false;
-        active = tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
+        active = tundeviceCreate("ww-lifetime-test", mode != 0, true, 1500, NULL, NULL, kDeviceFragmentPreserve);
         require(active && ! tundeviceEnableTrustedChecksums(active) && raw_setiff_calls == 1 && gso_setiff_calls == 0,
                 "missing virtio feature did not select raw fallback");
         destroyDevice(active);
 
         resetGsoSetup();
         existing_interface = true;
-        active             = tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
+        active = tundeviceCreate("ww-lifetime-test", mode != 0, true, 1500, NULL, NULL, kDeviceFragmentPreserve);
         if (mode == 0)
         {
             require(active && raw_setiff_calls == 2 && ! raw_attach_exclusive && gso_offload_calls == 0 &&
@@ -1382,18 +1408,20 @@ static void testGsoNegotiationAndRawFallback(void)
             resetGsoSetup();
             fail_gso_ioctl_request = serious_failures[i];
             fail_gso_ioctl_errno   = EIO;
-            active = tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
+            active = tundeviceCreate("ww-lifetime-test", mode != 0, true, 1500, NULL, NULL, kDeviceFragmentPreserve);
             require(active == NULL && raw_setiff_calls == 0 && tun_open_calls == 1,
                     "genuine construction failure was treated as optional capability rejection");
         }
         resetGsoSetup();
         fail_tun_open_call = 1;
-        require(tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve) == NULL &&
+        require(tundeviceCreate("ww-lifetime-test", mode != 0, true, 1500, NULL, NULL, kDeviceFragmentPreserve) ==
+                        NULL &&
                     tun_open_calls == 1,
                 "open failure retried optional capability fallback");
         resetGsoSetup();
         fail_nonblocking = true;
-        require(tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve) == NULL &&
+        require(tundeviceCreate("ww-lifetime-test", mode != 0, true, 1500, NULL, NULL, kDeviceFragmentPreserve) ==
+                        NULL &&
                     tun_open_calls == 1 && raw_setiff_calls == 0,
                 "nonblocking failure entered capability fallback");
     }
@@ -1409,7 +1437,7 @@ static void testOffloadResourceFallbacks(void)
             fail_output_budget_once = failure == 0;
             fail_worker_queue_once  = failure == 1;
             tun_device_t *tdev =
-                tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
+                tundeviceCreate("ww-lifetime-test", mode != 0, true, 1500, NULL, NULL, kDeviceFragmentPreserve);
             require(tdev && ! tundeviceEnableTrustedChecksums(tdev) && active_offload_mask == 0 &&
                         raw_setiff_calls == 1 && output_budget_calls == (failure == 0 ? 2U : 1U),
                     "common resource failure did not roll back into usable raw mode");
@@ -1425,7 +1453,7 @@ static void testOffloadResourceFallbacks(void)
         fail_offload_call    = failure == 0 ? 0 : 3;
         fail_feature_check   = failure == 2 ? 2 : 0;
         fail_tun_open_call   = failure == 3 ? 2 : 0;
-        tun_device_t *tdev   = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+        tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", true, true, 1500, NULL, NULL, kDeviceFragmentPreserve);
         require(! fail_worker_gso_once && output_budget_calls == 1, "GSO-only failure repeated common setup");
         if (failure == 3)
         {
@@ -2165,7 +2193,7 @@ static void testOrdinaryChecksumWorkerHandoff(bool gso_requested, bool cancel, b
     resetReaderFixture(0);
     ordinary_checksum_fixture_t fixture = {0};
     tun_device_t               *tdev    = tundeviceCreate(
-        "ww-lifetime-test", gso_requested, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
+        "ww-lifetime-test", gso_requested, true, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
     require(tdev && bringUpDevice(tdev), "ordinary checksum device setup");
     uint8_t record[kGsoFixtureRecordLength];
     makeSmallGsoRecord(record);
@@ -2235,7 +2263,7 @@ static void testOrdinaryChecksumMixedFifo(bool gso_requested)
     GSTATE.ram_profile                  = 8;
     ordinary_checksum_fixture_t fixture = {0};
     tun_device_t               *tdev    = tundeviceCreate(
-        "ww-lifetime-test", gso_requested, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
+        "ww-lifetime-test", gso_requested, true, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
     require(tdev && bringUpDevice(tdev), "mixed ordinary checksum device setup");
     uint8_t ordinary[kGsoFixtureRecordLength], partial[kGsoFixtureRecordLength], aggregate[kGsoFixtureRecordLength];
     makeSmallGsoRecord(ordinary);
@@ -2352,7 +2380,7 @@ static void testOrdinaryChecksumBudget(bool gso_requested)
     resetReaderFixture(0);
     ordinary_checksum_fixture_t fixture = {0};
     tun_device_t               *tdev    = tundeviceCreate(
-        "ww-lifetime-test", gso_requested, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
+        "ww-lifetime-test", gso_requested, true, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
     require(tdev && bringUpDevice(tdev), "ordinary checksum budget device setup");
     gso_probe_session                      = tunLinuxReaderSession(tdev);
     gso_probe_session->output_packet_limit = 1;
@@ -2391,6 +2419,7 @@ static void testOrdinaryChecksumReaderFallback(bool gso_requested, bool reassemb
     ordinary_checksum_fixture_t fixture = {0};
     tun_device_t               *tdev    = tundeviceCreate("ww-lifetime-test",
                                          gso_requested,
+                                         true,
                                          1500,
                                          &fixture,
                                          observeOrdinaryChecksum,
@@ -2532,8 +2561,8 @@ static void testTrustedHandoff(bool gso_requested, bool cancel, bool stale)
     resetCapturedMessages();
     resetGsoSetup();
     resetReaderFixture(0);
-    tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, observeTrustedRecord, kDeviceFragmentReassemble);
+    tun_device_t *tdev = tundeviceCreate(
+        "ww-lifetime-test", gso_requested, true, 1500, NULL, observeTrustedRecord, kDeviceFragmentReassemble);
     require(tdev && tundeviceEnableTrustedChecksums(tdev), "trusted device setup");
     require(bringUpDevice(tdev), "trusted device startup");
     uint8_t aggregate[kGsoFixtureRecordLength], partial[kGsoFixtureRecordLength], ordinary[kGsoFixtureRecordLength],
@@ -2628,8 +2657,8 @@ static void testTrustedChecksumOnlyFallback(void)
     resetGsoSetup();
     resetReaderFixture(0);
     ordinary_checksum_fixture_t fixture = {0};
-    tun_device_t               *tdev =
-        tundeviceCreate("ww-lifetime-test", false, 1500, &fixture, observeTrustedOrdinary, kDeviceFragmentReassemble);
+    tun_device_t               *tdev    = tundeviceCreate(
+        "ww-lifetime-test", false, true, 1500, &fixture, observeTrustedOrdinary, kDeviceFragmentReassemble);
     require(tdev && tundeviceEnableTrustedChecksums(tdev), "trusted checksum-only fallback setup");
     require(bringUpDevice(tdev), "trusted checksum-only fallback startup");
     uint8_t tcp[kGsoFixtureRecordLength];
@@ -3062,8 +3091,8 @@ static void testTrustedWriterOutcomes(bool gso_requested)
     resetTunLogCapture();
     resetGsoSetup();
     resetReaderFixture(0);
-    tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+    tun_device_t *tdev = tundeviceCreate(
+        "ww-lifetime-test", gso_requested, true, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev && tundeviceEnableTrustedChecksums(tdev) && bringUpDevice(tdev), "trusted writer setup");
     for (unsigned i = 0; i < 4; ++i)
     {
@@ -3132,8 +3161,8 @@ static void testWriterBatch(bool gso_requested, unsigned count, unsigned capacit
     resetIoInjection();
     resetGsoSetup();
     resetReaderFixture(0);
-    tun_device_t *tdev =
-        tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+    tun_device_t *tdev = tundeviceCreate(
+        "ww-lifetime-test", gso_requested, true, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev && tundeviceEnableTrustedChecksums(tdev) && bringUpDevice(tdev), "batch writer setup");
     writer_batch_count  = count;
     writer_batch_offset = writer_batch_calls = writer_batch_aggregates = writer_batch_max = 0;
@@ -3198,7 +3227,7 @@ static void testTrustedQueueFallback(void)
     resetGsoSetup();
     resetReaderFixture(0);
     fail_worker_queue_once = true;
-    tun_device_t *tdev     = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    tun_device_t *tdev     = tundeviceCreate("ww-lifetime-test", true, true, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev && ! fail_worker_queue_once && ! tundeviceEnableTrustedChecksums(tdev),
             "queue fallback activated trust");
     require(gso_offload_calls == 2 && raw_setiff_calls == 1,
@@ -3295,6 +3324,143 @@ static void testDnsMutationCleanup(void)
     existing_interface = false;
 }
 
+static void observeSingleQueueWorkerOne(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid)
+{
+    discard tdev;
+    require(wid == 1 && currentThreadIsEventWorkerWID(1), "single receive queue changed the flow's processing worker");
+    require(sbufGetLength(buf) == 28 && memoryEqual(sbufGetRawPtr(buf), userdata, 28),
+            "single receive queue changed packet bytes");
+    ++callback_count;
+    bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+}
+
+static void testMultiQueuePreferencePreservesProcessingWorkers(test_env_t *env)
+{
+    buffer_pool_t *second_pool   = bufferpoolCreate(env->large_master,
+                                                  env->medium_master,
+                                                  env->small_master,
+                                                  16,
+                                                  8192,
+                                                  MEDIUM_BUFFER_SIZE_RAM_HIGH,
+                                                  4096,
+                                                  8192,
+                                                  8192);
+    wloop_t        second_loop   = {.wid = 1};
+    buffer_pool_t *pools[2]      = {env->worker_buffer_pool, second_pool};
+    wloop_t       *loops[2]      = {env->loops[0], &second_loop};
+    GSTATE.workers_count         = 2;
+    GSTATE.shortcut_buffer_pools = pools;
+    GSTATE.shortcut_loops        = loops;
+    GSTATE.workers[1] = (worker_t) {.wid = 1, .has_event_loop = true, .loop = &second_loop, .buffer_pool = second_pool};
+    record_queue_preference = true;
+
+    /* Exercise each path that opens/reopens the interface, with both explicit
+     * preferences. Disabling multiqueue must survive every framing fallback. */
+    for (unsigned preference = 0; preference < 2; ++preference)
+    {
+        const bool multi_queue_requested = preference != 0;
+        for (unsigned scenario = 0; scenario < 9; ++scenario)
+        {
+            resetGsoSetup();
+            resetReaderFixture(0);
+            resetTunLogCapture();
+            const bool gso_requested = scenario >= 2 && scenario != 7;
+            gso_feature_available    = scenario != 0 && scenario != 7;
+            if (scenario == 3)
+                fail_gso_ioctl_request = TUNSETVNETHDRSZ;
+            if (scenario == 4)
+                fail_output_budget_once = true;
+            if (scenario == 5 || scenario == 6)
+            {
+                fail_worker_gso_once = true;
+                fail_offload_call    = 3;
+            }
+            if (scenario == 6)
+                fail_feature_check = 2;
+            existing_interface = scenario == 7;
+            refuse_multi_queue = scenario == 8;
+
+            tun_device_t *tdev = tundeviceCreate(
+                "ww-lifetime-test", gso_requested, multi_queue_requested, 1500, NULL, NULL, kDeviceFragmentPreserve);
+            require(tdev != NULL && getWorkersCount() == 2,
+                    "queue preference failed construction or changed the processing worker count");
+            const bool retain_offload = scenario == 1 || scenario == 2 || scenario == 5 || scenario == 8;
+            require(tundeviceEnableTrustedChecksums(tdev) == retain_offload,
+                    "queue preference changed offload negotiation");
+            const unsigned expected_opens = scenario == 6 || scenario == 7                      ? 3U
+                                            : scenario == 0 || (scenario >= 3 && scenario <= 5) ? 2U
+                                                                                                : 1U;
+            require(tun_open_calls == expected_opens, "queue preference did not exercise the intended reopen path");
+            require(requested_tun_flag_count >= 1, "queue preference skipped interface attachment");
+            unsigned multi_queue_attempts = 0;
+            for (unsigned i = 0; i < requested_tun_flag_count; ++i)
+            {
+                if ((requested_tun_flags[i] & IFF_MULTI_QUEUE) != 0)
+                    ++multi_queue_attempts;
+                require(multi_queue_requested || (requested_tun_flags[i] & IFF_MULTI_QUEUE) == 0,
+                        "disabled multiqueue was reenabled while reopening the interface");
+            }
+            require(! multi_queue_requested || multi_queue_attempts > 0,
+                    "enabled multiqueue never requested the kernel flag with two workers");
+            require(queue_flag_probes == (multi_queue_requested && ! existing_interface ? 1U : 0U),
+                    "queue preference did not control optional multiqueue/steering setup");
+            require(countTunLogSubstring("uses 1 worker-owned receive queue(s)") == 1,
+                    "single-queue selection/fallback was not published");
+            destroyDevice(tdev);
+            existing_interface = false;
+        }
+    }
+
+    resetGsoSetup();
+    resetReaderFixture(0);
+    resetIoInjection();
+    resetShutdownRequests();
+    resetCapturedMessages();
+    gso_feature_available = false;
+    uint8_t packet[28]    = {0x45, 0, 0, 28, 0, 1, 0, 0, 64, 17};
+    PUT_BE32(packet + 12, UINT32_C(0x0A000001));
+    PUT_BE32(packet + 16, UINT32_C(0x0A000002));
+    PUT_BE16(packet + 22, 53);
+    PUT_BE16(packet + 24, 8);
+    wid_t processing_worker = 0;
+    for (uint16_t port = 1; port < 1024; ++port)
+    {
+        PUT_BE16(packet + 20, port);
+        require(deviceFlowAffineWID(packet, sizeof(packet), &processing_worker), "valid flow has no worker");
+        if (processing_worker == 1)
+            break;
+    }
+    require(processing_worker == 1, "fixture did not select a different processing worker");
+    PUT_BE16(packet + 10, (uint16_t) ~gsoChecksumWords(packet, 20, 0));
+    tun_device_t *tdev = tundeviceCreate(
+        "ww-lifetime-test", false, false, 1500, packet, observeSingleQueueWorkerOne, kDeviceFragmentPreserve);
+    require(tdev != NULL && queue_flag_probes == 0 && bringUpDevice(tdev), "disabled-multiqueue reader startup");
+    require(requested_tun_flag_count == 1 && (requested_tun_flags[0] & IFF_MULTI_QUEUE) == 0,
+            "disabled-multiqueue reader opened a multiqueue interface");
+    const injected_io_result_t reads[] = {{.result = sizeof(packet), .bytes = packet}, {.result = -1, .error = EAGAIN}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    callback_count = 0;
+    runReaderUntilIdle();
+    require(captured_message_count == 1 && captured_messages[0].wid == 1 && callback_count == 0,
+            "worker-zero receive did not queue the flow to worker one");
+    testWorkerBindWID(1);
+    deliverMessage(0, getCurrentEventWorker());
+    testWorkerBindWID(0);
+    require(callback_count == 1 && getWorkersCount() == 2 && tundeviceIsUp(tdev),
+            "single-queue mode lost delivery or changed worker availability");
+    resetIoInjection();
+    require(bringDownDevice(tdev), "single-queue multiworker reader teardown");
+    destroyDevice(tdev);
+    resetCapturedMessages();
+
+    record_queue_preference      = false;
+    GSTATE.workers_count         = 1;
+    GSTATE.shortcut_buffer_pools = env->buffer_pools;
+    GSTATE.shortcut_loops        = env->loops;
+    GSTATE.workers[1]            = (worker_t) {0};
+    bufferpoolDestroy(second_pool);
+}
+
 int main(void)
 {
     testCaseSet("tun_linux_message_lifetime_test");
@@ -3360,6 +3526,7 @@ int main(void)
     testHandoffFailureFallsBackToHardAbort(true);
     testInterfaceDownFailureRemainsRetryable();
     testPendingWriterMessagesAfterStop();
+    testMultiQueuePreferencePreservesProcessingWorkers(&env);
     internaloggerDestroy();
     envTeardown(&env);
     puts("Linux TUN message lifetime tests passed");

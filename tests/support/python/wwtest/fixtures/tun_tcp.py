@@ -72,8 +72,9 @@ def preflight(mode):
 class Fixture:
     """One fresh runtime/server namespace pair, shared by both test modes."""
 
-    def __init__(self, binary, directory, gso):
+    def __init__(self, binary, directory, gso, multi_queue=None):
         self.binary, self.directory, self.gso = binary, directory, gso
+        self.multi_queue = multi_queue
         self.processes, self.logs = [], []
         self.waterwall = None
 
@@ -96,6 +97,8 @@ class Fixture:
 
     def configure(self, config):
         config["nodes"][0]["settings"]["gso"] = self.gso
+        if self.multi_queue is not None:
+            config["nodes"][0]["settings"]["multi-queue"] = self.multi_queue
 
     def __enter__(self):
         self.directory.mkdir()
@@ -149,6 +152,14 @@ class Fixture:
                     require("tx-checksumming: on" in features, "TUN checksum offload was not active")
                     tso = "on" if self.gso_enabled else "off"
                     require("tx-tcp-segmentation: " + tso in features, "TUN TSO4 feature disagrees with active mode")
+                    if self.multi_queue is False:
+                        require(f"{TUN} uses 1 worker-owned receive queue(s)" in log,
+                                "disabled multiqueue did not select one receive queue")
+                        native_link = json.loads(output(*self.runtime, "ip", "-d", "-j", "link", "show", TUN))[0]
+                        require(native_link["linkinfo"]["info_data"]["multi_queue"] is False,
+                                "disabled multiqueue still enabled IFF_MULTI_QUEUE")
+                        require(native_link["num_rx_queues"] == native_link["num_tx_queues"] == 1,
+                                "disabled multiqueue retained extra native receive or transmit queues")
                     (self.directory / "tun-features.txt").write_text(features)
                     (self.directory / "tun-link.txt").write_text(link.stdout)
                     break

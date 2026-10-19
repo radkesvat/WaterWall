@@ -474,8 +474,9 @@ static tun_linux_open_result_t tunLinuxCapabilityFailure(int error)
 }
 
 static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool checksum_setup, bool gso_requested,
-                                                   bool exclusive, uint16_t mtu, int *out_fd, struct ifreq *out_ifr,
-                                                   bool *out_gso_enabled, const char **out_reason, int *out_errno)
+                                                   bool multi_queue_requested, bool exclusive, uint16_t mtu,
+                                                   int *out_fd, struct ifreq *out_ifr, bool *out_gso_enabled,
+                                                   const char **out_reason, int *out_errno)
 {
     assert(! gso_requested || checksum_setup);
     *out_gso_enabled = false;
@@ -510,7 +511,7 @@ static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool checks
     }
 
     const short base_flags = ifr.ifr_flags;
-    if (exclusive && getWorkersCount() > 1)
+    if (multi_queue_requested && exclusive && getWorkersCount() > 1)
         ifr.ifr_flags |= IFF_MULTI_QUEUE;
     int set_result = ioctl(fd, TUNSETIFF, (void *) &ifr);
     if (set_result < 0 && (ifr.ifr_flags & IFF_MULTI_QUEUE) != 0 &&
@@ -616,8 +617,8 @@ static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool checks
 }
 #endif
 
-tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu, void *userdata, TunReadEventHandle cb,
-                              device_fragment_policy_t fragment_policy)
+tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_queue_requested, uint16_t mtu,
+                              void *userdata, TunReadEventHandle cb, device_fragment_policy_t fragment_policy)
 {
     if (mtu <= 16)
     {
@@ -628,6 +629,7 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
     struct ifreq ifr;
 #ifdef OS_BSD
     discard gso_requested;
+    discard multi_queue_requested;
     int     fd = -1;
 
     // Open the TUN device
@@ -676,8 +678,8 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
     bool                    checksum_offload_enabled = false;
     const char             *reason                   = NULL;
     int                     failure_errno            = 0;
-    tun_linux_open_result_t result =
-        tunLinuxOpenAttempt(name, true, gso_requested, true, mtu, &fd, &ifr, &gso_enabled, &reason, &failure_errno);
+    tun_linux_open_result_t result                   = tunLinuxOpenAttempt(
+        name, true, gso_requested, multi_queue_requested, true, mtu, &fd, &ifr, &gso_enabled, &reason, &failure_errno);
     if (result == kTunLinuxOpenOk)
     {
         checksum_offload_enabled = true;
@@ -698,7 +700,8 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
             LOGE("TunDevice: cannot open %s: %s (errno %d: %s)", name, reason, failure_errno, strerror(failure_errno));
             return NULL;
         }
-        result = tunLinuxOpenAttempt(name, false, false, true, mtu, &fd, &ifr, &gso_enabled, &reason, &failure_errno);
+        result = tunLinuxOpenAttempt(
+            name, false, false, multi_queue_requested, true, mtu, &fd, &ifr, &gso_enabled, &reason, &failure_errno);
         if (! gso_requested && result == kTunLinuxOpenNameConflict)
         {
             /* Preserve raw-IP attachment support, but only an exclusive open
@@ -707,6 +710,7 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
             result                = tunLinuxOpenAttempt(name,
                                          false,
                                          false,
+                                         multi_queue_requested,
                                          false,
                                          mtu,
                                          &fd,
@@ -838,6 +842,7 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
                     result       = tunLinuxOpenAttempt(tdev->name,
                                                  true,
                                                  false,
+                                                 multi_queue_requested,
                                                  true,
                                                  mtu,
                                                  &tdev->handle,
@@ -880,6 +885,7 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
         result = tunLinuxOpenAttempt(tdev->name,
                                      false,
                                      false,
+                                     multi_queue_requested,
                                      true,
                                      mtu,
                                      &raw_fd,
@@ -910,7 +916,7 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
                                                            : tunLinuxQueuesOpen(tdev->handle,
                                                                          tdev->name,
                                                                          tdev->checksum_offload_enabled,
-                                                                         getWorkersCount(),
+                                                                         multi_queue_requested ? getWorkersCount() : 1,
                                                                          tdev->queue_fds,
                                                                          &queue_reason);
     tdev->queue_fds[0]       = tdev->handle;

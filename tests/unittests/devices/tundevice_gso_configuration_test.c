@@ -1,11 +1,10 @@
 /*
- * Covers: tundevice gso configuration; the explicit inputs, callbacks and expected results below define
- * this suite.
+ * Covers: TunDevice GSO and multiqueue boolean settings, including defaults, invalid types and independence.
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
- * Cases: testGsoSetting
- * Checks: Assertion labels include: :1500}; GSO setting accepted or rejected incorrectly; GSO setting had
- * the wrong default or value; TUN must certify enqueue-only Payload
+ * Cases: testSettings
+ * Checks: Both requests retain their own default/value; invalid settings reject construction;
+ * TUN must certify enqueue-only Payload.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.tundevice_gso_configuration_unit
@@ -19,26 +18,34 @@
 
 #include "loggers/network_logger.h"
 
-static void testGsoSetting(const char *json_value, bool valid, bool expected_request)
+static void testSettings(const char *gso_value, const char *multi_queue_value, bool valid, bool expected_gso,
+                         bool expected_multi_queue)
 {
     cJSON *settings =
         cJSON_Parse("{\"device-name\":\"ww-fixture\",\"device-ip\":\"192.0.2.1/24\",\"device-mtu\":1500}");
     require(settings != NULL, "cannot parse TunDevice settings fixture");
 
-    if (json_value != NULL)
+    const char *keys[]   = {"gso", "multi-queue"};
+    const char *values[] = {gso_value, multi_queue_value};
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i)
     {
-        cJSON *value = cJSON_Parse(json_value);
-        require(value != NULL, "cannot parse GSO value fixture");
-        require(cJSON_AddItemToObject(settings, "gso", value), "cannot add GSO value fixture");
+        if (values[i] != NULL)
+        {
+            cJSON *value = cJSON_Parse(values[i]);
+            require(value != NULL, "cannot parse TunDevice boolean value fixture");
+            require(cJSON_AddItemToObject(settings, keys[i], value), "cannot add TunDevice boolean value fixture");
+        }
     }
 
     node_t    node   = {.node_settings_json = settings};
     tunnel_t *tunnel = tundeviceTunnelCreate(&node);
-    require((tunnel != NULL) == valid, "GSO setting accepted or rejected incorrectly");
+    require((tunnel != NULL) == valid, "TunDevice boolean setting accepted or rejected incorrectly");
     if (tunnel != NULL)
     {
         tundevice_tstate_t *state = tunnelGetState(tunnel);
-        require(state->gso_requested == expected_request, "GSO setting had the wrong default or value");
+        require(state->gso_requested == expected_gso, "GSO setting had the wrong default or value");
+        require(state->multi_queue_requested == expected_multi_queue,
+                "multiqueue setting had the wrong default or value");
         tundeviceTunnelDestroy(tunnel, wwLifecycleStartupRollback());
     }
     cJSON_Delete(settings);
@@ -98,16 +105,26 @@ int main(void)
             "activation overwrote other node flags");
     memoryFree(metadata.type);
 
-    testGsoSetting(NULL, true, true);
-    testGsoSetting("true", true, true);
-    testGsoSetting("false", true, false);
-    testGsoSetting("null", false, false);
-    testGsoSetting("0", false, false);
-    testGsoSetting("\"true\"", false, false);
-    testGsoSetting("[]", false, false);
-    testGsoSetting("{}", false, false);
+    testSettings(NULL, NULL, true, true, true);
+    testSettings("true", NULL, true, true, true);
+    testSettings("false", NULL, true, false, true);
+    testSettings(NULL, "true", true, true, true);
+    testSettings(NULL, "false", true, true, false);
+    for (unsigned gso = 0; gso < 2; ++gso)
+    {
+        for (unsigned multi_queue = 0; multi_queue < 2; ++multi_queue)
+        {
+            testSettings(gso ? "true" : "false", multi_queue ? "true" : "false", true, gso, multi_queue);
+        }
+    }
+    const char *invalid_values[] = {"null", "0", "1", "\"true\"", "[]", "{}"};
+    for (size_t i = 0; i < sizeof(invalid_values) / sizeof(invalid_values[0]); ++i)
+    {
+        testSettings(invalid_values[i], NULL, false, false, false);
+        testSettings(NULL, invalid_values[i], false, false, false);
+    }
 
     networkloggerDestroy();
-    puts("TunDevice GSO configuration and checksum capability tests passed");
+    puts("TunDevice GSO/multiqueue configuration and checksum capability tests passed");
     return 0;
 }

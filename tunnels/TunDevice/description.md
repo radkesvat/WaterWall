@@ -24,14 +24,16 @@ its own MTU; other node overrides do not change it. An invalid inherited core
 
 Because it is a packet adapter, this node does not create per-connection lines. It uses worker packet lines provided by the chain.
 
-Linux uses worker-owned receive queues. A newly created interface attempts one
-queue per event worker with fixed kernel steering; unavailable multiqueue or
+Linux uses worker-owned receive queues. With the default `multi-queue: true`, a
+newly created interface attempts one queue per event worker with fixed kernel
+steering; unavailable multiqueue or
 steering falls back to one queue owned by worker 0. Existing single-queue
 interfaces remain supported. Steering groups IPv4 packets by address pair and
 protocol so fragments keep one reader; the normal full flow hash still selects
 the processing worker. Multiple connections between the same address pair and
 protocol share a receive queue. Startup logs the active queue count. Queue
-selection is independent of `gso`.
+selection is independent of `gso`. Set `multi-queue: false` to use one receive
+queue owned by worker 0 while retaining all configured processing workers.
 
 Windows receives on worker 0 using Wintun event notifications. Linux and Windows
 have no dedicated application TUN reader thread. Reads use bounded batches and
@@ -58,6 +60,7 @@ Payload coming from either side and reaching `TunDevice` is written into the TUN
     "device-name": "tun0",
     "device-ip": "10.10.0.1/24",
     "device-mtu": 1500,
+    "multi-queue": true,
     "gso": true,
     "dns": ["1.1.1.1", "8.8.8.8"],
     "route-table": "off"
@@ -119,6 +122,17 @@ Full-route example with local ranges excluded:
   Fractional numbers, strings, booleans, and `null` are rejected.
 
   Default: global MTU size used by WaterWall.
+
+- `multi-queue` `(boolean)`
+  Allow Linux to create one TUN queue per event worker. Default: `true`.
+  Unavailable multiqueue or fixed steering, or refused extra-queue setup,
+  automatically falls back to one queue owned by worker 0.
+
+  `false` disables multiqueue setup and uses one queue owned by worker 0.
+  Other workers still process their assigned flows; the configured worker count
+  does not change. Reads and writes use the resulting TUN queue set. This option
+  is independent of `gso`. Invalid types, including `null`, are rejected on every
+  platform. Non-Linux platforms accept the boolean and ignore it.
 
 - `gso` `(boolean)`
   Request Linux TCPv4 segmentation offload. The default remains `true`;

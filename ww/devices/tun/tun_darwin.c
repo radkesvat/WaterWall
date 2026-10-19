@@ -1166,10 +1166,11 @@ static int tunDarwinOpen(const char *name, char actual_name[IFNAMSIZ])
     return fd;
 }
 
-tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
-                              device_fragment_policy_t fragment_policy)
+tun_device_t *tundeviceCreate(const char *name, bool offload, bool multi_queue_requested, uint16_t mtu, void *userdata,
+                              TunReadEventHandle cb, device_fragment_policy_t fragment_policy)
 {
     discard offload;
+    discard multi_queue_requested;
     if (mtu <= 16)
     {
         LOGE("TunDevice: Invalid MTU size: %u", mtu);

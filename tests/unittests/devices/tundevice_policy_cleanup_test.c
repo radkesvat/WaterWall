@@ -42,6 +42,7 @@ static bool         bring_down_ok;
 static bool         partial_dns;
 static bool         dns_helper_started;
 static bool         last_offload_requested;
+static bool         last_multi_queue_requested;
 static char         route_values[][16] = {"1.0.0.0/8", "2.0.0.0/8", "3.0.0.0/8"};
 static char         dns_values[][8]    = {"1.1.1.1", "2.2.2.2"};
 static char         inert_script[]     = "inert fixture script";
@@ -130,11 +131,12 @@ static void fakeRecordFailure(int code, application_shutdown_reason_e reason)
     }
 }
 
-static tun_device_t *fakeCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
-                                device_fragment_policy_t fragment_policy)
+static tun_device_t *fakeCreate(const char *name, bool offload, bool multi_queue_requested, uint16_t mtu,
+                                void *userdata, TunReadEventHandle cb, device_fragment_policy_t fragment_policy)
 {
     (void) name;
-    last_offload_requested = offload;
+    last_offload_requested     = offload;
+    last_multi_queue_requested = multi_queue_requested;
     (void) mtu;
     (void) userdata;
     (void) cb;
@@ -194,8 +196,8 @@ void tundeviceOnIPPacketReceived(tun_device_t *device, void *userdata, sbuf_t *b
 #define tundeviceBringDown                 fakeBringDown
 #define applicationShutdownRecordFailure   fakeRecordFailure
 #define tundeviceCreate                    fakeCreate
-#define tundeviceCreateOwned(name, offload, mtu, userdata, cb, policy, ownership)                                      \
-    fakeCreate(name, offload, mtu, userdata, cb, policy)
+#define tundeviceCreateOwned(name, offload, multi_queue_requested, mtu, userdata, cb, policy, ownership)               \
+    fakeCreate(name, offload, multi_queue_requested, mtu, userdata, cb, policy)
 #define tundeviceAssignIP                    fakeAssignIp
 #define tundeviceBringUp                     fakeDeviceSuccess
 #define tundeviceRequestStop                 fakeDeviceSuccess
@@ -218,7 +220,7 @@ static void resetProbe(void)
     selected_exit                  = 0;
     dns_set_ok = dns_clear_ok = bring_down_ok = dns_helper_started = true;
     dns_cancelled = partial_dns = false;
-    last_offload_requested      = false;
+    last_offload_requested = last_multi_queue_requested = false;
 }
 
 static void testRouteInventory(void)
@@ -387,6 +389,7 @@ static void testStartupRollback(bool gso_requested, bool cancelled, bool cleanup
     require(tunnel != NULL, "startup tunnel allocation");
     tundevice_tstate_t *state    = tunnelGetState(tunnel);
     state->gso_requested         = gso_requested;
+    state->multi_queue_requested = ! gso_requested;
     state->dns_servers[0]        = dns_values[0];
     state->dns_servers[1]        = dns_values[1];
     state->dns_server_count      = 2;
@@ -399,6 +402,8 @@ static void testStartupRollback(bool gso_requested, bool cancelled, bool cleanup
     wwStartupContextBegin(&context);
     tundeviceTunnelOnStart(tunnel);
     ww_startup_result_t result = wwStartupContextEnd(&context);
+    require(last_multi_queue_requested == state->multi_queue_requested,
+            "multi-queue request was not forwarded to the TUN backend");
 #ifdef OS_LINUX
     require(last_offload_requested == gso_requested, "Linux GSO request was not forwarded to the TUN backend");
 #else

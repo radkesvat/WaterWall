@@ -119,6 +119,13 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
         return tundeviceTunnelCreateFail(t);
     }
 
+    state->multi_queue_requested = true;
+    if (jsonGetObjectBoolean(settings, "multi-queue", &state->multi_queue_requested) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: TunDevice->settings->multi-queue must be a boolean");
+        return tundeviceTunnelCreateFail(t);
+    }
+
     if (! tundeviceLoadRouteSettings(state, settings))
     {
         return tundeviceTunnelCreateFail(t);

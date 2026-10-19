@@ -1318,16 +1318,18 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 //     // Sleep(2200);
 // }
 
-tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
-                              device_fragment_policy_t fragment_policy)
+tun_device_t *tundeviceCreate(const char *name, bool offload, bool multi_queue_requested, uint16_t mtu, void *userdata,
+                              TunReadEventHandle cb, device_fragment_policy_t fragment_policy)
 {
-    return tundeviceCreateOwned(name, offload, mtu, userdata, cb, fragment_policy, NULL);
+    return tundeviceCreateOwned(name, offload, multi_queue_requested, mtu, userdata, cb, fragment_policy, NULL);
 }
 
-tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb,
-                                   device_fragment_policy_t fragment_policy, tun_windows_ownership_t *ownership)
+tun_device_t *tundeviceCreateOwned(const char *name, bool offload, bool multi_queue_requested, uint16_t mtu,
+                                   void *userdata, TunReadEventHandle cb, device_fragment_policy_t fragment_policy,
+                                   tun_windows_ownership_t *ownership)
 {
     discard offload;
+    discard multi_queue_requested;
     if (mtu <= 16)
     {
         LOGE("TunDevice: Invalid MTU size: %u", mtu);
