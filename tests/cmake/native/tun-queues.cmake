@@ -1,6 +1,7 @@
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
   waterwall_add_native_executable(tun_linux_queues_test SUPPORT SOURCES
     ${WATERWALL_UNIT_SOURCE_ROOT}/devices/tun_linux_queues_test.c
+    ${CMAKE_SOURCE_DIR}/ww/devices/device_flow_hash.c
     ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_queues.c)
   target_link_libraries(tun_linux_queues_test PRIVATE waterwall_runtime_options)
   target_link_options(tun_linux_queues_test PRIVATE

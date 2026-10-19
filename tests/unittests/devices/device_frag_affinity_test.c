@@ -370,6 +370,7 @@ typedef struct shared_fragment_probe_s
     atomic_uint                  *arrivals;
     atomic_uint                  *completed;
     sbuf_t                       *fragments[kSharedFragmentDatagrams];
+    sbuf_t                       *ordinary[kSharedFragmentDatagrams];
 } shared_fragment_probe_t;
 
 static WTHREAD_ROUTINE(offerSharedFragments)
@@ -384,6 +385,21 @@ static WTHREAD_ROUTINE(offerSharedFragments)
             require(getHRTimeUs() < deadline, "shared fragment reader did not reach rendezvous");
             YIELD_THREAD();
         }
+        sbuf_t *ordinary = probe->ordinary[i];
+        uint8_t ordinary_bytes[84];
+        require(sbufGetLength(ordinary) == sizeof(ordinary_bytes), "ordinary shared-reader fixture length");
+        memoryCopy(ordinary_bytes, sbufGetRawPtr(ordinary), sizeof(ordinary_bytes));
+        const void *ordinary_storage = sbufGetRawPtr(ordinary);
+        wid_t       ordinary_wid;
+        require(deviceFlowAffineWID(ordinary_bytes, sizeof(ordinary_bytes), &ordinary_wid),
+                "ordinary shared-reader packet lost its processing worker");
+        device_frag_affinity_result_t ordinary_result;
+        require(deviceFragAffinityOffer(
+                    probe->table, sbufGetRawPtr(ordinary), sbufGetLength(ordinary), ordinary, &ordinary_result) ==
+                    kDeviceFragAffinityNotFragment,
+                "shared fragment table consumed an interleaved ordinary packet");
+        require(ordinary_result.completed == NULL && ordinary_result.released_count == 0,
+                "ordinary shared-reader packet released fragment storage");
         sbuf_t                             *buf = probe->fragments[i];
         device_frag_affinity_result_t       result;
         const device_frag_affinity_action_t action =
@@ -398,9 +414,17 @@ static WTHREAD_ROUTINE(offerSharedFragments)
             for (unsigned byte = 0; byte < 128; ++byte)
                 require(bytes[20 + byte] == (uint8_t) (i + byte), "concurrent readers mixed fragment payloads");
             require(deviceIpv4HeaderChecksumValid(bytes, 20), "shared reassembly emitted an invalid header");
+            wid_t completed_wid;
+            require(deviceFlowAffineWID(bytes, sbufGetLength(result.completed), &completed_wid) &&
+                        completed_wid == ordinary_wid,
+                    "ordinary and reassembled packets selected different processing workers");
             sbufDestroy(result.completed);
             atomicAddExplicit(probe->completed, 1, memory_order_relaxed);
         }
+        require(sbufGetRawPtr(ordinary) == ordinary_storage && sbufGetLength(ordinary) == sizeof(ordinary_bytes) &&
+                    memcmp(sbufGetRawPtr(ordinary), ordinary_bytes, sizeof(ordinary_bytes)) == 0,
+                "fragment interleaving modified caller-owned ordinary packet storage");
+        sbufDestroy(ordinary);
     }
     return 0;
 }
@@ -422,6 +446,10 @@ static void testSharedReadersAndGlobalBudget(void)
             for (unsigned byte = 0; byte < 64; ++byte)
                 sbufGetMutablePtr(buf)[20 + byte] = (uint8_t) (i + reader * 64 + byte);
             probes[reader].fragments[i] = buf;
+            sbuf_t *ordinary            = makeFragment(2000 + i, 0, false);
+            for (unsigned byte = 0; byte < 64; ++byte)
+                sbufGetMutablePtr(ordinary)[20 + byte] = (uint8_t) (i + byte);
+            probes[reader].ordinary[i] = ordinary;
         }
     atomicStoreRelaxed(&forbid_fragment_pool_access, true);
     wthread_t threads[2];

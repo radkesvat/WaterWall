@@ -1,5 +1,6 @@
-/* Startup rollback and real-kernel steering invariants.
+/* Startup rollback and real-kernel port-aware steering invariants.
  * CTest: waterwall.tun_linux_queues_unit, waterwall.tun_linux_steering_kernel */
+#include "devices/device_flow_hash.h"
 #include "devices/tun/tun_linux_queues.h"
 #include "test_assert.h"
 
@@ -158,7 +159,7 @@ long __wrap_syscall(long number, ...)
     va_end(args);
     require(command == BPF_PROG_LOAD, "only loads one steering program");
     require(attr->prog_type == BPF_PROG_TYPE_SOCKET_FILTER, "TUN steering accepts socket-filter programs");
-    require(attr->insn_cnt > 0 && attr->insn_cnt < 64, "steering is a small fixed program");
+    require(attr->insn_cnt > 0 && attr->insn_cnt <= 192, "steering is a bounded fixed program");
     ++load_calls;
     if (load_error != 0)
     {
@@ -259,16 +260,242 @@ static uint32_t runPacket(const uint8_t *packet, uint32_t length)
     uint8_t frame[14 + 80] = {0};
     require(length <= sizeof(frame) - 14, "packet fixture fits in its Ethernet wrapper");
     frame[12] = 0x08;
+    if (length < 20)
+    {
+        /* An IPv4 Ethernet type makes the test-run skb builder reject a short
+         * IP header before this production filter can inspect it. */
+        frame[12] = 0x88;
+        frame[13] = 0xB5;
+    }
     memcpy(frame + 14, packet, length);
     union bpf_attr attr    = {0};
     attr.test.prog_fd      = (uint32_t) kernel_fd;
     attr.test.data_in      = (uint64_t) (uintptr_t) frame;
     attr.test.data_size_in = 14 + length;
     attr.test.repeat       = 1;
-    require(__real_syscall(SYS_bpf, BPF_PROG_TEST_RUN, &attr, sizeof(attr)) == 0,
-            "kernel executes the installed production steering program");
+    const long result      = __real_syscall(SYS_bpf, BPF_PROG_TEST_RUN, &attr, sizeof(attr));
+    if (result != 0)
+    {
+        fprintf(stderr, "BPF packet test failed for %u IP bytes: %s\n", length, strerror(errno));
+    }
+    require(result == 0, "kernel executes the installed production steering program");
     require(attr.test.retval < kRequestedQueues, "all packets select an attached queue");
     return attr.test.retval;
+}
+
+static void put16(uint8_t *field, uint16_t value)
+{
+    field[0] = (uint8_t) (value >> 8);
+    field[1] = (uint8_t) value;
+}
+
+static void makePacket(uint8_t *packet, uint32_t length, uint8_t protocol)
+{
+    memset(packet, 0, length);
+    packet[0]  = 0x45;
+    packet[6]  = 0x40;
+    packet[8]  = 64;
+    packet[9]  = protocol;
+    packet[12] = 10;
+    packet[15] = 1;
+    packet[16] = 192;
+    packet[18] = 2;
+    packet[19] = 42;
+    put16(packet + 2, (uint16_t) length);
+    put16(packet + 20, 12345);
+    put16(packet + 22, 443);
+}
+
+static void reverseEndpoints(uint8_t *packet, unsigned header_length)
+{
+    uint8_t endpoint[4];
+    memcpy(endpoint, packet + 12, 4);
+    memcpy(packet + 12, packet + 16, 4);
+    memcpy(packet + 16, endpoint, 4);
+    memcpy(endpoint, packet + header_length, 2);
+    memcpy(packet + header_length, packet + header_length + 2, 2);
+    memcpy(packet + header_length + 2, endpoint, 2);
+}
+
+static uint32_t addressQueue(const uint8_t *packet)
+{
+    uint32_t hash = 0;
+    for (unsigned i = 0; i < 4; ++i)
+    {
+        hash = (hash << 8) | (packet[12 + i] ^ packet[16 + i]);
+    }
+    hash ^= (uint32_t) packet[9] * UINT32_C(0x9E3779B1);
+    hash ^= hash >> 16;
+    hash *= UINT32_C(0x7FEB352D);
+    hash ^= hash >> 15;
+    hash *= UINT32_C(0x846CA68B);
+    hash ^= hash >> 16;
+    return hash % kRequestedQueues;
+}
+
+static void requireAllQueues(const bool *observed, const char *message)
+{
+    for (unsigned i = 0; i < kRequestedQueues; ++i)
+    {
+        require(observed[i], message);
+    }
+}
+
+static uint32_t processingQueue(const uint8_t *packet, uint32_t length)
+{
+    uint64_t hash;
+    require(deviceFlowAffinityHash(packet, length, &hash), "transport fixture has a valid processing-worker hash");
+    return (uint32_t) (hash % kRequestedQueues);
+}
+
+static void testTransportSteering(void)
+{
+    const uint8_t protocols[] = {6, 17};
+    for (unsigned p = 0; p < sizeof(protocols); ++p)
+    {
+        uint8_t packet[80];
+        makePacket(packet, sizeof(packet), protocols[p]);
+        bool source_queues[kRequestedQueues]      = {0};
+        bool destination_queues[kRequestedQueues] = {0};
+        for (unsigned port = 1; port <= 256; ++port)
+        {
+            put16(packet + 20, (uint16_t) (10000 + port));
+            put16(packet + 22, 443);
+            const uint32_t source_queue = runPacket(packet, sizeof(packet));
+            source_queues[source_queue] = true;
+            require(source_queue == processingQueue(packet, sizeof(packet)),
+                    "native transport steering matches processing-worker affinity");
+            reverseEndpoints(packet, 20);
+            require(runPacket(packet, sizeof(packet)) == source_queue,
+                    "reversing both addresses and ports preserves a transport queue");
+            reverseEndpoints(packet, 20);
+
+            put16(packet + 20, 12345);
+            put16(packet + 22, (uint16_t) (20000 + port));
+            const uint32_t destination_queue      = runPacket(packet, sizeof(packet));
+            destination_queues[destination_queue] = true;
+            require(destination_queue == processingQueue(packet, sizeof(packet)),
+                    "destination port contributes to the shared processing-worker affinity");
+        }
+        requireAllQueues(source_queues, "source ports distribute same-address transport connections across queues");
+        requireAllQueues(destination_queues,
+                         "destination ports distribute same-address transport connections across queues");
+
+        /* Endpoint sorting also includes the port when both addresses match. */
+        memcpy(packet + 16, packet + 12, 4);
+        const uint32_t same_address_queue = runPacket(packet, sizeof(packet));
+        require(same_address_queue == processingQueue(packet, sizeof(packet)),
+                "same-address endpoint ordering matches processing-worker affinity");
+        reverseEndpoints(packet, 20);
+        require(runPacket(packet, sizeof(packet)) == same_address_queue,
+                "same-address endpoints remain symmetric when only the ports reverse");
+    }
+}
+
+static void testFragmentAndProtocolFallback(void)
+{
+    const uint8_t protocols[]                = {6, 17, 1, 132};
+    bool          observed[kRequestedQueues] = {0};
+    for (unsigned p = 0; p < sizeof(protocols); ++p)
+    {
+        uint8_t packet[80];
+        makePacket(packet, sizeof(packet), protocols[p]);
+        for (unsigned address = 1; address <= 128; ++address)
+        {
+            packet[19]           = (uint8_t) address;
+            const uint32_t queue = addressQueue(packet);
+            observed[queue]      = true;
+            for (unsigned kind = 0; kind < 3; ++kind)
+            {
+                /* First, middle and final fragments must share one fallback. */
+                put16(packet + 6, (uint16_t) (kind == 0 ? 0x2000 : kind == 1 ? 0x2008 : 8));
+                put16(packet + 4, (uint16_t) (1000 + address + kind));
+                put16(packet + 20, (uint16_t) (30000 + address + kind));
+                put16(packet + 22, (uint16_t) (40000 + address + kind));
+                require(runPacket(packet, sizeof(packet)) == queue,
+                        "all fragments use address/protocol fallback regardless of ports or identification");
+                reverseEndpoints(packet, 20);
+                require(runPacket(packet, sizeof(packet)) == queue,
+                        "fragment fallback is symmetric in the address pair");
+                reverseEndpoints(packet, 20);
+            }
+            if (protocols[p] == 1 || protocols[p] == 132)
+            {
+                put16(packet + 6, 0x4000);
+                require(runPacket(packet, sizeof(packet)) == queue,
+                        "nontransport protocols retain address/protocol fallback");
+                packet[20]++;
+                packet[22] += 3;
+                require(runPacket(packet, sizeof(packet)) == queue, "nontransport payload bytes never act as ports");
+            }
+        }
+    }
+    requireAllQueues(observed, "fallback endpoint pairs still distribute across all queues");
+}
+
+static void testHeaderBounds(void)
+{
+    uint8_t packet[80];
+    makePacket(packet, sizeof(packet), 6);
+    const uint32_t ordinary_queue = runPacket(packet, sizeof(packet));
+    packet[6]                     = 0;
+    require(runPacket(packet, sizeof(packet)) == ordinary_queue, "DF does not change an unfragmented transport queue");
+    memmove(packet + 24, packet + 20, sizeof(packet) - 24);
+    memset(packet + 20, 0xAB, 4);
+    packet[0] = 0x46;
+    require(runPacket(packet, sizeof(packet)) == ordinary_queue, "IPv4 options move the transport port offset");
+    packet[20]++;
+    packet[23]++;
+    require(runPacket(packet, sizeof(packet)) == ordinary_queue, "IPv4 option bytes do not contribute ports");
+    reverseEndpoints(packet, 24);
+    require(runPacket(packet, sizeof(packet)) == ordinary_queue, "IPv4 options preserve endpoint symmetry");
+
+    makePacket(packet, sizeof(packet), 6);
+    memmove(packet + 60, packet + 20, 4);
+    memset(packet + 20, 0xCD, 40);
+    packet[0] = 0x4F;
+    put16(packet + 2, 64);
+    require(runPacket(packet, sizeof(packet)) == ordinary_queue, "maximum IPv4 IHL locates ports within declared data");
+
+    makePacket(packet, sizeof(packet), 6);
+    for (unsigned length = 0; length < 20; ++length)
+    {
+        require(runPacket(packet, length) == 0, "truncated IPv4 headers select queue zero");
+    }
+    packet[0] = 0x44;
+    require(runPacket(packet, sizeof(packet)) == 0, "an IPv4 IHL shorter than the base header is invalid");
+    packet[0] = 0x4F;
+    put16(packet + 2, 59);
+    require(runPacket(packet, 59) == 0, "truncated IPv4 options are invalid");
+    put16(packet + 2, 60);
+    require(runPacket(packet, 59) == 0, "declared IPv4 data cannot exceed available bytes");
+    packet[0] = 0x46;
+    put16(packet + 2, 23);
+    require(runPacket(packet, sizeof(packet)) == 0, "declared total length cannot end inside IPv4 options");
+    packet[0] = 0x45;
+    put16(packet + 2, sizeof(packet) + 1);
+    require(runPacket(packet, sizeof(packet)) == 0, "a truncated declared datagram selects queue zero");
+    put16(packet + 2, 19);
+    require(runPacket(packet, sizeof(packet)) == 0, "total length cannot be shorter than the base header");
+
+    const uint8_t protocols[] = {6, 17};
+    for (unsigned p = 0; p < sizeof(protocols); ++p)
+    {
+        makePacket(packet, sizeof(packet), protocols[p]);
+        for (unsigned payload_length = 0; payload_length < 4; ++payload_length)
+        {
+            put16(packet + 2, (uint16_t) (20 + payload_length));
+            require(runPacket(packet, sizeof(packet)) == addressQueue(packet),
+                    "trailing bytes outside declared transport payload never contribute ports");
+            require(runPacket(packet, 20 + payload_length) == addressQueue(packet),
+                    "valid short transport payload uses the address/protocol fallback");
+        }
+    }
+
+    packet[0] = 0x60;
+    require(runPacket(packet, sizeof(packet)) == 0, "unsupported IPv6 retains the single designated reader");
+    packet[0] = 0x30;
+    require(runPacket(packet, sizeof(packet)) == 0, "unknown IP versions retain the single designated reader");
 }
 
 static int testKernel(void)
@@ -286,43 +513,9 @@ static int testKernel(void)
         }
         require(false, "production steering passes the actual kernel verifier");
     }
-    uint8_t packet[80]              = {0x45, 0, 0, sizeof(packet), 0, 0, 0x40, 0, 64, 6};
-    packet[12]                      = 10;
-    packet[15]                      = 1;
-    packet[16]                      = 192;
-    packet[17]                      = 0;
-    packet[18]                      = 2;
-    bool observed[kRequestedQueues] = {0};
-    for (unsigned address = 1; address <= 128; ++address)
-    {
-        packet[19]           = (uint8_t) address;
-        const uint32_t queue = runPacket(packet, sizeof(packet));
-        observed[queue]      = true;
-        packet[20]++;
-        packet[22] += 3;
-        require(runPacket(packet, sizeof(packet)) == queue, "transport ports never split a fragment-affine producer");
-        packet[4]++;
-        packet[6] = 0x20;
-        require(runPacket(packet, sizeof(packet)) == queue, "leading fragments retain the ordinary packet's queue");
-        packet[6] = 0;
-        packet[7] = 8;
-        require(runPacket(packet, sizeof(packet)) == queue, "nonleading fragments retain the same producer");
-        packet[7] = 0;
-        packet[6] = 0x40;
-        uint8_t endpoint[4];
-        memcpy(endpoint, packet + 12, 4);
-        memcpy(packet + 12, packet + 16, 4);
-        memcpy(packet + 16, endpoint, 4);
-        require(runPacket(packet, sizeof(packet)) == queue, "endpoint reversal preserves queue selection");
-        memcpy(packet + 16, packet + 12, 4);
-        memcpy(packet + 12, endpoint, 4);
-    }
-    for (unsigned i = 0; i < kRequestedQueues; ++i)
-    {
-        require(observed[i], "distinct endpoint pairs distribute across all queues");
-    }
-    packet[0] = 0x60;
-    require(runPacket(packet, sizeof(packet)) == 0, "unsupported IP versions retain the single designated reader");
+    testTransportSteering();
+    testFragmentAndProtocolFallback();
+    testHeaderBounds();
     __real_close(kernel_fd);
     return 0;
 }
