@@ -25,6 +25,18 @@ typedef void (*DeviceReaderPrepareFn)(sbuf_t *buf);
 typedef struct device_reader_session_s device_reader_session_t;
 struct device_reader_worker_queue_s;
 
+/* A capacity notification may run on any settling thread. It may only post or
+ * coalesce producer wakeups, never read a worker-owned queue or pool. EndWait
+ * quiesces these calls before the notification context may be reclaimed. */
+typedef void (*DeviceReaderCapacityNotifyFn)(void *context);
+
+typedef enum device_reader_post_result_e
+{
+    kDeviceReaderPostAccepted,
+    kDeviceReaderPostCapacity,
+    kDeviceReaderPostClosed
+} device_reader_post_result_e;
+
 /* Remaining delivery work for this FIFO callback, shared across aggregates. */
 typedef struct device_reader_work_budget_s
 {
@@ -54,7 +66,7 @@ struct device_reader_session_s
     DeviceReaderDeliverFn deliver;
     buffer_pool_t        *reader_buffer_pool;
 
-    /* Optional Linux TUN offload-output budget. The reader alone reserves;
+    /* Optional device-wide dispatch budget. Concurrent producers may reserve;
      * queued worker deliveries and cancellation may settle on any thread. */
     atomic_size_t output_charge;
     atomic_uint   output_packets;
@@ -62,11 +74,16 @@ struct device_reader_session_s
     size_t        output_charge_limit;
     uint32_t      output_packet_limit;
     int           output_wake_fd;
+    wmutex_t                     output_budget_lock;
+    quiescence_gate_t            capacity_notify_gate;
+    DeviceReaderCapacityNotifyFn capacity_notify;
+    void                        *capacity_notify_context;
 
     /* Optional ordered worker dispatch. Each scheduled lane token owns a
      * session reference until its entire FIFO is drained or cancelled. */
     struct device_reader_worker_queue_s *worker_queues;
     uint16_t                             worker_queue_count;
+    bool                                 inline_dispatch;
 
     /* Reader-owned assembly/raw staging. The mutex serializes generation
      * transitions; only the reader (or the joined-reader lifecycle owner) may
@@ -116,7 +133,7 @@ void deviceReaderSessionRetireProducerBuffers(device_reader_session_t *session);
  * returned to the reader pool instead of overflowing the message allocation.
  * The posting thread must already own a live session reference. A queued
  * message acquires an additional reference and keeps it through delivery or
- * cleanup.
+ * cleanup. Budgeted sessions using capacity callbacks must use TryPost instead.
  */
 bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs, unsigned int count);
 
@@ -131,7 +148,26 @@ bool deviceReaderSessionConfigureOutputBudget(device_reader_session_t *session, 
  * their actual charges and may wait for capacity on the reader thread. */
 bool deviceReaderSessionEnableWorkerQueue(device_reader_session_t *session);
 
-/* Reader-only reservation of storage and packet slots for a complete work
+/* Configure before Begin. Notify fans capacity changes out to all producers.
+ * Producers publish their waiting flag before trying reservation and clear it
+ * on success: notification can race the failed reservation's return. The
+ * session closes and quiesces this root. */
+void deviceReaderSessionConfigureCapacityNotify(device_reader_session_t *session, DeviceReaderCapacityNotifyFn notify,
+                                                void *context);
+
+/* Configure after EnableWorkerQueue, before Begin. An idle destination FIFO
+ * may drain synchronously from an admitted normal callback on its own worker.
+ * Existing queued work always remains ahead of newly posted work. */
+void deviceReaderSessionEnableInlineDispatch(device_reader_session_t *session);
+
+/* Nonblocking whole-batch admission for worker-owned producers. Capacity
+ * refusal retains every buffer; Accepted and Closed transfer/settle every
+ * buffer. The batch must fit the configured byte/packet limits and capacity.
+ * Requires an enabled worker FIFO. No path borrows the session reader pool. */
+device_reader_post_result_e deviceReaderSessionTryPost(device_reader_session_t *session, wid_t target_wid,
+                                                       sbuf_t **bufs, unsigned int count);
+
+/* Concurrent reservation of storage and packet slots for a complete work
  * item, including any output allowance needed for progress. Release may run
  * on any thread. A successful reservation must be settled exactly once. */
 bool deviceReaderSessionTryReserveWork(device_reader_session_t *session, size_t charge, unsigned int packets);

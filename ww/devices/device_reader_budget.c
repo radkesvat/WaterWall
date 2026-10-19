@@ -17,8 +17,21 @@ enum
 
 void deviceReaderSessionSignalOutputCapacity(device_reader_session_t *session)
 {
+    if (! atomic_exchange_explicit(&session->output_waiting, false, memory_order_acq_rel))
+    {
+        return;
+    }
+    if (session->capacity_notify != NULL)
+    {
+        if (quiescenceGateEnter(&session->capacity_notify_gate))
+        {
+            session->capacity_notify(session->capacity_notify_context);
+            quiescenceGateLeave(&session->capacity_notify_gate);
+        }
+        return;
+    }
 #ifdef OS_LINUX
-    if (session->output_wake_fd >= 0 && atomic_exchange_explicit(&session->output_waiting, false, memory_order_acq_rel))
+    if (session->output_wake_fd >= 0)
     {
         const uint64_t one = 1;
         for (;;)
@@ -46,6 +59,7 @@ void deviceReaderSessionReleaseWork(device_reader_session_t *session, size_t exa
     assert(session != NULL);
     assert(exact_charge > 0);
     assert(packets > 0);
+    mutexLock(&session->output_budget_lock);
     const size_t previous_charge =
         atomic_fetch_sub_explicit(&session->output_charge, exact_charge, memory_order_acq_rel);
     const unsigned int previous_count =
@@ -55,6 +69,7 @@ void deviceReaderSessionReleaseWork(device_reader_session_t *session, size_t exa
         LOGF("DeviceReaderSession: output-budget reservation underflow");
         abortProgramNow(1);
     }
+    mutexUnlock(&session->output_budget_lock);
     deviceReaderSessionSignalOutputCapacity(session);
 }
 
@@ -67,30 +82,41 @@ bool deviceReaderSessionConfigureOutputBudget(device_reader_session_t *session, 
 {
     assert(session != NULL);
     assert(max_charge > 0 && max_packets > 0);
-    assert(session->output_wake_fd < 0);
+    assert(session->output_charge_limit == 0);
     assert(atomic_load_explicit(&session->generation, memory_order_relaxed) == 0);
+    if (! mutexTryInit(&session->output_budget_lock))
+    {
+        return false;
+    }
 #ifdef OS_LINUX
     const int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (fd < 0)
     {
+        mutexDestroy(&session->output_budget_lock);
         return false;
     }
+    session->output_wake_fd = fd;
+#endif
     session->output_charge_limit = max_charge;
     session->output_packet_limit = max_packets;
-    session->output_wake_fd      = fd;
     return true;
-#else
-    discard session;
-    discard max_charge;
-    discard max_packets;
-    return false;
-#endif
+}
+
+void deviceReaderSessionConfigureCapacityNotify(device_reader_session_t *session, DeviceReaderCapacityNotifyFn notify,
+                                                void *context)
+{
+    assert(session != NULL && notify != NULL);
+    assert(session->output_charge_limit != 0);
+    assert(atomic_load_explicit(&session->generation, memory_order_relaxed) == 0);
+    assert(session->capacity_notify == NULL);
+    session->capacity_notify         = notify;
+    session->capacity_notify_context = context;
 }
 
 bool deviceReaderSessionTryReserveWork(device_reader_session_t *session, size_t exact_charge, unsigned int packets)
 {
     assert(session != NULL);
-    assert(session->output_wake_fd >= 0);
+    assert(session->output_charge_limit != 0);
     assert(exact_charge > 0 && exact_charge <= session->output_charge_limit);
     assert(packets > 0 && packets <= session->output_packet_limit);
     if (UNLIKELY(! atomic_load_explicit(&session->producer_admission, memory_order_acquire)))
@@ -98,53 +124,23 @@ bool deviceReaderSessionTryReserveWork(device_reader_session_t *session, size_t 
         return false;
     }
 
-    /* Publish the waiter before observing credits; a foreign-thread release
-     * between this point and a failed reservation must leave a wake event.
-     * The exchange's acquire half observes a release that completed just
-     * before it, so stale credit loads cannot strand an unnotified waiter. */
-    discard atomic_exchange_explicit(&session->output_waiting, true, memory_order_acq_rel);
-
-    w_atomic_uint_value_t count = atomic_load_explicit(&session->output_packets, memory_order_relaxed);
-    for (;;)
+    /* Admit both dimensions together. A temporary partial reservation could
+     * otherwise make a peer sleep even though no accepted work can wake it.
+     * Publish refusal while holding the same short lock used by settlement. */
+    mutexLock(&session->output_budget_lock);
+    const size_t       charge = atomic_load_explicit(&session->output_charge, memory_order_relaxed);
+    const unsigned int count  = atomic_load_explicit(&session->output_packets, memory_order_relaxed);
+    if (packets > session->output_packet_limit - count || exact_charge > session->output_charge_limit - charge)
     {
-        if (packets > session->output_packet_limit - count)
-        {
-            return false;
-        }
-        if (atomic_compare_exchange_weak_explicit(
-                &session->output_packets, &count, count + packets, memory_order_acq_rel, memory_order_relaxed))
-        {
-            break;
-        }
+        atomic_store_explicit(&session->output_waiting, true, memory_order_release);
+        mutexUnlock(&session->output_budget_lock);
+        return false;
     }
-
-    /* The Windows fallback's atomic_size_t stores intptr_t; its CAS expected
-     * pointer must match that type as well as its width. C11 uses size_t. */
-#if WW_HAVE_C11_ATOMICS
-    size_t charge = atomic_load_explicit(&session->output_charge, memory_order_relaxed);
-#else
-    w_atomic_uint_value_t charge = atomic_load_explicit(&session->output_charge, memory_order_relaxed);
-#endif
-    for (;;)
-    {
-        if (exact_charge > session->output_charge_limit - charge)
-        {
-            const unsigned int previous =
-                atomic_fetch_sub_explicit(&session->output_packets, packets, memory_order_acq_rel);
-            if (UNLIKELY(previous < packets))
-            {
-                LOGF("DeviceReaderSession: output-budget packet reservation underflow");
-                abortProgramNow(1);
-            }
-            return false;
-        }
-        if (atomic_compare_exchange_weak_explicit(
-                &session->output_charge, &charge, charge + exact_charge, memory_order_acq_rel, memory_order_relaxed))
-        {
-            atomic_store_explicit(&session->output_waiting, false, memory_order_release);
-            return true;
-        }
-    }
+    atomic_store_explicit(&session->output_charge, charge + exact_charge, memory_order_relaxed);
+    atomic_store_explicit(&session->output_packets, count + packets, memory_order_relaxed);
+    /* A successful producer must not clear another producer's waiter. */
+    mutexUnlock(&session->output_budget_lock);
+    return true;
 }
 
 bool deviceReaderSessionTryReserveOutput(device_reader_session_t *session, size_t exact_charge)
@@ -193,6 +189,7 @@ void deviceReaderSessionDrainOutputWake(device_reader_session_t *session)
 bool deviceReaderSessionWaitReserveWork(device_reader_session_t *session, size_t charge, unsigned int packets,
                                         uint32_t generation)
 {
+    assert(session->capacity_notify == NULL);
     for (;;)
     {
         if (! atomicLoadExplicit(&session->producer_admission, memory_order_acquire) ||
@@ -229,7 +226,10 @@ bool deviceReaderSessionWaitReserveWork(device_reader_session_t *session, size_t
 
 void deviceReaderBudgetDestroy(device_reader_session_t *session)
 {
-    discard session;
+    if (session->output_charge_limit != 0)
+    {
+        mutexDestroy(&session->output_budget_lock);
+    }
 #ifdef OS_LINUX
     if (session->output_wake_fd >= 0)
     {

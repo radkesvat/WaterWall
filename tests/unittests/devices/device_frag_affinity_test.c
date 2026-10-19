@@ -4,7 +4,8 @@
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
  * Cases: testCompletion, testTrustedHeaderChecksum, testRejectionAndRetirement, testBounds, testRaw,
- * testIsolationAndGrowthPeak
+ * testIsolationAndGrowthPeak, testSharedReadersAndGlobalBudget,
+ * testSharedRawResultsSurviveOtherReaders
  * Checks: Assertion labels include: premature/missing completion; length/padding lost; header not from
  * fragment zero; bad reconstructed checksum
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -16,7 +17,36 @@
 #include "test_assert.h"
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
+static atomic_bool forbid_fragment_pool_access;
+static void        checkedFragmentPoolReuse(buffer_pool_t *pool, sbuf_t *buf)
+{
+    require(! atomicLoadRelaxed(&forbid_fragment_pool_access), "shared fragments recycled into a reader pool");
+    bufferpoolReuseBuffer(pool, buf);
+}
+static sbuf_t *checkedFragmentPoolGet(buffer_pool_t *pool, uint32_t size, uint16_t padding)
+{
+    require(! atomicLoadRelaxed(&forbid_fragment_pool_access), "shared fragments allocated from a reader pool");
+    return bufferpoolGetBestFit(pool, size, padding);
+}
+static bool checkedFragmentPoolFit(const buffer_pool_t *pool, uint64_t size, uint16_t padding, buffer_pool_fit_t *fit)
+{
+    require(! atomicLoadRelaxed(&forbid_fragment_pool_access), "shared fragments queried a reader pool");
+    return bufferpoolQueryBestFit(pool, size, padding, fit);
+}
+static uint16_t checkedFragmentPoolPadding(buffer_pool_t *pool)
+{
+    require(! atomicLoadRelaxed(&forbid_fragment_pool_access), "shared fragments read padding from a reader pool");
+    return bufferpoolGetLargeBufferPadding(pool);
+}
+#define bufferpoolReuseBuffer           checkedFragmentPoolReuse
+#define bufferpoolGetBestFit            checkedFragmentPoolGet
+#define bufferpoolQueryBestFit          checkedFragmentPoolFit
+#define bufferpoolGetLargeBufferPadding checkedFragmentPoolPadding
 #include "devices/device_frag_affinity.c"
+#undef bufferpoolReuseBuffer
+#undef bufferpoolGetBestFit
+#undef bufferpoolQueryBestFit
+#undef bufferpoolGetLargeBufferPadding
 #include "devices/device_frag_affinity.h"
 #include "wwapi.h"
 
@@ -330,6 +360,130 @@ static void testIsolationAndGrowthPeak(void)
     deviceFragAffinityDestroy(a);
 }
 
+enum
+{
+    kSharedFragmentDatagrams = 64
+};
+typedef struct shared_fragment_probe_s
+{
+    device_frag_affinity_table_t *table;
+    atomic_uint                  *arrivals;
+    atomic_uint                  *completed;
+    sbuf_t                       *fragments[kSharedFragmentDatagrams];
+} shared_fragment_probe_t;
+
+static WTHREAD_ROUTINE(offerSharedFragments)
+{
+    shared_fragment_probe_t *probe = userdata;
+    for (unsigned i = 0; i < kSharedFragmentDatagrams; ++i)
+    {
+        atomicAddExplicit(&probe->arrivals[i], 1, memory_order_acq_rel);
+        const uint64_t deadline = getHRTimeUs() + UINT64_C(2000000);
+        while (atomicLoadExplicit(&probe->arrivals[i], memory_order_acquire) != 2)
+        {
+            require(getHRTimeUs() < deadline, "shared fragment reader did not reach rendezvous");
+            YIELD_THREAD();
+        }
+        sbuf_t                             *buf = probe->fragments[i];
+        device_frag_affinity_result_t       result;
+        const device_frag_affinity_action_t action =
+            deviceFragAffinityOffer(probe->table, sbufGetRawPtr(buf), sbufGetLength(buf), buf, &result);
+        require(action == kDeviceFragAffinityStaged || action == kDeviceFragAffinityComplete,
+                "concurrent readers lost a non-overlapping fragment");
+        if (action == kDeviceFragAffinityComplete)
+        {
+            require(sbufGetLength(result.completed) == 148 && sbufGetLeftCapacity(result.completed) >= 96,
+                    "shared reassembly lost its complete length or configured padding");
+            const uint8_t *bytes = sbufGetRawPtr(result.completed);
+            for (unsigned byte = 0; byte < 128; ++byte)
+                require(bytes[20 + byte] == (uint8_t) (i + byte), "concurrent readers mixed fragment payloads");
+            require(deviceIpv4HeaderChecksumValid(bytes, 20), "shared reassembly emitted an invalid header");
+            sbufDestroy(result.completed);
+            atomicAddExplicit(probe->completed, 1, memory_order_relaxed);
+        }
+    }
+    return 0;
+}
+
+static void testSharedReadersAndGlobalBudget(void)
+{
+    device_frag_affinity_table_t *table = deviceFragAffinityCreate(g_pool, kDeviceFragmentReassemble);
+    deviceFragAffinityEnableShared(table, 96);
+    atomic_uint             arrivals[kSharedFragmentDatagrams] = {0};
+    atomic_uint             completed                          = 0;
+    shared_fragment_probe_t probes[2]                          = {
+        {.table = table, .arrivals = arrivals, .completed = &completed},
+        {.table = table, .arrivals = arrivals, .completed = &completed},
+    };
+    for (unsigned reader = 0; reader < 2; ++reader)
+        for (unsigned i = 0; i < kSharedFragmentDatagrams; ++i)
+        {
+            sbuf_t *buf = makeFragment(2000 + i, reader * 8, reader == 0);
+            for (unsigned byte = 0; byte < 64; ++byte)
+                sbufGetMutablePtr(buf)[20 + byte] = (uint8_t) (i + reader * 64 + byte);
+            probes[reader].fragments[i] = buf;
+        }
+    atomicStoreRelaxed(&forbid_fragment_pool_access, true);
+    wthread_t threads[2];
+    for (unsigned reader = 0; reader < 2; ++reader)
+        require(threadCreate(&threads[reader], offerSharedFragments, &probes[reader]) == kWThreadErrorNone,
+                "failed to start shared fragment reader");
+    for (unsigned reader = 0; reader < 2; ++reader)
+        require(threadJoin(threads[reader]) == 0, "failed to join shared fragment reader");
+    require(atomicLoadRelaxed(&completed) == kSharedFragmentDatagrams && table->retained_bytes == 0,
+            "shared readers lost datagrams or leaked assembly charges");
+
+    unsigned accepted = 0;
+    for (unsigned i = 0; i < kDeviceFragAffinityMaxEntries; ++i)
+    {
+        sbuf_t                             *buf = makeFragment(3000 + i, 8000, false);
+        device_frag_affinity_result_t       result;
+        const device_frag_affinity_action_t action =
+            deviceFragAffinityOffer(table, sbufGetRawPtr(buf), sbufGetLength(buf), buf, &result);
+        accepted += action == kDeviceFragAffinityStaged;
+        require(table->retained_bytes <= kDeviceFragAffinityMaxAssemblyBytes,
+                "shared fragment readers exceeded the single device assembly budget");
+    }
+    require(accepted > 0 && accepted < kDeviceFragAffinityMaxEntries,
+            "shared assembly allocation budget was not enforced");
+    deviceFragAffinityEndGeneration(table);
+    deviceFragAffinityRetireReleasePool(table);
+    require(table->retained_bytes == 0, "shared retirement leaked detached allocations");
+    deviceFragAffinityDestroy(table);
+    atomicStoreRelaxed(&forbid_fragment_pool_access, false);
+}
+
+static void testSharedRawResultsSurviveOtherReaders(void)
+{
+    device_frag_affinity_table_t *table = deviceFragAffinityCreate(g_pool, kDeviceFragmentPreserve);
+    deviceFragAffinityEnableShared(table, 64);
+    sbuf_t                       *tails[2] = {makeFragment(4000, 8, false), makeFragment(4001, 8, false)};
+    sbuf_t                       *zeros[2] = {makeFragment(4000, 0, true), makeFragment(4001, 0, true)};
+    device_frag_affinity_result_t results[2];
+    atomicStoreRelaxed(&forbid_fragment_pool_access, true);
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        require(
+            deviceFragAffinityOffer(table, sbufGetRawPtr(tails[i]), sbufGetLength(tails[i]), tails[i], &results[i]) ==
+                kDeviceFragAffinityStaged,
+            "shared raw tail was not staged");
+        require(
+            deviceFragAffinityOffer(table, sbufGetRawPtr(zeros[i]), sbufGetLength(zeros[i]), zeros[i], &results[i]) ==
+                kDeviceFragAffinityDispatch,
+            "shared raw zero did not release its tail");
+    }
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        require(results[i].released_count == 1 && results[i].released[0] == tails[i],
+                "another reader clobbered caller-owned raw release storage");
+        sbufDestroy(results[i].released[0]);
+        sbufDestroy(zeros[i]);
+    }
+    require(table->retained_bytes == 0 && table->staged_total == 0, "raw shared dispatch leaked staging charges");
+    deviceFragAffinityDestroy(table);
+    atomicStoreRelaxed(&forbid_fragment_pool_access, false);
+}
+
 int main(void)
 {
     testCaseSet("device_frag_affinity_test");
@@ -350,6 +504,8 @@ int main(void)
     testBounds();
     testRaw();
     testIsolationAndGrowthPeak();
+    testSharedReadersAndGlobalBudget();
+    testSharedRawResultsSurviveOtherReaders();
 
     bufferpoolDestroy(g_pool);
     masterpoolMakeEmpty(g_large_master);

@@ -25,6 +25,7 @@
 
 #include "devices/device_reader_session.h"
 
+#include "wloop_internal.h"
 #include "worker_messages.h"
 
 #include <poll.h>
@@ -1137,6 +1138,220 @@ static void testWorkerQueueStopWakesOrdinaryCapacityWait(test_env_t *env)
     bufferpoolDestroy(reader_pool);
 }
 
+static void recordCapacityNotification(void *context)
+{
+    atomic_uint *notifications = context;
+    atomicAddExplicit(notifications, 1, memory_order_relaxed);
+}
+
+typedef struct capacity_notify_probe_s
+{
+    device_reader_session_t *session;
+    atomic_bool              entered;
+    atomic_bool              release;
+} capacity_notify_probe_t;
+
+static void blockCapacityNotification(void *context)
+{
+    capacity_notify_probe_t *probe = context;
+    atomicStoreExplicit(&probe->entered, true, memory_order_release);
+    waitForEndWaitFlag(&probe->release, "capacity notification was never released");
+}
+
+static void *releaseCapacityFromForeignThread(void *context)
+{
+    capacity_notify_probe_t *probe = context;
+    deviceReaderSessionReleaseWork(probe->session, 256, 1);
+    return NULL;
+}
+
+static void testEndWaitQuiescesCapacityNotification(test_env_t *env)
+{
+    reader_probe_t           delivered = {0};
+    device_reader_session_t *session   = createSession(env, &delivered, 1);
+    capacity_notify_probe_t  notify    = {.session = session};
+    require(deviceReaderSessionConfigureOutputBudget(session, 256, 1), "failed to configure notification fixture");
+    deviceReaderSessionConfigureCapacityNotify(session, blockCapacityNotification, &notify);
+    require(deviceReaderSessionBegin(session) != 0 && deviceReaderSessionTryReserveWork(session, 256, 1) &&
+                ! deviceReaderSessionTryReserveWork(session, 256, 1),
+            "failed to arm capacity notification");
+    pthread_t release_thread;
+    require(pthread_create(&release_thread, NULL, releaseCapacityFromForeignThread, &notify) == 0,
+            "failed to create foreign capacity release thread");
+    waitForEndWaitFlag(&notify.entered, "foreign capacity notification never entered");
+    deviceReaderSessionEndRequest(session);
+    end_wait_probe_t end_probe = {.session = session};
+    pthread_t        end_thread;
+    deviceReaderSessionInstallEndWaitYieldHook(readerSessionEndWaitYieldHook, &end_probe);
+    require(pthread_create(&end_thread, NULL, endWaitRoutine, &end_probe) == 0,
+            "failed to create notification end thread");
+    waitForEndWaitFlag(&end_probe.first_hook_entered, "EndWait failed to wait for active notification");
+    atomicStoreExplicit(&end_probe.first_hook_release, true, memory_order_release);
+    waitForSecondEndWaitHook(&end_probe, "EndWait failed to keep waiting for active notification");
+    require(! atomicLoadExplicit(&end_probe.completed, memory_order_acquire),
+            "EndWait returned before the capacity callback quiesced");
+    atomicStoreExplicit(&notify.release, true, memory_order_release);
+    require(pthread_join(release_thread, NULL) == 0, "failed to join capacity release thread");
+    atomicStoreExplicit(&end_probe.second_hook_release, true, memory_order_release);
+    require(pthread_join(end_thread, NULL) == 0, "failed to join notification end thread");
+    deviceReaderSessionInstallEndWaitYieldHook(NULL, NULL);
+    requireOutputBudgetEmpty(session);
+    deviceReaderSessionUnref(session);
+}
+
+static void testNonblockingBatchCapacityAndRetainedOwnership(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t           probe         = {0};
+    device_reader_session_t *session       = createSession(env, &probe, 2);
+    atomic_uint              notifications = 0;
+    sbuf_t                  *bufs[2]       = {sbufCreate(64), sbufCreate(64)};
+    const size_t             charge        = sbufGetAllocationCharge(bufs[0]);
+    require(deviceReaderSessionConfigureOutputBudget(session, 2 * charge, 2) &&
+                deviceReaderSessionEnableWorkerQueue(session),
+            "failed to configure nonblocking batch fixture");
+    deviceReaderSessionConfigureCapacityNotify(session, recordCapacityNotification, &notifications);
+    require(deviceReaderSessionBegin(session) != 0, "failed to begin nonblocking batch fixture");
+    require(deviceReaderSessionTryReserveWork(session, charge, 1), "failed to occupy batch capacity");
+    sbufSetLength(bufs[0], 1);
+    sbufSetLength(bufs[1], 1);
+    sbufWriteUI8(bufs[0], 11);
+    sbufWriteUI8(bufs[1], 22);
+    require(deviceReaderSessionTryPost(session, 0, bufs, 2) == kDeviceReaderPostCapacity,
+            "full device budget did not retain the whole batch");
+    require(sbufReadUI8(bufs[0]) == 11 && sbufReadUI8(bufs[1]) == 22 && captured_message_count == 0 &&
+                atomicLoadRelaxed(&session->output_charge) == charge &&
+                atomicLoadRelaxed(&session->output_packets) == 1,
+            "capacity refusal changed buffers, partially reserved, or queued part of the batch");
+    /* A second producer can fit while the first producer's larger batch waits. */
+    require(deviceReaderSessionTryReserveWork(session, charge, 1), "second producer failed to use remaining credit");
+    deviceReaderSessionReleaseWork(session, charge, 1);
+    require(atomicLoadRelaxed(&notifications) == 1,
+            "successful second producer cleared the first producer's capacity notification");
+    deviceReaderSessionReleaseWork(session, charge, 1);
+    require(deviceReaderSessionTryPost(session, 0, bufs, 2) == kDeviceReaderPostAccepted,
+            "whole batch did not resume after capacity returned");
+    require(captured_message_count == 1, "nonblocking batch scheduled duplicate FIFO tokens");
+    deliverWorkerQueueMessage(0);
+    require(probe.delivered == 2, "resumed batch lost buffers");
+    requireOutputBudgetEmpty(session);
+
+    sbuf_t *late = sbufCreate(64);
+    require(deviceReaderSessionTryPost(session, 0, &late, 1) == kDeviceReaderPostAccepted,
+            "failed to queue late-cancellation packet");
+    require(! deviceReaderSessionTryReserveWork(session, 2 * charge, 2), "failed to arm late capacity notification");
+    deviceReaderSessionEnd(session);
+    testWorkerUnbindWID();
+    cleanupMessage(1);
+    late = sbufCreate(64);
+    require(deviceReaderSessionTryPost(session, 0, &late, 1) == kDeviceReaderPostClosed,
+            "closed nonblocking session accepted a packet");
+    testWorkerBindWID(0);
+    require(atomicLoadRelaxed(&notifications) == 1, "late cancellation called a retired capacity notification context");
+    requireOutputBudgetEmpty(session);
+    deviceReaderSessionUnref(session);
+}
+
+typedef struct inline_post_probe_s
+{
+    device_reader_session_t *session;
+    sbuf_t                  *buf;
+} inline_post_probe_t;
+
+static void postFromNormalCallback(void *context)
+{
+    inline_post_probe_t *probe = context;
+    require(deviceReaderSessionTryPost(probe->session, 0, &probe->buf, 1) == kDeviceReaderPostAccepted,
+            "normal callback packet was refused");
+}
+
+static void testInlineDispatchKeepsExistingFifo(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t           probe   = {0};
+    device_reader_session_t *session = createSession(env, &probe, 2);
+    require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 8) &&
+                deviceReaderSessionEnableWorkerQueue(session),
+            "failed to configure inline FIFO fixture");
+    deviceReaderSessionEnableInlineDispatch(session);
+    require(deviceReaderSessionBegin(session) != 0, "failed to begin inline FIFO fixture");
+    wloop_t *loop = wloopCreate(0, env->worker_buffer_pool, 0);
+    require(loop != NULL, "failed to create inline callback loop");
+    getCurrentEventWorker()->loop = loop;
+    inline_post_probe_t post      = {.session = session, .buf = sbufCreate(64)};
+    require(wloopInvokeNormalCallback(loop, postFromNormalCallback, &post), "inline normal callback was refused");
+    require(probe.delivered == 1 && captured_message_count == 0,
+            "idle matching worker queued instead of directly delivering its packet");
+
+    worker_work_probe_t work = {.target_steps = 2};
+    require(postWorkerWork(session, &work), "failed to queue preceding worker work");
+    probe.required_work_steps = &work.steps;
+    probe.expected_work_steps = 2;
+    post.buf                  = sbufCreate(64);
+    require(wloopInvokeNormalCallback(loop, postFromNormalCallback, &post), "ordered normal callback was refused");
+    require(probe.delivered == 1 && captured_message_count == 1,
+            "inline packet overtook already-scheduled work or scheduled another FIFO token");
+    deliverWorkerQueueMessage(0);
+    require(work.steps == 1 && probe.delivered == 1 && captured_message_count == 2,
+            "unfinished aggregate lost priority over inline input");
+    deliverWorkerQueueMessage(1);
+    require(work.steps == 2 && probe.delivered == 2, "FIFO failed to resume deferred inline input");
+
+    probe.required_work_steps = NULL;
+    post.buf                  = sbufCreate(64);
+    postFromNormalCallback(&post);
+    require(probe.delivered == 2 && captured_message_count == 3,
+            "worker identity alone granted inline normal callback admission");
+    deliverWorkerQueueMessage(2);
+    requireOutputBudgetEmpty(session);
+    getCurrentEventWorker()->loop = NULL;
+    wloopDestroy(&loop);
+    deviceReaderSessionEnd(session);
+    deviceReaderSessionUnref(session);
+}
+
+typedef struct concurrent_reserve_probe_s
+{
+    device_reader_session_t *session;
+    atomic_bool             *start;
+} concurrent_reserve_probe_t;
+
+static void *reserveFromConcurrentProducer(void *context)
+{
+    concurrent_reserve_probe_t *probe = context;
+    waitForEndWaitFlag(probe->start, "concurrent budget test did not start");
+    for (unsigned int i = 0; i < 2000; ++i)
+    {
+        while (! deviceReaderSessionTryReserveWork(probe->session, 256, 2))
+            YIELD_THREAD();
+        require(atomicLoadRelaxed(&probe->session->output_charge) == 256 &&
+                    atomicLoadRelaxed(&probe->session->output_packets) == 2,
+                "concurrent producer exceeded all-or-none device admission");
+        deviceReaderSessionReleaseWork(probe->session, 256, 2);
+    }
+    return NULL;
+}
+
+static void testConcurrentProducerBudget(test_env_t *env)
+{
+    reader_probe_t           probe   = {0};
+    device_reader_session_t *session = createSession(env, &probe, 2);
+    require(deviceReaderSessionConfigureOutputBudget(session, 256, 2) && deviceReaderSessionBegin(session) != 0,
+            "failed to configure concurrent producer budget");
+    atomic_bool                start    = false;
+    concurrent_reserve_probe_t producer = {.session = session, .start = &start};
+    pthread_t                  threads[2];
+    for (unsigned int i = 0; i < ARRAY_SIZE(threads); ++i)
+        require(pthread_create(&threads[i], NULL, reserveFromConcurrentProducer, &producer) == 0,
+                "failed to start concurrent producer");
+    atomicStoreExplicit(&start, true, memory_order_release);
+    for (unsigned int i = 0; i < ARRAY_SIZE(threads); ++i)
+        require(pthread_join(threads[i], NULL) == 0, "failed to join concurrent producer");
+    requireOutputBudgetEmpty(session);
+    deviceReaderSessionEnd(session);
+    deviceReaderSessionUnref(session);
+}
+
 int main(void)
 {
     testCaseSet("device_reader_session_test");
@@ -1160,6 +1375,10 @@ int main(void)
     testWorkerQueueStaleContinuationAndRefusal(&env);
     testWorkerQueueCancellationOutlivesDevice(&env);
     testWorkerQueueStopWakesOrdinaryCapacityWait(&env);
+    testEndWaitQuiescesCapacityNotification(&env);
+    testNonblockingBatchCapacityAndRetainedOwnership(&env);
+    testInlineDispatchKeepsExistingFifo(&env);
+    testConcurrentProducerBudget(&env);
     envTeardown(&env);
     puts("device reader session tests passed");
     return 0;

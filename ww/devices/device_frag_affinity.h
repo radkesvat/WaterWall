@@ -25,22 +25,26 @@ typedef enum device_frag_affinity_action_e
 } device_frag_affinity_action_t;
 typedef struct device_frag_affinity_result_s
 {
-    sbuf_t **released;
+    sbuf_t  *released[kDeviceFragAffinityMaxStagedPerEntry];
     uint8_t  released_count;
     wid_t    wid;
     sbuf_t  *completed;
 } device_frag_affinity_result_t;
 device_frag_affinity_table_t *deviceFragAffinityCreate(buffer_pool_t *pool, device_fragment_policy_t policy);
+/* Exclusive startup: use detached allocations under the table mutex so several
+ * worker readers can share the existing device-wide fragment limits. */
+void deviceFragAffinityEnableShared(device_frag_affinity_table_t *table, uint16_t padding);
 /* Only before publishing a fresh table to its reader. Trust is fixed for its
  * lifetime; fragment shape/bounds and reconstructed header sums remain intact. */
-void                          deviceFragAffinityTrustIpv4HeaderChecksum(device_frag_affinity_table_t *table);
-void                          deviceFragAffinityDestroy(device_frag_affinity_table_t *table);
-void                          deviceFragAffinityBeginGeneration(device_frag_affinity_table_t *table);
+void deviceFragAffinityTrustIpv4HeaderChecksum(device_frag_affinity_table_t *table);
+void deviceFragAffinityDestroy(device_frag_affinity_table_t *table);
+void deviceFragAffinityBeginGeneration(device_frag_affinity_table_t *table);
 /* Metadata only; never recycle from the lifecycle thread before reader join. */
 void deviceFragAffinityEndGeneration(device_frag_affinity_table_t *table);
 /* Caller has joined the reader and reset exclusive pool ownership. */
 void deviceFragAffinityReleaseStagedBuffers(device_frag_affinity_table_t *table);
 void deviceFragAffinityRetireReleasePool(device_frag_affinity_table_t *table);
-/* Raw released scratch remains valid until the next offer. */
+/* Released raw tails belong to the caller and remain in its result storage;
+ * another reader's offer cannot overwrite that array. */
 device_frag_affinity_action_t deviceFragAffinityOffer(device_frag_affinity_table_t *table, const uint8_t *packet,
                                                       uint32_t length, sbuf_t *buf, device_frag_affinity_result_t *out);

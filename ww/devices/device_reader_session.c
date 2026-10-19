@@ -28,7 +28,7 @@ static void deviceReaderSessionEndWaitYield(void *context)
 static master_pool_item_t *deviceReaderMessageCreate(void *userdata)
 {
     const device_reader_session_t *session = userdata;
-    const size_t                   slot    = sizeof(sbuf_t *) + (session->output_wake_fd >= 0 ? sizeof(size_t) : 0);
+    const size_t                   slot = sizeof(sbuf_t *) + (session->output_charge_limit != 0 ? sizeof(size_t) : 0);
     const size_t                   size    = sizeof(device_reader_message_t) + (size_t) session->batch_capacity * slot;
     return memoryAllocate(size);
 }
@@ -80,6 +80,7 @@ device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint1
     atomic_init(&session->output_packets, 0);
     atomic_init(&session->output_waiting, false);
     quiescenceGateInit(&session->delivery_gate);
+    quiescenceGateInit(&session->capacity_notify_gate);
     masterpoolInstallCallBacks(session->message_pool, deviceReaderMessageCreate, deviceReaderMessageDestroy);
     return session;
 }
@@ -138,7 +139,8 @@ void deviceReaderSessionUnref(device_reader_session_t *session)
 
 uint32_t deviceReaderSessionBegin(device_reader_session_t *session)
 {
-    if (UNLIKELY(! quiescenceGateIsClosedAndQuiesced(&session->delivery_gate)))
+    if (UNLIKELY(! quiescenceGateIsClosedAndQuiesced(&session->delivery_gate) ||
+                 ! quiescenceGateIsClosedAndQuiesced(&session->capacity_notify_gate)))
     {
         LOGE("DeviceReaderSession: begin requires the previous generation to be closed and quiesced");
         return 0;
@@ -164,6 +166,11 @@ uint32_t deviceReaderSessionBegin(device_reader_session_t *session)
         return 0;
     }
     deviceFragAffinityBeginGeneration(session->frag_affinity);
+    if (session->capacity_notify != NULL && ! quiescenceGateOpen(&session->capacity_notify_gate))
+    {
+        LOGF("DeviceReaderSession: failed to reopen quiesced capacity notification");
+        abortProgramNow(1);
+    }
     atomicStoreExplicit(&session->producer_admission, true, memory_order_release);
     return generation;
 }
@@ -178,6 +185,7 @@ void deviceReaderSessionEnd(device_reader_session_t *session)
 void deviceReaderSessionEndRequest(device_reader_session_t *session)
 {
     atomicStoreExplicit(&session->producer_admission, false, memory_order_release);
+    quiescenceGateClose(&session->capacity_notify_gate);
     quiescenceGateClose(&session->delivery_gate);
     deviceReaderSessionSignalOutputCapacity(session);
 }
@@ -185,8 +193,10 @@ void deviceReaderSessionEndRequest(device_reader_session_t *session)
 void deviceReaderSessionEndWait(device_reader_session_t *session)
 {
 #ifdef DEVICE_READER_SESSION_TEST_HOOKS
+    quiescenceGateWaitQuiesced(&session->capacity_notify_gate, deviceReaderSessionEndWaitYield, session);
     quiescenceGateWaitQuiesced(&session->delivery_gate, deviceReaderSessionEndWaitYield, session);
 #else
+    quiescenceGateWaitQuiesced(&session->capacity_notify_gate, quiescenceGateYieldThread, NULL);
     quiescenceGateWaitQuiesced(&session->delivery_gate, quiescenceGateYieldThread, NULL);
 #endif
     /* Delivery admission protects the callback root, not downstream retention. */

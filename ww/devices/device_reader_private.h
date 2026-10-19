@@ -40,7 +40,7 @@ typedef struct device_reader_worker_queue_s
  * charge array after those pointers; configuration is fixed before first Post. */
 static inline size_t *deviceReaderMessageCharges(device_reader_message_t *message)
 {
-    assert(message->session->output_wake_fd >= 0);
+    assert(message->session->output_charge_limit != 0);
     return (size_t *) (message->bufs + message->session->batch_capacity);
 }
 

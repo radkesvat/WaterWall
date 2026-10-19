@@ -22,7 +22,7 @@ typedef struct device_frag_affinity_entry_s
     bool                in_use, poisoned, wid_known, saw_last;
     wid_t               wid;
     uint64_t            expires_at_ms;
-    uint64_t zero_flow_hash;
+    uint64_t            zero_flow_hash;
     uint32_t            final_end;
     uint16_t            fragments;
     uint8_t             range_count, staged_count;
@@ -33,13 +33,14 @@ typedef struct device_frag_affinity_entry_s
 struct device_frag_affinity_table_s
 {
     buffer_pool_t               *release_pool;
+    bool                         shared;
+    uint16_t                     shared_padding;
     wmutex_t                     lock;
     bool                         generation_open;
     bool                         trusted_ipv4_header;
     device_fragment_policy_t     policy;
     size_t                       retained_bytes;
     uint32_t                     staged_total;
-    sbuf_t                      *release_scratch[kDeviceFragAffinityMaxStagedPerEntry];
     device_frag_affinity_entry_t entries[kDeviceFragAffinityMaxEntries];
 };
 
@@ -222,19 +223,27 @@ static bool deviceFragAffinityHashAsWhole(uint8_t *packet, uint32_t length, uint
     return ok;
 }
 
+static void deviceFragRecycle(device_frag_affinity_table_t *table, sbuf_t *buf)
+{
+    if (table->shared)
+        sbufDestroy(buf);
+    else
+        bufferpoolReuseBuffer(table->release_pool, buf);
+}
+
 static void deviceFragReleaseStorage(device_frag_affinity_table_t *table, device_frag_affinity_entry_t *entry)
 {
     for (unsigned i = 0; i < entry->staged_count; ++i)
     {
         table->retained_bytes -= sbufGetAllocationCharge(entry->staged[i]);
-        bufferpoolReuseBuffer(table->release_pool, entry->staged[i]);
+        deviceFragRecycle(table, entry->staged[i]);
     }
     table->staged_total -= entry->staged_count;
     entry->staged_count = 0;
     if (entry->assembly)
     {
         table->retained_bytes -= sbufGetAllocationCharge(entry->assembly);
-        bufferpoolReuseBuffer(table->release_pool, entry->assembly);
+        deviceFragRecycle(table, entry->assembly);
         entry->assembly = NULL;
     }
 }
@@ -288,6 +297,13 @@ device_frag_affinity_table_t *deviceFragAffinityCreate(buffer_pool_t *pool, devi
     table->generation_open = true;
     return table;
 }
+void deviceFragAffinityEnableShared(device_frag_affinity_table_t *table, uint16_t padding)
+{
+    assert(table != NULL && table->retained_bytes == 0);
+    table->shared         = true;
+    table->shared_padding = padding;
+}
+
 void deviceFragAffinityTrustIpv4HeaderChecksum(device_frag_affinity_table_t *table)
 {
     assert(table != NULL);
@@ -414,17 +430,22 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
     }
     if (table->policy == kDeviceFragmentReassemble)
     {
-        const uint32_t need    = 20U + (uint32_t) view->offset + view->payload_len;
-        const uint16_t padding = bufferpoolGetLargeBufferPadding(table->release_pool);
+        const uint32_t need = 20U + (uint32_t) view->offset + view->payload_len;
+        const uint16_t padding =
+            table->shared ? table->shared_padding : bufferpoolGetLargeBufferPadding(table->release_pool);
         if (! entry->assembly || need > sbufGetMaximumWriteableSize(entry->assembly))
         {
-            buffer_pool_fit_t fit;
-            if (! bufferpoolQueryBestFit(table->release_pool, need, padding, &fit) ||
-                fit.allocation_charge > kDeviceFragAffinityMaxAssemblyBytes - table->retained_bytes)
+            buffer_pool_fit_t fit = {0};
+            uint32_t          capacity;
+            const bool        fits = table->shared ? sbufTryComputeCapacity(need, padding, &capacity) &&
+                                                  sbufTryComputeQueueCharge(capacity, &fit.allocation_charge)
+                                                   : bufferpoolQueryBestFit(table->release_pool, need, padding, &fit);
+            if (! fits || fit.allocation_charge > kDeviceFragAffinityMaxAssemblyBytes - table->retained_bytes)
                 goto poison;
             /* Reserve the full replacement, including the still-live old allocation. */
             table->retained_bytes += fit.allocation_charge;
-            sbuf_t *grown = bufferpoolGetBestFit(table->release_pool, need, padding);
+            sbuf_t *grown = table->shared ? sbufCreateWithPadding(need, padding)
+                                          : bufferpoolGetBestFit(table->release_pool, need, padding);
             if (UNLIKELY(sbufGetAllocationCharge(grown) != fit.allocation_charge ||
                          sbufGetMaximumWriteableSize(grown) < need || sbufGetLeftCapacity(grown) < padding))
             {
@@ -443,7 +464,7 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
                                r.end - r.begin);
                 }
                 table->retained_bytes -= sbufGetAllocationCharge(entry->assembly);
-                bufferpoolReuseBuffer(table->release_pool, entry->assembly);
+                deviceFragRecycle(table, entry->assembly);
             }
             candidate.assembly = grown;
         }
@@ -456,7 +477,7 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
         memoryCopy(bytes + 20 + view->offset, (const uint8_t *) sbufGetRawPtr(buf) + 20, view->payload_len);
         ++candidate.fragments;
         *entry = candidate;
-        bufferpoolReuseBuffer(table->release_pool, buf);
+        deviceFragRecycle(table, buf);
         if (! entry->wid_known || ! deviceFragAffinityIsComplete(entry))
             return kDeviceFragAffinityStaged;
         /* Fragment zero is authoritative for TOS/TTL/DF/reserved bits; clear only MF/offset. */
@@ -491,11 +512,10 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
         return kDeviceFragAffinityStaged;
     }
     out->wid            = candidate.wid;
-    out->released       = table->release_scratch;
     out->released_count = candidate.staged_count;
     for (unsigned i = 0; i < candidate.staged_count; ++i)
     {
-        table->release_scratch[i] = candidate.staged[i];
+        out->released[i] = candidate.staged[i];
         table->retained_bytes -= sbufGetAllocationCharge(candidate.staged[i]);
     }
     table->staged_total -= candidate.staged_count;
@@ -508,15 +528,15 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
 poison:
     deviceFragPoison(table, entry, now);
 drop:
-    bufferpoolReuseBuffer(table->release_pool, buf);
+    deviceFragRecycle(table, buf);
     return kDeviceFragAffinityConsumedDrop;
 }
 
 device_frag_affinity_action_t deviceFragAffinityOffer(device_frag_affinity_table_t *table, const uint8_t *packet,
                                                       uint32_t length, sbuf_t *buf, device_frag_affinity_result_t *out)
 {
-    *out                              = (device_frag_affinity_result_t) {0};
-    device_frag_view_t         view   = {0};
+    *out                            = (device_frag_affinity_result_t) {0};
+    device_frag_view_t         view = {0};
     device_frag_parse_result_t parsed =
         deviceFragAffinityParse(packet, length, table != NULL && table->trusted_ipv4_header, &view);
     if (parsed == kDeviceFragParseNotFragment)
