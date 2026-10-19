@@ -120,6 +120,17 @@ ww_lwip_engine_t *wwLwipRuntimeGet(uint8_t owner)
     return engine;
 }
 
+ww_lwip_engine_t *wwLwipRuntimeBeginAckBatch(uint8_t owner)
+{
+    if (! currentThreadIsEventWorkerWID(owner) || slots == NULL || owner >= slot_count)
+        return NULL;
+    engine_slot_t *slot = &slots[owner];
+    if (slot->quiesced || slot->engine == NULL || ! wloopNormalDispatchAllowed(slot->loop))
+        return NULL;
+    wwLwipEngineBeginAckBatch(slot->engine);
+    return slot->engine;
+}
+
 void wwLwipRuntimeQuiesceWorker(uint8_t owner)
 {
     assert(currentThreadIsEventWorkerWID(owner));

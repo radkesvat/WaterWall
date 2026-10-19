@@ -242,10 +242,15 @@ static void setup(void *worker_ptr, void *argument, void *unused1, void *unused2
     worker_t *worker = worker_ptr;
     probe_t  *probe  = argument;
     CHECK(worker->wid == probe->owner);
+    CHECK(wwLwipRuntimeBeginAckBatch(worker->wid) == NULL);
     probe->engine = wwLwipRuntimeGet(worker->wid);
     CHECK(probe->engine != NULL);
     CHECK(wwLwipRuntimeGet(worker->wid) == probe->engine);
     CHECK(wwLwipRuntimeGet((uint8_t) (1 - worker->wid)) == NULL);
+    CHECK(wwLwipRuntimeBeginAckBatch((uint8_t) (1 - worker->wid)) == NULL);
+    CHECK(wwLwipRuntimeBeginAckBatch(worker->wid) == probe->engine);
+    CHECK(wwLwipEngineCurrent() == NULL);
+    wwLwipEngineEndAckBatch(probe->engine);
     ww_lwip_engine_t *previous;
     CHECK(wwLwipEngineEnter(probe->engine, &previous));
     ip4_addr_t address, mask, gateway;
@@ -335,6 +340,7 @@ int main(void)
     CHECK(probes[0].netif.loop_first != NULL);
     wwLwipEngineLeave(probes[0].engine, previous);
     CHECK(wwLwipEngineNextTimeout(probes[0].engine) == SYS_TIMEOUTS_SLEEPTIME_INFINITE);
+    CHECK(wwLwipRuntimeBeginAckBatch(0) == NULL);
     CHECK(workerRequestQuiesce(getWorker(2)));
     for (wid_t i = 0; i < 3; ++i)
         CHECK(workerWaitForPhase(getWorker(i), kWorkerLifecycleQuiesced, 5000));

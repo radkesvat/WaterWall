@@ -37,6 +37,8 @@ struct ww_lwip_engine_s
     bool                 dispatching;
     bool                 releasing;
     bool                 quiesced;
+    bool                 ack_batch;
+    struct tcp_pcb      *ack_pending;
     ww_lwip_wake_fn      wake;
     void                *wake_argument;
     struct stats_        stats;
@@ -226,9 +228,85 @@ void wwLwipEngineSetWake(ww_lwip_engine_t *engine, ww_lwip_wake_fn wake, void *a
 void wwLwipEngineQuiesce(ww_lwip_engine_t *engine)
 {
     LWIP_ASSERT("quiesce on idle owner", wwLwipEngineOwnerIsCurrent(engine->owner, engine->loop) && engine->depth == 0);
+    assert(! engine->ack_batch && engine->ack_pending == NULL);
     engine->quiesced      = true;
     engine->wake          = NULL;
     engine->wake_argument = NULL;
+}
+
+void wwLwipEngineBeginAckBatch(ww_lwip_engine_t *engine)
+{
+    assert(engine != NULL);
+    if (! wwLwipEngineOwnerIsCurrent(engine->owner, engine->loop))
+        LWIP_PLATFORM_ASSERT("ACK batch requires its owner event worker");
+    assert(engine->depth == 0 && ! engine->dispatching && ! engine->quiesced);
+    assert(! engine->ack_batch && engine->ack_pending == NULL);
+    engine->ack_batch = true;
+}
+
+void wwLwipEngineCancelAck(struct tcp_pcb *pcb)
+{
+    assert(current_engine != NULL && pcb->ww_engine == current_engine);
+    if (pcb->ww_ack_previous != NULL)
+    {
+        *pcb->ww_ack_previous = pcb->ww_ack_next;
+        if (pcb->ww_ack_next != NULL)
+            pcb->ww_ack_next->ww_ack_previous = pcb->ww_ack_previous;
+        pcb->ww_ack_previous = NULL;
+        pcb->ww_ack_next     = NULL;
+    }
+}
+
+int wwLwipEngineDeferAck(struct tcp_pcb *pcb)
+{
+    assert(current_engine != NULL && pcb->ww_engine == current_engine);
+    if (! current_engine->ack_batch || pcb->state != ESTABLISHED ||
+        (pcb->flags & (TF_ACK_NOW | TF_INFR | TF_RTO | TF_RXCLOSED | TF_FIN)) != 0 ||
+        RCV_WND_SCALE(pcb, pcb->rcv_ann_wnd) == 0)
+        return 0;
+#if TCP_QUEUE_OOSEQ
+    if (pcb->ooseq != NULL)
+        return 0;
+#endif
+#if LWIP_TCP_SACK_OUT
+    if (LWIP_TCP_SACK_VALID(pcb, 0))
+        return 0;
+#endif
+    if (pcb->ww_ack_previous == NULL)
+    {
+        pcb->ww_ack_next     = current_engine->ack_pending;
+        pcb->ww_ack_previous = &current_engine->ack_pending;
+        if (pcb->ww_ack_next != NULL)
+            pcb->ww_ack_next->ww_ack_previous = &pcb->ww_ack_next;
+        current_engine->ack_pending = pcb;
+    }
+    tcp_set_flags(pcb, TF_ACK_DELAY);
+    return 1;
+}
+
+void wwLwipEngineEndAckBatch(ww_lwip_engine_t *engine)
+{
+    assert(engine != NULL && engine->ack_batch && engine->depth == 0 && ! engine->dispatching);
+    ww_lwip_engine_t *previous;
+    if (! wwLwipEngineEnter(engine, &previous))
+        LWIP_PLATFORM_ASSERT("ACK batch requires its owner event worker");
+    engine->ack_batch   = false;
+    engine->dispatching = true;
+    while (engine->ack_pending != NULL)
+    {
+        struct tcp_pcb *pcb = engine->ack_pending;
+        wwLwipEngineCancelAck(pcb);
+        /* Piggybacked or urgent output may already have acknowledged the data.
+         * Unlink first: output callbacks may retire other queued connections.
+         * Failed output retains lwIP's ordinary ACK retry flags and timer. */
+        if ((pcb->flags & (TF_ACK_DELAY | TF_ACK_NOW)) != 0)
+        {
+            tcp_ack_now(pcb);
+            tcp_output(pcb);
+        }
+    }
+    engine->dispatching = false;
+    wwLwipEngineLeave(engine, previous);
 }
 
 ww_lwip_engine_t *wwLwipEngineCreate(uint8_t owner, struct wloop_s *loop)
@@ -337,6 +415,7 @@ void wwLwipEngineDestroy(ww_lwip_engine_t *engine)
     ww_lwip_engine_t *previous;
     const bool        entered = wwLwipEngineEnter(engine, &previous);
     LWIP_ASSERT("destroy on owner outside dispatch", entered && ! engine->dispatching && engine->depth == 1);
+    assert(! engine->ack_batch && engine->ack_pending == NULL);
     (void) entered;
     engine->releasing = true;
     wwLwipReassemblyCleanup4();

@@ -30,5 +30,12 @@ uint32_t          wwLwipEngineNextTimeout(ww_lwip_engine_t *engine);
 void              wwLwipEngineSetWake(ww_lwip_engine_t *engine, ww_lwip_wake_fn wake, void *argument);
 void              wwLwipEngineQuiesce(ww_lwip_engine_t *engine);
 
+/* Owner-only bounded receive scopes, begun/ended outside stack entry or dispatch.
+ * Calls do not retain an entered engine scope. End flushes ordinary cumulative
+ * ACKs before returning. Do not nest batches or span an event-loop yield;
+ * input, control and recovery ACK paths remain live. */
+void wwLwipEngineBeginAckBatch(ww_lwip_engine_t *engine);
+void wwLwipEngineEndAckBatch(ww_lwip_engine_t *engine);
+
 /* Implemented by the worker runtime; context selection never grants ownership. */
 bool wwLwipEngineOwnerIsCurrent(uint8_t owner, const struct wloop_s *loop);

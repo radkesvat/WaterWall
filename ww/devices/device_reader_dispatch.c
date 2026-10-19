@@ -3,6 +3,7 @@
 #include "devices/device_reader_private.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
+#include "lwip/engine_runtime.h"
 #include "worker_messages.h"
 
 enum
@@ -154,8 +155,9 @@ static void deviceReaderWorkerQueueDrain(void *worker, void *arg1, void *arg2, v
     device_reader_session_t      *session = queue->session;
     const wid_t                   wid     = ((worker_t *) worker)->wid;
     assert(wid == queue->wid);
-    device_reader_work_budget_t budget = {.packets = kDeviceReaderWorkerPacketQuantum,
-                                          .bytes   = kDeviceReaderWorkerByteQuantum};
+    device_reader_work_budget_t budget    = {.packets = kDeviceReaderWorkerPacketQuantum,
+                                             .bytes   = kDeviceReaderWorkerByteQuantum};
+    ww_lwip_engine_t           *ack_batch = wwLwipRuntimeBeginAckBatch(wid);
 
     while (budget.packets > 0 && budget.bytes > 0)
     {
@@ -165,6 +167,8 @@ static void deviceReaderWorkerQueueDrain(void *worker, void *arg1, void *arg2, v
         {
             queue->scheduled = false;
             mutexUnlock(&queue->lock);
+            if (ack_batch != NULL)
+                wwLwipEngineEndAckBatch(ack_batch);
             deviceReaderSessionUnref(session);
             return;
         }
@@ -240,6 +244,10 @@ static void deviceReaderWorkerQueueDrain(void *worker, void *arg1, void *arg2, v
         deviceReaderSessionCleanupMessage(message);
     }
 
+    /* Flush before yielding or publishing the continuation. No ACK intent
+     * survives this bounded packet/byte quantum. */
+    if (ack_batch != NULL)
+        wwLwipEngineEndAckBatch(ack_batch);
     mutexLock(&queue->lock);
     const bool more = queue->head != NULL;
     if (! more)
@@ -272,18 +280,36 @@ static void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *a
     const bool entered = quiescenceGateEnter(&session->delivery_gate);
     if (entered && deviceReaderSessionMatchesGeneration(session, generation))
     {
+        ww_lwip_engine_t *ack_batch     = wwLwipRuntimeBeginAckBatch(wid);
+        unsigned int      batch_packets = 0;
+        size_t            batch_bytes   = 0;
         for (unsigned int i = 0; i < message->count; i++)
         {
+            const uint32_t length = sbufGetLength(message->bufs[i]);
+            if (batch_packets != 0 &&
+                (batch_packets == kDeviceReaderWorkerPacketQuantum ||
+                 length > kDeviceReaderWorkerByteQuantum - min(batch_bytes, (size_t) kDeviceReaderWorkerByteQuantum)))
+            {
+                if (ack_batch != NULL)
+                    wwLwipEngineEndAckBatch(ack_batch);
+                ack_batch     = wwLwipRuntimeBeginAckBatch(wid);
+                batch_packets = 0;
+                batch_bytes   = 0;
+            }
             if (message->prepare != NULL)
             {
                 message->prepare(message->bufs[i]);
             }
             session->deliver(session->device, message->bufs[i], wid);
+            ++batch_packets;
+            batch_bytes += length;
             if (charges != NULL && charges[i] != 0)
             {
                 deviceReaderSessionReleaseOutput(session, charges[i]);
             }
         }
+        if (ack_batch != NULL)
+            wwLwipEngineEndAckBatch(ack_batch);
         quiescenceGateLeave(&session->delivery_gate);
     }
     else
