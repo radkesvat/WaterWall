@@ -40,7 +40,9 @@
 #include "fixtures/worker_registry_fixture.h"
 #include "wloop_internal.h"
 #include "wwapi.h"
+#include <errno.h>
 #include <poll.h>
+#include <stdio.h>
 
 /*
  * Fake worker table for the stubbed GSTATE below. Without it the identity
@@ -283,6 +285,63 @@ static wio_t *createSocketPairIO(wloop_t *loop, int *peer_fd)
     *peer_fd = sockets[1];
     return io;
 }
+
+#if defined(OS_LINUX) && defined(EVENT_EPOLL)
+static void registrationReadReady(wio_t *io)
+{
+    unsigned int *callbacks = weventGetUserdata(io);
+    char          byte      = 0;
+    require(recv(wioGetFD(io), &byte, 1, MSG_DONTWAIT) == 1 && byte == 'r',
+            "accepted readiness did not receive the queued byte");
+    ++*callbacks;
+    require(wioDel(io, WW_READ) == 0, "completed readiness could not remove its interest");
+}
+
+static void testRejectedRegistrationPreservesLoopAccounting(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "failed to create the rejected-registration loop");
+    const uint32_t initial_ios     = loop->nios;
+    const uint32_t initial_actives = loop->nactives;
+
+    /* Epoll rejects regular files with EPERM. Give WIO its own descriptor so
+     * normal FILE cleanup and watcher ownership remain independent. */
+    FILE *file = tmpfile();
+    require(file != NULL, "failed to create the nonpollable regular file");
+    const int file_fd = dup(fileno(file));
+    require(file_fd >= 0 && fclose(file) == 0, "failed to prepare the regular-file descriptor");
+    wio_t *unsupported = wioGet(loop, file_fd);
+    require(unsupported != NULL, "failed to create the regular-file WIO");
+    errno = 0;
+    require(wioAdd(unsupported, registrationReadReady, WW_READ) < 0 && errno == EPERM,
+            "epoll registration rejection was reported as success");
+    require(wioGetError(unsupported) == EPERM && ! unsupported->active && unsupported->events == 0,
+            "rejected registration published active readiness");
+    require(loop->nios == initial_ios && loop->nactives == initial_actives,
+            "rejected registration changed event-loop accounting");
+
+    unsigned int callbacks = 0;
+    int          peer_fd   = -1;
+    wio_t       *accepted  = createSocketPairIO(loop, &peer_fd);
+    weventSetUserData(accepted, &callbacks);
+    require(wioAdd(accepted, registrationReadReady, WW_READ) == 0,
+            "valid readiness registration failed after the rejected descriptor");
+    require(accepted->active && accepted->events == WW_READ && loop->nios == initial_ios + 1 &&
+                loop->nactives == initial_actives + 1,
+            "successful registration did not publish exactly one active watcher");
+    require(write(peer_fd, "r", 1) == 1, "failed to make the accepted descriptor readable");
+    require(wloopProcessEvents(loop, 1000) >= 0 && callbacks == 1,
+            "valid readiness did not dispatch after a failed registration");
+    require(! accepted->active && accepted->events == 0 && ! accepted->pending && loop->nios == initial_ios &&
+                loop->nactives == initial_actives,
+            "readiness retirement did not restore event-loop accounting");
+
+    wioClose(unsupported);
+    wioClose(accepted);
+    close(peer_fd);
+    wloopDestroy(&loop);
+}
+#endif
 
 static void closeAdmissionThenWriteEvent(wevent_t *event)
 {
@@ -1266,6 +1325,9 @@ int main(void)
     env_t env;
     envSetup(&env);
 
+#if defined(OS_LINUX) && defined(EVENT_EPOLL)
+    testRejectedRegistrationPreservesLoopAccounting(&env);
+#endif
     testDirectWriteCallbackAdmission(&env);
     testCrossLoopCallbackCannotBorrowAdmission(&env);
     testAcceptedCrossLoopWriteBindsTargetAuthority(&env);
