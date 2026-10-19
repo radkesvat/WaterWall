@@ -241,14 +241,15 @@ static void parsing(void)
 
 static void fieldSemantics(void)
 {
-    user_t                   *u              = usersLookupByIdentifier(&state()->store.users, 42);
-    const user_stat_t         stats          = u->stats;
-    const user_runtime_stat_t runtime        = u->runtime;
-    const user_client_time_t  client_time    = u->client_time;
-    const uint64_t            stats_revision = state()->store.stats_revision;
-    uint8_t                   digest[sizeof(u->sha256_pass)];
+    user_t                  *u              = usersLookupByIdentifier(&state()->store.users, 42);
+    const user_stat_t        stats          = u->stats;
+    user_runtime_stat_t      runtime        = u->runtime;
+    const user_client_time_t client_time    = u->client_time;
+    const uint64_t           stats_revision = state()->store.stats_revision;
+    uint8_t                  digest[sizeof(u->sha256_pass)];
     memoryCopy(digest, &u->sha256_pass, sizeof(digest));
     const uint64_t created = u->timeinfo.created_at_ms, first = u->timeinfo.first_usage_at_ms;
+    const uint64_t bandwidth_before = getHRTimeUs() / 1000U;
     edit(42,
          "{\"name\":\"renamed\",\"email\":\"new@example.invalid\",\"notes\":\"note \\u20ac\","
          "\"wireguard_allowed_ips\":\"10.8.0.123/24\",\"gid\":\"18446744073709551615\","
@@ -266,6 +267,22 @@ static void fieldSemantics(void)
                    u->limit.devices == 7 && u->limit.cons_in == 8 && u->limit.cons_out == 9 &&
                    u->timeinfo.expire_at_ms == 1 && u->timeinfo.expire_after_first_usage_ms == UINT64_MAX,
                "editable field semantics mismatch");
+    /* Explicit finite-rate edits initialize only their private bucket policy.
+     * Validate that permitted delta before retaining the full protected-state
+     * oracle, including unchanged waiter identities and later sparse edits. */
+    const uint64_t bandwidth_after = getHRTimeUs() / 1000U;
+    for (unsigned direction = 0; direction < 2; ++direction)
+    {
+        const user_bandwidth_state_t *bandwidth = &u->runtime.bandwidth[direction];
+        twfRequire(bandwidth->policy_valid && bandwidth->rate == 4 + direction && bandwidth->bucket.credit == 1 &&
+                       bandwidth->bucket.remainder == 0 && bandwidth->bucket.has_clock &&
+                       bandwidth->bucket.last_refill_ms >= bandwidth_before &&
+                       bandwidth->bucket.last_refill_ms <= bandwidth_after && bandwidth->oversized_ticket == 0 &&
+                       bandwidth->oversized_capacity == 0 && bandwidth->head == runtime.bandwidth[direction].head &&
+                       bandwidth->tail == runtime.bandwidth[direction].tail,
+                   "finite bandwidth edit did not install the defined initial credit or changed waiters");
+    }
+    memoryCopy(runtime.bandwidth, u->runtime.bandwidth, sizeof(runtime.bandwidth));
     /* Disabled and expired users remain editable; omitted siblings survive. */
     edit(42, "{\"limit\":{\"traffic\":{\"total\":\"0\"}},\"time\":{\"expire_at_ms\":\"0\"}}", NULL);
     twfRequire(u->limit.traffic.u == UINT64_MAX && u->limit.traffic.d == 2 && u->limit.traffic.total == 0 &&

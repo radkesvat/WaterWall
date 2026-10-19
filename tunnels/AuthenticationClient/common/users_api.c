@@ -906,3 +906,193 @@ void authenticationclientRequestPush(tunnel_t *t)
      * latched progress state and may be superseded by the periodic push. */
     sendWorkerMessageForceQueueBestEffort(0, authenticationclientRequestPushOnWorker0, t, NULL, NULL);
 }
+
+bool authenticationclientUserObservePayload(tunnel_t *t, const user_handle_t *handle, uint64_t upload_bytes,
+                                            uint64_t download_bytes, uint64_t now_ms)
+{
+    assert(t != NULL && userHandleIsValid(handle));
+    authenticationclient_tstate_t *ts                      = tunnelGetState(t);
+    bool                           first_usage_push_needed = false;
+    rwlockReadLock(&ts->users_lock);
+    bool close = ts->users == NULL ||
+                 usersObserveTrafficByIdentifier(
+                     ts->users, handle->user_id, upload_bytes, download_bytes, now_ms, &first_usage_push_needed);
+    rwlockReadUnlock(&ts->users_lock);
+    if (first_usage_push_needed &&
+        authenticationclientRequestFirstUsagePush(t) == kAuthenticationClientFirstUsagePushNotReady)
+    {
+        rwlockReadLock(&ts->users_lock);
+        if (ts->users != NULL)
+            usersResetFirstUsagePushRequestByIdentifier(ts->users, handle->user_id);
+        rwlockReadUnlock(&ts->users_lock);
+    }
+    return close;
+}
+
+static authenticationclient_bandwidth_ticket_t *authenticationclientBandwidthTicket(authenticationclient_tstate_t *ts,
+                                                                                    uint64_t user_id, uint64_t ticket)
+{
+    if (ticket == 0 || ts->bandwidth_tickets == NULL)
+        return NULL;
+    authenticationclient_bandwidth_ticket_t *record =
+        &ts->bandwidth_tickets[ticket % kAuthenticationClientBandwidthMaxTickets];
+    return record->id == ticket && record->user_id == user_id ? record : NULL;
+}
+
+uint64_t authenticationclientUserBandwidthRegister(tunnel_t *t, const user_handle_t *handle,
+                                                   user_bandwidth_direction_t direction)
+{
+    assert(t != NULL && userHandleIsValid(handle) && direction <= kUserBandwidthDownload);
+    authenticationclient_tstate_t *ts     = tunnelGetState(t);
+    uint64_t                       ticket = 0;
+    mutexLock(&ts->control_mutex);
+    if (ts->bandwidth_ticket_count >= kAuthenticationClientBandwidthMaxTickets ||
+        ts->bandwidth_last_ticket == UINT64_MAX)
+        goto done;
+    if (ts->bandwidth_tickets == NULL)
+        ts->bandwidth_tickets =
+            memoryAllocateZero(kAuthenticationClientBandwidthMaxTickets * sizeof(*ts->bandwidth_tickets));
+    for (size_t i = 0; i < kAuthenticationClientBandwidthMaxTickets && ts->bandwidth_last_ticket != UINT64_MAX; ++i)
+    {
+        uint64_t                                 candidate = ++ts->bandwidth_last_ticket;
+        authenticationclient_bandwidth_ticket_t *record =
+            &ts->bandwidth_tickets[candidate % kAuthenticationClientBandwidthMaxTickets];
+        if (record->id != 0)
+            continue;
+        rwlockReadLock(&ts->users_lock);
+        bool registered =
+            ts->users != NULL && usersBandwidthRegisterByIdentifier(ts->users, handle->user_id, direction, candidate);
+        rwlockReadUnlock(&ts->users_lock);
+        if (registered)
+        {
+            *record = (authenticationclient_bandwidth_ticket_t) {
+                .id = candidate, .user_id = handle->user_id, .direction = direction};
+            ++ts->bandwidth_ticket_count;
+            ticket = candidate;
+        }
+        break;
+    }
+done:
+    mutexUnlock(&ts->control_mutex);
+    return ticket;
+}
+
+void authenticationclientUserBandwidthSetEligible(tunnel_t *t, const user_handle_t *handle,
+                                                  user_bandwidth_direction_t direction, uint64_t ticket, bool eligible)
+{
+    assert(t != NULL && userHandleIsValid(handle) && ticket != 0);
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    rwlockReadLock(&ts->users_lock);
+    if (ts->users != NULL)
+        usersBandwidthSetEligibleByIdentifier(ts->users, handle->user_id, direction, ticket, eligible);
+    rwlockReadUnlock(&ts->users_lock);
+}
+
+static void authenticationclientBandwidthCostSubtract(buffer_budget_cost_t *used, buffer_budget_cost_t cost)
+{
+    assert(used->bytes >= cost.bytes && used->charge >= cost.charge && used->entries >= cost.entries);
+    used->bytes -= cost.bytes;
+    used->charge -= cost.charge;
+    used->entries -= cost.entries;
+}
+
+void authenticationclientUserBandwidthCancel(tunnel_t *t, const user_handle_t *handle,
+                                             user_bandwidth_direction_t direction, uint64_t ticket)
+{
+    assert(t != NULL && userHandleIsValid(handle));
+    if (ticket == 0)
+        return;
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    mutexLock(&ts->control_mutex);
+    authenticationclient_bandwidth_ticket_t *record = authenticationclientBandwidthTicket(ts, handle->user_id, ticket);
+    if (record != NULL)
+    {
+        assert(record->direction == direction);
+        rwlockReadLock(&ts->users_lock);
+        if (ts->users != NULL)
+            usersBandwidthCancelByIdentifier(ts->users, handle->user_id, direction, ticket);
+        rwlockReadUnlock(&ts->users_lock);
+        authenticationclientBandwidthCostSubtract(&ts->bandwidth_queued_cost, record->cost);
+        memoryZero(record, sizeof(*record));
+        --ts->bandwidth_ticket_count;
+    }
+    mutexUnlock(&ts->control_mutex);
+}
+
+bool authenticationclientUserBandwidthReserve(tunnel_t *t, const user_handle_t *handle, uint64_t ticket,
+                                              buffer_budget_cost_t cost)
+{
+    assert(t != NULL && userHandleIsValid(handle) && ticket != 0);
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    bool                           ok = false;
+    mutexLock(&ts->control_mutex);
+    authenticationclient_bandwidth_ticket_t *record = authenticationclientBandwidthTicket(ts, handle->user_id, ticket);
+    buffer_budget_cost_t                    *used   = &ts->bandwidth_queued_cost;
+    if (record == NULL || cost.bytes > (64U << 20) - used->bytes || cost.charge > (128U << 20) - used->charge ||
+        cost.entries > 16384 - used->entries)
+        goto done;
+    rwlockReadLock(&ts->users_lock);
+    ok = ts->users != NULL &&
+         usersBandwidthReserveByIdentifier(ts->users, handle->user_id, record->direction, ticket, cost);
+    rwlockReadUnlock(&ts->users_lock);
+    if (ok)
+    {
+        used->bytes += cost.bytes;
+        used->charge += cost.charge;
+        used->entries += cost.entries;
+        record->cost.bytes += cost.bytes;
+        record->cost.charge += cost.charge;
+        record->cost.entries += cost.entries;
+    }
+done:
+    mutexUnlock(&ts->control_mutex);
+    return ok;
+}
+
+void authenticationclientUserBandwidthRelease(tunnel_t *t, const user_handle_t *handle, uint64_t ticket,
+                                              buffer_budget_cost_t cost)
+{
+    assert(t != NULL && userHandleIsValid(handle) && ticket != 0);
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    mutexLock(&ts->control_mutex);
+    authenticationclient_bandwidth_ticket_t *record = authenticationclientBandwidthTicket(ts, handle->user_id, ticket);
+    if (record != NULL)
+    {
+        rwlockReadLock(&ts->users_lock);
+        if (ts->users != NULL)
+            usersBandwidthReleaseByIdentifier(ts->users, handle->user_id, record->direction, ticket, cost);
+        rwlockReadUnlock(&ts->users_lock);
+        authenticationclientBandwidthCostSubtract(&record->cost, cost);
+        authenticationclientBandwidthCostSubtract(&ts->bandwidth_queued_cost, cost);
+    }
+    mutexUnlock(&ts->control_mutex);
+}
+
+user_bandwidth_result_t authenticationclientUserBandwidthPreview(tunnel_t *t, const user_handle_t *handle,
+                                                                 user_bandwidth_direction_t direction, uint64_t ticket,
+                                                                 uint64_t bytes, bool datagram)
+{
+    assert(t != NULL && userHandleIsValid(handle));
+    authenticationclient_tstate_t *ts     = tunnelGetState(t);
+    user_bandwidth_result_t        result = {.decision = kUserDeliveryReject};
+    rwlockReadLock(&ts->users_lock);
+    if (ts->users != NULL)
+        result = usersBandwidthPreviewByIdentifier(ts->users, handle->user_id, direction, ticket, bytes, datagram);
+    rwlockReadUnlock(&ts->users_lock);
+    return result;
+}
+
+user_delivery_decision_t authenticationclientUserCommitDelivery(tunnel_t *t, const user_handle_t *handle,
+                                                                user_bandwidth_direction_t direction, uint64_t ticket,
+                                                                uint64_t bytes, bool datagram, bool more)
+{
+    assert(t != NULL && userHandleIsValid(handle));
+    authenticationclient_tstate_t *ts     = tunnelGetState(t);
+    user_delivery_decision_t       result = kUserDeliveryReject;
+    rwlockReadLock(&ts->users_lock);
+    if (ts->users != NULL)
+        result = usersCommitDeliveryByIdentifier(
+            ts->users, handle->user_id, direction, ticket, bytes, datagram, more, ts->traffic_multiplier);
+    rwlockReadUnlock(&ts->users_lock);
+    return result;
+}

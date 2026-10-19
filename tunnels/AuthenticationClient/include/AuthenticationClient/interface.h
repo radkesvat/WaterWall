@@ -39,8 +39,8 @@ WW_EXPORT node_t nodeAuthenticationClientGet(void);
 WW_EXPORT authenticationclient_state_t authenticationclientGetState(tunnel_t *t);
 WW_EXPORT bool                         authenticationclientIsReady(tunnel_t *t);
 /* Admission from the last valid RAM cache, independently of transport state. */
-WW_EXPORT bool                         authenticationclientCanAuthenticate(tunnel_t *t);
-WW_EXPORT uint64_t                     authenticationclientUsersGeneration(tunnel_t *t);
+WW_EXPORT bool     authenticationclientCanAuthenticate(tunnel_t *t);
+WW_EXPORT uint64_t authenticationclientUsersGeneration(tunnel_t *t);
 
 WW_EXPORT bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password, user_handle_t *handle_out);
 WW_EXPORT authenticationclient_user_lookup_result_t
@@ -90,8 +90,8 @@ WW_EXPORT cJSON *authenticationclientUsersToJson(tunnel_t *t);
 WW_EXPORT bool   authenticationclientUserGetStats(tunnel_t *t, const user_handle_t *handle, user_stat_t *stats_out);
 /* Traffic inputs are actual measured bytes. Both accounting APIs apply this
  * client's configured multiplier once; returned traffic stats are charged bytes. */
-WW_EXPORT bool   authenticationclientUserAddTraffic(tunnel_t *t, const user_handle_t *handle, uint64_t upload_bytes,
-                                                    uint64_t download_bytes);
+WW_EXPORT bool authenticationclientUserAddTraffic(tunnel_t *t, const user_handle_t *handle, uint64_t upload_bytes,
+                                                  uint64_t download_bytes);
 
 WW_EXPORT void authenticationclientRequestPull(tunnel_t *t);
 WW_EXPORT void authenticationclientRequestPush(tunnel_t *t);
@@ -116,3 +116,28 @@ WW_EXPORT bool authenticationclientUserAccountTraffic(tunnel_t *t, const user_ha
                                                       uint64_t download_bytes, uint64_t now_ms);
 /* True when an already-open connection for this user must be closed (disabled, expired, over quota). */
 WW_EXPORT bool authenticationclientUserShouldClose(tunnel_t *t, const user_handle_t *handle, uint64_t now_ms);
+
+/* UserController arrival observation does not charge quota or multiplier carry. */
+WW_EXPORT bool authenticationclientUserObservePayload(tunnel_t *t, const user_handle_t *handle, uint64_t upload_bytes,
+                                                      uint64_t download_bytes, uint64_t now_ms);
+/* Tickets are client-unique and never reused. Registration starts ineligible;
+ * activate after queue admission. Cancellation releases all remaining costs. */
+WW_EXPORT uint64_t authenticationclientUserBandwidthRegister(tunnel_t *t, const user_handle_t *handle,
+                                                             user_bandwidth_direction_t direction);
+WW_EXPORT void     authenticationclientUserBandwidthSetEligible(tunnel_t *t, const user_handle_t *handle,
+                                                                user_bandwidth_direction_t direction, uint64_t ticket,
+                                                                bool eligible);
+WW_EXPORT void     authenticationclientUserBandwidthCancel(tunnel_t *t, const user_handle_t *handle,
+                                                           user_bandwidth_direction_t direction, uint64_t ticket);
+WW_EXPORT bool     authenticationclientUserBandwidthReserve(tunnel_t *t, const user_handle_t *handle, uint64_t ticket,
+                                                            buffer_budget_cost_t cost);
+WW_EXPORT void     authenticationclientUserBandwidthRelease(tunnel_t *t, const user_handle_t *handle, uint64_t ticket,
+                                                            buffer_budget_cost_t cost);
+WW_EXPORT user_bandwidth_result_t  authenticationclientUserBandwidthPreview(tunnel_t *t, const user_handle_t *handle,
+                                                                            user_bandwidth_direction_t direction,
+                                                                            uint64_t ticket, uint64_t bytes,
+                                                                            bool datagram);
+WW_EXPORT user_delivery_decision_t authenticationclientUserCommitDelivery(tunnel_t *t, const user_handle_t *handle,
+                                                                          user_bandwidth_direction_t direction,
+                                                                          uint64_t ticket, uint64_t bytes,
+                                                                          bool datagram, bool more);

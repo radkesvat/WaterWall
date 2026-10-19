@@ -23,6 +23,8 @@
  *   usersChangePassword() instead so database lookup indexes are updated.
  */
 
+#include "base/rate_bucket.h"
+#include "bufio/buffer_budget.h"
 #include "wlibc.h"
 
 #include "cJSON.h"
@@ -184,6 +186,40 @@ typedef struct user_ip_usage_s
  */
 typedef struct user_ip_index_s user_ip_index_t;
 
+/* Shared bandwidth state contains numeric identities and resource costs only.
+ * All fields are guarded by the user's stats lock, after its configuration lock. */
+typedef enum user_bandwidth_direction_e
+{
+    kUserBandwidthUpload   = 0,
+    kUserBandwidthDownload = 1
+} user_bandwidth_direction_t;
+
+typedef enum user_delivery_decision_e
+{
+    kUserDeliveryForward = 0,
+    kUserDeliveryWait,
+    kUserDeliveryReject,
+    kUserDeliveryForwardClose
+} user_delivery_decision_t;
+
+typedef struct user_bandwidth_result_s
+{
+    user_delivery_decision_t decision;
+    uint64_t                 grant;
+    uint64_t                 retry_ms;
+    bool                     limited;
+} user_bandwidth_result_t;
+
+typedef struct user_bandwidth_waiter_s user_bandwidth_waiter_t;
+typedef struct user_bandwidth_state_s
+{
+    rate_bucket_t            bucket;
+    uint64_t                 rate;
+    uint64_t                 oversized_ticket, oversized_capacity;
+    bool                     policy_valid;
+    user_bandwidth_waiter_t *head, *tail;
+} user_bandwidth_state_t;
+
 /*
  * Live, process-local enforcement state. Unlike user_stat_t this is never
  * serialized, copied, or synced to AuthenticationServer; it is recreated empty
@@ -193,10 +229,13 @@ typedef struct user_ip_index_s user_ip_index_t;
  */
 typedef struct user_runtime_stat_s
 {
-    uint64_t         active_cons_out;
-    user_ip_usage_t *ip_usages;
-    size_t           ip_usage_count;
-    size_t           ip_usage_capacity;
+    user_bandwidth_state_t bandwidth[2];
+    buffer_budget_cost_t   queued_cost;
+    size_t                 bandwidth_waiter_count;
+    uint64_t               active_cons_out;
+    user_ip_usage_t       *ip_usages;
+    size_t                 ip_usage_count;
+    size_t                 ip_usage_capacity;
     /* Optional; NULL until the distinct-IP set is large enough to promote. */
     user_ip_index_t *ip_index;
     bool             first_usage_push_requested;
@@ -422,3 +461,20 @@ void userGetTimeInfo(User *user, user_time_info_t *timeinfo);
 void userGetStats(User *user, user_stat_t *stats);
 
 user_stat_t userStatsDiff(User *base, User *current);
+
+/* Bandwidth runtime APIs. Ticket zero is an immediate, nonqueued request and
+ * cannot bypass any eligible waiter. All times are freshly sampled under locks. */
+bool userObserveTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint64_t now_ms,
+                        bool *first_usage_push_needed);
+bool userBandwidthRegister(User *user, user_bandwidth_direction_t direction, uint64_t ticket);
+void userBandwidthSetEligible(User *user, user_bandwidth_direction_t direction, uint64_t ticket, bool eligible);
+void userBandwidthCancel(User *user, user_bandwidth_direction_t direction, uint64_t ticket);
+bool userBandwidthReserve(User *user, user_bandwidth_direction_t direction, uint64_t ticket, buffer_budget_cost_t cost);
+void userBandwidthRelease(User *user, user_bandwidth_direction_t direction, uint64_t ticket, buffer_budget_cost_t cost);
+user_bandwidth_result_t  userBandwidthPreview(User *user, user_bandwidth_direction_t direction, uint64_t ticket,
+                                              uint64_t bytes, bool datagram);
+user_delivery_decision_t userCommitDelivery(User *user, user_bandwidth_direction_t direction, uint64_t ticket,
+                                            uint64_t bytes, bool datagram, bool more, uint32_t multiplier);
+/* Caller holds both configuration and stats write locks. Settle old policy and
+ * clamp temporary datagram credit before applying the current configured rates. */
+void userBandwidthReconcileLocked(User *user, uint64_t now_ms);

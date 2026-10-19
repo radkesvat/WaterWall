@@ -134,7 +134,6 @@ static void testLogCaptureEnd(void)
     test_log_capture_enabled = false;
 }
 
-
 static void testDuplicateCredentialLogsOmitCredentials(void)
 {
     static const char duplicate_password[] = "credential-log-regression-password";
@@ -1708,6 +1707,222 @@ static void testFirstUseRacesAndMigration(void)
     usersDestroy(&old_users);
     atomic_store(&client_clock_test, false);
 }
+static void testBandwidthSharedTurnsAndMigration(void)
+{
+    atomic_store(&client_clock_test, true);
+    atomic_store(&client_clock_ms, 0);
+    users_t old_users, new_users;
+    user_t  source;
+    require(usersCreate(&old_users) && usersCreate(&new_users) && userCreate(&source, "bandwidth-old"),
+            "bandwidth fixture");
+    userSetId(&source, 42);
+    source.limit.bandwidth = (user_ud_t) {100, 200};
+    require(usersAddUser(&old_users, &source), "bandwidth old user");
+    userDestroy(&source);
+    require(userCreate(&source, "bandwidth-new"), "bandwidth changed credentials");
+    userSetId(&source, 42);
+    source.limit.bandwidth = (user_ud_t) {100, 200};
+    require(usersAddUser(&new_users, &source), "bandwidth new user");
+    userDestroy(&source);
+    user_t *user = usersLookupByIdentifier(&old_users, 42);
+    userInstallClientClock(user, 10000, 5000, 0);
+    bool push = false;
+    require(! userObserveTraffic(user, 20, 0, 0, &push) && push, "arrival first use");
+    require(user->stats.traffic.u == 0 && user->runtime.traffic_remainder_u == 0 && user->client_time.observed,
+            "arrival charged queued bytes");
+    user_bandwidth_result_t result = userBandwidthPreview(user, kUserBandwidthUpload, 0, 20, false);
+    require(result.decision == kUserDeliveryForward && result.grant == 10 && result.limited, "100 ms initial credit");
+    require(userCommitDelivery(user, kUserBandwidthUpload, 0, 10, false, false, 500) == kUserDeliveryForward,
+            "initial delivery commit");
+    require(user->stats.traffic.u == 5 &&
+                userBandwidthPreview(user, kUserBandwidthUpload, 0, 1, false).decision == kUserDeliveryWait,
+            "aggregate credit or multiplier");
+    require(userBandwidthPreview(user, kUserBandwidthDownload, 0, 20, false).grant == 20, "directions share credit");
+    require(userBandwidthRegister(user, kUserBandwidthUpload, 11) &&
+                userBandwidthRegister(user, kUserBandwidthUpload, 22),
+            "waiter registration");
+    userBandwidthSetEligible(user, kUserBandwidthUpload, 11, true);
+    userBandwidthSetEligible(user, kUserBandwidthUpload, 22, true);
+    atomic_store(&client_clock_ms, 105);
+    require(userBandwidthPreview(user, kUserBandwidthUpload, 0, 1, false).decision == kUserDeliveryWait,
+            "new traffic bypassed eligible turn");
+    require(userCommitDelivery(user, kUserBandwidthUpload, 11, 1, false, true, 1000) == kUserDeliveryForward,
+            "first waiter turn");
+    require(userBandwidthPreview(user, kUserBandwidthUpload, 11, 1, false).decision == kUserDeliveryWait &&
+                userBandwidthPreview(user, kUserBandwidthUpload, 22, 1, false).decision == kUserDeliveryForward,
+            "successful turn did not rotate");
+    userBandwidthSetEligible(user, kUserBandwidthUpload, 22, false);
+    buffer_budget_cost_t cost = {123, 256, 1};
+    require(userBandwidthReserve(user, kUserBandwidthUpload, 11, cost), "queue reservation");
+    uint64_t credit    = user->runtime.bandwidth[0].bucket.credit;
+    uint16_t remainder = user->runtime.bandwidth[0].bucket.remainder;
+    require(usersMigrateRuntimeStateByIdentifier(&new_users, &old_users), "bandwidth refresh migration");
+    user_t *next = usersLookupByIdentifier(&new_users, 42);
+    require(next->runtime.bandwidth[0].bucket.credit == credit &&
+                next->runtime.bandwidth[0].bucket.remainder == remainder && next->runtime.bandwidth_waiter_count == 2 &&
+                next->runtime.queued_cost.bytes == 123,
+            "same ID refresh reset runtime or minted burst");
+    require(userCommitDelivery(next, kUserBandwidthUpload, 11, 1, false, true, 1000) == kUserDeliveryForward,
+            "paused ticket still occupied turn after migration");
+    userBandwidthSetEligible(next, kUserBandwidthUpload, 22, true);
+    require(userBandwidthPreview(next, kUserBandwidthUpload, 11, 1, false).decision == kUserDeliveryForward,
+            "resume jumped ahead of existing eligible ticket");
+    userBandwidthRelease(next, kUserBandwidthUpload, 11, cost);
+    userBandwidthCancel(next, kUserBandwidthUpload, 11);
+    userBandwidthCancel(next, kUserBandwidthUpload, 22);
+    require(next->runtime.queued_cost.bytes == 0 && next->runtime.bandwidth_waiter_count == 0,
+            "queue accounting leaked");
+    usersDestroy(&new_users);
+    usersDestroy(&old_users);
+    atomic_store(&client_clock_test, false);
+}
+
+static void testBandwidthDatagramCreditAndRateChanges(void)
+{
+    atomic_store(&client_clock_test, true);
+    atomic_store(&client_clock_ms, 0);
+    user_t user;
+    require(userCreate(&user, "datagram-budget"), "datagram fixture");
+    user.limit.bandwidth.u = 1;
+    require(userBandwidthRegister(&user, kUserBandwidthUpload, 1), "packet ticket");
+    userBandwidthSetEligible(&user, kUserBandwidthUpload, 1, true);
+    atomic_store(&client_clock_ms, 100000);
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 1, 3, true).decision == kUserDeliveryWait,
+            "preactivation idle minted whole-packet credit");
+    atomic_store(&client_clock_ms, 101000);
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 1, 3, true).decision == kUserDeliveryWait,
+            "oversized packet released before earning credit");
+    atomic_store(&client_clock_ms, 102000);
+    require(userCommitDelivery(&user, kUserBandwidthUpload, 1, 3, true, true, 1000) == kUserDeliveryForward &&
+                user.stats.traffic.u == 3,
+            "1 byte/s packet did not make progress");
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 1, 4, true).decision == kUserDeliveryWait,
+            "oversized head burst survived delivery");
+    atomic_store(&client_clock_ms, 105000);
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 1, 4, true).decision == kUserDeliveryWait,
+            "packet gained credit early");
+    userBandwidthSetEligible(&user, kUserBandwidthUpload, 1, false);
+    require(user.runtime.bandwidth[0].bucket.credit == 1, "pause transferred oversized burst");
+    userBandwidthSetEligible(&user, kUserBandwidthUpload, 1, true);
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 1, 4, true).decision == kUserDeliveryWait,
+            "resumed head skipped activation");
+    rwlockWriteLock(&user.lock);
+    rwlockWriteLock(&user.stats_lock);
+    user.limit.bandwidth.u = 2;
+    userBandwidthReconcileLocked(&user, 105000);
+    rwlockWriteUnlock(&user.stats_lock);
+    rwlockWriteUnlock(&user.lock);
+    require(user.runtime.bandwidth[0].bucket.credit == 1 && user.runtime.bandwidth[0].oversized_ticket == 0,
+            "rate change retained oversized credit");
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 1, 65536, true).decision == kUserDeliveryReject,
+            "oversized datagram accepted");
+    require(userCommitDelivery(&user, kUserBandwidthUpload, 1, 0, true, false, 1000) == kUserDeliveryForward &&
+                user.stats.traffic.u == 3,
+            "empty packet lost or charged");
+    userBandwidthCancel(&user, kUserBandwidthUpload, 1);
+    userDestroy(&user);
+    atomic_store(&client_clock_test, false);
+}
+
+static void testBandwidthRateTransitions(void)
+{
+    atomic_store(&client_clock_test, true);
+    atomic_store(&client_clock_ms, 0);
+    users_t users;
+    user_t  source;
+    require(usersCreate(&users) && userCreate(&source, "rate-transitions"), "rate transition fixture");
+    userSetId(&source, 42);
+    source.limit.bandwidth.u = 15;
+    require(usersAddUser(&users, &source), "rate transition user");
+    userDestroy(&source);
+    user_t *user = usersLookupByIdentifier(&users, 42);
+    require(userCommitDelivery(user, kUserBandwidthUpload, 0, 2, false, false, 1000) == kUserDeliveryForward,
+            "rate transition initial credit");
+    atomic_store(&client_clock_ms, 50);
+    require(userBandwidthPreview(user, kUserBandwidthUpload, 0, 1, false).decision == kUserDeliveryWait,
+            "fraction rounded into early byte");
+    user_config_patch_t patch = {.mask = kUserConfigBandwidthUp, .limit.bandwidth.u = 25};
+    require(usersPatchConfigByIdentifier(&users, 42, &patch) == kUsersUpdateResultOk &&
+                user->runtime.bandwidth[0].bucket.credit == 0 && user->runtime.bandwidth[0].bucket.remainder == 750,
+            "rate change lost old-rate fraction or minted burst");
+    atomic_store(&client_clock_ms, 60);
+    require(userCommitDelivery(user, kUserBandwidthUpload, 0, 1, false, false, 1000) == kUserDeliveryForward,
+            "fractional refill did not combine across rate change");
+    patch.limit.bandwidth.u = 0;
+    require(usersPatchConfigByIdentifier(&users, 42, &patch) == kUsersUpdateResultOk, "finite to unlimited");
+    require(userBandwidthRegister(user, kUserBandwidthUpload, 99), "unlimited waiter");
+    userBandwidthSetEligible(user, kUserBandwidthUpload, 99, true);
+    require(userBandwidthPreview(user, kUserBandwidthUpload, 0, 128, false).decision == kUserDeliveryWait &&
+                userBandwidthPreview(user, kUserBandwidthUpload, 99, 128, false).grant == 128,
+            "finite to unlimited lost FIFO");
+    userBandwidthCancel(user, kUserBandwidthUpload, 99);
+    patch.limit.bandwidth.u = 100;
+    require(usersPatchConfigByIdentifier(&users, 42, &patch) == kUsersUpdateResultOk &&
+                userCommitDelivery(user, kUserBandwidthUpload, 0, 10, false, false, 1000) == kUserDeliveryForward,
+            "unlimited to finite did not initialize defined burst");
+    require(usersPatchConfigByIdentifier(&users, 42, &patch) == kUsersUpdateResultOk &&
+                userBandwidthPreview(user, kUserBandwidthUpload, 0, 1, false).decision == kUserDeliveryWait,
+            "unchanged refresh minted credit");
+    usersDestroy(&users);
+    atomic_store(&client_clock_test, false);
+}
+
+typedef struct bandwidth_race_context_s
+{
+    user_t      *user;
+    atomic_uint *forwarded;
+} bandwidth_race_context_t;
+static WTHREAD_ROUTINE(bandwidthRaceThread)
+{
+    bandwidth_race_context_t *context = userdata;
+    for (unsigned i = 0; i < 1000; ++i)
+        if (userCommitDelivery(context->user, kUserBandwidthUpload, 0, 1, false, false, 1000) == kUserDeliveryForward)
+            atomic_fetch_add(context->forwarded, 1);
+    return 0;
+}
+
+static void testBandwidthConcurrentAndFinalQuota(void)
+{
+    atomic_store(&client_clock_test, true);
+    atomic_store(&client_clock_ms, 0);
+    user_t user;
+    require(userCreate(&user, "bandwidth-race"), "bandwidth race fixture");
+    user.limit.bandwidth.u             = 1000;
+    atomic_uint              forwarded = 0;
+    bandwidth_race_context_t context   = {&user, &forwarded};
+    wthread_t                threads[2];
+    for (unsigned i = 0; i < 2; ++i)
+        require(threadCreate(&threads[i], bandwidthRaceThread, &context) == kWThreadErrorNone, "bandwidth thread");
+    for (unsigned i = 0; i < 2; ++i)
+        require(threadJoin(threads[i]) == 0, "bandwidth thread join");
+    require(atomic_load(&forwarded) == 100 && user.stats.traffic.u == 100,
+            "racing workers overspent shared initial credit");
+    userDestroy(&user);
+    require(userCreate(&user, "final-chunk"), "quota fixture");
+    user.limit.traffic.total = 1;
+    require(userCommitDelivery(&user, kUserBandwidthUpload, 0, 2, false, false, 1000) == kUserDeliveryForwardClose &&
+                user.stats.traffic.u == 2,
+            "final quota chunk was discarded or uncharged");
+    require(userCommitDelivery(&user, kUserBandwidthUpload, 0, 1, false, false, 1000) == kUserDeliveryReject &&
+                user.stats.traffic.u == 2,
+            "exhausted quota charged another candidate");
+    userDestroy(&user);
+    require(userCreate(&user, "extreme-rate"), "extreme-rate fixture");
+    user.limit.bandwidth.u           = UINT64_MAX;
+    user_bandwidth_result_t preview  = userBandwidthPreview(&user, kUserBandwidthUpload, 0, UINT64_MAX, false);
+    uint64_t                capacity = UINT64_MAX / 10 + 1;
+    require(preview.grant == 16384 && user.runtime.bandwidth[0].bucket.credit == capacity,
+            "full uint64 rate was clamped or stream turn was unbounded");
+    require(userCommitDelivery(&user, kUserBandwidthUpload, 0, 16384, false, false, 1) == kUserDeliveryForward,
+            "extreme-rate initial grant");
+    atomic_store(&client_clock_ms, UINT64_MAX / 1000);
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 0, capacity, false).grant == 16384 &&
+                user.runtime.bandwidth[0].bucket.credit == capacity,
+            "extreme-rate long idle overflow");
+    userDestroy(&user);
+    atomic_store(&client_clock_test, false);
+}
+
 #endif
 
 int main(void)
@@ -1735,6 +1950,10 @@ int main(void)
     testFirstUsageSetIfMissingKeepsServerValue();
     testEarliestFirstUseMerge();
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
+    testBandwidthSharedTurnsAndMigration();
+    testBandwidthDatagramCreditAndRateChanges();
+    testBandwidthConcurrentAndFinalQuota();
+    testBandwidthRateTransitions();
     testLocalFirstUseClockAndEdits();
     testFirstUseRacesAndMigration();
     testDiscountedFirstUseStartsBeforeWholeByteCharge();

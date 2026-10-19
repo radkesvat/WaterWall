@@ -42,6 +42,10 @@ void authenticationclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t
     authenticationclientDestroyUsersSnapshot(sync_baseline_users);
     rwlockDestroy(&ts->users_lock);
 
+    assert(ts->bandwidth_ticket_count == 0);
+    assert(ts->bandwidth_queued_cost.bytes == 0 && ts->bandwidth_queued_cost.charge == 0 &&
+           ts->bandwidth_queued_cost.entries == 0);
+    memoryFree(ts->bandwidth_tickets);
     mutexDestroy(&ts->control_mutex);
 
     memoryFree(ts->name);

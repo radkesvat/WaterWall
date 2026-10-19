@@ -8,6 +8,14 @@
 #include "utils/json_helpers.h"
 #include "wtime.h"
 
+struct user_bandwidth_waiter_s
+{
+    uint64_t                 ticket;
+    bool                     eligible;
+    buffer_budget_cost_t     cost;
+    user_bandwidth_waiter_t *next;
+};
+
 static bool userPublicDeadlineExpired(uint64_t deadline_ms)
 {
     return deadline_ms != 0 && getHRTimeUs() / 1000U >= deadline_ms;
@@ -1223,6 +1231,16 @@ void userRuntimeStateClear(user_runtime_stat_t *runtime)
         memoryFree(runtime->ip_usages);
     }
     userIpIndexFree(runtime->ip_index);
+    for (unsigned direction = 0; direction < 2; ++direction)
+    {
+        user_bandwidth_waiter_t *waiter = runtime->bandwidth[direction].head;
+        while (waiter != NULL)
+        {
+            user_bandwidth_waiter_t *next = waiter->next;
+            memoryFree(waiter);
+            waiter = next;
+        }
+    }
     memoryZero(runtime, sizeof(*runtime));
 }
 
@@ -2190,6 +2208,52 @@ static uint64_t userScaleTrafficLocked(uint64_t bytes, uint32_t multiplier, uint
     return userSaturatingAdd(whole * multiplier, fractional / kUserTrafficMultiplierScale);
 }
 
+/* User and stats write locks are held. Arrival observations and public
+ * accounting share the same clock and coalesced first-use notification. */
+static uint64_t userObserveTrafficLocked(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint64_t now_ms,
+                                         bool *first_usage_push_needed)
+{
+    if (user->client_time.clock_valid)
+    {
+        now_ms = userClientAdvanceAgeLocked(user, getHRTimeUs() / 1000ULL);
+        if ((upload_bytes != 0 || download_bytes != 0) && ! user->client_time.observed)
+        {
+            user_client_time_t *time = &user->client_time;
+            time->observed           = true;
+            time->first_local_ms     = now_ms;
+            time->first_report_ms =
+                userSaturatingAdd(time->accounting_anchor_ms, userSaturatingSub(now_ms, time->local_anchor_ms));
+            time->age_valid    = true;
+            time->future_valid = false;
+        }
+        userClientProjectExpiryLocked(user, now_ms);
+    }
+    if (first_usage_push_needed != NULL && (upload_bytes != 0 || download_bytes != 0) &&
+        (user->client_time.clock_valid ? ! user->client_time.observation_acked
+                                       : user->timeinfo.first_usage_at_ms == 0) &&
+        ! user->runtime.first_usage_push_requested)
+    {
+        user->runtime.first_usage_push_requested = true;
+        *first_usage_push_needed                 = true;
+    }
+    return now_ms;
+}
+
+bool userObserveTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint64_t now_ms,
+                        bool *first_usage_push_needed)
+{
+    assert(userObjectIsInitialized(user));
+    if (first_usage_push_needed != NULL)
+        *first_usage_push_needed = false;
+    rwlockWriteLock(&user->lock);
+    rwlockWriteLock(&user->stats_lock);
+    now_ms     = userObserveTrafficLocked(user, upload_bytes, download_bytes, now_ms, first_usage_push_needed);
+    bool close = ! user->enabled || userExpiredLocked(user, now_ms) || userTrafficReachedLocked(user);
+    rwlockWriteUnlock(&user->stats_lock);
+    rwlockWriteUnlock(&user->lock);
+    return close;
+}
+
 bool userAccountTrafficScaled(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint32_t multiplier,
                               uint64_t now_ms, bool *first_usage_push_needed)
 {
@@ -2208,36 +2272,14 @@ bool userAccountTrafficScaled(User *user, uint64_t upload_bytes, uint64_t downlo
 
     rwlockWriteLock(&user->lock);
     rwlockWriteLock(&user->stats_lock);
-    if (user->client_time.clock_valid)
-    {
-        now_ms = userClientAdvanceAgeLocked(user, getHRTimeUs() / 1000ULL);
-        if ((upload_bytes != 0 || download_bytes != 0) && ! user->client_time.observed)
-        {
-            user_client_time_t *time = &user->client_time;
-            time->observed           = true;
-            time->first_local_ms     = now_ms;
-            time->first_report_ms =
-                userSaturatingAdd(time->accounting_anchor_ms, userSaturatingSub(now_ms, time->local_anchor_ms));
-            time->age_valid    = true;
-            time->future_valid = false;
-        }
-        userClientProjectExpiryLocked(user, now_ms);
-    }
+    now_ms = userObserveTrafficLocked(user, upload_bytes, download_bytes, now_ms, first_usage_push_needed);
     const uint64_t charged_upload =
         userScaleTrafficLocked(upload_bytes, multiplier, &user->runtime.traffic_remainder_u);
     const uint64_t charged_download =
         userScaleTrafficLocked(download_bytes, multiplier, &user->runtime.traffic_remainder_d);
     user->stats.traffic.u = userSaturatingAdd(user->stats.traffic.u, charged_upload);
     user->stats.traffic.d = userSaturatingAdd(user->stats.traffic.d, charged_download);
-    if (first_usage_push_needed != NULL && (upload_bytes != 0 || download_bytes != 0) &&
-        (user->client_time.clock_valid ? ! user->client_time.observation_acked
-                                       : user->timeinfo.first_usage_at_ms == 0) &&
-        ! user->runtime.first_usage_push_requested)
-    {
-        user->runtime.first_usage_push_requested = true;
-        *first_usage_push_needed                 = true;
-    }
-    should_close = (! user->enabled) || userExpiredLocked(user, now_ms) || userTrafficReachedLocked(user);
+    should_close          = (! user->enabled) || userExpiredLocked(user, now_ms) || userTrafficReachedLocked(user);
     rwlockWriteUnlock(&user->stats_lock);
     rwlockWriteUnlock(&user->lock);
     return should_close;
@@ -2346,4 +2388,309 @@ user_stat_t userStatsDiff(User *base, User *current)
     diff.traffic.d = userSaturatingSub(current_stats.traffic.d, base_stats.traffic.d);
 
     return diff;
+}
+
+static uint64_t userBandwidthCapacity(uint64_t rate)
+{
+    return max(UINT64_C(1), rate / 10U + (rate % 10U != 0));
+}
+
+void userBandwidthReconcileLocked(User *user, uint64_t now_ms)
+{
+    for (unsigned d = 0; d < 2; ++d)
+    {
+        user_bandwidth_state_t *state = &user->runtime.bandwidth[d];
+        uint64_t                rate  = d == kUserBandwidthUpload ? user->limit.bandwidth.u : user->limit.bandwidth.d;
+        if (! state->policy_valid && rate == 0)
+            continue;
+        if (state->policy_valid && state->rate == rate)
+            continue;
+        if (state->policy_valid && state->rate != 0)
+        {
+            uint64_t cap =
+                state->oversized_ticket != 0 ? state->oversized_capacity : userBandwidthCapacity(state->rate);
+            ratebucketRefill(&state->bucket, state->rate, cap, 1, now_ms);
+            ratebucketClamp(&state->bucket, userBandwidthCapacity(state->rate));
+        }
+        if (! state->policy_valid || state->rate == 0)
+        {
+            ratebucketInit(&state->bucket, rate == 0 ? 0 : userBandwidthCapacity(rate));
+            state->bucket.has_clock      = true;
+            state->bucket.last_refill_ms = now_ms;
+        }
+        else if (rate != 0)
+            ratebucketClamp(&state->bucket, userBandwidthCapacity(rate));
+        state->rate               = rate;
+        state->policy_valid       = true;
+        state->oversized_ticket   = 0;
+        state->oversized_capacity = 0;
+    }
+}
+
+static user_bandwidth_waiter_t *userBandwidthFind(user_bandwidth_state_t *state, uint64_t ticket)
+{
+    for (user_bandwidth_waiter_t *w = state->head; w != NULL; w = w->next)
+        if (w->ticket == ticket)
+            return w;
+    return NULL;
+}
+
+static user_bandwidth_waiter_t *userBandwidthHead(user_bandwidth_state_t *state)
+{
+    for (user_bandwidth_waiter_t *w = state->head; w != NULL; w = w->next)
+        if (w->eligible)
+            return w;
+    return NULL;
+}
+
+static void userBandwidthUnlink(user_bandwidth_state_t *state, user_bandwidth_waiter_t *waiter)
+{
+    user_bandwidth_waiter_t **link = &state->head;
+    user_bandwidth_waiter_t  *prev = NULL;
+    while (*link != waiter)
+    {
+        assert(*link != NULL);
+        prev = *link;
+        link = &(*link)->next;
+    }
+    *link = waiter->next;
+    if (state->tail == waiter)
+        state->tail = prev;
+    waiter->next = NULL;
+}
+
+static void userBandwidthAppend(user_bandwidth_state_t *state, user_bandwidth_waiter_t *waiter)
+{
+    if (state->tail != NULL)
+        state->tail->next = waiter;
+    else
+        state->head = waiter;
+    state->tail = waiter;
+}
+
+static void userBandwidthEndOversized(user_bandwidth_state_t *state, uint64_t ticket, uint64_t now)
+{
+    if (state->oversized_ticket != ticket || ticket == 0)
+        return;
+    ratebucketRefill(&state->bucket, state->rate, state->oversized_capacity, 1, now);
+    ratebucketClamp(&state->bucket, userBandwidthCapacity(state->rate));
+    state->oversized_ticket = state->oversized_capacity = 0;
+}
+
+bool userBandwidthRegister(User *user, user_bandwidth_direction_t direction, uint64_t ticket)
+{
+    assert(userObjectIsInitialized(user) && direction <= kUserBandwidthDownload && ticket != 0);
+    rwlockWriteLock(&user->lock);
+    rwlockWriteLock(&user->stats_lock);
+    bool ok = user->runtime.bandwidth_waiter_count < 1024;
+    if (ok)
+    {
+        user_bandwidth_state_t *state = &user->runtime.bandwidth[direction];
+        assert(userBandwidthFind(state, ticket) == NULL);
+        user_bandwidth_waiter_t *waiter = memoryAllocateZero(sizeof(*waiter));
+        waiter->ticket                  = ticket;
+        userBandwidthAppend(state, waiter);
+        ++user->runtime.bandwidth_waiter_count;
+    }
+    rwlockWriteUnlock(&user->stats_lock);
+    rwlockWriteUnlock(&user->lock);
+    return ok;
+}
+
+void userBandwidthSetEligible(User *user, user_bandwidth_direction_t direction, uint64_t ticket, bool eligible)
+{
+    assert(direction <= kUserBandwidthDownload && ticket != 0);
+    rwlockWriteLock(&user->lock);
+    rwlockWriteLock(&user->stats_lock);
+    user_bandwidth_state_t  *state  = &user->runtime.bandwidth[direction];
+    user_bandwidth_waiter_t *waiter = userBandwidthFind(state, ticket);
+    if (waiter != NULL && waiter->eligible != eligible)
+    {
+        uint64_t now = getHRTimeUs() / 1000U;
+        userBandwidthReconcileLocked(user, now);
+        userBandwidthEndOversized(state, ticket, now);
+        waiter->eligible = eligible;
+        if (eligible)
+        {
+            userBandwidthUnlink(state, waiter);
+            userBandwidthAppend(state, waiter);
+        }
+    }
+    rwlockWriteUnlock(&user->stats_lock);
+    rwlockWriteUnlock(&user->lock);
+}
+
+static bool userBandwidthCostFits(buffer_budget_cost_t used, buffer_budget_cost_t cost, buffer_budget_cost_t limit)
+{
+    return cost.bytes <= limit.bytes - used.bytes && cost.charge <= limit.charge - used.charge &&
+           cost.entries <= limit.entries - used.entries;
+}
+
+static void userBandwidthAddCost(buffer_budget_cost_t *used, buffer_budget_cost_t cost)
+{
+    used->bytes += cost.bytes;
+    used->charge += cost.charge;
+    used->entries += cost.entries;
+}
+
+static void userBandwidthSubtractCost(buffer_budget_cost_t *used, buffer_budget_cost_t cost)
+{
+    assert(cost.bytes <= used->bytes && cost.charge <= used->charge && cost.entries <= used->entries);
+    used->bytes -= cost.bytes;
+    used->charge -= cost.charge;
+    used->entries -= cost.entries;
+}
+
+bool userBandwidthReserve(User *user, user_bandwidth_direction_t direction, uint64_t ticket, buffer_budget_cost_t cost)
+{
+    assert(direction <= kUserBandwidthDownload && ticket != 0);
+    rwlockWriteLock(&user->stats_lock);
+    user_bandwidth_waiter_t *waiter = userBandwidthFind(&user->runtime.bandwidth[direction], ticket);
+    bool                     ok     = waiter != NULL &&
+              userBandwidthCostFits(user->runtime.queued_cost, cost, (buffer_budget_cost_t) {4U << 20, 8U << 20, 1024});
+    if (ok)
+    {
+        userBandwidthAddCost(&user->runtime.queued_cost, cost);
+        userBandwidthAddCost(&waiter->cost, cost);
+    }
+    rwlockWriteUnlock(&user->stats_lock);
+    return ok;
+}
+
+void userBandwidthRelease(User *user, user_bandwidth_direction_t direction, uint64_t ticket, buffer_budget_cost_t cost)
+{
+    assert(direction <= kUserBandwidthDownload && ticket != 0);
+    rwlockWriteLock(&user->stats_lock);
+    user_bandwidth_waiter_t *waiter = userBandwidthFind(&user->runtime.bandwidth[direction], ticket);
+    if (waiter != NULL)
+    {
+        userBandwidthSubtractCost(&waiter->cost, cost);
+        userBandwidthSubtractCost(&user->runtime.queued_cost, cost);
+    }
+    rwlockWriteUnlock(&user->stats_lock);
+}
+
+void userBandwidthCancel(User *user, user_bandwidth_direction_t direction, uint64_t ticket)
+{
+    assert(direction <= kUserBandwidthDownload && ticket != 0);
+    rwlockWriteLock(&user->lock);
+    rwlockWriteLock(&user->stats_lock);
+    user_bandwidth_state_t  *state  = &user->runtime.bandwidth[direction];
+    user_bandwidth_waiter_t *waiter = userBandwidthFind(state, ticket);
+    if (waiter != NULL)
+    {
+        uint64_t now = getHRTimeUs() / 1000U;
+        userBandwidthReconcileLocked(user, now);
+        userBandwidthEndOversized(state, ticket, now);
+        userBandwidthUnlink(state, waiter);
+        userBandwidthSubtractCost(&user->runtime.queued_cost, waiter->cost);
+        --user->runtime.bandwidth_waiter_count;
+        memoryFree(waiter);
+    }
+    rwlockWriteUnlock(&user->stats_lock);
+    rwlockWriteUnlock(&user->lock);
+}
+
+/* Both locks are held, and now is a fresh process-wide clock sample. Preview
+ * never spends credit; activation of an oversized head settles ordinary credit
+ * before the larger cap is installed. */
+static user_bandwidth_result_t userBandwidthPreviewLocked(User *user, user_bandwidth_direction_t direction,
+                                                          uint64_t ticket, uint64_t bytes, bool datagram, uint64_t now)
+{
+    user_bandwidth_result_t result = {.decision = kUserDeliveryReject};
+    if (! user->enabled || userExpiredLocked(user, now) || userTrafficReachedLocked(user) ||
+        (datagram && bytes > 65535))
+        return result;
+    userBandwidthReconcileLocked(user, now);
+    user_bandwidth_state_t  *state  = &user->runtime.bandwidth[direction];
+    user_bandwidth_waiter_t *head   = userBandwidthHead(state);
+    user_bandwidth_waiter_t *waiter = ticket == 0 ? NULL : userBandwidthFind(state, ticket);
+    if (ticket != 0 && waiter == NULL)
+        return result;
+    if ((ticket != 0 && ! waiter->eligible) || (head != NULL && head->ticket != ticket))
+        return (user_bandwidth_result_t) {.decision = kUserDeliveryWait, .retry_ms = 10};
+    uint64_t wanted = datagram || (ticket == 0 && state->rate == 0) ? bytes : min(bytes, UINT64_C(16384));
+    if (state->rate == 0)
+        return (user_bandwidth_result_t) {.decision = kUserDeliveryForward, .grant = wanted};
+    uint64_t ordinary = userBandwidthCapacity(state->rate);
+    uint64_t cap      = state->oversized_ticket != 0 ? state->oversized_capacity : ordinary;
+    ratebucketRefill(&state->bucket, state->rate, cap, 1, now);
+    if (datagram && bytes > ordinary && ticket != 0 && state->oversized_ticket == 0)
+    {
+        state->oversized_ticket   = ticket;
+        state->oversized_capacity = bytes;
+    }
+    uint64_t available = ratebucketAvailable(&state->bucket);
+    uint64_t grant     = datagram ? (available >= wanted ? wanted : 0) : min(wanted, available);
+    if (grant != 0 || bytes == 0)
+        return (user_bandwidth_result_t) {.decision = kUserDeliveryForward, .grant = grant};
+    uint64_t retry = ratebucketRetryMs(&state->bucket, state->rate, 1, now, datagram ? wanted : 1);
+    return (user_bandwidth_result_t) {.decision = kUserDeliveryWait,
+                                      .retry_ms = min(max(retry, UINT64_C(1)), UINT64_C(100))};
+}
+
+user_bandwidth_result_t userBandwidthPreview(User *user, user_bandwidth_direction_t direction, uint64_t ticket,
+                                             uint64_t bytes, bool datagram)
+{
+    assert(userObjectIsInitialized(user) && direction <= kUserBandwidthDownload);
+    rwlockWriteLock(&user->lock);
+    rwlockWriteLock(&user->stats_lock);
+    uint64_t now = getHRTimeUs() / 1000U;
+    if (user->client_time.clock_valid)
+    {
+        now = userClientAdvanceAgeLocked(user, now);
+        userClientProjectExpiryLocked(user, now);
+    }
+    user_bandwidth_result_t result = userBandwidthPreviewLocked(user, direction, ticket, bytes, datagram, now);
+    result.limited = (direction == kUserBandwidthUpload ? user->limit.bandwidth.u : user->limit.bandwidth.d) != 0;
+    rwlockWriteUnlock(&user->stats_lock);
+    rwlockWriteUnlock(&user->lock);
+    return result;
+}
+
+user_delivery_decision_t userCommitDelivery(User *user, user_bandwidth_direction_t direction, uint64_t ticket,
+                                            uint64_t bytes, bool datagram, bool more, uint32_t multiplier)
+{
+    assert(userObjectIsInitialized(user) && direction <= kUserBandwidthDownload && multiplier != 0 &&
+           multiplier <= kUserTrafficMultiplierMax);
+    rwlockWriteLock(&user->lock);
+    rwlockWriteLock(&user->stats_lock);
+    uint64_t now = getHRTimeUs() / 1000U;
+    if (user->client_time.clock_valid)
+    {
+        now = userClientAdvanceAgeLocked(user, now);
+        userClientProjectExpiryLocked(user, now);
+    }
+    user_bandwidth_result_t  preview = userBandwidthPreviewLocked(user, direction, ticket, bytes, datagram, now);
+    user_delivery_decision_t result  = preview.decision;
+    if (result == kUserDeliveryForward && preview.grant < bytes)
+        result = kUserDeliveryWait;
+    if (result == kUserDeliveryForward)
+    {
+        user_bandwidth_state_t *state = &user->runtime.bandwidth[direction];
+        if (state->rate != 0)
+        {
+            uint64_t granted = ratebucketGrant(&state->bucket, bytes, false);
+            assert(granted == bytes);
+            discard granted;
+        }
+        userBandwidthEndOversized(state, ticket, now);
+        uint32_t *remainder =
+            direction == kUserBandwidthUpload ? &user->runtime.traffic_remainder_u : &user->runtime.traffic_remainder_d;
+        uint64_t *traffic = direction == kUserBandwidthUpload ? &user->stats.traffic.u : &user->stats.traffic.d;
+        *traffic          = userSaturatingAdd(*traffic, userScaleTrafficLocked(bytes, multiplier, remainder));
+        if (ticket != 0)
+        {
+            user_bandwidth_waiter_t *waiter = userBandwidthFind(state, ticket);
+            assert(waiter != NULL);
+            waiter->eligible = more;
+            userBandwidthUnlink(state, waiter);
+            userBandwidthAppend(state, waiter);
+        }
+        if (userTrafficReachedLocked(user))
+            result = kUserDeliveryForwardClose;
+    }
+    rwlockWriteUnlock(&user->stats_lock);
+    rwlockWriteUnlock(&user->lock);
+    return result;
 }

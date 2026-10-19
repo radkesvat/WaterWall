@@ -2147,6 +2147,13 @@ static void usersCommitReservedCredentialsLocked(users_t *users, user_t *slot)
 
 static void usersCommitReservedUserLocked(users_t *users, user_t *slot)
 {
+    /* Initialize a newly installed finite policy before publication, so an
+     * edit before first traffic still preserves/clamps its original credit. */
+    rwlockWriteLock(&slot->lock);
+    rwlockWriteLock(&slot->stats_lock);
+    userBandwidthReconcileLocked(slot, getHRTimeUs() / 1000U);
+    rwlockWriteUnlock(&slot->stats_lock);
+    rwlockWriteUnlock(&slot->lock);
     usersCommitReservedCredentialsLocked(users, slot);
     if (slot->id != 0)
         USERS_INSERT_RESERVED(id_table, users_id_map_t, slot->id, slot);
@@ -3794,6 +3801,12 @@ static void usersApplyConfigValues(user_t *user, const user_update_t *update, ch
     }
 }
 
+static bool usersUpdateTouchesBandwidth(const user_update_t *update, const user_config_patch_t *patch)
+{
+    return (update->mask & kUserUpdateLimit) != 0 ||
+           (patch != NULL && (patch->mask & (kUserConfigBandwidthUp | kUserConfigBandwidthDown)) != 0);
+}
+
 static void usersCommitConfigUpdateLocked(users_t *users, user_t *user, const user_update_t *update, char **name_copy,
                                           char **email_copy, char **notes_copy,
                                           users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
@@ -3823,6 +3836,8 @@ static void usersCommitConfigUpdateLocked(users_t *users, user_t *user, const us
     }
 
     usersApplyConfigValues(user, update, name_copy, email_copy, notes_copy, wireguard_allowed_ips, patch);
+    if (usersUpdateTouchesBandwidth(update, patch))
+        userBandwidthReconcileLocked(user, getHRTimeUs() / 1000U);
 
     /*
      * Insert the replacement name entry. Capacity was reserved above and the old
@@ -3865,7 +3880,12 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
             return result;
     }
     rwlockWriteLock(&user->lock);
+    bool bandwidth_locked = usersUpdateTouchesBandwidth(update, NULL);
+    if (bandwidth_locked)
+        rwlockWriteLock(&user->stats_lock);
     usersCommitConfigUpdateLocked(users, user, update, name_copy, email_copy, notes_copy, wireguard_allowed_ips, NULL);
+    if (bandwidth_locked)
+        rwlockWriteUnlock(&user->stats_lock);
     rwlockWriteUnlock(&user->lock);
     if ((update->mask & kUserUpdateStats) != 0U)
     {
@@ -4606,8 +4626,9 @@ static users_update_result_t usersApplyPreparedConfigByIdentifier(users_t *users
     }
     else
         rwlockWriteLock(&users->lock);
-    user_t *user = usersIDTableLookupLocked(users, id);
-    users_update_result_t result = kUsersUpdateResultUserNotFound;
+    user_t               *user             = usersIDTableLookupLocked(users, id);
+    users_update_result_t result           = kUsersUpdateResultUserNotFound;
+    bool                  bandwidth_locked = false;
     if (user == NULL)
         goto unlock_collection;
     if (bounded)
@@ -4620,6 +4641,20 @@ static users_update_result_t usersApplyPreparedConfigByIdentifier(users_t *users
     }
     else
         rwlockWriteLock(&user->lock);
+    if (usersUpdateTouchesBandwidth(&prepared->update, &prepared->patch))
+    {
+        if (bounded)
+        {
+            if (! rwlockTryWriteLock(&user->stats_lock))
+            {
+                result = kUsersUpdateResultBusy;
+                goto unlock_user;
+            }
+        }
+        else
+            rwlockWriteLock(&user->stats_lock);
+        bandwidth_locked = true;
+    }
     result = usersPreflightConfigIndexesLocked(
         users, user, &prepared->update, prepared->name, &prepared->allowed_ips, bounded, max_growth_bytes, deadline_ms);
     if (result != kUsersUpdateResultOk)
@@ -4643,6 +4678,8 @@ static users_update_result_t usersApplyPreparedConfigByIdentifier(users_t *users
                                   &prepared->allowed_ips,
                                   &prepared->patch);
 unlock_user:
+    if (bandwidth_locked)
+        rwlockWriteUnlock(&user->stats_lock);
     rwlockWriteUnlock(&user->lock);
 unlock_collection:
     rwlockWriteUnlock(&users->lock);
@@ -4810,6 +4847,7 @@ static void usersMoveRuntimeStateWithLocks(user_t *dest, user_t *src)
     rwlockWriteLock(&first->stats_lock);
     rwlockWriteLock(&second->stats_lock);
     userRuntimeStateMove(&dest->runtime, &src->runtime);
+    userBandwidthReconcileLocked(dest, getHRTimeUs() / 1000U);
     dest->client_time = src->client_time;
     memoryZero(&src->client_time, sizeof(src->client_time));
     rwlockWriteUnlock(&second->stats_lock);
@@ -5807,4 +5845,100 @@ user_t *usersFindFirstLimited(users_t *users)
 const user_t *usersFindFirstLimitedConst(const users_t *users)
 {
     return usersFindFirstLimited((users_t *) users);
+}
+
+bool usersObserveTrafficByIdentifier(users_t *users, uint64_t id, uint64_t upload_bytes, uint64_t download_bytes,
+                                     uint64_t now_ms, bool *first_usage_push_needed)
+{
+    assert(users != NULL && id != 0);
+    if (first_usage_push_needed != NULL)
+        *first_usage_push_needed = false;
+    rwlockReadLock(&users->lock);
+    user_t *user = usersIDTableLookupLocked(users, id);
+    bool    close =
+        user == NULL || userObserveTraffic(user, upload_bytes, download_bytes, now_ms, first_usage_push_needed);
+    rwlockReadUnlock(&users->lock);
+    return close;
+}
+
+bool usersBandwidthRegisterByIdentifier(users_t *users, uint64_t id, user_bandwidth_direction_t direction,
+                                        uint64_t ticket)
+{
+    assert(users != NULL && id != 0);
+    rwlockReadLock(&users->lock);
+    user_t *user   = usersIDTableLookupLocked(users, id);
+    bool    result = user == NULL ? false : userBandwidthRegister(user, direction, ticket);
+    rwlockReadUnlock(&users->lock);
+    return result;
+}
+
+void usersBandwidthSetEligibleByIdentifier(users_t *users, uint64_t id, user_bandwidth_direction_t direction,
+                                           uint64_t ticket, bool eligible)
+{
+    assert(users != NULL && id != 0);
+    rwlockReadLock(&users->lock);
+    user_t *user = usersIDTableLookupLocked(users, id);
+    if (user != NULL)
+        userBandwidthSetEligible(user, direction, ticket, eligible);
+    rwlockReadUnlock(&users->lock);
+}
+
+void usersBandwidthCancelByIdentifier(users_t *users, uint64_t id, user_bandwidth_direction_t direction,
+                                      uint64_t ticket)
+{
+    assert(users != NULL && id != 0);
+    rwlockReadLock(&users->lock);
+    user_t *user = usersIDTableLookupLocked(users, id);
+    if (user != NULL)
+        userBandwidthCancel(user, direction, ticket);
+    rwlockReadUnlock(&users->lock);
+}
+
+bool usersBandwidthReserveByIdentifier(users_t *users, uint64_t id, user_bandwidth_direction_t direction,
+                                       uint64_t ticket, buffer_budget_cost_t cost)
+{
+    assert(users != NULL && id != 0);
+    rwlockReadLock(&users->lock);
+    user_t *user   = usersIDTableLookupLocked(users, id);
+    bool    result = user == NULL ? false : userBandwidthReserve(user, direction, ticket, cost);
+    rwlockReadUnlock(&users->lock);
+    return result;
+}
+
+void usersBandwidthReleaseByIdentifier(users_t *users, uint64_t id, user_bandwidth_direction_t direction,
+                                       uint64_t ticket, buffer_budget_cost_t cost)
+{
+    assert(users != NULL && id != 0);
+    rwlockReadLock(&users->lock);
+    user_t *user = usersIDTableLookupLocked(users, id);
+    if (user != NULL)
+        userBandwidthRelease(user, direction, ticket, cost);
+    rwlockReadUnlock(&users->lock);
+}
+
+user_bandwidth_result_t usersBandwidthPreviewByIdentifier(users_t *users, uint64_t id,
+                                                          user_bandwidth_direction_t direction, uint64_t ticket,
+                                                          uint64_t bytes, bool datagram)
+{
+    assert(users != NULL && id != 0);
+    rwlockReadLock(&users->lock);
+    user_t                 *user   = usersIDTableLookupLocked(users, id);
+    user_bandwidth_result_t result = user == NULL ? (user_bandwidth_result_t) {.decision = kUserDeliveryReject}
+                                                  : userBandwidthPreview(user, direction, ticket, bytes, datagram);
+    rwlockReadUnlock(&users->lock);
+    return result;
+}
+
+user_delivery_decision_t usersCommitDeliveryByIdentifier(users_t *users, uint64_t id,
+                                                         user_bandwidth_direction_t direction, uint64_t ticket,
+                                                         uint64_t bytes, bool datagram, bool more, uint32_t multiplier)
+{
+    assert(users != NULL && id != 0);
+    rwlockReadLock(&users->lock);
+    user_t                  *user = usersIDTableLookupLocked(users, id);
+    user_delivery_decision_t result =
+        user == NULL ? kUserDeliveryReject
+                     : userCommitDelivery(user, direction, ticket, bytes, datagram, more, multiplier);
+    rwlockReadUnlock(&users->lock);
+    return result;
 }

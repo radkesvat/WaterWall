@@ -449,3 +449,22 @@ user_t       *usersFindFirstLimited(users_t *users);
 const user_t *usersFindFirstLimitedConst(const users_t *users);
 
 user_stat_t usersUsageDiff(users_t *users, user_t *base, user_t *current);
+
+bool usersObserveTrafficByIdentifier(users_t *users, uint64_t id, uint64_t upload_bytes, uint64_t download_bytes,
+                                     uint64_t now_ms, bool *first_usage_push_needed);
+bool usersBandwidthRegisterByIdentifier(users_t *users, uint64_t id, user_bandwidth_direction_t direction,
+                                        uint64_t ticket);
+void usersBandwidthSetEligibleByIdentifier(users_t *users, uint64_t id, user_bandwidth_direction_t direction,
+                                           uint64_t ticket, bool eligible);
+void usersBandwidthCancelByIdentifier(users_t *users, uint64_t id, user_bandwidth_direction_t direction,
+                                      uint64_t ticket);
+bool usersBandwidthReserveByIdentifier(users_t *users, uint64_t id, user_bandwidth_direction_t direction,
+                                       uint64_t ticket, buffer_budget_cost_t cost);
+void usersBandwidthReleaseByIdentifier(users_t *users, uint64_t id, user_bandwidth_direction_t direction,
+                                       uint64_t ticket, buffer_budget_cost_t cost);
+user_bandwidth_result_t  usersBandwidthPreviewByIdentifier(users_t *users, uint64_t id,
+                                                           user_bandwidth_direction_t direction, uint64_t ticket,
+                                                           uint64_t bytes, bool datagram);
+user_delivery_decision_t usersCommitDeliveryByIdentifier(users_t *users, uint64_t id,
+                                                         user_bandwidth_direction_t direction, uint64_t ticket,
+                                                         uint64_t bytes, bool datagram, bool more, uint32_t multiplier);

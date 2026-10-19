@@ -74,42 +74,60 @@ typedef struct authenticationclient_status_s
     bool                           accounting_lower_bound;
 } authenticationclient_status_t;
 
+enum
+{
+    kAuthenticationClientBandwidthMaxTickets = 16384
+};
+typedef struct authenticationclient_bandwidth_ticket_s
+{
+    uint64_t                   id, user_id;
+    user_bandwidth_direction_t direction;
+    buffer_budget_cost_t       cost;
+} authenticationclient_bandwidth_ticket_t;
+
 typedef struct authenticationclient_tstate_s
 {
     char *name;
     char *secret;
 
-    users_t  *users;
-    users_t  *sync_baseline_users;
+    users_t *users;
+    users_t *sync_baseline_users;
     /* Worker-0 owned value snapshots; no pointers into a replaceable table. */
     authenticationclient_accounting_entry_t *pending_entries;
     size_t                                   pending_entries_count;
     authenticationclient_accounting_entry_t *catchup_entries;
     size_t                                   catchup_entries_count;
     bool                                     catchup_capture_needed;
-    wrwlock_t users_lock;
-    uint64_t  users_generation;
+    wrwlock_t                                users_lock;
+    uint64_t                                 users_generation;
 
-    wmutex_t control_mutex;
-    bool     started;
-    bool     stopping;
-    bool     connected;
-    bool     authenticated;
-    bool     auth_rejected;
-    bool     write_paused;
-    bool     auth_in_flight;
-    bool     pull_in_flight;
-    bool     push_in_flight;
-    bool     first_usage_push_requested;
-    bool     first_usage_push_deferred;
-    bool     users_loaded;
-    bool     clock_loaded;
-    bool     verbose;
-    bool     reconnect_work_pending;
-    bool     continuity_error;
-    bool     pull_requested;
-    bool     pull_required; /* Refresh after authentication or ACK, before a new usage batch. */
-    bool     push_requested;
+    /* Shared costs and numeric ticket registry use control_mutex. Lock order:
+     * control_mutex -> users_lock -> collection -> user -> stats. Registry costs
+     * survive removal until their owner cancels/releases the unique ticket. */
+    authenticationclient_bandwidth_ticket_t *bandwidth_tickets;
+    buffer_budget_cost_t                     bandwidth_queued_cost;
+    size_t                                   bandwidth_ticket_count;
+    uint64_t                                 bandwidth_last_ticket;
+    wmutex_t                                 control_mutex;
+    bool                                     started;
+    bool                                     stopping;
+    bool                                     connected;
+    bool                                     authenticated;
+    bool                                     auth_rejected;
+    bool                                     write_paused;
+    bool                                     auth_in_flight;
+    bool                                     pull_in_flight;
+    bool                                     push_in_flight;
+    bool                                     first_usage_push_requested;
+    bool                                     first_usage_push_deferred;
+    bool                                     users_loaded;
+    bool                                     clock_loaded;
+    bool                                     verbose;
+    bool                                     reconnect_work_pending;
+    bool                                     continuity_error;
+    bool                                     pull_requested;
+    bool pull_required; /* Refresh after authentication or ACK, before a new usage batch. */
+    bool push_requested;
 
     line_t   *control_line;
     wtimer_t *ping_timer;
