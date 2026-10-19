@@ -54,6 +54,15 @@ typedef bool (*DeviceReaderWorkFn)(device_reader_session_t *session, void *conte
 /* Frees only context-owned storage; may run on any thread, without admission. */
 typedef void (*DeviceReaderWorkCleanupFn)(void *context);
 
+/* Stack-owned, synchronous producer scope. Fields are private to dispatch;
+ * callers must not copy an active scope or let it survive its callback. */
+typedef struct device_reader_burst_s
+{
+    struct device_reader_worker_queue_s *queue;
+    worker_t                            *worker;
+    bool                                 owns_drain;
+} device_reader_burst_t;
+
 struct device_reader_session_s
 {
     atomic_uint           refcount;
@@ -154,12 +163,23 @@ bool deviceReaderSessionEnableWorkerQueue(device_reader_session_t *session);
 void deviceReaderSessionConfigureCapacityNotify(device_reader_session_t *session, DeviceReaderCapacityNotifyFn notify,
                                                 void *context);
 
+/* Optional same-worker receive-burst scope. The caller holds a live session
+ * reference through EndBurst and must not nest scopes for the same queue.
+ * False means this is not the supplied worker's admitted normal callback;
+ * ordinary queued delivery remains in effect and EndBurst must not be called.
+ * A successful scope defers newly claimed local delivery until EndBurst, which
+ * drains one bounded quantum inline. Existing queued tokens and foreign claims
+ * keep queued ownership. End every successful scope on every callback exit, without
+ * yielding; it can deliver packets and invoke ordinary downstream callbacks. */
+bool deviceReaderSessionTryBeginBurst(device_reader_session_t *session, worker_t *worker, device_reader_burst_t *burst);
+void deviceReaderSessionEndBurst(device_reader_burst_t *burst);
+
 /* Nonblocking whole-batch admission for worker-owned producers. Capacity
  * refusal retains every buffer; Accepted and Closed transfer/settle every
  * buffer. The batch must fit the configured byte/packet limits and capacity.
- * Requires an enabled worker FIFO. Delivery is deferred even on the producer's
- * worker, so its read burst can share a bounded ACK batch. No path borrows the
- * session reader pool. */
+ * Requires an enabled worker FIFO. Delivery stays queued outside a successful
+ * receive-burst scope; that scope defers eligible local delivery until EndBurst.
+ * No path borrows the session reader pool. */
 device_reader_post_result_e deviceReaderSessionTryPost(device_reader_session_t *session, wid_t target_wid,
                                                        sbuf_t **bufs, unsigned int count);
 

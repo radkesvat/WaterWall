@@ -13,6 +13,7 @@
 #include "lwip/priv/tcp_priv.h"
 #include "lwip/stats.h"
 #include "lwip/timeouts.h"
+#include "net/packet_batch.h"
 #include "port_registry.h"
 #include "wloop_internal.h"
 #include "worker_messages.h"
@@ -242,15 +243,21 @@ static void setup(void *worker_ptr, void *argument, void *unused1, void *unused2
     worker_t *worker = worker_ptr;
     probe_t  *probe  = argument;
     CHECK(worker->wid == probe->owner);
-    CHECK(wwLwipRuntimeBeginAckBatch(worker->wid) == NULL);
+    packet_batch_t receive_batch;
+    packetBatchBegin(&receive_batch);
+    /* Both real workers hold independent scopes while their lazy engines are
+     * constructed. The first packet can join the scope that created it. */
+    const int batch_barrier = pthread_barrier_wait(&poll_pressure);
+    CHECK(batch_barrier == 0 || batch_barrier == PTHREAD_BARRIER_SERIAL_THREAD);
     probe->engine = wwLwipRuntimeGet(worker->wid);
     CHECK(probe->engine != NULL);
     CHECK(wwLwipRuntimeGet(worker->wid) == probe->engine);
     CHECK(wwLwipRuntimeGet((uint8_t) (1 - worker->wid)) == NULL);
-    CHECK(wwLwipRuntimeBeginAckBatch((uint8_t) (1 - worker->wid)) == NULL);
-    CHECK(wwLwipRuntimeBeginAckBatch(worker->wid) == probe->engine);
+    CHECK(wwLwipEngineJoinReceiveBatch(probe->engine));
+    CHECK(! wwLwipEngineJoinReceiveBatch(probe->engine));
     CHECK(wwLwipEngineCurrent() == NULL);
-    wwLwipEngineEndAckBatch(probe->engine);
+    packetBatchEnd(&receive_batch);
+    CHECK(! wwLwipEngineJoinReceiveBatch(probe->engine));
     ww_lwip_engine_t *previous;
     CHECK(wwLwipEngineEnter(probe->engine, &previous));
     ip4_addr_t address, mask, gateway;
@@ -266,6 +273,26 @@ static void setup(void *worker_ptr, void *argument, void *unused1, void *unused2
     struct tcp_pcb *poll   = connectPcb(probe, true);
     tcp_arg(poll, probe);
     tcp_poll(poll, onPoll, 1);
+    tcp_clear_flags(poll, TF_ACK_DELAY | TF_ACK_NOW);
+    const tcpflags_t ordinary_flags = poll->flags;
+    wwLwipEngineLeave(probe->engine, previous);
+    /* A device-only scope must leave an existing engine in ordinary ACK mode.
+     * Another configuration using this worker does not opt this scope into lwIP. */
+    packetBatchBegin(&receive_batch);
+    CHECK(wwLwipEngineEnter(probe->engine, &previous));
+    CHECK(wwLwipEngineDeferAck(poll) == 0 && poll->flags == ordinary_flags && poll->ww_ack_previous == NULL);
+    wwLwipEngineLeave(probe->engine, previous);
+    packetBatchEnd(&receive_batch);
+    packetBatchBegin(&receive_batch);
+    CHECK(wwLwipEngineJoinReceiveBatch(probe->engine));
+    CHECK(! wwLwipEngineJoinReceiveBatch(probe->engine));
+    CHECK(wwLwipEngineEnter(probe->engine, &previous));
+    CHECK(wwLwipEngineDeferAck(poll) == 1 && poll->ww_ack_previous != NULL);
+    wwLwipEngineLeave(probe->engine, previous);
+    packetBatchEnd(&receive_batch);
+    CHECK(wwLwipEngineCurrent() == NULL);
+    CHECK(wwLwipEngineEnter(probe->engine, &previous));
+    CHECK(poll->ww_ack_previous == NULL && (poll->flags & (TF_ACK_DELAY | TF_ACK_NOW)) == 0);
     struct tcp_pcb *tw   = connectPcb(probe, true);
     probe->timewait_port = tw->local_port;
     CHECK(tcp_close(tw) == ERR_OK);
@@ -340,7 +367,7 @@ int main(void)
     CHECK(probes[0].netif.loop_first != NULL);
     wwLwipEngineLeave(probes[0].engine, previous);
     CHECK(wwLwipEngineNextTimeout(probes[0].engine) == SYS_TIMEOUTS_SLEEPTIME_INFINITE);
-    CHECK(wwLwipRuntimeBeginAckBatch(0) == NULL);
+    CHECK(! wwLwipEngineJoinReceiveBatch(probes[0].engine));
     CHECK(workerRequestQuiesce(getWorker(2)));
     for (wid_t i = 0; i < 3; ++i)
         CHECK(workerWaitForPhase(getWorker(i), kWorkerLifecycleQuiesced, 5000));

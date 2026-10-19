@@ -410,6 +410,7 @@ void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             lineReuseBuffer(l, buf);
             return;
         }
+        discard           wwLwipEngineJoinReceiveBatch(engine);
         ww_lwip_engine_t *previous;
         const bool        entered = wwLwipEngineEnter(engine, &previous);
         assert(entered);

@@ -532,7 +532,13 @@ static void tunReaderRun(tun_worker_reader_t *lane, worker_t *worker)
     }
     if (! failed)
     {
+        device_reader_burst_t burst;
+        const bool            local_burst = deviceReaderSessionTryBeginBurst(generation->session, worker, &burst);
         failed = ! tunReaderDrain(lane, worker);
+        /* This also settles a local token after capacity refusal, EAGAIN,
+         * lifecycle closure or read failure while the generation is pinned. */
+        if (local_burst)
+            deviceReaderSessionEndBurst(&burst);
         if (atomicLoadExplicit(&lane->waiting, memory_order_acquire) || failed)
             wioDel(lane->io, WW_READ);
         else if (wioAdd(lane->io, tunReaderOnReady, WW_READ) != 0)

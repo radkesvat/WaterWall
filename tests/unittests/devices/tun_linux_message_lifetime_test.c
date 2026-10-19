@@ -92,18 +92,6 @@ typedef struct tcp_ack_probe_s
 } tcp_ack_probe_t;
 
 static tcp_ack_probe_t *active_ack_probe;
-
-ww_lwip_engine_t *__real_wwLwipRuntimeBeginAckBatch(uint8_t owner);
-ww_lwip_engine_t *__wrap_wwLwipRuntimeBeginAckBatch(uint8_t owner);
-ww_lwip_engine_t *__wrap_wwLwipRuntimeBeginAckBatch(uint8_t owner)
-{
-    if (active_ack_probe == NULL)
-        return __real_wwLwipRuntimeBeginAckBatch(owner);
-    require(owner == 0 && currentThreadIsEventWorkerWID(owner), "TCP ACK batch left its packet worker");
-    ++active_ack_probe->batches;
-    wwLwipEngineBeginAckBatch(active_ack_probe->engine);
-    return active_ack_probe->engine;
-}
 static unsigned int       fake_thread_create_calls;
 static unsigned int       fake_thread_join_calls;
 static unsigned int       reject_reader_activation;
@@ -628,6 +616,11 @@ ssize_t __wrap_read(int fd, void *buf, size_t count)
     }
     if (fd == tun_handle_fd && injected_read_count > 0)
     {
+        if (active_ack_probe != NULL)
+        {
+            require(active_ack_probe->received == 0 && active_ack_probe->outputs == 0 && active_ack_probe->batches == 0,
+                    "same-worker TCP delivery started before the bounded native read burst ended");
+        }
         if (drive_worker_delivery && observed_read_calls >= gso_deliver_after_read_calls)
         {
             while (gso_messages_delivered < captured_message_count)
@@ -3558,6 +3551,8 @@ static void deliverTcpInput(tun_device_t *device, void *userdata, sbuf_t *buf, u
     discard           device;
     tcp_ack_probe_t  *probe = userdata;
     ww_lwip_engine_t *previous;
+    if (wwLwipEngineJoinReceiveBatch(probe->engine))
+        ++probe->batches;
     require(wwLwipEngineEnter(probe->engine, &previous), "TCP fixture input engine entry failed");
     struct pbuf *packet = pbuf_alloc(PBUF_RAW, (u16_t) sbufGetLength(buf), PBUF_RAM);
     require(packet != NULL && pbuf_take(packet, sbufGetRawPtr(buf), (u16_t) sbufGetLength(buf)) == ERR_OK,
@@ -3576,7 +3571,7 @@ static void readTcpBurst(void *context)
 static void testSameWorkerTunBurstCoalescesTcpAcks(test_env_t *env)
 {
     /* Real constructor/read/FIFO paths plus real TCP input and cumulative ACKs.
-     * Only runtime lookup selects this fixture-owned engine; no timers run. */
+     * Input joins the generic receive scope; no engine timers run. */
     resetCapturedMessages();
     resetIoInjection();
     resetReaderFixture(0);
@@ -3634,15 +3629,10 @@ static void testSameWorkerTunBurstCoalescesTcpAcks(test_env_t *env)
     armDeviceReads(reads, ARRAY_SIZE(reads));
     active_ack_probe = &probe;
     require(wloopInvokeNormalCallback(loop, readTcpBurst, NULL), "TCP native receive callback admission failed");
-    if (probe.outputs != 0)
-        fprintf(stderr, "native receive burst emitted %u TCP outputs before FIFO delivery\n", probe.outputs);
-    require(probe.outputs == 0 && probe.received == 0,
-            "same-worker TUN input flushed TCP ACKs before the receive burst reached its owner FIFO");
-    require(captured_message_count == 1, "one native receive burst did not coalesce its owner FIFO notification");
-    deliverMessage(0, getCurrentEventWorker());
+    require(captured_message_count == 0, "same-worker receive burst queued an avoidable FIFO notification");
     require(probe.received == 6000 && probe.outputs == 1 && probe.last_flags == TCP_ACK &&
                 probe.last_ack == probe.peer_next + 6000 && probe.batches == 1,
-            "queued native receive burst did not produce one cumulative TCP ACK");
+            "completed native receive burst did not produce one cumulative TCP ACK before returning");
     require(atomicLoadRelaxed(&tunLinuxReaderSession(tdev)->output_packets) == 0,
             "TCP receive-burst fixture retained packet reservations");
     active_ack_probe = NULL;

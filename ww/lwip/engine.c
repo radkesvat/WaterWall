@@ -2,6 +2,7 @@
 #include "wdef.h"
 
 #include "engine_internal.h"
+#include "packet_batch.h"
 #include "pool_cache_internal.h"
 #include "port_registry.h"
 #include "shared_pools.h"
@@ -31,21 +32,22 @@ void wwLwipPortCleanup(void);
 
 struct ww_lwip_engine_s
 {
-    uint8_t              owner;
-    struct wloop_s      *loop;
-    unsigned             depth;
-    bool                 dispatching;
-    bool                 releasing;
-    bool                 quiesced;
-    bool                 ack_batch;
-    struct tcp_pcb      *ack_pending;
-    ww_lwip_wake_fn      wake;
-    void                *wake_argument;
-    struct stats_        stats;
-    void                *modules[kWwLwipStateCount];
-    struct sys_timeo     timeouts[MEMP_NUM_SYS_TIMEOUT];
-    bool                 timeout_used[MEMP_NUM_SYS_TIMEOUT];
-    ww_lwip_pool_cache_t pool_cache;
+    uint8_t                    owner;
+    struct wloop_s            *loop;
+    unsigned                   depth;
+    bool                       dispatching;
+    bool                       releasing;
+    bool                       quiesced;
+    bool                       ack_batch;
+    struct tcp_pcb            *ack_pending;
+    packet_batch_participant_t receive_batch;
+    ww_lwip_wake_fn            wake;
+    void                      *wake_argument;
+    struct stats_              stats;
+    void                      *modules[kWwLwipStateCount];
+    struct sys_timeo           timeouts[MEMP_NUM_SYS_TIMEOUT];
+    bool                       timeout_used[MEMP_NUM_SYS_TIMEOUT];
+    ww_lwip_pool_cache_t       pool_cache;
 };
 
 static WW_LWIP_THREAD_LOCAL ww_lwip_engine_t *current_engine;
@@ -244,6 +246,22 @@ void wwLwipEngineBeginAckBatch(ww_lwip_engine_t *engine)
     engine->ack_batch = true;
 }
 
+static void engineReceiveBatchBegin(void *context)
+{
+    wwLwipEngineBeginAckBatch(context);
+}
+
+static void engineReceiveBatchEnd(void *context)
+{
+    wwLwipEngineEndAckBatch(context);
+}
+
+bool wwLwipEngineJoinReceiveBatch(ww_lwip_engine_t *engine)
+{
+    assert(engine != NULL && wwLwipEngineOwnerIsCurrent(engine->owner, engine->loop));
+    return packetBatchJoin(&engine->receive_batch);
+}
+
 void wwLwipEngineCancelAck(struct tcp_pcb *pcb)
 {
     assert(current_engine != NULL && pcb->ww_engine == current_engine);
@@ -316,8 +334,10 @@ ww_lwip_engine_t *wwLwipEngineCreate(uint8_t owner, struct wloop_s *loop)
         return NULL;
     }
     ww_lwip_engine_t *engine = memoryAllocateZero(control_size);
-    engine->owner = owner;
-    engine->loop  = loop;
+    engine->owner            = owner;
+    engine->loop             = loop;
+    engine->receive_batch    = (packet_batch_participant_t) {
+           .begin = engineReceiveBatchBegin, .end = engineReceiveBatchEnd, .context = engine};
     wwLwipPoolCacheInitialize(&engine->pool_cache);
     memcpy(engine->stats.memp, shared_stats.memp, sizeof(engine->stats.memp));
     for (unsigned i = 0; i < kWwLwipStateCount; ++i)
@@ -412,6 +432,7 @@ void wwLwipEngineCheckTimeouts(ww_lwip_engine_t *engine)
 
 void wwLwipEngineDestroy(ww_lwip_engine_t *engine)
 {
+    assert(engine->receive_batch.batch == NULL);
     ww_lwip_engine_t *previous;
     const bool        entered = wwLwipEngineEnter(engine, &previous);
     LWIP_ASSERT("destroy on owner outside dispatch", entered && ! engine->dispatching && engine->depth == 1);

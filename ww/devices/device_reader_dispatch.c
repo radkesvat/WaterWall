@@ -3,7 +3,7 @@
 #include "devices/device_reader_private.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
-#include "lwip/engine_runtime.h"
+#include "packet_batch.h"
 #include "worker_messages.h"
 
 enum
@@ -93,6 +93,41 @@ static void deviceReaderSessionCleanupMessage(device_reader_message_t *message)
 
 static void deviceReaderWorkerQueueDrain(void *worker, void *arg1, void *arg2, void *arg3);
 
+bool deviceReaderSessionTryBeginBurst(device_reader_session_t *session, worker_t *worker, device_reader_burst_t *burst)
+{
+    assert(session != NULL && session->worker_queues != NULL && worker != NULL && burst != NULL);
+    assert(worker->wid < session->worker_queue_count);
+    *burst = (device_reader_burst_t) {0};
+    if (worker != tryGetCurrentEventWorker() || ! wloopCurrentThreadInNormalCallback(worker->loop))
+        return false;
+
+    device_reader_worker_queue_t *queue = &session->worker_queues[worker->wid];
+    mutexLock(&queue->lock);
+    assert(queue->producer_burst == NULL);
+    *burst                = (device_reader_burst_t) {.queue = queue, .worker = worker};
+    queue->producer_burst = burst;
+    mutexUnlock(&queue->lock);
+    return true;
+}
+
+void deviceReaderSessionEndBurst(device_reader_burst_t *burst)
+{
+    assert(burst != NULL && burst->queue != NULL && burst->worker != NULL);
+    device_reader_worker_queue_t *queue  = burst->queue;
+    worker_t                     *worker = burst->worker;
+    assert(worker == tryGetCurrentEventWorker() && wloopCurrentThreadInNormalCallback(worker->loop));
+    mutexLock(&queue->lock);
+    assert(queue->producer_burst == burst);
+    const bool owns_drain = burst->owns_drain;
+    queue->producer_burst = NULL;
+    mutexUnlock(&queue->lock);
+    *burst = (device_reader_burst_t) {0};
+    /* Clear the scope before callbacks: recursive input joins the existing
+     * token, and any unfinished quantum keeps its normal queued continuation. */
+    if (owns_drain)
+        deviceReaderWorkerQueueDrain(worker, queue, NULL, NULL);
+}
+
 /* The sole queued token owns this lane until callback-or-cleanup settlement.
  * A producer may append while cancellation detaches the old FIFO; subsequent
  * work then schedules its own token. Neither path touches an owner-only pool. */
@@ -141,15 +176,24 @@ static bool deviceReaderWorkerQueueAppend(device_reader_message_t *message, wid_
     }
     queue->tail         = message;
     const bool schedule = ! queue->scheduled;
+    bool       local    = false;
     if (schedule)
     {
         queue->scheduled = true;
         deviceReaderSessionRef(session);
+        device_reader_burst_t *burst = queue->producer_burst;
+        if (burst != NULL && currentThreadIsEventWorkerWID(target_wid) &&
+            wloopCurrentThreadInNormalCallback(burst->worker->loop))
+        {
+            assert(! burst->owns_drain);
+            burst->owns_drain = true;
+            local             = true;
+        }
     }
     mutexUnlock(&queue->lock);
-    /* Defer even on the producer's worker so a bounded read burst shares the
-     * existing ACK quantum instead of flushing once per posted packet. */
-    return ! schedule || deviceReaderWorkerQueueSchedule(queue);
+    /* A newly claimed local token belongs to the producer's EndBurst. Every
+     * other token remains queued; no packet is delivered during collection. */
+    return ! schedule || local || deviceReaderWorkerQueueSchedule(queue);
 }
 
 static void deviceReaderWorkerQueueDrain(void *worker, void *arg1, void *arg2, void *arg3)
@@ -162,7 +206,8 @@ static void deviceReaderWorkerQueueDrain(void *worker, void *arg1, void *arg2, v
     assert(wid == queue->wid);
     device_reader_work_budget_t budget    = {.packets = kDeviceReaderWorkerPacketQuantum,
                                              .bytes   = kDeviceReaderWorkerByteQuantum};
-    ww_lwip_engine_t           *ack_batch = wwLwipRuntimeBeginAckBatch(wid);
+    packet_batch_t              batch;
+    packetBatchBegin(&batch);
 
     while (budget.packets > 0 && budget.bytes > 0)
     {
@@ -172,8 +217,7 @@ static void deviceReaderWorkerQueueDrain(void *worker, void *arg1, void *arg2, v
         {
             queue->scheduled = false;
             mutexUnlock(&queue->lock);
-            if (ack_batch != NULL)
-                wwLwipEngineEndAckBatch(ack_batch);
+            packetBatchEnd(&batch);
             deviceReaderSessionUnref(session);
             return;
         }
@@ -249,10 +293,8 @@ static void deviceReaderWorkerQueueDrain(void *worker, void *arg1, void *arg2, v
         deviceReaderSessionCleanupMessage(message);
     }
 
-    /* Flush before yielding or publishing the continuation. No ACK intent
-     * survives this bounded packet/byte quantum. */
-    if (ack_batch != NULL)
-        wwLwipEngineEndAckBatch(ack_batch);
+    /* Participants flush before yielding or publishing the continuation. */
+    packetBatchEnd(&batch);
     mutexLock(&queue->lock);
     const bool more = queue->head != NULL;
     if (! more)
@@ -285,9 +327,10 @@ static void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *a
     const bool entered = quiescenceGateEnter(&session->delivery_gate);
     if (entered && deviceReaderSessionMatchesGeneration(session, generation))
     {
-        ww_lwip_engine_t *ack_batch     = wwLwipRuntimeBeginAckBatch(wid);
-        unsigned int      batch_packets = 0;
-        size_t            batch_bytes   = 0;
+        packet_batch_t batch;
+        packetBatchBegin(&batch);
+        unsigned int batch_packets = 0;
+        size_t       batch_bytes   = 0;
         for (unsigned int i = 0; i < message->count; i++)
         {
             const uint32_t length = sbufGetLength(message->bufs[i]);
@@ -295,9 +338,8 @@ static void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *a
                 (batch_packets == kDeviceReaderWorkerPacketQuantum ||
                  length > kDeviceReaderWorkerByteQuantum - min(batch_bytes, (size_t) kDeviceReaderWorkerByteQuantum)))
             {
-                if (ack_batch != NULL)
-                    wwLwipEngineEndAckBatch(ack_batch);
-                ack_batch     = wwLwipRuntimeBeginAckBatch(wid);
+                packetBatchEnd(&batch);
+                packetBatchBegin(&batch);
                 batch_packets = 0;
                 batch_bytes   = 0;
             }
@@ -313,8 +355,7 @@ static void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *a
                 deviceReaderSessionReleaseOutput(session, charges[i]);
             }
         }
-        if (ack_batch != NULL)
-            wwLwipEngineEndAckBatch(ack_batch);
+        packetBatchEnd(&batch);
         quiescenceGateLeave(&session->delivery_gate);
     }
     else
@@ -558,6 +599,7 @@ void deviceReaderDispatchDestroy(device_reader_session_t *session)
     {
         assert(session->worker_queues[i].head == NULL);
         assert(! session->worker_queues[i].scheduled);
+        assert(session->worker_queues[i].producer_burst == NULL);
         mutexDestroy(&session->worker_queues[i].lock);
     }
     memoryFree(session->worker_queues);

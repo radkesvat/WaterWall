@@ -24,6 +24,7 @@
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
 #include "devices/device_reader_session.h"
+#include "net/packet_batch.h"
 
 #include "wloop_internal.h"
 #include "worker_messages.h"
@@ -70,7 +71,56 @@ typedef struct reader_probe_s
     atomic_bool         block_delivery;
     atomic_bool         delivery_entered;
     atomic_bool         release_delivery;
+    struct packet_batch_probe_s *packet_batch;
 } reader_probe_t;
+
+typedef struct packet_batch_entry_s
+{
+    packet_batch_participant_t   participant;
+    struct packet_batch_probe_s *probe;
+    unsigned int                 begins, ends, first_delivery, delivered[2];
+} packet_batch_entry_t;
+
+typedef struct packet_batch_probe_s
+{
+    reader_probe_t      *reader;
+    packet_batch_entry_t entries[2];
+} packet_batch_probe_t;
+
+static void beginPacketBatch(void *context)
+{
+    packet_batch_entry_t *entry = context;
+    require(entry->begins == entry->ends, "packet batch began twice without ending");
+    entry->first_delivery = entry->probe->reader->delivered;
+    ++entry->begins;
+}
+
+static void endPacketBatch(void *context)
+{
+    packet_batch_entry_t *entry = context;
+    require(entry->begins == entry->ends + 1 && entry->ends < ARRAY_SIZE(entry->delivered),
+            "packet batch ended without beginning or exceeded its test quantum count");
+    for (unsigned int i = 0; i < ARRAY_SIZE(entry->probe->entries); ++i)
+    {
+        packet_batch_participant_t *participant = &entry->probe->entries[i].participant;
+        require(participant->batch == NULL && ! packetBatchJoin(participant),
+                "packet batch flushed before clearing every membership or admitted a participant during flush");
+    }
+    entry->delivered[entry->ends++] = entry->probe->reader->delivered - entry->first_delivery;
+}
+
+static void initializePacketBatchProbe(packet_batch_probe_t *probe, reader_probe_t *reader)
+{
+    memoryZero(probe, sizeof(*probe));
+    probe->reader = reader;
+    for (unsigned int i = 0; i < ARRAY_SIZE(probe->entries); ++i)
+    {
+        packet_batch_entry_t *entry = &probe->entries[i];
+        entry->probe                = probe;
+        entry->participant =
+            (packet_batch_participant_t) {.begin = beginPacketBatch, .end = endPacketBatch, .context = entry};
+    }
+}
 
 typedef struct end_wait_probe_s
 {
@@ -175,6 +225,16 @@ void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
 static void deliverPacket(void *device, sbuf_t *buf, wid_t wid)
 {
     reader_probe_t *probe = device;
+    if (probe->packet_batch != NULL)
+    {
+        for (unsigned int i = 0; i < ARRAY_SIZE(probe->packet_batch->entries); ++i)
+        {
+            packet_batch_entry_t *entry  = &probe->packet_batch->entries[i];
+            const bool            joined = entry->participant.batch != NULL;
+            require(packetBatchJoin(&entry->participant) == ! joined && entry->begins == entry->ends + 1,
+                    "packet delivery lacked an active batch or rejoined an existing participant");
+        }
+    }
     if (probe->required_work_steps != NULL)
     {
         require(*probe->required_work_steps == probe->expected_work_steps,
@@ -1310,6 +1370,252 @@ static void testSameWorkerPostsKeepExistingFifo(test_env_t *env)
     deviceReaderSessionUnref(session);
 }
 
+typedef struct burst_post_probe_s
+{
+    device_reader_session_t *session;
+    reader_probe_t          *delivered;
+    worker_work_probe_t     *head_work;
+    unsigned int             packets;
+    uint32_t                 packet_length;
+    wid_t                    target_wid;
+    bool                     close_before_end;
+    bool                     refuse_continuation;
+    bool                     check_capacity;
+} burst_post_probe_t;
+
+static void postFromReceiveBurst(void *context)
+{
+    burst_post_probe_t   *probe = context;
+    device_reader_burst_t burst;
+    require(deviceReaderSessionTryBeginBurst(probe->session, getCurrentEventWorker(), &burst),
+            "admitted worker could not begin its receive burst");
+    const unsigned int delivered_before = probe->delivered->delivered;
+    const unsigned int messages_before  = captured_message_count;
+    if (probe->head_work != NULL)
+        require(postWorkerWork(probe->session, probe->head_work), "burst aggregate admission failed");
+    for (unsigned int i = 0; i < probe->packets; ++i)
+    {
+        sbuf_t *buf = sbufCreate(probe->packet_length);
+        sbufSetLength(buf, probe->packet_length);
+        require(deviceReaderSessionTryPost(probe->session, probe->target_wid, &buf, 1) == kDeviceReaderPostAccepted,
+                "receive burst packet admission failed");
+        require(probe->delivered->delivered == delivered_before,
+                "same-worker packet was delivered before its explicit receive burst ended");
+    }
+    if (probe->check_capacity)
+    {
+        sbuf_t *retained = sbufCreate(probe->packet_length);
+        sbufSetLength(retained, 1);
+        sbufWriteUI8(retained, 0xa5);
+        require(deviceReaderSessionTryPost(probe->session, 0, &retained, 1) == kDeviceReaderPostCapacity &&
+                    sbufReadUI8(retained) == 0xa5,
+                "burst capacity refusal lost caller ownership or changed its retained packet");
+        sbufDestroy(retained);
+    }
+    require(captured_message_count == messages_before + (probe->target_wid != 0 ? 1U : 0U),
+            "same-worker receive burst posted a drain token before its boundary");
+    if (probe->close_before_end)
+        deviceReaderSessionEndRequest(probe->session);
+    fail_post = probe->refuse_continuation;
+    deviceReaderSessionEndBurst(&burst);
+    fail_post = false;
+}
+
+static void testReceiveBurstBoundsAndSettlement(test_env_t *env)
+{
+    /* One bounded inline drain replaces the self-notification, while packet,
+     * byte, oversized-singleton and refused-continuation rules stay intact. */
+    const unsigned int counts[]  = {6, 65, 2, 1, 65};
+    const uint32_t     lengths[] = {100, 100, 40000, 70000, 100};
+    const unsigned int first[]   = {6, 64, 1, 1, 64};
+    for (unsigned int test = 0; test < ARRAY_SIZE(counts); ++test)
+    {
+        resetCapturedMessages();
+        reader_probe_t           delivered = {0};
+        device_reader_session_t *session   = createSession(env, &delivered, 1);
+        require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 128) &&
+                    deviceReaderSessionEnableWorkerQueue(session) && deviceReaderSessionBegin(session) != 0,
+                "failed to configure bounded receive-burst fixture");
+        wloop_t *loop = wloopCreate(0, env->worker_buffer_pool, 0);
+        require(loop != NULL, "failed to create receive-burst callback loop");
+        getCurrentEventWorker()->loop = loop;
+        burst_post_probe_t burst      = {.session             = session,
+                                         .delivered           = &delivered,
+                                         .packets             = counts[test],
+                                         .packet_length       = lengths[test],
+                                         .refuse_continuation = test == 4};
+        require(wloopInvokeNormalCallback(loop, postFromReceiveBurst, &burst), "receive-burst callback was refused");
+        const bool continuation = first[test] != counts[test] && ! burst.refuse_continuation;
+        require(delivered.delivered == first[test] && captured_message_count == (continuation ? 1U : 0U),
+                "receive burst exceeded its quantum or sent an unnecessary self-notification");
+        for (unsigned int i = 0; i < captured_message_count; ++i)
+            deliverWorkerQueueMessage(i);
+        require(delivered.delivered == (burst.refuse_continuation ? first[test] : counts[test]),
+                "receive-burst continuation lost a packet or ran after synchronous refusal");
+        requireOutputBudgetEmpty(session);
+        require(atomicLoadRelaxed(&session->refcount) == 1, "receive burst leaked its drain-token session reference");
+        getCurrentEventWorker()->loop = NULL;
+        wloopDestroy(&loop);
+        deviceReaderSessionEnd(session);
+        deviceReaderSessionUnref(session);
+    }
+}
+
+static void testReceiveBurstPreservesQueuedAndForeignWork(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t           delivered = {0};
+    device_reader_session_t *session   = createWorkerQueueSession(env, &delivered);
+    wloop_t                 *loop      = wloopCreate(0, env->worker_buffer_pool, 0);
+    require(loop != NULL, "failed to create ordered receive-burst loop");
+    getCurrentEventWorker()->loop = loop;
+    worker_work_probe_t work      = {.target_steps = 2};
+    require(postWorkerWork(session, &work), "failed to queue work preceding the receive burst");
+    delivered.required_work_steps = &work.steps;
+    delivered.expected_work_steps = 2;
+    burst_post_probe_t burst      = {.session = session, .delivered = &delivered, .packets = 1, .packet_length = 100};
+    require(wloopInvokeNormalCallback(loop, postFromReceiveBurst, &burst), "ordered receive burst was refused");
+    require(work.steps == 0 && delivered.delivered == 0 && captured_message_count == 1,
+            "receive burst stole an existing queued token or overtook older aggregate work");
+    deliverWorkerQueueMessage(0);
+    require(work.steps == 1 && delivered.delivered == 0 && captured_message_count == 2,
+            "receive burst bypassed an unfinished aggregate head");
+    deliverWorkerQueueMessage(1);
+    require(work.steps == 2 && work.cleanups == 1 && delivered.delivered == 1,
+            "queued aggregate continuation lost the trailing burst packet");
+
+    worker_work_probe_t local_work = {.target_steps = 2};
+    delivered.required_work_steps  = &local_work.steps;
+    burst.head_work                = &local_work;
+    require(wloopInvokeNormalCallback(loop, postFromReceiveBurst, &burst), "local aggregate burst was refused");
+    require(local_work.steps == 1 && delivered.delivered == 1 && captured_message_count == 3,
+            "inline receive burst failed to retain and reschedule its unfinished aggregate head");
+    deliverWorkerQueueMessage(2);
+    require(local_work.steps == 2 && local_work.cleanups == 1 && delivered.delivered == 2,
+            "inline aggregate continuation lost FIFO priority over its burst packet");
+
+    delivered.required_work_steps = NULL;
+    burst.head_work               = NULL;
+    burst.target_wid              = 1;
+    require(wloopInvokeNormalCallback(loop, postFromReceiveBurst, &burst), "foreign-target burst was refused");
+    require(delivered.delivered == 2 && captured_message_count == 4 && captured_messages[3].wid == 1,
+            "receive burst ran a foreign worker inline or lost its queued notification");
+    deliverWorkerQueueMessage(3);
+    require(delivered.delivered == 3, "foreign receive-burst packet was not delivered on its target worker");
+    requireOutputBudgetEmpty(session);
+    getCurrentEventWorker()->loop = NULL;
+    wloopDestroy(&loop);
+    deviceReaderSessionEnd(session);
+    deviceReaderSessionUnref(session);
+}
+
+static void testReceiveBurstCapacityAndClosedGeneration(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t           delivered = {0};
+    device_reader_session_t *session   = createSession(env, &delivered, 1);
+    require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 1) &&
+                deviceReaderSessionEnableWorkerQueue(session) && deviceReaderSessionBegin(session) != 0,
+            "failed to configure closing receive-burst fixture");
+    wloop_t *loop = wloopCreate(0, env->worker_buffer_pool, 0);
+    require(loop != NULL, "failed to create closing receive-burst loop");
+    getCurrentEventWorker()->loop = loop;
+    device_reader_burst_t inactive;
+    require(! deviceReaderSessionTryBeginBurst(session, getCurrentEventWorker(), &inactive),
+            "worker identity alone admitted an inline receive burst");
+    burst_post_probe_t burst = {.session          = session,
+                                .delivered        = &delivered,
+                                .packets          = 1,
+                                .packet_length    = 100,
+                                .close_before_end = true,
+                                .check_capacity   = true};
+    require(wloopInvokeNormalCallback(loop, postFromReceiveBurst, &burst), "closing receive burst was refused");
+    require(delivered.delivered == 0 && captured_message_count == 0,
+            "closed receive burst delivered stale input or queued an unnecessary token");
+    requireOutputBudgetEmpty(session);
+    require(atomicLoadRelaxed(&session->refcount) == 1, "closed receive burst retained its session reference");
+    deviceReaderSessionEnd(session);
+    require(deviceReaderSessionBegin(session) != 0, "settled receive burst prevented the session from reopening");
+    burst.close_before_end = false;
+    burst.check_capacity   = false;
+    require(wloopInvokeNormalCallback(loop, postFromReceiveBurst, &burst), "reopened receive burst was refused");
+    require(delivered.delivered == 1 && captured_message_count == 0,
+            "reopened receive burst retained stale queue ownership");
+    requireOutputBudgetEmpty(session);
+    getCurrentEventWorker()->loop = NULL;
+    wloopDestroy(&loop);
+    deviceReaderSessionEnd(session);
+    deviceReaderSessionUnref(session);
+}
+
+static void testGenericPacketBatchParticipants(test_env_t *env)
+{
+    reader_probe_t       reader = {0};
+    packet_batch_probe_t probe;
+    initializePacketBatchProbe(&probe, &reader);
+    require(! packetBatchJoin(&probe.entries[0].participant), "participant joined without a packet scope");
+    packet_batch_t batch;
+    packetBatchBegin(&batch);
+    packetBatchEnd(&batch);
+    require(probe.entries[0].begins == 0 && probe.entries[1].begins == 0,
+            "empty packet scope activated unrelated consumers");
+    packetBatchBegin(&batch);
+    for (unsigned int i = 0; i < ARRAY_SIZE(probe.entries); ++i)
+    {
+        require(packetBatchJoin(&probe.entries[i].participant), "packet scope refused a new participant");
+        require(! packetBatchJoin(&probe.entries[i].participant), "packet scope admitted the same participant twice");
+    }
+    packetBatchEnd(&batch);
+    require(probe.entries[0].ends == 1 && probe.entries[1].ends == 1 &&
+                ! packetBatchJoin(&probe.entries[0].participant),
+            "packet scope lost a participant or remained active after ending");
+
+    /* Both the FIFO and legacy message path expose the same bounded scope.
+     * Participants join lazily on delivery and can rejoin the next quantum. */
+    const unsigned int counts[]  = {65, 2, 1};
+    const uint32_t     lengths[] = {100, 40000, 70000};
+    const unsigned int first[]   = {64, 1, 1};
+    for (unsigned int fifo = 0; fifo < 2; ++fifo)
+    {
+        for (unsigned int test = 0; test < ARRAY_SIZE(counts); ++test)
+        {
+            resetCapturedMessages();
+            reader = (reader_probe_t) {0};
+            initializePacketBatchProbe(&probe, &reader);
+            reader.packet_batch              = &probe;
+            device_reader_session_t *session = createSession(env, &reader, 128);
+            if (fifo)
+                require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 128) &&
+                            deviceReaderSessionEnableWorkerQueue(session),
+                        "failed to configure packet scope FIFO");
+            require(deviceReaderSessionBegin(session) != 0, "failed to begin packet scope fixture");
+            sbuf_t *packets[65];
+            for (unsigned int i = 0; i < counts[test]; ++i)
+            {
+                packets[i] = sbufCreate(lengths[test]);
+                sbufSetLength(packets[i], lengths[test]);
+            }
+            require(deviceReaderSessionPost(session, 0, packets, counts[test]), "packet scope post failed");
+            require(probe.entries[0].begins == 0 && reader.delivered == 0 && captured_message_count == 1,
+                    "packet scope began before queued delivery");
+            for (unsigned int i = 0; i < captured_message_count; ++i)
+                deliverWorkerQueueMessage(i);
+            const unsigned int quanta = counts[test] == first[test] ? 1 : 2;
+            for (unsigned int i = 0; i < ARRAY_SIZE(probe.entries); ++i)
+            {
+                packet_batch_entry_t *entry = &probe.entries[i];
+                require(entry->begins == quanta && entry->ends == quanta && entry->delivered[0] == first[test] &&
+                            (quanta == 1 || entry->delivered[1] == counts[test] - first[test]),
+                        "packet scope lost a participant, callback order, or packet/byte quantum boundary");
+            }
+            require(reader.delivered == counts[test], "packet scope lost a delivered packet");
+            requireOutputBudgetEmpty(session);
+            deviceReaderSessionEnd(session);
+            deviceReaderSessionUnref(session);
+        }
+    }
+}
+
 typedef struct concurrent_reserve_probe_s
 {
     device_reader_session_t *session;
@@ -1378,6 +1684,10 @@ int main(void)
     testEndWaitQuiescesCapacityNotification(&env);
     testNonblockingBatchCapacityAndRetainedOwnership(&env);
     testSameWorkerPostsKeepExistingFifo(&env);
+    testReceiveBurstBoundsAndSettlement(&env);
+    testReceiveBurstPreservesQueuedAndForeignWork(&env);
+    testReceiveBurstCapacityAndClosedGeneration(&env);
+    testGenericPacketBatchParticipants(&env);
     testConcurrentProducerBudget(&env);
     envTeardown(&env);
     puts("device reader session tests passed");

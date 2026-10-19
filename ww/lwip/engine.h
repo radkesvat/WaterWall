@@ -36,6 +36,10 @@ void              wwLwipEngineQuiesce(ww_lwip_engine_t *engine);
  * input, control and recovery ACK paths remain live. */
 void wwLwipEngineBeginAckBatch(ww_lwip_engine_t *engine);
 void wwLwipEngineEndAckBatch(ww_lwip_engine_t *engine);
+/* Join the current generic receive quantum before stack entry. Returns true
+ * only on first participation; no scope or an existing join returns false.
+ * The engine remains alive through the synchronous receive boundary. */
+bool wwLwipEngineJoinReceiveBatch(ww_lwip_engine_t *engine);
 
 /* Implemented by the worker runtime; context selection never grants ownership. */
 bool wwLwipEngineOwnerIsCurrent(uint8_t owner, const struct wloop_s *loop);

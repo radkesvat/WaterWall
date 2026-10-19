@@ -1345,7 +1345,14 @@ endif()
 include(${LWIP_DIR}/src/Filelists.cmake)
 include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
 
+add_library(ww_packet_batch STATIC net/packet_batch.c)
+target_include_directories(ww_packet_batch PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/net
+    PRIVATE ${WW_CONFIG_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/libc)
+target_link_libraries(ww_packet_batch PUBLIC waterwall_runtime_options waterwall_cpu_options)
+target_link_libraries(ww PUBLIC ww_packet_batch)
+
 add_library(ww_lwip STATIC ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c lwip/pool_cache.c)
+target_link_libraries(ww_lwip PUBLIC ww_packet_batch)
 target_include_directories(ww_lwip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libc)
 # Source-local engine modules must not merge their private macro namespaces.
 set_target_properties(ww_lwip PROPERTIES UNITY_BUILD OFF)
@@ -1367,7 +1374,7 @@ if(WW_BUILD_UNIT_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         UDP_LOCAL_PORT_RANGE_START=49152 UDP_LOCAL_PORT_RANGE_END=49159
         $<$<CONFIG:Debug>:LWIP_DEBUG=1>)
     set_target_properties(ww_lwip_engine_test PROPERTIES UNITY_BUILD OFF)
-    target_link_libraries(ww_lwip_engine_test PUBLIC waterwall_runtime_options)
+    target_link_libraries(ww_lwip_engine_test PUBLIC waterwall_runtime_options ww_packet_batch)
 endif()
 
 target_compile_definitions(ww_lwip PUBLIC $<$<CONFIG:Debug>:LWIP_DEBUG=1>)

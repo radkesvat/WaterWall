@@ -34,6 +34,9 @@ typedef struct device_reader_worker_queue_s
     device_reader_message_t *tail;
     wid_t                    wid;
     bool                     scheduled;
+    /* Protected by lock; only the admitted owner may access the scope fields.
+     * A local scope can own the scheduled token before any wake is posted. */
+    device_reader_burst_t *producer_burst;
 } device_reader_worker_queue_t;
 
 /* Raw readers need only pointers. A budgeted session allocates a parallel
