@@ -2,351 +2,196 @@
 
 #include "loggers/network_logger.h"
 
-static uint64_t speedlimitNowMs(line_t *l)
+static uint64_t speedlimitNowMs(line_t *line)
 {
-    return wloopNowMS(getWorkerLoop(lineGetWID(l)));
+    return wloopNowMS(getWorkerLoop(lineGetWID(line)));
 }
 
-static speedlimit_bucket_t *speedlimitGetWorkerBucket(speedlimit_tstate_t *ts, line_t *l)
+static rate_bucket_t speedlimitReadBucket(const speedlimit_bucket_t *bucket)
 {
-    return &ts->worker_buckets[lineGetWID(l)];
+    return (rate_bucket_t) {.credit         = bucket->tokens_units / kSpeedLimitUnitsPerByte,
+                            .last_refill_ms = bucket->last_refill_ms,
+                            .remainder      = (uint16_t) (bucket->tokens_units % kSpeedLimitUnitsPerByte),
+                            .has_clock      = bucket->has_clock || bucket->last_refill_ms != 0};
 }
 
-static void speedlimitRefillLocalBucket(const speedlimit_tstate_t *ts, speedlimit_bucket_t *bucket, uint64_t now_ms)
+static void speedlimitWriteBucket(speedlimit_bucket_t *bucket, const rate_bucket_t *value)
 {
-    if (bucket->last_refill_ms == 0)
-    {
-        bucket->last_refill_ms = now_ms;
-        return;
-    }
+    bucket->tokens_units   = value->credit * kSpeedLimitUnitsPerByte + value->remainder;
+    bucket->last_refill_ms = value->last_refill_ms;
+    bucket->has_clock      = value->has_clock;
+}
 
-    if (now_ms <= bucket->last_refill_ms)
+/* Synchronization is adapter policy. One lock serializes the two atomic fields
+ * so clock publication cannot precede its corresponding shared credit refill. */
+static speedlimit_bucket_t *speedlimitAcquireBucket(speedlimit_tstate_t *state, speedlimit_bucket_t *global)
+{
+    while (atomicFlagTestAndSet(&state->global_bucket.lock))
     {
-        return;
     }
+    *global = (speedlimit_bucket_t) {.tokens_units   = atomicLoadU64Relaxed(&state->global_bucket.tokens_units),
+                                     .last_refill_ms = atomicLoadU64Relaxed(&state->global_bucket.last_refill_ms),
+                                     .has_clock      = state->global_bucket.has_clock};
+    return global;
+}
 
-    uint64_t elapsed_ms = now_ms - bucket->last_refill_ms;
-    uint64_t steps      = elapsed_ms / ts->recharge_interval_ms;
-    if (steps == 0)
-    {
-        return;
-    }
+static speedlimit_bucket_t *speedlimitLocalBucket(tunnel_t *tunnel, line_t *line)
+{
+    speedlimit_tstate_t *state = tunnelGetState(tunnel);
+    return state->limit_mode == kSpeedLimitLimitModePerWorker
+               ? &state->worker_buckets[lineGetWID(line)]
+               : &((speedlimit_lstate_t *) lineGetState(line, tunnel))->line_bucket;
+}
 
-    uint64_t added_units;
-    if (steps > (UINT64_MAX / ts->refill_units_per_step))
+static void speedlimitReleaseBucket(speedlimit_tstate_t *state, const speedlimit_bucket_t *bucket)
+{
+    if (state->limit_mode == kSpeedLimitLimitModeAllLines)
     {
-        added_units = UINT64_MAX;
+        atomicStoreU64Relaxed(&state->global_bucket.tokens_units, bucket->tokens_units);
+        atomicStoreU64Relaxed(&state->global_bucket.last_refill_ms, bucket->last_refill_ms);
+        state->global_bucket.has_clock = bucket->has_clock;
+        atomicFlagClear(&state->global_bucket.lock);
     }
+}
+
+static speedlimit_bucket_t *speedlimitBucket(tunnel_t *tunnel, line_t *line, speedlimit_bucket_t *global)
+{
+    speedlimit_tstate_t *state = tunnelGetState(tunnel);
+    if (state->limit_mode != kSpeedLimitLimitModeAllLines)
+        return speedlimitLocalBucket(tunnel, line);
+    return speedlimitAcquireBucket(state, global);
+}
+
+uint64_t speedlimitPeekAvailableUnits(tunnel_t *tunnel, line_t *line)
+{
+    speedlimit_tstate_t *state = tunnelGetState(tunnel);
+    speedlimit_bucket_t  global;
+    speedlimit_bucket_t *bucket = speedlimitBucket(tunnel, line, &global);
+    rate_bucket_t        value  = speedlimitReadBucket(bucket);
+    ratebucketRefill(
+        &value, state->bytes_per_sec, state->bytes_per_sec, state->recharge_interval_ms, speedlimitNowMs(line));
+    speedlimitWriteBucket(bucket, &value);
+    uint64_t units = bucket->tokens_units;
+    speedlimitReleaseBucket(state, bucket);
+    return units;
+}
+
+size_t speedlimitGrantBytes(tunnel_t *tunnel, line_t *line, size_t requested, bool allow_partial)
+{
+    if (requested == 0)
+        return 0;
+    speedlimit_tstate_t *state = tunnelGetState(tunnel);
+    speedlimit_bucket_t  global;
+    speedlimit_bucket_t *bucket = speedlimitBucket(tunnel, line, &global);
+    rate_bucket_t        value  = speedlimitReadBucket(bucket);
+    ratebucketRefill(
+        &value, state->bytes_per_sec, state->bytes_per_sec, state->recharge_interval_ms, speedlimitNowMs(line));
+    size_t granted = (size_t) ratebucketGrant(&value, requested, allow_partial);
+    speedlimitWriteBucket(bucket, &value);
+    speedlimitReleaseBucket(state, bucket);
+    return granted;
+}
+
+uint32_t speedlimitGetRetryDelayMs(tunnel_t *tunnel, line_t *line)
+{
+    speedlimit_tstate_t *state = tunnelGetState(tunnel);
+    speedlimit_bucket_t  global;
+    speedlimit_bucket_t *bucket = speedlimitBucket(tunnel, line, &global);
+    rate_bucket_t        value  = speedlimitReadBucket(bucket);
+    uint64_t             now    = speedlimitNowMs(line);
+    ratebucketRefill(&value, state->bytes_per_sec, state->bytes_per_sec, state->recharge_interval_ms, now);
+    uint64_t delay = ratebucketRetryMs(&value, state->bytes_per_sec, state->recharge_interval_ms, now, 1);
+    speedlimitWriteBucket(bucket, &value);
+    speedlimitReleaseBucket(state, bucket);
+    assert(delay <= INT_MAX);
+    return delay == 0 ? kSpeedLimitImmediateMs : (uint32_t) delay;
+}
+
+bool speedlimitScheduleUpstreamDrain(speedlimit_lstate_t *state, uint32_t delay_ms)
+{
+    assert(delay_ms > 0);
+    return trafficshaperSchedule(&state->up, delay_ms);
+}
+
+bool speedlimitScheduleDownstreamDrain(speedlimit_lstate_t *state, uint32_t delay_ms)
+{
+    assert(delay_ms > 0);
+    return trafficshaperSchedule(&state->down, delay_ms);
+}
+
+void speedlimitCloseLineOnDrainFailure(speedlimit_lstate_t *state, sbuf_t *detached)
+{
+    tunnel_t *tunnel = state->tunnel;
+    line_t   *line   = state->line;
+    lineRef(line);
+    if (detached != NULL)
+        lineReuseBuffer(line, detached);
+    speedlimitLinestateDestroy(state);
+    tunnelNextUpStreamFinish(tunnel, line);
+    if (lineIsAlive(line))
+        tunnelPrevDownStreamFinish(tunnel, line);
+    lineUnref(line);
+}
+
+static traffic_shaper_preview_t speedlimitPreview(void *context, size_t requested, bool queued)
+{
+    discard                 queued;
+    speedlimit_direction_t *direction = context;
+    speedlimit_lstate_t    *state     = direction->state;
+    uint64_t                units     = speedlimitPeekAvailableUnits(state->tunnel, state->line);
+    size_t                  bytes     = (size_t) min((uint64_t) requested, units / kSpeedLimitUnitsPerByte);
+    return (traffic_shaper_preview_t) {
+        bytes, requested != 0 && bytes == 0 ? speedlimitGetRetryDelayMs(state->tunnel, state->line) : 0, false};
+}
+
+static traffic_shaper_commit_t speedlimitCommit(void *context, size_t bytes, bool queued, bool remaining)
+{
+    discard                 queued;
+    discard                 remaining;
+    speedlimit_direction_t *direction = context;
+    speedlimit_lstate_t    *state     = direction->state;
+    return speedlimitGrantBytes(state->tunnel, state->line, bytes, false) == bytes ? kTrafficShaperForward
+                                                                                   : kTrafficShaperWait;
+}
+
+static void speedlimitForward(void *context, sbuf_t *buffer)
+{
+    speedlimit_direction_t *direction = context;
+    speedlimit_lstate_t    *state     = direction->state;
+    if (direction->upstream)
+        tunnelNextUpStreamPayload(state->tunnel, state->line, buffer);
     else
-    {
-        added_units = steps * ts->refill_units_per_step;
-    }
-
-    bucket->last_refill_ms += steps * ts->recharge_interval_ms;
-
-    if (bucket->tokens_units >= ts->bucket_capacity_units)
-    {
-        bucket->tokens_units = ts->bucket_capacity_units;
-        return;
-    }
-
-    if (added_units >= ts->bucket_capacity_units - bucket->tokens_units)
-    {
-        bucket->tokens_units = ts->bucket_capacity_units;
-        return;
-    }
-
-    bucket->tokens_units += added_units;
+        tunnelPrevDownStreamPayload(state->tunnel, state->line, buffer);
 }
 
-static void speedlimitRefillAtomicBucket(const speedlimit_tstate_t *ts, speedlimit_atomic_bucket_t *bucket,
-                                         uint64_t now_ms)
+static void speedlimitPressure(void *context, bool paused)
 {
-    while (true)
+    speedlimit_direction_t *direction = context;
+    speedlimit_lstate_t    *state     = direction->state;
+    if (direction->upstream)
     {
-        uint64_t last_refill_ms = atomicLoadU64Relaxed(&bucket->last_refill_ms);
-        if (last_refill_ms == 0)
-        {
-            uint64_t expected = 0;
-            if (atomicCompareExchangeU64(&bucket->last_refill_ms, &expected, now_ms))
-            {
-                return;
-            }
-            continue;
-        }
-
-        if (now_ms <= last_refill_ms)
-        {
-            return;
-        }
-
-        uint64_t elapsed_ms = now_ms - last_refill_ms;
-        uint64_t steps      = elapsed_ms / ts->recharge_interval_ms;
-        if (steps == 0)
-        {
-            return;
-        }
-
-        uint64_t new_last_refill_ms = last_refill_ms + (steps * ts->recharge_interval_ms);
-        uint64_t expected_last      = last_refill_ms;
-        if (! atomicCompareExchangeU64(&bucket->last_refill_ms, &expected_last, new_last_refill_ms))
-        {
-            continue;
-        }
-
-        uint64_t added_units;
-        if (steps > (UINT64_MAX / ts->refill_units_per_step))
-        {
-            added_units = UINT64_MAX;
-        }
+        if (paused)
+            tunnelPrevDownStreamPause(state->tunnel, state->line);
         else
-        {
-            added_units = steps * ts->refill_units_per_step;
-        }
-
-        while (true)
-        {
-            uint64_t old_units = atomicLoadU64Relaxed(&bucket->tokens_units);
-            uint64_t new_units = old_units;
-
-            if (old_units < ts->bucket_capacity_units)
-            {
-                if (added_units >= ts->bucket_capacity_units - old_units)
-                {
-                    new_units = ts->bucket_capacity_units;
-                }
-                else
-                {
-                    new_units = old_units + added_units;
-                }
-            }
-
-            uint64_t expected_units = old_units;
-            if (atomicCompareExchangeU64(&bucket->tokens_units, &expected_units, new_units))
-            {
-                return;
-            }
-        }
-    }
-}
-
-uint64_t speedlimitPeekAvailableUnits(tunnel_t *t, line_t *l)
-{
-    speedlimit_tstate_t *ts     = tunnelGetState(t);
-    uint64_t             now_ms = speedlimitNowMs(l);
-
-    switch (ts->limit_mode)
-    {
-    case kSpeedLimitLimitModePerWorker: {
-        speedlimit_bucket_t *bucket = speedlimitGetWorkerBucket(ts, l);
-        speedlimitRefillLocalBucket(ts, bucket, now_ms);
-        return bucket->tokens_units;
-    }
-    case kSpeedLimitLimitModeAllLines:
-        speedlimitRefillAtomicBucket(ts, &ts->global_bucket, now_ms);
-        return atomicLoadU64Relaxed(&ts->global_bucket.tokens_units);
-    case kSpeedLimitLimitModePerLine:
-    default: {
-        speedlimit_lstate_t *ls = lineGetState(l, t);
-        speedlimitRefillLocalBucket(ts, &ls->line_bucket, now_ms);
-        return ls->line_bucket.tokens_units;
-    }
-    }
-}
-
-static uint64_t speedlimitPeekLastRefillMs(tunnel_t *t, line_t *l)
-{
-    speedlimit_tstate_t *ts = tunnelGetState(t);
-
-    switch (ts->limit_mode)
-    {
-    case kSpeedLimitLimitModePerWorker:
-        return speedlimitGetWorkerBucket(ts, l)->last_refill_ms;
-    case kSpeedLimitLimitModeAllLines:
-        return atomicLoadU64Relaxed(&ts->global_bucket.last_refill_ms);
-    case kSpeedLimitLimitModePerLine:
-    default:
-        return ((speedlimit_lstate_t *) lineGetState(l, t))->line_bucket.last_refill_ms;
-    }
-}
-
-size_t speedlimitGrantBytes(tunnel_t *t, line_t *l, size_t requested_bytes, bool allow_partial)
-{
-    speedlimit_tstate_t *ts = tunnelGetState(t);
-    if (requested_bytes == 0)
-    {
-        return 0;
-    }
-
-    uint64_t now_ms = speedlimitNowMs(l);
-
-    if (ts->limit_mode == kSpeedLimitLimitModeAllLines)
-    {
-        speedlimitRefillAtomicBucket(ts, &ts->global_bucket, now_ms);
-
-        while (true)
-        {
-            uint64_t old_units       = atomicLoadU64Relaxed(&ts->global_bucket.tokens_units);
-            uint64_t available_bytes = old_units / kSpeedLimitUnitsPerByte;
-            size_t   grant_bytes     = 0;
-
-            if (allow_partial)
-            {
-                grant_bytes = (size_t) min((uint64_t) requested_bytes, available_bytes);
-            }
-            else if (available_bytes >= requested_bytes)
-            {
-                grant_bytes = requested_bytes;
-            }
-
-            if (grant_bytes == 0)
-            {
-                return 0;
-            }
-
-            uint64_t consume_units  = ((uint64_t) grant_bytes) * kSpeedLimitUnitsPerByte;
-            uint64_t expected_units = old_units;
-            if (atomicCompareExchangeU64(&ts->global_bucket.tokens_units, &expected_units, old_units - consume_units))
-            {
-                return grant_bytes;
-            }
-        }
-    }
-
-    speedlimit_bucket_t *bucket;
-    if (ts->limit_mode == kSpeedLimitLimitModePerWorker)
-    {
-        bucket = speedlimitGetWorkerBucket(ts, l);
+            tunnelPrevDownStreamResume(state->tunnel, state->line);
     }
     else
     {
-        speedlimit_lstate_t *ls = lineGetState(l, t);
-        bucket                  = &ls->line_bucket;
+        if (paused)
+            tunnelNextUpStreamPause(state->tunnel, state->line);
+        else
+            tunnelNextUpStreamResume(state->tunnel, state->line);
     }
-
-    speedlimitRefillLocalBucket(ts, bucket, now_ms);
-
-    uint64_t available_bytes = bucket->tokens_units / kSpeedLimitUnitsPerByte;
-    size_t   grant_bytes     = 0;
-    if (allow_partial)
-    {
-        grant_bytes = (size_t) min((uint64_t) requested_bytes, available_bytes);
-    }
-    else if (available_bytes >= requested_bytes)
-    {
-        grant_bytes = requested_bytes;
-    }
-
-    if (grant_bytes == 0)
-    {
-        return 0;
-    }
-
-    bucket->tokens_units -= ((uint64_t) grant_bytes) * kSpeedLimitUnitsPerByte;
-    return grant_bytes;
 }
 
-uint32_t speedlimitGetRetryDelayMs(tunnel_t *t, line_t *l)
+static void speedlimitClose(void *context)
 {
-    speedlimit_tstate_t *ts           = tunnelGetState(t);
-    uint64_t             now_ms       = speedlimitNowMs(l);
-    uint64_t             tokens_units = speedlimitPeekAvailableUnits(t, l);
-    uint64_t             last_refill  = speedlimitPeekLastRefillMs(t, l);
-
-    if (tokens_units >= kSpeedLimitUnitsPerByte)
-    {
-        return kSpeedLimitImmediateMs;
-    }
-
-    if (last_refill == 0 || now_ms < last_refill)
-    {
-        return ts->recharge_interval_ms;
-    }
-
-    uint64_t phase_ms = (now_ms - last_refill) % ts->recharge_interval_ms;
-    uint64_t wait_ms  = (phase_ms == 0) ? ts->recharge_interval_ms : (ts->recharge_interval_ms - phase_ms);
-
-    const uint64_t missing_units = kSpeedLimitUnitsPerByte - tokens_units;
-    const uint64_t steps_needed  = 1 + (missing_units - 1) / ts->refill_units_per_step;
-    if (steps_needed > 1)
-    {
-        wait_ms += (steps_needed - 1) * ts->recharge_interval_ms;
-    }
-
-    /* Intervals >= 1000 need one step; shorter intervals earn a byte in under 2000 ms. */
-    assert(wait_ms > 0 && wait_ms <= INT_MAX);
-
-    return (uint32_t) wait_ms;
+    speedlimit_direction_t *direction = context;
+    speedlimitCloseLineOnDrainFailure(direction->state, NULL);
 }
 
-bool speedlimitScheduleUpstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms)
-{
-    assert(delay_ms > 0);
-
-    if (ls->up_timer != NULL)
-    {
-        return wtimerReset(ls->up_timer, delay_ms);
-    }
-
-    wtimer_t *timer = wtimerAdd(getWorkerLoop(lineGetWID(ls->line)), speedlimitUpstreamDrainTimerCallback, delay_ms, 1);
-    if (timer == NULL)
-    {
-        // the queue can never be drained again on this line, the caller closes it
-        LOGE("SpeedLimit: failed to create the upstream drain timer for this line");
-        return false;
-    }
-
-    ls->up_timer = timer;
-    weventSetUserData(timer, ls);
-    return true;
-}
-
-bool speedlimitScheduleDownstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms)
-{
-    assert(delay_ms > 0);
-
-    if (ls->down_timer != NULL)
-    {
-        return wtimerReset(ls->down_timer, delay_ms);
-    }
-
-    wtimer_t *timer =
-        wtimerAdd(getWorkerLoop(lineGetWID(ls->line)), speedlimitDownstreamDrainTimerCallback, delay_ms, 1);
-    if (timer == NULL)
-    {
-        // the queue can never be drained again on this line, the caller closes it
-        LOGE("SpeedLimit: failed to create the downstream drain timer for this line");
-        return false;
-    }
-
-    ls->down_timer = timer;
-    weventSetUserData(timer, ls);
-    return true;
-}
-
-void speedlimitCloseLineOnDrainFailure(speedlimit_lstate_t *ls, sbuf_t *detached_buf)
-{
-    tunnel_t *t = ls->tunnel;
-    line_t   *l = ls->line;
-
-    // both sides of this line are initialized and the close below may destroy the line re-entrantly
-    lineRef(l);
-
-    if (detached_buf != NULL)
-    {
-        // this buffer was already removed from its queue and will never be forwarded
-        lineReuseBuffer(l, detached_buf);
-    }
-
-    // recycles both queues and deletes both timers
-    speedlimitLinestateDestroy(ls);
-
-    tunnelNextUpStreamFinish(t, l);
-
-    if (lineIsAlive(l))
-    {
-        tunnelPrevDownStreamFinish(t, l);
-    }
-
-    lineUnref(l);
-}
+const traffic_shaper_ops_t speedlimitShaperOps = {.preview  = speedlimitPreview,
+                                                  .commit   = speedlimitCommit,
+                                                  .forward  = speedlimitForward,
+                                                  .pressure = speedlimitPressure,
+                                                  .close    = speedlimitClose};

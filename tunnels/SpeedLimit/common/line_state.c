@@ -1,46 +1,63 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
-void speedlimitLinestateInitialize(speedlimit_lstate_t *ls, tunnel_t *t, line_t *l)
+void speedlimitLinestateInitialize(speedlimit_lstate_t *state, tunnel_t *tunnel, line_t *line)
 {
-    speedlimit_tstate_t *ts = tunnelGetState(t);
-
-    *ls = (speedlimit_lstate_t) {.tunnel      = t,
-                                 .line        = l,
-                                 .up_queue    = bufferqueueCreate(kSpeedLimitQueueCap),
-                                 .down_queue  = bufferqueueCreate(kSpeedLimitQueueCap),
-                                 .line_bucket = {.tokens_units = ts->bucket_capacity_units}};
-
+    speedlimit_tstate_t *settings = tunnelGetState(tunnel);
+    *state                        = (speedlimit_lstate_t) {
+                               .tunnel = tunnel, .line = line, .line_bucket = {.tokens_units = settings->bucket_capacity_units}};
+    state->up_context                 = (speedlimit_direction_t) {state, true};
+    state->down_context               = (speedlimit_direction_t) {state, false};
     const buffer_budget_cost_t limits = {
         kSpeedLimitMaxQueueBytes, kSpeedLimitMaxQueueCharge, kSpeedLimitMaxQueueBuffers};
-    bufferbudgetInit(&ls->up_budget, limits);
-    bufferbudgetInit(&ls->down_budget, limits);
-    const bool up_attached   = bufferqueueTryAttachBudget(&ls->up_queue, &ls->up_budget);
-    const bool down_attached = bufferqueueTryAttachBudget(&ls->down_queue, &ls->down_budget);
-    assert(up_attached && down_attached);
-    discard up_attached;
-    discard down_attached;
+    bufferbudgetInit(&state->up_budget, limits);
+    bufferbudgetInit(&state->down_budget, limits);
+    trafficshaperInit(&state->up,
+                      line,
+                      &state->up_budget,
+                      &speedlimitShaperOps,
+                      &state->up_context,
+                      kTrafficShaperStream,
+                      kSpeedLimitImmediateMs,
+                      false);
+    trafficshaperInit(&state->down,
+                      line,
+                      &state->down_budget,
+                      &speedlimitShaperOps,
+                      &state->down_context,
+                      kTrafficShaperStream,
+                      kSpeedLimitImmediateMs,
+                      false);
+    speedlimit_lstate_t **head = &settings->worker_buckets[lineGetWID(line)].active_lines;
+    state->active_next         = *head;
+    if (*head != NULL)
+        (*head)->active_prev = state;
+    *head = state;
 }
 
-void speedlimitLinestateDestroy(speedlimit_lstate_t *ls)
+void speedlimitLinestateDestroy(speedlimit_lstate_t *state)
 {
-    if (ls->up_timer != NULL)
+    speedlimit_tstate_t *settings = tunnelGetState(state->tunnel);
+    if (state->active_prev != NULL)
+        state->active_prev->active_next = state->active_next;
+    else
+        settings->worker_buckets[lineGetWID(state->line)].active_lines = state->active_next;
+    if (state->active_next != NULL)
+        state->active_next->active_prev = state->active_prev;
+    trafficshaperDestroy(&state->up);
+    trafficshaperDestroy(&state->down);
+    bufferbudgetAssertEmpty(&state->up_budget);
+    bufferbudgetAssertEmpty(&state->down_budget);
+    memoryZeroAligned32(state, tunnelGetCorrectAlignedLineStateSize(sizeof(*state)));
+}
+
+void speedlimitTunnelWorkerQuiesce(tunnel_t *tunnel, wid_t wid, const ww_lifecycle_context_t *context)
+{
+    discard              context;
+    speedlimit_tstate_t *settings = tunnelGetState(tunnel);
+    for (speedlimit_lstate_t *state = settings->worker_buckets[wid].active_lines; state != NULL;
+         state                      = state->active_next)
     {
-        weventSetUserData(ls->up_timer, NULL);
-        wtimerDelete(ls->up_timer);
+        trafficshaperQuiesce(&state->up);
+        trafficshaperQuiesce(&state->down);
     }
-
-    if (ls->down_timer != NULL)
-    {
-        weventSetUserData(ls->down_timer, NULL);
-        wtimerDelete(ls->down_timer);
-    }
-
-    bufferqueueDestroy(&ls->up_queue);
-    bufferqueueDestroy(&ls->down_queue);
-    bufferbudgetAssertEmpty(&ls->up_budget);
-    bufferbudgetAssertEmpty(&ls->down_budget);
-
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(speedlimit_lstate_t)));
 }

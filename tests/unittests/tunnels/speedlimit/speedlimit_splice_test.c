@@ -52,12 +52,12 @@ static speedlimit_lstate_t *state(void)
 
 static buffer_queue_t *queue(void)
 {
-    return upstream ? &state()->up_queue : &state()->down_queue;
+    return upstream ? &state()->up.queue : &state()->down.queue;
 }
 
 static wtimer_t *timer(void)
 {
-    return upstream ? state()->up_timer : state()->down_timer;
+    return upstream ? state()->up.timer : state()->down.timer;
 }
 
 static sbuf_t *ordinary(const void *data, uint32_t length)
@@ -194,7 +194,7 @@ static void setup(bool up, const char *work_mode, const char *limit_mode)
     received_length = materialized = 0;
     payloads = pauses = resumes = finishes = 0;
     measuring = expect_splice = expect_ordinary = pause_output = close_output = close_resume = inject_input = false;
-    expected_identity                                                                        = NULL;
+    expected_identity                                                                                       = NULL;
     twfWorkerEnvSetup(&env, 8192, kPadding);
     metadata = nodeSpeedLimitGet();
     char settings[192];
@@ -226,8 +226,11 @@ static void tokens(uint32_t bytes)
     speedlimit_tstate_t *ts    = tunnelGetState(node);
     uint64_t             units = (uint64_t) bytes * kSpeedLimitUnitsPerByte;
     uint64_t             now   = wloopNowMS(env.loop);
-    state()->line_bucket       = (speedlimit_bucket_t) {units, now};
-    ts->worker_buckets[0]      = (speedlimit_bucket_t) {units, now};
+    state()->line_bucket  = (speedlimit_bucket_t) {.tokens_units = units, .last_refill_ms = now, .has_clock = true};
+    ts->worker_buckets[0] = (speedlimit_bucket_t) {.tokens_units   = units,
+                                                   .last_refill_ms = now,
+                                                   .has_clock      = true,
+                                                   .active_lines   = ts->worker_buckets[0].active_lines};
     atomicStoreU64Relaxed(&ts->global_bucket.tokens_units, units);
     atomicStoreU64Relaxed(&ts->global_bucket.last_refill_ms, now);
 }
@@ -341,6 +344,55 @@ static void testFallback(bool up)
     twfRequire(received_length == sizeof(bytes) && memoryCompare(received, bytes, sizeof(bytes)) == 0,
                "fallback input bytes changed");
     teardown();
+#else
+    discard up;
+#endif
+}
+
+static void testBudgetedSpliceFallback(bool up)
+{
+#if WW_HAVE_SPLICE
+    for (unsigned dimension = 0; dimension < 2; ++dimension)
+    {
+        setup(up, "pause", "per-line");
+        tokens(0);
+        uint8_t bytes[4096];
+        for (unsigned i = 0; i < sizeof(bytes); ++i)
+            bytes[i] = (uint8_t) i;
+        sbuf_t           *source = pipeBytes(bytes, sizeof(bytes), 7);
+        buffer_pool_fit_t fit;
+        twfRequire(bufferpoolQueryBestFit(env.pool, 2048, bufferpoolGetLargeBufferPadding(env.pool), &fit),
+                   "query partial-output fallback geometry");
+        buffer_budget_t     *budget = up ? &state()->up_budget : &state()->down_budget;
+        buffer_budget_cost_t limits = bufferbudgetGetLimits(budget);
+        if (dimension == 0)
+            limits.charge = sbufGetQueueCharge(source) + fit.allocation_charge;
+        else
+            limits.entries = 2;
+        // The source plus one ordinary candidate fits exactly. A simultaneous
+        // splice wrapper and ordinary fallback cannot enter the retained turn.
+        bufferbudgetInit(budget, limits);
+        submit(source);
+        expect_ordinary = measuring = true;
+        tokens(2048);
+        tick();
+        twfRequire(lineIsAlive(line) && received_length == 2048 && payloads == 1,
+                   "refused temporary wrapper budget prevented ordinary partial progress");
+        twfRequire(materialized == 2048 - 7, "budget fallback did not consume the exact granted pipe range");
+        const buffer_budget_cost_t usage = bufferbudgetGetUsage(budget);
+        twfRequire(usage.bytes == 2048 && usage.entries == 1 &&
+                       usage.charge == sbufGetQueueCharge(bufferqueueFront(queue())),
+                   "budget fallback retained temporary output/wrapper costs after handoff");
+        expect_ordinary = false;
+        tokens(2048);
+        tick();
+        twfRequire(received_length == sizeof(bytes) && memoryCompare(received, bytes, sizeof(bytes)) == 0,
+                   "budget fallback damaged the accepted FIFO remainder");
+        twfRequire(bufferbudgetGetUsage(budget).bytes == 0 && bufferbudgetGetUsage(budget).charge == 0 &&
+                       bufferbudgetGetUsage(budget).entries == 0,
+                   "budget fallback did not settle all retained costs");
+        teardown();
+    }
 #else
     discard up;
 #endif
@@ -511,12 +563,64 @@ static void testRateSettings(void)
     twfWorkerEnvTeardown(&env);
 }
 
+static void testSharedRateArithmetic(void)
+{
+    rate_bucket_t bucket;
+    ratebucketInit(&bucket, 0);
+    ratebucketRefill(&bucket, 1, 100, 1, 0);
+    twfRequire(bucket.has_clock && bucket.last_refill_ms == 0, "time zero was mistaken for an absent clock");
+    ratebucketRefill(&bucket, 1, 100, 1, 999);
+    twfRequire(bucket.credit == 0 && bucket.remainder == 999, "one-byte rate lost fractional refill");
+    twfRequire(ratebucketRetryMs(&bucket, 1, 1, 999, 1) == 1, "one-byte retry rounded down");
+    ratebucketRefill(&bucket, 1, 100, 1, 1000);
+    twfRequire(ratebucketGrant(&bucket, 1, false) == 1, "one-byte rate failed to progress");
+    ratebucketRefill(&bucket, 1, 100, 1, 500);
+    twfRequire(bucket.last_refill_ms == 1000 && bucket.credit == 0, "older clock rewound or refilled bucket");
+    ratebucketRefill(&bucket, 1, 100, 1, UINT64_MAX);
+    twfRequire(bucket.credit == 100 && bucket.remainder == 0, "long idle refill did not cap safely");
+
+    ratebucketInit(&bucket, 0);
+    ratebucketRefill(&bucket, UINT64_MAX, UINT64_MAX, 1, 0);
+    twfRequire(ratebucketRetryMs(&bucket, UINT64_MAX, 1, 0, UINT64_MAX) == 1000, "maximum-rate retry overflowed");
+    ratebucketRefill(&bucket, UINT64_MAX, UINT64_MAX, 1, 1);
+    twfRequire(bucket.credit == UINT64_MAX / 1000 && bucket.remainder == UINT64_MAX % 1000,
+               "maximum-rate fractional refill overflowed");
+    ratebucketRefill(&bucket, UINT64_MAX, UINT64_MAX, 1, 999);
+    const uint64_t remaining = UINT64_MAX / 1000 + (UINT64_MAX % 1000 != 0);
+    twfRequire(bucket.credit == UINT64_MAX - remaining, "maximum-rate refill lost precision across samples");
+    ratebucketRefill(&bucket, UINT64_MAX, UINT64_MAX, 1, 1000);
+    twfRequire(bucket.credit == UINT64_MAX && bucket.remainder == 0, "maximum-rate full second did not saturate");
+
+    ratebucketInit(&bucket, 0);
+    ratebucketRefill(&bucket, 1, 100, 997, 0);
+    twfRequire(ratebucketRetryMs(&bucket, 1, 997, 0, 1) == 1994, "recharge-step retry lost a fractional step");
+    ratebucketRefill(&bucket, 1, 100, 997, 1994);
+    twfRequire(bucket.credit == 1 && bucket.remainder == 994, "recharge-step refill changed precision");
+    twfRequire(ratebucketRetryMs(&bucket, 1, 1, 1994, UINT64_MAX) == UINT64_MAX,
+               "unrepresentable wait did not saturate");
+}
+
+static void testQuiesce(bool up)
+{
+    setup(up, "pause", "per-line");
+    tokens(0);
+    submit(ordinary("retained", 8));
+    speedlimit_tstate_t *settings = tunnelGetState(node);
+    twfRequire(settings->worker_buckets[0].active_lines == state(), "active line absent from owner inventory");
+    speedlimitTunnelWorkerQuiesce(node, 0, NULL);
+    twfRequire(timer() == NULL && bufferqueueGetBufLen(queue()) == 8,
+               "quiescence did not detach timer while preserving owner-drain buffers");
+    teardown();
+}
+
 int main(void)
 {
+    testSharedRateArithmetic();
     testRateSettings();
     testRetryRounding();
     for (unsigned up = 0; up < 2; ++up)
     {
+        testQuiesce(up);
         testResetRefusal(up, false);
         testResetRefusal(up, true);
         testPausedTimer(up);
@@ -538,6 +642,7 @@ int main(void)
         testForwardAndDrop(up, true);
 #endif
         testFallback(up);
+        testBudgetedSpliceFallback(up);
     }
     testEmpty();
     metadata = nodeSpeedLimitGet();

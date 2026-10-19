@@ -293,9 +293,9 @@ static void caseRescheduleAfterPartialSliceFails(void)
     twfRequireEqualText(fixture.trace.seq, "Iu", "the queued payload did not pause the previous side");
 
     speedlimit_lstate_t *ls = lineGetState(l, fixture.speedlimit);
-    twfRequire(ls->up_timer != NULL, "the first upstream drain timer was not armed");
+    twfRequire(ls->up.timer != NULL, "the first upstream drain timer was not armed");
 
-    wtimer_t *armed_timer = ls->up_timer;
+    wtimer_t *armed_timer = ls->up.timer;
 
     // Enough tokens for a slice but not for the whole queued buffer, so the drain detaches a send buffer and then
     // has to arm a follow-up timer, which is the call that fails.
@@ -341,7 +341,7 @@ static void caseFinalResumeTickFails(void)
     twfRequireEqualText(fixture.trace.seq, "Iu", "the queued payload did not pause the previous side");
 
     speedlimit_lstate_t *ls          = lineGetState(l, fixture.speedlimit);
-    wtimer_t            *armed_timer = ls->up_timer;
+    wtimer_t            *armed_timer = ls->up.timer;
     twfRequire(armed_timer != NULL, "the first upstream drain timer was not armed");
 
     // Exactly enough tokens to drain the queue completely, so the only remaining work is the local-resume tick.
@@ -378,7 +378,7 @@ static void caseResumeScheduleFails(bool upstream)
     else
         speedlimitTunnelDownStreamPayload(fixture.speedlimit, l, makePayload(&fixture, 8));
     speedlimit_lstate_t *ls      = lineGetState(l, fixture.speedlimit);
-    wtimer_t            *pending = upstream ? ls->up_timer : ls->down_timer;
+    wtimer_t            *pending = upstream ? ls->up.timer : ls->down.timer;
     if (upstream)
     {
         speedlimitTunnelDownStreamPause(fixture.speedlimit, l);

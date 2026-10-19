@@ -167,6 +167,7 @@ static bool finalizeRateMath(speedlimit_tstate_t *state, int workers_count)
     state->bucket_capacity_units = state->bytes_per_sec * kSpeedLimitUnitsPerByte;
     state->refill_units_per_step = state->bytes_per_sec * state->recharge_interval_ms;
 
+    atomicFlagClear(&state->global_bucket.lock);
     atomicStoreU64Relaxed(&state->global_bucket.tokens_units, state->bucket_capacity_units);
     atomicStoreU64Relaxed(&state->global_bucket.last_refill_ms, 0);
 
@@ -191,15 +192,16 @@ tunnel_t *speedlimitTunnelCreate(node_t *node)
         return NULL;
     }
 
-    t->fnInitU    = &speedlimitTunnelUpStreamInit;
-    t->fnFinU     = &speedlimitTunnelUpStreamFinish;
-    t->fnPayloadU = &speedlimitTunnelUpStreamPayload;
-    t->fnPauseU   = &speedlimitTunnelUpStreamPause;
-    t->fnResumeU  = &speedlimitTunnelUpStreamResume;
-    t->fnFinD     = &speedlimitTunnelDownStreamFinish;
-    t->fnPayloadD = &speedlimitTunnelDownStreamPayload;
-    t->fnPauseD   = &speedlimitTunnelDownStreamPause;
-    t->fnResumeD  = &speedlimitTunnelDownStreamResume;
+    t->onWorkerQuiesce = speedlimitTunnelWorkerQuiesce;
+    t->fnInitU         = &speedlimitTunnelUpStreamInit;
+    t->fnFinU          = &speedlimitTunnelUpStreamFinish;
+    t->fnPayloadU      = &speedlimitTunnelUpStreamPayload;
+    t->fnPauseU        = &speedlimitTunnelUpStreamPause;
+    t->fnResumeU       = &speedlimitTunnelUpStreamResume;
+    t->fnFinD          = &speedlimitTunnelDownStreamFinish;
+    t->fnPayloadD      = &speedlimitTunnelDownStreamPayload;
+    t->fnPauseD        = &speedlimitTunnelDownStreamPause;
+    t->fnResumeD       = &speedlimitTunnelDownStreamResume;
 
     const cJSON         *settings = node->node_settings_json;
     speedlimit_tstate_t *state    = tunnelGetState(t);

@@ -75,6 +75,7 @@ add_library(ww STATIC
     base/wlog.c
     base/wlsem.c
     base/quiescence_gate.c
+    base/rate_bucket.c
     base/wsocket.c
     base/tcp_socket_diag.c
     base/wsysinfo.c
@@ -145,6 +146,7 @@ add_library(ww STATIC
     # Networking
     net/bound_udp_socket.c
     net/packet_tunnel.c
+    net/traffic_shaper.c
     net/pipe_tunnel.c
     net/sync_dns.c
     net/tls_client_hello.c
