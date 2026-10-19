@@ -1252,36 +1252,36 @@ static void testNonblockingBatchCapacityAndRetainedOwnership(test_env_t *env)
     deviceReaderSessionUnref(session);
 }
 
-typedef struct inline_post_probe_s
+typedef struct normal_post_probe_s
 {
     device_reader_session_t *session;
     sbuf_t                  *buf;
-} inline_post_probe_t;
+} normal_post_probe_t;
 
 static void postFromNormalCallback(void *context)
 {
-    inline_post_probe_t *probe = context;
+    normal_post_probe_t *probe = context;
     require(deviceReaderSessionTryPost(probe->session, 0, &probe->buf, 1) == kDeviceReaderPostAccepted,
             "normal callback packet was refused");
 }
 
-static void testInlineDispatchKeepsExistingFifo(test_env_t *env)
+static void testSameWorkerPostsKeepExistingFifo(test_env_t *env)
 {
     resetCapturedMessages();
     reader_probe_t           probe   = {0};
     device_reader_session_t *session = createSession(env, &probe, 2);
     require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 8) &&
                 deviceReaderSessionEnableWorkerQueue(session),
-            "failed to configure inline FIFO fixture");
-    deviceReaderSessionEnableInlineDispatch(session);
-    require(deviceReaderSessionBegin(session) != 0, "failed to begin inline FIFO fixture");
+            "failed to configure same-worker FIFO fixture");
+    require(deviceReaderSessionBegin(session) != 0, "failed to begin same-worker FIFO fixture");
     wloop_t *loop = wloopCreate(0, env->worker_buffer_pool, 0);
-    require(loop != NULL, "failed to create inline callback loop");
+    require(loop != NULL, "failed to create normal callback loop");
     getCurrentEventWorker()->loop = loop;
-    inline_post_probe_t post      = {.session = session, .buf = sbufCreate(64)};
-    require(wloopInvokeNormalCallback(loop, postFromNormalCallback, &post), "inline normal callback was refused");
-    require(probe.delivered == 1 && captured_message_count == 0,
-            "idle matching worker queued instead of directly delivering its packet");
+    normal_post_probe_t post      = {.session = session, .buf = sbufCreate(64)};
+    require(wloopInvokeNormalCallback(loop, postFromNormalCallback, &post), "normal callback was refused");
+    require(probe.delivered == 0 && captured_message_count == 1, "same-worker packet bypassed its deferred owner FIFO");
+    deliverWorkerQueueMessage(0);
+    require(probe.delivered == 1, "same-worker packet was not delivered by its owner FIFO");
 
     worker_work_probe_t work = {.target_steps = 2};
     require(postWorkerWork(session, &work), "failed to queue preceding worker work");
@@ -1289,20 +1289,20 @@ static void testInlineDispatchKeepsExistingFifo(test_env_t *env)
     probe.expected_work_steps = 2;
     post.buf                  = sbufCreate(64);
     require(wloopInvokeNormalCallback(loop, postFromNormalCallback, &post), "ordered normal callback was refused");
-    require(probe.delivered == 1 && captured_message_count == 1,
-            "inline packet overtook already-scheduled work or scheduled another FIFO token");
-    deliverWorkerQueueMessage(0);
-    require(work.steps == 1 && probe.delivered == 1 && captured_message_count == 2,
-            "unfinished aggregate lost priority over inline input");
+    require(probe.delivered == 1 && captured_message_count == 2,
+            "same-worker packet overtook already-scheduled work or scheduled another FIFO token");
     deliverWorkerQueueMessage(1);
-    require(work.steps == 2 && probe.delivered == 2, "FIFO failed to resume deferred inline input");
+    require(work.steps == 1 && probe.delivered == 1 && captured_message_count == 3,
+            "unfinished aggregate lost priority over same-worker input");
+    deliverWorkerQueueMessage(2);
+    require(work.steps == 2 && probe.delivered == 2, "FIFO failed to resume deferred same-worker input");
 
     probe.required_work_steps = NULL;
     post.buf                  = sbufCreate(64);
     postFromNormalCallback(&post);
-    require(probe.delivered == 2 && captured_message_count == 3,
-            "worker identity alone granted inline normal callback admission");
-    deliverWorkerQueueMessage(2);
+    require(probe.delivered == 2 && captured_message_count == 4,
+            "worker identity alone bypassed normal callback scheduling");
+    deliverWorkerQueueMessage(3);
     requireOutputBudgetEmpty(session);
     getCurrentEventWorker()->loop = NULL;
     wloopDestroy(&loop);
@@ -1377,7 +1377,7 @@ int main(void)
     testWorkerQueueStopWakesOrdinaryCapacityWait(&env);
     testEndWaitQuiescesCapacityNotification(&env);
     testNonblockingBatchCapacityAndRetainedOwnership(&env);
-    testInlineDispatchKeepsExistingFifo(&env);
+    testSameWorkerPostsKeepExistingFifo(&env);
     testConcurrentProducerBudget(&env);
     envTeardown(&env);
     puts("device reader session tests passed");

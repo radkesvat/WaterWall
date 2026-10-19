@@ -16,8 +16,15 @@
 #include "devices/tun/tun_linux_internal.h"
 #include "devices/tun/tun_linux_offload.h"
 #include "loggers/internal_logger.h"
+#include "lwip/engine_runtime.h"
+#include "lwip/ip.h"
+#include "lwip/netif.h"
+#include "lwip/priv/tcp_priv.h"
+#include "lwip/ww_lwip.h"
 #include "wchecksum.h"
 #include "wevent.h"
+#include "wfrand.h"
+#include "wloop_internal.h"
 #include "worker_messages.h"
 
 #include "fixtures/worker_registry_fixture.h"
@@ -73,6 +80,30 @@ static captured_message_t writer_messages[kMaxCapturedMessages];
 static unsigned int       writer_message_count;
 static bool               capture_writer_messages;
 static unsigned int       callback_count;
+
+typedef struct tcp_ack_probe_s
+{
+    ww_lwip_engine_t *engine;
+    struct netif      netif;
+    struct tcp_pcb   *pcb;
+    uint32_t          peer_next, peer_ack, last_ack;
+    unsigned          received, outputs, batches;
+    uint8_t           last_flags;
+} tcp_ack_probe_t;
+
+static tcp_ack_probe_t *active_ack_probe;
+
+ww_lwip_engine_t *__real_wwLwipRuntimeBeginAckBatch(uint8_t owner);
+ww_lwip_engine_t *__wrap_wwLwipRuntimeBeginAckBatch(uint8_t owner);
+ww_lwip_engine_t *__wrap_wwLwipRuntimeBeginAckBatch(uint8_t owner)
+{
+    if (active_ack_probe == NULL)
+        return __real_wwLwipRuntimeBeginAckBatch(owner);
+    require(owner == 0 && currentThreadIsEventWorkerWID(owner), "TCP ACK batch left its packet worker");
+    ++active_ack_probe->batches;
+    wwLwipEngineBeginAckBatch(active_ack_probe->engine);
+    return active_ack_probe->engine;
+}
 static unsigned int       fake_thread_create_calls;
 static unsigned int       fake_thread_join_calls;
 static unsigned int       reject_reader_activation;
@@ -3461,6 +3492,178 @@ static void testMultiQueuePreferencePreservesProcessingWorkers(test_env_t *env)
     bufferpoolDestroy(second_pool);
 }
 
+static err_t recordTcpAck(struct netif *netif, struct pbuf *packet, const ip4_addr_t *destination)
+{
+    discard          destination;
+    tcp_ack_probe_t *probe = netif->state;
+    uint8_t          bytes[40];
+    require(pbuf_copy_partial(packet, bytes, sizeof(bytes), 0) == sizeof(bytes) && bytes[9] == IP_PROTO_TCP,
+            "TCP fixture output was not an IPv4 TCP packet");
+    ++probe->outputs;
+    probe->last_ack   = GET_BE32(bytes + 28);
+    probe->last_flags = bytes[33];
+    return ERR_OK;
+}
+
+static err_t initAckNetif(struct netif *netif)
+{
+    netif->name[0] = 'a';
+    netif->name[1] = 'k';
+    netif->mtu     = 1500;
+    netif->output  = recordTcpAck;
+    return ERR_OK;
+}
+
+static err_t receiveTcpData(void *argument, struct tcp_pcb *pcb, struct pbuf *packet, err_t error)
+{
+    tcp_ack_probe_t *probe = argument;
+    require(pcb == probe->pcb && error == ERR_OK && packet != NULL, "TCP fixture received unexpected close/error");
+    probe->received += packet->tot_len;
+    tcp_recved(pcb, packet->tot_len);
+    pbuf_free(packet);
+    return ERR_OK;
+}
+
+static void buildTcpInput(tcp_ack_probe_t *probe, uint8_t *bytes, uint32_t sequence, uint8_t flags, uint16_t payload)
+{
+    uint8_t pseudo[32 + 1000] = {0};
+    memoryZero(bytes, (size_t) 40 + payload);
+    bytes[0]  = 0x45;
+    bytes[8]  = 64;
+    bytes[9]  = IP_PROTO_TCP;
+    bytes[12] = bytes[16] = 10;
+    bytes[15]             = 2;
+    bytes[19]             = 1;
+    PUT_BE16(bytes + 2, 40 + payload);
+    PUT_BE16(bytes + 20, 80);
+    PUT_BE16(bytes + 22, 1234);
+    PUT_BE32(bytes + 24, sequence);
+    PUT_BE32(bytes + 28, probe->peer_ack);
+    bytes[32] = 0x50;
+    bytes[33] = flags;
+    PUT_BE16(bytes + 34, 65535);
+    memset(bytes + 40, 0x5a, payload);
+    memoryCopy(pseudo, bytes + 12, 8);
+    pseudo[9] = IP_PROTO_TCP;
+    PUT_BE16(pseudo + 10, 20 + payload);
+    memoryCopy(pseudo + 12, bytes + 20, (size_t) 20 + payload);
+    uint16_t checksum = (uint16_t) ~wwLwipChecksum(pseudo, 32 + payload);
+    memoryCopy(bytes + 36, &checksum, sizeof(checksum));
+    checksum = (uint16_t) ~wwLwipChecksum(bytes, 20);
+    memoryCopy(bytes + 10, &checksum, sizeof(checksum));
+}
+
+static void deliverTcpInput(tun_device_t *device, void *userdata, sbuf_t *buf, uint8_t wid)
+{
+    discard           device;
+    tcp_ack_probe_t  *probe = userdata;
+    ww_lwip_engine_t *previous;
+    require(wwLwipEngineEnter(probe->engine, &previous), "TCP fixture input engine entry failed");
+    struct pbuf *packet = pbuf_alloc(PBUF_RAW, (u16_t) sbufGetLength(buf), PBUF_RAM);
+    require(packet != NULL && pbuf_take(packet, sbufGetRawPtr(buf), (u16_t) sbufGetLength(buf)) == ERR_OK,
+            "TCP fixture could not copy its admitted input");
+    require(wwLwipEngineInput(probe->engine, packet, &probe->netif) == ERR_OK, "TCP fixture rejected native TUN input");
+    wwLwipEngineLeave(probe->engine, previous);
+    bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+}
+
+static void readTcpBurst(void *context)
+{
+    discard context;
+    runReaderUntilIdle();
+}
+
+static void testSameWorkerTunBurstCoalescesTcpAcks(test_env_t *env)
+{
+    /* Real constructor/read/FIFO paths plus real TCP input and cumulative ACKs.
+     * Only runtime lookup selects this fixture-owned engine; no timers run. */
+    resetCapturedMessages();
+    resetIoInjection();
+    resetReaderFixture(0);
+    resetGsoSetup();
+    wloop_t *saved_loop = env->loops[0];
+    wloop_t *loop       = wloopCreate(0, env->worker_buffer_pool, 0);
+    require(loop != NULL && globalstateInitializeSecureRandom() && frandGlobalInit() &&
+                wCryptoGlobalInit() == kWCryptoOk,
+            "TCP receive-burst fixture initialization failed");
+    env->loops[0] = getCurrentEventWorker()->loop = loop;
+    wwLwipInitializeProtocolState();
+    wwLwipEngineSharedInit();
+    tcp_ack_probe_t probe = {0};
+    probe.engine          = wwLwipEngineCreate(0, loop);
+    ww_lwip_engine_t *previous;
+    require(probe.engine != NULL && wwLwipEngineEnter(probe.engine, &previous), "TCP fixture engine entry failed");
+    ip4_addr_t address, mask, gateway;
+    IP4_ADDR(&address, 10, 0, 0, 1);
+    IP4_ADDR(&mask, 255, 255, 255, 0);
+    ip4_addr_set_zero(&gateway);
+    require(netif_add(&probe.netif, &address, &mask, &gateway, &probe, initAckNetif, ip_input) != NULL,
+            "TCP fixture netif initialization failed");
+    netif_set_up(&probe.netif);
+    netif_set_link_up(&probe.netif);
+    probe.pcb = tcp_new();
+    require(probe.pcb != NULL && tcp_bind_netif(probe.pcb, &probe.netif) == ERR_OK &&
+                tcp_bind(probe.pcb, IP_ADDR_ANY, 1234) == ERR_OK,
+            "TCP fixture bind failed");
+    tcp_arg(probe.pcb, &probe);
+    tcp_recv(probe.pcb, receiveTcpData);
+    ip_addr_t peer;
+    IP_ADDR4(&peer, 10, 0, 0, 2);
+    require(tcp_connect(probe.pcb, &peer, 80, NULL) == ERR_OK, "TCP fixture SYN failed");
+    probe.peer_ack = probe.pcb->snd_nxt;
+    wwLwipEngineLeave(probe.engine, previous);
+    sbuf_t *syn_ack = sbufCreate(40);
+    buildTcpInput(&probe, sbufGetMutablePtr(syn_ack), 100, TCP_SYN | TCP_ACK, 0);
+    sbufSetLength(syn_ack, 40);
+    deliverTcpInput(NULL, &probe, syn_ack, 0);
+    require(wwLwipEngineEnter(probe.engine, &previous), "TCP fixture handshake entry failed");
+    require(probe.pcb->state == ESTABLISHED, "TCP fixture handshake did not establish a connection");
+    wwLwipEngineLeave(probe.engine, previous);
+    probe.peer_next    = 101;
+    probe.outputs      = 0;
+    tun_device_t *tdev = createRawDevice("ww-ack-burst", false, 1500, &probe, deliverTcpInput, kDeviceFragmentPreserve);
+    require(tdev != NULL && bringUpDevice(tdev), "TCP receive-burst TUN startup failed");
+    uint8_t              packets[6][1040];
+    injected_io_result_t reads[7] = {0};
+    for (unsigned i = 0; i < ARRAY_SIZE(packets); ++i)
+    {
+        buildTcpInput(&probe, packets[i], probe.peer_next + i * 1000, TCP_ACK, 1000);
+        reads[i] = (injected_io_result_t) {.result = sizeof(packets[i]), .bytes = packets[i]};
+    }
+    reads[6] = (injected_io_result_t) {.result = -1, .error = EAGAIN};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    active_ack_probe = &probe;
+    require(wloopInvokeNormalCallback(loop, readTcpBurst, NULL), "TCP native receive callback admission failed");
+    if (probe.outputs != 0)
+        fprintf(stderr, "native receive burst emitted %u TCP outputs before FIFO delivery\n", probe.outputs);
+    require(probe.outputs == 0 && probe.received == 0,
+            "same-worker TUN input flushed TCP ACKs before the receive burst reached its owner FIFO");
+    require(captured_message_count == 1, "one native receive burst did not coalesce its owner FIFO notification");
+    deliverMessage(0, getCurrentEventWorker());
+    require(probe.received == 6000 && probe.outputs == 1 && probe.last_flags == TCP_ACK &&
+                probe.last_ack == probe.peer_next + 6000 && probe.batches == 1,
+            "queued native receive burst did not produce one cumulative TCP ACK");
+    require(atomicLoadRelaxed(&tunLinuxReaderSession(tdev)->output_packets) == 0,
+            "TCP receive-burst fixture retained packet reservations");
+    active_ack_probe = NULL;
+    resetIoInjection();
+    destroyDevice(tdev);
+    resetCapturedMessages();
+    require(wwLwipEngineEnter(probe.engine, &previous), "TCP fixture cleanup entry failed");
+    tcp_abort(probe.pcb);
+    netif_remove(&probe.netif);
+    wwLwipEngineLeave(probe.engine, previous);
+    wwLwipEngineDestroy(probe.engine);
+    wwLwipEngineSharedCleanup();
+    require(wwLwipShutdown(), "TCP fixture protocol state cleanup failed");
+    wCryptoGlobalCleanup();
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
+    env->loops[0] = getCurrentEventWorker()->loop = saved_loop;
+    wloopDestroy(&loop);
+}
+
 int main(void)
 {
     testCaseSet("tun_linux_message_lifetime_test");
@@ -3471,6 +3674,7 @@ int main(void)
     loggerSetHandler(logger, captureTunLog);
     setInternalLogger(logger);
     checkSumInit();
+    testSameWorkerTunBurstCoalescesTcpAcks(&env);
     testChecksumOnlyNegotiation();
     testDnsMutationCleanup();
     testGsoNegotiationAndRawFallback();

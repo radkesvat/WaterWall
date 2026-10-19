@@ -40,13 +40,6 @@ bool deviceReaderSessionEnableWorkerQueue(device_reader_session_t *session)
     return true;
 }
 
-void deviceReaderSessionEnableInlineDispatch(device_reader_session_t *session)
-{
-    assert(session != NULL && session->worker_queues != NULL);
-    assert(atomicLoadRelaxed(&session->generation) == 0);
-    session->inline_dispatch = true;
-}
-
 static void deviceReaderSessionReuseReaderBuffers(device_reader_session_t *session, sbuf_t **bufs, unsigned int count)
 {
     for (unsigned int i = 0; i < count; i++)
@@ -154,17 +147,9 @@ static bool deviceReaderWorkerQueueAppend(device_reader_message_t *message, wid_
         deviceReaderSessionRef(session);
     }
     mutexUnlock(&queue->lock);
-    if (! schedule)
-    {
-        return true;
-    }
-    worker_t *worker = session->inline_dispatch ? tryGetCurrentEventWorker() : NULL;
-    if (worker != NULL && worker->wid == target_wid && wloopCurrentThreadInNormalCallback(worker->loop))
-    {
-        deviceReaderWorkerQueueDrain(worker, queue, NULL, NULL);
-        return true;
-    }
-    return deviceReaderWorkerQueueSchedule(queue);
+    /* Defer even on the producer's worker so a bounded read burst shares the
+     * existing ACK quantum instead of flushing once per posted packet. */
+    return ! schedule || deviceReaderWorkerQueueSchedule(queue);
 }
 
 static void deviceReaderWorkerQueueDrain(void *worker, void *arg1, void *arg2, void *arg3)

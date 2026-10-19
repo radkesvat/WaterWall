@@ -377,6 +377,7 @@
       "-Wl,--wrap=tunLinuxOffloadCompleteChecksum"
       "-Wl,--wrap=deviceReaderSessionEnableWorkerQueue"
       "-Wl,--wrap=deviceReaderSessionConfigureOutputBudget"
+      "-Wl,--wrap=wwLwipRuntimeBeginAckBatch"
       "-Wl,--wrap=tunConfigureWorkerGso"
       "-Wl,--wrap=fcntl"
       "-Wl,--wrap=bufferpoolGetBestFit"

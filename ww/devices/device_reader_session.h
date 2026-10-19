@@ -83,7 +83,6 @@ struct device_reader_session_s
      * session reference until its entire FIFO is drained or cancelled. */
     struct device_reader_worker_queue_s *worker_queues;
     uint16_t                             worker_queue_count;
-    bool                                 inline_dispatch;
 
     /* Reader-owned assembly/raw staging. The mutex serializes generation
      * transitions; only the reader (or the joined-reader lifecycle owner) may
@@ -155,15 +154,12 @@ bool deviceReaderSessionEnableWorkerQueue(device_reader_session_t *session);
 void deviceReaderSessionConfigureCapacityNotify(device_reader_session_t *session, DeviceReaderCapacityNotifyFn notify,
                                                 void *context);
 
-/* Configure after EnableWorkerQueue, before Begin. An idle destination FIFO
- * may drain synchronously from an admitted normal callback on its own worker.
- * Existing queued work always remains ahead of newly posted work. */
-void deviceReaderSessionEnableInlineDispatch(device_reader_session_t *session);
-
 /* Nonblocking whole-batch admission for worker-owned producers. Capacity
  * refusal retains every buffer; Accepted and Closed transfer/settle every
  * buffer. The batch must fit the configured byte/packet limits and capacity.
- * Requires an enabled worker FIFO. No path borrows the session reader pool. */
+ * Requires an enabled worker FIFO. Delivery is deferred even on the producer's
+ * worker, so its read burst can share a bounded ACK batch. No path borrows the
+ * session reader pool. */
 device_reader_post_result_e deviceReaderSessionTryPost(device_reader_session_t *session, wid_t target_wid,
                                                        sbuf_t **bufs, unsigned int count);
 

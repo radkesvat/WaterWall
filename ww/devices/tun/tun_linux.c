@@ -930,7 +930,6 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_q
     if (tdev->reader_session->worker_queues == NULL && ! deviceReaderSessionEnableWorkerQueue(tdev->reader_session))
         goto fail_after_session;
     deviceReaderSessionConfigureCapacityNotify(tdev->reader_session, tunReaderCapacityReady, tdev);
-    deviceReaderSessionEnableInlineDispatch(tdev->reader_session);
     devicePoolUpdatePadding(tdev->reader_buffer_pool, worker_pool);
     deviceFragAffinityEnableShared(tdev->reader_session->frag_affinity,
                                    bufferpoolGetLargeBufferPadding(tdev->reader_buffer_pool));
