@@ -24,6 +24,20 @@ its own MTU; other node overrides do not change it. An invalid inherited core
 
 Because it is a packet adapter, this node does not create per-connection lines. It uses worker packet lines provided by the chain.
 
+Linux uses worker-owned receive queues. A newly created interface attempts one
+queue per event worker with fixed kernel steering; unavailable multiqueue or
+steering falls back to one queue owned by worker 0. Existing single-queue
+interfaces remain supported. Steering groups IPv4 packets by address pair and
+protocol so fragments keep one reader; the normal full flow hash still selects
+the processing worker. Multiple connections between the same address pair and
+protocol share a receive queue. Startup logs the active queue count. Queue
+selection is independent of `gso`.
+
+Windows receives on worker 0 using Wintun event notifications. Linux and Windows
+have no dedicated application TUN reader thread. Reads use bounded batches and
+preserve flow ownership; the other workers continue processing their flows.
+Darwin/BSD retain their existing reader backend.
+
 ## Typical Placement
 
 `TunDevice` can be placed at either edge of a chain:

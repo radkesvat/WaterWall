@@ -39,6 +39,7 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 
     t->onStart          = &tundeviceTunnelOnStart;
     t->onQuiesceRequest = &tundeviceTunnelOnQuiesceRequest;
+    t->onWorkerQuiesce  = &tundeviceTunnelOnWorkerQuiesce;
     t->onQuiesceWait    = &tundeviceTunnelOnQuiesceWait;
     t->onDestroy        = &tundeviceTunnelDestroy;
 

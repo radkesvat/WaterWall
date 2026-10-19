@@ -17,8 +17,8 @@
  *
  * Only the first is recoverable. Every other value - documented or not - means
  * the session will not produce packets again, so the reader must leave its loop
- * and let tundeviceNoteUnexpectedThreadExit() publish the failure. Treating an
- * unrecognised error as recoverable is what produces the silent blackhole: the
+ * and publish device failure, requesting shutdown after leaving its gate. Treating
+ * an unrecognised error as recoverable produces a silent blackhole: the
  * reader spins forever while the device is still advertised as up.
  *
  * The numeric value is restated here because this header is included before

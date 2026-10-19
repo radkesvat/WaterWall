@@ -1,9 +1,9 @@
 #pragma once
 
-/* Backend-private state. The lifecycle coordinator owns handles, the reader
- * thread, its pool and reader-session owner reference. Reader I/O borrows them
- * until joined; worker writes borrow them through the writer generation gate. Queued offload work owns its input and
- * session credits independently. */
+/* Backend-private state. The coordinator owns native descriptors and the
+ * reader-session reference. Linux reads/writes borrow them through generation
+ * gates; BSD retains its joined external reader. Queued work owns its buffers
+ * and session credits independently. */
 #include "devices/device_reader_session.h"
 #include "devices/tun/tun_lifecycle.h"
 #include "devices/tun/tun_writer.h"
@@ -34,12 +34,15 @@ struct tun_device_s
 {
     char *name;
     int   handle;
-    int   linux_pipe_fds[2]; // used for signaling read thread to stop
+#ifndef OS_LINUX
+    int linux_pipe_fds[2]; // BSD reader stop signal
+#endif
 
-    void     *userdata;
-    wthread_t read_thread;
-
+    void *userdata;
+#ifndef OS_LINUX
+    wthread_t       read_thread;
     wthread_routine routine_reader;
+#endif
 
     device_reader_session_t *reader_session;
     buffer_pool_t           *reader_buffer_pool;
@@ -51,8 +54,12 @@ struct tun_device_s
     bool         checksum_offload_enabled;
     bool         gso_enabled;
 #ifdef OS_LINUX
-    bool        trusted_checksums;
-    atomic_bool gso_write_disabled;
+    struct tun_reader_generation_s *reader;
+    atomic_uintptr_t                reader_notify;
+    uint16_t                        queue_count;
+    int                             queue_fds[UINT8_MAX + 1U];
+    bool                            trusted_checksums;
+    atomic_bool                     gso_write_disabled;
     /* Allocated before publication so unavailable offload storage can fall back. */
     sbuf_t *offload_scratch;
     /* Output allowance and this chain's padding, captured before publication. */
@@ -67,7 +74,9 @@ struct tun_device_s
     // Whether read_thread holds a started, unjoined thread. This
     // -- not `up` -- decides what bring-down must join, so a device whose thread
     // already exited on its own is still torn down completely. Owner-thread only.
+#ifndef OS_LINUX
     bool reader_joinable;
+#endif
     bool reader_generation_open;
     // The most recent configuration mutation may have completed before its
     // supervisor lost control. The immediate policy caller consumes this flag.
@@ -88,9 +97,15 @@ static inline uint16_t tunDeviceMtu(const tun_device_t *tdev)
 bool tunSetMtuByName(const char *name, uint16_t mtu);
 bool tunSetStateByName(const char *name, bool up);
 void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid);
+#ifndef OS_LINUX
 WTHREAD_ROUTINE(routineReadFromTun);
+#endif
 bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, size_t count);
 #ifdef OS_LINUX
+bool tunReaderOpen(tun_device_t *tdev);
+void tunReaderCloseRequest(tun_device_t *tdev);
+void tunReaderCloseWait(tun_device_t *tdev);
+void tunReaderCapacityReady(void *context);
 bool tunConfigureWorkerOffload(tun_device_t *tdev);
 bool tunConfigureWorkerGso(tun_device_t *tdev);
 /* Final destruction releases snapshot storage after the policy owner attempts cleanup. */

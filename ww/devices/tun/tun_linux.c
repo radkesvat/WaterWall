@@ -6,6 +6,7 @@
 #ifdef OS_LINUX
 #include "devices/tun/tun_linux_gso_limits.h"
 #include "devices/tun/tun_linux_offload.h"
+#include "devices/tun/tun_linux_queues.h"
 #endif
 #include "generic_pool.h"
 #include "global_state.h"
@@ -48,7 +49,7 @@
 bool tundeviceEnableTrustedChecksums(tun_device_t *tdev)
 {
     assert(tdev != NULL && tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown);
-    assert(! tdev->reader_joinable);
+    assert(tdev->reader == NULL);
     if (! tdev->checksum_offload_enabled)
     {
         return false;
@@ -61,7 +62,7 @@ bool tundeviceEnableTrustedChecksums(tun_device_t *tdev)
 bool tundeviceEnableTrustedReceiveChecksums(tun_device_t *tdev)
 {
     assert(tdev != NULL && tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown);
-    assert(! tdev->reader_joinable);
+    assert(tdev->reader == NULL);
     deviceFragAffinityTrustIpv4HeaderChecksum(tdev->reader_session->frag_affinity);
     tdev->trusted_checksums = true;
     return true;
@@ -91,6 +92,7 @@ static bool tunSetNonBlocking(int fd)
     return true;
 }
 
+#ifndef OS_LINUX
 static bool tunSetCloseOnExec(int fd)
 {
     int flags = fcntl(fd, F_GETFD, 0);
@@ -125,6 +127,8 @@ static bool tunCreateStopPipe(int fds[2])
     return false;
 }
 
+#endif
+
 bool tundeviceGetLuid(tun_device_t *tdev, uint64_t *out)
 {
     discard tdev;
@@ -136,6 +140,9 @@ static void tundeviceCloseLifetimeGates(tun_device_t *tdev)
 {
     tunWriterCloseRequest(&tdev->writer);
     deviceReaderSessionEndRequest(tdev->reader_session);
+#ifdef OS_LINUX
+    tunReaderCloseRequest(tdev);
+#endif
 }
 
 static void tundeviceRetireReaderGeneration(tun_device_t *tdev)
@@ -149,6 +156,7 @@ static void tundeviceRetireReaderGeneration(tun_device_t *tdev)
     tdev->reader_generation_open = false;
 }
 
+#ifndef OS_LINUX
 static bool tundeviceSignalReaderStop(tun_device_t *tdev)
 {
     if (! tdev->reader_joinable)
@@ -251,6 +259,14 @@ static WTHREAD_ROUTINE(tundeviceReaderThreadMain) // NOLINT
     return 0;
 }
 
+#else
+static bool tundeviceSignalReaderStop(tun_device_t *tdev)
+{
+    discard tdev;
+    return true;
+}
+#endif
+
 // Bring TUN device up
 bool tundeviceBringUp(tun_device_t *tdev)
 {
@@ -272,6 +288,8 @@ bool tundeviceBringUp(tun_device_t *tdev)
 
 #ifdef OS_LINUX
     atomicStoreRelaxed(&tdev->gso_write_disabled, false);
+    atomicStoreRelaxed(&tdev->gso_generated_segments, 0);
+    atomicStoreRelaxed(&tdev->gso_intact_aggregates, 0);
 #endif
     if (! tunWriterOpen(&tdev->writer, kTunWriterQueueMax, SIZE_MAX, tdev, tunWriteBatch))
     {
@@ -300,6 +318,10 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
+#ifdef OS_LINUX
+    if (! tunReaderOpen(tdev))
+        goto rollback;
+#else
     if (tdev->read_event_callback != NULL)
     {
         tundeviceDrainStopPipe(tdev);
@@ -316,6 +338,8 @@ bool tundeviceBringUp(tun_device_t *tdev)
             goto rollback;
         }
     }
+
+#endif
 
     if (! tunLifecycleTransitionStartingToUp(&tdev->lifecycle))
     {
@@ -339,6 +363,10 @@ rollback:
         LOGE("TunDevice: error restoring %s down after startup failure", tdev->name);
     }
 
+#ifdef OS_LINUX
+    tunReaderCloseWait(tdev);
+    tundeviceRetireReaderGeneration(tdev);
+#else
     if (tdev->reader_joinable)
     {
         if (safeThreadJoin(tdev->read_thread))
@@ -356,6 +384,7 @@ rollback:
     {
         tundeviceRetireReaderGeneration(tdev);
     }
+#endif
 
     if (rollback_ok)
     {
@@ -378,7 +407,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     // A previous interface-down failure retains STOPPING after the reader and
     // worker output queues have been released. Keep retrying until that last owned operation
     // succeeds and DOWN can be published.
-    if (tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown && ! tdev->reader_joinable)
+    if (tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown && ! tdev->reader_generation_open)
     {
         return true;
     }
@@ -397,6 +426,10 @@ bool tundeviceBringDown(tun_device_t *tdev)
         LOGI("TunDevice: device %s is now down", tdev->name);
     }
 
+#ifdef OS_LINUX
+    tunReaderCloseWait(tdev);
+    tundeviceRetireReaderGeneration(tdev);
+#else
     if (tdev->reader_joinable)
     {
         if (safeThreadJoin(tdev->read_thread))
@@ -414,6 +447,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     {
         tundeviceRetireReaderGeneration(tdev);
     }
+#endif
 
     if (bring_down_ok)
     {
@@ -475,7 +509,17 @@ static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool checks
         ifr.ifr_name[IFNAMSIZ - 1] = '\0';
     }
 
-    if (ioctl(fd, TUNSETIFF, (void *) &ifr) < 0)
+    const short base_flags = ifr.ifr_flags;
+    if (exclusive && getWorkersCount() > 1)
+        ifr.ifr_flags |= IFF_MULTI_QUEUE;
+    int set_result = ioctl(fd, TUNSETIFF, (void *) &ifr);
+    if (set_result < 0 && (ifr.ifr_flags & IFF_MULTI_QUEUE) != 0 &&
+        (errno == EINVAL || errno == EOPNOTSUPP || errno == ENOTTY))
+    {
+        ifr.ifr_flags = base_flags;
+        set_result    = ioctl(fd, TUNSETIFF, (void *) &ifr);
+    }
+    if (set_result < 0)
     {
         const int saved_errno = errno;
         *out_reason           = "TUNSETIFF";
@@ -660,8 +704,16 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
             /* Preserve raw-IP attachment support, but only an exclusive open
              * proves ownership of a fresh interface's resolver baseline. */
             interface_preexisting = true;
-            result =
-                tunLinuxOpenAttempt(name, false, false, false, mtu, &fd, &ifr, &gso_enabled, &reason, &failure_errno);
+            result                = tunLinuxOpenAttempt(name,
+                                         false,
+                                         false,
+                                         false,
+                                         mtu,
+                                         &fd,
+                                         &ifr,
+                                         &gso_enabled,
+                                         &reason,
+                                         &failure_errno);
         }
         if (result != kTunLinuxOpenOk)
         {
@@ -694,8 +746,10 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
     tun_device_t *tdev        = memoryAllocate(sizeof(tun_device_t));
     char         *device_name = stringDuplicate(ifr.ifr_name);
 
-    *tdev = (tun_device_t) {.name                = device_name,
-                            .routine_reader      = routineReadFromTun,
+    *tdev = (tun_device_t) {.name = device_name,
+#ifndef OS_LINUX
+                            .routine_reader = routineReadFromTun,
+#endif
                             .handle              = fd,
                             .read_event_callback = cb,
                             .userdata            = userdata,
@@ -823,8 +877,16 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
         tdev->handle        = -1;
         int          raw_fd = -1;
         struct ifreq raw_ifr;
-        result = tunLinuxOpenAttempt(
-            tdev->name, false, false, true, mtu, &raw_fd, &raw_ifr, &tdev->gso_enabled, &reason, &failure_errno);
+        result = tunLinuxOpenAttempt(tdev->name,
+                                     false,
+                                     false,
+                                     true,
+                                     mtu,
+                                     &raw_fd,
+                                     &raw_ifr,
+                                     &tdev->gso_enabled,
+                                     &reason,
+                                     &failure_errno);
         if (result != kTunLinuxOpenOk)
         {
             LOGE("TunDevice: raw-IP fallback failed for %s at %s (errno %d: %s)",
@@ -841,11 +903,39 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
     }
 #endif
 
+#ifdef OS_LINUX
+    /* Queue count and framing are fixed before any worker receives data. */
+    const char *queue_reason = NULL;
+    tdev->queue_count        = tdev->interface_preexisting ? 1
+                                                           : tunLinuxQueuesOpen(tdev->handle,
+                                                                         tdev->name,
+                                                                         tdev->checksum_offload_enabled,
+                                                                         getWorkersCount(),
+                                                                         tdev->queue_fds,
+                                                                         &queue_reason);
+    tdev->queue_fds[0]       = tdev->handle;
+    if (queue_reason != NULL)
+        LOGW("TunDevice: %s using one receive queue: %s (%s)", tdev->name, queue_reason, strerror(errno));
+    LOGI("TunDevice: %s uses %u worker-owned receive queue(s)", tdev->name, (unsigned) tdev->queue_count);
+    if (tdev->reader_session->output_charge_limit == 0 &&
+        ! deviceReaderSessionConfigureOutputBudget(
+            tdev->reader_session, kTunOffloadPendingChargeLimit, kTunOffloadPendingPacketLimit))
+        goto fail_after_session;
+    if (tdev->reader_session->worker_queues == NULL && ! deviceReaderSessionEnableWorkerQueue(tdev->reader_session))
+        goto fail_after_session;
+    deviceReaderSessionConfigureCapacityNotify(tdev->reader_session, tunReaderCapacityReady, tdev);
+    deviceReaderSessionEnableInlineDispatch(tdev->reader_session);
+    devicePoolUpdatePadding(tdev->reader_buffer_pool, worker_pool);
+    deviceFragAffinityEnableShared(tdev->reader_session->frag_affinity,
+                                   bufferpoolGetLargeBufferPadding(tdev->reader_buffer_pool));
+#else
     if (! tunCreateStopPipe(tdev->linux_pipe_fds))
     {
         LOGE("TunDevice: failed to create pipe for linux_pipe_fds");
         goto fail_after_session;
     }
+
+#endif
 
 #ifdef OS_LINUX
     assert(! tdev->gso_enabled || tdev->checksum_offload_enabled);
@@ -860,6 +950,10 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, uint16_t mtu
     return tdev;
 
 fail_after_session:
+#ifdef OS_LINUX
+    for (uint16_t i = 1; i < tdev->queue_count; ++i)
+        close(tdev->queue_fds[i]);
+#endif
     memoryFree(tdev->name);
 #ifdef OS_LINUX
     if (tdev->offload_scratch != NULL)
@@ -909,8 +1003,13 @@ void tundeviceDestroy(tun_device_t *tdev)
     deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
     bufferpoolDestroy(tdev->reader_buffer_pool);
     close(tdev->handle);
+#ifdef OS_LINUX
+    for (uint16_t i = 1; i < tdev->queue_count; ++i)
+        close(tdev->queue_fds[i]);
+#else
     close(tdev->linux_pipe_fds[0]);
     close(tdev->linux_pipe_fds[1]);
+#endif
     deviceReaderSessionUnref(tdev->reader_session);
     memoryFree(tdev);
 }
@@ -925,11 +1024,6 @@ device_reader_session_t *tunLinuxReaderSession(tun_device_t *tdev)
 tun_writer_t *tunLinuxWriter(tun_device_t *tdev)
 {
     return &tdev->writer;
-}
-
-void tunLinuxSetReaderRoutine(tun_device_t *tdev, wthread_routine routine)
-{
-    tdev->routine_reader = routine;
 }
 
 tun_lifecycle_state_t tunLinuxLifecycleState(const tun_device_t *tdev)

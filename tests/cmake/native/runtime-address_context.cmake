@@ -356,7 +356,8 @@
       ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_writer.c
       ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux.c
       ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_config.c
-      ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_io.c)
+      ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_io.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_reader.c)
   target_link_libraries(tun_linux_message_lifetime_test PRIVATE ww_test_support)
     target_link_options(tun_linux_message_lifetime_test PRIVATE
       "-Wl,--wrap=procRunArgvWithDeadline"
@@ -367,6 +368,10 @@
       "-Wl,--wrap=write"
       "-Wl,--wrap=writev"
       "-Wl,--wrap=poll"
+      "-Wl,--wrap=wioGet"
+      "-Wl,--wrap=wioAdd"
+      "-Wl,--wrap=wioDel"
+      "-Wl,--wrap=wioReleaseNoClose"
       "-Wl,--wrap=tunLinuxGsoMaxSegmentsConfigure"
       "-Wl,--wrap=tunLinuxOffloadPrepareSegment"
       "-Wl,--wrap=tunLinuxOffloadCompleteChecksum"
@@ -374,7 +379,7 @@
       "-Wl,--wrap=deviceReaderSessionConfigureOutputBudget"
       "-Wl,--wrap=tunConfigureWorkerGso"
       "-Wl,--wrap=fcntl"
-      "-Wl,--wrap=sbufCreateWithPadding"
+      "-Wl,--wrap=bufferpoolGetBestFit"
       "-Wl,--wrap=sbufDestroy"
       "-Wl,--wrap=pthread_create"
       "-Wl,--wrap=pthread_join"

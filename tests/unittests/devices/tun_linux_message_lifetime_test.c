@@ -1,30 +1,8 @@
-/*
- * Covers: tun linux message lifetime; the explicit inputs, callbacks and expected results below define
- * this suite.
- * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
- * shown below.
- * Cases: testGsoNegotiationAndRawFallback,
- * testOrdinaryChecksumWorkerHandoff, testOrdinaryChecksumMixedFifo,
- * testOrdinaryChecksumBudget, testOrdinaryChecksumReaderFallback,
- * testTunWriterRefusalClassesUseFreshTlsState, testQueuedCleanupOutlivesDevice,
- * testClosedAndStaleDeliveriesDoNotTouchDevice, testBringUpRollsBackThreadCreationFailures,
- * testThreadExitDuringStartupRollsBack, testThreadExitsDuringStartupAreNotPublishedAsUp; the driver
- * lists the remaining cases
- * Checks: Assertion labels include: GSO segmentation or payload copying ran on the reader thread; a
- * recoverable device I/O error took the device out of UP; a recoverable device I/O error requested
- * process shutdown; GSO setup advertised unexpected offload flags
- * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
- * or application-throughput behavior.
- * CTest: waterwall.tun_linux_message_lifetime_unit
- * Organization: Bring-up rollback, reader/worker-write failure and GSO/checksum handoff use the same
- * controlled reader thread, deferred worker callbacks, syscall seams and buffer/session ledger. Standalone offload
- * geometry and device session contracts already have separate suites.
- */
-// Queued-message lifetime coverage for the Linux TUN device.
-//
-// tun_linux.c is compiled directly into this executable. Privileged device
-// syscalls and thread creation are wrapped, while the production BringUp,
-// BringDown, queued-message delivery, and cleanup paths run unchanged.
+/* Covers worker-owned TUN readiness, activation rollback, asynchronous packet
+ * lifetime, fragment ownership, and ordered GSO/checksum delivery. Native I/O,
+ * WIO registration and worker queues are controlled; the real production
+ * lifecycle, bounded receive callbacks and packet FIFO run unchanged.
+ * CTest: waterwall.tun_linux_message_lifetime_unit */
 
 #include "wwapi.h"
 
@@ -38,6 +16,7 @@
 #include "devices/tun/tun_linux_offload.h"
 #include "loggers/internal_logger.h"
 #include "wchecksum.h"
+#include "wevent.h"
 #include "worker_messages.h"
 
 #include "fixtures/worker_registry_fixture.h"
@@ -83,6 +62,7 @@ typedef struct test_env_s
     buffer_pool_t *worker_buffer_pool;
     buffer_pool_t *buffer_pools[1];
     wloop_t       *loops[1];
+    wloop_t        loop;
 } test_env_t;
 
 static captured_message_t captured_messages[kMaxCapturedMessages];
@@ -91,12 +71,9 @@ static captured_message_t writer_messages[kMaxCapturedMessages];
 static unsigned int       writer_message_count;
 static bool               capture_writer_messages;
 static unsigned int       callback_count;
-static unsigned int       next_fake_thread = 1;
 static unsigned int       fake_thread_create_calls;
 static unsigned int       fake_thread_join_calls;
-static unsigned int       fail_fake_thread_create_on_call;
-static unsigned int       fail_fake_thread_join_on_call;
-static unsigned int       run_fake_thread_on_create_call;
+static unsigned int       reject_reader_activation;
 static unsigned int       fail_interface_down_calls;
 static unsigned int       interface_down_attempts;
 static unsigned int       gso_feature_checks;
@@ -119,17 +96,19 @@ static bool               gso_feature_available;
 static char               gso_attach_name[IFNAMSIZ];
 static char               raw_attach_name[IFNAMSIZ];
 static bool               raw_attach_exclusive;
-// TUN owns one auxiliary reader thread; all output runs on event workers.
-enum
-{
-    kCapturedReaderThread = 0,
-    kMaxCapturedThreads   = 1
-};
-static void *(*captured_thread_routines[kMaxCapturedThreads])(void *);
-static void                    *captured_thread_args[kMaxCapturedThreads];
-static sbuf_t                  *expected_reused_buffer;
-static buffer_pool_t           *expected_reuse_pool;
-static unsigned int             expected_reuse_count;
+/* Readiness callbacks and their worker notifications are separate from the
+ * packet delivery FIFO. All production callbacks run as the registered owner. */
+static captured_message_t    reader_messages[kMaxCapturedMessages];
+static unsigned              reader_message_count, reader_messages_done;
+static WorkerMessageCallback reader_message_callback;
+static bool                  opening_reader, closing_reader, inside_reader_callback;
+static bool                  fail_watcher_registration;
+static wio_t                 reader_io;
+static wio_cb                reader_ready_callback;
+static unsigned              watcher_detach_calls;
+
+static sbuf_t                  *expected_discarded_buffer;
+static unsigned int             expected_discard_count;
 static device_reader_session_t *tracked_session;
 static master_pool_t           *tracked_message_pool;
 static unsigned int             tracked_session_free_count;
@@ -182,8 +161,8 @@ void                           __real_masterpoolDestroy(master_pool_t *pool);
 void                           __wrap_masterpoolDestroy(master_pool_t *pool);
 void                           __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
 void                           __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
-sbuf_t                        *__real_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
-sbuf_t                        *__wrap_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
+sbuf_t *__real_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capacity, uint16_t pad_left);
+sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capacity, uint16_t pad_left);
 void                           __real_sbufDestroy(sbuf_t *buf);
 void                           __wrap_sbufDestroy(sbuf_t *buf);
 bool __wrap_tunLinuxGsoMaxSegmentsConfigure(const char *ifname, uint32_t requested, uint32_t *active);
@@ -233,9 +212,8 @@ static bool hard_abort_is_expected;
 /*
  * Device I/O error injection.
  *
- * The routines under test are the production routineReadFromTun and
- * routineWriteToTun, driven through the wrapped read()/write()/poll() against
- * the fake handle. Each test arms exactly the number of device operations the
+ * Production receive callbacks and worker writer batches run through wrapped
+ * read()/write() against the fake descriptor. Each test arms exactly the number of device operations the
  * correct implementation should perform and queues one more unit of work than
  * that, so an implementation that swallows a permanent error runs off the end
  * of the armed sequence and fails loudly instead of hanging.
@@ -299,11 +277,10 @@ bool                            __wrap_deviceReaderSessionEnableWorkerQueue(devi
 }
 
 static size_t                   largest_writev_packet;
-static bool                     inject_reader_pollin;
-static bool                     inject_gso_reader_poll;
-static bool                     stop_gso_reader_on_budget_wait;
-static unsigned int             gso_budget_wake_polls;
-static unsigned int             gso_device_ready_polls;
+static bool                     drive_worker_delivery;
+static bool                     stop_when_receive_blocked;
+static unsigned int             capacity_resumes;
+static unsigned int             receive_attempts;
 static unsigned int             gso_messages_delivered;
 static unsigned int             gso_deliver_after_read_calls;
 static bool                     verify_gso_aggregate_transfer;
@@ -312,8 +289,8 @@ static unsigned int             prepared_gso_segments;
 static unsigned int             prepared_gso_bytes;
 static unsigned int             gso_expected_segments = 3;
 static unsigned int             ordinary_after_gso_deliveries;
-static unsigned int             ordinary_worker_checksums;
-static unsigned int             ordinary_reader_checksums;
+static unsigned int             queued_checksum_completions;
+static unsigned int             receive_checksum_completions;
 static device_reader_session_t *gso_probe_session;
 static sbuf_t                  *gso_scratch_buffer;
 static unsigned int             gso_scratch_destroy_count;
@@ -332,6 +309,7 @@ static unsigned      writer_batch_settled[130], writer_batch_count, writer_batch
 static unsigned      writer_batch_calls, writer_batch_aggregates, writer_batch_max;
 static unsigned      writer_batch_fault;
 static tun_device_t *writer_batch_device;
+static void          deliverNextGsoMessage(void);
 
 bool __wrap_tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_offload_plan_t *plan, uint32_t offset,
                                           uint8_t *destination, uint32_t capacity, uint32_t *length);
@@ -340,7 +318,7 @@ bool __real_tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_off
 bool __wrap_tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_offload_plan_t *plan, uint32_t offset,
                                           uint8_t *destination, uint32_t capacity, uint32_t *length)
 {
-    require(currentThreadIsEventWorkerWID(0), "GSO segmentation or payload copying ran on the reader thread");
+    require(currentThreadIsEventWorkerWID(0), "GSO segmentation or payload copying ran outside the processing worker");
     prepared_gso_segments++;
     const bool prepared = __real_tunLinuxOffloadPrepareSegment(ip, plan, offset, destination, capacity, length);
     if (prepared)
@@ -354,14 +332,14 @@ void __real_tunLinuxOffloadCompleteChecksum(uint8_t *ip, const tun_linux_offload
 void __wrap_tunLinuxOffloadCompleteChecksum(uint8_t *ip, const tun_linux_offload_plan_t *plan);
 void __wrap_tunLinuxOffloadCompleteChecksum(uint8_t *ip, const tun_linux_offload_plan_t *plan)
 {
-    if (currentThreadIsEventWorkerWID(0))
+    if (! inside_reader_callback)
     {
-        ordinary_worker_checksums++;
+        queued_checksum_completions++;
     }
     else
     {
-        require(! currentThreadHasRegisteredWID(), "ordinary checksum ran on the wrong worker");
-        ordinary_reader_checksums++;
+        require(currentThreadIsEventWorkerWID(0), "ordinary checksum ran outside its receive worker");
+        receive_checksum_completions++;
     }
     __real_tunLinuxOffloadCompleteChecksum(ip, plan);
 }
@@ -396,16 +374,6 @@ static unsigned int countTunLogSubstring(const char *needle)
         match += length;
     }
     return count;
-}
-
-/* The fake pthread wrapper executes a device body inline, but its production
- * contract is still that of an auxiliary, unregistered thread. */
-static void runAuxiliaryThreadBody(void *(*routine)(void *), void *arg)
-{
-    const wid_t saved_wid = getWID();
-    testWorkerUnbindWID();
-    discard routine(arg);
-    testWorkerBindWID(saved_wid);
 }
 
 // A recoverable error must leave the device usable: the routine keeps running,
@@ -600,8 +568,20 @@ int __wrap_socket(int domain, int type, int protocol)
 
 ssize_t __wrap_read(int fd, void *buf, size_t count)
 {
+    if (fd == tun_handle_fd && (opening_reader || injected_read_count == 0))
+    {
+        errno = EAGAIN;
+        return -1;
+    }
     if (fd == tun_handle_fd && injected_read_count > 0)
     {
+        if (drive_worker_delivery && observed_read_calls >= gso_deliver_after_read_calls)
+        {
+            while (gso_messages_delivered < captured_message_count)
+                deliverNextGsoMessage();
+        }
+        if (drive_worker_delivery)
+            ++receive_attempts;
         require(observed_read_calls < injected_read_count,
                 "the reader kept reading a device that reported a permanent error");
         const unsigned int index = observed_read_calls++;
@@ -629,7 +609,6 @@ ssize_t __wrap_read(int fd, void *buf, size_t count)
             worker_t            worker  = {.wid = 0};
             captured_message_t *message = &captured_messages[0];
             message->callback(&worker, message->arg1, message->arg2, message->arg3);
-            testWorkerUnbindWID();
             captured_message_count = 0;
         }
         return applyInjectedIoResult(&injected_reads[index]);
@@ -756,98 +735,81 @@ static void deliverNextGsoMessage(void)
     captured_message_t *message      = &captured_messages[gso_messages_delivered++];
     const unsigned int  bytes_before = prepared_gso_bytes;
     const unsigned int  before       = prepared_gso_segments;
+    const bool          previous     = inside_reader_callback;
+    inside_reader_callback           = false;
     message->callback(&worker, message->arg1, message->arg2, message->arg3);
+    inside_reader_callback = previous;
     require(prepared_gso_segments - before <= 64, "worker segmented more than 64 packets in one callback");
     require(prepared_gso_bytes - bytes_before <= 65536, "worker segmented more than64 KiB in one callback");
-    testWorkerUnbindWID();
 }
 
 int __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout)
 {
-    if (inject_gso_reader_poll && nfds == 3)
-    {
-        if ((fds[2].events & POLLIN) != 0)
-        {
-            require(gso_probe_session != NULL &&
-                        atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) ==
-                            gso_probe_session->output_packet_limit &&
-                        atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) <=
-                            gso_probe_session->output_charge_limit,
-                    "pending GSO output exceeded its packet or allocation budget");
-            if (stop_gso_reader_on_budget_wait)
-            {
-                fds[0].revents = 0;
-                fds[1].revents = POLLIN;
-                fds[2].revents = 0;
-                return 1;
-            }
-            deliverNextGsoMessage();
-            gso_budget_wake_polls++;
-            const int ready = __real_poll(fds, nfds, 0);
-            require(ready > 0 && (fds[2].revents & POLLIN), "budget release did not wake GSO reader via eventfd");
-            return ready;
-        }
-        require((fds[0].events & POLLIN) != 0, "GSO reader polled no descriptor while unblocked");
-        if (observed_read_calls >= gso_deliver_after_read_calls)
-        {
-            while (gso_messages_delivered < captured_message_count)
-            {
-                deliverNextGsoMessage();
-            }
-        }
-        fds[0].revents = POLLIN;
-        fds[1].revents = 0;
-        fds[2].revents = 0;
-        gso_device_ready_polls++;
-        return 1;
-    }
-    if (inject_reader_pollin && nfds == 2)
-    {
-        // Report the device readable and the stop pipe idle, so the reader loop
-        // is driven purely by the armed read results.
-        fds[0].revents = POLLIN;
-        fds[1].revents = 0;
-        return 1;
-    }
     return __real_poll(fds, nfds, timeout);
 }
 
 int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*routine)(void *), void *arg)
 {
+    discard thread;
     discard attr;
+    discard routine;
+    discard arg;
     fake_thread_create_calls++;
-    if (fake_thread_create_calls == fail_fake_thread_create_on_call)
-    {
-        return EAGAIN;
-    }
-    // Record the thread body so a test can run it inline and observe what the
-    // device does when a routine returns on its own. Nothing is spawned here.
-    *thread = (pthread_t) next_fake_thread++;
-    if (fake_thread_create_calls <= kMaxCapturedThreads)
-    {
-        captured_thread_routines[fake_thread_create_calls - 1] = routine;
-        captured_thread_args[fake_thread_create_calls - 1]     = arg;
-    }
-    if (fake_thread_create_calls == run_fake_thread_on_create_call)
-    {
-        runAuxiliaryThreadBody(routine, arg);
-    }
-    return 0;
+    require(false, "TUN must not create a dedicated read or write thread");
+    return EAGAIN;
 }
 
 int __wrap_pthread_join(pthread_t thread, void **retval)
 {
     discard thread;
+    discard retval;
     fake_thread_join_calls++;
-    if (fake_thread_join_calls == fail_fake_thread_join_on_call)
+    require(false, "TUN must not join a dedicated read or write thread");
+    return EINVAL;
+}
+
+wio_t *__wrap_wioGet(wloop_t *loop, int fd);
+int    __wrap_wioAdd(wio_t *io, wio_cb callback, int events);
+int    __wrap_wioDel(wio_t *io, int events);
+void   __wrap_wioReleaseNoClose(wio_t *io);
+
+wio_t *__wrap_wioGet(wloop_t *loop, int fd)
+{
+    require(currentThreadIsEventWorkerWID(0), "watcher installed on its owner worker");
+    require(fd == tun_handle_fd, "watcher owns the receive descriptor");
+    memoryZero(&reader_io, sizeof(reader_io));
+    reader_io.loop = loop;
+    reader_io.fd   = fd;
+    return &reader_io;
+}
+
+int __wrap_wioAdd(wio_t *io, wio_cb callback, int events)
+{
+    require(io == &reader_io && currentThreadIsEventWorkerWID(0), "read watcher changed only by its owner");
+    if (fail_watcher_registration)
     {
-        return EBUSY;
+        errno = ENOMEM;
+        return -1;
     }
-    if (retval != NULL)
-    {
-        *retval = NULL;
-    }
+    reader_ready_callback = callback;
+    io->events |= events;
     return 0;
+}
+
+int __wrap_wioDel(wio_t *io, int events)
+{
+    require(io == &reader_io && currentThreadIsEventWorkerWID(0), "read interest removed by its owner");
+    io->events &= ~events;
+    return 0;
+}
+
+void __wrap_wioReleaseNoClose(wio_t *io)
+{
+    require(io == &reader_io && currentThreadIsEventWorkerWID(0), "watcher detached on its owner worker");
+    require(io->fd == tun_handle_fd, "watcher retains the caller-owned TUN descriptor");
+    io->events = 0;
+    io->fd     = -1;
+    ++watcher_detach_calls;
 }
 
 pid_t __wrap_fork(void)
@@ -878,8 +840,23 @@ worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid
                                                                              void *arg1, void *arg2, void *arg3)
 {
     require(wid == 0, "TUN fixture posted to an unexpected worker");
-    captured_message_t *messages = capture_writer_messages ? writer_messages : captured_messages;
-    unsigned int       *count    = capture_writer_messages ? &writer_message_count : &captured_message_count;
+    const bool reader_message = opening_reader || closing_reader || callback == reader_message_callback;
+    if (reader_message)
+    {
+        reader_message_callback = callback;
+        if (reject_reader_activation != 0)
+        {
+            reject_reader_activation = 0;
+            cleanup(arg1, arg2, arg3, kWorkerMessageCancelQuiesced);
+            return kWorkerMessageSubmitRejectedCleanupRan;
+        }
+    }
+    captured_message_t *messages = reader_message            ? reader_messages
+                                   : capture_writer_messages ? writer_messages
+                                                             : captured_messages;
+    unsigned int       *count    = reader_message            ? &reader_message_count
+                                   : capture_writer_messages ? &writer_message_count
+                                                             : &captured_message_count;
     require(*count < kMaxCapturedMessages, "captured-message queue overflow");
     messages[(*count)++] = (captured_message_t) {
         .callback = callback,
@@ -921,10 +898,6 @@ void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
                 require(++writer_batch_settled[i] == 1, "batch double recycling");
     }
     writer_batch_recycling = true;
-    if (pool == expected_reuse_pool && buf == expected_reused_buffer)
-    {
-        expected_reuse_count++;
-    }
     __real_bufferpoolReuseBuffer(pool, buf);
     writer_batch_recycling = false;
 
@@ -942,10 +915,10 @@ void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
     }
 }
 
-sbuf_t *__wrap_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
+sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capacity, uint16_t pad_left)
 {
-    sbuf_t *buf = __real_sbufCreateWithPadding(minimum_capacity, pad_left);
-    if (gso_scratch_buffer == NULL && minimum_capacity == 65536 && pad_left >= 10)
+    sbuf_t *buf = __real_bufferpoolGetBestFit(pool, minimum_capacity, pad_left);
+    if (inside_reader_callback && gso_scratch_buffer == NULL && minimum_capacity == 65536)
     {
         gso_scratch_buffer = buf;
     }
@@ -954,6 +927,8 @@ sbuf_t *__wrap_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_lef
 
 void __wrap_sbufDestroy(sbuf_t *buf)
 {
+    if (buf == expected_discarded_buffer)
+        ++expected_discard_count;
     if (writer_batch_probe && ! writer_batch_recycling)
     {
         for (unsigned i = 0; i < writer_batch_count; ++i)
@@ -976,6 +951,11 @@ bool __wrap_requestProgramShutdown(int exit_code)
 
 _Noreturn void __wrap_abortProgramNow(int exit_code)
 {
+    if (hard_abort_is_expected && shutdown_request_calls != 1)
+    {
+        fprintf(stderr, "FAIL: hard fallback occurred before the intended shutdown handoff\n");
+        _Exit(75);
+    }
     /*
      * Any hard abort the test did not deliberately provoke is a failure: the
      * whole point of this change is that a structured device I/O failure goes
@@ -1006,11 +986,10 @@ static void resetIoInjection(void)
     observed_write_calls           = 0;
     observed_writev_calls          = 0;
     largest_writev_packet          = 0;
-    inject_reader_pollin           = false;
-    inject_gso_reader_poll         = false;
-    stop_gso_reader_on_budget_wait = false;
-    gso_budget_wake_polls          = 0;
-    gso_device_ready_polls         = 0;
+    drive_worker_delivery          = false;
+    stop_when_receive_blocked      = false;
+    capacity_resumes               = 0;
+    receive_attempts               = 0;
     gso_messages_delivered         = 0;
     gso_deliver_after_read_calls   = 1;
     verify_gso_aggregate_transfer  = false;
@@ -1019,8 +998,8 @@ static void resetIoInjection(void)
     prepared_gso_bytes             = 0;
     gso_expected_segments          = 3;
     ordinary_after_gso_deliveries  = 0;
-    ordinary_worker_checksums      = 0;
-    ordinary_reader_checksums      = 0;
+    queued_checksum_completions    = 0;
+    receive_checksum_completions   = 0;
     gso_probe_session              = NULL;
     gso_scratch_buffer             = NULL;
     gso_scratch_destroy_count      = 0;
@@ -1094,7 +1073,7 @@ static void envSetup(test_env_t *env)
                                                8192,
                                                8192);
     env->buffer_pools[0]    = env->worker_buffer_pool;
-    env->loops[0]           = (wloop_t *) (void *) env;
+    env->loops[0]           = &env->loop;
 
     GSTATE.masterpool_buffer_pools_large  = env->large_master;
     GSTATE.masterpool_buffer_pools_small  = env->small_master;
@@ -1170,25 +1149,80 @@ static void cancelWriterMessages(void)
     writer_message_count = 0;
 }
 
-static void resetFakeThreads(unsigned int fail_on_call)
+static void runReaderMessages(void)
 {
-    fake_thread_create_calls        = 0;
-    fake_thread_join_calls          = 0;
-    fail_fake_thread_create_on_call = fail_on_call;
-    fail_fake_thread_join_on_call   = 0;
-    run_fake_thread_on_create_call  = 0;
-    memoryZero(captured_thread_routines, sizeof(captured_thread_routines));
-    memoryZero(captured_thread_args, sizeof(captured_thread_args));
+    for (; reader_messages_done < reader_message_count;)
+    {
+        captured_message_t message  = reader_messages[reader_messages_done++];
+        const bool         previous = inside_reader_callback;
+        inside_reader_callback      = true;
+        message.callback(getCurrentEventWorker(), message.arg1, message.arg2, message.arg3);
+        inside_reader_callback = previous;
+    }
+    reader_message_count = reader_messages_done = 0;
 }
 
-// Runs one captured device I/O thread body inline. Emulate the real auxiliary
-// thread's unregistered identity while the production wrapper runs; the test
-// process itself is deliberately bound to worker zero.
-static void runCapturedThreadBody(unsigned int index)
+static bool bringUpDevice(tun_device_t *tdev)
 {
-    require(index < kMaxCapturedThreads, "invalid captured thread index");
-    require(captured_thread_routines[index] != NULL, "the requested thread body was not captured");
-    runAuxiliaryThreadBody(captured_thread_routines[index], captured_thread_args[index]);
+    opening_reader = true;
+    const bool up  = tundeviceBringUp(tdev);
+    runReaderMessages();
+    opening_reader = false;
+    return up;
+}
+
+static bool bringDownDevice(tun_device_t *tdev)
+{
+    closing_reader  = true;
+    const bool down = tundeviceBringDown(tdev);
+    runReaderMessages();
+    closing_reader = false;
+    return down;
+}
+
+static void destroyDevice(tun_device_t *tdev)
+{
+    if (tdev != NULL)
+        discard bringDownDevice(tdev);
+    tundeviceDestroy(tdev);
+    runReaderMessages();
+}
+
+static void resetReaderFixture(unsigned int fail_on_call)
+{
+    require(reader_message_count == 0, "previous reader generation settled its worker messages");
+    fake_thread_create_calls = fake_thread_join_calls = 0;
+    reject_reader_activation                          = fail_on_call;
+    fail_watcher_registration                         = false;
+    watcher_detach_calls                              = 0;
+}
+
+/* Drive the production bounded receive callback and its capacity notifications.
+ * Packet FIFO callbacks remain explicitly controlled by each test. */
+static void runReaderUntilIdle(void)
+{
+    unsigned steps = 0;
+    while (++steps < 128 && observed_read_calls < injected_read_count)
+    {
+        if (reader_io.events == 0)
+        {
+            if (stop_when_receive_blocked)
+                return;
+            require(gso_messages_delivered < captured_message_count, "blocked reader has retained work to retire");
+            deliverNextGsoMessage();
+            ++capacity_resumes;
+            runReaderMessages();
+        }
+        else
+        {
+            require(reader_ready_callback != NULL, "receive readiness was registered");
+            inside_reader_callback = true;
+            reader_ready_callback(&reader_io);
+            inside_reader_callback = false;
+            runReaderMessages();
+        }
+    }
+    require(steps < 128, "bounded receive progress");
 }
 
 /* Raw lifecycle fixtures explicitly reject virtio support; GSO false by itself
@@ -1207,7 +1241,7 @@ static tun_device_t *createRunningDevice(void)
 {
     tun_device_t *tdev = createRawDevice("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev != NULL, "production tundeviceCreate failed");
-    require(tundeviceBringUp(tdev), "production tundeviceBringUp failed");
+    require(bringUpDevice(tdev), "production tundeviceBringUp failed");
     return tdev;
 }
 
@@ -1224,13 +1258,13 @@ static tun_device_t *createRunningReaderDevice(void)
     tun_device_t *tdev =
         createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "production reader-device create failed");
-    require(tundeviceBringUp(tdev), "production reader-device bring-up failed");
+    require(bringUpDevice(tdev), "production reader-device bring-up failed");
     return tdev;
 }
 
 static tun_device_t *createRunningOffloadReaderDevice(TunReadEventHandle callback, bool gso_requested)
 {
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     resetGsoSetup();
     tun_device_t *tdev =
         tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, callback, kDeviceFragmentPreserve);
@@ -1241,13 +1275,13 @@ static tun_device_t *createRunningOffloadReaderDevice(TunReadEventHandle callbac
                 gso_byte_order_calls == 1 && gso_offload_calls == (gso_requested ? 2U : 1U) &&
                 gso_limit_calls == (gso_requested ? 1U : 0U),
             "GSO setup skipped or repeated one negotiated descriptor step");
-    require(tundeviceBringUp(tdev), "GSO reader-device bring-up failed");
+    require(bringUpDevice(tdev), "GSO reader-device bring-up failed");
     return tdev;
 }
 
 static void testChecksumOnlyNegotiation(void)
 {
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     resetGsoSetup();
     tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev != NULL, "checksum-only device create failed");
@@ -1259,7 +1293,7 @@ static void testChecksumOnlyNegotiation(void)
             "checksum-only setup enabled segmentation");
     require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) >= 0,
             "checksum-only setup omitted worker admission resources");
-    tundeviceDestroy(tdev);
+    destroyDevice(tdev);
 }
 
 static void testGsoNegotiationAndRawFallback(void)
@@ -1268,7 +1302,7 @@ static void testGsoNegotiationAndRawFallback(void)
     for (unsigned mode = 0; mode < 2; ++mode)
         for (unsigned int i = 0; i < ARRAY_SIZE(failing_requests); ++i)
         {
-            resetFakeThreads(0);
+            resetReaderFixture(0);
             resetGsoSetup();
             resetTunLogCapture();
             fail_gso_ioctl_request = failing_requests[i];
@@ -1276,16 +1310,16 @@ static void testGsoNegotiationAndRawFallback(void)
                 tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
             require(tdev != NULL, "GSO setup failure did not fall back to a raw-IP descriptor");
             require(! tundeviceEnableTrustedChecksums(tdev), "fallback activated trust");
-            require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) < 0,
-                    "raw-IP fallback incorrectly configured GSO output credits");
+            require(deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(tdev)) >= 0,
+                    "raw-IP fallback omitted bounded worker admission");
             require(raw_setiff_calls == 1 && gso_feature_checks == 1,
                     "GSO fallback did not retry exactly one raw descriptor");
             require(countTunLogSubstring("falling back to raw-IP TUN") == 1,
                     "GSO setup fallback did not emit one runtime diagnostic");
-            tundeviceDestroy(tdev);
+            destroyDevice(tdev);
         }
 
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     resetGsoSetup();
     fail_gso_ioctl_request = TUNSETIFF;
     fail_gso_ioctl_errno   = EBUSY;
@@ -1294,7 +1328,7 @@ static void testGsoNegotiationAndRawFallback(void)
             "exclusive GSO name conflict unexpectedly fell back onto the same TUN name");
 
     resetGsoSetup();
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     tun_device_t *active = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(active != NULL && tundeviceEnableTrustedChecksums(active) &&
                 deviceReaderSessionOutputWakeFd(tunLinuxReaderSession(active)) >= 0,
@@ -1305,7 +1339,7 @@ static void testGsoNegotiationAndRawFallback(void)
     require(offload_masks[0] == TUN_F_CSUM && offload_masks[1] == (TUN_F_CSUM | TUN_F_TSO4) &&
                 active_offload_mask == offload_masks[1],
             "GSO upgrade did not retain CSUM in the replacement mask");
-    tundeviceDestroy(active);
+    destroyDevice(active);
 
     resetGsoSetup();
     fail_offload_mask = TUN_F_CSUM | TUN_F_TSO4;
@@ -1313,7 +1347,7 @@ static void testGsoNegotiationAndRawFallback(void)
     require(active && tundeviceEnableTrustedChecksums(active) && active_offload_mask == TUN_F_CSUM &&
                 tun_open_calls == 1 && gso_offload_calls == 2 && gso_limit_calls == 0 && raw_setiff_calls == 0,
             "rejected TSO upgrade did not retain checksum-only mode on the same descriptor");
-    tundeviceDestroy(active);
+    destroyDevice(active);
 
     for (unsigned mode = 0; mode < 2; ++mode)
     {
@@ -1322,7 +1356,7 @@ static void testGsoNegotiationAndRawFallback(void)
         active = tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
         require(active && ! tundeviceEnableTrustedChecksums(active) && raw_setiff_calls == 1 && gso_setiff_calls == 0,
                 "missing virtio feature did not select raw fallback");
-        tundeviceDestroy(active);
+        destroyDevice(active);
 
         resetGsoSetup();
         existing_interface = true;
@@ -1332,7 +1366,7 @@ static void testGsoNegotiationAndRawFallback(void)
             require(active && raw_setiff_calls == 2 && ! raw_attach_exclusive && gso_offload_calls == 0 &&
                         ! tundeviceEnableTrustedChecksums(active),
                     "GSO false lost pre-existing raw attachment");
-            tundeviceDestroy(active);
+            destroyDevice(active);
         }
         else
             require(active == NULL && raw_setiff_calls == 0, "GSO request attached a pre-existing interface");
@@ -1371,22 +1405,21 @@ static void testOffloadResourceFallbacks(void)
         for (unsigned failure = 0; failure < 2; ++failure)
         {
             resetGsoSetup();
-            resetFakeThreads(0);
+            resetReaderFixture(0);
             fail_output_budget_once = failure == 0;
             fail_worker_queue_once  = failure == 1;
             tun_device_t *tdev =
                 tundeviceCreate("ww-lifetime-test", mode != 0, 1500, NULL, NULL, kDeviceFragmentPreserve);
             require(tdev && ! tundeviceEnableTrustedChecksums(tdev) && active_offload_mask == 0 &&
-                        raw_setiff_calls == 1 && output_budget_calls == 1,
+                        raw_setiff_calls == 1 && output_budget_calls == (failure == 0 ? 2U : 1U),
                     "common resource failure did not roll back into usable raw mode");
-            require(tundeviceBringUp(tdev) && tundeviceBringDown(tdev),
-                    "partially configured session lost raw usability");
-            tundeviceDestroy(tdev);
+            require(bringUpDevice(tdev) && bringDownDevice(tdev), "partially configured session lost raw usability");
+            destroyDevice(tdev);
         }
     for (unsigned failure = 0; failure < 4; ++failure)
     {
         resetGsoSetup();
-        resetFakeThreads(0);
+        resetReaderFixture(0);
         resetTunLogCapture();
         fail_worker_gso_once = true;
         fail_offload_call    = failure == 0 ? 0 : 3;
@@ -1405,8 +1438,8 @@ static void testOffloadResourceFallbacks(void)
         require(tun_open_calls == (failure == 0 ? 1U : failure == 1 ? 2U : 3U), "unexpected downgrade reopen count");
         require(countTunLogSubstring("configured framing: checksum-only offload") == (failure == 2 ? 0U : 1U),
                 "GSO downgrade published the wrong mode");
-        require(tundeviceBringUp(tdev) && tundeviceBringDown(tdev), "downgraded device could not start and stop");
-        tundeviceDestroy(tdev);
+        require(bringUpDevice(tdev) && bringDownDevice(tdev), "downgraded device could not start and stop");
+        destroyDevice(tdev);
     }
 }
 
@@ -1456,7 +1489,7 @@ static void testTunWriterRefusalClassesUseFreshTlsState(void)
 {
     /* Down reaches the actual Linux TUN device layer without a published writer
      * generation. A fresh helper starts its sparse TLS sampler at ordinal one. */
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     tun_device_t *tdev = createRawDevice("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev != NULL, "failed to create down TUN refusal fixture");
     tun_refusal_probe_t down = {.tdev = tdev};
@@ -1464,11 +1497,11 @@ static void testTunWriterRefusalClassesUseFreshTlsState(void)
     runFreshTunRefusalThread(&down);
     require(countTunLogSubstring("TunDevice: write failed, device is down") == 1,
             "fresh TUN writer thread did not emit exactly its first Down diagnostic");
-    tundeviceDestroy(tdev);
+    destroyDevice(tdev);
 
     /* The real wrapper remains UP while its test fixture replaces the large
      * production generation with a capacity-one open one. Full is silent. */
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     tdev = createRunningDevice();
     reopenTunWriterWithCapacityOne(tdev);
     sbuf_t *prefill = sbufCreate(64);
@@ -1479,15 +1512,16 @@ static void testTunWriterRefusalClassesUseFreshTlsState(void)
     resetTunLogCapture();
     runFreshTunRefusalThread(&full);
     require(tun_log_capture_len == 0, "TUN Full refusal emitted a diagnostic");
-    require(tundeviceBringDown(tdev), "failed to bring down TUN Full-refusal fixture");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "failed to bring down TUN Full-refusal fixture");
+    destroyDevice(tdev);
     cancelWriterMessages();
 }
 
 static void postOne(tun_device_t *tdev, sbuf_t *buf)
 {
     unsigned int before = captured_message_count;
-    deviceReaderSessionPost(tunLinuxReaderSession(tdev), 0, &buf, 1);
+    require(deviceReaderSessionTryPost(tunLinuxReaderSession(tdev), 0, &buf, 1) == kDeviceReaderPostAccepted,
+            "worker reader admitted its packet without blocking");
     require(captured_message_count == before + 1, "production distribution did not post one message");
     require(captured_messages[before].callback != NULL, "production distribution omitted its delivery callback");
     require(captured_messages[before].cleanup != NULL, "production distribution omitted its cleanup callback");
@@ -1518,12 +1552,12 @@ static void testQueuedCleanupOutlivesDevice(void)
 
     sbuf_t *buf = sbufCreate(64);
     postOne(tdev, buf);
-    require(atomicLoadExplicit(&session->refcount, memory_order_acquire) == 2,
-            "posting did not retain the reader session");
+    require(atomicLoadExplicit(&session->refcount, memory_order_acquire) == 4,
+            "posting retains message, FIFO token and receive generation");
 
-    tundeviceDestroy(tdev);
-    require(atomicLoadExplicit(&session->refcount, memory_order_acquire) == 1,
-            "device destroy did not release exactly its session reference");
+    destroyDevice(tdev);
+    require(atomicLoadExplicit(&session->refcount, memory_order_acquire) == 2,
+            "device destroy leaves only the FIFO token and pending message references");
     require(tracked_session_free_count == 0 && tracked_pool_destroy_count == 0,
             "device destroy freed a session retained by a queued message");
 
@@ -1538,186 +1572,97 @@ static void testQueuedCleanupOutlivesDevice(void)
 
 static void testClosedAndStaleDeliveriesDoNotTouchDevice(void)
 {
-    resetCapturedMessages();
-    callback_count = 0;
-
-    tun_device_t            *tdev     = createRunningReaderDevice();
-    device_reader_session_t *session  = tunLinuxReaderSession(tdev);
-    worker_t                 receiver = {.wid = 0};
-
-    sbuf_t *closed_buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
-    sbuf_t *stale_buf  = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
-    postOne(tdev, closed_buf);
-    postOne(tdev, stale_buf);
-
-    require(tundeviceBringDown(tdev), "production bring-down failed");
-    require(! quiescenceGateEnter(&session->delivery_gate), "delivery gate accepted an entry after bring-down");
-
-    expected_reuse_pool    = getWorkerBufferPool(0);
-    expected_reused_buffer = closed_buf;
-    expected_reuse_count   = 0;
-    deliverMessage(0, &receiver);
-    require(callback_count == 0, "delivery after bring-down invoked the device callback");
-    require(expected_reuse_count == 1, "delivery after bring-down did not return its buffer to the worker pool");
-
-    require(tundeviceBringUp(tdev), "production restart bring-up failed");
-    expected_reused_buffer = stale_buf;
-    expected_reuse_count   = 0;
-    deliverMessage(1, &receiver);
-    require(callback_count == 0, "stale generation delivery invoked the device callback");
-    require(expected_reuse_count == 1, "stale generation delivery did not return its buffer to the worker pool");
-
-    expected_reused_buffer = NULL;
-    expected_reuse_pool    = NULL;
-    tundeviceDestroy(tdev);
-    resetCapturedMessages();
-}
-
-static void testBringUpRollsBackThreadCreationFailures(void)
-{
-    for (unsigned int failed_call = 1; failed_call <= 1; failed_call++)
+    for (unsigned restart = 0; restart < 2; ++restart)
     {
-        resetFakeThreads(failed_call);
-        tun_device_t *tdev =
-            createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
-        require(tdev != NULL, "thread-failure device create failed");
-
-        device_reader_session_t *session           = tunLinuxReaderSession(tdev);
-        uint32_t                 failed_generation = (uint32_t) atomicLoadRelaxed(&session->generation) + 1U;
-        require(! tundeviceBringUp(tdev), "bring-up unexpectedly survived a thread-creation failure");
-        require(fake_thread_create_calls == failed_call, "bring-up failed on the wrong thread-creation call");
-        require(fake_thread_join_calls == 0, "bring-up rollback joined the wrong number of started threads");
-        require(! tundeviceIsUp(tdev), "thread-creation rollback left the device up");
-        require(! quiescenceGateIsActive(&session->delivery_gate),
-                "thread-creation rollback left the delivery gate open");
-        require(atomicLoadExplicit(&session->refcount, memory_order_acquire) == 1,
-                "thread-creation rollback leaked a reader-session reference");
-        require((uint32_t) atomicLoadRelaxed(&session->generation) == failed_generation,
-                "failed bring-up did not stamp exactly one reader generation");
-
-        resetFakeThreads(0);
-        require(tundeviceBringUp(tdev), "device could not restart after thread-creation rollback");
-        require((uint32_t) atomicLoadRelaxed(&session->generation) == failed_generation + 1U,
-                "restart after rollback did not advance the reader generation");
-        require(tundeviceBringDown(tdev), "restart after thread-creation rollback did not shut down");
-        tundeviceDestroy(tdev);
+        resetCapturedMessages();
+        callback_count                   = 0;
+        tun_device_t            *tdev    = createRunningReaderDevice();
+        device_reader_session_t *session = tunLinuxReaderSession(tdev);
+        sbuf_t                  *buf     = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
+        postOne(tdev, buf);
+        require(bringDownDevice(tdev), "production bring-down failed");
+        require(! quiescenceGateEnter(&session->delivery_gate), "delivery gate accepted entry after bring-down");
+        if (restart)
+            require(bringUpDevice(tdev), "production restart bring-up failed");
+        expected_discarded_buffer = buf;
+        expected_discard_count    = 0;
+        deliverMessage(0, getCurrentEventWorker());
+        require(callback_count == 0, "closed or stale delivery invoked the device callback");
+        require(expected_discard_count == 1, "closed or stale FIFO entry was not discarded exactly once");
+        expected_discarded_buffer = NULL;
+        destroyDevice(tdev);
+        resetCapturedMessages();
     }
 }
 
-// This stub stands in for an I/O routine that hit a real device error and
-// returned while `running` was still set.
-static WTHREAD_ROUTINE(failingIoRoutine) // NOLINT
+static void testBringUpRollsBackRejectedActivation(void)
 {
-    discard userdata;
-    return 0;
+    for (unsigned int failed_call = 1; failed_call <= 1; failed_call++)
+    {
+        resetReaderFixture(failed_call);
+        tun_device_t *tdev =
+            createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+        require(tdev != NULL, "activation-failure device create failed");
+
+        device_reader_session_t *session           = tunLinuxReaderSession(tdev);
+        uint32_t                 failed_generation = (uint32_t) atomicLoadRelaxed(&session->generation) + 1U;
+        require(! bringUpDevice(tdev), "bring-up unexpectedly survived a worker-activation failure");
+        require(fake_thread_create_calls == 0, "worker activation failure created a thread");
+        require(fake_thread_join_calls == 0, "bring-up rollback joined the wrong number of started threads");
+        require(! tundeviceIsUp(tdev), "worker-activation rollback left the device up");
+        require(! quiescenceGateIsActive(&session->delivery_gate),
+                "worker-activation rollback left the delivery gate open");
+        require(atomicLoadExplicit(&session->refcount, memory_order_acquire) == 1,
+                "worker-activation rollback leaked a reader-session reference");
+        require((uint32_t) atomicLoadRelaxed(&session->generation) == failed_generation,
+                "failed bring-up did not stamp exactly one reader generation");
+
+        resetReaderFixture(0);
+        require(bringUpDevice(tdev), "device could not restart after worker-activation rollback");
+        require((uint32_t) atomicLoadRelaxed(&session->generation) == failed_generation + 1U,
+                "restart after rollback did not advance the reader generation");
+        require(bringDownDevice(tdev), "restart after worker-activation rollback did not shut down");
+        destroyDevice(tdev);
+    }
 }
 
-static void testThreadExitDuringStartupRollsBack(unsigned int exit_on_create_call)
+static void testWatcherFailureRequestsShutdown(void)
 {
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     resetShutdownRequests();
-    run_fake_thread_on_create_call = exit_on_create_call;
-
+    resetIoInjection();
     tun_device_t *tdev =
         createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
-    require(tdev != NULL, "startup-exit device create failed");
-
-    require(exit_on_create_call == 1, "invalid reader startup-exit injection point");
-    tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
-
-    device_reader_session_t *session           = tunLinuxReaderSession(tdev);
-    uint32_t                 failed_generation = (uint32_t) atomicLoadRelaxed(&session->generation) + 1U;
-
-    require(! tundeviceBringUp(tdev), "bring-up survived an I/O thread exiting during startup");
-    require(fake_thread_create_calls == exit_on_create_call, "startup rollback created an unexpected thread");
-    require(fake_thread_join_calls == exit_on_create_call, "startup rollback did not join every created thread");
-    require(! tundeviceIsUp(tdev), "startup rollback left the device advertised as up");
-    require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown, "startup rollback did not publish final DOWN");
-    require(! quiescenceGateIsActive(&session->delivery_gate), "startup rollback left the delivery gate open");
-    require(atomicLoadExplicit(&session->refcount, memory_order_acquire) == 1,
-            "startup rollback leaked a reader-session reference");
-    require((uint32_t) atomicLoadRelaxed(&session->generation) == failed_generation,
-            "startup rollback did not stamp exactly one reader generation");
-    /*
-     * STARTING -> FAILED must stay a synchronous bring-up rollback. Requesting
-     * process shutdown from the device thread here would race the rollback and
-     * take the decision away from the main-thread TunDevice::onStart path.
-     */
-    require(shutdown_request_calls == 0, "an I/O thread exit during startup requested process shutdown");
-
-    sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
-    sbufSetLength(buf, 64);
-    require(! queueWriterPacket(tdev, buf), "startup rollback left the writer gate open");
-    bufferpoolReuseBuffer(getWorkerBufferPool(0), buf);
-
-    resetFakeThreads(0);
-    require(tundeviceBringUp(tdev), "device could not restart after an I/O thread startup exit");
-    require(tundeviceBringDown(tdev), "restart after an I/O thread startup exit did not shut down");
-    require(shutdown_request_calls == 0, "restarting after a startup exit requested process shutdown");
-    tundeviceDestroy(tdev);
+    require(tdev != NULL, "watcher-failure device create");
+    fail_watcher_registration = true;
+    require(bringUpDevice(tdev), "device publishes before queued worker activation");
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleFailed && shutdown_request_calls == 1,
+            "worker readiness registration failure requests one orderly shutdown");
+    require(bringDownDevice(tdev), "failed watcher generation retires");
+    require(watcher_detach_calls == 1 && fake_thread_create_calls == 0 && fake_thread_join_calls == 0,
+            "watcher released without auxiliary threads");
+    destroyDevice(tdev);
 }
 
-static void testThreadExitsDuringStartupAreNotPublishedAsUp(void)
-{
-    testThreadExitDuringStartupRollsBack(1);
-}
-
-// Reader failure closes device admission and requests shutdown exactly once.
-static void testUnexpectedThreadExitsRequestShutdownOnce(void)
-{
-    resetFakeThreads(0);
-    resetShutdownRequests();
-    tun_device_t *tdev =
-        createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
-    require(tdev != NULL, "unexpected-exit device create failed");
-    tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
-    require(tundeviceBringUp(tdev), "unexpected-exit device bring-up failed");
-    require(fake_thread_create_calls == 1, "TUN created an auxiliary output thread");
-    runCapturedThreadBody(kCapturedReaderThread);
-    require(! tundeviceIsUp(tdev) && tunLinuxLifecycleState(tdev) == kTunLifecycleFailed,
-            "reader exit left the device advertised as up");
-    require(shutdown_request_calls == 1 && shutdown_request_last_code == 1,
-            "reader exit did not request exactly one failure shutdown");
-    require(tundeviceBringDown(tdev), "bring-down after reader exit failed");
-    require(fake_thread_join_calls == 1, "bring-down did not join the reader exactly once");
-    require(tundeviceBringDown(tdev) && fake_thread_join_calls == 1, "repeated bring-down joined the reader again");
-    require(shutdown_request_calls == 1, "teardown requested shutdown again");
-    tundeviceDestroy(tdev);
-}
-
-// A routine that returns because normal teardown closed/woke it is not a
-// failure: the lifecycle has already left the active states, so the wrapper must
-// neither publish FAILED nor request shutdown.
 static void testNormalStopDoesNotRequestShutdown(void)
 {
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     resetShutdownRequests();
-
-    tun_device_t *tdev =
-        createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
-    require(tdev != NULL, "normal-stop device create failed");
-
-    // Capture the reader without running it until device admission has closed.
-    tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
-    require(tundeviceBringUp(tdev), "normal-stop device bring-up failed");
-    require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
-
-    require(tundeviceBringDown(tdev), "normal bring-down failed");
-    require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown, "normal bring-down did not publish DOWN");
-
-    runCapturedThreadBody(kCapturedReaderThread);
-    runWriterMessages();
-
-    require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown,
-            "a routine returning after a normal stop published FAILED");
-    require(shutdown_request_calls == 0, "a routine returning after a normal stop requested process shutdown");
-
-    tundeviceDestroy(tdev);
+    resetIoInjection();
+    tun_device_t *tdev         = createRunningReaderDevice();
+    wio_cb        old_callback = reader_ready_callback;
+    require(bringDownDevice(tdev), "normal stop closes worker readiness");
+    require(watcher_detach_calls == 1 && reader_io.userdata == NULL,
+            "normal stop detaches the callback root before reclamation");
+    old_callback(&reader_io);
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown && shutdown_request_calls == 0,
+            "late readiness after normal stop remains inert");
+    destroyDevice(tdev);
 }
 
 /*
- * A permanent read error must end the read routine so the thread wrapper can
- * publish FAILED and request the orderly shutdown.
+ * A permanent read error must stop receive readiness, publish FAILED and
+ * request orderly shutdown.
  *
  * Before this, the drain helper reported "other error" and the reader loop
  * ignored it: on a dead-but-readable handle that became an unbounded spin that
@@ -1727,23 +1672,22 @@ static void testPermanentReadErrorFailsTheDevice(int io_errno, const char *label
 {
     discard label;
 
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     resetShutdownRequests();
     resetIoInjection();
 
     tun_device_t *tdev =
         createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "read-error device create failed");
-    require(tundeviceBringUp(tdev), "read-error device bring-up failed");
+    require(bringUpDevice(tdev), "read-error device bring-up failed");
     require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
 
     // Exactly one device read is expected. A reader that swallows the error
     // asks for a second one and trips the wrap's own assertion.
     const injected_io_result_t reads[] = {{.result = -1, .error = io_errno}};
-    inject_reader_pollin               = true;
     armDeviceReads(reads, ARRAY_SIZE(reads));
 
-    runCapturedThreadBody(kCapturedReaderThread);
+    runReaderUntilIdle();
 
     require(observed_read_calls == 1, "a permanent read error did not end the read routine immediately");
     require(! tundeviceIsUp(tdev), "a permanent read error left the device advertised as up");
@@ -1752,44 +1696,42 @@ static void testPermanentReadErrorFailsTheDevice(int io_errno, const char *label
     require(shutdown_request_last_code == 1, "a permanent read error requested the wrong exit code");
 
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "bring-down after a permanent read error failed");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "bring-down after a permanent read error failed");
+    destroyDevice(tdev);
 }
 
-// EAGAIN means "nothing to read right now", so the reader must go back to
-// poll() with the device still up, and only the following permanent error ends
-// it. The in-flight check runs on read #2, before the routine has returned.
+// EAGAIN yields to the event loop with the device still up. Only the following
+// permanent error ends receive readiness. The in-flight check runs on read #2, before the routine has returned.
 static void testTransientReadErrorKeepsTheDeviceUp(void)
 {
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     resetShutdownRequests();
     resetIoInjection();
 
     tun_device_t *tdev =
         createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev != NULL, "transient-read device create failed");
-    require(tundeviceBringUp(tdev), "transient-read device bring-up failed");
+    require(bringUpDevice(tdev), "transient-read device bring-up failed");
 
     const injected_io_result_t reads[] = {
         {.result = -1, .error = EAGAIN},
         {.result = -1, .error = EIO},
     };
-    inject_reader_pollin = true;
     armDeviceReads(reads, ARRAY_SIZE(reads));
     in_flight_device     = tdev;
     in_flight_check_call = 2;
 
-    runCapturedThreadBody(kCapturedReaderThread);
+    runReaderUntilIdle();
 
-    require(observed_read_calls == 2, "EAGAIN did not send the reader back to poll()");
+    require(observed_read_calls == 2, "EAGAIN did not yield until another readiness callback");
     require(in_flight_checks_run == 1, "the in-flight recoverable-error check never ran");
     require(tunLinuxLifecycleState(tdev) == kTunLifecycleFailed,
             "the permanent read error after EAGAIN did not publish FAILED");
     require(shutdown_request_calls == 1, "the permanent read error after EAGAIN did not request one shutdown");
 
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "bring-down after a transient read error failed");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "bring-down after a transient read error failed");
+    destroyDevice(tdev);
 }
 
 // Queues packets on the current event worker without entering native I/O.
@@ -1814,7 +1756,7 @@ static void testPermanentWriteErrorFailsTheDevice(int io_errno, const char *labe
 {
     discard label;
 
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     resetShutdownRequests();
     resetIoInjection();
 
@@ -1836,8 +1778,8 @@ static void testPermanentWriteErrorFailsTheDevice(int io_errno, const char *labe
     require(shutdown_request_last_code == 1, "a permanent write error requested the wrong exit code");
 
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "bring-down after a permanent write error failed");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "bring-down after a permanent write error failed");
+    destroyDevice(tdev);
 }
 
 /*
@@ -1849,7 +1791,7 @@ static void testPermanentWriteErrorFailsTheDevice(int io_errno, const char *labe
  */
 static void testRecoverableWriteErrorsKeepTheDeviceUp(void)
 {
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     resetShutdownRequests();
     resetIoInjection();
 
@@ -1874,8 +1816,8 @@ static void testRecoverableWriteErrorsKeepTheDeviceUp(void)
     require(shutdown_request_calls == 1, "the permanent write error did not request exactly one shutdown");
 
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "bring-down after recoverable write errors failed");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "bring-down after recoverable write errors failed");
+    destroyDevice(tdev);
 }
 
 static void testPermanentIoErrorsReachTheShutdownWrapper(void)
@@ -1895,50 +1837,32 @@ static void testPermanentIoErrorsReachTheShutdownWrapper(void)
 
 static void testInterfaceDownFailureRemainsRetryable(void)
 {
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     tun_device_t *tdev = createRunningReaderDevice();
 
     fail_interface_down_calls = 1;
     interface_down_attempts   = 0;
 
-    require(! tundeviceBringDown(tdev), "interface-down failure reported successful cleanup");
+    require(! bringDownDevice(tdev), "interface-down failure reported successful cleanup");
     require(tunLinuxLifecycleState(tdev) == kTunLifecycleStopping, "interface-down failure did not retain STOPPING");
-    require(fake_thread_join_calls == 1, "interface-down failure skipped owned thread joins");
+    require(fake_thread_join_calls == 0 && watcher_detach_calls == 1,
+            "interface-down failure did not detach its watcher");
     require(interface_down_attempts == 1, "interface-down failure did not attempt interface cleanup");
-    require(! tundeviceBringUp(tdev), "bring-up was accepted while interface cleanup remained incomplete");
+    require(! bringUpDevice(tdev), "bring-up was accepted while interface cleanup remained incomplete");
 
-    require(tundeviceBringDown(tdev), "interface-down cleanup retry failed");
+    require(bringDownDevice(tdev), "interface-down cleanup retry failed");
     require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown, "successful interface-down retry did not publish DOWN");
     require(interface_down_attempts == 2, "cleanup retry did not retry the interface-down operation");
-    require(fake_thread_join_calls == 1, "cleanup retry rejoined already released threads");
+    require(fake_thread_join_calls == 0 && watcher_detach_calls == 1, "cleanup retry repeated watcher release");
 
-    tundeviceDestroy(tdev);
-}
-
-static void testJoinFailureRetainsOwnershipForRetry(void)
-{
-    resetFakeThreads(0);
-    tun_device_t *tdev = createRunningReaderDevice();
-
-    fail_fake_thread_join_on_call = 1;
-    require(! tundeviceBringDown(tdev), "reader join failure reported successful cleanup");
-    require(tunLinuxLifecycleState(tdev) == kTunLifecycleStopping,
-            "join failure published DOWN while thread ownership remained");
-    require(! tundeviceBringUp(tdev), "restart succeeded while failed-join ownership remained");
-
-    fail_fake_thread_join_on_call = 0;
-    require(tundeviceBringDown(tdev), "join retry did not complete retained teardown");
-    require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown, "join retry did not publish DOWN");
-    require(fake_thread_join_calls == 2, "join retry did not target only the retained reader");
-
-    tundeviceDestroy(tdev);
+    destroyDevice(tdev);
 }
 
 static void testPendingWriterMessagesAfterStop(void)
 {
     for (unsigned mode = 0; mode < 3; ++mode)
     {
-        resetFakeThreads(0);
+        resetReaderFixture(0);
         resetIoInjection();
         tun_device_t *tdev = createRunningDevice();
         require(fake_thread_create_calls == 0, "write-only TUN created an auxiliary thread");
@@ -1955,14 +1879,14 @@ static void testPendingWriterMessagesAfterStop(void)
         require(observed_write_calls == 0 && observed_writev_calls == 0,
                 "enqueue-only TUN callback entered native I/O");
         writer_batch_probe = true;
-        require(tundeviceBringDown(tdev), "stop with pending worker output failed");
+        require(bringDownDevice(tdev), "stop with pending worker output failed");
         for (unsigned i = 0; i < writer_batch_count; ++i)
             require(writer_batch_settled[i] == 1, "stop did not settle queued output exactly once");
         if (mode == 1)
-            require(tundeviceBringUp(tdev), "restart with a stale writer token failed");
+            require(bringUpDevice(tdev), "restart with a stale writer token failed");
         if (mode == 2)
         {
-            tundeviceDestroy(tdev);
+            destroyDevice(tdev);
             testWorkerUnbindWID();
             cancelWriterMessages();
             testWorkerBindWID(0);
@@ -1971,7 +1895,7 @@ static void testPendingWriterMessagesAfterStop(void)
         {
             runWriterMessages();
             require(tundeviceIsUp(tdev) == (mode == 1), "stale writer token changed lifecycle");
-            tundeviceDestroy(tdev);
+            destroyDevice(tdev);
         }
         for (unsigned i = 0; i < writer_batch_count; ++i)
             require(writer_batch_settled[i] == 1, "stale token settled an output twice");
@@ -1995,10 +1919,11 @@ static void testHandoffFailureFallsBackToHardAbort(bool from_writer)
 
     if (child == 0)
     {
-        resetFakeThreads(0);
+        resetReaderFixture(0);
         resetShutdownRequests();
         shutdown_request_accepts = false;
         hard_abort_is_expected   = true;
+        bufferpoolResetThreadOwnership(getWorkerBufferPool(0));
 
         tun_device_t *tdev =
             createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
@@ -2006,8 +1931,7 @@ static void testHandoffFailureFallsBackToHardAbort(bool from_writer)
         {
             _Exit(70);
         }
-        tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
-        if (! tundeviceBringUp(tdev))
+        if (! bringUpDevice(tdev))
         {
             _Exit(71);
         }
@@ -2023,7 +1947,12 @@ static void testHandoffFailureFallsBackToHardAbort(bool from_writer)
             runWriterMessages();
         }
         else
-            runCapturedThreadBody(kCapturedReaderThread);
+        {
+            resetIoInjection();
+            const injected_io_result_t reads[] = {{.result = -1, .error = EIO}};
+            armDeviceReads(reads, ARRAY_SIZE(reads));
+            runReaderUntilIdle();
+        }
         _Exit(72); // must not be reached
     }
 
@@ -2061,7 +1990,7 @@ static void     observeFragmentPacket(tun_device_t *tdev, void *userdata, sbuf_t
 }
 static void testReaderFragmentPolicy(bool normalized, bool trusted_pair, bool corrupt_header)
 {
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     resetShutdownRequests();
     resetIoInjection();
     resetCapturedMessages();
@@ -2102,7 +2031,7 @@ static void testReaderFragmentPolicy(bool normalized, bool trusted_pair, bool co
         require(! tundeviceEnableTrustedChecksums(tdev) && active_offload_mask == 0,
                 "raw direct-pair trust enabled transmit offload");
     }
-    require(tundeviceBringUp(tdev), "fragment backend setup failed");
+    require(bringUpDevice(tdev), "fragment backend setup failed");
     const injected_io_result_t reads[] = {{.result = 84, .bytes = packets[1]},
                                           {.result = 84, .bytes = packets[0]},
                                           {.result = -1, .error = EAGAIN},
@@ -2110,15 +2039,14 @@ static void testReaderFragmentPolicy(bool normalized, bool trusted_pair, bool co
     normalized_delivery                = normalized;
     fragment_deliveries                = 0;
     deliver_fragment_batch             = ! corrupt_header || trusted_pair;
-    inject_reader_pollin               = true;
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    runCapturedThreadBody(kCapturedReaderThread);
+    runReaderUntilIdle();
     deliver_fragment_batch  = false;
     const unsigned expected = corrupt_header && ! trusted_pair ? 0U : normalized ? 1U : 2U;
     require(fragment_deliveries == expected, "backend fragment/receive-checksum policy lost/duplicated packets");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "fragment backend shutdown failed");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "fragment backend shutdown failed");
+    destroyDevice(tdev);
 }
 
 enum
@@ -2234,11 +2162,11 @@ static void testOrdinaryChecksumWorkerHandoff(bool gso_requested, bool cancel, b
     resetIoInjection();
     resetCapturedMessages();
     resetGsoSetup();
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     ordinary_checksum_fixture_t fixture = {0};
     tun_device_t               *tdev    = tundeviceCreate(
         "ww-lifetime-test", gso_requested, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
-    require(tdev && tundeviceBringUp(tdev), "ordinary checksum device setup");
+    require(tdev && bringUpDevice(tdev), "ordinary checksum device setup");
     uint8_t record[kGsoFixtureRecordLength];
     makeSmallGsoRecord(record);
     require(tunLinuxOffloadEncodeWrite(record + 10, kGsoFixtureIpLength, record), "ordinary partial fixture seed");
@@ -2246,39 +2174,39 @@ static void testOrdinaryChecksumWorkerHandoff(bool gso_requested, bool cancel, b
     const injected_io_result_t reads[] = {
         {.result = sizeof(record), .bytes = record}, {.result = -1, .error = EAGAIN}, {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll       = true;
+    drive_worker_delivery        = true;
     gso_deliver_after_read_calls = cancel || stale ? 100 : 2;
     gso_probe_session            = tunLinuxReaderSession(tdev);
-    runCapturedThreadBody(kCapturedReaderThread);
-    require(ordinary_reader_checksums == 0, "ordinary NEEDS_CSUM completion still ran on the reader");
+    runReaderUntilIdle();
+    require(receive_checksum_completions == 0, "ordinary NEEDS_CSUM completion still ran on the reader");
     device_reader_session_t *session = gso_probe_session;
     if (cancel || stale)
     {
-        require(fixture.delivered == 0 && ordinary_worker_checksums == 0 && captured_message_count == 1,
+        require(fixture.delivered == 0 && queued_checksum_completions == 0 && captured_message_count == 1,
                 "ordinary pending checksum completed before worker admission");
         resetIoInjection();
-        require(tundeviceBringDown(tdev), "ordinary pending checksum stop");
+        require(bringDownDevice(tdev), "ordinary pending checksum stop");
         if (stale)
         {
-            require(tundeviceBringUp(tdev), "ordinary pending checksum restart");
+            require(bringUpDevice(tdev), "ordinary pending checksum restart");
             worker_t worker = {.wid = 0};
             deliverMessage(0, &worker);
         }
         else
         {
             deviceReaderSessionRef(session);
-            tundeviceDestroy(tdev);
+            destroyDevice(tdev);
             tdev = NULL;
             testWorkerUnbindWID();
             cleanupMessage(0);
             testWorkerBindWID(0);
         }
-        require(fixture.delivered == 0 && ordinary_worker_checksums == 0,
+        require(fixture.delivered == 0 && queued_checksum_completions == 0,
                 "cancelled/stale ordinary work performed checksum or delivery");
     }
     else
     {
-        require(fixture.delivered == 1 && ordinary_worker_checksums == 1,
+        require(fixture.delivered == 1 && queued_checksum_completions == 1,
                 "ordinary checksum did not complete once on the destination worker");
     }
     require(atomic_load_explicit(&session->output_packets, memory_order_acquire) == 0 &&
@@ -2291,8 +2219,8 @@ static void testOrdinaryChecksumWorkerHandoff(bool gso_requested, bool cancel, b
     resetIoInjection();
     if (tdev != NULL)
     {
-        require(tundeviceBringDown(tdev), "ordinary checksum final stop");
-        tundeviceDestroy(tdev);
+        require(bringDownDevice(tdev), "ordinary checksum final stop");
+        destroyDevice(tdev);
     }
     resetCapturedMessages();
 }
@@ -2303,12 +2231,12 @@ static void testOrdinaryChecksumMixedFifo(bool gso_requested)
     resetIoInjection();
     resetCapturedMessages();
     resetGsoSetup();
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     GSTATE.ram_profile                  = 8;
     ordinary_checksum_fixture_t fixture = {0};
     tun_device_t               *tdev    = tundeviceCreate(
         "ww-lifetime-test", gso_requested, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
-    require(tdev && tundeviceBringUp(tdev), "mixed ordinary checksum device setup");
+    require(tdev && bringUpDevice(tdev), "mixed ordinary checksum device setup");
     uint8_t ordinary[kGsoFixtureRecordLength], partial[kGsoFixtureRecordLength], aggregate[kGsoFixtureRecordLength];
     makeSmallGsoRecord(ordinary);
     PUT_BE32(ordinary + 10 + 24, 2000);
@@ -2396,20 +2324,21 @@ static void testOrdinaryChecksumMixedFifo(bool gso_requested)
                                           {.result = -1, .error = EAGAIN},
                                           {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll       = true;
+    drive_worker_delivery        = true;
     gso_deliver_after_read_calls = 7;
     gso_probe_session            = tunLinuxReaderSession(tdev);
-    runCapturedThreadBody(kCapturedReaderThread);
-    require(fixture.delivered == (gso_requested ? 8U : 6U) && ordinary_worker_checksums == (gso_requested ? 4U : 5U) &&
-                ordinary_reader_checksums == 0 && prepared_gso_segments == (gso_requested ? 3U : 0U) &&
-                captured_message_count == 1 && gso_device_ready_polls == (gso_requested ? 3U : 2U),
+    runReaderUntilIdle();
+    require(fixture.delivered == (gso_requested ? 8U : 6U) &&
+                queued_checksum_completions == (gso_requested ? 4U : 5U) && receive_checksum_completions == 0 &&
+                prepared_gso_segments == (gso_requested ? 3U : 0U) && captured_message_count == 1 &&
+                observed_read_calls == ARRAY_SIZE(reads),
             "mixed FIFO lost checksum work, batching, or coalesced worker dispatch");
     require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
             "mixed ordinary checksum reservation leak");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "mixed ordinary checksum stop");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "mixed ordinary checksum stop");
+    destroyDevice(tdev);
     resetCapturedMessages();
     GSTATE.ram_profile = 1;
 }
@@ -2420,11 +2349,11 @@ static void testOrdinaryChecksumBudget(bool gso_requested)
     resetIoInjection();
     resetCapturedMessages();
     resetGsoSetup();
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     ordinary_checksum_fixture_t fixture = {0};
     tun_device_t               *tdev    = tundeviceCreate(
         "ww-lifetime-test", gso_requested, 1500, &fixture, observeOrdinaryChecksum, kDeviceFragmentReassemble);
-    require(tdev && tundeviceBringUp(tdev), "ordinary checksum budget device setup");
+    require(tdev && bringUpDevice(tdev), "ordinary checksum budget device setup");
     gso_probe_session                      = tunLinuxReaderSession(tdev);
     gso_probe_session->output_packet_limit = 1;
     uint8_t record[kGsoFixtureRecordLength];
@@ -2437,18 +2366,18 @@ static void testOrdinaryChecksumBudget(bool gso_requested)
                                           {.result = -1, .error = EAGAIN},
                                           {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll       = true;
+    drive_worker_delivery        = true;
     gso_deliver_after_read_calls = 3;
-    runCapturedThreadBody(kCapturedReaderThread);
-    require(fixture.delivered == 2 && ordinary_worker_checksums == 2 && ordinary_reader_checksums == 0 &&
-                gso_budget_wake_polls == 1,
+    runReaderUntilIdle();
+    require(fixture.delivered == 2 && queued_checksum_completions == 2 && receive_checksum_completions == 0 &&
+                capacity_resumes == 1,
             "ordinary pending checksum did not resume after one-slot budget pressure");
     require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
             "ordinary checksum budget reservation leak");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "ordinary checksum budget stop");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "ordinary checksum budget stop");
+    destroyDevice(tdev);
     resetCapturedMessages();
 }
 
@@ -2458,7 +2387,7 @@ static void testOrdinaryChecksumReaderFallback(bool gso_requested, bool reassemb
     resetIoInjection();
     resetCapturedMessages();
     resetGsoSetup();
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     ordinary_checksum_fixture_t fixture = {0};
     tun_device_t               *tdev    = tundeviceCreate("ww-lifetime-test",
                                          gso_requested,
@@ -2466,7 +2395,7 @@ static void testOrdinaryChecksumReaderFallback(bool gso_requested, bool reassemb
                                          &fixture,
                                          observeOrdinaryChecksum,
                                          reassemble ? kDeviceFragmentReassemble : kDeviceFragmentPreserve);
-    require(tdev && tundeviceBringUp(tdev), "ordinary checksum fallback device setup");
+    require(tdev && bringUpDevice(tdev), "ordinary checksum fallback device setup");
     uint8_t  generic[43] = {0};
     uint8_t *ip          = generic + 10;
     ip[0]                = 0x45;
@@ -2524,18 +2453,18 @@ static void testOrdinaryChecksumReaderFallback(bool gso_requested, bool reassemb
                                           {.result = -1, .error = EAGAIN},
                                           {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll       = true;
+    drive_worker_delivery        = true;
     gso_deliver_after_read_calls = 4;
     gso_probe_session            = tunLinuxReaderSession(tdev);
-    runCapturedThreadBody(kCapturedReaderThread);
-    require(fixture.delivered == fixture.count && ordinary_worker_checksums == 0 && ordinary_reader_checksums == 2,
+    runReaderUntilIdle();
+    require(fixture.delivered == fixture.count && queued_checksum_completions == 0 && receive_checksum_completions == 2,
             "generic/fragment checksum fallback changed reader completion or fragment policy");
     require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
             "ordinary checksum fallback reservation leak");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "ordinary checksum fallback stop");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "ordinary checksum fallback stop");
+    destroyDevice(tdev);
     resetCapturedMessages();
 }
 
@@ -2602,11 +2531,11 @@ static void testTrustedHandoff(bool gso_requested, bool cancel, bool stale)
     resetIoInjection();
     resetCapturedMessages();
     resetGsoSetup();
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     tun_device_t *tdev =
         tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, observeTrustedRecord, kDeviceFragmentReassemble);
     require(tdev && tundeviceEnableTrustedChecksums(tdev), "trusted device setup");
-    require(tundeviceBringUp(tdev), "trusted device startup");
+    require(bringUpDevice(tdev), "trusted device startup");
     uint8_t aggregate[kGsoFixtureRecordLength], partial[kGsoFixtureRecordLength], ordinary[kGsoFixtureRecordLength],
         corrupt[kGsoFixtureRecordLength];
     makeSmallGsoRecord(aggregate);
@@ -2631,20 +2560,20 @@ static void testTrustedHandoff(bool gso_requested, bool cancel, bool stale)
                                           {.result = sizeof(partial), .bytes = partial},
                                           {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll       = true;
+    drive_worker_delivery        = true;
     gso_deliver_after_read_calls = cancel || stale ? 100 : 5;
     gso_probe_session            = tunLinuxReaderSession(tdev);
     callback_count               = 0;
-    runCapturedThreadBody(kCapturedReaderThread);
+    runReaderUntilIdle();
     device_reader_session_t *session = gso_probe_session;
     if (cancel || stale)
     {
         require(callback_count == 0 && captured_message_count > 0, "trusted cancellation fixture delivered early");
         resetIoInjection();
-        require(tundeviceBringDown(tdev), "trusted pending stop");
+        require(bringDownDevice(tdev), "trusted pending stop");
         if (stale)
         {
-            require(tundeviceBringUp(tdev), "trusted pending restart");
+            require(bringUpDevice(tdev), "trusted pending restart");
             worker_t worker = {.wid = 0};
             for (unsigned i = 0; i < captured_message_count; ++i)
                 deliverMessage(i, &worker);
@@ -2653,7 +2582,7 @@ static void testTrustedHandoff(bool gso_requested, bool cancel, bool stale)
         else
         {
             deviceReaderSessionRef(session);
-            tundeviceDestroy(tdev);
+            destroyDevice(tdev);
             tdev = NULL;
             testWorkerUnbindWID();
             for (unsigned i = 0; i < captured_message_count; ++i)
@@ -2673,8 +2602,8 @@ static void testTrustedHandoff(bool gso_requested, bool cancel, bool stale)
     resetIoInjection();
     if (tdev)
     {
-        require(tundeviceBringDown(tdev), "trusted final stop");
-        tundeviceDestroy(tdev);
+        require(bringDownDevice(tdev), "trusted final stop");
+        destroyDevice(tdev);
     }
     resetCapturedMessages();
 }
@@ -2697,12 +2626,12 @@ static void testTrustedChecksumOnlyFallback(void)
     resetIoInjection();
     resetCapturedMessages();
     resetGsoSetup();
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     ordinary_checksum_fixture_t fixture = {0};
     tun_device_t               *tdev =
         tundeviceCreate("ww-lifetime-test", false, 1500, &fixture, observeTrustedOrdinary, kDeviceFragmentReassemble);
     require(tdev && tundeviceEnableTrustedChecksums(tdev), "trusted checksum-only fallback setup");
-    require(tundeviceBringUp(tdev), "trusted checksum-only fallback startup");
+    require(bringUpDevice(tdev), "trusted checksum-only fallback startup");
     uint8_t tcp[kGsoFixtureRecordLength];
     makeSmallGsoRecord(tcp);
     uint8_t  udp[41] = {0};
@@ -2751,19 +2680,19 @@ static void testTrustedChecksumOnlyFallback(void)
                                           {.result = sizeof(fragment), .bytes = fragment},
                                           {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll       = true;
+    drive_worker_delivery        = true;
     gso_deliver_after_read_calls = 7;
     gso_probe_session            = tunLinuxReaderSession(tdev);
-    runCapturedThreadBody(kCapturedReaderThread);
-    require(fixture.delivered == 5 && ordinary_reader_checksums == 1 && ordinary_worker_checksums == 0 &&
+    runReaderUntilIdle();
+    require(fixture.delivered == 5 && receive_checksum_completions == 1 && queued_checksum_completions == 0 &&
                 prepared_gso_segments == 0,
             "trusted checksum-only materialization or receive admission");
     require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
             "trusted checksum-only fallback reservation leak");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "trusted checksum-only fallback stop");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "trusted checksum-only fallback stop");
+    destroyDevice(tdev);
     resetCapturedMessages();
 }
 
@@ -2789,20 +2718,20 @@ static void testChecksumOnlyRejectsGso(void)
     }
     reads[7] = (injected_io_result_t) {.result = -1, .error = EIO};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll       = true;
+    drive_worker_delivery        = true;
     gso_deliver_after_read_calls = 7;
     gso_probe_session            = tunLinuxReaderSession(tdev);
     callback_count               = 0;
-    runCapturedThreadBody(kCapturedReaderThread);
+    runReaderUntilIdle();
     require(callback_count == 1 && captured_message_count == 1 && prepared_gso_segments == 0 &&
-                ordinary_worker_checksums == 0 && ordinary_reader_checksums == 0,
+                queued_checksum_completions == 0 && receive_checksum_completions == 0,
             "checksum-only reader admitted unexpected GSO work");
     require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
             "unexpected GSO leaked admission credits");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "checksum-only rejection cleanup");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "checksum-only rejection cleanup");
+    destroyDevice(tdev);
     resetCapturedMessages();
 }
 
@@ -2821,24 +2750,24 @@ static void testGsoWorkerSegmentationOwnsAggregate(void)
                                           {.result = kGsoFixtureRecordLength, .bytes = ordinary},
                                           {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll        = true;
+    drive_worker_delivery         = true;
     verify_gso_aggregate_transfer = true;
     gso_deliver_after_read_calls  = 2;
     gso_probe_session             = tunLinuxReaderSession(tdev);
     callback_count                = 0;
 
-    runCapturedThreadBody(kCapturedReaderThread);
+    runReaderUntilIdle();
 
     require(callback_count == 3 && prepared_gso_segments == 3 && ordinary_after_gso_deliveries == 1,
             "worker did not segment and deliver its owned aggregate before ordinary traffic");
-    require(observed_read_calls == 3 && gso_device_ready_polls == 3 && gso_budget_wake_polls == 0,
+    require(observed_read_calls == 3 && receive_attempts == 3 && capacity_resumes == 0,
             "scratch-overwrite fixture did not defer worker delivery until after the second read");
     require(atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
             "worker segmentation leaked aggregate reservations");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "GSO scratch-overwrite device did not stop");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "GSO scratch-overwrite device did not stop");
+    destroyDevice(tdev);
     resetCapturedMessages();
 }
 
@@ -2857,24 +2786,24 @@ static void testGsoReaderResumesPendingWithoutTunReadiness(void)
                                           {.result = kGsoFixtureRecordLength, .bytes = record},
                                           {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll       = true;
+    drive_worker_delivery        = true;
     gso_probe_session            = session;
     gso_deliver_after_read_calls = 3;
     gso_expected_segments        = 6;
     callback_count               = 0;
 
-    runCapturedThreadBody(kCapturedReaderThread);
+    runReaderUntilIdle();
 
     require(callback_count == 6 && prepared_gso_segments == 6 && observed_read_calls == 4,
             "GSO reader did not retry EINTR or finish repeated aggregates");
-    require(gso_budget_wake_polls == 1, "pending aggregate required new TUN readiness after capacity returned");
+    require(capacity_resumes == 1, "pending aggregate required new TUN readiness after capacity returned");
     require(atomic_load_explicit(&session->output_packets, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&session->output_charge, memory_order_acquire) == 0,
             "aggregate delivery did not return every reservation");
     require(shutdown_request_calls == 1, "terminal GSO reader error did not request orderly shutdown");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "GSO reader did not bring down after terminal error");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "GSO reader did not bring down after terminal error");
+    destroyDevice(tdev);
     resetCapturedMessages();
 }
 
@@ -2947,12 +2876,12 @@ static void testGsoSmallMssContinuationPreservesOrdinaryFifo(void)
                                           {.result = sizeof(ordinary), .bytes = ordinary},
                                           {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll        = true;
+    drive_worker_delivery         = true;
     verify_gso_aggregate_transfer = true;
     gso_deliver_after_read_calls  = 2;
     gso_probe_session             = tunLinuxReaderSession(tdev);
     callback_count                = 0;
-    runCapturedThreadBody(kCapturedReaderThread);
+    runReaderUntilIdle();
     require(callback_count == kSmallMssSegments && prepared_gso_segments == kSmallMssSegments &&
                 ordinary_after_gso_deliveries == 1,
             "worker did not finish an aggregate above2048 segments followed by ordinary input");
@@ -2962,8 +2891,8 @@ static void testGsoSmallMssContinuationPreservesOrdinaryFifo(void)
                 atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0,
             "small-MSS worker continuation leaked retained aggregate or output capacity");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "small-MSS continuation device failed to stop");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "small-MSS continuation device failed to stop");
+    destroyDevice(tdev);
     resetCapturedMessages();
 }
 
@@ -3005,18 +2934,18 @@ static void testGsoWorkerYieldsAtByteQuantum(void)
     }
     const injected_io_result_t reads[] = {{.result = sizeof(record), .bytes = record}, {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll = true;
+    drive_worker_delivery  = true;
     gso_probe_session      = tunLinuxReaderSession(tdev);
     callback_count         = 0;
-    runCapturedThreadBody(kCapturedReaderThread);
+    runReaderUntilIdle();
     require(callback_count == 45 && prepared_gso_segments == 45 && gso_messages_delivered >= 2,
             "worker failed to yield a full-size aggregate at its byte quantum");
     require(atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0,
             "byte-quantum continuation leaked retained work");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "byte-quantum device failed to stop");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "byte-quantum device failed to stop");
+    destroyDevice(tdev);
     resetCapturedMessages();
 }
 
@@ -3062,17 +2991,17 @@ static void testGsoWorkerPoolPaddingGrowth(test_env_t *env)
     makeSmallGsoRecord(record);
     const injected_io_result_t reads[] = {{.result = sizeof(record), .bytes = record}, {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll = true;
+    drive_worker_delivery  = true;
     gso_probe_session      = tunLinuxReaderSession(tdev);
     callback_count         = 0;
-    runCapturedThreadBody(kCapturedReaderThread);
+    runReaderUntilIdle();
     require(callback_count == 3 && prepared_gso_segments == 3 &&
                 atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0,
             "later pool padding change lost GSO output or leaked its reservation");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "padding-growth device failed to stop");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "padding-growth device failed to stop");
+    destroyDevice(tdev);
     env->buffer_pools[0]                  = env->worker_buffer_pool;
     GSTATE.masterpool_buffer_pools_large  = env->large_master;
     GSTATE.masterpool_buffer_pools_medium = env->medium_master;
@@ -3122,8 +3051,8 @@ static void testGsoWriterFramingAndPacketOutcomes(bool gso_requested)
     require(shutdown_request_calls == 1 && tunLinuxLifecycleState(tdev) == kTunLifecycleFailed,
             "GSO writer did not end on a permanent descriptor error");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "GSO writer did not bring down after terminal error");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "GSO writer did not bring down after terminal error");
+    destroyDevice(tdev);
 }
 
 static void testTrustedWriterOutcomes(bool gso_requested)
@@ -3132,10 +3061,10 @@ static void testTrustedWriterOutcomes(bool gso_requested)
     resetIoInjection();
     resetTunLogCapture();
     resetGsoSetup();
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     tun_device_t *tdev =
         tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
-    require(tdev && tundeviceEnableTrustedChecksums(tdev) && tundeviceBringUp(tdev), "trusted writer setup");
+    require(tdev && tundeviceEnableTrustedChecksums(tdev) && bringUpDevice(tdev), "trusted writer setup");
     for (unsigned i = 0; i < 4; ++i)
     {
         uint8_t record[kGsoFixtureRecordLength];
@@ -3159,8 +3088,8 @@ static void testTrustedWriterOutcomes(bool gso_requested)
     require(observed_writev_calls == 5, "trusted short write/retry handling");
     require(shutdown_request_calls == 1, "trusted writer permanent-error settlement");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "trusted writer shutdown");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "trusted writer shutdown");
+    destroyDevice(tdev);
 }
 
 static void testTrustedRawWriterKeepsCompleteChecksums(void)
@@ -3168,13 +3097,13 @@ static void testTrustedRawWriterKeepsCompleteChecksums(void)
     resetShutdownRequests();
     resetIoInjection();
     resetGsoSetup();
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     tun_device_t *tdev =
         createRawDevice("ww-lifetime-test", false, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
     require(tdev && tundeviceEnableTrustedReceiveChecksums(tdev), "trusted raw writer setup");
     require(! tundeviceEnableTrustedChecksums(tdev) && active_offload_mask == 0,
             "trusted raw writer enabled transmit offload");
-    require(tundeviceBringUp(tdev), "trusted raw writer startup");
+    require(bringUpDevice(tdev), "trusted raw writer startup");
     uint8_t record[kGsoFixtureRecordLength];
     makeSmallGsoRecord(record);
     uint8_t       *ip   = record + kTunVirtioHeaderSize;
@@ -3193,8 +3122,8 @@ static void testTrustedRawWriterKeepsCompleteChecksums(void)
     require(observed_write_calls == 1 && observed_writev_calls == 0 && shutdown_request_calls == 0,
             "trusted raw writer used offload framing or failed its write");
     resetIoInjection();
-    require(tundeviceBringDown(tdev), "trusted raw writer shutdown");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "trusted raw writer shutdown");
+    destroyDevice(tdev);
 }
 
 static void testWriterBatch(bool gso_requested, unsigned count, unsigned capacity, unsigned fault)
@@ -3202,10 +3131,10 @@ static void testWriterBatch(bool gso_requested, unsigned count, unsigned capacit
     resetShutdownRequests();
     resetIoInjection();
     resetGsoSetup();
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     tun_device_t *tdev =
         tundeviceCreate("ww-lifetime-test", gso_requested, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
-    require(tdev && tundeviceEnableTrustedChecksums(tdev) && tundeviceBringUp(tdev), "batch writer setup");
+    require(tdev && tundeviceEnableTrustedChecksums(tdev) && bringUpDevice(tdev), "batch writer setup");
     writer_batch_count  = count;
     writer_batch_offset = writer_batch_calls = writer_batch_aggregates = writer_batch_max = 0;
     writer_batch_fault                                                                    = fault;
@@ -3241,7 +3170,7 @@ static void testWriterBatch(bool gso_requested, unsigned count, unsigned capacit
     if (fault == 7)
         require(tundeviceRequestStop(tdev), "stop before deferred batch dispatch");
     runWriterMessages();
-    require(tundeviceBringDown(tdev), "batch bring down");
+    require(bringDownDevice(tdev), "batch bring down");
     for (unsigned i = 0; i < count; ++i)
         require(writer_batch_settled[i] == 1, "batch or worker queue retained buffer after stop");
     writer_batch_probe = false;
@@ -3261,23 +3190,23 @@ static void testWriterBatch(bool gso_requested, unsigned count, unsigned capacit
         require(writer_batch_calls == 1, "writer continued after stop/permanent failure");
     if (fault == 7)
         require(writer_batch_calls == 0, "writer emitted after stop before dispatch");
-    tundeviceDestroy(tdev);
+    destroyDevice(tdev);
 }
 
 static void testTrustedQueueFallback(void)
 {
     resetGsoSetup();
-    resetFakeThreads(0);
+    resetReaderFixture(0);
     fail_worker_queue_once = true;
     tun_device_t *tdev     = tundeviceCreate("ww-lifetime-test", true, 1500, NULL, NULL, kDeviceFragmentPreserve);
     require(tdev && ! fail_worker_queue_once && ! tundeviceEnableTrustedChecksums(tdev),
             "queue fallback activated trust");
     require(gso_offload_calls == 2 && raw_setiff_calls == 1,
             "queue failure did not roll back successful offload ioctl");
-    tundeviceDestroy(tdev);
+    destroyDevice(tdev);
 }
 
-static void testGsoPendingAggregateSettlesOnReaderExit(void)
+static void testGsoPendingAggregateSettlesAfterStop(void)
 {
     resetShutdownRequests();
     resetIoInjection();
@@ -3290,14 +3219,14 @@ static void testGsoPendingAggregateSettlesOnReaderExit(void)
     const injected_io_result_t reads[] = {{.result = kGsoFixtureRecordLength, .bytes = record},
                                           {.result = kGsoFixtureRecordLength, .bytes = record}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    inject_gso_reader_poll         = true;
-    stop_gso_reader_on_budget_wait = true;
+    drive_worker_delivery          = true;
+    stop_when_receive_blocked      = true;
     gso_deliver_after_read_calls   = 2;
     gso_probe_session              = session;
-    require(gso_scratch_buffer != NULL, "GSO device did not preallocate direct scratch storage");
+    require(gso_scratch_buffer != NULL, "GSO receive worker did not allocate scratch storage");
     callback_count = 0;
 
-    runCapturedThreadBody(kCapturedReaderThread);
+    runReaderUntilIdle();
 
     require(observed_read_calls == 2 && callback_count == 0 && prepared_gso_segments == 0 &&
                 captured_message_count == 1,
@@ -3311,11 +3240,11 @@ static void testGsoPendingAggregateSettlesOnReaderExit(void)
     tracked_message_pool       = session->message_pool;
     tracked_session_free_count = 0;
     tracked_pool_destroy_count = 0;
-    require(tundeviceBringDown(tdev), "pending GSO reader did not bring down after exit");
-    require(tundeviceBringUp(tdev), "GSO device did not restart with its retained scratch allocation");
+    require(bringDownDevice(tdev), "pending GSO reader did not bring down after exit");
+    require(bringUpDevice(tdev), "GSO device did not restart with its retained scratch allocation");
     require(gso_scratch_destroy_count == 0, "GSO scratch was destroyed before the restarted device stopped");
-    require(tundeviceBringDown(tdev), "restarted GSO device did not stop");
-    tundeviceDestroy(tdev);
+    require(bringDownDevice(tdev), "restarted GSO device did not stop");
+    destroyDevice(tdev);
     require(gso_scratch_destroy_count == 0, "device destroy released worker-owned aggregate storage");
     require(tracked_session_free_count == 0, "device destroyed a session with queued GSO output");
     cleanupMessage(0);
@@ -3352,7 +3281,7 @@ static void testDnsMutationCleanup(void)
             require(! tundeviceClearDnsServers(tdev) && command_calls == 1,
                     "uncertain DNS result triggered unsafe blanket revert");
         }
-        tundeviceDestroy(tdev);
+        destroyDevice(tdev);
     }
     existing_interface = true;
     command_calls      = 0;
@@ -3362,7 +3291,7 @@ static void testDnsMutationCleanup(void)
     /* Attached DNS snapshot/restore behavior has its own real-configuration
      * fixture in tun_linux_dns_test.c. Creating an attachment itself is inert. */
     require(command_calls == 0, "attachment changed DNS before policy setup");
-    tundeviceDestroy(tdev);
+    destroyDevice(tdev);
     existing_interface = false;
 }
 
@@ -3415,7 +3344,7 @@ int main(void)
     testWriterBatch(false, 3, 140, 0);
     testWriterBatch(false, 70, 140, 0);
     testTrustedQueueFallback();
-    testGsoPendingAggregateSettlesOnReaderExit();
+    testGsoPendingAggregateSettlesAfterStop();
     testReaderFragmentPolicy(true, false, false);
     testReaderFragmentPolicy(false, false, false);
     testReaderFragmentPolicy(true, false, true);
@@ -3423,15 +3352,13 @@ int main(void)
     testQueuedCleanupOutlivesDevice();
     testClosedAndStaleDeliveriesDoNotTouchDevice();
     testTunWriterRefusalClassesUseFreshTlsState();
-    testBringUpRollsBackThreadCreationFailures();
-    testThreadExitsDuringStartupAreNotPublishedAsUp();
-    testUnexpectedThreadExitsRequestShutdownOnce();
+    testBringUpRollsBackRejectedActivation();
+    testWatcherFailureRequestsShutdown();
     testNormalStopDoesNotRequestShutdown();
     testPermanentIoErrorsReachTheShutdownWrapper();
     testHandoffFailureFallsBackToHardAbort(false);
     testHandoffFailureFallsBackToHardAbort(true);
     testInterfaceDownFailureRemainsRetryable();
-    testJoinFailureRetainsOwnershipForRetry();
     testPendingWriterMessagesAfterStop();
     internaloggerDestroy();
     envTeardown(&env);

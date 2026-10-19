@@ -20,12 +20,8 @@
 // Focused, platform-neutral coverage for the Windows TUN oversized-receive drop
 // policy. Generic rate-limited accounting has its own logger utility test.
 //
-// The release/recycle/queue-ownership behaviour of routineReadFromTun() (that the
-// Wintun packet and the reserved buffer are each freed exactly once and that
-// previously queued valid buffers are preserved) is exercised through the Windows
-// test harness / manual runs, since fully mocking the Wintun reader would require
-// a large production refactor.
-
+// Production ring ownership, bounded callbacks and native notification lifetime
+// are covered by tun_windows_reader_test with substituted Wintun I/O.
 
 // Case 1 and 2: a packet equal to the MTU is accepted; one byte larger is a drop.
 static void testPacketSizeDecision(void)
@@ -43,8 +39,7 @@ static void testPacketSizeDecision(void)
  * Wintun receive-error classification.
  *
  * Only an exhausted ring is recoverable. Everything else must be terminal so the
- * reader returns and the thread wrapper can publish FAILED and request the
- * orderly shutdown.
+ * reader callback can publish FAILED and request orderly shutdown.
  */
 static void testOnlyAnExhaustedRingIsRecoverable(void)
 {

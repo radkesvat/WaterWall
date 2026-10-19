@@ -76,6 +76,8 @@ bool tundeviceDnsNeedsCleanup(const tun_device_t *tdev);
  * worker's deferred FIFO; refusal leaves ownership with the caller. Native
  * writes and buffer recycling run later on the same worker. */
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf);
+/* Owner-worker lifecycle hook: detach receive readiness before loop quiescence. */
+void tundeviceWorkerQuiesce(tun_device_t *tdev, uint8_t wid);
 bool tundeviceDetectDefaultInterface(tun_default_route_t *out);
 bool tundeviceDisableReversePathFiltering(const char *ifname);
 

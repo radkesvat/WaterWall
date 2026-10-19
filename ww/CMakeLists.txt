@@ -612,6 +612,8 @@ elseif(UNIX AND NOT ANDROID)
     )
     if(LINUX)
         target_sources(ww PRIVATE
+            devices/tun/tun_linux_queues.c
+            devices/tun/tun_linux_reader.c
             devices/tun/tun_linux_gso_limits.c
             devices/tun/tun_linux_gso_write.c
             devices/tun/tun_linux_offload.c
@@ -1720,6 +1722,8 @@ if(BUILD_TESTING)
         devices/tun/tun_linux.c
         devices/tun/tun_linux_config.c
         devices/tun/tun_linux_io.c
+        devices/tun/tun_linux_queues.c
+        devices/tun/tun_linux_reader.c
         devices/tun/tun_windows.c
         devices/windows_driver_artifacts.c
         devices/windows_session_effects.c

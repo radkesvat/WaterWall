@@ -2,6 +2,14 @@
 
 #include "loggers/network_logger.h"
 
+void tundeviceTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
+{
+    discard             context;
+    tundevice_tstate_t *state = tunnelGetState(t);
+    if (state->tdev != NULL)
+        tundeviceWorkerQuiesce(state->tdev, wid);
+}
+
 void tundeviceTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard             context;

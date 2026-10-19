@@ -1274,3 +1274,9 @@ void tundeviceDestroy(tun_device_t *tdev)
     deviceReaderSessionUnref(tdev->reader_session);
     memoryFree(tdev);
 }
+
+void tundeviceWorkerQuiesce(tun_device_t *tdev, uint8_t wid)
+{
+    discard tdev;
+    discard wid;
+}

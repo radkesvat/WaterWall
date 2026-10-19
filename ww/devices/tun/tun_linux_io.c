@@ -58,6 +58,7 @@ void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
     tdev->read_event_callback(tdev, tdev->userdata, buf, wid);
 }
 
+#ifndef OS_LINUX
 // Hands whatever the drain cycle has already read to the reader session. Every
 // exit from tunDrainPackets() goes through this, so a device error never
 // strands packets that were read successfully before it.
@@ -68,463 +69,6 @@ static void tunFlushReadBatch(tun_device_t *tdev, sbuf_t **bufs, uint16_t queued
         deviceFlowAffinityPostBatch(tdev->reader_session, bufs, queued_count);
     }
 }
-
-#ifdef OS_LINUX
-typedef struct tun_offload_reader_s
-{
-    sbuf_t                  *scratch;
-    tun_linux_offload_plan_t pending_plan;
-    bool                     pending;
-    bool                     waiting_for_capacity;
-    uint64_t                 ordinary_records;
-    uint64_t                 gso_aggregates;
-    uint64_t                 checksum_completions;
-    uint64_t                 malformed_records;
-    uint64_t                 unsupported_records;
-    uint64_t                 oversized_records;
-} tun_offload_reader_t;
-
-static atomic_log_rate_limiter_t tun_offload_reject_log;
-
-static const char *tunOffloadRejectName(tun_linux_offload_reject_t reject)
-{
-    switch (reject)
-    {
-    case kTunLinuxOffloadMalformed:
-        return "malformed";
-    case kTunLinuxOffloadUnsupported:
-        return "unsupported offload metadata";
-    case kTunLinuxOffloadOversized:
-        return "oversized";
-    case kTunLinuxOffloadAccept:
-        break;
-    }
-    return "unexpected";
-}
-
-static void tunOffloadCountReject(tun_device_t *tdev, tun_offload_reader_t *reader, tun_linux_offload_reject_t reject)
-{
-    switch (reject)
-    {
-    case kTunLinuxOffloadMalformed:
-        reader->malformed_records++;
-        break;
-    case kTunLinuxOffloadUnsupported:
-        reader->unsupported_records++;
-        break;
-    case kTunLinuxOffloadOversized:
-        reader->oversized_records++;
-        break;
-    case kTunLinuxOffloadAccept:
-        return;
-    }
-    if (atomicLogRateLimiterShouldLog(&tun_offload_reject_log, kTunOffloadLogIntervalMs))
-    {
-        LOGW("TunDevice: dropping %s TUN offload record on %s", tunOffloadRejectName(reject), tdev->name);
-    }
-}
-
-static void tunOffloadReaderInit(tun_device_t *tdev, tun_offload_reader_t *reader)
-{
-    reader->scratch = tdev->offload_scratch;
-    atomic_store_explicit(&tdev->gso_generated_segments, 0, memory_order_relaxed);
-    atomic_store_explicit(&tdev->gso_intact_aggregates, 0, memory_order_relaxed);
-    if (UNLIKELY(reader->scratch == NULL))
-    {
-        LOGF("TunDevice: offload reader started without its receive scratch");
-        abortProgramNow(1);
-    }
-    sbufReset(reader->scratch);
-    if (UNLIKELY(sbufGetLeftCapacity(reader->scratch) < kTunVirtioHeaderSize ||
-                 sbufGetMaximumWriteableSize(reader->scratch) < kTunOffloadPacketStorageCapacity))
-    {
-        LOGF("TunDevice: published offload scratch violates required geometry");
-        abortProgramNow(1);
-    }
-}
-
-static void tunOffloadReaderCleanup(tun_device_t *tdev, tun_offload_reader_t *reader)
-{
-    /* The device retains scratch through a later BringUp; the reader has
-     * exclusive access only while its thread is running. */
-    reader->scratch = NULL;
-    LOGI("TunDevice: %s offload reader summary: ordinary=%llu aggregates=%llu generated=%llu reader-checksum=%llu "
-         "malformed=%llu unsupported=%llu oversized=%llu intact=%llu",
-         tdev->name,
-         (unsigned long long) reader->ordinary_records,
-         (unsigned long long) reader->gso_aggregates,
-         (unsigned long long) atomic_load_explicit(&tdev->gso_generated_segments, memory_order_relaxed),
-         (unsigned long long) reader->checksum_completions,
-         (unsigned long long) reader->malformed_records,
-         (unsigned long long) reader->unsupported_records,
-         (unsigned long long) reader->oversized_records,
-         (unsigned long long) atomic_load_explicit(&tdev->gso_intact_aggregates, memory_order_relaxed));
-}
-
-typedef struct tun_offload_work_s
-{
-    sbuf_t                  *aggregate;
-    tun_linux_offload_plan_t plan;
-    uint32_t                 next_payload_offset;
-    size_t                   output_charge;
-    uint16_t                 padding;
-} tun_offload_work_t;
-
-static void tunOffloadWorkCleanup(void *context)
-{
-    tun_offload_work_t *work = context;
-    if (work->aggregate != NULL)
-    {
-        sbufDestroy(work->aggregate);
-    }
-    memoryFree(work);
-}
-
-/* The session admits this callback on the selected event worker and keeps the
- * aggregate at its FIFO head across continuations. One prepaid output allowance
- * is sufficient because delivery transfers each segment before the next one is
- * allocated; downstream retention follows the ordinary packet-chain contract. */
-static bool tunOffloadWorkStep(device_reader_session_t *session, void *context, wid_t wid,
-                               device_reader_work_budget_t *budget)
-{
-    tun_offload_work_t *work = context;
-    assert(currentThreadIsEventWorkerWID(wid));
-    buffer_pool_t *pool    = getWorkerBufferPool(wid);
-    uint32_t       emitted = 0;
-    /* The direct trusted TUN/PTC pair accepts assured TCPv4 aggregates intact.
-     * Preflight has validated an exact, unfragmented packet <= UINT16_MAX.
-     * Delivery uses the same selected worker and FIFO as segmented input. */
-    tun_device_t *device = session->device;
-    assert(work->plan.action != kTunLinuxOffloadSegment || (device->gso_enabled && work->output_charge > 0));
-    const bool intact_tcp_gso =
-        work->plan.action == kTunLinuxOffloadSegment && device->trusted_checksums && work->plan.transport_assured;
-    if (work->plan.action != kTunLinuxOffloadSegment || intact_tcp_gso)
-    {
-        assert(work->plan.transport_assured || work->plan.action == kTunLinuxOffloadChecksum);
-        const uint32_t length = sbufGetLength(work->aggregate);
-        if (budget->packets == 0 || budget->bytes < length)
-        {
-            return false;
-        }
-        if (work->plan.action == kTunLinuxOffloadChecksum && ! work->plan.transport_assured)
-        {
-            tunLinuxOffloadCompleteChecksum(sbufGetMutablePtr(work->aggregate), &work->plan);
-        }
-        sbuf_t *output  = work->aggregate;
-        work->aggregate = NULL;
-        --budget->packets;
-        budget->bytes -= length;
-        if (intact_tcp_gso)
-        {
-            atomic_fetch_add_explicit(&device->gso_intact_aggregates, 1, memory_order_relaxed);
-        }
-        tunDeliverPacket(session->device, output, wid);
-        return true;
-    }
-    while (work->next_payload_offset < work->plan.payload_length && budget->packets > 0)
-    {
-        const uint32_t payload_length = min(work->plan.gso_size, work->plan.payload_length - work->next_payload_offset);
-        const uint32_t segment_length = work->plan.header_length + payload_length;
-        if (segment_length > budget->bytes)
-        {
-            break;
-        }
-        buffer_pool_fit_t fit;
-        if (UNLIKELY(! bufferpoolQueryBestFit(pool, segment_length, work->padding, &fit)))
-        {
-            LOGF("TunDevice: GSO worker output has unrepresentable buffer geometry");
-            abortProgramNow(1);
-        }
-        /* A later startup config can increase the shared worker pool's padding.
-         * Keep this chain's prepaid bound with an exact-sized ordinary buffer
-         * when the current pool tier no longer fits that allowance. */
-        sbuf_t *output = fit.allocation_charge <= work->output_charge
-                             ? bufferpoolGetBestFit(pool, segment_length, work->padding)
-                             : sbufCreateWithPadding(segment_length, work->padding);
-        if (UNLIKELY(output == NULL || sbufGetAllocationCharge(output) > work->output_charge))
-        {
-            LOGF("TunDevice: GSO output allocation violated its prepaid worker allowance");
-            abortProgramNow(1);
-        }
-        uint32_t built_length = 0;
-        if (UNLIKELY(! tunLinuxOffloadPrepareSegment(sbufGetRawPtr(work->aggregate),
-                                                     &work->plan,
-                                                     work->next_payload_offset,
-                                                     sbufGetMutablePtr(output),
-                                                     sbufGetMaximumWriteableSize(output),
-                                                     &built_length) ||
-                     built_length != segment_length))
-        {
-            LOGF("TunDevice: GSO worker segmentation violated successful aggregate preflight");
-            abortProgramNow(1);
-        }
-        sbufSetLength(output, built_length);
-        if (! work->plan.transport_assured)
-        {
-            tunLinuxOffloadCompleteSegment(sbufGetMutablePtr(output), built_length);
-        }
-        /* Preflight checked shape and metadata. The destination stack uses its
-         * receive policy for this generated segment. */
-        tunDeliverPacket(session->device, output, wid);
-        work->next_payload_offset += payload_length;
-        budget->bytes -= segment_length;
-        --budget->packets;
-        emitted++;
-    }
-    tun_device_t *tdev = session->device;
-    atomic_fetch_add_explicit(&tdev->gso_generated_segments, emitted, memory_order_relaxed);
-    if (work->next_payload_offset != work->plan.payload_length)
-    {
-        return false;
-    }
-    bufferpoolReuseBuffer(pool, work->aggregate);
-    work->aggregate = NULL;
-    return true;
-}
-
-/* Only complete TCP/UDP records with ordinary transport checksum coordinates
- * bypass reader fragment handling. Completion cannot change their flow key.
- * Other metadata retains generic reader-side completion before affinity. */
-static bool tunOffloadCanDeferChecksum(const uint8_t *ip, const tun_linux_offload_plan_t *plan)
-{
-    assert(plan->action == kTunLinuxOffloadChecksum && ! plan->transport_assured);
-    if ((ip[0] >> 4U) == 4)
-    {
-        ipv4_packet_view_t packet = {0};
-        if (! ipv4packetviewParse(ip, plan->ip_length, &packet) || packet.ip_total_length != plan->ip_length ||
-            packet.fragmented)
-        {
-            return false;
-        }
-        const bool tcp = packet.protocol == 6 && ipv4packetviewParseTcp(ip, plan->ip_length, &packet);
-        const bool udp = packet.protocol == 17 && ipv4packetviewParseUdp(ip, plan->ip_length, &packet);
-        return (tcp || udp) && plan->checksum_start == packet.transport_offset &&
-               plan->checksum_field == packet.transport_offset + (tcp ? 16U : 6U);
-    }
-    /* Plain IPv6 TCP/UDP has no fragment/extension header to normalize. */
-    if ((ip[0] >> 4U) == 6 && plan->ip_length >= 48 && GET_BE16(ip + 4) + 40U == plan->ip_length)
-    {
-        const uint32_t transport_length = plan->ip_length - 40U;
-        const bool     tcp              = ip[6] == 6 && transport_length >= 20 && (ip[52] >> 4U) >= 5 &&
-                         (uint32_t) (ip[52] >> 4U) * 4U <= transport_length;
-        const bool udp = ip[6] == 17 && GET_BE16(ip + 44) >= 8 && GET_BE16(ip + 44) <= transport_length;
-        return (tcp || udp) && plan->checksum_start == 40 && plan->checksum_field == 40U + (tcp ? 16U : 6U);
-    }
-    return false;
-}
-
-/* Preserve one unadmitted record in scratch when the input budget is full.
- * GSO/assured admission transfers scratch itself. Ordinary checksum work copies
- * into compact packet storage and leaves scratch available for batched reads. */
-static void tunOffloadPostPending(tun_device_t *tdev, tun_offload_reader_t *reader)
-{
-    wid_t wid;
-    if (UNLIKELY(! deviceFlowAffineWID(sbufGetRawPtr(reader->scratch), sbufGetLength(reader->scratch), &wid)))
-    {
-        LOGF("TunDevice: preflighted offload work has no flow identity");
-        abortProgramNow(1);
-    }
-    const bool compact_checksum =
-        reader->pending_plan.action == kTunLinuxOffloadChecksum && ! reader->pending_plan.transport_assured;
-    buffer_pool_fit_t input_fit = {0};
-    if (UNLIKELY(compact_checksum && ! bufferpoolQueryBestFit(tdev->reader_buffer_pool,
-                                                              reader->pending_plan.ip_length,
-                                                              bufferpoolGetSmallBufferPadding(tdev->reader_buffer_pool),
-                                                              &input_fit)))
-    {
-        LOGF("TunDevice: ordinary checksum work has unrepresentable buffer geometry");
-        abortProgramNow(1);
-    }
-    assert(reader->pending_plan.action != kTunLinuxOffloadSegment || tdev->gso_enabled);
-    const size_t output_charge = compact_checksum || ! tdev->gso_enabled ? 0 : tdev->gso_output_charge[wid];
-    const size_t input_charge =
-        compact_checksum ? input_fit.allocation_charge : sbufGetAllocationCharge(reader->scratch);
-    const size_t   charge        = input_charge + sizeof(tun_offload_work_t) + output_charge;
-    const unsigned slots         = compact_checksum ? 1 : 2;
-    reader->waiting_for_capacity = false;
-    if (! deviceReaderSessionTryReserveWork(tdev->reader_session, charge, slots))
-    {
-        reader->waiting_for_capacity = true;
-        return;
-    }
-    tun_offload_work_t *work = memoryAllocate(sizeof(*work));
-    *work                    = (tun_offload_work_t) {.aggregate     = reader->scratch,
-                                                     .plan          = reader->pending_plan,
-                                                     .output_charge = output_charge,
-                                                     .padding       = tdev->offload_output_padding[wid]};
-    if (compact_checksum)
-    {
-        work->aggregate = bufferpoolGetBestFit(tdev->reader_buffer_pool, work->plan.ip_length, input_fit.left_padding);
-        if (UNLIKELY(sbufGetAllocationCharge(work->aggregate) != input_charge))
-        {
-            LOGF("TunDevice: ordinary checksum storage violated its reservation");
-            abortProgramNow(1);
-        }
-        memoryCopy(sbufGetMutablePtr(work->aggregate), sbufGetRawPtr(reader->scratch), work->plan.ip_length);
-        sbufSetLength(work->aggregate, work->plan.ip_length);
-    }
-    else
-    {
-        const uint16_t padding =
-            max(bufferpoolGetLargeBufferPadding(tdev->reader_buffer_pool), (uint16_t) kTunVirtioHeaderSize);
-        reader->scratch = bufferpoolGetBestFit(tdev->reader_buffer_pool, kTunOffloadPacketStorageCapacity, padding);
-        tdev->offload_scratch = reader->scratch;
-    }
-    reader->pending = false;
-    discard deviceReaderSessionPostWork(
-        tdev->reader_session, wid, work, tunOffloadWorkStep, tunOffloadWorkCleanup, charge, slots);
-}
-
-/* One bounded read drain. A GSO record stops this batch; the outer reader
- * loop admits the aggregate before polling or reading another record. */
-static tun_drain_result_t tunDrainOffloadPackets(tun_device_t *tdev, tun_offload_reader_t *reader)
-{
-    sbuf_t            *bufs[kMaxReadDistributeQueueSize];
-    uint16_t           queued_count  = 0;
-    const uint32_t     output_budget = min((uint32_t) RAM_PROFILE, (uint32_t) kMaxReadDistributeQueueSize);
-    tun_drain_result_t result        = kTunDrainAgain;
-
-    for (uint32_t attempt = 0; attempt < RAM_PROFILE && queued_count < output_budget; ++attempt)
-    {
-        if (! tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
-        {
-            break;
-        }
-
-        /* Receive virtio metadata before the aligned IP start, in headroom.
-         * Removing it restores the pool cursor without moving packet bytes. */
-        sbufReset(reader->scratch);
-        sbufShiftLeft(reader->scratch, kTunVirtioHeaderSize);
-        uint8_t *record = sbufGetMutablePtr(reader->scratch);
-        assert(sbufGetMaximumWriteableSize(reader->scratch) >= kTunVirtioHeaderSize + kTunOffloadPacketStorageCapacity);
-
-        ssize_t nread;
-        for (;;)
-        {
-            nread = read(tdev->handle, record, kTunVirtioHeaderSize + kTunOffloadPacketStorageCapacity);
-            if (UNLIKELY(nread < 0 && errno == EINTR))
-            {
-                continue;
-            }
-            break;
-        }
-        if (UNLIKELY(nread == 0))
-        {
-            result = kTunDrainEndOfStream;
-            break;
-        }
-        if (nread < 0)
-        {
-            const int saved_errno = errno;
-            if (! tunIoErrnoIsTransient(saved_errno))
-            {
-                LOGE("TunDevice: unrecoverable offload read error on %s, errno %d (%s)",
-                     tdev->name,
-                     saved_errno,
-                     strerror(saved_errno));
-                result = kTunDrainDeviceError;
-            }
-            break;
-        }
-        if (UNLIKELY(nread < kTunVirtioHeaderSize))
-        {
-            tunOffloadCountReject(tdev, reader, kTunLinuxOffloadMalformed);
-            continue;
-        }
-
-        uint8_t metadata[kTunVirtioHeaderSize];
-        memoryCopy(metadata, record, sizeof(metadata));
-        /* Preflight knows wire types, not the descriptor's negotiated mode. */
-        if (! tdev->gso_enabled && metadata[1] != 0)
-        {
-            tunOffloadCountReject(tdev, reader, kTunLinuxOffloadUnsupported);
-            continue;
-        }
-        sbufSetLength(reader->scratch, (uint32_t) nread);
-        sbufShiftRight(reader->scratch, kTunVirtioHeaderSize);
-        uint8_t       *ip        = sbufGetMutablePtr(reader->scratch);
-        const uint32_t ip_length = sbufGetLength(reader->scratch);
-
-        tun_linux_offload_plan_t         plan   = {0};
-        const tun_linux_offload_reject_t reject = tunLinuxOffloadPreflight(metadata, ip, ip_length, tdev->mtu, &plan);
-        if (UNLIKELY(reject != kTunLinuxOffloadAccept))
-        {
-            tunOffloadCountReject(tdev, reader, reject);
-            continue;
-        }
-        if (UNLIKELY(tdev->trusted_checksums && ! tunLinuxOffloadTrustInput(metadata, ip, &plan)))
-        {
-            tunOffloadCountReject(tdev, reader, kTunLinuxOffloadMalformed);
-            continue;
-        }
-        if (plan.action == kTunLinuxOffloadSegment || plan.transport_assured)
-        {
-            reader->pending_plan = plan;
-            reader->pending      = true;
-            if (plan.action == kTunLinuxOffloadSegment)
-            {
-                reader->gso_aggregates++;
-            }
-            else
-            {
-                reader->ordinary_records++;
-            }
-            break;
-        }
-
-        if (plan.action == kTunLinuxOffloadChecksum)
-        {
-            if (tunOffloadCanDeferChecksum(ip, &plan))
-            {
-                /* Publish older ordinary packets before this FIFO work item.
-                 * Successful admission keeps this read drain batched; only
-                 * capacity exhaustion retains the current record in scratch. */
-                tunFlushReadBatch(tdev, bufs, queued_count);
-                queued_count         = 0;
-                reader->pending_plan = plan;
-                reader->pending      = true;
-                reader->ordinary_records++;
-                tunOffloadPostPending(tdev, reader);
-                if (reader->pending)
-                {
-                    break;
-                }
-                continue;
-            }
-            tunLinuxOffloadCompleteChecksum(ip, &plan);
-            reader->checksum_completions++;
-        }
-        sbuf_t *output = bufferpoolGetBestFit(
-            tdev->reader_buffer_pool, ip_length, bufferpoolGetSmallBufferPadding(tdev->reader_buffer_pool));
-        if (UNLIKELY(output == NULL))
-        {
-            LOGE("TunDevice: failed to allocate ordinary offload-framed packet");
-            result = kTunDrainDeviceError;
-            break;
-        }
-        memoryCopy(sbufGetMutablePtr(output), ip, ip_length);
-        sbufSetLength(output, ip_length);
-        bufs[queued_count++] = output;
-        reader->ordinary_records++;
-    }
-
-    if (queued_count > 0)
-    {
-        if (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
-        {
-            tunFlushReadBatch(tdev, bufs, queued_count);
-        }
-        else
-        {
-            for (uint16_t i = 0; i < queued_count; ++i)
-            {
-                bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[i]);
-            }
-        }
-    }
-    return result;
-}
-#endif
 
 // Drains packets from the TUN device after POLLIN. Every accumulated buffer is
 // handed to the reader session before returning, on every path.
@@ -645,33 +189,8 @@ WTHREAD_ROUTINE(routineReadFromTun)
     fds[1].events     = POLLIN;
     nfds_t poll_count = 2;
 
-#ifdef OS_LINUX
-    tun_offload_reader_t offload_reader = {0};
-    if (tdev->checksum_offload_enabled)
-    {
-        tunOffloadReaderInit(tdev, &offload_reader);
-        fds[2].fd  = deviceReaderSessionOutputWakeFd(tdev->reader_session);
-        poll_count = 3;
-    }
-#endif
-
     while (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
     {
-#ifdef OS_LINUX
-        if (tdev->checksum_offload_enabled && offload_reader.pending && ! offload_reader.waiting_for_capacity)
-        {
-            tunOffloadPostPending(tdev, &offload_reader);
-            if (! offload_reader.pending || ! offload_reader.waiting_for_capacity)
-            {
-                continue;
-            }
-        }
-        fds[0].events = tdev->checksum_offload_enabled && offload_reader.waiting_for_capacity ? 0 : POLLIN;
-        if (tdev->checksum_offload_enabled)
-        {
-            fds[2].events = offload_reader.waiting_for_capacity ? POLLIN : 0;
-        }
-#endif
         int ret = poll(fds, poll_count, kTunReaderStopPollMs);
 
         if (ret < 0)
@@ -698,20 +217,6 @@ WTHREAD_ROUTINE(routineReadFromTun)
             break;
         }
 
-#ifdef OS_LINUX
-        if (tdev->checksum_offload_enabled && offload_reader.waiting_for_capacity && (fds[2].revents & POLLIN))
-        {
-            deviceReaderSessionDrainOutputWake(tdev->reader_session);
-            offload_reader.waiting_for_capacity = false;
-            continue;
-        }
-        if (UNLIKELY(tdev->checksum_offload_enabled && (fds[2].revents & (POLLERR | POLLHUP | POLLNVAL))))
-        {
-            LOGE("TunDevice: offload output-capacity notification failed");
-            break;
-        }
-#endif
-
         // Check for socket errors
         if (UNLIKELY((fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0))
         {
@@ -722,12 +227,7 @@ WTHREAD_ROUTINE(routineReadFromTun)
         if (fds[0].revents & POLLIN)
         {
             tun_drain_result_t drain_res;
-#ifdef OS_LINUX
-            drain_res =
-                tdev->checksum_offload_enabled ? tunDrainOffloadPackets(tdev, &offload_reader) : tunDrainPackets(tdev);
-#else
             drain_res = tunDrainPackets(tdev);
-#endif
             if (drain_res != kTunDrainAgain)
             {
                 // The device is gone. Leaving the loop is what lets the thread
@@ -739,13 +239,6 @@ WTHREAD_ROUTINE(routineReadFromTun)
             continue;
         }
 
-#ifdef OS_LINUX
-        if (tdev->checksum_offload_enabled && offload_reader.waiting_for_capacity)
-        {
-            continue;
-        }
-#endif
-
         // If we get here, poll returned > 0 but none of our expected events occurred
         LOGE("TunDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, fd[1].revents=0x%x",
              fds[0].revents,
@@ -753,14 +246,10 @@ WTHREAD_ROUTINE(routineReadFromTun)
         break;
     }
 
-#ifdef OS_LINUX
-    if (tdev->checksum_offload_enabled)
-    {
-        tunOffloadReaderCleanup(tdev, &offload_reader);
-    }
-#endif
     return 0;
 }
+
+#endif
 
 /* False ends the writer. A short packet write is never replayed as a suffix. */
 static bool tunWriteResult(tun_device_t *tdev, ssize_t written, size_t expected, int write_errno)
@@ -802,7 +291,7 @@ static bool tunWriteResult(tun_device_t *tdev, ssize_t written, size_t expected,
 }
 
 /* Consumes exactly this packet, including validation refusal and device failure. */
-static bool tunWriteOrdinary(tun_device_t *tdev, buffer_pool_t *pool, sbuf_t *buf)
+static bool tunWriteOrdinary(tun_device_t *tdev, buffer_pool_t *pool, sbuf_t *buf, int fd)
 {
     if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
     {
@@ -835,12 +324,12 @@ static bool tunWriteOrdinary(tun_device_t *tdev, buffer_pool_t *pool, sbuf_t *bu
         };
         do
         {
-            written = writev(tdev->handle, iov, 2);
+            written = writev(fd, iov, 2);
         } while (written < 0 && errno == EINTR && tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)));
     }
     else
     {
-        written = write(tdev->handle, sbufGetRawPtr(buf), packet_length);
+        written = write(fd, sbufGetRawPtr(buf), packet_length);
     }
     const int write_errno = written < 0 ? errno : 0;
     bufferpoolReuseBuffer(pool, buf);
@@ -852,10 +341,15 @@ static bool tunWriteOrdinary(tun_device_t *tdev, buffer_pool_t *pool, sbuf_t *bu
  * different workers can write concurrently without sharing their local pools. */
 bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **batch, size_t count)
 {
-    tun_device_t  *tdev         = context;
-    buffer_pool_t *pool         = worker->buffer_pool;
-    size_t         offset       = 0;
-    bool           keep_running = true;
+    tun_device_t  *tdev = context;
+    buffer_pool_t *pool = worker->buffer_pool;
+#ifdef OS_LINUX
+    const int fd = tdev->queue_fds[worker->wid % tdev->queue_count];
+#else
+    const int fd = tdev->handle;
+#endif
+    size_t offset       = 0;
+    bool   keep_running = true;
     while (offset < count && tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
     {
 #ifdef OS_LINUX
@@ -870,7 +364,7 @@ bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **batch, size_t count
             ssize_t written;
             do
             {
-                written = writev(tdev->handle, record.iov, (int) record.count);
+                written = writev(fd, record.iov, (int) record.count);
             } while (written < 0 && errno == EINTR && tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)));
             const int write_errno = written < 0 ? errno : 0;
             /* EINVAL rejects virtio metadata before packet injection. Only this
@@ -889,7 +383,7 @@ bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **batch, size_t count
         else
 #endif
         {
-            keep_running = tunWriteOrdinary(tdev, pool, batch[offset++]);
+            keep_running = tunWriteOrdinary(tdev, pool, batch[offset++], fd);
         }
         if (! keep_running)
             break;
@@ -949,73 +443,10 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
     return false;
 }
 
-#ifdef OS_LINUX
-/* Both virtio modes require ordered admission and enough storage for any
- * ordinary work item. Configuration is one-time even if later GSO setup fails. */
-bool tunConfigureWorkerOffload(tun_device_t *tdev)
+#ifndef OS_LINUX
+void tundeviceWorkerQuiesce(tun_device_t *tdev, uint8_t wid)
 {
-    size_t         maximum_charge = sbufGetAllocationCharge(tdev->offload_scratch);
-    buffer_pool_t *pool           = tdev->reader_buffer_pool;
-    const uint16_t padding        = bufferpoolGetSmallBufferPadding(pool);
-    const uint32_t lengths[]      = {tdev->mtu,
-                                     min(bufferpoolGetSmallBufferSize(pool), (uint32_t) tdev->mtu),
-                                     min(bufferpoolGetMediumBufferSize(pool), (uint32_t) tdev->mtu),
-                                     min(bufferpoolGetLargeBufferSize(pool), (uint32_t) tdev->mtu)};
-    for (unsigned i = 0; i < sizeof(lengths) / sizeof(lengths[0]); ++i)
-    {
-        buffer_pool_fit_t fit;
-        if (! bufferpoolQueryBestFit(pool, lengths[i], padding, &fit))
-        {
-            return false;
-        }
-        maximum_charge = max(maximum_charge, fit.allocation_charge);
-    }
-    if (maximum_charge + sizeof(tun_offload_work_t) > kTunOffloadPendingChargeLimit)
-    {
-        return false;
-    }
-    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
-    {
-        tdev->offload_output_padding[wid] = bufferpoolGetSmallBufferPadding(getWorkerBufferPool(wid));
-    }
-    return deviceReaderSessionConfigureOutputBudget(
-               tdev->reader_session, kTunOffloadPendingChargeLimit, kTunOffloadPendingPacketLimit) &&
-           deviceReaderSessionEnableWorkerQueue(tdev->reader_session);
+    discard tdev;
+    discard wid;
 }
-
-/* Best-fit choices change only at a tier's payload limit. Sampling those
- * limits and the MTU bounds every possible segment allocation, including tiers
- * with different padding. Later configurations may increase pool padding; the
- * worker then uses exact-sized storage if a tier exceeds this allowance. */
-bool tunConfigureWorkerGso(tun_device_t *tdev)
-{
-    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
-    {
-        buffer_pool_t *pool           = getWorkerBufferPool(wid);
-        const uint16_t padding        = tdev->offload_output_padding[wid];
-        const uint32_t lengths[]      = {1,
-                                         tdev->mtu,
-                                         min(bufferpoolGetSmallBufferSize(pool), (uint32_t) tdev->mtu),
-                                         min(bufferpoolGetMediumBufferSize(pool), (uint32_t) tdev->mtu),
-                                         min(bufferpoolGetLargeBufferSize(pool), (uint32_t) tdev->mtu)};
-        size_t         maximum_charge = 0;
-        for (unsigned int i = 0; i < sizeof(lengths) / sizeof(lengths[0]); ++i)
-        {
-            buffer_pool_fit_t fit;
-            if (! bufferpoolQueryBestFit(pool, lengths[i], padding, &fit))
-            {
-                return false;
-            }
-            maximum_charge = max(maximum_charge, fit.allocation_charge);
-        }
-        if (maximum_charge + sbufGetAllocationCharge(tdev->offload_scratch) + sizeof(tun_offload_work_t) >
-            kTunOffloadPendingChargeLimit)
-        {
-            return false;
-        }
-        tdev->gso_output_charge[wid] = maximum_charge;
-    }
-    return true;
-}
-
 #endif

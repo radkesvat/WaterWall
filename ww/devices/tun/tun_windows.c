@@ -15,9 +15,9 @@
 #include "master_pool.h"
 #include "watomic.h"
 #include "wintun.h"
+#include "worker_messages.h"
 #include "wplatform.h"
 #include "wproc.h"
-#include "wthread.h"
 #include <iphlpapi.h>
 #include <netioapi.h>
 
@@ -31,10 +31,10 @@
 
 enum
 {
-    kTunWriteQueueMax            = 4096,
-    kMaxReadDistributeQueueSize  = 128,
-    kTunReaderStopFallbackWaitMs = 500,
-    kTunDiscardReportIntervalMs  = 1000
+    kTunWriteQueueMax           = 4096,
+    kMaxReadDistributeQueueSize = 128,
+    kTunReaderBatchBytes        = 256 * 1024,
+    kTunDiscardReportIntervalMs = 1000
 };
 
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in the reader session");
@@ -45,6 +45,18 @@ static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count m
 static_assert(kTunWintunErrorNoMoreItems == ERROR_NO_MORE_ITEMS,
               "the Wintun receive policy's ERROR_NO_MORE_ITEMS value drifted from the Win32 definition");
 
+typedef struct tun_windows_reader_s
+{
+    quiescence_gate_t gate;
+    atomic_uint       references;
+    atomic_bool       pending;
+    atomic_bool       submission_failed;
+    tun_device_t     *device;
+    wid_t             wid;
+    PTP_WAIT          wait;
+    HANDLE            event;
+} tun_windows_reader_t;
+
 struct tun_device_s
 {
     char                    *name;
@@ -52,32 +64,28 @@ struct tun_device_s
     HANDLE                   adapter_handle;
     HANDLE                   ownership;
     HANDLE                   session_handle;
-    HANDLE                   stop_event;
+    HANDLE                   stop_event; /* Cancels supervised DNS setup, not reader notification. */
     tun_windows_dns_result_e dns_result;
     bool                     dns_cleanup_needed;
     MIB_UNICASTIPADDRESS_ROW address_row;
 
-    void     *userdata;
-    wthread_t read_thread;
-    bool      reader_generation_open;
-
-    wthread_routine routine_reader;
+    void                 *userdata;
+    tun_windows_reader_t *reader;
+    bool                  reader_generation_open;
 
     device_reader_session_t *reader_session;
     buffer_pool_t           *reader_buffer_pool;
 
     TunReadEventHandle read_event_callback;
 
-    tun_writer_t            writer;
-    uint16_t                mtu;
+    tun_writer_t writer;
+    uint16_t     mtu;
 
-    // Reader-thread-owned accounting for oversized receive packets that are
+    // Reader-worker-owned accounting for oversized receive packets that are
     // dropped instead of terminating the process.
     log_rate_limiter_t oversized_read_discard_limiter;
 
     atomic_int lifecycle;
-
-    // The reader handle is the join authority and is nulled after joining.
 };
 
 // External variables
@@ -464,35 +472,8 @@ static void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
     tdev->read_event_callback(tdev, tdev->userdata, buf, wid);
 }
 
-static bool tundeviceReaderStopRequested(tun_device_t *tdev, DWORD *routine_result)
-{
-    if (! tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
-    {
-        return true;
-    }
-
-    DWORD wait_result = WaitForSingleObject(tdev->stop_event, 0);
-    if (wait_result == WAIT_OBJECT_0)
-    {
-        return true;
-    }
-    if (wait_result == WAIT_TIMEOUT)
-    {
-        return false;
-    }
-    if (wait_result == WAIT_FAILED)
-    {
-        *routine_result = GetLastError();
-        LOGE("TunDevice: ReadThread: stop-event check failed, code: %lu", *routine_result);
-        return true;
-    }
-
-    LOGE("TunDevice: ReadThread: unexpected stop-event check result: %lu", wait_result);
-    return true;
-}
-
 // Counts one oversized-read drop and emits a rate-limited aggregate warning.
-// Only the reader thread calls this, so the counters need no atomics.
+// Only the selected reader worker calls this, so the counters need no atomics.
 static void tunWindowsRecordOversizedReadDiscard(tun_device_t *tdev)
 {
     log_rate_limiter_report_t report =
@@ -503,7 +484,7 @@ static void tunWindowsRecordOversizedReadDiscard(tun_device_t *tdev)
         return;
     }
 
-    LOGW("TunDevice: ReadThread: discarded %llu packet(s) larger than configured MTU %u over %llums (total=%llu)",
+    LOGW("TunDevice: reader: discarded %llu packet(s) larger than configured MTU %u over %llums (total=%llu)",
          LLU(report.events),
          (unsigned int) tunDeviceMtu(tdev),
          LLU(report.elapsed_ms),
@@ -520,156 +501,194 @@ static void tunWindowsReportPendingOversizedReadDiscards(tun_device_t *tdev)
         return;
     }
 
-    LOGW(
-        "TunDevice: ReadThread: discarded %llu packet(s) larger than configured MTU %u before reader exit (total=%llu)",
-        LLU(report.events),
-        (unsigned int) tunDeviceMtu(tdev),
-        LLU(report.total));
+    LOGW("TunDevice: reader: discarded %llu packet(s) larger than configured MTU %u before reader exit (total=%llu)",
+         LLU(report.events),
+         (unsigned int) tunDeviceMtu(tdev),
+         LLU(report.total));
 }
 
-/**
- * Reader thread routine - reads packets from TUN device
- */
-static WTHREAD_ROUTINE(routineReadFromTun)
+/* Each queued token owns only this generation. Closing its gate makes old
+ * notifications and cancellation safe after device destruction or restart. */
+static void tunWindowsReaderUnref(tun_windows_reader_t *reader)
 {
-    tun_device_t         *tdev    = userdata;
-    WINTUN_SESSION_HANDLE Session = tdev->session_handle;
-    sbuf_t               *bufs[kMaxReadDistributeQueueSize];
-    uint8_t               queued_count   = 0;
-    DWORD                 routine_result = ERROR_SUCCESS;
-    HANDLE                wait_handles[] = {
-        WintunGetReadWaitEvent(Session),
-        tdev->stop_event,
-    };
-
-    if (wait_handles[0] == NULL || wait_handles[1] == NULL)
+    const w_atomic_uint_value_t before = atomicSubExplicit(&reader->references, 1, memory_order_acq_rel);
+    assert(before > 0);
+    if (before == 1)
     {
-        routine_result = GetLastError();
-        if (routine_result == ERROR_SUCCESS)
-        {
-            routine_result = ERROR_INVALID_HANDLE;
-        }
-        LOGE("TunDevice: ReadThread: failed to prepare wait handles, code: %lu", routine_result);
-        return routine_result;
+        assert(quiescenceGateIsClosedAndQuiesced(&reader->gate));
+        assert(reader->wait == NULL);
+        memoryFree(reader);
+    }
+}
+
+static bool tunWindowsReaderFailed(tun_device_t *tdev, DWORD error)
+{
+    tun_lifecycle_state_t failed_from;
+    if (! tunLifecycleTransitionToFailed(&tdev->lifecycle, &failed_from))
+        return false;
+    LOGE("TunDevice: reader failed on device %s, code: %lu", tdev->name, error);
+    return failed_from == kTunLifecycleUp;
+}
+
+static void tunWindowsReaderRequestShutdown(bool failed)
+{
+    if (failed && ! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
+    }
+}
+
+static void tunWindowsReaderRun(worker_t *worker, void *arg1, void *arg2, void *arg3);
+
+static void tunWindowsReaderCancelled(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
+{
+    discard               arg2;
+    discard               arg3;
+    tun_windows_reader_t *reader = arg1;
+    /* Cancellation has no device, pool, wait-handle, or worker authority. */
+    if (reason == kWorkerMessageCancelEnqueueFailure || reason == kWorkerMessageCancelTargetUnavailable)
+        atomicStoreExplicit(&reader->submission_failed, true, memory_order_release);
+    atomicStoreExplicit(&reader->pending, false, memory_order_release);
+    tunWindowsReaderUnref(reader);
+}
+
+/* The caller holds the generation gate or exclusive startup ownership. */
+static bool tunWindowsReaderSchedule(tun_windows_reader_t *reader)
+{
+    if (atomicExchangeExplicit(&reader->pending, true, memory_order_acq_rel))
+        return true;
+    discard atomicIncExplicit(&reader->references, memory_order_relaxed);
+    return sendWorkerMessageForceQueueWithCleanup(reader->wid,
+                                                  (WorkerMessageCallback) tunWindowsReaderRun,
+                                                  tunWindowsReaderCancelled,
+                                                  reader,
+                                                  NULL,
+                                                  NULL) == kWorkerMessageSubmitAccepted;
+}
+
+static VOID CALLBACK tunWindowsReaderReady(PTP_CALLBACK_INSTANCE instance, PVOID context, PTP_WAIT wait,
+                                           TP_WAIT_RESULT result)
+{
+    discard               instance;
+    discard               wait;
+    discard               result;
+    tun_windows_reader_t *reader = context;
+    if (! quiescenceGateEnter(&reader->gate))
+        return;
+    /* Wintun's wait is one-shot. Foreign notification only publishes one owner
+     * message; it never drains the ring or borrows either buffer pool. */
+    bool failed = false;
+    if (! tunWindowsReaderSchedule(reader) && atomicLoadExplicit(&reader->submission_failed, memory_order_acquire))
+        failed = tunWindowsReaderFailed(reader->device, ERROR_NOT_READY);
+    quiescenceGateLeave(&reader->gate);
+    tunWindowsReaderRequestShutdown(failed);
+}
+
+static void tunWindowsReaderRun(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard               arg2;
+    discard               arg3;
+    tun_windows_reader_t *reader = arg1;
+    assert(currentThreadIsEventWorkerWID(worker->wid) && worker->wid == reader->wid);
+    discard worker;
+    if (! quiescenceGateEnter(&reader->gate))
+    {
+        atomicStoreExplicit(&reader->pending, false, memory_order_release);
+        tunWindowsReaderUnref(reader);
+        return;
     }
 
-    while (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
+    tun_device_t *tdev = reader->device;
+    sbuf_t       *bufs[kMaxReadDistributeQueueSize];
+    unsigned int  count    = 0;
+    unsigned int  received = 0;
+    size_t        bytes    = 0;
+    bool          empty    = false;
+    bool          failed   = false;
+    while (received < kMaxReadDistributeQueueSize && bytes < kTunReaderBatchBytes &&
+           tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
     {
-        bufs[queued_count] = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
-        bufs[queued_count] = sbufReserveSpace(bufs[queued_count], tunDeviceMtu(tdev));
-
         DWORD packet_size;
-        BYTE *packet = WintunReceivePacket(Session, &packet_size);
-
-        if (packet)
+        BYTE *packet = WintunReceivePacket(tdev->session_handle, &packet_size);
+        if (packet == NULL)
         {
-            if (UNLIKELY(tunWindowsReceivePacketExceedsMtu(tunDeviceMtu(tdev), packet_size)))
-            {
-                // Drop only this oversized packet; valid packets already queued at
-                // bufs[0..queued_count-1] stay queued and the reader keeps running.
-                WintunReleaseReceivePacket(Session, packet);
-                bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
-                tunWindowsRecordOversizedReadDiscard(tdev);
-                continue;
-            }
-
-            sbufSetLength(bufs[queued_count], packet_size);
-            memoryCopyLarge(sbufGetMutablePtr(bufs[queued_count]), packet, packet_size);
-
-            WintunReleaseReceivePacket(Session, packet);
-
-            if (TUN_LOG_EVERYTHING)
-            {
-                LOGD("TunDevice: ReadThread: Read %lu bytes from device %s", packet_size, tdev->name);
-                // printPacket(Packet, PacketSize);
-            }
-
-            queued_count++;
-            if (queued_count == kMaxReadDistributeQueueSize)
-            {
-                if (tundeviceReaderStopRequested(tdev, &routine_result))
-                {
-                    goto cleanup;
-                }
-                deviceFlowAffinityPostBatch(tdev->reader_session, &bufs[0], queued_count);
-                queued_count = 0;
-            }
+            /* Preserve Wintun's thread-local error before any other call. */
+            const DWORD error = GetLastError();
+            if (tunWindowsClassifyReceiveError(error) == kTunWindowsReceiveWaitForData)
+                empty = true;
+            else
+                failed = tunWindowsReaderFailed(tdev, error);
+            break;
         }
-        else
+        received++;
+        bytes += packet_size;
+        if (tunWindowsReceivePacketExceedsMtu(tunDeviceMtu(tdev), packet_size))
         {
-            // The thread-local last error is only meaningful right here:
-            // recycling the buffer below runs arbitrary code that can overwrite
-            // it, which would misclassify a real device loss as a transient.
-            DWORD last_error = GetLastError();
-
-            bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
-
-            if (tunWindowsClassifyReceiveError(last_error) == kTunWindowsReceiveTerminal)
-            {
-                /*
-                 * Anything but an exhausted ring means this session is finished,
-                 * including ERROR_HANDLE_EOF and ERROR_INVALID_DATA. Returning
-                 * is what lets the thread wrapper publish FAILED and request the
-                 * orderly shutdown; swallowing it would leave a dead adapter
-                 * advertised as up while the reader spins.
-                 */
-                LOGE("TunDevice: ReadThread: Packet read failed: error %lu", last_error);
-                LOGE("TunDevice: ReadThread: Terminating");
-                routine_result = last_error;
-                goto cleanup;
-            }
-
-            // ERROR_NO_MORE_ITEMS: the ring is empty, so flush what is queued and
-            // then wait for the session to signal more data.
-            if (queued_count > 0)
-            {
-                if (tundeviceReaderStopRequested(tdev, &routine_result))
-                {
-                    goto cleanup;
-                }
-                deviceFlowAffinityPostBatch(tdev->reader_session, &bufs[0], queued_count);
-                queued_count = 0;
-                continue;
-            }
-
-            DWORD wait_result = WaitForMultipleObjects(2, wait_handles, FALSE, kTunReaderStopFallbackWaitMs);
-            if (wait_result == WAIT_OBJECT_0)
-            {
-                continue;
-            }
-            if (wait_result == WAIT_OBJECT_0 + 1)
-            {
-                goto cleanup;
-            }
-            if (wait_result == WAIT_TIMEOUT)
-            {
-                if (! tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
-                {
-                    goto cleanup;
-                }
-                continue;
-            }
-            if (wait_result == WAIT_FAILED)
-            {
-                routine_result = GetLastError();
-                LOGE("TunDevice: ReadThread: wait failed, code: %lu", routine_result);
-                goto cleanup;
-            }
-            LOGE("TunDevice: ReadThread: unexpected wait result: %lu", wait_result);
-            goto cleanup;
+            WintunReleaseReceivePacket(tdev->session_handle, packet);
+            tunWindowsRecordOversizedReadDiscard(tdev);
+            continue;
         }
+        sbuf_t *buf = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
+        buf         = sbufReserveSpace(buf, tunDeviceMtu(tdev));
+        sbufSetLength(buf, packet_size);
+        memoryCopyLarge(sbufGetMutablePtr(buf), packet, packet_size);
+        WintunReleaseReceivePacket(tdev->session_handle, packet);
+        bufs[count++] = buf;
     }
-    LOGD("TunDevice: ReadThread: Terminating due to inactive lifecycle");
 
-cleanup:
-    if (queued_count > 0)
+    if (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
     {
-        reuseTunReadBuffers(tdev, &bufs[0], queued_count);
+        if (count != 0)
+            deviceFlowAffinityPostBatch(tdev->reader_session, bufs, count);
+        /* Clear before rearming: an already-signaled event can notify at once. */
+        atomicStoreExplicit(&reader->pending, false, memory_order_release);
+        if (empty)
+            SetThreadpoolWait(reader->wait, reader->event, NULL);
+        else if (! tunWindowsReaderSchedule(reader) &&
+                 atomicLoadExplicit(&reader->submission_failed, memory_order_acquire))
+            failed = tunWindowsReaderFailed(tdev, ERROR_NOT_READY);
     }
+    else
+    {
+        reuseTunReadBuffers(tdev, bufs, count);
+        atomicStoreExplicit(&reader->pending, false, memory_order_release);
+    }
+    quiescenceGateLeave(&reader->gate);
+    tunWindowsReaderUnref(reader);
+    tunWindowsReaderRequestShutdown(failed);
+}
 
-    tunWindowsReportPendingOversizedReadDiscards(tdev);
-
-    return routine_result;
+static bool tunWindowsReaderStart(tun_device_t *tdev)
+{
+    tun_windows_reader_t *reader = memoryAllocate(sizeof(*reader));
+    *reader                      = (tun_windows_reader_t) {.device = tdev, .wid = 0};
+    atomic_init(&reader->references, 1);
+    atomic_init(&reader->pending, false);
+    atomic_init(&reader->submission_failed, false);
+    quiescenceGateInit(&reader->gate);
+    tdev->reader  = reader;
+    reader->event = WintunGetReadWaitEvent(tdev->session_handle);
+    if (reader->event == NULL)
+    {
+        LOGE("TunDevice: cannot obtain Wintun receive event, code: %lu", GetLastError());
+        return false;
+    }
+    reader->wait = CreateThreadpoolWait(tunWindowsReaderReady, reader, NULL);
+    if (reader->wait == NULL)
+    {
+        LOGE("TunDevice: cannot create Wintun receive notification, code: %lu", GetLastError());
+        return false;
+    }
+    if (! quiescenceGateOpen(&reader->gate))
+        return false;
+    /* Startup queues this behind packet Init; native notification is armed only
+     * after this owner callback has first drained the ring to empty. */
+    if (! tunWindowsReaderSchedule(reader))
+    {
+        LOGE("TunDevice: cannot admit initial Wintun reader callback");
+        return false;
+    }
+    return true;
 }
 
 static bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, size_t count)
@@ -735,80 +754,46 @@ static void tundeviceCloseLifetimeGates(tun_device_t *tdev)
     deviceReaderSessionEndRequest(tdev->reader_session);
 }
 
-static bool tundeviceJoinThread(wthread_t *thread, const char *name)
-{
-    if (*thread == NULL)
-    {
-        return true;
-    }
-
-    DWORD thread_id = GetThreadId(*thread);
-    if (thread_id == 0)
-    {
-        LOGE("TunDevice: failed to identify %s thread, code: %lu", name, GetLastError());
-        return false;
-    }
-
-    if (GetCurrentThreadId() == thread_id)
-    {
-        LOGE("TunDevice: cannot join %s thread from the same thread", name);
-        return false;
-    }
-
-    DWORD wait_result = WaitForSingleObject(*thread, INFINITE);
-    if (wait_result != WAIT_OBJECT_0)
-    {
-        DWORD last_error = wait_result == WAIT_FAILED ? GetLastError() : ERROR_INVALID_FUNCTION;
-        LOGE("TunDevice: failed to join %s thread, wait result: %lu, code: %lu", name, wait_result, last_error);
-        return false;
-    }
-
-    if (! CloseHandle(*thread))
-    {
-        LOGE("TunDevice: failed to close joined %s thread handle, code: %lu", name, GetLastError());
-        return false;
-    }
-
-    *thread = NULL;
-    return true;
-}
-
 static void tundeviceBeginSessionShutdown(void *context)
 {
     tun_device_t *tdev = context;
-
     tunLifecycleTransitionToStopping(&tdev->lifecycle);
     tundeviceCloseLifetimeGates(tdev);
+    if (tdev->reader != NULL)
+    {
+        quiescenceGateClose(&tdev->reader->gate);
+        if (tdev->reader->wait != NULL)
+            SetThreadpoolWait(tdev->reader->wait, NULL, NULL);
+    }
 }
 
-static bool tundeviceSignalStopEvent(void *context)
+void tundeviceWorkerQuiesce(tun_device_t *tdev, wid_t wid)
 {
-    tun_device_t *tdev = context;
-
-    if (tdev->stop_event == NULL)
-    {
-        LOGE("TunDevice: stop event is not initialized");
-        return false;
-    }
-
-    if (! SetEvent(tdev->stop_event))
-    {
-        LOGE("TunDevice: failed to signal stop event, code: %lu", GetLastError());
-        LOGW("TunDevice: reader will use the bounded shutdown wait fallback");
-        return false;
-    }
-
-    return true;
+    assert(currentThreadIsEventWorkerWID(wid));
+    if (tdev->reader != NULL && tdev->reader->wid == wid && tdev->reader->wait != NULL)
+        SetThreadpoolWait(tdev->reader->wait, NULL, NULL);
 }
 
-static bool tundeviceJoinReader(void *context)
+static void tundeviceQuiesceReader(void *context)
 {
-    tun_device_t *tdev = context;
-    if (! tundeviceJoinThread(&tdev->read_thread, "reader"))
+    tun_device_t         *tdev   = context;
+    tun_windows_reader_t *reader = tdev->reader;
+    if (reader == NULL)
+        return;
+    quiescenceGateWaitQuiesced(&reader->gate, quiescenceGateYieldThread, NULL);
+    if (reader->wait != NULL)
     {
-        return false;
+        /* An admitted worker may have rearmed after the request-side disarm.
+         * Once its gate is empty no further rearm is possible. */
+        SetThreadpoolWait(reader->wait, NULL, NULL);
+        WaitForThreadpoolWaitCallbacks(reader->wait, TRUE);
+        CloseThreadpoolWait(reader->wait);
+        reader->wait = NULL;
     }
-    return true;
+    reader->device = NULL;
+    tdev->reader   = NULL;
+    tunWindowsReaderUnref(reader);
+    tunWindowsReportPendingOversizedReadDiscards(tdev);
 }
 
 static void tundeviceWaitReaderDelivery(void *context)
@@ -853,10 +838,9 @@ static bool tundeviceShutdownSession(tun_device_t *tdev)
 {
     static const tun_windows_lifetime_ops_t ops = {
         .begin_shutdown       = tundeviceBeginSessionShutdown,
-        .signal_reader        = tundeviceSignalStopEvent,
+        .quiesce_reader       = tundeviceQuiesceReader,
         .wait_reader_delivery = tundeviceWaitReaderDelivery,
         .wait_writes          = tundeviceWaitWrites,
-        .join_reader          = tundeviceJoinReader,
         .retire_reader        = tundeviceRetireReader,
         .end_session          = tundeviceEndSession,
     };
@@ -867,57 +851,17 @@ static bool tundeviceShutdownSession(tun_device_t *tdev)
 bool tundeviceRequestStop(tun_device_t *tdev)
 {
     tundeviceBeginSessionShutdown(tdev);
-    return tundeviceSignalStopEvent(tdev);
-}
-
-/*
- * The reader has settled its buffers before reporting failure. Startup failure
- * stays with BringUp's synchronous rollback; a published device failure requests
- * the lifecycle coordinator. Never stop or join the reader from its own thread.
- */
-static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, const char *which)
-{
-    tun_lifecycle_state_t failed_from;
-    if (! tunLifecycleTransitionToFailed(&tdev->lifecycle, &failed_from))
+    if (tdev->stop_event != NULL && ! SetEvent(tdev->stop_event))
     {
-        // Either normal teardown already moved the device to STOPPING (this
-        // routine returned because it was asked to), or the peer thread already
-        // published the failure. Neither case logs or requests again.
-        return;
+        LOGE("TunDevice: failed to cancel pending DNS setup, code: %lu", GetLastError());
+        return false;
     }
-
-    LOGE("TunDevice: %s thread for device %s exited unexpectedly; the device is no longer usable", which, tdev->name);
-
-    /*
-     * STARTING -> FAILED is a startup failure: tundeviceBringUp() observes the
-     * failed publication, rolls back what it owns and returns false, and the
-     * main-thread TunDevice::onStart path decides what happens next. Requesting
-     * shutdown from here would race that synchronous rollback.
-     *
-     * UP -> FAILED is an already published device losing a required I/O thread
-     * at runtime. The packet chain cannot continue correctly, so this is
-     * process-fatal: request the orderly, worker-0-owned shutdown.
-     */
-    if (failed_from == kTunLifecycleUp && ! requestProgramShutdown(1))
-    {
-        abortProgramNow(1);
-    }
-}
-
-static WTHREAD_ROUTINE(tundeviceReaderThreadMain) // NOLINT
-{
-    // The reader stays unregistered, uses its private pool, and posts packets
-    // to explicit event workers.
-    assert(! currentThreadHasRegisteredWID());
-    tun_device_t *tdev = userdata;
-    discard       tdev->routine_reader(tdev);
-    tundeviceNoteUnexpectedThreadExit(tdev, "reader");
-    return 0;
+    return true;
 }
 
 bool tundeviceBringUp(tun_device_t *tdev)
 {
-    if (tdev->session_handle != NULL || tdev->writer.current != NULL || tdev->read_thread != NULL)
+    if (tdev->session_handle != NULL || tdev->writer.current != NULL || tdev->reader != NULL)
     {
         LOGE("TunDevice: Device shutdown is incomplete");
         return false;
@@ -929,8 +873,8 @@ bool tundeviceBringUp(tun_device_t *tdev)
     }
 
     /*
-     * Copy the event worker's pool geometry onto the unregistered reader's
-     * private pool before starting it.
+     * Finalize the dedicated receive pool before handing it to the selected
+     * event worker for this generation.
      */
     buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
 
@@ -945,7 +889,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
 
     if (! ResetEvent(tdev->stop_event))
     {
-        LOGE("TunDevice: failed to reset stop event, code: %lu", GetLastError());
+        LOGE("TunDevice: failed to reset DNS cancellation event, code: %lu", GetLastError());
         tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
         return false;
     }
@@ -972,7 +916,6 @@ bool tundeviceBringUp(tun_device_t *tdev)
     }
 
     tdev->session_handle = Session;
-    tdev->read_thread    = NULL;
 
     if (! tunWriterOpen(&tdev->writer, kTunWriteQueueMax, SIZE_MAX, tdev, tunWriteBatch))
     {
@@ -980,12 +923,8 @@ bool tundeviceBringUp(tun_device_t *tdev)
         goto rollback;
     }
 
-    wthread_error_t error = threadCreate(&tdev->read_thread, tundeviceReaderThreadMain, tdev);
-    if (error != kWThreadErrorNone)
-    {
-        LOGE("TunDevice: failed to create reader thread, code: %u", error);
+    if (! tunWindowsReaderStart(tdev))
         goto rollback;
-    }
 
     if (tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleFailed)
     {
@@ -994,7 +933,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
 
     if (! tunLifecycleTransitionStartingToUp(&tdev->lifecycle))
     {
-        LOGE("TunDevice: an I/O thread failed during startup");
+        LOGE("TunDevice: reader failed during startup");
         goto rollback;
     }
 
@@ -1007,7 +946,7 @@ rollback:
     }
     else
     {
-        LOGE("TunDevice: thread-startup rollback is incomplete; retained resources require a shutdown retry");
+        LOGE("TunDevice: reader-startup rollback is incomplete; retained resources require a shutdown retry");
     }
     return false;
 }
@@ -1015,7 +954,7 @@ rollback:
 bool tundeviceBringDown(tun_device_t *tdev)
 {
     if (tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown && tdev->session_handle == NULL &&
-        tdev->writer.current == NULL && tdev->read_thread == NULL)
+        tdev->writer.current == NULL && tdev->reader == NULL)
     {
         return true;
     }
@@ -1410,8 +1349,8 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu,
     LOGI("TunDevice: WinTun loaded successfully");
 
     /*
-     * The unregistered reader retains its own pool. Output workers use their
-     * existing local pools.
+     * One worker owns the private receive pool and fragment staging. Output
+     * workers use their existing local pools.
      */
     buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
 
@@ -1434,15 +1373,13 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu,
 
     *tdev = (tun_device_t) {
         .name                           = device_name,
-        .routine_reader                 = routineReadFromTun,
         .read_event_callback            = cb,
         .userdata                       = userdata,
         .reader_session                 = NULL,
         .reader_buffer_pool             = reader_bpool,
         .adapter_handle                 = NULL,
         .session_handle                 = NULL,
-        .stop_event                     = NULL,
-        .read_thread                    = NULL,
+        .reader                         = NULL,
         .mtu                            = mtu,
         .oversized_read_discard_limiter = {0},
     };
@@ -1464,7 +1401,7 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, uint16_t mtu,
     tdev->stop_event = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (tdev->stop_event == NULL)
     {
-        LOGE("TunDevice: failed to create stop event, code: %lu", GetLastError());
+        LOGE("TunDevice: failed to create DNS cancellation event, code: %lu", GetLastError());
         tundeviceDestroy(tdev);
         return NULL;
     }
@@ -1579,7 +1516,7 @@ void tundeviceDestroy(tun_device_t *tdev)
 {
 
     if (tunLifecycleLoad(&tdev->lifecycle) != kTunLifecycleDown || tdev->session_handle != NULL ||
-        tdev->writer.current != NULL || tdev->read_thread != NULL)
+        tdev->writer.current != NULL || tdev->reader != NULL)
     {
         if (! tundeviceBringDown(tdev))
         {
@@ -1589,7 +1526,7 @@ void tundeviceDestroy(tun_device_t *tdev)
              * use-after-free risk. Hard-abort with an explicit diagnostic rather
              * than trying to run more cleanup. Mirrors tun_linux.c.
              */
-            LOGF("TunDevice: refusing to destroy device while I/O threads may still be running");
+            LOGF("TunDevice: refusing to destroy device while I/O callbacks may still be running");
             abortProgramNow(1);
         }
     }
@@ -1633,7 +1570,7 @@ void tundevicePlatformShutdown(void)
 {
     HMODULE module = (HMODULE) GSTATE.wintun_dll_handle;
 
-    /* All adapter sessions and device threads have stopped before this hook. */
+    /* All adapter sessions and native notifications have stopped before this hook. */
     GSTATE.flag_tundev_windows_initialized = false;
     GSTATE.wintun_dll_handle               = NULL;
     GSTATE.wintun_dll_path                 = NULL;

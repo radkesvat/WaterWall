@@ -70,6 +70,7 @@ WW_EXPORT api_result_t tundeviceTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void tundeviceTunnelOnStart(tunnel_t *t);
 void tundeviceTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void tundeviceTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void tundeviceTunnelOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings);
