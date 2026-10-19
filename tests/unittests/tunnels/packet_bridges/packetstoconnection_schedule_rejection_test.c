@@ -473,7 +473,9 @@ static void requireQueuedBytes(struct tcp_pcb *pcb, uint32_t expected)
 static void caseScaledSendCapacity(unsigned mode)
 {
     twfSetCase("PTC fills scaled TCP capacity across 16-bit writes and preserves a refused suffix in FIFO order");
-    const uint32_t length = 128U * 1024U;
+    /* The default bridge budget must admit the entire 2 MiB stack capacity
+     * before any ACK; otherwise a larger TCP_SND_BUF still pauses at 256 KiB. */
+    const uint32_t length = mode == 0 ? 2U * 1024U * 1024U : 128U * 1024U;
     ptc_fixture_t  fixture;
     ptcFixtureSetup(&fixture);
     const uint32_t  baseline = ptcTcpPcbUsed();

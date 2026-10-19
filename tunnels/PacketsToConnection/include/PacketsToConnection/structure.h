@@ -108,9 +108,10 @@ enum
      * or acknowledged them. `Pause` is advisory between tunnels - a neighbour may
      * already have a queued callback, may race the pause, or may simply be
      * defective - so the queue needs a real admission limit rather than a
-     * cooperative one. Matches ConnectionToPackets' `max-pending-bytes`.
+     * cooperative one. The default covers lwIP's full send capacity because
+     * this budget includes bytes copied into lwIP but not yet acknowledged.
      */
-    kPtcDefaultMaxPendingBytes = 262144U,
+    kPtcDefaultMaxPendingBytes = TCP_SND_BUF,
     kPtcMinMaxPendingBytes     = 1024U,
     kPtcMaxMaxPendingBytes     = 67108864U,
     /* Fixed headroom for already-delivered input; not a pool allocation size. */

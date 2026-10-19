@@ -1,5 +1,5 @@
 <!--
-Documentation version: 160
+Documentation version: 161
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketsToConnection.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketsToConnection.mdx, and all files must keep the same documentation version.
 -->
 
@@ -248,13 +248,17 @@ This is intentional and should be treated as a current limitation of the UDP pat
 
 - `udp-idle-timeout-ms` `(int, default: 300000)`
   Controls how long an idle UDP flow line is kept alive before the tunnel closes it.
-- `max-pending-bytes` `(int, default: 262144)`
+- `max-pending-bytes` `(int, default: 2097152)`
   Budget for TCP payload retained while lwIP has not yet taken or fully acknowledged it. Valid range
   `1024` .. `67108864`. Admission includes a fixed 1 MiB of delivery headroom; exceeding the combined bound sheds that flow.
 - `fake-dns` `(bool or object, default: false)`
   Enables an in-tunnel fake DNS responder for IPv4 A queries. Mapped fake-IP destinations are converted back into domain destinations on generated TCP/UDP Waterwall lines.
 
 The minimum allowed `udp-idle-timeout-ms` value is `1`.
+
+The default TCP pending budget is 2 MiB, matching lwIP's send capacity. This is
+a per-flow limit, not a preallocation; the shared lwIP pools can impose pressure
+before an individual flow reaches that limit.
 
 `Pause` is advisory between tunnels, so it cannot be the only bound on retained memory: the next tunnel may already
 have a payload callback queued, may race the pause, or may simply ignore it. The admission bound is therefore
@@ -314,7 +318,7 @@ power-of-two bucket count are all validated before either allocation is attempte
   "type": "PacketsToConnection",
   "settings": {
     "udp-idle-timeout-ms": 120000,
-    "max-pending-bytes": 262144,
+    "max-pending-bytes": 2097152,
     "fake-dns": {
       "address": "198.18.0.2",
       "network": "100.64.0.0",

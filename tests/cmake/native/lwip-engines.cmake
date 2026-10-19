@@ -1,5 +1,10 @@
 # Explicit native registrations; included in dependency order by unittests/CMakeLists.txt.
 if(TARGET ww_lwip_engine_test)
+  waterwall_add_native_executable(lwip_tcp_capacity_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/lwip/lwip_tcp_capacity_test.c)
+  target_link_libraries(lwip_tcp_capacity_test PRIVATE ww_test_support ww_lwip pthread)
+  target_link_options(lwip_tcp_capacity_test PRIVATE "-Wl,--wrap=sys_now")
+  add_dependencies(waterwall_unit_tests lwip_tcp_capacity_test)
+  add_waterwall_unit_test(waterwall.lwip_tcp_capacity_unit lwip_tcp_capacity_test "unit;net;lwip;capacity")
   waterwall_add_native_executable(lwip_ack_batch_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/lwip/lwip_ack_batch_test.c)
   target_link_libraries(lwip_ack_batch_test PRIVATE ww_test_support ww_lwip_engine_test pthread)
   target_link_options(lwip_ack_batch_test PRIVATE "-Wl,--wrap=sys_now")

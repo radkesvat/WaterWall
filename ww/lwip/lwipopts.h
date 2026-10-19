@@ -330,11 +330,12 @@ a lot of data that needs to be copied, this should be set high. */
 /* TCP Maximum segment size. */
 #define TCP_MSS              1460        // 1024
 
-/* TCP sender buffer space (bytes). */
-#define TCP_SND_BUF          (256 * 1024)
+    /* Per-connection send capacity; payload storage still comes from the bounded
+       process-wide pools in lwippools.h and can apply backpressure earlier. */
+#define TCP_SND_BUF          (2 * 1024 * 1024)
 
-/* TCP sender buffer space (pbufs). This must be at least = 2 *
-   TCP_SND_BUF/TCP_MSS for things to work. */
+    /* TCP sender buffer space (pbufs). This must be at least = 2 *
+       TCP_SND_BUF/TCP_MSS for things to work. */
 #define TCP_SND_QUEUELEN     (16 * TCP_SND_BUF / TCP_MSS)
 
     /* TCP writable space (bytes). This must be less than or equal
@@ -343,10 +344,11 @@ a lot of data that needs to be copied, this should be set high. */
        lwIP's 16-bit readiness limit even when the send buffer is larger. */
 #define TCP_SNDLOWAT         LWIP_MIN((TCP_SND_BUF / 2), (0xFFFF - (4 * TCP_MSS) - 1))
 
-    /* TCP receive window. Scaling allows the full window when the peer supports it. */
-#define TCP_WND              (2048 * 1024)
+    /* Fixed receive capacity. Scale 7 represents the full 4 MiB window in the
+       16-bit wire field; peers without scaling retain lwIP's unscaled limit. */
+#define TCP_WND              (4 * 1024 * 1024)
 #define LWIP_WND_SCALE       1
-#define TCP_RCV_SCALE        6
+#define TCP_RCV_SCALE        7
 
 /* Maximum number of retransmissions of data segments. */
 #define TCP_MAXRTX           12
