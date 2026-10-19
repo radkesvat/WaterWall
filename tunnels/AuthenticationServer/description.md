@@ -1,5 +1,5 @@
 <!--
-Documentation version: 161
+Documentation version: 162
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -924,7 +924,7 @@ Request `{"id":"42"}`. The result contains `config_revision`, `stats_revision`,
 | `name`, `email`, `notes`, `wireguard_allowed_ips` | Complete permitted strings; absent values are empty strings. No keys or credentials are included. |
 | `record_stat_interval_ms` | Configured statistics interval. |
 | `limit.traffic.u`, `.d`, `.total` | Stored upload, download and combined limits in charged quota bytes. |
-| `limit.bandwidth.u`, `.d` | Stored configured bandwidth units. |
+| `limit.bandwidth.u`, `.d` | Actual logical bytes per second, upload/download independently; zero is unlimited. UserController shares each user's local allowance across lines and workers of one AuthenticationClient. |
 | `limit.ips`, `.devices`, `.cons_in`, `.cons_out` | Stored limits; presence does not assert enforcement by every traffic node. |
 | `time.created_at_ms`, `.expire_at_ms` | Existing wall-clock creation and absolute-expiry values. |
 | `time.expire_after_first_usage_ms` | Relative-expiry duration. |
@@ -1017,7 +1017,7 @@ remain unchanged. These leaves are editable:
 | `gid` | Canonical unsigned decimal string, including `"0"`. |
 | `enabled` | JSON boolean. |
 | `record_stat_interval_ms` | Canonical decimal string from `"0"` through INT_MAX. |
-| `limit.traffic.u`, `.d`, `.total`; `limit.bandwidth.u`, `.d` | Canonical unsigned decimal strings, preserving existing units. |
+| `limit.traffic.u`, `.d`, `.total`; `limit.bandwidth.u`, `.d` | Canonical unsigned decimal strings; traffic is charged quota bytes, bandwidth is actual logical bytes per second. |
 | `limit.ips`, `.devices`, `.cons_in`, `.cons_out` | Canonical unsigned decimal strings. |
 | `time.expire_at_ms`, `.expire_after_first_usage_ms` | Canonical unsigned decimal strings, preserving zero sentinels and clock/duration semantics. |
 

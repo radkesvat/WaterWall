@@ -27,6 +27,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
       add_waterwall_test_labels(${socks_udp_case} "integration" "tunnels" "socks" "udp" "splice")
       add_waterwall_case_resource_lock(${socks_udp_case} socks5_splice)
     endforeach()
+    foreach(splice_mode IN ITEMS true false)
+      set(socks_udp_case waterwall.socks5server_udp_auth_bandwidth_splice_${splice_mode})
+      add_waterwall_isolated_test(${socks_udp_case}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/socks5_splice_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" udp_server "${splice_mode}" auth_bandwidth)
+      set_tests_properties(${socks_udp_case} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(${socks_udp_case} "integration" "tunnels" "socks" "udp" "splice")
+      add_waterwall_case_resource_lock(${socks_udp_case} socks5_splice)
+    endforeach()
   endif()
 endif()
 add_waterwall_expected_failure_integration_test(
@@ -103,7 +112,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   endforeach()
 endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
-  foreach(protocol IN ITEMS tcp tcp_db udp fallback fallback_http)
+  foreach(protocol IN ITEMS tcp tcp_db tcp_db_bandwidth udp udp_db_bandwidth fallback fallback_http)
+    if(protocol STREQUAL "tcp_db_bandwidth" AND NOT TARGET APIServer)
+      continue()
+    endif()
     foreach(splice_mode IN ITEMS true false)
       add_waterwall_isolated_test(waterwall.vlessserver_${protocol}_splice_${splice_mode}
         "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/vlessserver_splice_integration.py"

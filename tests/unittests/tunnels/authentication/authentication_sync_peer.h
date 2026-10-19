@@ -26,3 +26,9 @@ line_t     *authTestControllerOpen(tunnel_t *controller, tunnel_chain_t *chain);
 void        authTestControllerPayload(tunnel_t *controller, line_t *line);
 void        authTestControllerSweep(tunnel_t *controller);
 void        authTestControllerDestroy(tunnel_t *controller);
+
+void authTestControllerBandwidthCases(tunnel_t *auth, tunnel_chain_t *chain, void (*advance)(unsigned));
+void authTestControllerMultiplierCases(tunnel_t *auth, tunnel_chain_t *chain, void (*advance)(unsigned),
+                                       uint32_t scale);
+
+void authTestControllerUpdateUser(tunnel_t *auth, const user_update_t *update);

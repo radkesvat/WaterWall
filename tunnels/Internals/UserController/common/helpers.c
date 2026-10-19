@@ -196,32 +196,8 @@ void usercontrollerUnregisterLine(tunnel_t *t, line_t *l, usercontroller_lstate_
     lineUnref(l);
 }
 
-void usercontrollerWorkerClearRegistry(tunnel_t *t, wid_t wid)
-{
-    usercontroller_worker_state_t *ws = usercontrollerGetWorkerState(t, wid);
-    if (ws == NULL)
-    {
-        return;
-    }
-
-    while (ws->line_count > 0)
-    {
-        ws->line_count -= 1U;
-        line_t *line              = ws->lines[ws->line_count];
-        ws->lines[ws->line_count] = NULL;
-
-        if (lineIsAlive(line))
-        {
-            usercontroller_lstate_t *ls = lineGetState(line, t);
-            ls->registered              = false;
-        }
-
-        lineUnref(line);
-    }
-}
-
-// Account payload bytes against the user's upload/download quota, mapping the physical flow direction
-// to the user's perspective based on where the line started.
+// Observe raw arrival independently of forwarding/quota charging. Queueing (or a
+// later discard) must not postpone first use or consume multiplier carry.
 //
 // "Upload" is traffic leaving the user toward the far side; "download" is traffic arriving at the user.
 // The user sits on the side the line was initiated from:
@@ -230,9 +206,7 @@ void usercontrollerWorkerClearRegistry(tunnel_t *t, wid_t wid)
 // So a line started from the next side flips the mapping, which is exactly the
 // TunDevice -> WireGuardDevice -> UserController -> UdpStatelessSocket case.
 //
-// Returns true when accounting says the user is now over quota / disabled / expired and the line must
-// be torn down (the caller recycles the buffer and closes the line).
-bool usercontrollerAccountDirectional(tunnel_t *t, usercontroller_lstate_t *ls, uint64_t bytes, bool upstream_payload)
+bool usercontrollerObserveDirectional(tunnel_t *t, usercontroller_lstate_t *ls, uint64_t bytes, bool upstream_payload)
 {
     usercontroller_tstate_t *ts = tunnelGetState(t);
 
@@ -240,7 +214,7 @@ bool usercontrollerAccountDirectional(tunnel_t *t, usercontroller_lstate_t *ls, 
     uint64_t up        = is_upload ? bytes : 0;
     uint64_t down      = is_upload ? 0 : bytes;
 
-    return authenticationclientUserAccountTraffic(
+    return authenticationclientUserObservePayload(
         ts->auth_client_tunnel, &ls->handle, up, down, usercontrollerLocalTimeMS());
 }
 
@@ -367,7 +341,7 @@ static void usercontrollerReleaseAccounting(tunnel_t *t, line_t *l, usercontroll
 //
 //   kUserControllerCloseFromPrev : prev finished us -> close next only, never touch prev
 //   kUserControllerCloseFromNext : next finished us -> close prev only, never touch next
-//   kUserControllerCloseInternal : our decision     -> close upstream first, then downstream
+//   kUserControllerCloseInternal : our decision     -> close the non-creator side first, then its owner
 //
 // Accounting release and local-state cleanup make no neighbor callbacks. Hold the line allocation
 // across Finish propagation and recheck logical life before notifying the second side.
@@ -377,6 +351,9 @@ void usercontrollerCloseLine(tunnel_t *t, line_t *l, usercontroller_close_origin
 
     bool close_next = origin != kUserControllerCloseFromNext;
     bool close_prev = origin != kUserControllerCloseFromPrev;
+    // Reverse Init puts the creator next. Clean its opposite side before
+    // notifying the creator, which can logically destroy this borrowed line.
+    bool prev_first = origin == kUserControllerCloseInternal && ls->started_from_next;
 
     lineRef(l);
 
@@ -384,12 +361,17 @@ void usercontrollerCloseLine(tunnel_t *t, line_t *l, usercontroller_close_origin
 
     usercontrollerLinestateDestroy(ls);
 
-    if (close_next)
+    if (prev_first)
+    {
+        tunnelPrevDownStreamFinish(t, l);
+    }
+
+    if (close_next && lineIsAlive(l))
     {
         tunnelNextUpStreamFinish(t, l);
     }
 
-    if (close_prev && lineIsAlive(l))
+    if (close_prev && ! prev_first && lineIsAlive(l))
     {
         tunnelPrevDownStreamFinish(t, l);
     }

@@ -3,6 +3,19 @@
 
 WW_EXPORT node_t nodeUserControllerGet(void);
 
+typedef enum usercontroller_payload_mode_e
+{
+    kUserControllerPayloadStream = 1,
+    kUserControllerPayloadDatagram
+} usercontroller_payload_mode_t;
+
+/* Pure owner-worker metadata query. Bound during construction, before Prepare,
+ * as an alternative to JSON payload-mode. Init saves its result once; later
+ * destination-context changes never alter the saved framing. */
+typedef usercontroller_payload_mode_t (*usercontroller_payload_mode_resolver_t)(tunnel_t *owner, line_t *line);
+WW_EXPORT void usercontrollerSetPayloadModeResolver(tunnel_t *controller, tunnel_t *owner,
+                                                    usercontroller_payload_mode_resolver_t resolver);
+
 /**
  * @brief Bring an already-open line under per-user limit enforcement, on demand.
  *

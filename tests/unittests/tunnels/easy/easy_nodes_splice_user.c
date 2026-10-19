@@ -12,23 +12,68 @@
 #include "UserController/structure.h"
 #include "easy_nodes_splice_fixture.h"
 
-static uint64_t upload, download;
-static unsigned account_calls, releases;
-static bool     reject;
-bool __wrap_authenticationclientUserAccountTraffic(tunnel_t *t, const user_handle_t *handle, uint64_t up, uint64_t down,
+static uint64_t        upload, download;
+static unsigned        account_calls, releases;
+static bool            reject;
+static easy_fixture_t *user_fixture;
+
+static void userReverseFinish(tunnel_t *t, line_t *l)
+{
+    ++user_fixture->finishes;
+    if (t == user_fixture->next)
+    {
+        lineDestroy(l);
+        user_fixture->line = NULL;
+    }
+}
+bool __wrap_authenticationclientUserObservePayload(tunnel_t *t, const user_handle_t *handle, uint64_t up, uint64_t down,
                                                    uint64_t now);
-void __wrap_authenticationclientUserReleaseConnection(tunnel_t *t, const user_handle_t *handle,
-                                                      const user_ip_key_t *ip);
-bool __wrap_authenticationclientUserAccountTraffic(tunnel_t *t, const user_handle_t *handle, uint64_t up, uint64_t down,
+user_bandwidth_result_t  __wrap_authenticationclientUserBandwidthPreview(tunnel_t *t, const user_handle_t *handle,
+                                                                         user_bandwidth_direction_t direction,
+                                                                         uint64_t ticket, uint64_t bytes, bool datagram);
+user_delivery_decision_t __wrap_authenticationclientUserCommitDelivery(tunnel_t *t, const user_handle_t *handle,
+                                                                       user_bandwidth_direction_t direction,
+                                                                       uint64_t ticket, uint64_t bytes, bool datagram,
+                                                                       bool more);
+void                     __wrap_authenticationclientUserReleaseConnection(tunnel_t *t, const user_handle_t *handle,
+                                                                          const user_ip_key_t *ip);
+bool __wrap_authenticationclientUserObservePayload(tunnel_t *t, const user_handle_t *handle, uint64_t up, uint64_t down,
                                                    uint64_t now)
 {
     discard t;
     discard handle;
     discard now;
-    upload += up;
-    download += down;
-    ++account_calls;
+    discard up;
+    discard down;
     return reject;
+}
+user_bandwidth_result_t __wrap_authenticationclientUserBandwidthPreview(tunnel_t *t, const user_handle_t *handle,
+                                                                        user_bandwidth_direction_t direction,
+                                                                        uint64_t ticket, uint64_t bytes, bool datagram)
+{
+    discard t;
+    discard handle;
+    discard direction;
+    discard ticket;
+    discard datagram;
+    return (user_bandwidth_result_t) {.decision = kUserDeliveryForward, .grant = bytes};
+}
+user_delivery_decision_t __wrap_authenticationclientUserCommitDelivery(tunnel_t *t, const user_handle_t *handle,
+                                                                       user_bandwidth_direction_t direction,
+                                                                       uint64_t ticket, uint64_t bytes, bool datagram,
+                                                                       bool more)
+{
+    discard t;
+    discard handle;
+    discard ticket;
+    discard datagram;
+    discard more;
+    if (direction == kUserBandwidthUpload)
+        upload += bytes;
+    else
+        download += bytes;
+    ++account_calls;
+    return kUserDeliveryForward;
 }
 void __wrap_authenticationclientUserReleaseConnection(tunnel_t *t, const user_handle_t *handle, const user_ip_key_t *ip)
 {
@@ -45,8 +90,18 @@ void testUserControllerSplice(bool splice)
         {
             easy_fixture_t f;
             easySetup(&f, tunnelCreate(NULL, sizeof(usercontroller_tstate_t), sizeof(usercontroller_lstate_t)));
+            if (reverse)
+            {
+                // Reverse Init describes a next-side creator. Match the exact
+                // line's ownership instead of keeping the default prev owner.
+                user_fixture   = &f;
+                f.prev->fnFinD = userReverseFinish;
+                f.next->fnFinU = userReverseFinish;
+            }
             usercontroller_lstate_t *ls = lineGetState(f.line, f.node);
             usercontrollerLinestateInitialize(ls, reverse);
+            ls->payload_mode = kUserControllerPayloadStream;
+            usercontrollerBandwidthInitialize(f.node, f.line);
             ls->managed = managed;
             upload = download = account_calls = releases = 0;
             reject                                       = false;

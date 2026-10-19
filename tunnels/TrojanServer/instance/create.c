@@ -75,6 +75,13 @@ static bool parseFallbackNode(trojanserver_tstate_t *ts, node_t *node, const cJS
     return true;
 }
 
+static usercontroller_payload_mode_t trojanserverResolvePayloadMode(tunnel_t *owner, line_t *line)
+{
+    const trojanserver_lstate_t *ls = lineGetState(line, owner);
+    return ls->line_kind == kTrojanServerLineKindUdpRemote ? kUserControllerPayloadDatagram
+                                                           : kUserControllerPayloadStream;
+}
+
 static bool trojanserverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
 {
     trojanserver_tstate_t *ts = tunnelGetState(t);
@@ -97,6 +104,7 @@ static bool trojanserverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
         return false;
     }
 
+    usercontrollerSetPayloadModeResolver(ts->user_controller_tunnel, t, trojanserverResolvePayloadMode);
     ts->user_controller_node.instance = ts->user_controller_tunnel;
     return true;
 }

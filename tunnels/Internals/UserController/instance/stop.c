@@ -14,6 +14,13 @@ static void usercontrollerDeleteTimer(wtimer_t **timer)
     *timer = NULL;
 }
 
+void usercontrollerTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
+{
+    discard                  context;
+    usercontroller_tstate_t *ts = tunnelGetState(t);
+    atomicStoreExplicit(&ts->shaping_stopping, true, memory_order_release);
+}
+
 void usercontrollerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
@@ -26,16 +33,12 @@ void usercontrollerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecy
     }
 
     usercontrollerDeleteTimer(&ts->worker_states[wid].sweep_timer);
-}
-
-void usercontrollerTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
-{
-    discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
-    usercontroller_tstate_t *ts = tunnelGetState(t);
-    if (ts->worker_states == NULL || wid >= ts->worker_count)
+    usercontroller_worker_state_t *ws = &ts->worker_states[wid];
+    ws->quiesced                      = true;
+    for (size_t i = 0; i < ws->line_count; ++i)
     {
-        return;
+        line_t *line = ws->lines[i];
+        if (lineIsAlive(line))
+            usercontrollerBandwidthQuiesce(lineGetState(line, t));
     }
-    usercontrollerWorkerClearRegistry(t, wid);
 }

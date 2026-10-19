@@ -436,6 +436,13 @@ static bool processAllPeers(const cJSON *peers_array, wireguard_device_t *device
     return true;
 }
 
+static usercontroller_payload_mode_t wireguarddeviceResolvePayloadMode(tunnel_t *owner, line_t *line)
+{
+    discard owner;
+    discard line;
+    return kUserControllerPayloadDatagram;
+}
+
 static bool wireguarddeviceCreateUserControllerTunnel(tunnel_t *t, node_t *node, const cJSON *settings)
 {
     wgd_tstate_t *state          = tunnelGetState(t);
@@ -464,6 +471,7 @@ static bool wireguarddeviceCreateUserControllerTunnel(tunnel_t *t, node_t *node,
         return false;
     }
 
+    usercontrollerSetPayloadModeResolver(state->user_controller_tunnel, t, wireguarddeviceResolvePayloadMode);
     state->user_controller_node.instance = state->user_controller_tunnel;
     return true;
 }

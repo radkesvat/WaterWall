@@ -6,8 +6,12 @@ waterwall.vlessserver_fallback_http_splice_true, waterwall.vlessserver_fallback_
 waterwall.vlessserver_fallback_splice_true, waterwall.vlessserver_tcp_db_splice_false,
 waterwall.vlessserver_tcp_db_splice_true, waterwall.vlessserver_tcp_splice_false,
 waterwall.vlessserver_tcp_splice_true, waterwall.vlessserver_udp_splice_false,
-waterwall.vlessserver_udp_splice_true."""
+waterwall.vlessserver_udp_splice_true. The tcp_db_bandwidth and udp_db_bandwidth variants
+exercise finite UserController rates with exact FIFO/boundary and clean shutdown oracles.
+TCP also keeps two same-user sessions live across bandwidth edits with retained input;
+controlled-time native tests own rate precision, without wall-clock throughput thresholds."""
 import concurrent.futures
+import threading
 import uuid
 import json
 from pathlib import Path
@@ -28,6 +32,7 @@ from wwtest.run_directory import RunDirectory
 from wwtest.process import Process, close_on_error, install_termination_handler
 
 from wwtest.sockets import exact
+import api_server_probe as api
 
 
 def address(port):
@@ -42,12 +47,91 @@ def receive_frame(sock):
     return exact(sock, int.from_bytes(exact(sock, 2), "big"))
 
 
+def shared_bandwidth_tcp(client, backend, header):
+    """Real shared-user streams survive a policy refresh while input is retained."""
+    first_prefix = threading.Event()
+    payloads = [b"first-prefix" + bytes(range(256)) * 512 + b"first-tail",
+                b"second-prefix" + bytes(reversed(range(256))) * 512 + b"second-tail"]
+
+    def peer(conn, expected):
+        conn.settimeout(15)
+        conn.sendall(b"server-first")
+        prefix = exact(conn, 1)
+        assert prefix == expected[:1], "shared stream changed its first byte"
+        first_prefix.set()  # A one-byte grant proves the larger delivery has entered shaping.
+        assert prefix + exact(conn, len(expected) - 1) == expected, "shared stream FIFO changed"
+        conn.sendall(expected[::-1])
+        assert conn.recv(1) == b"", "unexpected shared-stream shutdown bytes"
+
+    with socket.create_connection(("127.0.0.1", 27961), timeout=5) as second, \
+            close_on_error(client), close_on_error(second):
+        second.settimeout(15)
+        client.sendall(header)
+        with backend.accept()[0] as first_remote:
+            second.sendall(header)
+            with backend.accept()[0] as second_remote, \
+                    concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                results = [executor.submit(peer, conn, data)
+                           for conn, data in zip((first_remote, second_remote), payloads)]
+                streams = (client, second)
+                for stream in streams:
+                    assert exact(stream, 2) == b"\x00\x00", "missing shared VLESS response"
+                    assert exact(stream, 12) == b"server-first", "second same-user session was not admitted"
+
+                with api.connect(27963) as admin, admin.makefile("rb") as reader:
+                    sequence = 0
+
+                    def query(node, operation, body):
+                        nonlocal sequence
+                        sequence += 1
+                        identifier = "bandwidth-" + str(sequence)
+                        admin.sendall(api.frame({
+                            "id": identifier, "auth": {"client": "bandwidth-test", "token": api.TOKEN},
+                            "selector": {"config": "vless-server-splice", "node": node},
+                            "operation": operation, "content_type": "application/json",
+                            "body_encoding": "utf8", "body": json.dumps(body)}))
+                        envelope = api.response(reader, identifier)
+                        assert envelope["error"] is None and envelope["result"]["code"] == 0, "bandwidth API refusal"
+                        return json.loads(envelope["result"]["body"])
+
+                    def change_rate(rate):
+                        current = query("auth-db", "get-user", {"id": "1001"})
+                        changed = query("auth-db", "update-user", {
+                            "id": "1001", "if_match": current["edit_token"],
+                            "patch": {"limit": {"bandwidth": {"u": str(rate), "d": str(rate)}}}})
+                        deadline = time.monotonic() + 8
+                        while True:
+                            status = query("auth-client", "status", {})
+                            if int(status["applied_config_revision"]) >= int(changed["config_revision"]):
+                                assert status["can_authenticate"], "refresh lost cached admission"
+                                return
+                            assert time.monotonic() < deadline, "bandwidth edit did not reach the live client"
+                            time.sleep(.02)
+
+                    change_rate(1)
+                    for stream, data in zip(streams, payloads):
+                        stream.sendall(data[:31])
+                        stream.sendall(data[31:])
+                    assert first_prefix.wait(5), "queued shared-user input made no initial progress"
+                    # At 1 byte/s these bodies cannot finish within socket deadlines. This
+                    # edit must release retained FIFO data on both already-open sessions.
+                    change_rate(0)
+                    for stream, data in zip(streams, payloads):
+                        assert exact(stream, len(data)) == data[::-1], "refreshed shared-user reply changed"
+                for stream in streams:
+                    stream.shutdown(socket.SHUT_RDWR)
+                for result in results:
+                    result.result(timeout=20)
+
+
 def run(binary, mode, enabled, fallback_delay=7):
     tracer = shutil.which("strace")
     if tracer is None:
         raise RuntimeError("strace is required to verify actual splice I/O")
-    database = mode == "tcp_db"
-    udp = mode == "udp"
+    bandwidth = mode in ("tcp_db_bandwidth", "udp_db_bandwidth")
+    database = mode == "tcp_db" or bandwidth
+    shared_bandwidth = mode == "tcp_db_bandwidth"
+    udp = mode in ("udp", "udp_db_bandwidth")
     local_fallback = mode == "fallback_http"
     fallback = mode == "fallback" or local_fallback
     with RunDirectory("waterwall-vlessserver-splice-") as directory:
@@ -68,8 +152,23 @@ def run(binary, mode, enabled, fallback_delay=7):
             settings["auth-client-node-name"] = "auth-client"
             fixture = Path(__file__).parent / "cases" / "vless_auth_tcp_loopback" / "config.json"
             nodes = json.loads(fixture.read_text())["nodes"][:2] + nodes
+            limits = {"connections-out": 2 if shared_bandwidth else 1}
+            if bandwidth:
+                # Each 8192-byte UDP payload exceeds the 6553-byte ordinary burst.
+                limits["bandwidth"] = {"up": 65536, "down": 65536}
             (root / "users.json").write_text(json.dumps({"users": [{"id": 1001, "name": "alice", "password": "42424242-4242-4242-4242-424242424242",
-                                                                    "enabled": True, "limit": {"connections-out": 1}}]}))
+                                                                    "enabled": True, "limit": limits}]}))
+        if shared_bandwidth:
+            nodes[0]["settings"]["pull-interval-ms"] = 100
+            nodes.extend([
+                {"name": "bandwidth-api-listener", "type": "TcpListener", "next": "bandwidth-api",
+                 "settings": {"address": "127.0.0.1", "port": 27963}},
+                {"name": "bandwidth-api", "type": "APIServer", "settings": {"clients": [
+                    {"name": "bandwidth-test", "token": api.TOKEN, "allow": [
+                        {"config": "vless-server-splice", "node": "auth-db",
+                         "operations": ["get-user", "update-user"]},
+                        {"config": "vless-server-splice", "node": "auth-client", "operations": ["status"]}]}]}},
+            ])
         if local_fallback:
             nodes.extend([
                 {"name": "fallback", "type": "HttpProxyServer", "next": "fallback-connect",
@@ -134,8 +233,10 @@ def run(binary, mode, enabled, fallback_delay=7):
                                 assert data == expected, "fixed destination UDP order changed"
                                 backend.sendto(data, origin)
                                 assert receive_frame(client) == expected
+                        elif shared_bandwidth:
+                            shared_bandwidth_tcp(client, backend, header)
                         else:
-                            data = bytes(range(256)) * 4096
+                            data = bytes(range(256)) * (512 if bandwidth else 4096)
                             # Larger than an ordinary receive pool tier; each batch
                             # stays below fallback's fixed 2 MiB retention limit.
                             probe = b"invalid VLESS probe\r\n" + data[:256 * 1024] if fallback else b""

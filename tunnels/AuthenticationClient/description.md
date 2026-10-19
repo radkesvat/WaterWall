@@ -1,5 +1,5 @@
 <!--
-Documentation version: 158
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -202,6 +202,14 @@ time using an independent worker-0 deadline timer, even with ping/pull/push disa
 
 `verbose` enables focused debug logs for the control-line lifecycle, reconnect decisions, timer ticks, and
 request/response correlation flow. It does not log secrets, session tokens, passwords, or raw users JSON.
+
+## Local Per-User Bandwidth
+
+UserController enforces each user's `limit.bandwidth.u` and `.d` as actual logical bytes per second, with zero unlimited.
+All lines, controllers and workers referencing this AuthenticationClient share each user's independent directional budget.
+Different clients and users are independent; no distributed allowance is implied. Queued bytes are charged only at onward
+handoff, while first positive arrival starts first-use expiry even before forwarding. Runtime buckets and fair-turn tickets
+migrate by durable user ID and remain outside JSON, snapshots and persistence. Multipliers affect quota only.
 
 ## Traffic Multiplier
 

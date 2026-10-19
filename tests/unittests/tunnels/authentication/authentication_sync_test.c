@@ -10,7 +10,7 @@
 #include <pthread.h>
 #define require(c, m) TEST_REQUIRE(TEST_FAILURE_EXIT, c, m)
 
-static atomic_ullong now_us;
+static atomic_ullong     now_us;
 static atomic_ullong     server_wall_ms, client_wall_ms;
 static thread_local bool in_server;
 int                      __wrap_gettimeofday(struct timeval *tv, void *tz);
@@ -22,8 +22,8 @@ int                      __wrap_gettimeofday(struct timeval *tv, void *tz)
     tv->tv_usec       = (suseconds_t) ((ms % 1000) * 1000);
     return 0;
 }
-unsigned long long   __wrap_getHRTimeUs(void);
-unsigned long long   __wrap_getHRTimeUs(void)
+unsigned long long __wrap_getHRTimeUs(void);
+unsigned long long __wrap_getHRTimeUs(void)
 {
     const uint64_t now = atomicLoadU64(&now_us);
     /* Deliberately different origins AND rates: server runs at 2x client. */
@@ -137,12 +137,12 @@ static sbuf_t *faultClockMetadata(sbuf_t *b)
 
 static void output(tunnel_t *t, line_t *l, sbuf_t *b)
 {
-    discard        t;
-    const bool     previous_clock = in_server;
-    in_server                     = false;
-    b                             = faultClockMetadata(b);
-    const uint8_t *bytes = sbufGetRawPtr(b);
-    const int      i     = owner(l);
+    discard    t;
+    const bool previous_clock = in_server;
+    in_server                 = false;
+    b                         = faultClockMetadata(b);
+    const uint8_t *bytes      = sbufGetRawPtr(b);
+    const int      i          = owner(l);
     if (i < 0)
     {
         require(sbufGetLength(b) >= 29, "raw response was truncated");
@@ -332,7 +332,7 @@ static void setup(unsigned users)
     line_master = masterpoolCreateWithCapacity(16);
     for (unsigned i = 0; i < 2; ++i)
         chain->line_pools[i] = genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(
-            line_master, sizeof(line_t) + client_size + authTestPeerLineSize(), 8);
+            line_master, sizeof(line_t) + client_size + authTestPeerLineSize() + 4096, 8);
 }
 static void startWithMultiplier(unsigned i, uint32_t multiplier)
 {
@@ -597,7 +597,7 @@ static void testEmptyPushDoesNotDropPull(void)
 
 static void rawRequest(line_t *l, const uint8_t token[64], uint8_t type, const void *text, uint32_t length)
 {
-    sbuf_t        *message = bufferpoolGetBestFit(lineGetBufferPool(l), 77 + length, 0);
+    sbuf_t *message = bufferpoolGetBestFit(lineGetBufferPool(l), 77 + length, 0);
     sbufSetLength(message, 77 + length);
     uint8_t *bytes = sbufGetMutablePtr(message);
     memoryZero(bytes, 77);
@@ -1529,7 +1529,7 @@ static void testStrictTrafficBatches(void)
     require(raw_response[0] == 0 && stringCompare(before, after) == 0, "exact replay changed accepted batch state");
     cJSON_free(before);
     cJSON_free(after);
-    before              = authTestPeerSnapshot(server);
+    before = authTestPeerSnapshot(server);
     const char *removed =
         "{\"id\":42,\"password\":\"account-0\",\"stats\":{\"traffic\":{\"up\":99,\"down\":0,\"first-usage-at-ms\":1}}}";
     rawRequest(line, token, 8, removed, (uint32_t) stringLength(removed));
@@ -2252,21 +2252,111 @@ static void testTrafficDuringRefresh(void)
     teardown();
 }
 
-#if defined(AUTHENTICATION_SYNC_HAVE_CONTROLLER)
-static void testOfflineControllerExpiry(void)
+static void testSharedBandwidthReservations(void)
 {
-    for (unsigned idle = 0; idle < 2; ++idle)
+    setup(1);
+    start(0);
+    disconnect(0);
+    user_handle_t handle;
+    userHandleSet(&handle, state(0)->users_generation, 42);
+    uint64_t first  = authenticationclientUserBandwidthRegister(clients[0], &handle, kUserBandwidthUpload);
+    uint64_t second = authenticationclientUserBandwidthRegister(clients[0], &handle, kUserBandwidthDownload);
+    require(first != 0 && second > first, "client tickets not unique");
+    buffer_budget_cost_t cost = {3U << 20, 3U << 20, 100};
+    require(authenticationclientUserBandwidthReserve(clients[0], &handle, first, cost), "shared user reservation");
+    require(! authenticationclientUserBandwidthReserve(
+                clients[0], &handle, second, (buffer_budget_cost_t) {2U << 20, 2U << 20, 1}),
+            "shared user byte limit bypassed");
+    require(! authenticationclientUserBandwidthReserve(clients[0], &handle, second, (buffer_budget_cost_t) {0, 0, 925}),
+            "shared user empty-entry limit bypassed");
+    require(state(0)->bandwidth_queued_cost.bytes == cost.bytes &&
+                state(0)->bandwidth_queued_cost.entries == cost.entries,
+            "refused reservation changed client totals");
+    users_t *replacement = memoryAllocateAligned(sizeof(*replacement), 32);
+    require(usersCreate(replacement), "replacement users");
+    user_t source;
+    require(userCreate(&source, "recreated-bandwidth"), "recreated user");
+    userSetId(&source, 42);
+    require(usersAddUser(replacement, &source), "replacement insertion");
+    userDestroy(&source);
+    rwlockWriteLock(&state(0)->users_lock);
+    users_t *old    = state(0)->users;
+    state(0)->users = replacement;
+    ++state(0)->users_generation;
+    rwlockWriteUnlock(&state(0)->users_lock);
+    usersDestroy(old);
+    memoryFreeAligned(old);
+    require(
+        authenticationclientUserBandwidthPreview(clients[0], &handle, kUserBandwidthUpload, first, 1, false).decision ==
+            kUserDeliveryReject,
+        "recreated user accepted stale waiter");
+    uint64_t recreated = authenticationclientUserBandwidthRegister(clients[0], &handle, kUserBandwidthUpload);
+    require(recreated > second, "recreated account reused ticket");
+    require(
+        authenticationclientUserBandwidthReserve(clients[0], &handle, recreated, (buffer_budget_cost_t) {10, 100, 1}),
+        "recreated account reservation");
+    authenticationclientUserBandwidthRelease(clients[0], &handle, first, cost);
+    require(usersLookupByIdentifier(replacement, 42)->runtime.queued_cost.bytes == 10 &&
+                state(0)->bandwidth_queued_cost.bytes == 10,
+            "old release debited recreated account");
+    authenticationclientUserBandwidthCancel(clients[0], &handle, kUserBandwidthUpload, first);
+    authenticationclientUserBandwidthCancel(clients[0], &handle, kUserBandwidthDownload, second);
+    authenticationclientUserBandwidthCancel(clients[0], &handle, kUserBandwidthUpload, recreated);
+    require(state(0)->bandwidth_ticket_count == 0 && state(0)->bandwidth_queued_cost.bytes == 0,
+            "ticket cancellation leaked aggregate costs");
+    state(0)->bandwidth_last_ticket = UINT64_MAX;
+    require(authenticationclientUserBandwidthRegister(clients[0], &handle, kUserBandwidthUpload) == 0,
+            "ticket exhaustion wrapped");
+    teardown();
+}
+
+void authTestControllerUpdateUser(tunnel_t *auth, const user_update_t *update)
+{
+    authenticationclient_tstate_t *ts = tunnelGetState(auth);
+    rwlockReadLock(&ts->users_lock);
+    user_t *user = usersLookupByIdentifier(ts->users, 42);
+    require(user != NULL && usersUpdateUser(ts->users, user, update), "controller cached-user update");
+    rwlockReadUnlock(&ts->users_lock);
+}
+
+#if defined(AUTHENTICATION_SYNC_HAVE_CONTROLLER)
+static void testControllerBandwidth(void)
+{
+    setup(1);
+    start(0);
+    disconnect(0);
+    authTestControllerBandwidthCases(clients[0], chain, pump);
+    teardown();
+    const uint32_t multipliers[] = {500, 2000};
+    for (size_t i = 0; i < sizeof(multipliers) / sizeof(multipliers[0]); ++i)
     {
         setup(1);
-        user_update_t update = {.mask = kUserUpdateTimeInfo, .timeinfo.expire_after_first_usage_ms = 100};
+        startWithMultiplier(0, multipliers[i]);
+        disconnect(0);
+        authTestControllerMultiplierCases(clients[0], chain, pump, multipliers[i]);
+        teardown();
+    }
+}
+
+static void testOfflineControllerExpiry(void)
+{
+    for (unsigned idle = 0; idle < 3; ++idle)
+    {
+        setup(1);
+        user_update_t update = {.mask                                 = kUserUpdateTimeInfo | kUserUpdateLimit,
+                                .timeinfo.expire_after_first_usage_ms = 100,
+                                .limit.bandwidth.u                    = idle == 2 ? 1 : 0};
         authTestPeerSetUser(server, 42, &update);
         start(0);
         tunnel_t *controller = authTestControllerCreate(clients[0]);
         line_t   *line       = authTestControllerOpen(controller, chain);
         require(lineIsAlive(line), "controller did not admit loaded account");
         disconnect(0);
+        if (idle == 2)
+            tunnelDownStreamPause(controller, line);
         authTestControllerPayload(controller, line);
-        require(lineIsAlive(line) && local(0, false) == 1, "controller first traffic failed offline");
+        require(lineIsAlive(line) && local(0, false) == (idle == 2 ? 0 : 1),
+                "controller arrival queued/forwarding charge failed offline");
         atomicAddU64(&now_us, 101000);
         if (idle)
             authTestControllerSweep(controller);
@@ -2798,9 +2888,11 @@ int main(void)
     testDiscountConcurrentRefresh();
     testStatusSnapshot();
     testStatusTimeoutHistory();
+    testSharedBandwidthReservations();
     testOfflineFirstUseDeadline();
 #if defined(AUTHENTICATION_SYNC_HAVE_CONTROLLER)
     testOfflineControllerExpiry();
+    testControllerBandwidth();
 #endif
     testTrafficDuringRefresh();
     testCatchupInterruptionAndCaptureRefusal();

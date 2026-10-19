@@ -75,6 +75,13 @@ static bool vlessserverParseFallbackNode(vlessserver_tstate_t *ts, node_t *node,
     return true;
 }
 
+static usercontroller_payload_mode_t vlessserverResolvePayloadMode(tunnel_t *owner, line_t *line)
+{
+    const vlessserver_lstate_t *ls = lineGetState(line, owner);
+    return ls->line_kind == kVlessServerLineKindUdpRemote ? kUserControllerPayloadDatagram
+                                                          : kUserControllerPayloadStream;
+}
+
 static bool vlessserverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
 {
     vlessserver_tstate_t *ts = tunnelGetState(t);
@@ -97,6 +104,7 @@ static bool vlessserverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
         return false;
     }
 
+    usercontrollerSetPayloadModeResolver(ts->user_controller_tunnel, t, vlessserverResolvePayloadMode);
     ts->user_controller_node.instance = ts->user_controller_tunnel;
     return true;
 }

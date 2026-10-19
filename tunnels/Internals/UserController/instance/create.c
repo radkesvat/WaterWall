@@ -36,7 +36,7 @@ static bool parseAuthClientNode(usercontroller_tstate_t *ts, node_t *node, const
 
 static bool parseSettings(usercontroller_tstate_t *ts, node_t *node, const cJSON *settings)
 {
-    const cJSON *auth_node_json    = cJSON_GetObjectItemCaseSensitive(settings, "auth-client-node-name");
+    const cJSON *auth_node_json = cJSON_GetObjectItemCaseSensitive(settings, "auth-client-node-name");
     int          sweep_interval_ms;
 
     if (! cJSON_IsString(auth_node_json) || auth_node_json->valuestring == NULL ||
@@ -56,6 +56,29 @@ static bool parseSettings(usercontroller_tstate_t *ts, node_t *node, const cJSON
     }
     ts->sweep_interval_ms = (uint32_t) sweep_interval_ms;
 
+    const cJSON *mode = cJSON_GetObjectItemCaseSensitive(settings, "payload-mode");
+    if (mode != NULL)
+    {
+        if (cJSON_IsString(mode) && stringCompare(mode->valuestring, "stream") == 0)
+        {
+            ts->fixed_payload_mode = kUserControllerPayloadStream;
+        }
+        else if (cJSON_IsString(mode) && stringCompare(mode->valuestring, "datagram") == 0)
+        {
+            ts->fixed_payload_mode = kUserControllerPayloadDatagram;
+        }
+        else if (cJSON_IsString(mode) && stringCompare(mode->valuestring, "dest_context->protocol") == 0)
+        {
+            ts->payload_mode_from_destination = true;
+        }
+        else
+        {
+            LOGF("JSON Error: UserController->settings->payload-mode must be stream, datagram, or "
+                 "dest_context->protocol");
+            return false;
+        }
+    }
+
     return parseAuthClientNode(ts, node, auth_node_json->valuestring);
 }
 
@@ -74,16 +97,20 @@ tunnel_t *usercontrollerTunnelCreate(node_t *node)
     t->fnEstU     = &usercontrollerTunnelUpStreamEst;
     t->fnFinU     = &usercontrollerTunnelUpStreamFinish;
     t->fnPayloadU = &usercontrollerTunnelUpStreamPayload;
+    t->fnPauseU   = &usercontrollerTunnelUpStreamPause;
+    t->fnResumeU  = &usercontrollerTunnelUpStreamResume;
 
     t->fnInitD    = &usercontrollerTunnelDownStreamInit;
     t->fnFinD     = &usercontrollerTunnelDownStreamFinish;
     t->fnPayloadD = &usercontrollerTunnelDownStreamPayload;
+    t->fnPauseD   = &usercontrollerTunnelDownStreamPause;
+    t->fnResumeD  = &usercontrollerTunnelDownStreamResume;
 
-    t->onPrepare       = &usercontrollerTunnelOnPrepair;
-    t->onStart         = &usercontrollerTunnelOnStart;
-    t->onWorkerQuiesce = &usercontrollerTunnelOnWorkerQuiesce;
-    t->onWorkerStop    = &usercontrollerTunnelOnWorkerStop;
-    t->onDestroy       = &usercontrollerTunnelDestroy;
+    t->onPrepare        = &usercontrollerTunnelOnPrepair;
+    t->onStart          = &usercontrollerTunnelOnStart;
+    t->onQuiesceRequest = &usercontrollerTunnelOnQuiesceRequest;
+    t->onWorkerQuiesce  = &usercontrollerTunnelOnWorkerQuiesce;
+    t->onDestroy        = &usercontrollerTunnelDestroy;
 
     if (! checkJsonIsObjectAndHasChild(settings))
     {
@@ -92,8 +119,8 @@ tunnel_t *usercontrollerTunnelCreate(node_t *node)
         return NULL;
     }
 
-    ts->worker_count      = getWorkersCount();
-    ts->worker_states     = memoryAllocateZero(sizeof(*ts->worker_states) * ts->worker_count);
+    ts->worker_count  = getWorkersCount();
+    ts->worker_states = memoryAllocateZero(sizeof(*ts->worker_states) * ts->worker_count);
     if (! parseSettings(ts, node, settings))
     {
         usercontrollerTunnelstateDestroy(ts);

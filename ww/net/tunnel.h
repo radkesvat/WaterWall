@@ -79,8 +79,9 @@ typedef void (*TunnelFlowRoutineFin)(tunnel_t *, line_t *line);
  * Pause/Resume are repeatable advisory notifications, not counted holds or a
  * core Payload gate. Ordinary middle tunnels use the forwarding defaults and
  * may deliver due scheduled output without waiting for Resume. Adapters and
- * exact-line heads/tails control their producers; SpeedLimit also combines its
- * local hold with consumer pressure. Every receiver retains its hard limits.
+ * exact-line heads/tails control their producers; SpeedLimit and bandwidth-enabled
+ * UserController combine their local hold with consumer pressure. Every receiver
+ * retains its hard limits.
  *
  * A middle tunnel originating Pause must arrange its own Resume or close even
  * if no further input arrives. An advisory Resume may override another node's

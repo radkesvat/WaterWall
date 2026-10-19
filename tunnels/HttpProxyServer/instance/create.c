@@ -2,6 +2,13 @@
 #include "internal.h"
 #include "loggers/network_logger.h"
 
+static usercontroller_payload_mode_t httpproxyserverResolvePayloadMode(tunnel_t *owner, line_t *line)
+{
+    discard owner;
+    discard line;
+    return kUserControllerPayloadStream;
+}
+
 tunnel_t *httpproxyserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(hps_tstate_t), sizeof(hps_lstate_t));
@@ -42,6 +49,7 @@ tunnel_t *httpproxyserverTunnelCreate(node_t *node)
         ts->controller = nodemanagerCreateTunnelInstance(&ts->controller_node);
         if (! ts->controller)
             goto fail;
+        usercontrollerSetPayloadModeResolver(ts->controller, t, httpproxyserverResolvePayloadMode);
         ts->controller_node.instance = ts->controller;
     }
     return t;

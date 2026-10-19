@@ -6,7 +6,11 @@ waterwall.socks5client_tcp_auth_splice_false, waterwall.socks5client_tcp_auth_sp
 waterwall.socks5client_tcp_noauth_splice_false, waterwall.socks5client_tcp_noauth_splice_true,
 waterwall.socks5client_udp_ordinary_reads, waterwall.socks5server_tcp_auth_splice_false,
 waterwall.socks5server_tcp_auth_splice_true, waterwall.socks5server_tcp_noauth_splice_false,
-waterwall.socks5server_tcp_noauth_splice_true, waterwall.socks5server_udp_ordinary_reads."""
+waterwall.socks5server_tcp_noauth_splice_true, waterwall.socks5server_udp_ordinary_reads.
+The socks5server_udp_auth_bandwidth_splice_false/true variants use AuthenticationClient
+and finite UserController rates, checking whole packets larger than the ordinary burst,
+FIFO in both directions and clean shutdown. Controlled-time native tests own rate precision;
+these namespace cases have no wall-clock throughput threshold."""
 import concurrent.futures
 import json
 from pathlib import Path
@@ -34,7 +38,7 @@ REPLY = b"\x05\x00\x00\x01" + bytes(6)
 CREDENTIALS = b"\x01\x01u\x01p"
 
 
-def udp_roundtrip(backend, is_client, control):
+def udp_roundtrip(backend, is_client, control, authenticated=False, bandwidth=False):
     payloads = (b"first", bytes(range(256)) * 8, b"")
     envelope = b"\x00\x00\x00\x01" + socket.inet_aton(HOST)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as application:
@@ -62,8 +66,13 @@ def udp_roundtrip(backend, is_client, control):
                         assert received == payload[::-1] and source == (HOST, LISTEN_PORT), "UDP reply changed"
         else:
             with control:
-                control.sendall(b"\x05\x01\x00")
-                assert exact(control, 2) == b"\x05\x00", "noauth UDP method rejected"
+                control.settimeout(15)
+                method = 2 if authenticated else 0
+                control.sendall(bytes([5, 1, method]))
+                assert exact(control, 2) == bytes([5, method]), "UDP authentication method rejected"
+                if authenticated:
+                    control.sendall(CREDENTIALS)
+                    assert exact(control, 2) == b"\x01\x00", "UDP authentication failed"
                 control.sendall(b"\x05\x03\x00\x01" + bytes(6))
                 reply = exact(control, 10)
                 assert reply[:8] == b"\x05\x00\x00\x01" + socket.inet_aton(HOST), "wrong UDP relay reply"
@@ -78,8 +87,32 @@ def udp_roundtrip(backend, is_client, control):
                     backend.sendto(payload[::-1], source)
                     assert application.recv(65535) == prefix + payload[::-1], "UDP server reply envelope changed"
 
+                if bandwidth:
+                    # 8192-byte packets exceed the 6554-byte ordinary burst. Send
+                    # a complete batch before receiving so both shaping directions
+                    # must preserve indivisible datagrams and FIFO while retaining input.
+                    batch = (bytes(range(256)) * 32, b"middle", b"",
+                             bytes(reversed(range(256))) * 32, b"last")
+                    for payload in batch:
+                        application.send(prefix + payload)
+                    sources = []
+                    for payload in batch:
+                        received, source = backend.recvfrom(65535)
+                        assert received == payload, "shaped UDP upload changed packet boundaries or FIFO"
+                        sources.append(source)
+                    for payload, source in zip(batch, sources):
+                        backend.sendto(payload[::-1], source)
+                    for index, payload in enumerate(batch):
+                        try:
+                            received = application.recv(65535)
+                        except TimeoutError as error:
+                            raise AssertionError(f"shaped UDP download packet {index} "
+                                                 f"({len(payload)} payload bytes) did not arrive") from error
+                        assert received == prefix + payload[::-1], \
+                            f"shaped UDP download packet {index} changed boundaries or FIFO"
 
-def run(binary, side, enabled, authenticated):
+
+def run(binary, side, enabled, authenticated, bandwidth=False):
     tracer = shutil.which("strace")
     if tracer is None:
         raise RuntimeError("strace is required for pipe-to-socket evidence")
@@ -96,7 +129,8 @@ def run(binary, side, enabled, authenticated):
         if is_client:
             settings.update({"username": "u", "password": "p"})
         else:
-            settings = {"connect": True, "udp": False, "auth-client-node-name": "auth-client"}
+            settings.pop("no-auth")
+            settings["auth-client-node-name"] = "auth-client"
     # Keep the runtime's parent directory small and controlled as well as its CWD.
     with RunDirectory("waterwall-socks5-splice-") as directory:
         root = Path(directory) / "run"
@@ -115,8 +149,11 @@ def run(binary, side, enabled, authenticated):
         if authenticated and not is_client:
             fixture = Path(__file__).resolve().parent / "cases/socks5_connect_large_body_probe/config.json"
             nodes = json.loads(fixture.read_text())["nodes"][:2] + nodes
+            user = {"id": 1001, "password": "u:p", "enabled": True}
+            if bandwidth:
+                user["limit"] = {"bandwidth": {"up": 65536, "down": 65536}}
             (root / "users.json").write_text(json.dumps({
-                "users": [{"id": 1001, "password": "u:p", "enabled": True}]}))
+                "users": [user]}))
         if is_client and not udp:
             (root / "hosts").write_text(f"{HOST} origin.test\n")
         (root / "config.json").write_text(json.dumps({"name": "socks5-splice", "nodes": nodes}))
@@ -162,7 +199,7 @@ def run(binary, side, enabled, authenticated):
                         time.sleep(.02)
 
                 if udp:
-                    udp_roundtrip(backend, is_client, client)
+                    udp_roundtrip(backend, is_client, client, authenticated, bandwidth)
                     process.send_signal(signal.SIGTERM)
                     assert process.wait(timeout=10) == 128 + signal.SIGTERM, "unclean SOCKS UDP shutdown"
                     assert "splice(" not in (root / "splice.log").read_text(), "UDP association attempted splice I/O"
@@ -226,5 +263,6 @@ def run(binary, side, enabled, authenticated):
 
 if __name__ == "__main__":
     install_termination_handler()
-    run(str(Path(sys.argv[1]).resolve()), sys.argv[2], sys.argv[3] == "true", sys.argv[4] == "auth")
+    run(str(Path(sys.argv[1]).resolve()), sys.argv[2], sys.argv[3] == "true",
+        sys.argv[4] in ("auth", "auth_bandwidth"), sys.argv[4] == "auth_bandwidth")
     print("SOCKS5 setup, socket roundtrip and splice policy passed")

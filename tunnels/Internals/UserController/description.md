@@ -1,11 +1,11 @@
 <!--
-Documentation version: 155
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UserController.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UserController.mdx, and all files must keep the same documentation version.
 -->
 
 # UserController Node
 
-`UserController` is a middle (stream) node that enforces per-user limits for traffic-serving chains.
+`UserController` is a middle node for stream or datagram normal lines that enforces per-user limits for traffic-serving chains.
 
 It does not open sockets or perform protocol parsing. It sits behind a node that authenticates users (such as
 `Socks5Server`) and in front of the outbound side of the chain (such as `TcpConnector`). For every authenticated line
@@ -38,9 +38,9 @@ UdpStatelessSocket -> UserController -> WireGuardDevice -> TunDevice   (line sta
 TunDevice -> WireGuardDevice -> UserController -> UdpStatelessSocket   (line starts from next)
 ```
 
-In both layouts the per-peer line first passes through unmanaged (no user yet). Once `WireGuardDevice` authenticates the
-peer it records the user with `lineAddUser()` and calls the [programmatic promotion API](#programmatic-promotion-api) to
-apply that user's limits on demand.
+In both layouts the per-peer line first passes through unmanaged (no user yet). A custom authenticating integration can record a user with `lineAddUser()` and call the
+[programmatic promotion API](#programmatic-promotion-api). WireGuardDevice currently uses its configured peers and does
+not attach database users; its internal controller therefore remains unmanaged transport plumbing.
 
 `UserController` is bidirectional: it works whether the line is initiated from its `prev` side (an upstream `Init`) or
 its `next` side (a downstream `Init`), and it records that origin per line. The origin matters for traffic accounting —
@@ -56,6 +56,7 @@ see [Direction Awareness](#direction-awareness-upload-vs-download).
   "type": "UserController",
   "settings": {
     "auth-client-node-name": "auth-client",
+    "payload-mode": "stream",
     "sweep-interval-ms": 1000,
     "verbose": false
   }
@@ -80,6 +81,10 @@ uses that node instance; it does not create an authentication client.
 - `auth-client-node-name` `(string, required)`
   Name of an existing `AuthenticationClient` node in the same config file. It must point to an `AuthenticationClient`,
   not to `UserController` itself.
+
+- `payload-mode` `(string, required for manual instances)`
+  Exactly `"stream"`, `"datagram"`, or `"dest_context->protocol"`. The last option reads TCP/UDP destination metadata once
+  during Init. Internal creators bind a metadata resolver instead; conflicting or missing sources are rejected.
 
 - `verbose` `(optional boolean, default: false)`
   Reserved for additional debug logging.
@@ -108,10 +113,10 @@ uses that node instance; it does not create an authentication client.
   their existing connections are closed.
 
 - `traffic` (`up` / `down` / `total`)
-  Each payload's actual bytes are passed to AuthenticationClient, which applies its `traffic-multiplier` once and advances
+  Each delivery's actual bytes are passed at handoff to AuthenticationClient, which applies its `traffic-multiplier` once and advances
   cumulative charged upload/download counters. When the quota is reached, new
-  connections are rejected and already-open connections are closed. (This is the data-volume quota, not a bytes-per-second
-  speed limit; `bandwidth` speed limiting is not handled by this node.)
+  connections are rejected and already-open connections are closed. Quota is charged at onward handoff, independently
+  of bandwidth enforcement.
 
 - `enabled`
   Disabled users (`enabled: false`) may not open new connections and their existing connections are closed. The node
@@ -124,8 +129,73 @@ cumulative traffic counters.
 New managed lines use AuthenticationClient cached-admission availability. Existing managed lines keep accounting,
 payload expiry checks, idle sweeps and reservation release during ordinary outages or explicit credential rejection.
 Cached quotas and reservations are local; multiple disconnected clients may overshoot aggregate quotas. Relative
-expiry starts with actual first nonzero accounted traffic, even while duration is initially zero; enabling duration
+expiry starts with the first positive measured arrival, even while duration is initially zero; enabling duration
 later uses that retained age. Explicit duration and absolute-date edits recompute their components independently.
+
+## Bandwidth And Payload Framing
+
+`limit.bandwidth.u` / `up` and `.d` / `down` are actual logical bytes per second. Zero means unlimited;
+the full unsigned 64-bit range is supported. One user's upload and download allowances are independent and shared
+by every connection, controller and worker using the same `AuthenticationClient` instance. Other users and other
+client instances have independent allowances. This is local enforcement, without coordination between machines.
+`traffic-multiplier` changes charged quota bytes only; it never changes rates, bursts, queue sizes or clocks.
+
+For finite rate `R`, ordinary burst capacity is `max(1, ceil(R / 10))` bytes: approximately 100 ms, with a one-byte
+minimum at very low rates. Contending eligible queues receive bounded FIFO turns. A whole datagram can hold its turn
+while earning credit; fairness does not promise equal latency. Streams retain excess bytes in FIFO order and may split a delivery. Datagrams remain whole and ordered,
+including empty datagrams, which consume no rate or quota. A datagram larger than ordinary burst capacity earns its
+complete credit before release, even at 1 byte/s; the instantaneous burst has a one-datagram exception. Idle time before
+that head became eligible supplies only ordinary burst credit. Canceling or pausing the head releases its turn and
+clamps transferable credit to ordinary capacity. Payloads over 65,535 bytes are refused in datagram mode; smaller
+protocol-specific limits still apply.
+
+Retained data, prepared fragments and queue entries share these hard resource limits in both directions combined:
+
+| Scope | Logical bytes | Allocation charge | Buffers | Queued direction tickets |
+| --- | ---: | ---: | ---: | ---: |
+| One managed line | 1 MiB | 2 MiB | 256 | 2 |
+| One user in one AuthenticationClient | 4 MiB | 8 MiB | 1024 | 1024 |
+| One AuthenticationClient | 64 MiB | 128 MiB | 16384 | 16384 |
+
+These are resource ceilings, not configurable bandwidth rates. Stream admission refusal closes the affected line and
+discards retained bytes. Datagram overflow drops only the newly refused datagram; accepted FIFO entries survive.
+Required timer or continuation refusal closes the affected line in either mode. Dropped or discarded data is never charged.
+Consumer Pause stops that direction's drain and fair-turn eligibility. Resume arranges progress before notifying the
+producer. For streams, local shaping pressure and external consumer pressure are independent holds. Datagram backlog
+alone never sends producer Pause/Resume: UDP producers may drop arrivals while paused, before this node's queue is full.
+Datagrams continue entering the bounded queue while waiting for rate credit; explicit external consumer Pause/Resume
+still applies and is propagated to the producer.
+
+First positive measured arrival starts first-use expiry and reporting before queueing, including offline and discounted
+traffic; zero length alone does not start use. Quota is charged exactly once, with the multiplier, immediately before
+Payload ownership is handed onward. The final permitted chunk is handed off once even if it exhausts or crosses quota,
+then the still-live line closes. An already exhausted user receives no further grant. Handoff does not confirm socket delivery.
+
+Configuration refresh preserves same-ID bucket credit, fractional refill, timestamps and queue identity, including password
+replacement. Rate changes settle old-rate credit first and clamp it to the new capacity; unchanged refresh adds no burst.
+Finite-to-unlimited changes preserve the queued FIFO. Unlimited-to-finite initializes one ordinary burst. Existing managed
+lines keep cached enforcement through ordinary authentication-client outages or credential rejection.
+
+Manual instances require an explicit `payload-mode`, even when current users are unlimited:
+
+| Value | Payload handling |
+| --- | --- |
+| `stream` | Bytes may be split across deliveries. |
+| `datagram` | Each payload remains one whole datagram. |
+| `dest_context->protocol` | Read the destination protocol once during Init: exactly TCP selects stream; exactly UDP selects datagram. |
+
+Destination-context mode rejects the line if the protocol is missing, ambiguous or unsupported. Use it only when the
+destination protocol is available before Init and describes the payload at this node's position. A transport conversion
+can leave UDP routing metadata on a line carrying decoded stream bytes, so destination detection is never an automatic
+fallback for an omitted setting.
+
+Internal creators instead bind `usercontrollerSetPayloadModeResolver(controller, owner, resolver)` immediately after
+construction, before preparation. A configured mode and a resolver cannot both be supplied. The pure owner-worker
+metadata query runs once in either Init direction; every mode source is resolved and saved before admission or forwarding.
+The saved mode also governs later promotion and cannot change with destination metadata.
+SOCKS/Trojan/VLESS resolve initialized TCP versus decoded UDP remote-line roles; HTTP fixes stream mode; WireGuard fixes
+datagram mode on its normal transport side in either orientation. Packet lines never enter UserController. This binding
+does not add WireGuard database-user authentication; its existing unmanaged transport behavior remains.
 
 ## Direction Awareness (Upload vs Download)
 
@@ -145,7 +215,7 @@ otherwise identical in both directions.
 
 ## Where Limit State Lives
 
-Live enforcement state (current outbound connection count and the set of in-use source IPs) is stored on the `user_t`
+Live enforcement state (connection/IP reservations, directional rate buckets and fair-turn tickets) is stored on the `user_t`
 object inside `AuthenticationClient`, in a dedicated process-local `runtime` field that is never serialized or synced to
 `AuthenticationServer`. Charged traffic is added to the normal `stats.traffic` counters. The multiplier is configured
 on AuthenticationClient, not UserController; physical payload length, bandwidth and speed are unchanged. The client
@@ -155,25 +225,24 @@ Login, reservation, zero-byte calls and rebasing do not start or restart it. All
 `AuthenticationClient` helpers, so `UserController` never holds a raw `user_t` pointer.
 
 During a full users-table refresh (`GetAllUsers`), matching users are found by durable user id and their process-local runtime
-connection/IP counters are moved to the refreshed user object. Runtime clock evidence, elapsed age and per-direction
+connection/IP counters and shaping state are moved to the refreshed user object. Runtime clock evidence, elapsed age and per-direction
 fractional charge remainders move with those reservations. New expiry policy is projected separately from canonical
 wall/accounting clock metadata; unchanged pulls never extend an existing countdown.
 
 ## Lifecycle Behavior
 
-- On `Init` from either side, the node initializes its line state, records the origin direction, and reads the current
-  user handle. For an authenticated line it atomically checks all limits and reserves a connection slot (and an IP slot).
+- On `Init` from either side, the node initializes its line state, records the origin direction, resolves and saves the
+  payload mode, and reads the current user handle. An unresolved mode rejects even an anonymous line. For an authenticated
+  line it atomically checks all limits and reserves a connection slot (and an IP slot).
   On an upstream `Init` (line from `prev`) it forwards `tunnelNextUpStreamInit()` on success and, on rejection, finishes
   the prev side. On a downstream `Init` (line from `next`) it forwards `tunnelPrevDownStreamInit()` on success and, on
   rejection, finishes the next side. In both cases the rejection path destroys its own line state and never opens the
   far side. Lines that carry no user handle at `Init` pass through unmanaged and can be promoted later through the
   [programmatic promotion API](#programmatic-promotion-api).
 
-- On each payload, it passes measured bytes in the direction selected by the line origin to AuthenticationClient for
-  charging and quota enforcement. First measured traffic starts expiry even when a discounted charge rounds to zero.
-  The AuthClient accounting helper internally asks for one coalesced early `PushUserStats` attempt when the first non-zero
-  local traffic creates an unacknowledged producer observation, independently of canonical first use. If the user is now over quota, expired, or
-  disabled, it recycles the buffer and tears the line down in both directions.
+- On positive payload arrival, it observes first use and checks eligibility before retaining any data. It prepares exact
+  delivery, then commits bandwidth and quota immediately before handoff. A final quota-exhausting candidate is forwarded
+  once before close; queued or discarded bytes are not charged. First-use reporting remains coalesced and independent of delivery.
 
 - A per-worker sweep timer checks open managed lines even when they are idle, so disabled, expired, removed, or
   over-quota users are cut off without waiting for another payload.
@@ -184,7 +253,7 @@ wall/accounting clock metadata; unchanged pulls never extend an existing countdo
 ## Programmatic Promotion API
 
 For nodes that authenticate a user only after the line is already open (see [Typical Placement](#typical-placement)),
-`UserController` exposes one function in its public `interface.h`:
+`UserController` exposes a promotion function in its public `interface.h`:
 
 ```c
 WW_EXPORT user_admission_result_t usercontrollerTunnelTryManageLine(tunnel_t *t, line_t *l);
@@ -211,7 +280,7 @@ Contract:
   rejection** and must close/drop the line itself; it must not treat a rejected line as admitted. A non-OK call reserves
   nothing, so retrying later is safe.
 - Call it on the line's owner worker (`lineIsOnCurrentEventWorker(l)`), and only on a normal line that has already traversed
-  this `UserController` instance. Do not call it on packet lines.
+  this `UserController` instance. It retains the payload mode saved during Init. Do not call it on packet lines.
 - Once a line is managed this way, traffic accounting, the idle sweep, and `Finish`-time slot release all apply exactly
   as they do for a line admitted at `Init`; no extra teardown wiring is needed on the caller side.
 
@@ -234,7 +303,7 @@ if (admission != kUserAdmissionOk)
 - This node requires `AuthenticationClient`; node creation fails if `auth-client-node-name` is missing or wrong.
 - This node does not require left padding and does not prepend in-place.
 - This node is not a packet tunnel and does not use packet-line semantics.
-- Speed (bytes-per-second / `bandwidth`) limiting is out of scope; use `SpeedLimit` for that.
+- Bandwidth enforcement is provided by UserController itself; no SpeedLimit node is inserted.
 
 ## Node Metadata
 
@@ -252,6 +321,6 @@ Source-backed metadata:
 
 ## Splice support
 
-Allowed and unmanaged payloads pass through opaquely in both directions. Traffic accounting uses logical payload bytes, including resident prefixes, with the existing reversed upload/download mapping for lines started from next. Rejection recycles the still-owned buffer and discards its private-pipe bytes before closing through the existing lifecycle.
+Unmanaged and unlimited immediate payloads pass through opaquely in both directions. Shaped queues preserve whole datagrams and split streams through `sbufMoveRangeTo()`, including private pipes with ordinary fallback. Prepared output remains budgeted until handoff or discard. Traffic accounting uses logical payload bytes, including resident prefixes, with the existing reversed upload/download mapping for lines started from next. Rejection recycles the still-owned buffer and discards its private-pipe bytes before closing through the existing lifecycle.
 
 Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.

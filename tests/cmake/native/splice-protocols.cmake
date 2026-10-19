@@ -91,7 +91,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET HeaderClient AND TARGET Bridge 
   target_link_libraries(easy_nodes_splice_test PRIVATE HeaderClient Bridge BlackHole UserController AuthenticationClient JunkDatagramSender ww)
   target_link_options(easy_nodes_splice_test PRIVATE
     "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=snprintf" "-Wl,--wrap=__snprintf_chk"
-    "-Wl,--wrap=authenticationclientUserAccountTraffic" "-Wl,--wrap=authenticationclientUserReleaseConnection")
+    "-Wl,--wrap=authenticationclientUserObservePayload"
+    "-Wl,--wrap=authenticationclientUserBandwidthPreview"
+    "-Wl,--wrap=authenticationclientUserCommitDelivery"
+    "-Wl,--wrap=authenticationclientUserReleaseConnection")
   add_dependencies(waterwall_unit_tests easy_nodes_splice_test)
   add_waterwall_unit_test(waterwall.easy_nodes_splice_unit easy_nodes_splice_test "unit;tunnels;splice;buffers;ownership")
 endif()

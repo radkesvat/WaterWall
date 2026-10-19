@@ -29,6 +29,17 @@ if(TARGET WireGuardDevice)
 endif()
 
 if(LINUX AND TARGET WireGuardDevice)
+  waterwall_add_native_executable(wireguarddevice_controller_mode_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguarddevice_controller_mode_test.c)
+  target_include_directories(wireguarddevice_controller_mode_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice)
+  target_link_libraries(wireguarddevice_controller_mode_test PRIVATE WireGuardDevice UserController AuthenticationClient ww)
+  target_link_options(wireguarddevice_controller_mode_test PRIVATE
+    "-Wl,--wrap=nodemanagerGetConfigNodeByName")
+  add_dependencies(waterwall_unit_tests wireguarddevice_controller_mode_test)
+  add_waterwall_unit_test(waterwall.wireguarddevice_controller_mode_unit wireguarddevice_controller_mode_test
+    "unit;tunnels;wireguard;usercontroller;framing;line")
+
   waterwall_add_native_executable(wireguard_crypto_failure_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/crypto/wireguard_crypto_failure_test.c
     ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/common/wireguard.c)
   target_link_libraries(wireguard_crypto_failure_test PRIVATE ww_test_support)

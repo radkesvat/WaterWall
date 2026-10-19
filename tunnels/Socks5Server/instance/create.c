@@ -124,6 +124,12 @@ static bool parseUdpReplyAddress(socks5server_tstate_t *ts, const cJSON *setting
     return true;
 }
 
+static usercontroller_payload_mode_t socks5serverResolvePayloadMode(tunnel_t *owner, line_t *line)
+{
+    const socks5server_lstate_t *ls = lineGetState(line, owner);
+    return ls->kind == kSocks5ServerLineKindUdpRemote ? kUserControllerPayloadDatagram : kUserControllerPayloadStream;
+}
+
 static bool socks5serverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
 {
     socks5server_tstate_t *ts = tunnelGetState(t);
@@ -146,6 +152,7 @@ static bool socks5serverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
         return false;
     }
 
+    usercontrollerSetPayloadModeResolver(ts->user_controller_tunnel, t, socks5serverResolvePayloadMode);
     ts->user_controller_node.instance = ts->user_controller_tunnel;
     return true;
 }
