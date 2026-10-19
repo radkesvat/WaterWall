@@ -1279,9 +1279,9 @@ foreach(ww_lwip_capacity_knob
 endforeach()
 
 # lwIP stores every pool count in a u16_t. The preprocessor guards in lwipopts.h
-# catch an overflow too, but only after a full configure and part of a build, so
+# and lwippools.h catch an overflow too, but only after configure and part of a build, so
 # the derived products are checked here where the mistake was made. The ratios
-# must track lwipopts.h.
+# must track both headers.
 set(ww_lwip_tcp_flows "${WW_LWIP_MAX_TCP_FLOWS}")
 set(ww_lwip_udp_flows "${WW_LWIP_MAX_UDP_FLOWS}")
 set(ww_lwip_reass "${WW_LWIP_MAX_REASS_DATAGRAMS}")
@@ -1304,11 +1304,14 @@ math(EXPR ww_lwip_reass_pbufs "${ww_lwip_reass} * 16")
 math(EXPR ww_lwip_pbuf_pool "${ww_lwip_reass_pbufs} * 3")
 # Mirrors WW_LWIP_RX_WRAPPER_POOL_SIZE in lwipopts.h; the two must agree.
 math(EXPR ww_lwip_rx_wrappers "${ww_lwip_reass_pbufs} + ${ww_lwip_tcp_flows} + 256")
+# Largest malloc class count: four entries per rounded flow share, divisor 4.
+math(EXPR ww_lwip_heap_entries "4 * ((${ww_lwip_tcp_flows} + ${ww_lwip_udp_flows} + 3) / 4)")
 
 foreach(ww_lwip_derived
         "WW_LWIP_MAX_TCP_FLOWS:MEMP_NUM_TCP_SEG:${ww_lwip_tcp_seg}"
         "WW_LWIP_MAX_UDP_FLOWS:MEMP_NUM_UDP_PCB:${ww_lwip_udp_flows}"
         "WW_LWIP_MAX_TCP_LISTENERS:MEMP_NUM_TCP_PCB_LISTEN:${ww_lwip_listeners}"
+        "WW_LWIP_MAX_TCP_FLOWS/WW_LWIP_MAX_UDP_FLOWS:LWIP_MALLOC_MEMPOOL:${ww_lwip_heap_entries}"
         "WW_LWIP_MAX_REASS_DATAGRAMS:IP_REASS_MAX_PBUFS:${ww_lwip_reass_pbufs}"
         "WW_LWIP_MAX_REASS_DATAGRAMS:PBUF_POOL_SIZE:${ww_lwip_pbuf_pool}"
         "WW_LWIP_MAX_REASS_DATAGRAMS:WW_LWIP_RX_WRAPPER_POOL_SIZE:${ww_lwip_rx_wrappers}"

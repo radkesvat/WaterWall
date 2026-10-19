@@ -20,6 +20,9 @@
  * Both flow targets feed the sizing: UDP flows allocate PBUF_RAM from this same
  * heap for every datagram they send, so deriving the classes from the TCP target
  * alone would under-serve a UDP-heavy deployment.
+ * Each rounded flow share reserves four blocks to provide shared send headroom.
+ * At the default flow targets, the classes reserve about 18.5 MiB before allocator
+ * overhead. This static capacity is independent of the runtime RAM profile.
  *
  * WW_LWIP_FULL_MSS_BLOCK is the hot class, and its size is computed rather than
  * guessed. A full-MSS tcp_write(..., COPY) asks pbuf_alloc() for
@@ -46,15 +49,18 @@
                                                               : 1)
 
 #if MEM_USE_POOLS
+#if (WW_LWIP_HEAP_CLASS(4) * 4) > 65535
+#error "WW_LWIP_MAX_TCP_FLOWS / WW_LWIP_MAX_UDP_FLOWS exceed what lwIP's malloc-pool counts can index"
+#endif
 LWIP_MALLOC_MEMPOOL_START
-LWIP_MALLOC_MEMPOOL(WW_LWIP_HEAP_CLASS(4), 256)
-LWIP_MALLOC_MEMPOOL(WW_LWIP_HEAP_CLASS(8), 512)
-LWIP_MALLOC_MEMPOOL(WW_LWIP_HEAP_CLASS(8), 1024)
-LWIP_MALLOC_MEMPOOL(WW_LWIP_HEAP_CLASS(4), WW_LWIP_FULL_MSS_BLOCK)
-LWIP_MALLOC_MEMPOOL(WW_LWIP_HEAP_CLASS(16), 2048)
-LWIP_MALLOC_MEMPOOL(WW_LWIP_HEAP_CLASS(32), 4160)
-LWIP_MALLOC_MEMPOOL(WW_LWIP_HEAP_CLASS(64), 8192)
-LWIP_MALLOC_MEMPOOL(WW_LWIP_HEAP_CLASS(128), 16384)
+LWIP_MALLOC_MEMPOOL((WW_LWIP_HEAP_CLASS(4) * 4), 256)
+LWIP_MALLOC_MEMPOOL((WW_LWIP_HEAP_CLASS(8) * 4), 512)
+LWIP_MALLOC_MEMPOOL((WW_LWIP_HEAP_CLASS(8) * 4), 1024)
+LWIP_MALLOC_MEMPOOL((WW_LWIP_HEAP_CLASS(4) * 4), WW_LWIP_FULL_MSS_BLOCK)
+LWIP_MALLOC_MEMPOOL((WW_LWIP_HEAP_CLASS(16) * 4), 2048)
+LWIP_MALLOC_MEMPOOL((WW_LWIP_HEAP_CLASS(32) * 4), 4160)
+LWIP_MALLOC_MEMPOOL((WW_LWIP_HEAP_CLASS(64) * 4), 8192)
+LWIP_MALLOC_MEMPOOL((WW_LWIP_HEAP_CLASS(128) * 4), 16384)
 LWIP_MALLOC_MEMPOOL_END
 #endif /* MEM_USE_POOLS */
 
