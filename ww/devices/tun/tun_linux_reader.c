@@ -408,7 +408,7 @@ static bool tunReaderDrain(tun_worker_reader_t *lane, worker_t *worker)
     tun_device_t         *tdev   = lane->generation->device;
     tun_offload_reader_t *reader = &lane->offload;
     uint32_t              bytes  = 0;
-    for (unsigned attempts = 0; attempts < 64 && bytes < 64U * 1024U; ++attempts)
+    for (unsigned attempts = 0; attempts < 256 && bytes < 256U * 1024U; ++attempts)
     {
         if (! tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
             return true;

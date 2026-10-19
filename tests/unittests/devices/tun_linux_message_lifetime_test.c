@@ -785,8 +785,8 @@ static void deliverNextGsoMessage(void)
     inside_reader_callback           = false;
     message->callback(&worker, message->arg1, message->arg2, message->arg3);
     inside_reader_callback = previous;
-    require(prepared_gso_segments - before <= 64, "worker segmented more than 64 packets in one callback");
-    require(prepared_gso_bytes - bytes_before <= 65536, "worker segmented more than64 KiB in one callback");
+    require(prepared_gso_segments - before <= 256, "worker segmented more than 256 packets in one callback");
+    require(prepared_gso_bytes - bytes_before <= 256U * 1024U, "worker segmented more than 256 KiB in one callback");
 }
 
 int __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout)
@@ -2938,7 +2938,7 @@ static void testGsoSmallMssContinuationPreservesOrdinaryFifo(void)
     require(callback_count == kSmallMssSegments && prepared_gso_segments == kSmallMssSegments &&
                 ordinary_after_gso_deliveries == 1,
             "worker did not finish an aggregate above2048 segments followed by ordinary input");
-    require(gso_messages_delivered >= (kSmallMssSegments + 63) / 64,
+    require(gso_messages_delivered >= (kSmallMssSegments + 255) / 256,
             "large aggregate did not yield bounded worker continuations");
     require(atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0,
@@ -2954,10 +2954,10 @@ static void observeGsoByteQuantum(tun_device_t *tdev, void *userdata, sbuf_t *bu
     discard            tdev;
     discard            userdata;
     const uint8_t     *ip        = sbufGetRawPtr(buf);
-    const unsigned int offset    = callback_count * 1460;
+    const unsigned int offset    = (callback_count % 45) * 1460;
     const unsigned int remaining = 65535 - 40 - offset;
     const unsigned int payload   = min(remaining, 1460U);
-    require(callback_count < 45 && sbufGetLength(buf) == 40 + payload && GET_BE32(ip + 24) == 1000 + offset &&
+    require(callback_count < 4 * 45 && sbufGetLength(buf) == 40 + payload && GET_BE32(ip + 24) == 1000 + offset &&
                 gsoSegmentChecksumsValid(ip, sbufGetLength(buf)),
             "byte-quantum continuation lost packet geometry, order, or checksum");
     for (unsigned int i = 0; i < payload; ++i)
@@ -2985,14 +2985,26 @@ static void testGsoWorkerYieldsAtByteQuantum(void)
     {
         ip[40 + i] = (uint8_t) i;
     }
-    const injected_io_result_t reads[] = {{.result = sizeof(record), .bytes = record}, {.result = -1, .error = EIO}};
+    /* Four full-size records fit the packet quantum but their segmented output
+     * exceeds 256 KiB. They also reach the native reader's byte quantum. */
+    const injected_io_result_t reads[] = {{.result = sizeof(record), .bytes = record},
+                                          {.result = sizeof(record), .bytes = record},
+                                          {.result = sizeof(record), .bytes = record},
+                                          {.result = sizeof(record), .bytes = record},
+                                          {.result = -1, .error = EIO}};
     armDeviceReads(reads, ARRAY_SIZE(reads));
-    drive_worker_delivery  = true;
-    gso_probe_session      = tunLinuxReaderSession(tdev);
-    callback_count         = 0;
+    drive_worker_delivery        = true;
+    gso_deliver_after_read_calls = 4;
+    gso_probe_session            = tunLinuxReaderSession(tdev);
+    callback_count               = 0;
+    inside_reader_callback       = true;
+    reader_ready_callback(&reader_io);
+    inside_reader_callback = false;
+    require(observed_read_calls == 4 && callback_count == 0,
+            "native reader failed to yield after reaching its byte quantum");
     runReaderUntilIdle();
-    require(callback_count == 45 && prepared_gso_segments == 45 && gso_messages_delivered >= 2,
-            "worker failed to yield a full-size aggregate at its byte quantum");
+    require(callback_count == 4 * 45 && prepared_gso_segments == 4 * 45 && gso_messages_delivered >= 2,
+            "worker failed to yield repeated full-size aggregates at its byte quantum");
     require(atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0 &&
                 atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) == 0,
             "byte-quantum continuation leaked retained work");

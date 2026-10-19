@@ -1015,18 +1015,18 @@ static void testWorkerQueueBatchesCompletedAggregates(test_env_t *env)
 {
     /* Small records share one callback, but combined packet and byte limits
      * still force a continuation. This also catches yielding once per record. */
-    const unsigned int counts[]          = {3, 65, 2};
-    const uint32_t     sizes[]           = {100, 100, 40000};
-    const unsigned int first_completed[] = {3, 64, 1};
+    const unsigned int counts[]          = {3, 257, 2};
+    const uint32_t     sizes[]           = {100, 100, 140000};
+    const unsigned int first_completed[] = {3, 256, 1};
     for (unsigned int test = 0; test < ARRAY_SIZE(counts); ++test)
     {
         resetCapturedMessages();
         reader_probe_t           probe   = {0};
         device_reader_session_t *session = createSession(env, &probe, 4);
-        require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 256) &&
+        require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 1024) &&
                     deviceReaderSessionEnableWorkerQueue(session) && deviceReaderSessionBegin(session) != 0,
                 "failed to initialize aggregate batching fixture");
-        worker_work_probe_t work[65] = {0};
+        worker_work_probe_t work[257] = {0};
         for (unsigned int i = 0; i < counts[test]; ++i)
         {
             work[i].target_steps = 1;
@@ -1425,15 +1425,15 @@ static void testReceiveBurstBoundsAndSettlement(test_env_t *env)
 {
     /* One bounded inline drain replaces the self-notification, while packet,
      * byte, oversized-singleton and refused-continuation rules stay intact. */
-    const unsigned int counts[]  = {6, 65, 2, 1, 65};
-    const uint32_t     lengths[] = {100, 100, 40000, 70000, 100};
-    const unsigned int first[]   = {6, 64, 1, 1, 64};
+    const unsigned int counts[]  = {6, 257, 2, 1, 257};
+    const uint32_t     lengths[] = {100, 100, 140000, 280000, 100};
+    const unsigned int first[]   = {6, 256, 1, 1, 256};
     for (unsigned int test = 0; test < ARRAY_SIZE(counts); ++test)
     {
         resetCapturedMessages();
         reader_probe_t           delivered = {0};
         device_reader_session_t *session   = createSession(env, &delivered, 1);
-        require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 128) &&
+        require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 512) &&
                     deviceReaderSessionEnableWorkerQueue(session) && deviceReaderSessionBegin(session) != 0,
                 "failed to configure bounded receive-burst fixture");
         wloop_t *loop = wloopCreate(0, env->worker_buffer_pool, 0);
@@ -1572,9 +1572,9 @@ static void testGenericPacketBatchParticipants(test_env_t *env)
 
     /* Both the FIFO and legacy message path expose the same bounded scope.
      * Participants join lazily on delivery and can rejoin the next quantum. */
-    const unsigned int counts[]  = {65, 2, 1};
-    const uint32_t     lengths[] = {100, 40000, 70000};
-    const unsigned int first[]   = {64, 1, 1};
+    const unsigned int counts[]  = {257, 2, 1};
+    const uint32_t     lengths[] = {100, 140000, 280000};
+    const unsigned int first[]   = {256, 1, 1};
     for (unsigned int fifo = 0; fifo < 2; ++fifo)
     {
         for (unsigned int test = 0; test < ARRAY_SIZE(counts); ++test)
@@ -1583,13 +1583,13 @@ static void testGenericPacketBatchParticipants(test_env_t *env)
             reader = (reader_probe_t) {0};
             initializePacketBatchProbe(&probe, &reader);
             reader.packet_batch              = &probe;
-            device_reader_session_t *session = createSession(env, &reader, 128);
+            device_reader_session_t *session = createSession(env, &reader, 512);
             if (fifo)
-                require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 128) &&
+                require(deviceReaderSessionConfigureOutputBudget(session, 1024 * 1024, 512) &&
                             deviceReaderSessionEnableWorkerQueue(session),
                         "failed to configure packet scope FIFO");
             require(deviceReaderSessionBegin(session) != 0, "failed to begin packet scope fixture");
-            sbuf_t *packets[65];
+            sbuf_t *packets[257];
             for (unsigned int i = 0; i < counts[test]; ++i)
             {
                 packets[i] = sbufCreate(lengths[test]);

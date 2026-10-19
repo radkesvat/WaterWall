@@ -8,8 +8,8 @@
 
 enum
 {
-    kDeviceReaderWorkerPacketQuantum = 64,
-    kDeviceReaderWorkerByteQuantum   = 64 * 1024
+    kDeviceReaderWorkerPacketQuantum = 256,
+    kDeviceReaderWorkerByteQuantum   = 256 * 1024
 };
 
 bool deviceReaderSessionEnableWorkerQueue(device_reader_session_t *session)
