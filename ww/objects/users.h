@@ -5,7 +5,9 @@
  * Ownership:
  * - users_t owns every user_t it returns.
  * - Returned user_t pointers point into users_t-owned storage and remain valid
- *   until that specific user is removed, usersClear(), or usersDestroy().
+ *   until that specific user is removed, usersClear(), usersDestroy(), or a
+ *   successful non-self usersCopy() replaces this destination. Copy invalidates
+ *   every old destination user/string pointer; failure preserves the destination.
  *   Other users keep stable object addresses across add/remove operations, but
  *   index ordering may change after removal.
  * - Removed user pointers become invalid immediately. Removed storage is not
@@ -64,8 +66,8 @@
  *   reused until usersClear()/usersDestroy().
  * - Add/update/remove are failure-atomic: a failure before the commit point
  *   leaves the table and every index unchanged. An impossible failure after an
- *   irreversible commit restores the indexes from the active users and
- *   terminates, as the current code does.
+ *   irreversible commit emits a fixed fatal diagnostic and terminates directly;
+ *   corrupt removal never allocates or rebuilds indexes.
  */
 
 #include "wlibc.h"
@@ -282,6 +284,9 @@ typedef struct user_config_prepared_patch_s user_config_prepared_patch_t;
 /* Preparation owns selected strings and normalized routing data. The allowance
  * covers its allocation and peak transient normalization storage/scratch. A zero
  * deadline has no time limit. Every failure clears *out. */
+/* Successful config ownership transfer consumes the preparation. It may only be
+ * destroyed afterward. Busy/timeout/precommit refusals leave it reusable.
+ * Prepared fresh-account creation intentionally has different reusable semantics. */
 users_update_result_t usersPrepareConfigPatch(const user_config_patch_t *patch, size_t max_owned_bytes,
                                               uint64_t deadline_ms, user_config_prepared_patch_t **out);
 void                  usersFreePreparedConfigPatch(user_config_prepared_patch_t *prepared);
@@ -327,10 +332,10 @@ users_password_result_t usersTryChangePreparedPasswordByIdentifier(users_t *user
                                                                    user_prepared_password_change_t *prepared,
                                                                    size_t max_working_bytes, uint64_t deadline_ms,
                                                                    users_config_precommit_fn precommit, void *context);
-users_update_result_t usersTryApplyPreparedConfigByIdentifier(users_t *users, uint64_t id,
-                                                              user_config_prepared_patch_t *prepared,
-                                                              size_t max_growth_bytes, uint64_t deadline_ms,
-                                                              users_config_precommit_fn precommit, void *context);
+users_update_result_t   usersTryApplyPreparedConfigByIdentifier(users_t *users, uint64_t id,
+                                                                user_config_prepared_patch_t *prepared,
+                                                                size_t max_growth_bytes, uint64_t deadline_ms,
+                                                                users_config_precommit_fn precommit, void *context);
 /* Fresh private accounts only: preparation derives credentials and owns all
  * selected input before any shared lock. NULL/empty config uses userCreate()
  * defaults. The retained/peak accounting includes aligned private storage,
@@ -367,7 +372,7 @@ users_update_result_t usersAddTrafficByIdentifier(users_t *users, uint64_t id, u
  * and each matched pair's user locks, then stats locks, in address order; callers
  * must not hold any of those locks.
  */
-bool                  usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src);
+bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src);
 /* Owned accounting values, captured under collection -> user -> stats locks.
  * False on unrepresentable array geometry; heap OOM is fatal. Free with memoryFree(). */
 bool usersSnapshotAccounting(const users_t *users, user_accounting_snapshot_t **entries_out, size_t *count_out);
@@ -411,7 +416,7 @@ bool usersUserDisabled(users_t *users, const user_t *user);
 bool usersUserExpired(users_t *users, const user_t *user, uint64_t now_ms);
 bool usersUserActive(users_t *users, const user_t *user, uint64_t now_ms);
 
-size_t        usersCount(const users_t *users);
+size_t usersCount(const users_t *users);
 /* Bounded, owned public projections. No collection/user pointer escapes the
  * protected copy. Caller supplies room for limit summaries (1..100); positions
  * at count return an empty terminal page. Error outputs are always cleared.
@@ -421,11 +426,11 @@ user_public_result_t usersCopyPublicDetailByIdentifier(const users_t *users, uin
                                                        uint64_t deadline_ms, user_public_detail_t *out);
 user_public_result_t usersCopyPublicPage(const users_t *users, size_t position, size_t limit, uint64_t deadline_ms,
                                          user_public_summary_t *entries_out, size_t *count_out, size_t *total_out);
-bool          usersIsEmpty(const users_t *users);
-bool          usersReserve(users_t *users, size_t capacity);
-user_t       *usersGetAt(users_t *users, size_t index);
-const user_t *usersGetAtConst(const users_t *users, size_t index);
-bool          usersContainsUser(const users_t *users, const user_t *user);
+bool                 usersIsEmpty(const users_t *users);
+bool                 usersReserve(users_t *users, size_t capacity);
+user_t              *usersGetAt(users_t *users, size_t index);
+const user_t        *usersGetAtConst(const users_t *users, size_t index);
+bool                 usersContainsUser(const users_t *users, const user_t *user);
 
 bool usersRebuildLookups(users_t *users);
 bool usersValidate(const users_t *users);
@@ -433,7 +438,8 @@ bool usersValidate(const users_t *users);
 /*
  * Native O(N) deep copy of src into dest. Both tables must already be
  * initialized (usersCreate()). dest == src succeeds without work. On failure
- * dest is left unchanged. Serialized configuration and stat fields are copied
+ * dest is left unchanged. Success invalidates every old destination user/string
+ * pointer. Serialized configuration and stat fields are copied
  * and lookup indexes are rebuilt directly from the copied users; process-local
  * runtime connection/IP state and the AuthenticationClient projected local
  * expiry are NOT copied (use usersMigrateRuntimeStateByIdentifier() for runtime
@@ -468,3 +474,14 @@ user_bandwidth_result_t  usersBandwidthPreviewByIdentifier(users_t *users, uint6
 user_delivery_decision_t usersCommitDeliveryByIdentifier(users_t *users, uint64_t id,
                                                          user_bandwidth_direction_t direction, uint64_t ticket,
                                                          uint64_t bytes, bool datagram, bool more, uint32_t multiplier);
+
+/* Incremental fresh import with lexical, required nonzero IDs. Failure rolls back
+ * this append only; existing records/handles remain. Credentials derive once. */
+bool usersFeedJsonRequiredIds(users_t *users, const cJSON *json);
+/* Index/structural check for trusted fresh imports/copies. usersValidate remains
+ * the full derived-credential diagnostic in every build configuration. */
+bool usersValidateStructure(const users_t *users);
+/* Owned full credential-bearing row, admitted before arbitrary strings are
+ * copied. Exact compact JSON size is returned; failure clears both outputs. */
+user_public_result_t usersCopyFullUserJsonAt(const users_t *users, size_t position, size_t max_encoded, cJSON **out,
+                                             size_t *encoded_size);

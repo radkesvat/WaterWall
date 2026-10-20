@@ -2,6 +2,16 @@
 
 #include "wlibc.h"
 
+/* Called only after the signed geometry bound has admitted count. */
+static inline size_t userIndexHashBucketCount(size_t count)
+{
+    const size_t requested = (size_t) ((float) count / 0.80f) + 4U;
+    size_t       buckets   = 1;
+    while (buckets < requested)
+        buckets *= 2U;
+    return buckets;
+}
+
 /* The user indexes use STC's default 0.80 load factor. Validate its floating
  * conversion, power-of-two bucket rounding and signed byte arithmetic before
  * reserving. Both arrays must fit; heap exhaustion itself is fatal. */
@@ -10,10 +20,7 @@ static inline bool userIndexHashCapacityIsRepresentable(size_t count, size_t val
     assert(value_size >= 4 && metadata_size != 0);
     if (count > (size_t) PTRDIFF_MAX / 4U)
         return false;
-    const size_t requested_buckets = (size_t) ((float) count / 0.80f) + 4U;
-    size_t       buckets           = 1;
-    while (buckets < requested_buckets)
-        buckets *= 2U;
+    const size_t buckets = userIndexHashBucketCount(count);
     return buckets <= (size_t) PTRDIFF_MAX / value_size && buckets < (size_t) PTRDIFF_MAX / metadata_size;
 }
 
@@ -29,10 +36,7 @@ static inline bool userIndexHashGrowthGeometry(size_t count, size_t current_buck
         return true;
     if (! userIndexHashCapacityIsRepresentable(count, value_size, metadata_size))
         return false;
-    size_t requested = (size_t) ((float) count / 0.80f) + 4U;
-    size_t buckets   = 1;
-    while (buckets < requested)
-        buckets *= 2U;
+    size_t buckets = userIndexHashBucketCount(count);
     if (buckets == current_buckets)
         return true;
     size_t values   = buckets * value_size;

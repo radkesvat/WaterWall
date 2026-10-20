@@ -2,8 +2,9 @@
  * User object lifecycle, JSON persistence, and usage accounting helpers.
  */
 
-#include "objects/user.h"
+#include "node_builder/config_lexical.h"
 #include "objects/user_index_geometry.h"
+#include "objects/user_internal.h"
 
 #include "utils/json_helpers.h"
 #include "wsocket.h"
@@ -16,11 +17,6 @@ struct user_bandwidth_waiter_s
     buffer_budget_cost_t     cost;
     user_bandwidth_waiter_t *next;
 };
-
-static bool userPublicDeadlineExpired(uint64_t deadline_ms)
-{
-    return deadline_ms != 0 && getHRTimeUs() / 1000U >= deadline_ms;
-}
 
 /* Read only one codepoint. Stop at a terminating NUL even in an invalid
  * sequence, so short malformed strings never cause a read past their end. */
@@ -70,7 +66,7 @@ static user_public_result_t userPublicStringSize(const char *text, size_t allowa
     {
         if (offset >= next_deadline_check)
         {
-            if (userPublicDeadlineExpired(deadline_ms))
+            if (userDeadlineExpired(deadline_ms))
                 return kUserPublicTimeout;
             next_deadline_check = offset + 256U;
         }
@@ -96,7 +92,7 @@ static user_public_result_t userPublicNamePreview(const char *name, uint64_t dea
     size_t offset = 0;
     while (offset < USER_PUBLIC_NAME_PREVIEW_MAX && name[offset] != '\0')
     {
-        if (userPublicDeadlineExpired(deadline_ms))
+        if (userDeadlineExpired(deadline_ms))
             return kUserPublicTimeout;
         size_t               size;
         user_public_result_t result = userPublicCodepointSize((const unsigned char *) name + offset, 4, &size);
@@ -122,7 +118,7 @@ static user_public_result_t userPublicNamePreview(const char *name, uint64_t dea
 
 static user_public_result_t userPublicAcquire(const user_t *user, uint64_t deadline_ms)
 {
-    if (userPublicDeadlineExpired(deadline_ms))
+    if (userDeadlineExpired(deadline_ms))
         return kUserPublicTimeout;
     if (! rwlockTryReadLock((wrwlock_t *) &user->lock))
         return kUserPublicBusy;
@@ -156,7 +152,7 @@ user_public_result_t userCopyPublicSummary(const user_t *user, uint64_t deadline
     out->expire_after_first_usage_ms = user->timeinfo.expire_after_first_usage_ms;
     out->first_usage_at_ms           = user->timeinfo.first_usage_at_ms;
     result                           = userPublicNamePreview(user->name, deadline_ms, out);
-    if (result == kUserPublicOk && userPublicDeadlineExpired(deadline_ms))
+    if (result == kUserPublicOk && userDeadlineExpired(deadline_ms))
         result = kUserPublicTimeout;
     userPublicRelease(user);
     if (result != kUserPublicOk)
@@ -193,7 +189,7 @@ user_public_result_t userCopyPublicDetail(const user_t *user, size_t max_string_
             goto done;
         total += sizes[i];
     }
-    if (userPublicDeadlineExpired(deadline_ms))
+    if (userDeadlineExpired(deadline_ms))
     {
         result = kUserPublicTimeout;
         goto done;
@@ -209,7 +205,7 @@ user_public_result_t userCopyPublicDetail(const user_t *user, size_t max_string_
     char **destinations[]        = {&out->name, &out->email, &out->notes, &out->wireguard_allowed_ips};
     for (size_t i = 0; i < 4; ++i)
     {
-        if (userPublicDeadlineExpired(deadline_ms))
+        if (userDeadlineExpired(deadline_ms))
         {
             result = kUserPublicTimeout;
             goto done;
@@ -217,7 +213,7 @@ user_public_result_t userCopyPublicDetail(const user_t *user, size_t max_string_
         *destinations[i] = memoryAllocate(sizes[i]);
         memoryCopy(*destinations[i], strings[i] != NULL ? strings[i] : "", sizes[i]);
     }
-    if (userPublicDeadlineExpired(deadline_ms))
+    if (userDeadlineExpired(deadline_ms))
         result = kUserPublicTimeout;
 done:
     userPublicRelease(user);
@@ -578,7 +574,6 @@ bool userSetWireGuardAllowedIps(User *user, const char *value)
 typedef struct user_snapshot_s
 {
     char *name;
-    char *password;
     char *email;
     char *notes;
     char *wireguard_allowed_ips;
@@ -600,18 +595,13 @@ typedef struct user_snapshot_s
 
     user_stat_t stats;
 
-    hash_t                                         hash_pass;
-    uint8_t                                        sha_alignment_padding[8];
-    MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
-    uint8_t                                        sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
-    MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
-    uint8_t                                        uuid_pass[kWwUuidBytesLen];
-    uint8_t                                        wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
-
-    bool sha224_pass_valid;
-    bool sha256_pass_valid;
-    bool uuid_pass_valid;
-    bool wireguard_publickey_valid;
+    union {
+        user_credential_value_t credentials;
+        struct
+        {
+            USER_CREDENTIAL_VALUE_FIELDS
+        };
+    };
 } user_snapshot_t;
 
 _Static_assert(offsetof(user_snapshot_t, sha224_pass) % 32U == 0,
@@ -654,8 +644,10 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     rwlockReadLock(&mutable_src->lock);
     rwlockReadLock(&mutable_src->stats_lock);
 
+    snapshot->credentials = src->credentials;
     userStringDuplicate(&snapshot->name, src->name);
     userStringDuplicate(&snapshot->password, src->password);
+    snapshot->password_length = src->password == NULL ? 0 : stringLength(src->password);
     userStringDuplicate(&snapshot->email, src->email);
     userStringDuplicate(&snapshot->notes, src->notes);
     userStringDuplicate(&snapshot->wireguard_allowed_ips, src->wireguard_allowed_ips);
@@ -673,15 +665,6 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     snapshot->wireguard_allowed_ip_prefix = src->wireguard_allowed_ip_prefix;
     snapshot->wireguard_allowed_ips_valid = src->wireguard_allowed_ips_valid;
     snapshot->stats                       = src->stats;
-    snapshot->hash_pass                   = src->hash_pass;
-    snapshot->sha224_pass                 = src->sha224_pass;
-    snapshot->sha256_pass                 = src->sha256_pass;
-    memoryCopy(snapshot->uuid_pass, src->uuid_pass, sizeof(snapshot->uuid_pass));
-    memoryCopy(snapshot->wireguard_publickey, src->wireguard_publickey, sizeof(snapshot->wireguard_publickey));
-    snapshot->sha224_pass_valid         = src->sha224_pass_valid;
-    snapshot->sha256_pass_valid         = src->sha256_pass_valid;
-    snapshot->uuid_pass_valid           = src->uuid_pass_valid;
-    snapshot->wireguard_publickey_valid = src->wireguard_publickey_valid;
 
     rwlockReadUnlock(&mutable_src->stats_lock);
     rwlockReadUnlock(&mutable_src->lock);
@@ -699,7 +682,6 @@ bool userPreparePassword(user_prepared_password_t *prepared, const char *passwor
     prepared->password = memoryAllocate(password_length + 1U);
     memoryCopy(prepared->password, password, password_length + 1U);
     prepared->password_length = password_length;
-    prepared->hash_pass       = calcHashBytes(prepared->password, password_length);
     if (wCryptoSHA224(&prepared->sha224_pass, (const unsigned char *) prepared->password, password_length) !=
         kWCryptoOk)
         goto failure;
@@ -742,17 +724,8 @@ void userCommitPreparedPasswordLocked(User *user, user_prepared_password_t *prep
     memorySecureZero(&user->sha224_pass, sizeof(user->sha224_pass));
     memorySecureZero(&user->sha256_pass, sizeof(user->sha256_pass));
     memorySecureZero(user->uuid_pass, sizeof(user->uuid_pass));
-    user->password     = prepared->password;
+    user->credentials  = *prepared;
     prepared->password = NULL;
-    user->hash_pass    = prepared->hash_pass;
-    user->sha224_pass  = prepared->sha224_pass;
-    user->sha256_pass  = prepared->sha256_pass;
-    memoryCopy(user->uuid_pass, prepared->uuid_pass, sizeof(user->uuid_pass));
-    memoryCopy(user->wireguard_publickey, prepared->wireguard_publickey, sizeof(user->wireguard_publickey));
-    user->sha224_pass_valid         = prepared->sha224_pass_valid;
-    user->sha256_pass_valid         = prepared->sha256_pass_valid;
-    user->uuid_pass_valid           = prepared->uuid_pass_valid;
-    user->wireguard_publickey_valid = prepared->wireguard_publickey_valid;
 }
 
 static const cJSON *userJsonGetItem(const cJSON *json_obj, const char *key)
@@ -960,176 +933,83 @@ static bool userJsonReadStats(const cJSON *json_obj, user_stat_t *stats)
            userJsonReadUd(speed, &stats->speed) && userJsonReadUd(traffic, &stats->traffic);
 }
 
-static bool userJsonAddStringIfNotEmpty(cJSON *json_obj, const char *key, const char *value)
+/* These helpers construct fresh runtime-cJSON values. Heap exhaustion is fatal;
+ * the only branches here omit empty configuration/statistics values. */
+static void userJsonAddUdIfNotZero(cJSON *root, const char *key, user_ud_t value)
 {
-    if (userStringIsEmpty(value))
-    {
-        return true;
-    }
-
-    return cJSON_AddStringToObject(json_obj, key, value) != NULL;
-}
-
-static bool userJsonAddUdIfNotZero(cJSON *json_obj, const char *key, user_ud_t value)
-{
-    cJSON *ud_json = NULL;
-
     if (value.u == 0 && value.d == 0)
-    {
-        return true;
-    }
-
-    ud_json = cJSON_CreateObject();
-    if (UNLIKELY(ud_json == NULL))
-    {
-        return false;
-    }
-
-    if (UNLIKELY((value.u != 0 && ! jsonAddUint64ToObject(ud_json, "up", value.u)) ||
-                 (value.d != 0 && ! jsonAddUint64ToObject(ud_json, "down", value.d))))
-    {
-        cJSON_Delete(ud_json);
-        return false;
-    }
-
-    if (UNLIKELY(! cJSON_AddItemToObject(json_obj, key, ud_json)))
-    {
-        cJSON_Delete(ud_json);
-        return false;
-    }
-    return true;
+        return;
+    cJSON *json = cJSON_CreateObject();
+    if (value.u != 0)
+        discard jsonAddUint64ToObject(json, "up", value.u);
+    if (value.d != 0)
+        discard jsonAddUint64ToObject(json, "down", value.d);
+    discard cJSON_AddItemToObject(root, key, json);
 }
 
-static bool userJsonAddLimitIfNotZero(cJSON *root, const user_limit_t *limit)
+static void userJsonAddLimitIfNotZero(cJSON *root, const user_limit_t *limit)
 {
-    cJSON *limit_json   = NULL;
-    cJSON *traffic_json = NULL;
-
     if (limit->traffic.u == 0 && limit->traffic.d == 0 && limit->traffic.total == 0 && limit->bandwidth.u == 0 &&
         limit->bandwidth.d == 0 && limit->ips == 0 && limit->devices == 0 && limit->cons_in == 0 &&
         limit->cons_out == 0)
-    {
-        return true;
-    }
-
-    limit_json = cJSON_CreateObject();
-    if (UNLIKELY(limit_json == NULL))
-    {
-        return false;
-    }
-
+        return;
+    cJSON *json = cJSON_CreateObject();
     if (limit->traffic.u != 0 || limit->traffic.d != 0 || limit->traffic.total != 0)
     {
-        traffic_json = cJSON_CreateObject();
-        if (UNLIKELY(traffic_json == NULL))
-        {
-            cJSON_Delete(limit_json);
-            return false;
-        }
-
-        if (UNLIKELY(
-                (limit->traffic.u != 0 && ! jsonAddUint64ToObject(traffic_json, "up", limit->traffic.u)) ||
-                (limit->traffic.d != 0 && ! jsonAddUint64ToObject(traffic_json, "down", limit->traffic.d)) ||
-                (limit->traffic.total != 0 && ! jsonAddUint64ToObject(traffic_json, "total", limit->traffic.total))))
-        {
-            cJSON_Delete(traffic_json);
-            cJSON_Delete(limit_json);
-            return false;
-        }
-        if (UNLIKELY(! cJSON_AddItemToObject(limit_json, "traffic", traffic_json)))
-        {
-            cJSON_Delete(traffic_json);
-            cJSON_Delete(limit_json);
-            return false;
-        }
+        cJSON *traffic = cJSON_CreateObject();
+        if (limit->traffic.u != 0)
+            discard jsonAddUint64ToObject(traffic, "up", limit->traffic.u);
+        if (limit->traffic.d != 0)
+            discard jsonAddUint64ToObject(traffic, "down", limit->traffic.d);
+        if (limit->traffic.total != 0)
+            discard jsonAddUint64ToObject(traffic, "total", limit->traffic.total);
+        discard cJSON_AddItemToObject(json, "traffic", traffic);
     }
-
-    if (UNLIKELY(! userJsonAddUdIfNotZero(limit_json, "bandwidth", limit->bandwidth) ||
-                 (limit->ips != 0 && ! jsonAddUint64ToObject(limit_json, "ips", limit->ips)) ||
-                 (limit->devices != 0 && ! jsonAddUint64ToObject(limit_json, "devices", limit->devices)) ||
-                 (limit->cons_in != 0 && ! jsonAddUint64ToObject(limit_json, "connections-in", limit->cons_in)) ||
-                 (limit->cons_out != 0 && ! jsonAddUint64ToObject(limit_json, "connections-out", limit->cons_out))))
-    {
-        cJSON_Delete(limit_json);
-        return false;
-    }
-
-    if (UNLIKELY(! cJSON_AddItemToObject(root, "limit", limit_json)))
-    {
-        cJSON_Delete(limit_json);
-        return false;
-    }
-    return true;
+    userJsonAddUdIfNotZero(json, "bandwidth", limit->bandwidth);
+    if (limit->ips != 0)
+        discard jsonAddUint64ToObject(json, "ips", limit->ips);
+    if (limit->devices != 0)
+        discard jsonAddUint64ToObject(json, "devices", limit->devices);
+    if (limit->cons_in != 0)
+        discard jsonAddUint64ToObject(json, "connections-in", limit->cons_in);
+    if (limit->cons_out != 0)
+        discard jsonAddUint64ToObject(json, "connections-out", limit->cons_out);
+    discard cJSON_AddItemToObject(root, "limit", json);
 }
 
-static bool userJsonAddTimeInfo(cJSON *root, const user_time_info_t *timeinfo)
+static void userJsonAddTimeInfo(cJSON *root, const user_time_info_t *timeinfo)
 {
-    cJSON *time_json = cJSON_CreateObject();
-    if (UNLIKELY(time_json == NULL))
-    {
-        return false;
-    }
-
-    if (UNLIKELY(
-            (timeinfo->created_at_ms != 0 &&
-             ! jsonAddUint64ToObject(time_json, "created-at-ms", timeinfo->created_at_ms)) ||
-            (timeinfo->first_usage_at_ms != 0 &&
-             ! jsonAddUint64ToObject(time_json, "first-usage-at-ms", timeinfo->first_usage_at_ms)) ||
-            (timeinfo->expire_at_ms != 0 &&
-             ! jsonAddUint64ToObject(time_json, "expire-at-ms", timeinfo->expire_at_ms)) ||
-            (timeinfo->expire_after_first_usage_ms != 0 &&
-             ! jsonAddUint64ToObject(time_json, "expire-after-first-usage-ms", timeinfo->expire_after_first_usage_ms))))
-    {
-        cJSON_Delete(time_json);
-        return false;
-    }
-
-    if (time_json->child == NULL)
-    {
-        cJSON_Delete(time_json);
-        return true;
-    }
-
-    if (UNLIKELY(! cJSON_AddItemToObject(root, "time", time_json)))
-    {
-        cJSON_Delete(time_json);
-        return false;
-    }
-    return true;
+    if (timeinfo->created_at_ms == 0 && timeinfo->first_usage_at_ms == 0 && timeinfo->expire_at_ms == 0 &&
+        timeinfo->expire_after_first_usage_ms == 0)
+        return;
+    cJSON *json = cJSON_CreateObject();
+    if (timeinfo->created_at_ms != 0)
+        discard jsonAddUint64ToObject(json, "created-at-ms", timeinfo->created_at_ms);
+    if (timeinfo->first_usage_at_ms != 0)
+        discard jsonAddUint64ToObject(json, "first-usage-at-ms", timeinfo->first_usage_at_ms);
+    if (timeinfo->expire_at_ms != 0)
+        discard jsonAddUint64ToObject(json, "expire-at-ms", timeinfo->expire_at_ms);
+    if (timeinfo->expire_after_first_usage_ms != 0)
+        discard jsonAddUint64ToObject(json, "expire-after-first-usage-ms", timeinfo->expire_after_first_usage_ms);
+    discard cJSON_AddItemToObject(root, "time", json);
 }
 
-static bool userJsonAddStatsIfNotZero(cJSON *root, const user_stat_t *stats)
+static void userJsonAddStatsIfNotZero(cJSON *root, const user_stat_t *stats)
 {
-    cJSON *stats_json = NULL;
-
     if (stats->ips == 0 && stats->devices == 0 && stats->cons_in == 0 && stats->cons_out == 0 &&
         stats->traffic.u == 0 && stats->traffic.d == 0)
-    {
-        return true;
-    }
-
-    stats_json = cJSON_CreateObject();
-    if (UNLIKELY(stats_json == NULL))
-    {
-        return false;
-    }
-
-    if (UNLIKELY((stats->ips != 0 && ! jsonAddUint64ToObject(stats_json, "ips", stats->ips)) ||
-                 (stats->devices != 0 && ! jsonAddUint64ToObject(stats_json, "devices", stats->devices)) ||
-                 (stats->cons_in != 0 && ! jsonAddUint64ToObject(stats_json, "connections-in", stats->cons_in)) ||
-                 (stats->cons_out != 0 && ! jsonAddUint64ToObject(stats_json, "connections-out", stats->cons_out)) ||
-                 ! userJsonAddUdIfNotZero(stats_json, "traffic", stats->traffic)))
-    {
-        cJSON_Delete(stats_json);
-        return false;
-    }
-
-    if (UNLIKELY(! cJSON_AddItemToObject(root, "stats", stats_json)))
-    {
-        cJSON_Delete(stats_json);
-        return false;
-    }
-    return true;
+        return;
+    cJSON *json = cJSON_CreateObject();
+    if (stats->ips != 0)
+        discard jsonAddUint64ToObject(json, "ips", stats->ips);
+    if (stats->devices != 0)
+        discard jsonAddUint64ToObject(json, "devices", stats->devices);
+    if (stats->cons_in != 0)
+        discard jsonAddUint64ToObject(json, "connections-in", stats->cons_in);
+    if (stats->cons_out != 0)
+        discard jsonAddUint64ToObject(json, "connections-out", stats->cons_out);
+    userJsonAddUdIfNotZero(json, "traffic", stats->traffic);
+    discard cJSON_AddItemToObject(root, "stats", json);
 }
 
 static uint64_t userSaturatingAdd(uint64_t a, uint64_t b)
@@ -1176,6 +1056,43 @@ static bool userTrafficReachedLocked(const User *user)
     return userLimitReached(user->limit.traffic.u, user->stats.traffic.u) ||
            userLimitReached(user->limit.traffic.d, user->stats.traffic.d) ||
            userLimitReached(user->limit.traffic.total, userSaturatingAdd(user->stats.traffic.u, user->stats.traffic.d));
+}
+
+/* Configuration and stats ownership are held; live reservation gauges are not
+ * authentication eligibility. */
+static user_admission_result_t userEligibilityLocked(const User *user, uint64_t expiry_now)
+{
+    return ! user->enabled                       ? kUserAdmissionDisabled
+           : userExpiredLocked(user, expiry_now) ? kUserAdmissionExpired
+           : userTrafficReachedLocked(user)      ? kUserAdmissionTrafficLimited
+                                                 : kUserAdmissionOk;
+}
+
+user_admission_result_t userCopyAccess(User *user, uint64_t now_ms, uint64_t *id_out, char **name_out,
+                                       char **password_out)
+{
+    assert(userObjectIsInitialized(user) && (name_out == NULL || *name_out == NULL) &&
+           (password_out == NULL || *password_out == NULL));
+    rwlockReadLock(&user->lock);
+    rwlockReadLock(&user->stats_lock);
+    user_admission_result_t result = userEligibilityLocked(user, now_ms);
+    if (id_out != NULL)
+        *id_out = user->id;
+    if (result == kUserAdmissionOk && user->id != 0)
+    {
+        if (name_out != NULL && user->name != NULL && user->name[0] != '\0')
+            *name_out = stringDuplicate(user->name);
+        if (password_out != NULL && user->password != NULL && user->password[0] != '\0')
+            *password_out = stringDuplicate(user->password);
+    }
+    rwlockReadUnlock(&user->stats_lock);
+    rwlockReadUnlock(&user->lock);
+    return result;
+}
+
+user_admission_result_t userCheckEligibility(User *user, uint64_t now_ms, uint64_t *id_out)
+{
+    return userCopyAccess(user, now_ms, id_out, NULL, NULL);
 }
 
 static bool userIpKeyValid(const user_ip_key_t *ip_key)
@@ -1402,72 +1319,86 @@ bool userCreate(User *user, const char *password)
     return true;
 }
 
-bool userCopy(User *dest, const User *src)
+static bool userInstallOwnedSnapshot(User *dest, user_snapshot_t *snapshot)
 {
-    user_snapshot_t snapshot;
-
-    if (UNLIKELY(dest == NULL || src == NULL))
-    {
-        return false;
-    }
-    if (UNLIKELY(! userSnapshotCreate(&snapshot, src)))
-    {
-        return false;
-    }
-
     memoryZero(dest, sizeof(*dest));
     if (UNLIKELY(! rwlockTryInit(&dest->lock)))
     {
-        userSnapshotDestroy(&snapshot);
         return false;
     }
     if (UNLIKELY(! rwlockTryInit(&dest->stats_lock)))
     {
         rwlockDestroy(&dest->lock);
-        userSnapshotDestroy(&snapshot);
         return false;
     }
 
     dest->initialized = true;
 
-    dest->name                  = snapshot.name;
-    dest->password              = snapshot.password;
-    dest->email                 = snapshot.email;
-    dest->notes                 = snapshot.notes;
-    dest->wireguard_allowed_ips = snapshot.wireguard_allowed_ips;
+    dest->name                  = snapshot->name;
+    dest->password              = snapshot->password;
+    dest->password_length       = snapshot->password_length;
+    dest->email                 = snapshot->email;
+    dest->notes                 = snapshot->notes;
+    dest->wireguard_allowed_ips = snapshot->wireguard_allowed_ips;
 
-    dest->id                          = snapshot.id;
-    dest->gid                         = snapshot.gid;
-    dest->enabled                     = snapshot.enabled;
-    dest->limit                       = snapshot.limit;
-    dest->timeinfo                    = snapshot.timeinfo;
-    dest->record_stat_interval_ms     = snapshot.record_stat_interval_ms;
-    dest->wireguard_allowed_ip        = snapshot.wireguard_allowed_ip;
-    dest->wireguard_allowed_mask      = snapshot.wireguard_allowed_mask;
-    dest->wireguard_allowed_ip_count  = snapshot.wireguard_allowed_ip_count;
-    dest->wireguard_allowed_ip_family = snapshot.wireguard_allowed_ip_family;
-    dest->wireguard_allowed_ip_prefix = snapshot.wireguard_allowed_ip_prefix;
-    dest->wireguard_allowed_ips_valid = snapshot.wireguard_allowed_ips_valid;
-    dest->stats                       = snapshot.stats;
-    dest->hash_pass                   = snapshot.hash_pass;
-    dest->sha224_pass                 = snapshot.sha224_pass;
-    dest->sha256_pass                 = snapshot.sha256_pass;
-    memoryCopy(dest->uuid_pass, snapshot.uuid_pass, sizeof(dest->uuid_pass));
-    memoryCopy(dest->wireguard_publickey, snapshot.wireguard_publickey, sizeof(dest->wireguard_publickey));
-    dest->sha224_pass_valid         = snapshot.sha224_pass_valid;
-    dest->sha256_pass_valid         = snapshot.sha256_pass_valid;
-    dest->uuid_pass_valid           = snapshot.uuid_pass_valid;
-    dest->wireguard_publickey_valid = snapshot.wireguard_publickey_valid;
+    dest->id                          = snapshot->id;
+    dest->gid                         = snapshot->gid;
+    dest->enabled                     = snapshot->enabled;
+    dest->limit                       = snapshot->limit;
+    dest->timeinfo                    = snapshot->timeinfo;
+    dest->record_stat_interval_ms     = snapshot->record_stat_interval_ms;
+    dest->wireguard_allowed_ip        = snapshot->wireguard_allowed_ip;
+    dest->wireguard_allowed_mask      = snapshot->wireguard_allowed_mask;
+    dest->wireguard_allowed_ip_count  = snapshot->wireguard_allowed_ip_count;
+    dest->wireguard_allowed_ip_family = snapshot->wireguard_allowed_ip_family;
+    dest->wireguard_allowed_ip_prefix = snapshot->wireguard_allowed_ip_prefix;
+    dest->wireguard_allowed_ips_valid = snapshot->wireguard_allowed_ips_valid;
+    dest->stats                       = snapshot->stats;
+    dest->credentials                 = snapshot->credentials;
+    snapshot->name = snapshot->password = snapshot->email = snapshot->notes = snapshot->wireguard_allowed_ips = NULL;
+    return true;
+}
 
-    snapshot.name                  = NULL;
-    snapshot.password              = NULL;
-    snapshot.email                 = NULL;
-    snapshot.notes                 = NULL;
-    snapshot.wireguard_allowed_ips = NULL;
-    memorySecureZero(&snapshot.sha224_pass, sizeof(snapshot.sha224_pass));
-    memorySecureZero(&snapshot.sha256_pass, sizeof(snapshot.sha256_pass));
-    memorySecureZero(snapshot.uuid_pass, sizeof(snapshot.uuid_pass));
-    memoryZero(snapshot.wireguard_publickey, sizeof(snapshot.wireguard_publickey));
+bool userCopy(User *dest, const User *src)
+{
+    if (dest == NULL || src == NULL)
+        return false;
+    user_snapshot_t snapshot;
+    if (! userSnapshotCreate(&snapshot, src))
+        return false;
+    bool copied = userInstallOwnedSnapshot(dest, &snapshot);
+    userSnapshotDestroy(&snapshot);
+    return copied;
+}
+
+bool userMoveOwnedValue(User *dest, User *source)
+{
+    assert(dest != NULL && userObjectIsInitialized(source) && dest != source);
+    user_snapshot_t snapshot             = {0};
+    snapshot.name                        = source->name;
+    snapshot.email                       = source->email;
+    snapshot.notes                       = source->notes;
+    snapshot.wireguard_allowed_ips       = source->wireguard_allowed_ips;
+    snapshot.credentials                 = source->credentials;
+    snapshot.id                          = source->id;
+    snapshot.gid                         = source->gid;
+    snapshot.enabled                     = source->enabled;
+    snapshot.limit                       = source->limit;
+    snapshot.timeinfo                    = source->timeinfo;
+    snapshot.stats                       = source->stats;
+    snapshot.record_stat_interval_ms     = source->record_stat_interval_ms;
+    snapshot.wireguard_allowed_ip        = source->wireguard_allowed_ip;
+    snapshot.wireguard_allowed_mask      = source->wireguard_allowed_mask;
+    snapshot.wireguard_allowed_ip_count  = source->wireguard_allowed_ip_count;
+    snapshot.wireguard_allowed_ip_family = source->wireguard_allowed_ip_family;
+    snapshot.wireguard_allowed_ip_prefix = source->wireguard_allowed_ip_prefix;
+    snapshot.wireguard_allowed_ips_valid = source->wireguard_allowed_ips_valid;
+    if (! userInstallOwnedSnapshot(dest, &snapshot))
+    {
+        memorySecureZero(&snapshot, sizeof(snapshot));
+        return false;
+    }
+    source->name = source->password = source->email = source->notes = source->wireguard_allowed_ips = NULL;
     userSnapshotDestroy(&snapshot);
     return true;
 }
@@ -1491,7 +1422,6 @@ void userDestroy(User *user)
     memoryZero(&user->wireguard_allowed_mask, sizeof(user->wireguard_allowed_mask));
     memoryZero(&user->stats, sizeof(user->stats));
     user->id                          = 0;
-    user->hash_pass                   = 0;
     user->enabled                     = false;
     user->wireguard_allowed_ip_count  = 0;
     user->wireguard_allowed_ip_family = 0;
@@ -1522,7 +1452,41 @@ bool userSetPassword(User *user, const char *password)
     return userChangePassword(user, password);
 }
 
-bool userCreateFromJson(User *user, const cJSON *user_json)
+bool userPrepareJsonAllowedIps(const cJSON *json, user_allowed_ip_preparation_t *prepared)
+{
+    assert(prepared != NULL);
+    memoryZero(prepared, sizeof(*prepared));
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(json, "wireguard-allowed-ips");
+    if (item == NULL || cJSON_IsNull(item))
+        return true;
+    if (! cJSON_IsString(item) || item->valuestring == NULL)
+        return false;
+    user_parsed_allowed_ip_t *value = &prepared->value;
+    return userWireGuardAllowedIpsParse(item->valuestring,
+                                        &prepared->text,
+                                        &value->wireguard_allowed_ip,
+                                        &value->wireguard_allowed_mask,
+                                        &value->wireguard_allowed_ip_family,
+                                        &value->wireguard_allowed_ip_prefix,
+                                        &value->wireguard_allowed_ip_count,
+                                        &value->wireguard_allowed_ips_valid);
+}
+
+static bool userInstallJsonAllowedIps(User *user, const char *value, user_allowed_ip_preparation_t *prepared)
+{
+    if (prepared == NULL)
+        return value == NULL || userSetWireGuardAllowedIps(user, value);
+    if (prepared->text != NULL)
+    {
+        memoryFree(user->wireguard_allowed_ips);
+        user->wireguard_allowed_ips = prepared->text;
+        prepared->text              = NULL;
+        user->allowed_ip            = prepared->value;
+    }
+    return true;
+}
+
+bool userCreateFromJsonPreparedAllowedIps(User *user, const cJSON *user_json, user_allowed_ip_preparation_t *prepared)
 {
     const char  *password = NULL;
     const char  *value    = NULL;
@@ -1550,7 +1514,7 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
                  ! userJsonReadOptionalString(user_json, "email", &email) ||
                  ! userJsonReadOptionalString(user_json, "notes", &notes) ||
                  ! userJsonReadOptionalString(user_json, "wireguard-allowed-ips", &value) ||
-                 (value != NULL && ! userSetWireGuardAllowedIps(user, value)) ||
+                 ! userInstallJsonAllowedIps(user, value, prepared) ||
                  ! userJsonReadOptionalUint64Aliased(user_json, "id", "user-id", &user->id) ||
                  ! userJsonReadOptionalUint64Aliased(user_json, "gid", "group-id", &user->gid) ||
                  ! userJsonReadOptionalBoolAliased(user_json, "enabled", "enable", &user->enabled) ||
@@ -1596,47 +1560,119 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
     return true;
 }
 
+bool userCreateFromJson(User *user, const cJSON *json)
+{
+    return userCreateFromJsonPreparedAllowedIps(user, json, NULL);
+}
+
+static void userJsonAddExportString(cJSON *json, const char *key, const char *text, bool required, bool placeholders)
+{
+    if (! required && (text == NULL || text[0] == '\0'))
+        return;
+    discard cJSON_AddStringToObject(json, key, placeholders ? "" : text);
+}
+
+/* Caller holds configuration ownership. Statistics are a coherent copied value. */
+static cJSON *userBuildJsonLocked(User *user, const user_stat_t *stats, bool placeholders)
+{
+    cJSON *json = cJSON_CreateObject();
+    userJsonAddExportString(json, "name", user->name, false, placeholders);
+    userJsonAddExportString(json, "password", user->password, true, placeholders);
+    userJsonAddExportString(json, "email", user->email, false, placeholders);
+    userJsonAddExportString(json, "notes", user->notes, false, placeholders);
+    userJsonAddExportString(json, "wireguard-allowed-ips", user->wireguard_allowed_ips, false, placeholders);
+    if (user->id != 0)
+        discard jsonAddUint64ToObject(json, "id", user->id);
+    if (user->gid != 0)
+        discard jsonAddUint64ToObject(json, "gid", user->gid);
+    if (! user->enabled)
+        discard cJSON_AddFalseToObject(json, "enabled");
+    if (user->record_stat_interval_ms != USER_DEFAULT_RECORD_STAT_INTERVAL_MS)
+        discard jsonAddUint64ToObject(json, "record-stat-interval-ms", (uint64_t) user->record_stat_interval_ms);
+    userJsonAddTimeInfo(json, &user->timeinfo);
+    userJsonAddLimitIfNotZero(json, &user->limit);
+    userJsonAddStatsIfNotZero(json, stats);
+    return json;
+}
+
 cJSON *userToJson(User *user)
 {
-    cJSON      *json  = NULL;
-    user_stat_t stats = {0};
-
-    if (UNLIKELY(! userObjectIsInitialized(user)))
-    {
+    if (! userObjectIsInitialized(user))
         return NULL;
-    }
-
-    json = cJSON_CreateObject();
-    if (UNLIKELY(json == NULL))
-    {
-        return NULL;
-    }
-
     rwlockReadLock(&user->lock);
     rwlockReadLock(&user->stats_lock);
-    stats = user->stats;
+    user_stat_t stats = user->stats;
     rwlockReadUnlock(&user->stats_lock);
-
-    if (UNLIKELY(! userJsonAddStringIfNotEmpty(json, "name", user->name) ||
-                 ! cJSON_AddStringToObject(json, "password", user->password) ||
-                 ! userJsonAddStringIfNotEmpty(json, "email", user->email) ||
-                 ! userJsonAddStringIfNotEmpty(json, "notes", user->notes) ||
-                 ! userJsonAddStringIfNotEmpty(json, "wireguard-allowed-ips", user->wireguard_allowed_ips) ||
-                 (user->id != 0 && ! jsonAddUint64ToObject(json, "id", user->id)) ||
-                 (user->gid != 0 && ! jsonAddUint64ToObject(json, "gid", user->gid)) ||
-                 (! user->enabled && cJSON_AddFalseToObject(json, "enabled") == NULL) ||
-                 (user->record_stat_interval_ms != USER_DEFAULT_RECORD_STAT_INTERVAL_MS &&
-                  ! jsonAddUint64ToObject(json, "record-stat-interval-ms", (uint64_t) user->record_stat_interval_ms)) ||
-                 ! userJsonAddTimeInfo(json, &user->timeinfo) || ! userJsonAddLimitIfNotZero(json, &user->limit) ||
-                 ! userJsonAddStatsIfNotZero(json, &stats)))
-    {
-        rwlockReadUnlock(&user->lock);
-        cJSON_Delete(json);
-        return NULL;
-    }
-
+    cJSON *json = userBuildJsonLocked(user, &stats, false);
     rwlockReadUnlock(&user->lock);
     return json;
+}
+
+user_public_result_t userCopyFullJsonBounded(User *user, size_t limit, cJSON **out, size_t *encoded_size)
+{
+    assert(userObjectIsInitialized(user) && out != NULL && encoded_size != NULL);
+    *out          = NULL;
+    *encoded_size = 0;
+    rwlockReadLock(&user->lock);
+    rwlockReadLock(&user->stats_lock);
+    user_stat_t stats = user->stats;
+    rwlockReadUnlock(&user->stats_lock);
+    /* Only fixed-size numeric metadata and empty placeholders are allocated
+     * before string admission. No arbitrary row string is copied yet. */
+    cJSON *json   = userBuildJsonLocked(user, &stats, true);
+    char  *scalar = cJSON_PrintUnformatted(json);
+    size_t size   = stringLength(scalar);
+    cJSON_free(scalar);
+    user_public_result_t result = kUserPublicTooLarge;
+    if (size > limit)
+        goto done;
+    const char *texts[] = {user->name, user->password, user->email, user->notes, user->wireguard_allowed_ips};
+    const char *keys[]  = {"name", "password", "email", "notes", "wireguard-allowed-ips"};
+    for (size_t i = 0; i < ARRAY_SIZE(texts); ++i)
+    {
+        const char *text = texts[i];
+        if (text == NULL)
+        {
+            if (i == 1)
+            {
+                result = kUserPublicInvalidEncoding;
+                goto done;
+            }
+            continue;
+        }
+        size_t length = 0;
+        while (text[length] != '\0')
+        {
+            unsigned char c    = (unsigned char) text[length];
+            size_t        cost = c == '"' || c == '\\'                                           ? 2U
+                                 : c >= 0x20U                                                    ? 1U
+                                 : c == '\b' || c == '\f' || c == '\n' || c == '\r' || c == '\t' ? 2U
+                                                                                                 : 6U;
+            if (cost > limit - size)
+                goto done;
+            size += cost;
+            ++length;
+        }
+        if (! configLexicalCheckEncodingQuiet(text, length))
+        {
+            result = kUserPublicInvalidEncoding;
+            goto done;
+        }
+    }
+    for (size_t i = 0; i < ARRAY_SIZE(texts); ++i)
+    {
+        cJSON *field = cJSON_GetObjectItemCaseSensitive(json, keys[i]);
+        if (field != NULL)
+            discard cJSON_SetValuestring(field, texts[i]);
+    }
+    *out          = json;
+    *encoded_size = size;
+    json          = NULL;
+    result        = kUserPublicOk;
+done:
+    cJSON_Delete(json);
+    rwlockReadUnlock(&user->lock);
+    return result;
 }
 
 bool userPasswordMatches(User *user, const char *password)
@@ -1681,19 +1717,14 @@ bool userPasswordDataValid(User *user)
     }
 
     rwlockReadLock(&user->lock);
-    if (! userStringIsEmpty(user->password) &&
-        calcHashBytes(user->password, stringLength(user->password)) == user->hash_pass)
+    if (! userStringIsEmpty(user->password) && user->sha224_pass_valid && user->sha256_pass_valid)
     {
-        result = true;
-
-        if (user->sha224_pass_valid && user->sha256_pass_valid &&
-            wCryptoSHA224(&sha224, (const unsigned char *) user->password, stringLength(user->password)) ==
-                kWCryptoOk &&
-            wCryptoSHA256(&sha256, (const unsigned char *) user->password, stringLength(user->password)) == kWCryptoOk)
-        {
-            result = memoryEqual(&sha256, &user->sha256_pass, sizeof(sha256)) &&
-                     memoryEqual(&sha224, &user->sha224_pass, sizeof(sha224));
-        }
+        result = wCryptoSHA224(&sha224, (const unsigned char *) user->password, stringLength(user->password)) ==
+                     kWCryptoOk &&
+                 wCryptoSHA256(&sha256, (const unsigned char *) user->password, stringLength(user->password)) ==
+                     kWCryptoOk &&
+                 memoryEqual(&sha256, &user->sha256_pass, sizeof(sha256)) &&
+                 memoryEqual(&sha224, &user->sha224_pass, sizeof(sha224));
         if (result)
         {
             const bool password_is_uuid = wwUuidParseString(user->password, uuid);
@@ -2093,20 +2124,13 @@ user_admission_result_t userTryAdmitConnection(User *user, const user_ip_key_t *
     }
 
     /* Lock order matches userSnapshotCreate(): user->lock then user->stats_lock. */
-    rwlockWriteLock(&user->lock);
+    rwlockReadLock(&user->lock);
     rwlockWriteLock(&user->stats_lock);
 
-    if (! user->enabled)
+    result = userEligibilityLocked(user, now_ms);
+    if (result != kUserAdmissionOk)
     {
-        result = kUserAdmissionDisabled;
-    }
-    else if (userExpiredLocked(user, now_ms))
-    {
-        result = kUserAdmissionExpired;
-    }
-    else if (userTrafficReachedLocked(user))
-    {
-        result = kUserAdmissionTrafficLimited;
+        /* Eligibility refusal precedes any live reservation. */
     }
     else if (userLimitReached(user->limit.cons_out, user->runtime.active_cons_out))
     {
@@ -2156,7 +2180,7 @@ user_admission_result_t userTryAdmitConnection(User *user, const user_ip_key_t *
     }
 
     rwlockWriteUnlock(&user->stats_lock);
-    rwlockWriteUnlock(&user->lock);
+    rwlockReadUnlock(&user->lock);
     return result;
 }
 
@@ -2223,6 +2247,14 @@ static uint64_t userScaleTrafficLocked(uint64_t bytes, uint32_t multiplier, uint
 
 /* User and stats write locks are held. Arrival observations and public
  * accounting share the same clock and coalesced first-use notification. */
+static void userChargeTrafficLocked(User *user, uint64_t upload, uint64_t download, uint32_t multiplier)
+{
+    user->stats.traffic.u = userSaturatingAdd(
+        user->stats.traffic.u, userScaleTrafficLocked(upload, multiplier, &user->runtime.traffic_remainder_u));
+    user->stats.traffic.d = userSaturatingAdd(
+        user->stats.traffic.d, userScaleTrafficLocked(download, multiplier, &user->runtime.traffic_remainder_d));
+}
+
 static uint64_t userObserveTrafficLocked(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint64_t now_ms,
                                          bool *first_usage_push_needed)
 {
@@ -2261,7 +2293,7 @@ bool userObserveTraffic(User *user, uint64_t upload_bytes, uint64_t download_byt
     rwlockWriteLock(&user->lock);
     rwlockWriteLock(&user->stats_lock);
     now_ms     = userObserveTrafficLocked(user, upload_bytes, download_bytes, now_ms, first_usage_push_needed);
-    bool close = ! user->enabled || userExpiredLocked(user, now_ms) || userTrafficReachedLocked(user);
+    bool close = userEligibilityLocked(user, now_ms) != kUserAdmissionOk;
     rwlockWriteUnlock(&user->stats_lock);
     rwlockWriteUnlock(&user->lock);
     return close;
@@ -2286,13 +2318,8 @@ bool userAccountTrafficScaled(User *user, uint64_t upload_bytes, uint64_t downlo
     rwlockWriteLock(&user->lock);
     rwlockWriteLock(&user->stats_lock);
     now_ms = userObserveTrafficLocked(user, upload_bytes, download_bytes, now_ms, first_usage_push_needed);
-    const uint64_t charged_upload =
-        userScaleTrafficLocked(upload_bytes, multiplier, &user->runtime.traffic_remainder_u);
-    const uint64_t charged_download =
-        userScaleTrafficLocked(download_bytes, multiplier, &user->runtime.traffic_remainder_d);
-    user->stats.traffic.u = userSaturatingAdd(user->stats.traffic.u, charged_upload);
-    user->stats.traffic.d = userSaturatingAdd(user->stats.traffic.d, charged_download);
-    should_close          = (! user->enabled) || userExpiredLocked(user, now_ms) || userTrafficReachedLocked(user);
+    userChargeTrafficLocked(user, upload_bytes, download_bytes, multiplier);
+    should_close = userEligibilityLocked(user, now_ms) != kUserAdmissionOk;
     rwlockWriteUnlock(&user->stats_lock);
     rwlockWriteUnlock(&user->lock);
     return should_close;
@@ -2309,7 +2336,7 @@ bool userRuntimeShouldClose(User *user, uint64_t now_ms)
 
     rwlockReadLock(&user->lock);
     rwlockReadLock(&user->stats_lock);
-    should_close = (! user->enabled) || userExpiredLocked(user, now_ms) || userTrafficReachedLocked(user);
+    should_close = userEligibilityLocked(user, now_ms) != kUserAdmissionOk;
     rwlockReadUnlock(&user->stats_lock);
     rwlockReadUnlock(&user->lock);
     return should_close;
@@ -2493,7 +2520,7 @@ static void userBandwidthEndOversized(user_bandwidth_state_t *state, uint64_t ti
 bool userBandwidthRegister(User *user, user_bandwidth_direction_t direction, uint64_t ticket)
 {
     assert(userObjectIsInitialized(user) && direction <= kUserBandwidthDownload && ticket != 0);
-    rwlockWriteLock(&user->lock);
+    rwlockReadLock(&user->lock);
     rwlockWriteLock(&user->stats_lock);
     bool ok = user->runtime.bandwidth_waiter_count < 1024;
     if (ok)
@@ -2506,7 +2533,7 @@ bool userBandwidthRegister(User *user, user_bandwidth_direction_t direction, uin
         ++user->runtime.bandwidth_waiter_count;
     }
     rwlockWriteUnlock(&user->stats_lock);
-    rwlockWriteUnlock(&user->lock);
+    rwlockReadUnlock(&user->lock);
     return ok;
 }
 
@@ -2608,11 +2635,11 @@ void userBandwidthCancel(User *user, user_bandwidth_direction_t direction, uint6
  * never spends credit; activation of an oversized head settles ordinary credit
  * before the larger cap is installed. */
 static user_bandwidth_result_t userBandwidthPreviewLocked(User *user, user_bandwidth_direction_t direction,
-                                                          uint64_t ticket, uint64_t bytes, bool datagram, uint64_t now)
+                                                          uint64_t ticket, uint64_t bytes, bool datagram, uint64_t now,
+                                                          uint64_t expiry_now)
 {
     user_bandwidth_result_t result = {.decision = kUserDeliveryReject};
-    if (! user->enabled || userExpiredLocked(user, now) || userTrafficReachedLocked(user) ||
-        (datagram && bytes > 65535))
+    if (userEligibilityLocked(user, expiry_now) != kUserAdmissionOk || (datagram && bytes > 65535))
         return result;
     userBandwidthReconcileLocked(user, now);
     user_bandwidth_state_t  *state  = &user->runtime.bandwidth[direction];
@@ -2654,7 +2681,8 @@ user_bandwidth_result_t userBandwidthPreview(User *user, user_bandwidth_directio
         now = userClientAdvanceAgeLocked(user, now);
         userClientProjectExpiryLocked(user, now);
     }
-    user_bandwidth_result_t result = userBandwidthPreviewLocked(user, direction, ticket, bytes, datagram, now);
+    user_bandwidth_result_t result = userBandwidthPreviewLocked(
+        user, direction, ticket, bytes, datagram, now, user->client_view_expiry_valid ? now : getTimeOfDayMS());
     result.limited = (direction == kUserBandwidthUpload ? user->limit.bandwidth.u : user->limit.bandwidth.d) != 0;
     rwlockWriteUnlock(&user->stats_lock);
     rwlockWriteUnlock(&user->lock);
@@ -2674,8 +2702,9 @@ user_delivery_decision_t userCommitDelivery(User *user, user_bandwidth_direction
         now = userClientAdvanceAgeLocked(user, now);
         userClientProjectExpiryLocked(user, now);
     }
-    user_bandwidth_result_t  preview = userBandwidthPreviewLocked(user, direction, ticket, bytes, datagram, now);
-    user_delivery_decision_t result  = preview.decision;
+    user_bandwidth_result_t preview = userBandwidthPreviewLocked(
+        user, direction, ticket, bytes, datagram, now, user->client_view_expiry_valid ? now : getTimeOfDayMS());
+    user_delivery_decision_t result = preview.decision;
     if (result == kUserDeliveryForward && preview.grant < bytes)
         result = kUserDeliveryWait;
     if (result == kUserDeliveryForward)
@@ -2688,10 +2717,10 @@ user_delivery_decision_t userCommitDelivery(User *user, user_bandwidth_direction
             discard granted;
         }
         userBandwidthEndOversized(state, ticket, now);
-        uint32_t *remainder =
-            direction == kUserBandwidthUpload ? &user->runtime.traffic_remainder_u : &user->runtime.traffic_remainder_d;
-        uint64_t *traffic = direction == kUserBandwidthUpload ? &user->stats.traffic.u : &user->stats.traffic.d;
-        *traffic          = userSaturatingAdd(*traffic, userScaleTrafficLocked(bytes, multiplier, remainder));
+        userChargeTrafficLocked(user,
+                                direction == kUserBandwidthUpload ? bytes : 0,
+                                direction == kUserBandwidthDownload ? bytes : 0,
+                                multiplier);
         if (ticket != 0)
         {
             user_bandwidth_waiter_t *waiter = userBandwidthFind(state, ticket);

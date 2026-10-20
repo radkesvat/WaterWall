@@ -115,6 +115,12 @@ add_library(ww STATIC
     objects/user_handle.c
     objects/user.c
     objects/users.c
+    objects/users_index.c
+    objects/users_allowed_ip.c
+    objects/users_update.c
+    objects/users_prepared.c
+    objects/users_public.c
+    objects/users_runtime.c
     
     # Event handling
     event/wevent.c
@@ -1741,6 +1747,12 @@ if(BUILD_TESTING)
         devices/raw/raw_linux.c
         objects/user.c
         objects/users.c
+        objects/users_index.c
+        objects/users_allowed_ip.c
+        objects/users_update.c
+        objects/users_prepared.c
+        objects/users_public.c
+        objects/users_runtime.c
         PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
     )
 endif()

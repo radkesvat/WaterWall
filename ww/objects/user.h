@@ -268,6 +268,39 @@ typedef struct user_accounting_snapshot_s
 typedef struct user_s User;
 typedef User          user_t;
 
+/* Shared owned values; transparent aliases keep the visible field API stable. */
+#define USER_CREDENTIAL_VALUE_FIELDS                                                                                   \
+    char                                          *password;                                                           \
+    size_t                                         password_length;                                                    \
+    MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;                                                \
+    uint8_t                                        sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];       \
+    MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;                                                \
+    uint8_t                                        uuid_pass[kWwUuidBytesLen];                                         \
+    uint8_t                                        wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];                 \
+    bool sha224_pass_valid, sha256_pass_valid, uuid_pass_valid, wireguard_publickey_valid;
+typedef struct user_credential_value_s
+{
+    USER_CREDENTIAL_VALUE_FIELDS
+} user_credential_value_t;
+#define USER_PARSED_ALLOWED_IP_FIELDS                                                                                  \
+    ip_addr_t wireguard_allowed_ip;                                                                                    \
+    ip_addr_t wireguard_allowed_mask;                                                                                  \
+    uint64_t  wireguard_allowed_ip_count;                                                                              \
+    uint8_t   wireguard_allowed_ip_family, wireguard_allowed_ip_prefix;                                                \
+    bool      wireguard_allowed_ips_valid;
+typedef struct user_parsed_allowed_ip_s
+{
+    USER_PARSED_ALLOWED_IP_FIELDS
+} user_parsed_allowed_ip_t;
+#define USER_CLIENT_CLOCK_FIELDS                                                                                       \
+    uint64_t           client_view_expires_at_ms;                                                                      \
+    bool               client_view_expiry_valid, client_view_expired;                                                  \
+    user_client_time_t client_time;
+typedef struct user_client_clock_s
+{
+    USER_CLIENT_CLOCK_FIELDS
+} user_client_clock_t;
+
 struct user_s
 {
     wrwlock_t lock;
@@ -275,7 +308,6 @@ struct user_s
     bool      initialized;
 
     char *name;
-    char *password;
     char *email;
     char *notes;
     char *wireguard_allowed_ips;
@@ -291,18 +323,22 @@ struct user_s
      * expiry checks compare against this local-clock deadline instead of the
      * persisted server-clock timeinfo fields. Never serialized or copied.
      */
-    uint64_t client_view_expires_at_ms;
-    bool     client_view_expiry_valid;
-    bool               client_view_expired;
-    user_client_time_t client_time;
-    int      record_stat_interval_ms;
+    union {
+        user_client_clock_t client_clock;
+        struct
+        {
+            USER_CLIENT_CLOCK_FIELDS
+        };
+    };
+    int record_stat_interval_ms;
 
-    ip_addr_t wireguard_allowed_ip;
-    ip_addr_t wireguard_allowed_mask;
-    uint64_t  wireguard_allowed_ip_count;
-    uint8_t   wireguard_allowed_ip_family;
-    uint8_t   wireguard_allowed_ip_prefix;
-    bool      wireguard_allowed_ips_valid;
+    union {
+        user_parsed_allowed_ip_t allowed_ip;
+        struct
+        {
+            USER_PARSED_ALLOWED_IP_FIELDS
+        };
+    };
 
     user_stat_t stats;
 
@@ -315,18 +351,13 @@ struct user_s
      * with standalone/stack users must not use strict aligned helpers unless
      * they also provide aligned storage.
      */
-    hash_t                                         hash_pass;
-    uint8_t                                        sha_alignment_padding[8];
-    MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
-    uint8_t                                        sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
-    MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
-    uint8_t                                        uuid_pass[kWwUuidBytesLen];
-    uint8_t                                        wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
-
-    bool sha224_pass_valid;
-    bool sha256_pass_valid;
-    bool uuid_pass_valid;
-    bool wireguard_publickey_valid;
+    union {
+        user_credential_value_t credentials;
+        struct
+        {
+            USER_CREDENTIAL_VALUE_FIELDS
+        };
+    };
 };
 
 bool userCreate(User *user, const char *password);
@@ -361,24 +392,14 @@ cJSON *userToJson(User *user);
 bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_addr_t *ip_out, ip_addr_t *mask_out,
                                   uint8_t *family_out, uint8_t *prefix_out, uint64_t *count_out, bool *valid_out);
 bool userWireGuardAllowedIpsStringValid(const char *value);
+/* Standalone only when changing indexed fields; use users_t transactions for stored accounts. */
 bool userSetWireGuardAllowedIps(User *user, const char *value);
 
 /* Owned credential staging, without user locks, accounting, or runtime state.
  * Prepare derives each primitive once. Destroy is required on every result,
  * including after commit transfers password ownership. This internal object
  * helper is shared by standalone users and indexed collection transactions. */
-typedef struct user_prepared_password_s
-{
-    char                                          *password;
-    size_t                                         password_length;
-    hash_t                                         hash_pass;
-    MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
-    uint8_t                                        sha224_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
-    MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
-    uint8_t                                        uuid_pass[kWwUuidBytesLen];
-    uint8_t                                        wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
-    bool sha224_pass_valid, sha256_pass_valid, uuid_pass_valid, wireguard_publickey_valid;
-} user_prepared_password_t;
+typedef user_credential_value_t user_prepared_password_t;
 bool userPreparePassword(user_prepared_password_t *prepared, const char *password, size_t password_length);
 void userFreePreparedPassword(user_prepared_password_t *prepared);
 /* Caller holds the user's configuration write lock. Admission has already
@@ -408,14 +429,15 @@ bool userPasswordDataValid(User *user);
 void     userSetEnabled(User *user, bool enabled);
 bool     userIsEnabled(User *user);
 uint64_t userGetId(User *user);
-void     userSetId(User *user, uint64_t id);
-bool     userIsDisabled(User *user);
-bool     userIsExpired(User *user, uint64_t now_ms);
-bool     userIsActive(User *user, uint64_t now_ms);
-bool     userIsTrafficLimited(User *user);
-bool     userHasReachedTrafficLimit(User *user);
-bool     userHasReachedBandwidthLimit(User *user);
-bool     userHasReachedLimit(User *user);
+/* Standalone setters must not mutate indexed accounts: use collection transactions. */
+void userSetId(User *user, uint64_t id);
+bool userIsDisabled(User *user);
+bool userIsExpired(User *user, uint64_t now_ms);
+bool userIsActive(User *user, uint64_t now_ms);
+bool userIsTrafficLimited(User *user);
+bool userHasReachedTrafficLimit(User *user);
+bool userHasReachedBandwidthLimit(User *user);
+bool userHasReachedLimit(User *user);
 
 /*
  * Live connection-admission and accounting helpers used by enforcement nodes.
@@ -478,3 +500,12 @@ user_delivery_decision_t userCommitDelivery(User *user, user_bandwidth_direction
 /* Caller holds both configuration and stats write locks. Settle old policy and
  * clamp temporary datagram credit before applying the current configured rates. */
 void userBandwidthReconcileLocked(User *user, uint64_t now_ms);
+
+/* Coherent enabled/expiry/quota snapshot; no live connection/IP admission.
+ * id_out, when supplied, is sampled under the same configuration ownership. */
+user_admission_result_t userCheckEligibility(User *user, uint64_t now_ms, uint64_t *id_out);
+
+/* Optional owned profile strings sampled with eligibility and identity. Outputs
+ * must be empty; callers own their release (including password secure wiping). */
+user_admission_result_t userCopyAccess(User *user, uint64_t now_ms, uint64_t *id_out, char **name_out,
+                                       char **password_out);

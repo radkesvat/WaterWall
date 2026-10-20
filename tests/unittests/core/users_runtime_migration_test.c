@@ -26,9 +26,22 @@
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
 static atomic_bool   client_clock_test;
 static atomic_ullong client_clock_ms;
-unsigned long long   __real_getHRTimeUs(void);
-unsigned long long   __wrap_getHRTimeUs(void);
-unsigned long long   __wrap_getHRTimeUs(void)
+static atomic_ullong client_wall_ms;
+static atomic_bool   client_wall_test;
+int                  __real_gettimeofday(struct timeval *tv, void *tz);
+int                  __wrap_gettimeofday(struct timeval *tv, void *tz);
+int                  __wrap_gettimeofday(struct timeval *tv, void *tz)
+{
+    if (! atomic_load(&client_wall_test))
+        return __real_gettimeofday(tv, tz);
+    uint64_t now = atomic_load(&client_wall_ms);
+    tv->tv_sec   = (time_t) (now / 1000U);
+    tv->tv_usec  = (suseconds_t) ((now % 1000U) * 1000U);
+    return 0;
+}
+unsigned long long __real_getHRTimeUs(void);
+unsigned long long __wrap_getHRTimeUs(void);
+unsigned long long __wrap_getHRTimeUs(void)
 {
     return atomic_load(&client_clock_test) ? atomic_load(&client_clock_ms) * 1000ULL : __real_getHRTimeUs();
 }
@@ -1707,6 +1720,53 @@ static void testFirstUseRacesAndMigration(void)
     usersDestroy(&old_users);
     atomic_store(&client_clock_test, false);
 }
+static void testStandaloneBandwidthExpiryClocks(void)
+{
+    atomic_store(&client_clock_test, true);
+    atomic_store(&client_wall_test, true);
+    atomic_store(&client_clock_ms, 5000);
+    atomic_store(&client_wall_ms, UINT64_C(1700000000000));
+    user_t user;
+    require(userCreate(&user, "standalone-clocks"), "standalone clock user");
+    user.timeinfo.expire_at_ms = UINT64_C(1700000000100);
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 0, 10, false).decision == kUserDeliveryForward,
+            "unexpired standalone absolute expiry");
+    atomic_store(&client_wall_ms, UINT64_C(1700000000100));
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 0, 10, false).decision == kUserDeliveryReject &&
+                userCommitDelivery(&user, kUserBandwidthUpload, 0, 10, false, false, 1000) == kUserDeliveryReject &&
+                user.stats.traffic.u == 0,
+            "standalone absolute expiry used pacing clock or charged rejected bytes");
+    user.timeinfo.expire_at_ms                = 0;
+    user.timeinfo.first_usage_at_ms           = UINT64_C(1700000000000);
+    user.timeinfo.expire_after_first_usage_ms = 200;
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 0, 1, false).decision == kUserDeliveryForward,
+            "standalone first-use duration expired early");
+    atomic_store(&client_wall_ms, UINT64_C(1700000000200));
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 0, 1, false).decision == kUserDeliveryReject,
+            "standalone first-use duration ignored wall time");
+    user.timeinfo.expire_after_first_usage_ms = 0;
+    user.limit.bandwidth.u                    = 100;
+    require(userCommitDelivery(&user, kUserBandwidthUpload, 0, 10, false, false, 1000) == kUserDeliveryForward,
+            "no-expiry standalone initial credit");
+    atomic_store(&client_wall_ms, UINT64_C(1900000000000));
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 0, 1, false).decision == kUserDeliveryWait,
+            "forward wall jump minted pacing credit");
+    atomic_store(&client_wall_ms, 1);
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 0, 1, false).decision == kUserDeliveryWait,
+            "backward wall jump minted pacing credit");
+    atomic_store(&client_clock_ms, 5010);
+    require(userCommitDelivery(&user, kUserBandwidthUpload, 0, 1, false, false, 1000) == kUserDeliveryForward,
+            "fresh monotonic sample did not refill");
+    userSetClientViewExpiry(&user, 5020, true);
+    require(! user.client_time.clock_valid, "projection fixture unexpectedly has installed client clock");
+    atomic_store(&client_clock_ms, 5020);
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 0, 1, false).decision == kUserDeliveryReject,
+            "explicit client expiry projection required client clock");
+    userDestroy(&user);
+    atomic_store(&client_wall_test, false);
+    atomic_store(&client_clock_test, false);
+}
+
 static void testBandwidthSharedTurnsAndMigration(void)
 {
     atomic_store(&client_clock_test, true);
@@ -1950,6 +2010,7 @@ int main(void)
     testFirstUsageSetIfMissingKeepsServerValue();
     testEarliestFirstUseMerge();
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
+    testStandaloneBandwidthExpiryClocks();
     testBandwidthSharedTurnsAndMigration();
     testBandwidthDatagramCreditAndRateChanges();
     testBandwidthConcurrentAndFinalQuota();

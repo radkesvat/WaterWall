@@ -30,6 +30,12 @@
  */
 
 #include "objects/user_index_geometry.h"
+#include "objects/users_internal.h"
+
+#if defined(OS_LINUX)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 #include "wthread.h"
 #include "wwapi.h"
 
@@ -93,8 +99,8 @@ static uint8_t  g_force_sha224_value[SHA224_DIGEST_SIZE];
 static uint8_t  g_force_wireguard_value[USER_WIREGUARD_PUBLICKEY_SIZE];
 static users_t *g_password_derivation_users;
 static user_t  *g_password_derivation_user;
-static bool    g_force_sha256_enabled;
-static uint8_t g_force_sha256_value[SHA256_DIGEST_SIZE];
+static bool     g_force_sha256_enabled;
+static uint8_t  g_force_sha256_value[SHA256_DIGEST_SIZE];
 
 wcrypto_status_t __real_wCryptoSHA224(sha224_hash_t *out, const unsigned char *in, size_t inlen);
 wcrypto_status_t __real_wCryptoSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen);
@@ -1517,6 +1523,11 @@ static void testPreparedConfigRefusalsAndLocks(void)
     require(allocationCountEnd() == 0, "prepared range reuse or rename allocated during commit");
 #endif
     configHoldFinish(&holder);
+    require(prepared->consumed && prepared->patch.mask == 0 && prepared->update.mask == 0 &&
+                prepared->patch.name == NULL && prepared->update.name == NULL &&
+                prepared->patch.wireguard_allowed_ips == NULL && prepared->update.wireguard_allowed_ips == NULL &&
+                prepared->name == NULL && prepared->allowed_ips.copy == NULL,
+            "committed config preparation retained transferred aliases or masks");
     usersFreePreparedConfigPatch(prepared);
     require(stringCompare(target->name, "after") == 0 &&
                 stringCompare(target->wireguard_allowed_ips, "10.62.0.0/24") == 0 &&
@@ -2460,11 +2471,163 @@ static void testPreparedPasswordDeadlines(void)
 }
 #endif
 
+static void testTrustedImportDerivationAndBoundedRows(void)
+{
+    users_t users, copied;
+    require(usersCreate(&users) && usersCreate(&copied), "trusted import setup");
+    cJSON *json = cJSON_Parse("[{\"id\":1,\"password\":\"trusted-first\",\"notes\":\"quote \\\" and \\n line\"},"
+                              "{\"id\":2,\"password\":\"trusted-second\",\"wireguard-allowed-ips\":\"10.3.4.5/24\"}]");
+    require(json != NULL, "trusted import JSON");
+    resetCounters();
+    require(usersFeedJsonRequiredIds(&users, json) && usersValidateStructure(&users), "trusted import failed");
+    cJSON_Delete(json);
+    require(usersCopy(&copied, &users), "trusted copy failed");
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+    require(g_sha224_calls == 2 && g_sha256_calls == 2 && g_x25519_calls == 2,
+            "import or trusted baseline copy rederived credentials");
+#endif
+    user_t *target = usersGetAt(&copied, 0);
+    target->sha224_pass.bytes[0] ^= 1U;
+    require(! usersValidate(&copied) && ! userPasswordDataValid(target), "full diagnostic accepted corrupt derivation");
+    target->sha224_pass.bytes[0] ^= 1U;
+    cJSON *row     = NULL;
+    size_t encoded = 0;
+    require(usersCopyFullUserJsonAt(&users, 0, SIZE_MAX, &row, &encoded) == kUserPublicOk, "bounded row export");
+    char *printed = cJSON_PrintUnformatted(row);
+    require(stringLength(printed) == encoded, "bounded row size disagrees with JSON escaping");
+    cJSON_free(printed);
+    cJSON_Delete(row);
+    row          = NULL;
+    size_t exact = encoded;
+    require(usersCopyFullUserJsonAt(&users, 0, exact - 1U, &row, &encoded) == kUserPublicTooLarge && row == NULL &&
+                encoded == 0,
+            "bounded row crossed exact encoded allowance");
+    require(usersCopyFullUserJsonAt(&users, 0, exact, &row, &encoded) == kUserPublicOk && encoded == exact,
+            "bounded row refused exact allowance");
+    cJSON_Delete(row);
+    row = NULL;
+    require(usersCopyFullUserJsonAt(&users, 2, SIZE_MAX, &row, &encoded) == kUserPublicOutOfRange && row == NULL &&
+                encoded == 0,
+            "bounded row end detection");
+    target            = usersGetAt(&users, 0);
+    char *saved_notes = target->notes;
+    target->notes     = memoryAllocate(1024U * 1024U);
+    memset(target->notes, 'x', 1024U * 1024U - 1U);
+    target->notes[1024U * 1024U - 1U] = '\0';
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    allocationCountBegin();
+#endif
+    require(usersCopyFullUserJsonAt(&users, 0, 256, &row, &encoded) == kUserPublicTooLarge && row == NULL,
+            "oversized row was not refused before copying arbitrary strings");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    discard allocationCountEnd();
+    require(g_alloc_bytes < 32768U, "bounded row allocated a copy of oversized notes");
+#endif
+    memoryFree(target->notes);
+    char invalid_notes[] = "invalid-\xc0\xaf";
+    target->notes        = invalid_notes;
+    require(usersCopyFullUserJsonAt(&users, 0, 4096, &row, &encoded) == kUserPublicInvalidEncoding && row == NULL &&
+                encoded == 0,
+            "bounded row accepted malformed UTF-8");
+    target->notes = saved_notes;
+    json          = cJSON_Parse("{\"id\":3,\"password\":\"checked-import\",\"wireguard-allowed-ips\":\"10.5.6.9/24\"}");
+    resetCounters();
+    require(usersAddUserFromJsonChecked(&users, json) == kUsersAddResultOk, "trusted checked JSON add");
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+    require(g_sha224_calls == 1 && g_sha256_calls == 1 && g_x25519_calls == 1,
+            "fresh checked JSON add rederived credentials");
+#endif
+    cJSON_Delete(json);
+    json = cJSON_Parse("[{\"id\":4,\"password\":\"append-page\"},{\"password\":\"missing-id\"}]");
+    require(! usersFeedJsonRequiredIds(&users, json) && usersCount(&users) == 3 && usersValidateStructure(&users),
+            "required-ID late-row refusal did not roll back just-appended rows");
+    cJSON_Delete(json);
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+    json = cJSON_Parse("{\"id\":5,\"password\":\"backend-refused-import\"}");
+    resetCounters();
+    g_sha256_fail_on_call = 1;
+    require(! usersFeedJsonRequiredIds(&users, json) && usersCount(&users) == 3 && usersValidateStructure(&users),
+            "crypto failure published an imported account");
+    cJSON_Delete(json);
+    resetCounters();
+    /* A failed SHA must reject before a later derived-key comparison can happen
+     * to match. The zero scalar reproduces that old false-positive diagnostic. */
+    uint8_t saved_key[USER_WIREGUARD_PUBLICKEY_SIZE];
+    memoryCopy(saved_key, target->wireguard_publickey, sizeof(saved_key));
+    const uint8_t zero_scalar[USER_WIREGUARD_PUBLICKEY_SIZE] = {0};
+    const uint8_t basepoint[USER_WIREGUARD_PUBLICKEY_SIZE]   = {9};
+    require(__real_wCryptoX25519(target->wireguard_publickey, zero_scalar, basepoint) == kWCryptoOk,
+            "diagnostic crypto refusal fixture");
+    g_sha224_fail_on_call = 1;
+    require(! userPasswordDataValid(target), "full diagnostic accepted a failed SHA backend");
+    memoryCopy(target->wireguard_publickey, saved_key, sizeof(saved_key));
+    memoryZero(saved_key, sizeof(saved_key));
+    resetCounters();
+#endif
+    usersDestroy(&copied);
+    usersDestroy(&users);
+}
+
+#if defined(OS_LINUX) && defined(USERS_TEST_ALLOC_COUNTING)
+static bool    g_expect_corruption_abort;
+_Noreturn void __real_abortProgramNow(int exit_code);
+_Noreturn void __wrap_abortProgramNow(int exit_code);
+_Noreturn void __wrap_abortProgramNow(int exit_code)
+{
+    if (g_expect_corruption_abort)
+        _Exit(exit_code == 1 && g_alloc_calls == 0 ? 72 : 73);
+    __real_abortProgramNow(exit_code);
+}
+
+static void testCorruptionIsFatalWithoutRepair(void)
+{
+    users_t users;
+    require(usersCreate(&users), "fatal corruption setup");
+    user_t                  *target      = addNamedUser(&users, 1, "fatal-old", "fatal-name");
+    user_prepared_password_t replacement = {0};
+    require(userPreparePassword(&replacement, "fatal-new", 9), "fatal password preparation");
+    for (unsigned kind = 0; kind < 4; ++kind)
+    {
+        pid_t pid = fork();
+        require(pid >= 0, "fork corruption child");
+        if (pid == 0)
+        {
+            if (kind == 0)
+                users.sha224_table = NULL;
+            else if (kind == 1)
+                users.sha224_table->map.size = 0;
+            else if (kind == 2)
+                users.name_table->map.size = users_name_map_t_capacity(&users.name_table->map);
+            else
+                users_sha224_map_t_clear(&users.sha224_table->map);
+            g_expect_corruption_abort = true;
+            allocationCountBegin();
+            if (kind < 2)
+                discard usersPasswordPreflightLocked(&users, target, &replacement);
+            else if (kind == 2)
+                discard usersNameTableInsertReservedLocked(&users, target);
+            else
+                discard usersRemoveUser(&users, target);
+            _Exit(74);
+        }
+        int status = 0;
+        require(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 72,
+                "corruption was recoverable or allocated/repaired before fatal exit");
+    }
+    userFreePreparedPassword(&replacement);
+    usersDestroy(&users);
+}
+#endif
+
 int main(void)
 {
     testCaseSet("users_index_test");
     require(wCryptoGlobalInit() == kWCryptoOk, "crypto global initialization failed");
 
+    testTrustedImportDerivationAndBoundedRows();
+#if defined(OS_LINUX) && defined(USERS_TEST_ALLOC_COUNTING)
+    testCorruptionIsFatalWithoutRepair();
+#endif
     testNameIndex();
     testPointerIndexAndRemoval();
     testStrictAllowedIps();

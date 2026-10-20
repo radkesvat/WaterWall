@@ -124,6 +124,7 @@
   if(LINUX)
     target_compile_definitions(users_runtime_migration_test PRIVATE WCRYPTO_TEST_LINKER_WRAP=1)
     target_link_options(users_runtime_migration_test PRIVATE
+      "-Wl,--wrap=gettimeofday"
       "-Wl,--wrap=getHRTimeUs"
       "-Wl,-u,wCryptoSHA224"
       "-Wl,-u,wCryptoSHA256"
@@ -142,7 +143,13 @@
   # wipe counter observe this executable's lookup and update paths.
   waterwall_add_native_executable(users_index_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/core/users_index_test.c
     ${CMAKE_SOURCE_DIR}/ww/objects/user.c
-    ${CMAKE_SOURCE_DIR}/ww/objects/users.c)
+    ${CMAKE_SOURCE_DIR}/ww/objects/users.c
+    ${CMAKE_SOURCE_DIR}/ww/objects/users_index.c
+    ${CMAKE_SOURCE_DIR}/ww/objects/users_allowed_ip.c
+    ${CMAKE_SOURCE_DIR}/ww/objects/users_update.c
+    ${CMAKE_SOURCE_DIR}/ww/objects/users_prepared.c
+    ${CMAKE_SOURCE_DIR}/ww/objects/users_public.c
+    ${CMAKE_SOURCE_DIR}/ww/objects/users_runtime.c)
   target_link_libraries(users_index_test PRIVATE ww_test_support)
   target_link_libraries(users_index_test PRIVATE ww)
   # Test-only counter proving every post-snapshot exit of the password change
@@ -154,6 +161,7 @@
     # Count allocations without replacing the allocator's fatal failure contract.
     target_compile_definitions(users_index_test PRIVATE USERS_TEST_ALLOC_COUNTING=1)
     target_link_options(users_index_test PRIVATE
+      "-Wl,--wrap=abortProgramNow"
       "-Wl,-u,wCryptoSHA224"
       "-Wl,-u,wCryptoSHA256"
       "-Wl,-u,wCryptoX25519"
