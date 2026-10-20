@@ -19,3 +19,13 @@ bool authenticationserverPrivatePublish(authenticationserver_private_file_t *fil
 void authenticationserverPrivateDiscard(authenticationserver_private_file_t *file);
 bool authenticationserverPrivateWrite(const char *destination, const void *data, size_t length);
 bool authenticationserverPrivateRestrict(const char *path);
+
+/* Absence is captured only from the actual open, never a cleanup errno. */
+typedef enum authenticationserver_private_read_result_e
+{
+    kAuthenticationServerPrivateReadSuccess,
+    kAuthenticationServerPrivateReadAbsent,
+    kAuthenticationServerPrivateReadError
+} authenticationserver_private_read_result_t;
+authenticationserver_private_read_result_t authenticationserverPrivateRead(const char *path, char **data,
+                                                                           size_t *length);

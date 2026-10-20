@@ -553,6 +553,18 @@ static void mixedCredentialTransactions(tunnel_t *server)
     twfRequireNoLeakedBuffers();
 }
 
+static void requireRecoveryFilesUnchanged(const char *primary, const char *backup, const char *expected_primary,
+                                          const char *expected_backup)
+{
+    char *actual_primary = readFile(primary);
+    char *actual_backup  = readFile(backup);
+    twfRequire(actual_primary != NULL && actual_backup != NULL && strcmp(actual_primary, expected_primary) == 0 &&
+                   strcmp(actual_backup, expected_backup) == 0,
+               "startup rollback modified primary or recovery database");
+    memoryFree(actual_primary);
+    memoryFree(actual_backup);
+}
+
 int main(void)
 {
     twfSetCase("authenticationserver API concurrency and lifecycle");
@@ -572,6 +584,11 @@ int main(void)
     twfRequire(file != NULL && fwrite(initial, 1, sizeof(initial) - 1, file) == sizeof(initial) - 1 &&
                    fclose(file) == 0,
                "database seed failed");
+    static const char recovery[] = "{\"users\":[{\"id\":41,\"password\":\"distinct-recovery\"}]}";
+    file                         = fopen(backup, "wb");
+    twfRequire(file != NULL && fwrite(recovery, 1, sizeof(recovery) - 1, file) == sizeof(recovery) - 1 &&
+                   fclose(file) == 0,
+               "recovery seed failed");
     cJSON  *settings = cJSON_CreateObject();
     discard cJSON_AddStringToObject(settings, "db-path", primary);
     discard cJSON_AddNumberToObject(settings, "file-save-rate-ms", 60000);
@@ -589,11 +606,13 @@ int main(void)
                    unregisters == 1,
                "random-source failure did not roll back constructor");
     twfRequire(! nodeApiHasRegistration(unregistered), "random failure left an API registration");
+    requireRecoveryFilesUnchanged(primary, backup, initial, recovery);
     refuse_registration = true;
     tunnel_t *refused   = authenticationserverTunnelCreate(&node);
     twfRequire(refused == NULL && registrations == 1 && unregisters == 2,
                "registration failure did not roll back constructor");
     twfRequire(! nodeApiHasRegistration(unregistered), "registration failure retained reachable descriptor");
+    requireRecoveryFilesUnchanged(primary, backup, initial, recovery);
     tunnel_t *server = authenticationserverTunnelCreate(&node);
     twfRequire(server != NULL && registrations == 2 && nodeApiHasRegistration(server),
                "real constructor registration failed");
@@ -630,7 +649,24 @@ int main(void)
                                 1024U * 1024U) == NULL,
                "closed admission accepted a provider job");
     nodeApiDomainDestroy(domain);
-    authenticationserverTunnelDestroy(server, wwLifecycleStartupRollback());
+    authenticationserver_tstate_t *final_state = tunnelGetState(server);
+    cJSON                         *final_user  = cJSON_Parse("{\"id\":999,\"password\":\"normal-shutdown-persisted\"}");
+    twfRequire(final_user != NULL &&
+                   usersAddUserFromJsonChecked(&final_state->store.users, final_user) == kUsersAddResultOk,
+               "normal shutdown mutation setup failed");
+    cJSON_Delete(final_user);
+    char *retained_recovery = readFile(backup);
+    twfRequire(retained_recovery != NULL && remove(primary) == 0, "shutdown missing-primary setup failed");
+    authenticationserverTunnelDestroy(server, wwLifecycleProcessShutdown());
+    char *after_shutdown_recovery = readFile(backup);
+    twfRequire(after_shutdown_recovery != NULL && strcmp(after_shutdown_recovery, retained_recovery) == 0,
+               "final missing-primary save changed recovery backup");
+    memoryFree(after_shutdown_recovery);
+    memoryFree(retained_recovery);
+    char *persisted = readFile(primary);
+    twfRequire(persisted != NULL && strstr(persisted, "normal-shutdown-persisted") != NULL,
+               "normal process shutdown did not persist runtime changes");
+    memoryFree(persisted);
     nodeApiRegistryDestroy();
     cJSON_Delete(settings);
     globalstateDestroySecureRandom();

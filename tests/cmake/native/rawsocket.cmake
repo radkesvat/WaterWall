@@ -581,7 +581,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
   target_include_directories(authenticationserver_storage_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/AuthenticationServer)
   target_link_libraries(authenticationserver_storage_test PRIVATE AuthenticationServer ww)
   target_link_options(authenticationserver_storage_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
-    "-Wl,--wrap=open" "-Wl,--wrap=fwrite" "-Wl,--wrap=fflush" "-Wl,--wrap=fclose"
+    "-Wl,--wrap=open" "-Wl,--wrap=fread" "-Wl,--wrap=fwrite" "-Wl,--wrap=fflush" "-Wl,--wrap=fclose"
     "-Wl,--wrap=fsync" "-Wl,--wrap=fchmod" "-Wl,--wrap=rename"
     "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=time")
   add_dependencies(waterwall_unit_tests authenticationserver_storage_test)

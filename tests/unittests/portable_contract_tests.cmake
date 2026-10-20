@@ -24,6 +24,17 @@ function(_waterwall_register_portable_contract test_name target_name labels)
   waterwall_register_native_test(${test_name} ${target_name} "${labels}" AGGREGATE ${aggregate})
 endfunction()
 
+if(TARGET AuthenticationServer)
+  waterwall_add_native_executable(authentication_portability_test SUPPORT EXCLUDE_FROM_ALL SOURCES
+    "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authentication_portability_test.c")
+  target_include_directories(authentication_portability_test PRIVATE
+    "${CMAKE_SOURCE_DIR}/tunnels/AuthenticationServer/common")
+  target_link_libraries(authentication_portability_test PRIVATE AuthenticationServer ww)
+  set_target_properties(authentication_portability_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+  _waterwall_register_portable_contract(waterwall.authentication_portability_unit
+    authentication_portability_test "unit;authentication;configuration;storage;portable")
+endif()
+
 if(NOT TARGET socket_manager_selection_test)
   waterwall_add_native_executable(socket_manager_selection_test SUPPORT EXCLUDE_FROM_ALL SOURCES
     "${WATERWALL_UNIT_SOURCE_ROOT}/devices/socket_manager/socket_manager_selection_test.c")

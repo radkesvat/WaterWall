@@ -20,6 +20,12 @@ typedef enum fault_e
     kBackupStage,
     kHistory,
     kDirectorySync,
+    kReadOpen,
+    kRead,
+    kReadClose,
+    kMissingPrimary,
+    kMissingNoBackup,
+    kMissingPublication,
     kPermissions
 } fault_t;
 static fault_t  fault;
@@ -71,7 +77,25 @@ int __wrap_open(const char *path, int flags, ...)
             return -1;
         }
     }
+    if (fault == kReadOpen && strcmp(path, primary) == 0 && (flags & O_ACCMODE) == O_RDONLY)
+    {
+        fault = kNone;
+        errno = EIO;
+        return -1;
+    }
     return __real_open(path, flags, mode);
+}
+size_t __real_fread(void *ptr, size_t size, size_t count, FILE *stream);
+size_t __wrap_fread(void *ptr, size_t size, size_t count, FILE *stream);
+size_t __wrap_fread(void *ptr, size_t size, size_t count, FILE *stream)
+{
+    if (fault == kRead)
+    {
+        fault = kNone;
+        errno = EIO;
+        return __real_fread(ptr, size, count - 1, stream);
+    }
+    return __real_fread(ptr, size, count, stream);
 }
 size_t __real_fwrite(const void *ptr, size_t size, size_t count, FILE *stream);
 size_t __wrap_fwrite(const void *ptr, size_t size, size_t count, FILE *stream);
@@ -109,8 +133,9 @@ int __real_fclose(FILE *stream);
 int __wrap_fclose(FILE *stream);
 int __wrap_fclose(FILE *stream)
 {
-    int result = __real_fclose(stream);
-    if (fault == kClose)
+    bool read_close = fault == kReadClose && (fcntl(fileno(stream), F_GETFL) & O_ACCMODE) == O_RDONLY;
+    int  result     = __real_fclose(stream);
+    if (fault == kClose || read_close)
     {
         fault = kNone;
         return EOF;
@@ -239,7 +264,16 @@ static void testCommit(mode_t mask, fault_t selected)
     twfRequire(usersCreate(&ts->store.users), "users construction failed");
     ts->db_path = primary;
     twfRequire(authenticationserverLoadDatabase(ts), "initial database load failed");
-    ts->database_loaded     = true;
+    ts->database_loaded                  = true;
+    static const char protected_backup[] = "{\"users\":[{\"id\":42,\"password\":\"previous-backup\"}]}";
+    if (selected == kMissingPrimary || selected == kMissingNoBackup || selected == kMissingPublication)
+    {
+        if (selected != kMissingNoBackup)
+            twfRequire(
+                authenticationserverPrivateWrite(ts->backup_path, protected_backup, sizeof(protected_backup) - 1),
+                "missing-primary backup seed failed");
+        twfRequire(remove(primary) == 0, "primary removal failed");
+    }
     ts->normal_backups_mode = kAuthenticationServerNormalBackupsDaily;
     ts->normal_backups_path = directory;
     if (selected == kHistory)
@@ -267,7 +301,9 @@ static void testCommit(mode_t mask, fault_t selected)
     authenticationserver_session_t session        = {.allow_user_write = true};
     const uint8_t                  correlation[4] = {0};
     static const char              addition[]     = "{\"id\":43,\"password\":\"proposed\"}";
-    fault                                         = selected;
+    fault                                         = selected == kMissingPrimary || selected == kMissingNoBackup ? kNone
+                                                    : selected == kMissingPublication ? kPrimaryRename
+                                                                                      : selected;
     stage_writes = directory_syncs = 0;
     use_test_clock                 = true;
     test_clock_us                  = 0; /* A valid outcome timestamp, never an unavailable sentinel. */
@@ -281,7 +317,8 @@ static void testCommit(mode_t mask, fault_t selected)
                                                            (const uint8_t *) addition,
                                                            sizeof(addition) - 1);
     rwlockWriteUnlock(&ts->state_lock);
-    const bool committed = selected == kNone || selected == kHistory || selected == kDirectorySync;
+    const bool committed = selected == kNone || selected == kHistory || selected == kDirectorySync ||
+                           selected == kMissingPrimary || selected == kMissingNoBackup;
     twfRequire(response != NULL &&
                    (((const uint8_t *) sbufGetRawPtr(response))[0] == kAuthenticationServerResponseTypeOk) == committed,
                "save result disagreed with commit boundary");
@@ -301,6 +338,15 @@ static void testCommit(mode_t mask, fault_t selected)
     twfRequire(saved_status.config_revision == (committed ? 85U : 84U) && saved_status.stats_revision == 1902 &&
                    saved_status.user_count == (committed ? 2U : 1U),
                "status did not preserve the existing save/revision ordering");
+    if (selected == kMissingPrimary || selected == kMissingPublication)
+    {
+        char *retained = readFile(ts->backup_path);
+        twfRequire(retained != NULL && strcmp(retained, protected_backup) == 0,
+                   "missing primary rotated recovery backup");
+        memoryFree(retained);
+    }
+    if (selected == kMissingNoBackup)
+        twfRequire(! isFile(ts->backup_path), "missing primary fabricated a recovery backup");
     unsigned reads_before                         = wall_time_reads;
     unsigned writes_before                        = private_writes;
     test_wall_time                                = 100;
@@ -325,6 +371,17 @@ static void testCommit(mode_t mask, fault_t selected)
                        failed_status.primary_save_last_attempt_age_ms == 25 &&
                        failed_status.primary_save_last_success_age_ms == 125 && ts->primary_save_last_success_ms == 0,
                    "later failure lost the earlier successful replacement time");
+    }
+    if (selected == kMissingPrimary || selected == kMissingNoBackup)
+    {
+        char *restored = readFile(primary);
+        fault          = kNone;
+        twfRequire(authenticationserverSaveDatabase(ts), "normal rotation did not resume after missing primary");
+        char *rotated = readFile(ts->backup_path);
+        twfRequire(restored != NULL && rotated != NULL && strcmp(restored, rotated) == 0,
+                   "next normal save did not rotate the restored primary");
+        memoryFree(restored);
+        memoryFree(rotated);
     }
     use_test_clock                                        = false;
     fault                                                 = kNone;
@@ -376,15 +433,121 @@ static void testCommit(mode_t mask, fault_t selected)
     twfRequire(rmdir(directory) == 0, "temporary directory remained populated");
 }
 
+static void testCalendarWeeksAndLayouts(void)
+{
+    char directory[] = "/tmp/ww-auth-calendar-XXXXXX";
+    twfRequire(mkdtemp(directory) != NULL, "calendar directory failed");
+    snprintf(primary, sizeof(primary), "%s/users.json", directory);
+    char  *read_bytes  = NULL;
+    size_t read_length = 0;
+    twfRequire(authenticationserverPrivateRead(primary, &read_bytes, &read_length) ==
+                       kAuthenticationServerPrivateReadAbsent &&
+                   read_bytes == NULL && read_length == 0,
+               "missing private primary was not classified at open");
+    int empty_fd = open(primary, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    twfRequire(empty_fd >= 0 && close(empty_fd) == 0 &&
+                   authenticationserverPrivateRead(primary, &read_bytes, &read_length) ==
+                       kAuthenticationServerPrivateReadError,
+               "empty primary was misclassified as missing");
+    twfRequire(remove(primary) == 0 && symlink("missing-target", primary) == 0 &&
+                   authenticationserverPrivateRead(primary, &read_bytes, &read_length) ==
+                       kAuthenticationServerPrivateReadError,
+               "dangling primary symlink was misclassified as missing");
+    twfRequire(remove(primary) == 0 && authenticationserverPrivateRead(directory, &read_bytes, &read_length) ==
+                                           kAuthenticationServerPrivateReadError,
+               "nonregular primary was accepted");
+    authenticationserver_tstate_t ts = {0};
+    rwlockinit(&ts.state_lock);
+    twfRequire(usersCreate(&ts.store.users), "calendar users creation failed");
+    ts.db_path                   = primary;
+    static const char *layouts[] = {
+        "{\"password\":{\"id\":1,\"password\":\"one\"}}",
+        "{\"pass\":{\"id\":1,\"pass\":\"one\"}}",
+        "{\"password\":{\"id\":1,\"password\":\"one\"},\"pass\":{\"id\":2,\"password\":\"two\"}}",
+        "{\"users\":[{\"id\":1,\"password\":\"one\"}],\"pass\":{}}"};
+    for (size_t i = 0; i < sizeof(layouts) / sizeof(layouts[0]); ++i)
+    {
+        twfRequire(authenticationserverPrivateWrite(primary, layouts[i], strlen(layouts[i])), "layout seed failed");
+        if (ts.backup_path != NULL)
+        {
+            memoryFree(ts.backup_path);
+            ts.backup_path = NULL;
+        }
+        usersClear(&ts.store.users);
+        twfRequire(authenticationserverLoadDatabase(&ts) && usersCount(&ts.store.users) == (i == 2 ? 2U : 1U),
+                   "server required-ID validation misclassified name map");
+    }
+    const char *old_tz   = getenv("TZ");
+    char       *saved_tz = old_tz == NULL ? NULL : stringDuplicate(old_tz);
+    twfRequire(setenv("TZ", "STD0DST,M3.3.3/0,M11.1.3/0", 1) == 0, "calendar timezone setup failed");
+    tzset();
+    ts.database_loaded            = true;
+    ts.normal_backups_mode        = kAuthenticationServerNormalBackupsWeekly;
+    ts.normal_backups_path        = directory;
+    ts.normal_backups_count_limit = 10;
+    static const struct
+    {
+        int      year, month, day;
+        uint64_t slot;
+    } dates[]      = {{2026, 3, 16, 20260316},
+                      {2026, 3, 18, 20260316},
+                      {2026, 3, 22, 20260316},
+                      {2026, 11, 2, 20261102},
+                      {2026, 11, 4, 20261102},
+                      {2026, 11, 8, 20261102},
+                      {2026, 12, 28, 20261228},
+                      {2027, 1, 1, 20261228},
+                      {2027, 1, 3, 20261228}};
+    use_test_clock = true;
+    for (size_t i = 0; i < sizeof(dates) / sizeof(dates[0]); ++i)
+    {
+        struct tm local = {.tm_year  = dates[i].year - 1900,
+                           .tm_mon   = dates[i].month - 1,
+                           .tm_mday  = dates[i].day,
+                           .tm_hour  = 12,
+                           .tm_isdst = -1};
+        test_wall_time  = mktime(&local);
+        twfRequire(test_wall_time != (time_t) -1 && authenticationserverSaveDatabase(&ts) &&
+                       ts.normal_backups_last_slot == dates[i].slot,
+                   "weekly backup used elapsed days instead of local calendar week");
+    }
+    use_test_clock = false;
+    if (saved_tz != NULL)
+        twfRequire(setenv("TZ", saved_tz, 1) == 0, "calendar timezone restore failed");
+    else
+        twfRequire(unsetenv("TZ") == 0, "calendar timezone removal failed");
+    tzset();
+    memoryFree(saved_tz);
+    memoryFree(ts.backup_path);
+    usersDestroy(&ts.store.users);
+    rwlockDestroy(&ts.state_lock);
+    DIR           *dir = opendir(directory);
+    struct dirent *entry;
+    unsigned       snapshots = 0;
+    while ((entry = readdir(dir)) != NULL)
+    {
+        if (entry->d_name[0] == '.')
+            continue;
+        if (stringStartsWith(entry->d_name, "authenticationserver-"))
+            ++snapshots;
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+        twfRequire(remove(path) == 0, "calendar cleanup failed");
+    }
+    twfRequire(snapshots == 3, "one local week produced multiple history snapshots");
+    twfRequire(closedir(dir) == 0 && rmdir(directory) == 0, "calendar directory cleanup failed");
+}
+
 int main(void)
 {
     twfSetCase("authenticationserver private storage and commit");
     twfRequire(createNetworkLogger(NULL, false) != NULL && wCryptoGlobalInit() == kWCryptoOk, "runtime setup failed");
-    for (fault_t selected = kNone; selected <= kDirectorySync; ++selected)
+    for (fault_t selected = kNone; selected <= kMissingPublication; ++selected)
     {
         testCommit(022, selected);
         testCommit(000, selected);
     }
+    testCalendarWeeksAndLayouts();
     twfRequire(private_writes > 0, "no actual private file writes were exercised");
     wCryptoGlobalCleanup();
     networkloggerDestroy();

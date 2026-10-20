@@ -5,7 +5,6 @@
 
 void authenticationserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
-    discard                        context;
     authenticationserver_tstate_t *ts = tunnelGetState(t);
 
     nodeApiUnregister(t);
@@ -15,7 +14,8 @@ void authenticationserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t
     authenticationserverAuditDestroy(ts->audit);
     ts->audit = NULL;
 
-    if (UNLIKELY(ts->database_loaded && ! authenticationserverSaveDatabase(ts)))
+    if (UNLIKELY(ts->database_loaded && (context == NULL || context->scope != kWwLifecycleStartupRollback) &&
+                 ! authenticationserverSaveDatabase(ts)))
     {
         LOGW("AuthenticationServer: final users database save failed during destroy");
     }

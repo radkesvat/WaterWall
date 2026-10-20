@@ -139,6 +139,7 @@ static bool authenticationserverNormalBackupPeriod(authenticationserver_normal_b
         struct tm week_start_tm     = local_tm;
         int       days_since_monday = local_tm.tm_wday == 0 ? 6 : local_tm.tm_wday - 1;
 
+        week_start_tm.tm_mday -= days_since_monday;
         week_start_tm.tm_hour  = 0;
         week_start_tm.tm_min   = 0;
         week_start_tm.tm_sec   = 0;
@@ -149,7 +150,6 @@ static bool authenticationserverNormalBackupPeriod(authenticationserver_normal_b
         {
             return false;
         }
-        week_start_ts -= (time_t) days_since_monday * SECONDS_PER_DAY;
 
         if (UNLIKELY(! authenticationserverLocalTime(&week_start_ts, &week_start_tm)))
         {
@@ -728,10 +728,17 @@ bool authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *ts)
      * proposed transaction. Only primary replacement commits the mutation. */
     uint64_t committed_ms = 0;
     bool     committed    = authenticationserverPrivateStage(&primary, ts->db_path, json_text, json_len);
-    char    *previous     = committed ? readFile(ts->db_path) : NULL;
-    committed             = committed && previous != NULL &&
-                authenticationserverPrivateStage(&backup, ts->backup_path, previous, stringLength(previous)) &&
-                authenticationserverPrivatePublish(&backup, ts->backup_path, NULL) &&
+    char    *previous     = NULL;
+    size_t   previous_len = 0;
+    authenticationserver_private_read_result_t read_result = kAuthenticationServerPrivateReadError;
+    if (committed)
+        read_result = authenticationserverPrivateRead(ts->db_path, &previous, &previous_len);
+    /* A missing primary has no previous committed bytes to rotate. Preserve any
+     * existing recovery file, and resume normal rotation on the next save. */
+    committed = committed && read_result != kAuthenticationServerPrivateReadError &&
+                (read_result == kAuthenticationServerPrivateReadAbsent ||
+                 (authenticationserverPrivateStage(&backup, ts->backup_path, previous, previous_len) &&
+                  authenticationserverPrivatePublish(&backup, ts->backup_path, NULL))) &&
                 authenticationserverPrivatePublish(&primary, ts->db_path, &committed_ms);
     authenticationserverRecordPrimarySave(ts, committed, committed ? committed_ms : getHRTimeUs() / 1000U);
     memoryFree(previous);

@@ -203,3 +203,73 @@ bool authenticationserverPrivateWrite(const char *destination, const void *data,
     authenticationserverPrivateDiscard(&staged);
     return ok;
 }
+
+authenticationserver_private_read_result_t authenticationserverPrivateRead(const char *path, char **data,
+                                                                           size_t *length)
+{
+    assert(data != NULL && length != NULL);
+    *data        = NULL;
+    *length      = 0;
+    char  *bytes = NULL;
+    size_t size  = 0;
+#ifdef OS_WIN
+    HANDLE handle =
+        CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    if (handle == INVALID_HANDLE_VALUE)
+        return GetLastError() == ERROR_FILE_NOT_FOUND ? kAuthenticationServerPrivateReadAbsent
+                                                      : kAuthenticationServerPrivateReadError;
+    BY_HANDLE_FILE_INFORMATION info;
+    LARGE_INTEGER              file_size;
+    bool                       ok = GetFileInformationByHandle(handle, &info) &&
+              ! (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) &&
+              GetFileSizeEx(handle, &file_size) && file_size.QuadPart > 0 && (uint64_t) file_size.QuadPart < SIZE_MAX &&
+              authenticationserverPrivateRestrict(path);
+    if (ok)
+    {
+        size        = (size_t) file_size.QuadPart;
+        bytes       = memoryAllocate(size + 1U);
+        size_t used = 0;
+        while (ok && used < size)
+        {
+            const DWORD wanted   = (DWORD) min(size - used, (size_t) MAXDWORD);
+            DWORD       received = 0;
+            ok                   = ReadFile(handle, bytes + used, wanted, &received, NULL) && received == wanted;
+            used += received;
+        }
+    }
+    if (! CloseHandle(handle))
+        ok = false;
+#else
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0)
+        return errno == ENOENT ? kAuthenticationServerPrivateReadAbsent : kAuthenticationServerPrivateReadError;
+    struct stat info;
+    bool        ok = fstat(fd, &info) == 0 && S_ISREG(info.st_mode) && info.st_size > 0 &&
+              (uintmax_t) info.st_size < SIZE_MAX && fchmod(fd, S_IRUSR | S_IWUSR) == 0;
+    FILE *stream = NULL;
+    if (ok)
+    {
+        stream = fdopen(fd, "rb");
+        ok     = stream != NULL;
+    }
+    if (stream != NULL)
+    {
+        size  = (size_t) info.st_size;
+        bytes = memoryAllocate(size + 1U);
+        ok    = fread(bytes, 1, size, stream) == size && ! ferror(stream);
+        if (fclose(stream) != 0)
+            ok = false;
+    }
+    else if (close(fd) != 0)
+        ok = false;
+#endif
+    if (! ok)
+    {
+        memoryFree(bytes);
+        return kAuthenticationServerPrivateReadError;
+    }
+    bytes[size] = '\0';
+    *data       = bytes;
+    *length     = size;
+    return kAuthenticationServerPrivateReadSuccess;
+}
