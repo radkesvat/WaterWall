@@ -9,6 +9,17 @@ static char        audit_node_name[] = "authentication";
 static node_t      audit_node        = {.name = audit_node_name};
 static tunnel_t   *audit_tunnel;
 
+static char audit_diagnostic[2048];
+
+static void auditCaptureDiagnostic(int level, const char *text, int length)
+{
+    if (level < LOG_LEVEL_ERROR)
+        return;
+    size_t copied = min((size_t) max(length, 0), sizeof(audit_diagnostic) - 1U);
+    memoryCopy(audit_diagnostic, text, copied);
+    audit_diagnostic[copied] = '\0';
+}
+
 const char *__wrap_nodemanagerConfigName(const node_manager_config_t *config);
 const char *__wrap_nodemanagerConfigName(const node_manager_config_t *config)
 {
@@ -23,6 +34,7 @@ static void auditConfigExpect(const char *text, const char *path, bool accepted,
     twfRequire(count > 0 && count < (int) sizeof(json), "audit settings fixture overflow");
     audit_node.node_settings_json = cJSON_Parse(json);
     twfRequire(audit_node.node_settings_json != NULL, "audit fixture JSON invalid");
+    audit_diagnostic[0]               = '\0';
     authenticationserver_tstate_t *ts = tunnelGetState(audit_tunnel);
     twfRequire(authenticationserverAuditConfigure(audit_tunnel, &audit_node) == accepted &&
                    (ts->audit != NULL) == enabled,
@@ -32,6 +44,12 @@ static void auditConfigExpect(const char *text, const char *path, bool accepted,
     ts->audit = NULL;
     cJSON_Delete(audit_node.node_settings_json);
     audit_node.node_settings_json = NULL;
+}
+
+static void auditConfigExpectDiagnostic(const char *text, const char *path, const char *category)
+{
+    auditConfigExpect(text, path, false, false);
+    twfRequire(strstr(audit_diagnostic, category) != NULL, "audit refusal diagnostic category mismatch");
 }
 
 static void auditConfigProtected(const char *path, bool create)
@@ -56,6 +74,7 @@ static void auditConfigProtected(const char *path, bool create)
 int main(void)
 {
     twfRequire(createNetworkLogger(NULL, false) != NULL, "audit config logger init failed");
+    loggerSetHandler(getNetworkLogger(), auditCaptureDiagnostic);
     char directory[] = "/tmp/waterwall-audit-config-XXXXXX";
     twfRequire(mkdtemp(directory) != NULL, "audit config directory failed");
     char path[512], database[512], backup[512], other[1024];
@@ -99,9 +118,9 @@ int main(void)
     char long_path[MAX_PATH];
     memset(long_path, 'a', sizeof(long_path) - 1);
     long_path[sizeof(long_path) - 1] = '\0';
-    auditConfigExpect(valid, long_path, false, false);
+    auditConfigExpectDiagnostic(valid, long_path, "supported bounds");
     snprintf(other, sizeof(other), "%s/missing/audit", directory);
-    auditConfigExpect(valid, other, false, false);
+    auditConfigExpectDiagnostic(valid, other, "parent resolution failed");
     char label[kAuthenticationServerAuditLabelCap + 2];
     memset(label, 'x', sizeof(label) - 1);
     label[sizeof(label) - 1] = '\0';
@@ -127,10 +146,14 @@ int main(void)
     audit_node.name        = audit_node_name;
     ts->auth_clients_count = 0;
     ts->auth_clients       = NULL;
-    auditConfigExpect(valid, database, false, false);
-    auditConfigExpect(valid, backup, false, false);
+    auditConfigExpectDiagnostic(valid, database, "overlap database");
+    auditConfigExpectDiagnostic(valid, backup, "overlap database");
     snprintf(other, sizeof(other), "%s/../%s/users.json", directory, strrchr(directory, '/') + 1);
     auditConfigExpect(valid, other, false, false);
+    snprintf(other, sizeof(other), "%s/hardlink.jsonl", directory);
+    twfRequire(link(database, other) == 0, "audit hardlink setup failed");
+    auditConfigExpectDiagnostic(valid, other, "overlap database");
+    twfRequire(unlink(other) == 0, "audit hardlink cleanup failed");
     snprintf(other, sizeof(other), "%s/alias", directory);
     twfRequire(symlink(directory, other) == 0, "audit directory alias setup failed");
     snprintf(other, sizeof(other), "%s/alias/users.json", directory);
@@ -175,13 +198,33 @@ int main(void)
     snprintf(other, sizeof(other), "%s/deep-alias", directory);
     twfRequire(symlink(deep[3], other) == 0, "audit long parent alias setup failed");
     snprintf(other, sizeof(other), "%s/deep-alias/admin.jsonl", directory);
-    auditConfigExpect(valid, other, false, false);
+    auditConfigExpectDiagnostic(valid, other, "supported bounds");
     snprintf(other, sizeof(other), "%s/admin.jsonl", deep[3]);
     twfRequire(access(other, F_OK) != 0 && errno == ENOENT, "audit created a file under an oversized parent");
     snprintf(other, sizeof(other), "%s/admin.jsonl.lock", deep[3]);
     twfRequire(access(other, F_OK) != 0 && errno == ENOENT, "audit created a lock under an oversized parent");
+    char deep_alias[512];
+    snprintf(deep_alias, sizeof(deep_alias), "%s/deep-alias", directory);
+    ts->normal_backups_path = deep_alias;
+    snprintf(other, sizeof(other), "%s/authenticationserver-history.json", directory);
+    auditConfigExpectDiagnostic(valid, other, "supported bounds");
+    twfRequire(access(other, F_OK) != 0 && errno == ENOENT, "failed history-path check created an audit file");
+    ts->normal_backups_path = NULL;
+    snprintf(other, sizeof(other), "%s/deep-alias/users.json", directory);
+    ts->db_path = other;
+    auditConfigExpectDiagnostic(valid, path, "supported bounds");
+    ts->db_path = database;
     for (unsigned i = 4; i > 0; --i)
         twfRequire(rmdir(deep[i - 1]) == 0, "audit long parent cleanup failed");
+
+    /* The configured spelling fits, but its lock/archive candidates must fit too. */
+    size_t prefix_length = strlen(directory);
+    memoryCopy(other, directory, prefix_length);
+    other[prefix_length] = '/';
+    memset(other + prefix_length + 1, 's', MAX_PATH - 17U - prefix_length - 1U);
+    other[MAX_PATH - 17U] = '\0';
+    auditConfigExpectDiagnostic(valid, other, "supported bounds");
+    twfRequire(access(other, F_OK) != 0 && errno == ENOENT, "audit suffix refusal created a file");
 
     for (unsigned i = 0; i < 2; ++i)
     {
