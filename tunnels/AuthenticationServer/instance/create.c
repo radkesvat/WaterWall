@@ -1,3 +1,4 @@
+#include "../../Internals/AuthenticationCommon/credentials.h"
 #include "AuthenticationServer/api.h"
 #include "structure.h"
 
@@ -252,6 +253,12 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
         {
             LOGF("JSON Error: AuthenticationServer->settings->auth-clients[%u]->secret (string field) : invalid value",
                  (unsigned int) index);
+            return false;
+        }
+
+        if (! authenticationCredentialsFit(client->name, client->secret))
+        {
+            LOGE("AuthenticationServer: configured credentials exceed the authentication handshake limit");
             return false;
         }
 

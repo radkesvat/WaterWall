@@ -591,7 +591,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationserver_responses_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   target_link_libraries(authenticationserver_responses_test PRIVATE AuthenticationServer ww)
-  target_link_options(authenticationserver_responses_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_options(authenticationserver_responses_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=sbufCreateWithPadding")
   add_dependencies(waterwall_unit_tests authenticationserver_responses_test)
   add_waterwall_unit_test(waterwall.authenticationserver_responses_unit authenticationserver_responses_test
     "unit;authentication;buffer;line")

@@ -44,18 +44,17 @@ static inline sbuf_t *authenticationStreamReadExact(buffer_stream_t *stream, uin
 /* Nested callbacks cannot drain recursively. Compact before refusing fragmented
  * storage, while keeping the older unread suffix ahead of the new delivery.
  * On refusal the caller still owns input; on success the stream owns its bytes. */
-static inline bool authenticationStreamPushNested(buffer_stream_t *stream, sbuf_t *input, uint32_t max_message)
+static inline bool authenticationStreamPushNestedBounded(buffer_stream_t *stream, sbuf_t *input, size_t limit,
+                                                         size_t charge_limit, size_t entry_limit)
 {
-    const size_t limit    = (size_t) max_message + kAuthenticationStreamReentryHeadroom;
     const size_t buffered = bufferstreamGetBufLen(stream);
     const size_t incoming = sbufGetLength(input);
     if (buffered > limit || incoming > limit - buffered)
         return false;
 
     const size_t charge = authenticationStreamCharge(stream);
-    if (charge <= kAuthenticationStreamChargeLimit &&
-        sbufGetAllocationCharge(input) <= kAuthenticationStreamChargeLimit - charge &&
-        bs_doublequeue_t_size(&stream->q) < kAuthenticationStreamEntryLimit)
+    if (charge <= charge_limit && sbufGetAllocationCharge(input) <= charge_limit - charge &&
+        (size_t) bs_doublequeue_t_size(&stream->q) < entry_limit)
     {
         bufferstreamPush(stream, input);
         return true;
@@ -67,22 +66,38 @@ static inline bool authenticationStreamPushNested(buffer_stream_t *stream, sbuf_
     sbufConcatNoCheck(compact, input);
     bufferpoolReuseBuffer(stream->pool, input);
     bufferstreamPush(stream, compact);
-    assert(authenticationStreamCharge(stream) <= kAuthenticationStreamChargeLimit);
+    assert(authenticationStreamCharge(stream) <= charge_limit);
     return true;
+}
+
+static inline bool authenticationStreamPushNested(buffer_stream_t *stream, sbuf_t *input, uint32_t max_message)
+{
+    return authenticationStreamPushNestedBounded(stream,
+                                                 input,
+                                                 (size_t) max_message + kAuthenticationStreamReentryHeadroom,
+                                                 kAuthenticationStreamChargeLimit,
+                                                 kAuthenticationStreamEntryLimit);
 }
 
 /* Parsing consumed every complete message, so only one incomplete message can
  * remain. Fragment count and pool tier must not turn it into an oversized one. */
-static inline void authenticationStreamCompactIncomplete(buffer_stream_t *stream, uint32_t max_message)
+static inline void authenticationStreamCompactIncompleteBounded(buffer_stream_t *stream, uint32_t max_message,
+                                                                size_t charge_limit, size_t entry_limit)
 {
     const size_t bytes = bufferstreamGetBufLen(stream);
     assert(bytes < max_message);
     discard max_message;
-    if (authenticationStreamCharge(stream) > kAuthenticationStreamChargeLimit ||
-        bs_doublequeue_t_size(&stream->q) > kAuthenticationStreamEntryLimit)
+    if (bytes != 0 &&
+        (authenticationStreamCharge(stream) > charge_limit || (size_t) bs_doublequeue_t_size(&stream->q) > entry_limit))
     {
         sbuf_t *compact = authenticationStreamCopyExact(stream, (uint32_t) bytes);
         bufferstreamPush(stream, compact);
     }
-    assert(authenticationStreamCharge(stream) <= kAuthenticationStreamChargeLimit);
+    assert(authenticationStreamCharge(stream) <= charge_limit);
+}
+
+static inline void authenticationStreamCompactIncomplete(buffer_stream_t *stream, uint32_t max_message)
+{
+    authenticationStreamCompactIncompleteBounded(
+        stream, max_message, kAuthenticationStreamChargeLimit, kAuthenticationStreamEntryLimit);
 }

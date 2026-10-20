@@ -7,6 +7,7 @@ uint32_t    authTestPeerLineSize(void);
 user_stat_t authTestPeerStats(tunnel_t *server, uint64_t id);
 uint64_t    authTestPeerFirstUse(tunnel_t *server);
 void        authTestPeerExpireSessions(tunnel_t *server);
+void        authTestPeerInputRetention(tunnel_t *server, line_t *line, size_t *bytes, size_t *charge, size_t *entries);
 void        authTestPeerLoseEpoch(tunnel_t *server, unsigned client);
 void        authTestPeerPassword(tunnel_t *server);
 void        authTestPeerPopulate(tunnel_t *server, unsigned count);

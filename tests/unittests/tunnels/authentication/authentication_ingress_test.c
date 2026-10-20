@@ -29,6 +29,7 @@ static size_t                     captured_length;
 static uint32_t                   response_ids[8];
 static unsigned                   response_count, nested_count;
 static uint64_t                   delivered;
+static unsigned                   nested_suffix_mode;
 
 static authenticationclient_tstate_t *state(void)
 {
@@ -52,14 +53,14 @@ static void put32(uint8_t *p, uint32_t value)
     memoryCopy(p, &value, sizeof(value));
 }
 
-/* A well-framed Ping with deliberately invalid credentials is a legal request
- * envelope regardless of the data size; its answer is authentication-required. */
+/* Ordinary maximum-size envelopes require an authenticated token. */
 static sbuf_t *request(uint32_t correlation, uint32_t frame_length)
 {
     require(frame_length >= 9, "request frame too short");
     sbuf_t  *b = bytesBuffer(NULL, frame_length + 68);
     uint8_t *p = sbufGetMutablePtr(b);
     put32(p, frame_length + 64);
+    memoryCopy(p + 4, state()->token, 64);
     p[68] = kAuthenticationClientRequestTypePing;
     put32(p + 69, correlation);
     put32(p + 73, frame_length - 9);
@@ -114,6 +115,31 @@ static void output(tunnel_t *t, line_t *l, sbuf_t *b)
         {
             inject = false;
             tunnelUpStreamPayload(server, l, request(3, 9));
+        }
+        if (nested_suffix_mode != 0)
+        {
+            const unsigned mode = nested_suffix_mode;
+            nested_suffix_mode  = 0;
+            sbuf_t *successor   = request(3, mode == 1 ? 9 : 64 * 1024);
+            memoryZero(sbufGetMutablePtr(successor) + 4, 64);
+            if (mode == 1)
+            {
+                sbuf_t *prefix = bytesBuffer(sbufGetRawPtr(successor), 2);
+                tunnelUpStreamPayload(server, l, join(request(2, 64 * 1024), prefix));
+                require(lineIsAlive(l), "large valid envelope plus tiny incomplete successor was rejected");
+            }
+            else if (mode == 2)
+            {
+                sbuf_t *header = bytesBuffer(sbufGetRawPtr(successor), 68);
+                tunnelUpStreamPayload(server, l, join(request(2, 64 * 1024), header));
+                require(! lineIsAlive(l), "valid first token elevated an oversized unknown-token successor");
+            }
+            else
+            {
+                tunnelUpStreamPayload(server, l, bytesBuffer((const uint8_t *) sbufGetRawPtr(successor) + 2, 66));
+                require(! lineIsAlive(l), "older unread suffix lent its allowance to a split unknown-token header");
+            }
+            lineReuseBuffer(l, successor);
         }
         if (flood)
         {
@@ -210,6 +236,7 @@ static void setup(uint32_t medium)
     captured_length = delivered = 0;
     response_count = nested_count = 0;
     observed_line                 = NULL;
+    nested_suffix_mode            = 0;
     memoryZero(&worker, sizeof(worker));
     GSTATE.flag_initialized      = true;
     GSTATE.workers_count         = 1;
@@ -511,6 +538,82 @@ static void testTerminalPaths(void)
     }
 }
 
+static void testPreauthRetention(void)
+{
+    setup(64 * 1024);
+    start();
+    raw               = true;
+    sbuf_t *oversized = request(1, 16385);
+    memoryZero(sbufGetMutablePtr(oversized) + 4, 64);
+    const uint8_t *header = sbufGetRawPtr(oversized);
+    tunnelUpStreamPayload(server, observed_line, bytesBuffer(header, 4));
+    tunnelUpStreamPayload(server, observed_line, bytesBuffer(header + 4, 63));
+    require(lineIsAlive(observed_line), "incomplete token header was prematurely rejected");
+    tunnelUpStreamPayload(server, observed_line, bytesBuffer(header + 67, 1));
+    require(! lineIsAlive(observed_line) && response_count == 0,
+            "oversized pre-auth declaration needed body bytes before refusal");
+    lineReuseBuffer(observed_line, oversized);
+    teardown();
+
+    setup(64 * 1024);
+    start();
+    raw             = true;
+    sbuf_t *message = request(1, 16384);
+    memoryZero(sbufGetMutablePtr(message) + 4, 64);
+    sbuf_t *carrier = bytesBuffer(NULL, 2 * 1024 * 1024);
+    memoryCopy(sbufGetMutablePtr(carrier), sbufGetRawPtr(message), 68);
+    sbufSetLength(carrier, 68);
+    tunnelUpStreamPayload(server, observed_line, carrier);
+    for (unsigned i = 0; i < 100; ++i)
+    {
+        size_t bytes, charge, entries;
+        authTestPeerInputRetention(server, observed_line, &bytes, &charge, &entries);
+        require(bytes == 68 + i && charge <= 128 * 1024 && entries <= 64,
+                "pre-auth incomplete input retained oversized backing charge or tiny-fragment runs");
+        tunnelUpStreamPayload(server, observed_line, bytesBuffer((const uint8_t *) sbufGetRawPtr(message) + 68 + i, 1));
+    }
+    tunnelUpStreamPayload(server,
+                          observed_line,
+                          bytesBuffer((const uint8_t *) sbufGetRawPtr(message) + 168, sbufGetLength(message) - 168));
+    require(lineIsAlive(observed_line) && response_count == 1, "maximum bounded pre-auth request did not complete");
+    lineReuseBuffer(observed_line, message);
+    teardown();
+}
+
+static void testNestedSuccessorAllowance(void)
+{
+    for (unsigned mode = 1; mode <= 3; ++mode)
+    {
+        setup(64 * 1024);
+        start();
+        raw                = true;
+        nested_suffix_mode = mode;
+        if (mode == 3)
+        {
+            sbuf_t *successor = request(3, 64 * 1024);
+            memoryZero(sbufGetMutablePtr(successor) + 4, 64);
+            sbuf_t *older = join(request(2, 64 * 1024), bytesBuffer(sbufGetRawPtr(successor), 2));
+            tunnelUpStreamPayload(server, observed_line, join(request(1, 9), older));
+            lineReuseBuffer(observed_line, successor);
+        }
+        else
+            tunnelUpStreamPayload(server, observed_line, request(1, 9));
+        if (mode == 1)
+        {
+            require(lineIsAlive(observed_line) && response_count == 2 && response_ids[0] == 1 && response_ids[1] == 2,
+                    "nested large valid request did not drain before incomplete successor");
+            sbuf_t *last = request(3, 9);
+            memoryZero(sbufGetMutablePtr(last) + 4, 64);
+            tunnelUpStreamPayload(
+                server, observed_line, bytesBuffer((const uint8_t *) sbufGetRawPtr(last) + 2, sbufGetLength(last) - 2));
+            lineReuseBuffer(observed_line, last);
+            require(lineIsAlive(observed_line) && response_count == 3 && response_ids[2] == 3,
+                    "small unknown-token successor did not complete after valid envelope");
+        }
+        teardown();
+    }
+}
+
 int main(void)
 {
     testCaseSet("authentication ingress framing and retention");
@@ -528,6 +631,8 @@ int main(void)
     testClientReentry(true);
     testEmptyDeliveries();
     testTerminalPaths();
+    testPreauthRetention();
+    testNestedSuccessorAllowance();
     wCryptoGlobalCleanup();
     globalstateDestroySecureRandom();
     networkloggerDestroy();

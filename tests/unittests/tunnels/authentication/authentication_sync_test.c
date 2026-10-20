@@ -2482,6 +2482,47 @@ static void testMultiplierSettings(void)
     teardown();
 }
 
+static void testCredentialSettingsLimit(void)
+{
+    setup(1);
+    const unsigned char symbols[] = {'a', '\\', '\1'};
+    const size_t        costs[]   = {1, 2, 6};
+    for (unsigned i = 0; i < sizeof(symbols); ++i)
+    {
+        cJSON  *handshake = cJSON_CreateObject();
+        discard cJSON_AddStringToObject(handshake, "name", "edge-a");
+        discard cJSON_AddStringToObject(handshake, "secret", "");
+        discard cJSON_AddStringToObject(
+            handshake, "epoch", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        char        *text      = cJSON_PrintUnformatted(handshake);
+        const size_t available = 16375U - strlen(text); /* 16 KiB payload minus frame header. */
+        cJSON_free(text);
+        char        *secret   = memoryAllocate(available + 2);
+        const size_t repeated = available / costs[i], tail = available % costs[i];
+        memorySet(secret, symbols[i], repeated);
+        memorySet(secret + repeated, 'a', tail);
+        const size_t length = repeated + tail;
+        secret[length]      = 0;
+        cJSON_ReplaceItemInObjectCaseSensitive(handshake, "secret", cJSON_CreateString(secret));
+        text = cJSON_PrintUnformatted(handshake);
+        require(strlen(text) == 16375U, "credential boundary did not measure actual worst handshake");
+        cJSON_free(text);
+        cJSON_Delete(handshake);
+        cJSON  *settings = cJSON_CreateObject();
+        discard cJSON_AddStringToObject(settings, "name", "edge-a");
+        discard cJSON_AddStringToObject(settings, "secret", secret);
+        requireMultiplierSetting(settings, 1000);
+        secret[length]     = 'a';
+        secret[length + 1] = 0;
+        settings           = cJSON_CreateObject();
+        discard cJSON_AddStringToObject(settings, "name", "edge-a");
+        discard cJSON_AddStringToObject(settings, "secret", secret);
+        requireMultiplierSetting(settings, 0);
+        memoryFree(secret);
+    }
+    teardown();
+}
+
 static user_stat_t localStats(unsigned i, uint64_t id)
 {
     user_stat_t stats;
@@ -2925,3 +2966,4 @@ int main(void)
     networkloggerDestroy();
     return 0;
 }
+    testCredentialSettingsLimit();

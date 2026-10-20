@@ -88,6 +88,7 @@ typedef struct authenticationserver_lstate_s
     bool            response_paused;
     bool                        response_draining;
     bool                        processing_requests;
+    bool                        reject_further_input;
 } authenticationserver_lstate_t;
 
 enum
@@ -113,6 +114,7 @@ enum
     kAuthenticationServerMaxResponseEntries = 1024,
     kAuthenticationServerOutputChunkSize    = 16U * 1024U,
     kAuthenticationServerMaxBatchEntries    = 4096,
+    kAuthenticationServerMaxFramesPerEnvelope = 64,
     kAuthenticationServerResponseQueueCap               = 4,
     kAuthenticationServerMaxPasswordLength              = 1024U,
     kAuthenticationServerDefaultNormalBackupsCountLimit = 10U,
@@ -191,6 +193,9 @@ void authenticationserverSessionsDestroy(authenticationserver_tstate_t *ts);
 void authenticationserverAuthClientsDestroy(authenticationserver_tstate_t *ts);
 
 bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls);
+/* Validate the token in the unread prefix without retaining a session pointer. */
+bool authenticationserverInputTokenValid(tunnel_t *t, buffer_stream_t *stream, const sbuf_t *input);
+bool authenticationserverInputAllowance(tunnel_t *t, buffer_stream_t *stream, const sbuf_t *input, bool *ordinary_out);
 bool authenticationserverFlushResponses(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls);
 void authenticationserverCloseLine(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls, const char *reason);
 

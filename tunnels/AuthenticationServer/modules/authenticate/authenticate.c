@@ -1,4 +1,6 @@
 #include "modules/authenticate/authenticate.h"
+#include "../../../Internals/AuthenticationCommon/credentials.h"
+#include "node_builder/config_lexical.h"
 
 #include "loggers/network_logger.h"
 
@@ -8,18 +10,27 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
 {
     discard session;
 
-    if (UNLIKELY(request_data_len == 0))
+    if (UNLIKELY(request_data_len == 0 || request_data_len > kAuthenticationAuthenticateDataLimit))
     {
-        LOGW("AuthenticationServer: Authenticate received an empty JSON payload");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-auth-request");
     }
 
-    cJSON *json = cJSON_ParseWithLength((const char *) request_data, request_data_len);
+    cJSON *json = configLexicalParseBoundedQuiet((const char *) request_data, request_data_len, 2, 8);
     if (UNLIKELY(! cJSON_IsObject(json)))
     {
         cJSON_Delete(json);
-        LOGW("AuthenticationServer: Authenticate received malformed JSON");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-auth-request");
+    }
+
+    const cJSON *field = NULL;
+    cJSON_ArrayForEach(field, json)
+    {
+        if (stringCompare(field->string, "name") != 0 && stringCompare(field->string, "secret") != 0 &&
+            stringCompare(field->string, "epoch") != 0)
+        {
+            cJSON_Delete(json);
+            return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-auth-request");
+        }
     }
 
     const cJSON *name_json   = cJSON_GetObjectItemCaseSensitive(json, "name");
@@ -29,7 +40,6 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
                  secret_json->valuestring[0] == '\0'))
     {
         cJSON_Delete(json);
-        LOGW("AuthenticationServer: Authenticate request is missing name or secret");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-auth-request");
     }
 
@@ -54,7 +64,6 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
 
     if (UNLIKELY(new_session == NULL))
     {
-        LOGW("AuthenticationServer: Authenticate rejected client credentials");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, error);
     }
 

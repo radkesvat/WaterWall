@@ -90,7 +90,7 @@ authenticationserver_session_t *authenticationserverSessionFindByTokenLocked(
     for (uint32_t i = 0; i < ts->sessions_count; ++i)
     {
         authenticationserver_session_t *session = ts->sessions[i];
-        if (memoryEqual(session->token, token, kAuthenticationServerSessionTokenSize))
+        if (wCryptoEqual(session->token, token, kAuthenticationServerSessionTokenSize))
         {
             return session;
         }

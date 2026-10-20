@@ -36,6 +36,14 @@ uint32_t authTestPeerLineSize(void)
 {
     return tunnelGetCorrectAlignedLineStateSize(sizeof(authenticationserver_lstate_t));
 }
+void authTestPeerInputRetention(tunnel_t *server, line_t *line, size_t *bytes, size_t *charge, size_t *entries)
+{
+    authenticationserver_lstate_t *ls = lineGetState(line, server);
+    *bytes                            = bufferstreamGetBufLen(&ls->read_stream);
+    *charge                           = 0;
+    *entries                          = bs_doublequeue_t_size(&ls->read_stream.q);
+    c_foreach(entry, bs_doublequeue_t, ls->read_stream.q) *charge += sbufGetAllocationCharge(*entry.ref);
+}
 void authTestPeerDestroy(tunnel_t *t)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);

@@ -1,3 +1,4 @@
+#include "../../Internals/AuthenticationCommon/credentials.h"
 #include "../../Internals/AuthenticationCommon/stream.h"
 #include "structure.h"
 
@@ -184,7 +185,9 @@ bool authenticationserverUserJsonWireGuardAllowedIpsValid(const cJSON *user_json
 void authenticationserverCloseLine(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls, const char *reason)
 {
     // Internal close paths pass literal reasons; keep that contract for new callers.
-    LOGW("AuthenticationServer: closing logical connection: %s", reason);
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    if (ts->verbose)
+        LOGD("AuthenticationServer: closing logical connection: %s", reason);
 
     authenticationserverLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
@@ -274,6 +277,82 @@ static bool authenticationserverReadMessageHeader(authenticationserver_lstate_t 
     return true;
 }
 
+bool authenticationserverInputTokenValid(tunnel_t *t, buffer_stream_t *stream, const sbuf_t *input)
+{
+    const size_t buffered = bufferstreamGetBufLen(stream);
+    const size_t incoming = input == NULL ? 0 : sbufGetLength(input);
+    if (buffered < kAuthenticationServerRequestEnvelopeHeaderSize &&
+        incoming < kAuthenticationServerRequestEnvelopeHeaderSize - buffered)
+        return false;
+    uint8_t      header[kAuthenticationServerRequestEnvelopeHeaderSize];
+    const size_t prefix = min(buffered, sizeof(header));
+    if (prefix != 0)
+        bufferstreamViewBytesAt(stream, 0, header, prefix);
+    if (prefix < sizeof(header))
+        memoryCopy(header + prefix, sbufGetRawPtr(input), sizeof(header) - prefix);
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    rwlockReadLock(&ts->state_lock);
+    const bool valid =
+        authenticationserverSessionFindByTokenLocked(t, header + kAuthenticationServerMessageHeaderSize) != NULL;
+    rwlockReadUnlock(&ts->state_lock);
+    return valid;
+}
+
+/* Nested input cannot drain now. Inspect every retained envelope boundary so
+ * one valid token cannot lend its larger allowance to an unknown successor.
+ * Incomplete headers and all unvalidated envelopes share the small allowance. */
+bool authenticationserverInputAllowance(tunnel_t *t, buffer_stream_t *stream, const sbuf_t *input, bool *ordinary_out)
+{
+    const size_t buffered = bufferstreamGetBufLen(stream);
+    const size_t incoming = input == NULL ? 0 : sbufGetLength(input);
+    const size_t maximum  = kAuthenticationServerMaxMessagePayload + kAuthenticationServerRequestEnvelopeHeaderSize +
+                           kAuthenticationStreamReentryHeadroom;
+    const size_t preauth = kAuthenticationPreAuthPayloadLimit + kAuthenticationServerRequestEnvelopeHeaderSize;
+    *ordinary_out        = false;
+    if (buffered > maximum || incoming > maximum - buffered)
+        return false;
+    const size_t                   total       = buffered + incoming;
+    size_t                         unvalidated = 0;
+    authenticationserver_tstate_t *ts          = tunnelGetState(t);
+    for (size_t offset = 0; offset < total;)
+    {
+        const size_t available = total - offset;
+        if (available < kAuthenticationServerRequestEnvelopeHeaderSize)
+            return available <= preauth - unvalidated;
+        uint8_t      header[kAuthenticationServerRequestEnvelopeHeaderSize];
+        const size_t from_stream = offset < buffered ? min(sizeof(header), buffered - offset) : 0;
+        if (from_stream != 0)
+            bufferstreamViewBytesAt(stream, offset, header, from_stream);
+        if (from_stream < sizeof(header))
+        {
+            const size_t input_offset = offset + from_stream - buffered;
+            memoryCopy(header + from_stream,
+                       (const uint8_t *) sbufGetRawPtr(input) + input_offset,
+                       sizeof(header) - from_stream);
+        }
+        const uint32_t body = authenticationserverReadNetworkUI32(header);
+        if (body < kAuthenticationServerSessionTokenSize ||
+            body > kAuthenticationServerSessionTokenSize + kAuthenticationServerMaxMessagePayload)
+            return false;
+        rwlockReadLock(&ts->state_lock);
+        const bool valid =
+            authenticationserverSessionFindByTokenLocked(t, header + kAuthenticationServerMessageHeaderSize) != NULL;
+        rwlockReadUnlock(&ts->state_lock);
+        const size_t retained = min(available, (size_t) body + kAuthenticationServerMessageHeaderSize);
+        if (valid)
+            *ordinary_out = true;
+        else
+        {
+            if (body > kAuthenticationServerSessionTokenSize + kAuthenticationPreAuthPayloadLimit ||
+                retained > preauth - unvalidated)
+                return false;
+            unvalidated += retained;
+        }
+        offset += retained;
+    }
+    return true;
+}
+
 static sbuf_t *authenticationserverCreateResponseMessage(line_t *l)
 {
     buffer_pool_t *pool    = lineGetBufferPool(l);
@@ -300,7 +379,16 @@ static bool authenticationserverAppendResponseFrame(line_t *l, sbuf_t **message,
         return false;
     }
 
-    *message = sbufReserveSpace(*message, message_len + frame_len);
+    const uint32_t needed = message_len + frame_len;
+    if (sbufGetMaximumWriteableSize(*message) < needed)
+    {
+        const uint32_t maximum =
+            kAuthenticationServerMaxResponsePayload + kAuthenticationServerResponseEnvelopeHeaderSize;
+        uint32_t capacity = sbufGetMaximumWriteableSize(*message);
+        while (capacity < needed)
+            capacity = capacity > maximum / 2U ? maximum : capacity * 2U;
+        *message = sbufReserveSpace(*message, capacity);
+    }
     sbufSetLength(*message, message_len + frame_len);
     memoryCopyLarge(sbufGetMutablePtr(*message) + message_len, sbufGetRawPtr(frame), frame_len);
     lineReuseBuffer(l, frame);
@@ -326,46 +414,33 @@ static bool authenticationserverValidateRequestPayload(sbuf_t *payload)
     const uint8_t *ptr       = sbufGetRawPtr(payload);
     uint32_t       remaining = sbufGetLength(payload);
     uint32_t       offset    = 0;
+    uint32_t       frames    = 0;
 
     if (UNLIKELY(remaining == 0))
     {
-        LOGW("AuthenticationServer: received empty message payload; expected at least one request frame");
         return false;
     }
 
     while (remaining > 0)
     {
+        if (++frames > kAuthenticationServerMaxFramesPerEnvelope)
+            return false;
         if (UNLIKELY(remaining < kAuthenticationServerRequestHeaderSize))
         {
-            LOGW("AuthenticationServer: malformed message at offset %u: %u trailing bytes are smaller than a request "
-                 "header",
-                 (unsigned int) offset,
-                 (unsigned int) remaining);
             return false;
         }
 
         const uint8_t *frame            = ptr + offset;
-        const uint8_t  request_type     = frame[0];
         const uint8_t *length_ptr       = frame + 1 + kAuthenticationServerCorrelationIdSize;
         const uint32_t request_data_len = authenticationserverReadNetworkUI32(length_ptr);
 
         if (UNLIKELY(request_data_len > kAuthenticationServerMaxRequestData))
         {
-            LOGW("AuthenticationServer: request type %u at offset %u has oversized %u-byte data",
-                 (unsigned int) request_type,
-                 (unsigned int) offset,
-                 (unsigned int) request_data_len);
             return false;
         }
 
         if (UNLIKELY(request_data_len > remaining - kAuthenticationServerRequestHeaderSize))
         {
-            LOGW("AuthenticationServer: incomplete request type %u at offset %u: declares %u data bytes, only %u "
-                 "available",
-                 (unsigned int) request_type,
-                 (unsigned int) offset,
-                 (unsigned int) request_data_len,
-                 (unsigned int) (remaining - kAuthenticationServerRequestHeaderSize));
             return false;
         }
 
@@ -445,6 +520,13 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
     sbuf_t                         *response          = authenticationserverCreateResponseMessage(l);
     bool                            authenticate_seen = false;
 
+    /* The token may have been replaced while the large envelope was arriving. */
+    if (session == NULL && sbufGetLength(payload) > kAuthenticationPreAuthPayloadLimit)
+    {
+        lineReuseBuffer(l, response);
+        return false;
+    }
+
     authenticationserverSessionTouch(session, getTickMS());
 
     if (ts->verbose)
@@ -490,7 +572,6 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
             if (UNLIKELY(request_type == kAuthenticationServerRequestTypeAuthenticate &&
                          (session != NULL || authenticate_seen)))
             {
-                LOGW("AuthenticationServer: rejected duplicate or already authenticated Authenticate request");
                 response_frame =
                     authenticationserverCreateErrorResponseFrame(l, correlation_id, "already-authenticated");
             }
@@ -502,6 +583,11 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
             if (request_type == kAuthenticationServerRequestTypeAuthenticate)
             {
                 authenticate_seen = true;
+                if (response_frame != NULL && sbufReadUI8(response_frame) != kAuthenticationServerResponseTypeSession)
+                {
+                    authenticationserver_lstate_t *ls = lineGetState(l, t);
+                    ls->reject_further_input          = true;
+                }
             }
 
             if (UNLIKELY(response_frame == NULL))
@@ -581,6 +667,16 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
 
     while (true)
     {
+        if (ls->reject_further_input)
+        {
+            if (bufferstreamGetBufLen(&ls->read_stream) != 0)
+            {
+                authenticationserverCloseLine(t, l, ls, "input after rejected authentication");
+                return false;
+            }
+            ls->processing_requests = false;
+            return true;
+        }
         uint32_t message_body_len = 0;
         if (! authenticationserverReadMessageHeader(ls, &message_body_len))
         {
@@ -601,6 +697,17 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
         }
 
         const size_t message_len = (size_t) kAuthenticationServerMessageHeaderSize + (size_t) message_body_len;
+        if (bufferstreamGetBufLen(&ls->read_stream) < kAuthenticationServerRequestEnvelopeHeaderSize)
+        {
+            ls->processing_requests = false;
+            return true;
+        }
+        if (message_body_len > kAuthenticationServerSessionTokenSize + kAuthenticationPreAuthPayloadLimit &&
+            ! authenticationserverInputTokenValid(t, &ls->read_stream, NULL))
+        {
+            authenticationserverCloseLine(t, l, ls, "unauthenticated message payload size exceeds limit");
+            return false;
+        }
         if (bufferstreamGetBufLen(&ls->read_stream) < message_len)
         {
             ls->processing_requests = false;

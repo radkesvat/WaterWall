@@ -1,3 +1,4 @@
+#include "../../Internals/AuthenticationCommon/credentials.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -101,6 +102,12 @@ static bool authenticationclientParseSettings(authenticationclient_tstate_t *ts,
     if (UNLIKELY(! getStringFromJsonObject(&ts->secret, settings, "secret") || ts->secret[0] == '\0'))
     {
         LOGF("JSON Error: AuthenticationClient->settings->secret (string field) : invalid value");
+        return false;
+    }
+
+    if (! authenticationCredentialsFit(ts->name, ts->secret))
+    {
+        LOGE("AuthenticationClient: configured credentials exceed the Authenticate input limit");
         return false;
     }
 

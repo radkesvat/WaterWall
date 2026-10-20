@@ -204,6 +204,70 @@ static void queueAndDrain(const char *path)
     twfRequire(inspectFile(path, false) == kAuthenticationServerAuditQueueCap + 1, "shutdown lost accepted records");
 }
 
+static void unauthenticatedRefusals(const char *path)
+{
+    startAudit(path);
+    atomic_store(&hold_append, true);
+    authenticationserverAuditRecordProducer(state()->audit, "producer", "UpdateUser", 42, 100, 0, NULL);
+    twfRequire(semaphoreWait(&entered), "writer gate failed");
+    twf_line_pool_t lines;
+    twfLinePoolSetup(&lines, 0, 2);
+    line_t        *line                                                = twfLinePoolCreateLine(&lines);
+    const uint8_t  correlation[kAuthenticationServerCorrelationIdSize] = {0, 0, 0, 1};
+    const char     refusal[]                                           = "authentication-required";
+    const uint64_t revision                                            = state()->store.config_revision;
+    const size_t   count                                               = usersCount(&state()->store.users);
+    for (unsigned i = 0; i < kAuthenticationServerAuditQueueCap * 2; ++i)
+    {
+        rwlockWriteLock(&state()->state_lock);
+        sbuf_t *response = authenticationserverDispatchRequest(i % 2 ? kAuthenticationServerRequestTypeAddNewUser
+                                                                     : kAuthenticationServerRequestTypeUpdateUser,
+                                                               correlation,
+                                                               server,
+                                                               line,
+                                                               NULL,
+                                                               NULL,
+                                                               0);
+        rwlockWriteUnlock(&state()->state_lock);
+        twfRequire(response != NULL &&
+                       sbufGetLength(response) == kAuthenticationServerResponseHeaderSize + sizeof(refusal) - 1 &&
+                       ((const uint8_t *) sbufGetRawPtr(response))[0] == kAuthenticationServerResponseTypeError &&
+                       memcmp((const uint8_t *) sbufGetRawPtr(response) + kAuthenticationServerResponseHeaderSize,
+                              refusal,
+                              sizeof(refusal) - 1) == 0,
+                   "unauthenticated administration did not retain its protocol refusal");
+        lineReuseBuffer(line, response);
+    }
+    lineDestroy(line);
+    twfLinePoolTeardown(&lines);
+    authenticationserver_audit_snapshot_t snapshot;
+    authenticationserverAuditSnapshot(state()->audit, &snapshot);
+    twfRequire(snapshot.enabled && snapshot.healthy && snapshot.queued_records == 0 && snapshot.dropped_records == 0 &&
+                   snapshot.write_failures == 0 && snapshot.last_error == NULL &&
+                   state()->store.config_revision == revision && usersCount(&state()->store.users) == count,
+               "unauthenticated refusals consumed audit capacity, degraded health, or mutated users");
+    cJSON_Delete(call("create-user", "{\"id\":\"46\",\"password\":\"PRIVATE_PASSWORD_REAL_ADMIN\"}", NULL));
+    authenticationserverAuditSnapshot(state()->audit, &snapshot);
+    twfRequire(snapshot.healthy && snapshot.queued_records == 1 && snapshot.dropped_records == 0,
+               "anonymous refusals prevented authenticated administrative auditing");
+    semaphorePost(&release_writer);
+    waitFor(2, 0);
+    stopAudit();
+    twfRequire(inspectFile(path, false) == 2, "unauthenticated refusals entered the administrative audit file");
+    FILE *file = fopen(path, "rb");
+    char  record[kAuthenticationServerAuditRecordCap + 1];
+    twfRequire(file && fgets(record, sizeof(record), file) && fgets(record, sizeof(record), file) && fclose(file) == 0,
+               "cannot read authenticated audit event");
+    cJSON *json = cJSON_Parse(record);
+    twfRequire(cJSON_IsObject(json), "authenticated audit event is not JSON");
+    expectText(json, "source", "api");
+    expectText(json, "actor", "administrator");
+    expectText(json, "operation", "create-user");
+    expectText(json, "outcome", "committed");
+    cJSON_Delete(json);
+    twfRequireNoLeakedBuffers();
+}
+
 static void writerFailure(const char *path)
 {
     startAudit(path);
@@ -323,18 +387,19 @@ int main(void)
     atomic_init(&fail_append, false);
     char directory[] = "/tmp/ww-audit-events-XXXXXX";
     twfRequire(mkdtemp(directory) != NULL, "temporary directory failed");
-    char paths[4][256], bad[256];
+    char paths[5][256], bad[256];
     snprintf(bad, sizeof(bad), "%s/missing/audit.jsonl", directory);
     twfRequire(authenticationserverAuditCreate(bad, 16384, 2, "audit-unit", "accounts", state()->api_instance_id) ==
                    NULL,
                "invalid audit path did not refuse startup");
-    for (unsigned i = 0; i < 4; ++i)
+    for (unsigned i = 0; i < 5; ++i)
         snprintf(paths[i], sizeof(paths[i]), "%s/audit-%u.jsonl", directory, i);
     mutations(paths[0]);
     queueAndDrain(paths[1]);
     writerFailure(paths[2]);
     producerRollback(paths[3]);
-    for (unsigned i = 0; i < 4; ++i)
+    unauthenticatedRefusals(paths[4]);
+    for (unsigned i = 0; i < 5; ++i)
     {
         char lock[300];
         snprintf(lock, sizeof(lock), "%.*s.lock", (int) sizeof(paths[i]) - 1, paths[i]);

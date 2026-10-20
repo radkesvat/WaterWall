@@ -140,11 +140,6 @@ sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
         {
             if (UNLIKELY(session == NULL))
             {
-                LOGW("AuthenticationServer: rejected request type %u without a valid session token",
-                     (unsigned int) request_type);
-                if (module->require_user_write)
-                    authenticationserverAuditRecordProducer(
-                        ts->audit, NULL, module->name, 0, 0, 0, "authentication-required");
                 return authenticationserverCreateErrorResponseFrame(l, correlation_id, "authentication-required");
             }
             if (UNLIKELY(module->require_stats_push && ! session->allow_stats_push))
@@ -192,6 +187,7 @@ sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
         return module->handler(correlation_id, t, l, session, request_data, request_data_len);
     }
 
-    LOGW("AuthenticationServer: unknown request type %u", (unsigned int) request_type);
+    if (ts->verbose)
+        LOGD("AuthenticationServer: unknown request type %u", (unsigned int) request_type);
     return authenticationserverCreateErrorResponseFrame(l, correlation_id, "unknown-request-type");
 }
