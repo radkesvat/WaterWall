@@ -23,3 +23,8 @@ tunnels/Router/geosite_ww_style_generator/geosite_generated.json linguist-genera
 
 # Packer / Unpacker scripts
 core/tools/**/*.py linguist-vendored
+
+# Auxiliary clients and TLS helper (exclude from language statistics)
+tunnels/APIServer/client/*.py linguist-detectable=false
+tunnels/APIServer/examples/*.py linguist-detectable=false
+tunnels/TlsClient/common/decompress_brotli.cc linguist-detectable=false
