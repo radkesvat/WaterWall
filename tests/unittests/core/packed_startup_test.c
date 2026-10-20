@@ -382,6 +382,23 @@ static void testRestrictedKeyValidation(void)
 
     const char duplicate[] = "{\"outer\":{\"a\":1,\"\\u0061\":2}}";
     CHECK(configLexicalParse(duplicate, sizeof(duplicate) - 1U, WW_HOST_JSON_DEPTH_LIMIT) == NULL);
+    CHECK(configLexicalParseQuiet(duplicate, sizeof(duplicate) - 1U, WW_HOST_JSON_DEPTH_LIMIT) == NULL);
+    json = configLexicalParseQuiet(valid, sizeof(valid) - 1U, WW_HOST_JSON_DEPTH_LIMIT);
+    CHECK(json != NULL);
+    cJSON_Delete(json);
+    static const char *const invalid[] = {"\xef\xbb\xbf{}",
+                                          "{\"a\":\"\\u0000\"}",
+                                          "{} trailing",
+                                          "[[[0]]]",
+                                          "[0,0,0,0,0,0,0,0]",
+                                          "01",
+                                          "1e999",
+                                          "{\"x\":\"\xff\"}"};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(*invalid); ++i)
+    {
+        CHECK(configLexicalParseBounded(invalid[i], strlen(invalid[i]), 2, 8) == NULL);
+        CHECK(configLexicalParseBoundedQuiet(invalid[i], strlen(invalid[i]), 2, 8) == NULL);
+    }
 }
 
 extern long __real_syscall(long number, ...);

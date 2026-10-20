@@ -60,7 +60,7 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
 {
     authenticationserver_tstate_t      *ts       = tunnelGetState(t);
     authenticationserver_auth_client_t *client   = session->accounting_client;
-    cJSON                              *json     = configLexicalParse((const char *) request_data, request_data_len, 8);
+    cJSON *json = configLexicalParseQuiet((const char *) request_data, request_data_len, 8);
     const cJSON                        *epoch    = cJSON_GetObjectItemCaseSensitive(json, "epoch");
     uint64_t                            sequence = 0;
     const char                         *error    = "invalid-usage-batch";

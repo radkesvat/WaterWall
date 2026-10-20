@@ -35,7 +35,7 @@ const char *authenticationserverParsePasswordChange(sbuf_t *message, const node_
     else if (context->working_memory_allowance < kAuthenticationServerApiScratchCharge + parser_charge)
         error = "resource_limit";
     else
-        body = configLexicalParseBounded((const char *) sbufGetRawPtr(message), length, 1, 16);
+        body = configLexicalParseBoundedQuiet((const char *) sbufGetRawPtr(message), length, 1, 16);
     if (error == NULL && ! cJSON_IsObject(body))
         error = "invalid_request";
 

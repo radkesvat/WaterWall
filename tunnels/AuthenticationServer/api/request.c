@@ -95,7 +95,7 @@ const char *authenticationserverApiParse(sbuf_t *message, const node_api_call_co
     else
     {
         const char *text = (const char *) sbufGetRawPtr(message);
-        body             = configLexicalParseBounded(text, length, 2, 16);
+        body             = configLexicalParseBoundedQuiet(text, length, 2, 16);
         if (! cJSON_IsObject(body) || ! integerLexemes(text, length))
             error = "invalid_request";
     }

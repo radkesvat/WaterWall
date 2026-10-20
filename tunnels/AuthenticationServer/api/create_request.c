@@ -36,7 +36,7 @@ const char *authenticationserverParseCreate(sbuf_t *message, const node_api_call
     else if (context->working_memory_allowance < kAuthenticationServerApiScratchCharge + parser_charge)
         error = "resource_limit";
     else
-        body = configLexicalParseBounded((const char *) sbufGetRawPtr(message), length, 4, 64);
+        body = configLexicalParseBoundedQuiet((const char *) sbufGetRawPtr(message), length, 4, 64);
     if (error == NULL && ! cJSON_IsObject(body))
         error = "invalid_request";
 
