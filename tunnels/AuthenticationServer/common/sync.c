@@ -41,6 +41,7 @@ void authenticationserverBumpConfigRevision(tunnel_t *t)
         abortProgramNow(1);
     }
     ts->store.config_revision += 1U;
+    ts->database_dirty = true;
 }
 
 void authenticationserverBumpStatsRevision(tunnel_t *t)
@@ -48,6 +49,7 @@ void authenticationserverBumpStatsRevision(tunnel_t *t)
     authenticationserver_tstate_t *ts = tunnelGetState(t);
 
     ts->store.stats_revision += 1U;
+    ts->database_dirty = true;
 }
 
 bool authenticationserverUserHasRequiredId(const user_t *user)

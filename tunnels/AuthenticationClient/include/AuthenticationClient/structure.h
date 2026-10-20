@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../../Internals/AuthenticationCommon/wire.h"
 #include "interface.h"
 
 typedef struct authenticationclient_pending_request_s
@@ -17,6 +18,24 @@ typedef struct authenticationclient_accounting_entry_s
     uint64_t  first_usage_at_ms;
 } authenticationclient_accounting_entry_t;
 
+/* Owned traversal metadata. No page is published before final validation. */
+typedef struct authenticationclient_page_clock_s
+{
+    size_t   position, count;
+    uint64_t server_time_ms, accounting_time_ms, received_at_ms;
+} authenticationclient_page_clock_t;
+
+typedef struct authenticationclient_staging_s
+{
+    users_t                           *users;
+    authenticationclient_page_clock_t *clocks;
+    size_t                             clock_count, clock_capacity;
+    uint64_t                           total, position, encoded_bytes, config_revision, stats_revision;
+    uint64_t                           revision_generation;
+    char                               instance[33], cursor[65];
+    bool                               active, complete;
+} authenticationclient_staging_t;
+
 typedef enum authenticationclient_failure_e
 {
     kAuthenticationClientFailureNone = 0,
@@ -27,7 +46,8 @@ typedef enum authenticationclient_failure_e
     kAuthenticationClientFailureInvalidResponse,
     kAuthenticationClientFailureStatsPushDenied,
     kAuthenticationClientFailureStatsPushRejected,
-    kAuthenticationClientFailureRemoteError
+    kAuthenticationClientFailureRemoteError,
+    kAuthenticationClientFailureSyncLimit
 } authenticationclient_failure_t;
 
 typedef enum authenticationclient_blocking_reason_e
@@ -57,8 +77,13 @@ typedef struct authenticationclient_status_s
     bool     users_loaded, clock_loaded, can_authenticate, write_paused;
     bool     auth_in_flight, pull_in_flight, push_in_flight, pull_requested, pull_required, push_requested;
     bool     catchup_capture_needed, reconnect_queued, unresolved_batch;
+    bool     traversal_active;
+    uint64_t sync_staged_users, sync_staged_bytes, sync_total_users;
     bool     first_usage_push_requested, first_usage_push_deferred;
     bool     retry_deadline_valid, request_deadline_valid;
+    uint32_t sync_retry_streak;
+    uint64_t sync_retry_remaining_ms;
+    authenticationclient_failure_t sync_retry_failure;
     uint64_t users_count, pending_request_count, retained_catchup_slots;
     uint32_t traffic_multiplier; /* Fixed-point thousandths, as configured. */
     uint64_t batch_sequence, batch_entry_count, batch_size;
@@ -94,6 +119,8 @@ typedef struct authenticationclient_tstate_s
 
     users_t *users;
     users_t *sync_baseline_users;
+    authenticationclient_staging_t staging; /* Worker 0, released after callbacks settle. */
+    uint64_t                       sync_max_users, sync_max_bytes;
     /* Worker-0 owned value snapshots; no pointers into a replaceable table. */
     authenticationclient_accounting_entry_t *pending_entries;
     size_t                                   pending_entries_count;
@@ -140,11 +167,16 @@ typedef struct authenticationclient_tstate_s
     wtimer_t *progress_timer;
     uint64_t  reconnect_due_ms;
     uint64_t  stats_retry_not_before_ms;
+    uint64_t                       sync_retry_not_before_ms;
+    uint32_t                       sync_retry_streak;
+    authenticationclient_failure_t sync_retry_failure;
     uint64_t  request_deadline_ms;
 
     uint8_t  token[64];
     char     accounting_epoch[65];
     uint64_t next_batch_sequence;
+    uint64_t last_ack_sequence;
+    uint8_t  last_ack_digest[SHA256_DIGEST_SIZE];
     char    *pending_batch;
     uint32_t pending_batch_length;
     uint32_t next_correlation_id;
@@ -189,41 +221,40 @@ enum
     kTunnelStateSize = sizeof(authenticationclient_tstate_t),
     kLineStateSize   = sizeof(authenticationclient_lstate_t),
 
-    kAuthenticationClientMessageHeaderSize  = 4,
-    kAuthenticationClientSessionTokenSize   = 64,
-    kAuthenticationClientRevisionHeaderSize = 16,
-    kAuthenticationClientRequestEnvelopeHeaderSize =
-        kAuthenticationClientMessageHeaderSize + kAuthenticationClientSessionTokenSize,
-    kAuthenticationClientResponseEnvelopeHeaderSize =
-        kAuthenticationClientMessageHeaderSize + kAuthenticationClientRevisionHeaderSize,
-    kAuthenticationClientCorrelationIdSize  = 4,
-    kAuthenticationClientRequestHeaderSize  = 1 + kAuthenticationClientCorrelationIdSize + 4,
-    kAuthenticationClientResponseHeaderSize = 1 + kAuthenticationClientCorrelationIdSize + 4,
-    kAuthenticationClientMaxMessagePayload  = 16U * 1024U * 1024U,
-    kAuthenticationClientMaxRequestData     = 16U * 1024U * 1024U,
-    kAuthenticationClientMaxResponsePayload = 16U * 1024U * 1024U,
-    kAuthenticationClientMaxBatchEntries    = 4096,
+    kAuthenticationClientMessageHeaderSize          = kAuthenticationMessageHeaderSize,
+    kAuthenticationClientSessionTokenSize           = kAuthenticationSessionTokenSize,
+    kAuthenticationClientRevisionHeaderSize         = kAuthenticationRevisionHeaderSize,
+    kAuthenticationClientRequestEnvelopeHeaderSize  = kAuthenticationRequestEnvelopeHeaderSize,
+    kAuthenticationClientResponseEnvelopeHeaderSize = kAuthenticationResponseEnvelopeHeaderSize,
+    kAuthenticationClientCorrelationIdSize          = kAuthenticationCorrelationIdSize,
+    kAuthenticationClientRequestHeaderSize          = kAuthenticationRequestHeaderSize,
+    kAuthenticationClientResponseHeaderSize         = kAuthenticationResponseHeaderSize,
+    kAuthenticationClientMaxMessagePayload          = kAuthenticationMaxMessagePayload,
+    kAuthenticationClientMaxRequestData             = kAuthenticationMaxRequestData,
+    kAuthenticationClientMaxResponsePayload         = kAuthenticationMaxResponsePayload,
+    kAuthenticationClientMaxBatchEntries            = kAuthenticationMaxBatchEntries,
 
-    kAuthenticationClientRequestTypePing                      = 1,
-    kAuthenticationClientRequestTypeGetUserBySHA256Hex        = 2,
-    kAuthenticationClientRequestTypeGetUserBySHA256Base64     = 3,
-    kAuthenticationClientRequestTypeGetUserBySHA256           = 4,
-    kAuthenticationClientRequestTypeGetUserByPassword         = 5,
-    kAuthenticationClientRequestTypeAddNewUser                = 6,
-    kAuthenticationClientRequestTypeUpdateUser                = 7,
-    kAuthenticationClientRequestTypeGetAllUsers               = 9,
-    kAuthenticationClientRequestTypeAuthenticate              = 10,
-    kAuthenticationClientRequestTypePushUserStats             = 11,
-    kAuthenticationClientRequestTypeGetUserBySHA224Hex        = 12,
-    kAuthenticationClientRequestTypeGetUserBySHA224Base64     = 13,
-    kAuthenticationClientRequestTypeGetUserBySHA224           = 14,
+    kAuthenticationClientRequestTypePing                  = kAuthenticationRequestTypePing,
+    kAuthenticationClientRequestTypeGetUserBySHA256Hex    = kAuthenticationRequestTypeGetUserBySHA256Hex,
+    kAuthenticationClientRequestTypeGetUserBySHA256Base64 = kAuthenticationRequestTypeGetUserBySHA256Base64,
+    kAuthenticationClientRequestTypeGetUserBySHA256       = kAuthenticationRequestTypeGetUserBySHA256,
+    kAuthenticationClientRequestTypeGetUserByPassword     = kAuthenticationRequestTypeGetUserByPassword,
+    kAuthenticationClientRequestTypeAddNewUser            = kAuthenticationRequestTypeAddNewUser,
+    kAuthenticationClientRequestTypeUpdateUser            = kAuthenticationRequestTypeUpdateUser,
+    kAuthenticationClientRequestTypeGetUsersPage          = kAuthenticationRequestTypeGetUsersPage,
+    kAuthenticationClientRequestTypeGetAllUsers           = kAuthenticationRequestTypeGetAllUsers,
+    kAuthenticationClientRequestTypeAuthenticate          = kAuthenticationRequestTypeAuthenticate,
+    kAuthenticationClientRequestTypePushUserStats         = kAuthenticationRequestTypePushUserStats,
+    kAuthenticationClientRequestTypeGetUserBySHA224Hex    = kAuthenticationRequestTypeGetUserBySHA224Hex,
+    kAuthenticationClientRequestTypeGetUserBySHA224Base64 = kAuthenticationRequestTypeGetUserBySHA224Base64,
+    kAuthenticationClientRequestTypeGetUserBySHA224       = kAuthenticationRequestTypeGetUserBySHA224,
 
-    kAuthenticationClientResponseTypeOk      = 0,
-    kAuthenticationClientResponseTypeError   = 0xFF,
-    kAuthenticationClientResponseTypePong    = 1,
-    kAuthenticationClientResponseTypeUser    = 2,
-    kAuthenticationClientResponseTypeUsers   = 3,
-    kAuthenticationClientResponseTypeSession = 4,
+    kAuthenticationClientResponseTypeOk      = kAuthenticationResponseTypeOk,
+    kAuthenticationClientResponseTypeError   = kAuthenticationResponseTypeError,
+    kAuthenticationClientResponseTypePong    = kAuthenticationResponseTypePong,
+    kAuthenticationClientResponseTypeUser    = kAuthenticationResponseTypeUser,
+    kAuthenticationClientResponseTypeUsers   = kAuthenticationResponseTypeUsers,
+    kAuthenticationClientResponseTypeSession = kAuthenticationResponseTypeSession,
 
     kAuthenticationClientDefaultPingIntervalMs      = 60U * 1000U,
     kAuthenticationClientDefaultPullIntervalMs      = 5U * 60U * 1000U,

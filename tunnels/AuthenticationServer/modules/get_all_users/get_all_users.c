@@ -1,56 +1,186 @@
 #include "modules/get_all_users/get_all_users.h"
+#include "AuthenticationServer/api.h"
+#include "node_builder/config_lexical.h"
 
-#include "loggers/network_logger.h"
+static void pageNumber(cJSON *json, const char *key, uint64_t number)
+{
+    char text[24];
+    snprintf(text, sizeof(text), "%" PRIu64, number);
+    cJSON_DeleteItemFromObjectCaseSensitive(json, key);
+    discard cJSON_AddStringToObject(json, key, text);
+}
+
+static void pagePosition(cJSON *json, const authenticationserver_page_view_t *view, size_t count, bool validated)
+{
+    char cursor[65];
+    authenticationserverApiCursor(view, count, cursor);
+    pageNumber(json, "count", count);
+    cJSON_DeleteItemFromObjectCaseSensitive(json, "cursor");
+    discard cJSON_AddStringToObject(json, "cursor", cursor);
+    cJSON_DeleteItemFromObjectCaseSensitive(json, "complete");
+    discard cJSON_AddBoolToObject(json, "complete", view->position + count == view->total);
+    cJSON_DeleteItemFromObjectCaseSensitive(json, "validated");
+    discard cJSON_AddBoolToObject(json, "validated", validated);
+}
+
+static bool pageUnsigned(const cJSON *json, const char *key, uint64_t *number)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(json, key);
+    return cJSON_IsString(item) && authenticationserverApiUnsignedDecimal(item->valuestring, number);
+}
 
 sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
                                               tunnel_t *t, line_t *l, authenticationserver_session_t *session,
                                               const uint8_t *request_data, uint32_t request_data_len)
 {
-    authenticationserver_tstate_t *ts = tunnelGetState(t);
-    discard                        request_data;
-
-    if (UNLIKELY(request_data_len != 0))
+    authenticationserver_tstate_t *ts      = tunnelGetState(t);
+    const char                    *error   = "invalid-users-page-request";
+    cJSON                         *request = NULL, *page = NULL;
+    char                          *text = NULL;
+    if (request_data_len == 0 || request_data_len > 1024)
+        goto refused;
+    request = configLexicalParseBoundedQuiet((const char *) request_data, request_data_len, 2, 16);
+    if (! cJSON_IsObject(request))
+        goto refused;
+    for (const cJSON *field = request->child; field != NULL; field = field->next)
+        if (strcmp(field->string, "epoch") != 0 && strcmp(field->string, "sequence") != 0 &&
+            strcmp(field->string, "digest") != 0 && strcmp(field->string, "cursor") != 0 &&
+            strcmp(field->string, "total") != 0 && strcmp(field->string, "validate") != 0)
+            goto refused;
+    const cJSON *epoch  = cJSON_GetObjectItemCaseSensitive(request, "epoch");
+    const cJSON *digest = cJSON_GetObjectItemCaseSensitive(request, "digest");
+    uint64_t     sequence;
+    uint8_t      decoded[SHA256_DIGEST_SIZE];
+    if (! cJSON_IsString(epoch) || epoch->valuestring == NULL || strlen(epoch->valuestring) != 64 ||
+        ! cJSON_IsString(digest) || digest->valuestring == NULL || strlen(digest->valuestring) != 64 ||
+        ! asciiHexDecodeBytes((const uint8_t *) digest->valuestring, 64, decoded, sizeof(decoded)) ||
+        ! pageUnsigned(request, "sequence", &sequence))
+        goto refused;
+    authenticationserver_auth_client_t *checkpoint = session->accounting_client;
+    if (memcmp(epoch->valuestring, checkpoint->accounting_epoch, 64) != 0 || sequence != checkpoint->last_sequence ||
+        ! wCryptoEqual(decoded, checkpoint->last_digest, sizeof(decoded)))
     {
-        LOGW("AuthenticationServer: GetAllUsers received unexpected %u-byte request data",
-             (unsigned int) request_data_len);
-        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-get-all-users-request");
+        error = "accounting-continuity-lost";
+        goto refused;
     }
-
-    cJSON *users_json = usersToJson(&ts->store.users);
-    if (UNLIKELY(users_json == NULL))
+    authenticationserver_api_request_t cursor      = {0};
+    const cJSON                       *cursor_json = cJSON_GetObjectItemCaseSensitive(request, "cursor");
+    const cJSON                       *total_json  = cJSON_GetObjectItemCaseSensitive(request, "total");
+    const cJSON                       *validation  = cJSON_GetObjectItemCaseSensitive(request, "validate");
+    const bool                         validate    = validation != NULL && cJSON_IsTrue(validation);
+    if (validation != NULL && ! cJSON_IsTrue(validation))
+        goto refused;
+    if ((cursor_json == NULL) != (total_json == NULL) || (validate && cursor_json == NULL))
+        goto refused;
+    const size_t total = usersCount(&ts->store.users);
+    if (cursor_json != NULL)
     {
-        LOGW("AuthenticationServer: GetAllUsers failed to export users database");
-        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "users-json-export-failed");
+        uint64_t supplied_total;
+        error = "invalid_cursor";
+        if (! cJSON_IsString(cursor_json) || cursor_json->valuestring == NULL ||
+            ! authenticationserverApiCursorDecode(cursor_json->valuestring, &cursor) ||
+            ! pageUnsigned(request, "total", &supplied_total))
+            goto refused;
+        if (memcmp(cursor.instance_id, ts->api_instance_id, 16) != 0 || cursor.revision != ts->store.config_revision)
+        {
+            error = "stale_cursor";
+            goto refused;
+        }
+        if (supplied_total != total || cursor.position > total ||
+            (validate ? cursor.position != total : cursor.position == total))
+            goto refused;
     }
-    discard jsonAddUint64ToObject(users_json, "server-time-ms", getTimeOfDayMS());
-    discard jsonAddUint64ToObject(users_json, "accounting-time-ms", authenticationserverAccountingTimeMS(ts));
-
-    char *users_json_text = authenticationserverSerializeResponseJson(users_json);
-    if (UNLIKELY(users_json_text == NULL))
+    authenticationserver_page_view_t view = {
+        .config_revision = ts->store.config_revision, .position = (size_t) cursor.position, .total = total};
+    memoryCopy(view.instance_id, ts->api_instance_id, sizeof(view.instance_id));
+    page = cJSON_CreateObject();
+    char              instance[33], digest_text[65];
+    static const char hex[] = "0123456789abcdef";
+    for (size_t i = 0; i < 16; ++i)
     {
-        cJSON_Delete(users_json);
-        LOGW("AuthenticationServer: GetAllUsers failed to serialize users database");
-        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "users-json-serialize-failed");
+        instance[2 * i]     = hex[ts->api_instance_id[i] >> 4];
+        instance[2 * i + 1] = hex[ts->api_instance_id[i] & 15];
     }
-
-    const size_t users_json_text_len = stringLength(users_json_text);
-    if (UNLIKELY(users_json_text_len >
-                 kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize))
+    instance[32] = 0;
+    for (size_t i = 0; i < sizeof(checkpoint->last_digest); ++i)
     {
-        cJSON_Delete(users_json);
-        cJSON_free(users_json_text);
-        LOGW("AuthenticationServer: GetAllUsers response is too large");
-        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "response-too-large");
+        digest_text[2 * i]     = hex[checkpoint->last_digest[i] >> 4];
+        digest_text[2 * i + 1] = hex[checkpoint->last_digest[i] & 15];
     }
-
-    discard session;
-    cJSON_Delete(users_json);
-
-    sbuf_t *response = authenticationserverCreateResponseFrame(l,
-                                                               kAuthenticationServerResponseTypeUsers,
-                                                               correlation_id,
-                                                               (const uint8_t *) users_json_text,
-                                                               (uint32_t) users_json_text_len);
-    cJSON_free(users_json_text);
+    digest_text[64] = 0;
+    discard cJSON_AddStringToObject(page, "instance", instance);
+    discard cJSON_AddStringToObject(page, "epoch", epoch->valuestring);
+    discard cJSON_AddStringToObject(page, "digest", digest_text);
+    pageNumber(page, "sequence", checkpoint->last_sequence);
+    pageNumber(page, "config-revision", ts->store.config_revision);
+    pageNumber(page, "stats-revision", ts->store.stats_revision);
+    pageNumber(page, "server-time-ms", getTimeOfDayMS());
+    pageNumber(page, "accounting-time-ms", authenticationserverAccountingTimeMS(ts));
+    pageNumber(page, "total", total);
+    pageNumber(page, "position", view.position);
+    cJSON       *users = cJSON_AddArrayToObject(page, "users");
+    const size_t hard  = kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize;
+    size_t       count = 0, row_bytes = 0;
+    while (! validate && view.position + count < total && count < kAuthenticationUsersPageMaxUsers)
+    {
+        pagePosition(page, &view, count + 1, false);
+        /* Measure metadata without constructing the next user's owned strings. */
+        cJSON  *empty = cJSON_CreateArray();
+        discard cJSON_DetachItemFromObjectCaseSensitive(page, "users");
+        discard cJSON_AddItemToObject(page, "users", empty);
+        text                  = cJSON_PrintUnformatted(page);
+        const size_t overhead = strlen(text) + count; /* Between-row commas. */
+        cJSON_free(text);
+        text = NULL;
+        /* Restore ownership of previously admitted rows after metadata measuring. */
+        discard cJSON_DetachItemFromObjectCaseSensitive(page, "users");
+        cJSON_Delete(empty);
+        discard      cJSON_AddItemToObject(page, "users", users);
+        const size_t target = kAuthenticationUsersPageTargetBytes - kAuthenticationServerResponseEnvelopeHeaderSize -
+                              kAuthenticationServerResponseHeaderSize;
+        const size_t         allowance = overhead + row_bytes < target ? target - overhead - row_bytes : 0;
+        cJSON               *row       = NULL;
+        size_t               encoded   = 0;
+        user_public_result_t result =
+            usersCopyFullUserJsonAt(&ts->store.users, view.position + count, allowance, &row, &encoded);
+        if (count == 0 && result == kUserPublicTooLarge && overhead < hard)
+            result = usersCopyFullUserJsonAt(&ts->store.users, view.position, hard - overhead, &row, &encoded);
+        if (result == kUserPublicTooLarge && count != 0)
+            break;
+        if (result != kUserPublicOk)
+        {
+            error = result == kUserPublicTooLarge ? "user-too-large" : "invalid-user-record";
+            goto refused;
+        }
+        discard cJSON_AddItemToArray(users, row);
+        row_bytes += encoded;
+        ++count;
+        if (overhead + row_bytes > target)
+            break; /* Exceptional first row. */
+    }
+    pagePosition(page, &view, count, validate);
+    text = authenticationserverSerializeResponseJson(page);
+    if (text == NULL)
+    {
+        error = "user-too-large";
+        goto refused;
+    }
+    sbuf_t *response = authenticationserverCreateResponseFrame(
+        l, kAuthenticationServerResponseTypeUsers, correlation_id, (const uint8_t *) text, (uint32_t) strlen(text));
+    authenticationserverWipeJsonStrings(page);
+    cJSON_Delete(page);
+    cJSON_Delete(request);
+    memorySecureZero(text, strlen(text));
+    cJSON_free(text);
     return response;
+refused:
+    authenticationserverWipeJsonStrings(page);
+    cJSON_Delete(page);
+    cJSON_Delete(request);
+    if (text != NULL)
+    {
+        memorySecureZero(text, strlen(text));
+        cJSON_free(text);
+    }
+    return authenticationserverCreateErrorResponseFrame(l, correlation_id, error);
 }

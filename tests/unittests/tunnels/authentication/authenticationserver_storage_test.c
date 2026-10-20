@@ -26,7 +26,8 @@ typedef enum fault_e
     kMissingPrimary,
     kMissingNoBackup,
     kMissingPublication,
-    kPermissions
+    kPermissions,
+    kProbeClose
 } fault_t;
 static fault_t  fault;
 static char     primary[512];
@@ -36,6 +37,69 @@ static bool     use_test_clock;
 static uint64_t test_clock_us;
 static time_t   test_wall_time;
 static unsigned wall_time_reads;
+static bool     inspect_owned_credentials;
+static char    *read_watch, *password_watch, *serialized_watch;
+static size_t   read_watch_length, password_watch_length, serialized_watch_length;
+static unsigned owned_credentials_wiped;
+
+void __real_memoryFree(void *pointer);
+void __wrap_memoryFree(void *pointer);
+void __wrap_memoryFree(void *pointer)
+{
+    if (pointer != NULL && (pointer == read_watch || pointer == password_watch || pointer == serialized_watch))
+    {
+        const size_t length = pointer == read_watch       ? read_watch_length
+                              : pointer == password_watch ? password_watch_length
+                                                          : serialized_watch_length;
+        for (size_t i = 0; i < length; ++i)
+            twfRequire(((const uint8_t *) pointer)[i] == 0, "database credential copy reached free unwiped");
+        if (pointer == read_watch)
+            read_watch = NULL;
+        else if (pointer == password_watch)
+            password_watch = NULL;
+        else
+            serialized_watch = NULL;
+        ++owned_credentials_wiped;
+    }
+    __real_memoryFree(pointer);
+}
+
+static void watchDatabasePassword(cJSON *json)
+{
+    cJSON *row      = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(json, "users"), 0);
+    cJSON *password = cJSON_GetObjectItemCaseSensitive(row, "password");
+    if (cJSON_IsString(password))
+    {
+        twfRequire(password_watch == NULL, "prior database JSON password not released");
+        password_watch        = password->valuestring;
+        password_watch_length = strlen(password_watch);
+    }
+}
+
+cJSON *__real_cJSON_ParseWithLength(const char *text, size_t length);
+cJSON *__wrap_cJSON_ParseWithLength(const char *text, size_t length);
+cJSON *__wrap_cJSON_ParseWithLength(const char *text, size_t length)
+{
+    cJSON *json = __real_cJSON_ParseWithLength(text, length);
+    if (inspect_owned_credentials)
+        watchDatabasePassword(json);
+    return json;
+}
+
+char *__real_cJSON_PrintBuffered(const cJSON *json, int size, cJSON_bool format);
+char *__wrap_cJSON_PrintBuffered(const cJSON *json, int size, cJSON_bool format);
+char *__wrap_cJSON_PrintBuffered(const cJSON *json, int size, cJSON_bool format)
+{
+    char *text = __real_cJSON_PrintBuffered(json, size, format);
+    if (inspect_owned_credentials)
+    {
+        watchDatabasePassword((cJSON *) json);
+        twfRequire(serialized_watch == NULL, "prior database serialization not released");
+        serialized_watch        = text;
+        serialized_watch_length = text == NULL ? 0 : strlen(text);
+    }
+    return text;
+}
 
 unsigned long long __real_getHRTimeUs(void);
 unsigned long long __wrap_getHRTimeUs(void);
@@ -85,10 +149,29 @@ int __wrap_open(const char *path, int flags, ...)
     }
     return __real_open(path, flags, mode);
 }
+int __real_close(int fd);
+int __wrap_close(int fd);
+int __wrap_close(int fd)
+{
+    const int result = __real_close(fd);
+    if (fault == kProbeClose)
+    {
+        fault = kNone;
+        errno = EIO;
+        return -1;
+    }
+    return result;
+}
 size_t __real_fread(void *ptr, size_t size, size_t count, FILE *stream);
 size_t __wrap_fread(void *ptr, size_t size, size_t count, FILE *stream);
 size_t __wrap_fread(void *ptr, size_t size, size_t count, FILE *stream)
 {
+    if (inspect_owned_credentials)
+    {
+        twfRequire(read_watch == NULL, "prior database read not released");
+        read_watch        = ptr;
+        read_watch_length = size * count;
+    }
     if (fault == kRead)
     {
         fault = kNone;
@@ -244,7 +327,7 @@ static authenticationserver_status_t statusSnapshot(tunnel_t *server)
     return snapshot;
 }
 
-static void testCommit(mode_t mask, fault_t selected)
+static void testCommit(mode_t mask, fault_t selected, bool was_dirty)
 {
     char directory[] = "/tmp/ww-auth-storage-XXXXXX";
     twfRequire(mkdtemp(directory) != NULL, "temporary directory failed");
@@ -265,6 +348,7 @@ static void testCommit(mode_t mask, fault_t selected)
     ts->db_path = primary;
     twfRequire(authenticationserverLoadDatabase(ts), "initial database load failed");
     ts->database_loaded                  = true;
+    ts->database_dirty                   = was_dirty;
     static const char protected_backup[] = "{\"users\":[{\"id\":42,\"password\":\"previous-backup\"}]}";
     if (selected == kMissingPrimary || selected == kMissingNoBackup || selected == kMissingPublication)
     {
@@ -326,6 +410,8 @@ static void testCommit(mode_t mask, fault_t selected)
     twfRequire((usersLookupByIdentifier(&ts->store.users, 43) != NULL) == committed,
                "in-memory rollback disagreed with disk");
     authenticationserver_status_t saved_status = statusSnapshot(server);
+    twfRequire(ts->database_dirty == (! committed && was_dirty) && ts->primary_checkpoint_valid == committed,
+               "producer create did not preserve dirty/checkpoint facts across commit or rollback");
     twfRequire(saved_status.primary_save_last_result ==
                        (committed ? kAuthenticationServerSaveSuccess : kAuthenticationServerSaveFailure) &&
                    saved_status.primary_save_last_attempt_valid &&
@@ -442,19 +528,24 @@ static void testCalendarWeeksAndLayouts(void)
     size_t read_length = 0;
     twfRequire(authenticationserverPrivateRead(primary, &read_bytes, &read_length) ==
                        kAuthenticationServerPrivateReadAbsent &&
-                   read_bytes == NULL && read_length == 0,
+                   read_bytes == NULL && read_length == 0 &&
+                   authenticationserverPrivateProbe(primary) == kAuthenticationServerPrivateReadAbsent,
                "missing private primary was not classified at open");
     int empty_fd = open(primary, O_WRONLY | O_CREAT | O_EXCL, 0600);
     twfRequire(empty_fd >= 0 && close(empty_fd) == 0 &&
                    authenticationserverPrivateRead(primary, &read_bytes, &read_length) ==
-                       kAuthenticationServerPrivateReadError,
+                       kAuthenticationServerPrivateReadError &&
+                   authenticationserverPrivateProbe(primary) == kAuthenticationServerPrivateReadError,
                "empty primary was misclassified as missing");
     twfRequire(remove(primary) == 0 && symlink("missing-target", primary) == 0 &&
                    authenticationserverPrivateRead(primary, &read_bytes, &read_length) ==
-                       kAuthenticationServerPrivateReadError,
+                       kAuthenticationServerPrivateReadError &&
+                   authenticationserverPrivateProbe(primary) == kAuthenticationServerPrivateReadError,
                "dangling primary symlink was misclassified as missing");
-    twfRequire(remove(primary) == 0 && authenticationserverPrivateRead(directory, &read_bytes, &read_length) ==
-                                           kAuthenticationServerPrivateReadError,
+    twfRequire(remove(primary) == 0 &&
+                   authenticationserverPrivateRead(directory, &read_bytes, &read_length) ==
+                       kAuthenticationServerPrivateReadError &&
+                   authenticationserverPrivateProbe(directory) == kAuthenticationServerPrivateReadError,
                "nonregular primary was accepted");
     authenticationserver_tstate_t ts = {0};
     rwlockinit(&ts.state_lock);
@@ -538,16 +629,158 @@ static void testCalendarWeeksAndLayouts(void)
     twfRequire(closedir(dir) == 0 && rmdir(directory) == 0, "calendar directory cleanup failed");
 }
 
+static void testCleanPeriodicSaving(void)
+{
+    char directory[] = "/tmp/waterwall-clean-save-XXXXXX";
+    twfRequire(mkdtemp(directory) != NULL, "clean-save directory failed");
+    snprintf(primary, sizeof(primary), "%s/users.json", directory);
+    static const char seed[] = "{\"users\":[{\"id\":1,\"password\":\"one\"}]}";
+    twfRequire(authenticationserverPrivateWrite(primary, seed, sizeof(seed) - 1), "clean-save seed failed");
+    authenticationserver_tstate_t ts = {0};
+    rwlockinit(&ts.state_lock);
+    twfRequire(usersCreate(&ts.store.users), "clean-save users failed");
+    ts.db_path = primary;
+    twfRequire(authenticationserverLoadDatabase(&ts), "clean-save load failed");
+    ts.database_loaded = true;
+    twfRequire(authenticationserverSaveDatabase(&ts) && ts.primary_checkpoint_valid && ! ts.periodic_save_seen,
+               "forced save consumed the first periodic tick");
+    unsigned writes = private_writes;
+    twfRequire(authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic) &&
+                   private_writes > writes && ts.primary_checkpoint_valid && ! ts.database_dirty,
+               "first periodic save was skipped");
+    const uint64_t attempt = ts.primary_save_last_attempt_ms;
+    writes                 = private_writes;
+    char *backup           = readFile(ts.backup_path);
+    for (unsigned i = 0; i < 5; ++i)
+        twfRequire(authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic),
+                   "clean periodic skip failed");
+    char *after = readFile(ts.backup_path);
+    twfRequire(private_writes == writes && ts.primary_save_last_attempt_ms == attempt && strcmp(backup, after) == 0,
+               "clean skip rewrote files or save telemetry");
+    memoryFree(backup);
+    memoryFree(after);
+    ts.database_dirty = true;
+    twfRequire(authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic) &&
+                   private_writes > writes && ! ts.database_dirty,
+               "dirty periodic save was skipped");
+    writes                        = private_writes;
+    ts.normal_backups_mode        = kAuthenticationServerNormalBackupsHourly;
+    ts.normal_backups_path        = directory;
+    ts.normal_backups_count_limit = 10;
+    use_test_clock                = true;
+    test_clock_us                 = 1000000;
+    test_wall_time                = 1792454400;
+    twfRequire(authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic) &&
+                   private_writes > writes && ts.normal_backups_last_slot != 0,
+               "due history did not force clean save");
+    writes = private_writes;
+    twfRequire(authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic) &&
+                   private_writes == writes,
+               "same history slot rewrote clean primary");
+    test_wall_time += 3600;
+    static char missing_directory[] = "/nonexistent-waterwall-test-directory";
+    ts.normal_backups_path          = missing_directory;
+    const uint64_t slot             = ts.normal_backups_last_slot;
+    twfRequire(authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic) &&
+                   ! ts.database_dirty && ts.normal_backups_last_slot == slot && private_writes > writes,
+               "history failure dirtied committed primary or consumed due slot");
+    writes                 = private_writes;
+    ts.normal_backups_path = directory;
+    twfRequire(authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic) &&
+                   private_writes > writes && ts.normal_backups_last_slot != slot,
+               "due history was not retried");
+    ts.normal_backups_mode = kAuthenticationServerNormalBackupsDisabled;
+    twfRequire(remove(primary) == 0, "clean primary removal failed");
+    backup = readFile(ts.backup_path);
+    twfRequire(authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic),
+               "clean periodic save failed to repair missing primary");
+    after = readFile(ts.backup_path);
+    twfRequire(strcmp(backup, after) == 0, "missing-primary clean repair changed recovery copy");
+    memoryFree(backup);
+    memoryFree(after);
+    twfRequire(authenticationserverPrivateWrite(primary, "", 0), "empty primary fixture failed");
+    twfRequire(! authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic) &&
+                   ts.primary_save_last_result == kAuthenticationServerSaveFailure,
+               "empty primary was a successful clean skip");
+    twfRequire(remove(primary) == 0 && authenticationserverSaveDatabase(&ts), "forced repair failed");
+    const fault_t probe_faults[] = {kReadOpen, kProbeClose};
+    for (size_t i = 0; i < sizeof(probe_faults) / sizeof(probe_faults[0]); ++i)
+    {
+        fault  = probe_faults[i];
+        writes = private_writes;
+        twfRequire(! authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic) &&
+                       private_writes == writes && fault == kNone &&
+                       ts.primary_save_last_result == kAuthenticationServerSaveFailure,
+                   "failed health probe skipped successfully or started serialization/staging");
+    }
+    writes = private_writes;
+    twfRequire(authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSaveShutdown) &&
+                   private_writes > writes,
+               "final shutdown did not force clean save");
+    use_test_clock = false;
+    memoryFree(ts.backup_path);
+    usersDestroy(&ts.store.users);
+    rwlockDestroy(&ts.state_lock);
+    DIR           *dir = opendir(directory);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL)
+        if (entry->d_name[0] != '.')
+        {
+            char path[1024];
+            snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+            twfRequire(remove(path) == 0, "clean-save file cleanup failed");
+        }
+    twfRequire(closedir(dir) == 0 && rmdir(directory) == 0, "clean-save directory cleanup failed");
+}
+
+static void testOwnedDatabaseCredentialWiping(void)
+{
+    char directory[] = "/tmp/waterwall-database-wipe-XXXXXX";
+    twfRequire(mkdtemp(directory) != NULL, "database wipe directory failed");
+    snprintf(primary, sizeof(primary), "%s/users.json", directory);
+    static const char seed[] = "{\"users\":[{\"id\":1,\"password\":\"owned-database-secret\"}]}";
+    twfRequire(authenticationserverPrivateWrite(primary, seed, sizeof(seed) - 1), "database wipe seed failed");
+    authenticationserver_tstate_t ts = {.db_path = primary, .database_loaded = true};
+    rwlockinit(&ts.state_lock);
+    twfRequire(usersCreate(&ts.store.users), "database wipe users failed");
+    inspect_owned_credentials = true;
+    twfRequire(authenticationserverLoadDatabase(&ts), "database wipe load failed");
+    twfRequire(owned_credentials_wiped == 2 && read_watch == NULL && password_watch == NULL,
+               "loaded database source/tree credentials were not wiped");
+    const fault_t faults[] = {kNone, kWrite, kReadClose};
+    for (size_t i = 0; i < sizeof(faults) / sizeof(faults[0]); ++i)
+    {
+        const unsigned before = owned_credentials_wiped;
+        fault                 = faults[i];
+        twfRequire(authenticationserverSaveDatabase(&ts) == (faults[i] == kNone) &&
+                       owned_credentials_wiped >= before + 2 && read_watch == NULL && password_watch == NULL &&
+                       serialized_watch == NULL,
+                   "database success/failure released owned credentials unwiped");
+    }
+    inspect_owned_credentials = false;
+    fault                     = kNone;
+    memoryFree(ts.backup_path);
+    usersDestroy(&ts.store.users);
+    rwlockDestroy(&ts.state_lock);
+    char backup[520];
+    snprintf(backup, sizeof(backup), "%s.backup", primary);
+    twfRequire(remove(backup) == 0 && remove(primary) == 0 && rmdir(directory) == 0, "database wipe cleanup failed");
+}
+
 int main(void)
 {
     twfSetCase("authenticationserver private storage and commit");
     twfRequire(createNetworkLogger(NULL, false) != NULL && wCryptoGlobalInit() == kWCryptoOk, "runtime setup failed");
     for (fault_t selected = kNone; selected <= kMissingPublication; ++selected)
     {
-        testCommit(022, selected);
-        testCommit(000, selected);
+        testCommit(022, selected, false);
+        testCommit(000, selected, false);
     }
+    testCommit(022, kNone, true);
+    testCommit(022, kWrite, true);
     testCalendarWeeksAndLayouts();
+    testCleanPeriodicSaving();
+    testOwnedDatabaseCredentialWiping();
     twfRequire(private_writes > 0, "no actual private file writes were exercised");
     wCryptoGlobalCleanup();
     networkloggerDestroy();

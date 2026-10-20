@@ -1,24 +1,9 @@
 #include "AuthenticationServer/config_fields.h"
+#include "AuthenticationServer/api.h"
 
 bool authenticationserverConfigUnsignedString(const cJSON *value, uint64_t *out)
 {
-    if (! cJSON_IsString(value) || value->valuestring[0] < '0' || value->valuestring[0] > '9')
-        return false;
-    const char *text = value->valuestring;
-    if (text[0] == '0' && text[1] != '\0')
-        return false;
-    uint64_t number = 0;
-    for (size_t i = 0; text[i] != '\0'; ++i)
-    {
-        if (i >= 20 || text[i] < '0' || text[i] > '9')
-            return false;
-        unsigned digit = (unsigned) (text[i] - '0');
-        if (number > (UINT64_MAX - digit) / 10)
-            return false;
-        number = number * 10 + digit;
-    }
-    *out = number;
-    return true;
+    return cJSON_IsString(value) && authenticationserverApiUnsignedDecimal(value->valuestring, out);
 }
 
 static bool unsignedLeaf(const cJSON *value, uint64_t *out, user_config_patch_t *patch, uint32_t bit)

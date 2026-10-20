@@ -61,7 +61,7 @@ CATEGORY_B = [
      ("1",),
      ("AuthenticationClient: failed to create ping timer",),
      "worker-0 startup task: required ping timer could not be created"),
-    ("tunnels/AuthenticationClient/common/protocol.c", "authenticationclientStartSyncTimer",
+    ("tunnels/AuthenticationClient/common/sync.c", "authenticationclientStartSyncTimer",
      ("1",),
      ("AuthenticationClient: failed to create sync timer",),
      "worker-0 startup task: required sync timer could not be created"),

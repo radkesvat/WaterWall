@@ -1,5 +1,5 @@
-#include "AuthenticationServer/password_change.h"
 #include "AuthenticationServer/audit.h"
+#include "AuthenticationServer/password_change.h"
 #include "loggers/network_logger.h"
 
 const char *authenticationserverPasswordChangeError(users_password_result_t result)
@@ -40,25 +40,13 @@ typedef struct password_change_acknowledgement_s
 static bool preparePasswordChangeAcknowledgement(void *arg)
 {
     password_change_acknowledgement_t *ack = arg;
-    char                               token[kAuthenticationServerEditTokenChars + 1];
-    authenticationserverEditTokenFormat(ack->request->instance_id, ack->request->revision + 1, token);
-    authenticationserver_json_writer_t w = {.output      = (char *) sbufGetMutablePtr(ack->buffer),
-                                            .capacity    = kAuthenticationServerPasswordAckCap,
-                                            .deadline_ms = ack->call->deadline_ms};
-    authenticationserverJsonText(&w, "{\"id\":");
-    authenticationserverJsonU64(&w, ack->request->id);
-    authenticationserverJsonText(&w, ",\"config_revision\":");
-    authenticationserverJsonU64(&w, ack->request->revision + 1);
-    authenticationserverJsonText(&w, ",\"edit_token\":");
-    authenticationserverJsonString(&w, token);
-    authenticationserverJsonText(&w, "}");
-    if (w.timeout || w.overflow)
-    {
-        ack->error = w.timeout ? "timeout" : "response_too_large";
-        return false;
-    }
-    sbufSetLength(ack->buffer, (uint32_t) w.used);
-    return true;
+    ack->error                             = authenticationserverApiPrepareAck(ack->buffer,
+                                                   kAuthenticationServerPasswordAckCap,
+                                                   ack->call->deadline_ms,
+                                                   ack->request->id,
+                                                   ack->request->instance_id,
+                                                   ack->request->revision + 1);
+    return ack->error == NULL;
 }
 
 const char *authenticationserverApplyConditionalPasswordChange(tunnel_t                                *t,

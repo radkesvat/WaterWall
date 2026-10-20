@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 #include "loggers/network_logger.h"
 
@@ -12,52 +12,19 @@ typedef enum authenticationclient_first_usage_push_result_e
 authenticationclient_state_t authenticationclientGetState(tunnel_t *t)
 {
     if (UNLIKELY(t == NULL))
-    {
         return kAuthenticationClientStateStopped;
-    }
-
-    authenticationclient_tstate_t *ts    = tunnelGetState(t);
-    authenticationclient_state_t   state = kAuthenticationClientStateStopped;
-
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
     mutexLock(&ts->control_mutex);
-    if (ts->continuity_error)
-    {
-        state = kAuthenticationClientStateContinuityError;
-    }
-    else if (LIKELY(ts->authenticated))
-    {
-        bool users_loaded = false;
-
-        rwlockReadLock(&ts->users_lock);
-        users_loaded = ts->users_loaded;
-        rwlockReadUnlock(&ts->users_lock);
-
-        state = users_loaded ? kAuthenticationClientStateReady : kAuthenticationClientStateAuthenticating;
-    }
-    else if (ts->connected)
-    {
-        state = kAuthenticationClientStateAuthenticating;
-    }
-    else if (ts->started && ! ts->stopping)
-    {
-        state = kAuthenticationClientStateConnecting;
-    }
+    rwlockReadLock(&ts->users_lock);
+    const authenticationclient_state_t state = authenticationclientStateLocked(ts);
+    rwlockReadUnlock(&ts->users_lock);
     mutexUnlock(&ts->control_mutex);
-
     return state;
 }
 
 bool authenticationclientIsReady(tunnel_t *t)
 {
     return authenticationclientGetState(t) == kAuthenticationClientStateReady;
-}
-
-/* Caller holds control_mutex then users_lock. Transport state is independent
- * of a usable cache; explicit rejection survives every transport retry. */
-static bool authenticationclientCanAuthenticateLocked(const authenticationclient_tstate_t *ts)
-{
-    return ts->started && ! ts->stopping && ! ts->continuity_error && ! ts->auth_rejected && ts->users_loaded &&
-           ts->clock_loaded && ts->users != NULL;
 }
 
 bool authenticationclientCanAuthenticate(tunnel_t *t)
@@ -90,51 +57,6 @@ uint64_t authenticationclientUsersGeneration(tunnel_t *t)
     return generation;
 }
 
-static bool authenticationclientSetUserHandle(authenticationclient_tstate_t *ts, user_t *user,
-                                              user_handle_t *handle_out)
-{
-    const uint64_t user_id = userGetId(user);
-    if (UNLIKELY(user_id == 0))
-    {
-        userHandleClear(handle_out);
-        return false;
-    }
-
-    userHandleSet(handle_out, ts->users_generation, user_id);
-    return true;
-}
-
-bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                         user_handle_t *handle_out)
-{
-    if (UNLIKELY(t == NULL || sha256 == NULL || handle_out == NULL))
-    {
-        if (handle_out != NULL)
-            userHandleClear(handle_out);
-        return false;
-    }
-
-    authenticationclient_tstate_t *ts     = tunnelGetState(t);
-    bool                           found  = false;
-    uint64_t                       now_ms = authenticationclientLocalTimeMS();
-
-    mutexLock(&ts->control_mutex);
-    rwlockReadLock(&ts->users_lock);
-    user_t *user = authenticationclientCanAuthenticateLocked(ts) ? usersLookupBySHA256(ts->users, sha256) : NULL;
-    if (user != NULL && ! userRuntimeShouldClose(user, now_ms))
-    {
-        found = authenticationclientSetUserHandle(ts, user, handle_out);
-    }
-    rwlockReadUnlock(&ts->users_lock);
-    mutexUnlock(&ts->control_mutex);
-
-    if (! found)
-    {
-        userHandleClear(handle_out);
-    }
-    return found;
-}
-
 void authenticationclientUserProfileClear(authenticationclient_user_profile_t *profile)
 {
     if (profile == NULL)
@@ -148,6 +70,7 @@ void authenticationclientUserProfileClear(authenticationclient_user_profile_t *p
     }
     if (profile->password != NULL)
     {
+        memorySecureZero(profile->password, strlen(profile->password) + 1);
         memoryFree(profile->password);
         profile->password = NULL;
     }
@@ -169,23 +92,117 @@ static void authenticationclientAssertProfileEmpty(authenticationclient_user_pro
     }
 }
 
-// Duplicate the user's name/password into the profile. The caller must hold
-// ts->users_lock (read); user->lock guards the name/password strings, matching
-// the users_lock -> user->lock ordering used by usersToJson.
-// Shared credential duplication intentionally fails fast: never return a partial
-// identity. Recoverable status/caller plumbing requires a maintainer redesign.
-static void authenticationclientFillUserProfileLocked(authenticationclient_user_profile_t *profile, user_t *user)
+typedef enum authenticationclient_credential_kind_e
 {
-    rwlockReadLock(&user->lock);
-    if (user->name != NULL && user->name[0] != '\0')
+    kAuthenticationClientCredentialSHA224,
+    kAuthenticationClientCredentialSHA256,
+    kAuthenticationClientCredentialUUID,
+    kAuthenticationClientCredentialWireGuard,
+    kAuthenticationClientCredentialPassword
+} authenticationclient_credential_kind_t;
+
+/* control_mutex -> users_lock pins availability, generation and table identity;
+ * userCopyAccess holds configuration/stats ownership for eligibility and profile. */
+static authenticationclient_user_lookup_result_t authenticationclientResolveCredential(
+    tunnel_t *t, authenticationclient_credential_kind_t kind, const void *credential, user_handle_t *handle_out,
+    authenticationclient_user_profile_t *profile_out, const char *fn_name)
+{
+    authenticationclientAssertProfileEmpty(profile_out, fn_name);
+    if (UNLIKELY(t == NULL || credential == NULL || handle_out == NULL ||
+                 (kind == kAuthenticationClientCredentialPassword && ((const char *) credential)[0] == '\0')))
     {
-        profile->name = stringDuplicate(user->name);
+        if (handle_out != NULL)
+            userHandleClear(handle_out);
+        return kAuthenticationClientUserLookupInvalidArgument;
     }
-    if (user->password != NULL && user->password[0] != '\0')
+
+    sha256_hash_t sha256 = {0};
+    if (kind == kAuthenticationClientCredentialPassword &&
+        UNLIKELY(wCryptoSHA256(&sha256, credential, stringLength(credential)) != kWCryptoOk))
     {
-        profile->password = stringDuplicate(user->password);
+        memorySecureZero(&sha256, sizeof(sha256));
+        userHandleClear(handle_out);
+        return kAuthenticationClientUserLookupHashFailed;
     }
-    rwlockReadUnlock(&user->lock);
+
+    authenticationclient_tstate_t            *ts     = tunnelGetState(t);
+    const uint64_t                            now_ms = authenticationclientLocalTimeMS();
+    authenticationclient_user_lookup_result_t result = kAuthenticationClientUserLookupUserNotFound;
+    mutexLock(&ts->control_mutex);
+    rwlockReadLock(&ts->users_lock);
+    user_t *user = NULL;
+    if (! authenticationclientCanAuthenticateLocked(ts))
+        result = kAuthenticationClientUserLookupUsersUnavailable;
+    else
+    {
+        switch (kind)
+        {
+        case kAuthenticationClientCredentialSHA224:
+            user = usersLookupBySHA224(ts->users, credential);
+            break;
+        case kAuthenticationClientCredentialSHA256:
+            user = usersLookupBySHA256(ts->users, credential);
+            break;
+        case kAuthenticationClientCredentialUUID:
+            user = usersLookupByUUID(ts->users, credential);
+            break;
+        case kAuthenticationClientCredentialWireGuard:
+            user = usersLookupByWireGuardPublicKey(ts->users, credential);
+            break;
+        case kAuthenticationClientCredentialPassword:
+            user = usersLookupBySHA256(ts->users, sha256.bytes);
+            break;
+        }
+    }
+    if (user != NULL)
+    {
+        if (kind == kAuthenticationClientCredentialPassword && ! userPasswordMatches(user, credential))
+            result = kAuthenticationClientUserLookupPasswordMismatch;
+        else
+        {
+            uint64_t                      user_id = 0;
+            const user_admission_result_t access  = userCopyAccess(user,
+                                                                  now_ms,
+                                                                  &user_id,
+                                                                  profile_out != NULL ? &profile_out->name : NULL,
+                                                                  profile_out != NULL ? &profile_out->password : NULL);
+            if (access == kUserAdmissionDisabled)
+                result = kAuthenticationClientUserLookupUserDisabled;
+            else if (access == kUserAdmissionExpired)
+                result = kAuthenticationClientUserLookupUserExpired;
+            else if (access == kUserAdmissionTrafficLimited)
+                result = kAuthenticationClientUserLookupUserLimitReached;
+            else
+            {
+                assert(access == kUserAdmissionOk);
+                if (user_id == 0)
+                    result = kAuthenticationClientUserLookupUserIdRequired;
+                else
+                {
+                    userHandleSet(handle_out, ts->users_generation, user_id);
+                    result = kAuthenticationClientUserLookupOk;
+                }
+            }
+        }
+    }
+    rwlockReadUnlock(&ts->users_lock);
+    mutexUnlock(&ts->control_mutex);
+    memorySecureZero(&sha256, sizeof(sha256));
+    if (result != kAuthenticationClientUserLookupOk)
+        userHandleClear(handle_out);
+    return result;
+}
+
+bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                         user_handle_t *handle_out)
+{
+    return authenticationclientResolveCredential(t,
+                                                 kAuthenticationClientCredentialSHA256,
+                                                 sha256,
+                                                 handle_out,
+                                                 NULL,
+                                                 "authenticationclientGetUserBySHA256") ==
+           kAuthenticationClientUserLookupOk;
 }
 
 bool authenticationclientGetUserBySHA224(tunnel_t *t, const uint8_t sha224[SHA224_DIGEST_SIZE],
@@ -198,39 +215,13 @@ bool authenticationclientGetUserBySHA224WithProfile(tunnel_t *t, const uint8_t s
                                                     user_handle_t                       *handle_out,
                                                     authenticationclient_user_profile_t *profile_out)
 {
-    authenticationclientAssertProfileEmpty(profile_out, "authenticationclientGetUserBySHA224WithProfile");
-
-    if (UNLIKELY(t == NULL || sha224 == NULL || handle_out == NULL))
-    {
-        if (handle_out != NULL)
-            userHandleClear(handle_out);
-        return false;
-    }
-
-    authenticationclient_tstate_t *ts     = tunnelGetState(t);
-    bool                           found  = false;
-    uint64_t                       now_ms = authenticationclientLocalTimeMS();
-
-    mutexLock(&ts->control_mutex);
-    rwlockReadLock(&ts->users_lock);
-    user_t *user = authenticationclientCanAuthenticateLocked(ts) ? usersLookupBySHA224(ts->users, sha224) : NULL;
-    if (user != NULL && ! userRuntimeShouldClose(user, now_ms) &&
-        authenticationclientSetUserHandle(ts, user, handle_out))
-    {
-        if (profile_out != NULL)
-        {
-            authenticationclientFillUserProfileLocked(profile_out, user);
-        }
-        found = true;
-    }
-    rwlockReadUnlock(&ts->users_lock);
-    mutexUnlock(&ts->control_mutex);
-
-    if (! found)
-    {
-        userHandleClear(handle_out);
-    }
-    return found;
+    return authenticationclientResolveCredential(t,
+                                                 kAuthenticationClientCredentialSHA224,
+                                                 sha224,
+                                                 handle_out,
+                                                 profile_out,
+                                                 "authenticationclientGetUserBySHA224WithProfile") ==
+           kAuthenticationClientUserLookupOk;
 }
 
 bool authenticationclientGetUserByUUID(tunnel_t *t, const uint8_t uuid[kWwUuidBytesLen], user_handle_t *handle_out)
@@ -242,69 +233,12 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByUUIDWithP
     tunnel_t *t, const uint8_t uuid[kWwUuidBytesLen], user_handle_t *handle_out,
     authenticationclient_user_profile_t *profile_out)
 {
-    authenticationclientAssertProfileEmpty(profile_out, "authenticationclientGetUserByUUIDWithProfile");
-
-    if (UNLIKELY(t == NULL || uuid == NULL || handle_out == NULL))
-    {
-        if (handle_out != NULL)
-        {
-            userHandleClear(handle_out);
-        }
-        return kAuthenticationClientUserLookupInvalidArgument;
-    }
-
-    authenticationclient_tstate_t            *ts     = tunnelGetState(t);
-    uint64_t                                  now_ms = authenticationclientLocalTimeMS();
-    authenticationclient_user_lookup_result_t result = kAuthenticationClientUserLookupUserNotFound;
-
-    mutexLock(&ts->control_mutex);
-    rwlockReadLock(&ts->users_lock);
-    user_t *user = NULL;
-    if (UNLIKELY(! authenticationclientCanAuthenticateLocked(ts)))
-    {
-        result = kAuthenticationClientUserLookupUsersUnavailable;
-    }
-    else
-    {
-        user = usersLookupByUUID(ts->users, uuid);
-    }
-
-    if (user != NULL)
-    {
-        if (! userIsEnabled(user))
-        {
-            result = kAuthenticationClientUserLookupUserDisabled;
-        }
-        else if (userIsExpired(user, now_ms))
-        {
-            result = kAuthenticationClientUserLookupUserExpired;
-        }
-        else if (userHasReachedTrafficLimit(user))
-        {
-            result = kAuthenticationClientUserLookupUserLimitReached;
-        }
-        else if (userGetId(user) == 0)
-        {
-            result = kAuthenticationClientUserLookupUserIdRequired;
-        }
-        else
-        {
-            userHandleSet(handle_out, ts->users_generation, userGetId(user));
-            if (profile_out != NULL)
-            {
-                authenticationclientFillUserProfileLocked(profile_out, user);
-            }
-            result = kAuthenticationClientUserLookupOk;
-        }
-    }
-    rwlockReadUnlock(&ts->users_lock);
-    mutexUnlock(&ts->control_mutex);
-
-    if (result != kAuthenticationClientUserLookupOk)
-    {
-        userHandleClear(handle_out);
-    }
-    return result;
+    return authenticationclientResolveCredential(t,
+                                                 kAuthenticationClientCredentialUUID,
+                                                 uuid,
+                                                 handle_out,
+                                                 profile_out,
+                                                 "authenticationclientGetUserByUUIDWithProfile");
 }
 
 bool authenticationclientGetUserByWireGuardPublicKey(tunnel_t      *t,
@@ -319,69 +253,12 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByWireGuard
     tunnel_t *t, const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE], user_handle_t *handle_out,
     authenticationclient_user_profile_t *profile_out)
 {
-    authenticationclientAssertProfileEmpty(profile_out, "authenticationclientGetUserByWireGuardPublicKeyWithProfile");
-
-    if (UNLIKELY(t == NULL || publickey == NULL || handle_out == NULL))
-    {
-        if (handle_out != NULL)
-        {
-            userHandleClear(handle_out);
-        }
-        return kAuthenticationClientUserLookupInvalidArgument;
-    }
-
-    authenticationclient_tstate_t            *ts     = tunnelGetState(t);
-    uint64_t                                  now_ms = authenticationclientLocalTimeMS();
-    authenticationclient_user_lookup_result_t result = kAuthenticationClientUserLookupUserNotFound;
-
-    mutexLock(&ts->control_mutex);
-    rwlockReadLock(&ts->users_lock);
-    user_t *user = NULL;
-    if (UNLIKELY(! authenticationclientCanAuthenticateLocked(ts)))
-    {
-        result = kAuthenticationClientUserLookupUsersUnavailable;
-    }
-    else
-    {
-        user = usersLookupByWireGuardPublicKey(ts->users, publickey);
-    }
-
-    if (user != NULL)
-    {
-        if (! userIsEnabled(user))
-        {
-            result = kAuthenticationClientUserLookupUserDisabled;
-        }
-        else if (userIsExpired(user, now_ms))
-        {
-            result = kAuthenticationClientUserLookupUserExpired;
-        }
-        else if (userHasReachedTrafficLimit(user))
-        {
-            result = kAuthenticationClientUserLookupUserLimitReached;
-        }
-        else if (userGetId(user) == 0)
-        {
-            result = kAuthenticationClientUserLookupUserIdRequired;
-        }
-        else
-        {
-            userHandleSet(handle_out, ts->users_generation, userGetId(user));
-            if (profile_out != NULL)
-            {
-                authenticationclientFillUserProfileLocked(profile_out, user);
-            }
-            result = kAuthenticationClientUserLookupOk;
-        }
-    }
-    rwlockReadUnlock(&ts->users_lock);
-    mutexUnlock(&ts->control_mutex);
-
-    if (result != kAuthenticationClientUserLookupOk)
-    {
-        userHandleClear(handle_out);
-    }
-    return result;
+    return authenticationclientResolveCredential(t,
+                                                 kAuthenticationClientCredentialWireGuard,
+                                                 publickey,
+                                                 handle_out,
+                                                 profile_out,
+                                                 "authenticationclientGetUserByWireGuardPublicKeyWithProfile");
 }
 
 bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password, user_handle_t *handle_out)
@@ -429,81 +306,12 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordW
 authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordWithProfile(
     tunnel_t *t, const char *password, user_handle_t *handle_out, authenticationclient_user_profile_t *profile_out)
 {
-    authenticationclientAssertProfileEmpty(profile_out, "authenticationclientGetUserByPasswordWithProfile");
-
-    if (UNLIKELY(t == NULL || password == NULL || password[0] == '\0' || handle_out == NULL))
-    {
-        if (handle_out != NULL)
-        {
-            userHandleClear(handle_out);
-        }
-        return kAuthenticationClientUserLookupInvalidArgument;
-    }
-
-    sha256_hash_t sha256 = {0};
-    if (UNLIKELY(wCryptoSHA256(&sha256, (const unsigned char *) password, stringLength(password)) != kWCryptoOk))
-    {
-        userHandleClear(handle_out);
-        return kAuthenticationClientUserLookupHashFailed;
-    }
-
-    authenticationclient_tstate_t            *ts     = tunnelGetState(t);
-    uint64_t                                  now_ms = authenticationclientLocalTimeMS();
-    authenticationclient_user_lookup_result_t result = kAuthenticationClientUserLookupUserNotFound;
-
-    mutexLock(&ts->control_mutex);
-    rwlockReadLock(&ts->users_lock);
-    user_t *user = NULL;
-    if (UNLIKELY(! authenticationclientCanAuthenticateLocked(ts)))
-    {
-        result = kAuthenticationClientUserLookupUsersUnavailable;
-    }
-    else
-    {
-        user = usersLookupBySHA256(ts->users, sha256.bytes);
-    }
-
-    if (user != NULL)
-    {
-        if (! userPasswordMatches(user, password))
-        {
-            result = kAuthenticationClientUserLookupPasswordMismatch;
-        }
-        else if (! userIsEnabled(user))
-        {
-            result = kAuthenticationClientUserLookupUserDisabled;
-        }
-        else if (userIsExpired(user, now_ms))
-        {
-            result = kAuthenticationClientUserLookupUserExpired;
-        }
-        else if (userHasReachedTrafficLimit(user))
-        {
-            result = kAuthenticationClientUserLookupUserLimitReached;
-        }
-        else if (userGetId(user) == 0)
-        {
-            result = kAuthenticationClientUserLookupUserIdRequired;
-        }
-        else
-        {
-            userHandleSet(handle_out, ts->users_generation, userGetId(user));
-            if (profile_out != NULL)
-            {
-                authenticationclientFillUserProfileLocked(profile_out, user);
-            }
-            result = kAuthenticationClientUserLookupOk;
-        }
-    }
-    rwlockReadUnlock(&ts->users_lock);
-    mutexUnlock(&ts->control_mutex);
-
-    memoryZero(&sha256, sizeof(sha256));
-    if (result != kAuthenticationClientUserLookupOk)
-    {
-        userHandleClear(handle_out);
-    }
-    return result;
+    return authenticationclientResolveCredential(t,
+                                                 kAuthenticationClientCredentialPassword,
+                                                 password,
+                                                 handle_out,
+                                                 profile_out,
+                                                 "authenticationclientGetUserByPasswordWithProfile");
 }
 
 bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *handle)
@@ -696,12 +504,7 @@ static void authenticationclientResetFirstUsagePushState(tunnel_t *t)
     ts->first_usage_push_deferred  = false;
     mutexUnlock(&ts->control_mutex);
 
-    rwlockReadLock(&ts->users_lock);
-    if (ts->users != NULL)
-    {
-        usersResetFirstUsagePushRequests(ts->users);
-    }
-    rwlockReadUnlock(&ts->users_lock);
+    authenticationclientResetFirstUsagePushRuntime(t);
 }
 
 static void authenticationclientFirstUsagePushOnWorker0(void *worker_ptr, void *arg1, void *arg2, void *arg3)
@@ -720,8 +523,9 @@ static void authenticationclientFirstUsagePushOnWorker0(void *worker_ptr, void *
     {
         authenticationclient_tstate_t *ts = tunnelGetState(t);
         mutexLock(&ts->control_mutex);
-        const bool deferred =
-            ts->push_in_flight || ts->pull_in_flight || ts->pull_required || ts->stats_push_refused || ts->write_paused;
+        const bool deferred = ts->push_in_flight || ts->pull_in_flight || ts->pull_required || ts->stats_push_refused ||
+                              ts->write_paused ||
+                              authenticationclientRetryNotBeforeLocked(ts) > authenticationclientLocalTimeMS();
         if (deferred)
         {
             ts->first_usage_push_deferred = true;
@@ -741,7 +545,8 @@ static authenticationclient_first_usage_push_result_t authenticationclientReques
 
     mutexLock(&ts->control_mutex);
     ts->push_requested = true;
-    if (ts->push_in_flight || ts->pull_in_flight || ts->pull_required || ts->stats_push_refused || ts->write_paused)
+    if (ts->push_in_flight || ts->pull_in_flight || ts->pull_required || ts->stats_push_refused || ts->write_paused ||
+        authenticationclientRetryNotBeforeLocked(ts) > authenticationclientLocalTimeMS())
     {
         ts->first_usage_push_requested = true;
         ts->first_usage_push_deferred  = true;

@@ -39,6 +39,30 @@ typedef struct profile_fixture_s
 } profile_fixture_t;
 
 static unsigned copy_calls;
+static void    *sensitive_release;
+static size_t   sensitive_length;
+static unsigned wiped_releases;
+
+void __real_memoryFree(void *ptr);
+void __wrap_memoryFree(void *ptr);
+void __wrap_memoryFree(void *ptr)
+{
+    if (ptr != NULL && ptr == sensitive_release)
+    {
+        for (size_t i = 0; i < sensitive_length; ++i)
+            require(((const uint8_t *) ptr)[i] == 0, "owned sensitive allocation was freed without secure wiping");
+        sensitive_release = NULL;
+        ++wiped_releases;
+    }
+    __real_memoryFree(ptr);
+}
+
+static void watchSensitiveRelease(char *value)
+{
+    require(value != NULL && sensitive_release == NULL, "sensitive release watch is already occupied");
+    sensitive_release = value;
+    sensitive_length  = strlen(value) + 1;
+}
 
 char *__real_stringDuplicate(const char *source);
 char *__wrap_stringDuplicate(const char *source);
@@ -58,7 +82,7 @@ static void fixtureCreate(profile_fixture_t *fixture, lookup_kind_t kind)
     require(fixture->tunnel != NULL && usersCreate(&fixture->users), "fixture allocation failed");
     authenticationclient_tstate_t *state = tunnelGetState(fixture->tunnel);
     rwlockinit(&state->users_lock);
-    state->users            = &fixture->users;
+    state->users = &fixture->users;
     mutexInit(&state->control_mutex);
     state->started          = true;
     state->clock_loaded     = true;
@@ -118,7 +142,10 @@ static void testSuccess(const profile_fixture_t *fixture)
             "successful lookup did not publish complete identity");
     require(profile.name != fixture->user->name && profile.password != fixture->user->password,
             "profile borrowed database strings");
+    unsigned before = wiped_releases;
+    watchSensitiveRelease(profile.password);
     authenticationclientUserProfileClear(&profile);
+    require(sensitive_release == NULL && wiped_releases == before + 1, "profile password release was not observed");
     require(profile.name == NULL && profile.password == NULL, "profile clear left owned fields");
 
     copy_calls = 0;
@@ -246,6 +273,24 @@ static void testAdmissionAvailability(profile_fixture_t *fixture)
     ts->stopping = ts->auth_rejected = ts->continuity_error = false;
 }
 
+static void testOwnedSecretCleanup(void)
+{
+    for (unsigned rollback = 0; rollback < 2; ++rollback)
+    {
+        tunnel_t *t = tunnelCreate(NULL, sizeof(authenticationclient_tstate_t), 0);
+        require(t != NULL, "secret cleanup tunnel allocation");
+        authenticationclient_tstate_t *state = tunnelGetState(t);
+        mutexInit(&state->control_mutex);
+        rwlockinit(&state->users_lock);
+        state->secret   = stringDuplicate("owned-client-SECRET");
+        unsigned before = wiped_releases;
+        watchSensitiveRelease(state->secret);
+        authenticationclientTunnelDestroy(t, rollback ? wwLifecycleStartupRollback() : wwLifecycleProcessShutdown());
+        require(sensitive_release == NULL && wiped_releases == before + 1,
+                "node-owned secret was not wiped on normal or rollback destruction");
+    }
+}
+
 int main(void)
 {
     testCaseSet("authenticationclient_profile_test");
@@ -261,6 +306,7 @@ int main(void)
         testEligibilityAndAdmission(&fixture);
         fixtureDestroy(&fixture);
     }
+    testOwnedSecretCleanup();
     wCryptoGlobalCleanup();
     networkloggerDestroy();
     puts("AuthenticationClient owned credential profiles passed");

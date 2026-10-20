@@ -1,6 +1,6 @@
 #pragma once
 
-#include "structure.h"
+#include "AuthenticationServer/structure.h"
 
 sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
                                               tunnel_t *t, line_t *l, authenticationserver_session_t *session,

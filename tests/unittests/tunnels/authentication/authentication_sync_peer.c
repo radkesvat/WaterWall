@@ -1,5 +1,6 @@
 /* Server half shared by the paired authentication sync and ingress fixtures. */
 #include "authentication_sync_peer.h"
+#include "../../../../tunnels/AuthenticationServer/modules/get_all_users/get_all_users.h"
 #include "AuthenticationServer/api.h"
 #include "AuthenticationServer/structure.h"
 #include "test_assert.h"
@@ -137,21 +138,37 @@ void authTestPeerCredentials(tunnel_t *t, unsigned client, uint8_t token[64], ch
     require(false, "peer session unavailable");
 }
 
-size_t authTestPeerPadUsersResponse(tunnel_t *t, size_t json_length)
+size_t authTestPeerPadUsersResponse(tunnel_t *t, line_t *line, size_t json_length)
 {
     authenticationserver_tstate_t *ts   = tunnelGetState(t);
     user_t                        *user = usersLookupByIdentifier(&ts->store.users, 42);
     /* Keep the optional notes property present while measuring fixed overhead. */
     require(usersSetUserNotes(&ts->store.users, user, "a"), "seed notes failed");
-    cJSON *json = usersToJson(&ts->store.users);
-    require(json != NULL, "peer users export failed");
-    discard jsonAddUint64ToObject(json, "server-time-ms", getTimeOfDayMS());
-    discard jsonAddUint64ToObject(json, "accounting-time-ms", authenticationserverAccountingTimeMS(ts));
-    char   *text = authenticationserverSerializeResponseJson(json);
-    require(text != NULL && stringLength(text) < json_length, "target JSON is too small");
-    const size_t padding = json_length - stringLength(text) + 1;
+    rwlockReadLock(&ts->state_lock);
+    require(ts->sessions_count != 0, "page padding requires an authenticated session");
+    authenticationserver_session_t *session = ts->sessions[0];
+    char                            epoch[65], digest[65] = {0}, sequence[24];
+    memoryCopy(epoch, session->accounting_client->accounting_epoch, 64);
+    epoch[64] = 0;
+    asciiHexEncodeBytesLower(session->accounting_client->last_digest, SHA256_DIGEST_SIZE, (uint8_t *) digest);
+    snprintf(sequence, sizeof(sequence), "%" PRIu64, session->accounting_client->last_sequence);
+    cJSON        *json = cJSON_CreateObject();
+    discard       cJSON_AddStringToObject(json, "epoch", epoch);
+    discard       cJSON_AddStringToObject(json, "sequence", sequence);
+    discard       cJSON_AddStringToObject(json, "digest", digest);
+    char         *text           = cJSON_PrintUnformatted(json);
+    const uint8_t correlation[4] = {0};
+    sbuf_t       *frame =
+        authenticationserverGetAllUsersHandle(correlation, t, line, session, (const uint8_t *) text, strlen(text));
+    require(frame != NULL && ((const uint8_t *) sbufGetRawPtr(frame))[0] == kAuthenticationServerResponseTypeUsers,
+            "page padding metadata request failed");
+    const size_t actual = sbufGetLength(frame) - kAuthenticationServerResponseHeaderSize;
+    require(actual < json_length, "target page JSON is too small");
+    const size_t padding = json_length - actual + 1;
+    lineReuseBuffer(line, frame);
     cJSON_free(text);
     cJSON_Delete(json);
+    rwlockReadUnlock(&ts->state_lock);
     char *notes = memoryAllocate(padding + 1);
     memset(notes, 'a', padding);
     notes[padding] = '\0';

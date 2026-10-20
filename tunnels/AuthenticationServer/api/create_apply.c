@@ -1,5 +1,5 @@
-#include "AuthenticationServer/config_create.h"
 #include "AuthenticationServer/audit.h"
+#include "AuthenticationServer/config_create.h"
 #include "loggers/network_logger.h"
 
 const char *authenticationserverConfigCreateError(users_add_result_t result)
@@ -52,27 +52,14 @@ typedef struct creation_acknowledgement_s
 
 static bool prepareCreateAcknowledgement(void *arg)
 {
-    creation_acknowledgement_t *ack      = arg;
-    const uint64_t              revision = ack->state->store.config_revision + 1;
-    char                        token[kAuthenticationServerEditTokenChars + 1];
-    authenticationserverEditTokenFormat(ack->state->api_instance_id, revision, token);
-    authenticationserver_json_writer_t w = {.output      = (char *) sbufGetMutablePtr(ack->buffer),
-                                            .capacity    = kAuthenticationServerCreateAckCap,
-                                            .deadline_ms = ack->call->deadline_ms};
-    authenticationserverJsonText(&w, "{\"id\":");
-    authenticationserverJsonU64(&w, ack->request->id);
-    authenticationserverJsonText(&w, ",\"config_revision\":");
-    authenticationserverJsonU64(&w, revision);
-    authenticationserverJsonText(&w, ",\"edit_token\":");
-    authenticationserverJsonString(&w, token);
-    authenticationserverJsonText(&w, "}");
-    if (w.timeout || w.overflow)
-    {
-        ack->error = w.timeout ? "timeout" : "response_too_large";
-        return false;
-    }
-    sbufSetLength(ack->buffer, (uint32_t) w.used);
-    return true;
+    creation_acknowledgement_t *ack = arg;
+    ack->error                      = authenticationserverApiPrepareAck(ack->buffer,
+                                                   kAuthenticationServerCreateAckCap,
+                                                   ack->call->deadline_ms,
+                                                   ack->request->id,
+                                                   ack->state->api_instance_id,
+                                                   ack->state->store.config_revision + 1);
+    return ack->error == NULL;
 }
 
 const char *authenticationserverApplyCreate(tunnel_t *t, authenticationserver_create_request_t *request,

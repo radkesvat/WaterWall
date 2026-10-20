@@ -14,6 +14,12 @@ unsigned long long __wrap_getHRTimeUs(void)
     return 100000000;
 }
 
+uint32_t __wrap_fastRand32(void);
+uint32_t __wrap_fastRand32(void)
+{
+    return 0; /* Deterministic lower jitter bound in fake-clock fixtures. */
+}
+
 static worker_t                   worker;
 static buffer_pool_t             *pools[1];
 static wloop_t                   *loops[1];
@@ -29,6 +35,7 @@ static size_t                     captured_length;
 static uint32_t                   response_ids[8];
 static unsigned                   response_count, nested_count;
 static uint64_t                   delivered;
+static uint32_t                   response_remaining, largest_response;
 static unsigned                   nested_suffix_mode;
 
 static authenticationclient_tstate_t *state(void)
@@ -96,6 +103,16 @@ static void established(tunnel_t *t, line_t *l)
 static void output(tunnel_t *t, line_t *l, sbuf_t *b)
 {
     discard t;
+    if (response_remaining == 0)
+    {
+        uint32_t size;
+        require(sbufGetLength(b) >= 4, "short response prefix");
+        memoryCopy(&size, sbufGetRawPtr(b), 4);
+        response_remaining = ntohl(size) + 4;
+        largest_response   = max(largest_response, response_remaining);
+    }
+    require(sbufGetLength(b) <= response_remaining, "response chunks crossed envelope boundary");
+    response_remaining -= sbufGetLength(b);
     if (capture)
     {
         captured = memoryReAllocate(captured, captured_length + sbufGetLength(b));
@@ -161,8 +178,8 @@ static void output(tunnel_t *t, line_t *l, sbuf_t *b)
     {
         client_nested = false;
         require(sbufGetLength(b) >= 29, "nested response missing envelope");
-        memoryZero(sbufGetMutablePtr(b) + 4, 8);
-        put32(sbufGetMutablePtr(b) + 8, 3);
+        /* Its real revision matches its page metadata. The older queued Pong
+         * below carries revision 2, so the final revision 1 proves FIFO. */
     }
     if (client_flood)
     {
@@ -236,7 +253,8 @@ static void setup(uint32_t medium)
     captured_length = delivered = 0;
     response_count = nested_count = 0;
     observed_line                 = NULL;
-    nested_suffix_mode            = 0;
+    response_remaining = largest_response = 0;
+    nested_suffix_mode                    = 0;
     memoryZero(&worker, sizeof(worker));
     GSTATE.flag_initialized      = true;
     GSTATE.workers_count         = 1;
@@ -297,6 +315,8 @@ static void setup(uint32_t medium)
     ts->reconnect_interval_ms = 10;
     ts->request_timeout_ms    = 1000;
     ts->max_pending_requests  = 64;
+    ts->sync_max_users        = kAuthenticationDefaultSyncMaxUsers;
+    ts->sync_max_bytes        = kAuthenticationDefaultSyncMaxBytes;
 }
 
 static void start(void)
@@ -358,12 +378,14 @@ static void testMaximumResponse(uint32_t medium, bool fragmented)
     start();
     require(authenticationclientIsReady(client), "initial fragmented exchange failed");
     const size_t notes = authTestPeerPadUsersResponse(
-        server, kAuthenticationClientMaxResponsePayload - kAuthenticationClientResponseHeaderSize);
+        server, observed_line, kAuthenticationClientMaxResponsePayload - kAuthenticationClientResponseHeaderSize);
     delivered = 0;
     authenticationclientRequestPull(client);
     require(state()->control_line == observed_line && authenticationclientIsReady(client),
             "maximum legal Users response disconnected the client");
-    require(delivered == kAuthenticationClientMaxResponsePayload + kAuthenticationClientResponseEnvelopeHeaderSize,
+    require(largest_response ==
+                    kAuthenticationClientMaxResponsePayload + kAuthenticationClientResponseEnvelopeHeaderSize &&
+                delivered > largest_response,
             "fixture did not send the exact maximum response");
     require(! state()->pull_in_flight, "maximum response did not complete the pull");
     user_t *user = usersLookupByIdentifier(state()->users, 42);
@@ -377,7 +399,7 @@ static void testCombinedResponses(void)
     setup(64 * 1024);
     start();
     const size_t notes = authTestPeerPadUsersResponse(
-        server, kAuthenticationClientMaxResponsePayload - kAuthenticationClientResponseHeaderSize);
+        server, observed_line, kAuthenticationClientMaxResponsePayload - kAuthenticationClientResponseHeaderSize);
     capture = true;
     authenticationclientRequestPull(client);
     require(captured_length ==
@@ -442,7 +464,7 @@ static void testClientReentry(bool exhaust)
     if (exhaust)
         require(! lineIsAlive(observed_line) && nested_count < 2048, "client nested ingress storage was unbounded");
     else
-        require(lineIsAlive(observed_line) && state()->pending_count == 0 && state()->remote_config_revision == 3,
+        require(lineIsAlive(observed_line) && state()->pending_count == 0 && state()->remote_config_revision == 1,
                 "client nested response overtook older input");
     teardown();
 }

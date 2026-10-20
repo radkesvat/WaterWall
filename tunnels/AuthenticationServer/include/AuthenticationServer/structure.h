@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../../Internals/AuthenticationCommon/wire.h"
 #include "audit.h"
 #include "status.h"
 #include "wwapi.h"
@@ -74,6 +75,9 @@ typedef struct authenticationserver_tstate_s
     bool                                       primary_save_last_attempt_valid;
     bool                                       primary_save_last_success_valid;
     bool                                       database_loaded;
+    bool                                       database_dirty;
+    bool                                       primary_checkpoint_valid;
+    bool                                       periodic_save_seen;
     bool                                       verbose;
 } authenticationserver_tstate_t;
 
@@ -96,24 +100,22 @@ enum
     kTunnelStateSize = sizeof(authenticationserver_tstate_t),
     kLineStateSize   = sizeof(authenticationserver_lstate_t),
 
-    kAuthenticationServerMessageHeaderSize  = 4,
-    kAuthenticationServerSessionTokenSize   = 64,
-    kAuthenticationServerRevisionHeaderSize = 16,
-    kAuthenticationServerRequestEnvelopeHeaderSize =
-        kAuthenticationServerMessageHeaderSize + kAuthenticationServerSessionTokenSize,
-    kAuthenticationServerResponseEnvelopeHeaderSize =
-        kAuthenticationServerMessageHeaderSize + kAuthenticationServerRevisionHeaderSize,
-    kAuthenticationServerCorrelationIdSize              = 4,
-    kAuthenticationServerRequestHeaderSize              = 1 + kAuthenticationServerCorrelationIdSize + 4,
-    kAuthenticationServerResponseHeaderSize             = 1 + kAuthenticationServerCorrelationIdSize + 4,
-    kAuthenticationServerMaxMessagePayload              = 16U * 1024U * 1024U,
-    kAuthenticationServerMaxRequestData                 = 16U * 1024U * 1024U,
-    kAuthenticationServerMaxResponsePayload             = 16U * 1024U * 1024U,
+    kAuthenticationServerMessageHeaderSize          = kAuthenticationMessageHeaderSize,
+    kAuthenticationServerSessionTokenSize           = kAuthenticationSessionTokenSize,
+    kAuthenticationServerRevisionHeaderSize         = kAuthenticationRevisionHeaderSize,
+    kAuthenticationServerRequestEnvelopeHeaderSize  = kAuthenticationRequestEnvelopeHeaderSize,
+    kAuthenticationServerResponseEnvelopeHeaderSize = kAuthenticationResponseEnvelopeHeaderSize,
+    kAuthenticationServerCorrelationIdSize          = kAuthenticationCorrelationIdSize,
+    kAuthenticationServerRequestHeaderSize          = kAuthenticationRequestHeaderSize,
+    kAuthenticationServerResponseHeaderSize         = kAuthenticationResponseHeaderSize,
+    kAuthenticationServerMaxMessagePayload          = kAuthenticationMaxMessagePayload,
+    kAuthenticationServerMaxRequestData             = kAuthenticationMaxRequestData,
+    kAuthenticationServerMaxResponsePayload         = kAuthenticationMaxResponsePayload,
     kAuthenticationServerMaxResponseQueue   = 16U * 1024U * 1024U + kAuthenticationServerResponseEnvelopeHeaderSize,
     kAuthenticationServerMaxResponseCharge  = 32U * 1024U * 1024U,
     kAuthenticationServerMaxResponseEntries = 1024,
     kAuthenticationServerOutputChunkSize    = 16U * 1024U,
-    kAuthenticationServerMaxBatchEntries    = 4096,
+    kAuthenticationServerMaxBatchEntries            = kAuthenticationMaxBatchEntries,
     kAuthenticationServerMaxFramesPerEnvelope = 64,
     kAuthenticationServerResponseQueueCap               = 4,
     kAuthenticationServerMaxPasswordLength              = 1024U,
@@ -121,26 +123,27 @@ enum
     kAuthenticationServerDefaultSessionIdleTimeoutMs    = 10U * 60U * 1000U,
     kAuthenticationServerSessionExpirySweepMs           = 60U * 1000U,
 
-    kAuthenticationServerRequestTypePing                      = 1,
-    kAuthenticationServerRequestTypeGetUserBySHA256Hex        = 2,
-    kAuthenticationServerRequestTypeGetUserBySHA256Base64     = 3,
-    kAuthenticationServerRequestTypeGetUserBySHA256           = 4,
-    kAuthenticationServerRequestTypeGetUserByPassword         = 5,
-    kAuthenticationServerRequestTypeAddNewUser                = 6,
-    kAuthenticationServerRequestTypeUpdateUser                = 7,
-    kAuthenticationServerRequestTypeGetAllUsers               = 9,
-    kAuthenticationServerRequestTypeAuthenticate              = 10,
-    kAuthenticationServerRequestTypePushUserStats             = 11,
-    kAuthenticationServerRequestTypeGetUserBySHA224Hex        = 12,
-    kAuthenticationServerRequestTypeGetUserBySHA224Base64     = 13,
-    kAuthenticationServerRequestTypeGetUserBySHA224           = 14,
+    kAuthenticationServerRequestTypePing                  = kAuthenticationRequestTypePing,
+    kAuthenticationServerRequestTypeGetUserBySHA256Hex    = kAuthenticationRequestTypeGetUserBySHA256Hex,
+    kAuthenticationServerRequestTypeGetUserBySHA256Base64 = kAuthenticationRequestTypeGetUserBySHA256Base64,
+    kAuthenticationServerRequestTypeGetUserBySHA256       = kAuthenticationRequestTypeGetUserBySHA256,
+    kAuthenticationServerRequestTypeGetUserByPassword     = kAuthenticationRequestTypeGetUserByPassword,
+    kAuthenticationServerRequestTypeAddNewUser            = kAuthenticationRequestTypeAddNewUser,
+    kAuthenticationServerRequestTypeUpdateUser            = kAuthenticationRequestTypeUpdateUser,
+    kAuthenticationServerRequestTypeGetUsersPage          = kAuthenticationRequestTypeGetUsersPage,
+    kAuthenticationServerRequestTypeGetAllUsers           = kAuthenticationRequestTypeGetAllUsers,
+    kAuthenticationServerRequestTypeAuthenticate          = kAuthenticationRequestTypeAuthenticate,
+    kAuthenticationServerRequestTypePushUserStats         = kAuthenticationRequestTypePushUserStats,
+    kAuthenticationServerRequestTypeGetUserBySHA224Hex    = kAuthenticationRequestTypeGetUserBySHA224Hex,
+    kAuthenticationServerRequestTypeGetUserBySHA224Base64 = kAuthenticationRequestTypeGetUserBySHA224Base64,
+    kAuthenticationServerRequestTypeGetUserBySHA224       = kAuthenticationRequestTypeGetUserBySHA224,
 
-    kAuthenticationServerResponseTypeOk      = 0,
-    kAuthenticationServerResponseTypeError   = 0xFF,
-    kAuthenticationServerResponseTypePong    = 1,
-    kAuthenticationServerResponseTypeUser    = 2,
-    kAuthenticationServerResponseTypeUsers   = 3,
-    kAuthenticationServerResponseTypeSession = 4
+    kAuthenticationServerResponseTypeOk      = kAuthenticationResponseTypeOk,
+    kAuthenticationServerResponseTypeError   = kAuthenticationResponseTypeError,
+    kAuthenticationServerResponseTypePong    = kAuthenticationResponseTypePong,
+    kAuthenticationServerResponseTypeUser    = kAuthenticationResponseTypeUser,
+    kAuthenticationServerResponseTypeUsers   = kAuthenticationResponseTypeUsers,
+    kAuthenticationServerResponseTypeSession = kAuthenticationResponseTypeSession
 };
 
 typedef sbuf_t *(*authenticationserver_module_handler_fn)(
@@ -172,6 +175,17 @@ void authenticationserverLinestateDestroy(authenticationserver_lstate_t *ls);
 bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts);
 bool authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *ts);
 bool authenticationserverSaveDatabase(authenticationserver_tstate_t *ts);
+typedef enum authenticationserver_save_reason_e
+{
+    kAuthenticationServerSaveForced,
+    kAuthenticationServerSavePeriodic,
+    kAuthenticationServerSaveShutdown,
+    kAuthenticationServerSaveProducerCreate
+} authenticationserver_save_reason_t;
+bool     authenticationserverSaveDatabaseForReason(authenticationserver_tstate_t     *ts,
+                                                   authenticationserver_save_reason_t reason);
+bool     authenticationserverSaveDatabaseLockedForReason(authenticationserver_tstate_t     *ts,
+                                                         authenticationserver_save_reason_t reason);
 void authenticationserverSaveTimerCallback(wtimer_t *timer);
 void authenticationserverSessionExpiryTimerCallback(wtimer_t *timer);
 void authenticationserverGetRevisions(tunnel_t *t, uint64_t *config_revision, uint64_t *stats_revision);

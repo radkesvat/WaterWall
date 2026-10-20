@@ -1,7 +1,8 @@
 /* CTest: waterwall.authentication_portability_unit
- * Real portable CIDR/JSON parsing and private-file operations. The native runner
+ * Real portable protocol, CIDR/JSON parsing and private-file operations. The native runner
  * supplies an isolated working directory; this fixture creates a private child.
  * No sockets, worker loops, permission assumptions under root, or fault wrappers. */
+#include "AuthenticationServer/api.h"
 #include "loggers/network_logger.h"
 #include "node_builder/config_lexical.h"
 #include "private_file.h"
@@ -172,13 +173,15 @@ static void privateFiles(void)
     size_t length = 1;
     errno         = EIO;
     require(authenticationserverPrivateRead(primary, &bytes, &length) == kAuthenticationServerPrivateReadAbsent &&
-                bytes == NULL && length == 0,
+                bytes == NULL && length == 0 &&
+                authenticationserverPrivateProbe(primary) == kAuthenticationServerPrivateReadAbsent,
             "portable missing file was not classified at open");
     static const char first[] = "{\"users\":[]}\n", replacement[] = "{\"users\":[],\"fixture\":true}\n";
     require(authenticationserverPrivateWrite(primary, first, sizeof(first) - 1U), "portable private write failed");
     errno = ENOENT;
     require(authenticationserverPrivateRead(primary, &bytes, &length) == kAuthenticationServerPrivateReadSuccess &&
-                length == sizeof(first) - 1U && memcmp(bytes, first, length + 1U) == 0,
+                length == sizeof(first) - 1U && memcmp(bytes, first, length + 1U) == 0 &&
+                authenticationserverPrivateProbe(primary) == kAuthenticationServerPrivateReadSuccess,
             "portable private read lost bytes or used stale errno");
     memoryFree(bytes);
     require(authenticationserverPrivateWrite(primary, replacement, sizeof(replacement) - 1U) &&
@@ -191,34 +194,135 @@ static void privateFiles(void)
     require(stat(primary, &info) == 0 && (info.st_mode & 0777) == 0600, "portable private file permissions changed");
 #endif
     require(authenticationserverPrivateRead(directory, &bytes, &length) == kAuthenticationServerPrivateReadError &&
-                bytes == NULL && length == 0,
+                bytes == NULL && length == 0 &&
+                authenticationserverPrivateProbe(directory) == kAuthenticationServerPrivateReadError,
             "portable directory read was treated as absence or success");
     require(authenticationserverPrivateRead("auth-portability-private/users.json/child", &bytes, &length) ==
                     kAuthenticationServerPrivateReadError &&
                 bytes == NULL && length == 0,
             "portable invalid-parent open was treated as absence");
+    require(authenticationserverPrivateProbe("auth-portability-private/users.json/child") ==
+                kAuthenticationServerPrivateReadError,
+            "portable invalid-parent probe was treated as absence");
     require(authenticationserverPrivateWrite(primary, "", 0) &&
                 authenticationserverPrivateRead(primary, &bytes, &length) == kAuthenticationServerPrivateReadError &&
-                bytes == NULL && length == 0,
+                bytes == NULL && length == 0 &&
+                authenticationserverPrivateProbe(primary) == kAuthenticationServerPrivateReadError,
             "portable empty file was treated as absence or success");
     require(remove(primary) == 0 &&
                 authenticationserverPrivateRead(primary, &bytes, &length) == kAuthenticationServerPrivateReadAbsent,
             "portable removed file was not absent");
 }
 
+static void pageProtocolMetadata(void)
+{
+    static const struct
+    {
+        uint64_t revision, position;
+        size_t   emitted;
+    } cases[] = {{UINT64_C(9007199254740993), UINT64_C(9007199254740995), 1}, {UINT64_MAX, UINT64_MAX, 0}};
+    char cursor[65];
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        authenticationserver_page_view_t view = {
+            .config_revision = cases[i].revision,
+            .position        = (size_t) min(cases[i].position, (uint64_t) SIZE_MAX - cases[i].emitted)};
+        for (size_t j = 0; j < sizeof(view.instance_id); ++j)
+            view.instance_id[j] = (uint8_t) (j * 17U);
+        authenticationserverApiCursor(&view, cases[i].emitted, cursor);
+        authenticationserver_api_request_t decoded = {0};
+        require(authenticationserverApiCursorDecode(cursor, &decoded) && decoded.has_cursor &&
+                    decoded.revision == cases[i].revision &&
+                    decoded.position == (uint64_t) view.position + cases[i].emitted &&
+                    memcmp(decoded.instance_id, view.instance_id, sizeof(view.instance_id)) == 0,
+                "portable page cursor lost exact 64-bit metadata");
+    }
+    authenticationserver_api_request_t decoded = {0};
+    require(authenticationserverApiCursorDecode("00112233445566778899aabbccddeeffffffffffffffffffffffffffffffffff",
+                                                &decoded) &&
+                decoded.revision == UINT64_MAX && decoded.position == UINT64_MAX,
+            "portable cursor decoder narrowed uint64 metadata");
+    cursor[0] = 'A';
+    require(! authenticationserverApiCursorDecode(cursor, &decoded), "portable cursor accepted uppercase hex");
+    cursor[0] = 'g';
+    require(! authenticationserverApiCursorDecode(cursor, &decoded), "portable cursor accepted nonhex character");
+    cursor[0]  = '0';
+    cursor[63] = '\0';
+    require(! authenticationserverApiCursorDecode(cursor, &decoded) &&
+                ! authenticationserverApiCursorDecode(NULL, &decoded),
+            "portable cursor accepted missing or short text");
+    static const struct
+    {
+        const char *text;
+        uint64_t    value;
+    } valid[] = {{"0", 0}, {"9007199254740993", UINT64_C(9007199254740993)}, {"18446744073709551615", UINT64_MAX}};
+    for (size_t i = 0; i < ARRAY_SIZE(valid); ++i)
+    {
+        uint64_t value;
+        require(authenticationserverApiUnsignedDecimal(valid[i].text, &value) && value == valid[i].value,
+                "portable page decimal lost exact unsigned value");
+    }
+    static const char *invalid[] = {
+        NULL, "", "00", "01", "+1", "-1", " 1", "1 ", "1.0", "1e0", "18446744073709551616", "999999999999999999999"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        uint64_t value;
+        require(! authenticationserverApiUnsignedDecimal(invalid[i], &value),
+                "portable page decimal accepted invalid text");
+    }
+}
+
+static void boundedCredentialRow(void)
+{
+    users_t users;
+    require(usersCreate(&users), "portable row collection failed");
+    cJSON  *source = cJSON_CreateObject();
+    discard cJSON_AddStringToObject(source, "id", "18446744073709551615");
+    discard cJSON_AddStringToObject(source, "password", "portable-row");
+    discard cJSON_AddStringToObject(source, "notes", "quote \" slash \\ line\n\xc3\xa9");
+    require(usersFeedJsonRequiredIds(&users, source), "portable credential row import failed");
+    authenticationserverWipeJsonStrings(source);
+    cJSON_Delete(source);
+    cJSON *row     = NULL;
+    size_t encoded = 0;
+    require(usersCopyFullUserJsonAt(&users, 0, 4096, &row, &encoded) == kUserPublicOk && encoded != 0,
+            "portable credential row export failed");
+    char *text = cJSON_PrintUnformatted(row);
+    require(strlen(text) == encoded &&
+                strcmp(cJSON_GetObjectItemCaseSensitive(row, "password")->valuestring, "portable-row") == 0,
+            "portable row size or full credential output changed");
+    memorySecureZero(text, encoded);
+    cJSON_free(text);
+    authenticationserverWipeJsonStrings(row);
+    cJSON_Delete(row);
+    size_t exact = 0;
+    require(usersCopyFullUserJsonAt(&users, 0, encoded, &row, &exact) == kUserPublicOk && exact == encoded,
+            "portable row equality boundary refused");
+    authenticationserverWipeJsonStrings(row);
+    cJSON_Delete(row);
+    require(usersCopyFullUserJsonAt(&users, 0, encoded - 1U, &row, &exact) == kUserPublicTooLarge && row == NULL &&
+                exact == 0,
+            "portable row one-byte-under boundary materialized output");
+    usersDestroy(&users);
+}
+
 int main(void)
 {
     testCaseSet("authentication_portability_test");
-    require(createNetworkLogger(NULL, false) != NULL, "portable logger initialization failed");
+    require(createNetworkLogger(NULL, false) != NULL && wCryptoGlobalInit() == kWCryptoOk,
+            "portable logger/crypto initialization failed");
     createPrivateDirectory();
     strictCidrs();
     quietLexicalParsing();
     privateFiles();
+    pageProtocolMetadata();
+    boundedCredentialRow();
 #ifdef OS_WIN
     require(RemoveDirectoryA(directory), "portable private-directory cleanup failed");
 #else
     require(rmdir(directory) == 0, "portable private-directory cleanup failed");
 #endif
+    wCryptoGlobalCleanup();
     networkloggerDestroy();
     return 0;
 }

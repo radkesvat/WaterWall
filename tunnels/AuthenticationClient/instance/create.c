@@ -77,6 +77,27 @@ static bool authenticationclientReadTrafficMultiplier(const cJSON *settings, uin
     return true;
 }
 
+static bool authenticationclientReadSyncLimit(const cJSON *settings, const char *name, uint64_t fallback, uint64_t *out)
+{
+    const cJSON *value = NULL;
+    for (const cJSON *item = settings->child; item != NULL; item = item->next)
+        if (item->string != NULL && strcmp(item->string, name) == 0)
+        {
+            if (value != NULL)
+                return false;
+            value = item;
+        }
+    *out = fallback;
+    if (value == NULL)
+        return true;
+    if (! cJSON_IsNumber(value) || ! getUint64FromJson(out, value) || *out == 0 || *out > SIZE_MAX)
+    {
+        LOGE("AuthenticationClient: %s must be a positive representable integer", name);
+        return false;
+    }
+    return true;
+}
+
 static bool authenticationclientParseSettings(authenticationclient_tstate_t *ts, node_t *node)
 {
     const cJSON *settings = node->node_settings_json;
@@ -112,6 +133,12 @@ static bool authenticationclientParseSettings(authenticationclient_tstate_t *ts,
     }
 
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+
+    if (! authenticationclientReadSyncLimit(
+            settings, "sync-max-users", kAuthenticationDefaultSyncMaxUsers, &ts->sync_max_users) ||
+        ! authenticationclientReadSyncLimit(
+            settings, "sync-max-bytes", kAuthenticationDefaultSyncMaxBytes, &ts->sync_max_bytes))
+        return false;
 
     if (! authenticationclientReadTrafficMultiplier(settings, &ts->traffic_multiplier))
         return false;

@@ -2,21 +2,6 @@
 #include "AuthenticationServer/config_fields.h"
 #include "node_builder/config_lexical.h"
 
-/* Parsed strings are private and bounded by the lexical request limits. Wiping
- * all decoded strings also covers malformed or misnamed password fields in a
- * successfully parsed tree. The input buffer is wiped separately on every path. */
-static void wipeDecodedStrings(cJSON *item)
-{
-    for (; item != NULL; item = item->next)
-    {
-        wipeDecodedStrings(item->child);
-        if (item->valuestring != NULL)
-            memorySecureZero(item->valuestring, strlen(item->valuestring));
-        if (item->string != NULL)
-            memorySecureZero(item->string, strlen(item->string));
-    }
-}
-
 const char *authenticationserverParseCreate(sbuf_t *message, const node_api_call_context_t *context,
                                             authenticationserver_create_request_t *request)
 {
@@ -78,7 +63,7 @@ const char *authenticationserverParseCreate(sbuf_t *message, const node_api_call
         error = authenticationserverConfigCreateError(
             usersPrepareNewUser(request->id, password, &config, allowance, context->deadline_ms, &request->candidate));
     }
-    wipeDecodedStrings(body);
+    authenticationserverWipeJsonStrings(body);
     cJSON_Delete(body);
     memorySecureZero(sbufGetMutablePtr(message), length);
     bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), message);

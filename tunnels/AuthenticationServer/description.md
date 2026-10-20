@@ -1,5 +1,5 @@
 <!--
-Documentation version: 162
+Documentation version: 163
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -27,7 +27,7 @@ from `AuthenticationClient`.
 
 Available modules are `Authenticate`, `ping`, `GetUserBySHA256Hex`, `GetUserBySHA256Base64`, `GetUserBySHA256`,
 `GetUserBySHA224Hex`, `GetUserBySHA224Base64`, `GetUserBySHA224`, `GetUserByPassword`, `AddNewUser`, `UpdateUser`,
-`GetAllUsers`, and `PushUserStats`.
+`GetUsersPage`, and `PushUserStats`.
 
 ## Typical Placement
 
@@ -91,9 +91,8 @@ It must not have a `next` node.
   Default session inactivity timeout in milliseconds. `600000` is 10 minutes.
 
 - `verbose` `(optional boolean, default: false)`
-  Enables focused debug logs for authentication line lifecycle, request-message parsing, module dispatch, permission
-  decisions, session permissions, and response queue/send flow. It does not log secrets, session tokens, passwords, or
-  raw user JSON.
+  Enables focused debug logs for line lifecycle, module dispatch, permission refusals and response queue/send flow.
+  It does not log secrets, session tokens, passwords or raw user JSON.
 
 - `normal-backups` `(optional string: "hourly", "daily", or "weekly")`
   Enables write-only normal backup snapshots. This field must be specified together with `normal-backups-path`; specifying
@@ -411,10 +410,10 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
   UUID credentials and WireGuard-style public keys are derived from the same password when applicable. Two users must not
   share the same password/SHA-224, SHA-256, UUID credential, or derived WireGuard public key.
 - `wireguard-allowed-ips` is durable user configuration, not a password-derived key. It is stored in JSON, synchronized
-  by `GetAllUsers`, and validated so configured ranges do not overlap between users.
+  by `GetUsersPage`, and validated so configured ranges do not overlap between users.
 - `id` is the durable logical user identity. Keep each non-zero id unique and stable for that logical user's lifetime;
   reusing an existing id for a different user can intentionally transfer client-side runtime state on the next
-  `GetAllUsers` refresh.
+  `GetUsersPage` traversal.
 - AuthenticationClient credentials are not stored in the user database. They live only in `settings.auth-clients`.
 - The authoritative in-memory table tracks separate configuration and statistics revisions. These revisions are server
   metadata, not fields inside individual user objects.
@@ -452,6 +451,29 @@ when later construction fails. Weekly history slots use the local Monday-based
 calendar, including weeks containing daylight-saving transitions or a year boundary.
 This is not a guarantee of recovery from arbitrary filesystem or power-loss failures.
 
+Clean periodic ticks skip serialization and staging only after one successful process-local primary checkpoint,
+when no in-memory mutation is dirty, the primary opens as a nonempty regular file without following links, and no
+history slot is due. The first periodic save, explicit forced saves, producer `AddNewUser` and normal final shutdown
+still save. A successful producer creation saves the candidate and earlier dirty changes before its revision bump;
+failure rolls it back while preserving earlier dirty state. Configuration/statistics commits mark dirty; exact usage
+replay and session enrollment do not. A primary commit clears dirty even if optional history output fails; its history
+slot remains due for retry. Missing-primary repair and backup protection remain unchanged.
+
+Skipped ticks leave `.backup` and primary-save result/age telemetry unchanged. `database_dirty` and
+`primary_checkpoint_valid` are process-local status facts. File open/type/empty/access/close failures are failures,
+not successful skips. The health probe does not hash or validate externally edited JSON; editing a live database file
+is not an account-update API. Saving remains synchronous under the state write lock, with the existing durability and
+rollback rules.
+
+For a damaged audit tail, stop every writer, preserve/quarantine the evidence privately, and deliberately repair or
+select a valid audit file before restarting. For abandoned stage files, first stop all writers and remove only positively
+identified stale private staging files. Never use broad wildcard deletion while a writer might be active. Stage files
+contain plaintext credentials and are not startup recovery candidates.
+
+The server securely wipes its owned producer secrets, decoded Authenticate fields and temporary password lookup copies
+before release. Page rendering also clears its locally owned JSON/string copy before freeing it. Transport/pool,
+configuration, dispatcher and OS copies are outside this guarantee; neither files nor all process copies are erased.
+
 ## Startup Recovery
 
 A valid primary is authoritative. If primary loading fails, the server validates `db-path.backup` and restores it
@@ -463,7 +485,7 @@ node creation fails. A pre-existing backup has no provenance metadata proving wh
 
 The server owns one authoritative table and store-level `config_revision` / `stats_revision` counters, initially 1.
 Configuration mutations bump the former; new usage batches and earliest first-use merges bump the latter. Independent point
-reads share the state read lock. Authentication, full pulls, saves and mutations hold its write lock.
+reads share the state read lock. Authentication, saves and mutations hold its write lock. Whole-table/page reads share the read lock.
 
 ### Control Identity And Sessions
 
@@ -596,7 +618,7 @@ Request types:
 - `5`: `GetUserByPassword`
 - `6`: `AddNewUser`
 - `7`: `UpdateUser`
-- `9`: `GetAllUsers`
+- `9`: `GetUsersPage` (`GetAllUsers` C alias)
 - `10`: `Authenticate`
 - `11`: `PushUserStats`
 - `12`: `GetUserBySHA224Hex`
@@ -799,36 +821,68 @@ needs an identity set, observation window and cross-producer deduplication; addi
 global distinct count. Device reporting needs defined device identity and collection. Reset requires a separate policy
 for delayed usage and distributed cutoffs; no reset operation is provided here.
 
-### GetAllUsers Module
+### GetUsersPage Module
 
-The `GetAllUsers` module expects an empty request payload.
-
-On success it returns response type `3` and response data containing the normalized users database JSON from
-`usersToJson()`, plus response-only server-time metadata:
+Request `9` (`GetUsersPage`, also named `GetAllUsers` in the C interface) returns one bounded credential-bearing page.
+There is no whole-table fallback. Every request needs the current producer token, `allow-user-pull`, and its exact
+acknowledged accounting checkpoint. Sequence and digest are zero at enrollment:
 
 ```json
-{"users":[],"server-time-ms":1767225600000,"accounting-time-ms":1767225600000}
+{"epoch":"<64 hex characters>","sequence":"0","digest":"0000000000000000000000000000000000000000000000000000000000000000"}
 ```
 
-`server-time-ms` is not written to the database. `AuthenticationClient` uses it to project absolute-date expiry onto
-the client's local clock.
+A continuation adds `"cursor":"<64 lowercase hex characters>"` and `"total":"130"`. The cursor encodes the 16-byte
+server instance ID, 64-bit configuration revision and 64-bit next collection position, in that order. It is a stateless
+position hint and grants no permission. The request is at most 1024 bytes, uses strict quiet JSON with depth two and
+16 values, rejects unknown/duplicate fields, and uses canonical unsigned decimal strings for sequence and total.
 
-A pull returns authoritative counters and current envelope revisions without changing the accounting checkpoint.
+Each response has type `3` and this schema (all unsigned 64-bit metadata are decimal strings):
 
-If the request contains unexpected data, or if exporting/serializing the in-memory database fails, it returns an error
-response frame with the same correlation ID.
+```json
+{
+  "instance":"<32 lowercase hex characters>",
+  "epoch":"<64 hex characters>",
+  "sequence":"0",
+  "digest":"<64 hex characters>",
+  "config-revision":"1",
+  "stats-revision":"1",
+  "server-time-ms":"1767225600000",
+  "accounting-time-ms":"1767225600000",
+  "total":"0",
+  "position":"0",
+  "count":"0",
+  "cursor":"<64 lowercase hex characters>",
+  "complete":true,
+  "validated":false,
+  "users":[]
+}
+```
 
-`accounting-time-ms` is response-only runtime metadata. At instance construction the server samples
-`C0 = max(wall-ms, 1)` and fresh monotonic `M0`, then returns saturating `C0 + max(Mnow - M0, 0)`.
-Later wall corrections do not rebase this clock; neither anchor is persisted. Existing imported nonzero first-use values
-remain approximate Unix-millisecond instants in this numeric domain. Both canonical exact clock fields are required by
-AuthenticationClient; invalid metadata retains its last usable cache. Absolute dates use `server-time-ms`; first-use
-observations/durations use the accounting clock and retained client monotonic age.
+The `users` array contains exactly `count` complete user records, including credentials. Ordinary pages target 256 KiB
+of complete encoded response and at most 128 users. A first record larger than that target occupies a page by itself,
+up to the existing 16 MiB hard response framing limit after all metadata/frame overhead. `user-too-large` rejects a
+record that cannot fit; fields are never truncated. Size admission precedes copying arbitrary-length row strings, and
+only bounded page state is retained. No frozen full-table snapshot is kept on the server.
 
-An authorized producer reports its immutable first-local-traffic estimate in every entry, including later positive
-reports after ACK. Reports are trusted accounting input; this adds no proof of physical first use. Earlier observations
-can shorten expiry, future estimates clamp to the single application-time accounting sample, and replay never applies
-bytes or timestamps twice. There is no receipt-time fallback for missing observation metadata.
+A last data page has `complete:true`, `validated:false` and a terminal cursor. The client must then send that cursor,
+the same total/checkpoint and `"validate":true`. The server returns a small `complete:true,validated:true` response,
+with `position == total`, `count:"0"` and an empty `users` array. An empty table has one empty complete data page and
+uses the same final validation. Validation acknowledges no usage.
+
+Any configuration edit, including a same-value edit, invalidates continuation/final validation with `stale_cursor`.
+Wrong totals or positions return `invalid_cursor`; epoch/sequence/digest contradictions return
+`accounting-continuity-lost`. Traffic/first-use changes from other producers do not invalidate configuration cursors.
+Each page samples statistics and clocks separately, so the installed statistics revision is a conservative first-page
+revision, not an atomic whole-table statistics snapshot. Per-page request deadlines allow a progressing traversal to
+outlast the former single-response deadline. The client serves its old cache until final validation and atomic install.
+
+The server executes page reads under the envelope's existing shared state lock (exclusive for a mixed mutation
+envelope), releases it before transport callbacks, and never recursively acquires it in the handler. The 64-frame cap,
+entry-session authorization, token revalidation and bounded response queue remain in force.
+
+`server-time-ms` and positive `accounting-time-ms` are response-only values. Absolute dates use the wall sample; the
+accounting clock advances from its construction wall/monotonic anchor without rebasing on later wall corrections.
+The client preserves each page's clock pair and receipt time when installing that page's users.
 
 ### PushUserStats Module
 
@@ -873,9 +927,11 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
   Ordinary nested input retains the existing one-maximum-message plus 2 MiB ceiling. Empty deliveries are recycled.
   One extracted request and a compaction destination are bounded parsing scratch; the current synchronous delivery is
   outside the retained bound.
-- Full-table synchronization currently requires one serialized response under the roughly 16 MiB ceiling, including
-  its response metadata/framing. Larger tables cannot synchronize; a required pull failure can defer usage pushes.
-  Pagination is separate work; this is a byte limit, not a fixed user-count limit.
+- Synchronization is paged: ordinary pages target 256 KiB/128 users and one exceptional record may use the hard
+  response limit. The client defaults to 100,000 users and 256 MiB encoded user-record bytes per complete traversal;
+  active/baseline/staged tables, indexes, parsing and runtime queues consume additional RAM. Account count is not a
+  fixed users-per-16-MiB estimate.
+
 - This node does not require left padding and does not prepend in-place.
 - This node is not a packet tunnel and does not use packet-line semantics.
 
@@ -1392,12 +1448,10 @@ stale traversal are caller-controlled.
 - All keyed lookups (SHA-224, SHA-256, UUID, WireGuard public key, durable id,
   non-empty name) are average O(1); WireGuard Allowed-IP address lookup and
   range-overlap detection are O(log M) through an ordered interval index.
-- Accounting retains only the last sequence/digest per configured client; full pulls serialize the authoritative table.
-- Pure point-read request messages (`Ping`, `GetUserBySHA-224/256`, and
-  `GetUserByPassword`) share the server state read lock and may execute
-  concurrently. Any message containing authentication, `GetAllUsers`, a user
-  mutation, a stats mutation, or an unknown/mixed non-point-read request takes
-  the state write lock for the full dispatch.
+- Accounting retains only the last sequence/digest per configured client; synchronization builds one bounded page at a time.
+- Read-only request messages (`Ping`, credential lookups and `GetUsersPage`) share the server state read lock and
+  may execute concurrently. Authentication, user mutations and statistics mutations take the state write lock for
+  the whole envelope. Mixed envelopes use the strongest lock required by their module descriptors.
 
 ## Node Metadata
 

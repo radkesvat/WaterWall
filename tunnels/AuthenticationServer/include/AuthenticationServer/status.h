@@ -13,6 +13,7 @@ typedef enum authenticationserver_save_result_e
 typedef struct authenticationserver_status_s
 {
     bool                                  database_loaded;
+    bool                                  database_dirty, primary_checkpoint_valid;
     size_t                                user_count;
     uint32_t                              configured_producer_count;
     uint32_t                              session_record_count;

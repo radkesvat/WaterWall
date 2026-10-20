@@ -29,7 +29,73 @@ done:
     CloseHandle(token);
     return descriptor;
 }
+
+/* Some Windows runtimes report FILE_NOT_FOUND even when an existing path
+ * component is a regular file. Find the first existing parent before treating
+ * the missing target as absence; access and invalid-parent errors stay errors. */
+static authenticationserver_private_read_result_t privateMissingPath(const char *path)
+{
+    char                                      *parent = stringDuplicate(path);
+    size_t                                     length = stringLength(parent);
+    authenticationserver_private_read_result_t result = kAuthenticationServerPrivateReadAbsent;
+    for (;;)
+    {
+        size_t separator = length;
+        while (separator != 0 && ! filePathIsSeparator(parent[separator - 1U]))
+            --separator;
+        if (separator == 0)
+            break;
+        const size_t parent_length =
+            separator == 1U || (separator == 3U && parent[1] == ':') ? separator : separator - 1U;
+        parent[parent_length]  = '\0';
+        const DWORD attributes = GetFileAttributesA(parent);
+        if (attributes != INVALID_FILE_ATTRIBUTES)
+        {
+            result = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? kAuthenticationServerPrivateReadAbsent
+                                                                  : kAuthenticationServerPrivateReadError;
+            break;
+        }
+        const DWORD error = GetLastError();
+        if ((error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) || parent_length == length)
+        {
+            result = kAuthenticationServerPrivateReadError;
+            break;
+        }
+        length = parent_length;
+    }
+    memoryFree(parent);
+    return result;
+}
 #endif
+
+authenticationserver_private_read_result_t authenticationserverPrivateProbe(const char *path)
+{
+#ifdef OS_WIN
+    HANDLE handle =
+        CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    if (handle == INVALID_HANDLE_VALUE)
+    {
+        const DWORD error = GetLastError();
+        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ? privateMissingPath(path)
+                                                                              : kAuthenticationServerPrivateReadError;
+    }
+    BY_HANDLE_FILE_INFORMATION info;
+    bool                       ok = GetFileInformationByHandle(handle, &info) &&
+              ! (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) &&
+              (info.nFileSizeHigh != 0 || info.nFileSizeLow != 0);
+    if (! CloseHandle(handle))
+        ok = false;
+#else
+    const int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0)
+        return errno == ENOENT ? kAuthenticationServerPrivateReadAbsent : kAuthenticationServerPrivateReadError;
+    struct stat info;
+    bool        ok = fstat(fd, &info) == 0 && S_ISREG(info.st_mode) && info.st_size > 0;
+    if (close(fd) != 0)
+        ok = false;
+#endif
+    return ok ? kAuthenticationServerPrivateReadSuccess : kAuthenticationServerPrivateReadError;
+}
 
 bool authenticationserverPrivateRestrict(const char *path)
 {
@@ -216,7 +282,7 @@ authenticationserver_private_read_result_t authenticationserverPrivateRead(const
     HANDLE handle =
         CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
     if (handle == INVALID_HANDLE_VALUE)
-        return GetLastError() == ERROR_FILE_NOT_FOUND ? kAuthenticationServerPrivateReadAbsent
+        return GetLastError() == ERROR_FILE_NOT_FOUND ? privateMissingPath(path)
                                                       : kAuthenticationServerPrivateReadError;
     BY_HANDLE_FILE_INFORMATION info;
     LARGE_INTEGER              file_size;
@@ -265,6 +331,8 @@ authenticationserver_private_read_result_t authenticationserverPrivateRead(const
 #endif
     if (! ok)
     {
+        if (bytes != NULL)
+            memorySecureZero(bytes, size);
         memoryFree(bytes);
         return kAuthenticationServerPrivateReadError;
     }

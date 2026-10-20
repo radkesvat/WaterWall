@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "internal.h"
 
 typedef struct status_entry_s
 {
@@ -183,14 +183,72 @@ static bool accountingAggregate(status_entry_t *entries, size_t count, uint64_t 
     return ! deadlineExpired(deadline_ms);
 }
 
+uint64_t authenticationclientRetryNotBeforeLocked(const authenticationclient_tstate_t *ts)
+{
+    return max(ts->sync_retry_not_before_ms, ts->stats_push_refused ? ts->stats_retry_not_before_ms : 0);
+}
+
+void authenticationclientResetSyncRetryLocked(authenticationclient_tstate_t *ts)
+{
+    ts->sync_retry_streak        = 0;
+    ts->sync_retry_not_before_ms = 0;
+    ts->sync_retry_failure       = kAuthenticationClientFailureNone;
+}
+
 void authenticationclientRecordFailure(tunnel_t *t, authenticationclient_failure_t failure, uint8_t operation)
 {
-    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    authenticationclient_tstate_t *ts  = tunnelGetState(t);
+    const uint64_t                 now = authenticationclientLocalTimeMS();
     mutexLock(&ts->control_mutex);
     ts->last_failure           = failure;
     ts->last_failure_operation = operation;
-    ts->last_failure_ms        = authenticationclientLocalTimeMS();
+    ts->last_failure_ms        = now;
+    if (! ts->stopping && failure != kAuthenticationClientFailureNone &&
+        failure != kAuthenticationClientFailureContinuity && failure != kAuthenticationClientFailureCredentialRejected)
+    {
+        if (ts->sync_retry_streak != UINT32_MAX)
+            ++ts->sync_retry_streak;
+        uint64_t delay = ts->reconnect_interval_ms;
+        if (ts->sync_retry_streak > 1)
+        {
+            const uint64_t base = max((uint64_t) ts->reconnect_interval_ms, UINT64_C(1000));
+            const uint64_t cap  = max(base, UINT64_C(60000));
+            delay               = base;
+            for (uint32_t n = 2; n < ts->sync_retry_streak && delay < cap; ++n)
+                delay = min(delay * 2, cap);
+            /* Independent fast-RNG draw; tests wrap fastRand32 deterministically. */
+            delay += fastRand32() % (delay / 4 + 1);
+        }
+        const uint64_t due           = delay > UINT64_MAX - now ? UINT64_MAX : now + delay;
+        ts->sync_retry_not_before_ms = max(ts->sync_retry_not_before_ms, due);
+        ts->sync_retry_failure       = failure;
+    }
     mutexUnlock(&ts->control_mutex);
+}
+
+authenticationclient_blocking_reason_t authenticationclientBlockingReasonLocked(const authenticationclient_tstate_t *ts)
+{
+    return ts->stopping           ? kAuthenticationClientBlockStopping
+           : ! ts->started        ? kAuthenticationClientBlockNotStarted
+           : ts->continuity_error ? kAuthenticationClientBlockContinuity
+           : ts->auth_rejected    ? kAuthenticationClientBlockCredentialRejected
+           : ! ts->users_loaded || ! ts->clock_loaded || ts->users == NULL ? kAuthenticationClientBlockCacheClock
+                                                                           : kAuthenticationClientBlockNone;
+}
+
+bool authenticationclientCanAuthenticateLocked(const authenticationclient_tstate_t *ts)
+{
+    return authenticationclientBlockingReasonLocked(ts) == kAuthenticationClientBlockNone;
+}
+
+authenticationclient_state_t authenticationclientStateLocked(const authenticationclient_tstate_t *ts)
+{
+    return ts->continuity_error ? kAuthenticationClientStateContinuityError
+           : ts->authenticated
+               ? (ts->users_loaded ? kAuthenticationClientStateReady : kAuthenticationClientStateAuthenticating)
+           : ts->connected                 ? kAuthenticationClientStateAuthenticating
+           : ts->started && ! ts->stopping ? kAuthenticationClientStateConnecting
+                                           : kAuthenticationClientStateStopped;
 }
 
 void authenticationclientStatusSnapshot(tunnel_t *t, bool include_accounting, size_t working_allowance,
@@ -215,23 +273,16 @@ void authenticationclientStatusSnapshot(tunnel_t *t, bool include_accounting, si
     out->clock_loaded                = ts->clock_loaded;
     out->users_count                 = usersCount(ts->users);
     out->traffic_multiplier          = ts->traffic_multiplier;
-    out->blocking_reason             = ts->stopping           ? kAuthenticationClientBlockStopping
-                                       : ! ts->started        ? kAuthenticationClientBlockNotStarted
-                                       : ts->continuity_error ? kAuthenticationClientBlockContinuity
-                                       : ts->auth_rejected    ? kAuthenticationClientBlockCredentialRejected
-                                       : ! ts->users_loaded || ! ts->clock_loaded || ts->users == NULL
-                                           ? kAuthenticationClientBlockCacheClock
-                                           : kAuthenticationClientBlockNone;
-    out->can_authenticate            = out->blocking_reason == kAuthenticationClientBlockNone;
-    out->state                       = ts->continuity_error ? kAuthenticationClientStateContinuityError
-                                       : ts->authenticated
-                                           ? (ts->users_loaded ? kAuthenticationClientStateReady : kAuthenticationClientStateAuthenticating)
-                                       : ts->connected                 ? kAuthenticationClientStateAuthenticating
-                                       : ts->started && ! ts->stopping ? kAuthenticationClientStateConnecting
-                                                                       : kAuthenticationClientStateStopped;
+    out->blocking_reason             = authenticationclientBlockingReasonLocked(ts);
+    out->can_authenticate            = authenticationclientCanAuthenticateLocked(ts);
+    out->state                       = authenticationclientStateLocked(ts);
     out->write_paused                = ts->write_paused;
     out->auth_in_flight              = ts->auth_in_flight;
     out->pull_in_flight              = ts->pull_in_flight;
+    out->traversal_active            = ts->staging.active;
+    out->sync_staged_users           = ts->staging.position;
+    out->sync_staged_bytes           = ts->staging.encoded_bytes;
+    out->sync_total_users            = ts->staging.total;
     out->push_in_flight              = ts->push_in_flight;
     out->pull_requested              = ts->pull_requested;
     out->pull_required               = ts->pull_required;
@@ -246,6 +297,9 @@ void authenticationclientStatusSnapshot(tunnel_t *t, bool include_accounting, si
     out->batch_sequence              = ts->next_batch_sequence;
     out->batch_entry_count           = ts->pending_entries_count;
     out->batch_size                  = ts->pending_batch_length;
+    out->sync_retry_streak           = ts->sync_retry_streak;
+    out->sync_retry_failure          = ts->sync_retry_failure;
+    out->sync_retry_remaining_ms     = elapsed(ts->sync_retry_not_before_ms, now);
     out->retry_deadline_valid        = ts->reconnect_timer != NULL;
     out->retry_remaining_ms          = elapsed(ts->reconnect_due_ms, loop_now);
     out->request_deadline_valid      = ts->request_timer != NULL;

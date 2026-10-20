@@ -92,11 +92,14 @@ def check_ack(value, identifier, previous_token):
             "Mutation did not publish exactly its committed revision")
 
 
-def check_status(value, sessions, users=3):
-    require(set(value) == {"database_loaded", "user_count", "configured_producer_count",
+def check_status(value, sessions, users=3, *, dirty=False):
+    require(set(value) == {"database_loaded", "database_dirty", "primary_checkpoint_valid",
+                           "user_count", "configured_producer_count",
                            "session_record_count", "config_revision", "stats_revision", "primary_save", "edit_token", "audit"},
             "Status field allowlist changed")
     check_token(value)
+    require(value["database_dirty"] is dirty and value["primary_checkpoint_valid"] is False,
+            "Persistence dirty/checkpoint status changed without a primary save")
     require(value["audit"] == {"enabled": False, "healthy": True, "queued_records": "0",
                                 "written_records": "0", "dropped_records": "0", "write_failures": "0",
                                 "last_error": None}, "Disabled audit status changed")
@@ -263,7 +266,7 @@ def main():
             conditional_edits(stream, reader, control, control_reader, token, edited)
             create_accounts(stream, reader, control, control_reader, token)
             password_changes(stream, reader, control, control_reader, token, epoch)
-            check_status(query(stream, reader, "final", "status"), 1, 7)
+            check_status(query(stream, reader, "final", "status"), 1, 7, dirty=True)
 
 
 def conditional_edits(stream, reader, control, control_reader, session_token, previous):
@@ -471,7 +474,7 @@ def create_accounts(stream, reader, control, control_reader, session_token):
         require(check_detail(query(stream, reader, "preserved-" + identifier, "get-user", {"id": identifier}),
                              identifier) == saved, "Account creation changed an existing account")
     final = query(stream, reader, "created-status", "status")
-    check_status(final, 1, 7)
+    check_status(final, 1, 7, dirty=True)
     page = check_page(query(stream, reader, "created-list", "list-users"), 7)
     require(final["edit_token"] == recovered["edit_token"] == page["edit_token"]
             and final["stats_revision"] == before["stats_revision"]
@@ -577,7 +580,7 @@ def password_changes(stream, reader, control, control_reader, session_token, pro
     require(replay == usage_ack and str(replay_config) == explicit["config_revision"]
             and replay_stats == stats_revision, "Credential changes invalidated the producer epoch/digest or replayed usage")
     final = query(stream, reader, "password-status", "status")
-    check_status(final, 1, 7)
+    check_status(final, 1, 7, dirty=True)
     details = query(stream, reader, "password-redacted-detail", "get-user", {"id": MAX_ID})
     listing = check_page(query(stream, reader, "password-redacted-list", "list-users"), 7)
     require(check_detail(details, MAX_ID) == expected

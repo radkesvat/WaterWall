@@ -15,7 +15,7 @@ void authenticationserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t
     ts->audit = NULL;
 
     if (UNLIKELY(ts->database_loaded && (context == NULL || context->scope != kWwLifecycleStartupRollback) &&
-                 ! authenticationserverSaveDatabase(ts)))
+                 ! authenticationserverSaveDatabaseForReason(ts, kAuthenticationServerSaveShutdown)))
     {
         LOGW("AuthenticationServer: final users database save failed during destroy");
     }

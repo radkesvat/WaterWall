@@ -1,4 +1,5 @@
 #include "AuthenticationServer/api.h"
+#include "loggers/network_logger.h"
 
 const char *authenticationserverApiPublicError(user_public_result_t result)
 {
@@ -19,8 +20,9 @@ const char *authenticationserverApiPublicError(user_public_result_t result)
     case kUserPublicInvalidEncoding:
         return "invalid_record_encoding";
     }
-    assert(false);
-    return "invalid_request";
+    LOGF("AuthenticationServer: invalid internal public view result");
+    abortProgramNow(1);
+    return NULL;
 }
 
 const char *authenticationserverCopyUserView(tunnel_t *t, uint64_t id, size_t allowance, uint64_t deadline_ms,

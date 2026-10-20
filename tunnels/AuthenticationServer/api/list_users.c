@@ -120,7 +120,15 @@ api_result_t authenticationserverApiListUsers(tunnel_t *t, sbuf_t *message, cons
     const size_t cap    = min((size_t) kAuthenticationServerApiBodyCap, context->max_response_body_size);
     authenticationserver_json_writer_t measured = {.capacity = cap, .deadline_ms = context->deadline_ms};
     beginPage(&measured, &view);
-    size_t emitted = 0;
+    size_t                             emitted = 0, measured_size = 0;
+    authenticationserver_json_writer_t empty = measured;
+    endPage(&empty, &view, 0);
+    buffer_pool_fit_t empty_fit;
+    if (! empty.overflow && ! empty.timeout &&
+        bufferpoolQueryBestFit(getCurrentEventWorkerBufferPool(), empty.used, 0, &empty_fit) &&
+        charge <= context->working_memory_allowance &&
+        empty_fit.allocation_charge <= context->working_memory_allowance - charge)
+        measured_size = empty.used;
     for (size_t i = 0; i < view.count; ++i)
     {
         if (i != 0)
@@ -134,13 +142,14 @@ api_result_t authenticationserverApiListUsers(tunnel_t *t, sbuf_t *message, cons
             charge > context->working_memory_allowance ||
             fit.allocation_charge > context->working_memory_allowance - charge)
             break;
-        emitted = i + 1;
+        emitted       = i + 1;
+        measured_size = complete.used;
     }
     api_result_t result = {.result_code = kApiResultError};
-    if (view.count == 0 || emitted != 0)
+    if ((view.count == 0 && measured_size != 0) || emitted != 0)
     {
         view.count = emitted;
-        result     = authenticationserverApiRender(context, kAuthenticationServerApiBodyCap, charge, page, &view);
+        result     = authenticationserverApiRenderMeasured(context, charge, measured_size, page, &view);
     }
     memoryFree(view.users);
     if (result.buffer == NULL)

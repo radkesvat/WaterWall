@@ -4,6 +4,73 @@
 #include "AuthenticationServer/structure.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "loggers/network_logger.h"
+#include "node_builder/config_lexical.h"
+
+static char    *secret_watch, *decoded_watch, *serialized_watch;
+static size_t   secret_watch_length, decoded_watch_length, serialized_watch_length;
+static unsigned secret_wiped, decoded_wiped, serialized_wiped;
+static bool     inspect_auth_secret, inspect_user_json, refuse_serialization;
+void            __real_memoryFree(void *pointer);
+void            __wrap_memoryFree(void *pointer);
+void            __wrap_memoryFree(void *pointer)
+{
+    if (pointer != NULL && (pointer == secret_watch || pointer == decoded_watch || pointer == serialized_watch))
+    {
+        const size_t length = pointer == secret_watch    ? secret_watch_length
+                              : pointer == decoded_watch ? decoded_watch_length
+                                                         : serialized_watch_length;
+        for (size_t i = 0; i < length; ++i)
+            twfRequire(((const uint8_t *) pointer)[i] == 0, "owned secret reached free unwiped");
+        if (pointer == secret_watch)
+        {
+            secret_watch = NULL;
+            ++secret_wiped;
+        }
+        else if (pointer == decoded_watch)
+        {
+            decoded_watch = NULL;
+            ++decoded_wiped;
+        }
+        else
+        {
+            serialized_watch = NULL;
+            ++serialized_wiped;
+        }
+    }
+    __real_memoryFree(pointer);
+}
+cJSON *__real_configLexicalParseBoundedQuiet(const char *, size_t, size_t, size_t);
+cJSON *__wrap_configLexicalParseBoundedQuiet(const char *, size_t, size_t, size_t);
+cJSON *__wrap_configLexicalParseBoundedQuiet(const char *text, size_t length, size_t depth, size_t values)
+{
+    cJSON *json = __real_configLexicalParseBoundedQuiet(text, length, depth, values);
+    if (inspect_auth_secret)
+    {
+        cJSON *secret = cJSON_GetObjectItemCaseSensitive(json, "secret");
+        if (cJSON_IsString(secret))
+        {
+            decoded_watch        = secret->valuestring;
+            decoded_watch_length = strlen(decoded_watch);
+        }
+    }
+    return json;
+}
+
+cJSON_bool __real_cJSON_PrintPreallocated(cJSON *json, char *buffer, const int length, const cJSON_bool format);
+cJSON_bool __wrap_cJSON_PrintPreallocated(cJSON *json, char *buffer, const int length, const cJSON_bool format);
+cJSON_bool __wrap_cJSON_PrintPreallocated(cJSON *json, char *buffer, const int length, const cJSON_bool format)
+{
+    const cJSON_bool result = __real_cJSON_PrintPreallocated(json, buffer, length, format);
+    if (! inspect_user_json)
+        return result;
+    cJSON *password = cJSON_GetObjectItemCaseSensitive(json, "password");
+    twfRequire(cJSON_IsString(password), "credential JSON fixture lost password");
+    decoded_watch           = password->valuestring;
+    decoded_watch_length    = strlen(decoded_watch);
+    serialized_watch        = buffer;
+    serialized_watch_length = result && ! refuse_serialization ? strlen(buffer) : (size_t) length;
+    return result && ! refuse_serialization;
+}
 
 static twf_worker_env_t env;
 static twf_line_pool_t  lines;
@@ -110,6 +177,7 @@ static authenticationserver_lstate_t *setup(void)
     tunnelBind(owner, server);
     authenticationserver_tstate_t *ts = tunnelGetState(server);
     rwlockinit(&ts->state_lock);
+    authenticationserverInitializeAccountingClock(ts);
     twfRequire(usersCreate(&ts->store.users), "users construction failed");
     twfLinePoolSetup(&lines, server->lstate_size, 4);
     line = twfLinePoolCreateLine(&lines);
@@ -434,6 +502,311 @@ static void testMaximumAndReentry(bool paused, bool finish)
     teardown();
 }
 
+static cJSON *producerResponse(uint8_t operation, const void *data, uint32_t size, const char *error)
+{
+    memoryFree(received);
+    received                          = NULL;
+    received_length                   = 0;
+    sbuf_t                        *b  = envelope(operation, data, size, 1);
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    if (ts->sessions_count != 0)
+        memoryCopy(sbufGetMutablePtr(b) + 4, ts->sessions[0]->token, 64);
+    tunnelUpStreamPayload(server, line, b);
+    twfRequire(lineIsAlive(line) && received_length >= 29, "producer page did not respond");
+    const uint32_t length = received_length - 29;
+    if (error != NULL)
+    {
+        twfRequire(received[20] == kAuthenticationServerResponseTypeError && length == strlen(error) &&
+                       memcmp(received + 29, error, length) == 0,
+                   "wrong producer refusal");
+        return NULL;
+    }
+    twfRequire(received[20] == kAuthenticationServerResponseTypeUsers ||
+                   received[20] == kAuthenticationServerResponseTypeUser,
+               "wrong producer response kind");
+    cJSON *json = cJSON_ParseWithLength((const char *) received + 29, length);
+    twfRequire(cJSON_IsObject(json), "page body was not JSON");
+    return json;
+}
+
+static uint64_t pageValue(const cJSON *page, const char *name)
+{
+    const cJSON *value = cJSON_GetObjectItemCaseSensitive(page, name);
+    uint64_t     number;
+    twfRequire(cJSON_IsString(value) && getUint64FromJson(&number, value), "page metadata is not exact decimal string");
+    return number;
+}
+
+static void pageRequest(char text[512], const char *cursor, size_t total, bool validate)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    char                           epoch[65];
+    memoryCopy(epoch, ts->auth_clients[0].accounting_epoch, 64);
+    epoch[64] = 0;
+    snprintf(
+        text, 512, "{\"epoch\":\"%s\",\"sequence\":\"0\",\"digest\":\"%064u\"%s", epoch, 0, cursor == NULL ? "}" : ",");
+    if (cursor != NULL)
+        snprintf(text + strlen(text),
+                 512 - strlen(text),
+                 "\"cursor\":\"%s\",\"total\":\"%zu\"%s}",
+                 cursor,
+                 total,
+                 validate ? ",\"validate\":true" : "");
+}
+
+static void producerSession(void)
+{
+    configureCredentials();
+    static const char auth[] = "{\"name\":\"edge\",\"secret\":\"secret\"}";
+    tunnelUpStreamPayload(
+        server, line, envelope(kAuthenticationServerRequestTypeAuthenticate, auth, sizeof(auth) - 1, 1));
+    twfRequire(((authenticationserver_tstate_t *) tunnelGetState(server))->sessions_count == 1, "producer auth failed");
+}
+
+static void testProducerPages(void)
+{
+    setup();
+    producerSession();
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    for (uint64_t i = 0; i < 130; ++i)
+    {
+        char password[32];
+        snprintf(password, sizeof(password), "page-%" PRIu64, i);
+        user_t source;
+        twfRequire(userCreate(&source, password), "page user failed");
+        userSetId(&source, i + 1);
+        twfRequire(usersAddUser(&ts->store.users, &source), "page insertion failed");
+        userDestroy(&source);
+    }
+    char text[512], cursor[65], terminal[65];
+    pageRequest(text, NULL, 0, false);
+    cJSON *page = producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), NULL);
+    twfRequire(pageValue(page, "position") == 0 && pageValue(page, "count") == 128 && pageValue(page, "total") == 130 &&
+                   cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(page, "users")) == 128 &&
+                   cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(page, "complete")),
+               "first producer page boundary failed");
+    strcpy(cursor, cJSON_GetObjectItemCaseSensitive(page, "cursor")->valuestring);
+    cJSON_Delete(page);
+    authenticationserverBumpStatsRevision(server);
+    pageRequest(text, cursor, 130, false);
+    page = producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), NULL);
+    twfRequire(pageValue(page, "position") == 128 && pageValue(page, "count") == 2 &&
+                   cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(page, "complete")) &&
+                   cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(page, "validated")),
+               "terminal data page failed");
+    strcpy(terminal, cJSON_GetObjectItemCaseSensitive(page, "cursor")->valuestring);
+    cJSON_Delete(page);
+    pageRequest(text, terminal, 130, true);
+    page = producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), NULL);
+    twfRequire(pageValue(page, "count") == 0 && pageValue(page, "position") == 130 &&
+                   cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(page, "validated")),
+               "final page validation failed");
+    cJSON_Delete(page);
+    pageRequest(text, cursor, 131, false);
+    producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), "invalid_cursor");
+    authenticationserverBumpConfigRevision(server);
+    pageRequest(text, terminal, 130, true);
+    producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), "stale_cursor");
+    pageRequest(text, NULL, 0, false);
+    char *digest = strstr(text, "digest\":\"");
+    twfRequire(digest != NULL, "checkpoint fixture failed");
+    digest[9] = '1';
+    producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), "accounting-continuity-lost");
+    teardown();
+
+    setup();
+    producerSession();
+    ts = tunnelGetState(server);
+    pageRequest(text, NULL, 0, false);
+    page = producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), NULL);
+    twfRequire(pageValue(page, "total") == 0 && pageValue(page, "count") == 0 &&
+                   cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(page, "complete")),
+               "empty table did not complete");
+    cJSON_Delete(page);
+    user_t source;
+    twfRequire(userCreate(&source, "exceptional"), "exceptional row creation failed");
+    userSetId(&source, 1);
+    source.notes = memoryAllocate(300001);
+    memset(source.notes, 'x', 300000);
+    source.notes[300000] = 0;
+    twfRequire(usersAddUser(&ts->store.users, &source), "exceptional row insert failed");
+    userDestroy(&source);
+    page = producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), NULL);
+    twfRequire(pageValue(page, "count") == 1 && received_length > 256 * 1024,
+               "large first row was not exceptional page");
+    cJSON_Delete(page);
+    user_t *huge = usersLookupByIdentifier(&ts->store.users, 1);
+    memoryFree(huge->notes);
+    huge->notes = memoryAllocate(17 * 1024 * 1024 + 1);
+    memset(huge->notes, 'x', 17 * 1024 * 1024);
+    huge->notes[17 * 1024 * 1024] = 0;
+    producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), "user-too-large");
+    teardown();
+}
+
+static void testCanonicalProducerLookups(void)
+{
+    setup();
+    producerSession();
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    user_t                         source;
+    twfRequire(userCreate(&source, "lookup"), "lookup user failed");
+    userSetId(&source, 1);
+    twfRequire(usersAddUser(&ts->store.users, &source), "lookup insertion failed");
+    userDestroy(&source);
+    sha224_hash_t a;
+    sha256_hash_t b;
+    twfRequire(wCryptoSHA224(&a, (const uint8_t *) "lookup", 6) == kWCryptoOk &&
+                   wCryptoSHA256(&b, (const uint8_t *) "lookup", 6) == kWCryptoOk,
+               "lookup digest failed");
+    const uint8_t     kinds[]        = {kAuthenticationServerRequestTypeGetUserBySHA224,
+                                        kAuthenticationServerRequestTypeGetUserBySHA256};
+    const uint8_t     hex_kinds[]    = {kAuthenticationServerRequestTypeGetUserBySHA224Hex,
+                                        kAuthenticationServerRequestTypeGetUserBySHA256Hex};
+    const uint8_t     base64_kinds[] = {kAuthenticationServerRequestTypeGetUserBySHA224Base64,
+                                        kAuthenticationServerRequestTypeGetUserBySHA256Base64};
+    static const char hex[]          = "0123456789abcdef",
+                      alphabet[]     = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        const uint8_t *digest = i == 0 ? a.bytes : b.bytes;
+        const size_t   size   = i == 0 ? sizeof(a.bytes) : sizeof(b.bytes);
+        cJSON_Delete(producerResponse(kinds[i], digest, size, NULL));
+        char text[65];
+        for (size_t j = 0; j < size; ++j)
+        {
+            text[2 * j]     = hex[digest[j] >> 4];
+            text[2 * j + 1] = hex[digest[j] & 15];
+        }
+        cJSON_Delete(producerResponse(hex_kinds[i], text, 2 * size, NULL));
+        const int length = wwBase64Encode(digest, size, text);
+        cJSON_Delete(producerResponse(base64_kinds[i], text, length, NULL));
+        const char  *error = i == 0 ? "invalid-sha224-base64" : "invalid-sha256-base64";
+        const size_t last  = i == 0 ? 37 : 42;
+        const char  *entry = strchr(alphabet, text[last]);
+        twfRequire(entry != NULL, "base64 fixture failed");
+        text[last] = alphabet[(entry - alphabet) + 1];
+        producerResponse(base64_kinds[i], text, length, error);
+        wwBase64Encode(digest, size, text);
+        producerResponse(base64_kinds[i], text, length - 1, error);
+        text[0] = '-';
+        producerResponse(base64_kinds[i], text, length, error);
+    }
+    cJSON_Delete(producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, "lookup", 6, NULL));
+    const char nul[] = "look\0up";
+    producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, nul, sizeof(nul) - 1, "invalid-password");
+    ts->sessions[0]->allow_user_pull = false;
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        producerResponse(kinds[i], "", 0, "user-pull-not-allowed");
+        producerResponse(hex_kinds[i], "", 0, "user-pull-not-allowed");
+        producerResponse(base64_kinds[i], "", 0, "user-pull-not-allowed");
+    }
+    producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, "", 0, "user-pull-not-allowed");
+    teardown();
+}
+
+static void testProducerDirtyBoundaries(void)
+{
+    setup();
+    producerSession();
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    twfRequire(! ts->database_dirty, "session enrollment dirtied the database");
+    user_t source;
+    twfRequire(userCreate(&source, "dirty-boundary"), "dirty-boundary user failed");
+    userSetId(&source, 1);
+    twfRequire(usersAddUser(&ts->store.users, &source), "dirty-boundary insertion failed");
+    userDestroy(&source);
+    authenticationserver_session_t *session = ts->sessions[0];
+    session->allow_user_write = session->allow_stats_push = true;
+    const uint8_t     correlation[4]                      = {0};
+    static const char update[]                            = "{\"id\":\"1\",\"name\":\"changed\"}";
+    rwlockWriteLock(&ts->state_lock);
+    sbuf_t *reply = authenticationserverDispatchRequest(kAuthenticationServerRequestTypeUpdateUser,
+                                                        correlation,
+                                                        server,
+                                                        line,
+                                                        session,
+                                                        (const uint8_t *) update,
+                                                        sizeof(update) - 1);
+    twfRequire(reply != NULL && sbufReadUI8(reply) == kAuthenticationServerResponseTypeOk && ts->database_dirty,
+               "producer update did not dirty the database");
+    lineReuseBuffer(line, reply);
+    ts->database_dirty = false;
+    char epoch[65]     = {0}, batch[512];
+    memoryCopy(epoch, ts->auth_clients[0].accounting_epoch, 64);
+    const int size = snprintf(batch,
+                              sizeof(batch),
+                              "{\"epoch\":\"%s\",\"sequence\":\"1\",\"users\":[{\"id\":\"1\",\"up\":\"0\","
+                              "\"down\":\"0\",\"first-usage-at-ms\":\"1\"}]}",
+                              epoch);
+    twfRequire(size > 0 && (size_t) size < sizeof(batch), "usage dirty fixture overflow");
+    for (unsigned replay = 0; replay < 2; ++replay)
+    {
+        reply = authenticationserverDispatchRequest(kAuthenticationServerRequestTypePushUserStats,
+                                                    correlation,
+                                                    server,
+                                                    line,
+                                                    session,
+                                                    (const uint8_t *) batch,
+                                                    (uint32_t) size);
+        twfRequire(reply != NULL && sbufReadUI8(reply) == kAuthenticationServerResponseTypeOk &&
+                       ts->database_dirty == (replay == 0),
+                   "new usage or exact replay changed dirty state incorrectly");
+        lineReuseBuffer(line, reply);
+        ts->database_dirty = false;
+    }
+    rwlockWriteUnlock(&ts->state_lock);
+    teardown();
+}
+
+static void testOwnedProducerSecretWiping(void)
+{
+    for (unsigned rejected = 0; rejected < 2; ++rejected)
+    {
+        setup();
+        configureCredentials();
+        authenticationserver_tstate_t *ts = tunnelGetState(server);
+        secret_watch                      = ts->auth_clients[0].secret;
+        secret_watch_length               = strlen(secret_watch);
+        const unsigned old_secret = secret_wiped, old_decoded = decoded_wiped;
+        const char    *auth =
+            rejected ? "{\"name\":\"edge\",\"secret\":\"wrong\"}" : "{\"name\":\"edge\",\"secret\":\"secret\"}";
+        inspect_auth_secret = true;
+        tunnelUpStreamPayload(
+            server, line, envelope(kAuthenticationServerRequestTypeAuthenticate, auth, strlen(auth), 1));
+        inspect_auth_secret = false;
+        twfRequire(decoded_watch == NULL && decoded_wiped == old_decoded + 1,
+                   "decoded auth secret did not reach wiped release");
+        teardown();
+        twfRequire(secret_watch == NULL && secret_wiped == old_secret + 1, "producer secret was not wiped on destroy");
+    }
+}
+
+static void testOwnedLookupSecretWiping(void)
+{
+    setup();
+    for (unsigned refused = 0; refused < 2; ++refused)
+    {
+        cJSON         *user = cJSON_CreateObject();
+        discard        cJSON_AddStringToObject(user, "password", "owned-lookup-secret");
+        const unsigned old_decoded = decoded_wiped, old_serialized = serialized_wiped;
+        inspect_user_json            = true;
+        refuse_serialization         = refused != 0;
+        const uint8_t correlation[4] = {0};
+        sbuf_t *response  = authenticationserverCreateUserJsonResponseFrame(line, correlation, user, "lookup-test");
+        inspect_user_json = refuse_serialization = false;
+        twfRequire(response != NULL && decoded_watch == NULL && serialized_watch == NULL &&
+                       decoded_wiped == old_decoded + 1 && serialized_wiped > old_serialized,
+                   "owned lookup credential or serialized attempt was released unwiped");
+        twfRequire(sbufReadUI8(response) ==
+                       (refused ? kAuthenticationServerResponseTypeError : kAuthenticationServerResponseTypeUser),
+                   "lookup serialization refusal fixture did not run");
+        lineReuseBuffer(line, response);
+    }
+    teardown();
+}
+
 int main(void)
 {
     twfSetCase("authenticationserver response bounds and FIFO");
@@ -449,6 +822,11 @@ int main(void)
     testAuthenticateValidation();
     testGeometricConstruction();
     testSessionAtEnvelopeEntry();
+    testProducerPages();
+    testCanonicalProducerLookups();
+    testProducerDirtyBoundaries();
+    testOwnedProducerSecretWiping();
+    testOwnedLookupSecretWiping();
     wCryptoGlobalCleanup();
     globalstateDestroySecureRandom();
     networkloggerDestroy();

@@ -140,12 +140,15 @@ static cJSON *callOperation(const char *operation, const void *body, size_t size
     sbuf_t *input = bufferpoolGetBestFit(env.pool, (uint32_t) size, 0);
     memoryCopy(sbufGetMutablePtr(input), body, size);
     sbufSetLength(input, (uint32_t) size);
-    const uint64_t revision = state()->store.config_revision;
+    const bool     was_dirty = state()->database_dirty;
+    const uint64_t revision  = state()->store.config_revision;
     const size_t   count = usersCount(&state()->store.users), slots = state()->store.users.slot_count;
     context.operation   = operation;
     api_result_t result = nodeApiFind(server, operation)->handler(server, input, &context);
     twfRequire(result.result_code == (error == NULL ? kApiResultOk : kApiResultError) && result.buffer != NULL,
                "incorrect operation result");
+    twfRequire(state()->database_dirty == (was_dirty || (error == NULL && strcmp(operation, "create-user") == 0)),
+               "create/read result changed dirty state incorrectly");
     const size_t length = sbufGetLength(result.buffer);
     char        *raw    = memoryAllocate(length + 1);
     memoryCopy(raw, sbufGetRawPtr(result.buffer), length);
@@ -187,6 +190,7 @@ static void call(const char *body, const char *error)
 }
 static void create(uint64_t id, const char *password, const char *config, const char *error)
 {
+    state()->database_dirty = false;
     char body[4096];
     requestText(body, sizeof(body), id, password, config);
     call(body, error);

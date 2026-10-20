@@ -16,22 +16,14 @@
 #include "modules/push_user_stats/push_user_stats.h"
 #include "modules/update_user/update_user.h"
 
-typedef struct authenticationserver_module_s
-{
-    uint8_t                                request_type;
-    const char                            *name;
-    authenticationserver_module_handler_fn handler;
-    bool                                   public_access;
-    bool                                   require_stats_push;
-    bool                                   require_user_pull;
-    bool                                   require_user_write;
-} authenticationserver_module_t;
+#include "modules/dispatcher.h"
 
 static const authenticationserver_module_t kAuthenticationServerModules[] = {
     {
         .request_type  = kAuthenticationServerRequestTypeAuthenticate,
         .name          = "Authenticate",
         .handler       = authenticationserverAuthenticateHandle,
+        .write_lock    = true,
         .public_access = true,
     },
     {
@@ -85,17 +77,21 @@ static const authenticationserver_module_t kAuthenticationServerModules[] = {
         .request_type       = kAuthenticationServerRequestTypeAddNewUser,
         .name               = "AddNewUser",
         .handler            = authenticationserverAddNewUserHandle,
+        .mutates_store      = true,
+        .write_lock         = true,
         .require_user_write = true,
     },
     {
         .request_type       = kAuthenticationServerRequestTypeUpdateUser,
         .name               = "UpdateUser",
         .handler            = authenticationserverUpdateUserHandle,
+        .mutates_store      = true,
+        .write_lock         = true,
         .require_user_write = true,
     },
     {
-        .request_type      = kAuthenticationServerRequestTypeGetAllUsers,
-        .name              = "GetAllUsers",
+        .request_type      = kAuthenticationServerRequestTypeGetUsersPage,
+        .name              = "GetUsersPage",
         .handler           = authenticationserverGetAllUsersHandle,
         .require_user_pull = true,
     },
@@ -103,11 +99,13 @@ static const authenticationserver_module_t kAuthenticationServerModules[] = {
         .request_type       = kAuthenticationServerRequestTypePushUserStats,
         .name               = "PushUserStats",
         .handler            = authenticationserverPushUserStatsHandle,
+        .mutates_store      = true,
+        .write_lock         = true,
         .require_stats_push = true,
     },
 };
 
-static const authenticationserver_module_t *authenticationserverFindModule(uint8_t request_type)
+const authenticationserver_module_t *authenticationserverFindModule(uint8_t request_type)
 {
     for (uint32_t i = 0; i < sizeof(kAuthenticationServerModules) / sizeof(kAuthenticationServerModules[0]); ++i)
     {
@@ -127,13 +125,12 @@ static uint32_t authenticationserverDispatcherCorrelationIdRead(
            ((uint32_t) correlation_id[2] << 8U) | (uint32_t) correlation_id[3];
 }
 
-sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
-                                            const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
-                                            tunnel_t *t, line_t *l, authenticationserver_session_t *session,
-                                            const uint8_t *request_data, uint32_t request_data_len)
+sbuf_t *authenticationserverDispatchModule(const authenticationserver_module_t *module,
+                                           const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
+                                           tunnel_t *t, line_t *l, authenticationserver_session_t *session,
+                                           const uint8_t *request_data, uint32_t request_data_len)
 {
-    authenticationserver_tstate_t       *ts     = tunnelGetState(t);
-    const authenticationserver_module_t *module = authenticationserverFindModule(request_type);
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
     if (LIKELY(module != NULL))
     {
         if (LIKELY(! module->public_access))
@@ -188,6 +185,15 @@ sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
     }
 
     if (ts->verbose)
-        LOGD("AuthenticationServer: unknown request type %u", (unsigned int) request_type);
+        LOGD("AuthenticationServer: unknown request type");
     return authenticationserverCreateErrorResponseFrame(l, correlation_id, "unknown-request-type");
+}
+
+sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
+                                            const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
+                                            tunnel_t *t, line_t *l, authenticationserver_session_t *session,
+                                            const uint8_t *request_data, uint32_t request_data_len)
+{
+    return authenticationserverDispatchModule(
+        authenticationserverFindModule(request_type), correlation_id, t, l, session, request_data, request_data_len);
 }

@@ -14,6 +14,10 @@ static void status(authenticationserver_json_writer_t *w, const void *value)
     } while (0)
     AUTH_JSON_TEXT("{\"database_loaded\":");
     AUTH_JSON_TEXT(s->database_loaded ? "true" : "false");
+    AUTH_JSON_TEXT(",\"database_dirty\":");
+    AUTH_JSON_TEXT(s->database_dirty ? "true" : "false");
+    AUTH_JSON_TEXT(",\"primary_checkpoint_valid\":");
+    AUTH_JSON_TEXT(s->primary_checkpoint_valid ? "true" : "false");
     AUTH_JSON_TEXT(",");
     NUMBER("user_count", s->user_count);
     AUTH_JSON_TEXT(",");

@@ -48,6 +48,8 @@ typedef struct authenticationserver_json_writer_s
     size_t   used, capacity;
     uint64_t deadline_ms;
     bool     overflow, timeout;
+    bool     clock_checked;
+    size_t   checked_at;
 } authenticationserver_json_writer_t;
 
 typedef void (*authenticationserver_api_render_fn)(authenticationserver_json_writer_t *, const void *);
@@ -79,3 +81,13 @@ api_result_t authenticationserverApiListUsers(tunnel_t *, sbuf_t *, const node_a
 api_result_t authenticationserverApiUpdateUser(tunnel_t *, sbuf_t *, const node_api_call_context_t *);
 api_result_t authenticationserverApiCreateUser(tunnel_t *, sbuf_t *, const node_api_call_context_t *);
 api_result_t authenticationserverApiChangeUserPassword(tunnel_t *, sbuf_t *, const node_api_call_context_t *);
+
+bool         authenticationserverApiUnsignedDecimal(const char *text, uint64_t *value);
+void         authenticationserverWipeJsonStrings(cJSON *json);
+const char  *authenticationserverApiPrepareAck(sbuf_t *buffer, size_t capacity, uint64_t deadline, uint64_t id,
+                                               const uint8_t instance[16], uint64_t revision);
+api_result_t authenticationserverApiRenderMeasured(const node_api_call_context_t *context, size_t retained_charge,
+                                                   size_t measured, authenticationserver_api_render_fn render,
+                                                   const void *view);
+
+bool authenticationserverApiCursorDecode(const char *text, authenticationserver_api_request_t *request);

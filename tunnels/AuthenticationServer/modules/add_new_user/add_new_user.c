@@ -1,4 +1,5 @@
 #include "modules/add_new_user/add_new_user.h"
+#include "AuthenticationServer/api.h"
 #include "AuthenticationServer/audit.h"
 
 #include "loggers/network_logger.h"
@@ -83,12 +84,14 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
     if (UNLIKELY(! cJSON_IsObject(user_json)))
     {
         LOGW("AuthenticationServer: AddNewUser JSON payload is not a user object");
+        authenticationserverWipeJsonStrings(user_json);
         cJSON_Delete(user_json);
         return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, "invalid-user-json");
     }
     if (UNLIKELY(! authenticationserverUserJsonWireGuardAllowedIpsValid(user_json)))
     {
         LOGW("AuthenticationServer: AddNewUser rejected user JSON: invalid-wireguard-allowed-ips");
+        authenticationserverWipeJsonStrings(user_json);
         cJSON_Delete(user_json);
         return authenticationserverAddUserRejected(
             t, l, session, correlation_id, audit_id, "invalid-wireguard-allowed-ips");
@@ -98,9 +101,11 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
     if (UNLIKELY(! userCreateFromJson(&user, user_json)))
     {
         LOGW("AuthenticationServer: AddNewUser JSON payload is not a valid user");
+        authenticationserverWipeJsonStrings(user_json);
         cJSON_Delete(user_json);
         return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, "invalid-user");
     }
+    authenticationserverWipeJsonStrings(user_json);
     cJSON_Delete(user_json);
 
     if (UNLIKELY(! authenticationserverUserHasRequiredId(&user)))
@@ -122,7 +127,8 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
         return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, error);
     }
 
-    if (UNLIKELY(! authenticationserverSaveDatabaseLocked(ts)))
+    const bool was_dirty = ts->database_dirty;
+    if (UNLIKELY(! authenticationserverSaveDatabaseLockedForReason(ts, kAuthenticationServerSaveProducerCreate)))
     {
         LOGW("AuthenticationServer: AddNewUser failed to save database after adding user; rolling back in-memory add");
         if (UNLIKELY(! usersRemoveUserBySHA256(&ts->store.users, added_sha256)))
@@ -130,9 +136,11 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
             LOGF("AuthenticationServer: AddNewUser could not roll back its exclusively owned account");
             abortProgramNow(1);
         }
+        ts->database_dirty = was_dirty;
         return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, "database-save-failed");
     }
     authenticationserverBumpConfigRevision(t);
+    ts->database_dirty = false; /* The forced save included this account and prior unsaved changes. */
     authenticationserverAuditRecordProducer(ts->audit,
                                             session != NULL ? session->client_name : NULL,
                                             "AddNewUser",

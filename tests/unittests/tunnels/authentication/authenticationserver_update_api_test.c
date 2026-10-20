@@ -83,10 +83,13 @@ static cJSON *callBytes(const void *body, size_t size, const char *error)
     sbuf_t *input = bufferpoolGetBestFit(env.pool, (uint32_t) size, 0);
     memoryCopy(sbufGetMutablePtr(input), body, size);
     sbufSetLength(input, (uint32_t) size);
-    const uint64_t revision = state()->store.config_revision;
-    api_result_t   result   = nodeApiFind(server, "update-user")->handler(server, input, &context);
+    const bool     was_dirty = state()->database_dirty;
+    const uint64_t revision  = state()->store.config_revision;
+    api_result_t   result    = nodeApiFind(server, "update-user")->handler(server, input, &context);
     twfRequire(result.result_code == (error == NULL ? kApiResultOk : kApiResultError), "incorrect update result");
     twfRequire(result.buffer != NULL, "missing update result body");
+    twfRequire(state()->database_dirty == (was_dirty || error == NULL),
+               "update result changed dirty state incorrectly");
     cJSON *json = cJSON_ParseWithLength((const char *) sbufGetRawPtr(result.buffer), sbufGetLength(result.buffer));
     twfRequire(cJSON_IsObject(json), "update response is not JSON");
     if (error != NULL)
@@ -118,6 +121,7 @@ static void call(const char *body, const char *error)
 
 static void edit(uint64_t id, const char *patch, const char *error)
 {
+    state()->database_dirty = false;
     char match[49], body[4096];
     token(match);
     requestText(body, sizeof(body), id, match, patch);
@@ -342,10 +346,12 @@ static void conflictsAndRefusal(void)
     context.deadline_ms              = nodeApiNowMs();
     edit(42, "{\"enabled\":true}", "timeout");
     context.deadline_ms = UINT64_MAX;
-    /* Expire during bounded preparation/ACK rendering, before mutation. */
+    /* The chunked ACK renderer and bounded preparation make twelve clock
+     * checks before commit. Expire at each check, rather than assuming the
+     * former byte-at-a-time renderer still performs twenty or more reads. */
     fake_time_us        = UINT64_C(1000000);
     context.deadline_ms = 1500;
-    for (unsigned i = 1; i <= 20; ++i)
+    for (unsigned i = 1; i <= 12; ++i)
     {
         clock_reads  = 0;
         expire_after = i;

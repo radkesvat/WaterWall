@@ -164,6 +164,7 @@ static sbuf_t *passwordInputBytes(const void *body, size_t size)
 }
 static cJSON *callBytes(const void *body, size_t size, const char *error)
 {
+    const bool     was_dirty = state()->database_dirty;
     const uint64_t revision = state()->store.config_revision, stats_revision = state()->store.stats_revision;
     users_t       *users = &state()->store.users;
     const size_t   count = usersCount(users), slots = users->slot_count;
@@ -173,6 +174,8 @@ static cJSON *callBytes(const void *body, size_t size, const char *error)
         nodeApiFind(server, "change-user-password")->handler(server, passwordInputBytes(body, size), &context);
     twfRequire(result.result_code == (error == NULL ? kApiResultOk : kApiResultError) && result.buffer != NULL,
                "wrong password operation status");
+    twfRequire(state()->database_dirty == (was_dirty || error == NULL),
+               "password result changed dirty state incorrectly");
     cJSON *json = cJSON_ParseWithLength((const char *) sbufGetRawPtr(result.buffer), sbufGetLength(result.buffer));
     twfRequire(cJSON_IsObject(json), "password result is not JSON");
     if (error != NULL)
@@ -211,6 +214,7 @@ static void call(const char *body, const char *error)
 }
 static void rotate(uint64_t id, const char *password, const char *error)
 {
+    state()->database_dirty = false;
     char match[49], body[4096];
     token(match);
     requestText(body, sizeof(body), id, match, password);

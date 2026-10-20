@@ -53,7 +53,8 @@ def main():
         api.require(response["error"] is None and response["result"]["code"] == 0, "Fixture status failed")
 
     initial = command(["status"])
-    api.require(initial["user_count"] == "2", "Unexpected initial count")
+    api.require(initial["user_count"] == "2" and initial["database_dirty"] is False
+                and initial["primary_checkpoint_valid"] is False, "Unexpected initial counts/save state")
     first = command(["users", "get", LARGE_ID])
     api.require(first["user"]["id"] == LARGE_ID, "CLI rounded an account ID")
     created = command(["users", "create", MAX_ID, "--password-stdin", "--set", "name=CLI created"],
@@ -85,6 +86,9 @@ def main():
                 "CLI traversal omitted or rounded an account")
     diagnostic = command(["users", "create", MAX_ID, "--password-stdin"], stdin=b"unused", expected=1)
     api.require("id_exists" in diagnostic, "Duplicate creation was not refused")
+    changed_status = command(["status"])
+    api.require(changed_status["database_dirty"] is True and changed_status["primary_checkpoint_valid"] is False,
+                "Account writes lost dirty state or claimed a primary save")
     diagnostic = command(["users", "get", LARGE_ID], monitor=True, expected=2)
     api.require("forbidden" in diagnostic, "Operation permission was not enforced")
 

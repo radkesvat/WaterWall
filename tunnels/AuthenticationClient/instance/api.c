@@ -69,6 +69,8 @@ static const char *failureName(authenticationclient_failure_t failure)
         return "continuity_error";
     case kAuthenticationClientFailureInvalidResponse:
         return "invalid_response";
+    case kAuthenticationClientFailureSyncLimit:
+        return "sync_limit";
     case kAuthenticationClientFailureRemoteError:
         return "remote_error";
     case kAuthenticationClientFailureStatsPushDenied:
@@ -109,7 +111,7 @@ static const char *syncPhase(const authenticationclient_status_t *s)
         return "authenticating";
     if (s->push_in_flight)
         return "pushing";
-    if (s->pull_in_flight)
+    if (s->pull_in_flight || s->traversal_active)
         return "pulling";
     if (s->unresolved_batch)
         return "replay_pending";
@@ -222,6 +224,13 @@ static api_result_t statusApi(tunnel_t *t, sbuf_t *message, const node_api_call_
     BOOL(pull_requested);
     BOOL(pull_required);
     BOOL(push_requested);
+    BOOL(traversal_active);
+    U64(sync_staged_users);
+    U64(sync_staged_bytes);
+    U64(sync_total_users);
+    APPEND(",\"sync_retry_streak\":%" PRIu32, snapshot.sync_retry_streak);
+    U64(sync_retry_remaining_ms);
+    APPEND(",\"sync_retry_failure\":\"%s\"", failureName(snapshot.sync_retry_failure));
     BOOL(first_usage_push_requested);
     BOOL(first_usage_push_deferred);
     BOOL(catchup_capture_needed);

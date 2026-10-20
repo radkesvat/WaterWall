@@ -28,6 +28,8 @@ authenticationserver_status_result_t authenticationserverStatusSnapshot(tunnel_t
     const uint64_t                now     = getHRTimeUs() / 1000U;
     authenticationserver_status_t sampled = {
         .database_loaded                 = ts->database_loaded,
+        .database_dirty                  = ts->database_dirty,
+        .primary_checkpoint_valid        = ts->primary_checkpoint_valid,
         .user_count                      = user_count,
         .configured_producer_count       = ts->auth_clients_count,
         .session_record_count            = ts->sessions_count,

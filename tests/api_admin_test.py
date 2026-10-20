@@ -58,7 +58,8 @@ def page(identifier=LARGE_ID, cursor=None):
 
 
 def status():
-    return {"database_loaded": True, "user_count": "3", "configured_producer_count": "1",
+    return {"database_loaded": True, "database_dirty": False, "primary_checkpoint_valid": False,
+            "user_count": "3", "configured_producer_count": "1",
             "session_record_count": "0", "config_revision": "84", "stats_revision": "6", "edit_token": EDIT_TOKEN,
             "primary_save": {"last_result": "not_attempted", "last_attempt_age_ms": None, "last_success_age_ms": None},
             "audit": {"enabled": False, "healthy": True, "queued_records": "0", "written_records": "0",
@@ -135,6 +136,38 @@ class AdminTest(unittest.TestCase):
             self.assertEqual(result, 2)
             self.assertEqual(text, "")
             self.assertEqual(call.call_count, 1)
+
+    def test_persistence_status_flags_accept_exact_booleans(self):
+        for dirty, checkpoint in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(dirty=dirty, checkpoint=checkpoint):
+                value = status()
+                value.update(database_dirty=dirty, primary_checkpoint_valid=checkpoint)
+                result, text, diagnostic, call, _ = self.invoke(["status"], [reply(value)])
+                self.assertEqual(result, 0, diagnostic)
+                self.assertEqual(json.loads(text), value)
+                self.assertEqual(diagnostic, "")
+                call.assert_called_once()
+
+    def test_persistence_status_schema_remains_strict(self):
+        invalid = []
+        for field in ("database_dirty", "primary_checkpoint_valid"):
+            for bad in (0, 1, "true", None, [], {}):
+                value = status()
+                value[field] = bad
+                invalid.append(value)
+            value = status()
+            del value[field]
+            invalid.append(value)
+        value = status()
+        value["password"] = "PRIVATE_PASSWORD_SENTINEL"
+        invalid.append(value)
+        for value in invalid:
+            with self.subTest(value=value):
+                result, text, diagnostic, call, _ = self.invoke(["status"], [reply(value)])
+                self.assertEqual(result, 2)
+                self.assertEqual(text, "")
+                self.assertNotIn("PRIVATE_PASSWORD_SENTINEL", diagnostic)
+                call.assert_called_once()
 
     def test_read_status_and_exact_large_id(self):
         for command, body, operation, expected in [

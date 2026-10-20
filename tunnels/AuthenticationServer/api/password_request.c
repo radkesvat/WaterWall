@@ -2,20 +2,6 @@
 #include "AuthenticationServer/password_change.h"
 #include "node_builder/config_lexical.h"
 
-/* Wipe every decoded string, including values in rejected/misnamed fields.
- * The lexical bounds limit recursion and the lengths inspected here. */
-static void wipePasswordRequestStrings(cJSON *item)
-{
-    for (; item != NULL; item = item->next)
-    {
-        wipePasswordRequestStrings(item->child);
-        if (item->valuestring != NULL)
-            memorySecureZero(item->valuestring, strlen(item->valuestring));
-        if (item->string != NULL)
-            memorySecureZero(item->string, strlen(item->string));
-    }
-}
-
 const char *authenticationserverParsePasswordChange(sbuf_t *message, const node_api_call_context_t *context,
                                                     authenticationserver_password_request_t *request)
 {
@@ -78,7 +64,7 @@ const char *authenticationserverParsePasswordChange(sbuf_t *message, const node_
         error = authenticationserverPasswordChangeError(
             usersPreparePasswordChange(password, allowance, context->deadline_ms, &request->password));
     }
-    wipePasswordRequestStrings(body);
+    authenticationserverWipeJsonStrings(body);
     cJSON_Delete(body);
     memorySecureZero(sbufGetMutablePtr(message), length);
     bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), message);

@@ -1,3 +1,4 @@
+#include "AuthenticationServer/api.h"
 #include "private_file.h"
 #include "structure.h"
 
@@ -9,13 +10,6 @@ typedef struct authenticationserver_backup_path_list_s
     size_t count;
     size_t capacity;
 } authenticationserver_backup_path_list_t;
-
-typedef struct authenticationserver_user_id_list_s
-{
-    uint64_t *items;
-    size_t    count;
-    size_t    capacity;
-} authenticationserver_user_id_list_t;
 
 static char *authenticationserverCreateBackupPath(const char *db_path)
 {
@@ -42,6 +36,7 @@ static bool authenticationserverBuildUsersJson(authenticationserver_tstate_t *ts
     }
 
     char *json_text = cJSON_PrintBuffered(json, 4096, true);
+    authenticationserverWipeJsonStrings(json);
     cJSON_Delete(json);
 
     if (UNLIKELY(json_text == NULL))
@@ -218,180 +213,6 @@ static void authenticationserverBackupPathListDestroy(authenticationserver_backu
         memoryFree(list->items[i]);
     }
     memoryFree(list->items);
-}
-
-static void authenticationserverUserIdListDestroy(authenticationserver_user_id_list_t *list)
-{
-    memoryFree(list->items);
-}
-
-static bool authenticationserverUserIdListAppend(authenticationserver_user_id_list_t *list, uint64_t id)
-{
-    for (size_t i = 0; i < list->count; ++i)
-    {
-        if (UNLIKELY(list->items[i] == id))
-        {
-            LOGW("AuthenticationServer: users database contains duplicate required user id %" PRIu64, id);
-            return false;
-        }
-    }
-
-    if (list->count == list->capacity)
-    {
-        if (UNLIKELY(list->capacity > SIZE_MAX / 2U))
-            return false;
-        size_t new_capacity = list->capacity == 0U ? 16U : list->capacity * 2U;
-        if (UNLIKELY(new_capacity > SIZE_MAX / sizeof(*list->items)))
-            return false;
-
-        uint64_t *new_items = memoryReAllocate(list->items, sizeof(*new_items) * new_capacity);
-        list->items    = new_items;
-        list->capacity = new_capacity;
-    }
-
-    list->items[list->count] = id;
-    ++list->count;
-    return true;
-}
-
-static bool authenticationserverJsonLooksLikeSingleUser(const cJSON *json)
-{
-    return cJSON_IsString(cJSON_GetObjectItemCaseSensitive(json, "password")) ||
-           cJSON_IsString(cJSON_GetObjectItemCaseSensitive(json, "pass"));
-}
-
-static const cJSON *authenticationserverUserJsonIdItem(const cJSON *user_json)
-{
-    const cJSON *item = cJSON_GetObjectItemCaseSensitive(user_json, "id");
-    return item != NULL ? item : cJSON_GetObjectItemCaseSensitive(user_json, "user-id");
-}
-
-static bool authenticationserverReadRequiredUserJsonId(const cJSON *user_json, uint64_t *id)
-{
-    const cJSON *item = authenticationserverUserJsonIdItem(user_json);
-    if (UNLIKELY(item == NULL || cJSON_IsNull(item)))
-    {
-        return false;
-    }
-    if (UNLIKELY(cJSON_IsString(item) && (item->valuestring == NULL || item->valuestring[0] == '\0')))
-    {
-        return false;
-    }
-    if (UNLIKELY(! getUint64FromJson(id, item)))
-    {
-        return false;
-    }
-
-    return *id != 0;
-}
-
-static bool authenticationserverValidateUserJsonRequiredId(authenticationserver_user_id_list_t *ids,
-                                                           const cJSON *user_json, const char *path)
-{
-    const size_t index = ids->count;
-    uint64_t     id    = 0;
-
-    if (UNLIKELY(! cJSON_IsObject(user_json)))
-    {
-        LOGW("AuthenticationServer: users database \"%s\" has a non-object user entry at index %zu", path, index);
-        return false;
-    }
-    if (UNLIKELY(! authenticationserverReadRequiredUserJsonId(user_json, &id)))
-    {
-        LOGW("AuthenticationServer: users database \"%s\" has a user at index %zu without a required non-zero id",
-             path,
-             index);
-        return false;
-    }
-
-    return authenticationserverUserIdListAppend(ids, id);
-}
-
-static bool authenticationserverValidateUsersJsonRequiredIds(authenticationserver_user_id_list_t *ids,
-                                                             const cJSON *json, const char *path);
-
-static bool authenticationserverValidateUsersJsonArrayRequiredIds(authenticationserver_user_id_list_t *ids,
-                                                                  const cJSON *array, const char *path)
-{
-    const cJSON *entry = NULL;
-
-    cJSON_ArrayForEach(entry, array)
-    {
-        if (UNLIKELY(! authenticationserverValidateUserJsonRequiredId(ids, entry, path)))
-        {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static bool authenticationserverValidateUsersJsonObjectMapRequiredIds(authenticationserver_user_id_list_t *ids,
-                                                                      const cJSON *object, const char *path)
-{
-    const cJSON *entry = NULL;
-
-    cJSON_ArrayForEach(entry, object)
-    {
-        if (UNLIKELY(! authenticationserverValidateUserJsonRequiredId(ids, entry, path)))
-        {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static bool authenticationserverValidateUsersJsonRequiredIds(authenticationserver_user_id_list_t *ids,
-                                                             const cJSON *json, const char *path)
-{
-    if (UNLIKELY(json == NULL || cJSON_IsNull(json)))
-    {
-        return true;
-    }
-    if (cJSON_IsArray(json))
-    {
-        return authenticationserverValidateUsersJsonArrayRequiredIds(ids, json, path);
-    }
-    if (UNLIKELY(! cJSON_IsObject(json)))
-    {
-        LOGW("AuthenticationServer: users database \"%s\" must be an object, array, or null", path);
-        return false;
-    }
-    if (json->child == NULL)
-    {
-        return true;
-    }
-
-    const cJSON *users_array = cJSON_GetObjectItemCaseSensitive(json, "users");
-    if (users_array != NULL)
-    {
-        if (UNLIKELY(cJSON_IsNull(users_array)))
-        {
-            return true;
-        }
-        if (UNLIKELY(! cJSON_IsArray(users_array)))
-        {
-            LOGW("AuthenticationServer: users database \"%s\" field \"users\" must be an array", path);
-            return false;
-        }
-        return authenticationserverValidateUsersJsonArrayRequiredIds(ids, users_array, path);
-    }
-    if (authenticationserverJsonLooksLikeSingleUser(json))
-    {
-        return authenticationserverValidateUserJsonRequiredId(ids, json, path);
-    }
-
-    return authenticationserverValidateUsersJsonObjectMapRequiredIds(ids, json, path);
-}
-
-static bool authenticationserverValidateDatabaseJsonRequiredIds(const cJSON *json, const char *path)
-{
-    authenticationserver_user_id_list_t ids = {0};
-    bool                                ok  = authenticationserverValidateUsersJsonRequiredIds(&ids, json, path);
-
-    authenticationserverUserIdListDestroy(&ids);
-    return ok;
 }
 
 static int authenticationserverCompareBackupPaths(const void *left, const void *right)
@@ -598,8 +419,6 @@ static bool authenticationserverMaybeWriteNormalBackup(authenticationserver_tsta
     return true;
 }
 
-static bool authenticationserverValidateUsersHaveRequiredIds(authenticationserver_tstate_t *ts, const char *path);
-
 static bool authenticationserverLoadUsersFromPath(authenticationserver_tstate_t *ts, const char *path)
 {
     char *json_text = readFile(path);
@@ -609,71 +428,37 @@ static bool authenticationserverLoadUsersFromPath(authenticationserver_tstate_t 
         return false;
     }
 
-    cJSON *json = cJSON_ParseWithLength(json_text, stringLength(json_text));
+    const size_t json_length = stringLength(json_text);
+    cJSON       *json        = cJSON_ParseWithLength(json_text, json_length);
     if (UNLIKELY(json == NULL))
     {
         LOGW("AuthenticationServer: could not parse users database \"%s\"", path);
+        memorySecureZero(json_text, json_length);
         memoryFree(json_text);
         return false;
     }
 
-    bool ok = authenticationserverValidateDatabaseJsonRequiredIds(json, path);
-    usersClear(&ts->store.users);
-    if (UNLIKELY(! ok))
+    users_t candidate;
+    bool    ok = usersCreate(&candidate);
+    if (ok)
     {
-        LOGW("AuthenticationServer: users database \"%s\" failed required user id validation", path);
+        ok = usersFeedJsonRequiredIds(&candidate, json) && usersValidateStructure(&candidate) &&
+             usersCopy(&ts->store.users, &candidate);
+        usersDestroy(&candidate);
     }
-    else if (UNLIKELY(! usersFeedJson(&ts->store.users, json)))
-    {
-        usersClear(&ts->store.users);
-        LOGW("AuthenticationServer: users database \"%s\" has an invalid users layout", path);
-        ok = false;
-    }
-    else if (UNLIKELY(! usersValidate(&ts->store.users)))
-    {
-        LOGW("AuthenticationServer: users database \"%s\" failed validation", path);
-        usersClear(&ts->store.users);
-        ok = false;
-    }
-    else if (UNLIKELY(! authenticationserverValidateUsersHaveRequiredIds(ts, path)))
-    {
-        LOGW("AuthenticationServer: users database \"%s\" failed required user id validation", path);
-        usersClear(&ts->store.users);
-        ok = false;
-    }
+    if (! ok)
+        LOGW("AuthenticationServer: users database \"%s\" has invalid users or required IDs", path);
 
     if (LIKELY(ok))
     {
         LOGI("AuthenticationServer: loaded %zu users from \"%s\"", usersCount(&ts->store.users), path);
     }
 
+    authenticationserverWipeJsonStrings(json);
     cJSON_Delete(json);
+    memorySecureZero(json_text, json_length);
     memoryFree(json_text);
     return ok;
-}
-
-static bool authenticationserverValidateUsersHaveRequiredIds(authenticationserver_tstate_t *ts, const char *path)
-{
-    const size_t count = usersCount(&ts->store.users);
-
-    for (size_t i = 0; i < count; ++i)
-    {
-        const user_t *user = usersGetAtConst(&ts->store.users, i);
-        if (UNLIKELY(user == NULL))
-        {
-            LOGW("AuthenticationServer: users database \"%s\" could not inspect user at index %zu", path, i);
-            return false;
-        }
-        if (UNLIKELY(! authenticationserverUserHasRequiredId(user)))
-        {
-            LOGW("AuthenticationServer: users database \"%s\" has a user at index %zu without a required non-zero id",
-                 path,
-                 i);
-            return false;
-        }
-    }
-
-    return true;
 }
 
 static bool authenticationserverRewritePrimaryFromMemory(authenticationserver_tstate_t *ts)
@@ -687,6 +472,7 @@ static bool authenticationserverRewritePrimaryFromMemory(authenticationserver_ts
     }
 
     bool ok = authenticationserverWriteJsonFile(ts->db_path, json_text, json_len);
+    memorySecureZero(json_text, json_len);
     cJSON_free(json_text);
     return ok;
 }
@@ -706,15 +492,44 @@ static void authenticationserverRecordPrimarySave(authenticationserver_tstate_t 
     }
 }
 
-bool authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *ts)
+static bool authenticationserverHistoryDue(authenticationserver_tstate_t *ts)
+{
+    if (ts->normal_backups_mode == kAuthenticationServerNormalBackupsDisabled)
+        return false;
+    const time_t now = time(NULL);
+    uint64_t     slot;
+    char         period[32];
+    return now == (time_t) -1 ||
+           ! authenticationserverNormalBackupPeriod(ts->normal_backups_mode, now, &slot, period, sizeof(period)) ||
+           slot != ts->normal_backups_last_slot;
+}
+
+bool authenticationserverSaveDatabaseLockedForReason(authenticationserver_tstate_t     *ts,
+                                                     authenticationserver_save_reason_t reason)
 {
     char  *json_text = NULL;
     size_t json_len  = 0;
+    const bool first_periodic = reason == kAuthenticationServerSavePeriodic && ! ts->periodic_save_seen;
+    if (reason == kAuthenticationServerSavePeriodic)
+        ts->periodic_save_seen = true;
 
     if (UNLIKELY(! ts->database_loaded))
     {
         authenticationserverRecordPrimarySave(ts, false, getHRTimeUs() / 1000U);
         return false;
+    }
+
+    if (reason == kAuthenticationServerSavePeriodic && ! first_periodic && ! ts->database_dirty &&
+        ts->primary_checkpoint_valid)
+    {
+        const authenticationserver_private_read_result_t health = authenticationserverPrivateProbe(ts->db_path);
+        if (health == kAuthenticationServerPrivateReadError)
+        {
+            authenticationserverRecordPrimarySave(ts, false, getHRTimeUs() / 1000U);
+            return false;
+        }
+        if (health == kAuthenticationServerPrivateReadSuccess && ! authenticationserverHistoryDue(ts))
+            return true;
     }
 
     if (UNLIKELY(! authenticationserverBuildUsersJson(ts, &json_text, &json_len)))
@@ -741,14 +556,18 @@ bool authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *ts)
                   authenticationserverPrivatePublish(&backup, ts->backup_path, NULL))) &&
                 authenticationserverPrivatePublish(&primary, ts->db_path, &committed_ms);
     authenticationserverRecordPrimarySave(ts, committed, committed ? committed_ms : getHRTimeUs() / 1000U);
+    memorySecureZero(previous, previous_len);
     memoryFree(previous);
     authenticationserverPrivateDiscard(&backup);
     authenticationserverPrivateDiscard(&primary);
     if (! committed)
     {
+        memorySecureZero(json_text, json_len);
         cJSON_free(json_text);
         return false;
     }
+    ts->database_dirty           = false;
+    ts->primary_checkpoint_valid = true;
 
     if (UNLIKELY(! authenticationserverMaybeWriteNormalBackup(ts, json_text, json_len)))
     {
@@ -759,11 +578,18 @@ bool authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *ts)
          usersCount(&ts->store.users),
          ts->db_path,
          ts->backup_path);
+    memorySecureZero(json_text, json_len);
     cJSON_free(json_text);
     return true;
 }
 
-bool authenticationserverSaveDatabase(authenticationserver_tstate_t *ts)
+bool authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *ts)
+{
+    return authenticationserverSaveDatabaseLockedForReason(ts, kAuthenticationServerSaveForced);
+}
+
+bool authenticationserverSaveDatabaseForReason(authenticationserver_tstate_t     *ts,
+                                               authenticationserver_save_reason_t reason)
 {
     /*
      * Runtime modules can temporarily mutate users_t and then roll back on file
@@ -771,9 +597,14 @@ bool authenticationserverSaveDatabase(authenticationserver_tstate_t *ts)
      * those in-flight states or interleaving writes to db-path and backup.
      */
     rwlockWriteLock(&ts->state_lock);
-    bool ok = authenticationserverSaveDatabaseLocked(ts);
+    bool ok = authenticationserverSaveDatabaseLockedForReason(ts, reason);
     rwlockWriteUnlock(&ts->state_lock);
     return ok;
+}
+
+bool authenticationserverSaveDatabase(authenticationserver_tstate_t *ts)
+{
+    return authenticationserverSaveDatabaseForReason(ts, kAuthenticationServerSaveForced);
 }
 
 bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
@@ -835,7 +666,7 @@ void authenticationserverSaveTimerCallback(wtimer_t *timer)
     }
 
     authenticationserver_tstate_t *ts = tunnelGetState(t);
-    if (UNLIKELY(! authenticationserverSaveDatabase(ts)))
+    if (UNLIKELY(! authenticationserverSaveDatabaseForReason(ts, kAuthenticationServerSavePeriodic)))
     {
         LOGW("AuthenticationServer: periodic users database save failed");
     }

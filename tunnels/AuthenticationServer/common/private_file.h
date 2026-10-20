@@ -29,3 +29,4 @@ typedef enum authenticationserver_private_read_result_e
 } authenticationserver_private_read_result_t;
 authenticationserver_private_read_result_t authenticationserverPrivateRead(const char *path, char **data,
                                                                            size_t *length);
+authenticationserver_private_read_result_t authenticationserverPrivateProbe(const char *path);

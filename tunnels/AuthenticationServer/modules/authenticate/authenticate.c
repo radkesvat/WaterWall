@@ -1,5 +1,6 @@
 #include "modules/authenticate/authenticate.h"
 #include "../../../Internals/AuthenticationCommon/credentials.h"
+#include "AuthenticationServer/api.h"
 #include "node_builder/config_lexical.h"
 
 #include "loggers/network_logger.h"
@@ -18,6 +19,7 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
     cJSON *json = configLexicalParseBoundedQuiet((const char *) request_data, request_data_len, 2, 8);
     if (UNLIKELY(! cJSON_IsObject(json)))
     {
+        authenticationserverWipeJsonStrings(json);
         cJSON_Delete(json);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-auth-request");
     }
@@ -28,6 +30,7 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
         if (stringCompare(field->string, "name") != 0 && stringCompare(field->string, "secret") != 0 &&
             stringCompare(field->string, "epoch") != 0)
         {
+            authenticationserverWipeJsonStrings(json);
             cJSON_Delete(json);
             return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-auth-request");
         }
@@ -39,6 +42,7 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
                  ! cJSON_IsString(secret_json) || secret_json->valuestring == NULL ||
                  secret_json->valuestring[0] == '\0'))
     {
+        authenticationserverWipeJsonStrings(json);
         cJSON_Delete(json);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-auth-request");
     }
@@ -50,6 +54,7 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
          stringLength(epoch_json->valuestring) != 64 ||
          ! asciiHexDecodeBytes((const uint8_t *) epoch_json->valuestring, 64, decoded, sizeof(decoded))))
     {
+        authenticationserverWipeJsonStrings(json);
         cJSON_Delete(json);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-auth-request");
     }
@@ -60,6 +65,7 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
                                           secret_json->valuestring,
                                           epoch_json != NULL ? (const uint8_t *) epoch_json->valuestring : NULL,
                                           &error);
+    authenticationserverWipeJsonStrings(json);
     cJSON_Delete(json);
 
     if (UNLIKELY(new_session == NULL))

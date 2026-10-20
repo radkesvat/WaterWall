@@ -525,7 +525,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   target_link_libraries(authenticationserver_audit_test PRIVATE AuthenticationServer ww)
   target_link_options(authenticationserver_audit_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
-    "-Wl,--wrap=authenticationserverAuditWriterAppend" "-Wl,--wrap=authenticationserverSaveDatabaseLocked")
+    "-Wl,--wrap=authenticationserverAuditWriterAppend" "-Wl,--wrap=authenticationserverSaveDatabaseLockedForReason")
   add_dependencies(waterwall_unit_tests authenticationserver_audit_test)
   add_waterwall_unit_test(waterwall.authenticationserver_audit_unit authenticationserver_audit_test
     "unit;authentication;audit;security;concurrency;tsan")
@@ -571,7 +571,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationserver_api_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   target_link_libraries(authenticationserver_api_test PRIVATE AuthenticationServer ww)
-  target_link_options(authenticationserver_api_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_options(authenticationserver_api_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=getHRTimeUs")
   add_dependencies(waterwall_unit_tests authenticationserver_api_test)
   add_waterwall_unit_test(waterwall.authenticationserver_api_unit authenticationserver_api_test
     "unit;authentication;api;security;ownership")
@@ -582,8 +582,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
   target_link_libraries(authenticationserver_storage_test PRIVATE AuthenticationServer ww)
   target_link_options(authenticationserver_storage_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
     "-Wl,--wrap=open" "-Wl,--wrap=fread" "-Wl,--wrap=fwrite" "-Wl,--wrap=fflush" "-Wl,--wrap=fclose"
-    "-Wl,--wrap=fsync" "-Wl,--wrap=fchmod" "-Wl,--wrap=rename"
-    "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=time")
+    "-Wl,--wrap=fsync" "-Wl,--wrap=fchmod" "-Wl,--wrap=rename" "-Wl,--wrap=close"
+    "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=time" "-Wl,--wrap=memoryFree"
+    "-Wl,--wrap=cJSON_ParseWithLength" "-Wl,--wrap=cJSON_PrintBuffered")
   add_dependencies(waterwall_unit_tests authenticationserver_storage_test)
   add_waterwall_unit_test(waterwall.authenticationserver_storage_unit authenticationserver_storage_test
     "unit;authentication;storage")
@@ -592,7 +593,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   target_link_libraries(authenticationserver_responses_test PRIVATE AuthenticationServer ww)
   target_link_options(authenticationserver_responses_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
-    "-Wl,--wrap=sbufCreateWithPadding")
+    "-Wl,--wrap=sbufCreateWithPadding" "-Wl,--wrap=memoryFree" "-Wl,--wrap=configLexicalParseBoundedQuiet"
+    "-Wl,--wrap=cJSON_PrintPreallocated")
   add_dependencies(waterwall_unit_tests authenticationserver_responses_test)
   add_waterwall_unit_test(waterwall.authenticationserver_responses_unit authenticationserver_responses_test
     "unit;authentication;buffer;line")
@@ -610,7 +612,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationClient)
     target_link_libraries(authentication_sync_test PRIVATE UserController)
     target_compile_definitions(authentication_sync_test PRIVATE AUTHENTICATION_SYNC_HAVE_CONTROLLER=1)
   endif()
-  target_link_options(authentication_sync_test PRIVATE "-Wl,--wrap=gettimeofday" "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=usersSnapshotAccounting")
+  target_link_options(authentication_sync_test PRIVATE "-Wl,--wrap=gettimeofday" "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=usersSnapshotAccounting" "-Wl,--wrap=fastRand32")
   add_dependencies(waterwall_unit_tests authentication_sync_test)
   # The 4097-account boundary exercises software X25519 under ASan as well.
   add_waterwall_unit_test(waterwall.authentication_sync_unit authentication_sync_test "unit;authentication;accounting;worker;line" 300)
@@ -618,7 +620,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationClient)
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authentication_ingress_test.c
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authentication_sync_peer.c)
   target_link_libraries(authentication_ingress_test PRIVATE AuthenticationClient AuthenticationServer ww)
-  target_link_options(authentication_ingress_test PRIVATE "-Wl,--wrap=getHRTimeUs")
+  target_link_options(authentication_ingress_test PRIVATE "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=fastRand32")
   add_dependencies(waterwall_unit_tests authentication_ingress_test)
   add_waterwall_unit_test(waterwall.authentication_ingress_unit authentication_ingress_test
     "unit;authentication;buffer;line" 180)
@@ -627,13 +629,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationClient)
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationclient_progress_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   target_link_libraries(authenticationclient_progress_test PRIVATE AuthenticationClient ww)
-  target_link_options(authenticationclient_progress_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=getHRTimeUs")
+  target_link_options(authenticationclient_progress_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=fastRand32" "-Wl,--wrap=cJSON_PrintUnformatted" "-Wl,--wrap=cJSON_Delete" "-Wl,--wrap=cJSON_free")
   add_dependencies(waterwall_unit_tests authenticationclient_progress_test)
   add_waterwall_unit_test(waterwall.authenticationclient_progress_unit authenticationclient_progress_test
     "unit;authentication;timer;worker;line")
   waterwall_add_native_executable(authenticationclient_profile_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationclient_profile_test.c)
   target_link_libraries(authenticationclient_profile_test PRIVATE AuthenticationClient ww)
-  target_link_options(authenticationclient_profile_test PRIVATE "-Wl,--wrap=stringDuplicate")
+  target_link_options(authenticationclient_profile_test PRIVATE "-Wl,--wrap=stringDuplicate" "-Wl,--wrap=memoryFree")
   add_dependencies(waterwall_unit_tests authenticationclient_profile_test)
   add_waterwall_unit_test(waterwall.authenticationclient_profile_unit authenticationclient_profile_test
     "unit;authenticationclient;identity;allocation")

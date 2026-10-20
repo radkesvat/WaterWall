@@ -5,6 +5,13 @@
 #include "loggers/network_logger.h"
 #include <pthread.h>
 
+static uint32_t retry_random;
+uint32_t        __wrap_fastRand32(void);
+uint32_t        __wrap_fastRand32(void)
+{
+    return retry_random;
+}
+
 static atomic_ullong clock_us;
 unsigned long long   __wrap_getHRTimeUs(void);
 unsigned long long   __wrap_getHRTimeUs(void)
@@ -19,6 +26,57 @@ static tunnel_chain_t  *chain;
 static unsigned         inits, finishes, depth, maximum_depth, other_work;
 static bool             fail_init, establish;
 static uint32_t         last_id;
+static bool             inspect_authentication, refuse_serialization;
+static const cJSON     *authentication_json;
+static const char      *authentication_secret;
+static char            *authentication_text;
+static size_t           authentication_secret_length, authentication_text_length;
+static unsigned         wiped_json_secrets, wiped_texts, forwarded_authentication;
+
+char *__real_cJSON_PrintUnformatted(const cJSON *json);
+char *__wrap_cJSON_PrintUnformatted(const cJSON *json);
+char *__wrap_cJSON_PrintUnformatted(const cJSON *json)
+{
+    if (! inspect_authentication)
+        return __real_cJSON_PrintUnformatted(json);
+    const cJSON *secret = cJSON_GetObjectItemCaseSensitive(json, "secret");
+    twfRequire(cJSON_IsString(secret) && secret->valuestring != NULL, "Authenticate JSON secret missing");
+    authentication_json          = json;
+    authentication_secret        = secret->valuestring;
+    authentication_secret_length = strlen(secret->valuestring) + 1;
+    authentication_text          = refuse_serialization ? NULL : __real_cJSON_PrintUnformatted(json);
+    authentication_text_length   = authentication_text ? strlen(authentication_text) + 1 : 0;
+    return authentication_text;
+}
+
+void __real_cJSON_Delete(cJSON *json);
+void __wrap_cJSON_Delete(cJSON *json);
+void __wrap_cJSON_Delete(cJSON *json)
+{
+    if (json != NULL && json == authentication_json)
+    {
+        for (size_t i = 0; i < authentication_secret_length; ++i)
+            twfRequire(authentication_secret[i] == 0, "decoded Authenticate secret was destroyed without wiping");
+        authentication_json   = NULL;
+        authentication_secret = NULL;
+        ++wiped_json_secrets;
+    }
+    __real_cJSON_Delete(json);
+}
+
+void __real_cJSON_free(void *ptr);
+void __wrap_cJSON_free(void *ptr);
+void __wrap_cJSON_free(void *ptr)
+{
+    if (ptr != NULL && ptr == authentication_text)
+    {
+        for (size_t i = 0; i < authentication_text_length; ++i)
+            twfRequire(((const char *) ptr)[i] == 0, "serialized Authenticate was freed without wiping");
+        authentication_text = NULL;
+        ++wiped_texts;
+    }
+    __real_cJSON_free(ptr);
+}
 
 static void init(tunnel_t *t, line_t *l)
 {
@@ -42,6 +100,19 @@ static void payload(tunnel_t *t, line_t *l, sbuf_t *b)
     discard t;
     memoryCopy(&last_id, (const uint8_t *) sbufGetRawPtr(b) + 69, 4);
     last_id = ntohl(last_id);
+    if (inspect_authentication)
+    {
+        const size_t length = sbufGetLength(b);
+        twfRequire(length > 77 &&
+                       ((const uint8_t *) sbufGetRawPtr(b))[68] == kAuthenticationClientRequestTypeAuthenticate,
+                   "expected forwarded Authenticate frame");
+        cJSON       *json   = cJSON_ParseWithLength((const char *) sbufGetRawPtr(b) + 77, length - 77);
+        const cJSON *secret = cJSON_GetObjectItemCaseSensitive(json, "secret");
+        twfRequire(cJSON_IsString(secret) && strcmp(secret->valuestring, "secret") == 0,
+                   "local wiping changed the already-transferred Authenticate request");
+        cJSON_Delete(json);
+        ++forwarded_authentication;
+    }
     lineReuseBuffer(l, b);
 }
 static void other(void *worker, void *a, void *b, void *c)
@@ -63,6 +134,7 @@ static authenticationclient_tstate_t *setup(void)
     atomicStoreU64(&clock_us, 100000000);
     inits = finishes = depth = maximum_depth = other_work = 0;
     fail_init = establish = false;
+    retry_random          = 0;
     twfWorkerEnvSetup(&env, 8192, 0);
     messages = masterpoolCreateWithCapacity(16);
     workerMessagesInstallMasterPoolCallbacks(messages);
@@ -93,6 +165,8 @@ static authenticationclient_tstate_t *setup(void)
     ts->secret                = stringDuplicate("secret");
     ts->next_correlation_id   = 1;
     ts->max_pending_requests  = 64;
+    ts->sync_max_users        = kAuthenticationDefaultSyncMaxUsers;
+    ts->sync_max_bytes        = kAuthenticationDefaultSyncMaxBytes;
     ts->reconnect_interval_ms = 5000;
     ts->request_timeout_ms    = 100;
     return ts;
@@ -359,14 +433,80 @@ static void testRefusalClassificationAndDiagnostics(void)
                "diagnostic escaping changed protocol classification");
     teardown();
 }
+static void testOwnedAuthenticateCleanup(void)
+{
+    for (unsigned path = 0; path < 3; ++path)
+    {
+        authenticationclient_tstate_t *ts = setup();
+        wiped_json_secrets = wiped_texts = forwarded_authentication = 0;
+        inspect_authentication                                      = true;
+        refuse_serialization                                        = path == 2;
+        if (path == 0)
+        {
+            establish = true;
+            authenticationclientOpenControlLine(client);
+            twfRequire(ts->control_line != NULL, "Authenticate transport open");
+        }
+        else
+            twfRequire(! authenticationclientSendAuthenticate(client), "refused Authenticate unexpectedly sent");
+        twfRequire(wiped_json_secrets == 1 && wiped_texts == (path == 2 ? 0U : 1U) &&
+                       forwarded_authentication == (path == 0 ? 1U : 0U) && authentication_json == NULL &&
+                       authentication_text == NULL,
+                   "Authenticate success/refusal/serialization failure did not settle owned sensitive copies");
+        inspect_authentication = refuse_serialization = false;
+        teardown();
+    }
+}
+
+static void testRepeatedSyncBackoff(void)
+{
+    authenticationclient_tstate_t *ts = setup();
+    ts->reconnect_interval_ms         = 0;
+    const uint64_t now                = getHRTimeUs() / 1000;
+    authenticationclientRecordFailure(client, kAuthenticationClientFailureTransportClosed, 0);
+    twfRequire(ts->sync_retry_streak == 1 && ts->sync_retry_not_before_ms == now,
+               "first zero retry lost its queue semantics");
+    uint64_t delay = 1000;
+    for (unsigned n = 2; n <= 12; ++n)
+    {
+        retry_random = (uint32_t) (delay / 4);
+        authenticationclientRecordFailure(
+            client, kAuthenticationClientFailureInvalidResponse, kAuthenticationClientRequestTypeGetUsersPage);
+        twfRequire(ts->sync_retry_streak == n && ts->sync_retry_not_before_ms == now + delay + delay / 4,
+                   "retry exponential delay/cap/jitter bound changed");
+        const uint64_t due = ts->sync_retry_not_before_ms;
+        authenticationclientOpenControlLine(client);
+        authenticationclientResumeSync(client);
+        authenticationclientScheduleReconnect(client);
+        twfRequire(inits == 0 && ts->pending_count == 0 && ts->sync_retry_not_before_ms == due &&
+                       ts->progress_timer == NULL && ts->reconnect_timer != NULL,
+                   "direct work bypassed or extended failed-sync backoff");
+        delay = min(delay * 2, UINT64_C(60000));
+    }
+    authenticationclient_status_t snapshot;
+    authenticationclientStatusSnapshot(client, false, 0, 0, &snapshot);
+    twfRequire(snapshot.sync_retry_streak == 12 && snapshot.sync_retry_remaining_ms == 75000 &&
+                   snapshot.sync_retry_failure == kAuthenticationClientFailureInvalidResponse,
+               "status lost fixed retry facts");
+    /* A published earlier timer cannot open the line ahead of the effective
+     * deadline; it reschedules rather than spinning a short progress timer. */
+    pump(1000);
+    twfRequire(inits == 0 && ts->reconnect_timer != NULL, "obsolete retry bypassed later failure deadline");
+    pump(74000);
+    twfRequire(inits == 1, "backoff did not provide its own wakeup with optional jobs disabled");
+    teardown();
+}
+
 int main(void)
 {
     twfSetCase("authenticationclient request and reconnect progress");
     twfRequire(createNetworkLogger(NULL, false) != NULL, "logger setup failed");
+    testRepeatedSyncBackoff();
     testRetryProgress();
     testDeadlinesAndMalformed();
     testPausedProgress();
     testRefusalClassificationAndDiagnostics();
+    testOwnedAuthenticateCleanup();
     networkloggerDestroy();
     return 0;
 }

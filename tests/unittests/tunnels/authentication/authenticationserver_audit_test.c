@@ -37,16 +37,19 @@ bool __wrap_authenticationserverAuditWriterAppend(authenticationserver_audit_wri
     return __real_authenticationserverAuditWriterAppend(writer, record, length, error);
 }
 
-bool __real_authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *);
-bool __wrap_authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *);
-bool __wrap_authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *ts)
+bool __real_authenticationserverSaveDatabaseLockedForReason(authenticationserver_tstate_t *,
+                                                            authenticationserver_save_reason_t);
+bool __wrap_authenticationserverSaveDatabaseLockedForReason(authenticationserver_tstate_t *,
+                                                            authenticationserver_save_reason_t);
+bool __wrap_authenticationserverSaveDatabaseLockedForReason(authenticationserver_tstate_t     *ts,
+                                                            authenticationserver_save_reason_t reason)
 {
     if (fail_save)
     {
         fail_save = false;
         return false;
     }
-    return __real_authenticationserverSaveDatabaseLocked(ts);
+    return __real_authenticationserverSaveDatabaseLockedForReason(ts, reason);
 }
 
 static authenticationserver_tstate_t *state(void)

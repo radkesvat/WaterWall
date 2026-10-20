@@ -7,6 +7,39 @@
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "loggers/network_logger.h"
 
+static bool        count_clock, advance_clock;
+static unsigned    clock_reads;
+unsigned long long __real_getHRTimeUs(void);
+unsigned long long __wrap_getHRTimeUs(void);
+unsigned long long __wrap_getHRTimeUs(void)
+{
+    if (! count_clock)
+        return __real_getHRTimeUs();
+    ++clock_reads;
+    return 1000000ULL + (advance_clock ? clock_reads * 1000ULL : 0);
+}
+
+static void renderClockGranularity(void)
+{
+    char value[4097], output[sizeof(value) + 2];
+    memset(value, 'x', sizeof(value) - 1);
+    value[sizeof(value) - 1]                  = 0;
+    authenticationserver_json_writer_t writer = {
+        .output = output, .capacity = sizeof(output), .deadline_ms = UINT64_MAX};
+    clock_reads = 0;
+    count_clock = true;
+    authenticationserverJsonString(&writer, value);
+    count_clock = false;
+    twfRequire(! writer.timeout && ! writer.overflow && writer.used == 4098 && clock_reads <= 18,
+               "string renderer sampled time for individual bytes");
+    writer = (authenticationserver_json_writer_t) {.output = output, .capacity = sizeof(output), .deadline_ms = 1004};
+    clock_reads = 0;
+    count_clock = advance_clock = true;
+    authenticationserverJsonString(&writer, value);
+    count_clock = advance_clock = false;
+    twfRequire(writer.timeout && writer.used <= 768, "render ignored mid-span timeout");
+}
+
 static twf_worker_env_t        env;
 static tunnel_t               *server;
 static size_t                  last_body_size;
@@ -502,6 +535,7 @@ int main(void)
     cJSON_Delete(empty);
     add(UINT64_MAX);
     add(UINT64_C(9007199254740993));
+    renderClockGranularity();
     parsing();
     detail();
     editTokenCodec();

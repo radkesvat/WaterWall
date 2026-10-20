@@ -103,7 +103,8 @@ USER = {"id": ID, "gid": valid_uint, "enabled": BOOL,
         **{field: valid_text for field in STRING_FIELDS}, "record_stat_interval_ms": valid_uint,
         "limit": LIMIT, "time": {**TIME, "created_at_ms": valid_uint}, "usage": PAIR}
 SCHEMAS = {
-    "status": {**REVISION, "database_loaded": BOOL, "user_count": valid_uint,
+    "status": {**REVISION, "database_loaded": BOOL, "database_dirty": BOOL,
+               "primary_checkpoint_valid": BOOL, "user_count": valid_uint,
                "configured_producer_count": valid_uint, "session_record_count": valid_uint,
                "primary_save": {
                    "last_result": lambda value: value in ("not_attempted", "success", "failure"),

@@ -237,7 +237,7 @@ MANIFEST = [
     ("tunnels/template/instance/chain.c", "templateTunnelOnChain", 1,
      ("This Function is disabled, using the default Tunnel instead",),
      "disabled lifecycle callback stub: template onChain"),
-    ("tunnels/AuthenticationClient/common/protocol.c", "authenticationclientOpenControlLine", 1,
+    ("tunnels/AuthenticationClient/common/control_line.c", "authenticationclientOpenControlLine", 1,
      ("AuthenticationClient: control line must be opened on worker 0",),
      "helper/line-state invariant: AuthClient protocol worker not 0"),
     ("tunnels/AuthenticationClient/common/users_api.c", "authenticationclientAssertProfileEmpty", 1,

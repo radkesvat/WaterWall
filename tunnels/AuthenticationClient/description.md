@@ -59,6 +59,8 @@ Local loopback transport example:
     "reconnect-interval-ms": 5000,
     "request-timeout-ms": 120000,
     "max-pending-requests": 64,
+  "sync-max-users": 100000,
+  "sync-max-bytes": 268435456,
     "traffic-multiplier": 1,
     "verbose": false
   },
@@ -197,6 +199,8 @@ Optional settings:
   "reconnect-interval-ms": 5000,
   "request-timeout-ms": 120000,
   "max-pending-requests": 64,
+  "sync-max-users": 100000,
+  "sync-max-bytes": 268435456,
   "traffic-multiplier": 1,
   "verbose": false
 }
@@ -205,15 +209,15 @@ Optional settings:
 `ping-interval-ms` sends authenticated `Ping` requests and also retries `Authenticate` while the transport is connected
 but not authenticated.
 
-`pull-interval-ms` enables periodic revision checks for `GetAllUsers`. A value of `0` disables timer-driven pulls, but
+`pull-interval-ms` enables periodic revision checks for `GetUsersPage`. A value of `0` disables timer-driven pulls, but
 the client still pulls once after successful authentication and when the server reports `needs-pull`.
 
 `push-interval-ms` enables periodic `PushUserStats`. A value of `0` disables periodic pushes. Other tunnels can still
 ask for a push through the internal API.
 
 When pull or push is enabled, one `sync_timer` runs at the shortest enabled pull/push interval. Each sync tick checks
-which jobs are due and attempts `PushUserStats` first. `GetAllUsers` is sent when revisions differ, or when the pull
-cadence is due and no fresher response has already confirmed that the server and local table revisions match.
+which jobs are due and attempts `PushUserStats` first. `GetUsersPage` starts a traversal when configuration revisions differ or the pull cadence is due.
+Statistics revision differences follow the configured cadence because a paged snapshot samples mixed times.
 
 `reconnect-interval-ms` controls reconnect delay after the control transport closes. A value of `0` queues a retry for a later loop turn. Repeated retry requests preserve the first positive deadline.
 
@@ -229,7 +233,9 @@ UserController enforces each user's `limit.bandwidth.u` and `.d` as actual logic
 All lines, controllers and workers referencing this AuthenticationClient share each user's independent directional budget.
 Different clients and users are independent; no distributed allowance is implied. Queued bytes are charged only at onward
 handoff, while first positive arrival starts first-use expiry even before forwarding. Runtime buckets and fair-turn tickets
-migrate by durable user ID and remain outside JSON, snapshots and persistence. Multipliers affect quota only.
+migrate by durable user ID and remain outside JSON, snapshots and persistence. Multipliers affect quota only. Per user in one AuthenticationClient, queues permit 4 MiB logical bytes,
+8 MiB allocation charge and 1024 buffers/tickets. Per AuthenticationClient the limits are 64 MiB, 128 MiB and 16384
+buffers/tickets, with independently accounted byte/buffer and ticket registries. These are not cross-client budgets.
 
 ## Traffic Multiplier
 
@@ -318,15 +324,67 @@ sends `Authenticate` with a zero session token.
 
 `Authenticate` accepts `name`, `secret`, and an optional `epoch` for resumption. A Session response contains 128 bytes:
 a 64-byte token followed by a 64-byte accounting epoch, both hexadecimal OS-secure random values. The client stores
-the token, resolves any retained batch first, then pulls with `GetAllUsers`. A stale response cannot replace an enrolled epoch.
+the token, resolves any retained batch first, then pulls with `GetUsersPage`. A stale response cannot replace an enrolled epoch.
+
+## Paged Synchronization
+
+`GetUsersPage` (request 9, response `Users`/3) transfers a complete configuration through bounded pages. Each ordinary
+page targets 256 KiB including framing and contains at most 128 users. An exceptional first record may occupy one page
+up to the hard response-envelope limit, after all metadata/framing overhead. An impossible record returns correlated
+`user-too-large`; fields are never truncated. Full tables larger than 16 MiB can synchronize.
+
+`sync-max-users` defaults to `100000`; `sync-max-bytes` defaults to `268435456`. Both settings require positive exact
+JSON integers representable on the host. The byte charge sums the exact received JSON object spans for user records,
+including internal whitespace, excluding page metadata, commas and brackets. Admission checks declared totals and page
+charges before constructing additional users; the client never reserves the advertised total in advance. Limit failure
+reports `sync_limit`, drops staging and retains the usable cache and all usage debt. These are traversal admission bounds,
+not an exact RAM cap: active/baseline/staged tables, indexes, JSON and shaping queues consume additional memory.
+Changing these limits requires ordinary configuration restart; restarting does not recover accounting state.
+
+Initial request data is an object with `epoch`, exact decimal-string `sequence` and 64-lowercase-hex `digest` for the
+last matching usage ACK. Enrollment uses sequence `"0"` and 64 zero digest digits. Continuations add `cursor` and decimal
+`total`. A cursor has 64 lowercase hex digits: instance ID (32), configuration revision (16), next position (16).
+It grants no permission. Every request rechecks the producer token, pull permission and live accounting checkpoint.
+
+Each page contains `instance`, `config-revision`, `stats-revision`, `total`, `position`, `count`, `cursor`, `complete`,
+`validated`, `epoch`, `sequence`, `digest`, `server-time-ms`, `accounting-time-ms` and credential-bearing `users`.
+Every 64-bit numeric field is an exact decimal string. Positions are contiguous and each nonempty ordinary page advances.
+The empty database produces one complete empty data page. After the last data page (`complete:true`, `validated:false`),
+the client sends its terminal cursor/total with `validate:true`. The server checks the configuration/checkpoint again
+under its state lock and returns `validated:true`, zero count and empty users. It retains no frozen full-table snapshot.
+
+A configuration edit, including a same-value edit, makes continuation/final validation return `stale_cursor`. The client
+discards staging and restarts from page one after backoff while serving its old cache. Traffic/first-use changes by
+other producers do not invalidate the cursor. Statistics are sampled at different times: the installed stats revision
+is the first page's conservative sample; latest observed remote revisions remain separate. Ordinary cadence governs
+later statistics refreshes, preventing a mixed-time snapshot from creating an immediate refresh loop.
+
+No table/generation changes before successful final validation. All fallible preparation completes before runtime
+migration. Installation merges current local deltas, observations, multiplier carry, reservations, bandwidth queues and
+tickets by durable ID, then publishes active and baseline together once. Each user's clock uses its own page's paired
+server/accounting samples and local receipt time, installed after migration; later pages never reset elapsed age.
+An unresolved batch replays before page one. The whole traversal, including gaps and final validation, blocks new batches;
+first-use/push work remains latched. A page checkpoint contradiction blocks continuity rather than erasing debt.
+
+Absolute `request-timeout-ms` applies separately to every page and final validation, including paused requests. A valid
+complete traversal can take longer than that timeout overall. Disconnect, timeout, malformed/no-progress page, conflict
+or limit refusal releases staging only. Quiescence settles callbacks/timers before releasing owned state.
+
+Repeated failed synchronization uses a monotonic retry streak. The first ordinary retry retains `reconnect-interval-ms`,
+including a force-queued zero delay. Repeated failures start at `max(reconnect-interval-ms,1000)` and double to
+`max(base,60000)`, with additive jitter from zero through one quarter of that delay. The effective deadline also honors
+the stats-refusal floor of 30 seconds (or a larger configured interval). Requests, Resume, timers and first use cannot
+bypass it; independent retry wakeups work with optional intervals zero. Session, Pong and intermediate pages do not reset
+the streak; complete installation does. Status exposes `sync_retry_streak`, `sync_retry_remaining_ms`,
+`sync_retry_failure`, `traversal_active`, `sync_staged_users`, `sync_staged_bytes` and `sync_total_users` without secrets.
 
 ## Local Users Table
 
 The client keeps one active local users table. It is protected by a tunnel-level `wrwlock_t`.
 
-`GetAllUsers` replacement is atomic from the point of view of other tunnels:
+`GetUsersPage` replacement is atomic from the point of view of other tunnels:
 
-1. The response JSON is parsed into a fresh `users_t`.
+1. Each page is imported into a private staged `users_t`; terminal validation must succeed before installation.
 2. The fresh table is validated, including requiring every user to have a non-zero durable id and rejecting overlapping
    `wireguard-allowed-ips` ranges.
 3. Local unsynced charged traffic deltas, per-direction fractional charge remainders and process-local runtime counters
@@ -362,7 +420,7 @@ These limits are local knowledge: two disconnected clients each seeing 80 GB of 
 20 GB, producing 120 GB after reconciliation. Neither quotas nor connection/IP reservations become strict global limits.
 Already-accounted usage remains acceptable after a server disablement or lower-limit edit.
 
-GetAllUsers requires canonical exact `server-time-ms` and positive `accounting-time-ms`. Missing/invalid metadata rejects
+Every users page requires canonical exact `server-time-ms` and positive `accounting-time-ms`. Missing/invalid metadata rejects
 the refresh without client-wall-clock fallback. Absolute dates use server wall time. The server accounting clock starts
 at `max(wall-ms, 1)` once, then advances by fresh server monotonic elapsed time, independently of later wall corrections.
 
@@ -449,6 +507,14 @@ helpers may reject old handles. Callers can either look up a fresh handle or che
 `authenticationclientGetUserByWireGuardPublicKey()` are alternate lookup entry points; successful lookups still return
 the normal id-backed handle.
 
+The `WithResult` wrappers preserve detailed lookup failures; `WithProfile` copies optional identity strings coherently
+with the resolved handle. Release profiles with `authenticationclientUserProfileClear()`. Boolean wrappers and all
+credential-family lookups remain available. `UserObservePayload` starts first use without charging; `UserCommitDelivery`
+charges exactly forwarded bytes after bandwidth admission. `UserBandwidthRegister/SetEligible/Cancel/Reserve/Release/Preview`
+manage directional fair turns and retained costs. `UserAccountTraffic` provides immediate measured accounting for existing
+callers. The older `UserAddTraffic` is generation-sensitive and may reject a handle after refresh; ongoing enforcement
+and the current observation/delivery path resolve durable IDs. Getters/copy-outs, handles and explicit pull/push remain.
+
 Available internal operations:
 
 ```c
@@ -479,7 +545,7 @@ caller. Stats are copied into caller storage. Traffic updates are applied throug
 never mutates a `user_t` directly. Both traffic helpers accept actual measured upload/download bytes; callers must not
 pre-multiply them. Stats copy-outs contain charged usage.
 
-The live enforcement helpers resolve handles by durable id instead of rejecting them solely because a `GetAllUsers`
+The live enforcement helpers resolve handles by durable id instead of rejecting them solely because a `GetUsersPage`
 refresh bumped the local users generation. A miss means the user disappeared from the refreshed table. The `now_ms`
 argument for these helpers is in the client's local monotonic clock domain, because expiry has already been projected
 onto that clock when the users table was installed.
@@ -539,9 +605,7 @@ are startup settings; changing them and restarting does not promise recovery of 
 `authentication-required` follows ordinary reauthentication with the same batch. `usage-replay-conflict` and
 `usage-sequence-invalid` remain terminal accounting inconsistencies and block new admission.
 
-The serialized full-table response, including response metadata, must fit the current roughly 16 MiB framing ceiling.
-Larger tables cannot synchronize. Failed required pulls also defer new usage batches; paginated synchronization is a
-separate capability and is not implemented.
+Complete refreshes use bounded pages and retain the accounting barrier through final validation; see Paged Synchronization.
 
 Reconnect order is Authenticate/resume epoch, replay retained batch if present, validate ACK, then full pull.
 After that refresh, the client captures owed relative deltas and observations, including traffic during recovery,
@@ -581,7 +645,7 @@ All protocol timers live on worker 0, the same worker as the owned control line:
 `ping_timer` sends `Ping` while authenticated and retries `Authenticate` while connected but unauthenticated.
 
 `sync_timer` drives both user-table pull and stats push using the shortest enabled pull/push interval. Each tick checks
-the independent pull/push cadence, queues `PushUserStats` first when due, then queues `GetAllUsers` when revisions
+the independent pull/push cadence, queues `PushUserStats` first when due, then queues `GetUsersPage` when revisions
 differ or the pull cadence is due without a fresher equal-revision response.
 
 `reconnect_timer` preserves the first positive retry deadline, rechecking actual monotonic due time. Zero-delay
@@ -650,7 +714,7 @@ except the normal control line that it created itself.
   candidate is then confirmed with an exact plaintext comparison, so a
   hypothetical SHA-256 collision fails closed.
 - The local sync baseline is duplicated with the native `usersCopy()` deep copy
-  rather than a JSON round trip. Only the received `GetAllUsers` network response
+  rather than a JSON round trip. Only the received `GetUsersPage` network response
   still requires one JSON parse into the active table.
 
 ## Node Metadata

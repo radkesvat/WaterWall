@@ -6,7 +6,13 @@ add_library(AuthenticationClient STATIC
                     instance/start.c
                     instance/stop.c
                     common/line_state.c
-                    common/protocol.c
+                    common/wire.c
+                    common/pending.c
+                    common/control_line.c
+                    common/sync.c
+                    common/accounting.c
+                    common/table.c
+                    common/responses.c
                     common/progress.c
                     common/status.c
                     common/users_api.c

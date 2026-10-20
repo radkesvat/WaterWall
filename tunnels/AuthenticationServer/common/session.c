@@ -362,7 +362,7 @@ void authenticationserverAuthClientsDestroy(authenticationserver_tstate_t *ts)
         memoryFree(client->name);
         if (LIKELY(client->secret != NULL))
         {
-            memoryZero(client->secret, stringLength(client->secret));
+            memorySecureZero(client->secret, stringLength(client->secret));
         }
         memoryFree(client->secret);
         memoryZero(client, sizeof(*client));

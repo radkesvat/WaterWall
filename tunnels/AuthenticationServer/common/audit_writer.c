@@ -1,4 +1,5 @@
 #include "AuthenticationServer/audit_writer.h"
+#include "loggers/network_logger.h"
 #include "wwapi.h"
 
 #ifdef OS_WIN
@@ -376,6 +377,7 @@ const char *authenticationserverAuditErrorName(authenticationserver_audit_error_
     case kAuthenticationServerAuditErrorInvalidFile:
         return "invalid-file";
     }
-    assert(false);
-    return "unknown";
+    LOGF("AuthenticationServer: invalid internal audit error code");
+    abortProgramNow(1);
+    return NULL;
 }

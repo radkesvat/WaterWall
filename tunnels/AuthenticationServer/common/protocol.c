@@ -1,5 +1,7 @@
 #include "../../Internals/AuthenticationCommon/credentials.h"
 #include "../../Internals/AuthenticationCommon/stream.h"
+#include "AuthenticationServer/api.h"
+#include "modules/dispatcher.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -20,41 +22,6 @@ static uint32_t authenticationserverReadNetworkUI32(const uint8_t *src)
 static uint32_t authenticationserverCorrelationIdRead(const uint8_t src[kAuthenticationServerCorrelationIdSize])
 {
     return authenticationserverReadNetworkUI32(src);
-}
-
-static const char *authenticationserverRequestTypeName(uint8_t request_type)
-{
-    switch (request_type)
-    {
-    case kAuthenticationServerRequestTypePing:
-        return "Ping";
-    case kAuthenticationServerRequestTypeGetUserBySHA256Hex:
-        return "GetUserBySHA256Hex";
-    case kAuthenticationServerRequestTypeGetUserBySHA256Base64:
-        return "GetUserBySHA256Base64";
-    case kAuthenticationServerRequestTypeGetUserBySHA256:
-        return "GetUserBySHA256";
-    case kAuthenticationServerRequestTypeGetUserBySHA224Hex:
-        return "GetUserBySHA224Hex";
-    case kAuthenticationServerRequestTypeGetUserBySHA224Base64:
-        return "GetUserBySHA224Base64";
-    case kAuthenticationServerRequestTypeGetUserBySHA224:
-        return "GetUserBySHA224";
-    case kAuthenticationServerRequestTypeGetUserByPassword:
-        return "GetUserByPassword";
-    case kAuthenticationServerRequestTypeAddNewUser:
-        return "AddNewUser";
-    case kAuthenticationServerRequestTypeUpdateUser:
-        return "UpdateUser";
-    case kAuthenticationServerRequestTypeGetAllUsers:
-        return "GetAllUsers";
-    case kAuthenticationServerRequestTypeAuthenticate:
-        return "Authenticate";
-    case kAuthenticationServerRequestTypePushUserStats:
-        return "PushUserStats";
-    default:
-        return "Unknown";
-    }
 }
 
 static void authenticationserverWriteNetworkUI64(uint8_t *dest, uint64_t value)
@@ -125,6 +92,7 @@ char *authenticationserverSerializeResponseJson(const cJSON *json)
         if (cJSON_PrintPreallocated((cJSON *) json, text, (int) capacity, false) &&
             ! authenticationserverResponseDataTooLarge(stringLength(text)))
             return text;
+        memorySecureZero(text, capacity);
         cJSON_free(text);
         if (capacity == maximum)
             return NULL;
@@ -142,6 +110,7 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
     }
 
     char *user_json_text = authenticationserverSerializeResponseJson(user_json);
+    authenticationserverWipeJsonStrings(user_json);
     cJSON_Delete(user_json);
 
     if (UNLIKELY(user_json_text == NULL))
@@ -154,6 +123,7 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
     if (UNLIKELY(authenticationserverResponseDataTooLarge(user_json_text_len)))
     {
         LOGW("AuthenticationServer: %s response is too large", module_name);
+        memorySecureZero(user_json_text, user_json_text_len);
         cJSON_free(user_json_text);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "response-too-large");
     }
@@ -163,6 +133,7 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
                                                                correlation_id,
                                                                (const uint8_t *) user_json_text,
                                                                (uint32_t) user_json_text_len);
+    memorySecureZero(user_json_text, user_json_text_len);
     cJSON_free(user_json_text);
     return response;
 }
@@ -409,113 +380,50 @@ static void authenticationserverFinalizeResponseMessage(sbuf_t *message, uint64_
                                          stats_revision);
 }
 
-static bool authenticationserverValidateRequestPayload(sbuf_t *payload)
+typedef struct authenticationserver_frame_s
+{
+    const authenticationserver_module_t *module;
+    const uint8_t                       *correlation_id, *data;
+    uint32_t                             length;
+    uint8_t                              type;
+} authenticationserver_frame_t;
+
+static bool authenticationserverValidateRequestPayload(
+    sbuf_t *payload, authenticationserver_frame_t frames[kAuthenticationServerMaxFramesPerEnvelope], size_t *count,
+    bool *write_lock)
 {
     const uint8_t *ptr       = sbufGetRawPtr(payload);
-    uint32_t       remaining = sbufGetLength(payload);
-    uint32_t       offset    = 0;
-    uint32_t       frames    = 0;
-
-    if (UNLIKELY(remaining == 0))
+    size_t         remaining = sbufGetLength(payload);
+    *count                   = 0;
+    *write_lock              = false;
+    while (remaining != 0)
     {
-        return false;
-    }
-
-    while (remaining > 0)
-    {
-        if (++frames > kAuthenticationServerMaxFramesPerEnvelope)
+        if (*count == kAuthenticationServerMaxFramesPerEnvelope || remaining < kAuthenticationServerRequestHeaderSize)
             return false;
-        if (UNLIKELY(remaining < kAuthenticationServerRequestHeaderSize))
-        {
+        const uint32_t length = authenticationserverReadNetworkUI32(ptr + 1 + kAuthenticationServerCorrelationIdSize);
+        if (length > kAuthenticationServerMaxRequestData || length > remaining - kAuthenticationServerRequestHeaderSize)
             return false;
-        }
-
-        const uint8_t *frame            = ptr + offset;
-        const uint8_t *length_ptr       = frame + 1 + kAuthenticationServerCorrelationIdSize;
-        const uint32_t request_data_len = authenticationserverReadNetworkUI32(length_ptr);
-
-        if (UNLIKELY(request_data_len > kAuthenticationServerMaxRequestData))
-        {
-            return false;
-        }
-
-        if (UNLIKELY(request_data_len > remaining - kAuthenticationServerRequestHeaderSize))
-        {
-            return false;
-        }
-
-        const uint32_t consumed = kAuthenticationServerRequestHeaderSize + request_data_len;
-        offset += consumed;
+        const authenticationserver_module_t *module = authenticationserverFindModule(ptr[0]);
+        frames[(*count)++]                          = (authenticationserver_frame_t) {.module         = module,
+                                                                                      .type           = ptr[0],
+                                                                                      .correlation_id = ptr + 1,
+                                                                                      .data   = ptr + kAuthenticationServerRequestHeaderSize,
+                                                                                      .length = length};
+        *write_lock |= module != NULL && module->write_lock;
+        const size_t consumed = kAuthenticationServerRequestHeaderSize + length;
+        ptr += consumed;
         remaining -= consumed;
     }
-
-    return true;
-}
-
-static bool authenticationserverRequestMutatesStore(uint8_t request_type)
-{
-    switch (request_type)
-    {
-    case kAuthenticationServerRequestTypeAddNewUser:
-    case kAuthenticationServerRequestTypeUpdateUser:
-    case kAuthenticationServerRequestTypePushUserStats:
-        return true;
-    default:
-        return false;
-    }
-}
-
-static bool authenticationserverRequestCanUseSharedStateLock(uint8_t request_type)
-{
-    switch (request_type)
-    {
-    case kAuthenticationServerRequestTypePing:
-    case kAuthenticationServerRequestTypeGetUserBySHA256Hex:
-    case kAuthenticationServerRequestTypeGetUserBySHA256Base64:
-    case kAuthenticationServerRequestTypeGetUserBySHA256:
-    case kAuthenticationServerRequestTypeGetUserBySHA224Hex:
-    case kAuthenticationServerRequestTypeGetUserBySHA224Base64:
-    case kAuthenticationServerRequestTypeGetUserBySHA224:
-    case kAuthenticationServerRequestTypeGetUserByPassword:
-        return true;
-    default:
-        return false;
-    }
-}
-
-static bool authenticationserverMessageRequiresWriteLock(sbuf_t *payload)
-{
-    const uint8_t *ptr       = sbufGetRawPtr(payload);
-    uint32_t       remaining = sbufGetLength(payload);
-    uint32_t       offset    = 0;
-
-    while (remaining > 0)
-    {
-        const uint8_t *frame            = ptr + offset;
-        const uint8_t  request_type     = frame[0];
-        const uint8_t *length_ptr       = frame + 1 + kAuthenticationServerCorrelationIdSize;
-        const uint32_t request_data_len = authenticationserverReadNetworkUI32(length_ptr);
-        const uint32_t consumed         = kAuthenticationServerRequestHeaderSize + request_data_len;
-
-        if (! authenticationserverRequestCanUseSharedStateLock(request_type))
-        {
-            return true;
-        }
-
-        offset += consumed;
-        remaining -= consumed;
-    }
-
-    return false;
+    return *count != 0;
 }
 
 static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *l,
                                                            const uint8_t token[kAuthenticationServerSessionTokenSize],
-                                                           sbuf_t *payload, sbuf_t **response_out)
+                                                           sbuf_t *payload, const authenticationserver_frame_t *frames,
+                                                           size_t frame_count, sbuf_t **response_out)
 {
     authenticationserver_tstate_t  *ts                = tunnelGetState(t);
     authenticationserver_session_t *session           = authenticationserverSessionFindByTokenLocked(t, token);
-    const uint8_t                  *ptr               = sbufGetRawPtr(payload);
     uint32_t                        count             = 0;
     sbuf_t                         *response          = authenticationserverCreateResponseMessage(l);
     bool                            authenticate_seen = false;
@@ -539,36 +447,14 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
     for (uint32_t pass = 0; pass < 2U; ++pass)
     {
         const bool write_pass = pass == 0U;
-        uint32_t   remaining  = sbufGetLength(payload);
-        uint32_t   offset     = 0;
-
-        while (remaining > 0)
+        for (size_t i = 0; i < frame_count; ++i)
         {
-            const uint8_t *frame            = ptr + offset;
-            const uint8_t  request_type     = frame[0];
-            const uint8_t *correlation_id   = frame + 1;
-            const uint8_t *length_ptr       = frame + 1 + kAuthenticationServerCorrelationIdSize;
-            const uint32_t request_data_len = authenticationserverReadNetworkUI32(length_ptr);
-            const uint8_t *request_data     = frame + kAuthenticationServerRequestHeaderSize;
-            const uint32_t consumed         = kAuthenticationServerRequestHeaderSize + request_data_len;
-            sbuf_t        *response_frame   = NULL;
-
-            if (authenticationserverRequestMutatesStore(request_type) != write_pass)
-            {
-                offset += consumed;
-                remaining -= consumed;
+            const authenticationserver_frame_t *frame          = &frames[i];
+            const uint8_t                       request_type   = frame->type;
+            const uint8_t                      *correlation_id = frame->correlation_id;
+            sbuf_t                             *response_frame = NULL;
+            if ((frame->module != NULL && frame->module->mutates_store) != write_pass)
                 continue;
-            }
-
-            if (ts->verbose)
-            {
-                LOGD("AuthenticationServer: handling %s request correlation-id=%u payload=%u pass=%s",
-                     authenticationserverRequestTypeName(request_type),
-                     (unsigned int) authenticationserverCorrelationIdRead(correlation_id),
-                     (unsigned int) request_data_len,
-                     write_pass ? "write" : "read");
-            }
-
             if (UNLIKELY(request_type == kAuthenticationServerRequestTypeAuthenticate &&
                          (session != NULL || authenticate_seen)))
             {
@@ -577,8 +463,8 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
             }
             else
             {
-                response_frame = authenticationserverDispatchRequest(
-                    request_type, correlation_id, t, l, session, request_data, request_data_len);
+                response_frame = authenticationserverDispatchModule(
+                    frame->module, correlation_id, t, l, session, frame->data, frame->length);
             }
             if (request_type == kAuthenticationServerRequestTypeAuthenticate)
             {
@@ -604,8 +490,6 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
                 return false;
             }
 
-            offset += consumed;
-            remaining -= consumed;
             ++count;
         }
     }
@@ -632,9 +516,11 @@ static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l,
     authenticationserver_tstate_t *ts     = tunnelGetState(t);
     bool                           result = false;
 
-    if (LIKELY(authenticationserverValidateRequestPayload(payload)))
+    authenticationserver_frame_t frames[kAuthenticationServerMaxFramesPerEnvelope];
+    size_t                       count;
+    bool                         write_lock;
+    if (LIKELY(authenticationserverValidateRequestPayload(payload, frames, &count, &write_lock)))
     {
-        const bool write_lock = authenticationserverMessageRequiresWriteLock(payload);
         if (write_lock)
         {
             rwlockWriteLock(&ts->state_lock);
@@ -643,7 +529,7 @@ static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l,
         {
             rwlockReadLock(&ts->state_lock);
         }
-        result = authenticationserverBuildResponseMessageLocked(t, l, token, payload, response_out);
+        result = authenticationserverBuildResponseMessageLocked(t, l, token, payload, frames, count, response_out);
         if (write_lock)
         {
             rwlockWriteUnlock(&ts->state_lock);

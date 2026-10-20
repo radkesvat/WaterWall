@@ -6,9 +6,11 @@ bool authenticationserverApiExpired(uint64_t deadline_ms)
     return deadline_ms != 0 && nodeApiNowMs() >= deadline_ms;
 }
 
-static bool decimalId(const char *text, uint64_t *value)
+bool authenticationserverApiUnsignedDecimal(const char *text, uint64_t *value)
 {
-    if (text == NULL || text[0] < '1' || text[0] > '9')
+    if (text == NULL || text[0] < '0' || text[0] > '9')
+        return false;
+    if (text[0] == '0' && text[1] != '\0')
         return false;
     uint64_t result = 0;
     for (size_t i = 0; text[i] != '\0'; ++i)
@@ -49,7 +51,7 @@ static bool integerLexemes(const char *text, size_t length)
     return true;
 }
 
-static bool cursorDecode(const char *text, authenticationserver_api_request_t *request)
+bool authenticationserverApiCursorDecode(const char *text, authenticationserver_api_request_t *request)
 {
     if (text == NULL || strlen(text) != 64)
         return false;
@@ -104,7 +106,8 @@ const char *authenticationserverApiParse(sbuf_t *message, const node_api_call_co
     {
         if (kind == kAuthenticationServerApiGetUser && strcmp(field->string, "id") == 0)
         {
-            if (! cJSON_IsString(field) || ! decimalId(field->valuestring, &request->id))
+            if (! cJSON_IsString(field) ||
+                (! authenticationserverApiUnsignedDecimal(field->valuestring, &request->id) || request->id == 0))
                 error = "invalid_request";
             has_id = true;
         }
@@ -118,7 +121,7 @@ const char *authenticationserverApiParse(sbuf_t *message, const node_api_call_co
         }
         else if (kind == kAuthenticationServerApiListUsers && strcmp(field->string, "cursor") == 0)
         {
-            if (! cJSON_IsString(field) || ! cursorDecode(field->valuestring, request))
+            if (! cJSON_IsString(field) || ! authenticationserverApiCursorDecode(field->valuestring, request))
                 error = "invalid_cursor";
         }
         else
@@ -131,4 +134,16 @@ const char *authenticationserverApiParse(sbuf_t *message, const node_api_call_co
     if (authenticationserverApiExpired(context->deadline_ms))
         error = "timeout";
     return error;
+}
+
+void authenticationserverWipeJsonStrings(cJSON *item)
+{
+    for (; item != NULL; item = item->next)
+    {
+        authenticationserverWipeJsonStrings(item->child);
+        if (item->valuestring != NULL)
+            memorySecureZero(item->valuestring, strlen(item->valuestring));
+        if (item->string != NULL)
+            memorySecureZero(item->string, strlen(item->string));
+    }
 }

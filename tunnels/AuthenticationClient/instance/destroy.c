@@ -1,18 +1,7 @@
+#include "../common/internal.h"
 #include "api/node_api.h"
-#include "structure.h"
 
 #include "loggers/network_logger.h"
-
-static void authenticationclientDestroyUsersSnapshot(users_t *users)
-{
-    if (UNLIKELY(users == NULL))
-    {
-        return;
-    }
-
-    usersDestroy(users);
-    memoryFreeAligned(users);
-}
 
 void authenticationclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
@@ -34,12 +23,9 @@ void authenticationclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t
     ts->sync_baseline_users      = NULL;
     rwlockWriteUnlock(&ts->users_lock);
 
-    if (LIKELY(users != NULL))
-    {
-        usersDestroy(users);
-        memoryFreeAligned(users);
-    }
-    authenticationclientDestroyUsersSnapshot(sync_baseline_users);
+    authenticationclientDestroyUsers(users);
+    authenticationclientDestroyUsers(sync_baseline_users);
+    authenticationclientDiscardStaging(ts);
     rwlockDestroy(&ts->users_lock);
 
     assert(ts->bandwidth_ticket_count == 0);
@@ -49,8 +35,10 @@ void authenticationclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t
     mutexDestroy(&ts->control_mutex);
 
     memoryFree(ts->name);
+    if (ts->secret != NULL)
+        memorySecureZero(ts->secret, strlen(ts->secret) + 1);
     memoryFree(ts->secret);
-    memoryZero(ts->token, sizeof(ts->token));
+    memorySecureZero(ts->token, sizeof(ts->token));
 
     tunnelDestroy(t);
 }

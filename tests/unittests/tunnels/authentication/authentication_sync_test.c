@@ -10,6 +10,12 @@
 #include <pthread.h>
 #define require(c, m) TEST_REQUIRE(TEST_FAILURE_EXIT, c, m)
 
+uint32_t __wrap_fastRand32(void);
+uint32_t __wrap_fastRand32(void)
+{
+    return 0; /* Deterministic lower jitter bound in fake-clock fixtures. */
+}
+
 static atomic_ullong     now_us;
 static atomic_ullong     server_wall_ms, client_wall_ms;
 static thread_local bool in_server;
@@ -45,10 +51,14 @@ static char                      *captured_batch;
 static sbuf_t                    *held_request, *saved_ack, *saved_session;
 static bool                       hold_pull, hold_push, pause_before_session, pause_before_ack;
 static unsigned                   last_response;
+static unsigned                   page_requests;
+static uint64_t                   hold_page_position;
+static bool                       hold_final_page;
 static int                        raw_response[2];
 static char                       raw_body[2][128];
 static bool                       refuse_snapshot;
 static void                       requireSyncPhase(const char *expected);
+static sbuf_t                    *authPageResponseFault(sbuf_t *buffer);
 bool __real_usersSnapshotAccounting(const users_t *, user_accounting_snapshot_t **, size_t *);
 bool __wrap_usersSnapshotAccounting(const users_t *users, user_accounting_snapshot_t **entries, size_t *count);
 bool __wrap_usersSnapshotAccounting(const users_t *users, user_accounting_snapshot_t **entries, size_t *count)
@@ -141,6 +151,7 @@ static void output(tunnel_t *t, line_t *l, sbuf_t *b)
     const bool previous_clock = in_server;
     in_server                 = false;
     b                         = faultClockMetadata(b);
+    b                         = authPageResponseFault(b);
     const uint8_t *bytes      = sbufGetRawPtr(b);
     const int      i          = owner(l);
     if (i < 0)
@@ -253,8 +264,24 @@ static void input(tunnel_t *t, line_t *l, sbuf_t *b)
     }
     if (bytes[68] == kAuthenticationClientRequestTypeGetAllUsers)
     {
-        ++pulls;
-        if (hold_pull)
+        ++page_requests;
+        cJSON       *page     = cJSON_ParseWithLength((const char *) bytes + 77, sbufGetLength(b) - 77);
+        const cJSON *cursor   = cJSON_GetObjectItemCaseSensitive(page, "cursor");
+        const bool   initial  = cursor == NULL;
+        const bool   final    = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(page, "validate"));
+        uint64_t     position = initial ? 0 : strtoull(cursor->valuestring + 48, NULL, 16);
+        cJSON_Delete(page);
+        if (initial)
+            ++pulls;
+        if (position == hold_page_position || (final && hold_final_page))
+        {
+            hold_page_position = UINT64_MAX;
+            hold_final_page    = false;
+            require(held_request == NULL, "more than one held pagination request");
+            held_request = b;
+            return;
+        }
+        if (hold_pull && initial)
         {
             hold_pull = false;
             require(held_request == NULL, "more than one held pull");
@@ -271,6 +298,17 @@ static void pump(unsigned milliseconds)
     for (unsigned j = 0; j < 4; ++j)
         discard wloopProcessEvents(loops[0], 0);
 }
+static void retryConnection(unsigned client_index)
+{
+    const authenticationclient_tstate_t *ts  = state(client_index);
+    const uint64_t                       now = authenticationclientLocalTimeMS();
+    uint64_t                             due = max(ts->sync_retry_not_before_ms, ts->reconnect_due_ms);
+    if (ts->stats_push_refused)
+        due = max(due, ts->stats_retry_not_before_ms);
+    require(due >= now && due - now <= UINT32_MAX, "fake retry deadline is not representable");
+    pump((unsigned) (due - now));
+}
+
 static void setup(unsigned users)
 {
     atomicStoreU64(&now_us, 100000000);
@@ -281,6 +319,9 @@ static void setup(unsigned users)
     captured_owner = -1;
     clients[0] = clients[1] = NULL;
     drop_before = drop_ack = corrupt_ack = drop_auth = pushes = pulls = 0;
+    page_requests                                                     = 0;
+    hold_page_position                                                = UINT64_MAX;
+    hold_final_page                                                   = false;
     hold_pull = hold_push = pause_before_session = pause_before_ack = false;
     held_request = saved_ack = saved_session = NULL;
     captured_batch                           = NULL;
@@ -358,6 +399,8 @@ static void startWithMultiplier(unsigned i, uint32_t multiplier)
     ts->reconnect_interval_ms = 10;
     ts->request_timeout_ms    = 1000;
     ts->max_pending_requests  = 64;
+    ts->sync_max_users        = kAuthenticationDefaultSyncMaxUsers;
+    ts->sync_max_bytes        = kAuthenticationDefaultSyncMaxBytes;
     authenticationclientOpenControlLine(t);
 }
 static void start(unsigned i)
@@ -453,10 +496,10 @@ static void testLossAndOrdering(void)
     const uint64_t first_use = authTestPeerFirstUse(server);
     require(first_use != 0 && authTestPeerStats(server, 42).traffic.u == 10, "first batch did not apply");
     authTestPeerExpireSessions(server);
-    pump(10);
+    retryConnection(0);
     require(state(0)->pending_batch != NULL && authTestPeerStats(server, 42).traffic.u == 10,
             "repeated lost ACK charged twice");
-    pump(10);
+    retryConnection(0);
     require(state(0)->pending_batch == NULL && local(0, true) == 10 && local(0, false) == 17,
             "ACK/pull lost post-snapshot traffic");
     require(authTestPeerFirstUse(server) == first_use, "duplicate changed first-use timestamp");
@@ -1843,7 +1886,7 @@ static void testCachedAdmissionAndRejection(void)
     drop_auth        = 1;
     pump(10);
     require(state(0)->auth_rejected, "lost authorization reply cleared rejection");
-    pump(10);
+    pump(1000);
     require(! state(0)->auth_rejected && authenticationclientCanAuthenticate(clients[0]),
             "validated authorization did not clear block");
     /* Old correlated Authenticate id cannot revoke a newly authorized cache. */
@@ -2482,6 +2525,43 @@ static void testMultiplierSettings(void)
     teardown();
 }
 
+static void testSyncLimitSettings(void)
+{
+    setup(1);
+    const char *const keys[]    = {"sync-max-users", "sync-max-bytes"};
+    const char *const invalid[] = {
+        "0", "-1", "1.0", "1e0", "\"1\"", "null", "true", "[]", "{}", "18446744073709551616"};
+    for (size_t k = 0; k < sizeof(keys) / sizeof(keys[0]); ++k)
+    {
+        for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
+        {
+            char text[256];
+            snprintf(text, sizeof(text), "{\"name\":\"edge-a\",\"secret\":\"secret\",\"%s\":%s}", keys[k], invalid[i]);
+            cJSON *settings = cJSON_Parse(text);
+            require(settings != NULL, "sync-limit config fixture parse");
+            requireMultiplierSetting(settings, 0);
+        }
+        char duplicate[256];
+        snprintf(duplicate,
+                 sizeof(duplicate),
+                 "{\"name\":\"edge-a\",\"secret\":\"secret\",\"%s\":1,\"%s\":2}",
+                 keys[k],
+                 keys[k]);
+        requireMultiplierSetting(cJSON_Parse(duplicate), 0);
+    }
+    static char node_name[] = "sync-limits", next[] = "transport";
+    cJSON      *settings =
+        cJSON_Parse("{\"name\":\"edge-a\",\"secret\":\"secret\",\"sync-max-users\":1,\"sync-max-bytes\":1}");
+    node_t    node   = {.name = node_name, .next = next, .node_settings_json = settings};
+    tunnel_t *client = authenticationclientTunnelCreate(&node);
+    require(client != NULL, "minimum sync-limit settings refused");
+    authenticationclient_tstate_t *ts = tunnelGetState(client);
+    require(ts->sync_max_users == 1 && ts->sync_max_bytes == 1, "sync limits were rounded/defaulted");
+    authenticationclientTunnelDestroy(client, wwLifecycleStartupRollback());
+    cJSON_Delete(settings);
+    teardown();
+}
+
 static void testCredentialSettingsLimit(void)
 {
     setup(1);
@@ -3036,12 +3116,295 @@ static void testFirstUseDeferredByPull(void)
     teardown();
 }
 
+static void testPagedTablesAndAggregateLimits(void)
+{
+    setup(3);
+    /* Three bounded large rows make the aggregate exceed the old 16 MiB
+     * envelope without thousands of expensive crypto constructions. */
+    const size_t note_length = 6U * 1024U * 1024U;
+    char        *notes       = memoryAllocate(note_length + 1);
+    memset(notes, 'p', note_length);
+    notes[note_length] = '\0';
+    for (uint64_t id = 42; id < 45; ++id)
+    {
+        user_update_t update = {.mask = kUserUpdateNotes, .notes = notes};
+        authTestPeerSetUser(server, id, &update);
+    }
+    memoryFree(notes);
+    start(0);
+    require(state(0)->users_loaded && usersCount(state(0)->users) == 3 && page_requests == 4 &&
+                ! state(0)->staging.active && ! state(0)->pull_required,
+            ">16 MiB paired table did not install through three pages and final validation");
+    for (uint64_t id = 42; id < 45; ++id)
+        require(strlen(usersLookupByIdentifier(state(0)->users, id)->notes) == note_length,
+                "exceptional page truncated a full record");
+    require(state(0)->sync_retry_streak == 0, "successful final installation did not clear failed-sync streak");
+    teardown();
+
+    setup(129);
+    start(0);
+    require(usersCount(state(0)->users) == 129 && page_requests == 3,
+            "128-row page boundary did not make positional progress");
+    const uint64_t generation = state(0)->users_generation;
+    state(0)->sync_max_users  = 128;
+    authenticationclientRequestPull(clients[0]);
+    require(state(0)->users_generation == generation && authenticationclientCanAuthenticate(clients[0]) &&
+                state(0)->last_failure == kAuthenticationClientFailureSyncLimit && ! state(0)->staging.active,
+            "declared count limit replaced cache or retained staging");
+    state(0)->sync_max_users = 129;
+    pump(10);
+    require(state(0)->users_generation == generation + 1, "count equality did not recover");
+    hold_final_page = true;
+    authenticationclientRequestPull(clients[0]);
+    require(held_request != NULL && state(0)->staging.complete, "byte-equality traversal not held at validation");
+    const uint64_t exact_bytes = state(0)->staging.encoded_bytes;
+    deliverHeldRequest();
+    state(0)->sync_max_bytes = exact_bytes;
+    authenticationclientRequestPull(clients[0]);
+    require(! state(0)->staging.active && state(0)->last_pull_success_valid,
+            "exact aggregate-byte boundary was refused");
+    const uint64_t installed = state(0)->users_generation;
+    state(0)->sync_max_bytes = exact_bytes - 1;
+    authenticationclientRequestPull(clients[0]);
+    require(state(0)->users_generation == installed &&
+                state(0)->last_failure == kAuthenticationClientFailureSyncLimit &&
+                authenticationclientCanAuthenticate(clients[0]) && ! state(0)->staging.active,
+            "one-over aggregate bytes changed active cache");
+    teardown();
+}
+
+static void testPagedConfigurationAndLiveDeltas(void)
+{
+    setup(257);
+    start(0);
+    const uint64_t generation = state(0)->users_generation;
+    hold_page_position        = 128;
+    authenticationclientRequestPull(clients[0]);
+    require(held_request != NULL && state(0)->staging.position == 128 && state(0)->staging.active &&
+                state(0)->users_generation == generation && authenticationclientCanAuthenticate(clients[0]),
+            "intermediate page exposed a partial table");
+    const unsigned before_pushes = pushes;
+    for (uint64_t id = 42; id <= 42 + 256; id += 256)
+    {
+        user_handle_t handle = {.generation = generation, .user_id = id};
+        require(authenticationclientUserAddTraffic(clients[0], &handle, 7, 3), "traffic during paging failed");
+    }
+    authenticationclientRequestPush(clients[0]);
+    pump(0);
+    require(pushes == before_pushes && state(0)->pending_batch == NULL && state(0)->pull_required,
+            "new usage batch crossed the traversal barrier");
+    pump(400);
+    deliverHeldRequest();
+    for (unsigned i = 0; i < 4; ++i)
+        pump(1);
+    require(authTestPeerStats(server, 42).traffic.u == 7 && authTestPeerStats(server, 42 + 256).traffic.u == 7 &&
+                authTestPeerStats(server, 42).traffic.d == 3 && authTestPeerSequence(server, 0) == 1,
+            "early/late page traffic was not reported exactly once");
+    require(! state(0)->staging.active && ! state(0)->pull_required && state(0)->pending_batch == NULL,
+            "post-paging ACK refresh did not settle");
+
+    const uint64_t stable = state(0)->users_generation;
+    hold_page_position    = 128;
+    authenticationclientRequestPull(clients[0]);
+    authTestPeerPassword(server);
+    deliverHeldRequest();
+    require(state(0)->users_generation == stable && state(0)->last_failure == kAuthenticationClientFailureRemoteError &&
+                ! state(0)->staging.active && authenticationclientCanAuthenticate(clients[0]),
+            "config edit after first page published mixed configuration");
+    pump(10);
+    require(state(0)->users_generation == stable + 1 && state(0)->sync_retry_streak == 0,
+            "stale traversal did not restart and atomically recover");
+    user_handle_t handle;
+    require(authenticationclientGetUserByPassword(clients[0], "changed", &handle), "coherent edited credential absent");
+
+    const uint64_t validated = state(0)->users_generation;
+    hold_final_page          = true;
+    authenticationclientRequestPull(clients[0]);
+    require(held_request != NULL && state(0)->staging.complete, "final validation was not independently pending");
+    authTestPeerSetConfigRevision(server, state(0)->staging.config_revision + 1);
+    deliverHeldRequest();
+    require(state(0)->users_generation == validated && ! state(0)->staging.active &&
+                authenticationclientCanAuthenticate(clients[0]),
+            "edit before validation published stale traversal");
+    pump(10);
+    require(state(0)->users_generation == validated + 1, "final-validation stale cursor did not recover");
+    teardown();
+}
+
+static void testPagingDisconnectAndAbsoluteDeadlines(void)
+{
+    setup(257);
+    start(0);
+    for (unsigned boundary = 0; boundary < 4; ++boundary)
+    {
+        const uint64_t generation = state(0)->users_generation;
+        if (boundary == 3)
+            hold_final_page = true;
+        else
+            hold_page_position = (uint64_t) boundary * 128;
+        authenticationclientRequestPull(clients[0]);
+        require(held_request != NULL && state(0)->staging.active, "boundary request not retained");
+        sbufDestroy(held_request);
+        held_request = NULL;
+        disconnect(0);
+        require(! state(0)->staging.active && state(0)->users_generation == generation &&
+                    authenticationclientCanAuthenticate(clients[0]),
+                "disconnect discarded active cache");
+        pump(10);
+        require(state(0)->users_generation == generation + 1, "boundary disconnect failed to restart traversal");
+    }
+    const uint64_t generation = state(0)->users_generation;
+    hold_page_position        = 128;
+    authenticationclientRequestPull(clients[0]);
+    pump(700);
+    hold_page_position = 256;
+    deliverHeldRequest();
+    require(held_request != NULL, "second delayed page not held");
+    pump(700);
+    hold_final_page = true;
+    deliverHeldRequest();
+    require(held_request != NULL && state(0)->staging.complete, "delayed final validation not held");
+    pump(700);
+    deliverHeldRequest();
+    require(state(0)->users_generation == generation + 1 && ! state(0)->staging.active,
+            "progressing traversal inherited a whole-table absolute timeout");
+    hold_page_position = 128;
+    authenticationclientRequestPull(clients[0]);
+    pump(1000);
+    require(! state(0)->staging.active && state(0)->last_failure == kAuthenticationClientFailureTimeout &&
+                authenticationclientCanAuthenticate(clients[0]),
+            "stalled individual page did not time out");
+    sbufDestroy(held_request);
+    held_request = NULL;
+    teardown();
+}
+
+static void testPerPageClockInstallation(void)
+{
+    setup(257);
+    const user_update_t expiry = {.mask = kUserUpdateTimeInfo, .timeinfo.expire_at_ms = 1000600};
+    authTestPeerSetUser(server, 42, &expiry);
+    authTestPeerSetUser(server, 42 + 256, &expiry);
+    hold_page_position = 128;
+    start(0);
+    require(held_request != NULL && state(0)->staging.position == 128 && ! state(0)->users_loaded,
+            "fresh multi-page clock fixture not staged");
+    /* Server wall time stands still while local monotonic time advances, as
+     * with a wall correction. Early records must retain their earlier receipt. */
+    atomicStoreU64(&client_wall_ms, 1);
+    pump(700);
+    deliverHeldRequest();
+    user_t *early = usersLookupByIdentifier(state(0)->users, 42);
+    user_t *late  = usersLookupByIdentifier(state(0)->users, 42 + 256);
+    require(early != NULL && late != NULL && early->client_time.local_anchor_ms == 100000 &&
+                early->client_view_expired && late->client_view_expires_at_ms == 101300 &&
+                userRuntimeShouldClose(early, 100700) && ! userRuntimeShouldClose(late, 100700),
+            "page clocks used the final page receipt for every user or followed the local wall");
+    user_handle_t handle;
+    require(! authenticationclientGetUserByPassword(clients[0], "account-0", &handle),
+            "early-page expired account admitted after delayed installation");
+    teardown();
+}
+
+static void testPagingPreservesRuntimeAndFractionalCarry(void)
+{
+    setup(257);
+    startWithMultiplier(0, 500);
+    user_handle_t handle = {.generation = state(0)->users_generation, .user_id = 42};
+    user_ip_key_t ip     = {.type = 4, .bytes = {192, 0, 2, 9}};
+    require(authenticationclientUserTryAdmitConnection(clients[0], &handle, &ip, 100000) == kUserAdmissionOk,
+            "page runtime admission fixture");
+    const uint64_t ticket = authenticationclientUserBandwidthRegister(clients[0], &handle, kUserBandwidthUpload);
+    const buffer_budget_cost_t cost = {.bytes = 12, .charge = 64, .entries = 1};
+    require(ticket != 0 && authenticationclientUserBandwidthReserve(clients[0], &handle, ticket, cost),
+            "page runtime queue fixture");
+    authenticationclientUserBandwidthSetEligible(clients[0], &handle, kUserBandwidthUpload, ticket, true);
+    hold_page_position = 128;
+    authenticationclientRequestPull(clients[0]);
+    require(held_request != NULL, "runtime traversal boundary not held");
+    require(! authenticationclientUserObservePayload(clients[0], &handle, 1, 0, 100000),
+            "page arrival observation rejected");
+    require(authenticationclientUserCommitDelivery(clients[0], &handle, kUserBandwidthUpload, ticket, 1, false, true) ==
+                kUserDeliveryForward,
+            "page delivery fixture did not forward");
+    user_t        *before = usersLookupByIdentifier(state(0)->users, 42);
+    const uint64_t origin = before->client_time.first_report_ms;
+    require(before->runtime.traffic_remainder_u == 500 && origin != 0, "fractional observation fixture");
+    pump(400);
+    deliverHeldRequest();
+    user_t *after = usersLookupByIdentifier(state(0)->users, 42);
+    require(after->runtime.active_cons_out == 1 && after->runtime.ip_usage_count == 1 &&
+                after->runtime.traffic_remainder_u == 500 && after->client_time.first_report_ms == origin &&
+                after->runtime.queued_cost.bytes == cost.bytes && state(0)->bandwidth_queued_cost.bytes == cost.bytes,
+            "paging lost current carry/observation/admission/shaping state");
+    require(authenticationclientUserBandwidthPreview(clients[0], &handle, kUserBandwidthUpload, ticket, 1, false)
+                    .decision == kUserDeliveryForward,
+            "migrated shaping ticket lost its fair turn");
+    require(authenticationclientUserCommitDelivery(
+                clients[0], &handle, kUserBandwidthUpload, ticket, 1, false, false) == kUserDeliveryForward,
+            "delivery after paged migration failed");
+    require(after->runtime.traffic_remainder_u == 0 && local(0, false) == 1,
+            "fractional charge was reset or applied twice across pages");
+    authenticationclientUserBandwidthCancel(clients[0], &handle, kUserBandwidthUpload, ticket);
+    authenticationclientUserReleaseConnection(clients[0], &handle, &ip);
+    require(state(0)->bandwidth_ticket_count == 0 && state(0)->bandwidth_queued_cost.bytes == 0 &&
+                after->runtime.active_cons_out == 0,
+            "migrated runtime owners did not release");
+    authenticationclientRequestPush(clients[0]);
+    for (unsigned i = 0; i < 4; ++i)
+        pump(1);
+    require(authTestPeerStats(server, 42).traffic.u == 1, "fractional paged usage was not charged exactly once");
+    teardown();
+}
+
+static void testStatisticsMayChangeBetweenPages(void)
+{
+    setup(257);
+    start(0);
+    start(1);
+    hold_page_position = 128;
+    authenticationclientRequestPull(clients[0]);
+    require(held_request != NULL, "statistics traversal boundary not held");
+    const uint64_t first_stats = state(0)->staging.stats_revision;
+    const unsigned traversals  = pulls;
+    user_handle_t  remote      = {.generation = state(1)->users_generation, .user_id = 42 + 256};
+    require(authenticationclientUserAddTraffic(clients[1], &remote, 15, 0), "foreign stats fixture");
+    authenticationclientRequestPush(clients[1]);
+    require(authTestPeerStats(server, 42 + 256).traffic.u == 15, "foreign stats not accepted");
+    const unsigned after_foreign = pulls;
+    deliverHeldRequest();
+    user_t     *late = usersLookupByIdentifier(state(0)->users, 42 + 256);
+    user_stat_t stats, baseline;
+    userGetStats(late, &stats);
+    userGetStats(usersLookupByIdentifier(state(0)->sync_baseline_users, 42 + 256), &baseline);
+    require(! state(0)->staging.active && state(0)->local_stats_revision == first_stats &&
+                state(0)->remote_stats_revision > first_stats && stats.traffic.u == 15 && baseline.traffic.u == 15 &&
+                pulls == after_foreign && after_foreign > traversals,
+            "stats-only update restarted paging or became local debt");
+    const unsigned attempts = page_requests;
+    pump(1);
+    authenticationclientResumeSync(clients[0]);
+    require(page_requests == attempts && state(0)->progress_timer == NULL,
+            "mixed-time stats revision started an immediate refresh loop");
+    teardown();
+}
+
+#include "authentication_sync_pages.h"
+
 int main(void)
 {
     testCaseSet("authentication sync loss and continuity");
     require(createNetworkLogger(NULL, false) != NULL, "logger failed");
     require(globalstateInitializeSecureRandom() && wCryptoGlobalInit() == kWCryptoOk, "crypto failed");
+    testMalformedPagesAndBackoff();
+    testPerPageClockInstallation();
+    testPagingPreservesRuntimeAndFractionalCarry();
+    testStatisticsMayChangeBetweenPages();
+    testPagedTablesAndAggregateLimits();
+    testPagedConfigurationAndLiveDeltas();
+    testPagingDisconnectAndAbsoluteDeadlines();
     testMultiplierSettings();
+    testSyncLimitSettings();
     testCredentialSettingsLimit();
     testMultiplierFragmentAccounting();
     testMultiplierOfflineQuota();
