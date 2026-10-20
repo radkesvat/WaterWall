@@ -65,7 +65,9 @@ Diagnostics remain accessible while AuthenticationClient is offline or rejected.
 `clients` must be nonempty. Client names and decoded 32-byte tokens must be
 unique. Every `allow` entry names one exact logical configuration, public
 top-level node and nonempty operation list; wildcard permissions are unsupported.
-Startup preparation rejects missing targets or unregistered operations. An
+Startup preparation rejects missing targets or unregistered operations. Runtime
+requests without the exact permission return `forbidden`; admitted requests reuse
+the immutable descriptor resolved during preparation. An
 existing `TunnelApi` symbol does not automatically expose an external operation.
 Each write needs its own explicit operation permission; read, edit, create and
 password-administration permissions do not imply one another.
@@ -93,7 +95,7 @@ All fields below are positive finite integers. Startup rejects inconsistent geom
 | `max_jobs` | 64 | Admitted unfinished jobs per instance. |
 | `handler_working_memory` | 8388608 | Reserved temporary allowance for each handler. |
 | `max_memory` | 67108864 | Aggregate retained memory and working reservations per instance. |
-| `frame_timeout_ms` | 15000 | Absolute frame assembly deadline from the first byte. |
+| `frame_timeout_ms` | 15000 | Absolute frame assembly deadline from first-fragment arrival, including queue residence. |
 | `request_timeout_ms` | 10000 | Complete-request admission through response publication, including FIFO and worker wait. |
 | `output_timeout_ms` | 15000 | Response publication through transport handoff, including paused time. |
 | `idle_timeout_ms` | 60000 | Idle connection with no frame, request or output in progress. |
@@ -120,7 +122,7 @@ a UTF-8 handler returns `invalid_response` with no result body; a valid oversize
 encoded result returns `response_too_large`. Both are post-dispatch errors, so a
 write may have committed. Base64 operations may return arbitrary bytes.
 
-Zero does not disable a protection. Trickle input does not reset frame assembly time. The request deadline ends when a complete response is published; delivery then has its separate output deadline. Disconnect and timeout abandon execution but retain job reservations until queued cancellation or a running bounded handler actually settles.
+Zero does not disable a protection. Trickle input does not reset frame assembly time. Gateway `timeout` and `invalid_encoding` errors close the connection. The request deadline ends when a complete response is published; delivery then has its separate output deadline. Disconnect and timeout abandon execution but retain job reservations until queued cancellation or a running bounded handler actually settles.
 
 ## Protocol And Examples
 

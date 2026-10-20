@@ -29,7 +29,7 @@ tunnel_t *apiserverTunnelCreate(node_t *node)
     atomic_init(&ts->stopping, false);
     if (! apiserverLoadSettings(ts, node->node_settings_json))
     {
-        LOGF("APIServer: invalid clients, allowlist, or limit geometry");
+        LOGE("APIServer: invalid clients, allowlist, or limit geometry");
         apiserverDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }

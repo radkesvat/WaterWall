@@ -14,6 +14,7 @@
 
 static uint64_t now_us = UINT64_C(6000000000000);
 static bool     refuse_timer, refuse_message, refuse_reply;
+static unsigned timer_adds, timer_resets;
 static bool     hold_reply, hold_message;
 static struct
 {
@@ -44,7 +45,15 @@ wtimer_t *__real_wtimerAdd(wloop_t *, wtimer_cb, uint32_t, uint32_t);
 wtimer_t *__wrap_wtimerAdd(wloop_t *, wtimer_cb, uint32_t, uint32_t);
 wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb callback, uint32_t timeout, uint32_t repeat)
 {
+    ++timer_adds;
     return refuse_timer ? NULL : __real_wtimerAdd(loop, callback, timeout, repeat);
+}
+bool __real_wtimerReset(wtimer_t *, uint32_t);
+bool __wrap_wtimerReset(wtimer_t *, uint32_t);
+bool __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout)
+{
+    ++timer_resets;
+    return ! refuse_timer && __real_wtimerReset(timer, timeout);
 }
 worker_message_submit_result_e __real_sendWorkerMessageForceQueueWithCleanup(wid_t, WorkerMessageCallback,
                                                                              WorkerMessageCleanupCallback, void *,
@@ -254,11 +263,12 @@ static void openSettings(const char *text)
     nodeApiRegistryInitialize();
     require(nodeApiRegister(&target, operations, ARRAY_SIZE(operations)), "private test operation registration");
     calls = finishes = establishments = pauses = resumes = writes = 0;
-    captured_size                                                 = 0;
-    producer_paused                                               = false;
-    node                                                          = nodeAPIServerGet();
-    node.name                                                     = gateway_name;
-    node.node_settings_json                                       = cJSON_Parse(text);
+    timer_adds = timer_resets = 0;
+    captured_size             = 0;
+    producer_paused           = false;
+    node                      = nodeAPIServerGet();
+    node.name                 = gateway_name;
+    node.node_settings_json   = cJSON_Parse(text);
     require(node.node_settings_json != NULL, "fixture settings");
     api = apiserverTunnelCreate(&node);
     require(api != NULL, "valid API settings rejected");
@@ -854,6 +864,85 @@ static void queuedErrorsContinueAfterAsyncReply(void)
     closeLine();
 }
 
+static void preparedDescriptor(void)
+{
+    openLine();
+    apiserver_tstate_t *ts            = tunnelGetState(api);
+    api_request_t       request_state = {0};
+    apiserverRequestParse(&request_state, request, sizeof(request) - 1);
+    tunnel_t                   *resolved   = NULL;
+    const node_api_operation_t *operation  = NULL;
+    api_permission_t           *permission = ts->clients->permissions;
+    while (permission && strcmp(permission->operation, "echo") != 0)
+        permission = permission->next;
+    require(permission != NULL, "prepared echo permission missing");
+    require(request_state.error == NULL && apiserverAuthorize(ts, &request_state, &resolved, &operation) == NULL &&
+                resolved == &target && operation == permission->descriptor,
+            "authorization did not reuse its prepared immutable descriptor");
+    strcpy(request_state.operation, "unlisted");
+    require(strcmp(apiserverAuthorize(ts, &request_state, &resolved, &operation), "forbidden") == 0,
+            "absent exact permission used an unsupported-operation fallback");
+    request_state.config[0] = '\0';
+    strcpy(request_state.node, "duplicate");
+    require(strcmp(apiserverAuthorize(ts, &request_state, &resolved, &operation), "ambiguous_target") == 0,
+            "allowlist filtering suppressed global selector ambiguity");
+    memoryFree(request_state.body);
+    closeLine();
+}
+
+static void timerReuse(void)
+{
+    size_t   size;
+    uint8_t *bytes = frame(request, &size);
+    openLine();
+    wtimer_t      *timer    = state()->timer;
+    const uint64_t idle_due = timer->next_timeout;
+    now_us += 500000;
+    sendBytes(bytes, 1);
+    uint64_t frame_deadline = state()->frame_deadline;
+    require(state()->timer == timer && timer_adds == 1 && timer_resets == 1 && timer->next_timeout < idle_due &&
+                timer->next_timeout <= frame_deadline * 1000 && timer->next_timeout + 100000 >= frame_deadline * 1000,
+            "first fragment did not reuse the timer with a fresh cached time and earlier deadline");
+    for (size_t i = 1; i < 4; ++i)
+    {
+        now_us += 500000;
+        sendBytes(bytes + i, 1);
+        require(state()->timer == timer && state()->frame_deadline == frame_deadline && timer_adds == 1,
+                "header fragments recreated a timer or slid the arrival deadline");
+    }
+    unsigned resets = timer_resets;
+    wtimerTestMakePendingOneShot(timer);
+    require(timer->pending && timer->destroy, "due-pending timer fixture");
+    require(apiserverArmTimer(state()) && state()->timer == timer && ! timer->pending && ! timer->destroy &&
+                timer_resets == resets + 1,
+            "ordinary reset failed to revive a published due-pending timer");
+    pump();
+    require(lineIsAlive(line) && state()->timer == timer && timer_adds == 1,
+            "obsolete pending timer dispatched after reset");
+    closeLine();
+
+    openLine();
+    timer = state()->timer;
+    require(__real_wtimerReset(timer, 1), "early wake fixture");
+    pump();
+    require(lineIsAlive(line) && state()->timer != NULL && timer_adds == 2,
+            "timer callback did not clear publication before adding its replacement");
+    closeLine();
+
+    for (unsigned pending = 0; pending < 2; ++pending)
+    {
+        openLine();
+        if (pending)
+            wtimerTestMakePendingOneShot(state()->timer);
+        refuse_timer = true;
+        sendBytes(bytes, 1);
+        require(! lineIsAlive(line) && timer_adds == 1 && timer_resets == 1,
+                "reset refusal retried scheduling or retained the borrowed session");
+        closeLine();
+    }
+    memoryFree(bytes);
+}
+
 static void deadlinesAndRefusal(void)
 {
     openLine();
@@ -1088,6 +1177,8 @@ int main(void)
     TEST_RUN_CASE(pressureAndReentry);
     TEST_RUN_CASE(queuedErrorsContinueAfterResume);
     TEST_RUN_CASE(queuedErrorsContinueAfterAsyncReply);
+    TEST_RUN_CASE(preparedDescriptor);
+    TEST_RUN_CASE(timerReuse);
     TEST_RUN_CASE(deadlinesAndRefusal);
     TEST_RUN_CASE(hardLimits);
     TEST_RUN_CASE(lateCompletionAndReuse);

@@ -78,14 +78,16 @@ static uint64_t minimum(uint64_t current, uint64_t value)
 
 bool apiserverArmTimer(apiserver_lstate_t *ls)
 {
-    if (ls->timer)
-    {
-        weventSetUserData(ls->timer, NULL);
-        wtimerDelete(ls->timer);
-        ls->timer = NULL;
-    }
     if (ls->quiesced)
+    {
+        if (ls->timer)
+        {
+            weventSetUserData(ls->timer, NULL);
+            wtimerDelete(ls->timer);
+            ls->timer = NULL;
+        }
         return true;
+    }
     apiserver_tstate_t *ts  = tunnelGetState(ls->tunnel);
     uint64_t            now = nodeApiNowMs();
     uint64_t            due = UINT64_MAX;
@@ -106,7 +108,15 @@ bool apiserverArmTimer(apiserver_lstate_t *ls)
     uint64_t wait = due > now ? due - now : 1;
     if (wait > UINT32_MAX)
         wait = UINT32_MAX;
-    ls->timer = wtimerAdd(getWorkerLoop(lineGetWID(ls->line)), sessionTimer, (uint32_t) wait, 1);
+    wloop_t *loop = getWorkerLoop(lineGetWID(ls->line));
+    if (ls->timer)
+    {
+        /* Reset uses the owner's cached time, including outside loop dispatch.
+         * It also suppresses an obsolete due-pending delivery. */
+        wloopUpdateTime(loop);
+        return wtimerReset(ls->timer, (uint32_t) wait);
+    }
+    ls->timer = wtimerAdd(loop, sessionTimer, (uint32_t) wait, 1);
     if (! ls->timer)
         return false;
     weventSetUserData(ls->timer, ls);

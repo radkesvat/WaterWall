@@ -13,7 +13,7 @@ void apiserverOnPrepair(tunnel_t *t)
         if (! bufferpoolQueryBestFit(getWorkerBufferPool(wid), kApiMinimumResultAllowance, 0, &fit) ||
             fit.allocation_charge > ts->limits.handler_working_memory - kApiHandlerMetadataAllowance)
         {
-            LOGF("APIServer: handler_working_memory cannot accommodate a complete bounded result");
+            LOGE("APIServer: handler_working_memory cannot accommodate a complete bounded result");
             startupFailureRecord(1);
             return;
         }
@@ -24,7 +24,7 @@ void apiserverOnPrepair(tunnel_t *t)
             if (nodemanagerResolveApiTarget(p->config, p->node, &p->target, NULL) != kNodeApiTargetFound ||
                 ! (p->descriptor = nodeApiFind(p->target, p->operation)))
             {
-                LOGF("APIServer: allowlist must name an existing registered target operation");
+                LOGE("APIServer: allowlist must name an existing registered target operation");
                 startupFailureRecord(1);
                 return;
             }

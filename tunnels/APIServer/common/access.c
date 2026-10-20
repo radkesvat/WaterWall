@@ -31,11 +31,10 @@ const char *apiserverAuthorize(apiserver_tstate_t *ts, api_request_t *r, tunnel_
             break;
     if (! p)
         return "forbidden";
-    if (! nodeApiHasRegistration(*target))
-        return "unsupported_api";
-    *operation = nodeApiFind(*target, r->operation);
-    if (! *operation)
-        return "unsupported_operation";
+    /* Preparation resolved this immutable descriptor before registry freeze.
+     * Admission closes before targets or their registrations can be retired. */
+    assert(p->descriptor != NULL && nodeApiFind(*target, p->operation) == p->descriptor);
+    *operation = p->descriptor;
     if (strcmp((*operation)->request_content_type, r->content_type) != 0)
         return "unsupported_content_type";
     return NULL;
