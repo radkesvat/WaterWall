@@ -73,6 +73,12 @@ target_link_libraries(timer_pool_test PRIVATE ww)
 set_target_properties(timer_pool_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 _waterwall_register_portable_contract(waterwall.timer_pool_unit timer_pool_test "unit;timer;pool;lifetime;portable")
 
+waterwall_add_native_executable(timer_reset_lifetime_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/net/event/timer_reset_lifetime_test.c")
+  target_link_libraries(timer_reset_lifetime_test PRIVATE ww_test_support)
+target_link_libraries(timer_reset_lifetime_test PRIVATE ww)
+set_target_properties(timer_reset_lifetime_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+_waterwall_register_portable_contract(waterwall.timer_reset_lifetime_unit timer_reset_lifetime_test "unit;timer;event;lifetime;shutdown;portable")
+
 if(WIN32)
   waterwall_add_native_executable(atomic_u32_fallback_test SUPPORT EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/base/atomic_u32_test.c")
   target_compile_definitions(atomic_u32_fallback_test PRIVATE WW_HAVE_C11_ATOMICS=0)
