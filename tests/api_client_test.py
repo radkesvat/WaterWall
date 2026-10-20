@@ -91,6 +91,62 @@ class ClientOutcomeTest(unittest.TestCase):
             self.assertEqual(text, "")
             self.assertIn("Password-change outcome unknown", diagnostic)
 
+    def test_all_mutations_classify_success_refusal_and_uncertainty(self):
+        acknowledgement = {"id": "42", "config_revision": "87", "edit_token": "0" * 48}
+        for operation in ("create-user", "update-user", "change-user-password"):
+            with self.subTest(operation=operation):
+                result, text, diagnostic = self.invoke(self.reply(0, acknowledgement), operation=operation)
+                self.assertEqual(result, 0)
+                self.assertEqual(json.loads(text), acknowledgement)
+                self.assertEqual(diagnostic, "")
+                result, _, diagnostic = self.invoke(self.reply(1, {"error": {"code": "invalid_request"}}),
+                                                    operation=operation)
+                self.assertEqual(result, 1)
+                self.assertNotIn("outcome unknown", diagnostic)
+                result, _, diagnostic = self.invoke({"error": {"code": "forbidden"}}, operation=operation)
+                self.assertEqual(result, 2)
+                self.assertNotIn("outcome unknown", diagnostic)
+                for response in (None, self.reply(0, {}), {"error": {"code": "invalid_response"}},
+                                 {"error": {"code": "response_too_large"}}):
+                    result, _, diagnostic = self.invoke(response, operation=operation)
+                    self.assertEqual(result, 2)
+                    self.assertIn("outcome unknown", diagnostic)
+                for sent in (False, True):
+                    result, _, diagnostic = self.invoke(
+                        error=CLIENT.ApiTransportError("PRIVATE_PASSWORD_SENTINEL", sent=sent), operation=operation)
+                    self.assertEqual(result, 2)
+                    self.assertEqual("outcome unknown" in diagnostic, sent)
+        _, _, diagnostic = self.invoke(None, operation="create-user")
+        self.assertIn("retain the original ID and inputs", diagnostic)
+        self.assertIn("Existence alone does not prove", diagnostic)
+
+    def test_token_inputs_are_bounded_and_fail_without_transport(self):
+        with tempfile.TemporaryDirectory(prefix="ww-api-token-") as directory:
+            token_file = Path(directory) / "token"
+            base = ["api_client.py", "--client", "admin", "--node", "accounts"]
+            cases = [("--token-env", "", None), ("--token-env", "WW_MISSING_API_TOKEN", None),
+                     ("--token-file", str(token_file / "missing"), None)]
+            for payload in (b"a" * 67, b"a" * 64 + b"\n" * 100000, b"\xff" * 64):
+                cases.append(("--token-file", str(token_file), payload))
+            for option, value, payload in cases:
+                if payload is not None:
+                    token_file.write_bytes(payload)
+                stderr = io.StringIO()
+                with (patch.object(sys, "argv", base + [option, value]),
+                      patch.object(sys, "stderr", stderr), patch.dict(os.environ, {}, clear=True),
+                      patch.object(CLIENT, "call") as transport):
+                    self.assertEqual(CLIENT.main(), 2)
+                    transport.assert_not_called()
+                self.assertNotIn("Traceback", stderr.getvalue())
+                self.assertNotIn("a" * 64, stderr.getvalue())
+            for suffix in (b"", b"\n", b"\r\n"):
+                token_file.write_bytes(b"a" * 64 + suffix)
+                with (patch.object(sys, "argv", base + ["--token-file", str(token_file)]),
+                      patch.object(sys, "stderr", io.StringIO()), patch.object(sys, "stdout", io.TextIOWrapper(io.BytesIO())),
+                      patch.object(CLIENT, "call", return_value=self.reply(0, {})) as transport):
+                    self.assertEqual(CLIENT.main(), 0)
+                    self.assertEqual(transport.call_args.args[2]["auth"]["token"], "a" * 64)
+
     def test_update_recovery_still_requires_a_read(self):
         result, _, diagnostic = self.invoke(error=OSError(), operation="update-user")
         self.assertEqual(result, 2)

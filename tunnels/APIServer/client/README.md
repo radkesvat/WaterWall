@@ -22,7 +22,7 @@ regains control. Use an IP address when that resolver limitation is unsuitable.
 `--client`, `--node`, and one of `--token-file PATH` or `--token-env NAME` are
 required. `--config` is the logical configuration name; omitting it requires a
 globally unique node name. The client connects over TCP. APIServer must be reached
-through an appropriately protected transport for remote use; it does not encrypt
+through an authenticated encrypted transport with peer identity verification for remote use; it does not encrypt
 the API token. HTTP and raw UDP are not implemented by this client. An existing
 TcpOverUdp bridge can expose a local TCP entry point.
 
@@ -120,3 +120,9 @@ python3 tests/api_client_test.py
 The namespace integration case `waterwall.api_admin_cli` runs the real CLI against
 WaterWall; its setup and execution commands live in
 [`tests/cases/api_admin_cli/README.md`](../../../tests/cases/api_admin_cli/README.md).
+
+`invalid_response` is a post-dispatch gateway error for malformed UTF-8/NUL output
+from a UTF-8 handler. A write may have committed, so this error remains an uncertain
+outcome and must not trigger an automatic retry. Base64 results may contain arbitrary
+bytes. API tokens do not prevent unauthenticated resource consumption; restrict
+reachability or authenticate peers in the transport.

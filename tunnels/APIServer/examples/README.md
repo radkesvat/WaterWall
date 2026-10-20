@@ -16,12 +16,20 @@ python3 tunnels/APIServer/examples/api_client.py \
 
 The client name and token must match an APIServer credential whose allowlist permits
 the selected configuration, node, and operation. The token file contains exactly
-64 hexadecimal characters, optionally followed by a newline. You can use
+64 hexadecimal characters, optionally followed by CR, LF or CRLF. Token-file input
+is bounded to 66 bytes plus one overflow-detection byte; oversized or non-ASCII
+files and empty/missing environment names fail before transport use. You can use
 `--token-env VARIABLE_NAME` instead. The default operation body is `{}`; supply
 `--body-file request.json` for another body.
 
 The client sends one request and performs no automatic retries. It connects over
 TCP; HTTP and reliable UDP require the transport arrangements described below.
+A definite pre-send transport failure did not execute a write. Once sending begins,
+a malformed reply or post-dispatch error such as `invalid_response` leaves a
+mutation's outcome unknown. The client never automatically retries. For uncertain
+`create-user`, retain the original ID and inputs and read that ID before deciding
+whether to submit again; existence alone does not prove this request created it.
+For updates and password changes, reread and explicitly reconsider the write.
 
 The maintained guides and walkthroughs live in **WaterWall-Docs**:
 
