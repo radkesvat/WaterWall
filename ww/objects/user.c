@@ -6,6 +6,7 @@
 #include "objects/user_index_geometry.h"
 
 #include "utils/json_helpers.h"
+#include "wsocket.h"
 #include "wtime.h"
 
 struct user_bandwidth_waiter_s
@@ -374,7 +375,7 @@ bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_a
     uint8_t   prefix = 0;
     uint8_t   family = 0;
     ip_addr_t ip;
-    ip_addr_t mask;
+    ip_addr_t mask = {0};
     char      normalized[USER_WIREGUARD_ALLOWED_IPS_MAX_TEXT];
 
     if (normalized_out != NULL)
@@ -420,7 +421,16 @@ bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_a
         return false;
     }
 
-    compact = stringNewWithoutSpace(value);
+    const char *begin = value;
+    while (isspace((unsigned char) *begin))
+        ++begin;
+    const char *end = begin + strlen(begin);
+    while (end > begin && isspace((unsigned char) end[-1]))
+        --end;
+    const size_t length = (size_t) (end - begin);
+    compact             = memoryAllocate(length + 1U);
+    memoryCopy(compact, begin, length);
+    compact[length] = '\0';
     if (compact[0] == '\0')
     {
         if (normalized_out != NULL)
@@ -450,8 +460,11 @@ bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_a
     memoryCopy(ip_text, compact, ip_len);
     ip_text[ip_len] = '\0';
 
-    ip4_addr_t ip4;
-    if (ip4addr_aton(ip_text, &ip4))
+#ifdef OS_WIN
+    WSAInit();
+#endif
+    struct in_addr ip4;
+    if (inet_pton(AF_INET, ip_text, &ip4) == 1)
     {
         if (UNLIKELY(! userParsePrefixLength(slash + 1, 32U, &prefix)))
         {
@@ -459,22 +472,22 @@ bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_a
             return false;
         }
         memoryZero(&ip, sizeof(ip));
-        ip.type       = IPADDR_TYPE_V4;
-        ip.u_addr.ip4 = ip4;
+        ip.type = IPADDR_TYPE_V4;
+        memoryCopy(&ip.u_addr.ip4.addr, &ip4, sizeof(ip4));
         userBuildIpv4Mask(prefix, &mask);
         family = 4U;
     }
     else
     {
-        ip6_addr_t ip6;
-        if (UNLIKELY(! ip6addr_aton(ip_text, &ip6) || ! userParsePrefixLength(slash + 1, 128U, &prefix)))
+        struct in6_addr ip6;
+        if (UNLIKELY(inet_pton(AF_INET6, ip_text, &ip6) != 1 || ! userParsePrefixLength(slash + 1, 128U, &prefix)))
         {
             memoryFree(compact);
             return false;
         }
         memoryZero(&ip, sizeof(ip));
-        ip.type       = IPADDR_TYPE_V6;
-        ip.u_addr.ip6 = ip6;
+        ip.type = IPADDR_TYPE_V6;
+        memoryCopy(ip.u_addr.ip6.addr, &ip6, sizeof(ip6));
         userBuildIpv6Mask(prefix, &mask);
         family = 6U;
     }

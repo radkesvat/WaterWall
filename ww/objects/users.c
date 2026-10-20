@@ -2686,10 +2686,8 @@ static bool usersAppendJsonUserLocked(users_t *users, const cJSON *user_json, co
 }
 
 /*
- * Reserves active-pointer, stable-slot, and all lookup-table capacity for a JSON
- * container's children in one step, so a bulk feed does not repeatedly grow and
- * rehash. Append-to-existing semantics are preserved (capacity targets the old
- * count plus the incoming children); rollback still restores the old counts.
+ * Bound speculative storage before validating a container. Later entries grow
+ * stable storage and indexes only as they are accepted; rollback restores counts.
  */
 static bool usersReserveForFeedLocked(users_t *users, const cJSON *container)
 {
@@ -2699,7 +2697,7 @@ static bool usersReserveForFeedLocked(users_t *users, const cJSON *container)
         return true;
     }
 
-    size_t total = users->count + (size_t) entry_count;
+    size_t total = users->count + min((size_t) entry_count, (size_t) kUsersBlockSize);
     if (UNLIKELY(total < users->count))
     {
         LOGE("Users: JSON feed size overflow");
@@ -2751,8 +2749,8 @@ static bool usersFeedJsonObjectMapLocked(users_t *users, const cJSON *object)
 
 static bool usersJsonObjectLooksLikeSingleUser(const cJSON *json)
 {
-    return cJSON_GetObjectItemCaseSensitive(json, "password") != NULL ||
-           cJSON_GetObjectItemCaseSensitive(json, "pass") != NULL;
+    return cJSON_IsString(cJSON_GetObjectItemCaseSensitive(json, "password")) ||
+           cJSON_IsString(cJSON_GetObjectItemCaseSensitive(json, "pass"));
 }
 
 static bool usersUserJsonWireGuardAllowedIpsValid(const cJSON *json)
@@ -2776,7 +2774,7 @@ static bool usersUserJsonWireGuardAllowedIpsValid(const cJSON *json)
  * - [user, ...]
  * - {"users": [user, ...]}
  * - {"name": user, ...}, where the object key is used as a username hint.
- * - A single user object when it contains "password" or "pass".
+ * - A single user object when "password" or "pass" has a string value.
  */
 static bool usersFeedJsonLocked(users_t *users, const cJSON *json)
 {

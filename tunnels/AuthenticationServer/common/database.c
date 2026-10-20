@@ -256,8 +256,8 @@ static bool authenticationserverUserIdListAppend(authenticationserver_user_id_li
 
 static bool authenticationserverJsonLooksLikeSingleUser(const cJSON *json)
 {
-    return cJSON_GetObjectItemCaseSensitive(json, "password") != NULL ||
-           cJSON_GetObjectItemCaseSensitive(json, "pass") != NULL;
+    return cJSON_IsString(cJSON_GetObjectItemCaseSensitive(json, "password")) ||
+           cJSON_IsString(cJSON_GetObjectItemCaseSensitive(json, "pass"));
 }
 
 static const cJSON *authenticationserverUserJsonIdItem(const cJSON *user_json)

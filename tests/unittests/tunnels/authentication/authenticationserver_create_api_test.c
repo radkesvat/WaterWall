@@ -401,6 +401,14 @@ static void duplicatesAndFailures(void)
     create(60, "F47AC10B-58CC-4372-A567-0E02B2C3D479", NULL, "credentials_exist");
     create(60, "fresh-range", "{\"wireguard_allowed_ips\":\"10.8.0.5/32\"}", "allowed_ips_overlap");
     create(60, "fresh-range", "{\"wireguard_allowed_ips\":\"garbage\"}", "invalid_allowed_ips");
+    static const char *malformed_cidrs[] = {
+        "10/8", "192.168.1/24", "010.0.0.1/32", "12345::/16", "1:2:3:4:5:6:7:8zz/128", "10. 0.0.1/32"};
+    for (size_t i = 0; i < sizeof(malformed_cidrs) / sizeof(malformed_cidrs[0]); ++i)
+    {
+        char config[160];
+        snprintf(config, sizeof(config), "{\"wireguard_allowed_ips\":\"%s\"}", malformed_cidrs[i]);
+        create(60, "fresh-strict-range", config, "invalid_allowed_ips");
+    }
     for (crypto_failure = 1; crypto_failure <= 3; ++crypto_failure)
         create(60, "backend-failure", NULL, "creation_failed");
     crypto_failure = 0;

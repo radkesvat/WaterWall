@@ -180,7 +180,7 @@ wcrypto_status_t __wrap_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY
 #if defined(USERS_TEST_ALLOC_COUNTING)
 /* Count core allocations without replacing their succeed-or-terminate contract. */
 static bool   g_alloc_probe_active;
-static size_t g_alloc_calls;
+static size_t g_alloc_calls, g_alloc_bytes;
 static void  *g_secret_free_watch;
 static size_t g_secret_free_bytes, g_secret_wipes, g_secret_capture_bytes;
 
@@ -205,15 +205,18 @@ void *__wrap_memoryAllocate(size_t size);
 void *__wrap_memoryReAllocate(void *ptr, size_t size);
 void *__wrap_memoryCalloc(size_t count, size_t size);
 
-static void countAllocation(void)
+static void countAllocation(size_t bytes)
 {
     if (g_alloc_probe_active)
+    {
         ++g_alloc_calls;
+        g_alloc_bytes += bytes;
+    }
 }
 
 void *__wrap_memoryAllocate(size_t size)
 {
-    countAllocation();
+    countAllocation(size);
     void *ptr = __real_memoryAllocate(size);
     if (g_secret_capture_bytes == size)
     {
@@ -226,19 +229,20 @@ void *__wrap_memoryAllocate(size_t size)
 
 void *__wrap_memoryReAllocate(void *ptr, size_t size)
 {
-    countAllocation();
+    countAllocation(size);
     return __real_memoryReAllocate(ptr, size);
 }
 
 void *__wrap_memoryCalloc(size_t count, size_t size)
 {
-    countAllocation();
+    countAllocation(count * size);
     return __real_memoryCalloc(count, size);
 }
 
 static void allocationCountBegin(void)
 {
     g_alloc_calls        = 0;
+    g_alloc_bytes        = 0;
     g_alloc_probe_active = true;
 }
 
@@ -543,6 +547,161 @@ static users_add_result_t tryAddAllowedIpUser(users_t *users, uint64_t id, const
     users_add_result_t result = usersAddUserChecked(users, &user);
     userDestroy(&user);
     return result;
+}
+
+static void testStrictAllowedIps(void)
+{
+    static const char *invalid[] = {"10/8",
+                                    "192.168.1/24",
+                                    "010.0.0.1/32",
+                                    "0x0a.0.0.1/32",
+                                    "256.0.0.1/32",
+                                    "12345::/16",
+                                    "1:2:3:4:5:6:7:8zz/128",
+                                    "10.0.0.1x/32",
+                                    "10.0.0.1/33",
+                                    "::1/129",
+                                    "::1/-1",
+                                    "::1/1/2",
+                                    "10. 0.0.1/32",
+                                    ":: 1/128",
+                                    "10.0.0.1/ 32",
+                                    "10.0.0.1/32,10.0.0.2/32"};
+    static const char *valid[]   = {
+        "0.0.0.0/0", "10.0.0.1/32", "::/0", "::1/128", "2001:db8:0:0:0:0:0:1/64", "::ffff:192.0.2.1/128"};
+    for (size_t i = 0; i < sizeof(valid) / sizeof(valid[0]); ++i)
+        require(userWireGuardAllowedIpsStringValid(valid[i]), "strict CIDR rejected valid address");
+    users_t users;
+    require(usersCreate(&users), "strict CIDR table creation failed");
+    user_t *existing = addNamedAllowedIpUser(&users, 1, "strict-existing", "original", "10.7.8.9/24");
+    require(strcmp(existing->wireguard_allowed_ips, "10.7.8.0/24") == 0, "CIDR host-bit normalization changed");
+    char *normalized = NULL;
+    require(userWireGuardAllowedIpsParse(" \t10.7.8.9/24\r\n", &normalized, NULL, NULL, NULL, NULL, NULL, NULL) &&
+                strcmp(normalized, "10.7.8.0/24") == 0,
+            "surrounding CIDR whitespace was not trimmed");
+    memoryFree(normalized);
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
+    {
+        require(! userWireGuardAllowedIpsStringValid(invalid[i]), "strict CIDR accepted malformed address");
+        user_config_patch_t patch = {.mask                  = kUserConfigName | kUserConfigWireGuardAllowedIps,
+                                     .name                  = "changed",
+                                     .wireguard_allowed_ips = invalid[i]};
+        require(usersPatchConfigByIdentifier(&users, 1, &patch) == kUsersUpdateResultInvalidWireGuardAllowedIps &&
+                    strcmp(existing->name, "original") == 0 &&
+                    strcmp(existing->wireguard_allowed_ips, "10.7.8.0/24") == 0,
+                "invalid CIDR patch changed existing configuration");
+        cJSON  *entry = cJSON_CreateObject();
+        discard cJSON_AddNumberToObject(entry, "id", 2);
+        discard cJSON_AddStringToObject(entry, "password", "strict-new");
+        discard cJSON_AddStringToObject(entry, "wireguard-allowed-ips", invalid[i]);
+        require(! usersFeedJson(&users, entry) && usersCount(&users) == 1 &&
+                    usersLookupByIdentifier(&users, 2) == NULL && usersValidate(&users),
+                "invalid CIDR import changed table or indexes");
+        user_prepared_creation_t *prepared = NULL;
+        require(usersPrepareNewUser(2, "strict-new", &patch, SIZE_MAX, 0, &prepared) ==
+                        kUsersAddResultInvalidWireGuardAllowedIps &&
+                    prepared == NULL,
+                "fresh-account preparation accepted malformed CIDR");
+        cJSON_Delete(entry);
+    }
+    ip_addr_t probe = parseIp("10.7.8.20");
+    require(usersLookupByWireGuardAllowedIp(&users, &probe) == existing, "invalid CIDR changed range index");
+    usersDestroy(&users);
+}
+
+static void testImportLayoutsAndReservation(void)
+{
+    static const char *layouts[] = {
+        "{\"password\":{\"id\":1,\"password\":\"map-one\"}}",
+        "{\"pass\":{\"id\":1,\"password\":\"map-one\"}}",
+        "{\"password\":{\"id\":1,\"password\":\"map-one\"},\"pass\":{\"id\":2,\"pass\":\"map-two\"}}",
+        "{\"ordinary\":{\"id\":1,\"password\":\"map-one\",\"name\":\"explicit\"}}",
+        "{\"id\":1,\"password\":\"single\"}",
+        "{\"id\":1,\"pass\":\"single\"}",
+        "{\"users\":[{\"id\":1,\"password\":\"wrapped\"}],\"password\":{}}"};
+    for (size_t i = 0; i < sizeof(layouts) / sizeof(layouts[0]); ++i)
+    {
+        users_t users;
+        require(usersCreate(&users), "layout table creation failed");
+        cJSON *json = cJSON_Parse(layouts[i]);
+        require(json != NULL && usersFeedJson(&users, json) && usersValidate(&users), "user layout import failed");
+        user_t *user = usersLookupByIdentifier(&users, 1);
+        require(user != NULL && usersCount(&users) == (i == 2 ? 2U : 1U), "user map layout count mismatch");
+        if (i < 3)
+            require(strcmp(user->name, i == 1 ? "pass" : "password") == 0, "map key name hint lost");
+        if (i == 3)
+            require(strcmp(user->name, "explicit") == 0, "map hint overwrote explicit name");
+        cJSON_Delete(json);
+        usersDestroy(&users);
+    }
+    users_t malformed;
+    require(usersCreate(&malformed), "malformed credential table creation failed");
+    cJSON *bad = cJSON_Parse("{\"id\":1,\"password\":1,\"pass\":\"fallback-must-not-win\"}");
+    require(bad != NULL && ! usersFeedJson(&malformed, bad) && usersCount(&malformed) == 0,
+            "fallback credential bypassed malformed selected password");
+    cJSON_Delete(bad);
+    static const char *noop[] = {"null", "[]", "{}", "{\"users\":null}"};
+    for (size_t i = 0; i < sizeof(noop) / sizeof(noop[0]); ++i)
+    {
+        cJSON *json = cJSON_Parse(noop[i]);
+        require(json != NULL && usersFeedJson(&malformed, json) && usersCount(&malformed) == 0,
+                "no-op import layout changed");
+        cJSON_Delete(json);
+    }
+    usersDestroy(&malformed);
+    for (unsigned kind = 0; kind < 6; ++kind)
+    {
+        cJSON *array = kind < 3 ? cJSON_CreateArray() : cJSON_CreateObject();
+        for (unsigned i = 0; i < 4096; ++i)
+        {
+            cJSON  *entry = cJSON_CreateObject();
+            discard cJSON_AddStringToObject(entry, "password", "repeated");
+            if (kind % 3 == 2 && i == 0)
+                discard cJSON_AddNumberToObject(entry, "wireguard-allowed-ips", 1);
+            if (kind % 3 == 0 && i == 0)
+                cJSON_ReplaceItemInObjectCaseSensitive(entry, "password", cJSON_CreateNumber(1));
+            if (kind < 3)
+                discard cJSON_AddItemToArray(array, entry);
+            else
+            {
+                char key[32];
+                snprintf(key, sizeof(key), "name-%u", i);
+                discard cJSON_AddItemToObject(array, key, entry);
+            }
+        }
+        users_t users;
+        require(usersCreate(&users), "bounded import table creation failed");
+        user_t *prior = addNamedAllowedIpUser(&users, 42, "prior", "prior", "10.2.0.0/24");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+        allocationCountBegin();
+#endif
+        require(! usersFeedJson(&users, array), "invalid speculative tail imported");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+        discard allocationCountEnd();
+        require(g_alloc_bytes < 256U * 1024U, "invalid tail amplified speculative index allocation");
+#endif
+        require(users.slot_capacity <= 128 && users.capacity <= 128 && usersCount(&users) == 1 &&
+                    usersLookupByIdentifier(&users, 42) == prior && usersValidate(&users),
+                "invalid tail reserved excessive storage or broke rollback");
+        usersDestroy(&users);
+        cJSON_Delete(array);
+    }
+    users_t users;
+    require(usersCreate(&users), "multi-block import table creation failed");
+    cJSON *array = cJSON_CreateArray();
+    for (unsigned i = 0; i < 193; ++i)
+    {
+        cJSON *entry = cJSON_CreateObject();
+        char   password[32];
+        snprintf(password, sizeof(password), "bulk-%u", i);
+        discard cJSON_AddNumberToObject(entry, "id", i + 1);
+        discard cJSON_AddStringToObject(entry, "password", password);
+        discard cJSON_AddItemToArray(array, entry);
+    }
+    require(usersFeedJson(&users, array) && usersCount(&users) == 193 && usersValidate(&users),
+            "bounded speculation prevented valid multi-block import");
+    cJSON_Delete(array);
+    usersDestroy(&users);
 }
 
 static void testAllowedIpIndex(void)
@@ -2308,6 +2467,8 @@ int main(void)
 
     testNameIndex();
     testPointerIndexAndRemoval();
+    testStrictAllowedIps();
+    testImportLayoutsAndReservation();
     testAllowedIpIndex();
     testValidationAtScaleAndCorruption();
     testIncrementalPasswordChange();

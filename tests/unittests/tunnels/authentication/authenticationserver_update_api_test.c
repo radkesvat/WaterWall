@@ -323,6 +323,14 @@ static void conflictsAndRefusal(void)
     edit(42, "{\"name\":\"occupied\",\"enabled\":true}", "name_exists");
     edit(42, "{\"wireguard_allowed_ips\":\"10.9.0.5/32\",\"enabled\":true}", "allowed_ips_overlap");
     edit(42, "{\"wireguard_allowed_ips\":\"not-a-range\",\"enabled\":true}", "invalid_allowed_ips");
+    static const char *malformed_cidrs[] = {
+        "10/8", "192.168.1/24", "010.0.0.1/32", "12345::/16", "1:2:3:4:5:6:7:8zz/128", "10. 0.0.1/32"};
+    for (size_t i = 0; i < sizeof(malformed_cidrs) / sizeof(malformed_cidrs[0]); ++i)
+    {
+        char patch[160];
+        snprintf(patch, sizeof(patch), "{\"wireguard_allowed_ips\":\"%s\",\"enabled\":true}", malformed_cidrs[i]);
+        edit(42, patch, "invalid_allowed_ips");
+    }
     user_t *u = usersLookupByIdentifier(&state()->store.users, 42);
     twfRequire(! u->enabled && u->name[0] == '\0' && u->wireguard_allowed_ips[0] == '\0', "refusal changed fields");
     context.max_response_body_size = 255;
