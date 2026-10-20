@@ -147,6 +147,32 @@ class ClientOutcomeTest(unittest.TestCase):
                     self.assertEqual(CLIENT.main(), 0)
                     self.assertEqual(transport.call_args.args[2]["auth"]["token"], "a" * 64)
 
+    def test_raw_example_preserves_binary_stdout(self):
+        raw = b"\0\xff\x80"
+        response = {"error": None, "result": {"code": 0, "body_encoding": "base64", "body": "AP+A"}}
+        output = io.BytesIO()
+        stdout = io.TextIOWrapper(output, encoding="utf-8")
+        stderr = io.StringIO()
+        argv = ["api_client.py", "--client", "operator", "--node", "binary", "--operation", "binary",
+                "--token-env", "WW_TEST_API_TOKEN"]
+        with (patch.object(sys, "argv", argv), patch.object(sys, "stdout", stdout),
+              patch.object(sys, "stderr", stderr), patch.dict(os.environ, WW_TEST_API_TOKEN="a" * 64),
+              patch.object(CLIENT, "call", return_value=response) as transport):
+            self.assertEqual(CLIENT.main(), 0)
+            transport.assert_called_once()
+        stdout.flush()
+        self.assertEqual(output.getvalue(), raw)
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_duplicate_mutation_acknowledgement_is_uncertain(self):
+        response = self.reply(0, {})
+        response["result"]["body"] = ('{"id":"42","id":"duplicate","config_revision":"87",'
+                                       '"edit_token":"' + "0" * 48 + '"}')
+        result, text, diagnostic = self.invoke(response, operation="create-user")
+        self.assertEqual(result, 2)
+        self.assertEqual(text, "")
+        self.assertIn("Creation outcome unknown", diagnostic)
+
     def test_update_recovery_still_requires_a_read(self):
         result, _, diagnostic = self.invoke(error=OSError(), operation="update-user")
         self.assertEqual(result, 2)

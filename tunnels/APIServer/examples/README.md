@@ -2,7 +2,9 @@
 
 [`api_client.py`](api_client.py) is a generic Python client for calling registered
 WaterWall node operations over TCP. It uses only Python's standard library and
-shares its transport module with the [administration CLI](../client/README.md).
+shares `ww_api.py` transport and `ww_api_cli.py` connection/token/recovery support
+with the [administration CLI](../client/README.md). It writes decoded result bytes
+to stdout unchanged, without adding a newline.
 Keep both `examples/` and `client/` in their sibling locations when copying the
 example. Run it from the WaterWall repository root:
 

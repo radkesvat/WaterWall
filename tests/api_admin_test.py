@@ -303,6 +303,25 @@ class AdminTest(unittest.TestCase):
         self.assertEqual(result, 2)
         call.assert_not_called()
 
+    def test_shared_connection_token_boundaries(self):
+        result, text, errors, transport, _ = self.invoke(["status"], options=["--token-env", ""])
+        self.assertEqual(result, 2)
+        self.assertEqual(text, "")
+        self.assertNotIn(API_TOKEN, errors)
+        transport.assert_not_called()
+        with tempfile.TemporaryDirectory(prefix="ww-admin-token-") as directory:
+            path = Path(directory) / "token"
+            args = CLIENT.parser().parse_args(["--client", "admin", "--node", "accounts", "--token-file", str(path),
+                                               "status"])
+            for suffix in (b"", b"\r", b"\n", b"\r\n"):
+                path.write_bytes(API_TOKEN.encode("ascii") + suffix)
+                self.assertEqual(CLIENT.connection_inputs(args), API_TOKEN)
+            for data in (b"a" * 67, b"a" * 64 + b"\n\n", b"\xff" * 64, b"a" * 63):
+                path.write_bytes(data)
+                with self.assertRaises(CLIENT.CommandError) as caught:
+                    CLIENT.connection_inputs(args)
+                self.assertNotIn(API_TOKEN, str(caught.exception))
+
     def test_pre_dispatch_gateway_refusals_are_definite(self):
         for code in ("forbidden", "unauthorized", "unsupported_operation", "target_not_found", "ambiguous_target"):
             with self.subTest(code=code):

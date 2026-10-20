@@ -102,9 +102,13 @@ def _reject_constant(value):
     raise ValueError("Response has a nonfinite JSON number.")
 
 
+def strict_json(data):
+    """Decode one complete JSON document with unique keys and no NaN/Infinity literals."""
+    return json.loads(data.decode("utf-8"), object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+
+
 def _response(payload, request_id):
-    response = json.loads(payload.decode("utf-8"), object_pairs_hook=_unique_object,
-                          parse_constant=_reject_constant)
+    response = strict_json(payload)
     if not isinstance(response, dict) or set(response) != {"id", "error", "result"}:
         raise ValueError("Response has an unexpected request ID or shape.")
     # A framing refusal can precede ID parsing. This connection carries exactly

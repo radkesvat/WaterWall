@@ -13,74 +13,33 @@ unknown. Redacted reads cannot prove which password is stored; explicitly decide
 whether to resubmit the desired password with the freshly read token.
 """
 
-import argparse
 import base64
-import json
-import math
-import os
 from pathlib import Path
-import re
 import sys
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "client"))
-from ww_api import ApiTransportError, call, decode_result, read_exact
-
-
-# These gateway rejections occur before the selected operation can execute.
-PRE_DISPATCH_ERRORS = {"invalid_request", "invalid_encoding", "unauthorized", "forbidden",
-                       "target_not_found", "ambiguous_target", "unsupported_api",
-                       "unsupported_operation", "unsupported_content_type"}
+from ww_api import ApiTransportError, call, decode_result
+from ww_api_cli import (PRE_DISPATCH_ERRORS, WRITES, SafeParser, add_connection_arguments,
+                        connection_inputs, strict_json, unknown_outcome)
 
 
 def unknown_write_outcome(operation):
-    if operation == "create-user":
-        print("Creation outcome unknown: retain the original ID and inputs, then read that ID before deciding "
-              "whether to submit again. Existence alone does not prove this request created the account.",
-              file=sys.stderr)
-    elif operation == "change-user-password":
-        print("Password-change outcome unknown: read the account again; public reads cannot prove which password "
-              "is stored. Explicitly decide whether to resubmit the desired password with the current edit token.",
-              file=sys.stderr)
-    else:
-        print("Update outcome unknown: read the account again before deciding whether to submit another patch.",
-              file=sys.stderr)
+    print(unknown_outcome(operation), file=sys.stderr)
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=9080)
-    parser.add_argument("--client", required=True)
-    secret = parser.add_mutually_exclusive_group(required=True)
-    secret.add_argument("--token-env", metavar="NAME")
-    secret.add_argument("--token-file", type=Path, metavar="PATH")
-    parser.add_argument("--config", help="Logical configuration name, not a file path")
-    parser.add_argument("--node", required=True)
+    parser = SafeParser(description=__doc__)
+    add_connection_arguments(parser)
     parser.add_argument("--operation", default="status")
     parser.add_argument("--content-type", default="application/json")
     parser.add_argument("--body-file", type=Path, help="Opaque request bytes; default: {}")
     parser.add_argument("--body-encoding", choices=("utf8", "base64"), default="utf8")
     parser.add_argument("--id", default=None, help="Correlation label; default: random UUID")
-    parser.add_argument("--timeout", type=float, default=10.0)
-    parser.add_argument("--max-response-bytes", type=int, default=1024 * 1024)
     args = parser.parse_args()
     write_attempted = False
     try:
-        if not math.isfinite(args.timeout) or args.timeout <= 0 or not 0 < args.max_response_bytes <= 0xFFFFFFFF:
-            raise ValueError("Timeout and response limit must be finite positive values.")
-        if args.token_env is not None:
-            if not args.token_env:
-                raise ValueError("Token environment name must not be empty.")
-            token = os.environ.get(args.token_env, "")
-        else:
-            with args.token_file.open("rb", buffering=0) as token_file:
-                token_bytes = token_file.read(67)
-            if len(token_bytes) > 66 or token_bytes[64:] not in (b"", b"\r", b"\n", b"\r\n"):
-                raise ValueError("Token file exceeds the supported token format.")
-            token = token_bytes[:64].decode("ascii")
-        if re.fullmatch(r"[0-9a-fA-F]{64}", token) is None:
-            raise ValueError("Token input must contain exactly 64 hexadecimal characters.")
+        token = connection_inputs(args)
         raw_body = args.body_file.read_bytes() if args.body_file else b"{}"
         if args.body_encoding == "utf8":
             body = raw_body.decode("utf-8")
@@ -96,7 +55,7 @@ def main():
                    "selector": selector, "operation": args.operation,
                    "content_type": args.content_type,
                    "body_encoding": args.body_encoding, "body": body}
-        write_attempted = args.operation in {"create-user", "update-user", "change-user-password"}
+        write_attempted = args.operation in WRITES
         response = call(args.host, args.port, request, timeout=args.timeout,
                         max_response_bytes=args.max_response_bytes)
         if not isinstance(response, dict):
@@ -114,7 +73,7 @@ def main():
         if type(result.get("code")) is not int or result["code"] not in {0, 1}:
             raise ValueError("Response has an invalid node result code.")
         if write_attempted:
-            body = json.loads(decoded)
+            body = strict_json(decoded)
             if not isinstance(body, dict):
                 raise ValueError("Response has an invalid mutation result.")
             node_error = body.get("error") if isinstance(body, dict) else None

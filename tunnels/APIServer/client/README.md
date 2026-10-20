@@ -3,7 +3,9 @@
 `ww_admin.py` manages AuthenticationServer accounts through APIServer. It uses
 Python 3.10 or newer and only the standard library; no installation or third-party
 packages are needed. Keep this directory's Python files together when copying it.
-`ww_api.py` owns the shared TCP framing and envelope validation.
+`ww_api.py` owns TCP framing and outer-envelope validation. `ww_api_cli.py`
+shares connection options, bounded token loading and uncertain-write advice with
+the generic example; account body/schema validation stays in `ww_admin.py`.
 
 From the WaterWall repository root:
 
@@ -62,7 +64,9 @@ automation, use either `--password-file PATH` or `--password-stdin`. These input
 are exact UTF-8 bytes: **a final newline is part of the password**. Passwords are
 never accepted as command-line values. Do not use `echo` to prepare a password
 unless its added newline is intended. Token files instead contain exactly 64
-hexadecimal characters, optionally followed by LF or CRLF.
+hexadecimal characters, optionally followed by CR, LF or CRLF. Reads are bounded to 66 bytes plus one
+overflow-detection byte. Non-ASCII/oversized input and an empty environment-option
+name fail before transport use.
 
 Read an account, review its state, then pass the returned 48-character edit token
 to `--if-match`. Edits to any account or a server restart can invalidate it. The

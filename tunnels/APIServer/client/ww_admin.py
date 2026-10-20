@@ -6,11 +6,8 @@ previous read; writes are never retried automatically. Run `users --help` for
 commands and `users update --help` for the editable fields.
 """
 
-import argparse
 from getpass import getpass, GetPassWarning
 import json
-import math
-import os
 from pathlib import Path
 import re
 import sys
@@ -18,16 +15,12 @@ import uuid
 import warnings
 
 from ww_api import ApiTransportError, GATEWAY_ERRORS, call, decode_result
+from ww_api_cli import (PRE_DISPATCH_ERRORS, WRITES, SafeParser, add_connection_arguments,
+                        connection_inputs as shared_connection_inputs, strict_json, unknown_outcome)
 
 
 UINT64_MAX = (1 << 64) - 1
 BODY_LIMIT = 32768
-WRITES = {"create-user", "update-user", "change-user-password"}
-PRE_DISPATCH_ERRORS = {
-    "invalid_request", "invalid_encoding", "unauthorized", "forbidden",
-    "target_not_found", "ambiguous_target", "unsupported_api",
-    "unsupported_operation", "unsupported_content_type",
-}
 NODE_ERRORS = {
     "invalid_request", "conflict", "busy", "not_found", "invalid_cursor", "stale_cursor",
     "invalid_allowed_ips", "name_exists", "allowed_ips_overlap", "resource_limit",
@@ -57,16 +50,6 @@ class CommandError(Exception):
 
 class InvalidResponse(ValueError):
     pass
-
-
-class SafeParser(argparse.ArgumentParser):
-    def __init__(self, *args, **kwargs):
-        kwargs.setdefault("allow_abbrev", False)
-        super().__init__(*args, **kwargs)
-
-    def error(self, message):
-        # argparse normally echoes unrecognized input, possibly a supplied secret.
-        self.exit(2, "Invalid command arguments; run --help for usage.\n")
 
 
 def valid_uint(value, minimum=0, maximum=UINT64_MAX):
@@ -139,16 +122,7 @@ SCHEMAS = {
 
 def parser():
     result = SafeParser(description=__doc__)
-    result.add_argument("--host", default="127.0.0.1")
-    result.add_argument("--port", type=int, default=9080)
-    result.add_argument("--client", required=True)
-    secret = result.add_mutually_exclusive_group(required=True)
-    secret.add_argument("--token-env", metavar="NAME")
-    secret.add_argument("--token-file", type=Path, metavar="PATH")
-    result.add_argument("--config", help="Logical configuration name, not a file path")
-    result.add_argument("--node", required=True)
-    result.add_argument("--timeout", type=float, default=10.0, help="Seconds per API request (default: 10)")
-    result.add_argument("--max-response-bytes", type=int, default=1024 * 1024)
+    add_connection_arguments(result)
     commands = result.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="Read server status, save telemetry and audit health")
     users = commands.add_parser("users", help="Read and manage accounts")
@@ -185,20 +159,10 @@ def read_limited(path, limit):
 
 
 def connection_inputs(args):
-    if not 1 <= args.port <= 65535 or not math.isfinite(args.timeout) or args.timeout <= 0:
-        raise CommandError("Port and timeout must be valid positive values.")
-    if not 0 < args.max_response_bytes <= 64 * 1024 * 1024:
-        raise CommandError("Response limit must be between 1 byte and 64 MiB.")
-    for value in (args.client, args.node, args.config):
-        if value is not None and (not valid_text(value) or not 0 < len(value.encode("utf-8")) <= 256):
-            raise CommandError("Client, configuration and node names must contain 1..256 UTF-8 bytes without NUL.")
-    if not valid_text(args.host) or not args.host:
-        raise CommandError("Host must be nonempty and contain no NUL.")
-    token = (os.environ.get(args.token_env, "") if args.token_env is not None
-             else read_limited(args.token_file, 66).decode("ascii").rstrip("\r\n"))
-    if re.fullmatch(r"[0-9a-fA-F]{64}", token) is None:
-        raise CommandError("API token input must contain exactly 64 hexadecimal characters.")
-    return token
+    try:
+        return shared_connection_inputs(args, max_response_bytes=64 * 1024 * 1024)
+    except ValueError as error:
+        raise CommandError(str(error)) from None
 
 
 def password_input(args):
@@ -281,33 +245,6 @@ def prepare(args):
         body["password"] = password_input(args)
     operation = {"create": "create-user", "change-password": "change-user-password"}.get(args.action, "update-user")
     return operation, body
-
-
-def unknown_outcome(operation):
-    if operation == "create-user":
-        return ("Creation outcome unknown. Keep the original ID and inputs and read that ID. "
-                "Existence cannot prove who created it or which password is stored. "
-                "Explicitly decide whether to retry the same ID; do not select a new ID automatically.")
-    if operation == "change-user-password":
-        return ("Password-change outcome unknown. Read the account again; public reads cannot prove which password "
-                "is stored. Explicitly decide whether to resubmit the desired password with the current edit token.")
-    return ("Update outcome unknown. Read the account again and compare the intended changes before deciding "
-            "whether to submit another patch with a current edit token.")
-
-
-def strict_json(data):
-    def pairs(items):
-        result = {}
-        for key, value in items:
-            if key in result:
-                raise InvalidResponse()
-            result[key] = value
-        return result
-
-    def invalid_constant(value):
-        raise InvalidResponse()
-
-    return json.loads(data.decode("utf-8"), object_pairs_hook=pairs, parse_constant=invalid_constant)
 
 
 def perform(args, token, operation, body):
