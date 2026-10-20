@@ -913,11 +913,12 @@ static void timerReuse(void)
     unsigned resets = timer_resets;
     wtimerTestMakePendingOneShot(timer);
     require(timer->pending && timer->destroy, "due-pending timer fixture");
-    require(apiserverArmTimer(state()) && state()->timer == timer && ! timer->pending && ! timer->destroy &&
-                timer_resets == resets + 1,
+    require(apiserverArmTimer(state()) && state()->timer == timer && timer->pending && timer->pending_reset &&
+                ! timer->destroy && timer_resets == resets + 1 && timer_adds == 1,
             "ordinary reset failed to revive a published due-pending timer");
     pump();
-    require(lineIsAlive(line) && state()->timer == timer && timer_adds == 1,
+    require(lineIsAlive(line) && state()->timer == timer && ! timer->pending && ! timer->pending_reset &&
+                ! timer->destroy && timer_adds == 1,
             "obsolete pending timer dispatched after reset");
     closeLine();
 
