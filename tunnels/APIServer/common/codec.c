@@ -60,7 +60,7 @@ void apiserverRequestParse(api_request_t *r, const char *bytes, size_t length)
     static const char *const auth_keys[]     = {"client", "token"};
     r->error                                 = "invalid_request";
     r->close                                 = true;
-    cJSON *json                              = configLexicalParseBounded(bytes, length, 3, 40);
+    cJSON *json                              = configLexicalParseBoundedQuiet(bytes, length, 3, 40);
     if (! json)
         return;
     if (! cJSON_IsObject(json))
@@ -140,6 +140,8 @@ static const char *errorMessage(const char *code)
         return "API deadline expired.";
     if (strcmp(code, "shutting_down") == 0)
         return "API admission is closed.";
+    if (strcmp(code, "invalid_response") == 0)
+        return "The handler returned an invalid response.";
     if (strcmp(code, "response_too_large") == 0)
         return "Response exceeds the configured limit.";
     if (strcmp(code, "invalid_encoding") == 0)
@@ -152,6 +154,7 @@ typedef struct writer_s
 {
     char  *out;
     size_t size;
+    bool   invalid;
 } writer_t;
 
 static void append(writer_t *w, const void *bytes, size_t n)
@@ -243,14 +246,25 @@ static void response(writer_t *w, const char *id, const char *error, const node_
     }
     else
     {
-        if (! configLexicalCheckEncoding((const char *) body, length))
+        if (! configLexicalCheckEncodingQuiet((const char *) body, length))
         {
-            w->size = SIZE_MAX;
+            w->invalid = true;
+            w->size    = SIZE_MAX;
             return;
         }
         quoted(w, body, length);
     }
     literal(w, "}}");
+}
+
+api_response_measure_t apiserverResponseMeasure(const char *id, const char *error, const node_api_operation_t *op,
+                                                enum api_result_e code, const uint8_t *body, size_t length,
+                                                size_t *encoded_size)
+{
+    writer_t w = {0};
+    response(&w, id, error, op, code, body, length);
+    *encoded_size = w.size;
+    return w.invalid ? kApiResponseInvalid : w.size == SIZE_MAX ? kApiResponseTooLarge : kApiResponseValid;
 }
 
 size_t apiserverResponseSize(const char *id, const char *error, const node_api_operation_t *op, enum api_result_e code,

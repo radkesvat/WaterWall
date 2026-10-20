@@ -25,8 +25,19 @@ typedef struct api_request_s
  * temporary parsing bytes. The lexical preflight limits depth and values first. */
 void apiserverRequestParse(api_request_t *request, const char *bytes, size_t length);
 bool apiserverTokenDecode(const char *text, uint8_t bytes[32]);
-/* Exact encoded length, excluding the prefix. No allocation; SIZE_MAX refuses
- * invalid UTF-8 or unrepresentable geometry. error selects a fixed gateway body. */
+typedef enum api_response_measure_e
+{
+    kApiResponseValid,
+    kApiResponseInvalid,
+    kApiResponseTooLarge
+} api_response_measure_t;
+
+/* No allocation. Distinguish malformed UTF-8 handler text from size overflow. */
+api_response_measure_t apiserverResponseMeasure(const char *id, const char *error,
+                                                const node_api_operation_t *operation, enum api_result_e code,
+                                                const uint8_t *body, size_t length, size_t *encoded_size);
+/* Exact encoded length, excluding the prefix. SIZE_MAX refuses malformed or
+ * unrepresentable output. error selects a fixed gateway body. */
 size_t apiserverResponseSize(const char *id, const char *error, const node_api_operation_t *operation,
                              enum api_result_e code, const uint8_t *body, size_t length);
 void   apiserverResponseWrite(char *dest, const char *id, const char *error, const node_api_operation_t *operation,

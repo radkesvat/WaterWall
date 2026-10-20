@@ -54,7 +54,7 @@ void apiserverLinestateDestroy(apiserver_lstate_t *ls)
         apiserverReleaseRequest(ls);
     if (ls->frame)
     {
-        apiserverRelease(ls, ls->frame_size + 1);
+        apiserverRelease(ls, ls->frame_capacity);
         memoryFree(ls->frame);
     }
     if (ls->output)

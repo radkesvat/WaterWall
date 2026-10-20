@@ -77,6 +77,7 @@ typedef struct apiserver_lstate_s
     size_t                      header_size;
     char                       *frame;
     size_t                      frame_size;
+    size_t                      frame_capacity;
     size_t                      frame_used;
     api_request_t              *requests;
     api_request_t              *requests_tail;

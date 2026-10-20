@@ -56,6 +56,29 @@ static void consumeInput(apiserver_lstate_t *ls, size_t amount)
     }
 }
 
+/* Charge both allocations until copying has retired the older storage. */
+static bool growFrame(apiserver_lstate_t *ls, size_t needed)
+{
+    if (needed <= ls->frame_capacity)
+        return true;
+    size_t       capacity = ls->frame_capacity ? ls->frame_capacity : 1024;
+    const size_t maximum  = ls->frame_size + 1;
+    if (capacity > maximum)
+        capacity = maximum;
+    while (capacity < needed)
+        capacity = capacity > maximum / 2 ? maximum : capacity * 2;
+    if (! apiserverReserve(ls, capacity))
+        return false;
+    char *frame = memoryAllocate(capacity);
+    if (ls->frame_used)
+        memcpy(frame, ls->frame, ls->frame_used);
+    memoryFree(ls->frame);
+    apiserverRelease(ls, ls->frame_capacity);
+    ls->frame          = frame;
+    ls->frame_capacity = capacity;
+    return true;
+}
+
 bool apiserverParseInput(apiserver_lstate_t *ls)
 {
     apiserver_tstate_t *ts     = tunnelGetState(ls->tunnel);
@@ -86,13 +109,12 @@ bool apiserverParseInput(apiserver_lstate_t *ls)
                              ((uint32_t) ls->header[2] << 8) | ls->header[3];
             if (! ls->frame_size || ls->frame_size > ts->limits.max_request_envelope)
                 return apiserverFramingError(ls, "invalid_request");
-            if (! apiserverReserve(ls, ls->frame_size + 1))
-                return false;
-            ls->frame = memoryAllocate(ls->frame_size + 1);
             continue;
         }
         if (n > ls->frame_size - ls->frame_used)
             n = ls->frame_size - ls->frame_used;
+        if (! growFrame(ls, ls->frame_used + n + 1))
+            return false;
         memcpy(ls->frame + ls->frame_used, sbufGetRawPtr(input->buffer), n);
         ls->frame_used += n;
         consumeInput(ls, n);
@@ -112,9 +134,10 @@ bool apiserverParseInput(apiserver_lstate_t *ls)
         apiserverRelease(ls, temporary_charge);
         appendRequest(ls, r);
         memoryFree(ls->frame);
-        apiserverRelease(ls, ls->frame_size + 1);
+        apiserverRelease(ls, ls->frame_capacity);
         ls->frame          = NULL;
         ls->frame_size     = 0;
+        ls->frame_capacity = 0;
         ls->frame_used     = 0;
         ls->header_size    = 0;
         ls->frame_deadline = 0;

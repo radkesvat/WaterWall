@@ -81,10 +81,14 @@ bool apiserverLoadSettings(apiserver_tstate_t *ts, const cJSON *settings)
     API_TIMEOUT(output_timeout_ms, 15000);
     API_TIMEOUT(idle_timeout_ms, 60000);
 #undef API_TIMEOUT
-    /* Enough for a complete input, decoded body/tree overlap, encoded reply and
-     * ordinary output chunk. Aggregate also admits one fully reserved handler. */
+    /* Peak body storage is three envelopes during JSON/body parsing; geometric
+     * growth holds old plus new capacities (at most two envelopes) first. Keep
+     * both peaks alongside hard input, output, and carrier/metadata headroom.
+     * Aggregate also admits one fully reserved handler. */
+    uint64_t frame_growth_geometry = 2ULL * (l->max_request_envelope + 1);
+    uint64_t frame_parse_geometry  = 3ULL * l->max_request_envelope + 2;
     uint64_t line_geometry =
-        l->max_input_bytes + 3ULL * l->max_request_envelope + l->max_response_envelope + 128U * 1024U;
+        l->max_input_bytes + max(frame_growth_geometry, frame_parse_geometry) + l->max_response_envelope + 128U * 1024U;
     uint64_t job_geometry =
         l->handler_working_memory + 2ULL * l->max_request_envelope + 2ULL * l->max_response_envelope + 128U * 1024U;
     if (l->max_input_bytes < l->max_request_envelope + 4 || l->max_line_memory < line_geometry ||

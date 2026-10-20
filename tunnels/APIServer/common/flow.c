@@ -142,12 +142,16 @@ static bool pressure(apiserver_lstate_t *ls)
 {
     apiserver_tstate_t *ts     = tunnelGetState(ls->tunnel);
     bool                paused = ls->input_paused;
+    /* Copied incomplete bytes remain hard input, but need further producer input
+     * to complete. Only queued work and raw backlog exert byte pressure. */
+    assert(ls->input_bytes >= ls->header_size + ls->frame_used);
+    size_t pressure_bytes = ls->input_bytes - (ls->header_size + ls->frame_used);
     if (ls->request_count >= ts->limits.max_queued_requests + 1 ||
-        ls->input_bytes >= ts->limits.max_input_bytes - ts->limits.max_input_bytes / 4 ||
+        pressure_bytes >= ts->limits.max_input_bytes - ts->limits.max_input_bytes / 4 ||
         ls->input_fragments >= ts->limits.max_input_fragments - ts->limits.max_input_fragments / 4)
         paused = true;
     else if (ls->request_count <= ts->limits.max_queued_requests / 2 &&
-             ls->input_bytes <= ts->limits.max_input_bytes / 2 &&
+             pressure_bytes <= ts->limits.max_input_bytes / 2 &&
              ls->input_fragments <= ts->limits.max_input_fragments / 2)
         paused = false;
     if (paused == ls->input_paused)

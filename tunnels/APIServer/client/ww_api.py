@@ -4,7 +4,7 @@ The timeout is one monotonic budget for resolution, connection, sending and the
 complete response. Python's blocking system DNS lookup cannot be interrupted;
 its elapsed time is charged before a connection is attempted. Use an IP address
 when that resolver limitation is unsuitable. This module supplies no encryption:
-remote endpoints need an appropriately protected transport.
+remote endpoints need an authenticated encrypted transport with peer identity verification.
 """
 
 import base64
@@ -21,7 +21,7 @@ DEFAULT_MAX_BYTES = 1024 * 1024
 GATEWAY_ERRORS = frozenset({
     "invalid_request", "invalid_encoding", "unauthorized", "forbidden", "target_not_found",
     "ambiguous_target", "unsupported_api", "unsupported_operation", "unsupported_content_type",
-    "busy", "timeout", "shutting_down", "response_too_large",
+    "busy", "timeout", "shutting_down", "response_too_large", "invalid_response",
 })
 
 

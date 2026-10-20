@@ -5,10 +5,12 @@ bool apiserverPublishResponse(apiserver_lstate_t *ls, const char *error, const n
 {
     apiserver_tstate_t *ts = tunnelGetState(ls->tunnel);
     assert(ls->output == NULL && ls->requests != NULL);
-    size_t length = apiserverResponseSize(ls->requests->id, error, op, code, body, body_size);
-    if (length == SIZE_MAX || length > ts->limits.max_response_envelope)
+    size_t                 length;
+    api_response_measure_t measured =
+        apiserverResponseMeasure(ls->requests->id, error, op, code, body, body_size, &length);
+    if (measured != kApiResponseValid || length > ts->limits.max_response_envelope)
     {
-        error  = "response_too_large";
+        error  = measured == kApiResponseInvalid ? "invalid_response" : "response_too_large";
         length = apiserverResponseSize(ls->requests->id, error, NULL, kApiResultError, NULL, 0);
     }
     if (length > ts->limits.max_response_envelope || length > UINT32_MAX || length > SIZE_MAX - 4 ||

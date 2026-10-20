@@ -8,6 +8,7 @@
 #include "wloop_internal.h"
 
 #include "test_assert.h"
+#include <unistd.h>
 
 #define require(c, m) TEST_REQUIRE(TEST_FAILURE_EXIT, c, m)
 
@@ -26,7 +27,7 @@ static node_t          node;
 static tunnel_chain_t *chain;
 static line_t         *line;
 static unsigned        calls, finishes, establishments, pauses, resumes, writes;
-static bool            close_est, close_output, pause_output;
+static bool            close_est, close_output, pause_output, producer_paused, close_pause;
 static uint8_t         captured[4 * 1024 * 1024];
 static size_t          captured_size;
 static size_t          timer_baseline;
@@ -122,6 +123,14 @@ static const node_api_operation_t operations[] = {{.name                  = "ech
                                                    .response_encoding     = kNodeApiEncodingUtf8,
                                                    .execution             = kNodeApiSpecifiedWorker,
                                                    .wid                   = 0},
+                                                  {.name                  = "binary",
+                                                   .handler               = handler,
+                                                   .read_only             = true,
+                                                   .request_content_type  = "application/json",
+                                                   .response_content_type = "application/octet-stream",
+                                                   .response_encoding     = kNodeApiEncodingBase64,
+                                                   .execution             = kNodeApiSpecifiedWorker,
+                                                   .wid                   = 0},
                                                   {.name                  = "large",
                                                    .handler               = handler,
                                                    .read_only             = true,
@@ -139,10 +148,10 @@ static const node_api_operation_t operations[] = {{.name                  = "ech
                                                    .execution             = kNodeApiSpecifiedWorker,
                                                    .wid                   = 0}};
 
-static const char settings[] =
-    "{\"clients\":[{\"name\":\"operator\",\"token\":\""
-    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    "\",\"allow\":[{\"config\":\"one\",\"node\":\"echo\",\"operations\":[\"echo\",\"large\",\"oversize\"]}]}]}";
+static const char settings[] = "{\"clients\":[{\"name\":\"operator\",\"token\":\""
+                               "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                               "\",\"allow\":[{\"config\":\"one\",\"node\":\"echo\",\"operations\":[\"echo\","
+                               "\"binary\",\"large\",\"oversize\"]}]}]}";
 static const char request[] =
     "{\"id\":\"a\",\"auth\":{\"client\":\"operator\",\"token\":\""
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -183,12 +192,16 @@ static void onPause(tunnel_t *t, line_t *l)
     discard t;
     discard l;
     ++pauses;
+    producer_paused = true;
+    if (close_pause)
+        sourceCloseLine(l);
 }
 static void onResume(tunnel_t *t, line_t *l)
 {
     discard t;
     discard l;
     ++resumes;
+    producer_paused = false;
 }
 static void onOutput(tunnel_t *t, line_t *l, sbuf_t *buffer)
 {
@@ -242,6 +255,7 @@ static void openSettings(const char *text)
     require(nodeApiRegister(&target, operations, ARRAY_SIZE(operations)), "private test operation registration");
     calls = finishes = establishments = pauses = resumes = writes = 0;
     captured_size                                                 = 0;
+    producer_paused                                               = false;
     node                                                          = nodeAPIServerGet();
     node.name                                                     = gateway_name;
     node.node_settings_json                                       = cJSON_Parse(text);
@@ -303,8 +317,8 @@ static void closeLine(void)
     cJSON_Delete(node.node_settings_json);
     memoryFree(node.type);
     require(held.callback == NULL && ! hold_message && ! hold_reply, "held detached completion leaked");
-    close_est = close_output = pause_output = refuse_timer = refuse_message = refuse_reply = false;
-    nested_fragments                                                                       = 0;
+    close_est = close_output = pause_output = refuse_timer = refuse_message = refuse_reply = close_pause = false;
+    nested_fragments                                                                                     = 0;
 }
 
 static void sendBytes(const void *bytes, size_t size)
@@ -436,6 +450,159 @@ static void framing(void)
     memoryFree(bytes);
 }
 
+static void receivedAllocation(void)
+{
+    openLine();
+    line_t       *lines[80];
+    const uint8_t maximum_header[] = {0, 16, 0, 0};
+    for (size_t i = 0; i < ARRAY_SIZE(lines); ++i)
+    {
+        if (i)
+            secondLine();
+        lines[i] = line;
+        sendBytes(maximum_header, sizeof(maximum_header));
+        require(lineIsAlive(line) && state()->frame_size == 1024 * 1024 && state()->frame_capacity == 0 &&
+                    state()->frame == NULL,
+                "declared frame size allocated unread bytes");
+    }
+    size_t              bytes, jobs;
+    apiserver_tstate_t *ts = tunnelGetState(api);
+    nodeApiDomainGetUsage(ts->domain, &bytes, &jobs);
+    require(bytes == ARRAY_SIZE(lines) * sizeof(apiserver_lstate_t) && jobs == 0,
+            "header-only sessions amplified aggregate allocation");
+    secondLine();
+    sendRequest(request);
+    settle(1);
+    require(lineIsAlive(line) && captured_size != 0, "header-only peers prevented legitimate small request");
+    releaseLine(line);
+    for (size_t i = 1; i < ARRAY_SIZE(lines); ++i)
+        releaseLine(lines[i]);
+    line = lines[0];
+    closeLine();
+}
+
+static uint8_t *largeInput(size_t envelope_size, size_t *wire_size)
+{
+    char  *empty = changedRequest("body", "");
+    cJSON *json  = cJSON_Parse(empty);
+    memoryFree(empty);
+    cJSON_ReplaceItemInObjectCaseSensitive(json, "operation", cJSON_CreateString("large"));
+    empty                  = cJSON_PrintUnformatted(json);
+    const size_t body_size = envelope_size - strlen(empty);
+    memoryFree(empty);
+    char *body = memoryAllocate(body_size + 1);
+    memset(body, 'a', body_size);
+    body[body_size] = '\0';
+    cJSON_ReplaceItemInObjectCaseSensitive(json, "body", cJSON_CreateString(body));
+    memoryFree(body);
+    char *text = cJSON_PrintUnformatted(json);
+    cJSON_Delete(json);
+    require(strlen(text) == envelope_size, "large input fixture size");
+    uint8_t *bytes = frame(text, wire_size);
+    memoryFree(text);
+    return bytes;
+}
+
+static void sendAsProducer(const uint8_t *bytes, size_t size)
+{
+    while (size)
+    {
+        unsigned waits = 0;
+        while (producer_paused && lineIsAlive(line) && waits++ < 100)
+            pump();
+        require(lineIsAlive(line) && ! producer_paused, "producer stalled behind incomplete-frame pressure");
+        size_t n = min(size, (size_t) 16384);
+        sendBytes(bytes, n);
+        bytes += n;
+        size -= n;
+    }
+}
+
+static void incompletePressure(void)
+{
+    size_t   size;
+    uint8_t *bytes = largeInput(1600000, &size);
+    for (unsigned exact = 0; exact < 2; ++exact)
+    {
+        cJSON *json = cJSON_Parse(settings);
+        cJSON_AddNumberToObject(json, "max_request_envelope", 1600000);
+        cJSON_AddNumberToObject(json, "max_input_bytes", exact ? size : 2097152);
+        char *text = cJSON_PrintUnformatted(json);
+        openSettings(text);
+        memoryFree(text);
+        cJSON_Delete(json);
+        sendAsProducer(bytes, size);
+        settle(1);
+        require(lineIsAlive(line) && state()->input_bytes == 0 && state()->frame_capacity == 0,
+                "permitted maximum request failed through flow control");
+        closeLine();
+    }
+    cJSON *json = cJSON_Parse(settings);
+    cJSON_AddNumberToObject(json, "max_request_envelope", 1600000);
+    char *text = cJSON_PrintUnformatted(json);
+    openSettings(text);
+    memoryFree(text);
+    cJSON_Delete(json);
+    tunnelUpStreamPause(api, line);
+    for (unsigned i = 0; i < 9; ++i)
+        sendRequest(request);
+    sendBytes(bytes, 1000000);
+    require(producer_paused, "older complete requests did not exert pressure");
+    tunnelUpStreamResume(api, line);
+    for (unsigned i = 0; i < 100 && lineIsAlive(line) && (producer_paused || state()->input_head); ++i)
+        pump();
+    require(lineIsAlive(line) && ! producer_paused && resumes && state()->frame_used == 1000000 - 4,
+            "draining older requests did not autonomously Resume incomplete input");
+    sendAsProducer(bytes + 1000000, size - 1000000);
+    settle(10);
+    require(lineIsAlive(line) && state()->input_bytes == 0, "partial successor failed to complete");
+    closeLine();
+    json = cJSON_Parse(settings);
+    cJSON_AddNumberToObject(json, "max_request_envelope", 1600000);
+    cJSON_AddNumberToObject(json, "max_input_bytes", size);
+    text = cJSON_PrintUnformatted(json);
+    openSettings(text);
+    memoryFree(text);
+    cJSON_Delete(json);
+    close_pause = true;
+    sendBytes(bytes, size);
+    require(! lineIsAlive(line) && pauses == 1 && finishes == 0 && calls == 0,
+            "reentrant pressure closure touched a partially grown frame");
+    closeLine();
+    memoryFree(bytes);
+}
+
+static void growthRefusalAndTimeout(void)
+{
+    openLine();
+    size_t   size;
+    uint8_t *bytes = largeInput(10000, &size);
+    sendBytes(bytes, 5);
+    require(state()->frame_capacity == 1024 && state()->frame_used == 1,
+            "first received byte did not use small bounded capacity");
+    apiserver_tstate_t *ts = tunnelGetState(api);
+    size_t              used, jobs;
+    nodeApiDomainGetUsage(ts->domain, &used, &jobs);
+    buffer_pool_fit_t fit;
+    require(bufferpoolQueryBestFit(lineGetBufferPool(line), 2048, 0, &fit), "growth carrier geometry");
+    size_t retained = ts->limits.max_memory - used - fit.allocation_charge - sizeof(api_input_t);
+    require(nodeApiDomainTryReserve(ts->domain, retained), "growth refusal fixture reservation");
+    sendBytes(bytes + 5, 2048);
+    require(! lineIsAlive(line), "growth exceeded aggregate allowance");
+    nodeApiDomainGetUsage(ts->domain, &used, &jobs);
+    require(used == retained && jobs == 0, "refused frame growth leaked old or new reservation");
+    nodeApiDomainRelease(ts->domain, retained);
+    closeLine();
+    openLine();
+    sendBytes(bytes, 1029);
+    require(state()->frame_capacity >= 1026, "growth boundary fixture did not grow");
+    now_us += UINT64_C(16000000);
+    pump();
+    require(! lineIsAlive(line), "partially grown frame outlived first-byte deadline");
+    closeLine();
+    memoryFree(bytes);
+}
+
 static void policyAndResults(void)
 {
     static const char *const fields[] = {"token", "client", "operation", "node", "content_type"};
@@ -455,6 +622,63 @@ static void policyAndResults(void)
         settle(0);
         expectError(errors[i]);
         require(lineIsAlive(line) == (i >= 2), "authentication close policy");
+        closeLine();
+    }
+    for (unsigned invalid = 0; invalid < 2; ++invalid)
+    {
+        openWithLimit("max_response_envelope", 1024);
+        cJSON *bad = cJSON_Parse(request);
+        cJSON_ReplaceItemInObjectCaseSensitive(bad, "body_encoding", cJSON_CreateString("base64"));
+        cJSON_ReplaceItemInObjectCaseSensitive(bad, "body", cJSON_CreateString(invalid ? "AP8=" : "/w=="));
+        char *text = cJSON_PrintUnformatted(bad);
+        sendRequest(text);
+        memoryFree(text);
+        cJSON_Delete(bad);
+        settle(1);
+        expectError("invalid_response");
+        size_t offset = 0;
+        cJSON *error  = reply(&offset);
+        require(strcmp(cJSON_GetObjectItemCaseSensitive(error, "id")->valuestring, "a") == 0 &&
+                    cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(error, "result")),
+                "invalid handler response lost correlation or exposed a result");
+        cJSON_Delete(error);
+        closeLine();
+    }
+    openWithLimit("max_response_envelope", 1024);
+    cJSON *binary = cJSON_Parse(request);
+    cJSON_ReplaceItemInObjectCaseSensitive(binary, "body_encoding", cJSON_CreateString("base64"));
+    cJSON_ReplaceItemInObjectCaseSensitive(binary, "body", cJSON_CreateString("AP8="));
+    cJSON_ReplaceItemInObjectCaseSensitive(binary, "operation", cJSON_CreateString("binary"));
+    char *binary_text = cJSON_PrintUnformatted(binary);
+    sendRequest(binary_text);
+    memoryFree(binary_text);
+    cJSON_Delete(binary);
+    settle(1);
+    size_t binary_offset = 0;
+    cJSON *binary_reply  = reply(&binary_offset);
+    cJSON *binary_result = cJSON_GetObjectItemCaseSensitive(binary_reply, "result");
+    require(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(binary_reply, "error")) &&
+                strcmp(cJSON_GetObjectItemCaseSensitive(binary_result, "body_encoding")->valuestring, "base64") == 0 &&
+                strcmp(cJSON_GetObjectItemCaseSensitive(binary_result, "body")->valuestring, "AP8=") == 0,
+            "base64 handler result rejected arbitrary bytes");
+    cJSON_Delete(binary_reply);
+    closeLine();
+    for (unsigned encoding = 0; encoding < 2; ++encoding)
+    {
+        openWithLimit("max_response_envelope", 1024);
+        char body[1001];
+        memset(body, encoding ? 'x' : 1, sizeof(body) - 1);
+        body[sizeof(body) - 1] = '\0';
+        cJSON *oversized       = cJSON_Parse(request);
+        cJSON_ReplaceItemInObjectCaseSensitive(oversized, "body", cJSON_CreateString(body));
+        if (encoding)
+            cJSON_ReplaceItemInObjectCaseSensitive(oversized, "operation", cJSON_CreateString("binary"));
+        char *text = cJSON_PrintUnformatted(oversized);
+        sendRequest(text);
+        memoryFree(text);
+        cJSON_Delete(oversized);
+        settle(1);
+        expectError("response_too_large");
         closeLine();
     }
     openLine();
@@ -477,6 +701,29 @@ static void policyAndResults(void)
     require(writes == 1, "oversized result published a prefix");
     memoryFree(oversize);
     closeLine();
+}
+
+static void quietRuntimeRequests(void)
+{
+    static const char *const malformed[] = {"{\"id\":\"a\",\"id\":\"b\"}", "{\"id\":\"\xff\"}", "{} trailing"};
+    FILE                    *capture     = tmpfile();
+    require(capture != NULL, "runtime stderr capture");
+    int original = dup(STDERR_FILENO);
+    require(original >= 0 && dup2(fileno(capture), STDERR_FILENO) >= 0, "runtime stderr descriptor");
+    for (size_t i = 0; i < ARRAY_SIZE(malformed); ++i)
+    {
+        openLine();
+        sendRequest(malformed[i]);
+        require(! lineIsAlive(line) && calls == 0, "malformed runtime envelope reached dispatch");
+        expectError("invalid_request");
+        closeLine();
+    }
+    fflush(stderr);
+    long diagnostic_size = ftell(capture);
+    require(dup2(original, STDERR_FILENO) >= 0, "runtime stderr restoration");
+    close(original);
+    fclose(capture);
+    require(diagnostic_size == 0, "malformed API requests emitted configuration diagnostics");
 }
 
 static void pressureAndReentry(void)
@@ -833,7 +1080,11 @@ int main(void)
     require(wwStartupSucceeded(createGlobalState(init)), "runtime init");
     timer_baseline = getWorkerLoop(0)->ntimers;
     TEST_RUN_CASE(framing);
+    TEST_RUN_CASE(receivedAllocation);
+    TEST_RUN_CASE(incompletePressure);
+    TEST_RUN_CASE(growthRefusalAndTimeout);
     TEST_RUN_CASE(policyAndResults);
+    TEST_RUN_CASE(quietRuntimeRequests);
     TEST_RUN_CASE(pressureAndReentry);
     TEST_RUN_CASE(queuedErrorsContinueAfterResume);
     TEST_RUN_CASE(queuedErrorsContinueAfterAsyncReply);

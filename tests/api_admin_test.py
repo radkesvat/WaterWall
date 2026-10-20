@@ -314,6 +314,22 @@ class AdminTest(unittest.TestCase):
                 self.assertNotIn("outcome unknown", errors.lower())
                 call.assert_called_once()
 
+    def test_invalid_handler_response_is_uncertain_for_every_write(self):
+        self.assertIn("invalid_response", CLIENT.GATEWAY_ERRORS)
+        self.assertNotIn("invalid_response", CLIENT.PRE_DISPATCH_ERRORS)
+        for command in (["users", "create", LARGE_ID, "--password-stdin"],
+                        ["users", "disable", LARGE_ID, "--if-match", EDIT_TOKEN],
+                        ["users", "change-password", LARGE_ID, "--if-match", EDIT_TOKEN, "--password-stdin"]):
+            with self.subTest(command=command):
+                result, text, errors, call, _ = self.invoke(command,
+                    [{"error": {"code": "invalid_response", "message": "PRIVATE_PASSWORD_SENTINEL"}, "result": None}],
+                    stdin=PASSWORD.encode("utf-8"))
+                self.assertEqual(result, 3)
+                self.assertEqual(text, "")
+                self.assertIn("Gateway error: invalid_response", errors)
+                self.assertIn("outcome unknown", errors.lower())
+                call.assert_called_once()
+
     def test_transport_failures_distinguish_before_send_and_uncertain_writes(self):
         commands = [["users", "create", LARGE_ID, "--password-stdin"],
                     ["users", "update", LARGE_ID, "--if-match", EDIT_TOKEN, "--set", "enabled=false"],

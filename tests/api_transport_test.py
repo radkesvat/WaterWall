@@ -112,7 +112,9 @@ class TransportTest(unittest.TestCase):
         node["result"]["code"] = 1
         uncorrelated = {"id": None, "error": {"code": "invalid_request", "message": "Invalid request."},
                         "result": None}
-        for reply in (gateway, node, uncorrelated):
+        invalid_response = {"id": "request-1", "error": {"code": "invalid_response", "message": "Invalid output."},
+                            "result": None}
+        for reply in (gateway, node, uncorrelated, invalid_response):
             with self.subTest(reply=reply):
                 self.assertEqual(self.invoke(Stream(frame(reply))), reply)
 

@@ -9,8 +9,19 @@
  * CTest: waterwall.apiserver_codec_unit
  */
 #include "APIServer/codec.h"
+#include "node_builder/config_lexical.h"
 #include "test_assert.h"
 #include "wwapi.h"
+#if defined(_WIN32)
+#include <io.h>
+#define dup           _dup
+#define dup2          _dup2
+#define fileno        _fileno
+#define close         _close
+#define STDERR_FILENO 2
+#else
+#include <unistd.h>
+#endif
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
@@ -309,6 +320,23 @@ static void responseFidelity(void)
     require(apiserverResponseSize("bad", NULL, &text_operation, kApiResultOk, invalid_utf8, sizeof(invalid_utf8)) ==
                 SIZE_MAX,
             "Invalid UTF-8 result was emitted as text");
+    size_t measured;
+    require(apiserverResponseMeasure(
+                "bad", NULL, &text_operation, kApiResultOk, invalid_utf8, sizeof(invalid_utf8), &measured) ==
+                kApiResponseInvalid,
+            "malformed handler text was classified as size overflow");
+    const uint8_t nul[] = {'x', 0, 'y'};
+    require(apiserverResponseMeasure("nul", NULL, &text_operation, kApiResultOk, nul, sizeof(nul), &measured) ==
+                kApiResponseInvalid,
+            "NUL handler text was classified as a valid result");
+    json = encodedResponse(
+        "binary-invalid-utf8", NULL, &binary_operation, kApiResultOk, invalid_utf8, sizeof(invalid_utf8));
+    cJSON_Delete(json);
+    json = encodedResponse("binary-nul", NULL, &binary_operation, kApiResultOk, nul, sizeof(nul));
+    cJSON_Delete(json);
+    require(apiserverResponseMeasure("overflow", NULL, &binary_operation, kApiResultOk, NULL, SIZE_MAX, &measured) ==
+                kApiResponseTooLarge,
+            "unrepresentable handler output was classified as invalid text");
     require(apiserverResponseSize("overflow", NULL, &binary_operation, kApiResultOk, NULL, SIZE_MAX) == SIZE_MAX,
             "Overflowing base64 geometry was accepted");
 
@@ -372,6 +400,67 @@ static void maximumUpdateAcknowledgement(void)
     memoryFree(parsed.body);
 }
 
+static void quietStrictParsing(void)
+{
+#define CORPUS(text, valid) {text, sizeof(text) - 1, valid}
+    static const struct
+    {
+        const char *text;
+        size_t      size;
+        bool        valid;
+    } corpus[] = {CORPUS("{}", true),
+                  CORPUS("{\"a\":1}", true),
+                  CORPUS("{\"a\":\"\xc3\xa9\"}", true),
+                  CORPUS("\xef\xbb\xbf{}", false),
+                  CORPUS("{}\0suffix", false),
+                  CORPUS("{\"x\":\"\xff\"}", false),
+                  CORPUS("{\"a\":1,\"\\u0061\":2}", false),
+                  CORPUS("{\"x\":\"\\u0000\"}", false),
+                  CORPUS("{\"x\":\"\\ud800\"}", false),
+                  CORPUS("{\"x\":\"\\u0z00\"}", false),
+                  CORPUS("{\"x\":\"\n\"}", false),
+                  CORPUS("{\"x\":\"tail\\", false),
+                  CORPUS("{} trailing", false),
+                  CORPUS("{", false),
+                  CORPUS("}", false),
+                  CORPUS("[[[0]]]", false),
+                  CORPUS("[0,0,0,0,0,0,0,0]", false),
+                  CORPUS("01", false),
+                  CORPUS("1.", false),
+                  CORPUS("1e", false),
+                  CORPUS("1e999", false),
+                  CORPUS("\v{}", false)};
+#undef CORPUS
+    FILE *capture = tmpfile();
+    require(capture != NULL, "stderr capture file");
+    int original = dup(STDERR_FILENO);
+    require(original >= 0 && dup2(fileno(capture), STDERR_FILENO) >= 0, "stderr capture descriptor");
+    for (size_t i = 0; i < ARRAY_SIZE(corpus); ++i)
+    {
+        cJSON *json = configLexicalParseBounded(corpus[i].text, corpus[i].size, 2, 8);
+        require((json != NULL) == corpus[i].valid, "diagnostic parser changed strict acceptance");
+        cJSON_Delete(json);
+        fflush(stderr);
+        long before = ftell(capture);
+        json        = configLexicalParseBoundedQuiet(corpus[i].text, corpus[i].size, 2, 8);
+        require((json != NULL) == corpus[i].valid, "quiet parser differs from diagnostic strict parser");
+        cJSON_Delete(json);
+        fflush(stderr);
+        require(ftell(capture) == before, "quiet parser wrote configuration diagnostics");
+        if (! corpus[i].valid)
+        {
+            rawRejected(corpus[i].text, corpus[i].size);
+            fflush(stderr);
+            require(ftell(capture) == before, "runtime API parsing wrote configuration diagnostics");
+        }
+    }
+    fflush(stderr);
+    require(ftell(capture) > 0, "diagnostic parser lost host-configuration errors");
+    require(dup2(original, STDERR_FILENO) >= 0, "stderr restoration");
+    close(original);
+    fclose(capture);
+}
+
 static void gatewayErrors(void)
 {
     static const char *const errors[] = {"invalid_request",
@@ -386,7 +475,8 @@ static void gatewayErrors(void)
                                          "busy",
                                          "timeout",
                                          "shutting_down",
-                                         "response_too_large"};
+                                         "response_too_large",
+                                         "invalid_response"};
     for (size_t i = 0; i < sizeof(errors) / sizeof(*errors); ++i)
     {
         cJSON *json = encodedResponse(i ? "request" : NULL, errors[i], NULL, kApiResultError, NULL, 0);
@@ -409,6 +499,7 @@ int main(void)
     invalidSchema();
     labelsAndTokens();
     lexicalAndEncoding();
+    quietStrictParsing();
     responseFidelity();
     maximumUpdateAcknowledgement();
     gatewayErrors();
