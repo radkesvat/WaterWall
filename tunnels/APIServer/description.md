@@ -26,7 +26,10 @@ the caller side. See the [transport examples](https://github.com/radkesvat/Water
 for complete compositions and HTTP body handling.
 
 APIServer authenticates callers but provides no transport encryption. Bind local
-examples to loopback; remote access requires an appropriately protected stream.
+examples to loopback; remote access requires an authenticated encrypted transport
+with peer identity verification. API tokens do not prevent unauthenticated resource
+consumption. Restrict endpoint reachability or authenticate peers in the transport;
+bounded input allocation does not eliminate connection floods.
 
 ## Configuration
 
@@ -82,7 +85,7 @@ All fields below are positive finite integers. Startup rejects inconsistent geom
 | --- | --- | --- |
 | `max_request_envelope` | 1048576 | Request JSON envelope bytes. |
 | `max_response_envelope` | 1048576 | Encoded response JSON envelope bytes. |
-| `max_input_bytes` | 2097152 | Retained queued input payload per line. |
+| `max_input_bytes` | 2097152 | Hard input-byte limit per line, including queued requests and incomplete input. |
 | `max_line_memory` | 8388608 | Retained allocation charge per line. |
 | `max_input_fragments` | 256 | Input fragment/FIFO entries per line. |
 | `max_queued_requests` | 8 | Waiting complete requests, in addition to one active request. |
@@ -95,7 +98,27 @@ All fields below are positive finite integers. Startup rejects inconsistent geom
 | `output_timeout_ms` | 15000 | Response publication through transport handoff, including paused time. |
 | `idle_timeout_ms` | 60000 | Idle connection with no frame, request or output in progress. |
 
+A length header records the declared envelope size without allocating its body.
+Frame storage grows geometrically for received bytes; reservations cover both old
+and new capacities during copying. Parsing separately accounts for the assembled
+frame, JSON tree and decoded body, alongside input carriers, output and detached
+jobs. Teardown releases actual allocated capacity.
+
+Byte-pressure watermarks exclude only the header and body bytes already copied
+into the current incomplete frame: `input_bytes - (header_size + frame_used)`.
+Those bytes still count toward the hard input limit. Queued complete requests,
+raw backlog and fragment/entry limits continue to exert pressure. Bounded parser
+continuations Resume the source when only incomplete input remains, so a permitted
+large request can finish even when its size exceeds the high watermark.
+
 Working memory must accommodate the actual worker-pool allocation for a 4096-byte result plus 8192 bytes of parsing metadata. A smaller encoded response cap can still return a bounded `response_too_large` error for a valid result.
+
+Runtime JSON parsing keeps strict UTF-8, NUL, duplicate-key, depth/value and
+complete-input checks without configuration-parser stderr diagnostics. Host
+configuration/startup parsing retains its diagnostics. Invalid UTF-8 or NUL from
+a UTF-8 handler returns `invalid_response` with no result body; a valid oversized
+encoded result returns `response_too_large`. Both are post-dispatch errors, so a
+write may have committed. Base64 operations may return arbitrary bytes.
 
 Zero does not disable a protection. Trickle input does not reset frame assembly time. The request deadline ends when a complete response is published; delivery then has its separate output deadline. Disconnect and timeout abandon execution but retain job reservations until queued cancellation or a running bounded handler actually settles.
 

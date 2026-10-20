@@ -1,5 +1,5 @@
 <!--
-Documentation version: 159
+Documentation version: 160
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -15,7 +15,7 @@ It is not a data pass-through tunnel. Other tunnels use its internal API from
 
 ## Expected Chain
 
-Typical client-side chain:
+Local loopback client-side chain:
 
 ```text
 AuthenticationClient -> TcpConnector
@@ -44,7 +44,7 @@ Minimal in-process authentication chain:
 }
 ```
 
-Remote authentication server chain:
+Local loopback transport example:
 
 ```json
 {
@@ -77,6 +77,26 @@ Remote authentication server chain:
   }
 }
 ```
+
+The authentication protocol carries the client credentials and the full user table, including user passwords.
+Untrusted remote links require an authenticated encrypted transport with server identity verification. For example,
+change the authentication node's `next` to `auth-tls`, and insert this supported TLS wrapper before the connector:
+
+```json
+{
+  "name": "auth-tls",
+  "type": "TlsClient",
+  "settings": {"sni": "auth.example.com", "verify": true, "alpns": []},
+  "next": "auth-server-connector"
+}
+```
+
+Point the connector at that server's TLS listener. The server composition is
+`TcpListener -> TlsServer -> AuthenticationServer`; `TlsServer` uses `cert-file` and `key-file` for a certificate valid
+for `auth.example.com`. `verify:true` verifies the chain and hostname. The bare `127.0.0.1` example above is local.
+
+Configured credentials must fit an Authenticate data payload of 16,375 bytes after JSON escaping, including a
+64-byte resume epoch. Oversized values fail startup without truncation.
 
 The `settings.name` and `settings.secret` pair must match one entry in the upstream `AuthenticationServer`
 `settings.auth-clients` array:
@@ -500,6 +520,28 @@ for that subset. New traffic stays in `A`. A subsequent pull installs global cou
 Every ACK, including a duplicate, requires a full pull before the next new usage batch so server-owned first-use time
 and other clients' usage arrive.
 First-use work and blocked desired pushes/pulls remain pending until they can run.
+First-use reporting also remains deferred while a required/in-flight pull blocks it; its global latch and per-user
+request flags are preserved. Pull completion continues the remembered push without another packet. Paused writes
+suspend progress wakeups; Resume explicitly continues the remembered work.
+
+A correlated `stats-push-not-allowed` keeps cached admission under cached enabled/expiry/quota and local capacity rules.
+It retains the exact unresolved batch, first-use evidence and all debt. Other nonterminal push errors, including
+`invalid-usage-batch`, `usage-digest-failed` and unknown errors, also retain the batch without assuming whether it committed.
+The client reconnects and reauthenticates after a monotonic cooldown of at least 30 seconds, or the configured reconnect
+interval when larger. One due retry is scheduled even when every periodic interval and the reconnect interval are zero;
+traffic, explicit requests and Resume cannot bypass it. A Session does not clear reporting refusal; only the retained
+batch's matching ACK clears it. Status reports bounded `stats_push_denied` or `stats_push_rejected` failure classes and
+the actual retry/debt state. Remote error diagnostics escape at most 128 input bytes and explicitly mark truncation.
+
+Until the retained batch settles, no full pull may overtake it: the cache can remain stale as during a control outage,
+and later local traffic accumulates separately. Recovery requires the same live server accounting epoch. Permissions
+are startup settings; changing them and restarting does not promise recovery of a lost process-local checkpoint.
+`authentication-required` follows ordinary reauthentication with the same batch. `usage-replay-conflict` and
+`usage-sequence-invalid` remain terminal accounting inconsistencies and block new admission.
+
+The serialized full-table response, including response metadata, must fit the current roughly 16 MiB framing ceiling.
+Larger tables cannot synchronize. Failed required pulls also defer new usage batches; paginated synchronization is a
+separate capability and is not implemented.
 
 Reconnect order is Authenticate/resume epoch, replay retained batch if present, validate ACK, then full pull.
 After that refresh, the client captures owed relative deltas and observations, including traffic during recovery,
@@ -515,7 +557,7 @@ counter rebasing clears it. Final tunnel destruction releases this RAM state wit
 The server retains a bounded checkpoint per configured client beyond session expiry/replacement. Independent client
 processes need different configured names. A lost/superseded epoch with an unresolved batch enters
 `kAuthenticationClientStateContinuityError`, keeps the batch, closes the transport and stops automatic synchronization
-for operator reconciliation. With no uncertain batch, fresh enrollment and pull can resume. This guarantee covers
+until the operator resolves the accounting condition. No reconciliation/reset API is provided. With no uncertain batch, fresh enrollment and pull can resume. This guarantee covers
 connection loss while both processes run; it does not provide accounting recovery across process crashes/restarts.
 An ACK means acceptance in server memory, not a disk save. Periodic/final database saving does not persist accounting
 checkpoints. Client restart may lose unreported usage; server restart may lose acknowledged usage since its last

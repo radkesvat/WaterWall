@@ -111,6 +111,8 @@ It must not have a `next` node.
   AuthenticationClient credentials and permissions. Each entry must contain non-empty `name` and `secret` strings.
   `allow-stats-push`, `allow-user-pull`, and `allow-user-write` are optional booleans and default to `false`.
   `session-idle-timeout-ms` is optional per client and defaults to the top-level session timeout.
+  Both peers reject credentials at startup unless the exact escaped JSON handshake, including a 64-byte resume epoch,
+  fits 16,375 bytes. Credentials are never truncated.
 
 ## Administrative Audit Log
 
@@ -148,14 +150,18 @@ sidecar or rename/rotate these files externally while the server runs. The write
 requires regular files without link aliases, applies private permissions and
 excludes a second writer. On Unix files are owner-only (`0600`); Windows uses a
 protected ACL for the process user and SYSTEM. Startup fails if enabled audit
-logging cannot open or validate its files.
+logging cannot open or validate its files. Audit path validation preserves the
+current `MAX_PATH` bound, including archive/lock suffixes and resolved parent
+names; it reports unsupported lengths/basenames, failed parent resolution and
+actual protected-file overlaps separately. A resolution failure refuses startup.
 
 The node records successful and rejected `create-user`, `update-user` and
 `change-user-password` attempts that reach their registered handlers. It also
 records the producer protocol's `AddNewUser` and `UpdateUser` outcomes, including
 permission refusals from an authenticated producer. Reads, authentication,
 traffic batches and gateway rejections before target dispatch do not create
-administrative audit records. This is an account-administration trail, not a
+administrative audit records. Unauthenticated producer refusals consume no queue slots or dropped-event counts.
+This is an account-administration trail, not a
 complete access/security log.
 
 Each UTF-8 JSON line contains these bounded, permitted fields:
@@ -278,6 +284,13 @@ the server still restores only from the existing `db-path.backup` recovery file.
 - one standalone user object containing `id` or `user-id`, plus `password` or `pass`
 
 For object maps, the object key is used as a username hint only when the user object itself has no non-empty `name`.
+A string-valued `password` or `pass` selects a standalone record; object-valued
+entries named `password` or `pass` remain ordinary map entries. An existing
+`password` field takes precedence over fallback `pass` during credential
+validation, even if the selected field is malformed. A `users` wrapper takes
+precedence over the other layouts. Import reserves at most 64 speculative records
+above the existing count, then grows storage as entries validate. Failed append
+restores existing records and indexes; allocated capacity may remain.
 The saver always rewrites the database in the normalized `{"users": [...]}` form.
 
 In this example, `password` is still the authentication lookup key. The `id` is a separate durable user identity: keep it
@@ -321,7 +334,9 @@ A user object must contain a unique non-zero `id` and a password string. All oth
 - `wireguard-allowed-ips` `(optional string)`
   One normalized WireGuard inner CIDR owned by this user, for example `"10.44.0.23/32"` or `"fd00::23/128"`.
   Empty, `null`, or omitted means the user has no WireGuard allowed IP configured. The field accepts IPv4 and IPv6, but
-  it must contain exactly one CIDR, not a comma-separated list. Saved JSON normalizes the network address, so
+  it must contain exactly one CIDR, not a comma-separated list. Addresses require complete strict dotted-decimal IPv4
+  or IPv6 syntax, including valid embedded IPv4 forms. Shorthand/octal/hex IPv4, oversized IPv6 groups and trailing
+  garbage are rejected. Surrounding whitespace is trimmed; internal whitespace is invalid. Saved JSON normalizes the network address, so
   `"10.44.0.23/24"` is written back as `"10.44.0.0/24"`. Two users must not have overlapping WireGuard allowed ranges.
 
 - `limit` `(optional object)`
@@ -419,6 +434,10 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
 
 Under the server state write lock, saving stages the proposed database in the primary directory, stages the
 previous committed primary as `db-path.backup`, publishes that backup, then atomically replaces `db-path`.
+If opening the previous primary confirms that it is absent, saving publishes the
+current valid in-memory table directly and leaves any existing recovery backup
+untouched; no recovery backup is required. The next ordinary save resumes rotation.
+An empty file or an open/read/close failure is not treated as absence.
 Primary replacement is the commit point. Failure before it rejects `AddNewUser` and rolls its in-memory addition back;
 the recovery backup never receives that rejected proposal. History/pruning or directory-sync failures after replacement
 are logged and do not turn a committed addition into a rejected operation.
@@ -427,7 +446,11 @@ All primary, recovery, history and staging outputs are private before their firs
 creation on POSIX and a protected Windows DACL granting the process user and SYSTEM access. Existing primary/recovery
 permissions are restricted when loading; permission failure rejects startup. Writes, flush, file sync and close are
 checked. Staging names are unique and are never startup recovery candidates. Cleanup removes only this operation's
-staging files. This is not a guarantee of recovery from arbitrary filesystem or power-loss failures.
+staging files. Normal process shutdown saves a loaded database. Startup rollback
+releases resources without a final save, preserving the primary and recovery bytes
+when later construction fails. Weekly history slots use the local Monday-based
+calendar, including weeks containing daylight-saving transitions or a year boundary.
+This is not a guarantee of recovery from arbitrary filesystem or power-loss failures.
 
 ## Startup Recovery
 
@@ -503,7 +526,11 @@ final usage delivery. There is no accounting crash recovery or remote usage-rese
 Traffic-serving nodes use AuthenticationClient handles and copy-out APIs; they never receive borrowed user pointers.
 Credential eligibility checks enabled state, expiry and cumulative traffic. Live connection/IP admission remains local
 to one client runtime; saved gauge values do not reserve or exhaust live capacity. The protocol has no encryption of
-its own; remote chains require an authenticated protected transport.
+its own. It carries producer credentials and full user records, including user credentials. Untrusted remote links
+require authenticated encryption with server identity verification. A supported composition is
+`AuthenticationClient -> TlsClient -> TcpConnector` with `TlsClient` settings `{"sni":"auth.example.com","verify":true}`,
+paired with `TcpListener -> TlsServer -> AuthenticationServer` using the server certificate and key. The loopback
+examples describe local deployment. A response MAC alone would not protect confidentiality.
 
 ## Request And Response Framing
 
@@ -525,9 +552,15 @@ The request payload contains one or more request frames:
 - 4-byte unsigned big-endian request data length
 - request data bytes
 
-Each request frame is validated before dispatch. If the envelope body is too small for the token, the request payload is
-empty, contains trailing bytes smaller than a request header, or declares request data that is not fully present inside
-the request payload, `AuthenticationServer` logs a warning and closes the logical connection safely.
+The entire envelope is validated before any request executes, including a maximum of 64 frames. Frame 65 rejects
+all siblings without applying earlier mutations. A malformed envelope closes the borrowed logical connection;
+verbose mode provides bounded diagnostics without unconditional per-frame warnings.
+
+After the four-byte length and 64-byte token arrive, a currently valid token permits the ordinary message limit.
+Without one, frame payload is limited to 16 KiB, excluding the outer 68 bytes; an oversized declaration closes
+immediately without waiting for its body. Tokens are revalidated at dispatch. Large messages whose token was replaced
+or expired close without executing; small stale-token requests retain correlated `authentication-required` replies.
+The session at envelope entry governs all siblings: a successful Authenticate does not authorize sibling requests.
 
 Each module returns a response frame:
 
@@ -589,6 +622,10 @@ also require `allow-user-pull`; user create/update modules require `allow-user-w
 Request data is `{"name":"edge-1","secret":"long-random-secret"}` for fresh enrollment, or the same object
 with `"epoch":"<64 hexadecimal bytes>"` for resumption. The outer token is zero. Success returns type `4` and
 128 bytes: token then epoch, 64 hexadecimal bytes each. Later requests carry the token in their envelope.
+Authenticate data is at most 16,375 bytes, with strict quiet JSON parsing, depth two and eight lexical values.
+Only nonempty string `name`/`secret` and optional valid `epoch` are accepted; duplicate/unknown keys, trailing bytes,
+invalid encoding and decoded NUL are refused. After a failed Authenticate, admission closes before handing off its
+correlated response. Pause/Resume can finish that queued response; further input closes the line.
 Malformed credentials fail, authenticated-envelope enrollment returns `already-authenticated`, and failed resumption
 returns `accounting-continuity-lost`.
 
@@ -817,7 +854,7 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
 
 ## Notes And Caveats
 
-- The current outer message payload limit is 16 MiB.
+- The current authenticated outer message payload limit is 16 MiB; unauthenticated payload is limited to 16 KiB.
 - The current request data limit is 16 MiB.
 - The current response payload limit is 16 MiB.
 - Queued and active responses share 1024 entries, 16 MiB plus the 20-byte envelope in logical storage, and 32 MiB
@@ -826,13 +863,19 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
   order. Pause gates endpoint output; active backing allocations remain charged until release.
 - Temporary construction retains at most one bounded response frame, one growing message (each at most 16 MiB plus
   envelope), one bounded serialized JSON text (16 MiB plus five spare printer bytes), and one output chunk. Allocation
-  replacement may briefly overlap old/new storage. JSON trees, account tables, pools and transport queues are separate;
+  replacement may briefly overlap old/new storage. Message construction grows capacity geometrically within the cap. JSON trees, account tables, pools and transport queues are separate;
   this budget is not a total-RSS bound.
 - Complete request messages drain before checking incomplete-input limits; combined messages are not oversized frames.
-  Incomplete input stays below 16 MiB plus the 68-byte envelope, with at most 1024 entries and 32 MiB allocation charge
-  after compaction. Nested deliveries share one maximum wire message plus 2 MiB of bytes, including the older unread
-  suffix; fragmented storage is compacted before refusal. Empty deliveries are recycled. One extracted request and a
-  compaction destination are bounded parsing scratch; the current synchronous delivery is outside the retained bound.
+  Incomplete input with a validated token stays below 16 MiB plus the 68-byte envelope, with at most 1024 fragments and
+  32 MiB allocation charge after compaction. Unvalidated input retains at most 16 KiB plus 68 bytes, 64 fragments and
+  the greater of 128 KiB or one pool best-fit allocation for that maximum envelope. Nested delivery and older unread
+  bytes share their applicable allowance; a valid predecessor never authorizes an oversized unvalidated successor.
+  Ordinary nested input retains the existing one-maximum-message plus 2 MiB ceiling. Empty deliveries are recycled.
+  One extracted request and a compaction destination are bounded parsing scratch; the current synchronous delivery is
+  outside the retained bound.
+- Full-table synchronization currently requires one serialized response under the roughly 16 MiB ceiling, including
+  its response metadata/framing. Larger tables cannot synchronize; a required pull failure can defer usage pushes.
+  Pagination is separate work; this is a byte limit, not a fixed user-count limit.
 - This node does not require left padding and does not prepend in-place.
 - This node is not a packet tunnel and does not use packet-line semantics.
 
@@ -1284,8 +1327,8 @@ waiting or taking the statistics lock. It uses reserved credential-index capacit
 rather than growing/rehashing maps or scanning users. The existing password must
 terminate within 32 KiB plus one terminator byte; a larger imported value returns
 `resource_limit` without change. This is an operation bound, not a database import
-restriction. Request/decoded/prepared secrets and replaced plaintext are securely
-cleaned up using the existing object-layer ownership rules.
+restriction. The prepared/decoded secret copies and replaced object-layer plaintext are securely wiped on their
+owned cleanup paths. Raw transport and configuration buffers are not comprehensively wiped.
 
 Expected node errors are `invalid_request`, `conflict`, `not_found`,
 `credentials_exist`, `busy`, `resource_limit`, `password_change_failed`,
