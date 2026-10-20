@@ -306,6 +306,10 @@ static bool wloopHasPollWork(const wloop_t *loop)
 static void wloopReleasePending(wevent_t *event, bool callback_suppressed)
 {
     event->pending = 0;
+    if ((event->event_type & WEVENT_TYPE_TIMER) != 0)
+    {
+        ((wtimer_t *) event)->pending_reset = 0;
+    }
 
     if (callback_suppressed && event->destroy && (event->event_type & WEVENT_TYPE_TIMER) != 0)
     {
@@ -381,7 +385,9 @@ static int wloopProcessPendings(wloop_t *loop)
                     cur = next;
                     continue;
                 }
-                if (cur->active && cur->cb)
+                /* Reset cancels the old expiration, not dispatch's lifetime reference. */
+                bool reset_timer = (cur->event_type & WEVENT_TYPE_TIMER) != 0 && ((wtimer_t *) cur)->pending_reset;
+                if (cur->active && cur->cb && ! reset_timer)
                 {
                     if (wloopRunNormalEventCallback(loop, cur))
                     {
@@ -1701,6 +1707,8 @@ bool wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
         timer->next_timeout = timer->next_timeout / 100000 * 100000;
     }
     heap_insert(&loop->timers, &timer->node);
+    /* Dispatch may still hold its current or next pointer after this reset. */
+    timer->pending_reset = timer->pending;
     EVENT_RESET(timer);
     mutexUnlock(&loop->normal_admission_mutex);
     return true;

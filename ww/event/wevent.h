@@ -116,7 +116,8 @@ struct widle_s
     struct heap_node node;                                                                                             \
     struct list_node quiesced_node;                                                                                    \
     generic_pool_t  *allocation_pool;                                                                                  \
-    unsigned         quiesced : 1;
+    unsigned         quiesced : 1;                                                                                     \
+    unsigned         pending_reset : 1;
 
 struct wtimer_s
 {
@@ -347,7 +348,6 @@ void wioDelHeartBeatTimer(wio_t *io);
     {                                                                                                                  \
         ev->destroy = 0;                                                                                               \
         EVENT_ACTIVE(ev);                                                                                              \
-        ev->pending = 0;                                                                                               \
     } while (0)
 
 #define EVENT_UNPENDING(ev)                                                                                            \

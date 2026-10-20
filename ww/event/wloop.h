@@ -280,6 +280,11 @@ WW_EXPORT void wtimerDelete(wtimer_t *timer);
  * callback must clear every owner slot and represented work, then return
  * without deleting or retaining the executing timer. A callback suppressed by
  * quiescence is retained separately for owner-worker cleanup.
+ *
+ * Reset suppresses an old expiration waiting for dispatch but retains pending
+ * ownership until dispatch releases it. Deleting after a successful reset is
+ * safe, including from the timer's own callback; reclamation is deferred while
+ * dispatch still references the timer.
  */
 WW_EXPORT bool wtimerReset(wtimer_t *timer, uint32_t timeout_ms DEFAULT(0));
 
