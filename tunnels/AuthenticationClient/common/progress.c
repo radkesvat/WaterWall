@@ -26,10 +26,13 @@ void authenticationclientScheduleSyncProgress(tunnel_t *t)
     assert(currentThreadIsEventWorkerWID(0));
     authenticationclient_tstate_t *ts = tunnelGetState(t);
     mutexLock(&ts->control_mutex);
-    const bool needed = ts->started && ! ts->stopping && ! ts->continuity_error && ts->authenticated && ts->connected &&
-                        ! ts->auth_in_flight && ! ts->pull_in_flight && ! ts->push_in_flight &&
-                        (ts->pull_required || ts->push_requested || ts->pending_batch != NULL ||
-                         ts->catchup_capture_needed || ts->catchup_entries_count != 0);
+    const bool needed =
+        ts->started && ! ts->stopping && ! ts->continuity_error && ts->authenticated && ts->connected &&
+        ! ts->write_paused &&
+        (! ts->stats_push_refused || wloopNowMonotonicMS(getWorkerLoop(0)) >= ts->stats_retry_not_before_ms) &&
+        ! ts->auth_in_flight && ! ts->pull_in_flight && ! ts->push_in_flight &&
+        (ts->pull_required || ts->push_requested || ts->pending_batch != NULL || ts->catchup_capture_needed ||
+         ts->catchup_entries_count != 0);
     mutexUnlock(&ts->control_mutex);
     if (! needed || ts->progress_timer != NULL)
         return;
@@ -78,9 +81,14 @@ static void reconnectOnWorker0(void *worker_ptr, void *arg1, void *arg2, void *a
 void authenticationclientScheduleReconnect(tunnel_t *t)
 {
     authenticationclient_tstate_t *ts    = tunnelGetState(t);
-    const bool                     queue = ! currentThreadIsEventWorkerWID(0) || ts->reconnect_interval_ms == 0;
+    const bool                     owner = currentThreadIsEventWorkerWID(0);
     mutexLock(&ts->control_mutex);
-    const bool needed = ts->started && ! ts->stopping && ! ts->continuity_error && ts->control_line == NULL;
+    const uint64_t now           = owner ? wloopNowMonotonicMS(getWorkerLoop(0)) : 0;
+    const uint64_t refusal_delay = owner && ts->stats_push_refused && now < ts->stats_retry_not_before_ms
+                                       ? ts->stats_retry_not_before_ms - now
+                                       : 0;
+    const bool     queue         = ! owner || (ts->reconnect_interval_ms == 0 && refusal_delay == 0);
+    const bool     needed        = ts->started && ! ts->stopping && ! ts->continuity_error && ts->control_line == NULL;
     if (! needed || (queue && ts->reconnect_work_pending))
     {
         mutexUnlock(&ts->control_mutex);
@@ -105,9 +113,10 @@ void authenticationclientScheduleReconnect(tunnel_t *t)
     }
     if (ts->reconnect_timer != NULL)
         return; /* Preserve the first retry deadline. */
-    ts->reconnect_due_ms = wloopNowMonotonicMS(getWorkerLoop(0)) + ts->reconnect_interval_ms;
-    ts->reconnect_timer =
-        wtimerAdd(getWorkerLoop(0), authenticationclientReconnectTimerCallback, ts->reconnect_interval_ms, 1);
+    const uint32_t delay =
+        (uint32_t) min(max((uint64_t) ts->reconnect_interval_ms, refusal_delay), (uint64_t) UINT32_MAX);
+    ts->reconnect_due_ms = now + delay;
+    ts->reconnect_timer  = wtimerAdd(getWorkerLoop(0), authenticationclientReconnectTimerCallback, delay, 1);
     if (ts->reconnect_timer == NULL)
         progressFailure("reconnect timer");
     else

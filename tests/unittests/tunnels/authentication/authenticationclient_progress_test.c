@@ -106,9 +106,11 @@ static void teardown(void)
     twfRequire(! ts->reconnect_work_pending, "cancellation retained retry latch");
     authenticationclientTunnelOnWorkerQuiesce(client, 0, wwLifecycleProcessShutdown());
     authenticationclientTunnelOnWorkerStop(client, 0, wwLifecycleProcessShutdown());
-    twfRequire(ts->control_line == NULL && ts->request_timer == NULL && ts->reconnect_timer == NULL,
+    twfRequire(ts->control_line == NULL && ts->request_timer == NULL && ts->reconnect_timer == NULL &&
+                   ts->progress_timer == NULL,
                "stop left control resources alive");
     memoryFree(ts->pending_requests);
+    cJSON_free(ts->pending_batch);
     memoryFree(ts->name);
     memoryFree(ts->secret);
     mutexDestroy(&ts->control_mutex);
@@ -246,12 +248,125 @@ static void testDeadlinesAndMalformed(void)
         teardown();
     }
 }
+
+static void testPausedProgress(void)
+{
+    authenticationclient_tstate_t *ts = setup();
+    authenticationclientOpenControlLine(client);
+    ts->connected = ts->authenticated = true;
+    ts->pull_requested = ts->pull_required = true;
+    authenticationclientScheduleSyncProgress(client);
+    twfRequire(ts->progress_timer != NULL, "eligible synchronization did not schedule progress");
+    authenticationclientTunnelDownStreamPause(client, ts->control_line);
+    authenticationclientResumeSync(client);
+    for (unsigned i = 0; i < 20; ++i)
+    {
+        pump(1);
+        twfRequire(ts->progress_timer == NULL && ts->pending_count == 0,
+                   "paused synchronization armed repeated progress work");
+    }
+    authenticationclientTunnelDownStreamResume(client, ts->control_line);
+    twfRequire(ts->pull_in_flight && ts->pending_count == 1, "Resume did not continue remembered synchronization");
+    teardown();
+}
+
+static char     diagnostic[1024];
+static unsigned diagnostic_count;
+static void     captureDiagnostic(int level, const char *data, int length)
+{
+    discard level;
+    if (strstr(data, "AuthenticationClient: request ") == NULL)
+        return;
+    twfRequire(length >= 0 && (size_t) length < sizeof(diagnostic), "unbounded refusal diagnostic");
+    memoryCopy(diagnostic, data, (size_t) length);
+    diagnostic[length] = 0;
+    ++diagnostic_count;
+}
+
+static void errorReply(const uint8_t *data, uint32_t length)
+{
+    authenticationclient_tstate_t *ts = tunnelGetState(client);
+    sbuf_t                        *b  = bufferpoolGetBestFit(env.pool, 29 + length, 0);
+    sbufSetLength(b, 29 + length);
+    memoryZero(sbufGetMutablePtr(b), 29);
+    uint32_t number = htonl(25 + length);
+    memoryCopy(sbufGetMutablePtr(b), &number, 4);
+    sbufGetMutablePtr(b)[20] = kAuthenticationClientResponseTypeError;
+    number                   = htonl(last_id);
+    memoryCopy(sbufGetMutablePtr(b) + 21, &number, 4);
+    number = htonl(length);
+    memoryCopy(sbufGetMutablePtr(b) + 25, &number, 4);
+    memoryCopy(sbufGetMutablePtr(b) + 29, data, length);
+    tunnelDownStreamPayload(client, ts->control_line, b);
+}
+
+static void testRefusalClassificationAndDiagnostics(void)
+{
+    static const char *errors[] = {"stats-push-not-allowed",
+                                   "invalid-usage-batch",
+                                   "usage-digest-failed",
+                                   "unknown-error",
+                                   "usage-replay-conflict",
+                                   "usage-sequence-invalid",
+                                   "accounting-continuity-lost",
+                                   "authentication-required"};
+    for (unsigned i = 0; i < sizeof(errors) / sizeof(errors[0]); ++i)
+    {
+        authenticationclient_tstate_t *ts = setup();
+        authenticationclientOpenControlLine(client);
+        ts->connected = ts->authenticated = true;
+        ts->pending_batch                 = stringDuplicate("retained-batch");
+        ts->pending_batch_length          = (uint32_t) stringLength(ts->pending_batch);
+        ts->accounting_epoch[0]           = 'a';
+        ts->next_batch_sequence           = 7;
+        twfRequire(authenticationclientSendPushUserStats(client), "classification push not sent");
+        errorReply((const uint8_t *) errors[i], (uint32_t) stringLength(errors[i]));
+        const bool terminal = i >= 4 && i <= 6;
+        twfRequire(ts->continuity_error == terminal && ts->stats_push_refused == (i < 4) &&
+                       ts->next_batch_sequence == 7 && strcmp(ts->pending_batch, "retained-batch") == 0 &&
+                       (terminal ? ts->reconnect_timer == NULL : ts->reconnect_timer != NULL),
+                   "error classification changed retained accounting or terminal behavior");
+        if (i < 4)
+            twfRequire(ts->last_failure == (i == 0 ? kAuthenticationClientFailureStatsPushDenied
+                                                   : kAuthenticationClientFailureStatsPushRejected),
+                       "nonterminal refusal has the wrong bounded status classification");
+        teardown();
+    }
+
+    authenticationclient_tstate_t *ts = setup();
+    authenticationclientOpenControlLine(client);
+    ts->connected = ts->authenticated = true;
+    ts->pull_requested = ts->pull_required = false;
+    twfRequire(authenticationclientSendPing(client), "diagnostic request failed");
+    uint8_t bytes[160];
+    memorySet(bytes, 1, sizeof(bytes));
+    const uint8_t special[] = {'\r', '\n', 0x1B, '\t', 0, '\\', 0xC0, 0xFF, 0x7F, 'A'};
+    memoryCopy(bytes, special, sizeof(special));
+    logger_handler original = getNetworkLoggerHandle();
+    loggerSetHandler(getNetworkLogger(), captureDiagnostic);
+    diagnostic_count = 0;
+    errorReply(bytes, sizeof(bytes));
+    loggerSetHandler(getNetworkLogger(), original);
+    twfRequire(diagnostic_count == 1 && strlen(diagnostic) < 650 &&
+                   strstr(diagnostic, "\\x0D\\x0A\\x1B\\x09\\x00\\\\\\xC0\\xFF\\x7FA") != NULL &&
+                   strstr(diagnostic, "...[truncated]") != NULL,
+               "remote diagnostic did not escape every byte or mark truncation");
+    for (size_t i = 0; diagnostic[i] != '\0'; ++i)
+        twfRequire((diagnostic[i] >= 0x20 && diagnostic[i] <= 0x7E) ||
+                       (diagnostic[i] == '\n' && diagnostic[i + 1] == '\0'),
+                   "remote error injected a physical line or terminal control");
+    twfRequire(! ts->continuity_error && ts->last_failure == kAuthenticationClientFailureRemoteError,
+               "diagnostic escaping changed protocol classification");
+    teardown();
+}
 int main(void)
 {
     twfSetCase("authenticationclient request and reconnect progress");
     twfRequire(createNetworkLogger(NULL, false) != NULL, "logger setup failed");
     testRetryProgress();
     testDeadlinesAndMalformed();
+    testPausedProgress();
+    testRefusalClassificationAndDiagnostics();
     networkloggerDestroy();
     return 0;
 }

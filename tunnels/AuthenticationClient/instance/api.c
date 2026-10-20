@@ -71,6 +71,10 @@ static const char *failureName(authenticationclient_failure_t failure)
         return "invalid_response";
     case kAuthenticationClientFailureRemoteError:
         return "remote_error";
+    case kAuthenticationClientFailureStatsPushDenied:
+        return "stats_push_denied";
+    case kAuthenticationClientFailureStatsPushRejected:
+        return "stats_push_rejected";
     }
     assert(false);
     return "none";
@@ -145,8 +149,9 @@ static api_result_t statusApi(tunnel_t *t, sbuf_t *message, const node_api_call_
      * parser scratch are conservatively charged before tree construction. */
     const bool parse_fits =
         context->working_memory_allowance >= 2048 && length <= (context->working_memory_allowance - 2048) / 4;
-    cJSON *body  = parse_fits ? configLexicalParseBounded((const char *) sbufGetRawPtr(message), length, 2, 4) : NULL;
-    bool   valid = cJSON_IsObject(body), include_accounting = false;
+    cJSON *body =
+        parse_fits ? configLexicalParseBoundedQuiet((const char *) sbufGetRawPtr(message), length, 2, 4) : NULL;
+    bool valid = cJSON_IsObject(body), include_accounting = false;
     for (const cJSON *field = body != NULL ? body->child : NULL; valid && field != NULL; field = field->next)
     {
         if (field->string == NULL || strcmp(field->string, "include_accounting") != 0 || ! cJSON_IsBool(field))

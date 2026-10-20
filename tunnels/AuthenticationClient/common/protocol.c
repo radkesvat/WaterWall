@@ -320,6 +320,7 @@ static void authenticationclientMarkRequestInFlightLocked(authenticationclient_t
 static bool authenticationclientRequestMayBeSentLocked(authenticationclient_tstate_t *ts, uint8_t request_type)
 {
     if (UNLIKELY(ts->stopping || ts->continuity_error || ! ts->connected || ts->write_paused ||
+                 (ts->stats_push_refused && wloopNowMonotonicMS(getWorkerLoop(0)) < ts->stats_retry_not_before_ms) ||
                  ts->control_line == NULL))
     {
         return false;
@@ -930,11 +931,13 @@ static bool authenticationclientAcknowledgeUsageBatch(tunnel_t *t, const uint8_t
         ts->continuity_error = true;
     else
         ++ts->next_batch_sequence;
-    ts->pull_requested = true;
-    ts->pull_required  = true;
-    ts->last_ack_success_ms    = authenticationclientLocalTimeMS();
-    ts->last_ack_success_valid = true;
-    const bool exhausted       = ts->continuity_error;
+    ts->pull_requested            = true;
+    ts->pull_required             = true;
+    ts->stats_push_refused        = false;
+    ts->stats_retry_not_before_ms = 0;
+    ts->last_ack_success_ms       = authenticationclientLocalTimeMS();
+    ts->last_ack_success_valid    = true;
+    const bool exhausted          = ts->continuity_error;
     mutexUnlock(&ts->control_mutex);
     if (exhausted)
         authenticationclientRecordFailure(
@@ -1102,33 +1105,75 @@ static bool authenticationclientApplyLocalTrafficDelta(users_t *dest, users_t *o
     return true;
 }
 
+static bool authenticationclientErrorEquals(const uint8_t *data, uint32_t length, const char *expected)
+{
+    return length == stringLength(expected) && memoryEqual(data, expected, length);
+}
+
+static void authenticationclientEscapeError(const uint8_t *data, uint32_t length, char output[528])
+{
+    static const char hex[] = "0123456789ABCDEF";
+    size_t            at    = 0;
+    const uint32_t    count = min(length, 128U);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        const uint8_t byte = data[i];
+        if (byte == '\\')
+        {
+            output[at++] = '\\';
+            output[at++] = '\\';
+        }
+        else if (byte >= 0x20 && byte <= 0x7E)
+            output[at++] = (char) byte;
+        else
+        {
+            output[at++] = '\\';
+            output[at++] = 'x';
+            output[at++] = hex[byte >> 4];
+            output[at++] = hex[byte & 15];
+        }
+    }
+    if (length > count)
+    {
+        static const char marker[] = "...[truncated]";
+        memoryCopy(output + at, marker, sizeof(marker) - 1U);
+        at += sizeof(marker) - 1U;
+    }
+    output[at] = '\0';
+}
+
 static void authenticationclientHandleError(tunnel_t *t, line_t *l, uint8_t request_type, const uint8_t *data,
                                             uint32_t length)
 {
     authenticationclient_tstate_t *ts = tunnelGetState(t);
-    const bool                     continuity =
-        length == sizeof("accounting-continuity-lost") - 1 && memoryEqual(data, "accounting-continuity-lost", length);
+    const bool continuity             = authenticationclientErrorEquals(data, length, "accounting-continuity-lost");
+    const bool push                   = request_type == kAuthenticationClientRequestTypePushUserStats;
+    const bool inconsistent        = push && (authenticationclientErrorEquals(data, length, "usage-replay-conflict") ||
+                                       authenticationclientErrorEquals(data, length, "usage-sequence-invalid"));
     const bool credential_rejected = request_type == kAuthenticationClientRequestTypeAuthenticate &&
-                                     length == sizeof("authentication-failed") - 1 &&
-                                     memoryEqual(data, "authentication-failed", length);
+                                     authenticationclientErrorEquals(data, length, "authentication-failed");
     if (credential_rejected)
     {
         mutexLock(&ts->control_mutex);
         ts->auth_rejected = true;
         mutexUnlock(&ts->control_mutex);
     }
-    const bool authentication =
-        length == sizeof("authentication-required") - 1 && memoryEqual(data, "authentication-required", length);
+    const bool authentication = authenticationclientErrorEquals(data, length, "authentication-required");
+    const bool denied         = push && authenticationclientErrorEquals(data, length, "stats-push-not-allowed");
     authenticationclientRecordFailure(t,
-                                      continuity            ? kAuthenticationClientFailureContinuity
-                                      : credential_rejected ? kAuthenticationClientFailureCredentialRejected
-                                                            : kAuthenticationClientFailureRemoteError,
+                                      continuity || inconsistent ? kAuthenticationClientFailureContinuity
+                                      : credential_rejected      ? kAuthenticationClientFailureCredentialRejected
+                                      : denied                   ? kAuthenticationClientFailureStatsPushDenied
+                                      : push && ! authentication ? kAuthenticationClientFailureStatsPushRejected
+                                                                 : kAuthenticationClientFailureRemoteError,
                                       request_type);
-    LOGW("AuthenticationClient: request %u failed: %.*s", request_type, (int) min(length, 128U), (const char *) data);
-    if ((continuity || request_type == kAuthenticationClientRequestTypePushUserStats) && ! authentication)
+    char diagnostic[528]; /* 128 * 4, truncation marker and terminator. */
+    authenticationclientEscapeError(data, length, diagnostic);
+    LOGW("AuthenticationClient: request %u failed: %s", request_type, diagnostic);
+    if ((continuity || inconsistent) && ! authentication)
     {
         mutexLock(&ts->control_mutex);
-        if (ts->pending_batch != NULL)
+        if (ts->pending_batch != NULL || inconsistent)
             ts->continuity_error = true;
         else if (continuity)
         {
@@ -1144,6 +1189,15 @@ static void authenticationclientHandleError(tunnel_t *t, line_t *l, uint8_t requ
             authenticationclientCloseControlLine(t, l, true);
             return;
         }
+    }
+    else if (push && ! authentication)
+    {
+        mutexLock(&ts->control_mutex);
+        ts->stats_push_refused = true;
+        ts->stats_retry_not_before_ms =
+            wloopNowMonotonicMS(getWorkerLoop(0)) +
+            max((uint64_t) kAuthenticationClientStatsRefusalMinRetryMs, (uint64_t) ts->reconnect_interval_ms);
+        mutexUnlock(&ts->control_mutex);
     }
     authenticationclientRecoverControlLine(t, l, true);
 }
@@ -1417,6 +1471,12 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     }
 
     mutexLock(&ts->control_mutex);
+    if (ts->stats_push_refused && wloopNowMonotonicMS(getWorkerLoop(0)) < ts->stats_retry_not_before_ms)
+    {
+        mutexUnlock(&ts->control_mutex);
+        authenticationclientScheduleReconnect(t);
+        return;
+    }
     if (UNLIKELY(! ts->started || ts->stopping || ts->continuity_error || ts->control_line != NULL))
     {
         if (ts->verbose)

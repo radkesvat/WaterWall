@@ -25,6 +25,8 @@ typedef enum authenticationclient_failure_e
     kAuthenticationClientFailureCredentialRejected,
     kAuthenticationClientFailureContinuity,
     kAuthenticationClientFailureInvalidResponse,
+    kAuthenticationClientFailureStatsPushDenied,
+    kAuthenticationClientFailureStatsPushRejected,
     kAuthenticationClientFailureRemoteError
 } authenticationclient_failure_t;
 
@@ -125,6 +127,7 @@ typedef struct authenticationclient_tstate_s
     bool                                     verbose;
     bool                                     reconnect_work_pending;
     bool                                     continuity_error;
+    bool                                     stats_push_refused;
     bool                                     pull_requested;
     bool pull_required; /* Refresh after authentication or ACK, before a new usage batch. */
     bool push_requested;
@@ -136,6 +139,7 @@ typedef struct authenticationclient_tstate_s
     wtimer_t *request_timer;
     wtimer_t *progress_timer;
     uint64_t  reconnect_due_ms;
+    uint64_t  stats_retry_not_before_ms;
     uint64_t  request_deadline_ms;
 
     uint8_t  token[64];
@@ -227,6 +231,11 @@ enum
     kAuthenticationClientDefaultReconnectIntervalMs = 5U * 1000U,
     kAuthenticationClientDefaultRequestTimeoutMs    = 120U * 1000U,
     kAuthenticationClientDefaultMaxPendingRequests  = 64U
+};
+
+enum
+{
+    kAuthenticationClientStatsRefusalMinRetryMs = 30U * 1000U
 };
 
 WW_EXPORT void         authenticationclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);

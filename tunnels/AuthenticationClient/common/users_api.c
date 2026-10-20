@@ -720,13 +720,14 @@ static void authenticationclientFirstUsagePushOnWorker0(void *worker_ptr, void *
     {
         authenticationclient_tstate_t *ts = tunnelGetState(t);
         mutexLock(&ts->control_mutex);
-        const bool push_in_flight = ts->push_in_flight;
-        if (push_in_flight)
+        const bool deferred =
+            ts->push_in_flight || ts->pull_in_flight || ts->pull_required || ts->stats_push_refused || ts->write_paused;
+        if (deferred)
         {
             ts->first_usage_push_deferred = true;
         }
         mutexUnlock(&ts->control_mutex);
-        if (! push_in_flight)
+        if (! deferred)
         {
             authenticationclientResetFirstUsagePushState(t);
         }
@@ -740,10 +741,11 @@ static authenticationclient_first_usage_push_result_t authenticationclientReques
 
     mutexLock(&ts->control_mutex);
     ts->push_requested = true;
-    if (ts->push_in_flight)
+    if (ts->push_in_flight || ts->pull_in_flight || ts->pull_required || ts->stats_push_refused || ts->write_paused)
     {
-        ts->first_usage_push_deferred = true;
-        result                        = kAuthenticationClientFirstUsagePushPending;
+        ts->first_usage_push_requested = true;
+        ts->first_usage_push_deferred  = true;
+        result                         = kAuthenticationClientFirstUsagePushPending;
     }
     else if (ts->first_usage_push_requested)
     {

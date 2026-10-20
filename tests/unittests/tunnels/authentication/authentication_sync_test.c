@@ -2915,12 +2915,134 @@ static void testStatusTimeoutHistory(void)
     teardown();
 }
 
+static void testStatsRefusalRecovery(void)
+{
+    for (unsigned lost_ack = 0; lost_ack < 2; ++lost_ack)
+    {
+        setup(1);
+        start(0);
+        authenticationclient_tstate_t *ts = state(0);
+        ts->reconnect_interval_ms         = 0;
+        if (! lost_ack)
+            authTestPeerPermissions(server, 0, false, false);
+        else
+            drop_ack = 1;
+        traffic(0, 10);
+        if (lost_ack)
+        {
+            authenticationclientRequestPush(clients[0]);
+            require(authTestPeerStats(server, 42).traffic.u == 10 && ts->pending_batch != NULL,
+                    "lost ACK did not retain applied usage");
+            authTestPeerPermissions(server, 0, false, false);
+        }
+        pump(0); /* First-use and replay work run with every periodic job disabled. */
+        require(ts->stats_push_refused && ! ts->continuity_error && ts->pending_batch != NULL &&
+                    ts->control_line == NULL && ts->reconnect_timer != NULL &&
+                    ts->last_failure == kAuthenticationClientFailureStatsPushDenied,
+                "stats permission refusal became terminal or lost its independent retry");
+        char                         *batch    = stringDuplicate(ts->pending_batch);
+        const uint64_t                sequence = ts->next_batch_sequence;
+        const unsigned                attempts = pushes, refreshes = pulls;
+        const uint64_t                deadline = ts->stats_retry_not_before_ms;
+        authenticationclient_status_t snapshot;
+        authenticationclientStatusSnapshot(clients[0], true, 1024 * 1024, 0, &snapshot);
+        require(snapshot.can_authenticate && snapshot.unresolved_batch && snapshot.retry_deadline_valid &&
+                    snapshot.retry_remaining_ms == 30000 && snapshot.locally_unacknowledged_upload_bytes == 10 &&
+                    snapshot.first_use_observation_count == 1,
+                "refusal status lost cached admission, retained debt, first use or retry deadline");
+        user_handle_t handle;
+        require(authenticationclientGetUserByPassword(clients[0], "account-0", &handle),
+                "stats refusal blocked cached credentials");
+        user_ip_key_t ip = {.type = 4, .bytes = {192, 0, 2, 1}};
+        require(authenticationclientUserTryAdmitConnection(clients[0], &handle, &ip, 100000) == kUserAdmissionOk,
+                "stats refusal blocked cached reservation");
+        authenticationclientUserReleaseConnection(clients[0], &handle, &ip);
+        traffic(0, 5);
+        for (unsigned i = 0; i < 10; ++i)
+        {
+            authenticationclientRequestPush(clients[0]);
+            authenticationclientResumeSync(clients[0]);
+            authenticationclientOpenControlLine(clients[0]);
+            authenticationclientScheduleReconnect(clients[0]);
+            pump(0);
+        }
+        pump(29999);
+        require(pushes == attempts && pulls == refreshes && ts->control_line == NULL &&
+                    ts->stats_retry_not_before_ms == deadline && ts->next_batch_sequence == sequence &&
+                    strcmp(ts->pending_batch, batch) == 0 && ts->progress_timer == NULL,
+                "traffic or explicit/reentrant work bypassed refusal cooldown or changed the batch");
+        pump(1);
+        require(pushes == attempts + 1 && pulls == refreshes && ts->stats_push_refused && ! ts->continuity_error &&
+                    strcmp(ts->pending_batch, batch) == 0,
+                "due refusal retry did not preserve one exact batch attempt");
+        authTestPeerPermissions(server, 0, false, true);
+        pause_before_session = true;
+        pump(30000);
+        require(ts->authenticated && ts->stats_push_refused && ts->pending_batch != NULL && ts->write_paused,
+                "successful Session cleared refusal before its matching ACK");
+        authenticationclientTunnelDownStreamResume(clients[0], ts->control_line);
+        for (unsigned i = 0; i < 4; ++i)
+            pump(1);
+        require(! ts->stats_push_refused && ts->pending_batch == NULL && ts->next_batch_sequence == sequence + 2 &&
+                    authTestPeerStats(server, 42).traffic.u == 15 && local(0, true) == 15 && local(0, false) == 15,
+                "same-epoch recovery duplicated/dropped retained or later usage");
+        memoryFree(batch);
+        teardown();
+    }
+
+    setup(1);
+    start(0);
+    state(0)->reconnect_interval_ms = 60000;
+    authTestPeerPermissions(server, 0, false, false);
+    traffic(0, 1);
+    pump(0);
+    const unsigned attempts = pushes;
+    pump(30000);
+    require(pushes == attempts && state(0)->reconnect_timer != NULL,
+            "refusal ignored larger configured reconnect interval");
+    pump(30000);
+    require(pushes == attempts + 1, "larger configured refusal deadline did not retry");
+    teardown(); /* Quiescence must cancel an outstanding refusal retry. */
+}
+
+static void testFirstUseDeferredByPull(void)
+{
+    setup(128);
+    start(0);
+    hold_pull = true;
+    authenticationclientRequestPull(clients[0]);
+    require(held_request != NULL && state(0)->pull_in_flight, "first-use pull was not held");
+    testWorkerBindWID(1);
+    for (unsigned pass = 0; pass < 5; ++pass)
+        for (uint64_t id = 42; id < 42 + 128; ++id)
+        {
+            user_handle_t handle = {.generation = state(0)->users_generation, .user_id = id};
+            require(authenticationclientUserAddTraffic(clients[0], &handle, 1, 0), "first-use traffic failed");
+        }
+    testWorkerBindWID(0);
+    pump(0);
+    require(state(0)->first_usage_push_requested && state(0)->first_usage_push_deferred && state(0)->push_requested &&
+                pushes == 0 && state(0)->progress_timer == NULL,
+            "held pull repeatedly reset or scheduled first-use reporting");
+    for (size_t i = 0; i < usersCount(state(0)->users); ++i)
+        require(usersGetAt(state(0)->users, i)->runtime.first_usage_push_requested,
+                "held pull reset a user's first-use request flag");
+    deliverHeldRequest();
+    for (unsigned i = 0; i < 4; ++i)
+        pump(1);
+    require(pushes == 1 && state(0)->pending_batch == NULL, "pull completion needed another packet to report");
+    for (uint64_t id = 42; id < 42 + 128; ++id)
+        require(authTestPeerStats(server, id).traffic.u == 5, "deferred first-use report lost usage");
+    teardown();
+}
+
 int main(void)
 {
     testCaseSet("authentication sync loss and continuity");
     require(createNetworkLogger(NULL, false) != NULL, "logger failed");
     require(globalstateInitializeSecureRandom() && wCryptoGlobalInit() == kWCryptoOk, "crypto failed");
     testMultiplierSettings();
+    testCredentialSettingsLimit();
     testMultiplierFragmentAccounting();
     testMultiplierOfflineQuota();
     testDiscountFirstUse();
@@ -2929,6 +3051,8 @@ int main(void)
     testDiscountConcurrentRefresh();
     testStatusSnapshot();
     testStatusTimeoutHistory();
+    testStatsRefusalRecovery();
+    testFirstUseDeferredByPull();
     testSharedBandwidthReservations();
     testOfflineFirstUseDeadline();
 #if defined(AUTHENTICATION_SYNC_HAVE_CONTROLLER)
@@ -2966,4 +3090,3 @@ int main(void)
     networkloggerDestroy();
     return 0;
 }
-    testCredentialSettingsLimit();
