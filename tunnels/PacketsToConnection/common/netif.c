@@ -147,7 +147,7 @@ static void ptcDestroyRouteContext(interface_route_context_t *route)
 void ptcDestroyWorkerRoute(tunnel_t *t, wid_t wid)
 {
     ptc_tstate_t *state = tunnelGetState(t);
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     if (state->routes_v4 == NULL)
         return;
     assert(wid < state->route_worker_count);
@@ -173,7 +173,7 @@ static interface_route_context_t **ptcRouteSlot(ptc_tstate_t *state, wid_t packe
 
 interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t packet_wid)
 {
-    assert(currentThreadIsEventWorkerWID(packet_wid));
+    assert(currentThreadOwnsWorker(packet_wid));
     wwLwipEngineAssertCurrent();
 
     ptc_tstate_t *state = tunnelGetState(t);
@@ -320,7 +320,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     wid_t                      packet_wid = route_ctx->packet_wid;
     ptc_tstate_t              *state      = tunnelGetState(t);
 
-    assert(currentThreadIsEventWorkerWID(packet_wid));
+    assert(currentThreadOwnsWorker(packet_wid));
     assert(route_ctx->engine == wwLwipEngineCurrent());
     /* Owner cleanup can emit while removing protocol objects; the closed node
      * gate prevents publication to a neighbor that has already stopped. */
@@ -336,7 +336,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     }
 
     line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), packet_wid);
-    assert(packet_line != NULL && lineIsOnCurrentEventWorker(packet_line));
+    assert(packet_line != NULL && lineIsOnCurrentWorker(packet_line));
     buffer_pool_t *pool   = lineGetBufferPool(packet_line);
     sbuf_t        *buf    = bufferpoolGetBestFit(pool, p->tot_len, bufferpoolGetLargeBufferPadding(pool));
     const uint32_t length = p->tot_len;

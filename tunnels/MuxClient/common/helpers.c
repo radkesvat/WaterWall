@@ -1144,7 +1144,7 @@ muxclient_child_drain_result_t muxclientDrainAttachedChild(tunnel_t *t, line_t *
 static void muxclientRegisterDetachedChild(muxclient_tstate_t *ts, line_t *child_l, size_t queued_charge)
 {
     const wid_t wid = lineGetWID(child_l);
-    assert(lineIsOnCurrentEventWorker(child_l));
+    assert(lineIsOnCurrentWorker(child_l));
     assert(workerWIDIsRegistered(wid));
 
     if (UNLIKELY(wid >= ts->workers_count || ts->worker_states[wid].detached_child_count == UINT32_MAX ||
@@ -1161,7 +1161,7 @@ static void muxclientRegisterDetachedChild(muxclient_tstate_t *ts, line_t *child
 static void muxclientSubtractDetachedCharge(muxclient_tstate_t *ts, line_t *child_l, size_t charge)
 {
     const wid_t wid = lineGetWID(child_l);
-    assert(lineIsOnCurrentEventWorker(child_l));
+    assert(lineIsOnCurrentWorker(child_l));
 
     if (UNLIKELY(wid >= ts->workers_count || ts->worker_states[wid].detached_queued_charge < charge))
     {
@@ -1177,7 +1177,7 @@ static void muxclientRemoveDetachedChild(muxclient_tstate_t *ts, line_t *child_l
     const size_t residual_charge = child_ls->pending_child_queue_charge;
     const size_t residual_count  = bufferqueueGetBufCount(&child_ls->pending_child_data);
 
-    assert(lineIsOnCurrentEventWorker(child_l));
+    assert(lineIsOnCurrentWorker(child_l));
     assert(child_ls->close_state == kMuxClientChildCloseParentGoneDraining);
     assert(child_ls->parent == NULL);
 
@@ -1216,7 +1216,7 @@ muxclient_child_drain_result_t muxclientDrainDetachedChild(tunnel_t *t, line_t *
 {
     muxclient_tstate_t *ts = tunnelGetState(t);
 
-    assert(lineIsOnCurrentEventWorker(child_l));
+    assert(lineIsOnCurrentWorker(child_l));
     assert(child_ls->close_state == kMuxClientChildCloseParentGoneDraining);
     assert(child_ls->parent == NULL);
 
@@ -1346,7 +1346,7 @@ void muxclientHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
     if (parent_ls->parent_finishing && notify_parent_next)
         return;
 
-    assert(lineIsOnCurrentEventWorker(parent_l));
+    assert(lineIsOnCurrentWorker(parent_l));
     muxclientForgetParentSelection(ts, wid, parent_l);
     if (parent_ls->parent_state->owned)
     {

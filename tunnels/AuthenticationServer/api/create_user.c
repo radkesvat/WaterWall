@@ -19,7 +19,7 @@ api_result_t authenticationserverApiCreateUser(tunnel_t *t, sbuf_t *message, con
         return authenticationserverApiError(context, error);
     }
 
-    buffer_pool_t    *pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t    *pool = getCurrentWorkerBufferPool();
     buffer_pool_fit_t fit;
     sbuf_t           *ack      = NULL;
     size_t            retained = usersPreparedNewUserOwnedBytes(request.candidate);

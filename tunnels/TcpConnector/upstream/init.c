@@ -172,7 +172,7 @@ static void tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
         }
     }
 
-    wloop_t *loop = getCurrentEventWorkerLoop();
+    wloop_t *loop = getCurrentWorkerLoop();
 
     assert(dest_ctx->ip_address.type == IPADDR_TYPE_V4 || dest_ctx->ip_address.type == IPADDR_TYPE_V6);
     int addr_type = dest_ctx->ip_address.type == IPADDR_TYPE_V4 ? AF_INET : AF_INET6;

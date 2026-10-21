@@ -24,7 +24,7 @@ void pipeTunnelAfterFastStopCheckTestSeam(tunnel_t *wrapper, line_t *source_line
 static void pipeTestOwnedInit(tunnel_t *t, line_t *line)
 {
     discard t;
-    require(currentThreadIsEventWorkerWID(lineGetWID(line)), "pipe Init ran outside its target worker");
+    require(currentThreadOwnsWorker(lineGetWID(line)), "pipe Init ran outside its target worker");
     atomicStoreExplicit(&g_pipe_owned_line, line, memory_order_release);
     atomicAddExplicit(&g_pipe_init_count, 1, memory_order_relaxed);
 }
@@ -76,7 +76,7 @@ static void pipeCheckPayload(sbuf_t *buf)
 static void pipeTestOwnedPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     discard t;
-    require(currentThreadIsEventWorkerWID(lineGetWID(line)), "pipe owned Payload ran outside its target worker");
+    require(currentThreadOwnsWorker(lineGetWID(line)), "pipe owned Payload ran outside its target worker");
     pipeCheckPayload(buf);
     atomicAddExplicit(&g_pipe_owned_payload_count, 1, memory_order_relaxed);
     sbufDestroy(buf);
@@ -85,7 +85,7 @@ static void pipeTestOwnedPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
 static void pipeTestBorrowedPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     discard t;
-    require(currentThreadIsEventWorkerWID(lineGetWID(line)), "pipe borrowed Payload ran outside its owner worker");
+    require(currentThreadOwnsWorker(lineGetWID(line)), "pipe borrowed Payload ran outside its owner worker");
     pipeCheckPayload(buf);
     atomicAddExplicit(&g_pipe_borrowed_payload_count, 1, memory_order_relaxed);
     sbufDestroy(buf);
@@ -140,14 +140,14 @@ static void pipeWorkerStopCall(worker_t *worker, void *arg1, void *arg2, void *a
 static void pipeTestOwnedFinish(tunnel_t *t, line_t *line)
 {
     discard t;
-    require(currentThreadIsEventWorkerWID(lineGetWID(line)), "pipe owned Finish ran outside its target worker");
+    require(currentThreadOwnsWorker(lineGetWID(line)), "pipe owned Finish ran outside its target worker");
     atomicAddExplicit(&g_pipe_owned_finish_count, 1, memory_order_relaxed);
 }
 
 static void pipeTestBorrowedFinish(tunnel_t *t, line_t *line)
 {
     discard t;
-    require(currentThreadIsEventWorkerWID(lineGetWID(line)), "pipe borrowed Finish ran outside its owner worker");
+    require(currentThreadOwnsWorker(lineGetWID(line)), "pipe borrowed Finish ran outside its owner worker");
     atomicAddExplicit(&g_pipe_borrowed_finish_count, 1, memory_order_relaxed);
 }
 
@@ -208,11 +208,10 @@ void testPipeToRejectsBadWorkers(void)
      * go on to create a pair line for a worker that cannot own it.
      */
     require(! pipeTo(child, owned_line, 0), "pipeTo accepted the current worker as its target");
-    require(! pipeTo(child, owned_line, (wid_t) (getTotalWorkersCount())),
+    require(! pipeTo(child, owned_line, (wid_t) (getWorkersCount())),
             "pipeTo accepted the out-of-range identity as its target");
     require(! pipeTo(child, owned_line, kInvalidWID), "pipeTo accepted kInvalidWID as its target");
-    require(! pipeTo(child, owned_line, (wid_t) getTotalWorkersCount()),
-            "pipeTo accepted an out-of-range target worker");
+    require(! pipeTo(child, owned_line, (wid_t) getWorkersCount()), "pipeTo accepted an out-of-range target worker");
 
     // A source line this worker does not own is refused as well.
     line_t *foreign_line = allocateLineForTunnel(pipe_tunnel, 1);

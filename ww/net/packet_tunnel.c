@@ -50,7 +50,7 @@ bool packettunnelCanEnqueueDownstreamInline(const tunnel_t *producer, const line
     return sink != NULL && sink != producer && sink->next == producer && sink->chain == producer->chain &&
            sink->node != NULL && sink->node->layer_group == kNodeLayer3 &&
            (sink->node->flags & kNodeFlagPacketPayloadEnqueueOnly) != 0 &&
-           tunnelchainIsWorkerPacketLine(producer->chain, packet_line) && lineIsOnCurrentEventWorker(packet_line) &&
+           tunnelchainIsWorkerPacketLine(producer->chain, packet_line) && lineIsOnCurrentWorker(packet_line) &&
            tunnelIsActiveForLine(sink, packet_line);
 }
 

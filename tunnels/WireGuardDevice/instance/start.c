@@ -22,7 +22,7 @@ void wireguarddeviceQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, 
     // The message was delivered to exactly one worker; that worker owns the
     // packet line this callback must initialize.
     const wid_t wid = ((worker_t *) worker)->wid;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     tunnel_t *t = arg1;
     line_t   *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid);
@@ -40,7 +40,7 @@ static void wireguarddeviceQueueWorkerTransportLineInit(void *worker, void *arg1
     discard arg3;
 
     const wid_t wid = ((worker_t *) worker)->wid;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     tunnel_t     *t     = arg1;
     wgd_tstate_t *state = tunnelGetState(t);

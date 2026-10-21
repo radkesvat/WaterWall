@@ -206,7 +206,7 @@ static listener_selection_t searchTier(const filters_t filters[kFilterLevels], w
 listener_selection_t socketManagerSelect(const filters_t filters[kFilterLevels], wid_t wid,
                                          const listener_arrival_t *arrival)
 {
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     assert(arrival != NULL && arrival->endpoint != NULL);
     listener_arrival_t normalized = *arrival;
     normalizeIpAddr(&normalized.peer_addr);
@@ -225,7 +225,7 @@ listener_selection_t socketManagerSelect(const filters_t filters[kFilterLevels],
 
 void socketManagerCommitSelection(wid_t wid, const listener_selection_t *selection)
 {
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     assert(selection != NULL && selection->filter != NULL);
     if (selection->pending_sticky)
     {

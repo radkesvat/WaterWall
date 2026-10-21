@@ -477,7 +477,7 @@ static line_t *createAndInitLineIpv6(test_fixture_t *fixture, const char *ip_str
 static sbuf_t *makeDatagram(test_fixture_t *fixture, const char *msg)
 {
     discard fixture;
-    sbuf_t *buf = bufferpoolGetLargeBuffer(getCurrentEventWorkerBufferPool());
+    sbuf_t *buf = bufferpoolGetLargeBuffer(getCurrentWorkerBufferPool());
     size_t  len = stringLength(msg);
     memoryCopy(sbufGetMutablePtr(buf), msg, len);
     sbufSetLength(buf, (uint32_t) len);

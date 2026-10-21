@@ -284,7 +284,7 @@ bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
 
 bool rawdeviceBringUp(raw_device_t *rdev)
 {
-    discard getCurrentEventWorker();
+    discard getCurrentWorker();
     if (! rawLifecycleTransitionDownToStarting(&rdev->lifecycle))
     {
         LOGE("RawDevice: device cannot be started in current lifecycle state");
@@ -341,7 +341,7 @@ bool rawdeviceBringDown(raw_device_t *rdev)
 
 raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata)
 {
-    discard getCurrentEventWorker();
+    discard getCurrentWorker();
     discard bypass_conntrack;
     if (! windivertManagerEnsureLoaded())
         return NULL;

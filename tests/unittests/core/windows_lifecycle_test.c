@@ -50,7 +50,6 @@ static void fixtureCreate(worker_t workers[2], wloop_t *loop)
     memoryZero(workers, sizeof(worker_t) * 2U);
     memoryZero(loop, sizeof(*loop));
     workers[0].wid            = 0;
-    workers[0].has_event_loop = true;
     workers[0].loop           = loop;
     mutexInit(&workers[0].control_mutex);
     condmutexInit(&workers[0].control_condition_mutex);

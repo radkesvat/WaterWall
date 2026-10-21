@@ -915,11 +915,11 @@ bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
      * unregistered thread fails cleanly here instead
      * of borrowing worker 0's pool.
      */
-    if (! currentThreadIsEventWorker())
+    if (! currentThreadIsWorker())
     {
         return false;
     }
-    buffer_pool_t *pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *pool = getCurrentWorkerBufferPool();
 
     STACK_ALLOCATE_CACHE_ALIGNED(tlsclient_lstate_t, ls);
     memoryZero(ls, sizeof(*ls));
@@ -964,7 +964,7 @@ bool tlsclientCreateEchGreaseInnerClientHello(tlsclient_tstate_t *ts, wid_t wid,
 
     // Per-event-worker context array: the caller must be the event worker that
     // owns `wid`, and `wid` must index a getWorkersCount()-sized array.
-    if (wid >= getWorkersCount() || ! currentThreadIsEventWorkerWID(wid))
+    if (wid >= getWorkersCount() || ! currentThreadOwnsWorker(wid))
     {
         return false;
     }

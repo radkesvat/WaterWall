@@ -73,14 +73,14 @@ int main(int argc, char **argv)
 
     testOwningWorkerOutsideCallbackQueues();
     testTransactionalEnqueueFailureStages();
-    testOtherEventWorkerQueues();
+    testOtherWorkerQueues();
     testUnregisteredThreadQueues();
     testOutOfRangeCallerQueues();
     testInvalidTargetsCleanUpExactlyOnce();
     testAdmissionOpenIsOneWayAndChecked();
     testMessageAdmissionRacesWorkerTeardown();
 
-    testTunnelApiHelpersRejectNonEventWorkers();
+    testTunnelApiHelpersRejectUnregisteredThreads();
     testResolverRejectsForeignCallers();
     testLineResolverRejectsForeignCallers();
     testPipeToRejectsBadWorkers();
@@ -90,7 +90,7 @@ int main(int argc, char **argv)
     shutdownTestGlobalState();
 
 #if defined(HAS_UNIX_FORK)
-    testCheckedAccessorsAbortOffEventWorkers();
+    testCheckedAccessorsAbortOffWorkers();
 #endif
 
     return 0;

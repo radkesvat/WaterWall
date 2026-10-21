@@ -119,7 +119,7 @@ static uint64_t idletableNowMS(const idle_table_t *self)
 #else
     discard self;
 #endif
-    return wloopNowMonotonicMS(getCurrentEventWorkerLoop());
+    return wloopNowMonotonicMS(getCurrentWorkerLoop());
 }
 
 static uint64_t idletableDeadlineFromAge(const idle_table_t *self, uint64_t age_ms)
@@ -130,7 +130,7 @@ static uint64_t idletableDeadlineFromAge(const idle_table_t *self, uint64_t age_
 
 static void idletableAssertItemOwner(wid_t wid)
 {
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(wid)))
+    if (UNLIKELY(! currentThreadOwnsWorker(wid)))
     {
         LOGF("IdleTable: item for worker %d accessed from worker %d", workerWIDForLog(wid), workerWIDForLog(getWID()));
         abortProgramNow(1);
@@ -221,7 +221,7 @@ idle_table_t *idleTableCreate(wloop_t *loop)
 {
     assert(loop != NULL);
     const wid_t timer_wid = (wid_t) wloopGetWID(loop);
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(timer_wid)))
+    if (UNLIKELY(! currentThreadOwnsWorker(timer_wid)))
     {
         LOGF("IdleTable: table timer was created outside worker %d", workerWIDForLog(timer_wid));
         abortProgramNow(1);
@@ -511,7 +511,7 @@ void idletableDrainWorkerItems(idle_table_t *self, wid_t wid)
 
     // The expiration callbacks below run inline on the caller and reach into worker wid's line
     // pools, so draining from any other thread corrupts them.
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(wid)))
+    if (UNLIKELY(! currentThreadOwnsWorker(wid)))
     {
         LOGF("IdleTable: drain of worker %d items was called on worker %d",
              workerWIDForLog(wid),

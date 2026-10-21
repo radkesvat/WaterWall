@@ -727,7 +727,6 @@ static void testDurableDegradedRequestAndFinalization(void)
     memoryZero(&loop, sizeof(loop));
 
     workers[0].wid            = 0;
-    workers[0].has_event_loop = true;
     workers[0].loop           = &loop;
     mutexInit(&workers[0].control_mutex);
     condmutexInit(&workers[0].control_condition_mutex);

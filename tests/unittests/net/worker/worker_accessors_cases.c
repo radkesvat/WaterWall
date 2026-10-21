@@ -4,13 +4,13 @@
 
 void testAccessorsOnOwningWorker(void)
 {
-    require(currentThreadIsEventWorkerWID(0), "main thread is not bound to event worker 0");
+    require(currentThreadOwnsWorker(0), "main thread is not bound to event worker 0");
 
-    require(getCurrentEventWorker() == getWorker(0), "getCurrentEventWorker() did not return worker 0");
-    require(tryGetCurrentEventWorker() == getWorker(0), "tryGetCurrentEventWorker() did not return worker 0");
-    require(getCurrentEventWorkerWID() == 0, "getCurrentEventWorkerWID() did not return 0");
-    require(getCurrentEventWorkerBufferPool() == getWorkerBufferPool(0), "current buffer pool is not worker 0's");
-    sbuf_t *splice = bufferpoolGetSpliceBuffer(getCurrentEventWorkerBufferPool());
+    require(getCurrentWorker() == getWorker(0), "getCurrentWorker() did not return worker 0");
+    require(tryGetCurrentWorker() == getWorker(0), "tryGetCurrentWorker() did not return worker 0");
+    require(getCurrentWorkerWID() == 0, "getCurrentWorkerWID() did not return 0");
+    require(getCurrentWorkerBufferPool() == getWorkerBufferPool(0), "current buffer pool is not worker 0's");
+    sbuf_t *splice = bufferpoolGetSpliceBuffer(getCurrentWorkerBufferPool());
 #if WW_HAVE_SPLICE
     require(splice != NULL && sbufGetTotalCapacityNoPadding(splice) == SPLICE_BUFFER_STORAGE_SIZE,
             "current worker splice buffer has wrong capacity");
@@ -18,15 +18,15 @@ void testAccessorsOnOwningWorker(void)
 #else
     require(splice == NULL && errno == ENOSYS, "unsupported splice checkout did not return ENOSYS");
 #endif
-    require(getCurrentEventWorkerContextPool() == getWorkerContextPool(0), "current context pool is not worker 0's");
-    require(getCurrentEventWorkerLoop() == getWorkerLoop(0), "current loop is not worker 0's");
-    require(getLoopEventWorkerWID(getWorkerLoop(0)) == 0, "getLoopEventWorkerWID() did not resolve worker 0");
+    require(getCurrentWorkerContextPool() == getWorkerContextPool(0), "current context pool is not worker 0's");
+    require(getCurrentWorkerLoop() == getWorkerLoop(0), "current loop is not worker 0's");
+    require(getLoopWorkerWID(getWorkerLoop(0)) == 0, "getLoopWorkerWID() did not resolve worker 0");
 
     // Another event worker's resources are reachable by explicit id only, and
     // must not be confused with the current worker's.
-    require(getWorkerBufferPool(1) != getCurrentEventWorkerBufferPool(),
+    require(getWorkerBufferPool(1) != getCurrentWorkerBufferPool(),
             "worker 1's pool aliased the current worker's pool");
-    require(! currentThreadIsEventWorkerWID(1), "worker 0 claimed to own worker 1");
+    require(! currentThreadOwnsWorker(1), "worker 0 claimed to own worker 1");
 }
 
 void testWorkerTimerPools(void)
@@ -38,7 +38,6 @@ void testWorkerTimerPools(void)
                 GSTATE.masterpool_timers->cap == 4 * RAM_PROFILE,
             "timer pool sizes do not follow the memory profile");
     require(getWorker(1)->timer_pool != worker->timer_pool, "workers share a local timer pool");
-    require(getTotalWorkersCount() == getWorkersCount(), "unexpected extra worker slot");
 }
 
 void testWorkerMessagePoolLocalReuse(void)
@@ -97,19 +96,19 @@ void testWorkerMessagePoolLocalReuse(void)
 
 void testPredicatesRejectUnregisteredAndOutOfRange(void)
 {
-    const wid_t unregistered_wid = getTotalWorkersCount();
+    const wid_t unregistered_wid = getWorkersCount();
 
     testWorkerUnbindWID();
-    require(tryGetCurrentEventWorker() == NULL, "unregistered thread got an event worker");
-    require(! currentThreadIsEventWorker(), "unregistered thread reported event worker role");
-    require(! currentThreadIsEventWorkerWID(0), "unregistered thread claimed to own worker 0");
+    require(tryGetCurrentWorker() == NULL, "unregistered thread got an event worker");
+    require(! currentThreadIsWorker(), "unregistered thread reported event worker role");
+    require(! currentThreadOwnsWorker(0), "unregistered thread claimed to own worker 0");
+    require(! currentThreadOwnsWorker(kInvalidWID), "unregistered thread claimed to own the invalid worker");
 
     testWorkerBindWID(unregistered_wid);
-    require(! currentThreadHasRegisteredWID(), "out-of-range identity was registered");
-    require(! currentThreadIsEventWorker(), "out-of-range identity reported event worker role");
-    require(tryGetCurrentEventWorker() == NULL, "out-of-range identity got an event worker");
-    require(! currentThreadIsEventWorkerWID(0), "out-of-range identity claimed to own worker 0");
-    require(! currentThreadIsEventWorkerWID(unregistered_wid), "out-of-range identity passed an event-worker check");
+    require(! currentThreadIsWorker(), "out-of-range identity was registered");
+    require(tryGetCurrentWorker() == NULL, "out-of-range identity got an event worker");
+    require(! currentThreadOwnsWorker(0), "out-of-range identity claimed to own worker 0");
+    require(! currentThreadOwnsWorker(unregistered_wid), "out-of-range identity passed an event-worker check");
     require(workerWIDForLog(0) == 0, "workerWIDForLog(0) did not return 0");
     require(workerWIDForLog(1) == 1, "workerWIDForLog(1) did not return 1");
     require(workerWIDForLog(unregistered_wid) == (int) unregistered_wid,
@@ -120,7 +119,7 @@ void testPredicatesRejectUnregisteredAndOutOfRange(void)
     testWorkerBindWID(0);
 }
 
-void testTunnelApiHelpersRejectNonEventWorkers(void)
+void testTunnelApiHelpersRejectUnregisteredThreads(void)
 {
     // A standalone buffer, so the rejection path may destroy it outright.
     sbuf_t *message = sbufCreateWithPadding(64, 0);
@@ -134,13 +133,13 @@ void testTunnelApiHelpersRejectNonEventWorkers(void)
     message = sbufCreateWithPadding(64, 0);
     require(message != NULL, "failed to allocate a standalone API message");
 
-    testWorkerBindWID(getTotalWorkersCount());
+    testWorkerBindWID(getWorkersCount());
     result = tunnelapiRecycleMessage(message);
     require(result.result_code == kApiResultError, "tunnel API helper accepted the out-of-range identity");
     testWorkerBindWID(0);
 
     // On the owning event worker the buffer goes back to that worker's pool.
-    sbuf_t *pooled = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
+    sbuf_t *pooled = bufferpoolGetSmallBuffer(getCurrentWorkerBufferPool());
     require(pooled != NULL, "failed to take a buffer from worker 0's pool");
     result = tunnelapiRecycleMessage(pooled);
     require(result.result_code == kApiResultOk, "tunnel API helper rejected the owning event worker");
@@ -200,7 +199,7 @@ void testResolverRejectsForeignCallers(void)
     // Out of range, and the out-of-range identity which has no resolver at all.
     require(workerResolveDomainAsync(kInvalidWID, "example.invalid", probeDnsResult, NULL) == ARES_ENOTINITIALIZED,
             "resolver accepted kInvalidWID");
-    require(workerResolveDomainAsync(getTotalWorkersCount(), "example.invalid", probeDnsResult, NULL) ==
+    require(workerResolveDomainAsync(getWorkersCount(), "example.invalid", probeDnsResult, NULL) ==
                 ARES_ENOTINITIALIZED,
             "resolver accepted the out-of-range identity");
 
@@ -226,7 +225,7 @@ void testLineResolverRejectsForeignCallers(void)
             "line resolver accepted a foreign worker");
     require(atomicLoadU32Relaxed(&foreign_line.refc) == 1, "rejected line resolve leaked a line reference");
 
-    line_t unregistered_line = {.wid = (wid_t) (getTotalWorkersCount()), .alive = true};
+    line_t unregistered_line = {.wid = (wid_t) (getWorkersCount()), .alive = true};
     atomicStoreU32Relaxed(&unregistered_line.refc, 1);
     require(lineResolveDomainAsync(&unregistered_line, "example.invalid", probeLineDnsResult, NULL, NULL) ==
                 ARES_ENOTINITIALIZED,
@@ -254,11 +253,11 @@ static void runAbortCase(abort_case_e which)
     {
     case kAbortCaseUnregisteredPool:
         testWorkerUnbindWID();
-        discard getCurrentEventWorkerBufferPool();
+        discard getCurrentWorkerBufferPool();
         break;
     case kAbortCaseUnregisteredLoop:
         testWorkerUnbindWID();
-        discard getCurrentEventWorkerLoop();
+        discard getCurrentWorkerLoop();
         break;
     case kAbortCaseUnregisteredReuseBuffer: {
         sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
@@ -267,8 +266,8 @@ static void runAbortCase(abort_case_e which)
         break;
     }
     case kAbortCaseOutOfRangePool:
-        testWorkerBindWID(getTotalWorkersCount());
-        discard getCurrentEventWorkerBufferPool();
+        testWorkerBindWID(getWorkersCount());
+        discard getCurrentWorkerBufferPool();
         break;
     case kAbortCaseCount:
     default:
@@ -276,13 +275,13 @@ static void runAbortCase(abort_case_e which)
     }
 }
 
-void testCheckedAccessorsAbortOffEventWorkers(void)
+void testCheckedAccessorsAbortOffWorkers(void)
 {
     static const char *kNames[kAbortCaseCount] = {
-        "getCurrentEventWorkerBufferPool() from an unregistered thread",
-        "getCurrentEventWorkerLoop() from an unregistered thread",
+        "getCurrentWorkerBufferPool() from an unregistered thread",
+        "getCurrentWorkerLoop() from an unregistered thread",
         "reuseBuffer() from an unregistered thread",
-        "getCurrentEventWorkerBufferPool() from the out-of-range identity",
+        "getCurrentWorkerBufferPool() from the out-of-range identity",
     };
 
     for (int which = 0; which < (int) kAbortCaseCount; ++which)

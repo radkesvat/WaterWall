@@ -1180,7 +1180,7 @@ void wloopQuiesceNormalWork(wloop_t *loop)
         return;
     }
 
-    assert(currentThreadIsEventWorkerWID((wid_t) loop->wid));
+    assert(currentThreadOwnsWorker((wid_t) loop->wid));
     assert(! wloopNormalDispatchAllowed(loop));
 
     discard wloopProcessPendings(loop);
@@ -1622,7 +1622,7 @@ wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t r
         return NULL;
     }
     /* Foreign startup callers cannot borrow the loop owner's local pool. */
-    generic_pool_t *pool = currentThreadIsEventWorkerWID((wid_t) loop->wid) ? loop->timer_pool : NULL;
+    generic_pool_t *pool = currentThreadOwnsWorker((wid_t) loop->wid) ? loop->timer_pool : NULL;
     wtimeout_t *timer;
     if (pool != NULL)
     {
@@ -1936,7 +1936,7 @@ void wioAttach(wloop_t *loop, wio_t *io)
         LOGF("wioAttach: cannot attach a WIO still owned by pending dispatch on its original loop");
         abortProgramNow(1);
     }
-    if (! currentThreadIsEventWorkerWID((wid_t) loop->wid))
+    if (! currentThreadOwnsWorker((wid_t) loop->wid))
     {
         printError("wioAttach: loop wid %ld is not owned by the current worker (wid %d)",
                    loop->wid,
@@ -2078,7 +2078,7 @@ void wioReleaseNoClose(wio_t *io)
     bool     was_pending = io->pending;
 
     assert(loop != NULL);
-    assert(currentThreadIsEventWorkerWID((wid_t) loop->wid));
+    assert(currentThreadOwnsWorker((wid_t) loop->wid));
 
     if (io->events != 0)
     {

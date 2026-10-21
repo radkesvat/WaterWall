@@ -17,7 +17,7 @@ static void authenticationserverDeleteTimer(wtimer_t **timer)
 void authenticationserverTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     if (UNLIKELY(wid != 0))
     {

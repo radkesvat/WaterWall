@@ -147,7 +147,6 @@ static void contractEnvSetup(contract_env_t *env)
         env->workers[wid].loop           = env->loops[wid];
         env->workers[wid].buffer_pool    = env->pools[wid];
         env->workers[wid].wios_pool      = env->wios_pools[wid];
-        env->workers[wid].has_event_loop = true;
         mutexInit(&env->workers[wid].control_mutex);
         workerMessagesInit(&env->workers[wid]);
         workerMessagesOpenAdmission(&env->workers[wid]);
@@ -406,7 +405,7 @@ static void setCachedClockMessage(void *worker_arg, void *arg1, void *arg2, void
     worker_t *worker = worker_arg;
     discard   arg2;
     discard   arg3;
-    require(currentThreadIsEventWorkerWID(worker->wid), "cache update ran outside its owner worker");
+    require(currentThreadOwnsWorker(worker->wid), "cache update ran outside its owner worker");
     worker->loop->cur_hrtime = *(const uint64_t *) arg1 * 1000U;
 }
 

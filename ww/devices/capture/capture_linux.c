@@ -226,7 +226,7 @@ bool captureLinuxReaderPublishReady(capture_device_t *cdev, int *reader_socket)
 
 static WTHREAD_ROUTINE(capturedeviceReaderThreadMain) // NOLINT
 {
-    assert(! currentThreadHasRegisteredWID());
+    assert(! currentThreadIsWorker());
     capture_device_t *cdev = userdata;
     discard           cdev->routine_reader(cdev);
 
@@ -396,12 +396,11 @@ bool capturedeviceReaderOperational(capture_device_t *cdev)
 static bool capturedeviceStartReader(capture_device_t *cdev)
 {
     /*
-     * Device bring-up/creation runs on an event worker even though the reader
-     * and writer threads it manages stay unregistered. Read that worker's pool
-     * geometry once here and copy it onto the device-owned pools; the auxiliary
-     * threads never touch worker-local state themselves.
+     * Device bring-up runs on a worker. Copy its pool geometry to the device-owned
+     * reader pool; the auxiliary reader stays unregistered and never accesses
+     * worker-local state.
      */
-    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *worker_pool = getCurrentWorkerBufferPool();
 
     devicePoolUpdatePadding(cdev->reader_buffer_pool, worker_pool);
 
@@ -765,7 +764,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
      * geometry once here and copy it onto the device-owned pools; the auxiliary
      * threads never touch worker-local state themselves.
      */
-    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *worker_pool = getCurrentWorkerBufferPool();
 
     buffer_pool_t *reader_bpool = devicePoolCreate(worker_pool, 0);
     if (UNLIKELY(reader_bpool == NULL))

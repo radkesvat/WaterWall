@@ -67,7 +67,7 @@ bool localidletableTestIsQuiesced(const local_idle_table_t *self)
 static void localidletableAssertOwner(const local_idle_table_t *self)
 {
     assert(self != NULL);
-    assert(currentThreadIsEventWorkerWID(self->wid));
+    assert(currentThreadOwnsWorker(self->wid));
     discard self;
 }
 
@@ -229,7 +229,7 @@ local_idle_table_t *localIdleTableCreate(wloop_t *loop)
     assert(loop != NULL);
 
     const wid_t owner_wid = (wid_t) wloopGetWID(loop);
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(owner_wid)))
+    if (UNLIKELY(! currentThreadOwnsWorker(owner_wid)))
     {
         printError("LocalIdleTable: created off its owning event worker");
         abortProgramNow(1);

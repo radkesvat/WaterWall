@@ -116,7 +116,7 @@ udpconnector_worker_pool_t *udpconnectorGetLineWorkerPool(udpconnector_tstate_t 
     assert(ts != NULL);
     assert(ts->worker_pools != NULL);
     assert(l != NULL);
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     const wid_t wid = lineGetWID(l);
     assert(wid < getWorkersCount());
@@ -188,7 +188,7 @@ static void udpconnectorPoolSocketUnlink(udpconnector_pool_socket_t *sock)
 udpconnector_pool_socket_t *udpconnectorPoolSocketCreate(tunnel_t *t, udpconnector_worker_pool_t *pool, int family)
 {
     assert(pool != NULL);
-    assert(currentThreadIsEventWorkerWID(pool->wid));
+    assert(currentThreadOwnsWorker(pool->wid));
 
     udpconnector_tstate_t *ts = tunnelGetState(t);
 
@@ -208,7 +208,7 @@ udpconnector_pool_socket_t *udpconnectorPoolSocketCreate(tunnel_t *t, udpconnect
         return NULL;
     }
 
-    wloop_t *loop = getCurrentEventWorkerLoop();
+    wloop_t *loop = getCurrentWorkerLoop();
     wio_t   *io   = wioGet(loop, sockfd);
     if (UNLIKELY(io == NULL || wioIsClosed(io)))
     {
@@ -249,7 +249,7 @@ udpconnector_pool_socket_t *udpconnectorPoolSocketCreate(tunnel_t *t, udpconnect
 
 void udpconnectorPoolSocketRetire(udpconnector_pool_socket_t *sock)
 {
-    assert(currentThreadIsEventWorkerWID(sock->wid));
+    assert(currentThreadOwnsWorker(sock->wid));
 
     assert(sock->active_bindings_count == 0);
     assert(udpconnector_peer_binding_map_size(&sock->peer_map) == 0);
@@ -454,7 +454,7 @@ void udpconnectorBindingDetach(udpconnector_binding_t *binding, udpconnector_det
     discard disposition;
     assert(binding->active && binding->socket_linked && binding->line_linked);
     assert(binding->socket != NULL && binding->ls != NULL && binding->line != NULL);
-    assert(currentThreadIsEventWorkerWID(binding->socket->wid));
+    assert(currentThreadOwnsWorker(binding->socket->wid));
 
     udpconnector_pool_socket_t *sock = binding->socket;
     udpconnector_lstate_t      *ls   = binding->ls;
@@ -521,7 +521,7 @@ void udpconnectorBindingDetach(udpconnector_binding_t *binding, udpconnector_det
 void udpconnectorLineDetach(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
                             udpconnector_detach_disposition_t disposition)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     lineRef(l);
 
     // 1. Settle idle handle
@@ -592,7 +592,7 @@ void udpconnectorOnSocketRecvFrom(wio_t *io, sbuf_t *buf)
         return;
     }
 
-    assert(currentThreadIsEventWorkerWID(sock->wid));
+    assert(currentThreadOwnsWorker(sock->wid));
     assert(sock->io == io && sock->linked);
 
     sockaddr_u src_addr = *wioGetPeerAddrU(io);
@@ -610,7 +610,7 @@ void udpconnectorOnSocketRecvFrom(wio_t *io, sbuf_t *buf)
     udpconnector_lstate_t *ls = binding->ls;
     assert(binding->active && binding->socket_linked && binding->line_linked);
     assert(binding->socket == sock && l != NULL && ls != NULL && ls->line == l);
-    assert(lineIsAlive(l) && lineIsOnCurrentEventWorker(l));
+    assert(lineIsAlive(l) && lineIsOnCurrentWorker(l));
 
     if (ls->read_paused)
     {
@@ -650,7 +650,7 @@ void udpconnectorOnSocketClose(wio_t *io)
         return;
     }
 
-    assert(currentThreadIsEventWorkerWID(sock->wid));
+    assert(currentThreadOwnsWorker(sock->wid));
     assert(sock->io == io && sock->linked);
     tunnel_t *t = sock->tunnel;
 

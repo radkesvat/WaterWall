@@ -437,7 +437,6 @@ int main(void)
     worker_t workers[2];
     memoryZero(workers, sizeof(workers));
     workers[0].wid            = 0;
-    workers[0].has_event_loop = true;
     workers[1].wid            = 1;
 
     GSTATE.flag_initialized = true;

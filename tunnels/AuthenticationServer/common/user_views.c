@@ -90,7 +90,7 @@ const char *authenticationserverCopyPageView(tunnel_t *t, const authenticationse
             buffer_pool_fit_t fit;
             const size_t      snapshot_charge = base + count * sizeof(*view->users);
             if (snapshot_charge <= allowance &&
-                bufferpoolQueryBestFit(getCurrentEventWorkerBufferPool(), 512 + count * 2560, 0, &fit) &&
+                bufferpoolQueryBestFit(getCurrentWorkerBufferPool(), 512 + count * 2560, 0, &fit) &&
                 fit.allocation_charge <= allowance - snapshot_charge)
                 break;
             --count;

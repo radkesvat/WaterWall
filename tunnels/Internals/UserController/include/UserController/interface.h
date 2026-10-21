@@ -46,7 +46,7 @@ WW_EXPORT void usercontrollerSetPayloadModeResolver(tunnel_t *controller, tunnel
  * rejection and must close/drop the line itself; it must not treat a non-OK line
  * as admitted. A non-OK call reserves nothing, so it is safe to retry later.
  *
- * Must be called on the line's owner worker (`lineIsOnCurrentEventWorker(l)`), and
+ * Must be called on the line's owner worker (`lineIsOnCurrentWorker(l)`), and
  * only on a line that has traversed this UserController instance (so its
  * UserController line state already exists). Do not call it on packet lines.
  *

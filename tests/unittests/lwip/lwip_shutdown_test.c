@@ -32,7 +32,7 @@ static atomic_uint     settled;
 static void freeRetainedPbuf(struct pbuf *p)
 {
     retained_pbuf_t *r = (retained_pbuf_t *) p;
-    require(currentThreadIsEventWorkerWID(r->owner), "retained pbuf freed on foreign worker");
+    require(currentThreadOwnsWorker(r->owner), "retained pbuf freed on foreign worker");
     require(getWorker(r->owner)->loop == NULL, "retained pbuf released before detached-message teardown");
     ++r->freed;
 }
@@ -95,7 +95,7 @@ int main(void)
     data.network_logger_data.log_level  = off;
     data.dns_logger_data.log_level      = off;
     require(wwStartupSucceeded(createGlobalState(data)), "global startup failed");
-    require(getWorkersCount() == 3 && getTotalWorkersCount() == 3, "runtime allocated an extra stack worker");
+    require(getWorkersCount() == data.workers_count, "runtime allocated an extra stack worker");
     initTcpIpStack();
     initTcpIpStack();
     require(GSTATE.flag_lwip_initialized && wwLwipTestTcpIsnSecretIsInitialized(), "shared bootstrap unavailable");

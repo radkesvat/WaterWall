@@ -11,7 +11,7 @@ static void pingclientValidatePacketLine(tunnel_t *t, line_t *l)
 {
     pingclient_tstate_t *state = tunnelGetState(t);
 
-    if (UNLIKELY(! lineIsAlive(l) || ! lineIsOnCurrentEventWorker(l) ||
+    if (UNLIKELY(! lineIsAlive(l) || ! lineIsOnCurrentWorker(l) ||
                  ! tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l) || state->tracker == NULL || ! state->started))
     {
         LOGF("PingClient: invalid worker packet-line callback");

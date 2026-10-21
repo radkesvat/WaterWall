@@ -11,7 +11,7 @@ void ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_k
     ls->tunnel = t;
     ls->line   = l;
     ls->engine = wwLwipEngineCurrent();
-    assert(ls->engine != NULL && currentThreadIsEventWorkerWID(lineGetWID(l)));
+    assert(ls->engine != NULL && currentThreadOwnsWorker(lineGetWID(l)));
     ls->kind   = (uint8_t) kind;
 
     if (kind == kPtcLineKindTcp)

@@ -239,7 +239,7 @@ static void ipmanipulatorCleanupPacketBuffer(line_t *l, sbuf_t *buf)
 
     // Only the line's own worker may return the packet to its pool; anyone else
     // (another worker, lwIP, a device thread) destroys the standalone buffer.
-    if (lineIsOnCurrentEventWorker(l))
+    if (lineIsOnCurrentWorker(l))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -276,7 +276,7 @@ static void ipmanipulatorCleanupCapturedPacketReuse(void *arg1, void *arg2, void
 
 void ipmanipulatorForwardCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    if (lineIsOnCurrentEventWorker(l))
+    if (lineIsOnCurrentWorker(l))
     {
         if (! lineIsAlive(l))
         {
@@ -300,7 +300,7 @@ void ipmanipulatorForwardCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *bu
 
 static void ipmanipulatorScheduleCapturedPacketReuse(line_t *l, sbuf_t *buf)
 {
-    if (lineIsOnCurrentEventWorker(l))
+    if (lineIsOnCurrentWorker(l))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -422,7 +422,7 @@ static bool ipmanipulatorSchedulePrestartTimeout(tunnel_t *t, uint32_t slot_inde
         .generation = generation,
     };
 
-    return sendWorkerMessageTimedWithCleanup(getCurrentEventWorkerWID(),
+    return sendWorkerMessageTimedWithCleanup(getCurrentWorkerWID(),
                                              (WorkerMessageCallback) ipmanipulatorReleasePendingPrestartOnWorker,
                                              ipmanipulatorCleanupPendingPrestartMessage,
                                              kIpManipulatorTlsPrestartTimeoutMs,
@@ -488,7 +488,7 @@ static bool ipmanipulatorScheduleCaptureTimeout(tunnel_t *t, uint32_t slot_index
         .generation = generation,
     };
 
-    return sendWorkerMessageTimedWithCleanup(getCurrentEventWorkerWID(),
+    return sendWorkerMessageTimedWithCleanup(getCurrentWorkerWID(),
                                              (WorkerMessageCallback) ipmanipulatorReleasePendingCaptureOnWorker,
                                              ipmanipulatorCleanupPendingCaptureMessage,
                                              kIpManipulatorTlsCaptureTimeoutMs,
@@ -1753,10 +1753,10 @@ static bool ipmanipulatorDelayOrderedOutputSendUpstream(tunnel_t *t, ipmanipulat
         return true;
     }
 
-    if (! lineIsOnCurrentEventWorker(output->line))
+    if (! lineIsOnCurrentWorker(output->line))
     {
         LOGD("IpManipulator: delayed output released on worker %d; owner worker is %d; forwarding normally",
-             workerWIDForLog(getCurrentEventWorkerWID()),
+             workerWIDForLog(getCurrentWorkerWID()),
              workerWIDForLog(lineGetWID(output->line)));
         ipmanipulatorForwardCapturedPacketNormal(t, output->line, output->buf);
         lineUnref(output->line);
@@ -1765,7 +1765,7 @@ static bool ipmanipulatorDelayOrderedOutputSendUpstream(tunnel_t *t, ipmanipulat
         return true;
     }
 
-    assert(lineIsOnCurrentEventWorker(output->line));
+    assert(lineIsOnCurrentWorker(output->line));
 
     bool alive = lineIsAlive(output->line);
     if (alive)
@@ -1809,10 +1809,10 @@ bool ipmanipulatorDelayBatchSendUpstream(tunnel_t *t, ipmanipulator_delay_batch_
     {
         ipmanipulator_captured_packet_t *packet = &batch->packets[i];
 
-        if (packet->line != NULL && ! lineIsOnCurrentEventWorker(packet->line))
+        if (packet->line != NULL && ! lineIsOnCurrentWorker(packet->line))
         {
             LOGD("IpManipulator: delayed packet released on worker %d; owner worker is %d; forwarding normally",
-                 workerWIDForLog(getCurrentEventWorkerWID()),
+                 workerWIDForLog(getCurrentWorkerWID()),
                  workerWIDForLog(lineGetWID(packet->line)));
             if (packet->buf != NULL)
             {
@@ -1824,7 +1824,7 @@ bool ipmanipulatorDelayBatchSendUpstream(tunnel_t *t, ipmanipulator_delay_batch_
             continue;
         }
 
-        assert(packet->line == NULL || lineIsOnCurrentEventWorker(packet->line));
+        assert(packet->line == NULL || lineIsOnCurrentWorker(packet->line));
 
         if (packet->line == NULL)
         {
@@ -1958,7 +1958,7 @@ static void ipmanipulatorDelayBarrierCleanupTimer(void *arg1, void *arg2, void *
     tunnel_t                            *t   = arg1;
     ipmanipulator_delay_timer_message_t *msg = arg2;
 
-    if (currentThreadIsEventWorkerWID(msg->wid))
+    if (currentThreadOwnsWorker(msg->wid))
     {
         ipmanipulatorDelayBarrierFailOpen(t, &msg->key, msg->kind, msg->generation);
     }
@@ -1996,7 +1996,7 @@ static void ipmanipulatorDelayBarrierRunTimer(worker_t *worker, void *arg1, void
 
     // The callback must run on a registered event worker; each live barrier
     // below additionally verifies that this is its recorded owner worker.
-    assert(currentThreadIsEventWorkerWID(worker->wid));
+    assert(currentThreadOwnsWorker(worker->wid));
 
     tunnel_t                            *t     = arg1;
     ipmanipulator_delay_timer_message_t *msg   = arg2;
@@ -2123,14 +2123,14 @@ void ipmanipulatorDelayBarrierTestFire(tunnel_t *t, const ipmanipulator_flow_key
     ipmanipulator_delay_timer_message_t *msg = memoryAllocate(sizeof(*msg));
 
     *msg = (ipmanipulator_delay_timer_message_t) {
-        .key = *key, .kind = kind, .generation = generation, .wid = getCurrentEventWorkerWID()};
+        .key = *key, .kind = kind, .generation = generation, .wid = getCurrentWorkerWID()};
 
     /*
      * Fire it exactly as the worker-message path would: the callback takes its
      * identity from the worker it was delivered to, so the hook must hand over
      * the current event worker rather than a null placeholder.
      */
-    ipmanipulatorDelayBarrierRunTimer(getCurrentEventWorker(), t, msg, NULL);
+    ipmanipulatorDelayBarrierRunTimer(getCurrentWorker(), t, msg, NULL);
 }
 #endif
 

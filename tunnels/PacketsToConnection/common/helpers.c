@@ -564,7 +564,7 @@ bool ptcArmUdpIdleOnOwnerThread(ptc_lstate_t *ls)
         return true;
     }
 
-    ls->udp_idle_timer = wtimerAdd(getCurrentEventWorkerLoop(), ptcUdpIdleTimerCallback, ts->udp_idle_timeout_ms, 1);
+    ls->udp_idle_timer = wtimerAdd(getCurrentWorkerLoop(), ptcUdpIdleTimerCallback, ts->udp_idle_timeout_ms, 1);
     if (ls->udp_idle_timer == NULL)
     {
         return false;
@@ -863,7 +863,7 @@ void ptcDrainOwnedLinesOnCurrentWorker(tunnel_t *t, wid_t wid)
 {
     ptc_tstate_t *state = tunnelGetState(t);
 
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     if (state->owned_lines == NULL || wid >= state->owned_worker_count)
     {
         return;
@@ -893,7 +893,7 @@ void ptcDrainTerminalLinesOnCurrentWorker(tunnel_t *t, wid_t wid)
 {
     ptc_tstate_t *state = tunnelGetState(t);
 
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     if (state->owned_lines == NULL || wid >= state->owned_worker_count)
     {
         return;

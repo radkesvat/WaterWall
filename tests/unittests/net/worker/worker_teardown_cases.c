@@ -339,7 +339,7 @@ static WTHREAD_ROUTINE(lineRefusalPosterRoutine)
     require(getWID() == kInvalidWID, "line-refusal poster inherited a worker identity");
     if (poster->bind_out_of_range)
     {
-        testWorkerBindWID(getTotalWorkersCount());
+        testWorkerBindWID(getWorkersCount());
     }
 
     if (poster->with_buffer)
@@ -462,7 +462,7 @@ static void teardownOuterCleanup(void *arg1, void *arg2, void *arg3, worker_mess
     discard                     arg3;
 
     atomicAddExplicit(&probe->outer_cleanups, 1, memory_order_relaxed);
-    if (currentThreadIsEventWorkerWID(0))
+    if (currentThreadOwnsWorker(0))
     {
         atomicAddExplicit(&probe->cleanup_on_owner, 1, memory_order_relaxed);
     }

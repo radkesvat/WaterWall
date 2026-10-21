@@ -40,14 +40,14 @@ void disturberTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_cont
         return;
     }
 
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(wid) || lineGetWID(packet_line) != wid ||
+    if (UNLIKELY(! currentThreadOwnsWorker(wid) || lineGetWID(packet_line) != wid ||
                  ! tunnelchainIsWorkerPacketLine(chain, packet_line)))
     {
         LOGF("Disturber: worker Stop did not run on the exact owner packet line for worker %d", workerWIDForLog(wid));
         abortProgramNow(1);
     }
 
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     assert(lineGetWID(packet_line) == wid);
     assert(tunnelchainIsWorkerPacketLine(chain, packet_line));
 

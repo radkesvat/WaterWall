@@ -24,7 +24,7 @@ void usercontrollerTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_contex
 void usercontrollerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     usercontroller_tstate_t *ts = tunnelGetState(t);
     if (ts->worker_states == NULL || wid >= ts->worker_count)

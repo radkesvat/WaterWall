@@ -91,7 +91,7 @@ line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFn
     twfRequire(on_cancel == NULL, "ConnectionToPackets requested lock-reentrant cancellation notification");
     twfRequire(wwLwipEngineCurrent() == g_fixture->engine,
                "ConnectionToPackets control submission did not hold the owner engine");
-    twfRequire(lineIsOnCurrentEventWorker(line),
+    twfRequire(lineIsOnCurrentWorker(line),
                "ConnectionToPackets control refusal did not originate from its owner engine");
 
     lineRef(line);
@@ -111,7 +111,7 @@ line_task_submit_result_e __wrap_lineScheduleTaskWithBuf(line_t *const line, Lin
     twfRequire(on_cancel == NULL, "ConnectionToPackets requested lock-reentrant cancellation notification");
     twfRequire(wwLwipEngineCurrent() == g_fixture->engine,
                "ConnectionToPackets buffered submission did not hold the owner engine");
-    twfRequire(lineIsOnCurrentEventWorker(line),
+    twfRequire(lineIsOnCurrentWorker(line),
                "ConnectionToPackets buffered delivery did not originate from the line owner");
 
     /* Synchronous owner-worker refusal: the real scheduler retains the line,

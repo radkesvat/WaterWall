@@ -557,10 +557,10 @@ static void packetstostreamCleanupDecodedPacket(void *arg1, void *arg2, void *ar
     sbuf_t *buf         = arg3;
 
     // A pooled buffer may only go back to a pool this thread owns.
-    if (lineIsOnCurrentEventWorker(packet_line))
+    if (lineIsOnCurrentWorker(packet_line))
     {
         /* Message cleanup may run after logical line death. */
-        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), buf);
+        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), buf);
     }
     else
     {
@@ -596,7 +596,7 @@ void packetstostreamForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_
 
     assert(packet_line != NULL);
 
-    if (lineIsOnCurrentEventWorker(packet_line))
+    if (lineIsOnCurrentWorker(packet_line))
     {
         tunnelPrevDownStreamPayload(t, packet_line, packet);
         return;
@@ -751,7 +751,7 @@ void packetstostreamHeartbeatTimerCallback(wtimer_t *timer)
     assert(ts->sensitive_mode);
 
     // The heartbeat timer is armed per worker on that worker's own loop.
-    const wid_t wid = getLoopEventWorkerWID(weventGetLoop(timer));
+    const wid_t wid = getLoopWorkerWID(weventGetLoop(timer));
     assert(ts->worker_timers != NULL && ts->worker_timers[wid] == timer);
 
     line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid);
@@ -790,7 +790,7 @@ void packetstostreamTimeoutTimerCallback(wtimer_t *timer)
 
     packetstostream_tstate_t *ts = tunnelGetState(t);
     // One checked identity for the packet line and the per-worker timer slot.
-    const wid_t wid = getLoopEventWorkerWID(weventGetLoop(timer));
+    const wid_t wid = getLoopWorkerWID(weventGetLoop(timer));
     assert(ts->worker_timeout_timers != NULL && ts->worker_timeout_timers[wid] == timer);
 
     line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid);

@@ -23,7 +23,7 @@ static void syncProgress(wtimer_t *timer)
 
 void authenticationclientScheduleSyncProgress(tunnel_t *t)
 {
-    assert(currentThreadIsEventWorkerWID(0));
+    assert(currentThreadOwnsWorker(0));
     authenticationclient_tstate_t *ts = tunnelGetState(t);
     mutexLock(&ts->control_mutex);
     const bool needed = ts->started && ! ts->stopping && ! ts->continuity_error && ts->authenticated && ts->connected &&
@@ -80,7 +80,7 @@ static void reconnectOnWorker0(void *worker_ptr, void *arg1, void *arg2, void *a
 void authenticationclientScheduleReconnect(tunnel_t *t)
 {
     authenticationclient_tstate_t *ts    = tunnelGetState(t);
-    const bool                     owner = currentThreadIsEventWorkerWID(0);
+    const bool                     owner = currentThreadOwnsWorker(0);
     mutexLock(&ts->control_mutex);
     const uint64_t now           = owner ? wloopNowMonotonicMS(getWorkerLoop(0)) : 0;
     const uint64_t refusal_delay = owner && now < authenticationclientRetryNotBeforeLocked(ts)
@@ -161,7 +161,7 @@ static void requestDeadline(wtimer_t *timer)
 
 void authenticationclientUpdateRequestTimer(tunnel_t *t)
 {
-    assert(currentThreadIsEventWorkerWID(0));
+    assert(currentThreadOwnsWorker(0));
     authenticationclient_tstate_t *ts       = tunnelGetState(t);
     uint64_t                       earliest = UINT64_MAX;
     mutexLock(&ts->control_mutex);

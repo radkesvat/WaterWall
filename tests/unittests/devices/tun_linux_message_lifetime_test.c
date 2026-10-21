@@ -342,7 +342,7 @@ bool __real_tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_off
 bool __wrap_tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_offload_plan_t *plan, uint32_t offset,
                                           uint8_t *destination, uint32_t capacity, uint32_t *length)
 {
-    require(currentThreadIsEventWorkerWID(0), "GSO segmentation or payload copying ran outside the processing worker");
+    require(currentThreadOwnsWorker(0), "GSO segmentation or payload copying ran outside the processing worker");
     prepared_gso_segments++;
     const bool prepared = __real_tunLinuxOffloadPrepareSegment(ip, plan, offset, destination, capacity, length);
     if (prepared)
@@ -362,7 +362,7 @@ void __wrap_tunLinuxOffloadCompleteChecksum(uint8_t *ip, const tun_linux_offload
     }
     else
     {
-        require(currentThreadIsEventWorkerWID(0), "ordinary checksum ran outside its receive worker");
+        require(currentThreadOwnsWorker(0), "ordinary checksum ran outside its receive worker");
         receive_checksum_completions++;
     }
     __real_tunLinuxOffloadCompleteChecksum(ip, plan);
@@ -821,7 +821,7 @@ void   __wrap_wioReleaseNoClose(wio_t *io);
 
 wio_t *__wrap_wioGet(wloop_t *loop, int fd)
 {
-    require(currentThreadIsEventWorkerWID(0), "watcher installed on its owner worker");
+    require(currentThreadOwnsWorker(0), "watcher installed on its owner worker");
     require(fd == tun_handle_fd, "watcher owns the receive descriptor");
     memoryZero(&reader_io, sizeof(reader_io));
     reader_io.loop = loop;
@@ -831,7 +831,7 @@ wio_t *__wrap_wioGet(wloop_t *loop, int fd)
 
 int __wrap_wioAdd(wio_t *io, wio_cb callback, int events)
 {
-    require(io == &reader_io && currentThreadIsEventWorkerWID(0), "read watcher changed only by its owner");
+    require(io == &reader_io && currentThreadOwnsWorker(0), "read watcher changed only by its owner");
     if (fail_watcher_registration)
     {
         errno = ENOMEM;
@@ -844,14 +844,14 @@ int __wrap_wioAdd(wio_t *io, wio_cb callback, int events)
 
 int __wrap_wioDel(wio_t *io, int events)
 {
-    require(io == &reader_io && currentThreadIsEventWorkerWID(0), "read interest removed by its owner");
+    require(io == &reader_io && currentThreadOwnsWorker(0), "read interest removed by its owner");
     io->events &= ~events;
     return 0;
 }
 
 void __wrap_wioReleaseNoClose(wio_t *io)
 {
-    require(io == &reader_io && currentThreadIsEventWorkerWID(0), "watcher detached on its owner worker");
+    require(io == &reader_io && currentThreadOwnsWorker(0), "watcher detached on its owner worker");
     require(io->fd == tun_handle_fd, "watcher retains the caller-owned TUN descriptor");
     io->events = 0;
     io->fd     = -1;
@@ -1183,7 +1183,7 @@ static void runWriterMessages(void)
     for (unsigned i = 0; i < writer_message_count; ++i)
     {
         captured_message_t message = writer_messages[i];
-        message.callback(getCurrentEventWorker(), message.arg1, message.arg2, message.arg3);
+        message.callback(getCurrentWorker(), message.arg1, message.arg2, message.arg3);
     }
     writer_message_count    = 0;
     capture_writer_messages = previous;
@@ -1206,7 +1206,7 @@ static void runReaderMessages(void)
         captured_message_t message  = reader_messages[reader_messages_done++];
         const bool         previous = inside_reader_callback;
         inside_reader_callback      = true;
-        message.callback(getCurrentEventWorker(), message.arg1, message.arg2, message.arg3);
+        message.callback(getCurrentWorker(), message.arg1, message.arg2, message.arg3);
         inside_reader_callback = previous;
     }
     reader_message_count = reader_messages_done = 0;
@@ -1638,7 +1638,7 @@ static void testClosedAndStaleDeliveriesDoNotTouchDevice(void)
             require(bringUpDevice(tdev), "production restart bring-up failed");
         expected_discarded_buffer = buf;
         expected_discard_count    = 0;
-        deliverMessage(0, getCurrentEventWorker());
+        deliverMessage(0, getCurrentWorker());
         require(callback_count == 0, "closed or stale delivery invoked the device callback");
         require(expected_discard_count == 1, "closed or stale FIFO entry was not discarded exactly once");
         expected_discarded_buffer = NULL;
@@ -2182,7 +2182,7 @@ static void observeOrdinaryChecksum(tun_device_t *tdev, void *userdata, sbuf_t *
 {
     discard                      tdev;
     ordinary_checksum_fixture_t *fixture = userdata;
-    require(currentThreadIsEventWorkerWID(wid), "ordinary checksum delivery used a foreign worker");
+    require(currentThreadOwnsWorker(wid), "ordinary checksum delivery used a foreign worker");
     require(fixture->delivered < fixture->count, "unexpected ordinary checksum delivery");
     const unsigned index = fixture->delivered++;
     require(sbufGetLength(buf) == fixture->lengths[index] &&
@@ -2526,7 +2526,7 @@ static void observeGsoSegment(tun_device_t *tdev, void *userdata, sbuf_t *buf, u
     discard        tdev;
     discard        userdata;
     const uint8_t *ip = sbufGetRawPtr(buf);
-    require(currentThreadIsEventWorkerWID(wid), "GSO checksum completion was not published on the event worker");
+    require(currentThreadOwnsWorker(wid), "GSO checksum completion was not published on the event worker");
     require(gso_probe_session != NULL &&
                 atomic_load_explicit(&gso_probe_session->output_packets, memory_order_acquire) > 0,
             "GSO output reservation was released before worker publication");
@@ -2565,7 +2565,7 @@ static void observeTrustedRecord(tun_device_t *tdev, void *userdata, sbuf_t *buf
     (void) tdev;
     (void) userdata;
     const uint8_t *ip = sbufGetRawPtr(buf);
-    require(currentThreadIsEventWorkerWID(wid), "trusted handoff used foreign worker");
+    require(currentThreadOwnsWorker(wid), "trusted handoff used foreign worker");
     require(gsoChecksumWords(ip, 20, 0) != 0xffff, "trusted handoff repaired the unverified IPv4 checksum");
     require(callback_count < 5 && sbufGetLength(buf) == 43 && ip[40] == 'A' && ip[41] == 'B' &&
                 ip[42] == (callback_count == 3 ? ('C' ^ 1) : 'C'),
@@ -2665,7 +2665,7 @@ static void observeTrustedOrdinary(tun_device_t *tdev, void *userdata, sbuf_t *b
 {
     discard                      tdev;
     ordinary_checksum_fixture_t *fixture = userdata;
-    require(currentThreadIsEventWorkerWID(wid) && fixture->delivered < fixture->count, "trusted ordinary delivery");
+    require(currentThreadOwnsWorker(wid) && fixture->delivered < fixture->count, "trusted ordinary delivery");
     const unsigned index = fixture->delivered++;
     require(sbufGetLength(buf) == fixture->lengths[index] &&
                 memoryEqual(sbufGetRawPtr(buf), fixture->packets[index], fixture->lengths[index]),
@@ -2873,7 +2873,7 @@ static void observeSmallMssThenOrdinary(tun_device_t *tdev, void *userdata, sbuf
     discard        tdev;
     discard        userdata;
     const uint8_t *ip = sbufGetRawPtr(buf);
-    require(currentThreadIsEventWorkerWID(wid), "small-MSS output ran outside its flow worker");
+    require(currentThreadOwnsWorker(wid), "small-MSS output ran outside its flow worker");
     if (sbufGetLength(buf) == kGsoFixtureIpLength)
     {
         require(callback_count == kSmallMssSegments && ordinary_after_gso_deliveries == 0,
@@ -3363,7 +3363,7 @@ static void testDnsMutationCleanup(void)
 static void observeSingleQueueWorkerOne(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid)
 {
     discard tdev;
-    require(wid == 1 && currentThreadIsEventWorkerWID(1), "single receive queue changed the flow's processing worker");
+    require(wid == 1 && currentThreadOwnsWorker(1), "single receive queue changed the flow's processing worker");
     require(sbufGetLength(buf) == 28 && memoryEqual(sbufGetRawPtr(buf), userdata, 28),
             "single receive queue changed packet bytes");
     ++callback_count;
@@ -3387,7 +3387,7 @@ static void testMultiQueuePreferencePreservesProcessingWorkers(test_env_t *env)
     GSTATE.workers_count         = 2;
     GSTATE.shortcut_buffer_pools = pools;
     GSTATE.shortcut_loops        = loops;
-    GSTATE.workers[1] = (worker_t) {.wid = 1, .has_event_loop = true, .loop = &second_loop, .buffer_pool = second_pool};
+    GSTATE.workers[1]            = (worker_t) {.wid = 1, .loop = &second_loop, .buffer_pool = second_pool};
     record_queue_preference = true;
 
     /* Exercise each path that opens/reopens the interface, with both explicit
@@ -3480,7 +3480,7 @@ static void testMultiQueuePreferencePreservesProcessingWorkers(test_env_t *env)
     require(captured_message_count == 1 && captured_messages[0].wid == 1 && callback_count == 0,
             "worker-zero receive did not queue the flow to worker one");
     testWorkerBindWID(1);
-    deliverMessage(0, getCurrentEventWorker());
+    deliverMessage(0, getCurrentWorker());
     testWorkerBindWID(0);
     require(callback_count == 1 && getWorkersCount() == 2 && tundeviceIsUp(tdev),
             "single-queue mode lost delivery or changed worker availability");
@@ -3593,7 +3593,7 @@ static void testSameWorkerTunBurstCoalescesTcpAcks(test_env_t *env)
     require(loop != NULL && globalstateInitializeSecureRandom() && frandGlobalInit() &&
                 wCryptoGlobalInit() == kWCryptoOk,
             "TCP receive-burst fixture initialization failed");
-    env->loops[0] = getCurrentEventWorker()->loop = loop;
+    env->loops[0] = getCurrentWorker()->loop = loop;
     wwLwipInitializeProtocolState();
     wwLwipEngineSharedInit();
     tcp_ack_probe_t probe = {0};
@@ -3662,7 +3662,7 @@ static void testSameWorkerTunBurstCoalescesTcpAcks(test_env_t *env)
     frandThreadCleanup();
     frandGlobalCleanup();
     globalstateDestroySecureRandom();
-    env->loops[0] = getCurrentEventWorker()->loop = saved_loop;
+    env->loops[0] = getCurrentWorker()->loop = saved_loop;
     wloopDestroy(&loop);
 }
 

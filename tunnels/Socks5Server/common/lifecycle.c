@@ -4,7 +4,7 @@
 
 void socks5serverRequireCurrentLineWorker(const line_t *l, const char *callback_name)
 {
-    if (UNLIKELY(l == NULL || ! lineIsOnCurrentEventWorker(l)))
+    if (UNLIKELY(l == NULL || ! lineIsOnCurrentWorker(l)))
     {
         LOGF("Socks5Server: %s arrived outside its line owner worker",
              callback_name != NULL ? callback_name : "flow callback");

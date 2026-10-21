@@ -5,7 +5,7 @@
 void udpstatelesssocketTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
     if (wid == state->io_wid && state->socket.io != NULL)
     {
@@ -22,7 +22,7 @@ void udpstatelesssocketTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_li
 void udpstatelesssocketTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
     assert(state->socket.idle_tables != NULL);

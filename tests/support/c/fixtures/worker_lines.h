@@ -88,8 +88,7 @@ static void twfWorkerEnvSetupWithBufferSizes(twf_worker_env_t *env, uint32_t lar
     env->loop_shortcut[0] = env->loop;
     GSTATE.shortcut_loops = env->loop_shortcut;
 
-    env->worker = (worker_t) {
-        .wid = 0, .buffer_pool = env->pool, .wios_pool = env->wios_pool, .loop = env->loop, .has_event_loop = true};
+    env->worker    = (worker_t) {.wid = 0, .buffer_pool = env->pool, .wios_pool = env->wios_pool, .loop = env->loop};
     GSTATE.workers = &env->worker;
     testWorkerBindWID(0);
 

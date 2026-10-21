@@ -930,7 +930,7 @@ static WTHREAD_ROUTINE(tundeviceReaderThreadMain) // NOLINT
 {
     // The reader stays unregistered, uses its private pool, and posts packets
     // to explicit event workers.
-    assert(! currentThreadHasRegisteredWID());
+    assert(! currentThreadIsWorker());
     tun_device_t *tdev = userdata;
     discard       tdev->routine_reader(tdev);
     tundeviceNoteUnexpectedThreadExit(tdev, "reader");
@@ -949,7 +949,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
      * Copy the event worker's pool geometry onto the unregistered reader's
      * private pool before starting it.
      */
-    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *worker_pool = getCurrentWorkerBufferPool();
 
     devicePoolUpdatePadding(tdev->reader_buffer_pool, worker_pool);
 
@@ -1196,7 +1196,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, bool multi_queue_r
      * The unregistered reader retains its own pool. Output workers use their
      * existing local pools.
      */
-    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *worker_pool = getCurrentWorkerBufferPool();
 
     buffer_pool_t *reader_bpool = devicePoolCreate(worker_pool, mtu);
     if (UNLIKELY(reader_bpool == NULL))

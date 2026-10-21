@@ -25,31 +25,18 @@ bool workerWIDIsRegistered(wid_t wid)
     {
         return false;
     }
-    return wid < getTotalWorkersCount();
+    return wid < getWorkersCount();
 }
 
-bool workerWIDIsEventWorker(wid_t wid)
-{
-    if (! workerWIDIsRegistered(wid))
-    {
-        return false;
-    }
-    return WORKERS[wid].has_event_loop;
-}
-
-bool currentThreadHasRegisteredWID(void)
+bool currentThreadIsWorker(void)
 {
     return workerWIDIsRegistered(getWID());
 }
 
-bool currentThreadIsEventWorker(void)
+bool currentThreadOwnsWorker(wid_t wid)
 {
-    return workerWIDIsEventWorker(getWID());
-}
-
-bool currentThreadIsEventWorkerWID(wid_t wid)
-{
-    return currentThreadIsEventWorker() && (getWID() == wid);
+    const wid_t current = getWID();
+    return workerWIDIsRegistered(current) && current == wid;
 }
 
 void workerBindCurrentThread(worker_t *worker)
@@ -60,7 +47,7 @@ void workerBindCurrentThread(worker_t *worker)
         abortProgramNow(1);
     }
     wid_t wid = worker->wid;
-    if (UNLIKELY(wid >= getTotalWorkersCount() || worker != getWorker(wid)))
+    if (UNLIKELY(wid >= getWorkersCount() || worker != getWorker(wid)))
     {
         LOGF("workerBindCurrentThread: WID %u is out of bounds or worker pointer mismatch", wid);
         abortProgramNow(1);
@@ -125,11 +112,10 @@ static worker_quiesce_request_result_e workerRequestQuiesceInternal(worker_t    
         return kWorkerQuiesceRequestUnavailable;
     }
 
-    bool               woken = true;
     worker_lifecycle_e lifecycle;
     mutexLock(&worker->control_mutex);
     lifecycle = workerGetLifecycle(worker);
-    if (lifecycle >= kWorkerLifecycleTeardownRequested || (worker->has_event_loop && worker->loop == NULL))
+    if (lifecycle >= kWorkerLifecycleTeardownRequested || worker->loop == NULL)
     {
         mutexUnlock(&worker->control_mutex);
         return kWorkerQuiesceRequestUnavailable;
@@ -148,10 +134,7 @@ static worker_quiesce_request_result_e workerRequestQuiesceInternal(worker_t    
     }
     workerPublishLifecycleLocked(worker, kWorkerLifecycleQuiesceRequested);
     workerMessagesCloseAdmissionLocked(worker);
-    if (worker->loop != NULL)
-    {
-        woken = wloopRequestQuiesce(worker->loop);
-    }
+    const bool woken = wloopRequestQuiesce(worker->loop);
     mutexUnlock(&worker->control_mutex);
     if (already_requested)
     {
@@ -262,8 +245,7 @@ static void workerPublishLifecycle(worker_t *worker, worker_lifecycle_e phase)
 void workerPerformQuiesce(worker_t *worker, const ww_lifecycle_context_t *context)
 {
     assert(worker != NULL);
-    assert(worker->has_event_loop);
-    assert(currentThreadIsEventWorkerWID(worker->wid));
+    assert(currentThreadOwnsWorker(worker->wid));
 
     if (workerGetLifecycle(worker) >= kWorkerLifecycleQuiesced)
     {
@@ -287,8 +269,7 @@ void workerPerformQuiesce(worker_t *worker, const ww_lifecycle_context_t *contex
 void workerPerformDrain(worker_t *worker, const ww_lifecycle_context_t *context)
 {
     assert(worker != NULL);
-    assert(worker->has_event_loop);
-    assert(currentThreadIsEventWorkerWID(worker->wid));
+    assert(currentThreadOwnsWorker(worker->wid));
     assert(workerGetLifecycle(worker) >= kWorkerLifecycleDrainRequested);
 
     if (workerGetLifecycle(worker) >= kWorkerLifecycleDrained)
@@ -328,8 +309,7 @@ static void workerDestroyPools(worker_t *worker)
 void workerPerformTeardown(worker_t *worker)
 {
     assert(worker != NULL);
-    assert(worker->has_event_loop);
-    assert(currentThreadIsEventWorkerWID(worker->wid));
+    assert(currentThreadOwnsWorker(worker->wid));
     assert(workerGetLifecycle(worker) >= kWorkerLifecycleTeardownRequested);
 
     if (atomicExchangeExplicit(&worker->resources_destroyed, true, memory_order_relaxed))
@@ -347,25 +327,9 @@ void workerPerformTeardown(worker_t *worker)
     workerPublishLifecycle(worker, kWorkerLifecycleExited);
 }
 
-void workerDestroyNonEventResources(worker_t *worker)
-{
-    assert(worker != NULL);
-    assert(! worker->has_event_loop);
-
-    if (atomicExchangeExplicit(&worker->resources_destroyed, true, memory_order_relaxed))
-    {
-        return;
-    }
-
-    workerMessagesDestroy(worker);
-    workerDestroyPools(worker);
-    workerPublishLifecycle(worker, kWorkerLifecycleExited);
-}
-
 void workerDestroyUnstartedResources(worker_t *worker)
 {
     assert(worker != NULL);
-    assert(worker->has_event_loop);
     assert(! worker->thread_valid);
     assert(workerGetLifecycle(worker) == kWorkerLifecycleInitialized);
 
@@ -417,15 +381,11 @@ bool workerTryCreateCorePools(worker_t *worker)
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_wios, sizeof(wio_t), RAM_PROFILE);
     generic_pool_t *context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
         GSTATE.masterpool_context_pools, sizeof(context_t), RAM_PROFILE);
-    generic_pool_t *message_pool =
-        worker->has_event_loop ? genericpoolCreateWithMasterPoolCallbacks(GSTATE.masterpool_messages, RAM_PROFILE)
-                               : NULL;
-    generic_pool_t *timer_pool = worker->has_event_loop ? genericpoolCreateWithDefaultAllocatorAndCapacity(
-                                                              GSTATE.masterpool_timers, sizeof(wtimeout_t), RAM_PROFILE)
-                                                        : NULL;
+    generic_pool_t *message_pool = genericpoolCreateWithMasterPoolCallbacks(GSTATE.masterpool_messages, RAM_PROFILE);
+    generic_pool_t *timer_pool =
+        genericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_timers, sizeof(wtimeout_t), RAM_PROFILE);
 
-    if (UNLIKELY(wios_pool == NULL || context_pool == NULL ||
-                 (worker->has_event_loop && (message_pool == NULL || timer_pool == NULL))))
+    if (UNLIKELY(wios_pool == NULL || context_pool == NULL || message_pool == NULL || timer_pool == NULL))
     {
         threadsafegenericpoolDestroy(wios_pool);
         genericpoolDestroy(context_pool);
@@ -464,21 +424,9 @@ bool workerTryCreateBufferPool(worker_t *worker)
     return true;
 }
 
-static void workerRollbackInitialization(worker_t *worker)
+bool workerInit(worker_t *worker, wid_t wid)
 {
-    if (worker->has_event_loop)
-    {
-        workerDestroyUnstartedResources(worker);
-    }
-    else
-    {
-        workerDestroyNonEventResources(worker);
-    }
-}
-
-bool workerInit(worker_t *worker, wid_t wid, bool eventloop)
-{
-    *worker = (worker_t) {.wid = wid, .has_event_loop = eventloop};
+    *worker = (worker_t) {.wid = wid};
 
     mutexInit(&worker->control_mutex);
     condmutexInit(&worker->control_condition_mutex);
@@ -492,44 +440,37 @@ bool workerInit(worker_t *worker, wid_t wid, bool eventloop)
     if (UNLIKELY(! workerTryCreateCorePools(worker)))
     {
         LOGF("Worker %d: failed to construct WIO/context/message/timer pool metadata", (int) wid);
-        workerRollbackInitialization(worker);
+        workerDestroyUnstartedResources(worker);
         return false;
     }
 
     if (UNLIKELY(! workerTryCreateBufferPool(worker)))
     {
         LOGF("Worker %d: failed to construct buffer-pool metadata", (int) wid);
-        workerRollbackInitialization(worker);
+        workerDestroyUnstartedResources(worker);
         return false;
     }
 
-    if (eventloop)
-    {
-        // note that loop depeneds on worker->buffer_pool
-        worker->loop = wloopCreate(0, worker->buffer_pool, wid);
-        worker->loop->timer_pool = worker->timer_pool;
+    // The loop depends on the worker's buffer pool.
+    worker->loop             = wloopCreate(0, worker->buffer_pool, wid);
+    worker->loop->timer_pool = worker->timer_pool;
 
-        int dns_rc = asyncdnsInit(&worker->dns_resolver, worker->loop, &GSTATE.dns_options);
-        if (dns_rc != ARES_SUCCESS)
-        {
-            loggerPrint(getDnsLogger(),
-                        LOG_LEVEL_FATAL,
-                        "Worker %d failed to initialize async DNS resolver: %s",
-                        wid,
-                        ares_strerror(dns_rc));
-            workerRollbackInitialization(worker);
-            return false;
-        }
-        if (UNLIKELY(! workerMessagesOpenAdmission(worker)))
-        {
-            LOGF("Worker %d: message admission could not be opened from the initialized state", (int) wid);
-            workerRollbackInitialization(worker);
-            return false;
-        }
-    }
-    else
+    int dns_rc = asyncdnsInit(&worker->dns_resolver, worker->loop, &GSTATE.dns_options);
+    if (dns_rc != ARES_SUCCESS)
     {
-        worker->loop = NULL;
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_FATAL,
+                    "Worker %d failed to initialize async DNS resolver: %s",
+                    wid,
+                    ares_strerror(dns_rc));
+        workerDestroyUnstartedResources(worker);
+        return false;
+    }
+    if (UNLIKELY(! workerMessagesOpenAdmission(worker)))
+    {
+        LOGF("Worker %d: message admission could not be opened from the initialized state", (int) wid);
+        workerDestroyUnstartedResources(worker);
+        return false;
     }
     return true;
 }
@@ -609,7 +550,7 @@ int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *s
      * another worker's resolver corrupts it silently. Fail with a c-ares status
      * instead of relying on an assertion.
      */
-    if (UNLIKELY(wid >= getWorkersCount() || ! currentThreadIsEventWorkerWID(wid)))
+    if (UNLIKELY(wid >= getWorkersCount() || ! currentThreadOwnsWorker(wid)))
     {
         return ARES_ENOTINITIALIZED;
     }

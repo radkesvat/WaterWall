@@ -159,7 +159,7 @@ bool junkdatagramsenderIsWorkerPacketLine(tunnel_t *t, line_t *l)
 
 void junkdatagramsenderPacketLineFinish(tunnel_t *t, line_t *l)
 {
-    if (UNLIKELY(! junkdatagramsenderIsWorkerPacketLine(t, l) || ! lineIsOnCurrentEventWorker(l)))
+    if (UNLIKELY(! junkdatagramsenderIsWorkerPacketLine(t, l) || ! lineIsOnCurrentWorker(l)))
     {
         LOGF("JunkDatagramSender: packet Finish ran outside the exact owner packet line");
         abortProgramNow(1);

@@ -21,7 +21,7 @@ socks5server_assoc_entry_t *socks5serverFindWorkerAssociation(tunnel_t *t, wid_t
         return NULL;
     }
     socks5server_tstate_t *ts = tunnelGetState(t);
-    if (ts->worker_associations == NULL || wid >= ts->workers_count || ! currentThreadIsEventWorkerWID(wid))
+    if (ts->worker_associations == NULL || wid >= ts->workers_count || ! currentThreadOwnsWorker(wid))
     {
         return NULL;
     }
@@ -66,7 +66,7 @@ bool socks5serverAssociationIsActive(tunnel_t *t, wid_t wid, udplistener_dynamic
 bool socks5serverValidateUdpClientAssociation(tunnel_t *t, line_t *l, socks5server_lstate_t *ls,
                                               bool validate_provider_metadata)
 {
-    assert(t != NULL && l != NULL && ls != NULL && lineIsOnCurrentEventWorker(l));
+    assert(t != NULL && l != NULL && ls != NULL && lineIsOnCurrentWorker(l));
 
     const wid_t    wid        = lineGetWID(l);
     const uint16_t local_port = lineGetRoutingContext(l)->local_listener_port;
@@ -105,7 +105,7 @@ bool socks5serverRegisterUdpAssociation(tunnel_t *t, line_t *l, const user_handl
     socks5server_tstate_t *ts  = tunnelGetState(t);
     wid_t                  wid = lineGetWID(l);
 
-    if (ts->worker_associations == NULL || wid >= ts->workers_count || ! currentThreadIsEventWorkerWID(wid) ||
+    if (ts->worker_associations == NULL || wid >= ts->workers_count || ! currentThreadOwnsWorker(wid) ||
         ! lineIsAuthenticated(l) || ! lineIsAlive(l))
     {
         return false;
@@ -226,7 +226,7 @@ void socks5serverUnregisterUdpAssociation(tunnel_t *t, socks5server_lstate_t *ls
     udplistener_dynamic_endpoint_handle_t handle = ls->dynamic_handle;
     ls->dynamic_handle                           = (udplistener_dynamic_endpoint_handle_t) {0};
 
-    if (handle.owner_wid >= ts->workers_count || ! currentThreadIsEventWorkerWID(handle.owner_wid))
+    if (handle.owner_wid >= ts->workers_count || ! currentThreadOwnsWorker(handle.owner_wid))
     {
         LOGF("Socks5Server: control association handle has an invalid owner worker");
         abortProgramNow(1);

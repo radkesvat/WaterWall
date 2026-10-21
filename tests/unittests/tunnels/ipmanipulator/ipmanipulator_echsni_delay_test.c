@@ -220,7 +220,6 @@ static void envSetup(test_env_t *env)
         env->workers[wid].loop           = env->loops[wid];
         env->workers[wid].buffer_pool    = env->buffer_pools[wid];
         env->workers[wid].wios_pool      = env->wios_pools[wid];
-        env->workers[wid].has_event_loop = true;
         mutexInit(&env->workers[wid].control_mutex);
         workerMessagesInit(&env->workers[wid]);
         workerMessagesOpenAdmission(&env->workers[wid]);
@@ -683,7 +682,7 @@ static void replacePendingOriginalWorker(test_fixture_t *fixture, uint8_t index,
             "ECH foreign-owner fixture has no pending original at the requested index");
     ipmanipulator_captured_packet_t *pending = &flow->pending_original_packets[index];
     require(pending->line != NULL && pending->buf != NULL, "ECH foreign-owner fixture found an empty original");
-    require(lineIsOnCurrentEventWorker(pending->line), "ECH original replacement ran off the original owner worker");
+    require(lineIsOnCurrentWorker(pending->line), "ECH original replacement ran off the original owner worker");
 
     lineReuseBuffer(pending->line, pending->buf);
     *pending = (ipmanipulator_captured_packet_t) {.line = foreign_line, .buf = foreign_buf};

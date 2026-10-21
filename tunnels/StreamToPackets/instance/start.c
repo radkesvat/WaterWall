@@ -9,7 +9,7 @@ void streamtopacketsQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, 
     discard arg3;
 
     tunnel_t *t = arg1;
-    line_t   *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getCurrentEventWorkerWID());
+    line_t   *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getCurrentWorkerWID());
 
     if (UNLIKELY(! lineCallWithRef(l, tunnelNextUpStreamInit, t)))
     {

@@ -63,7 +63,7 @@ const char *authenticationserverParseUpdate(sbuf_t *message, const node_api_call
     }
     request->audit_fields = patch.mask;
     cJSON_Delete(body);
-    bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), message);
+    bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), message);
     if (authenticationserverApiExpired(context->deadline_ms))
         error = "timeout";
     if (error != NULL)

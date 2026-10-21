@@ -138,7 +138,7 @@ static void queueStaleUdpReply(line_t *line)
 
 static void sourceEst(tunnel_t *t, line_t *l)
 {
-    CHECK(t == source && wwLwipEngineCurrent() == NULL && currentThreadIsEventWorkerWID(lineGetWID(l)));
+    CHECK(t == source && wwLwipEngineCurrent() == NULL && currentThreadOwnsWorker(lineGetWID(l)));
     if (protocolOf(l) == 1)
         queueStaleUdpReply(l);
     ++established[lineGetWID(l)];
@@ -146,7 +146,7 @@ static void sourceEst(tunnel_t *t, line_t *l)
 }
 static void sourcePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    CHECK(t == source && wwLwipEngineCurrent() == NULL && currentThreadIsEventWorkerWID(lineGetWID(l)));
+    CHECK(t == source && wwLwipEngineCurrent() == NULL && currentThreadOwnsWorker(lineGetWID(l)));
     unsigned proto = protocolOf(l);
     CHECK(sbufGetLength(buf) == 8);
     CHECK(memcmp(sbufGetRawPtr(buf), proto == 0 ? "tcp-echo" : "udp-echo", 8) == 0);
@@ -227,7 +227,7 @@ static uint16_t chooseRemotePort(unsigned proto, uint16_t local)
 }
 static void finishTimer(wtimer_t *timer)
 {
-    wid_t wid = getLoopEventWorkerWID(weventGetLoop(timer));
+    wid_t wid = getLoopWorkerWID(weventGetLoop(timer));
     CHECK(established[wid] == 2 && received[wid][0] == 1 && received[wid][1] == 1);
     atomicStoreExplicit(&finished[wid], true, memory_order_release);
     if (wid == 0 && ! atomicLoadExplicit(&finished[1], memory_order_acquire))

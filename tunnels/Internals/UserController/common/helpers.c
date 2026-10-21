@@ -227,7 +227,7 @@ bool usercontrollerObserveDirectional(tunnel_t *t, usercontroller_lstate_t *ls, 
 // no-op (kUserAdmissionOk) for lines that carry no user, exactly like Init's passthrough behavior.
 user_admission_result_t usercontrollerTunnelTryManageLine(tunnel_t *t, line_t *l)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     usercontroller_lstate_t *ls = lineGetState(l, t);
 
@@ -281,7 +281,7 @@ void usercontrollerSweepTimerCallback(wtimer_t *timer)
     }
 
     usercontroller_tstate_t       *ts = tunnelGetState(t);
-    usercontroller_worker_state_t *ws = usercontrollerGetWorkerState(t, getCurrentEventWorkerWID());
+    usercontroller_worker_state_t *ws = usercontrollerGetWorkerState(t, getCurrentWorkerWID());
     if (ws == NULL)
     {
         return;

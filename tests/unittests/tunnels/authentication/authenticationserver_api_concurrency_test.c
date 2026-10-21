@@ -82,7 +82,7 @@ static api_result_t query(tunnel_t *t, const char *operation)
     const node_api_operation_t *descriptor = nodeApiFind(t, operation);
     twfRequire(descriptor != NULL, "query operation was not registered");
     const char    *body    = strcmp(operation, "get-user") == 0 ? "{\"id\":\"42\"}" : "{}";
-    buffer_pool_t *pool    = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *pool    = getCurrentWorkerBufferPool();
     sbuf_t        *message = bufferpoolGetSmallBuffer(pool);
     sbufSetLength(message, (uint32_t) strlen(body));
     memoryCopy(sbufGetMutablePtr(message), body, strlen(body));
@@ -107,7 +107,7 @@ static void requireQuery(tunnel_t *t, const char *operation, const char *error)
         twfRequire(cJSON_IsString(code) && strcmp(code->valuestring, error) == 0, "query error mismatch");
     }
     cJSON_Delete(json);
-    bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), result.buffer);
+    bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), result.buffer);
     twfRequireNoLeakedBuffers();
 }
 
@@ -176,7 +176,7 @@ static void testCallingWorker(tunnel_t *server, twf_worker_env_t *env)
     twfRequire(second_loop != NULL, "second event loop creation failed");
     buffer_pool_t *pools[] = {env->pool, second};
     wloop_t       *loops[] = {env->loop, second_loop};
-    worker_t workers[] = {env->worker, {.wid = 1, .buffer_pool = second, .loop = second_loop, .has_event_loop = true}};
+    worker_t       workers[]     = {env->worker, {.wid = 1, .buffer_pool = second, .loop = second_loop}};
     GSTATE.workers_count         = 2;
     GSTATE.workers               = workers;
     GSTATE.shortcut_buffer_pools = pools;
@@ -359,7 +359,7 @@ static void prepareMixedWrite(mixed_writer_t *writer, tunnel_t *server, mixed_wr
     *writer         = (mixed_writer_t) {.server = server, .kind = kind};
     writer->context = (node_api_call_context_t) {
         .principal = "password-admin", .working_memory_allowance = 4U * 1024U * 1024U, .max_response_body_size = 4096};
-    buffer_pool_t *pool    = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *pool    = getCurrentWorkerBufferPool();
     const size_t   length  = strlen(body);
     sbuf_t        *message = bufferpoolGetBestFit(pool, (uint32_t) length, 0);
     memoryCopy(sbufGetMutablePtr(message), body, length);
@@ -388,7 +388,7 @@ static void destroyMixedWrite(mixed_writer_t *writer)
     usersFreePreparedPasswordChange(writer->password.password);
     usersFreePreparedConfigPatch(writer->config.patch);
     usersFreePreparedNewUser(writer->creation.candidate);
-    bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), writer->ack);
+    bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), writer->ack);
 }
 
 typedef struct indexed_reader_s

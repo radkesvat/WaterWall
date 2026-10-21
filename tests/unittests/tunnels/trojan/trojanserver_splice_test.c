@@ -1033,7 +1033,7 @@ static void testFallback(void)
         twfRequire(g_fallback_finish_task.delay_ms >= 6 && g_fallback_finish_task.delay_ms <= 8,
                    "fallback jitter changed");
         if (fault == 1)
-            held_pipes = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
+            held_pipes = testSpliceInventoryHoldAvailable(getCurrentWorkerBufferPool());
         pressure           = fault == 2;
         immediate_pressure = fault == 3;
         fallbackFinishDriveDelayedTask();
@@ -1440,7 +1440,7 @@ static void testPipeFallbackAndPadding(void)
             if (off + count == n)
             {
                 if (fault == 1)
-                    held_pipes = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
+                    held_pipes = testSpliceInventoryHoldAvailable(getCurrentWorkerBufferPool());
                 pressure           = fault == 2;
                 immediate_pressure = fault == 3;
             }

@@ -987,7 +987,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             ipmanipulatorDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }
-        state->tls_capture_slots_count = (uint32_t) getTotalWorkersCount() * kIpManipulatorTlsCaptureSlotsPerWorker;
+        state->tls_capture_slots_count = (uint32_t) getWorkersCount() * kIpManipulatorTlsCaptureSlotsPerWorker;
         state->tls_capture_slots =
             memoryAllocateZero(sizeof(*state->tls_capture_slots) * state->tls_capture_slots_count);
         state->tls_prestart_slots_count = state->tls_capture_slots_count;

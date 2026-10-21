@@ -20,7 +20,7 @@ static void ctpRollbackStart(ctp_tstate_t *ts)
 
 void ctpQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3)
 {
-    discard worker;
+    const worker_t *owner = worker;
     discard arg2;
     discard arg3;
 
@@ -37,7 +37,7 @@ void ctpQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3)
         return;
     }
 
-    line_t *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getCurrentEventWorkerWID());
+    line_t *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), owner->wid);
 
     if (UNLIKELY(! lineCallWithRef(l, tunnelNextUpStreamInit, t)))
     {

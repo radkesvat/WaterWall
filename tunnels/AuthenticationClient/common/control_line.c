@@ -37,7 +37,7 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     // The control line is structurally owned by worker 0; an unregistered or
     // lwIP caller must never reach here (it queues in
     // authenticationclientScheduleReconnect() instead).
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(0)))
+    if (UNLIKELY(! currentThreadOwnsWorker(0)))
     {
         LOGF("AuthenticationClient: control line must be opened on worker 0, caller worker: %d",
              workerWIDForLog(getWID()));

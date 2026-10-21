@@ -120,7 +120,7 @@ void *workerMessagePoolAcquire(size_t record_size)
         abortProgramNow(1);
     }
 
-    worker_t *worker = tryGetCurrentEventWorker();
+    worker_t *worker = tryGetCurrentWorker();
     if (worker != NULL && worker->message_pool != NULL)
     {
         return genericpoolGetItem(worker->message_pool);
@@ -138,7 +138,7 @@ void workerMessagePoolRelease(void *record)
     /* Records have one fixed geometry and may migrate between local caches.
      * Never retain or access the allocating worker's pool: it may already
      * have been destroyed when another worker or a foreign thread settles. */
-    worker_t *worker = tryGetCurrentEventWorker();
+    worker_t *worker = tryGetCurrentWorker();
     if (worker != NULL && worker->message_pool != NULL)
     {
         genericpoolReuseItem(worker->message_pool, record);
@@ -282,7 +282,7 @@ static void workerMessageCleanupLocalBatch(wloop_t *loop, queued_worker_msg_t *b
 static void workerMessageDrainQueue(worker_t *worker)
 {
     /* Queued callbacks are written assuming they run on their target worker. */
-    assert(currentThreadIsEventWorkerWID(worker->wid));
+    assert(currentThreadOwnsWorker(worker->wid));
 
     for (;;)
     {
@@ -398,23 +398,22 @@ static void workerMessageReceived(wevent_t *ev)
     /* The wakeup event was posted to exactly one worker loop, so that loop is
      * the authoritative owner; never re-read TLS to choose a target. */
     wid_t wid = (wid_t) wloopGetWid(weventGetLoop(ev));
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     workerMessageDrainQueue(getWorker(wid));
 }
 
 /**
  * @brief Rejects a message aimed at a WID that can never drain a queue.
  *
- * Only ordinary event workers own a message queue and a loop to wake, so the
- * Non-event slots, kInvalidWID, and out-of-range ids are refused here rather
- * than at an assertion inside getWorker(). Posting is fallible and reachable
- * from unregistered threads, so this runs the caller's cleanup exactly once and
- * reports failure instead of aborting.
+ * Reject unavailable worker IDs before getWorker() can assert. Registered
+ * workers have a separate lifecycle admission check for queue/loop availability.
+ * Posting is fallible and reachable from unregistered threads, so rejection runs
+ * the caller's cleanup exactly once and reports failure instead of aborting.
  */
 static bool workerMessageRejectUndeliverable(wid_t wid, WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
                                              void *arg3)
 {
-    if (LIKELY(workerWIDIsEventWorker(wid)))
+    if (LIKELY(workerWIDIsRegistered(wid)))
     {
         return false;
     }
@@ -467,7 +466,7 @@ bool workerMessagesOpenAdmission(worker_t *worker)
     }
 
     mutexLock(&worker->control_mutex);
-    const bool ready = worker->has_event_loop && worker->loop != NULL && worker->message_queue != NULL &&
+    const bool ready = worker->loop != NULL && worker->message_queue != NULL &&
                        ! atomicLoadExplicit(&worker->resources_destroyed, memory_order_relaxed) &&
                        atomicLoadExplicit(&worker->lifecycle, memory_order_relaxed) ==
                            (w_atomic_int_value_t) kWorkerLifecycleInitialized &&
@@ -618,7 +617,7 @@ void sendWorkerMessageWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMes
     }
 
     worker_t *worker = getWorker(wid);
-    if (currentThreadIsEventWorkerWID(wid) && wloopCurrentThreadInNormalCallback(worker->loop))
+    if (currentThreadOwnsWorker(wid) && wloopCurrentThreadInNormalCallback(worker->loop))
     {
         cb(worker, arg1, arg2, arg3);
         return;
@@ -784,7 +783,7 @@ static void runTimedTask(wtimer_t *timer)
 
     wloop_t    *loop      = weventGetLoop(timer);
     const wid_t owner_wid = (wid_t) wloopGetWid(loop);
-    assert(currentThreadIsEventWorkerWID(owner_wid));
+    assert(currentThreadOwnsWorker(owner_wid));
     worker_t *worker = getWorker(owner_wid);
 
 #ifdef WW_WORKER_MESSAGE_TEST_SEAM
@@ -842,7 +841,7 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
 
     /* Either called on the target worker or delivered as a worker message to
      * it; both mean the timer is armed on its own loop's thread. */
-    assert(currentThreadIsEventWorkerWID(worker->wid));
+    assert(currentThreadOwnsWorker(worker->wid));
 
     mutexLock(&worker->control_mutex);
     worker_message_queue_t *queue = worker->message_queue;
@@ -942,7 +941,7 @@ static worker_message_submit_result_e sendWorkerMessageTimedTransactional(wid_t 
     /* Arming directly is only safe on the owning event worker's thread. A
      * foreign caller queues one by-value setup wrapper around this stable
      * delayed record; no second pooled message is allocated. */
-    if (currentThreadIsEventWorkerWID(wid))
+    if (currentThreadOwnsWorker(wid))
     {
         return setupTimedTaskChecked(worker, (void *) delay_ms_uiptr, msg, NULL, retain_on_refusal)
                    ? kWorkerMessageSubmitAccepted

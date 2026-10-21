@@ -32,7 +32,7 @@ void authenticationclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_
 void authenticationclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     if (UNLIKELY(wid != 0))
     {
@@ -56,7 +56,7 @@ void authenticationclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_
 void authenticationclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     if (wid != 0)
     {
         return;

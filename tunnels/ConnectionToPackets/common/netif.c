@@ -149,7 +149,7 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     ctp_netif_ctx_t *ctx = netif->state;
     tunnel_t        *t   = ctx->tunnel;
     ctp_tstate_t    *ts  = tunnelGetState(t);
-    assert(currentThreadIsEventWorkerWID(ctx->wid));
+    assert(currentThreadOwnsWorker(ctx->wid));
     assert(ctx->engine == wwLwipEngineCurrent());
 
     /*
@@ -205,7 +205,7 @@ static err_t ctpNetifInit(struct netif *netif)
 ctp_netif_ctx_t *ctpEnsureNetifLocked(tunnel_t *t, wid_t wid)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     wwLwipEngineAssertCurrent();
 
     if (UNLIKELY(ts->netifs == NULL || wid >= ts->netifs_count))
@@ -250,7 +250,7 @@ ctp_netif_ctx_t *ctpEnsureNetifLocked(tunnel_t *t, wid_t wid)
 void ctpDestroyWorkerNetif(tunnel_t *t, wid_t wid)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     if (ts->netifs == NULL)
         return;
     assert(wid < ts->netifs_count);

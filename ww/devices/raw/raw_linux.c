@@ -385,7 +385,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_connt
     }
     rawdeviceLogSocketBufferSize(rsocket, SO_SNDBUF, "SO_SNDBUF");
 
-    discard       getCurrentEventWorker();
+    discard       getCurrentWorker();
     raw_device_t *rdev     = memoryAllocateZero(sizeof(*rdev));
     rdev->name             = stringDuplicate(name);
     rdev->socket           = rsocket;

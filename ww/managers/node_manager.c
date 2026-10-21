@@ -449,7 +449,7 @@ void nodemanagerInitializeLineOnTargetWorker(void *worker, void *_tunnel, void *
     tunnel_t *tunnel = (tunnel_t *) _tunnel;
     line_t   *line   = (line_t *) _line;
 
-    assert(lineIsOnCurrentEventWorker(line));
+    assert(lineIsOnCurrentWorker(line));
 
     if (! lineCallWithRef(line, tunnelNextUpStreamInit, tunnel))
     {
@@ -1253,7 +1253,7 @@ void nodemanagerQuiesceWorker(wid_t wid, const ww_lifecycle_context_t *context)
     {
         return;
     }
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
     {
@@ -1290,7 +1290,7 @@ void nodemanagerStopWorkerResources(wid_t wid, const ww_lifecycle_context_t *con
     }
 
     // Called from the worker tearing itself down, for its own slot only.
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
     {

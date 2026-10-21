@@ -5,7 +5,7 @@
 void tcpconnectorTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     tcpconnector_tstate_t *ts = tunnelGetState(t);
     assert(ts->idle_tables != NULL);
     if (ts->idle_tables[wid] != NULL)
@@ -17,7 +17,7 @@ void tcpconnectorTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycl
 void tcpconnectorTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     tcpconnector_tstate_t *ts = tunnelGetState(t);
     assert(ts->idle_tables != NULL);

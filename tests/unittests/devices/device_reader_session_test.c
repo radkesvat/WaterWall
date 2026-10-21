@@ -242,7 +242,7 @@ static void deliverPacket(void *device, sbuf_t *buf, wid_t wid)
     }
     if (probe->check_prepare_order)
     {
-        require(currentThreadIsEventWorkerWID(wid), "prepared output did not reach its selected event worker");
+        require(currentThreadOwnsWorker(wid), "prepared output did not reach its selected event worker");
         require(probe->last_prepared == buf && probe->prepared == probe->delivered + 1 &&
                     ((const uint8_t *) sbufGetRawPtr(buf))[0] == 0xA5,
                 "output reached the device before its worker-side prepare callback");
@@ -265,7 +265,7 @@ static void deliverPacket(void *device, sbuf_t *buf, wid_t wid)
 static void prepareReaderOutput(sbuf_t *buf)
 {
     require(active_prepare_probe != NULL && active_prepare_session != NULL, "prepare callback lost its test owner");
-    require(currentThreadIsEventWorkerWID(0), "prepare callback ran outside the receiving event worker");
+    require(currentThreadOwnsWorker(0), "prepare callback ran outside the receiving event worker");
     require(atomic_load_explicit(&active_prepare_session->output_packets, memory_order_acquire) > 0 &&
                 atomic_load_explicit(&active_prepare_session->output_charge, memory_order_acquire) > 0,
             "prepare callback ran after its output reservation was released");
@@ -923,7 +923,7 @@ static bool stepWorkerWork(device_reader_session_t *session, void *context, wid_
                            device_reader_work_budget_t *budget)
 {
     worker_work_probe_t *probe = context;
-    require(wid == probe->target_wid && currentThreadIsEventWorkerWID(wid),
+    require(wid == probe->target_wid && currentThreadOwnsWorker(wid),
             "aggregate work ran outside its selected event worker");
     require(atomic_load_explicit(&session->output_charge, memory_order_acquire) > 0 &&
                 atomic_load_explicit(&session->output_packets, memory_order_acquire) >= 2,
@@ -1143,7 +1143,7 @@ typedef struct ordinary_wait_probe_s
 static void *postOrdinaryWhileFull(void *context)
 {
     ordinary_wait_probe_t *probe = context;
-    require(! currentThreadIsEventWorker(), "ordinary producer fixture unexpectedly owns an event worker");
+    require(! currentThreadIsWorker(), "ordinary producer fixture unexpectedly owns an event worker");
     sbuf_t *buf = bufferpoolGetSmallBuffer(probe->reader_pool);
     sbufSetLength(buf, 64);
     probe->accepted = deviceReaderSessionPost(probe->session, 0, &buf, 1);
@@ -1336,7 +1336,7 @@ static void testSameWorkerPostsKeepExistingFifo(test_env_t *env)
     require(deviceReaderSessionBegin(session) != 0, "failed to begin same-worker FIFO fixture");
     wloop_t *loop = wloopCreate(0, env->worker_buffer_pool, 0);
     require(loop != NULL, "failed to create normal callback loop");
-    getCurrentEventWorker()->loop = loop;
+    getCurrentWorker()->loop      = loop;
     normal_post_probe_t post      = {.session = session, .buf = sbufCreate(64)};
     require(wloopInvokeNormalCallback(loop, postFromNormalCallback, &post), "normal callback was refused");
     require(probe.delivered == 0 && captured_message_count == 1, "same-worker packet bypassed its deferred owner FIFO");
@@ -1364,7 +1364,7 @@ static void testSameWorkerPostsKeepExistingFifo(test_env_t *env)
             "worker identity alone bypassed normal callback scheduling");
     deliverWorkerQueueMessage(3);
     requireOutputBudgetEmpty(session);
-    getCurrentEventWorker()->loop = NULL;
+    getCurrentWorker()->loop = NULL;
     wloopDestroy(&loop);
     deviceReaderSessionEnd(session);
     deviceReaderSessionUnref(session);
@@ -1387,7 +1387,7 @@ static void postFromReceiveBurst(void *context)
 {
     burst_post_probe_t   *probe = context;
     device_reader_burst_t burst;
-    require(deviceReaderSessionTryBeginBurst(probe->session, getCurrentEventWorker(), &burst),
+    require(deviceReaderSessionTryBeginBurst(probe->session, getCurrentWorker(), &burst),
             "admitted worker could not begin its receive burst");
     const unsigned int delivered_before = probe->delivered->delivered;
     const unsigned int messages_before  = captured_message_count;
@@ -1438,7 +1438,7 @@ static void testReceiveBurstBoundsAndSettlement(test_env_t *env)
                 "failed to configure bounded receive-burst fixture");
         wloop_t *loop = wloopCreate(0, env->worker_buffer_pool, 0);
         require(loop != NULL, "failed to create receive-burst callback loop");
-        getCurrentEventWorker()->loop = loop;
+        getCurrentWorker()->loop      = loop;
         burst_post_probe_t burst      = {.session             = session,
                                          .delivered           = &delivered,
                                          .packets             = counts[test],
@@ -1454,7 +1454,7 @@ static void testReceiveBurstBoundsAndSettlement(test_env_t *env)
                 "receive-burst continuation lost a packet or ran after synchronous refusal");
         requireOutputBudgetEmpty(session);
         require(atomicLoadRelaxed(&session->refcount) == 1, "receive burst leaked its drain-token session reference");
-        getCurrentEventWorker()->loop = NULL;
+        getCurrentWorker()->loop = NULL;
         wloopDestroy(&loop);
         deviceReaderSessionEnd(session);
         deviceReaderSessionUnref(session);
@@ -1468,7 +1468,7 @@ static void testReceiveBurstPreservesQueuedAndForeignWork(test_env_t *env)
     device_reader_session_t *session   = createWorkerQueueSession(env, &delivered);
     wloop_t                 *loop      = wloopCreate(0, env->worker_buffer_pool, 0);
     require(loop != NULL, "failed to create ordered receive-burst loop");
-    getCurrentEventWorker()->loop = loop;
+    getCurrentWorker()->loop      = loop;
     worker_work_probe_t work      = {.target_steps = 2};
     require(postWorkerWork(session, &work), "failed to queue work preceding the receive burst");
     delivered.required_work_steps = &work.steps;
@@ -1503,7 +1503,7 @@ static void testReceiveBurstPreservesQueuedAndForeignWork(test_env_t *env)
     deliverWorkerQueueMessage(3);
     require(delivered.delivered == 3, "foreign receive-burst packet was not delivered on its target worker");
     requireOutputBudgetEmpty(session);
-    getCurrentEventWorker()->loop = NULL;
+    getCurrentWorker()->loop = NULL;
     wloopDestroy(&loop);
     deviceReaderSessionEnd(session);
     deviceReaderSessionUnref(session);
@@ -1519,9 +1519,9 @@ static void testReceiveBurstCapacityAndClosedGeneration(test_env_t *env)
             "failed to configure closing receive-burst fixture");
     wloop_t *loop = wloopCreate(0, env->worker_buffer_pool, 0);
     require(loop != NULL, "failed to create closing receive-burst loop");
-    getCurrentEventWorker()->loop = loop;
+    getCurrentWorker()->loop = loop;
     device_reader_burst_t inactive;
-    require(! deviceReaderSessionTryBeginBurst(session, getCurrentEventWorker(), &inactive),
+    require(! deviceReaderSessionTryBeginBurst(session, getCurrentWorker(), &inactive),
             "worker identity alone admitted an inline receive burst");
     burst_post_probe_t burst = {.session          = session,
                                 .delivered        = &delivered,
@@ -1542,7 +1542,7 @@ static void testReceiveBurstCapacityAndClosedGeneration(test_env_t *env)
     require(delivered.delivered == 1 && captured_message_count == 0,
             "reopened receive burst retained stale queue ownership");
     requireOutputBudgetEmpty(session);
-    getCurrentEventWorker()->loop = NULL;
+    getCurrentWorker()->loop = NULL;
     wloopDestroy(&loop);
     deviceReaderSessionEnd(session);
     deviceReaderSessionUnref(session);

@@ -114,7 +114,7 @@ static void tunWriterDrain(worker_t *worker, void *arg1, void *arg2, void *arg3)
     discard                  arg3;
     tun_writer_generation_t *generation = arg1;
     tun_writer_queue_t      *queue      = arg2;
-    assert(currentThreadIsEventWorkerWID(worker->wid));
+    assert(currentThreadOwnsWorker(worker->wid));
 
     if (! quiescenceGateEnter(&generation->gate))
     {
@@ -246,7 +246,7 @@ void tunWriterDestroy(tun_writer_t *writer)
 
 tun_writer_send_result_t tunWriterTrySend(tun_writer_t *writer, sbuf_t *buffer)
 {
-    worker_t                *worker = getCurrentEventWorker();
+    worker_t                *worker = getCurrentWorker();
     tun_writer_generation_t *generation =
         (tun_writer_generation_t *) atomicLoadExplicit(&writer->published_generation, memory_order_acquire);
     if (generation == NULL)

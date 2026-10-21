@@ -119,7 +119,7 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
     }
 
     wid_t owner_wid = lineGetWID(ls->line);
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(owner_wid)))
+    if (UNLIKELY(! currentThreadOwnsWorker(owner_wid)))
     {
         if (! ls->refused_retry_queued)
         {
@@ -244,7 +244,7 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     }
 
     const wid_t owner_wid = route_ctx->packet_wid;
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(owner_wid)))
+    if (UNLIKELY(! currentThreadOwnsWorker(owner_wid)))
     {
         LOGW(
             "PacketsToConnection: tcp accept callback arrived on worker %d for route owned by worker %d; dropping flow",

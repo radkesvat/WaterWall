@@ -91,7 +91,7 @@ static bool tunOffloadWorkStep(device_reader_session_t *session, void *context, 
                                device_reader_work_budget_t *budget)
 {
     tun_offload_work_t *work = context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     buffer_pool_t *pool    = getWorkerBufferPool(wid);
     uint32_t       emitted = 0;
     /* The direct trusted TUN/PTC pair accepts assured TCPv4 aggregates intact.
@@ -259,7 +259,7 @@ static void tunReaderUnref(tun_reader_generation_t *generation)
 
 static void tunReaderDetach(tun_worker_reader_t *lane)
 {
-    assert(currentThreadIsEventWorkerWID(lane->wid));
+    assert(currentThreadOwnsWorker(lane->wid));
     if (lane->io != NULL)
     {
         wio_t *io = lane->io;
@@ -558,7 +558,7 @@ static void tunReaderOnReady(wio_t *io)
 {
     tun_worker_reader_t *lane = weventGetUserdata(io);
     if (lane != NULL)
-        tunReaderRun(lane, getCurrentEventWorker());
+        tunReaderRun(lane, getCurrentWorker());
 }
 
 static void tunReaderMessage(worker_t *worker, void *arg1, void *arg2, void *arg3)
@@ -614,7 +614,7 @@ void tunReaderCloseRequest(tun_device_t *tdev)
 
 void tundeviceWorkerQuiesce(tun_device_t *tdev, wid_t wid)
 {
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     tun_reader_generation_t *generation = tdev->reader;
     if (generation != NULL && wid < generation->count)
         tunReaderDetach(&generation->lanes[wid]);
@@ -626,7 +626,7 @@ void tunReaderCloseWait(tun_device_t *tdev)
     if (generation == NULL)
         return;
     quiescenceGateWaitQuiesced(&generation->gate, quiescenceGateYieldThread, NULL);
-    worker_t *worker = tryGetCurrentEventWorker();
+    worker_t *worker = tryGetCurrentWorker();
     if (worker != NULL && worker->wid < generation->count)
         tunReaderDetach(&generation->lanes[worker->wid]);
     while (atomicLoadExplicit(&generation->attached, memory_order_acquire) != 0)

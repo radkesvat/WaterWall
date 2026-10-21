@@ -24,7 +24,7 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *
 
     if (state->send_request_pools != NULL)
     {
-        for (wid_t wid = 0; wid < getTotalWorkersCount(); ++wid)
+        for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
         {
             if (state->send_request_pools[wid] != NULL)
             {

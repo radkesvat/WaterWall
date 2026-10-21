@@ -13,7 +13,7 @@
  *
  * If this node grows a real API, keep the same ownership rule: consume `message`
  * on every path, and take working buffers from the *caller's* worker pool
- * (getCurrentEventWorkerBufferPool()), never from getWorkerBufferPool(0).
+ * (getCurrentWorkerBufferPool()), never from getWorkerBufferPool(0).
  */
 api_result_t templateTunnelApi(tunnel_t *instance, sbuf_t *message)
 {

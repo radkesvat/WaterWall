@@ -152,7 +152,7 @@ static void reverseclientBeginConnectMessageCleanup(void *arg1, void *arg2, void
     tunnel_t               *t   = arg1;
     reverseclient_tstate_t *ts  = tunnelGetState(t);
     const wid_t             wid = (wid_t) (uintptr_t) arg2;
-    if (workerWIDIsEventWorker(wid) && ts->threadlocal_pool[wid].connecting_cons_count > 0)
+    if (workerWIDIsRegistered(wid) && ts->threadlocal_pool[wid].connecting_cons_count > 0)
     {
         ts->threadlocal_pool[wid].connecting_cons_count--;
     }

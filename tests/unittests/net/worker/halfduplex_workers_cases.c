@@ -38,19 +38,19 @@ static sbuf_t *halfWorkerBytes(const void *data, uint32_t length)
 static void halfWorkerFinish(tunnel_t *t, line_t *line)
 {
     discard t;
-    require(lineIsOnCurrentEventWorker(line), "HalfDuplex transport finish on wrong worker");
+    require(lineIsOnCurrentWorker(line), "HalfDuplex transport finish on wrong worker");
     lineDestroy(line);
     atomicAddExplicit(&hw.finishes, 1, memory_order_release);
 }
 static void halfWorkerEst(tunnel_t *t, line_t *line)
 {
     discard t;
-    require(lineIsOnCurrentEventWorker(line), "HalfDuplex Est on wrong worker");
+    require(lineIsOnCurrentWorker(line), "HalfDuplex Est on wrong worker");
 }
 static void halfWorkerInit(tunnel_t *t, line_t *line)
 {
     discard t;
-    require(lineGetWID(line) == 0 && lineIsOnCurrentEventWorker(line), "pair did not move to first half worker");
+    require(lineGetWID(line) == 0 && lineIsOnCurrentWorker(line), "pair did not move to first half worker");
     hw.main                       = line;
     hw.in_init                    = true;
     halfduplexserver_lstate_t *ls = lineGetState(line, hw.server);
@@ -62,7 +62,7 @@ static void halfWorkerInit(tunnel_t *t, line_t *line)
 static void halfWorkerPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     discard t;
-    require(lineIsOnCurrentEventWorker(line), "HalfDuplex payload on wrong worker");
+    require(lineIsOnCurrentWorker(line), "HalfDuplex payload on wrong worker");
     unsigned count = atomicLoadExplicit(&hw.payloads, memory_order_acquire);
     require(! hw.in_init, "remote upload bypassed next Init barrier");
     if (count < 2)

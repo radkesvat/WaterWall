@@ -98,7 +98,7 @@ bool deviceReaderSessionTryBeginBurst(device_reader_session_t *session, worker_t
     assert(session != NULL && session->worker_queues != NULL && worker != NULL && burst != NULL);
     assert(worker->wid < session->worker_queue_count);
     *burst = (device_reader_burst_t) {0};
-    if (worker != tryGetCurrentEventWorker() || ! wloopCurrentThreadInNormalCallback(worker->loop))
+    if (worker != tryGetCurrentWorker() || ! wloopCurrentThreadInNormalCallback(worker->loop))
         return false;
 
     device_reader_worker_queue_t *queue = &session->worker_queues[worker->wid];
@@ -115,7 +115,7 @@ void deviceReaderSessionEndBurst(device_reader_burst_t *burst)
     assert(burst != NULL && burst->queue != NULL && burst->worker != NULL);
     device_reader_worker_queue_t *queue  = burst->queue;
     worker_t                     *worker = burst->worker;
-    assert(worker == tryGetCurrentEventWorker() && wloopCurrentThreadInNormalCallback(worker->loop));
+    assert(worker == tryGetCurrentWorker() && wloopCurrentThreadInNormalCallback(worker->loop));
     mutexLock(&queue->lock);
     assert(queue->producer_burst == burst);
     const bool owns_drain = burst->owns_drain;
@@ -182,7 +182,7 @@ static bool deviceReaderWorkerQueueAppend(device_reader_message_t *message, wid_
         queue->scheduled = true;
         deviceReaderSessionRef(session);
         device_reader_burst_t *burst = queue->producer_burst;
-        if (burst != NULL && currentThreadIsEventWorkerWID(target_wid) &&
+        if (burst != NULL && currentThreadOwnsWorker(target_wid) &&
             wloopCurrentThreadInNormalCallback(burst->worker->loop))
         {
             assert(! burst->owns_drain);

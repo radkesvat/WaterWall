@@ -598,7 +598,7 @@ static inline bool tunnelIsActiveForLine(const tunnel_t *t, const line_t *line)
 static inline void tunnelBypassLine(tunnel_t *t, line_t *line)
 {
     assert(t != NULL && line != NULL && line->alive);
-    assert(currentThreadIsEventWorkerWID(line->wid));
+    assert(currentThreadOwnsWorker(line->wid));
     assert(t->chain_index < kMaxChainLen);
     assert(t->prev != NULL && t->next != NULL);
     debugAssertZeroBuf(((uint8_t *) line->tunnels_line_state) + t->lstate_offset, t->lstate_size);

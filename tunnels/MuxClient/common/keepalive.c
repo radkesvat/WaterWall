@@ -20,7 +20,7 @@ static local_idle_item_t *muxclientCreateKeepaliveItem(muxclient_lstate_t *paren
                                                        LocalIdleExpireCallBack callback, uint64_t age_ms)
 {
     _Static_assert(sizeof(uintptr_t) <= sizeof(hash_t), "MuxClient keepalive item keys must fit pointers");
-    assert(lineIsOnCurrentEventWorker(parent->l) && *slot == NULL);
+    assert(lineIsOnCurrentWorker(parent->l) && *slot == NULL);
     muxclient_tstate_t *ts    = tunnelGetState(parent->parent_state->t);
     local_idle_table_t *table = ts->worker_states[lineGetWID(parent->l)].keepalive_table;
     local_idle_item_t  *item  = localidletableCreateItem(table, (hash_t) (uintptr_t) slot, parent, callback, age_ms);
@@ -34,7 +34,7 @@ static local_idle_item_t *muxclientCreateKeepaliveItem(muxclient_lstate_t *paren
 
 void muxclientDisarmKeepalive(muxclient_lstate_t *parent)
 {
-    assert(lineIsOnCurrentEventWorker(parent->l));
+    assert(lineIsOnCurrentWorker(parent->l));
     muxclientRemoveKeepaliveItem(&parent->parent_state->ping_item);
     muxclientRemoveKeepaliveItem(&parent->parent_state->pong_deadline_item);
 }
@@ -54,7 +54,7 @@ uint64_t muxclientUnansweredPingMS(const muxclient_tstate_t *ts, const muxclient
 
 static bool muxclientProbeParent(tunnel_t *t, line_t *l)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     muxclient_tstate_t *ts = tunnelGetState(t);
     if (! lineIsAlive(l))
         return false;
@@ -99,7 +99,7 @@ static void muxclientPingExpired(local_idle_item_t *item)
     muxclient_lstate_t *parent = item->userdata;
     tunnel_t           *t      = parent->parent_state->t;
     line_t             *l      = parent->l;
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     assert(parent->parent_state->ping_item == item);
     /* Only this exact line needs a reference. Reentrant sibling removal takes
      * that sibling out of the table before the heap visits it. */
@@ -115,7 +115,7 @@ static void muxclientPongDeadlineExpired(local_idle_item_t *item)
     muxclient_parent_state_t *state  = parent->parent_state;
     tunnel_t                 *t      = state->t;
     line_t                   *l      = parent->l;
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     assert(state->awaiting_pong && state->pong_deadline_item == item);
     lineRef(l);
     if (! state->peer_keepalive)
@@ -142,7 +142,7 @@ static void muxclientPongDeadlineExpired(local_idle_item_t *item)
 
 void muxclientArmKeepalive(tunnel_t *t, muxclient_lstate_t *parent)
 {
-    assert(lineIsOnCurrentEventWorker(parent->l));
+    assert(lineIsOnCurrentWorker(parent->l));
     muxclient_tstate_t       *ts     = tunnelGetState(t);
     muxclient_worker_state_t *worker = &ts->worker_states[lineGetWID(parent->l)];
     muxclient_parent_state_t *state  = parent->parent_state;

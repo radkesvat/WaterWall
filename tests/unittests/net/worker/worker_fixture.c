@@ -43,6 +43,7 @@ void initTestGlobalState(void)
     init_data.dns_logger_data.log_level      = log_off;
 
     require(wwStartupSucceeded(createGlobalState(init_data)), "failed to create worker-context fixture");
+    require(getWorkersCount() == init_data.workers_count, "runtime did not preserve the configured worker count");
 #if WW_HAVE_SPLICE
     require(sbufSplicePoolInitialize(UINT64_C(32) * SPLICE_PAYLOAD_LIMIT, SPLICE_PAYLOAD_LIMIT, 32, 0) > 0,
             "failed to create worker-context splice inventory");
@@ -70,7 +71,7 @@ void shutdownTestGlobalState(void)
 
 WTHREAD_ROUTINE(messagePoolForeignRoutine)
 {
-    require(! currentThreadIsEventWorker(), "foreign message-pool thread acquired a worker identity");
+    require(! currentThreadIsWorker(), "foreign message-pool thread acquired a worker identity");
     if (userdata != NULL)
     {
         workerMessagePoolRelease(userdata);

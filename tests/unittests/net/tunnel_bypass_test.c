@@ -347,7 +347,7 @@ static void testPacketDispatch(tunnel_chain_t *chain, tunnel_t **path)
 int main(void)
 {
     testCaseSet("tunnel_bypass_test");
-    worker_t worker         = {.wid = 0, .has_event_loop = true};
+    worker_t worker         = {.wid = 0};
     GSTATE.workers          = &worker;
     GSTATE.workers_count    = 1;
     GSTATE.flag_initialized = true;

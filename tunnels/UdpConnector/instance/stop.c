@@ -5,7 +5,7 @@
 void udpconnectorTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     udpconnector_tstate_t *ts = tunnelGetState(t);
     assert(ts->worker_pools != NULL);
 
@@ -40,7 +40,7 @@ void udpconnectorTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycl
 void udpconnectorTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     udpconnector_tstate_t *ts = tunnelGetState(t);
     assert(ts->worker_pools != NULL);

@@ -782,7 +782,7 @@ static void testFallback(void)
         twfRequire(g_fallback_finish_task.delay_ms >= 6 && g_fallback_finish_task.delay_ms <= 8,
                    "fallback jitter changed");
         if (fault == 1)
-            held_pipes = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
+            held_pipes = testSpliceInventoryHoldAvailable(getCurrentWorkerBufferPool());
         pressure           = fault == 2;
         immediate_pressure = fault == 3;
         fallbackFinishDriveDelayedTask();
@@ -1335,7 +1335,7 @@ static void testRepresentationsAndPipePressure(void)
         tunnelUpStreamPayload(f.t, f.line, bytes(wire, 3000, true, 320));
         b = bytes(wire + 3000, n - 3000, true, 320);
         if (fault == 0)
-            held_pipes = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
+            held_pipes = testSpliceInventoryHoldAvailable(getCurrentWorkerBufferPool());
         pressure           = fault == 1;
         immediate_pressure = fault == 2;
         tunnelUpStreamPayload(f.t, f.line, b);

@@ -60,7 +60,7 @@ static const uint8_t binary_body[] = {'a', 0, 0xff, 'z'};
 
 static api_result_t echoHandler(tunnel_t *instance, sbuf_t *request, const node_api_call_context_t *context)
 {
-    require(instance == &target && currentThreadIsEventWorker(), "handler lacked its event-worker target");
+    require(instance == &target && currentThreadIsWorker(), "handler lacked its event-worker target");
     require(strcmp(context->principal, "operator") == 0 && strcmp(context->operation, "binary") == 0,
             "detached call metadata was corrupted");
     require(context->gateway_config != NULL && context->gateway_node != NULL &&
@@ -78,13 +78,13 @@ static api_result_t echoHandler(tunnel_t *instance, sbuf_t *request, const node_
         atomicStoreExplicit(&refuse_next, true, memory_order_release);
     if (probe.empty_result)
     {
-        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), request);
+        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), request);
         return (api_result_t) {.result_code = kApiResultError};
     }
     if (probe.result_size != 0)
     {
-        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), request);
-        request = bufferpoolGetBestFit(getCurrentEventWorkerBufferPool(), (uint32_t) probe.result_size, 0);
+        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), request);
+        request = bufferpoolGetBestFit(getCurrentWorkerBufferPool(), (uint32_t) probe.result_size, 0);
         memset(sbufGetMutablePtr(request), 0xa5, probe.result_size);
         sbufSetLength(request, (uint32_t) probe.result_size);
     }
@@ -110,7 +110,7 @@ static const node_api_operation_t worker_one_operation  = {.name                
 
 static void completion(void *context, uint64_t session, uint64_t request, const node_api_reply_t *reply)
 {
-    require(context == &probe && currentThreadIsEventWorkerWID(probe.owner), "completion touched a foreign owner");
+    require(context == &probe && currentThreadOwnsWorker(probe.owner), "completion touched a foreign owner");
     require(session == 11 && request == 29, "internal lifetime tokens were corrupted");
     require(reply->status == probe.expected_status, "dispatch returned an incorrect gateway status");
     if (reply->status == kNodeApiDispatchOk)

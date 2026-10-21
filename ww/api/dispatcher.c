@@ -142,12 +142,12 @@ node_api_job_t *nodeApiJobCreate(node_api_domain_t *domain, tunnel_t *target, co
 {
     assert(domain != NULL && target != NULL && operation != NULL && principal != NULL);
     assert(body != NULL || body_size == 0);
-    assert(currentThreadIsEventWorkerWID(owner_wid));
+    assert(currentThreadOwnsWorker(owner_wid));
     assert(session_token != 0 && request_token != 0);
     assert(max_response_body_size > 0 && working_memory_allowance > 0);
     const wid_t       target_wid = operation->execution == kNodeApiCallingWorker ? owner_wid : operation->wid;
     buffer_pool_fit_t request_fit;
-    if (! workerWIDIsEventWorker(target_wid) || body_size > UINT32_MAX || max_response_body_size > UINT32_MAX ||
+    if (! workerWIDIsRegistered(target_wid) || body_size > UINT32_MAX || max_response_body_size > UINT32_MAX ||
         ! bufferpoolQueryBestFit(getWorkerBufferPool(target_wid), body_size, 0, &request_fit))
         return NULL;
     const size_t principal_size = strlen(principal) + 1;
@@ -266,7 +266,7 @@ static void completeJob(void *worker, void *arg1, void *arg2, void *arg3)
     discard         arg2;
     discard         arg3;
     node_api_job_t *job = arg1;
-    assert(currentThreadIsEventWorkerWID(job->owner_wid));
+    assert(currentThreadOwnsWorker(job->owner_wid));
     if (! jobIsAbandoned(job) && nodeApiAdmissionIsOpen())
     {
         if (nodeApiNowMs() >= job->context.deadline_ms)
@@ -282,7 +282,7 @@ static void executeJob(void *worker, void *arg1, void *arg2, void *arg3)
     discard         arg2;
     discard         arg3;
     node_api_job_t *job = arg1;
-    assert(currentThreadIsEventWorkerWID(job->target_wid));
+    assert(currentThreadOwnsWorker(job->target_wid));
     if (jobIsAbandoned(job))
     {
         nodeApiJobRelease(job);
@@ -294,7 +294,7 @@ static void executeJob(void *worker, void *arg1, void *arg2, void *arg3)
         job->reply.status = kNodeApiDispatchTimeout;
     else
     {
-        buffer_pool_t *pool    = getCurrentEventWorkerBufferPool();
+        buffer_pool_t *pool    = getCurrentWorkerBufferPool();
         sbuf_t        *request = bufferpoolGetBestFit(pool, (uint32_t) job->request_size, 0);
         if (job->request_size != 0)
             memoryCopy(sbufGetMutablePtr(request), job->request, job->request_size);
@@ -333,7 +333,7 @@ static void executeJob(void *worker, void *arg1, void *arg2, void *arg3)
 
 node_api_dispatch_status_t nodeApiJobSubmit(node_api_job_t *job)
 {
-    assert(job != NULL && currentThreadIsEventWorkerWID(job->owner_wid));
+    assert(job != NULL && currentThreadOwnsWorker(job->owner_wid));
     mutexLock(&job->domain->mutex);
     assert(! job->submitted);
     job->submitted = true;

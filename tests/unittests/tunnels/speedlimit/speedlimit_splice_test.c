@@ -332,7 +332,7 @@ static void testFallback(bool up)
     for (unsigned i = 0; i < sizeof(bytes); ++i)
         bytes[i] = (uint8_t) i;
     submit(pipeBytes(bytes, sizeof(bytes), 7));
-    test_splice_inventory_hold_t held = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
+    test_splice_inventory_hold_t held = testSpliceInventoryHoldAvailable(getCurrentWorkerBufferPool());
     expect_ordinary = measuring = true;
     tokens(2048);
     tick();

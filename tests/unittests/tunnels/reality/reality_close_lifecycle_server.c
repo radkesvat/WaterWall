@@ -466,7 +466,7 @@ static void serverFixtureInitialize(server_lifecycle_fixture_t *fixture)
     fixture->shortcut[0]         = fixture->pool;
     GSTATE.shortcut_buffer_pools = fixture->shortcut;
 
-    fixture->worker = (worker_t) {.wid = 0, .buffer_pool = fixture->pool, .has_event_loop = true};
+    fixture->worker = (worker_t) {.wid = 0, .buffer_pool = fixture->pool};
     GSTATE.workers  = &fixture->worker;
     testWorkerBindWID(0);
 

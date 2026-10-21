@@ -5,7 +5,7 @@
 void packetsenderTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     packetsender_tstate_t *state = tunnelGetState(t);
     if (state->workers == NULL || wid >= state->workers_count)

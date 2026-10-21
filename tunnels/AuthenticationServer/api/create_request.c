@@ -66,7 +66,7 @@ const char *authenticationserverParseCreate(sbuf_t *message, const node_api_call
     authenticationserverWipeJsonStrings(body);
     cJSON_Delete(body);
     memorySecureZero(sbufGetMutablePtr(message), length);
-    bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), message);
+    bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), message);
     if (authenticationserverApiExpired(context->deadline_ms))
         error = "timeout";
     if (error != NULL)

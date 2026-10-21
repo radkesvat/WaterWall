@@ -261,7 +261,7 @@ cJSON *authTestPeerApi(tunnel_t *t, const char *operation, const char *body, enu
                      strcmp(operation, "change-user-password") != 0),
             "peer API descriptor contract");
     const size_t length  = strlen(body);
-    sbuf_t      *request = bufferpoolGetBestFit(getCurrentEventWorkerBufferPool(), (uint32_t) length, 0);
+    sbuf_t      *request = bufferpoolGetBestFit(getCurrentWorkerBufferPool(), (uint32_t) length, 0);
     sbufSetLength(request, (uint32_t) length);
     memoryCopy(sbufGetMutablePtr(request), body, length);
     node_api_call_context_t context = {.operation                = operation,
@@ -271,7 +271,7 @@ cJSON *authTestPeerApi(tunnel_t *t, const char *operation, const char *body, enu
     api_result_t            result  = descriptor->handler(t, request, &context);
     require(result.result_code == expected && result.buffer != NULL, "peer API result contract");
     cJSON *json = cJSON_ParseWithLength((const char *) sbufGetRawPtr(result.buffer), sbufGetLength(result.buffer));
-    bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), result.buffer);
+    bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), result.buffer);
     require(cJSON_IsObject(json), "peer API did not return JSON");
     return json;
 }

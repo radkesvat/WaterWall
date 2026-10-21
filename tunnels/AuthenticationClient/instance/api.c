@@ -132,7 +132,7 @@ static const char *syncPhase(const authenticationclient_status_t *s)
 static api_result_t resultBody(const node_api_call_context_t *context, enum api_result_e code, const char *text,
                                size_t length)
 {
-    buffer_pool_t    *pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t    *pool = getCurrentWorkerBufferPool();
     buffer_pool_fit_t fit;
     if (length > context->max_response_body_size || ! bufferpoolQueryBestFit(pool, length, 0, &fit) ||
         fit.allocation_charge > context->working_memory_allowance)
@@ -145,7 +145,7 @@ static api_result_t resultBody(const node_api_call_context_t *context, enum api_
 
 static api_result_t statusApi(tunnel_t *t, sbuf_t *message, const node_api_call_context_t *context)
 {
-    assert(currentThreadIsEventWorkerWID(0) && message != NULL && context != NULL);
+    assert(currentThreadOwnsWorker(0) && message != NULL && context != NULL);
     const size_t length = sbufGetLength(message);
     /* At most four lexical values bound the tree; its string storage and
      * parser scratch are conservatively charged before tree construction. */
@@ -162,7 +162,7 @@ static api_result_t statusApi(tunnel_t *t, sbuf_t *message, const node_api_call_
             include_accounting = cJSON_IsTrue(field);
     }
     cJSON_Delete(body);
-    bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), message);
+    bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), message);
     if (! valid)
     {
         static const char explanation[] =
@@ -172,7 +172,7 @@ static api_result_t statusApi(tunnel_t *t, sbuf_t *message, const node_api_call_
 
     buffer_pool_fit_t output_fit;
     const bool        output_fits =
-        bufferpoolQueryBestFit(getCurrentEventWorkerBufferPool(), kStatusMaximumBodySize, 0, &output_fit) &&
+        bufferpoolQueryBestFit(getCurrentWorkerBufferPool(), kStatusMaximumBodySize, 0, &output_fit) &&
         output_fit.allocation_charge <= context->working_memory_allowance;
     authenticationclient_status_t snapshot;
     authenticationclientStatusSnapshot(t,

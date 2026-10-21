@@ -123,7 +123,7 @@ static sbuf_t *packet(unsigned sequence, uint32_t capacity)
 static bool writeBatch(void *context, worker_t *worker, sbuf_t **buffers, size_t count)
 {
     output_t *output = context;
-    require(currentThreadIsEventWorkerWID(worker->wid), "native write escaped owner worker");
+    require(currentThreadOwnsWorker(worker->wid), "native write escaped owner worker");
     require(worker == getWorker(worker->wid), "native callback received wrong worker");
     require(count > 0 && count <= kTunWriterBatchPackets, "native batch packet limit");
     pthread_mutex_lock(&output_mutex);
@@ -213,7 +213,7 @@ static void testAdmissionAndRefusal(void)
 static void *cancelForeign(void *arg)
 {
     captured_t *token = arg;
-    require(! currentThreadIsEventWorker(), "cancellation fixture has worker identity");
+    require(! currentThreadIsWorker(), "cancellation fixture has worker identity");
     token->cleanup(token->arg1, token->arg2, token->arg3, kWorkerMessageCancelTeardown);
     return NULL;
 }

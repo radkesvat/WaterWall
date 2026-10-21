@@ -204,7 +204,7 @@ static uint16_t testerserverPacketIpv4WorkerSourcePort(const testerserver_tstate
         return (uint16_t) kTesterServerPacketIpv4RequestSourcePort;
     }
 
-    const wid_t wid = getCurrentEventWorkerWID();
+    const wid_t wid = getCurrentWorkerWID();
     uint8_t     probe[kTesterServerPacketIpv4AffinityProbeSize];
 
     memoryZero(probe, sizeof(probe));

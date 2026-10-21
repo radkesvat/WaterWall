@@ -14,7 +14,7 @@ void ctpTunnelOnStop(tunnel_t *t, const ww_lifecycle_context_t *context)
 void ctpTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     ctpDrainTerminalLinesOnCurrentWorker(t, wid);
     ctpDetachWorkerLines(t, wid);
     ctpDestroyWorkerNetif(t, wid);

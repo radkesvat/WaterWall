@@ -171,7 +171,7 @@ static void recordSettlement(sbuf_t *buffer, buffer_pool_t *pool)
         if (pool != NULL)
         {
             require(pool == test_env->buffer_pools[tracked->owner], "raw output borrowed another worker's pool");
-            require(currentThreadIsEventWorkerWID(tracked->owner), "raw output recycled outside its worker");
+            require(currentThreadOwnsWorker(tracked->owner), "raw output recycled outside its worker");
             tracked->recycled++;
         }
         return;

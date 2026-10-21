@@ -201,7 +201,7 @@ void lineUnRefInternal(line_t *l)
 
     lineClearUsers(l);
 
-    worker_t *current = tryGetCurrentEventWorker();
+    worker_t *current = tryGetCurrentWorker();
     if (current != NULL && current->wid == l->wid)
     {
         genericpoolReuseItem(l->pools[current->wid], l);
@@ -352,7 +352,7 @@ static void lineReleaseScheduledTaskBuffer(line_t *line, sbuf_t *buf)
      * back into the line's pool. Anyone else (another worker, a device thread,
      * lwIP) destroys it instead of touching a pool it does not own.
      */
-    if (lineIsOnCurrentEventWorker(line))
+    if (lineIsOnCurrentWorker(line))
     {
         lineReuseBuffer(line, buf);
         return;
@@ -543,7 +543,7 @@ line_task_submit_result_e lineScheduleDelayedTask(line_t *const line, LineTaskFn
                                                   tunnel_t *t, LineTaskCancelFn on_cancel)
 {
     const wid_t target_wid      = lineGetWID(line);
-    const bool  timer_is_direct = delay_ms > 0 && currentThreadIsEventWorkerWID(target_wid);
+    const bool  timer_is_direct = delay_ms > 0 && currentThreadOwnsWorker(target_wid);
     lineRef(line);
 
     line_task_msg_t *msg = lineTaskMessageCreate(line, t, on_cancel);
@@ -569,7 +569,7 @@ line_task_submit_result_e lineScheduleDelayedTaskWithBuf(line_t *const line, Lin
                                                          tunnel_t *t, sbuf_t *buf, LineTaskCancelFn on_cancel)
 {
     const wid_t target_wid      = lineGetWID(line);
-    const bool  timer_is_direct = delay_ms > 0 && currentThreadIsEventWorkerWID(target_wid);
+    const bool  timer_is_direct = delay_ms > 0 && currentThreadOwnsWorker(target_wid);
     lineRef(line);
 
     line_task_msg_t *msg   = lineTaskMessageCreate(line, t, on_cancel);
@@ -607,7 +607,7 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
      * needs no unwind and cannot reach another worker's resolver in release
      * builds.
      */
-    if (UNLIKELY(! lineIsOnCurrentEventWorker(line)))
+    if (UNLIKELY(! lineIsOnCurrentWorker(line)))
     {
         return ARES_ENOTINITIALIZED;
     }

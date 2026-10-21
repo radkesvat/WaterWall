@@ -53,7 +53,7 @@ void __wrap_authenticationclientUserReleaseConnection(tunnel_t *t, const user_ha
 
 static usercontroller_payload_mode_t resolve(tunnel_t *owner, line_t *line)
 {
-    require(owner == auth_node.instance && lineIsOnCurrentEventWorker(line), "resolver lacks its owner worker context");
+    require(owner == auth_node.instance && lineIsOnCurrentWorker(line), "resolver lacks its owner worker context");
     ++resolver_calls;
     return resolved_mode;
 }

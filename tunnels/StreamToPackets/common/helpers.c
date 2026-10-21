@@ -459,11 +459,11 @@ static void streamtopacketsCleanupDecodedPacket(void *arg1, void *arg2, void *ar
     discard                       arg3;
 
     // A pooled buffer may only go back to a pool this thread owns.
-    if (lineIsOnCurrentEventWorker(msg->packet_line))
+    if (lineIsOnCurrentWorker(msg->packet_line))
     {
         /* Cleanup can observe a logically dead line; current-worker ownership
          * is enough to recycle without reading that line. */
-        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), msg->buf);
+        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), msg->buf);
     }
     else
     {
@@ -502,7 +502,7 @@ void streamtopacketsForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_
 
     assert(packet_line != NULL);
 
-    if (lineIsOnCurrentEventWorker(packet_line))
+    if (lineIsOnCurrentWorker(packet_line))
     {
         if (UNLIKELY(streamtopacketsPublishedGeneration(ts) != generation))
         {

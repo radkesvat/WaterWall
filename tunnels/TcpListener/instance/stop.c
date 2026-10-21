@@ -12,7 +12,7 @@ void tcplistenerTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t
 void tcplistenerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     tcplistener_tstate_t *ts = tunnelGetState(t);
     assert(ts->idle_tables != NULL);
     if (ts->idle_tables[wid] != NULL)
@@ -24,7 +24,7 @@ void tcplistenerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle
 void tcplistenerTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     tcplistener_tstate_t *ts = tunnelGetState(t);
     atomicStoreRelaxed(&ts->stopping, true);

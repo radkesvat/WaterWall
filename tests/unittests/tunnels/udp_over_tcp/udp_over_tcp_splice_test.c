@@ -516,7 +516,7 @@ static void testDecodeFallback(void)
     checkInitialized();
     const uint8_t                data[] = {0, 3, 'a', 'b', 'c', 0, 1, 'd'};
     sbuf_t                      *buf    = pipeBytes(data, sizeof(data), 0);
-    test_splice_inventory_hold_t held   = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
+    test_splice_inventory_hold_t held   = testSpliceInventoryHoldAvailable(getCurrentWorkerBufferPool());
     decode(node, line, buf);
     testSpliceInventoryReleaseHeld(&held);
     twfRequire(plain_calls == 2 && datagrams[0] == 3 && datagrams[1] == 1 && plain_length == 4 &&

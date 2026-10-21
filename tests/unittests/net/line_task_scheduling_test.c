@@ -241,7 +241,7 @@ static line_task_probe_t *taskProbe(tunnel_t *t)
 static void probeTask(tunnel_t *t, line_t *line)
 {
     line_task_probe_t *probe = taskProbe(t);
-    require(lineIsOnCurrentEventWorker(line), "line task ran outside its owner worker");
+    require(lineIsOnCurrentWorker(line), "line task ran outside its owner worker");
     atomicStoreExplicit(&probe->callback_wid, (int) lineGetWID(line), memory_order_relaxed);
     atomicStoreExplicit(&probe->task_time_us, wloopNowUS(getWorkerLoop(lineGetWID(line))), memory_order_relaxed);
     atomicAddExplicit(&probe->tasks, 1, memory_order_release);

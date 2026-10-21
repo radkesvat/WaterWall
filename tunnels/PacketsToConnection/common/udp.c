@@ -46,7 +46,7 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
     }
 
     const wid_t owner_wid = route_ctx->packet_wid;
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(owner_wid)))
+    if (UNLIKELY(! currentThreadOwnsWorker(owner_wid)))
     {
         LOGW("PacketsToConnection: udp recv callback arrived on worker %d for route owned by worker %d; dropping "
              "datagram",

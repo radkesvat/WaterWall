@@ -316,14 +316,7 @@ static void globalstateRollbackConstruction(wid_t constructed_workers, bool ares
         worker->thread_valid = false;
         if (! atomicLoadExplicit(&worker->resources_destroyed, memory_order_relaxed))
         {
-            if (worker->has_event_loop)
-            {
-                workerDestroyUnstartedResources(worker);
-            }
-            else
-            {
-                workerDestroyNonEventResources(worker);
-            }
+            workerDestroyUnstartedResources(worker);
         }
         contvarDestroy(&worker->control_condition);
         condmutexDestroy(&worker->control_condition_mutex);
@@ -391,7 +384,7 @@ void setGlobalState(struct ww_global_state_s *state)
  */
 void globalstateUpdateAllocationPadding(uint16_t padding)
 {
-    for (wid_t wi = 0; wi < getTotalWorkersCount(); wi++)
+    for (wid_t wi = 0; wi < getWorkersCount(); wi++)
     {
         bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), padding, padding, padding, padding);
     }
@@ -557,7 +550,7 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
 
         for (wid_t i = 0; i < getWorkersCount(); ++i)
         {
-            if (UNLIKELY(! workerInit(getWorker(i), i, true)))
+            if (UNLIKELY(! workerInit(getWorker(i), i)))
             {
                 constructed_workers = i + 1;
                 startupFailureRecord(1);
@@ -899,7 +892,7 @@ WW_EXPORT void destroyGlobalState(void)
     {
         // Every worker has been stopped and joined by now, so no thread can
         // still take a worker control mutex.
-        for (wid_t wi = 0; wi < getTotalWorkersCount(); wi++)
+        for (wid_t wi = 0; wi < getWorkersCount(); wi++)
         {
             contvarDestroy(&getWorker(wi)->control_condition);
             condmutexDestroy(&getWorker(wi)->control_condition_mutex);
@@ -934,7 +927,7 @@ WW_EXPORT void destroyGlobalState(void)
 #endif
 }
 
-_Noreturn void globalstateAbortNotEventWorker(const char *accessor)
+_Noreturn void globalstateAbortNotWorker(const char *accessor)
 {
     const wid_t wid = getWID();
 
@@ -950,5 +943,5 @@ void reuseBuffer(sbuf_t *b)
 {
     assert(b != NULL);
 
-    bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), b);
+    bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), b);
 }

@@ -93,7 +93,7 @@ static inline void lwipTestEngineBegin(unsigned workers)
     for (unsigned i = 0; i < workers; ++i)
     {
         lwip_test_loops[i].wid = i;
-        lwip_test_workers[i]   = (worker_t) {.wid = (wid_t) i, .has_event_loop = true, .loop = &lwip_test_loops[i]};
+        lwip_test_workers[i]   = (worker_t) {.wid = (wid_t) i, .loop = &lwip_test_loops[i]};
     }
     GSTATE.workers          = lwip_test_workers;
     GSTATE.workers_count    = workers;

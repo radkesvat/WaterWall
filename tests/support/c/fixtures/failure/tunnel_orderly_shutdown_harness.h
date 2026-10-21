@@ -254,7 +254,6 @@ static void tosWorkerEnvSetup(tos_worker_env_t *env, wid_t count, uint32_t large
         env->workers[wi].loop           = env->loops[wi];
         env->workers[wi].buffer_pool    = env->pools[wi];
         env->workers[wi].wios_pool      = env->wios_pools[wi];
-        env->workers[wi].has_event_loop = true;
         mutexInit(&env->workers[wi].control_mutex);
         workerMessagesInit(&env->workers[wi]);
         workerMessagesOpenAdmission(&env->workers[wi]);

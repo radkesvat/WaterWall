@@ -144,7 +144,7 @@ void ctpDrainTerminalLinesOnCurrentWorker(tunnel_t *t, wid_t wid)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
 
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     if (ts->terminal_lines == NULL || wid >= ts->netifs_count)
     {
         return;
@@ -556,8 +556,7 @@ bool ctpArmConnectDeadline(tunnel_t *t, line_t *l, ctp_lstate_t *ls)
 
     assert(ls->connect_timer == NULL);
 
-    ls->connect_timer =
-        wtimerAdd(getCurrentEventWorkerLoop(), ctpConnectDeadlineTimerCallback, ts->connect_timeout_ms, 1);
+    ls->connect_timer = wtimerAdd(getCurrentWorkerLoop(), ctpConnectDeadlineTimerCallback, ts->connect_timeout_ms, 1);
 
     if (UNLIKELY(ls->connect_timer == NULL))
     {
@@ -836,7 +835,7 @@ void ctpApplyWriteBackpressure(tunnel_t *t, line_t *l)
 void ctpDetachWorkerLines(tunnel_t *t, wid_t wid)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     if (ts->owned_lines == NULL)
         return;
     assert(wid < ts->netifs_count);

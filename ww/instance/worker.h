@@ -82,12 +82,8 @@ typedef struct worker_s
      */
     atomic_bool message_admission_open;
     bool        thread_valid; // True only after native thread handle creation succeeds.
-    // True when this worker owns an event loop. Pseudo-workers (currently the
-    // lwIP worker) do not, and must be identified by this flag rather than by a
-    // null `loop`, which a normal worker also clears while tearing down.
-    bool  has_event_loop;
-    tid_t tid; // Os Thread Id
-    wid_t wid; // Worker ID.
+    tid_t       tid;          // Os Thread Id
+    wid_t       wid;          // Worker ID.
 
 } worker_t;
 
@@ -95,11 +91,12 @@ extern thread_local wid_t tl_wid; // Thread-local worker ID. */
 
 /**
  * @brief Initializes a worker.
+ *
+ * Every worker owns an event loop and worker-local resources.
  * @param worker Pointer to the worker to initialize.
- * @param tid Worker ID.
- * @param eventloop  create eventloop for this thread
+ * @param wid Worker ID.
  */
-bool workerInit(worker_t *worker, wid_t wid, bool eventloop);
+bool workerInit(worker_t *worker, wid_t wid);
 
 /**
  * Transactionally construct WIO, context, and event-worker message/timer pool metadata.
@@ -133,29 +130,21 @@ void workerBindCurrentThread(worker_t *worker);
 void workerUnbindCurrentThread(void);
 
 /**
- * @brief Whether @p wid is a valid registered worker slot (including non-event slots).
+ * @brief Whether @p wid is a valid registered worker slot.
+ *
+ * Registration does not imply open admission or a still-attached event loop.
  */
 bool workerWIDIsRegistered(wid_t wid);
 
 /**
- * @brief Whether @p wid is a registered ordinary event worker.
+ * @brief Whether the current thread is bound to a registered worker.
  */
-bool workerWIDIsEventWorker(wid_t wid);
+bool currentThreadIsWorker(void);
 
 /**
- * @brief Whether the current thread owns a registered worker slot.
+ * @brief Whether the current thread is bound to the registered worker @p wid.
  */
-bool currentThreadHasRegisteredWID(void);
-
-/**
- * @brief Whether the current thread is a registered ordinary event worker.
- */
-bool currentThreadIsEventWorker(void);
-
-/**
- * @brief Whether the current thread is a registered event worker and owns @p wid.
- */
-bool currentThreadIsEventWorkerWID(wid_t wid);
+bool currentThreadOwnsWorker(wid_t wid);
 
 /**
  * @brief Diagnostic integer conversion for worker IDs, rendering kInvalidWID as -1.
@@ -265,20 +254,6 @@ worker_lifecycle_e workerGetLifecycle(const worker_t *worker);
 void workerPerformQuiesce(worker_t *worker, const ww_lifecycle_context_t *context);
 void workerPerformDrain(worker_t *worker, const ww_lifecycle_context_t *context);
 void workerPerformTeardown(worker_t *worker);
-
-/**
- * @brief Destroy the worker's own event-loop-local resources. Runs at most once.
- *
- * Ownership rules:
- *   - a worker thread calls this for itself after its loop returned;
- *   - worker 0 calls it for itself, on worker 0;
- *   - a non-event slot has no event loop or spawned thread; exclusive cleanup
- *     requires all external users of its resources to have stopped.
- * It must never be called for another worker that owns a running event loop.
- *
- * @param worker Pointer to the worker structure.
- */
-void workerDestroyNonEventResources(worker_t *worker);
 
 /** Destroy an event worker whose OS thread was never created. */
 void workerDestroyUnstartedResources(worker_t *worker);

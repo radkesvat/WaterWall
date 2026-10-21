@@ -80,7 +80,7 @@ static api_result_t errorBody(const node_api_call_context_t *context, const char
     char text[96];
     int  length = snprintf(text, sizeof(text), "{\"error\":{\"code\":\"%s\"}}", code);
     assert(length > 0 && (size_t) length < sizeof(text));
-    buffer_pool_t    *pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t    *pool = getCurrentWorkerBufferPool();
     buffer_pool_fit_t fit;
     if ((size_t) length > context->max_response_body_size || ! bufferpoolQueryBestFit(pool, (size_t) length, 0, &fit) ||
         context->working_memory_allowance < kAuthenticationServerApiScratchCharge ||
@@ -107,7 +107,7 @@ api_result_t authenticationserverApiRender(const node_api_call_context_t *contex
     if (writer.timeout)
         return (api_result_t) {.result_code = kApiResultError};
     buffer_pool_fit_t fit;
-    buffer_pool_t    *pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t    *pool = getCurrentWorkerBufferPool();
     if (writer.overflow || ! bufferpoolQueryBestFit(pool, writer.used, 0, &fit) ||
         retained_charge > context->working_memory_allowance ||
         fit.allocation_charge > context->working_memory_allowance - retained_charge)
@@ -122,7 +122,7 @@ api_result_t authenticationserverApiRenderMeasured(const node_api_call_context_t
                                                    size_t measured, authenticationserver_api_render_fn render,
                                                    const void *view)
 {
-    buffer_pool_t    *pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t    *pool = getCurrentWorkerBufferPool();
     buffer_pool_fit_t fit;
     if (! bufferpoolQueryBestFit(pool, measured, 0, &fit) || retained_charge > context->working_memory_allowance ||
         fit.allocation_charge > context->working_memory_allowance - retained_charge)

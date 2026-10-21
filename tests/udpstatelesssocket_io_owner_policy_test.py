@@ -53,7 +53,7 @@ def main() -> int:
     )[0]
     if request_match is not None and "wioClose" in request_match.group():
         violations.append("instance/stop.c: main-thread quiesce request closes worker-owned WIO")
-    for required in ("currentThreadIsEventWorkerWID(wid)", "wid == state->io_wid", "wioClose(state->socket.io)"):
+    for required in ("currentThreadOwnsWorker(wid)", "wid == state->io_wid", "wioClose(state->socket.io)"):
         if required not in worker_body:
             violations.append(f"instance/stop.c: worker quiesce lost owner check/action {required!r}")
 

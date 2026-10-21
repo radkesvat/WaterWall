@@ -258,7 +258,7 @@ void apiserverComplete(void *context, uint64_t session, uint64_t request, const 
 {
     tunnel_t           *t   = context;
     apiserver_tstate_t *ts  = tunnelGetState(t);
-    wid_t               wid = getCurrentEventWorkerWID();
+    wid_t               wid = getCurrentWorkerWID();
     apiserver_lstate_t *ls  = ts->sessions[wid];
     for (; ls; ls = ls->next)
         if (ls->session_token == session)

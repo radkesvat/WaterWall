@@ -12,7 +12,7 @@ void speedtestclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_conte
 void speedtestclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     speedtestclient_tstate_t *state         = tunnelGetState(t);
     const uint32_t            workers_count = tunnelGetChain(t)->workers_count;

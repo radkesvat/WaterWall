@@ -3,7 +3,7 @@
 void keepaliveclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     keepaliveclient_tstate_t       *ts    = tunnelGetState(t);
     keepaliveclient_worker_state_t *state = &ts->worker_states[wid];

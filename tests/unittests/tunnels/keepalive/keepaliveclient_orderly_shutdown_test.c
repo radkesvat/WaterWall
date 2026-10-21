@@ -69,7 +69,7 @@ static void ownerFinish(tunnel_t *t, line_t *l)
 static void nextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     next_state_t *state = tunnelGetState(t);
-    twfRequire(lineIsOnCurrentEventWorker(l), "idle callback sent a ping on another worker's line");
+    twfRequire(lineIsOnCurrentWorker(l), "idle callback sent a ping on another worker's line");
     twfRequire(twfLineRefCount(l) >= 3, "idle callback did not retain the current line across Payload");
     ++state->payload_count;
     ++state->worker_payload_counts[lineGetWID(l)];

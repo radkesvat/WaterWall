@@ -33,7 +33,7 @@ uint64_t softiplimiterNowMs(void)
 {
     // Cached, syscall-free clock for the current worker loop. Granularity is one
     // loop iteration, which is well within the ms-scale tolerance this node uses.
-    return wloopNowMS(getCurrentEventWorkerLoop());
+    return wloopNowMS(getCurrentWorkerLoop());
 }
 
 const char *softiplimiterIdentifierModeName(softiplimiter_identifier_mode_t mode)

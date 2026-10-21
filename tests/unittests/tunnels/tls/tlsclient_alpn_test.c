@@ -1024,7 +1024,7 @@ static WTHREAD_ROUTINE(tlsclientAuxiliaryThreadRoutine)
     aux_thread_args_t *args = userdata;
 
     require(getWID() == kInvalidWID, "auxiliary thread did not observe kInvalidWID");
-    require(! currentThreadHasRegisteredWID(), "auxiliary thread reported registered WID");
+    require(! currentThreadIsWorker(), "auxiliary thread reported registered WID");
 
     sbuf_t *hello = (sbuf_t *) (uintptr_t) 0x1;
     bool    ok    = tlsclientCreateClientHelloFromContext(
@@ -1195,7 +1195,7 @@ static void testTypedClientHelloGeneration(void)
      * slot in the getWorkersCount()-sized SSL context arrays. It must be
      * rejected outright rather than falling back to worker 0's context.
      */
-    const wid_t unregistered_wid         = getTotalWorkersCount();
+    const wid_t unregistered_wid         = getWorkersCount();
     line_t      unregistered_worker_line = {.wid = unregistered_wid};
     testWorkerBindWID(unregistered_wid);
     require(tlsclientTunnelGenerateClientHello(

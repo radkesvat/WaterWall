@@ -47,7 +47,7 @@ typedef struct api_result_s
  */
 static inline bool tunnelapiReleaseMessage(sbuf_t *message)
 {
-    if (UNLIKELY(! currentThreadIsEventWorker()))
+    if (UNLIKELY(! currentThreadIsWorker()))
     {
         /*
          * A caller without an event-worker context owns no worker-local
@@ -63,7 +63,7 @@ static inline bool tunnelapiReleaseMessage(sbuf_t *message)
 
     if (message != NULL)
     {
-        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), message);
+        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), message);
     }
     return true;
 }

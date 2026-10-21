@@ -49,7 +49,7 @@ bool nodeApiRegister(tunnel_t *instance, const node_api_operation_t *operations,
             (operation->response_encoding != kNodeApiEncodingUtf8 &&
              operation->response_encoding != kNodeApiEncodingBase64) ||
             (operation->execution != kNodeApiCallingWorker && operation->execution != kNodeApiSpecifiedWorker) ||
-            (operation->execution == kNodeApiSpecifiedWorker && ! workerWIDIsEventWorker(operation->wid)))
+            (operation->execution == kNodeApiSpecifiedWorker && ! workerWIDIsRegistered(operation->wid)))
             return false;
         for (size_t j = 0; j < i; ++j)
             if (strcmp(operations[j].name, operation->name) == 0)

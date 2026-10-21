@@ -254,7 +254,7 @@ authenticationclient_state_t authenticationclientStateLocked(const authenticatio
 void authenticationclientStatusSnapshot(tunnel_t *t, bool include_accounting, size_t working_allowance,
                                         uint64_t deadline_ms, authenticationclient_status_t *out)
 {
-    assert(t != NULL && out != NULL && currentThreadIsEventWorkerWID(0));
+    assert(t != NULL && out != NULL && currentThreadOwnsWorker(0));
     authenticationclient_tstate_t *ts = tunnelGetState(t);
     *out                              = (authenticationclient_status_t) {0};
     const uint64_t  now               = authenticationclientLocalTimeMS();

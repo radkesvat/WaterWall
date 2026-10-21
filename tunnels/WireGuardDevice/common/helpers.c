@@ -99,7 +99,7 @@ static void wireguarddeviceTransportLineInit(tunnel_t *t, line_t *line)
 line_t *wireguarddeviceEnsureTransportLine(wgd_tstate_t *state, wid_t wid)
 {
     assert(state != NULL);
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     tunnel_t       *tunnel = state->tunnel;
     tunnel_chain_t *chain  = tunnelGetChain(tunnel);
@@ -133,7 +133,7 @@ line_t *wireguarddeviceEnsureTransportLine(wgd_tstate_t *state, wid_t wid)
 
 void wireguarddeviceCloseTransportLine(tunnel_t *t, wid_t wid)
 {
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     wgd_tstate_t *state = tunnelGetState(t);
 
@@ -297,11 +297,11 @@ static void wireguarddeviceCleanupInnerPacket(void *arg1, void *arg2, void *arg3
     line_t *line = arg2;
     sbuf_t *buf  = arg3;
 
-    if (lineIsOnCurrentEventWorker(line))
+    if (lineIsOnCurrentWorker(line))
     {
         /* A cancellation can race packet-line shutdown.  The reference keeps
          * line memory valid, while this worker still owns the pool. */
-        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), buf);
+        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), buf);
     }
     else
     {
@@ -315,7 +315,7 @@ void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t
 {
     wid_t target_wid = 0;
 
-    assert(lineIsOnCurrentEventWorker(line));
+    assert(lineIsOnCurrentWorker(line));
 
     if (! wireguarddeviceInnerPacketTargetWID(sbufGetRawPtr(buf), sbufGetLength(buf), lineGetWID(line), &target_wid))
     {
@@ -400,7 +400,7 @@ err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_pee
     bool          sent;
 
     wireguarddeviceStateUnlock(ts);
-    line = wireguarddeviceEnsureTransportLine(ts, getCurrentEventWorkerWID());
+    line = wireguarddeviceEnsureTransportLine(ts, getCurrentWorkerWID());
     if (line == NULL)
     {
         reuseBuffer(q);
@@ -422,7 +422,7 @@ err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_ad
     bool          sent;
 
     wireguarddeviceStateUnlock(ts);
-    line = wireguarddeviceEnsureTransportLine(ts, getCurrentEventWorkerWID());
+    line = wireguarddeviceEnsureTransportLine(ts, getCurrentWorkerWID());
     if (line == NULL)
     {
         reuseBuffer(q);
@@ -583,7 +583,7 @@ err_t wireguardifAddAllowedIp(wireguard_device_t *device, uint8_t peer_index, co
 void wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer)
 {
     // Send a NULL packet as a keep-alive
-    sbuf_t *empty_buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
+    sbuf_t *empty_buf = bufferpoolGetSmallBuffer(getCurrentWorkerBufferPool());
     wireguardifOutputToPeer(device, empty_buf, NULL, peer);
 }
 

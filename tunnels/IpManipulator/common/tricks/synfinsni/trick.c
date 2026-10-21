@@ -483,7 +483,7 @@ static void synfinsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3,
     line_t                        *l       = arg2;
     synfinsnitrick_hold_timeout_t *context = arg3;
 
-    if (lineIsOnCurrentEventWorker(l))
+    if (lineIsOnCurrentWorker(l))
     {
         synfinsnitrickReleaseTimedOutHold(t, &context->key, context->generation);
     }
@@ -496,7 +496,7 @@ static bool synfinsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipma
 {
     /* Configuration rejects zero; keep direct/internal state fail-open too. */
     delay_ms                     = max(delay_ms, 1U);
-    const bool recover_on_caller = lineIsOnCurrentEventWorker(l);
+    const bool recover_on_caller = lineIsOnCurrentWorker(l);
 
     synfinsnitrick_hold_timeout_t *context = memoryAllocate(sizeof(*context));
     *context = (synfinsnitrick_hold_timeout_t) {
@@ -1331,7 +1331,7 @@ bool synfinsnitrickInitializeState(tunnel_t *t)
     return ipmanipulatorFlowTableInit(&state->synfin_table,
                                       "synfin-sni",
                                       state->trick_stateful_flow_limit,
-                                      (uint32_t) getTotalWorkersCount(),
+                                      (uint32_t) getWorkersCount(),
                                       sizeof(ipmanipulator_synfin_flow_t),
                                       synfinsnitrickDestroyFlowRecord,
                                       NULL);
@@ -1346,7 +1346,7 @@ void synfinsnitrickDestroyState(tunnel_t *t)
 
 bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     ipmanipulator_tstate_t          *state  = tunnelGetState(t);
     synfinsnitrick_tcp_packet_info_t info   = {0};

@@ -84,7 +84,6 @@ static void envSetup(test_env_t *env)
         env->workers[wid].loop           = env->loops[wid];
         env->workers[wid].buffer_pool    = env->buffer_pools[wid];
         env->workers[wid].wios_pool      = env->wios_pools[wid];
-        env->workers[wid].has_event_loop = true;
         mutexInit(&env->workers[wid].control_mutex);
         workerMessagesInit(&env->workers[wid]);
         workerMessagesOpenAdmission(&env->workers[wid]);
@@ -325,7 +324,7 @@ static void observePrestartRemainder(void)
 static void receiveNormal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
-    require(lineIsOnCurrentEventWorker(l), "normal packet was emitted on a non-owner worker");
+    require(lineIsOnCurrentWorker(l), "normal packet was emitted on a non-owner worker");
     recordReceivedPacket(normal_packets, &normal_packets_count, l, buf);
     lineReuseBuffer(l, buf);
 }
@@ -333,7 +332,7 @@ static void receiveNormal(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void receiveReal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
-    require(lineIsOnCurrentEventWorker(l), "real packet was emitted on a non-owner worker");
+    require(lineIsOnCurrentWorker(l), "real packet was emitted on a non-owner worker");
     recordReceivedPacket(real_packets, &real_packets_count, l, buf);
     observePrestartRemainder();
     lineReuseBuffer(l, buf);

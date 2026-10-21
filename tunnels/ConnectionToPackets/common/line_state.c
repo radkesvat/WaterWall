@@ -19,7 +19,7 @@ void ctpLinestateInitialize(ctp_lstate_t *ls, tunnel_t *t, line_t *l, ctp_line_k
         ls->pending_queue = bufferqueueCreate(kCtpPendingQueueCapacity);
     }
 
-    assert(currentThreadIsEventWorkerWID(lineGetWID(l)));
+    assert(currentThreadOwnsWorker(lineGetWID(l)));
     ctp_tstate_t *ts = tunnelGetState(t);
     assert(ts->owned_lines != NULL && lineGetWID(l) < ts->netifs_count);
     ls->owned_next = ts->owned_lines[lineGetWID(l)];
@@ -33,7 +33,7 @@ void ctpLinestateDestroy(ctp_lstate_t *ls)
     line_t *l   = ls->line;
     wid_t   wid = lineGetWID(l);
 
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     ctp_tstate_t *ts = tunnelGetState(ls->tunnel);
     if (ls->owned_prev != NULL)
         ls->owned_prev->owned_next = ls->owned_next;

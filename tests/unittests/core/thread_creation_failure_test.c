@@ -44,7 +44,7 @@ static WTHREAD_ROUTINE(threadCreationSuccessRoutine)
 {
     atomic_bool *ran = userdata;
     require(getWID() == kInvalidWID, "plain threadCreate thread did not observe kInvalidWID");
-    require(! currentThreadHasRegisteredWID(), "plain threadCreate thread reported registered WID");
+    require(! currentThreadIsWorker(), "plain threadCreate thread reported registered WID");
     atomic_store(ran, true);
     return 0;
 }

@@ -58,7 +58,7 @@ static void my_pbuf_free_custom(struct pbuf *p)
      */
     if (custombuf->sbuf != NULL)
     {
-        if (currentThreadIsEventWorkerWID(custombuf->origin_wid))
+        if (currentThreadOwnsWorker(custombuf->origin_wid))
         {
             bufferpoolReuseBuffer(custombuf->origin_pool, custombuf->sbuf);
         }
@@ -72,7 +72,7 @@ static void my_pbuf_free_custom(struct pbuf *p)
 
 my_custom_pbuf_t *ptcReusableReceiveBuffer(struct pbuf *p, buffer_pool_t *pool, wid_t owner_wid)
 {
-    assert(currentThreadIsEventWorkerWID(owner_wid));
+    assert(currentThreadOwnsWorker(owner_wid));
     if (p->next != NULL || p->ref != 1 || p->len == 0 || p->len != p->tot_len || (p->flags & PBUF_FLAG_IS_CUSTOM) == 0)
         return NULL;
     struct pbuf_custom *custom = (struct pbuf_custom *) p;
@@ -191,7 +191,7 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
 {
     // Runs on the packet line's event worker; record that identity with the
     // pbuf so a later deferred free knows whose pool the sbuf came from.
-    const wid_t    origin_wid  = getCurrentEventWorkerWID();
+    const wid_t    origin_wid  = getCurrentWorkerWID();
     buffer_pool_t *origin_pool = getWorkerBufferPool(origin_wid);
 
     /*
@@ -356,7 +356,7 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(currentThreadIsEventWorkerWID(lineGetWID(l)));
+    assert(currentThreadOwnsWorker(lineGetWID(l)));
     assert(tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l));
     ptc_tstate_t *state                = tunnelGetState(t);
     const bool    recalculate_checksum = packettunnelTakeChecksumRequest(l);

@@ -47,7 +47,7 @@ static worker_message_submit_result_e fixtureQueue(wid_t wid, WorkerMessageCallb
                                                    WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
                                                    void *arg3)
 {
-    const bool foreign = ! currentThreadHasRegisteredWID();
+    const bool foreign = ! currentThreadIsWorker();
     EnterCriticalSection(&capture_lock);
     if (reject_next)
     {
@@ -85,7 +85,7 @@ static PTP_WAIT WINAPI fixtureCreateWait(PTP_WAIT_CALLBACK callback, PVOID conte
 
 static void fixtureDistribute(device_reader_session_t *session, sbuf_t **buffers, unsigned int count)
 {
-    require(currentThreadIsEventWorkerWID(0), "packet distribution escaped reader owner");
+    require(currentThreadOwnsWorker(0), "packet distribution escaped reader owner");
     for (unsigned int i = 0; i < count; ++i)
     {
         require(sbufGetLength(buffers[i]) == fixture_packet_size, "native packet length changed");
@@ -122,7 +122,7 @@ static void WINAPI fixtureSetWait(PTP_WAIT wait, HANDLE event, PFILETIME timeout
 
 static DWORD WINAPI fixtureStopOnRearm(LPVOID context)
 {
-    require(! currentThreadHasRegisteredWID(), "stop fixture borrowed an event-worker identity");
+    require(! currentThreadIsWorker(), "stop fixture borrowed an event-worker identity");
     require(WaitForSingleObject(arm_reached, 5000) == WAIT_OBJECT_0, "reader did not reach rearm boundary");
     require(tundeviceRequestStop(context), "foreign lifecycle owner could not close admission");
     require(SetEvent(stop_done), "could not publish closed admission");
@@ -143,7 +143,7 @@ static HANDLE WINAPI fixtureReadEvent(WINTUN_SESSION_HANDLE session)
 
 static BYTE *WINAPI fixtureReceive(WINTUN_SESSION_HANDLE session, DWORD *size)
 {
-    require(session == (WINTUN_SESSION_HANDLE) (uintptr_t) 123 && currentThreadIsEventWorkerWID(0),
+    require(session == (WINTUN_SESSION_HANDLE) (uintptr_t) 123 && currentThreadOwnsWorker(0),
             "receive did not execute on selected worker");
     require(! packet_outstanding, "received again before native packet release");
     if (remaining == 0)
@@ -161,7 +161,7 @@ static BYTE *WINAPI fixtureReceive(WINTUN_SESSION_HANDLE session, DWORD *size)
 
 static VOID WINAPI fixtureRelease(WINTUN_SESSION_HANDLE session, const BYTE *packet)
 {
-    require(session == (WINTUN_SESSION_HANDLE) (uintptr_t) 123 && currentThreadIsEventWorkerWID(0),
+    require(session == (WINTUN_SESSION_HANDLE) (uintptr_t) 123 && currentThreadOwnsWorker(0),
             "native packet release escaped owner worker");
     require(packet_outstanding && packet == native_packet, "native packet released twice");
     packet_outstanding = false;
@@ -241,7 +241,7 @@ static tun_device_t *newDevice(void)
 {
     tun_device_t *device       = memoryAllocate(sizeof(*device));
     *device                    = (tun_device_t) {.name = stringDuplicate("fixture"), .mtu = 1500};
-    device->reader_buffer_pool = devicePoolCreate(getCurrentEventWorkerBufferPool(), device->mtu);
+    device->reader_buffer_pool = devicePoolCreate(getCurrentWorkerBufferPool(), device->mtu);
     tunWriterInit(&device->writer);
     atomic_init(&device->lifecycle, kTunLifecycleDown);
     device->reader_session = deviceReaderSessionCreate(

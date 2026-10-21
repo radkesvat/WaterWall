@@ -25,7 +25,7 @@ bool wwLwipEngineOwnerIsCurrent(uint8_t owner, const struct wloop_s *loop)
 {
     /* Teardown has already detached worker->loop. The engine retains its saved
      * loop until this owner releases it, before wloopDestroy(). */
-    return currentThreadIsEventWorkerWID(owner) && loop != NULL && wloopGetWID((wloop_t *) loop) == owner;
+    return currentThreadOwnsWorker(owner) && loop != NULL && wloopGetWID((wloop_t *) loop) == owner;
 }
 
 void wwLwipRuntimeInitialize(uint8_t workers)
@@ -43,7 +43,7 @@ static void onEngineTimer(wtimer_t *timer)
 {
     engine_slot_t *slot = weventGetUserdata(timer);
     assert(slot != NULL && slot->timer == timer);
-    assert(getLoopEventWorkerWID(weventGetLoop(timer)) == slot->owner);
+    assert(getLoopWorkerWID(weventGetLoop(timer)) == slot->owner);
     slot->timer = NULL;
     if (! slot->quiesced)
         wwLwipEngineCheckTimeouts(slot->engine);
@@ -65,7 +65,7 @@ static void detachTimer(engine_slot_t *slot)
 static void scheduleEngine(ww_lwip_engine_t *engine, void *argument)
 {
     engine_slot_t *slot = argument;
-    assert(currentThreadIsEventWorkerWID(slot->owner) && slot->engine == engine);
+    assert(currentThreadOwnsWorker(slot->owner) && slot->engine == engine);
     if (slot->quiesced || ! wloopNormalDispatchAllowed(slot->loop))
         return;
     const uint32_t delay        = wwLwipEngineNextTimeout(engine);
@@ -89,7 +89,7 @@ static void scheduleEngine(ww_lwip_engine_t *engine, void *argument)
 
 ww_lwip_engine_t *wwLwipRuntimeGet(uint8_t owner)
 {
-    if (! currentThreadIsEventWorkerWID(owner))
+    if (! currentThreadOwnsWorker(owner))
         return NULL;
     if (slots == NULL || owner >= slot_count)
         return NULL;
@@ -122,7 +122,7 @@ ww_lwip_engine_t *wwLwipRuntimeGet(uint8_t owner)
 
 void wwLwipRuntimeQuiesceWorker(uint8_t owner)
 {
-    assert(currentThreadIsEventWorkerWID(owner));
+    assert(currentThreadOwnsWorker(owner));
     if (slots == NULL)
         return;
     assert(owner < slot_count);
@@ -135,7 +135,7 @@ void wwLwipRuntimeQuiesceWorker(uint8_t owner)
 
 void wwLwipRuntimeDestroyWorker(uint8_t owner)
 {
-    assert(currentThreadIsEventWorkerWID(owner));
+    assert(currentThreadOwnsWorker(owner));
     if (slots == NULL)
         return;
     assert(owner < slot_count);

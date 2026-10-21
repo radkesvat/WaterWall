@@ -196,7 +196,7 @@ static void firstsnitrickSendOrderedNow(tunnel_t *t, ipmanipulator_ordered_outpu
             continue;
         }
 
-        if (! lineIsOnCurrentEventWorker(output->line))
+        if (! lineIsOnCurrentWorker(output->line))
         {
             ipmanipulatorForwardCapturedPacketNormal(t, output->line, output->buf);
         }
@@ -832,7 +832,7 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
 
 bool firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     firstsnitrick_tcp_packet_info_t info   = {0};
     uint64_t                        now_ms = getTickMS();
@@ -895,7 +895,7 @@ bool firstsnitrickInitializeState(tunnel_t *t)
     return ipmanipulatorFlowTableInit(&state->first_sni_table,
                                       "first-sni",
                                       state->trick_stateful_flow_limit,
-                                      (uint32_t) getTotalWorkersCount(),
+                                      (uint32_t) getWorkersCount(),
                                       sizeof(ipmanipulator_firstsni_flow_t),
                                       firstsnitrickDestroyFlowRecord,
                                       NULL);

@@ -340,7 +340,7 @@ static void smugglefintrickDetachQueuedPacketsLocked(ipmanipulator_tstate_t *sta
                                                      uint32_t                                   *queued_packets_count)
 {
     ipmanipulator_smuggle_fin_flow_t *flow  = smugglefintrickEntryRecord(entry);
-    wid_t                             owner = flow->line != NULL ? lineGetWID(flow->line) : getCurrentEventWorkerWID();
+    wid_t                             owner    = flow->line != NULL ? lineGetWID(flow->line) : getCurrentWorkerWID();
     ipmanipulator_flow_key_t          flow_key = smugglefintrickMakeFlowKey(flow);
 
     *queued_packets       = flow->queued_packets;
@@ -454,7 +454,7 @@ static void smugglefintrickReleaseQueuedPacketsNow(tunnel_t *t, line_t *l,
     uint32_t                                   queued_packets_count = 0;
     uint64_t                                   now_ms               = getTickMS();
 
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     ipmanipulator_flow_key_t key =
         ipmanipulatorFlowKeyMake(context->src_addr, context->src_port, context->dst_addr, context->dst_port);
@@ -521,7 +521,7 @@ static void smugglefintrickCleanupDelayedRelease(void *arg1, void *arg2, void *a
     line_t                            *l       = arg2;
     smugglefintrick_release_context_t *context = arg3;
 
-    if (lineIsOnCurrentEventWorker(l) && lineIsAlive(l))
+    if (lineIsOnCurrentWorker(l) && lineIsAlive(l))
     {
         context->force = true;
         smugglefintrickReleaseQueuedPacketsNow(t, l, context);
@@ -533,7 +533,7 @@ static void smugglefintrickCleanupDelayedRelease(void *arg1, void *arg2, void *a
 static bool smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_t delay_ms,
                                                  smugglefintrick_release_context_t *context)
 {
-    if (delay_ms == 0 && lineIsOnCurrentEventWorker(l))
+    if (delay_ms == 0 && lineIsOnCurrentWorker(l))
     {
         smugglefintrickReleaseQueuedPacketsNow(t, l, context);
         memoryFree(context);
@@ -542,7 +542,7 @@ static bool smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_
 
     smugglefintrick_release_context_t recovery_context = *context;
     recovery_context.force                             = true;
-    const bool recover_on_caller                       = lineIsOnCurrentEventWorker(l) && lineIsAlive(l);
+    const bool recover_on_caller                       = lineIsOnCurrentWorker(l) && lineIsAlive(l);
 
     lineRef(l);
 #ifdef IPMANIPULATOR_SMUGGLEFIN_TEST_HOOKS
@@ -637,7 +637,7 @@ static void smugglefintrickRunHandoffMessage(worker_t *worker, void *arg1, void 
     uint32_t                                   queued_packets_count = 0;
 
     assert(worker != NULL);
-    assert(currentThreadIsEventWorkerWID(worker->wid));
+    assert(currentThreadOwnsWorker(worker->wid));
     assert(lineGetWID(owner_line) == worker->wid);
     discard worker;
 
@@ -717,7 +717,7 @@ static void smugglefintrickRunHandoffMessage(worker_t *worker, void *arg1, void 
 
 bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     ipmanipulator_tstate_t                    *state                = tunnelGetState(t);
     smugglefintrick_tcp_packet_info_t          info                 = {0};
@@ -772,7 +772,7 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
              * Cancel its pause/queue ownership before reusing the sole canonical
              * entry for the new transcript.
              */
-            if (flow->paused && flow->line != NULL && lineIsOnCurrentEventWorker(flow->line))
+            if (flow->paused && flow->line != NULL && lineIsOnCurrentWorker(flow->line))
             {
                 ipmanipulator_flow_key_t old_key = smugglefintrickMakeFlowKey(flow);
 
@@ -920,7 +920,7 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     ipmanipulator_tstate_t                    *state                = tunnelGetState(t);
     smugglefintrick_tcp_packet_info_t          info                 = {0};
@@ -1094,14 +1094,14 @@ bool smugglefintrickInitializeState(tunnel_t *t)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    state->smuggle_fin_worker_pauses_count = (uint32_t) getTotalWorkersCount();
+    state->smuggle_fin_worker_pauses_count = (uint32_t) getWorkersCount();
     state->smuggle_fin_worker_pauses =
         memoryAllocateZero(sizeof(*state->smuggle_fin_worker_pauses) * state->smuggle_fin_worker_pauses_count);
 
     return ipmanipulatorFlowTableInit(&state->smuggle_fin_table,
                                       "smuggle-fin",
                                       state->trick_stateful_flow_limit,
-                                      (uint32_t) getTotalWorkersCount(),
+                                      (uint32_t) getWorkersCount(),
                                       sizeof(ipmanipulator_smuggle_fin_flow_t),
                                       smugglefintrickDestroyFlowRecord,
                                       NULL);

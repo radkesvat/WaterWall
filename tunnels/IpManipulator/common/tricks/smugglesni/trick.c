@@ -213,7 +213,7 @@ static void smugglesnitrickSendFakeBatchNow(tunnel_t *t, smugglesnitrick_fake_ba
 
         if (entry->line != NULL && entry->buf != NULL)
         {
-            if (! lineIsOnCurrentEventWorker(entry->line))
+            if (! lineIsOnCurrentWorker(entry->line))
             {
                 ipmanipulatorForwardCapturedPacketNormal(t, entry->line, entry->buf);
             }
@@ -348,7 +348,7 @@ static void smugglesnitrickCleanupDelayedBuffer(line_t *l, sbuf_t *buf)
     }
 
     // Cross-worker cleanup destroys instead of touching the owner's pool.
-    if (lineIsOnCurrentEventWorker(l))
+    if (lineIsOnCurrentWorker(l))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -440,7 +440,7 @@ static bool smugglesnitrickBuildFakeBatch(tunnel_t *t, line_t *l, ipmanipulator_
         {
             goto fail;
         }
-        assert(lineIsOnCurrentEventWorker(orig_entry->line));
+        assert(lineIsOnCurrentWorker(orig_entry->line));
 
         if (! smugglesnitrickParseTcpPacketInfo(
                 (const uint8_t *) sbufGetRawPtr(orig_entry->buf), sbufGetLength(orig_entry->buf), &orig_info))
@@ -537,7 +537,7 @@ bool smugglesnitrickInitializeState(tunnel_t *t)
     return ipmanipulatorFlowTableInit(&state->smuggle_table,
                                       "smuggle-sni",
                                       state->trick_stateful_flow_limit,
-                                      (uint32_t) getTotalWorkersCount(),
+                                      (uint32_t) getWorkersCount(),
                                       sizeof(ipmanipulator_smuggle_flow_t),
                                       smugglesnitrickDestroyFlowRecord,
                                       NULL);
@@ -567,7 +567,7 @@ void smugglesnitrickSetFlowPassthrough(tunnel_t *t, uint32_t src_addr, uint32_t 
 
 void smugglesnitrickLogDownStreamServerHello(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     discard l;
 
     smugglesnitrick_tcp_packet_info_t info   = {0};
@@ -626,7 +626,7 @@ void smugglesnitrickLogDownStreamServerHello(tunnel_t *t, line_t *l, sbuf_t *buf
 
 bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     ipmanipulator_tstate_t           *state                    = tunnelGetState(t);
     smugglesnitrick_tcp_packet_info_t info                     = {0};

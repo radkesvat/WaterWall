@@ -162,7 +162,7 @@ static raw_writer_batch_result_t writeBatch(void *context, worker_t *worker, raw
                                             size_t count)
 {
     output_t *output = context;
-    require(currentThreadIsEventWorkerWID(worker->wid), "native write escaped owner");
+    require(currentThreadOwnsWorker(worker->wid), "native write escaped owner");
     require(count > 0 && count <= kRawWriterBatchPackets, "native batch exceeded 512 packets");
     pthread_mutex_lock(&output_mutex);
     require(output->calls < ARRAY_SIZE(output->first), "native observation capacity");
@@ -270,7 +270,7 @@ static void testBlockedBudgetAndRetry(void)
 
 static void *notifyForeign(void *arg)
 {
-    require(! currentThreadIsEventWorker(), "completion fixture has worker identity");
+    require(! currentThreadIsWorker(), "completion fixture has worker identity");
     require(rawWriterNotify(arg), "foreign native completion was refused");
     return NULL;
 }
@@ -278,7 +278,7 @@ static void *notifyForeign(void *arg)
 static void *cancelForeign(void *arg)
 {
     captured_t *token = arg;
-    require(! currentThreadIsEventWorker(), "cancellation fixture has worker identity");
+    require(! currentThreadIsWorker(), "cancellation fixture has worker identity");
     token->cleanup(token->arg1, token->arg2, token->arg3, kWorkerMessageCancelTeardown);
     return NULL;
 }

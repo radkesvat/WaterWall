@@ -164,8 +164,8 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
         return udpstatelesssocketTunnelCreateFail(t);
     }
 
-    state->send_request_pools = memoryAllocateZero(sizeof(*state->send_request_pools) * getTotalWorkersCount());
-    for (wid_t wid = 0; wid < getTotalWorkersCount(); ++wid)
+    state->send_request_pools = memoryAllocateZero(sizeof(*state->send_request_pools) * getWorkersCount());
+    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
     {
         state->send_request_pools[wid] = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(
             state->send_request_master_pool, sizeof(udpstatelesssocket_send_request_t), (8) + RAM_PROFILE);

@@ -7,7 +7,7 @@ local_idle_table_t *udpconnectorGetWorkerIdleTable(udpconnector_tstate_t *ts)
     assert(ts != NULL);
     assert(ts->worker_pools != NULL);
 
-    const wid_t wid = getCurrentEventWorkerWID();
+    const wid_t wid = getCurrentWorkerWID();
     assert(wid < getWorkersCount());
 
     udpconnector_worker_pool_t *pool = &ts->worker_pools[wid];
@@ -22,7 +22,7 @@ local_idle_table_t *udpconnectorGetWorkerIdleTable(udpconnector_tstate_t *ts)
 local_idle_table_t *udpconnectorGetLineIdleTable(udpconnector_tstate_t *ts, line_t *l)
 {
     assert(l != NULL);
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     discard l;
     return udpconnectorGetWorkerIdleTable(ts);
 }

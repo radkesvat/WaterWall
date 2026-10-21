@@ -79,7 +79,7 @@ void __wrap_workerMessagesDestroyDetached(worker_message_queue_t *queue)
     /* Construction rollback also settles never-started workers on main. */
     if (! GSTATE.flag_lwip_initialized)
         return;
-    const wid_t owner = getCurrentEventWorkerWID();
+    const wid_t owner = getCurrentWorkerWID();
     CHECK(getWorker(owner)->loop == NULL);
     teardown_detached[owner] = true;
 }
@@ -101,7 +101,7 @@ static err_t output(struct netif *netif, struct pbuf *p, const ip4_addr_t *desti
 {
     (void) destination;
     probe_t *probe = netif->state;
-    CHECK(currentThreadIsEventWorkerWID(probe->owner));
+    CHECK(currentThreadOwnsWorker(probe->owner));
     uint8_t bytes[40];
     if (pbuf_copy_partial(p, bytes, sizeof(bytes), 0) == sizeof(bytes) && bytes[9] == 6 && (bytes[33] & TCP_SYN) != 0 &&
         get16(bytes + 20) == probe->retransmit_port)
@@ -165,7 +165,7 @@ static struct tcp_pcb *connectPcb(probe_t *probe, bool established)
 static err_t onPoll(void *argument, struct tcp_pcb *pcb)
 {
     probe_t *probe = argument;
-    CHECK(currentThreadIsEventWorkerWID(probe->owner));
+    CHECK(currentThreadOwnsWorker(probe->owner));
     ++probe->polled;
     if (! probe->write_refused)
     {
@@ -198,7 +198,7 @@ static err_t onPoll(void *argument, struct tcp_pcb *pcb)
 static void timeout(void *argument)
 {
     probe_t *probe = argument;
-    CHECK(wwLwipEngineCurrent() == probe->engine && currentThreadIsEventWorkerWID(probe->owner));
+    CHECK(wwLwipEngineCurrent() == probe->engine && currentThreadOwnsWorker(probe->owner));
     ++probe->fired;
 }
 static void dueTimeout(void *argument)

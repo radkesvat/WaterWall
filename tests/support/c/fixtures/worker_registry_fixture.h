@@ -18,17 +18,17 @@
  *
  * Unit tests that stub GSTATE instead of calling createGlobalState() set
  * GSTATE.workers_count and GSTATE.shortcut_* by hand. The worker identity
- * predicates read the worker table itself (worker_t::has_event_loop), so a stub
- * without a table is correctly reported as "not an event worker" and every
- * checked accessor - getCurrentEventWorkerBufferPool(), reuseBuffer(),
- * lineIsOnCurrentEventWorker(), the tunnel-API helpers - refuses to run.
+ * predicates require an initialized runtime and a worker table, so a stub
+ * without a table is correctly reported as "not a worker" and every
+ * checked accessor - getCurrentWorkerBufferPool(), reuseBuffer(),
+ * lineIsOnCurrentWorker(), the tunnel-API helpers - refuses to run.
  *
  * This fixture publishes a table that matches the stubbed counts: slots
- * [0, getWorkersCount()) are ordinary event workers, matching production.
+ * [0, getWorkersCount()) are registered workers, matching production.
  *
  * Usage:
  *
- *     GSTATE.workers_count = 1;                  // 1 ordinary event worker
+ *     GSTATE.workers_count = 1;                  // 1 worker
  *     testWorkerRegistryInstall(&env->registry); // publish the table
  *     testWorkerBindWID(0);
  *     ...
@@ -55,7 +55,7 @@ typedef struct test_worker_registry_s
  * @brief Publishes a fake worker table matching the current GSTATE.workers_count.
  *
  * Call after GSTATE.workers_count has been stubbed. Slots below
- * getWorkersCount() advertise an event loop.
+ * getWorkersCount() are registered workers; the caller supplies needed resources.
  */
 static inline void testWorkerRegistryInstall(test_worker_registry_t *registry)
 {
@@ -66,11 +66,11 @@ static inline void testWorkerRegistryInstall(test_worker_registry_t *registry)
     registry->saved_flag_initialized = GSTATE.flag_initialized;
     registry->installed              = true;
 
-    const wid_t total = getTotalWorkersCount();
+    const wid_t total = getWorkersCount();
 
     for (wid_t wid = 0; wid < total; ++wid)
     {
-        registry->slots[wid] = (worker_t) {.wid = wid, .has_event_loop = true};
+        registry->slots[wid] = (worker_t) {.wid = wid};
         atomicStoreRelaxed(&registry->slots[wid].message_admission_open, false);
     }
 

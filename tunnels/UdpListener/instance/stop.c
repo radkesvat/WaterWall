@@ -12,7 +12,7 @@ void udplistenerTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t
 void udplistenerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    if (! currentThreadIsEventWorkerWID(wid))
+    if (! currentThreadOwnsWorker(wid))
     {
         LOGF("UdpListener: worker quiesce arrived outside worker %u", (unsigned int) wid);
         abortProgramNow(1);
@@ -42,7 +42,7 @@ void udplistenerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle
 void udplistenerTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    if (! currentThreadIsEventWorkerWID(wid))
+    if (! currentThreadOwnsWorker(wid))
     {
         LOGF("UdpListener: worker stop arrived outside worker %u", (unsigned int) wid);
         abortProgramNow(1);

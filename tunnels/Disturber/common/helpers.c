@@ -103,14 +103,14 @@ void disturberPacketLineFinish(tunnel_t *t, line_t *l, disturber_payload_directi
 {
     tunnel_chain_t *chain = tunnelGetChain(t);
     if (UNLIKELY(chain == NULL || ! chain->finalized || ! chain->contains_packet_node || l == NULL ||
-                 ! disturberIsWorkerPacketLine(t, l) || ! lineIsOnCurrentEventWorker(l)))
+                 ! disturberIsWorkerPacketLine(t, l) || ! lineIsOnCurrentWorker(l)))
     {
         LOGF("Disturber: packet Finish ran outside the exact owner packet line");
         abortProgramNow(1);
     }
 
     assert(chain != NULL && chain->contains_packet_node);
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     assert(disturberIsWorkerPacketLine(t, l));
 
     disturber_lstate_t *ls = lineGetState(l, t);

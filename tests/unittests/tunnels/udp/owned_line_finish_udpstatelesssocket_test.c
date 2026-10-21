@@ -219,13 +219,13 @@ static buffer_pool_t *owner_send_pool;
 static unsigned       owner_send_calls, owner_close_calls;
 static void           observeOwnerSend(buffer_pool_t *pool)
 {
-    twfRequire(currentThreadIsEventWorkerWID(0), "adapter sent on a foreign worker");
+    twfRequire(currentThreadOwnsWorker(0), "adapter sent on a foreign worker");
     twfRequire(pool == owner_send_pool, "adapter borrowed a pool other than its socket owner's");
     ++owner_send_calls;
 }
 static void observeOwnerClose(wio_t *io)
 {
-    twfRequire(currentThreadIsEventWorkerWID(0), "adapter close callback ran on a foreign worker");
+    twfRequire(currentThreadOwnsWorker(0), "adapter close callback ran on a foreign worker");
     twfRequire(wioIsClosed(io), "close callback preceded closed publication");
     ++owner_close_calls;
     udpstatelesssocketOnSocketClose(io);

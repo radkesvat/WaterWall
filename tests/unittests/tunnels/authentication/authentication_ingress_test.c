@@ -270,7 +270,6 @@ static void setup(uint32_t medium)
     wio_master            = masterpoolCreateWithCapacity(16);
     wios[0]               = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 8);
     worker.wid            = 0;
-    worker.has_event_loop = true;
     worker.buffer_pool    = pools[0];
     worker.wios_pool      = wios[0];
     loops[0]              = wloopCreate(WLOOP_FLAG_AUTO_FREE, pools[0], 0);

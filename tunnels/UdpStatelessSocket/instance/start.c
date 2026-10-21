@@ -8,5 +8,5 @@ void udpstatelesssocketTunnelOnStart(tunnel_t *t)
     discard                      state;
     assert(state->socket.io != NULL);
     assert(state->io_wid == 0);
-    assert(currentThreadIsEventWorkerWID(state->io_wid));
+    assert(currentThreadOwnsWorker(state->io_wid));
 }

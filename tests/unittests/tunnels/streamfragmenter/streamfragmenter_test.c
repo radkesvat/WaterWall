@@ -1336,7 +1336,7 @@ int main(void)
     loop                         = wloopCreate(0, pool, 0);
     atomicStoreExplicit(&loop->status, WLOOP_STATUS_RUNNING, memory_order_release);
     GSTATE.shortcut_loops = &loop;
-    worker_t worker       = {.wid = 0, .buffer_pool = pool, .wios_pool = io_pool, .loop = loop, .has_event_loop = true};
+    worker_t worker       = {.wid = 0, .buffer_pool = pool, .wios_pool = io_pool, .loop = loop};
     GSTATE.workers        = &worker;
     testWorkerBindWID(0);
     configuration();

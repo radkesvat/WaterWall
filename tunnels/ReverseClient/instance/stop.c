@@ -12,7 +12,7 @@ void reverseclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context
 void reverseclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     reverseclient_tstate_t *ts = tunnelGetState(t);
     if (ts->starved_connections != NULL)

@@ -44,13 +44,13 @@ void disturberLinestateInitialize(disturber_lstate_t *ls, const disturber_tstate
 
 void disturberLinestateDestroy(line_t *l, disturber_lstate_t *ls)
 {
-    if (UNLIKELY(l == NULL || ! lineIsOnCurrentEventWorker(l)))
+    if (UNLIKELY(l == NULL || ! lineIsOnCurrentWorker(l)))
     {
         LOGF("Disturber: line-state destruction ran outside its owner worker");
         abortProgramNow(1);
     }
 
-    assert(l != NULL && lineIsOnCurrentEventWorker(l));
+    assert(l != NULL && lineIsOnCurrentWorker(l));
 
     if (ls->upstream.held_payload != NULL)
     {

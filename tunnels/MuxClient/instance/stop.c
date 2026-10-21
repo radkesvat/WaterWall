@@ -5,7 +5,7 @@
 void muxclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     muxclient_tstate_t *ts = tunnelGetState(t);
     if (UNLIKELY(wid >= ts->workers_count))
     {

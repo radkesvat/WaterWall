@@ -279,7 +279,7 @@ Contract:
 - On any non-OK result the function never sends a finish and never destroys line state. The **caller owns the
   rejection** and must close/drop the line itself; it must not treat a rejected line as admitted. A non-OK call reserves
   nothing, so retrying later is safe.
-- Call it on the line's owner worker (`lineIsOnCurrentEventWorker(l)`), and only on a normal line that has already traversed
+- Call it on the line's owner worker (`lineIsOnCurrentWorker(l)`), and only on a normal line that has already traversed
   this `UserController` instance. It retains the payload mode saved during Init. Do not call it on packet lines.
 - Once a line is managed this way, traffic accounting, the idle sweep, and `Finish`-time slot release all apply exactly
   as they do for a line admitted at `Init`; no extra teardown wiring is needed on the caller side.

@@ -252,7 +252,7 @@ static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, const char *wh
 
 static WTHREAD_ROUTINE(tundeviceReaderThreadMain) // NOLINT
 {
-    assert(! currentThreadHasRegisteredWID());
+    assert(! currentThreadIsWorker());
     tun_device_t *tdev = userdata;
     discard       tdev->routine_reader(tdev);
     tundeviceNoteUnexpectedThreadExit(tdev, "reader");
@@ -277,12 +277,11 @@ bool tundeviceBringUp(tun_device_t *tdev)
     }
 
     /*
-     * Device bring-up/creation runs on an event worker even though the reader
-     * thread it manages stays unregistered. Read that worker's pool
-     * geometry once here and copy it onto the device-owned reader pool; the auxiliary
-     * reader never touches worker-local state itself.
+     * Device bring-up runs on a worker. Copy its finalized pool geometry to the
+     * device-owned reader pool; BSD readers remain unregistered and never access
+     * worker-local state.
      */
-    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *worker_pool = getCurrentWorkerBufferPool();
 
     devicePoolUpdatePadding(tdev->reader_buffer_pool, worker_pool);
 
@@ -737,7 +736,7 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_q
      * geometry once here and copy it onto the device-owned reader pool; the auxiliary
      * reader never touches worker-local state itself.
      */
-    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *worker_pool = getCurrentWorkerBufferPool();
 
     buffer_pool_t *reader_bpool = devicePoolCreate(worker_pool, mtu);
     if (UNLIKELY(reader_bpool == NULL))

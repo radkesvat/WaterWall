@@ -29,7 +29,7 @@ static bool tlsclientHostnameBytesAreValid(const uint8_t *hostname, uint32_t hos
 static sbuf_t *tlsclientGenerateClientHelloForWorker(tunnel_t *instance, wid_t wid, buffer_pool_t *pool,
                                                      const uint8_t *hostname, uint32_t hostname_length)
 {
-    if (instance == NULL || pool == NULL || wid >= getWorkersCount() || ! currentThreadIsEventWorkerWID(wid) ||
+    if (instance == NULL || pool == NULL || wid >= getWorkersCount() || ! currentThreadOwnsWorker(wid) ||
         ! tlsclientHostnameBytesAreValid(hostname, hostname_length))
     {
         return NULL;
@@ -76,7 +76,7 @@ sbuf_t *tlsclientTunnelGenerateClientHello(tunnel_t *instance, line_t *caller_li
 
     // Generation runs on the caller's line: its worker owns both the SSL context
     // slot and the pool the generated ClientHello is allocated from.
-    if (! lineIsOnCurrentEventWorker(caller_line))
+    if (! lineIsOnCurrentWorker(caller_line))
     {
         return NULL;
     }
@@ -106,7 +106,7 @@ api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message)
      * worker 0's, so the request is destroyed rather than recycled and the call
      * fails.
      */
-    worker_t *worker = tryGetCurrentEventWorker();
+    worker_t *worker = tryGetCurrentWorker();
     if (worker == NULL)
     {
         sbufDestroy(message);

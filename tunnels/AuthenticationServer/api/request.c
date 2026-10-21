@@ -130,7 +130,7 @@ const char *authenticationserverApiParse(sbuf_t *message, const node_api_call_co
     if (error == NULL && kind == kAuthenticationServerApiGetUser && ! has_id)
         error = "invalid_request";
     cJSON_Delete(body);
-    bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), message);
+    bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), message);
     if (authenticationserverApiExpired(context->deadline_ms))
         error = "timeout";
     return error;

@@ -75,7 +75,7 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
      * worker through the worker-message queue. Say worker 0 explicitly rather
      * than inheriting whatever WID the creating thread happens to carry.
      */
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(0)))
+    if (UNLIKELY(! currentThreadOwnsWorker(0)))
     {
         LOGF("ReverseClient: node creation must run on worker 0, caller worker: %d", workerWIDForLog(getWID()));
         reverseclientHandshakeDestroy(ts->handshake_bytes);

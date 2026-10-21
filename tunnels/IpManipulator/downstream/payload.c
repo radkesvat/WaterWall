@@ -13,7 +13,7 @@
 
 void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
@@ -61,7 +61,7 @@ void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 void ipmanipulatorDownStreamPayloadAfterSmuggleFin(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 

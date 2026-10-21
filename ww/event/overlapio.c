@@ -1571,7 +1571,7 @@ static bool wioSettleWriteClose(wio_t *io, bool target_callback)
      * cross-loop write callback temporarily receives the target loop's
      * authority while it is still executing on the source worker. Only close
      * inline when both kinds of ownership agree. */
-    if (target_callback && currentThreadIsEventWorkerWID((wid_t) wloopGetWID(io->loop)))
+    if (target_callback && currentThreadOwnsWorker((wid_t) wloopGetWID(io->loop)))
     {
         wioClose(io);
         return true;

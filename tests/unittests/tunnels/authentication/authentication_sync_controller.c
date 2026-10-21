@@ -465,7 +465,7 @@ void authTestControllerBandwidthCases(tunnel_t *auth, tunnel_chain_t *chain, voi
     controllerPolicy(auth, 100, 0, 0);
     a     = authTestControllerCreate(auth);
     first = authTestControllerOpen(a, chain);
-    workerMessagesCloseAdmission(getCurrentEventWorker());
+    workerMessagesCloseAdmission(getCurrentWorker());
     controllerSend(a, first, 11, 'e', true);
     require(! lineIsAlive(first) && controllerStats(auth).traffic.u == 0,
             "required continuation refusal must close without charging");

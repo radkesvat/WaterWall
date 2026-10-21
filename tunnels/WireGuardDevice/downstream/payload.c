@@ -50,7 +50,7 @@ static void wireguardifSendHandshakeCookie(wireguard_device_t *device, const uin
     }
 
     // Send this packet out!
-    buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
+    buf = bufferpoolGetSmallBuffer(getCurrentWorkerBufferPool());
     sbufSetLength(buf, sizeof(message_cookie_reply_t));
     sbufWrite(buf, &packet, sizeof(message_cookie_reply_t));
     wireguardifDeviceOutput(device, buf, addr, port);
@@ -181,7 +181,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
         goto finish;
     }
 
-    buf = wireguarddeviceDecryptTransportPayload(getCurrentEventWorkerBufferPool(), src, data_len, nonce, keypair);
+    buf = wireguarddeviceDecryptTransportPayload(getCurrentWorkerBufferPool(), src, data_len, nonce, keypair);
     if (LIKELY(buf != NULL))
     {
         if (UNLIKELY(! wireguardCheckReplay(keypair, nonce)))
@@ -226,7 +226,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                 wireguarddeviceCheckPeerAllowedIp(peer, &source))
             {
                 wgd_tstate_t *ts   = (wgd_tstate_t *) device;
-                line_t       *line = tunnelchainGetWorkerPacketLine(ts->tunnel->chain, getCurrentEventWorkerWID());
+                line_t       *line = tunnelchainGetWorkerPacketLine(ts->tunnel->chain, getCurrentWorkerWID());
 
                 sbufSetLength(buf, packet_len);
                 wireguarddeviceStateUnlock(ts);
@@ -292,7 +292,7 @@ static void wireguardifSendHandshakeResponse(wireguard_device_t *device, wiregua
         }
 
         // Send this packet out!
-        buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
+        buf = bufferpoolGetSmallBuffer(getCurrentWorkerBufferPool());
 
         if (UNLIKELY(! wireguardStorePendingHandshake(peer, &packet, sizeof(packet))))
         {
@@ -506,7 +506,7 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
 void wireguarddeviceHandleTransportPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     wgd_tstate_t *state = tunnelGetState(t);
-    line_t       *line  = wireguarddeviceEnsureTransportLine(state, getCurrentEventWorkerWID());
+    line_t       *line  = wireguarddeviceEnsureTransportLine(state, getCurrentWorkerWID());
 
     if (line == NULL)
     {

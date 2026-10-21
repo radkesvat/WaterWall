@@ -124,7 +124,7 @@ local_idle_table_t *udpsockGetWorkerIdleTable(udpsock_t *socket)
     // Worker-local table: one checked identity drives both the per-worker array
     // and the loop the table is armed on. A non-event thread fails loudly here
     // instead of quietly creating a table on worker 0's loop.
-    const wid_t wid = getCurrentEventWorkerWID();
+    const wid_t wid = getCurrentWorkerWID();
     assert(wid < getWorkersCount());
 
     local_idle_table_t *table = socket->idle_tables[wid];
@@ -2740,7 +2740,7 @@ startup_failed:
  */
 static bool initializeSocketManagerPools(socket_manager_state_t *state)
 {
-    const wid_t                 workers   = getTotalWorkersCount();
+    const wid_t                 workers   = getWorkersCount();
     threadsafe_generic_pool_t **udp_pools = memoryAllocateZero(sizeof(*udp_pools) * workers);
     threadsafe_generic_pool_t **tcp_pools = memoryAllocateZero(sizeof(*tcp_pools) * workers);
     master_pool_t              *mp_udp    = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
@@ -2811,7 +2811,7 @@ socket_manager_state_t *socketmanagerCreate(void)
 
     // Startup-only: worker 0 is bound before managers are created, and the
     // manager's own worker/wid fields are structurally worker-0 owned.
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(0)))
+    if (UNLIKELY(! currentThreadOwnsWorker(0)))
     {
         LOGF("SocketManager: socketmanagerCreate() must run on worker 0, current worker: %d",
              workerWIDForLog(getWID()));
@@ -2898,7 +2898,7 @@ static void cleanupOneUdpSocket(udpsock_t **socket_slot)
 void socketmanagerDrainUdpSocketForWorker(udpsock_t *socket, wid_t wid)
 {
     // Runs as part of a worker tearing itself down, for its own slot only.
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     if (socket != NULL && socket->idle_tables != NULL && wid < getWorkersCount())
     {
@@ -2944,7 +2944,7 @@ void socketmanagerQuiesceWorker(wid_t wid)
     {
         return;
     }
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     c_foreach(bg, balancegroup_registry_t, socketmanager_gstate->balance_groups)
     {
@@ -3009,7 +3009,7 @@ static void destroyBalanceGroups(void)
  */
 static void destroyPools(void)
 {
-    for (unsigned int i = 0; i < getTotalWorkersCount(); ++i)
+    for (unsigned int i = 0; i < getWorkersCount(); ++i)
     {
         threadsafegenericpoolDestroy(socketmanager_gstate->udp_pools[i]);
         threadsafegenericpoolDestroy(socketmanager_gstate->tcp_pools[i]);

@@ -137,19 +137,9 @@ extern ww_global_state_t global_ww_state;
 #define MAX_ORDINARY_WORKERS 254
 
 /*!
- * @brief Get the number of total workers.
- *        Every registered production worker owns an event loop.
- *
- *        note that threads that tunnels may create are not counted as workers (eg TunDevice node)
- * @return The number of workers.
- */
-static inline wid_t getTotalWorkersCount(void)
-{
-    return (wid_t) WORKERS_COUNT;
-}
-
-/*!
  * @brief Get the number of workers.
+ *
+ * Every registered worker owns an event loop. Auxiliary threads are not workers.
  *
  * @return The number of workers.
  */
@@ -168,8 +158,8 @@ static inline worker_t *getWorker(wid_t wid)
 {
     assert(GSTATE.flag_initialized && WORKERS != NULL);
     assert(wid != kInvalidWID);
-    assert(wid < getTotalWorkersCount());
-    if (UNLIKELY(wid == kInvalidWID || wid >= getTotalWorkersCount()))
+    assert(wid < getWorkersCount());
+    if (UNLIKELY(wid == kInvalidWID || wid >= getWorkersCount()))
     {
         abortProgramNow(1);
     }
@@ -186,8 +176,8 @@ static inline buffer_pool_t *getWorkerBufferPool(wid_t wid)
 {
     assert(GSTATE.flag_initialized && GSTATE.shortcut_buffer_pools != NULL);
     assert(wid != kInvalidWID);
-    assert(wid < getTotalWorkersCount());
-    if (UNLIKELY(wid == kInvalidWID || wid >= getTotalWorkersCount()))
+    assert(wid < getWorkersCount());
+    if (UNLIKELY(wid == kInvalidWID || wid >= getWorkersCount()))
     {
         abortProgramNow(1);
     }
@@ -204,8 +194,8 @@ static inline threadsafe_generic_pool_t *getWorkerWiosPool(wid_t wid)
 {
     assert(GSTATE.flag_initialized && GSTATE.shortcut_wios_pools != NULL);
     assert(wid != kInvalidWID);
-    assert(wid < getTotalWorkersCount());
-    if (UNLIKELY(wid == kInvalidWID || wid >= getTotalWorkersCount()))
+    assert(wid < getWorkersCount());
+    if (UNLIKELY(wid == kInvalidWID || wid >= getWorkersCount()))
     {
         abortProgramNow(1);
     }
@@ -222,8 +212,8 @@ static inline generic_pool_t *getWorkerContextPool(wid_t wid)
 {
     assert(GSTATE.flag_initialized && GSTATE.shortcut_context_pools != NULL);
     assert(wid != kInvalidWID);
-    assert(wid < getTotalWorkersCount());
-    if (UNLIKELY(wid == kInvalidWID || wid >= getTotalWorkersCount()))
+    assert(wid < getWorkersCount());
+    if (UNLIKELY(wid == kInvalidWID || wid >= getWorkersCount()))
     {
         abortProgramNow(1);
     }
@@ -240,8 +230,8 @@ static inline struct wloop_s *getWorkerLoop(wid_t wid)
 {
     assert(GSTATE.flag_initialized && GSTATE.shortcut_loops != NULL);
     assert(wid != kInvalidWID);
-    assert(wid < getTotalWorkersCount());
-    if (UNLIKELY(wid == kInvalidWID || wid >= getTotalWorkersCount()))
+    assert(wid < getWorkersCount());
+    if (UNLIKELY(wid == kInvalidWID || wid >= getWorkersCount()))
     {
         abortProgramNow(1);
     }
@@ -257,7 +247,7 @@ static inline struct wloop_s *getWorkerLoop(wid_t wid)
  *
  * @param accessor Name of the accessor whose contract was violated.
  */
-WW_EXPORT _Noreturn void globalstateAbortNotEventWorker(const char *accessor);
+WW_EXPORT _Noreturn void globalstateAbortNotWorker(const char *accessor);
 
 /*!
  * @brief The worker owning the current thread, for event-worker-only callbacks.
@@ -267,31 +257,32 @@ WW_EXPORT _Noreturn void globalstateAbortNotEventWorker(const char *accessor);
  * payload handlers). It never falls back to worker 0: a caller without an event-worker context aborts instead.
  *
  * Externally reachable or otherwise fallible code must branch on
- * currentThreadIsEventWorker()/tryGetCurrentEventWorker() and fail cleanly
+ * currentThreadIsWorker()/tryGetCurrentWorker() and fail cleanly
  * rather than calling this.
  *
  * @return A pointer to the current thread's worker.
  */
-static inline worker_t *getCurrentEventWorker(void)
+static inline worker_t *getCurrentWorker(void)
 {
     const wid_t wid = getWID();
-    if (UNLIKELY(! workerWIDIsEventWorker(wid)))
+    if (UNLIKELY(! workerWIDIsRegistered(wid)))
     {
-        globalstateAbortNotEventWorker(__func__);
+        globalstateAbortNotWorker(__func__);
     }
     return &(WORKERS[wid]);
 }
 
 /*!
- * @brief Nullable form of getCurrentEventWorker(), for fallible callers.
+ * @brief Nullable form of getCurrentWorker(), for fallible callers.
  *
- * @return The current thread's worker, or NULL when the caller is unregistered,
- *         owns no event loop, or runs before/after worker storage exists.
+ * @return The current thread's worker, or NULL when the caller is unregistered
+ *         or runs before/after worker storage exists. Identity remains valid
+ *         during teardown after the worker's event loop has been detached.
  */
-static inline worker_t *tryGetCurrentEventWorker(void)
+static inline worker_t *tryGetCurrentWorker(void)
 {
     const wid_t wid = getWID();
-    if (! workerWIDIsEventWorker(wid))
+    if (! workerWIDIsRegistered(wid))
     {
         return NULL;
     }
@@ -306,12 +297,12 @@ static inline worker_t *tryGetCurrentEventWorker(void)
  *
  * @return The current worker ID. Aborts when the caller is not an event worker.
  */
-static inline wid_t getCurrentEventWorkerWID(void)
+static inline wid_t getCurrentWorkerWID(void)
 {
     const wid_t wid = getWID();
-    if (UNLIKELY(! workerWIDIsEventWorker(wid)))
+    if (UNLIKELY(! workerWIDIsRegistered(wid)))
     {
-        globalstateAbortNotEventWorker(__func__);
+        globalstateAbortNotWorker(__func__);
     }
     return wid;
 }
@@ -319,17 +310,17 @@ static inline wid_t getCurrentEventWorkerWID(void)
 /*!
  * @brief The buffer pool owned by the current event worker.
  *
- * Same contract as getCurrentEventWorker(): callers that may run on an
- * unregistered or lwIP thread must not use it.
+ * Same contract as getCurrentWorker(): callers that may run on an
+ * unregistered thread must not use it.
  *
  * @return A pointer to the current worker's buffer pool.
  */
-static inline buffer_pool_t *getCurrentEventWorkerBufferPool(void)
+static inline buffer_pool_t *getCurrentWorkerBufferPool(void)
 {
     const wid_t wid = getWID();
-    if (UNLIKELY(! workerWIDIsEventWorker(wid)))
+    if (UNLIKELY(! workerWIDIsRegistered(wid)))
     {
-        globalstateAbortNotEventWorker(__func__);
+        globalstateAbortNotWorker(__func__);
     }
     return GSTATE.shortcut_buffer_pools[wid];
 }
@@ -339,12 +330,12 @@ static inline buffer_pool_t *getCurrentEventWorkerBufferPool(void)
  *
  * @return A pointer to the current worker's context pool.
  */
-static inline generic_pool_t *getCurrentEventWorkerContextPool(void)
+static inline generic_pool_t *getCurrentWorkerContextPool(void)
 {
     const wid_t wid = getWID();
-    if (UNLIKELY(! workerWIDIsEventWorker(wid)))
+    if (UNLIKELY(! workerWIDIsRegistered(wid)))
     {
-        globalstateAbortNotEventWorker(__func__);
+        globalstateAbortNotWorker(__func__);
     }
     return GSTATE.shortcut_context_pools[wid];
 }
@@ -352,18 +343,18 @@ static inline generic_pool_t *getCurrentEventWorkerContextPool(void)
 /*!
  * @brief The event loop owned by the current event worker.
  *
- * The worker role comes from `has_event_loop`, so this stays valid for a worker
- * that is tearing down and has already detached `worker->loop`. Callers running
- * during teardown must still tolerate a loop that no longer accepts work.
+ * Worker identity remains valid after `worker->loop` is detached during teardown.
+ * This accessor reads the saved shortcut, which does not grant admission or extend
+ * the loop's lifetime; teardown callers must obey the loop's cleanup ordering.
  *
  * @return A pointer to the current worker's event loop.
  */
-static inline struct wloop_s *getCurrentEventWorkerLoop(void)
+static inline struct wloop_s *getCurrentWorkerLoop(void)
 {
     const wid_t wid = getWID();
-    if (UNLIKELY(! workerWIDIsEventWorker(wid)))
+    if (UNLIKELY(! workerWIDIsRegistered(wid)))
     {
-        globalstateAbortNotEventWorker(__func__);
+        globalstateAbortNotWorker(__func__);
     }
     return GSTATE.shortcut_loops[wid];
 }
@@ -380,12 +371,12 @@ static inline struct wloop_s *getCurrentEventWorkerLoop(void)
  * @param loop Loop the callback was dispatched from.
  * @return The owning worker ID. Aborts when the caller does not own that loop.
  */
-static inline wid_t getLoopEventWorkerWID(struct wloop_s *loop)
+static inline wid_t getLoopWorkerWID(struct wloop_s *loop)
 {
     const wid_t wid = (wid_t) wloopGetWID(loop);
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(wid)))
+    if (UNLIKELY(! currentThreadOwnsWorker(wid)))
     {
-        globalstateAbortNotEventWorker(__func__);
+        globalstateAbortNotWorker(__func__);
     }
     return wid;
 }

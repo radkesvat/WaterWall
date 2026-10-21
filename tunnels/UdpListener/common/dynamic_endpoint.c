@@ -9,7 +9,7 @@ static void udplistenerRecycleDynamicBuffer(buffer_pool_t *pool, sbuf_t *buf)
 
 static void udplistenerRequireDynamicEndpointWorker(udplistener_dynamic_endpoint_handle_t handle, const char *operation)
 {
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(handle.owner_wid)))
+    if (UNLIKELY(! currentThreadOwnsWorker(handle.owner_wid)))
     {
         LOGF("UdpListener: dynamic endpoint %s arrived outside owner worker", operation);
         abortProgramNow(1);
@@ -24,7 +24,7 @@ udplistener_dynamic_endpoint_t *udplistenerFindDynamicEndpoint(tunnel_t         
         return NULL;
     }
 
-    if (! currentThreadIsEventWorkerWID(handle.owner_wid))
+    if (! currentThreadOwnsWorker(handle.owner_wid))
     {
         return NULL;
     }
@@ -64,7 +64,7 @@ bool udplistenerDynamicEndpointOpen(tunnel_t *t, wid_t wid, const udplistener_dy
         *res_out = (udplistener_dynamic_endpoint_open_result_t) {0};
     }
 
-    if (t == NULL || req == NULL || res_out == NULL || ! currentThreadIsEventWorkerWID(wid))
+    if (t == NULL || req == NULL || res_out == NULL || ! currentThreadOwnsWorker(wid))
     {
         return false;
     }
@@ -120,7 +120,7 @@ bool udplistenerDynamicEndpointOpen(tunnel_t *t, wid_t wid, const udplistener_dy
         .source_ip_configured = false,
     };
 
-    wio_t *wio = boundUdpSocketCreate(getCurrentEventWorkerLoop(), &cfg);
+    wio_t *wio = boundUdpSocketCreate(getCurrentWorkerLoop(), &cfg);
     if (wio == NULL)
     {
         return false;
@@ -175,8 +175,7 @@ bool udplistenerDynamicEndpointOpen(tunnel_t *t, wid_t wid, const udplistener_dy
 
 bool udplistenerDynamicEndpointActivate(tunnel_t *t, udplistener_dynamic_endpoint_handle_t handle)
 {
-    if (t == NULL || ! udplistenerDynamicEndpointHandleIsValid(handle) ||
-        ! currentThreadIsEventWorkerWID(handle.owner_wid))
+    if (t == NULL || ! udplistenerDynamicEndpointHandleIsValid(handle) || ! currentThreadOwnsWorker(handle.owner_wid))
     {
         return false;
     }
@@ -276,7 +275,7 @@ bool udplistenerGetLineInfo(tunnel_t *t, const line_t *line, udplistener_dynamic
         *info_out = (udplistener_dynamic_line_info_t) {0};
     }
 
-    if (t == NULL || line == NULL || info_out == NULL || ! lineIsOnCurrentEventWorker(line))
+    if (t == NULL || line == NULL || info_out == NULL || ! lineIsOnCurrentWorker(line))
     {
         return false;
     }
@@ -309,8 +308,8 @@ bool udplistenerGetLineInfo(tunnel_t *t, const line_t *line, udplistener_dynamic
 void udplistenerOnDynamicEndpointRead(wio_t *io, sbuf_t *buf)
 {
     wloop_t *const loop = weventGetLoop(io);
-    const wid_t    wid  = getLoopEventWorkerWID(loop);
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(wid)))
+    const wid_t    wid  = getLoopWorkerWID(loop);
+    if (UNLIKELY(! currentThreadOwnsWorker(wid)))
     {
         LOGF("UdpListener: dynamic endpoint read arrived outside its event worker");
         abortProgramNow(1);

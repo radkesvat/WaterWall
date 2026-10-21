@@ -22,7 +22,7 @@ static udpstatelesssocket_send_request_t *udpstatelesssocketSendRequestCreate(ud
 {
     assert(state != NULL);
     assert(state->send_request_pools != NULL);
-    assert(state->io_wid < getTotalWorkersCount());
+    assert(state->io_wid < getWorkersCount());
 
     threadsafe_generic_pool_t *pool = state->send_request_pools[state->io_wid];
     assert(pool != NULL);
@@ -56,7 +56,7 @@ local_idle_table_t *udpstatelesssocketGetWorkerIdleTable(udpstatelesssocket_tsta
 local_idle_table_t *udpstatelesssocketGetLineIdleTable(udpstatelesssocket_tstate_t *ts, line_t *l)
 {
     assert(l != NULL);
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     discard l;
     return udpstatelesssocketGetWorkerIdleTable(ts);
 }
@@ -178,7 +178,7 @@ void udpstatelesssocketOnSocketClose(wio_t *io)
 
 static wio_t *udpstatelesssocketGetOwnerIo(udpstatelesssocket_tstate_t *state)
 {
-    assert(currentThreadIsEventWorkerWID(state->io_wid));
+    assert(currentThreadOwnsWorker(state->io_wid));
     return state->socket.io;
 }
 
@@ -246,7 +246,7 @@ void udpstatelesssocketDispatchToPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u
 
     // Writing inline is only legal on the socket's owning event worker; every
     // other caller hands the datagram to it as a worker message.
-    if (currentThreadIsEventWorkerWID(state->io_wid))
+    if (currentThreadOwnsWorker(state->io_wid))
     {
         udpstatelesssocketWriteOwnerPeer(t, buf, peer_addr, false);
         return;
@@ -583,7 +583,7 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
         /* The request's line reference preserves allocation memory, not its logical
          * life. DNS completion always runs on the submitting owner worker, so
          * recycle through that worker rather than reading a dead line. */
-        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), buf);
+        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), buf);
         lineUnref(line);
         udpstatelesssocketDnsRequestDestroy(request);
         return;

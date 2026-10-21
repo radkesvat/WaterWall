@@ -5,7 +5,7 @@
 void wireguarddeviceTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     wgd_tstate_t *state = tunnelGetState(t);
     if (wid == 0)
@@ -26,6 +26,6 @@ void wireguarddeviceTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifec
 void wireguarddeviceTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     wireguarddeviceCloseTransportLine(t, wid);
 }

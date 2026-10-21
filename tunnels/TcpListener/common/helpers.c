@@ -9,7 +9,7 @@ local_idle_table_t *tcplistenerGetWorkerIdleTable(tcplistener_tstate_t *ts)
     // Worker-local table: one checked identity for both the per-worker array and
     // the loop it is armed on. A non-event thread fails loudly instead of
     // silently creating a table on worker 0's loop.
-    const wid_t wid = getCurrentEventWorkerWID();
+    const wid_t wid = getCurrentWorkerWID();
     assert(wid < getWorkersCount());
 
     local_idle_table_t *table = ts->idle_tables[wid];
@@ -24,7 +24,7 @@ local_idle_table_t *tcplistenerGetWorkerIdleTable(tcplistener_tstate_t *ts)
 local_idle_table_t *tcplistenerGetLineIdleTable(tcplistener_tstate_t *ts, line_t *l)
 {
     assert(l != NULL);
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     discard l;
 
     return tcplistenerGetWorkerIdleTable(ts);

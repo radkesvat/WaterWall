@@ -8,7 +8,7 @@ static void keepaliveclientPongDeadlineExpired(local_idle_item_t *item);
 static local_idle_item_t *keepaliveclientCreateIdleItem(tunnel_t *t, line_t *l, local_idle_item_t **slot,
                                                         LocalIdleExpireCallBack callback, uint64_t age_ms)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     assert(*slot == NULL);
     keepaliveclient_tstate_t *ts    = tunnelGetState(t);
     local_idle_table_t       *table = ts->worker_states[lineGetWID(l)].idle_table;
@@ -196,7 +196,7 @@ void keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
 
 void keepaliveclientTrackLine(tunnel_t *t, line_t *l)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     keepaliveclient_tstate_t       *ts    = tunnelGetState(t);
     keepaliveclient_lstate_t       *ls    = lineGetState(l, t);
     keepaliveclient_worker_state_t *state = &ts->worker_states[lineGetWID(l)];
@@ -208,7 +208,7 @@ void keepaliveclientTrackLine(tunnel_t *t, line_t *l)
 
 void keepaliveclientUntrackLine(tunnel_t *t, line_t *l)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     keepaliveclient_tstate_t       *ts    = tunnelGetState(t);
     keepaliveclient_lstate_t       *ls    = lineGetState(l, t);
     keepaliveclient_worker_state_t *state = &ts->worker_states[lineGetWID(l)];
@@ -258,7 +258,7 @@ static void keepaliveclientPingExpired(local_idle_item_t *item)
     keepaliveclient_lstate_t *ls = item->userdata;
     line_t                   *l  = ls->line;
     tunnel_t                 *t  = ls->tunnel;
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     /* The payload callback may close this line or another due table item. */
     lineRef(l);
     if (! keepaliveclientSendPingFrame(t, l))
@@ -281,7 +281,7 @@ static void keepaliveclientPongDeadlineExpired(local_idle_item_t *item)
     keepaliveclient_lstate_t *ls = item->userdata;
     tunnel_t                 *t  = ls->tunnel;
     line_t                   *l  = ls->line;
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     assert(ls->awaiting_pong);
     keepaliveclient_tstate_t *ts = tunnelGetState(t);
     LOGW("KeepAliveClient: pong timed out (tolerance=%u ms), closing connection", ts->tolerance_ms);

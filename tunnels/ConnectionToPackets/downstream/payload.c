@@ -93,7 +93,7 @@ static void ctpInjectPacketCleanup(void *arg1, void *arg2, void *arg3, worker_me
     {
         ctpFragSettleDelivery(t, &msg->delivery_key, msg->delivery_serial, false, ctpFragSchedulePurge);
     }
-    if (t != NULL && currentThreadIsEventWorkerWID(msg->wid))
+    if (t != NULL && currentThreadOwnsWorker(msg->wid))
         ctpDrainTerminalLinesOnCurrentWorker(t, msg->wid);
     ctpInjectMessageDestroy(msg);
 }
@@ -107,7 +107,7 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
     tunnel_t         *t   = msg->tunnel;
     ctp_tstate_t     *ts  = tunnelGetState(t);
 
-    assert(currentThreadIsEventWorkerWID(worker->wid) && msg->wid == worker->wid);
+    assert(currentThreadOwnsWorker(worker->wid) && msg->wid == worker->wid);
     /* Lookup is repeated on the application owner. The registry lock is
      * released before selecting the engine and delivering any packet. */
     bool handed_to_lwip  = false;

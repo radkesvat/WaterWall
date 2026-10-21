@@ -67,7 +67,7 @@ static wio_t *udpstatelesssocketCreateUdpServer(udpstatelesssocket_tstate_t *sta
         return NULL;
     }
 
-    wio_t *io = wioGet(getCurrentEventWorkerLoop(), sockfd);
+    wio_t *io = wioGet(getCurrentWorkerLoop(), sockfd);
     if (io == NULL || wioIsClosed(io))
     {
         LOGE("UdpStatelessSocket: could not create event io");
@@ -104,7 +104,7 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
     const char                  *bind_address                  = state->listen_address;
 
     /* The singleton socket and every WIO operation on it belong to worker 0. */
-    assert(currentThreadIsEventWorkerWID(0));
+    assert(currentThreadOwnsWorker(0));
 
     if (state->interface_name != NULL && ! state->source_ip_configured && ! socketOptionBindToDeviceSupported())
     {

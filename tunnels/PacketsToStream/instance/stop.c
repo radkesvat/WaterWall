@@ -40,7 +40,7 @@ static line_t *packetstostreamGetWorkerPacketLineForStop(tunnel_t *t, wid_t wid)
     }
 
     line_t *packet_line = tunnelchainGetWorkerPacketLine(chain, wid);
-    if (UNLIKELY(packet_line == NULL || ! currentThreadIsEventWorkerWID(wid) || lineGetWID(packet_line) != wid ||
+    if (UNLIKELY(packet_line == NULL || ! currentThreadOwnsWorker(wid) || lineGetWID(packet_line) != wid ||
                  ! tunnelchainIsWorkerPacketLine(chain, packet_line)))
     {
         LOGF("PacketsToStream: invalid finalized packet-line ownership on worker %u", (unsigned int) wid);
@@ -74,7 +74,7 @@ static void packetstostreamCloseWorkerOutputLine(tunnel_t *t, line_t *packet_lin
 void packetstostreamTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     packetstostream_tstate_t *ts = tunnelGetState(t);
 
@@ -92,7 +92,7 @@ void packetstostreamTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifec
 void packetstostreamTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
     discard context;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     line_t *packet_line = packetstostreamGetWorkerPacketLineForStop(t, wid);
     if (packet_line == NULL)

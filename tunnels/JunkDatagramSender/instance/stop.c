@@ -30,7 +30,7 @@ void junkdatagramsenderTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifec
         return;
     }
 
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(wid) || lineGetWID(packet_line) != wid ||
+    if (UNLIKELY(! currentThreadOwnsWorker(wid) || lineGetWID(packet_line) != wid ||
                  ! tunnelchainIsWorkerPacketLine(chain, packet_line)))
     {
         LOGF("JunkDatagramSender: worker Stop did not run on the exact owner packet line for worker %d",

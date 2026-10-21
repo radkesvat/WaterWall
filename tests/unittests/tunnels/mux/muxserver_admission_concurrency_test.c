@@ -126,7 +126,7 @@ static mux_cid_t readFrameCid(const uint8_t *bytes)
 static void racePrevEst(tunnel_t *prev, line_t *parent_l)
 {
     admission_race_fixture_t *fixture = g_race_fixture;
-    require(fixture != NULL && prev == fixture->prev && lineIsOnCurrentEventWorker(parent_l),
+    require(fixture != NULL && prev == fixture->prev && lineIsOnCurrentWorker(parent_l),
             "race parent Est reached the wrong previous tunnel or worker");
 }
 
@@ -135,7 +135,7 @@ static void racePrevPayload(tunnel_t *prev, line_t *parent_l, sbuf_t *buf)
     admission_race_fixture_t *fixture = g_race_fixture;
     require(fixture != NULL && prev == fixture->prev, "race rejection reached the wrong previous tunnel");
     const wid_t wid = lineGetWID(parent_l);
-    require(wid < kRaceWorkers && lineIsOnCurrentEventWorker(parent_l),
+    require(wid < kRaceWorkers && lineIsOnCurrentWorker(parent_l),
             "race rejection ran outside its parent owner worker");
     require(sbufGetLength(buf) == kMuxFrameLength, "race rejection emitted the wrong frame length");
     const uint8_t  *bytes      = sbufGetRawPtr(buf);
@@ -158,7 +158,7 @@ static void racePrevPayload(tunnel_t *prev, line_t *parent_l, sbuf_t *buf)
 static void raceNextInit(tunnel_t *next, line_t *child_l)
 {
     admission_race_fixture_t *fixture = g_race_fixture;
-    require(fixture != NULL && next == fixture->next && lineIsOnCurrentEventWorker(child_l),
+    require(fixture != NULL && next == fixture->next && lineIsOnCurrentWorker(child_l),
             "admitted race child Init ran on the wrong worker");
     atomicIncRelaxed(&fixture->admitted[lineGetWID(child_l)]);
 }
@@ -166,7 +166,7 @@ static void raceNextInit(tunnel_t *next, line_t *child_l)
 static void raceNextFinish(tunnel_t *next, line_t *child_l)
 {
     admission_race_fixture_t *fixture = g_race_fixture;
-    require(fixture != NULL && next == fixture->next && lineIsOnCurrentEventWorker(child_l),
+    require(fixture != NULL && next == fixture->next && lineIsOnCurrentWorker(child_l),
             "race child Finish ran on the wrong worker");
     atomicIncRelaxed(&fixture->finished[lineGetWID(child_l)]);
 }
@@ -304,11 +304,10 @@ static void raceFixtureSetup(admission_race_fixture_t *fixture)
         testWorkerBindWID(wid);
         fixture->loops[wid] = wloopCreate(WLOOP_FLAG_AUTO_FREE, fixture->pools[wid], wid);
         require(fixture->loops[wid] != NULL, "failed to create race worker loop");
-        fixture->workers[wid]      = (worker_t) {.wid            = wid,
-                                                 .loop           = fixture->loops[wid],
-                                                 .buffer_pool    = fixture->pools[wid],
-                                                 .wios_pool      = fixture->wios_pools[wid],
-                                                 .has_event_loop = true};
+        fixture->workers[wid]      = (worker_t) {.wid         = wid,
+                                                 .loop        = fixture->loops[wid],
+                                                 .buffer_pool = fixture->pools[wid],
+                                                 .wios_pool   = fixture->wios_pools[wid]};
         fixture->parent_pools[wid] = genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(
             fixture->parent_master, sizeof(line_t) + sizeof(muxserver_lstate_t), 4);
         require(fixture->parent_pools[wid] != NULL, "failed to create race parent line pool");

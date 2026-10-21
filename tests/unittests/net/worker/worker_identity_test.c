@@ -6,7 +6,7 @@
  * testPlainAndNativeThreadsUnregistered, testWorkerBindingAndPredicates, testRebindingRejection,
  * testInvalidAccessorAssertion
  * Checks: Assertion labels include: plain threadCreate thread did not observe kInvalidWID; plain
- * threadCreate thread reported registered WID; plain threadCreate thread reported event worker role;
+ * threadCreate thread reported registered WID;
  * native pthread did not observe kInvalidWID
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
@@ -44,8 +44,8 @@ static WTHREAD_ROUTINE(plainThreadRoutine)
 {
     atomic_bool *ran = userdata;
     require(getWID() == kInvalidWID, "plain threadCreate thread did not observe kInvalidWID");
-    require(! currentThreadHasRegisteredWID(), "plain threadCreate thread reported registered WID");
-    require(! currentThreadIsEventWorker(), "plain threadCreate thread reported event worker role");
+    require(! currentThreadIsWorker(), "plain threadCreate thread reported registered WID");
+    require(! currentThreadOwnsWorker(kInvalidWID), "plain thread claimed to own the invalid worker");
     atomic_store(ran, true);
     return 0;
 }
@@ -55,8 +55,7 @@ static void *nativeThreadRoutine(void *arg)
 {
     atomic_bool *ran = arg;
     require(getWID() == kInvalidWID, "native pthread did not observe kInvalidWID");
-    require(! currentThreadHasRegisteredWID(), "native pthread reported registered WID");
-    require(! currentThreadIsEventWorker(), "native pthread reported event worker role");
+    require(! currentThreadIsWorker(), "native pthread reported registered WID");
     atomic_store(ran, true);
     return NULL;
 }
@@ -65,8 +64,7 @@ static DWORD WINAPI nativeThreadRoutine(LPVOID arg)
 {
     atomic_bool *ran = arg;
     require(getWID() == kInvalidWID, "native Win32 thread did not observe kInvalidWID");
-    require(! currentThreadHasRegisteredWID(), "native Win32 thread reported registered WID");
-    require(! currentThreadIsEventWorker(), "native Win32 thread reported event worker role");
+    require(! currentThreadIsWorker(), "native Win32 thread reported registered WID");
     atomic_store(ran, true);
     return 0;
 }
@@ -75,10 +73,16 @@ static DWORD WINAPI nativeThreadRoutine(LPVOID arg)
 static void testUnregisteredDefaults(void)
 {
     require(getWID() == kInvalidWID, "main test thread did not begin with kInvalidWID");
-    require(! currentThreadHasRegisteredWID(), "main test thread reported registered WID before setup");
-    require(! currentThreadIsEventWorker(), "main test thread reported event worker before setup");
+    require(! currentThreadIsWorker(), "main test thread reported registered WID before setup");
     require(! workerWIDIsRegistered(kInvalidWID), "kInvalidWID was reported as registered");
-    require(! workerWIDIsEventWorker(kInvalidWID), "kInvalidWID was reported as event worker");
+    require(! workerWIDIsRegistered(0), "worker 0 was registered before runtime setup");
+    require(! currentThreadOwnsWorker(kInvalidWID), "unregistered thread claimed to own the invalid worker");
+    require(tryGetCurrentWorker() == NULL, "unregistered thread got a worker before setup");
+
+    testWorkerBindWID(0);
+    require(! currentThreadIsWorker() && ! currentThreadOwnsWorker(0) && tryGetCurrentWorker() == NULL,
+            "a WID without runtime storage established worker ownership");
+    testWorkerUnbindWID();
 }
 
 static void testWorkerWIDForLog(void)
@@ -140,31 +144,28 @@ static void testWorkerBindingAndPredicates(void)
 
     // createGlobalState binds main thread to worker 0
     require(getWID() == 0, "main thread was not bound to worker 0 by createGlobalState");
-    require(currentThreadHasRegisteredWID(), "main thread reported no registered WID");
-    require(currentThreadIsEventWorker(), "main thread reported not event worker");
-    require(currentThreadIsEventWorkerWID(0), "currentThreadIsEventWorkerWID(0) failed");
-    require(! currentThreadIsEventWorkerWID(1), "currentThreadIsEventWorkerWID(1) returned true for worker 0");
-    require(! currentThreadIsEventWorkerWID(kInvalidWID), "currentThreadIsEventWorkerWID(kInvalidWID) returned true");
+    require(currentThreadIsWorker(), "main thread reported no registered WID");
+    require(currentThreadOwnsWorker(0), "currentThreadOwnsWorker(0) failed");
+    require(! currentThreadOwnsWorker(1), "currentThreadOwnsWorker(1) returned true for worker 0");
+    require(! currentThreadOwnsWorker(kInvalidWID), "currentThreadOwnsWorker(kInvalidWID) returned true");
 
     // Re-bind to same worker 0 is idempotent
     workerBindCurrentThread(getWorker(0));
     require(getWID() == 0, "idempotent bind changed WID");
 
-    // Check ordinary event worker predicate
+    // Every configured worker is registered and owns an event loop.
     require(workerWIDIsRegistered(0), "worker 0 not registered");
-    require(workerWIDIsEventWorker(0), "worker 0 not event worker");
     require(workerWIDIsRegistered(1), "worker 1 not registered");
-    require(workerWIDIsEventWorker(1), "worker 1 not event worker");
+    require(getWorker(0)->loop != NULL && getWorker(1)->loop != NULL, "registered worker lacks an event loop");
 
-    require(getTotalWorkersCount() == getWorkersCount(), "unexpected additional stack worker");
-    require(! workerWIDIsRegistered(getTotalWorkersCount()), "out-of-range worker was registered");
+    require(getWorkersCount() == init_data.workers_count, "runtime did not preserve the configured worker count");
+    require(! workerWIDIsRegistered(getWorkersCount()), "out-of-range worker was registered");
 
     // Unbind restores kInvalidWID
     workerUnbindCurrentThread();
     require(getWID() == kInvalidWID, "unbinding did not restore kInvalidWID");
-    require(! currentThreadHasRegisteredWID(), "unbound thread reported registered WID");
-    require(! currentThreadIsEventWorker(), "unbound thread reported event worker");
-    require(! currentThreadIsEventWorkerWID(0), "unbound thread reported event worker WID 0");
+    require(! currentThreadIsWorker(), "unbound thread reported registered WID");
+    require(! currentThreadOwnsWorker(0), "unbound thread claimed to own worker 0");
 
     // Re-bind back to worker 0 for teardown
     workerBindCurrentThread(getWorker(0));
@@ -183,10 +184,13 @@ static void testWorkerBindingAndPredicates(void)
     workerPerformDrain(worker0, testShutdownContext());
     require(workerRequestTeardown(worker0), "failed to request worker-0 teardown");
     workerPerformTeardown(worker0);
+    require(worker0->loop == NULL && currentThreadOwnsWorker(0), "loop detachment lost worker identity");
+    require(tryGetCurrentWorker() == worker0, "loop detachment lost the current worker");
 
     destroyGlobalState();
 
     require(getWID() == kInvalidWID, "destroyGlobalState did not restore kInvalidWID");
+    require(! currentThreadIsWorker() && tryGetCurrentWorker() == NULL, "destroyGlobalState left a current worker");
 }
 
 #if defined(HAS_UNIX_FORK)

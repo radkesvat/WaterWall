@@ -652,7 +652,7 @@ static void testDecodeAdvisoryAndFallback(void)
             fixtureSignal(&f, true);
             test_splice_inventory_hold_t held = {0};
             if (mode == 0)
-                held = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
+                held = testSpliceInventoryHoldAvailable(getCurrentWorkerBufferPool());
             pipe_pressure = mode == 1;
             pipe_moves    = 0;
             for (uint32_t i = 0; i < n + n2 + 7 && lineIsAlive(f.line);)
@@ -733,7 +733,7 @@ static void testEncoderPipeFallback(void)
                 sbufGetMutablePtr(input)[i] = pattern(i);
             test_splice_inventory_hold_t held = {0};
             if (mode == 0)
-                held = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
+                held = testSpliceInventoryHoldAvailable(getCurrentWorkerBufferPool());
             pipe_refusal          = mode == 1;
             pipe_pressure         = mode == 2;
             first_pipe_move_limit = 1;

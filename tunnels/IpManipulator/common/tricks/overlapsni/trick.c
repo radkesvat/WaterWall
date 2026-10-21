@@ -393,7 +393,7 @@ static void overlapsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3
     line_t                         *l       = arg2;
     overlapsnitrick_hold_timeout_t *context = arg3;
 
-    if (lineIsOnCurrentEventWorker(l))
+    if (lineIsOnCurrentWorker(l))
     {
         overlapsnitrickReleaseTimedOutHold(t, &context->key, context->generation);
     }
@@ -406,7 +406,7 @@ static bool overlapsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipm
 {
     /* Configuration rejects zero; keep direct/internal state fail-open too. */
     delay_ms                     = max(delay_ms, 1U);
-    const bool recover_on_caller = lineIsOnCurrentEventWorker(l);
+    const bool recover_on_caller = lineIsOnCurrentWorker(l);
 
     overlapsnitrick_hold_timeout_t *context = memoryAllocate(sizeof(*context));
     *context = (overlapsnitrick_hold_timeout_t) {
@@ -1030,7 +1030,7 @@ bool overlapsnitrickInitializeState(tunnel_t *t)
     return ipmanipulatorFlowTableInit(&state->overlap_table,
                                       "overlap-sni",
                                       state->trick_stateful_flow_limit,
-                                      (uint32_t) getTotalWorkersCount(),
+                                      (uint32_t) getWorkersCount(),
                                       sizeof(ipmanipulator_overlap_flow_t),
                                       overlapsnitrickDestroyFlowRecord,
                                       NULL);
@@ -1045,7 +1045,7 @@ void overlapsnitrickDestroyState(tunnel_t *t)
 
 bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
     discard l;
 
     ipmanipulator_tstate_t           *state       = tunnelGetState(t);
@@ -1090,7 +1090,7 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (held_line != NULL && held_packet.buf != NULL)
         {
-            if (lineIsOnCurrentEventWorker(held_line))
+            if (lineIsOnCurrentWorker(held_line))
             {
                 overlapsnitrickSendNormalNow(t, held_line, held_packet.buf);
             }
@@ -1121,7 +1121,7 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     ipmanipulator_tstate_t           *state  = tunnelGetState(t);
     overlapsnitrick_tcp_packet_info_t info   = {0};

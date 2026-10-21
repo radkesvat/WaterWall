@@ -125,7 +125,7 @@ api_result_t authenticationserverApiListUsers(tunnel_t *t, sbuf_t *message, cons
     endPage(&empty, &view, 0);
     buffer_pool_fit_t empty_fit;
     if (! empty.overflow && ! empty.timeout &&
-        bufferpoolQueryBestFit(getCurrentEventWorkerBufferPool(), empty.used, 0, &empty_fit) &&
+        bufferpoolQueryBestFit(getCurrentWorkerBufferPool(), empty.used, 0, &empty_fit) &&
         charge <= context->working_memory_allowance &&
         empty_fit.allocation_charge <= context->working_memory_allowance - charge)
         measured_size = empty.used;
@@ -138,7 +138,7 @@ api_result_t authenticationserverApiListUsers(tunnel_t *t, sbuf_t *message, cons
         endPage(&complete, &view, i + 1);
         buffer_pool_fit_t fit;
         if (complete.overflow || complete.timeout ||
-            ! bufferpoolQueryBestFit(getCurrentEventWorkerBufferPool(), complete.used, 0, &fit) ||
+            ! bufferpoolQueryBestFit(getCurrentWorkerBufferPool(), complete.used, 0, &fit) ||
             charge > context->working_memory_allowance ||
             fit.allocation_charge > context->working_memory_allowance - charge)
             break;

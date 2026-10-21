@@ -59,15 +59,15 @@ node_api_target_status_t __wrap_nodemanagerResolveApiTarget(const char *config, 
 static api_result_t largeBinary(tunnel_t *instance, sbuf_t *request, const node_api_call_context_t *context)
 {
     static const uint8_t expected[] = {0, 0x7f, 0x80, 0xff};
-    require(instance == &target && currentThreadIsEventWorkerWID(0), "Private handler ran on the wrong worker");
+    require(instance == &target && currentThreadOwnsWorker(0), "Private handler ran on the wrong worker");
     require(context->max_response_body_size >= kResponseBodySize,
             "Handler received insufficient reserved response space");
     require(sbufGetLength(request) == sizeof(expected) &&
                 memcmp(sbufGetRawPtr(request), expected, sizeof(expected)) == 0,
             "Reliable request reconstruction changed binary bytes");
-    bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), request);
+    bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), request);
     ++dispatches;
-    sbuf_t *result = bufferpoolGetBestFit(getCurrentEventWorkerBufferPool(), kResponseBodySize, 0);
+    sbuf_t *result = bufferpoolGetBestFit(getCurrentWorkerBufferPool(), kResponseBodySize, 0);
     for (size_t i = 0; i < kResponseBodySize; ++i)
         sbufGetMutablePtr(result)[i] = (uint8_t) i;
     sbufSetLength(result, kResponseBodySize);
@@ -290,7 +290,7 @@ int main(void)
     connection = NULL;
     for (size_t direction = 0; direction < 2; ++direction)
         for (size_t i = 0; i < queues[direction].count; ++i)
-            bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), queues[direction].packets[i]);
+            bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), queues[direction].packets[i]);
     apiserver_tstate_t *state = tunnelGetState(api);
     size_t              bytes_used, jobs;
     nodeApiDomainGetUsage(state->domain, &bytes_used, &jobs);

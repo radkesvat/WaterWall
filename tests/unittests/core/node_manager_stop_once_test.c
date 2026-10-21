@@ -66,7 +66,7 @@ static void tunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_con
 {
     discard t;
     require(context == &kShutdownContext, "worker quiesce lost its lifecycle context");
-    if (quiesce_request_calls != 2 || ! currentThreadIsEventWorkerWID(wid))
+    if (quiesce_request_calls != 2 || ! currentThreadOwnsWorker(wid))
     {
         phase_order_failed = true;
     }
@@ -88,7 +88,7 @@ static void tunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_contex
 {
     discard t;
     require(context == &kShutdownContext, "worker stop lost its lifecycle context");
-    if (quiesce_wait_calls != 2 || ! currentThreadIsEventWorkerWID(wid))
+    if (quiesce_wait_calls != 2 || ! currentThreadOwnsWorker(wid))
     {
         phase_order_failed = true;
     }

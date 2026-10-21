@@ -134,7 +134,7 @@ static void messagePoolTransferCallback(worker_t *worker, void *arg1, void *arg2
 {
     discard         arg3;
     generic_pool_t *pool = worker->message_pool;
-    require(currentThreadIsEventWorkerWID(1) && pool != NULL, "message record reached the wrong cache owner");
+    require(currentThreadOwnsWorker(1) && pool != NULL, "message record reached the wrong cache owner");
     const uint32_t expected_len = pool->len > pool->free_threshold ? pool->len - pool->cap / 2 : pool->len;
     workerMessagePoolRelease(arg1);
     require(pool->len == expected_len + 1, "cross-worker return did not enter the receiving worker's cache");
@@ -266,7 +266,7 @@ static void workerMessageBatchCallback(worker_t *worker, void *arg1, void *arg2,
 static void workerMessageBatchUnrelatedEvent(wevent_t *event)
 {
     worker_message_batch_probe_t *probe = event->userdata;
-    require(currentThreadIsEventWorkerWID(1), "unrelated batch-fairness event ran on the wrong worker");
+    require(currentThreadOwnsWorker(1), "unrelated batch-fairness event ran on the wrong worker");
     workerMessageBatchRecord(probe, kWorkerMessageBatchUnrelated);
 }
 
@@ -372,7 +372,7 @@ static void workerMessageFullBatchBlocker(wevent_t *event)
 {
     worker_message_full_batch_probe_t *probe = event->userdata;
 
-    require(currentThreadIsEventWorkerWID(1), "worker-message full-batch blocker ran on the wrong worker");
+    require(currentThreadOwnsWorker(1), "worker-message full-batch blocker ran on the wrong worker");
     atomicStoreExplicit(&probe->blocker_entered, true, memory_order_release);
     while (! atomicLoadExplicit(&probe->release_blocker, memory_order_acquire))
     {
@@ -402,7 +402,7 @@ static void workerMessageFullBatchCallback(worker_t *worker, void *arg1, void *a
 static void workerMessageFullBatchUnrelatedEvent(wevent_t *event)
 {
     worker_message_full_batch_probe_t *probe = event->userdata;
-    require(currentThreadIsEventWorkerWID(1), "worker-message full-batch unrelated event ran on the wrong worker");
+    require(currentThreadOwnsWorker(1), "worker-message full-batch unrelated event ran on the wrong worker");
     atomicStoreExplicit(
         &probe->unrelated_after, atomicLoadExplicit(&probe->callbacks, memory_order_acquire), memory_order_release);
 }
@@ -1019,8 +1019,7 @@ void testAdmissionOpenIsOneWayAndChecked(void)
 {
     worker_t incomplete;
     memoryZero(&incomplete, sizeof(incomplete));
-    incomplete.wid            = 0;
-    incomplete.has_event_loop = true;
+    incomplete.wid = 0;
     mutexInit(&incomplete.control_mutex);
     atomic_init(&incomplete.lifecycle, (w_atomic_int_value_t) kWorkerLifecycleInitialized);
     atomic_init(&incomplete.resources_destroyed, false);
@@ -1028,8 +1027,6 @@ void testAdmissionOpenIsOneWayAndChecked(void)
 
     require(! workerMessagesOpenAdmission(&incomplete), "message admission opened before loop/queue readiness");
     require(! atomicLoadRelaxed(&incomplete.message_admission_open), "failed open changed the admission gate");
-    incomplete.has_event_loop = false;
-    require(! workerMessagesOpenAdmission(&incomplete), "non-event worker admission was accepted");
     mutexDestroy(&incomplete.control_mutex);
 
     require(! workerMessagesOpenAdmission(getWorker(0)), "duplicate message-admission open was accepted");
@@ -1053,7 +1050,7 @@ void testOwningWorkerOutsideCallbackQueues(void)
     require(probeCleanups() == 0, "queued same-worker message ran cleanup before settlement");
 }
 
-void testOtherEventWorkerQueues(void)
+void testOtherWorkerQueues(void)
 {
     probeReset();
     sendWorkerMessageWithCleanup(1, (WorkerMessageCallback) probeCallback, probeCleanup, NULL, NULL, NULL);
@@ -1090,7 +1087,7 @@ void testOutOfRangeCallerQueues(void)
 {
     probeReset();
 
-    testWorkerBindWID(getTotalWorkersCount());
+    testWorkerBindWID(getWorkersCount());
     sendWorkerMessageWithCleanup(0, (WorkerMessageCallback) probeCallback, probeCleanup, NULL, NULL, NULL);
     testWorkerBindWID(0);
 
@@ -1100,7 +1097,7 @@ void testOutOfRangeCallerQueues(void)
 
 void testInvalidTargetsCleanUpExactlyOnce(void)
 {
-    const wid_t unregistered_wid = getTotalWorkersCount();
+    const wid_t unregistered_wid = getWorkersCount();
 
     const wid_t bad_targets[] = {kInvalidWID, unregistered_wid};
 

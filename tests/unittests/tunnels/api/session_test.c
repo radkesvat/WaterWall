@@ -101,7 +101,7 @@ node_api_target_status_t __wrap_nodemanagerResolveApiTarget(const char *config, 
 
 static api_result_t handler(tunnel_t *t, sbuf_t *request, const node_api_call_context_t *ctx)
 {
-    require(t == &target && currentThreadIsEventWorkerWID(0), "handler target affinity");
+    require(t == &target && currentThreadOwnsWorker(0), "handler target affinity");
     ++calls;
     if (refuse_reply)
     {
@@ -115,9 +115,9 @@ static api_result_t handler(tunnel_t *t, sbuf_t *request, const node_api_call_co
     }
     if (strcmp(ctx->operation, "large") == 0 || strcmp(ctx->operation, "oversize") == 0)
     {
-        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), request);
+        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), request);
         size_t size = strcmp(ctx->operation, "large") == 0 ? 70001 : ctx->max_response_body_size + 1;
-        request     = bufferpoolGetBestFit(getCurrentEventWorkerBufferPool(), (uint32_t) size, 0);
+        request     = bufferpoolGetBestFit(getCurrentWorkerBufferPool(), (uint32_t) size, 0);
         memset(sbufGetMutablePtr(request), 'x', size);
         sbufSetLength(request, (uint32_t) size);
     }

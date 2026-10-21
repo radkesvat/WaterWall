@@ -209,7 +209,6 @@ static void installCreateWorkerContext(void)
 {
     memoryZero(g_workers, sizeof(g_workers));
     g_workers[0].wid            = 0;
-    g_workers[0].has_event_loop = true;
     g_workers[1].wid            = 1;
 
     GSTATE.flag_initialized = true;

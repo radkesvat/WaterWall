@@ -35,7 +35,7 @@ void testerclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_c
             abortProgramNow(1);
         }
 
-        if (UNLIKELY(! currentThreadIsEventWorkerWID(wid) || lineGetWID(packet_line) != wid ||
+        if (UNLIKELY(! currentThreadOwnsWorker(wid) || lineGetWID(packet_line) != wid ||
                      ! tunnelchainIsWorkerPacketLine(chain, packet_line)))
         {
             LOGF("TesterClient: worker Stop did not run on the exact owner packet line for worker %d",
@@ -57,7 +57,7 @@ void testerclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_c
     }
 
     line_t *l = slot->line;
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     assert(lineGetWID(l) == wid);
 
     lineRef(l);

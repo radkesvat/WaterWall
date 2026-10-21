@@ -1613,7 +1613,7 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     GSTATE.shortcut_wios_pools   = &io_pool;
     wloop_t *loop                = wloopCreate(WLOOP_FLAG_AUTO_FREE, pool, 0);
     GSTATE.shortcut_loops        = &loop;
-    worker_t worker = {.wid = 0, .buffer_pool = pool, .wios_pool = io_pool, .loop = loop, .has_event_loop = true};
+    worker_t worker              = {.wid = 0, .buffer_pool = pool, .wios_pool = io_pool, .loop = loop};
     GSTATE.workers  = &worker;
     testWorkerBindWID(0);
     localConfiguration();

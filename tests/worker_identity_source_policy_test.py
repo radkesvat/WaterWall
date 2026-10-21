@@ -25,13 +25,13 @@ TEST_BIND_RE = re.compile(r"\btestWorker(?:Unbind|Bind)WID\b")
 PROD_BIND_RE = re.compile(r"\bworker(?:Unbind|Bind)CurrentThread\b")
 
 # `getWorkerXxx(getWID())` - a current-worker resource fetched by indexing with
-# an unvalidated WID. Use the getCurrentEventWorkerXxx() accessors instead.
+# an unvalidated WID. Use the getCurrentWorkerXxx() accessors instead.
 NESTED_CURRENT_WORKER_RE = re.compile(
     r"\bgetWorker(?:BufferPool|Loop|ContextPool|WiosPool|NowMS|NowUS)?\s*\(\s*getWID\s*\(\s*\)\s*\)"
 )
 
-# Raw worker-0 ownership decisions. currentThreadIsEventWorkerWID(0) says the
-# same thing and cannot be passed by an unregistered or lwIP thread.
+# Raw worker-0 ownership decisions. currentThreadOwnsWorker(0) says the
+# same thing and cannot be passed by an unregistered thread.
 RAW_WORKER_ZERO_RE = re.compile(r"getWID\s*\(\s*\)\s*(?:==|!=)\s*0\b|\b0\s*(?:==|!=)\s*getWID\s*\(\s*\)")
 
 # Raw affinity comparisons between the current thread and some other WID.
@@ -59,7 +59,6 @@ ALLOWED_PROD_BIND_PRODUCTION_FILES = {
     (ROOT / "ww" / "instance" / "worker.c").resolve(),
     (ROOT / "ww" / "instance" / "worker.h").resolve(),
     (ROOT / "ww" / "instance" / "global_state.c").resolve(),
-    (ROOT / "ww" / "lwip" / "contrib" / "ports" / "unix" / "port" / "sys_arch.c").resolve(),
 }
 
 # The checked accessors are implemented in terms of getWID(), so the files that
@@ -74,7 +73,7 @@ ALLOWED_NESTED_CURRENT_WORKER_FILES = {
 # another worker.c function must still be rejected by rules 5 and 6.
 ALLOWED_RAW_WID_COMPARISON_REGIONS = {
     (ROOT / "ww" / "instance" / "worker.c").resolve(): re.compile(
-        r"\bbool\s+currentThreadIsEventWorkerWID\s*\([^)]*\)\s*\{[^{}]*\}", re.DOTALL
+        r"\bbool\s+currentThreadOwnsWorker\s*\([^)]*\)\s*\{[^{}]*\}", re.DOTALL
     ),
 }
 
@@ -148,7 +147,7 @@ def main() -> int:
                     if NESTED_CURRENT_WORKER_RE.search(line) and resolved_path not in ALLOWED_NESTED_CURRENT_WORKER_FILES:
                         violations.append(
                             f"{path.relative_to(ROOT)}:{line_number}: getWorkerXxx(getWID()) nesting; "
-                            f"use getCurrentEventWorkerXxx() so a non-event thread cannot index worker 0"
+                            f"use getCurrentWorkerXxx() so an unregistered thread cannot index worker 0"
                         )
 
                     # Rule 5: Worker-0 ownership must be a named predicate, not raw equality.
@@ -156,14 +155,14 @@ def main() -> int:
                     if RAW_WORKER_ZERO_RE.search(line) and not raw_comparison_allowed:
                         violations.append(
                             f"{path.relative_to(ROOT)}:{line_number}: raw getWID() == 0 worker-0 decision; "
-                            f"use currentThreadIsEventWorkerWID(0)"
+                            f"use currentThreadOwnsWorker(0)"
                         )
 
                     # Rule 6: Affinity must be a named predicate, not raw equality.
                     if RAW_WID_COMPARISON_RE.search(line) and not raw_comparison_allowed:
                         violations.append(
                             f"{path.relative_to(ROOT)}:{line_number}: raw current-WID comparison; use "
-                            f"currentThreadIsEventWorkerWID(wid) or lineIsOnCurrentEventWorker(line)"
+                            f"currentThreadOwnsWorker(wid) or lineIsOnCurrentWorker(line)"
                         )
 
                     # Rule 7: Tunnel APIs consume their message through node.h's shared helpers.

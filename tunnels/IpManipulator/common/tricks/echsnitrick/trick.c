@@ -896,7 +896,7 @@ static void echsnitrickDrainPendingOriginals(tunnel_t *t, const echsnitrick_flow
 
         emitted_any = true;
 
-        if (foreign_owner || ! lineIsOnCurrentEventWorker(packet.line))
+        if (foreign_owner || ! lineIsOnCurrentWorker(packet.line))
         {
             if (packet.line != NULL && packet.buf != NULL)
             {
@@ -971,7 +971,7 @@ static void echsnitrickCleanupDelayedOriginalRelease(void *arg1, void *arg2, voi
     tunnel_t                      *t       = arg1;
     echsnitrick_delayed_release_t *release = arg3;
 
-    if (currentThreadIsEventWorkerWID(release->wid))
+    if (currentThreadOwnsWorker(release->wid))
     {
         echsnitrick_flow_identity_t identity = {
             .generation = release->generation,
@@ -1069,7 +1069,7 @@ static bool echsnitrickScheduleOriginalRelease(tunnel_t *t, const echsnitrick_fl
         .wid           = wid,
     };
 
-    if (delay_ms == 0 && currentThreadIsEventWorkerWID(wid))
+    if (delay_ms == 0 && currentThreadOwnsWorker(wid))
     {
         echsnitrickRunDelayedOriginalRelease(NULL, t, NULL, release);
         return true;
@@ -1463,7 +1463,7 @@ bool echsnitrickInitializeState(tunnel_t *t)
     return ipmanipulatorFlowTableInit(&state->echsni_table,
                                       "ech-sni-trick",
                                       state->trick_stateful_flow_limit,
-                                      (uint32_t) getTotalWorkersCount(),
+                                      (uint32_t) getWorkersCount(),
                                       sizeof(ipmanipulator_echsni_flow_t),
                                       echsnitrickDestroyFlowRecord,
                                       NULL);
@@ -1480,7 +1480,7 @@ void echsnitrickDestroyState(tunnel_t *t)
 
 bool echsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     discard l;
 
@@ -1539,7 +1539,7 @@ bool echsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 bool echsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     ipmanipulator_tstate_t       *state  = tunnelGetState(t);
     echsnitrick_tcp_packet_info_t info   = {0};
@@ -1668,7 +1668,7 @@ bool echsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             {
                 if (alive)
                 {
-                    if (lineIsOnCurrentEventWorker(packet->line))
+                    if (lineIsOnCurrentWorker(packet->line))
                     {
                         alive = echsnitrickSendUpstreamDirect(t, packet->line, packet->buf);
                     }
@@ -1677,7 +1677,7 @@ bool echsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                         ipmanipulatorLogCrossWorkerFlowFailure(t,
                                                                "ech-sni-trick",
                                                                "pending graceful-close packet state",
-                                                               getCurrentEventWorkerWID(),
+                                                               getCurrentWorkerWID(),
                                                                lineGetWID(packet->line));
                         ipmanipulatorForwardCapturedPacketNormal(t, packet->line, packet->buf);
                         packet->buf = NULL;
@@ -1685,7 +1685,7 @@ bool echsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 }
                 else
                 {
-                    if (lineIsOnCurrentEventWorker(packet->line))
+                    if (lineIsOnCurrentWorker(packet->line))
                     {
                         lineReuseBuffer(packet->line, packet->buf);
                     }

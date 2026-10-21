@@ -148,8 +148,8 @@ muxserver_worker_state_t *muxserverGetWorkerState(tunnel_t *t, line_t *line)
 {
     muxserver_tstate_t *ts  = tunnelGetState(t);
     const wid_t         wid = lineGetWID(line);
-    assert(lineIsOnCurrentEventWorker(line));
-    if (UNLIKELY(! workerWIDIsEventWorker(wid) || wid >= ts->workers_count))
+    assert(lineIsOnCurrentWorker(line));
+    if (UNLIKELY(! workerWIDIsRegistered(wid) || wid >= ts->workers_count))
     {
         LOGF("MuxServer: invalid worker %d for worker-local child state", (int) wid);
         abortProgramNow(1);
@@ -1053,7 +1053,7 @@ muxserver_detached_registry_t *muxserverGetDetachedRegistry(tunnel_t *t, line_t 
     muxserver_tstate_t *ts  = tunnelGetState(t);
     const wid_t         wid = lineGetWID(child_l);
 
-    assert(lineIsOnCurrentEventWorker(child_l));
+    assert(lineIsOnCurrentWorker(child_l));
     if (UNLIKELY(! workerWIDIsRegistered(wid) || wid >= ts->workers_count))
     {
         LOGF("MuxServer: invalid worker %d for detached child registry", (int) wid);
@@ -1291,7 +1291,7 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
     if (parent_ls->parent_finishing && notify_parent_prev)
         return;
 
-    assert(lineIsOnCurrentEventWorker(parent_l));
+    assert(lineIsOnCurrentWorker(parent_l));
     lineRef(parent_l);
     parent_ls->parent_finishing = true;
 

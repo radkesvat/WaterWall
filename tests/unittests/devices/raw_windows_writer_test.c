@@ -50,7 +50,7 @@ static worker_message_submit_result_e fixtureQueue(wid_t wid, WorkerMessageCallb
                                                    WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
                                                    void *arg3)
 {
-    const bool foreign = ! currentThreadHasRegisteredWID();
+    const bool foreign = ! currentThreadIsWorker();
     EnterCriticalSection(&capture_lock);
     if (reject_next)
     {
@@ -135,7 +135,7 @@ static bool fixtureClose(HANDLE handle)
 static bool fixtureSend(HANDLE handle, const void *packet, UINT length, UINT *written, const WINDIVERT_ADDRESS *address,
                         UINT address_length, OVERLAPPED *overlapped)
 {
-    require(handle == (HANDLE) (uintptr_t) 123 && currentThreadIsEventWorker(), "native send escaped event worker");
+    require(handle == (HANDLE) (uintptr_t) 123 && currentThreadIsWorker(), "native send escaped event worker");
     require(length == 24 && written == NULL && address_length == sizeof(*address), "native send arguments");
     require(address->Outbound && address->Layer == WINDIVERT_LAYER_NETWORK, "native packet direction");
     require(! address->IPChecksum && ! address->TCPChecksum && ! address->UDPChecksum,
@@ -143,7 +143,7 @@ static bool fixtureSend(HANDLE handle, const void *packet, UINT length, UINT *wr
     const unsigned sequence = ((const uint8_t *) packet)[20];
     require(observed_count < ARRAY_SIZE(observed), "native observation capacity");
     observed[observed_count++] = sequence;
-    const wid_t wid            = getCurrentEventWorkerWID();
+    const wid_t wid            = getCurrentWorkerWID();
     require(! operations[wid].active, "worker submitted another packet before native completion");
     if (outcomes[sequence] == ERROR_IO_PENDING)
         operations[wid] = (native_operation_t) {overlapped, packet, ERROR_SUCCESS, true, false};
@@ -212,7 +212,7 @@ static PTP_WAIT WINAPI fixtureCreateWait(PTP_WAIT_CALLBACK callback, PVOID conte
 }
 static void fixtureReuseBuffer(buffer_pool_t *pool, sbuf_t *buffer)
 {
-    require(currentThreadIsEventWorker() && pool == getCurrentEventWorker()->buffer_pool,
+    require(currentThreadIsWorker() && pool == getCurrentWorker()->buffer_pool,
             "native completion used a foreign worker pool");
     fixtureDestroyBuffer(buffer);
 }

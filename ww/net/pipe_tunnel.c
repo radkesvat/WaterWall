@@ -306,7 +306,7 @@ static void cleanupQueuedPipeMessage(void *arg1, void *arg2, void *arg3, worker_
 
     atomicStoreExplicit(&pair->terminal, true, memory_order_release);
     pipeDiscardPayload(payload);
-    if (currentThreadIsEventWorkerWID(lineGetWID(line_to)))
+    if (currentThreadOwnsWorker(lineGetWID(line_to)))
     {
         pipeReconcileLine(pair, line_to);
     }
@@ -851,7 +851,7 @@ static pipe_pair_t *pipeFindPairForWorker(pipetunnel_state_t *state, wid_t wid, 
 static void pipeDrainWorker(tunnel_t *t, wid_t wid)
 {
     pipetunnel_state_t *state = pipeTunnelState(t);
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     for (;;)
     {
@@ -968,12 +968,12 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
     pipetunnel_line_state_t *source = lineGetState(line, parent);
     const wid_t              wid    = lineGetWID(line);
 
-    if (UNLIKELY(! lineIsOnCurrentEventWorker(line)))
+    if (UNLIKELY(! lineIsOnCurrentWorker(line)))
     {
         pipeTunnelLogWIDViolation("pipe source line is not owned by the calling worker", parent, line, wid_to);
         return false;
     }
-    if (UNLIKELY(! workerWIDIsEventWorker(wid_to) || wid_to == wid ||
+    if (UNLIKELY(! workerWIDIsRegistered(wid_to) || wid_to == wid ||
                  atomicLoadExplicit(&state->stopping, memory_order_acquire)))
     {
         pipeTunnelLogWIDViolation("pipe target must be a different active event worker", parent, line, wid_to);

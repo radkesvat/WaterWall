@@ -105,7 +105,7 @@ line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFn
     twfRequire(on_cancel == NULL, "PacketsToConnection requested lock-reentrant cancellation notification");
     twfRequire(wwLwipEngineCurrent() == g_fixture->engine,
                "PacketsToConnection control submission did not hold the owner engine");
-    twfRequire(lineIsOnCurrentEventWorker(line),
+    twfRequire(lineIsOnCurrentWorker(line),
                "PacketsToConnection control refusal did not originate from its owner engine");
     if (g_submit_expectation == kPtcSubmitBufferedDelivery)
     {
@@ -130,7 +130,7 @@ line_task_submit_result_e __wrap_lineScheduleTaskWithBuf(line_t *const line, Lin
     twfRequire(on_cancel == NULL, "PacketsToConnection requested lock-reentrant cancellation notification");
     twfRequire(wwLwipEngineCurrent() == g_fixture->engine,
                "PacketsToConnection buffered submission did not hold the owner engine");
-    twfRequire(lineIsOnCurrentEventWorker(line),
+    twfRequire(lineIsOnCurrentWorker(line),
                "PacketsToConnection buffered delivery did not originate from the line owner");
 
     lineRef(line);

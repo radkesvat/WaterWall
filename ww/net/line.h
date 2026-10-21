@@ -66,7 +66,7 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
  */
 static inline line_t *lineCreate(generic_pool_t **pools, wid_t wid)
 {
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     return lineCreateForWorker(wid, pools, wid);
 }
@@ -320,9 +320,9 @@ static inline wid_t lineGetWID(const line_t *const line)
  * @return true The caller owns the line and may touch its worker-local state.
  * @return false The caller must post to lineGetWID(line) instead.
  */
-static inline bool lineIsOnCurrentEventWorker(const line_t *const line)
+static inline bool lineIsOnCurrentWorker(const line_t *const line)
 {
-    return currentThreadIsEventWorkerWID(lineGetWID(line));
+    return currentThreadOwnsWorker(lineGetWID(line));
 }
 
 /**
@@ -374,7 +374,7 @@ static inline bool lineIsEstablished(const line_t *const line)
 
 static inline void lineMarkFallback(line_t *line)
 {
-    assert(lineIsAlive(line) && lineIsOnCurrentEventWorker(line));
+    assert(lineIsAlive(line) && lineIsOnCurrentWorker(line));
     line->fallback_mode = true;
 }
 
@@ -385,7 +385,7 @@ static inline bool lineIsFallback(const line_t *line)
 
 static inline void lineMarkFallbackPeerWriteClosed(line_t *line)
 {
-    assert(lineIsAlive(line) && lineIsOnCurrentEventWorker(line) && lineIsFallback(line));
+    assert(lineIsAlive(line) && lineIsOnCurrentWorker(line) && lineIsFallback(line));
     line->fallback_peer_write_closed = true;
 }
 
@@ -404,13 +404,13 @@ static inline bool lineFallbackShouldLinger(const line_t *line)
  */
 static inline void linePreferOrdinaryReadUpstream(line_t *line)
 {
-    assert(lineIsAlive(line) && lineIsOnCurrentEventWorker(line));
+    assert(lineIsAlive(line) && lineIsOnCurrentWorker(line));
     line->prefer_ordinary_read_u = true;
 }
 
 static inline void linePreferOrdinaryReadDownstream(line_t *line)
 {
-    assert(lineIsAlive(line) && lineIsOnCurrentEventWorker(line));
+    assert(lineIsAlive(line) && lineIsOnCurrentWorker(line));
     line->prefer_ordinary_read_d = true;
 }
 

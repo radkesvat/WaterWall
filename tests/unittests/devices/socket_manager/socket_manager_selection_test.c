@@ -318,7 +318,7 @@ static void caseEffectiveInterfaceAddress(uint8_t protocol)
 int main(void)
 {
     twfSetCase("socket_manager_selection_test");
-    worker_t worker         = {.wid = 0, .has_event_loop = true};
+    worker_t worker         = {.wid = 0};
     GSTATE.flag_initialized = true;
     GSTATE.workers_count    = 1;
     GSTATE.workers          = &worker;

@@ -103,7 +103,7 @@ bool ctpTcpOpenFlow(tunnel_t *t, line_t *l, ctp_lstate_t *ls, const ip_addr_t *d
     struct tcp_pcb *pcb = NULL;
     bool            ok  = false;
 
-    assert(currentThreadIsEventWorkerWID(lineGetWID(l)));
+    assert(currentThreadOwnsWorker(lineGetWID(l)));
     ls->engine = wwLwipRuntimeGet(lineGetWID(l));
     if (ls->engine == NULL)
         return false;
@@ -371,7 +371,7 @@ err_t ctpTcpConnectedCallback(void *arg, struct tcp_pcb *tpcb, err_t err)
         return ERR_ABRT;
     }
 
-    assert(lineIsOnCurrentEventWorker(ls->line));
+    assert(lineIsOnCurrentWorker(ls->line));
 
     if (lineIsAlive(ls->line))
     {
@@ -467,7 +467,7 @@ err_t ctpTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
     }
 
     const wid_t owner_wid = lineGetWID(l);
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(owner_wid)))
+    if (UNLIKELY(! currentThreadOwnsWorker(owner_wid)))
     {
         /*
          * The read buffer would have to come from the owner's pool, which this
@@ -569,7 +569,7 @@ err_t ctpTcpSentCallback(void *arg, struct tcp_pcb *tpcb, u16_t len)
      * always runs on the injection worker - the owner. The guard keeps a future
      * lwIP path from letting the flush touch a foreign worker's buffer pool.
      */
-    if (UNLIKELY(! currentThreadIsEventWorkerWID(lineGetWID(ls->line))))
+    if (UNLIKELY(! currentThreadOwnsWorker(lineGetWID(ls->line))))
     {
         return ctpQueueWriteRetryLocked(ls) ? ERR_ABRT : ERR_OK;
     }

@@ -316,7 +316,7 @@ static streamtopackets_line_entry_t *streamtopacketsDetachForeignSourceLocked(
 // run on that line's own worker, holding a reference to it.
 static void streamtopacketsCloseEvictedLineNow(tunnel_t *t, line_t *l)
 {
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     streamtopackets_lstate_t *ls = lineIsAlive(l) ? lineGetState(l, t) : NULL;
 
@@ -383,7 +383,7 @@ static void streamtopacketsRecoverFailedEvictionClose(tunnel_t *t, line_t *l, wi
         return;
     }
 
-    if (lineIsOnCurrentEventWorker(l))
+    if (lineIsOnCurrentWorker(l))
     {
         // The takeover is running on this line's own worker, so the close this
         // could not queue can simply be performed here instead.
@@ -771,11 +771,11 @@ static void streamtopacketsCleanupSelectedWrite(void *arg1, void *arg2, void *ar
     discard                           arg3;
 
     // A pooled buffer may only go back to a pool this thread owns.
-    if (lineIsOnCurrentEventWorker(msg->line))
+    if (lineIsOnCurrentWorker(msg->line))
     {
         /* Cancellation may observe logical line death; the checked owner
          * worker is sufficient to recycle without reading it. */
-        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), msg->buf);
+        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), msg->buf);
     }
     else
     {
@@ -820,13 +820,13 @@ void streamtopacketsDeliverSelectedWrite(tunnel_t *t, line_t *l, uint64_t line_i
 {
     streamtopackets_tstate_t *ts = tunnelGetState(t);
 
-    assert(lineIsOnCurrentEventWorker(l));
+    assert(lineIsOnCurrentWorker(l));
 
     if (! lineIsAlive(l))
     {
         /* The caller is the selected line's owner worker, but its retained
          * reference does not revive a logically dead line. */
-        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), buf);
+        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), buf);
         return;
     }
 

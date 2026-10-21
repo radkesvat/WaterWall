@@ -52,7 +52,7 @@ void streamtopacketsTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (lineIsOnCurrentEventWorker(selected.line))
+    if (lineIsOnCurrentWorker(selected.line))
     {
         // The same validated delivery routine as the queued path: being on the
         // right worker is not a reason to skip a check.

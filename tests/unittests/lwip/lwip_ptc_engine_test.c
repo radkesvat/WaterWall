@@ -187,7 +187,7 @@ static void emit(tunnel_t *t, line_t *line, sbuf_t *buf)
 }
 static void opened(tunnel_t *t, line_t *line)
 {
-    CHECK(wwLwipEngineCurrent() == NULL && currentThreadIsEventWorkerWID(lineGetWID(line)));
+    CHECK(wwLwipEngineCurrent() == NULL && currentThreadOwnsWorker(lineGetWID(line)));
     CHECK(strcmp(lineGetDestinationAddressContext(line)->domain, "shared.test") == 0);
     ++probes[lineGetWID(line)].init;
     tunnelPrevDownStreamEst(t, line);
@@ -261,7 +261,7 @@ static uint32_t query(tunnel_t *t, line_t *line, const char *label)
 }
 static void finishTimer(wtimer_t *timer)
 {
-    wid_t    wid = getLoopEventWorkerWID(weventGetLoop(timer));
+    wid_t    wid = getLoopWorkerWID(weventGetLoop(timer));
     probe_t *p   = &probes[wid];
     CHECK(p->tcp == 2 && p->udp == 2 && p->init == 4);
     atomicStoreExplicit(&finished[wid], true, memory_order_release);

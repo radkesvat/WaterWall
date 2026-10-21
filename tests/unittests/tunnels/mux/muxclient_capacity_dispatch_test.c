@@ -706,8 +706,7 @@ static void caseWorkerDrainIsLocal(void)
     wloop_t       *second_loop   = wloopCreate(WLOOP_FLAG_AUTO_FREE, second_pool, 1);
     buffer_pool_t *pools[2]      = {env.pool, second_pool};
     wloop_t       *loops[2]      = {env.loop, second_loop};
-    worker_t       workers[2]    = {env.worker,
-                                    {.wid = 1, .buffer_pool = second_pool, .loop = second_loop, .has_event_loop = true}};
+    worker_t       workers[2]    = {env.worker, {.wid = 1, .buffer_pool = second_pool, .loop = second_loop}};
     GSTATE.workers_count         = 2;
     GSTATE.workers               = workers;
     GSTATE.shortcut_buffer_pools = pools;

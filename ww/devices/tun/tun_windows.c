@@ -589,7 +589,7 @@ static void tunWindowsReaderRun(worker_t *worker, void *arg1, void *arg2, void *
     discard               arg2;
     discard               arg3;
     tun_windows_reader_t *reader = arg1;
-    assert(currentThreadIsEventWorkerWID(worker->wid) && worker->wid == reader->wid);
+    assert(currentThreadOwnsWorker(worker->wid) && worker->wid == reader->wid);
     discard worker;
     if (! quiescenceGateEnter(&reader->gate))
     {
@@ -769,7 +769,7 @@ static void tundeviceBeginSessionShutdown(void *context)
 
 void tundeviceWorkerQuiesce(tun_device_t *tdev, wid_t wid)
 {
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
     if (tdev->reader != NULL && tdev->reader->wid == wid && tdev->reader->wait != NULL)
         SetThreadpoolWait(tdev->reader->wait, NULL, NULL);
 }
@@ -876,7 +876,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
      * Finalize the dedicated receive pool before handing it to the selected
      * event worker for this generation.
      */
-    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *worker_pool = getCurrentWorkerBufferPool();
 
     devicePoolUpdatePadding(tdev->reader_buffer_pool, worker_pool);
 
@@ -1354,7 +1354,7 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, bool multi_qu
      * One worker owns the private receive pool and fragment staging. Output
      * workers use their existing local pools.
      */
-    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *worker_pool = getCurrentWorkerBufferPool();
 
     buffer_pool_t *reader_bpool = devicePoolCreate(worker_pool, mtu);
     if (UNLIKELY(reader_bpool == NULL))

@@ -70,7 +70,7 @@ void bufferqueueDestroy(buffer_queue_t *self)
     {
         // Queued buffers are released on the worker that owns them, so the
         // identity is validated once and reused for every buffer.
-        buffer_pool_t *pool = getCurrentEventWorkerBufferPool();
+        buffer_pool_t *pool = getCurrentWorkerBufferPool();
         c_foreach(i, ww_sbuffer_queue_t, self->q)
         {
             bufferpoolReuseBuffer(pool, *i.ref);

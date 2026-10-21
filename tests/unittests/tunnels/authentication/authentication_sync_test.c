@@ -346,7 +346,6 @@ static void setup(unsigned users)
         require(pools[i] != NULL, "pool creation failed");
         wios[i]        = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 8);
         workers[i].wid = i;
-        workers[i].has_event_loop = true;
         workers[i].buffer_pool    = pools[i];
         workers[i].wios_pool      = wios[i];
         loops[i]                  = wloopCreate(WLOOP_FLAG_AUTO_FREE, pools[i], i);

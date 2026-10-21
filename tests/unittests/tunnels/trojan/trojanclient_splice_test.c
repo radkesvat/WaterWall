@@ -738,7 +738,7 @@ static void testFallback(void)
             if (offset + size == n)
             {
                 if (fault == 1)
-                    held_pipes = testSpliceInventoryHoldAvailable(getCurrentEventWorkerBufferPool());
+                    held_pipes = testSpliceInventoryHoldAvailable(getCurrentWorkerBufferPool());
                 pressure           = fault == 2;
                 immediate_pressure = fault == 3;
             }

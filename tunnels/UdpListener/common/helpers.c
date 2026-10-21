@@ -55,7 +55,7 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
     local_idle_table_t *table = udpsockGetWorkerIdleTable(sock);
 
     // The wio event carries the worker that owns this datagram's line.
-    assert(currentThreadIsEventWorkerWID(wid));
+    assert(currentThreadOwnsWorker(wid));
 
     // Key idle lines by (peer addr+port, local addr+port, selected tunnel). A single physical UDP socket can
     // serve more than one logical local endpoint (iptables multiport) AND more than one tunnel: exact endpoint

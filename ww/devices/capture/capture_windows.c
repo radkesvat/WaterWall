@@ -278,7 +278,7 @@ static WTHREAD_ROUTINE(capturedeviceReaderThreadMain) // NOLINT
 {
     // Auxiliary device thread: it must stay unregistered and use only
     // device-owned pools/channels, posting work to explicit event workers.
-    assert(! currentThreadHasRegisteredWID());
+    assert(! currentThreadIsWorker());
     capture_device_t *cdev = userdata;
     discard           cdev->routine_reader(cdev);
     capturedeviceNoteUnexpectedReaderExit(cdev);
@@ -468,7 +468,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
      * geometry once here and copy it onto the device-owned pools; the auxiliary
      * threads never touch worker-local state themselves.
      */
-    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *worker_pool = getCurrentWorkerBufferPool();
 
     devicePoolUpdatePadding(cdev->reader_buffer_pool, worker_pool);
 
@@ -576,7 +576,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
      * geometry once here and copy it onto the device-owned pools; the auxiliary
      * threads never touch worker-local state themselves.
      */
-    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+    buffer_pool_t *worker_pool = getCurrentWorkerBufferPool();
 
     buffer_pool_t *reader_bpool = devicePoolCreate(worker_pool, 0);
     if (UNLIKELY(reader_bpool == NULL))

@@ -136,7 +136,7 @@ static void rawWriterDrain(worker_t *worker, void *arg1, void *arg2, void *arg3)
     discard                  arg3;
     raw_writer_generation_t *generation = arg1;
     raw_writer_lane_t       *lane       = arg2;
-    assert(currentThreadIsEventWorkerWID(worker->wid));
+    assert(currentThreadOwnsWorker(worker->wid));
     if (! quiescenceGateEnter(&generation->gate))
     {
         rawWriterGenerationUnref(generation);
@@ -284,7 +284,7 @@ void rawWriterDestroy(raw_writer_t *writer)
 
 raw_writer_send_result_t rawWriterTrySend(raw_writer_t *writer, sbuf_t *buffer)
 {
-    worker_t                *worker = getCurrentEventWorker();
+    worker_t                *worker = getCurrentWorker();
     raw_writer_generation_t *generation =
         (raw_writer_generation_t *) atomicLoadExplicit(&writer->published_generation, memory_order_acquire);
     if (generation == NULL)
