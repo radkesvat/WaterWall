@@ -315,6 +315,56 @@ static user_t *addNamedUser(users_t *users, uint64_t id, const char *password, c
     return stored;
 }
 
+static void testLegacyInsertionOwnershipAndRefusals(void)
+{
+    users_t users;
+    user_t  source = {0};
+    cJSON  *json =
+        cJSON_Parse("{\"id\":73,\"password\":\"legacy-insertion-password\","
+                    "\"name\":\"legacy-source\",\"email\":\"source@example.test\",\"notes\":\"source notes\"}");
+    require(usersCreate(&users) && userCreateFromJson(&source, json), "legacy insertion setup failed");
+    cJSON_Delete(json);
+    require(userSetWireGuardAllowedIps(&source, "10.73.0.0/24"), "legacy insertion routing setup failed");
+
+#if defined(WW_SYNC_INIT_TEST_SEAM)
+    const size_t resources = atomic_load(&g_native_resources);
+    /* Both private-snapshot and destination-slot lock initializations remain
+     * fallible; failure must leave the caller's value and every index intact. */
+    for (size_t stage = 1; stage <= 4; ++stage)
+    {
+        atomic_store(&g_native_init_failure, atomic_load(&g_native_init_calls) + stage);
+        require(! usersAddUser(&users, &source), "legacy insertion accepted failed native initialization");
+        atomic_store(&g_native_init_failure, 0);
+        require(atomic_load(&g_native_resources) == resources && usersCount(&users) == 0 && users.slot_count == 0 &&
+                    usersLookupByPassword(&users, "legacy-insertion-password") == NULL && usersValidate(&users),
+                "failed legacy insertion leaked locks, consumed a slot or changed indexes");
+        require(userPasswordMatches(&source, "legacy-insertion-password") && strcmp(source.name, "legacy-source") == 0,
+                "failed legacy insertion consumed the caller's value");
+    }
+#endif
+
+    require(usersAddUser(&users, &source), "legacy insertion failed after native refusals");
+    user_t *stored = usersLookupByIdentifier(&users, 73);
+    require(stored != NULL && stored != &source && stored->password != source.password && stored->name != source.name &&
+                stored->email != source.email && stored->notes != source.notes &&
+                stored->wireguard_allowed_ips != source.wireguard_allowed_ips &&
+                usersLookupByPassword(&users, "legacy-insertion-password") == stored && usersValidate(&users),
+            "legacy insertion shares caller storage or failed to publish indexes");
+    require(! usersAddUser(&users, &source) && usersCount(&users) == 1 && users.slot_count == 1 &&
+                usersLookupByIdentifier(&users, 73) == stored && usersValidate(&users),
+            "duplicate legacy insertion changed the existing account or indexes");
+    require(userChangePassword(&source, "mutated-source-password") &&
+                userSetWireGuardAllowedIps(&source, "10.74.0.0/24"),
+            "legacy source mutation failed");
+    userDestroy(&source);
+    require(userPasswordMatches(stored, "legacy-insertion-password") &&
+                strcmp(stored->wireguard_allowed_ips, "10.73.0.0/24") == 0 &&
+                strcmp(stored->name, "legacy-source") == 0 && strcmp(stored->email, "source@example.test") == 0 &&
+                strcmp(stored->notes, "source notes") == 0 && usersValidate(&users),
+            "caller mutation/destruction changed the independently stored account");
+    usersDestroy(&users);
+}
+
 static void testPasswordHitSingleHash(void)
 {
     users_t users;
@@ -2646,6 +2696,7 @@ int main(void)
     testPreparedPasswordDeadlines();
 #endif
     testNativeCopy();
+    testLegacyInsertionOwnershipAndRefusals();
     testZeroCountIndexesStayEmpty();
     testAdaptiveIpIndex();
     testPasswordHitSingleHash();

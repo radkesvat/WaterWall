@@ -296,7 +296,8 @@ size_t                usersPreparedConfigPatchPeakBytes(const user_config_prepar
  * fallible index preparation. It must not call back into users/user helpers.
  * False refuses before logical mutation; the caller retains its precise reason.
  * An accepted patch transfers its selected strings; free prepared afterward on
- * every result. No statistics lock is acquired. Private capacity may survive a
+ * every result. Bandwidth patches additionally hold the target statistics lock;
+ * other configuration edits do not acquire it. Private capacity may survive a
  * refusal. The callback may be NULL. */
 typedef bool (*users_config_precommit_fn)(void *context);
 /* Credential-only preparation and failure-atomic bounded replacement. Neither

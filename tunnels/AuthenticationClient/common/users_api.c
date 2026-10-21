@@ -407,40 +407,6 @@ bool authenticationclientUserGetStats(tunnel_t *t, const user_handle_t *handle, 
     return ok;
 }
 
-static user_admission_result_t authenticationclientUsersTryAdmitConnectionByHandle(users_t             *users,
-                                                                                   const user_handle_t *handle,
-                                                                                   const user_ip_key_t *ip_key,
-                                                                                   uint64_t             now_ms)
-{
-    return usersTryAdmitConnectionByIdentifier(users, handle->user_id, ip_key, now_ms);
-}
-
-static void authenticationclientUsersReleaseConnectionByHandle(users_t *users, const user_handle_t *handle,
-                                                               const user_ip_key_t *ip_key)
-{
-    usersReleaseConnectionByIdentifier(users, handle->user_id, ip_key);
-}
-
-static bool authenticationclientUsersAccountTrafficByHandle(users_t *users, const user_handle_t *handle,
-                                                            uint64_t upload_bytes, uint64_t download_bytes,
-                                                            uint32_t multiplier, uint64_t now_ms, bool *found,
-                                                            bool *first_usage_push_needed)
-{
-    return usersAccountTrafficScaledByIdentifier(
-        users, handle->user_id, upload_bytes, download_bytes, multiplier, now_ms, found, first_usage_push_needed);
-}
-
-static void authenticationclientUsersResetFirstUsagePushRequestByHandle(users_t *users, const user_handle_t *handle)
-{
-    usersResetFirstUsagePushRequestByIdentifier(users, handle->user_id);
-}
-
-static bool authenticationclientUsersRuntimeShouldCloseByHandle(users_t *users, const user_handle_t *handle,
-                                                                uint64_t now_ms)
-{
-    return usersRuntimeShouldCloseByIdentifier(users, handle->user_id, now_ms);
-}
-
 /*
  * These enforcement helpers identify the user by durable id only. They deliberately do NOT gate on
  * handle->generation: a GetAllUsers refresh bumps the generation but the same logical user keeps the
@@ -462,7 +428,7 @@ user_admission_result_t authenticationclientUserTryAdmitConnection(tunnel_t *t, 
     rwlockReadLock(&ts->users_lock);
     if (authenticationclientCanAuthenticateLocked(ts))
     {
-        result = authenticationclientUsersTryAdmitConnectionByHandle(ts->users, handle, ip_key, now_ms);
+        result = usersTryAdmitConnectionByIdentifier(ts->users, handle->user_id, ip_key, now_ms);
     }
     rwlockReadUnlock(&ts->users_lock);
     mutexUnlock(&ts->control_mutex);
@@ -485,7 +451,7 @@ void authenticationclientUserReleaseConnection(tunnel_t *t, const user_handle_t 
     // (revoked user) is a harmless no-op.
     if (LIKELY(ts->users != NULL))
     {
-        authenticationclientUsersReleaseConnectionByHandle(ts->users, handle, ip_key);
+        usersReleaseConnectionByIdentifier(ts->users, handle->user_id, ip_key);
     }
     rwlockReadUnlock(&ts->users_lock);
 }
@@ -597,14 +563,14 @@ static bool authenticationclientAccountTraffic(tunnel_t *t, const user_handle_t 
     {
         // AccountTraffic returns close=true when the user is gone (revoked), so a removed user's
         // traffic is rejected and the connection is torn down.
-        should_close = authenticationclientUsersAccountTrafficByHandle(ts->users,
-                                                                       handle,
-                                                                       upload_bytes,
-                                                                       download_bytes,
-                                                                       ts->traffic_multiplier,
-                                                                       now_ms,
-                                                                       found_out,
-                                                                       &first_usage_push_needed);
+        should_close = usersAccountTrafficScaledByIdentifier(ts->users,
+                                                             handle->user_id,
+                                                             upload_bytes,
+                                                             download_bytes,
+                                                             ts->traffic_multiplier,
+                                                             now_ms,
+                                                             found_out,
+                                                             &first_usage_push_needed);
     }
     rwlockReadUnlock(&ts->users_lock);
 
@@ -616,7 +582,7 @@ static bool authenticationclientAccountTraffic(tunnel_t *t, const user_handle_t 
             rwlockReadLock(&ts->users_lock);
             if (ts->users != NULL)
             {
-                authenticationclientUsersResetFirstUsagePushRequestByHandle(ts->users, handle);
+                usersResetFirstUsagePushRequestByIdentifier(ts->users, handle->user_id);
             }
             rwlockReadUnlock(&ts->users_lock);
         }
@@ -653,7 +619,7 @@ bool authenticationclientUserShouldClose(tunnel_t *t, const user_handle_t *handl
     if (LIKELY(ts->users != NULL))
     {
         // Returns true when the user is disabled, expired, over quota, or removed from the table.
-        should_close = authenticationclientUsersRuntimeShouldCloseByHandle(ts->users, handle, now_ms);
+        should_close = usersRuntimeShouldCloseByIdentifier(ts->users, handle->user_id, now_ms);
     }
     rwlockReadUnlock(&ts->users_lock);
 

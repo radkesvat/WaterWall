@@ -99,7 +99,8 @@ users_update_result_t usersPrepareConfigPatch(const user_config_patch_t *patch, 
         size_t bytes;
         if (! usersConfigStringBytes(update.wireguard_allowed_ips, max_owned_bytes - peak, &bytes))
             return kUsersUpdateResultResourceLimit;
-        /* The legacy CIDR normalizer uses an int text length. */
+        /* Preserve the preparation's existing INT_MAX input-size policy. The
+         * CIDR normalizer itself uses size_t lengths. */
         if (bytes > (size_t) INT_MAX)
             return kUsersUpdateResultResourceLimit;
         bytes = max(bytes, (size_t) USER_WIREGUARD_ALLOWED_IPS_MAX_TEXT);

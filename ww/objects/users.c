@@ -856,7 +856,7 @@ bool usersAddUser(users_t *users, const user_t *user)
     if (LIKELY(usersReserveLocked(users, users->count + 1U)))
     {
         slot = usersStorageAtLocked(users, users->slot_count);
-        if (LIKELY(userCopy(slot, &user_copy)))
+        if (LIKELY(userMoveOwnedValue(slot, &user_copy)))
         {
             result = usersCommitNewUserLocked(users, slot, false);
             if (UNLIKELY(! result))
@@ -978,23 +978,9 @@ cJSON *usersToJson(const users_t *users)
         return NULL;
     }
 
-    root = cJSON_CreateObject();
-    if (UNLIKELY(root == NULL))
-    {
-        return NULL;
-    }
+    root  = cJSON_CreateObject();
     array = cJSON_CreateArray();
-    if (UNLIKELY(array == NULL))
-    {
-        cJSON_Delete(root);
-        return NULL;
-    }
-    if (UNLIKELY(! cJSON_AddItemToObject(root, "users", array)))
-    {
-        cJSON_Delete(array);
-        cJSON_Delete(root);
-        return NULL;
-    }
+    discard cJSON_AddItemToObject(root, "users", array);
 
     rwlockReadLock(&self->lock);
     for (size_t i = 0; i < users->count; ++i)
@@ -1006,13 +992,7 @@ cJSON *usersToJson(const users_t *users)
             cJSON_Delete(root);
             return NULL;
         }
-        if (UNLIKELY(! cJSON_AddItemToArray(array, user_json)))
-        {
-            rwlockReadUnlock(&self->lock);
-            cJSON_Delete(user_json);
-            cJSON_Delete(root);
-            return NULL;
-        }
+        discard cJSON_AddItemToArray(array, user_json);
     }
     rwlockReadUnlock(&self->lock);
 

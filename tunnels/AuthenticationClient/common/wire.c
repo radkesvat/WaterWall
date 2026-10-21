@@ -157,8 +157,6 @@ bool authenticationclientSendRequest(tunnel_t *t, uint8_t request_type, const ui
     uint32_t                       correlation_id                               = 0;
     uint64_t                       now_ms                                       = wloopNowMonotonicMS(getWorkerLoop(0));
 
-    line_t *line = NULL;
-
     mutexLock(&ts->control_mutex);
     if (UNLIKELY(! authenticationclientRequestMayBeSentLocked(ts, request_type)))
     {
@@ -197,26 +195,12 @@ bool authenticationclientSendRequest(tunnel_t *t, uint8_t request_type, const ui
         memoryCopy(token, ts->token, sizeof(token));
     }
 
-    if (LIKELY(ts->control_line != NULL && lineIsAlive(ts->control_line)))
-    {
-        line = ts->control_line;
-        lineRef(line);
-    }
+    line_t *line = ts->control_line;
+    assert(line != NULL && lineIsAlive(line));
+    lineRef(line);
     mutexUnlock(&ts->control_mutex);
 
     authenticationclientUpdateRequestTimer(t);
-    if (UNLIKELY(line == NULL))
-    {
-        if (ts->verbose)
-        {
-            LOGD("AuthenticationClient: no live control line for %s request correlation-id=%u",
-                 authenticationclientRequestTypeName(request_type),
-                 (unsigned int) correlation_id);
-        }
-        authenticationclientRemovePendingById(t, correlation_id);
-
-        return false;
-    }
 
     sbuf_t *message = authenticationclientCreateRequestMessage(
         line, request_type, correlation_id, request_data, request_data_len, token);
