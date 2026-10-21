@@ -298,18 +298,18 @@ above the existing count, then grows storage as entries validate. Failed append
 restores existing records and indexes; allocated capacity may remain.
 The saver always rewrites the database in the normalized `{"users": [...]}` form.
 
-In this example, `password` is still the authentication lookup key. The `id` is a separate durable user identity: keep it
-unique and stable for that user so Waterwall can do safe, fast lookups and carry local runtime state across user-table
-refreshes.
-
-### User JSON Structure
-
 Before importing any layout, the file reader keeps the exact byte count and validates
 the complete JSON document. Trailing non-whitespace bytes, concatenated documents,
 raw or decoded NUL, invalid UTF-8 and duplicate decoded object keys reject the file.
 Ordinary trailing JSON whitespace is allowed. An invalid primary follows the normal
 backup-recovery path. These checks retain the existing cJSON nesting limit and do
 not impose API-envelope byte or value-count limits on database files.
+
+In this example, `password` is still the authentication lookup key. The `id` is a separate durable user identity: keep it
+unique and stable for that user so Waterwall can do safe, fast lookups and carry local runtime state across user-table
+refreshes.
+
+### User JSON Structure
 
 A user object must contain a unique non-zero `id` and a password string. All other fields are optional:
 
@@ -751,12 +751,12 @@ serialized user JSON object.
 If the password payload is malformed or no user matches the password, it returns an error response frame with the same
 correlation ID.
 
-### AddNewUser Module
-
 All password and digest lookup modules admit the complete compact JSON size before copying the matched user's strings.
 The JSON must fit the 16 MiB response payload limit minus its 9-byte frame header. A record one byte over that limit
 returns `response-too-large`; it is never truncated. Invalid stored string encoding returns `user-json-serialize-failed`.
 The collection remains locked through the bounded copy so a concurrent removal cannot invalidate the selected account.
+
+### AddNewUser Module
 
 The `AddNewUser` module expects request data containing a JSON object for one user, using the AuthenticationServer user
 format described above. The submitted user must contain a non-zero unique `id`/`user-id`.
