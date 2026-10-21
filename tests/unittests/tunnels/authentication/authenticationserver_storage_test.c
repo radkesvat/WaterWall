@@ -67,7 +67,9 @@ void __wrap_memoryFree(void *pointer)
 static void watchDatabasePassword(cJSON *json)
 {
     cJSON *row      = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(json, "users"), 0);
-    cJSON *password = cJSON_GetObjectItemCaseSensitive(row, "password");
+    cJSON *password = cJSON_GetObjectItemCaseSensitive(row != NULL ? row : json, "password");
+    if (password == NULL)
+        password = cJSON_GetObjectItemCaseSensitive(row != NULL ? row : json, "pass");
     if (cJSON_IsString(password))
     {
         twfRequire(password_watch == NULL, "prior database JSON password not released");
@@ -76,11 +78,11 @@ static void watchDatabasePassword(cJSON *json)
     }
 }
 
-cJSON *__real_cJSON_ParseWithLength(const char *text, size_t length);
-cJSON *__wrap_cJSON_ParseWithLength(const char *text, size_t length);
-cJSON *__wrap_cJSON_ParseWithLength(const char *text, size_t length)
+cJSON *__real_cJSON_ParseWithLengthOpts(const char *text, size_t length, const char **end, cJSON_bool terminated);
+cJSON *__wrap_cJSON_ParseWithLengthOpts(const char *text, size_t length, const char **end, cJSON_bool terminated);
+cJSON *__wrap_cJSON_ParseWithLengthOpts(const char *text, size_t length, const char **end, cJSON_bool terminated)
 {
-    cJSON *json = __real_cJSON_ParseWithLength(text, length);
+    cJSON *json = __real_cJSON_ParseWithLengthOpts(text, length, end, terminated);
     if (inspect_owned_credentials)
         watchDatabasePassword(json);
     return json;
@@ -555,7 +557,10 @@ static void testCalendarWeeksAndLayouts(void)
         "{\"password\":{\"id\":1,\"password\":\"one\"}}",
         "{\"pass\":{\"id\":1,\"pass\":\"one\"}}",
         "{\"password\":{\"id\":1,\"password\":\"one\"},\"pass\":{\"id\":2,\"password\":\"two\"}}",
-        "{\"users\":[{\"id\":1,\"password\":\"one\"}],\"pass\":{}}"};
+        "{\"users\":[{\"id\":1,\"password\":\"one\"}],\"pass\":{}}",
+        "[{\"id\":1,\"pass\":\"one\"}]",
+        "{\"id\":1,\"password\":\"one\"}",
+        "{\"alice\":{\"id\":1,\"pass\":\"one\"}}\r\n\t "};
     for (size_t i = 0; i < sizeof(layouts) / sizeof(layouts[0]); ++i)
     {
         twfRequire(authenticationserverPrivateWrite(primary, layouts[i], strlen(layouts[i])), "layout seed failed");
@@ -627,6 +632,183 @@ static void testCalendarWeeksAndLayouts(void)
     }
     twfRequire(snapshots == 3, "one local week produced multiple history snapshots");
     twfRequire(closedir(dir) == 0 && rmdir(directory) == 0, "calendar directory cleanup failed");
+}
+
+static void requirePrivateFileEquals(const char *path, const char *expected, size_t expected_length)
+{
+    char  *actual = NULL;
+    size_t length = 0;
+    twfRequire(authenticationserverPrivateRead(path, &actual, &length) == kAuthenticationServerPrivateReadSuccess &&
+                   length == expected_length && memcmp(actual, expected, length) == 0,
+               "rejected input changed persisted bytes");
+    memorySecureZero(actual, length);
+    memoryFree(actual);
+}
+
+static void testMalformedDatabaseRecovery(void)
+{
+    static const char trailing[]      = "{\"users\":[]}garbage";
+    static const char concatenated[]  = "{\"users\":[]}{\"users\":[]}";
+    static const char raw_nul[]       = "{\"users\":[]}\0garbage";
+    static const char decoded_nul[]   = "{\"users\":[{\"id\":43,\"password\":\"abc\\u0000suffix\"}]}";
+    static const char duplicate_key[] = "{\"users\":[],\"us\\u0065rs\":[]}";
+    static const char invalid_utf8[]  = "{\"users\":[{\"id\":43,\"password\":\"bad\xc0\xaf\"}]}";
+    static const struct
+    {
+        const char *bytes;
+        size_t      length;
+    } invalid[]                   = {{trailing, sizeof(trailing) - 1},
+                                     {concatenated, sizeof(concatenated) - 1},
+                                     {raw_nul, sizeof(raw_nul) - 1},
+                                     {decoded_nul, sizeof(decoded_nul) - 1},
+                                     {duplicate_key, sizeof(duplicate_key) - 1},
+                                     {invalid_utf8, sizeof(invalid_utf8) - 1}};
+    static const char seed[]      = "{\"users\":[{\"id\":42,\"password\":\"recovered-secret\"}]}";
+    char              directory[] = "/tmp/waterwall-malformed-database-XXXXXX";
+    twfRequire(mkdtemp(directory) != NULL, "malformed database directory failed");
+    snprintf(primary, sizeof(primary), "%s/users.json", directory);
+    char backup[520];
+    snprintf(backup, sizeof(backup), "%s.backup", primary);
+    authenticationserver_tstate_t ts = {.db_path = primary, .database_loaded = true};
+    rwlockinit(&ts.state_lock);
+    twfRequire(usersCreate(&ts.store.users), "malformed database users failed");
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
+    {
+        twfRequire(authenticationserverPrivateWrite(primary, invalid[i].bytes, invalid[i].length) &&
+                       authenticationserverPrivateWrite(backup, seed, sizeof(seed) - 1),
+                   "malformed database seed failed");
+        reload(&ts);
+        user_t *user = usersLookupByIdentifier(&ts.store.users, 42);
+        twfRequire(usersCount(&ts.store.users) == 1 && user != NULL && userPasswordMatches(user, "recovered-secret"),
+                   "malformed primary bypassed recovery or changed the recovered credential");
+        requirePrivateFileEquals(backup, seed, sizeof(seed) - 1);
+        twfRequire(authenticationserverSaveDatabase(&ts), "save after malformed-primary recovery failed");
+        twfRequire(remove(primary) == 0, "could not exercise recovery after another save");
+        reload(&ts);
+        user = usersLookupByIdentifier(&ts.store.users, 42);
+        twfRequire(usersCount(&ts.store.users) == 1 && user != NULL && userPasswordMatches(user, "recovered-secret"),
+                   "post-recovery save replaced good recovery data with malformed bytes");
+
+        twfRequire(authenticationserverPrivateWrite(primary, invalid[i].bytes, invalid[i].length) &&
+                       authenticationserverPrivateWrite(backup, invalid[i].bytes, invalid[i].length),
+                   "invalid recovery seed failed");
+        memoryFree(ts.backup_path);
+        ts.backup_path = NULL;
+        twfRequire(! authenticationserverLoadDatabase(&ts) && usersCount(&ts.store.users) == 1 &&
+                       usersLookupByIdentifier(&ts.store.users, 42) != NULL,
+                   "invalid primary and backup replaced previously installed users");
+        requirePrivateFileEquals(primary, invalid[i].bytes, invalid[i].length);
+        requirePrivateFileEquals(backup, invalid[i].bytes, invalid[i].length);
+    }
+    memoryFree(ts.backup_path);
+    usersDestroy(&ts.store.users);
+    rwlockDestroy(&ts.state_lock);
+    twfRequire(remove(backup) == 0 && remove(primary) == 0 && rmdir(directory) == 0,
+               "malformed database cleanup failed");
+}
+
+static void testProducerJsonValidation(void)
+{
+    static const char trailing[]      = "{\"id\":43,\"password\":\"proposed\"}garbage";
+    static const char concatenated[]  = "{\"id\":43,\"password\":\"proposed\"}{}";
+    static const char raw_nul[]       = "{\"id\":43,\"password\":\"proposed\"}\0garbage";
+    static const char decoded_nul[]   = "{\"id\":43,\"password\":\"abc\\u0000suffix\"}";
+    static const char duplicate_key[] = "{\"id\":43,\"\\u0069d\":44,\"password\":\"proposed\"}";
+    static const char invalid_utf8[]  = "{\"id\":43,\"password\":\"bad\xc0\xaf\"}";
+    static const struct
+    {
+        const char *bytes;
+        size_t      length;
+    } invalid[]                     = {{trailing, sizeof(trailing) - 1},
+                                       {concatenated, sizeof(concatenated) - 1},
+                                       {raw_nul, sizeof(raw_nul) - 1},
+                                       {decoded_nul, sizeof(decoded_nul) - 1},
+                                       {duplicate_key, sizeof(duplicate_key) - 1},
+                                       {invalid_utf8, sizeof(invalid_utf8) - 1}};
+    static const char seed[]        = "{\"users\":[{\"id\":42,\"password\":\"committed\"}]}";
+    static const char backup_seed[] = "{\"users\":[{\"id\":42,\"password\":\"prior\"}]}";
+    char              directory[]   = "/tmp/waterwall-producer-json-XXXXXX";
+    twfRequire(mkdtemp(directory) != NULL, "producer JSON directory failed");
+    snprintf(primary, sizeof(primary), "%s/users.json", directory);
+    twfRequire(authenticationserverPrivateWrite(primary, seed, sizeof(seed) - 1), "producer JSON seed failed");
+    twf_worker_env_t env;
+    twfWorkerEnvSetup(&env, 8192, 32);
+    tunnel_t *server = tunnelCreate(NULL, sizeof(authenticationserver_tstate_t), 0);
+    twfRequire(server != NULL, "producer JSON server failed");
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    ts->db_path                       = primary;
+    rwlockinit(&ts->state_lock);
+    twfRequire(usersCreate(&ts->store.users) && authenticationserverLoadDatabase(ts), "producer JSON load failed");
+    ts->database_loaded       = true;
+    ts->store.config_revision = 84;
+    twfRequire(authenticationserverPrivateWrite(ts->backup_path, backup_seed, sizeof(backup_seed) - 1),
+               "producer JSON backup seed failed");
+    twf_line_pool_t lines;
+    twfLinePoolSetup(&lines, 0, 2);
+    line_t                        *line           = twfLinePoolCreateLine(&lines);
+    authenticationserver_session_t session        = {.allow_user_write = true};
+    const uint8_t                  correlation[4] = {0};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
+    {
+        const unsigned writes     = private_writes;
+        const unsigned wiped      = owned_credentials_wiped;
+        inspect_owned_credentials = true;
+        rwlockWriteLock(&ts->state_lock);
+        sbuf_t *response = authenticationserverDispatchRequest(kAuthenticationServerRequestTypeAddNewUser,
+                                                               correlation,
+                                                               server,
+                                                               line,
+                                                               &session,
+                                                               (const uint8_t *) invalid[i].bytes,
+                                                               (uint32_t) invalid[i].length);
+        rwlockWriteUnlock(&ts->state_lock);
+        inspect_owned_credentials = false;
+        twfRequire(password_watch == NULL && owned_credentials_wiped == wiped + (i == 0 || i == 1 || i == 4 ? 1U : 0U),
+                   "producer lexical refusal released parsed credential unwiped");
+        twfRequire(response != NULL &&
+                       ((const uint8_t *) sbufGetRawPtr(response))[0] == kAuthenticationServerResponseTypeError,
+                   "producer accepted malformed JSON");
+        lineReuseBuffer(line, response);
+        twfRequire(usersCount(&ts->store.users) == 1 && usersLookupByIdentifier(&ts->store.users, 43) == NULL &&
+                       usersLookupByIdentifier(&ts->store.users, 44) == NULL && ts->store.config_revision == 84 &&
+                       private_writes == writes &&
+                       ts->primary_save_last_result == kAuthenticationServerSaveNotAttempted,
+                   "invalid producer JSON mutated users, revisions or save state");
+        requirePrivateFileEquals(primary, seed, sizeof(seed) - 1);
+        requirePrivateFileEquals(ts->backup_path, backup_seed, sizeof(backup_seed) - 1);
+    }
+    static const char *valid[]     = {"{\"id\":43,\"password\":\"caf\\u00e9-\\ud83d\\udd10\"}\r\n",
+                                      "{\"id\":44,\"pass\":\"\xe9\x9b\xaa-\xf0\x9f\x94\x91\"}"};
+    static const char *passwords[] = {"caf\xc3\xa9-\xf0\x9f\x94\x90", "\xe9\x9b\xaa-\xf0\x9f\x94\x91"};
+    for (size_t i = 0; i < sizeof(valid) / sizeof(valid[0]); ++i)
+    {
+        rwlockWriteLock(&ts->state_lock);
+        sbuf_t *response = authenticationserverDispatchRequest(kAuthenticationServerRequestTypeAddNewUser,
+                                                               correlation,
+                                                               server,
+                                                               line,
+                                                               &session,
+                                                               (const uint8_t *) valid[i],
+                                                               (uint32_t) strlen(valid[i]));
+        rwlockWriteUnlock(&ts->state_lock);
+        twfRequire(response != NULL &&
+                       ((const uint8_t *) sbufGetRawPtr(response))[0] == kAuthenticationServerResponseTypeOk,
+                   "producer rejected valid Unicode password or alias");
+        lineReuseBuffer(line, response);
+        reload(ts);
+        user_t *user = usersLookupByIdentifier(&ts->store.users, 43 + i);
+        twfRequire(user != NULL && userPasswordMatches(user, passwords[i]) && ts->store.config_revision == 85 + i,
+                   "producer changed exact Unicode password bytes or revision");
+    }
+    lineDestroy(line);
+    twfLinePoolTeardown(&lines);
+    usersDestroy(&ts->store.users);
+    rwlockDestroy(&ts->state_lock);
+    twfRequire(remove(ts->backup_path) == 0 && remove(primary) == 0 && rmdir(directory) == 0,
+               "producer JSON cleanup failed");
+    memoryFree(ts->backup_path);
+    tunnelDestroy(server);
+    twfWorkerEnvTeardown(&env);
 }
 
 static void testCleanPeriodicSaving(void)
@@ -743,6 +925,7 @@ static void testOwnedDatabaseCredentialWiping(void)
     authenticationserver_tstate_t ts = {.db_path = primary, .database_loaded = true};
     rwlockinit(&ts.state_lock);
     twfRequire(usersCreate(&ts.store.users), "database wipe users failed");
+    owned_credentials_wiped   = 0;
     inspect_owned_credentials = true;
     twfRequire(authenticationserverLoadDatabase(&ts), "database wipe load failed");
     twfRequire(owned_credentials_wiped == 2 && read_watch == NULL && password_watch == NULL,
@@ -757,14 +940,26 @@ static void testOwnedDatabaseCredentialWiping(void)
                        serialized_watch == NULL,
                    "database success/failure released owned credentials unwiped");
     }
+    twfRequire(remove(ts.backup_path) == 0, "database wipe recovery removal failed");
+    static const char *rejected[] = {"{\"users\":[{\"id\":1,\"password\":\"owned-database-secret\"}]}trailing",
+                                     "{\"users\":[{\"id\":1,\"\\u0069d\":2,\"password\":\"owned-database-secret\"}]}"};
+    for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); ++i)
+    {
+        twfRequire(authenticationserverPrivateWrite(primary, rejected[i], strlen(rejected[i])),
+                   "rejected database wipe seed failed");
+        memoryFree(ts.backup_path);
+        ts.backup_path        = NULL;
+        const unsigned before = owned_credentials_wiped;
+        twfRequire(! authenticationserverLoadDatabase(&ts) && owned_credentials_wiped == before + 2 &&
+                       read_watch == NULL && password_watch == NULL,
+                   "lexical refusal released database bytes or parsed password unwiped");
+    }
     inspect_owned_credentials = false;
     fault                     = kNone;
     memoryFree(ts.backup_path);
     usersDestroy(&ts.store.users);
     rwlockDestroy(&ts.state_lock);
-    char backup[520];
-    snprintf(backup, sizeof(backup), "%s.backup", primary);
-    twfRequire(remove(backup) == 0 && remove(primary) == 0 && rmdir(directory) == 0, "database wipe cleanup failed");
+    twfRequire(remove(primary) == 0 && rmdir(directory) == 0, "database wipe cleanup failed");
 }
 
 int main(void)
@@ -778,6 +973,8 @@ int main(void)
     }
     testCommit(022, kNone, true);
     testCommit(022, kWrite, true);
+    testProducerJsonValidation();
+    testMalformedDatabaseRecovery();
     testCalendarWeeksAndLayouts();
     testCleanPeriodicSaving();
     testOwnedDatabaseCredentialWiping();

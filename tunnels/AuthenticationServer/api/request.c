@@ -137,12 +137,5 @@ const char *authenticationserverApiParse(sbuf_t *message, const node_api_call_co
 
 void authenticationserverWipeJsonStrings(cJSON *item)
 {
-    for (; item != NULL; item = item->next)
-    {
-        authenticationserverWipeJsonStrings(item->child);
-        if (item->valuestring != NULL)
-            memorySecureZero(item->valuestring, strlen(item->valuestring));
-        if (item->string != NULL)
-            memorySecureZero(item->string, strlen(item->string));
-    }
+    jsonWipeStrings(item);
 }

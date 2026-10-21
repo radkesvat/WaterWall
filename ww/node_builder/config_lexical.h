@@ -24,6 +24,11 @@ extern "C"
      * parsing keeps its existing limits. Bounds are checked before tree allocation. */
     cJSON *configLexicalParseBounded(const char *input, size_t length, size_t max_depth, size_t max_values);
     cJSON *configLexicalParseBoundedQuiet(const char *input, size_t length, size_t max_depth, size_t max_values);
+    /* Before deleting a fully parsed but rejected tree, invoke before_delete.
+     * The callback must not free the tree. The caller owns cleanup on success.
+     * This does not expose partial trees discarded inside cJSON on syntax errors. */
+    cJSON *configLexicalParseBoundedQuietWithCleanup(const char *input, size_t length, size_t max_depth,
+                                                     size_t max_values, void (*before_delete)(cJSON *));
 
 #ifdef __cplusplus
 }

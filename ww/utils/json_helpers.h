@@ -5,6 +5,24 @@
 #include "net/address_context.h"
 #include "objects/dynamic_value.h"
 
+/* Wipe only strings owned by this tree, matching cJSON_Delete ownership.
+ * Use before deleting credential-bearing trees after strict byte validation;
+ * borrowed reference values/children and constant keys remain untouched. */
+static inline void jsonWipeStrings(cJSON *item)
+{
+    for (; item != NULL; item = item->next)
+    {
+        if ((item->type & cJSON_IsReference) == 0)
+        {
+            jsonWipeStrings(item->child);
+            if (item->valuestring != NULL)
+                memorySecureZero(item->valuestring, strlen(item->valuestring));
+        }
+        if ((item->type & cJSON_StringIsConst) == 0 && item->string != NULL)
+            memorySecureZero(item->string, strlen(item->string));
+    }
+}
+
 /* Parse a base-10 unsigned 64-bit integer from a string, rejecting empty input,
  * a negative sign, and any trailing non-space characters. */
 static inline bool jsonParseUint64String(const char *value, uint64_t *dest)

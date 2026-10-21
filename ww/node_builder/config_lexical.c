@@ -259,7 +259,8 @@ bool configLexicalCheckKeys(const cJSON *item)
     return true;
 }
 
-static cJSON *parseBounded(const char *input, size_t length, size_t max_depth, size_t max_values, bool diagnose)
+static cJSON *parseBounded(const char *input, size_t length, size_t max_depth, size_t max_values, bool diagnose,
+                           void (*before_delete)(cJSON *))
 {
     if (length >= 3 && memcmp(input, "\xef\xbb\xbf", 3) == 0)
     {
@@ -281,6 +282,8 @@ static cJSON *parseBounded(const char *input, size_t length, size_t max_depth, s
     if ((size_t) (end - input) != length)
     {
         configLexicalRejectInput(diagnose, "trailing input", (size_t) (end - input));
+        if (before_delete != NULL)
+            before_delete(json);
         cJSON_Delete(json);
         return NULL;
     }
@@ -291,6 +294,8 @@ static cJSON *parseBounded(const char *input, size_t length, size_t max_depth, s
 #else
         configLexicalRejectInput(diagnose, "duplicate key, number range or size overflow (document end)", length);
 #endif
+        if (before_delete != NULL)
+            before_delete(json);
         cJSON_Delete(json);
         return NULL;
     }
@@ -304,15 +309,21 @@ cJSON *configLexicalParse(const char *input, size_t length, size_t max_depth)
 
 cJSON *configLexicalParseQuiet(const char *input, size_t length, size_t max_depth)
 {
-    return parseBounded(input, length, max_depth, SIZE_MAX, false);
+    return parseBounded(input, length, max_depth, SIZE_MAX, false, NULL);
 }
 
 cJSON *configLexicalParseBounded(const char *input, size_t length, size_t max_depth, size_t max_values)
 {
-    return parseBounded(input, length, max_depth, max_values, true);
+    return parseBounded(input, length, max_depth, max_values, true, NULL);
 }
 
 cJSON *configLexicalParseBoundedQuiet(const char *input, size_t length, size_t max_depth, size_t max_values)
 {
-    return parseBounded(input, length, max_depth, max_values, false);
+    return parseBounded(input, length, max_depth, max_values, false, NULL);
+}
+
+cJSON *configLexicalParseBoundedQuietWithCleanup(const char *input, size_t length, size_t max_depth, size_t max_values,
+                                                 void (*before_delete)(cJSON *))
+{
+    return parseBounded(input, length, max_depth, max_values, false, before_delete);
 }

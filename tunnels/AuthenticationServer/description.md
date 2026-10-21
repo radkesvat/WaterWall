@@ -298,6 +298,13 @@ refreshes.
 
 ### User JSON Structure
 
+Before importing any layout, the file reader keeps the exact byte count and validates
+the complete JSON document. Trailing non-whitespace bytes, concatenated documents,
+raw or decoded NUL, invalid UTF-8 and duplicate decoded object keys reject the file.
+Ordinary trailing JSON whitespace is allowed. An invalid primary follows the normal
+backup-recovery path. These checks retain the existing cJSON nesting limit and do
+not impose API-envelope byte or value-count limits on database files.
+
 A user object must contain a unique non-zero `id` and a password string. All other fields are optional:
 
 - `id` or `user-id` `(required unsigned integer)`
@@ -741,8 +748,13 @@ correlation ID.
 The `AddNewUser` module expects request data containing a JSON object for one user, using the AuthenticationServer user
 format described above. The submitted user must contain a non-zero unique `id`/`user-id`.
 
-The module validates that the payload is parseable JSON, that it is a user object, that the user can be created, and
-that the new user's id, name, and password hashes do not conflict with existing users. If validation passes, the user
+The module validates the complete payload before constructing credentials: UTF-8 must
+be valid, object keys must be unique after decoding, raw/decoded NUL is forbidden,
+and only JSON whitespace may follow the object. Malformed input leaves users,
+configuration revisions and database files unchanged. Valid Unicode password bytes
+and the `password`/`pass` aliases retain their normal meaning. It then checks that
+the user can be created and that the new user's id, name, and password hashes do not
+conflict with existing users. If validation passes, the user
 is added to the in-memory database and the users file is saved immediately through the private atomic commit sequence.
 If that immediate save fails, the module attempts to roll back the in-memory add and returns a save error.
 

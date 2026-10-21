@@ -75,7 +75,11 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
         return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, "invalid-user-json");
     }
 
-    cJSON *user_json = cJSON_ParseWithLength((const char *) request_data, request_data_len);
+    cJSON *user_json = configLexicalParseBoundedQuietWithCleanup((const char *) request_data,
+                                                                 request_data_len,
+                                                                 CJSON_NESTING_LIMIT,
+                                                                 SIZE_MAX,
+                                                                 authenticationserverWipeJsonStrings);
     if (UNLIKELY(user_json == NULL))
     {
         LOGW("AuthenticationServer: AddNewUser received malformed JSON");

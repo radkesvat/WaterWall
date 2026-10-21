@@ -421,15 +421,19 @@ static bool authenticationserverMaybeWriteNormalBackup(authenticationserver_tsta
 
 static bool authenticationserverLoadUsersFromPath(authenticationserver_tstate_t *ts, const char *path)
 {
-    char *json_text = readFile(path);
-    if (UNLIKELY(json_text == NULL))
+    char  *json_text   = NULL;
+    size_t json_length = 0;
+    if (UNLIKELY(authenticationserverPrivateRead(path, &json_text, &json_length) !=
+                 kAuthenticationServerPrivateReadSuccess))
     {
         LOGW("AuthenticationServer: could not read users database \"%s\"", path);
         return false;
     }
 
-    const size_t json_length = stringLength(json_text);
-    cJSON       *json        = cJSON_ParseWithLength(json_text, json_length);
+    /* Keep the file's full byte span, including NULs. Database imports retain
+     * cJSON's depth policy and have no API-envelope byte/value limit. */
+    cJSON *json = configLexicalParseBoundedQuietWithCleanup(
+        json_text, json_length, CJSON_NESTING_LIMIT, SIZE_MAX, authenticationserverWipeJsonStrings);
     if (UNLIKELY(json == NULL))
     {
         LOGW("AuthenticationServer: could not parse users database \"%s\"", path);
