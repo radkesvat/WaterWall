@@ -225,13 +225,13 @@ bool authenticationclientAcknowledgeUsageBatch(tunnel_t *t, const uint8_t *data,
     authenticationclient_tstate_t *ts = tunnelGetState(t);
     if (ts->pending_batch == NULL)
         return false;
-    cJSON        *json   = cJSON_ParseWithLength((const char *) data, length);
-    const cJSON  *epoch  = cJSON_GetObjectItemCaseSensitive(json, "epoch");
-    const cJSON  *digest = cJSON_GetObjectItemCaseSensitive(json, "digest");
-    const cJSON  *pull   = cJSON_GetObjectItemCaseSensitive(json, "needs-pull");
-    uint64_t      sequence;
+    cJSON        *json     = cJSON_ParseWithLength((const char *) data, length);
+    const cJSON  *epoch    = cJSON_GetObjectItemCaseSensitive(json, "epoch");
+    const cJSON  *digest   = cJSON_GetObjectItemCaseSensitive(json, "digest");
+    const cJSON  *pull     = cJSON_GetObjectItemCaseSensitive(json, "needs-pull");
+    uint64_t      sequence = 0;
     uint8_t       decoded[32];
-    sha256_hash_t expected;
+    sha256_hash_t expected = {0};
     const bool    valid =
         cJSON_IsObject(json) && cJSON_IsString(epoch) && epoch->valuestring != NULL &&
         stringCompare(epoch->valuestring, ts->accounting_epoch) == 0 &&

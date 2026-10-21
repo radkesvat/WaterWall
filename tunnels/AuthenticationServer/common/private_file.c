@@ -285,8 +285,8 @@ authenticationserver_private_read_result_t authenticationserverPrivateRead(const
         return GetLastError() == ERROR_FILE_NOT_FOUND ? privateMissingPath(path)
                                                       : kAuthenticationServerPrivateReadError;
     BY_HANDLE_FILE_INFORMATION info;
-    LARGE_INTEGER              file_size;
-    bool                       ok = GetFileInformationByHandle(handle, &info) &&
+    LARGE_INTEGER              file_size = {0};
+    bool                       ok        = GetFileInformationByHandle(handle, &info) &&
               ! (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) &&
               GetFileSizeEx(handle, &file_size) && file_size.QuadPart > 0 && (uint64_t) file_size.QuadPart < SIZE_MAX &&
               authenticationserverPrivateRestrict(path);
