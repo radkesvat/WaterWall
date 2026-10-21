@@ -217,6 +217,7 @@ void apiserverProgress(tunnel_t *t, line_t *line)
         {
             bool close = ls->close_after_output;
             apiserverRelease(ls, ls->output_size);
+            memorySecureZero(ls->output, ls->output_size);
             memoryFree(ls->output);
             ls->output      = NULL;
             ls->output_size = ls->output_offset = 0;

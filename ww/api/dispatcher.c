@@ -234,10 +234,14 @@ void nodeApiJobRelease(node_api_job_t *job)
     mutexUnlock(&domain->mutex);
     if (destroy)
     {
+        if (job->request != NULL)
+            memorySecureZero(job->request, job->request_size);
         memoryFree(job->request);
         memoryFree(job->principal);
         memoryFree(job->gateway_config);
         memoryFree(job->gateway_node);
+        if (job->response != NULL)
+            memorySecureZero(job->response, job->reply.body_size);
         memoryFree(job->response);
         memoryFree(job);
         domainReleaseReference(domain);
@@ -315,6 +319,7 @@ static void executeJob(void *worker, void *arg1, void *arg2, void *arg3)
                 job->reply.body      = job->response;
                 job->reply.body_size = response_size;
             }
+            memorySecureZero(sbufGetMutablePtr(result.buffer), response_size);
             bufferpoolReuseBuffer(pool, result.buffer);
         }
     }

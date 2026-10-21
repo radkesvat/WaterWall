@@ -64,7 +64,7 @@ static void rejected(cJSON *json, const char *error)
     api_request_t parsed = parseJson(json);
     require(parsed.error && strcmp(parsed.error, error) == 0, "Malformed request used an unexpected gateway code");
     require(parsed.close, "Malformed request did not request terminal closure");
-    memoryFree(parsed.body);
+    apiserverRequestClear(&parsed);
     cJSON_Delete(json);
 }
 
@@ -74,7 +74,7 @@ static void rawRejected(const char *bytes, size_t size)
     apiserverRequestParse(&parsed, bytes, size);
     require(parsed.error && strcmp(parsed.error, "invalid_request") == 0, "Invalid lexical envelope was accepted");
     require(parsed.close, "Invalid lexical envelope did not request closure");
-    memoryFree(parsed.body);
+    apiserverRequestClear(&parsed);
 }
 
 static void validBodies(void)
@@ -88,7 +88,7 @@ static void validBodies(void)
     require(strcmp(parsed.id, "req-42") == 0 && strcmp(parsed.config, "edge") == 0 &&
                 strcmp(parsed.node, "auth-client") == 0,
             "Envelope metadata changed");
-    memoryFree(parsed.body);
+    apiserverRequestClear(&parsed);
     cJSON_Delete(json);
 
     json = requestJson("AH+A/w==");
@@ -99,7 +99,7 @@ static void validBodies(void)
     require(! parsed.error && parsed.config[0] == '\0', "Canonical binary or unqualified selector was rejected");
     require(parsed.body_size == sizeof(binary) && memcmp(parsed.body, binary, sizeof(binary)) == 0,
             "Decoded binary request lost NUL or non-UTF-8 bytes");
-    memoryFree(parsed.body);
+    apiserverRequestClear(&parsed);
     cJSON_Delete(json);
 
     for (size_t i = 0; i < 2; ++i)
@@ -108,7 +108,7 @@ static void validBodies(void)
         cJSON_ReplaceItemInObjectCaseSensitive(json, "body_encoding", cJSON_CreateString(i ? "base64" : "utf8"));
         parsed = parseJson(json);
         require(! parsed.error && parsed.body_size == 0, "Empty gateway body was rejected");
-        memoryFree(parsed.body);
+        apiserverRequestClear(&parsed);
         cJSON_Delete(json);
     }
 }
@@ -191,7 +191,7 @@ static void labelsAndTokens(void)
         cJSON_ReplaceItemInObjectCaseSensitive(into, labels[i].field, cJSON_CreateString(value));
         api_request_t parsed = parseJson(json);
         require(! parsed.error, "Exact metadata length boundary was rejected");
-        memoryFree(parsed.body);
+        apiserverRequestClear(&parsed);
         cJSON_Delete(json);
 
         json = requestJson("{}");
@@ -397,7 +397,7 @@ static void maximumUpdateAcknowledgement(void)
     require(strcmp(cJSON_GetObjectItemCaseSensitive(result, "body")->valuestring, acknowledgement) == 0,
             "Maximum update acknowledgement changed during response serialization");
     cJSON_Delete(response);
-    memoryFree(parsed.body);
+    apiserverRequestClear(&parsed);
 }
 
 static void quietStrictParsing(void)

@@ -36,6 +36,45 @@ static unsigned        nested_fragments;
 
 static void sendBytes(const void *bytes, size_t size);
 
+/* Observe bytes at their real release boundary, never after freeing storage. */
+static struct
+{
+    void  *pointer;
+    size_t offset;
+    size_t size;
+} erased_spans[4];
+static unsigned erased_count;
+
+void __real_memoryFree(void *pointer);
+void __wrap_memoryFree(void *pointer);
+void __wrap_memoryFree(void *pointer)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(erased_spans); ++i)
+        if (pointer != NULL && pointer == erased_spans[i].pointer)
+        {
+            for (size_t j = 0; j < erased_spans[i].size; ++j)
+                require(((const uint8_t *) pointer)[erased_spans[i].offset + j] == 0,
+                        "API secret bytes remained at release");
+            erased_spans[i].pointer = NULL;
+            ++erased_count;
+        }
+    __real_memoryFree(pointer);
+}
+
+static void watchErasure(void *pointer, size_t offset, size_t size)
+{
+    require(pointer != NULL && size != 0, "empty secret release observation");
+    for (size_t i = 0; i < ARRAY_SIZE(erased_spans); ++i)
+        if (erased_spans[i].pointer == NULL)
+        {
+            erased_spans[i].pointer = pointer;
+            erased_spans[i].offset  = offset;
+            erased_spans[i].size    = size;
+            return;
+        }
+    require(false, "secret release observation capacity");
+}
+
 uint64_t __wrap_getHRTimeUs(void);
 uint64_t __wrap_getHRTimeUs(void)
 {
@@ -1159,6 +1198,44 @@ static void shutdownCase(void)
     closeLine();
 }
 
+static void secretRelease(void)
+{
+    openLine();
+    sendRequest(request);
+    require(state()->requests != NULL && state()->job != NULL, "queued secret request fixture");
+    watchErasure(state()->requests->body, 0, state()->requests->body_capacity);
+    watchErasure(state()->requests, offsetof(api_request_t, token), sizeof(state()->requests->token));
+    apiserver_tstate_t *ts = tunnelGetState(api);
+    watchErasure(ts->clients, offsetof(api_client_t, token), sizeof(ts->clients->token));
+    unsigned before = erased_count;
+    closeLine();
+    require(erased_count == before + 3, "queued request or configured token missed secure release");
+
+    openLine();
+    size_t   size;
+    uint8_t *bytes = frame(request, &size);
+    sendBytes(bytes, size - 1);
+    require(state()->frame != NULL && state()->frame_used > 0, "partial secret frame fixture");
+    watchErasure(state()->frame, 0, state()->frame_used);
+    before = erased_count;
+    closeLine();
+    require(erased_count == before + 1, "incomplete frame missed secure release");
+    memoryFree(bytes);
+
+    char *large = changedRequest("operation", "large");
+    openLine();
+    pause_output = true;
+    sendRequest(large);
+    for (unsigned i = 0; i < 8 && captured_size == 0; ++i)
+        pump();
+    require(state()->output != NULL && state()->output_paused, "retained output fixture");
+    watchErasure(state()->output, 0, state()->output_size);
+    before = erased_count;
+    closeLine();
+    require(erased_count == before + 1, "abandoned response missed secure release");
+    memoryFree(large);
+}
+
 int main(void)
 {
     static char            off[]        = "OFF";
@@ -1185,6 +1262,7 @@ int main(void)
     TEST_RUN_CASE(lateCompletionAndReuse);
     TEST_RUN_CASE(partialOutputExpiry);
     TEST_RUN_CASE(shutdownCase);
+    TEST_RUN_CASE(secretRelease);
     const ww_lifecycle_context_t *context = wwLifecycleStartupRollback();
     require(workerInstallApplicationQuiesceRequest(getWorker(0), context) != kWorkerQuiesceRequestUnavailable,
             "quiesce");

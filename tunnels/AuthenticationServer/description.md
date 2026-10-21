@@ -484,8 +484,10 @@ identified stale private staging files. Never use broad wildcard deletion while 
 contain plaintext credentials and are not startup recovery candidates.
 
 The server securely wipes its owned producer secrets, decoded Authenticate fields and temporary password lookup copies
-before release. Page rendering also clears its locally owned JSON/string copy before freeing it. Transport/pool,
-configuration, dispatcher and OS copies are outside this guarantee; neither files nor all process copies are erased.
+before release. Page rendering also clears its locally owned JSON/string copy before freeing it. APIServer and
+the dispatcher separately clear their owned secret copies at final release. Configuration trees, parser-internal
+partial trees, transferred transport/handler buffers and OS copies remain outside these guarantees; neither files
+nor all process copies are erased.
 
 ## Startup Recovery
 

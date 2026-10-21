@@ -14,6 +14,7 @@ typedef struct api_request_s
     uint8_t               token[32];
     uint8_t              *body;
     size_t                body_size;
+    size_t                body_capacity;
     size_t                charge;
     size_t                wire_size;
     uint64_t              deadline_ms;
@@ -24,6 +25,9 @@ typedef struct api_request_s
 /* Caller reserves sizeof(request)+length+1 for owned values, plus length+8192
  * temporary parsing bytes. The lexical preflight limits depth and values first. */
 void apiserverRequestParse(api_request_t *request, const char *bytes, size_t length);
+/* Securely wipes owned body storage and the token, then resets the request.
+ * The request allocation remains caller-owned. Valid after any parse result. */
+void apiserverRequestClear(api_request_t *request);
 bool apiserverTokenDecode(const char *text, uint8_t bytes[32]);
 typedef enum api_response_measure_e
 {

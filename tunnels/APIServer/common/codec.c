@@ -58,7 +58,7 @@ void apiserverRequestParse(api_request_t *r, const char *bytes, size_t length)
     static const char *const auth_keys[]     = {"client", "token"};
     r->error                                 = "invalid_request";
     r->close                                 = true;
-    cJSON *json                              = configLexicalParseBoundedQuiet(bytes, length, 3, 40);
+    cJSON *json = configLexicalParseBoundedQuietWithCleanup(bytes, length, 3, 40, jsonWipeStrings);
     if (! json)
         return;
     if (! cJSON_IsObject(json))
@@ -88,8 +88,9 @@ void apiserverRequestParse(api_request_t *r, const char *bytes, size_t length)
     const cJSON *body     = cJSON_GetObjectItemCaseSensitive(json, "body");
     if (! cJSON_IsString(body) || ! cJSON_IsString(encoding))
         goto done;
-    size_t n = strlen(body->valuestring);
-    r->body  = memoryAllocate(n + 1);
+    size_t n         = strlen(body->valuestring);
+    r->body_capacity = n + 1;
+    r->body          = memoryAllocate(r->body_capacity);
     if (strcmp(encoding->valuestring, "utf8") == 0)
     {
         memcpy(r->body, body->valuestring, n);
@@ -113,7 +114,20 @@ void apiserverRequestParse(api_request_t *r, const char *bytes, size_t length)
     r->error = NULL;
     r->close = false;
 done:
+    jsonWipeStrings(json);
     cJSON_Delete(json);
+}
+
+void apiserverRequestClear(api_request_t *request)
+{
+    assert(request != NULL);
+    if (request->body != NULL)
+    {
+        memorySecureZero(request->body, request->body_capacity);
+        memoryFree(request->body);
+    }
+    memorySecureZero(request->token, sizeof(request->token));
+    *request = (api_request_t) {0};
 }
 
 static const char *errorMessage(const char *code)

@@ -51,12 +51,43 @@ typedef struct probe_s
     wid_t                      owner;
     size_t                     result_size;
     bool                       empty_result;
+    bool                       watch_response_release;
     node_api_dispatch_status_t expected_status;
 } probe_t;
 
 static tunnel_t      target;
 static probe_t       probe;
 static const uint8_t binary_body[] = {'a', 0, 0xff, 'z'};
+
+static thread_local bool capture_request_allocation;
+static atomic_uintptr_t  watched_request, watched_response;
+static atomic_uint       secret_releases;
+
+void *__real_memoryAllocate(size_t size);
+void *__wrap_memoryAllocate(size_t size);
+void *__wrap_memoryAllocate(size_t size)
+{
+    void *pointer = __real_memoryAllocate(size);
+    if (capture_request_allocation && size == sizeof(binary_body))
+        atomicStoreExplicit(&watched_request, (uintptr_t) pointer, memory_order_release);
+    return pointer;
+}
+
+void __real_memoryFree(void *pointer);
+void __wrap_memoryFree(void *pointer);
+void __wrap_memoryFree(void *pointer)
+{
+    atomic_uintptr_t *spans[] = {&watched_request, &watched_response};
+    for (size_t i = 0; i < ARRAY_SIZE(spans); ++i)
+        if (pointer != NULL && (uintptr_t) pointer == atomicLoadExplicit(spans[i], memory_order_acquire))
+        {
+            for (size_t j = 0; j < sizeof(binary_body); ++j)
+                require(((const uint8_t *) pointer)[j] == 0, "detached secret bytes remained at release");
+            atomicStoreExplicit(spans[i], 0, memory_order_release);
+            atomicAddExplicit(&secret_releases, 1, memory_order_relaxed);
+        }
+    __real_memoryFree(pointer);
+}
 
 static api_result_t echoHandler(tunnel_t *instance, sbuf_t *request, const node_api_call_context_t *context)
 {
@@ -128,6 +159,11 @@ static void completion(void *context, uint64_t session, uint64_t request, const 
             require(reply->body_size == sizeof(binary_body) &&
                         memcmp(reply->body, binary_body, sizeof(binary_body)) == 0,
                     "binary response bytes changed");
+    }
+    if (probe.watch_response_release)
+    {
+        require(reply->body_size == sizeof(binary_body), "secret response observation size");
+        atomicStoreExplicit(&watched_response, (uintptr_t) reply->body, memory_order_release);
     }
     nodeApiJobRelease(probe.job);
     probe.job = NULL;
@@ -312,6 +348,38 @@ static void testRefusalAndBudget(void)
     nodeApiDomainDestroy(probe.domain);
 }
 
+static void testSecretRelease(void)
+{
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        resetProbe(0);
+        probe.watch_response_release = mode == 0;
+        capture_request_allocation   = true;
+        probe.job                    = newJob(&worker_zero_operation, nodeApiNowMs() + 5000);
+        capture_request_allocation   = false;
+        const uint8_t *copy          = (const uint8_t *) atomicLoadExplicit(&watched_request, memory_order_acquire);
+        require(probe.job != NULL && copy != NULL && memcmp(copy, binary_body, sizeof(binary_body)) == 0,
+                "detached request allocation was not observed");
+        unsigned before = atomicLoadRelaxed(&secret_releases);
+        if (mode == 2)
+            atomicStoreExplicit(&refuse_next, true, memory_order_release);
+        require(nodeApiJobSubmit(probe.job) == (mode == 2 ? kNodeApiDispatchBusy : kNodeApiDispatchOk),
+                "secret job submission result");
+        if (mode == 0)
+            waitFor(&probe.complete, "secret job reply missing");
+        else
+        {
+            nodeApiJobAbandon(probe.job);
+            nodeApiJobRelease(probe.job);
+            probe.job = NULL;
+        }
+        waitEmpty();
+        require(atomicLoadRelaxed(&secret_releases) == before + (mode == 0 ? 2U : 1U),
+                "detached success/cancellation missed secure release");
+        nodeApiDomainDestroy(probe.domain);
+    }
+}
+
 static void initializeRuntime(bool publish_workers)
 {
     static char            log_off[]    = "OFF";
@@ -423,6 +491,7 @@ int main(void)
     TEST_RUN_CASE(testResultBounds);
     TEST_RUN_CASE(testAbandonedAndDeadline);
     TEST_RUN_CASE(testRefusalAndBudget);
+    TEST_RUN_CASE(testSecretRelease);
     nodeApiCloseAdmission();
     nodeApiUnregister(&target);
     require(workerExitJoin(getWorker(1)), "worker one teardown failed");

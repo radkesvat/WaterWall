@@ -10,6 +10,7 @@ void apiserverUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
     /* Admitted callbacks and synchronous shutdown flushes can still deliver bytes. */
     if (ls->quiesced || atomic_load(&ts->stopping))
     {
+        memorySecureZero(sbufGetMutablePtr(payload), bytes);
         lineReuseBuffer(line, payload);
         return;
     }
@@ -22,6 +23,7 @@ void apiserverUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
     if (charge > SIZE_MAX - sizeof(api_input_t) || bytes > ts->limits.max_input_bytes - ls->input_bytes ||
         ls->input_fragments >= ts->limits.max_input_fragments || ! apiserverReserve(ls, charge + sizeof(api_input_t)))
     {
+        memorySecureZero(sbufGetMutablePtr(payload), bytes);
         lineReuseBuffer(line, payload);
         apiserverCloseSession(t, line);
         return;

@@ -46,6 +46,7 @@ void apiserverLinestateDestroy(apiserver_lstate_t *ls)
     {
         api_input_t *input = ls->input_head;
         ls->input_head     = input->next;
+        memorySecureZero(sbufGetMutablePtr(input->buffer), sbufGetLength(input->buffer));
         lineReuseBuffer(ls->line, input->buffer);
         apiserverRelease(ls, input->charge);
         memoryFree(input);
@@ -55,11 +56,13 @@ void apiserverLinestateDestroy(apiserver_lstate_t *ls)
     if (ls->frame)
     {
         apiserverRelease(ls, ls->frame_capacity);
+        memorySecureZero(ls->frame, ls->frame_used);
         memoryFree(ls->frame);
     }
     if (ls->output)
     {
         apiserverRelease(ls, ls->output_size);
+        memorySecureZero(ls->output, ls->output_size);
         memoryFree(ls->output);
     }
     *ls->previous = ls->next;

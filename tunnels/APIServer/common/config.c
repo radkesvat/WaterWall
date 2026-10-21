@@ -161,6 +161,7 @@ void apiserverFreeSettings(apiserver_tstate_t *ts)
             memoryFree(p);
         }
         memoryFree(client->name);
+        memorySecureZero(client->token, sizeof(client->token));
         memoryFree(client);
     }
 }

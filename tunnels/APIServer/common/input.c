@@ -10,7 +10,7 @@ void apiserverReleaseRequest(apiserver_lstate_t *ls)
     --ls->request_count;
     ls->input_bytes -= request->wire_size;
     apiserverRelease(ls, request->charge);
-    memoryFree(request->body);
+    apiserverRequestClear(request);
     memoryFree(request);
 }
 
@@ -43,6 +43,7 @@ bool apiserverFramingError(apiserver_lstate_t *ls, const char *error)
 static void consumeInput(apiserver_lstate_t *ls, size_t amount)
 {
     api_input_t *input = ls->input_head;
+    memorySecureZero(sbufGetMutablePtr(input->buffer), amount);
     sbufShiftRight(input->buffer, (uint32_t) amount);
     if (sbufGetLength(input->buffer) == 0)
     {
@@ -71,7 +72,10 @@ static bool growFrame(apiserver_lstate_t *ls, size_t needed)
         return false;
     char *frame = memoryAllocate(capacity);
     if (ls->frame_used)
+    {
         memcpy(frame, ls->frame, ls->frame_used);
+        memorySecureZero(ls->frame, ls->frame_used);
+    }
     memoryFree(ls->frame);
     apiserverRelease(ls, ls->frame_capacity);
     ls->frame          = frame;
@@ -133,6 +137,7 @@ bool apiserverParseInput(apiserver_lstate_t *ls)
         apiserverRequestParse(r, ls->frame, ls->frame_size);
         apiserverRelease(ls, temporary_charge);
         appendRequest(ls, r);
+        memorySecureZero(ls->frame, ls->frame_used);
         memoryFree(ls->frame);
         apiserverRelease(ls, ls->frame_capacity);
         ls->frame          = NULL;

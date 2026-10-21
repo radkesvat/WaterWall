@@ -62,6 +62,15 @@ Replace the token placeholder with a fresh random token, for example from
 from traffic-user passwords and AuthenticationClient's upstream secret.
 Diagnostics remain accessible while AuthenticationClient is offline or rejected.
 
+APIServer clears its owned decoded bodies, request tokens, buffered frame and response bytes,
+and configured binary tokens before releasing them. Consumed or discarded input bytes are cleared
+before their buffers return to the pool. Complete parsed JSON trees are cleared on both acceptance
+and later validation refusal. Detached API jobs clear their owned request/response copies at final
+release, including cancellation; returned handler response bytes are cleared before pool reuse.
+This does not clear startup configuration trees, parser-internal partial trees from syntax errors,
+request buffers transferred to handlers, buffers already transferred to neighboring nodes, OS copies,
+or every copy in the process. Handlers remain responsible for the request buffers they consume.
+
 `clients` must be nonempty. Client names and decoded 32-byte tokens must be
 unique. Every `allow` entry names one exact logical configuration, public
 top-level node and nonempty operation list; wildcard permissions are unsupported.

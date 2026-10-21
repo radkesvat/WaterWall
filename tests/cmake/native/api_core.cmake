@@ -9,7 +9,8 @@ add_waterwall_unit_test(waterwall.api_registry_resolver_unit api_registry_resolv
 waterwall_add_native_executable(api_dispatcher_test SUPPORT SOURCES
   ${WATERWALL_UNIT_SOURCE_ROOT}/core/api_dispatcher_test.c)
 target_link_libraries(api_dispatcher_test PRIVATE ww_test_support ww)
-target_link_options(api_dispatcher_test PRIVATE "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup")
+target_link_options(api_dispatcher_test PRIVATE "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
+  "-Wl,--wrap=memoryAllocate" "-Wl,--wrap=memoryFree")
 add_dependencies(waterwall_unit_tests api_dispatcher_test)
 add_waterwall_unit_test(waterwall.api_dispatcher_unit api_dispatcher_test
   "unit;api;worker-message;ownership;shutdown;tsan")
