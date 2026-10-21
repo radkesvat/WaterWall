@@ -563,7 +563,8 @@ void idletableDrainWorkerItems(idle_table_t *self, wid_t wid)
         }
     }
 
-    heapq_idles_t kept = heapq_idles_t_with_capacity(heapq_idles_t_size(&(self->hqueue)));
+    /* Other workers' posted expirations still own reserved heap-restoration slots. */
+    heapq_idles_t kept = heapq_idles_t_with_capacity(heapq_idles_t_capacity(&(self->hqueue)));
     while (heapq_idles_t_size(&(self->hqueue)) > 0)
     {
         idle_item_t *item = *heapq_idles_t_top(&(self->hqueue));

@@ -45,6 +45,9 @@ typedef struct local_idle_table_s local_idle_table_t;
  * A natural-expiration item is still active during the callback and may extend
  * or remove itself. A drain callback is terminal: lookup was already removed,
  * so it must only settle its consumer and clear any authoritative owner slot.
+ * Other active items may be refreshed or removed under their usual lifetime
+ * rules. Neither callback may synchronously drain, quiesce, or destroy its own
+ * table; defer those lifecycle operations until the outer dispatch returns.
  *
  * @param item Expired idle item.
  */
@@ -82,6 +85,7 @@ local_idle_table_t *localIdleTableCreate(wloop_t *loop);
  * Must be called on the table owner worker. Active items are released without
  * invoking expiration callbacks; call localidletableDrainItems() first if the
  * callbacks must run.
+ * Must not be called from this table's expiration or drain callback.
  *
  * @param self Local idle table.
  */
@@ -92,6 +96,7 @@ void localidletableDestroy(local_idle_table_t *self);
  *
  * This suppresses future natural-expiration callbacks but leaves every active
  * item indexed for owner-worker drain or callback-suppressing destruction.
+ * Must not be called from this table's expiration or drain callback.
  */
 void localidletableQuiesce(local_idle_table_t *self);
 
@@ -180,6 +185,7 @@ size_t localidletableGetItemCount(local_idle_table_t *self);
  * callbacks are destroyed.
  * Lookup visibility is removed before each inline callback; drain callbacks may
  * not refresh or remove the already invalid item.
+ * Must not be called from this table's expiration or drain callback.
  *
  * @param self Local idle table.
  */

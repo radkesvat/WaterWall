@@ -6,7 +6,8 @@
  * Cases: caseAcceptedCancellationRestoresForOwnerDrain,
  * caseImmediateForeignRefusalRestoresForOwnerDrain, caseDetachedPendingItemsAreFreedWithoutCallback,
  * caseStagingGrowthDeliversEveryItem, casePendingDeliveryRetainsHeapRestorationCapacity,
- * caseOwnerDrainDetachesPendingMessageItem; the driver lists the remaining cases
+ * caseOwnerDrainDetachesPendingMessageItem, caseOtherOwnerDrainPreservesCancellationRestoration,
+ * caseOtherOwnerDrainPreservesRefreshedDelivery; the driver lists the remaining cases
  * Checks: Assertion labels include: worker-message cleanup invoked a worker-affine idle callback; accepted
  * cancellation did not restore the attached idle item; owner drain did not invoke the restored item on
  * its target worker exactly once; foreign refusal invoked the target-worker callback inline
@@ -272,6 +273,112 @@ static void caseOwnerDrainDetachesPendingMessageItem(void)
     tosWorkerEnvTeardown(&env);
 }
 
+static void caseOtherOwnerDrainPreservesCancellationRestoration(void)
+{
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, kTestWorkers, kTestBufferSize, kTestBufferSize);
+
+    idle_probe_t  drained_probe  = {0};
+    idle_probe_t  retained_probe = {0};
+    idle_table_t *table          = createTestTable();
+    twfRequire(idletableCreateItem(table, kTestHash, &drained_probe, onExpired, 0, 0) != NULL,
+               "failed to create the worker-0 item for cancellation after another owner drains");
+    idle_item_t *retained_item = createOwnerItem(table, kTestHash + 1U, &retained_probe, 0);
+    twfRequire(retained_item != NULL, "failed to create the worker-1 cancellation restoration item");
+
+    /* Both items become message-owned, leaving the heap empty before worker 0 drains. */
+    postExpiredItem(table);
+    idletableDrainWorkerItems(table, 0);
+    twfRequire(drained_probe.callbacks == 0 && retained_probe.callbacks == 0,
+               "draining one owner delivered a pending expiration callback");
+    twfRequire(idletableGetIdleItemByHash(0, table, kTestHash) == NULL, "drained worker-0 item remained visible");
+    workerMessagesCleanupPending(getWorker(0));
+    twfRequire(drained_probe.callbacks == 0, "detached worker-0 message cleanup invoked expiration");
+
+    workerMessagesCloseAdmission(getWorker(1));
+    cleanupOwnerMessages();
+
+    const wid_t previous = tosSetCurrentWorker(1);
+    twfRequire(idletableGetIdleItemByHash(1, table, kTestHash + 1U) == retained_item,
+               "another owner's drain lost the cancelled item's restoration slot");
+    twfRequire(idletableTestGetDeadline(retained_item) == 1000,
+               "cancellation after another owner's drain changed the retained deadline");
+    twfRequire(! atomicLoadExplicit(&retained_item->worker_message_pending, memory_order_acquire),
+               "cancelled item remained message-owned after restoration");
+    twfRequire(retained_probe.callbacks == 0, "cancellation delivered the retained item's callback");
+    idletableDrainWorkerItems(table, 1);
+    twfRequire(idletableGetIdleItemByHash(1, table, kTestHash + 1U) == NULL,
+               "restored item remained visible after its owner drained");
+    idletableDrainWorkerItems(table, 1);
+    discard tosSetCurrentWorker(previous);
+
+    twfRequire(retained_probe.callbacks == 1 && retained_probe.callback_wid == 1,
+               "restored item did not drain exactly once on worker 1");
+    twfRequire(drained_probe.callbacks == 0 && idletableTestGetActiveItemCount(table) == 0,
+               "cross-owner cancellation drain left an item or delivered a detached callback");
+    idletableDestroy(table);
+    tosWorkerEnvTeardown(&env);
+}
+
+static void caseOtherOwnerDrainPreservesRefreshedDelivery(void)
+{
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, kTestWorkers, kTestBufferSize, kTestBufferSize);
+
+    idle_probe_t  drained_probe  = {0};
+    idle_probe_t  retained_probe = {0};
+    idle_table_t *table          = createTestTable();
+    twfRequire(idletableCreateItem(table, kTestHash, &drained_probe, onExpired, 0, 0) != NULL,
+               "failed to create the worker-0 item for refresh after another owner drains");
+    idle_item_t *retained_item = createOwnerItem(table, kTestHash + 1U, &retained_probe, 0);
+    twfRequire(retained_item != NULL, "failed to create the worker-1 refreshed-delivery item");
+
+    /* Both items leave the heap; only worker 0's queued item is detached by this drain. */
+    postExpiredItem(table);
+    idletableDrainWorkerItems(table, 0);
+    workerMessagesCleanupPending(getWorker(0));
+    twfRequire(drained_probe.callbacks == 0 && idletableGetIdleItemByHash(0, table, kTestHash) == NULL,
+               "worker-0 drain or detached message settlement delivered an expiration");
+
+    wid_t previous = tosSetCurrentWorker(1);
+    twfRequire(atomicLoadExplicit(&retained_item->worker_message_pending, memory_order_acquire),
+               "worker-1 item was not pending before its owner refreshed it");
+    idletableKeepIdleItemForAtleast(table, retained_item, 200);
+    twfRequire(idletableTestGetDeadline(retained_item) == 1200,
+               "pending refresh did not extend the retained item to its expected deadline");
+    discard tosSetCurrentWorker(previous);
+
+    tosPumpWorker(&env, 1);
+    twfRequire(retained_probe.callbacks == 0, "refreshed pending item delivered its obsolete expiration");
+    previous = tosSetCurrentWorker(1);
+    twfRequire(idletableGetIdleItemByHash(1, table, kTestHash + 1U) == retained_item,
+               "another owner's drain lost the refreshed item's restoration slot");
+    twfRequire(! atomicLoadExplicit(&retained_item->worker_message_pending, memory_order_acquire) &&
+                   idletableTestGetDeadline(retained_item) == 1200,
+               "refreshed delivery did not restore heap ownership and preserve the extended deadline");
+    discard tosSetCurrentWorker(previous);
+
+    idletableTestSetNowMS(table, 1199);
+    postExpiredItem(table);
+    tosPumpWorker(&env, 1);
+    twfRequire(retained_probe.callbacks == 0, "restored item expired before its extended deadline");
+
+    idletableTestSetNowMS(table, 1200);
+    postExpiredItem(table);
+    tosPumpWorker(&env, 1);
+    twfRequire(retained_probe.callbacks == 1 && retained_probe.callback_wid == 1,
+               "restored item did not expire on worker 1 at its extended deadline");
+    twfRequire(lookupOwnerItem(table, kTestHash + 1U) == NULL && idletableTestGetActiveItemCount(table) == 0,
+               "restored item remained visible after its final expiration");
+
+    postExpiredItem(table);
+    tosPumpWorker(&env, 1);
+    twfRequire(retained_probe.callbacks == 1 && drained_probe.callbacks == 0,
+               "cross-owner refresh settlement duplicated or revived an expiration");
+    idletableDestroy(table);
+    tosWorkerEnvTeardown(&env);
+}
+
 enum
 {
     kConcurrentStagedItems = 8,
@@ -371,6 +478,8 @@ int main(void)
     caseImmediateForeignRefusalRestoresForOwnerDrain();
     caseDetachedPendingItemsAreFreedWithoutCallback();
     caseOwnerDrainDetachesPendingMessageItem();
+    caseOtherOwnerDrainPreservesCancellationRestoration();
+    caseOtherOwnerDrainPreservesRefreshedDelivery();
     caseConcurrentRefreshStageRemoveAndDrain();
     puts("IdleTable cancellation ownership tests passed");
     return 0;
