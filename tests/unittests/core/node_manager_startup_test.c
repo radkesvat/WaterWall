@@ -1,6 +1,6 @@
 /* Multi-config startup: all chains finalize padding before any prepare/start
- * callback. Real pool checkout in callbacks verifies the fixed inventory is
- * ready. Preparation failure starts no producers; shutdown stops later configs.
+ * callback. Real pool checkout in callbacks verifies the lazy inventory is
+ * configured before first demand. Preparation failure starts no producers; shutdown stops later configs.
  * CTest: waterwall.node_manager_startup_unit. No sockets or worker loops run. */
 #include "test_assert.h"
 #include "wwapi.h"
@@ -26,7 +26,11 @@ static void probePrepare(tunnel_t *tunnel)
     require(created == 4 && started == 0, "preparation preceded complete topology or followed a producer");
     require(bufferpoolGetSpliceBufferPadding(pool) == 160, "preparation observed partial chain padding");
 #if WW_HAVE_SPLICE
-    require(sbufSplicePoolPadding() == 160 && sbufSplicePoolCount() == 2, "inventory was not ready before preparation");
+    require(sbufSplicePoolPadding() == 160 && sbufSplicePoolCapacityLimit() == 2ULL * 1024 * 1024,
+            "inventory was not configured before preparation");
+    if (prepared == 0)
+        require(sbufSplicePoolCount() == 0 && sbufSplicePoolCapacity() == 0,
+                "inventory allocated pipes before first demand");
     sbuf_t *buf = bufferpoolGetSpliceBuffer(pool);
     require(buf != NULL && buf->l_pad == 160, "preparation could not acquire a correctly padded splice buffer");
     bufferpoolReuseBuffer(pool, buf);
@@ -117,7 +121,7 @@ static void exerciseStartup(bool fail, unsigned stop)
     require(bufferpoolGetSpliceBufferPadding(pool) == 160 && prepared == 0 && started == 0,
             "second configuration failed to finalize global padding before startup");
 #if WW_HAVE_SPLICE
-    require(sbufSplicePoolInitialize(2ULL * 1024 * 1024, 4096, 2, 160) == 2, "inventory setup failed");
+    require(sbufSplicePoolInitialize(2ULL * 1024 * 1024, 4096, 2, 160), "inventory setup failed");
 #endif
     const ww_startup_result_t result = nodemanagerStartConfigs();
     require(wwStartupSucceeded(result) == ! fail, "startup status lost preparation failure");

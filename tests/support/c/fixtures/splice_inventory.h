@@ -18,8 +18,7 @@ static inline void testSpliceInventoryInitialize(uint16_t padding)
     if (GSTATE.splice_inventory == NULL)
     {
         TEST_REQUIRE(TEST_FAILURE_EXIT,
-                     sbufSplicePoolInitialize(UINT64_C(32) * SPLICE_PAYLOAD_LIMIT, SPLICE_PAYLOAD_LIMIT, 32, padding) >
-                         0,
+                     sbufSplicePoolInitialize(UINT64_C(32) * SPLICE_PAYLOAD_LIMIT, SPLICE_PAYLOAD_LIMIT, 32, padding),
                      "could not initialize test splice inventory");
     }
     if (! cleanup_registered)
@@ -33,7 +32,7 @@ static inline void testSpliceInventoryInitialize(uint16_t padding)
 #endif
 }
 
-/* Retain the requesting worker cache and all reachable master entries to force fallback. */
+/* Retain the requesting worker cache and grow/hold the reachable inventory to force fallback. */
 typedef struct test_splice_inventory_hold_s
 {
     sbuf_t **buffers;
@@ -44,7 +43,7 @@ static inline test_splice_inventory_hold_t testSpliceInventoryHoldAvailable(buff
 {
     test_splice_inventory_hold_t held = {0};
 #if WW_HAVE_SPLICE
-    const uint32_t capacity = sbufSplicePoolCount();
+    const uint32_t capacity = (uint32_t) (sbufSplicePoolCapacityLimit() / SPLICE_PAYLOAD_LIMIT);
     held.buffers            = memoryAllocate((size_t) capacity * sizeof(*held.buffers));
     TEST_REQUIRE(TEST_FAILURE_EXIT, capacity == 0 || held.buffers != NULL, "inventory hold allocation failed");
     while (held.count < capacity)

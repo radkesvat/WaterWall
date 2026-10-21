@@ -45,7 +45,7 @@ void initTestGlobalState(void)
     require(wwStartupSucceeded(createGlobalState(init_data)), "failed to create worker-context fixture");
     require(getWorkersCount() == init_data.workers_count, "runtime did not preserve the configured worker count");
 #if WW_HAVE_SPLICE
-    require(sbufSplicePoolInitialize(UINT64_C(32) * SPLICE_PAYLOAD_LIMIT, SPLICE_PAYLOAD_LIMIT, 32, 0) > 0,
+    require(sbufSplicePoolInitialize(UINT64_C(32) * SPLICE_PAYLOAD_LIMIT, SPLICE_PAYLOAD_LIMIT, 32, 0),
             "failed to create worker-context splice inventory");
 #endif
 }

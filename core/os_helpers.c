@@ -1,7 +1,28 @@
 #include "os_helpers.h"
-#include "wplatform.h"
 #include "loggers/core_logger.h"
+#include "wplatform.h"
 #include "wproc.h"
+
+uint64_t spliceCapacityLimit(uint32_t ram_profile, uint64_t effective_total_bytes)
+{
+    uint64_t profile_limit;
+    if (ram_profile >= kRamProfileL2Memory)
+        profile_limit = SPLICE_TOTAL_SIZE_LIMIT;
+    else if (ram_profile >= kRamProfileL1Memory)
+        profile_limit = 384ULL * 1024ULL * 1024ULL;
+    else if (ram_profile >= kRamProfileM2Memory)
+        profile_limit = 256ULL * 1024ULL * 1024ULL;
+    else if (ram_profile >= kRamProfileM1Memory)
+        profile_limit = 128ULL * 1024ULL * 1024ULL;
+    else if (ram_profile >= kRamProfileS2Memory)
+        profile_limit = 64ULL * 1024ULL * 1024ULL;
+    else
+        profile_limit = 32ULL * 1024ULL * 1024ULL;
+
+    if (effective_total_bytes != 0 && effective_total_bytes / 5 < profile_limit)
+        profile_limit = effective_total_bytes / 5;
+    return (profile_limit / SPLICE_PAYLOAD_LIMIT) * SPLICE_PAYLOAD_LIMIT;
+}
 
 #ifdef OS_UNIX
 #include <sys/resource.h>
@@ -316,9 +337,12 @@ void tryTuneTcp(bool splice_enabled)
 #endif
 }
 
-void tryIncreasePipeLimit(void)
+void tryIncreasePipeLimit(uint64_t capacity_limit)
 {
+    assert(capacity_limit <= SPLICE_TOTAL_SIZE_LIMIT);
 #if WW_HAVE_SPLICE
+    if (capacity_limit == 0)
+        return;
     cmd_result_t limits = execCmd("sysctl -n fs.pipe-user-pages-soft fs.pipe-user-pages-hard 2>&1");
     if (limits.exit_code != 0)
     {
@@ -355,7 +379,7 @@ void tryIncreasePipeLimit(void)
         LOGW("Core: Could not determine page size for the pipe soft limit; keeping current limits");
         return;
     }
-    const unsigned long target_bytes = SPLICE_TOTAL_SIZE_LIMIT;
+    const unsigned long target_bytes = (unsigned long) capacity_limit;
     unsigned long target = target_bytes / (unsigned long) page_size + (target_bytes % (unsigned long) page_size != 0);
     if (hard != 0 && hard < target)
     {
@@ -378,12 +402,18 @@ void tryIncreasePipeLimit(void)
         return;
     }
     LOGI("Core: System-wide pipe soft limit raised from %lu to %lu pages", soft, target);
+#else
+    discard(capacity_limit);
 #endif
 }
 
-uint32_t splicePipeCountLimit(void)
+uint32_t splicePipeCountLimit(uint64_t capacity_limit)
 {
+    assert(capacity_limit <= SPLICE_TOTAL_SIZE_LIMIT);
 #if WW_HAVE_SPLICE
+    const uint32_t target_count = (uint32_t) (capacity_limit / SPLICE_PAYLOAD_LIMIT);
+    if (target_count == 0)
+        return 0;
     struct rlimit limit;
     if (getrlimit(RLIMIT_NOFILE, &limit) != 0)
     {
@@ -415,10 +445,10 @@ uint32_t splicePipeCountLimit(void)
         return 0;
     }
 
-    const uint32_t target_count     = SPLICE_TOTAL_SIZE_LIMIT / SPLICE_PAYLOAD_LIMIT;
-    const rlim_t   descriptor_count = (limit.rlim_cur - open_count) / 8;
+    const rlim_t descriptor_count = (limit.rlim_cur - open_count) / 8;
     return descriptor_count < target_count ? (uint32_t) descriptor_count : target_count;
 #else
+    discard(capacity_limit);
     return 0;
 #endif
 }
@@ -519,13 +549,14 @@ void tryTuneTcp(bool splice_enabled)
     discard(splice_enabled);
 }
 
-void tryIncreasePipeLimit(void)
+void tryIncreasePipeLimit(uint64_t capacity_limit)
 {
-    discard(0);
+    discard(capacity_limit);
 }
 
-uint32_t splicePipeCountLimit(void)
+uint32_t splicePipeCountLimit(uint64_t capacity_limit)
 {
+    discard(capacity_limit);
     return 0;
 }
 

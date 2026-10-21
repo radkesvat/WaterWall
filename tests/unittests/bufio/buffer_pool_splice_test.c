@@ -1,5 +1,5 @@
 /*
- * Covers: fixed startup splice-pipe capacity, shared exhaustion, cross-thread release,
+ * Covers: lazy bounded splice-pipe growth, shared exhaustion, cross-thread release,
  * discard retirement and teardown, including bypassed ordinary buffer caching.
  * Setup: real pipe descriptors and buffer-pool APIs; only capacity negotiation and
  * selected splice/read failures are substituted at the OS boundary.
@@ -37,7 +37,7 @@ static unsigned int fail_pipe_call, fail_growth_call;
 static int          granted_capacity = kPipeCapacity;
 static int          descriptors[kMaximumRecordedPipes][2];
 static int          capacities[kMaximumRecordedPipes];
-static int          drain_error_fd = -1;
+static int          drain_error_fd   = -1;
 static int          discard_probe_fd = -1, discard_sink_fd = -1, discard_splice_error;
 static unsigned int discard_splice_calls, discard_read_calls;
 static size_t       discard_splice_limit = SIZE_MAX;
@@ -62,7 +62,7 @@ int __wrap_pipe2(int pair[2], int flags)
     const int result = __real_pipe2(pair, flags);
     if (result == 0)
     {
-        require(recorded_pipes < kMaximumRecordedPipes, "startup exceeded bounded pipe fixture");
+        require(recorded_pipes < kMaximumRecordedPipes, "growth exceeded bounded pipe fixture");
         descriptors[recorded_pipes][0] = pair[0];
         descriptors[recorded_pipes][1] = pair[1];
         capacities[recorded_pipes++]   = 4096;
@@ -93,7 +93,7 @@ int __wrap_fcntl(int fd, int command, ...)
         va_start(args, command);
         const int requested = va_arg(args, int);
         va_end(args);
-        require(requested == kPipeCapacity, "startup requested the wrong pipe capacity");
+        require(requested == kPipeCapacity, "growth requested the wrong pipe capacity");
         if (fail_growth_call != 0 && growth_calls == fail_growth_call)
         {
             errno = EPERM;
@@ -168,7 +168,8 @@ static void destroyInventory(void)
 {
     sbufSplicePoolDestroy();
     require(GSTATE.splice_inventory == NULL, "teardown retained global inventory ownership");
-    require(sbufSplicePoolCount() == 0 && sbufSplicePoolCapacity() == 0, "teardown retained inventory accounting");
+    require(sbufSplicePoolCount() == 0 && sbufSplicePoolCapacity() == 0 && sbufSplicePoolCapacityLimit() == 0,
+            "teardown retained inventory accounting");
     for (unsigned int i = 0; i < recorded_pipes; ++i)
     {
         requireClosed(descriptors[i][0]);
@@ -257,52 +258,121 @@ static void *releaseFromForeignThread(void *buffer)
     return NULL;
 }
 
-static void testStartupLimits(void)
+static void returnBuffers(sbuf_t **buffers, uint32_t count)
 {
+    for (uint32_t i = 0; i < count; ++i)
+        sbufDestroy(buffers[i]);
+}
+
+static void testLazyLimits(void)
+{
+    sbuf_t *buffers[8];
     resetProbe();
-    require(sbufSplicePoolInitialize(3ULL * kPipeCapacity + 123, kPipeCapacity, 20, 64) == 3,
-            "startup did not floor the configured capacity budget");
+    require(sbufSplicePoolInitialize(3ULL * kPipeCapacity + 123, kPipeCapacity, 20, 64), "configuration failed");
+    require(sbufSplicePoolCapacityLimit() == 3ULL * kPipeCapacity + 123 && sbufSplicePoolCount() == 0 &&
+                sbufSplicePoolCapacity() == 0 && pipe_calls == 0 && query_calls == 0 && growth_calls == 0,
+            "configuration allocated pipes or lost the byte ceiling");
+    require(sbufSplicePoolGetBuffers(buffers, 8, 64) == 3, "growth did not floor the configured capacity budget");
     require(sbufSplicePoolCount() == 3 && sbufSplicePoolCapacity() == 3ULL * kPipeCapacity && pipe_calls == 3,
-            "startup inventory exceeded its capacity budget");
+            "inventory exceeded its capacity budget");
+    returnBuffers(buffers, 3);
     destroyInventory();
 
     resetProbe();
-    require(sbufSplicePoolInitialize(8ULL * kPipeCapacity, kPipeCapacity, 2, 64) == 2 && pipe_calls == 2,
-            "startup did not honor descriptor headroom count");
+    require(sbufSplicePoolInitialize(8ULL * kPipeCapacity, kPipeCapacity, 2, 64) &&
+                sbufSplicePoolGetBuffers(buffers, 8, 64) == 2 && pipe_calls == 2,
+            "growth did not honor descriptor headroom count");
+    returnBuffers(buffers, 2);
     destroyInventory();
 
     resetProbe();
     fail_pipe_call = 3;
-    require(sbufSplicePoolInitialize(8ULL * kPipeCapacity, kPipeCapacity, 8, 64) == 2 && pipe_calls == 3,
-            "startup did not retain partial inventory after pipe refusal");
+    require(sbufSplicePoolInitialize(8ULL * kPipeCapacity, kPipeCapacity, 8, 64) &&
+                sbufSplicePoolGetBuffers(buffers, 8, 64) == 2 && pipe_calls == 3,
+            "growth did not retain partial inventory after pipe refusal");
     require(sbufSplicePoolCapacity() == 2ULL * kPipeCapacity, "partial inventory miscounted capacity");
+    require(sbufSplicePoolGet(64) == NULL && pipe_calls == 3, "refusal did not suppress immediate growth retries");
+    sbuf_t *same = buffers[0];
+    sbufDestroy(same);
+    buffers[0] = sbufSplicePoolGet(64);
+    require(buffers[0] == same && pipe_calls == 3, "growth cooldown prevented reuse of a returned pipe");
+    returnBuffers(buffers, 2);
     destroyInventory();
 
     resetProbe();
     fail_growth_call = 2;
-    require(sbufSplicePoolInitialize(8ULL * kPipeCapacity, kPipeCapacity, 8, 64) == 1 && pipe_calls == 2,
-            "startup retained a pipe whose full capacity was refused");
-    /* The discard sink may reuse a rejected pipe's descriptor number. Check
-     * every recorded descriptor after inventory and sink teardown below. */
+    require(sbufSplicePoolInitialize(8ULL * kPipeCapacity, kPipeCapacity, 8, 64) &&
+                sbufSplicePoolGetBuffers(buffers, 8, 64) == 1 && pipe_calls == 2,
+            "growth retained a pipe whose full capacity was refused");
+    require(sbufSplicePoolGet(64) == NULL && pipe_calls == 2, "sizing refusal did not suppress immediate retries");
+    returnBuffers(buffers, 1);
     destroyInventory();
 
     resetProbe();
     granted_capacity = kPipeCapacity / 2;
-    require(sbufSplicePoolInitialize(8ULL * kPipeCapacity, kPipeCapacity, 8, 64) == 0,
-            "startup accepted a pipe smaller than the required capacity");
-    require(pipe_calls == 1, "startup retried a rejected capacity without bound");
+    require(sbufSplicePoolInitialize(8ULL * kPipeCapacity, kPipeCapacity, 8, 64) && sbufSplicePoolGet(64) == NULL &&
+                sbufSplicePoolCount() == 0 && sbufSplicePoolCapacity() == 0,
+            "growth accepted a pipe smaller than the required capacity");
+    require(pipe_calls == 1, "growth retried a rejected capacity without bound");
     destroyInventory();
 
     resetProbe();
     granted_capacity = 2 * kPipeCapacity;
-    require(sbufSplicePoolInitialize(5ULL * kPipeCapacity, kPipeCapacity, 8, 64) == 2 &&
-                sbufSplicePoolCapacity() == 4ULL * kPipeCapacity,
-            "startup charged requested capacity instead of granted capacity");
+    require(sbufSplicePoolInitialize(5ULL * kPipeCapacity, kPipeCapacity, 8, 64) &&
+                sbufSplicePoolGetBuffers(buffers, 8, 64) == 2 && sbufSplicePoolCapacity() == 4ULL * kPipeCapacity,
+            "growth charged requested capacity instead of granted capacity");
+    returnBuffers(buffers, 2);
     destroyInventory();
 
     resetProbe();
-    require(sbufSplicePoolInitialize(kPipeCapacity - 1, kPipeCapacity, 8, 64) == 0 && pipe_calls == 0,
+    require(sbufSplicePoolInitialize(kPipeCapacity - 1, kPipeCapacity, 8, 64) && sbufSplicePoolGet(64) == NULL &&
+                pipe_calls == 0,
             "sub-pipe budget created a pipe");
+    destroyInventory();
+
+    resetProbe();
+    require(sbufSplicePoolInitialize(8ULL * kPipeCapacity, kPipeCapacity, 0, 64) && sbufSplicePoolGet(64) == NULL &&
+                pipe_calls == 0,
+            "zero descriptor allowance created a pipe");
+    destroyInventory();
+}
+
+static void testDemandGrowth(void)
+{
+    resetProbe();
+    require(sbufSplicePoolInitialize(8ULL * kPipeCapacity, kPipeCapacity, 8, 64), "demand setup failed");
+    sbuf_t *first = sbufSplicePoolGet(64);
+    checkSplice(first, 64);
+    require(pipe_calls == 1 && sbufSplicePoolCapacity() == kPipeCapacity,
+            "first demand filled the inventory beyond its request");
+    sbuf_t *second = sbufSplicePoolGet(64);
+    checkSplice(second, 64);
+    require(pipe_calls == 2 && sbufSplicePoolCapacity() == 2ULL * kPipeCapacity,
+            "second demand did not grow by one pipe");
+    sbufDestroy(first);
+    first = sbufSplicePoolGet(64);
+    require(first != NULL && pipe_calls == 2, "master reuse grew inventory unnecessarily");
+    sbufDestroy(first);
+    sbufDestroy(second);
+    destroyInventory();
+}
+
+static void testGrowthRetry(void)
+{
+    resetProbe();
+    fail_pipe_call = 1;
+    require(sbufSplicePoolInitialize(2ULL * kPipeCapacity, kPipeCapacity, 2, 64), "retry setup failed");
+    require(sbufSplicePoolGet(64) == NULL && pipe_calls == 1, "retry fixture did not observe kernel refusal");
+    for (unsigned int attempt = 0; attempt < 16; ++attempt)
+        require(sbufSplicePoolGet(64) == NULL && pipe_calls == 1, "growth refusal caused a syscall retry loop");
+    struct timespec delay = {.tv_sec = 1, .tv_nsec = 100000000};
+    while (nanosleep(&delay, &delay) != 0)
+        require(errno == EINTR, "could not wait for growth cooldown");
+    sbuf_t *buffer = sbufSplicePoolGet(64);
+    checkSplice(buffer, 64);
+    require(pipe_calls == 2 && sbufSplicePoolCapacity() == kPipeCapacity,
+            "transient refusal disabled growth or consumed its creation budget");
+    sbufDestroy(buffer);
     destroyInventory();
 }
 
@@ -313,7 +383,7 @@ static void testGlobalStateOwnership(void)
             "publishing shared control allocated pipes before padding was finalized");
     ww_global_state_t shared = *getGlobalState();
     shared.flag_initialized  = true;
-    require(sbufSplicePoolInitialize(2ULL * kPipeCapacity, kPipeCapacity, 2, 64) == 2, "inventory setup failed");
+    require(sbufSplicePoolInitialize(2ULL * kPipeCapacity, kPipeCapacity, 2, 64), "inventory setup failed");
     sbuf_t *held = sbufSplicePoolGet(64);
     require(held != NULL, "state-copy checkout failed");
     putBody(held);
@@ -342,7 +412,7 @@ static void testGlobalStateOwnership(void)
 static void testSharedReuseAndExhaustion(void)
 {
     resetProbe();
-    require(sbufSplicePoolInitialize(3ULL * kPipeCapacity, kPipeCapacity, 3, 64) == 3, "inventory setup failed");
+    require(sbufSplicePoolInitialize(3ULL * kPipeCapacity, kPipeCapacity, 3, 64), "inventory setup failed");
     fixture_t fixture = makeFixture(1);
     sbuf_t   *buffers[3];
     for (size_t i = 0; i < ARRAY_SIZE(buffers); ++i)
@@ -395,7 +465,7 @@ static void testSharedReuseAndExhaustion(void)
 static void testBoundedLocalCache(void)
 {
     resetProbe();
-    require(sbufSplicePoolInitialize(20ULL * kPipeCapacity, kPipeCapacity, 20, 64) == 20, "cache setup failed");
+    require(sbufSplicePoolInitialize(20ULL * kPipeCapacity, kPipeCapacity, 20, 64), "cache setup failed");
     fixture_t fixture = makeFixture(256);
     sbuf_t   *buffers[20];
     for (unsigned i = 0; i < 20; ++i)
@@ -433,7 +503,7 @@ static void testBoundedLocalCache(void)
 static void testImmutablePadding(void)
 {
     resetProbe();
-    require(sbufSplicePoolInitialize(kPipeCapacity, kPipeCapacity, 1, 33) == 1 && sbufSplicePoolPadding() == 64,
+    require(sbufSplicePoolInitialize(kPipeCapacity, kPipeCapacity, 1, 33) && sbufSplicePoolPadding() == 64,
             "startup did not freeze aligned padding");
     fixture_t fixture = makeFixture(1);
     sbuf_t   *buf     = bufferpoolGetSpliceBuffer(fixture.first);
@@ -470,6 +540,7 @@ static void testImmutablePadding(void)
 typedef struct concurrent_probe_s
 {
     atomic_bool start;
+    atomic_uint admitted;
     atomic_uint owners[2];
     atomic_uint successes;
 } concurrent_probe_t;
@@ -479,6 +550,14 @@ static void *exerciseSharedInventory(void *userdata)
     concurrent_probe_t *probe = userdata;
     while (! atomicLoadExplicit(&probe->start, memory_order_acquire))
         YIELD_THREAD();
+    /* Hold every first acquisition until all threads have attempted checkout.
+     * This forces concurrent cold demand beyond the two-pipe ceiling. */
+    sbuf_t *first = sbufSplicePoolGet(64);
+    atomicAddExplicit(&probe->admitted, 1, memory_order_acq_rel);
+    while (atomicLoadExplicit(&probe->admitted, memory_order_acquire) < 4)
+        YIELD_THREAD();
+    if (first != NULL)
+        sbufDestroy(first);
     for (unsigned int iteration = 0; iteration < 2000; ++iteration)
     {
         sbuf_t *buffer = sbufSplicePoolGet(64);
@@ -490,7 +569,7 @@ static void *exerciseSharedInventory(void *userdata)
         }
         const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buffer);
         const unsigned int             slot     = metadata.pipefd[0] == descriptors[0][0] ? 0 : 1;
-        require(metadata.pipefd[0] == descriptors[slot][0], "checkout escaped startup inventory");
+        require(metadata.pipefd[0] == descriptors[slot][0], "checkout escaped bounded inventory");
         require(atomicAddExplicit(&probe->owners[slot], 1, memory_order_acq_rel) == 0,
                 "two threads simultaneously leased one pipe");
         const unsigned char expected = (unsigned char) iteration;
@@ -509,7 +588,8 @@ static void *exerciseSharedInventory(void *userdata)
 static void testConcurrentLeases(void)
 {
     resetProbe();
-    require(sbufSplicePoolInitialize(2ULL * kPipeCapacity, kPipeCapacity, 2, 64) == 2, "concurrent setup failed");
+    require(sbufSplicePoolInitialize(2ULL * kPipeCapacity, kPipeCapacity, 2, 64) && pipe_calls == 0,
+            "concurrent setup allocated pipes eagerly");
     concurrent_probe_t probe = {0};
     pthread_t          threads[4];
     for (size_t i = 0; i < ARRAY_SIZE(threads); ++i)
@@ -528,7 +608,7 @@ static void testConcurrentLeases(void)
 static void testTeardownRejectsActiveLease(void)
 {
     resetProbe();
-    require(sbufSplicePoolInitialize(kPipeCapacity, kPipeCapacity, 1, 64) == 1, "active-lease teardown setup failed");
+    require(sbufSplicePoolInitialize(kPipeCapacity, kPipeCapacity, 1, 64), "active-lease teardown setup failed");
     sbuf_t *buffer = sbufSplicePoolGet(64);
     require(buffer != NULL, "active-lease fixture acquisition failed");
     const pid_t child = fork();
@@ -552,7 +632,7 @@ static void testTeardownRejectsActiveLease(void)
 static void testRetirement(void)
 {
     resetProbe();
-    require(sbufSplicePoolInitialize(2ULL * kPipeCapacity, kPipeCapacity, 2, 64) == 2, "retirement setup failed");
+    require(sbufSplicePoolInitialize(2ULL * kPipeCapacity, kPipeCapacity, 2, 64), "retirement setup failed");
     fixture_t fixture = makeFixture(1);
     sbuf_t   *broken  = bufferpoolGetSpliceBuffer(fixture.first);
     sbuf_t   *held    = bufferpoolGetSpliceBuffer(fixture.first);
@@ -564,7 +644,8 @@ static void testRetirement(void)
     bufferpoolReuseBuffer(fixture.first, broken);
     requireClosed(metadata.pipefd[0]);
     requireClosed(metadata.pipefd[1]);
-    require(sbufSplicePoolCount() == 1 && sbufSplicePoolCapacity() == kPipeCapacity,
+    require(sbufSplicePoolCount() == 1 && sbufSplicePoolCapacity() == kPipeCapacity &&
+                sbufSplicePoolCapacityLimit() == 2ULL * kPipeCapacity,
             "drain failure did not retire inventory capacity");
     require(bufferpoolGetSpliceBuffer(fixture.second) == NULL && pipe_calls == 2, "runtime replaced a retired pipe");
     sbufDestroy(held);
@@ -578,7 +659,7 @@ static void testRetirement(void)
 static void testDiscard(void)
 {
     resetProbe();
-    require(sbufSplicePoolInitialize(kPipeCapacity, kPipeCapacity, 1, 64) == 1, "discard setup failed");
+    require(sbufSplicePoolInitialize(kPipeCapacity, kPipeCapacity, 1, 64), "discard setup failed");
     sbuf_t *buffer = sbufSplicePoolGet(64);
     require(buffer != NULL, "discard fixture acquisition failed");
     const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buffer);
@@ -682,7 +763,9 @@ int main(void)
     testOrdinaryRecharge();
 #if WW_HAVE_SPLICE
     testGlobalStateOwnership();
-    testStartupLimits();
+    testLazyLimits();
+    testDemandGrowth();
+    testGrowthRetry();
     testSharedReuseAndExhaustion();
     testBoundedLocalCache();
     testImmutablePadding();

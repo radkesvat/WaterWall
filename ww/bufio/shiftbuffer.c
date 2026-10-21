@@ -17,13 +17,20 @@
 static sbuf_t *sbufAllocate(uint32_t capacity, uint16_t pad_left);
 
 #if WW_HAVE_SPLICE
-/* Owned by GSTATE. Startup fixes both the inventory and aligned padding before
- * producers start. Checked-out entries include worker-local cached buffers. */
+/* Owned by GSTATE. Startup fixes limits and aligned padding before producers
+ * start; cold misses grow the inventory. Checked-out entries include caches. */
 typedef struct sbuf_splice_inventory_s
 {
     master_pool_t *pool;
+    wmutex_t       growth_mutex;
     atomic_uint    count;
     atomic_ullong  capacity;
+    uint64_t       capacity_limit;
+    uint64_t       admitted_capacity; // Growth mutex; retirement never restores the lifetime creation budget.
+    uint64_t       retry_after_us;    // Growth mutex; shared cooldown after a kernel resource refusal.
+    uint32_t       count_limit;
+    uint32_t       admitted_count;
+    uint32_t       pipe_capacity;
     int32_t        padding; // -1 during exclusive configuration; then the immutable aligned padding.
     int            discard_fd;
 } sbuf_splice_inventory_t;
@@ -31,7 +38,7 @@ typedef struct sbuf_splice_inventory_s
 static master_pool_item_t *spliceBufferCreationForbidden(void *userdata)
 {
     discard userdata;
-    LOGF("SplicePool: buffer creation is restricted to startup");
+    LOGF("SplicePool: buffer creation must use bounded inventory growth");
     abortProgramNow(1);
 }
 
@@ -40,6 +47,37 @@ static void destroySplicePoolBuffer(master_pool_item_t *item)
     sbuf_t *buf = item;
     sbufSpliceClosePipe(buf);
     memoryFreeAligned(buf);
+}
+
+/* Only the cold-path growth mutex holder creates pipes. Live counters remain
+ * atomic because a foreign return may retire a failed pipe concurrently. */
+static sbuf_t *sbufSplicePoolCreateBuffer(sbuf_splice_inventory_t *inventory)
+{
+    int pair[2];
+    if (pipe2(pair, O_NONBLOCK | O_CLOEXEC) != 0)
+        return NULL;
+    int capacity = fcntl(pair[0], F_GETPIPE_SZ);
+    if (capacity > 0 && (uint32_t) capacity < inventory->pipe_capacity)
+        capacity = fcntl(pair[0], F_SETPIPE_SZ, (int) inventory->pipe_capacity);
+    if (capacity < 0 || (uint32_t) capacity < inventory->pipe_capacity ||
+        (uint64_t) capacity > inventory->capacity_limit - inventory->admitted_capacity)
+    {
+        const int error = capacity < 0 ? errno : ENOBUFS;
+        close(pair[0]);
+        close(pair[1]);
+        errno = error;
+        return NULL;
+    }
+    sbuf_t *buf =
+        sbufAllocate(SPLICE_BUFFER_STORAGE_SIZE + (uint32_t) inventory->padding, (uint16_t) inventory->padding);
+    buf->flags = kSbufFlagSplice | kSbufFlagSplicePooled;
+    sbufSpliceSetMetadata(
+        buf, (splice_buffer_metadata_t) {.pipefd = {pair[0], pair[1]}, .pipe_capacity = (uint32_t) capacity});
+    inventory->admitted_capacity += (uint32_t) capacity;
+    ++inventory->admitted_count;
+    atomicAddU64Explicit(&inventory->capacity, (uint32_t) capacity, memory_order_relaxed);
+    atomicAddExplicit(&inventory->count, 1, memory_order_relaxed);
+    return buf;
 }
 #endif
 
@@ -87,7 +125,12 @@ bool sbufSplicePoolPrepare(void)
 #if WW_HAVE_SPLICE
     assert(GSTATE.splice_inventory == NULL);
     sbuf_splice_inventory_t *inventory = memoryAllocate(sizeof(*inventory));
-    *inventory              = (sbuf_splice_inventory_t) {.padding = -1, .discard_fd = -1};
+    *inventory                         = (sbuf_splice_inventory_t) {.padding = -1, .discard_fd = -1};
+    if (! mutexTryInit(&inventory->growth_mutex))
+    {
+        memoryFree(inventory);
+        return false;
+    }
     GSTATE.splice_inventory = inventory;
     return true;
 #else
@@ -95,72 +138,48 @@ bool sbufSplicePoolPrepare(void)
 #endif
 }
 
-uint32_t sbufSplicePoolInitialize(uint64_t capacity_limit, uint32_t pipe_capacity, uint32_t max_pipe_count,
-                                  uint16_t padding)
+bool sbufSplicePoolInitialize(uint64_t capacity_limit, uint32_t pipe_capacity, uint32_t max_pipe_count,
+                              uint16_t padding)
 {
     assert(pipe_capacity > 0 && pipe_capacity <= INT_MAX);
     padding = sbufAlignLeftPadding(padding);
 #if WW_HAVE_SPLICE
-    if (GSTATE.splice_inventory == NULL)
-        discard sbufSplicePoolPrepare();
+    if (GSTATE.splice_inventory == NULL && ! sbufSplicePoolPrepare())
+        return false;
     sbuf_splice_inventory_t *inventory = GSTATE.splice_inventory;
     assert(inventory->padding == -1);
-    inventory->padding    = padding;
-    const uint32_t target = (uint32_t) min(capacity_limit / pipe_capacity, (uint64_t) max_pipe_count);
+    inventory->padding        = padding;
+    inventory->capacity_limit = capacity_limit;
+    inventory->pipe_capacity  = pipe_capacity;
+    const uint32_t target     = (uint32_t) min(capacity_limit / pipe_capacity, (uint64_t) max_pipe_count);
+    inventory->count_limit    = target;
     if (target == 0)
-        return 0;
+        return true;
     inventory->pool = masterpoolCreateWithCapacity(target / 2U + target % 2U);
     if (inventory->pool == NULL)
-        return 0;
+        return false;
     masterpoolInstallCallBacks(inventory->pool, spliceBufferCreationForbidden, destroySplicePoolBuffer);
 
-    uint64_t acquired_capacity = 0;
-    uint32_t acquired_count    = 0;
-    for (uint32_t i = 0; i < target; ++i)
+    do
     {
-        sbuf_t *buf = sbufAllocate(SPLICE_BUFFER_STORAGE_SIZE + (uint32_t) padding, padding);
-        int pair[2];
-        if (pipe2(pair, O_NONBLOCK | O_CLOEXEC) != 0)
-        {
-            memoryFreeAligned(buf);
-            break;
-        }
-        int capacity = fcntl(pair[0], F_GETPIPE_SZ);
-        if (capacity > 0 && (uint32_t) capacity < pipe_capacity)
-            capacity = fcntl(pair[0], F_SETPIPE_SZ, (int) pipe_capacity);
-        if (capacity < 0 || (uint32_t) capacity < pipe_capacity ||
-            (uint64_t) capacity > capacity_limit - acquired_capacity)
-        {
-            const int error = capacity < 0 ? errno : ENOBUFS;
-            close(pair[0]);
-            close(pair[1]);
-            memoryFreeAligned(buf);
-            errno = error;
-            break;
-        }
-        buf->flags = kSbufFlagSplice | kSbufFlagSplicePooled;
-        sbufSpliceSetMetadata(
-            buf, (splice_buffer_metadata_t) {.pipefd = {pair[0], pair[1]}, .pipe_capacity = (uint32_t) capacity});
-        acquired_capacity += (uint32_t) capacity;
-        ++acquired_count;
-        atomicStoreU64Explicit(&inventory->capacity, acquired_capacity, memory_order_relaxed);
-        atomicStoreExplicit(&inventory->count, acquired_count, memory_order_relaxed);
-        master_pool_item_t *item = buf;
-        masterpoolReuseItems(inventory->pool, &item, 1);
-    }
-    if (acquired_count != 0)
-    {
-        do
-        {
-            inventory->discard_fd = open("/dev/null", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
-        } while (inventory->discard_fd < 0 && errno == EINTR);
-    }
-    return acquired_count;
+        inventory->discard_fd = open("/dev/null", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+    } while (inventory->discard_fd < 0 && errno == EINTR);
+    return true;
 #else
     discard capacity_limit;
     discard pipe_capacity;
     discard max_pipe_count;
     discard padding;
+    return false;
+#endif
+}
+
+uint64_t sbufSplicePoolCapacityLimit(void)
+{
+#if WW_HAVE_SPLICE
+    const sbuf_splice_inventory_t *inventory = GSTATE.splice_inventory;
+    return inventory != NULL ? inventory->capacity_limit : 0;
+#else
     return 0;
 #endif
 }
@@ -200,6 +219,7 @@ void sbufSplicePoolDestroy(void)
     masterpoolDestroy(inventory->pool);
     if (inventory->discard_fd >= 0)
         close(inventory->discard_fd);
+    mutexDestroy(&inventory->growth_mutex);
     memoryFree(inventory);
     GSTATE.splice_inventory = NULL;
 #endif
@@ -425,9 +445,29 @@ uint32_t sbufSplicePoolGetBuffers(sbuf_t **buffers, uint32_t count, uint16_t pad
     sbufSplicePoolCheckPadding(padding);
 #if WW_HAVE_SPLICE
     sbuf_splice_inventory_t *inventory = GSTATE.splice_inventory;
-    const uint32_t           taken     = inventory != NULL && inventory->pool != NULL
+    uint32_t                 taken     = inventory != NULL && inventory->pool != NULL
                                              ? masterpoolTryGetItems(inventory->pool, (void **) buffers, count)
                                              : 0;
+    if (taken < count && inventory != NULL && inventory->pool != NULL)
+    {
+        mutexLock(&inventory->growth_mutex);
+        /* A return may have filled the master while this caller waited for a
+         * different worker's growth. Reuse it before acquiring more pipes. */
+        taken += masterpoolTryGetItems(inventory->pool, (void **) (buffers + taken), count - taken);
+        while (taken < count && inventory->admitted_count < inventory->count_limit &&
+               inventory->capacity_limit - inventory->admitted_capacity >= inventory->pipe_capacity &&
+               getHRTimeUs() >= inventory->retry_after_us)
+        {
+            sbuf_t *buf = sbufSplicePoolCreateBuffer(inventory);
+            if (buf == NULL)
+            {
+                inventory->retry_after_us = getHRTimeUs() + UINT64_C(1000000);
+                break;
+            }
+            buffers[taken++] = buf;
+        }
+        mutexUnlock(&inventory->growth_mutex);
+    }
     for (uint32_t i = 0; i < taken; ++i)
     {
         masterpoolRecordCheckout(inventory->pool);

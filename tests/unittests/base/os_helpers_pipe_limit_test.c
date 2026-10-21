@@ -1,6 +1,6 @@
 /*
- * Covers: os helpers pipe limit; the explicit inputs, callbacks and expected results below define this
- * suite.
+ * Covers: splice capacity budgets and OS pipe/descriptor limits. Profile and detected-RAM inputs
+ * determine the budget; isolated fake sysctl and descriptor boundaries verify how it is applied.
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
  * Checks: Assertion labels include: startup did not invoke fake sysctl; startup attempted an incorrect
@@ -88,6 +88,49 @@ static void createFakeSysctl(void)
 int main(void)
 {
     testCaseSet("os_helpers_pipe_limit_test");
+    const uint64_t mib = 1024ULL * 1024ULL;
+    const struct
+    {
+        uint32_t profile;
+        uint64_t expected_mib;
+    } profile_cases[] = {
+        {kRamProfileInvalid, 32},
+        {kRamProfileS1Memory, 32},
+        {kRamProfileS2Memory, 64},
+        {kRamProfileM1Memory, 128},
+        {kRamProfileM2Memory, 256},
+        {kRamProfileL1Memory, 384},
+        {kRamProfileL2Memory, 512},
+        {UINT32_MAX, 512},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(profile_cases); ++i)
+    {
+        require(spliceCapacityLimit(profile_cases[i].profile, 0) == profile_cases[i].expected_mib * mib,
+                "unknown RAM did not retain the profile ceiling");
+        require(spliceCapacityLimit(profile_cases[i].profile, UINT64_MAX) == profile_cases[i].expected_mib * mib,
+                "large detected RAM exceeded the profile ceiling or overflowed");
+    }
+    const struct
+    {
+        uint32_t profile;
+        uint64_t total_bytes;
+        uint64_t expected_bytes;
+    } memory_cases[] = {
+        {kRamProfileL2Memory, 640 * mib, 128 * mib},
+        {kRamProfileS1Memory, 640 * mib, 32 * mib},
+        {kRamProfileL2Memory, 5 * mib - 1, 0},
+        {kRamProfileL2Memory, 5 * mib, mib},
+        {kRamProfileL2Memory, 10 * mib - 1, mib},
+        {kRamProfileL2Memory, 10 * mib, 2 * mib},
+        {kRamProfileL2Memory, 160 * mib - 1, 31 * mib},
+        {kRamProfileL2Memory, 2560 * mib, 512 * mib},
+        {kRamProfileS1Memory, 1, 0},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(memory_cases); ++i)
+        require(spliceCapacityLimit(memory_cases[i].profile, memory_cases[i].total_bytes) ==
+                    memory_cases[i].expected_bytes,
+                "detected RAM cap or whole-pipe rounding was incorrect");
+
     createFakeSysctl();
     createCoreLogger(NULL, true);
 #if WW_HAVE_SPLICE
@@ -97,36 +140,43 @@ int main(void)
         int           read_status, write_status;
         long          page_size;
         unsigned long expected_target;
+        uint64_t      capacity_limit;
     } cases[] = {
-        {"16384\n32768\n", 0, 0, 4096, 32768},
-        {"16384\n32768\n", 0, 1, 4096, 32768},
-        {"16384\n262144\n", 0, 0, 4096, 131072},
-        {"131072\n262144\n", 0, 0, 4096, 0},
-        {"16384\n32768\n", 0, 0, -1, 0},
-        {"16384\n0\n", 0, 0, 4096, 131072},
-        {"16384\n0\n", 0, 1, 4096, 131072},
-        {"131071\n0\n", 0, 0, 4096, 131072},
-        {"131072\n0\n", 0, 0, 4096, 0},
-        {"262144\n0\n", 0, 0, 4096, 0},
-        {"1024\n0\n", 0, 0, 65536, 8192},
-        {"8192\n0\n", 0, 0, 65536, 0},
-        {"16384\n0\n", 0, 0, 65536, 0},
-        {"16384\n0\n", 0, 0, -1, 0},
-        {"16384\n0\n", 0, 0, 0, 0},
-        {"0\n32768\n", 0, 0, 4096, 0},
-        {"0\n0\n", 0, 0, 4096, 0},
-        {"32768\n32768\n", 0, 0, 4096, 0},
-        {"65536\n32768\n", 0, 0, 4096, 0},
-        {"sysctl unavailable", 127, 0, 4096, 0},
-        {"16384\nmissing hard limit", 1, 0, 4096, 0},
-        {"", 0, 0, 4096, 0},
-        {"16384\n", 0, 0, 4096, 0},
-        {"-1\n32768\n", 0, 0, 4096, 0},
-        {"16384\n-1\n", 0, 0, 4096, 0},
-        {"16384\n32768x\n", 0, 0, 4096, 0},
-        {"16384\n32768\nextra\n", 0, 0, 4096, 0},
-        {"16384\n18446744073709551616\n", 0, 0, 4096, 0},
-        {" 16384\t\n 32768 \n", 0, 0, 4096, 32768},
+        {"16384\n32768\n", 0, 0, 4096, 32768, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n32768\n", 0, 1, 4096, 32768, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n262144\n", 0, 0, 4096, 131072, SPLICE_TOTAL_SIZE_LIMIT},
+        {"131072\n262144\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n32768\n", 0, 0, -1, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n0\n", 0, 0, 4096, 131072, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n0\n", 0, 1, 4096, 131072, SPLICE_TOTAL_SIZE_LIMIT},
+        {"131071\n0\n", 0, 0, 4096, 131072, SPLICE_TOTAL_SIZE_LIMIT},
+        {"131072\n0\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"262144\n0\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"1024\n0\n", 0, 0, 65536, 8192, SPLICE_TOTAL_SIZE_LIMIT},
+        {"8192\n0\n", 0, 0, 65536, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n0\n", 0, 0, 65536, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n0\n", 0, 0, -1, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n0\n", 0, 0, 0, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"0\n32768\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"0\n0\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"32768\n32768\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"65536\n32768\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"sysctl unavailable", 127, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\nmissing hard limit", 1, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"-1\n32768\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n-1\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n32768x\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n32768\nextra\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {"16384\n18446744073709551616\n", 0, 0, 4096, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {" 16384\t\n 32768 \n", 0, 0, 4096, 32768, SPLICE_TOTAL_SIZE_LIMIT},
+
+        {"1024\n0\n", 0, 0, 4096, 32768, 128 * mib},
+        {"32768\n0\n", 0, 0, 4096, 0, 128 * mib},
+        {"1024\n0\n", 0, 0, 65536, 2048, 128 * mib},
+        {"1024\n0\n", 0, 0, 4096, 8192, 32 * mib},
+        {"1024\n0\n", 0, 0, 4096, 8193, 32 * mib + 1},
     };
     for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
     {
@@ -139,7 +189,7 @@ int main(void)
                     setenv("WW_PIPE_LIMIT_TEST_READ_EXIT", read_exit, 1) == 0 &&
                     setenv("WW_PIPE_LIMIT_TEST_WRITE_EXIT", write_exit, 1) == 0,
                 "could not configure pipe-limit scenario");
-        tryIncreasePipeLimit();
+        tryIncreasePipeLimit(cases[i].capacity_limit);
         FILE *log = fopen(log_path, "r");
         require(log != NULL, "startup did not invoke fake sysctl");
         char   commands[512] = {0};
@@ -158,6 +208,10 @@ int main(void)
         require(strcmp(commands, expected) == 0, "startup attempted an incorrect pipe-limit operation or retried");
     }
 
+    unlink(log_path);
+    tryIncreasePipeLimit(0);
+    require(access(log_path, F_OK) != 0, "zero capacity budget attempted system pipe tuning");
+
     DIR *descriptors = opendir("/proc/self/fd");
     require(descriptors != NULL, "could not measure initial descriptor count");
     rlim_t         baseline_open = 0;
@@ -172,48 +226,60 @@ int main(void)
     {
         rlim_t   remaining;
         uint32_t expected_count;
+        uint64_t capacity_limit;
     } descriptor_cases[] = {
-        {0, 0},
-        {7, 0},
-        {8, 1},
-        {1024, 128},
-        {4095, 511},
-        {4096, 512},
-        {8192, 512},
-        {RLIM_INFINITY, 512},
+        {0, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {7, 0, SPLICE_TOTAL_SIZE_LIMIT},
+        {8, 1, SPLICE_TOTAL_SIZE_LIMIT},
+        {1024, 128, SPLICE_TOTAL_SIZE_LIMIT},
+        {4095, 511, SPLICE_TOTAL_SIZE_LIMIT},
+        {4096, 512, SPLICE_TOTAL_SIZE_LIMIT},
+        {8192, 512, SPLICE_TOTAL_SIZE_LIMIT},
+        {RLIM_INFINITY, 512, SPLICE_TOTAL_SIZE_LIMIT},
+
+        {4096, 0, 0},
+        {4096, 0, mib - 1},
+        {4096, 1, mib},
+        {4096, 32, 32 * mib},
+        {4096, 128, 128 * mib},
+        {80, 10, 128 * mib},
     };
     for (size_t i = 0; i < ARRAY_SIZE(descriptor_cases); ++i)
     {
         test_descriptor_limit = descriptor_cases[i].remaining == RLIM_INFINITY
                                     ? RLIM_INFINITY
                                     : baseline_open + descriptor_cases[i].remaining;
-        require(splicePipeCountLimit() == descriptor_cases[i].expected_count,
+        require(splicePipeCountLimit(descriptor_cases[i].capacity_limit) == descriptor_cases[i].expected_count,
                 "startup splice inventory did not preserve descriptor headroom or cap the target");
     }
     test_descriptor_limit = baseline_open - 1;
-    require(splicePipeCountLimit() == 0, "inherited descriptors above the limit wrapped the available allowance");
+    require(splicePipeCountLimit(SPLICE_TOTAL_SIZE_LIMIT) == 0,
+            "inherited descriptors above the limit wrapped the available allowance");
 
     test_descriptor_limit = baseline_open + 80;
-    require(splicePipeCountLimit() == 10, "initial remaining descriptor allowance was miscounted");
+    require(splicePipeCountLimit(SPLICE_TOTAL_SIZE_LIMIT) == 10,
+            "initial remaining descriptor allowance was miscounted");
     int held_descriptors[16];
     for (size_t i = 0; i < ARRAY_SIZE(held_descriptors); ++i)
     {
         held_descriptors[i] = dup(STDERR_FILENO);
         require(held_descriptors[i] >= 0, "could not occupy descriptor headroom");
     }
-    require(splicePipeCountLimit() == 8, "existing descriptors did not reduce the startup pipe count");
+    require(splicePipeCountLimit(SPLICE_TOTAL_SIZE_LIMIT) == 8, "existing descriptors did not reduce the pipe count");
     for (size_t i = 0; i < ARRAY_SIZE(held_descriptors); ++i)
         require(close(held_descriptors[i]) == 0, "could not release descriptor headroom fixture");
 
     test_descriptor_scan_failure = true;
-    require(splicePipeCountLimit() == 0, "unavailable open-descriptor scan allowed splice preallocation");
+    require(splicePipeCountLimit(SPLICE_TOTAL_SIZE_LIMIT) == 0,
+            "unavailable open-descriptor scan allowed splice allocation");
     test_descriptor_scan_failure = false;
     test_descriptor_failure      = true;
-    require(splicePipeCountLimit() == 0, "unavailable descriptor limit allowed splice preallocation");
+    require(splicePipeCountLimit(SPLICE_TOTAL_SIZE_LIMIT) == 0,
+            "unavailable descriptor limit allowed splice allocation");
 #else
-    tryIncreasePipeLimit();
+    tryIncreasePipeLimit(SPLICE_TOTAL_SIZE_LIMIT);
     require(access(log_path, F_OK) != 0, "unsupported splice build changed system pipe limits");
-    require(splicePipeCountLimit() == 0, "unsupported splice build allowed pipe preallocation");
+    require(splicePipeCountLimit(SPLICE_TOTAL_SIZE_LIMIT) == 0, "unsupported splice build allowed pipe preallocation");
 #endif
     coreloggerDestroy();
     unlink(log_path);

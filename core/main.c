@@ -202,6 +202,22 @@ int waterwallInnerMain(int argc, char **argv)
         }
         goto startup_failed;
     }
+    uint64_t splice_capacity_limit = 0;
+#if WW_HAVE_SPLICE
+    if (getCoreSettings()->splice_enabled)
+    {
+        system_memory_snapshot_t              memory        = {0};
+        const system_memory_snapshot_status_t memory_status = systemMemorySnapshotGet(&memory);
+        // The initial sample supplies a fixed capacity policy, even if global setup outlasted its freshness window.
+        const uint64_t effective_total =
+            memory_status == kSystemMemorySnapshotFresh || memory_status == kSystemMemorySnapshotStale
+                ? memory.effective_total_bytes
+                : 0;
+        splice_capacity_limit = spliceCapacityLimit(GSTATE.ram_profile, effective_total);
+        if (effective_total == 0)
+            LOGW("Core: RAM ceiling unavailable; using the splice RAM-profile ceiling");
+    }
+#endif
 #ifdef OS_WIN
     if (startup_options.stop_event || startup_options.ready_event || startup_options.controller_process)
     {
@@ -240,7 +256,7 @@ int waterwallInnerMain(int argc, char **argv)
     increaseFileLimit();
     if (getCoreSettings()->splice_enabled)
     {
-        tryIncreasePipeLimit();
+        tryIncreasePipeLimit(splice_capacity_limit);
         discard sbufSplicePoolPrepare();
     }
     if (UNLIKELY(! waterwallStartupCheckpoint()))
@@ -304,17 +320,15 @@ int waterwallInnerMain(int argc, char **argv)
 
     if (getCoreSettings()->splice_enabled)
     {
-        const uint32_t pipe_count =
-            GSTATE.splice_inventory != NULL
-                ? sbufSplicePoolInitialize(SPLICE_TOTAL_SIZE_LIMIT,
-                                           SPLICE_PAYLOAD_LIMIT,
-                                           splicePipeCountLimit(),
-                                           bufferpoolGetSpliceBufferPadding(getWorkerBufferPool(0)))
-                : 0;
-        LOGI("Core: Splice inventory acquired %u pipes and %llu bytes of capacity (target %llu bytes)",
-             pipe_count,
-             (unsigned long long) sbufSplicePoolCapacity(),
-             (unsigned long long) SPLICE_TOTAL_SIZE_LIMIT);
+        const bool configured = GSTATE.splice_inventory != NULL &&
+                                sbufSplicePoolInitialize(splice_capacity_limit,
+                                                         SPLICE_PAYLOAD_LIMIT,
+                                                         splicePipeCountLimit(splice_capacity_limit),
+                                                         bufferpoolGetSpliceBufferPadding(getWorkerBufferPool(0)));
+        LOGI("Core: Splice inventory %s; lazy pipe capacity limit %llu bytes, allocated %llu bytes",
+             configured ? "configured" : "unavailable",
+             (unsigned long long) sbufSplicePoolCapacityLimit(),
+             (unsigned long long) sbufSplicePoolCapacity());
     }
     if (UNLIKELY(! waterwallStartupCheckpoint()))
         goto startup_failed;

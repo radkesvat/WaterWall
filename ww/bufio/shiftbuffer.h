@@ -53,7 +53,7 @@ enum
      * descriptor pointer, break I/O, or crash the process; a crash is not guaranteed.
      */
     kSbufFlagSplice = 1U << 0,
-    /* A complete startup inventory entry. Retained while cached or retired. */
+    /* A complete shared inventory entry, retained while healthy. */
     kSbufFlagSplicePooled = 1U << 1
 };
 
@@ -93,7 +93,7 @@ enum
     kSbufAllocationAlignment = 32
 };
 
-/** Whether this buffer belongs to the fixed startup inventory. */
+/** Whether this buffer belongs to the bounded shared inventory. */
 static inline bool sbufIsPooledSplice(const sbuf_t *buf)
 {
     return (buf->flags & kSbufFlagSplicePooled) != 0;
@@ -294,21 +294,24 @@ sbuf_t *sbufCreate(uint32_t minimum_capacity);
  *
  * @param pad_left Requested left padding in bytes, rounded up to a 32-byte boundary.
  * @return sbuf_t* Empty wrapper with only kSbufFlagSplice set and no pipe.
- * This does not draw from or grow the fixed inventory. Normal I/O uses the pool.
+ * This does not draw from or grow the shared inventory. Normal I/O uses the pool.
  */
 sbuf_t *sbufCreateSplice(uint16_t pad_left);
 
 /* Publish the shared control object before imports can copy global state.
- * Allocates no pipes/buffers. Returns false on unsupported builds;
+ * Allocates no pipes/buffers. Returns false on unsupported builds or mutex initialization refusal;
  * heap allocation failure terminates the process. */
 bool sbufSplicePoolPrepare(void);
 /* Exclusive startup after all chain padding is finalized, before producers.
- * Preallocate complete buffers and full-sized pipes within the resource limits.
- * Stops on pipe creation/sizing refusal, retaining prior successes; zero is valid.
+ * Configure an empty master and fixed resource limits without creating pipes or
+ * complete buffers. Returns false on unsupported builds or master/control
+ * metadata initialization refusal; a configured zero pipe budget succeeds.
  * Padding is aligned once and immutable. Uses the published control object;
  * standalone callers may omit Prepare when no state copies have been shared. */
-uint32_t sbufSplicePoolInitialize(uint64_t capacity_limit, uint32_t pipe_capacity, uint32_t max_pipe_count,
-                                  uint16_t padding);
+bool sbufSplicePoolInitialize(uint64_t capacity_limit, uint32_t pipe_capacity, uint32_t max_pipe_count,
+                              uint16_t padding);
+/* Configured byte ceiling; current capacity/count include active and cached pipes. */
+uint64_t sbufSplicePoolCapacityLimit(void);
 uint64_t sbufSplicePoolCapacity(void);
 uint32_t sbufSplicePoolCount(void);
 uint16_t sbufSplicePoolPadding(void);
@@ -317,9 +320,12 @@ void sbufSplicePoolCheckPadding(uint16_t padding);
 void sbufSpliceCheckBuffer(const sbuf_t *buf);
 /* Exclusive final teardown after all users and local caches have returned. */
 void sbufSplicePoolDestroy(void);
-/* Take complete empty entries, without allocating or resizing anything.
+/* Take complete empty entries, lazily creating missing entries within fixed byte
+ * and count ceilings. A kernel creation/sizing refusal stops this refill and
+ * suppresses further growth for one monotonic second across all callers.
  * A miss returns NULL/zero with ENOBUFS (ENOSYS on unsupported builds).
- * Bulk checkout may return fewer than count entries. */
+ * Bulk checkout may return fewer than count entries. Retirement does not restore
+ * the lifetime creation budget; healthy entries remain until final teardown. */
 sbuf_t  *sbufSplicePoolGet(uint16_t padding);
 uint32_t sbufSplicePoolGetBuffers(sbuf_t **buffers, uint32_t count, uint16_t padding);
 /* Permanently retire a failed owned pipe; it is never replaced during runtime. */

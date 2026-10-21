@@ -1808,7 +1808,8 @@ static void testRetiringSibling(unsigned mode, unsigned path)
 {
     twfSetCase(mode ? "Closing socket rejects live packet-balance sibling"
                     : "Closing socket rejects live connection-balance sibling");
-    const uint32_t fd_count = countOpenFileDescriptors();
+    const uint32_t fd_count          = countOpenFileDescriptors();
+    const uint32_t retained_pipe_fds = 2U * sbufSplicePoolCount();
     test_fixture_t f;
     setupFixtureMode(&f, mode ? kUdpConnectorBalanceModePacket : kUdpConnectorBalanceModeConnection);
     f.destroy_on_finish = true;
@@ -1869,7 +1870,10 @@ static void testRetiringSibling(unsigned mode, unsigned path)
     lineDestroy(other);
     twfRequireNoLeakedBuffers();
     teardownFixture(&f);
-    twfRequireEqualU32(countOpenFileDescriptors(), fd_count, "sibling retirement leaked descriptors");
+    /* Lazy-created healthy pipe pairs outlive this worker fixture. Account for
+     * exactly the shared inventory's retained descriptors in the leak check. */
+    const uint32_t expected_fd_count = fd_count - retained_pipe_fds + 2U * sbufSplicePoolCount();
+    twfRequireEqualU32(countOpenFileDescriptors(), expected_fd_count, "sibling retirement leaked descriptors");
 }
 
 static void testSpliceSocketRetirement(void)

@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * Buffer pool for ordinary small/medium/large buffers and fixed splice inventory entries.
+ * Buffer pool for ordinary small/medium/large buffers and bounded splice inventory entries.
  */
 
 #include "generic_pool.h"
@@ -81,9 +81,9 @@ uint16_t bufferpoolGetMediumBufferPadding(buffer_pool_t *pool);
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool);
 
 /** Retrieve a complete empty splice buffer with its permanent pipe and fixed padding.
- * A local miss takes up to four entries from the shared startup master, without
- * allocation or resizing. At most eight free entries are cached locally.
- * Returns NULL with ENOBUFS if local/master are empty, or ENOSYS if unsupported;
+ * A local miss takes up to four entries from the shared master, lazily creating
+ * missing entries within the inventory limits. At most eight free entries are cached locally.
+ * Returns NULL with ENOBUFS on exhaustion or kernel refusal, or ENOSYS if unsupported;
  * other workers' caches are not reclaimed. Callers normally use ordinary fallback.
  * Populate the pipe before publishing its actual logical body size. */
 sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool);

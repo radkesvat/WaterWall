@@ -116,11 +116,12 @@ static sbuf_t *makePayload(buffer_pool_t *pool, uint32_t length)
 }
 
 #if WW_HAVE_SPLICE
-static sbuf_t *makeSplicePattern(buffer_pool_t *pool, uint32_t length)
+static sbuf_t *tryMakeSplicePattern(buffer_pool_t *pool, uint32_t length)
 {
     require(length <= 4096, "direct splice test payload is too large");
     sbuf_t *input = bufferpoolGetSpliceBuffer(pool);
-    require(input != NULL, "could not allocate splice payload");
+    if (input == NULL)
+        return NULL;
 
     uint8_t bytes[4096];
     for (uint32_t i = 0; i < length; ++i)
@@ -139,6 +140,13 @@ static sbuf_t *makeSplicePattern(buffer_pool_t *pool, uint32_t length)
 
     input->capacity = input->l_pad + length;
     sbufSetLength(input, length);
+    return input;
+}
+
+static sbuf_t *makeSplicePattern(buffer_pool_t *pool, uint32_t length)
+{
+    sbuf_t *input = tryMakeSplicePattern(pool, length);
+    require(input != NULL, "could not allocate splice payload");
     return input;
 }
 
@@ -518,8 +526,12 @@ static void testBatchWithRetainedIncoming(buffer_pool_t *pool)
         return;
     test_pool_t      retained = testPoolCreateWithSizes(4096, 4096, 32);
     splice_stream_t *incoming = splicestreamCreate(retained.pool, 0);
-    for (unsigned i = 1; i < sbufSplicePoolCount(); ++i)
-        require(splicestreamPush(incoming, makeSplicePattern(pool, 1)), "incoming fixture refused");
+    sbuf_t          *retained_input;
+    /* Earlier cases deliberately retire a pipe. Exhaust actual checkouts,
+     * including lazy growth, rather than assuming the lifetime quota is live. */
+    while ((retained_input = tryMakeSplicePattern(pool, 1)) != NULL)
+        require(splicestreamPush(incoming, retained_input), "incoming fixture refused");
+    require(splicestreamLength(incoming) > 0, "incoming fixture retained no pipe payload");
     const size_t        before = splicestreamCharge(incoming);
     mux_parent_output_t output = {0};
     bufferqueueInitEmpty(&output.pending);

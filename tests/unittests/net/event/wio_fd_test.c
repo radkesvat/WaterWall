@@ -296,7 +296,7 @@ static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
     memoryZero(env, sizeof(*env));
 #if WW_HAVE_SPLICE
     const uint32_t pipe_size = (uint32_t) sysconf(_SC_PAGESIZE) * 16U;
-    require(sbufSplicePoolInitialize((uint64_t) pipe_size * 16U, pipe_size, 16, 64) == 16,
+    require(sbufSplicePoolInitialize((uint64_t) pipe_size * 16U, pipe_size, 16, 64),
             "failed to initialize WIO test pipe inventory");
 #endif
     GSTATE.workers_count = 1;
@@ -606,10 +606,10 @@ static void testPipeDescriptorZero(void)
         int    sockets[2];
         wio_t *io = socketIO(&env, sockets);
         sbufSplicePoolDestroy();
-        close(STDIN_FILENO);
         const uint32_t pipe_size = (uint32_t) sysconf(_SC_PAGESIZE);
-        require(sbufSplicePoolInitialize(SPLICE_PAYLOAD_LIMIT, pipe_size, 1, 64) == 1,
+        require(sbufSplicePoolInitialize(SPLICE_PAYLOAD_LIMIT, pipe_size, 1, 64),
                 "pipe inventory initialization failed with descriptor zero");
+        close(STDIN_FILENO);
         sbuf_t *pipe_buf = sbufSplicePoolGet(64);
         require(pipe_buf != NULL && sbufSpliceMetadata(pipe_buf).pipefd[0] == STDIN_FILENO,
                 "pipe initializer failed with descriptor zero");
@@ -629,7 +629,7 @@ static void testPipeDescriptorZero(void)
 }
 
 #if WW_HAVE_SPLICE
-static void testPipeCapacityStartup(void)
+static void testPipeCapacityLazyCreation(void)
 {
     const struct
     {
@@ -654,13 +654,15 @@ static void testPipeCapacityStartup(void)
         pipe_query_calls        = 0;
         pipe_growth_calls       = 0;
         pipe_requested_capacity = 0;
-        require(sbufSplicePoolInitialize(UINT64_C(4) * 1024U * 1024U, required_capacity, 1, 64) == cases[i].accepted,
-                "startup accepted an undersized pipe or rejected a full-sized pipe");
-        require(pipe_query_calls == 1 && pipe_growth_calls == cases[i].expected_growth,
-                "startup pipe capacity query or growth had the wrong call count");
-        require(! cases[i].expected_growth || pipe_requested_capacity == (int) required_capacity,
-                "startup pipe growth used the wrong requested size");
+        require(sbufSplicePoolInitialize(UINT64_C(4) * 1024U * 1024U, required_capacity, 1, 64),
+                "lazy pipe inventory configuration failed");
+        require(pipe_query_calls == 0 && pipe_growth_calls == 0 && sbufSplicePoolCount() == 0,
+                "inventory configuration created pipes before demand");
         sbuf_t *buf = sbufSplicePoolGet(64);
+        require(pipe_query_calls == 1 && pipe_growth_calls == cases[i].expected_growth,
+                "lazy pipe capacity query or growth had the wrong call count");
+        require(! cases[i].expected_growth || pipe_requested_capacity == (int) required_capacity,
+                "lazy pipe growth used the wrong requested size");
         require((buf != NULL) == cases[i].accepted, "checkout did not reflect the successfully initialized inventory");
         const splice_buffer_metadata_t metadata =
             buf != NULL ? sbufSpliceMetadata(buf) : (splice_buffer_metadata_t) {0};
@@ -685,8 +687,10 @@ static void testPipeCapacityStartup(void)
     pipe_query_error = pipe_growth_error = 0;
 
     fail_pipe = true;
-    require(sbufSplicePoolInitialize(required_capacity, required_capacity, 1, 64) == 0 && ! fail_pipe,
-            "startup pipe creation failure did not leave an empty inventory");
+    require(sbufSplicePoolInitialize(required_capacity, required_capacity, 1, 64) && fail_pipe,
+            "inventory configuration attempted pipe creation");
+    require(sbufSplicePoolGet(64) == NULL && ! fail_pipe && sbufSplicePoolCount() == 0,
+            "lazy pipe creation failure did not leave an empty inventory");
     sbufSplicePoolDestroy();
 }
 
@@ -723,12 +727,13 @@ static void testPipeInventoryReuse(void)
 {
     test_env_t env;
     setupWithBufferSize(&env, LARGE_BUFFER_SIZE_RAM_HIGH);
-    const unsigned int initial_creates = pipe_calls;
-    const unsigned int initial_queries = pipe_query_calls;
-    const unsigned int initial_growth  = pipe_growth_calls;
-    sbuf_t            *buf             = bufferpoolGetSpliceBuffer(env.buffers);
+    require(sbufSplicePoolCount() == 0, "WIO setup created pipes before demand");
+    sbuf_t *buf = bufferpoolGetSpliceBuffer(env.buffers);
     require(buf != NULL, "could not lease an initialized inventory pipe");
-    const splice_buffer_metadata_t initial = sbufSpliceMetadata(buf);
+    const unsigned int             initial_creates = pipe_calls;
+    const unsigned int             initial_queries = pipe_query_calls;
+    const unsigned int             initial_growth  = pipe_growth_calls;
+    const splice_buffer_metadata_t initial         = sbufSpliceMetadata(buf);
     for (unsigned int i = 0; i < 10; ++i)
     {
         sbuf_t *previous = buf;
@@ -750,7 +755,7 @@ static void testPipeInventoryReuse(void)
     bufferpoolReuseBuffer(env.buffers, dest);
     bufferpoolReuseBuffer(env.buffers, buf);
     require(pipe_calls == initial_creates && pipe_query_calls == initial_queries && pipe_growth_calls == initial_growth,
-            "runtime checkout or return created, queried, or resized a pipe");
+            "repeated reuse created, queried, or resized a pipe");
     teardown(&env);
     requireClosed(initial.pipefd[0]);
     requireClosed(initial.pipefd[1]);
@@ -2555,7 +2560,7 @@ int main(void)
     testSpliceModeSwitch();
     testDirectSpliceRead();
     testSpliceUrgentRead();
-    testPipeCapacityStartup();
+    testPipeCapacityLazyCreation();
     testSpliceReuseValidation();
     testPipeInventoryReuse();
     testSpliceReadCapacityPreference();
