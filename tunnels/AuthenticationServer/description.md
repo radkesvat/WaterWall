@@ -113,6 +113,12 @@ It must not have a `next` node.
   Both peers reject credentials at startup unless the exact escaped JSON handshake, including a 64-byte resume epoch,
   fits 16,375 bytes. Credentials are never truncated.
 
+`file-save-rate-ms`, both the server-wide and per-client `session-idle-timeout-ms`, and
+`normal-backups-count-limit` accept plain JSON integers from `1` through `2147483647` (`INT_MAX`).
+`file-save-rate-ms` is required. Optional defaults or the per-client inherited timeout apply only when the setting
+is absent. Present zero, negative, fractional, decimal/exponent, string, `null`, or out-of-range values fail startup
+before timers or backup retention use the value.
+
 ## Administrative Audit Log
 
 Omitting `audit-log` disables this feature. To enable it, add this object inside

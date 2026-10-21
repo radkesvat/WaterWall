@@ -97,16 +97,14 @@ static bool authenticationserverParseNormalBackups(authenticationserver_tstate_t
         return false;
     }
 
-    int count_limit = kAuthenticationServerDefaultNormalBackupsCountLimit;
-    if (limit_json != NULL)
+    int64_t count_limit = kAuthenticationServerDefaultNormalBackupsCountLimit;
+    if (UNLIKELY(jsonGetObjectIntegerInRange(settings, "normal-backups-count-limit", 1, INT_MAX, &count_limit) ==
+                 kJsonValueInvalid))
     {
-        if (UNLIKELY(! cJSON_IsNumber(limit_json) || limit_json->valueint <= 0))
-        {
-            LOGF("JSON Error: AuthenticationServer->settings->normal-backups-count-limit (positive integer field) : "
-                 "The data was invalid");
-            return false;
-        }
-        count_limit = (int) limit_json->valueint;
+        LOGF("JSON Error: AuthenticationServer->settings->normal-backups-count-limit must be an integer from 1 "
+             "through %d",
+             INT_MAX);
+        return false;
     }
     ts->normal_backups_count_limit = (uint32_t) count_limit;
 
@@ -175,25 +173,23 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
 
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
 
-    int file_save_rate_ms = 0;
-    if (UNLIKELY(! getIntFromJsonObject(&file_save_rate_ms, settings, "file-save-rate-ms") || file_save_rate_ms <= 0))
+    int64_t file_save_rate_ms = 0;
+    if (UNLIKELY(jsonGetObjectIntegerInRange(settings, "file-save-rate-ms", 1, INT_MAX, &file_save_rate_ms) !=
+                 kJsonValuePresent))
     {
-        LOGF("JSON Error: AuthenticationServer->settings->file-save-rate-ms (positive integer field) : The data was "
-             "empty or invalid");
+        LOGF("JSON Error: AuthenticationServer->settings->file-save-rate-ms requires an integer from 1 through %d",
+             INT_MAX);
         return false;
     }
 
     ts->file_save_rate_ms = (uint32_t) file_save_rate_ms;
 
-    int session_idle_timeout_ms = 0;
-    getIntFromJsonObjectOrDefault(&session_idle_timeout_ms,
-                                  settings,
-                                  "session-idle-timeout-ms",
-                                  kAuthenticationServerDefaultSessionIdleTimeoutMs);
-    if (UNLIKELY(session_idle_timeout_ms <= 0))
+    int64_t session_idle_timeout_ms = kAuthenticationServerDefaultSessionIdleTimeoutMs;
+    if (UNLIKELY(jsonGetObjectIntegerInRange(
+                     settings, "session-idle-timeout-ms", 1, INT_MAX, &session_idle_timeout_ms) == kJsonValueInvalid))
     {
-        LOGF("JSON Error: AuthenticationServer->settings->session-idle-timeout-ms (positive integer field) : The data "
-             "was invalid");
+        LOGF("JSON Error: AuthenticationServer->settings->session-idle-timeout-ms must be an integer from 1 through %d",
+             INT_MAX);
         return false;
     }
     ts->session_idle_timeout_ms = (uint32_t) session_idle_timeout_ms;
@@ -266,14 +262,15 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
         getBoolFromJsonObjectOrDefault(&client->allow_user_pull, client_json, "allow-user-pull", false);
         getBoolFromJsonObjectOrDefault(&client->allow_user_write, client_json, "allow-user-write", false);
 
-        int client_session_idle_timeout_ms = 0;
-        getIntFromJsonObjectOrDefault(
-            &client_session_idle_timeout_ms, client_json, "session-idle-timeout-ms", (int) ts->session_idle_timeout_ms);
-        if (UNLIKELY(client_session_idle_timeout_ms <= 0))
+        int64_t client_session_idle_timeout_ms = ts->session_idle_timeout_ms;
+        if (UNLIKELY(jsonGetObjectIntegerInRange(
+                         client_json, "session-idle-timeout-ms", 1, INT_MAX, &client_session_idle_timeout_ms) ==
+                     kJsonValueInvalid))
         {
-            LOGF("JSON Error: AuthenticationServer->settings->auth-clients[%u]->session-idle-timeout-ms (positive "
-                 "integer field) : invalid value",
-                 (unsigned int) index);
+            LOGF("JSON Error: AuthenticationServer->settings->auth-clients[%u]->session-idle-timeout-ms must be an "
+                 "integer from 1 through %d",
+                 (unsigned int) index,
+                 INT_MAX);
             return false;
         }
         client->session_idle_timeout_ms = (uint32_t) client_session_idle_timeout_ms;

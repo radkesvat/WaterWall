@@ -602,6 +602,12 @@ endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationClient)
   if(TARGET AuthenticationServer)
+  waterwall_add_native_executable(authentication_numeric_settings_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authentication_numeric_settings_test.c)
+  target_link_libraries(authentication_numeric_settings_test PRIVATE AuthenticationClient AuthenticationServer ww)
+  add_dependencies(waterwall_unit_tests authentication_numeric_settings_test)
+  add_waterwall_unit_test(waterwall.authentication_numeric_settings_unit authentication_numeric_settings_test
+    "unit;authentication;configuration")
   waterwall_add_native_executable(authentication_sync_test SUPPORT SOURCES
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authentication_sync_test.c
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authentication_sync_peer.c)

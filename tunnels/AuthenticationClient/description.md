@@ -206,6 +206,12 @@ Optional settings:
 }
 ```
 
+All five interval settings accept plain JSON integers from `0` through `2147483647` (`INT_MAX`).
+`max-pending-requests` accepts integers from `1` through `2147483647`.
+Defaults apply only when a setting is absent. Present values with fractions, decimal or exponent spelling,
+strings, `null`, or values outside the range are rejected at startup; they are never rounded or wrapped.
+The existing meaning of an explicitly configured `0` is preserved for each interval.
+
 `ping-interval-ms` sends authenticated `Ping` requests and also retries `Authenticate` while the transport is connected
 but not authenticated.
 

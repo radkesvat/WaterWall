@@ -24,13 +24,13 @@ static void authenticationclientInitializeCallbacks(tunnel_t *t)
     t->onDestroy        = &authenticationclientTunnelDestroy;
 }
 
-static bool authenticationclientReadInterval(const cJSON *settings, const char *name, int default_value, uint32_t *out)
+static bool authenticationclientReadInteger(const cJSON *settings, const char *name, uint32_t default_value,
+                                            uint32_t minimum, uint32_t *out)
 {
-    int value = default_value;
-    getIntFromJsonObjectOrDefault(&value, settings, name, default_value);
-    if (UNLIKELY(value < 0))
+    int64_t value = default_value;
+    if (UNLIKELY(jsonGetObjectIntegerInRange(settings, name, minimum, INT_MAX, &value) == kJsonValueInvalid))
     {
-        LOGF("AuthenticationClient: settings->%s must be zero or a positive integer", name);
+        LOGF("AuthenticationClient: settings->%s must be an integer from %u through %d", name, minimum, INT_MAX);
         return false;
     }
 
@@ -144,31 +144,34 @@ static bool authenticationclientParseSettings(authenticationclient_tstate_t *ts,
         return false;
 
     if (UNLIKELY(
-            ! authenticationclientReadInterval(
-                settings, "ping-interval-ms", kAuthenticationClientDefaultPingIntervalMs, &ts->ping_interval_ms) ||
-            ! authenticationclientReadInterval(
-                settings, "pull-interval-ms", kAuthenticationClientDefaultPullIntervalMs, &ts->pull_interval_ms) ||
-            ! authenticationclientReadInterval(
-                settings, "push-interval-ms", kAuthenticationClientDefaultPushIntervalMs, &ts->push_interval_ms) ||
-            ! authenticationclientReadInterval(settings,
-                                               "reconnect-interval-ms",
-                                               kAuthenticationClientDefaultReconnectIntervalMs,
-                                               &ts->reconnect_interval_ms) ||
-            ! authenticationclientReadInterval(
-                settings, "request-timeout-ms", kAuthenticationClientDefaultRequestTimeoutMs, &ts->request_timeout_ms)))
+            ! authenticationclientReadInteger(
+                settings, "ping-interval-ms", kAuthenticationClientDefaultPingIntervalMs, 0, &ts->ping_interval_ms) ||
+            ! authenticationclientReadInteger(
+                settings, "pull-interval-ms", kAuthenticationClientDefaultPullIntervalMs, 0, &ts->pull_interval_ms) ||
+            ! authenticationclientReadInteger(
+                settings, "push-interval-ms", kAuthenticationClientDefaultPushIntervalMs, 0, &ts->push_interval_ms) ||
+            ! authenticationclientReadInteger(settings,
+                                              "reconnect-interval-ms",
+                                              kAuthenticationClientDefaultReconnectIntervalMs,
+                                              0,
+                                              &ts->reconnect_interval_ms) ||
+            ! authenticationclientReadInteger(settings,
+                                              "request-timeout-ms",
+                                              kAuthenticationClientDefaultRequestTimeoutMs,
+                                              0,
+                                              &ts->request_timeout_ms)))
     {
         return false;
     }
 
-    int max_pending_requests = kAuthenticationClientDefaultMaxPendingRequests;
-    getIntFromJsonObjectOrDefault(
-        &max_pending_requests, settings, "max-pending-requests", kAuthenticationClientDefaultMaxPendingRequests);
-    if (UNLIKELY(max_pending_requests <= 0))
+    if (! authenticationclientReadInteger(settings,
+                                          "max-pending-requests",
+                                          kAuthenticationClientDefaultMaxPendingRequests,
+                                          1,
+                                          &ts->max_pending_requests))
     {
-        LOGF("JSON Error: AuthenticationClient->settings->max-pending-requests must be positive");
         return false;
     }
-    ts->max_pending_requests = (uint32_t) max_pending_requests;
 
     return true;
 }
