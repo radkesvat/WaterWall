@@ -1,7 +1,6 @@
 #include "internal.h"
 
 #include "loggers/network_logger.h"
-#include "node_builder/config_lexical.h"
 
 static bool authenticationclientPendingReserve(authenticationclient_tstate_t *ts, uint32_t count);
 

@@ -2,7 +2,6 @@
 #include "AuthenticationServer/audit.h"
 
 #include "loggers/network_logger.h"
-#include "node_builder/config_lexical.h"
 
 static const char *authenticationserverUsersUpdateResultError(users_update_result_t result)
 {

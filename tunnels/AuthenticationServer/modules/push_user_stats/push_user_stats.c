@@ -1,6 +1,5 @@
 #include "modules/push_user_stats/push_user_stats.h"
 #include "loggers/network_logger.h"
-#include "node_builder/config_lexical.h"
 
 typedef struct stats_entry_s
 {

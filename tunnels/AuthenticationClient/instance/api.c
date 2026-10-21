@@ -1,8 +1,5 @@
 #include "structure.h"
 
-#include "api/node_api.h"
-#include "node_builder/config_lexical.h"
-
 enum
 {
     kStatusMaximumBodySize = 4096

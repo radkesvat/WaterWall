@@ -2,7 +2,6 @@
 
 #include "APIServer/codec.h"
 #include "APIServer/interface.h"
-#include "api/dispatcher.h"
 
 enum
 {

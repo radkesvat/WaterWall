@@ -1,5 +1,4 @@
 #include "../common/internal.h"
-#include "api/node_api.h"
 
 #include "loggers/network_logger.h"
 

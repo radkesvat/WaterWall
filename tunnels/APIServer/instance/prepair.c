@@ -1,5 +1,4 @@
 #include "APIServer/structure.h"
-#include "instance/startup.h"
 #include "loggers/network_logger.h"
 
 void apiserverOnPrepair(tunnel_t *t)

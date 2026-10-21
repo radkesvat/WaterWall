@@ -1,6 +1,5 @@
 #pragma once
 
-#include "api/node_api.h"
 #include "structure.h"
 
 enum

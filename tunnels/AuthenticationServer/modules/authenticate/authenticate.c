@@ -1,7 +1,6 @@
 #include "modules/authenticate/authenticate.h"
 #include "../../../Internals/AuthenticationCommon/credentials.h"
 #include "AuthenticationServer/api.h"
-#include "node_builder/config_lexical.h"
 
 #include "loggers/network_logger.h"
 

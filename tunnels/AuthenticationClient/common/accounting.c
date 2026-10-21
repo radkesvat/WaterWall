@@ -1,7 +1,6 @@
 #include "internal.h"
 
 #include "loggers/network_logger.h"
-#include "node_builder/config_lexical.h"
 
 static int authenticationclientCompareEntries(const void *left, const void *right);
 

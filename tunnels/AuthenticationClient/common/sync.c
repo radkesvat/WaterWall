@@ -1,7 +1,6 @@
 #include "internal.h"
 
 #include "loggers/network_logger.h"
-#include "node_builder/config_lexical.h"
 
 static bool authenticationclientShouldSendGetAllUsers(tunnel_t *t, bool pull_due);
 

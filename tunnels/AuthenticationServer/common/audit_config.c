@@ -1,7 +1,6 @@
 #include "AuthenticationServer/structure.h"
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
-#include "node_builder/config_lexical.h"
 
 typedef enum authenticationserver_audit_path_result_e
 {

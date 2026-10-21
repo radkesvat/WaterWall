@@ -1,6 +1,6 @@
 #pragma once
 
-#include "api/node_api.h"
+#include "wwapi.h"
 
 typedef struct api_request_s
 {

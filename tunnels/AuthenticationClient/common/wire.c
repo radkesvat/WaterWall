@@ -2,7 +2,6 @@
 
 #include "../../Internals/AuthenticationCommon/stream.h"
 #include "loggers/network_logger.h"
-#include "node_builder/config_lexical.h"
 
 static void authenticationclientWriteNetworkUI32(uint8_t *dest, uint32_t value);
 

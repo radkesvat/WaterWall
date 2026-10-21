@@ -1,6 +1,7 @@
 #pragma once
 
-#include "api/node_api.h"
+#include "wwapi.h"
+
 #include "audit_writer.h"
 
 /* Queue admission never waits for capacity, allocates, or performs file I/O.

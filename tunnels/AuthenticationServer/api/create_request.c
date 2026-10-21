@@ -1,6 +1,5 @@
 #include "AuthenticationServer/config_create.h"
 #include "AuthenticationServer/config_fields.h"
-#include "node_builder/config_lexical.h"
 
 const char *authenticationserverParseCreate(sbuf_t *message, const node_api_call_context_t *context,
                                             authenticationserver_create_request_t *request)

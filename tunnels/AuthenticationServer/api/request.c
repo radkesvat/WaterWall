@@ -1,5 +1,4 @@
 #include "AuthenticationServer/api.h"
-#include "node_builder/config_lexical.h"
 
 bool authenticationserverApiExpired(uint64_t deadline_ms)
 {

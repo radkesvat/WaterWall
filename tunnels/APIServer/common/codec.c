@@ -1,6 +1,4 @@
 #include "APIServer/codec.h"
-#include "node_builder/config_lexical.h"
-#include "utils/base64.h"
 
 static bool keys(const cJSON *object, const char *const *allowed, size_t count)
 {

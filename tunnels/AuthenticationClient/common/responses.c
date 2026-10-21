@@ -1,7 +1,6 @@
 #include "internal.h"
 
 #include "loggers/network_logger.h"
-#include "node_builder/config_lexical.h"
 
 static bool authenticationclientErrorEquals(const uint8_t *data, uint32_t length, const char *expected);
 

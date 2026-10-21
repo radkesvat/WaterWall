@@ -1,6 +1,5 @@
 #include "AuthenticationServer/config_fields.h"
 #include "AuthenticationServer/config_update.h"
-#include "node_builder/config_lexical.h"
 
 const char *authenticationserverParseUpdate(sbuf_t *message, const node_api_call_context_t *context,
                                             authenticationserver_update_request_t *request)

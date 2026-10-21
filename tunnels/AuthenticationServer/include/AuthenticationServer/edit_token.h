@@ -1,6 +1,6 @@
 #pragma once
 
-#include "wlibc.h"
+#include "wwapi.h"
 
 enum
 {

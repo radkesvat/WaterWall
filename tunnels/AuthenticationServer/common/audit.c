@@ -1,6 +1,5 @@
 #include "AuthenticationServer/audit.h"
 #include "loggers/network_logger.h"
-#include "wwapi.h"
 
 /* Only the queue lock is shared with submitters. File output, JSON escaping and
  * diagnostics run on the dedicated writer, without any account/worker locks. */

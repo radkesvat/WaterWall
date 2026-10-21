@@ -1,6 +1,5 @@
 #include "modules/get_all_users/get_all_users.h"
 #include "AuthenticationServer/api.h"
-#include "node_builder/config_lexical.h"
 
 static void pageNumber(cJSON *json, const char *key, uint64_t number)
 {

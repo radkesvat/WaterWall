@@ -1,6 +1,5 @@
 #include "AuthenticationServer/config_fields.h"
 #include "AuthenticationServer/password_change.h"
-#include "node_builder/config_lexical.h"
 
 const char *authenticationserverParsePasswordChange(sbuf_t *message, const node_api_call_context_t *context,
                                                     authenticationserver_password_request_t *request)

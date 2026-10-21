@@ -1,6 +1,5 @@
 #include "APIServer/structure.h"
 #include "loggers/network_logger.h"
-#include "node_builder/config_lexical.h"
 
 tunnel_t *apiserverTunnelCreate(node_t *node)
 {
