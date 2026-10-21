@@ -686,8 +686,11 @@ static void case7CtrlCb(wtimer_t *timer)
     ok = wtimerReset(ctx->target, 4000);
     require(ok && ctx->target->pending && ctx->target->pending_reset, "reset 2 ok");
 
-    ok = wtimerReset(ctx->target, 8000);
+    const uint64_t reset_base_us = timer->loop->cur_hrtime;
+    ok                           = wtimerReset(ctx->target, 8000);
     require(ok && ctx->target->pending && ctx->target->pending_reset, "reset 3 ok");
+    const uint64_t expected_deadline = ((reset_base_us + UINT64_C(8000000)) / UINT64_C(100000)) * UINT64_C(100000);
+    require(ctx->target->next_timeout == expected_deadline, "final reset installs the exact rounded deadline");
 }
 
 static void case7TargetCb(wtimer_t *timer)
@@ -720,15 +723,15 @@ static void testMultiplePendingResetsKept(void)
     require(! ctx.target->pending, "target pending clear after dispatch");
     require(! ctx.target->pending_reset, "target pending_reset clear after dispatch");
     require(ctx.target->active, "target active");
-    require(((wtimeout_t *) ctx.target)->timeout == 8000, "final requested deadline wins");
+    require(((wtimeout_t *) ctx.target)->timeout == 8000, "final requested timeout stored");
     require(fix.loop->timers.nelts == 1, "exactly 1 timer in heap (no duplicate nodes)");
     require(fix.loop->ntimers == 1, "ntimers is 1");
 
-    /* Fire at replacement deadline */
+    /* Move the replacement deadline into the past to force delivery. */
     makeTimerDueNow(fix.loop, ctx.target);
     wloopProcessEvents(fix.loop, 0);
 
-    require(ctx.target_calls == 1, "target delivered once at replacement deadline");
+    require(ctx.target_calls == 1, "reset target delivered once when forced due");
     require(fix.loop->ntimers == 0, "all timers retired");
 
     fixtureCleanup(&fix);
@@ -1093,7 +1096,7 @@ static void testInfiniteRepetition(void)
 
     makeTimerDueNow(fix.loop, ctrl_ctx.target);
     wloopProcessEvents(fix.loop, 0);
-    require(ctrl_ctx.target_calls == 1, "replacement deadline fired once");
+    require(ctrl_ctx.target_calls == 1, "reset infinite timer delivered once when forced due");
     require(ctrl_ctx.target->repeat == INFINITE, "repeat is INFINITE");
 
     wtimerDelete(ctrl_ctx.target);
@@ -1133,7 +1136,20 @@ static void case12ACb(wtimer_t *timer)
 
     bool ok = wtimerReset(timer, 2000);
     require(ok, "reset ok");
+    const long   heap_before_delete = eventloopAllocCount() - eventloopFreeCount();
+    const size_t pool_before_delete =
+        ctx->fix->mode == TEST_MODE_POOLED ? masterpoolGetCheckedOut(ctx->fix->master) : 0;
     wtimerDelete(timer);
+    if (ctx->fix->mode == TEST_MODE_POOLED)
+    {
+        require(masterpoolGetCheckedOut(ctx->fix->master) == pool_before_delete,
+                "executing timer storage retained before replacement allocation");
+    }
+    else
+    {
+        require(eventloopAllocCount() - eventloopFreeCount() == heap_before_delete,
+                "executing timer storage retained before replacement allocation");
+    }
 
     /* While timer_a is still referenced by dispatch, allocate replacement timer_b */
     ctx->timer_b           = addTimer(ctx->fix, case12BCb, 3000, 1);
@@ -1185,7 +1201,20 @@ static void case12CtrlCb(wtimer_t *timer)
 
     bool ok = wtimerReset(ctx->target, 2000);
     require(ok, "reset ok");
+    const long   heap_before_delete = eventloopAllocCount() - eventloopFreeCount();
+    const size_t pool_before_delete =
+        ctx->fix->mode == TEST_MODE_POOLED ? masterpoolGetCheckedOut(ctx->fix->master) : 0;
     wtimerDelete(ctx->target);
+    if (ctx->fix->mode == TEST_MODE_POOLED)
+    {
+        require(masterpoolGetCheckedOut(ctx->fix->master) == pool_before_delete,
+                "pending timer storage retained before replacement allocation");
+    }
+    else
+    {
+        require(eventloopAllocCount() - eventloopFreeCount() == heap_before_delete,
+                "pending timer storage retained before replacement allocation");
+    }
 
     ctx->replacement           = addTimer(ctx->fix, case12ReplacementCb, 4000, 1);
     ctx->replacement->userdata = ctx;
