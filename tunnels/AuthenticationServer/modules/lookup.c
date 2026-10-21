@@ -6,6 +6,9 @@ sbuf_t *authenticationserverLookup(const uint8_t correlation_id[kAuthenticationS
 {
     authenticationserver_tstate_t *ts   = tunnelGetState(t);
     cJSON                         *user = NULL;
+    const size_t         maximum = kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize;
+    size_t               encoded_size;
+    user_public_result_t result;
     if (kind == kAuthLookupPassword)
     {
         if (length == 0 || length > kAuthenticationServerMaxPasswordLength || memchr(data, 0, length) != NULL)
@@ -13,7 +16,7 @@ sbuf_t *authenticationserverLookup(const uint8_t correlation_id[kAuthenticationS
         char *password = memoryAllocate((size_t) length + 1);
         memoryCopy(password, data, length);
         password[length] = 0;
-        user             = usersUserToJsonByPassword(&ts->store.users, password);
+        result           = usersCopyFullUserJsonByPassword(&ts->store.users, password, maximum, &user, &encoded_size);
         memorySecureZero(password, (size_t) length + 1);
         memoryFree(password);
     }
@@ -35,10 +38,15 @@ sbuf_t *authenticationserverLookup(const uint8_t correlation_id[kAuthenticationS
         }
         if (! valid)
             return authenticationserverCreateErrorResponseFrame(l, correlation_id, invalid_error);
-        user = kind == kAuthLookupSHA224 ? usersUserToJsonBySHA224(&ts->store.users, digest)
-                                         : usersUserToJsonBySHA256(&ts->store.users, digest);
+        result = kind == kAuthLookupSHA224
+                     ? usersCopyFullUserJsonBySHA224(&ts->store.users, digest, maximum, &user, &encoded_size)
+                     : usersCopyFullUserJsonBySHA256(&ts->store.users, digest, maximum, &user, &encoded_size);
     }
-    if (user == NULL)
+    if (result == kUserPublicNotFound)
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-not-found");
+    if (result == kUserPublicTooLarge)
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "response-too-large");
+    if (result != kUserPublicOk)
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-json-serialize-failed");
     return authenticationserverCreateUserJsonResponseFrame(l, correlation_id, user, operation);
 }

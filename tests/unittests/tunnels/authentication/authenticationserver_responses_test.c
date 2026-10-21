@@ -6,13 +6,32 @@
 #include "loggers/network_logger.h"
 #include "node_builder/config_lexical.h"
 
-static char    *secret_watch, *decoded_watch, *serialized_watch;
-static size_t   secret_watch_length, decoded_watch_length, serialized_watch_length;
-static unsigned secret_wiped, decoded_wiped, serialized_wiped;
-static bool     inspect_auth_secret, inspect_user_json, refuse_serialization;
-void            __real_memoryFree(void *pointer);
-void            __wrap_memoryFree(void *pointer);
-void            __wrap_memoryFree(void *pointer)
+static char       *secret_watch, *decoded_watch, *serialized_watch;
+static size_t      secret_watch_length, decoded_watch_length, serialized_watch_length;
+static unsigned    secret_wiped, decoded_wiped, serialized_wiped;
+static bool        inspect_auth_secret, inspect_user_json, refuse_serialization;
+static const char *lookup_text_watch;
+static unsigned    lookup_text_copies;
+cJSON             *__real_cJSON_AddStringToObject(cJSON *object, const char *name, const char *string);
+cJSON             *__wrap_cJSON_AddStringToObject(cJSON *object, const char *name, const char *string);
+cJSON             *__wrap_cJSON_AddStringToObject(cJSON *object, const char *name, const char *string)
+{
+    if (lookup_text_watch != NULL && string == lookup_text_watch)
+        ++lookup_text_copies;
+    return __real_cJSON_AddStringToObject(object, name, string);
+}
+char *__real_cJSON_SetValuestring(cJSON *object, const char *string);
+char *__wrap_cJSON_SetValuestring(cJSON *object, const char *string);
+char *__wrap_cJSON_SetValuestring(cJSON *object, const char *string)
+{
+    if (lookup_text_watch != NULL && string == lookup_text_watch)
+        ++lookup_text_copies;
+    return __real_cJSON_SetValuestring(object, string);
+}
+
+void __real_memoryFree(void *pointer);
+void __wrap_memoryFree(void *pointer);
+void __wrap_memoryFree(void *pointer)
 {
     if (pointer != NULL && (pointer == secret_watch || pointer == decoded_watch || pointer == serialized_watch))
     {
@@ -693,6 +712,11 @@ static void testCanonicalProducerLookups(void)
         producerResponse(base64_kinds[i], text, length, error);
     }
     cJSON_Delete(producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, "lookup", 6, NULL));
+    producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, "missing", 7, "user-not-found");
+    a.bytes[0] ^= 0x80U;
+    b.bytes[0] ^= 0x80U;
+    producerResponse(kAuthenticationServerRequestTypeGetUserBySHA224, a.bytes, sizeof(a.bytes), "user-not-found");
+    producerResponse(kAuthenticationServerRequestTypeGetUserBySHA256, b.bytes, sizeof(b.bytes), "user-not-found");
     const char nul[] = "look\0up";
     producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, nul, sizeof(nul) - 1, "invalid-password");
     ts->sessions[0]->allow_user_pull = false;
@@ -703,6 +727,56 @@ static void testCanonicalProducerLookups(void)
         producerResponse(base64_kinds[i], "", 0, "user-pull-not-allowed");
     }
     producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, "", 0, "user-pull-not-allowed");
+    teardown();
+}
+
+static void testBoundedProducerLookups(void)
+{
+    setup();
+    producerSession();
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    user_t                         source;
+    twfRequire(userCreate(&source, "bounded-lookup"), "bounded lookup user failed");
+    userSetId(&source, 1);
+    memoryFree(source.notes);
+    source.notes = stringDuplicate("x");
+    twfRequire(usersAddUser(&ts->store.users, &source), "bounded lookup insertion failed");
+    userDestroy(&source);
+    user_t      *stored       = usersLookupByIdentifier(&ts->store.users, 1);
+    cJSON       *json         = userToJson(stored);
+    char        *text         = cJSON_PrintUnformatted(json);
+    const size_t maximum      = kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize;
+    const size_t notes_length = maximum - strlen(text) + 1U;
+    cJSON_free(text);
+    cJSON_Delete(json);
+    memoryFree(stored->notes);
+    stored->notes = memoryAllocate(notes_length + 2U);
+    memset(stored->notes, 'x', notes_length + 1U);
+    stored->notes[notes_length] = '\0';
+    lookup_text_watch           = stored->notes;
+    lookup_text_copies          = 0;
+    json = producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, "bounded-lookup", 14, NULL);
+    twfRequire(received_length == maximum + kAuthenticationServerResponseEnvelopeHeaderSize +
+                                      kAuthenticationServerResponseHeaderSize &&
+                   lookup_text_copies == 1 &&
+                   strlen(cJSON_GetObjectItemCaseSensitive(json, "notes")->valuestring) == notes_length,
+               "exact-fit point record was refused, changed or copied before admission");
+    cJSON_Delete(json);
+
+    stored->notes[notes_length]     = 'x';
+    stored->notes[notes_length + 1] = '\0';
+    lookup_text_copies              = 0;
+    producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, "bounded-lookup", 14, "response-too-large");
+    producerResponse(kAuthenticationServerRequestTypeGetUserBySHA224,
+                     stored->sha224_pass.bytes,
+                     sizeof(stored->sha224_pass.bytes),
+                     "response-too-large");
+    producerResponse(kAuthenticationServerRequestTypeGetUserBySHA256,
+                     stored->sha256_pass.bytes,
+                     sizeof(stored->sha256_pass.bytes),
+                     "response-too-large");
+    twfRequire(lookup_text_copies == 0, "oversized point record copied arbitrary text before refusing");
+    lookup_text_watch = NULL;
     teardown();
 }
 
@@ -824,6 +898,7 @@ int main(void)
     testSessionAtEnvelopeEntry();
     testProducerPages();
     testCanonicalProducerLookups();
+    testBoundedProducerLookups();
     testProducerDirtyBoundaries();
     testOwnedProducerSecretWiping();
     testOwnedLookupSecretWiping();

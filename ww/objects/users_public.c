@@ -88,3 +88,52 @@ user_public_result_t usersCopyFullUserJsonAt(const users_t *users, size_t positi
     rwlockReadUnlock(&((users_t *) users)->lock);
     return result;
 }
+
+user_public_result_t usersCopyFullUserJsonBySHA224(const users_t *users, const uint8_t sha224[SHA224_DIGEST_SIZE],
+                                                   size_t max_encoded, cJSON **out, size_t *encoded_size)
+{
+    assert(users != NULL && sha224 != NULL && out != NULL && encoded_size != NULL);
+    *out          = NULL;
+    *encoded_size = 0;
+    users_t *self = (users_t *) users;
+    rwlockReadLock(&self->lock);
+    user_t              *user = usersSHA224TableLookupLocked(self, sha224);
+    user_public_result_t result =
+        user == NULL ? kUserPublicNotFound : userCopyFullJsonBounded(user, max_encoded, out, encoded_size);
+    rwlockReadUnlock(&self->lock);
+    return result;
+}
+
+user_public_result_t usersCopyFullUserJsonBySHA256(const users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                   size_t max_encoded, cJSON **out, size_t *encoded_size)
+{
+    assert(users != NULL && sha256 != NULL && out != NULL && encoded_size != NULL);
+    *out          = NULL;
+    *encoded_size = 0;
+    users_t *self = (users_t *) users;
+    rwlockReadLock(&self->lock);
+    user_t              *user = usersSHA256TableLookupLocked(self, sha256);
+    user_public_result_t result =
+        user == NULL ? kUserPublicNotFound : userCopyFullJsonBounded(user, max_encoded, out, encoded_size);
+    rwlockReadUnlock(&self->lock);
+    return result;
+}
+
+user_public_result_t usersCopyFullUserJsonByPassword(const users_t *users, const char *password, size_t max_encoded,
+                                                     cJSON **out, size_t *encoded_size)
+{
+    assert(users != NULL && password != NULL && out != NULL && encoded_size != NULL);
+    *out          = NULL;
+    *encoded_size = 0;
+    sha256_hash_t key;
+    if (! usersPasswordLookupKeyCreate(&key, password))
+        return kUserPublicNotFound;
+    users_t *self = (users_t *) users;
+    rwlockReadLock(&self->lock);
+    user_t              *user = usersLookupByPasswordLocked(self, &key, password);
+    user_public_result_t result =
+        user == NULL ? kUserPublicNotFound : userCopyFullJsonBounded(user, max_encoded, out, encoded_size);
+    rwlockReadUnlock(&self->lock);
+    memorySecureZero(&key, sizeof(key));
+    return result;
+}

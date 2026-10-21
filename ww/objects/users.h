@@ -485,3 +485,12 @@ bool usersValidateStructure(const users_t *users);
  * copied. Exact compact JSON size is returned; failure clears both outputs. */
 user_public_result_t usersCopyFullUserJsonAt(const users_t *users, size_t position, size_t max_encoded, cJSON **out,
                                              size_t *encoded_size);
+/* Indexed point lookups with the same full-row size admission. Hold collection
+ * ownership through copying so concurrent removal cannot invalidate the match.
+ * Missing credentials return NotFound; all failures clear both outputs. */
+user_public_result_t usersCopyFullUserJsonBySHA224(const users_t *users, const uint8_t sha224[SHA224_DIGEST_SIZE],
+                                                   size_t max_encoded, cJSON **out, size_t *encoded_size);
+user_public_result_t usersCopyFullUserJsonBySHA256(const users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                   size_t max_encoded, cJSON **out, size_t *encoded_size);
+user_public_result_t usersCopyFullUserJsonByPassword(const users_t *users, const char *password, size_t max_encoded,
+                                                     cJSON **out, size_t *encoded_size);

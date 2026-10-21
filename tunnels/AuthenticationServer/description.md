@@ -751,6 +751,11 @@ correlation ID.
 
 ### AddNewUser Module
 
+All password and digest lookup modules admit the complete compact JSON size before copying the matched user's strings.
+The JSON must fit the 16 MiB response payload limit minus its 9-byte frame header. A record one byte over that limit
+returns `response-too-large`; it is never truncated. Invalid stored string encoding returns `user-json-serialize-failed`.
+The collection remains locked through the bounded copy so a concurrent removal cannot invalidate the selected account.
+
 The `AddNewUser` module expects request data containing a JSON object for one user, using the AuthenticationServer user
 format described above. The submitted user must contain a non-zero unique `id`/`user-id`.
 

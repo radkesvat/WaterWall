@@ -120,15 +120,7 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
     }
 
     const size_t user_json_text_len = stringLength(user_json_text);
-    if (UNLIKELY(authenticationserverResponseDataTooLarge(user_json_text_len)))
-    {
-        LOGW("AuthenticationServer: %s response is too large", module_name);
-        memorySecureZero(user_json_text, user_json_text_len);
-        cJSON_free(user_json_text);
-        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "response-too-large");
-    }
-
-    sbuf_t *response = authenticationserverCreateResponseFrame(l,
+    sbuf_t      *response           = authenticationserverCreateResponseFrame(l,
                                                                kAuthenticationServerResponseTypeUser,
                                                                correlation_id,
                                                                (const uint8_t *) user_json_text,
