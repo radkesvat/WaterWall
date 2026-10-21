@@ -362,6 +362,35 @@ static uint64_t userWireGuardAllowedIpCount(uint8_t family, uint8_t prefix)
     return 1ULL << host_bits;
 }
 
+static bool userDottedIpv4TailValid(const char *text)
+{
+    if (strchr(text, '.') == NULL)
+        return true;
+
+    /* Native inet_pton() implementations differ on leading-zero octets. Apply
+     * the same dotted-decimal rules to IPv4 addresses and IPv6 dotted tails. */
+    const char *tail = strrchr(text, ':');
+    tail             = tail != NULL ? tail + 1 : text;
+    for (unsigned int octet = 0; octet < 4U; ++octet)
+    {
+        if (*tail < '0' || *tail > '9' || (*tail == '0' && tail[1] >= '0' && tail[1] <= '9'))
+            return false;
+        unsigned int value = 0;
+        do
+        {
+            value = value * 10U + (unsigned int) (*tail++ - '0');
+            if (value > 255U)
+                return false;
+        } while (*tail >= '0' && *tail <= '9');
+        if (octet == 3U)
+            return *tail == '\0';
+        if (*tail != '.')
+            return false;
+        ++tail;
+    }
+    return false;
+}
+
 bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_addr_t *ip_out, ip_addr_t *mask_out,
                                   uint8_t *family_out, uint8_t *prefix_out, uint64_t *count_out, bool *valid_out)
 {
@@ -455,6 +484,12 @@ bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_a
 
     memoryCopy(ip_text, compact, ip_len);
     ip_text[ip_len] = '\0';
+
+    if (! userDottedIpv4TailValid(ip_text))
+    {
+        memoryFree(compact);
+        return false;
+    }
 
 #ifdef OS_WIN
     WSAInit();

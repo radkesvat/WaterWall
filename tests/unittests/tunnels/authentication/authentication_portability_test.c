@@ -64,8 +64,18 @@ static void strictCidrs(void)
     static const char *invalid[] = {"10/8",
                                     "192.168.1/24",
                                     "010.0.0.1/32",
+                                    "00.0.0.0/32",
+                                    "192.00.2.1/32",
+                                    "192.0.02.1/32",
+                                    "192.0.2.001/32",
                                     "0x0a.0.0.1/32",
                                     "256.0.0.1/32",
+                                    "::ffff:010.0.0.1/128",
+                                    "::ffff:192.00.2.1/128",
+                                    "::ffff:192.0.02.1/128",
+                                    "::ffff:192.0.2.001/128",
+                                    "::ffff:192.0.2/128",
+                                    "::ffff:192.0.2.256/128",
                                     "12345::/16",
                                     "1:2:3:4:5:6:7:8zz/128",
                                     "10.0.0.1x/32",
@@ -76,18 +86,26 @@ static void strictCidrs(void)
                                     ":: 1/128",
                                     "10.0.0.1/ 32"};
     for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
-        require(! userWireGuardAllowedIpsStringValid(invalid[i]), "portable CIDR parser accepted malformed address");
+    {
+        char message[128];
+        snprintf(message, sizeof(message), "portable CIDR parser accepted malformed address: %s", invalid[i]);
+        require(! userWireGuardAllowedIpsStringValid(invalid[i]), message);
+    }
     static const struct
     {
         const char *input, *expected;
         uint8_t     family, prefix;
     } valid[] = {{"0.0.0.0/0", "0.0.0.0/0", 4, 0},
+                 {"1.2.3.4/32", "1.2.3.4/32", 4, 32},
+                 {"255.255.255.255/32", "255.255.255.255/32", 4, 32},
                  {"192.0.2.7/32", "192.0.2.7/32", 4, 32},
                  {" \t192.0.2.123/24\r\n", "192.0.2.0/24", 4, 24},
                  {"::/0", NULL, 6, 0},
                  {"::1/128", NULL, 6, 128},
                  {"2001:db8:0:0:0:0:0:1/64", NULL, 6, 64},
-                 {"::ffff:192.0.2.1/128", NULL, 6, 128}};
+                 {"::ffff:192.0.2.1/128", NULL, 6, 128},
+                 {"::ffff:0.0.0.0/128", NULL, 6, 128},
+                 {"::ffff:255.255.255.255/128", NULL, 6, 128}};
     for (size_t i = 0; i < ARRAY_SIZE(valid); ++i)
     {
         char     *normalized = NULL;
