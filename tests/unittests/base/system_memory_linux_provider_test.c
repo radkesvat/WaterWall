@@ -512,15 +512,21 @@ static void testHierarchicalV2Sampling(void)
                 strcmp(resolution.leaf_path, "/cg/tenant/leaf") == 0 && strcmp(resolution.boundary_path, "/cg") == 0,
             "v2 hierarchy did not resolve from leaf through mount boundary");
 
-    system_memory_snapshot_t snapshot = {0};
+    system_memory_snapshot_t snapshot = {.host_total_bytes = 2000};
     require(sampleFixture(&fixture, &resolution, &snapshot) == kSystemMemoryLinuxSampleValid &&
                 snapshot.cgroup_limited && snapshot.cgroup_current_bytes == 900 &&
-                snapshot.cgroup_limit_bytes == 1000 && snapshot.cgroup_available_bytes == 100,
-            "an unbounded v2 leaf hid its finite pressured parent");
+                snapshot.cgroup_limit_bytes == 1000 && snapshot.cgroup_available_bytes == 100 &&
+                snapshot.effective_total_bytes == 500,
+            "v2 total capacity did not retain the smallest limit independently of pressure");
+
+    snapshot = (system_memory_snapshot_t) {.host_total_bytes = 250};
+    require(sampleFixture(&fixture, &resolution, &snapshot) == kSystemMemoryLinuxSampleValid &&
+                snapshot.effective_total_bytes == 250 && snapshot.cgroup_limit_bytes == 1000,
+            "v2 effective total exceeded host physical RAM");
 
     fixtureAddDirectory(&fixture, "/", 0, 26, 9);
     addV2Level(&fixture, "/", "1000\n", "1000\n", 90);
-    snapshot = (system_memory_snapshot_t) {0};
+    snapshot = (system_memory_snapshot_t) {.host_total_bytes = 2000};
     require(sampleFixture(&fixture, &resolution, &snapshot) == kSystemMemoryLinuxSampleValid &&
                 snapshot.cgroup_current_bytes == 900 && snapshot.cgroup_limit_bytes == 1000,
             "ancestor walking escaped above the selected mount boundary");
@@ -529,11 +535,11 @@ static void testHierarchicalV2Sampling(void)
     fixtureFind(&fixture, "/cg/tenant/leaf/memory.max")->contents     = "1000\n";
     fixtureFind(&fixture, "/cg/tenant/memory.current")->contents      = "1\n";
     fixtureFind(&fixture, "/cg/tenant/memory.max")->contents          = "11\n";
-    snapshot                                                          = (system_memory_snapshot_t) {0};
+    snapshot = (system_memory_snapshot_t) {.host_total_bytes = 2000};
     require(sampleFixture(&fixture, &resolution, &snapshot) == kSystemMemoryLinuxSampleValid &&
                 snapshot.cgroup_current_bytes == 900 && snapshot.cgroup_limit_bytes == 1000 &&
-                snapshot.cgroup_available_bytes == 10,
-            "maximum pressure and minimum headroom were not retained from different ancestors");
+                snapshot.cgroup_available_bytes == 10 && snapshot.effective_total_bytes == 11,
+            "maximum pressure, minimum headroom and minimum total were not retained from different ancestors");
 
     fixtureFind(&fixture, "/cg/memory.current")->contents = "500\n";
     snapshot                                              = (system_memory_snapshot_t) {0};
@@ -650,6 +656,7 @@ static void testKnownV2RootWithoutFiniteLimits(void)
     GSTATE.system_load                 = &sampler;
     require(systemLoadSamplerUpdate(&sampler) && systemMemorySnapshotGet(&snapshot) == kSystemMemorySnapshotFresh &&
                 ! snapshot.cgroup_limited && snapshot.host_total_bytes == 1000U * 1024U &&
+                snapshot.effective_total_bytes == snapshot.host_total_bytes &&
                 snapshot.effective_available_bytes == 500U * 1024U,
             "known-root unbounded provider did not publish a fresh coherent host memory snapshot");
 
@@ -658,12 +665,14 @@ static void testKnownV2RootWithoutFiniteLimits(void)
     fixture.now_ms                                           = 600;
     require(systemLoadSamplerUpdate(&sampler) && systemMemorySnapshotGet(&snapshot) == kSystemMemorySnapshotFresh &&
                 snapshot.cgroup_limited && snapshot.cgroup_current_bytes == 2 && snapshot.cgroup_limit_bytes == 100 &&
-                snapshot.effective_available_bytes == 98 && fixture.cgroup_reads == discovery_reads,
+                snapshot.effective_total_bytes == 100 && snapshot.effective_available_bytes == 98 &&
+                fixture.cgroup_reads == discovery_reads,
             "known-root cached provider missed a new finite ancestor limit");
     fixtureFind(&fixture, "/cg/tenant/memory.max")->contents = "max\n";
     fixture.now_ms                                           = 1100;
     require(systemLoadSamplerUpdate(&sampler) && systemMemorySnapshotGet(&snapshot) == kSystemMemorySnapshotFresh &&
-                ! snapshot.cgroup_limited && snapshot.effective_available_bytes == 500U * 1024U,
+                ! snapshot.cgroup_limited && snapshot.effective_total_bytes == snapshot.host_total_bytes &&
+                snapshot.effective_available_bytes == 500U * 1024U,
             "known-root cached provider did not return to host memory after the finite limit was removed");
     GSTATE.system_load = saved_sampler;
     systemLoadSamplerDestroy(&sampler);
@@ -1233,7 +1242,7 @@ static void testCachedProviderStateAndGetter(void)
     system_memory_snapshot_t snapshot;
     require(systemMemorySnapshotGet(&snapshot) == kSystemMemorySnapshotFresh && snapshot.cgroup_limited &&
                 snapshot.cgroup_current_bytes == 3 && snapshot.cgroup_limit_bytes == 100 &&
-                snapshot.cgroup_available_bytes == 97,
+                snapshot.cgroup_available_bytes == 97 && snapshot.effective_total_bytes == 100,
             "cached hierarchy did not publish coherent pressure and headroom");
     const unsigned int reads_before_getter      = fixture.read_calls;
     const unsigned int identity_before_getter   = fixture.identity_calls;

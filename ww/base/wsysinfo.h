@@ -115,6 +115,9 @@ typedef struct system_memory_snapshot_s
     uint64_t cgroup_limit_bytes;
     uint64_t cgroup_current_bytes;
     uint64_t cgroup_available_bytes;
+    /* Host total bounded by every applicable finite cgroup limit; diagnostic
+     * cgroup_limit_bytes may describe a different, more pressured ancestor. */
+    uint64_t effective_total_bytes;
     uint64_t effective_available_bytes;
     uint32_t host_used_basis_points;
     uint32_t cgroup_used_basis_points;
@@ -163,6 +166,7 @@ typedef struct system_load_state_s
     atomic_ullong memory_cgroup_limit_bytes;
     atomic_ullong memory_cgroup_current_bytes;
     atomic_ullong memory_cgroup_available_bytes;
+    atomic_ullong memory_effective_total_bytes;
     atomic_ullong memory_effective_available_bytes;
     atomic_uint   memory_host_used_basis_points;
     atomic_uint   memory_cgroup_used_basis_points;

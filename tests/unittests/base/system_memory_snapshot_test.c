@@ -64,6 +64,7 @@ static system_memory_provider_result_t fakeProvider(void *userdata, system_memor
     snapshot->cgroup_limit_bytes     = 500000;
     snapshot->cgroup_current_bytes   = low_available ? 400000 : 100000;
     snapshot->cgroup_available_bytes = low_available ? 100000 : 400000;
+    snapshot->effective_total_bytes  = low_available ? 250000 : 500000;
     return kSystemMemoryProviderOk;
 }
 
@@ -84,10 +85,10 @@ static WTHREAD_ROUTINE(memoryReaderMain)
             break;
         }
         const bool high_tuple = snapshot.host_available_bytes == 800000 && snapshot.cgroup_current_bytes == 100000 &&
-                                snapshot.cgroup_available_bytes == 400000 &&
+                                snapshot.cgroup_available_bytes == 400000 && snapshot.effective_total_bytes == 500000 &&
                                 snapshot.effective_available_bytes == 400000;
         const bool low_tuple = snapshot.host_available_bytes == 200000 && snapshot.cgroup_current_bytes == 400000 &&
-                               snapshot.cgroup_available_bytes == 100000 &&
+                               snapshot.cgroup_available_bytes == 100000 && snapshot.effective_total_bytes == 250000 &&
                                snapshot.effective_available_bytes == 100000;
         if (! high_tuple && ! low_tuple)
         {
@@ -132,13 +133,14 @@ static void testSnapshotTupleInvariants(void)
                    .cgroup_limited         = true,
                    .cgroup_current_bytes   = 900,
                    .cgroup_limit_bytes     = 1000,
+                   .effective_total_bytes  = 11,
                    .cgroup_available_bytes = 10},
     };
     system_memory_snapshot_t snapshot;
     requireTupleStatus(
         &provider, kSystemMemorySnapshotFresh, &snapshot, "valid split pressure/headroom tuple was rejected");
     require(snapshot.cgroup_used_basis_points == 9000 && snapshot.cgroup_available_bytes == 10 &&
-                snapshot.effective_available_bytes == 10,
+                snapshot.effective_total_bytes == 11 && snapshot.effective_available_bytes == 10,
             "split pressure/headroom tuple was finalized incorrectly");
 
     provider.tuple.cgroup_available_bytes = 101;
@@ -172,7 +174,8 @@ static void testSnapshotTupleInvariants(void)
                        &snapshot,
                        "host-only tuple with provider diagnostic residue was rejected instead of cleared");
     require(snapshot.cgroup_current_bytes == 0 && snapshot.cgroup_limit_bytes == 0 &&
-                snapshot.cgroup_available_bytes == 0 && snapshot.cgroup_used_basis_points == 0,
+                snapshot.cgroup_available_bytes == 0 && snapshot.cgroup_used_basis_points == 0 &&
+                snapshot.effective_total_bytes == snapshot.host_total_bytes,
             "host-only tuple retained cgroup diagnostic fields");
 }
 
@@ -207,6 +210,7 @@ int main(void)
 #ifdef OS_WIN
     require(systemMemorySnapshotGet(&production_snapshot) == kSystemMemorySnapshotFresh &&
                 production_snapshot.host_total_bytes > 0 &&
+                production_snapshot.effective_total_bytes == production_snapshot.host_total_bytes &&
                 production_snapshot.host_available_bytes <= production_snapshot.host_total_bytes &&
                 ! production_snapshot.cgroup_limited,
             "Windows production GlobalMemoryStatusEx snapshot was not published coherently");
@@ -238,7 +242,8 @@ int main(void)
     require(systemMemorySnapshotGet(&snapshot) == kSystemMemorySnapshotFresh,
             "initial synchronous memory snapshot was not fresh");
     require(snapshot.host_used_basis_points == 2000 && snapshot.cgroup_used_basis_points == 2000 &&
-                snapshot.cgroup_available_bytes == 400000 && snapshot.effective_available_bytes == 400000,
+                snapshot.cgroup_available_bytes == 400000 && snapshot.effective_total_bytes == 500000 &&
+                snapshot.effective_available_bytes == 400000,
             "host/cgroup effective snapshot calculation is wrong");
     require((unsigned int) atomicLoadRelaxed(&provider.calls) == calls_after_update,
             "cached memory getter invoked the provider");

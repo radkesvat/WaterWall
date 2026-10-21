@@ -57,6 +57,7 @@ static system_memory_provider_result_t admissionProvider(void *userdata, system_
     snapshot->cgroup_limited       = provider->cgroup_limited;
     snapshot->cgroup_limit_bytes   = provider->cgroup_limit;
     snapshot->cgroup_current_bytes = provider->cgroup_current;
+    snapshot->effective_total_bytes = min(provider->host_total, provider->cgroup_limit);
     snapshot->cgroup_available_bytes =
         provider->cgroup_current >= provider->cgroup_limit ? 0 : provider->cgroup_limit - provider->cgroup_current;
     return kSystemMemoryProviderOk;

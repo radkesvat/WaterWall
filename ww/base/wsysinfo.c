@@ -287,6 +287,7 @@ static bool systemMemoryFinalizeSnapshot(system_memory_snapshot_t *snapshot, uin
     snapshot->effective_available_bytes = snapshot->host_available_bytes;
     if (! snapshot->cgroup_limited)
     {
+        snapshot->effective_total_bytes    = snapshot->host_total_bytes;
         snapshot->cgroup_limit_bytes       = 0;
         snapshot->cgroup_current_bytes     = 0;
         snapshot->cgroup_available_bytes   = 0;
@@ -294,7 +295,9 @@ static bool systemMemoryFinalizeSnapshot(system_memory_snapshot_t *snapshot, uin
         return true;
     }
 
-    if (snapshot->cgroup_limit_bytes == 0)
+    if (snapshot->cgroup_limit_bytes == 0 || snapshot->effective_total_bytes == 0 ||
+        snapshot->effective_total_bytes > snapshot->host_total_bytes ||
+        snapshot->effective_total_bytes > snapshot->cgroup_limit_bytes)
     {
         return false;
     }
@@ -313,7 +316,7 @@ static bool systemMemoryFinalizeSnapshot(system_memory_snapshot_t *snapshot, uin
         return false;
     }
     snapshot->effective_available_bytes = min(snapshot->host_available_bytes, snapshot->cgroup_available_bytes);
-    return true;
+    return snapshot->effective_available_bytes <= snapshot->effective_total_bytes;
 }
 
 #if defined(OS_WIN)
@@ -665,6 +668,7 @@ static void systemMemoryPublish(system_load_state_t *state, const system_memory_
     atomicStoreU64Explicit(&state->memory_cgroup_current_bytes, snapshot->cgroup_current_bytes, memory_order_seq_cst);
     atomicStoreU64Explicit(
         &state->memory_cgroup_available_bytes, snapshot->cgroup_available_bytes, memory_order_seq_cst);
+    atomicStoreU64Explicit(&state->memory_effective_total_bytes, snapshot->effective_total_bytes, memory_order_seq_cst);
     atomicStoreU64Explicit(
         &state->memory_effective_available_bytes, snapshot->effective_available_bytes, memory_order_seq_cst);
     atomicStoreExplicit(&state->memory_host_used_basis_points, snapshot->host_used_basis_points, memory_order_seq_cst);
@@ -971,6 +975,7 @@ system_memory_snapshot_status_t systemMemorySnapshotGet(system_memory_snapshot_t
             .cgroup_current_bytes = atomicLoadU64Explicit(&state->memory_cgroup_current_bytes, memory_order_seq_cst),
             .cgroup_available_bytes =
                 atomicLoadU64Explicit(&state->memory_cgroup_available_bytes, memory_order_seq_cst),
+            .effective_total_bytes = atomicLoadU64Explicit(&state->memory_effective_total_bytes, memory_order_seq_cst),
             .effective_available_bytes =
                 atomicLoadU64Explicit(&state->memory_effective_available_bytes, memory_order_seq_cst),
             .host_used_basis_points =

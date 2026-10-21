@@ -1013,6 +1013,7 @@ system_memory_linux_sample_result_t systemMemoryLinuxSampleResolvedCgroup(system
     if (resolution->kind == kSystemMemoryLinuxCgroupAbsent)
     {
         snapshot->cgroup_limited = false;
+        snapshot->effective_total_bytes = snapshot->host_total_bytes;
         return kSystemMemoryLinuxSampleValid;
     }
     if ((resolution->kind != kSystemMemoryLinuxCgroupV1 && resolution->kind != kSystemMemoryLinuxCgroupV2) ||
@@ -1029,6 +1030,7 @@ system_memory_linux_sample_result_t systemMemoryLinuxSampleResolvedCgroup(system
     bool     have_finite          = false;
     bool     have_diagnostic      = false;
     uint64_t minimum_remaining    = UINT64_MAX;
+    uint64_t minimum_limit        = UINT64_MAX;
     uint64_t diagnostic_current   = 0;
     uint64_t diagnostic_limit     = 0;
     uint64_t diagnostic_remaining = UINT64_MAX;
@@ -1203,6 +1205,7 @@ system_memory_linux_sample_result_t systemMemoryLinuxSampleResolvedCgroup(system
             }
             have_finite       = true;
             minimum_remaining = min(minimum_remaining, remaining);
+            minimum_limit     = min(minimum_limit, limit);
             if (systemMemoryLinuxSelectDiagnostic(pressure,
                                                   remaining,
                                                   level,
@@ -1233,6 +1236,7 @@ system_memory_linux_sample_result_t systemMemoryLinuxSampleResolvedCgroup(system
     if (! have_finite && resolution->hierarchy_root_visible)
     {
         snapshot->cgroup_limited = false;
+        snapshot->effective_total_bytes = snapshot->host_total_bytes;
         return kSystemMemoryLinuxSampleValid;
     }
     if (! have_finite || ! have_diagnostic)
@@ -1244,6 +1248,7 @@ system_memory_linux_sample_result_t systemMemoryLinuxSampleResolvedCgroup(system
     snapshot->cgroup_current_bytes   = diagnostic_current;
     snapshot->cgroup_limit_bytes     = diagnostic_limit;
     snapshot->cgroup_available_bytes = minimum_remaining;
+    snapshot->effective_total_bytes  = min(snapshot->host_total_bytes, minimum_limit);
     return kSystemMemoryLinuxSampleValid;
 }
 
