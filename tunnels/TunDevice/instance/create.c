@@ -138,7 +138,7 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 
     /* Device creation waits for OnStart, after chain padding is finalized. */
 #ifdef OS_WIN
-    const char *fail_msg = "Error: Loading the WireGuard driver requires administrative privileges.\n\n"
+    const char *fail_msg = "Error: Loading the Wintun driver requires administrative privileges.\n\n"
                            "Please restart Waterwall as an administrator and try again.";
     if (! isAdmin())
     {

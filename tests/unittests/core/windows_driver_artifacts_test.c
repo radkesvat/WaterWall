@@ -211,7 +211,8 @@ static bool fixtureNotAdmin(void)
 static int WINAPI fixtureMessageBox(HWND window, LPCSTR text, LPCSTR caption, UINT flags)
 {
     discard window;
-    discard text;
+    require(strstr(text, "Wintun") != NULL && strstr(text, "WireGuard") == NULL,
+            "TunDevice privilege dialog named the wrong driver");
     discard caption;
     discard flags;
     ++modal_calls;
@@ -273,8 +274,8 @@ int main(void)
     requireEmpty();
 
     require(windowsDriverArtifactPrepare(kWindowsDriverWintun, bytes, sizeof(bytes), &path), "prepare failed");
-    const wchar_t *again = NULL;
     require(ancestor_pin_opens != 0, "fixture did not inspect ancestor pin sharing");
+    const wchar_t *again = NULL;
     require(windowsDriverArtifactPrepare(kWindowsDriverWintun, bytes, sizeof(bytes), &again) && path == again,
             "immutable reuse did not retain the same artifact");
     HANDLE writable = CreateFileW(
