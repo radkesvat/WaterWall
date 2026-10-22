@@ -298,10 +298,9 @@ static void recoveryAndControl(void)
     expectAck(f, 2, f->peer_next, 65535 - 512);
     inject(f, f->peer_next, TCP_ACK, 512);
     f->peer_next += 1024;
-    CHECK(f->outputs == 2 && f->received == 1536);
+    CHECK(f->outputs == 3 && f->received == 1536 && f->last_ack == f->peer_next);
     end(f);
-    CHECK(f->outputs == 2);
-    /* Gap fill and partial duplicates retain lwIP's existing delayed ACK path. */
+    CHECK(f->outputs == 3);
     tcp_fasttmr();
     CHECK(f->outputs == 3 && f->last_ack == f->peer_next);
     begin(f);
@@ -322,6 +321,44 @@ static void recoveryAndControl(void)
     end(f);
     CHECK(f->outputs == before + 1);
     stop(f);
+}
+
+static void gapRecovery(void)
+{
+    for (unsigned batching = 0; batching != 2; ++batching)
+    {
+        for (unsigned queued = 0; queued != 2; ++queued)
+        {
+            for (unsigned overlap = 0; overlap != 2; ++overlap)
+            {
+                fixture_t *f = start(true);
+                if (batching)
+                    begin(f);
+                if (queued)
+                    data(f, 256);
+                inject(f, f->peer_next + 512, TCP_ACK, 256);
+                CHECK(f->pcb->ooseq != NULL);
+                CHECK((f->pcb->flags & (TF_ACK_DELAY | TF_ACK_NOW)) == 0);
+                CHECK((f->pcb->ww_ack_previous != NULL) == (batching && queued));
+                unsigned outputs = f->outputs;
+                /* Both partial gap progress and complete gap closure ACK
+                 * immediately, including a trimmed duplicate prefix. */
+                inject(f, f->peer_next - overlap * 64, TCP_ACK, (uint16_t) (256 + overlap * 64));
+                f->peer_next += 256;
+                CHECK(f->outputs == ++outputs && f->last_ack == f->peer_next);
+                CHECK(f->pcb->ooseq != NULL);
+                data(f, 256);
+                f->peer_next += 256;
+                CHECK(f->outputs == ++outputs && f->last_ack == f->peer_next);
+                CHECK(f->pcb->ooseq == NULL);
+                if (batching)
+                    end(f);
+                tcp_fasttmr();
+                CHECK(f->outputs == outputs);
+                stop(f);
+            }
+        }
+    }
 }
 
 static void piggybackAndRetirement(void)
@@ -439,6 +476,8 @@ int main(void)
     zeroWindow();
     testCaseSet("recovery and connection control");
     recoveryAndControl();
+    testCaseSet("gap recovery ACKs with and without batching");
+    gapRecovery();
     testCaseSet("piggyback and queued PCB retirement");
     piggybackAndRetirement();
     testCaseSet("retire queued middle and head connections");

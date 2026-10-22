@@ -1,6 +1,6 @@
 # Queue ordinary ACK intent before packet construction, only for an explicit
-# bounded receive batch. Control/recovery sends and the normal delayed-ACK timer
-# retain their upstream behavior.
+# bounded receive batch. Gap-recovery progress requests an immediate ACK;
+# control sends and the normal delayed-ACK timer retain their upstream behavior.
 function(ww_apply_lwip_ack_batch_patch lwip_dir)
     ww_lwip_replace_once("${lwip_dir}/src/include/lwip/tcp.h"
 [=[  TCP_PCB_COMMON(struct tcp_pcb);
@@ -42,6 +42,8 @@ void wwLwipEngineCancelAck(struct tcp_pcb *pcb);
       ww_ctx_seqno == pcb->rcv_nxt && ww_ctx_inseg.len != 0 &&
       (ww_ctx_flags & ~(TCP_ACK | TCP_PSH)) == 0;
 #if TCP_QUEUE_OOSEQ
+  u32_t ww_rcv_nxt_before = pcb->rcv_nxt;
+  u8_t ww_gap_pending = pcb->ooseq != NULL && ww_ctx_inseg.len != 0;
   ww_ack_batch_eligible = ww_ack_batch_eligible && pcb->ooseq == NULL;
 #endif
 #endif
@@ -52,6 +54,11 @@ void wwLwipEngineCancelAck(struct tcp_pcb *pcb);
         tcp_ack(pcb);]=]
 [=[        /* Acknowledge the segment(s). */
 #if WW_LWIP_WORKER_ENGINES
+#if TCP_QUEUE_OOSEQ
+        if (ww_gap_pending && TCP_SEQ_GT(pcb->rcv_nxt, ww_rcv_nxt_before)) {
+          tcp_ack_now(pcb);
+        } else
+#endif
         if (!ww_ack_batch_eligible || !wwLwipEngineDeferAck(pcb))
 #endif
         {
