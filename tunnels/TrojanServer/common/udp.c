@@ -140,6 +140,7 @@ line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, troj
     remote->phase       = kTrojanServerPhaseUdpConnecting;
     lineRef(client_l);
     lineGetRoutingContext(line)->local_listener_port = lineGetRoutingContext(client_l)->local_listener_port;
+    addresscontextCopy(lineGetSourceAddressContext(line), lineGetSourceAddressContext(client_l));
     trojanserverApplyDestinationContext(line, target, true);
     trojanserverSetCredentialSnapshot(remote, client->auth_username, client->auth_password);
     trojanserverRecordLineUser(line, remote, &remote->user_handle);

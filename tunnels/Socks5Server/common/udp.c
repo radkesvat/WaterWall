@@ -34,6 +34,7 @@ static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
     lineRef(client_l);
 
     lineGetRoutingContext(remote_l)->local_listener_port = socks5serverGetLocalPort(client_l);
+    addresscontextCopy(lineGetSourceAddressContext(remote_l), lineGetSourceAddressContext(client_l));
     socks5serverAddressToContext(identity, lineGetDestinationAddressContext(remote_l));
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(remote_l), IP_PROTO_UDP);
 

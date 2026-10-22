@@ -410,6 +410,17 @@ static void onInit(tunnel_t *t, line_t *l)
                 trojanserver_remote_map_t_get(&client->udp_remote_lines, remote->remote_key);
             twfRequire(remote->client_line == f.line && entry != NULL && entry->second == l,
                        "backend Init preceded complete association publication");
+            const address_context_t *source        = lineGetSourceAddressContext(l);
+            const address_context_t *client_source = lineGetSourceAddressContext(f.line);
+            if (addresscontextIsIp(client_source))
+                twfRequire(addresscontextIsIp(source) &&
+                               ipAddrEqualsExact(&source->ip_address, &client_source->ip_address) &&
+                               source->port == client_source->port && source->proto_tcp == client_source->proto_tcp &&
+                               source->proto_udp == client_source->proto_udp,
+                           "UDP backend source identity missing before Init");
+            const address_context_t *destination = lineGetDestinationAddressContext(l);
+            twfRequire(destination->proto_udp && ! destination->proto_tcp,
+                       "UDP backend destination protocol changed before Init");
             if (f.identity_wire != NULL)
             {
                 const uint8_t     *wire    = f.identity_wire;
@@ -560,6 +571,36 @@ static void identityDatagram(const uint8_t *address, size_t length, line_t *expe
     f.identity_wire   = address;
     f.expected_remote = expected;
     tunnelUpStreamPayload(f.t, f.line, bytes(wire, (uint32_t) length + 5, true, 320));
+}
+
+static void testUdpSourceIdentity(void)
+{
+    const char   *sources[]     = {"127.0.0.2", "2001:db8::2"};
+    const uint8_t destination[] = {1, 127, 0, 0, 1, 0, 80};
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        twfSetCase("UDP backend preserves IPv4/IPv6 source before Init and recreation");
+        begin(false, false, 128);
+        twfRequire(
+            addresscontextSetIpAddressPortProtocol(lineGetSourceAddressContext(f.line), sources[i], 1234, IP_PROTO_TCP),
+            "invalid source fixture");
+        twfRequire(addresscontextSetIpAddressPortProtocol(
+                       lineGetDestinationAddressContext(f.line), "198.51.100.9", 8443, IP_PROTO_TCP),
+                   "invalid client destination fixture");
+        startUdp();
+        identityDatagram(destination, sizeof(destination), NULL);
+        twfRequire(f.remote_count == 1 && f.calls_up == 1, "first UDP backend was not created");
+        tunnelDownStreamFin(f.t, f.remotes[0]);
+        twfRequire(! lineIsAlive(f.remotes[0]) && lineIsAlive(f.line),
+                   "backend Finish leaked its line or destroyed the borrowed client");
+        identityDatagram(destination, sizeof(destination), NULL);
+        twfRequire(f.remote_count == 2 && f.calls_up == 2, "UDP backend was not recreated");
+        tunnelUpStreamFin(f.t, f.line);
+        twfRequire(lineIsAlive(f.line) && ! lineIsAlive(f.remotes[1]),
+                   "client Finish did not preserve borrowed ownership and close the backend");
+        lineDestroy(f.line);
+        end();
+    }
 }
 
 static void testDomainAddressOwnership(void)
@@ -1565,6 +1606,7 @@ int main(void)
     sha224_hash_t hash;
     twfRequire(wCryptoSHA224(&hash, (const unsigned char *) "test", 4) == kWCryptoOk, "hash failed");
     asciiHexEncodeBytesLower(hash.bytes, SHA224_DIGEST_SIZE, hash_hex);
+    testUdpSourceIdentity();
     testDomainAddressOwnership();
     testUdpIdentity();
     testShutdownAdmission();

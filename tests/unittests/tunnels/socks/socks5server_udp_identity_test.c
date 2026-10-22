@@ -62,6 +62,23 @@ static void initNext(tunnel_t *t, line_t *l)
     socks5_address_t       original;
     twfRequire(socks5AddressDecode(active_wire, active_length, &original) == kSocks5AddressComplete, "fixture vector");
     twfRequire(ls->client_line == client && ls->client_line_ref_held, "remote parent was not published before Init");
+    const address_context_t *source        = lineGetSourceAddressContext(l);
+    const address_context_t *client_source = lineGetSourceAddressContext(client);
+    twfRequire(addresscontextIsIp(source) && ipAddrEqualsExact(&source->ip_address, &client_source->ip_address) &&
+                   source->port == client_source->port && source->proto_udp && ! source->proto_tcp,
+               "UDP backend source identity missing before Init");
+    const address_context_t *destination = lineGetDestinationAddressContext(l);
+    const void *destination_bytes        = original.kind == kSocks5AddressDomain ? (const void *) destination->domain
+                                           : original.kind == kSocks5AddressIpv4
+                                               ? (const void *) &destination->ip_address.u_addr.ip4.addr
+                                               : (const void *) &destination->ip_address.u_addr.ip6;
+    twfRequire((original.kind == kSocks5AddressDomain
+                    ? addresscontextIsDomain(destination) && destination->domain_len == original.length
+                : original.kind == kSocks5AddressIpv4 ? addresscontextIsIpv4(destination)
+                                                      : addresscontextIsIpv6(destination)) &&
+                   memoryEqual(destination_bytes, original.bytes, original.length) &&
+                   destination->port == original.port && destination->proto_udp && ! destination->proto_tcp,
+               "UDP backend destination or protocol changed before Init");
     twfRequire(linePrefersOrdinaryReadUpstream(l) && linePrefersOrdinaryReadDownstream(l),
                "UDP remote read preferences were not published before Init");
     twfRequire(ls->remote_key && ls->remote_key->address.kind == original.kind &&
@@ -254,8 +271,37 @@ static void spliceDatagrams(void)
                "splice UDP Init failure retained remote or forwarded payload");
     teardown();
 }
+static void sourceIdentity(void)
+{
+    const char   *sources[]     = {"127.0.0.2", "2001:db8::2"};
+    const uint8_t destination[] = {1, 127, 0, 0, 1, 0, 80};
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        twfSetCase("UDP backend preserves IPv4/IPv6 observed source before Init and recreation");
+        setup();
+        twfRequire(
+            addresscontextSetIpAddressPortProtocol(lineGetSourceAddressContext(client), sources[i], 1234, IP_PROTO_UDP),
+            "invalid source fixture");
+        twfRequire(addresscontextSetIpAddressPortProtocol(
+                       lineGetDestinationAddressContext(client), "198.51.100.9", 8443, IP_PROTO_TCP),
+                   "invalid client destination fixture");
+        sendDatagram(destination, sizeof(destination), NULL);
+        twfRequire(created == 1 && delivered == 1, "first UDP backend was not created");
+        socks5serverTunnelDownStreamFinish(server, remotes[0]);
+        twfRequire(! lineIsAlive(remotes[0]) && lineIsAlive(client),
+                   "backend Finish leaked its line or destroyed the borrowed client");
+        sendDatagram(destination, sizeof(destination), NULL);
+        twfRequire(created == 2 && delivered == 2, "UDP backend was not recreated");
+        socks5serverTunnelUpStreamFinish(server, client);
+        twfRequire(lineIsAlive(client) && ! lineIsAlive(remotes[1]),
+                   "client Finish did not preserve borrowed ownership and close the backend");
+        lineDestroy(client);
+        teardown();
+    }
+}
 int main(void)
 {
+    sourceIdentity();
     spliceDatagrams();
     const uint8_t ipv4[]      = {1, 127, 0, 0, 1, 0, 80};
     const uint8_t ipv6[]      = {4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 80};

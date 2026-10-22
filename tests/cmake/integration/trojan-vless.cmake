@@ -24,6 +24,17 @@ add_waterwall_integration_test(waterwall.vless_fallback_invalid_probe_tcp_loopba
 add_waterwall_integration_test(waterwall.vless_uuid_udp_loopback vless_uuid_udp_loopback)
 add_waterwall_integration_test(waterwall.vless_auth_tcp_loopback vless_auth_tcp_loopback)
 add_waterwall_integration_test(waterwall.vless_auth_udp_loopback vless_auth_udp_loopback)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
+   TARGET TrojanServer AND TARGET VlessServer AND TARGET Socks5Server AND
+   TARGET TcpListener AND TARGET TcpUdpListener AND TARGET UdpConnector AND
+   TARGET AuthenticationClient AND TARGET AuthenticationServer)
+  foreach(protocol IN ITEMS trojan vless socks5)
+    set(udp_ip_case waterwall.${protocol}server_udp_distinct_ip_probe)
+    add_waterwall_probe_integration_test(${udp_ip_case} authenticated_udp_distinct_ip_probe 25)
+    set_tests_properties(${udp_ip_case} PROPERTIES ENVIRONMENT "WATERWALL_AUTH_UDP_PROTOCOL=${protocol}")
+    add_waterwall_test_labels(${udp_ip_case} "authentication" "udp")
+  endforeach()
+endif()
 add_waterwall_integration_test(waterwall.softiplimiter_vless_tcp_loopback softiplimiter_vless_tcp_loopback)
 add_waterwall_integration_test(waterwall.softiplimiter_trojan_tcp_loopback softiplimiter_trojan_tcp_loopback)
 add_waterwall_probe_integration_test(waterwall.softiplimiter_vless_reject_distinct_ip_probe softiplimiter_vless_reject_distinct_ip_probe 10)

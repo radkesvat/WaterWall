@@ -38,6 +38,7 @@ static line_t *vlessserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l
     lineRef(client_l);
 
     lineGetRoutingContext(remote_l)->local_listener_port = lineGetRoutingContext(client_l)->local_listener_port;
+    addresscontextCopy(lineGetSourceAddressContext(remote_l), lineGetSourceAddressContext(client_l));
     lineCopyUsers(remote_l, client_l);
     vlessserverApplyDestinationContext(remote_l, &client_ls->udp_target, true);
     client_ls->udp_remote_line = remote_l;

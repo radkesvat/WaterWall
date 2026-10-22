@@ -1,0 +1,7 @@
+{
+  "users": [
+    {"id": 1001, "name": "trojan", "password": "udp-ip-test", "enabled": true, "limit": {"ips": 1}},
+    {"id": 1002, "name": "vless", "password": "42424242-4242-4242-4242-424242424242", "enabled": true, "limit": {"ips": 1}},
+    {"id": 1003, "name": "socks5", "password": "u:p", "enabled": true, "limit": {"ips": 1}}
+  ]
+}

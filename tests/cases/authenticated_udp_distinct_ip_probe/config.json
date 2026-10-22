@@ -1,0 +1,87 @@
+{
+  "name": "authenticated-udp-distinct-ip",
+  "nodes": [
+    {
+      "name": "auth-client",
+      "type": "AuthenticationClient",
+      "next": "auth-db",
+      "settings": {
+        "name": "edge-1",
+        "secret": "udp-ip-test-secret",
+        "ping-interval-ms": 0,
+        "pull-interval-ms": 0,
+        "push-interval-ms": 0,
+        "reconnect-interval-ms": 100,
+        "request-timeout-ms": 2000,
+        "max-pending-requests": 16
+      }
+    },
+    {
+      "name": "auth-db",
+      "type": "AuthenticationServer",
+      "settings": {
+        "db-path": "users.json",
+        "file-save-rate-ms": 60000,
+        "session-idle-timeout-ms": 600000,
+        "auth-clients": [{
+          "name": "edge-1",
+          "secret": "udp-ip-test-secret",
+          "allow-user-pull": true,
+          "allow-stats-push": true,
+          "allow-user-write": false
+        }]
+      }
+    },
+    {
+      "name": "trojan-listen",
+      "type": "TcpListener",
+      "next": "trojan-server",
+      "settings": {"address": "127.0.0.1", "port": 28420, "nodelay": true}
+    },
+    {
+      "name": "trojan-server",
+      "type": "TrojanServer",
+      "next": "trojan-out",
+      "settings": {"auth-client-node-name": "auth-client", "connect": false, "udp": true}
+    },
+    {
+      "name": "trojan-out",
+      "type": "UdpConnector",
+      "settings": {"address": "dest_context->address", "port": "dest_context->port"}
+    },
+    {
+      "name": "vless-listen",
+      "type": "TcpListener",
+      "next": "vless-server",
+      "settings": {"address": "127.0.0.1", "port": 28421, "nodelay": true}
+    },
+    {
+      "name": "vless-server",
+      "type": "VlessServer",
+      "next": "vless-out",
+      "settings": {"auth-client-node-name": "auth-client", "connect": false, "udp": true}
+    },
+    {
+      "name": "vless-out",
+      "type": "UdpConnector",
+      "settings": {"address": "dest_context->address", "port": "dest_context->port"}
+    },
+    {
+      "name": "socks5-listen",
+      "type": "TcpUdpListener",
+      "next": "socks5-server",
+      "settings": {"address": "127.0.0.1", "port": 28422, "nodelay": true}
+    },
+    {
+      "name": "socks5-server",
+      "type": "Socks5Server",
+      "next": "socks5-out",
+      "settings": {"auth-client-node-name": "auth-client", "connect": false, "udp": true, "ipv4": "127.0.0.1"}
+    },
+    {
+      "name": "socks5-out",
+      "type": "UdpConnector",
+      "settings": {"address": "dest_context->address", "port": "dest_context->port"}
+    }
+  ]
+}
