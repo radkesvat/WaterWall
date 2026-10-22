@@ -2669,12 +2669,35 @@ static void testCorruptionIsFatalWithoutRepair(void)
 }
 #endif
 
+static void testPointerIndexAlignedKeys(void)
+{
+    /* Aligned block addresses share low bits. The old default integer hash
+     * placed these in one cluster beyond STC's 10-bit probe-distance field. */
+    users_pointer_map_t map   = {0};
+    const size_t        count = 2048;
+    require(users_pointer_map_t_reserve(&map, (isize) count), "aligned pointer map reserve failed");
+    for (size_t i = 0; i < count; ++i)
+    {
+        uintptr_t key = (uintptr_t) (i + 1U) * UINT32_C(65536);
+        require(users_pointer_map_t_insert_or_assign(&map, key, i).inserted,
+                "aligned pointer key was misclassified as a duplicate");
+    }
+    for (size_t i = 0; i < count; ++i)
+    {
+        uintptr_t                key   = (uintptr_t) (i + 1U) * UINT32_C(65536);
+        users_pointer_map_t_iter found = users_pointer_map_t_find(&map, key);
+        require(found.ref != NULL && found.ref->second == i, "aligned pointer index lost a stored key");
+    }
+    users_pointer_map_t_drop(&map);
+}
+
 int main(void)
 {
     testCaseSet("users_index_test");
     require(wCryptoGlobalInit() == kWCryptoOk, "crypto global initialization failed");
 
     testTrustedImportDerivationAndBoundedRows();
+    testPointerIndexAlignedKeys();
 #if defined(OS_LINUX) && defined(USERS_TEST_ALLOC_COUNTING)
     testCorruptionIsFatalWithoutRepair();
 #endif

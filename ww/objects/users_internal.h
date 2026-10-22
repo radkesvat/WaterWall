@@ -212,10 +212,19 @@ static bool usersNameKeyEq(const users_name_key_t *a, const users_name_key_t *b)
 #undef i_type
 
 /* Maps a stored user_t address (as uintptr_t) to its active items[] index. */
+static size_t usersPointerKeyHash(const uintptr_t *key)
+{
+    /* STC's default integer multiplication preserves aligned low bits. Stable
+     * user blocks can otherwise exceed its finite probe-distance encoding. */
+    return (size_t) calcHashBytes(key, sizeof(*key));
+}
+
 #define i_type users_pointer_map_t // NOLINT
 #define i_key  uintptr_t           // NOLINT
 #define i_val  size_t              // NOLINT
+#define i_hash usersPointerKeyHash // NOLINT
 #include "stc/hmap.h"
+#undef i_hash
 #undef i_val
 #undef i_key
 #undef i_type
