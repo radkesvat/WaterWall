@@ -1330,6 +1330,24 @@ static tun_device_t *createRunningOffloadReaderDevice(TunReadEventHandle callbac
     return tdev;
 }
 
+static void testReaderMessageCapacity(void)
+{
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        resetReaderFixture(0);
+        resetGsoSetup();
+        tun_device_t *tdev =
+            mode == 0 ? createRawDevice("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve)
+                      : tundeviceCreate("ww-lifetime-test", mode == 2, true, 1500, NULL, NULL, kDeviceFragmentPreserve);
+        require(tdev != NULL, "reader capacity device creation");
+        const device_reader_session_t *session = tunLinuxReaderSession(tdev);
+        require(session->batch_capacity == 1, "single-packet Linux posts need exactly one message slot");
+        require(session->output_packet_limit == 512 && session->output_charge_limit == 8U * 1024U * 1024U,
+                "message size must not reduce the independent reader admission limits");
+        destroyDevice(tdev);
+    }
+}
+
 static void testInactiveReaderRemovesReadInterest(void)
 {
     for (unsigned stopping = 0; stopping < 2; ++stopping)
@@ -3712,6 +3730,7 @@ int main(void)
     loggerSetHandler(logger, captureTunLog);
     setInternalLogger(logger);
     checkSumInit();
+    testReaderMessageCapacity();
     testInactiveReaderRemovesReadInterest();
     testSameWorkerTunBurstCoalescesTcpAcks(&env);
     testChecksumOnlyNegotiation();

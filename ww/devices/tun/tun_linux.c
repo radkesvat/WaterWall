@@ -776,7 +776,7 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_q
 #endif
     tunWriterInit(&tdev->writer);
     tdev->reader_session = deviceReaderSessionCreate(
-        RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool, fragment_policy);
+        RAM_PROFILE * 2, kTunReaderMessageBatchCapacity, tdev, tunDeliverPacket, reader_bpool, fragment_policy);
     if (UNLIKELY(tdev->reader_session == NULL))
     {
         LOGE("TunDevice: failed to allocate reader session");

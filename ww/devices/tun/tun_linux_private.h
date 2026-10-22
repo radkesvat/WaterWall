@@ -19,10 +19,13 @@ enum
     kTunCommandTerminateGraceMs    = 250,
     kTunCommandMaxOutputBytes      = 64 * 1024,
 #ifdef OS_LINUX
+    kTunReaderMessageBatchCapacity   = 1,
     kTunOffloadPacketStorageCapacity = 65536,
     kTunOffloadPendingPacketLimit    = 512,
     kTunOffloadPendingChargeLimit    = 8 * 1024 * 1024,
     kTunOffloadLogIntervalMs         = 5000,
+#else
+    kTunReaderMessageBatchCapacity = kMaxReadDistributeQueueSize,
 #endif
     kLinuxRouteFlagUp     = 0x1,
     kLinuxRouteFlagReject = 0x200
