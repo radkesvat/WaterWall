@@ -115,6 +115,7 @@ if(WW_USE_STARTUP_GUARD)
 endif()
 
 target_compile_definitions(Waterwall PRIVATE
+  CJSON_HIDE_SYMBOLS
   WW_CJSON_CRT_ALLOCATOR=1
   WATERWALL_VERSION=${Waterwall_VERSION}
 )

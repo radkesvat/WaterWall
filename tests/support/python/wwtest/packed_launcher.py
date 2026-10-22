@@ -1,4 +1,4 @@
-"""Read-only PE launcher stripping/ASLR/DEP checks; no platform process APIs."""
+"""Read-only PE launcher export/stripping/ASLR/DEP checks; no platform process APIs."""
 import struct
 
 
@@ -9,6 +9,8 @@ def check_windows_launcher(data):
     optional = pe + 24
     magic = struct.unpack_from('<H', data, optional)[0]
     directories = optional + (112 if magic == 0x20b else 96)
+    if any(struct.unpack_from('<II', data, directories)):
+        raise AssertionError('launcher must not export public symbols')
     flags = struct.unpack_from('<H', data, optional+70)[0]
     if flags & 0x140 != 0x140:
         raise AssertionError('launcher must retain ASLR and DEP')
