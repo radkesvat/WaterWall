@@ -1,4 +1,15 @@
 # Root/platform registrations, including standalone archive and Windows seams.
+if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND APPLE)
+  waterwall_add_native_executable(tun_darwin_reader_test SUPPORT SOURCES tests/unittests/devices/tun_darwin_reader_test.c)
+  target_include_directories(tun_darwin_reader_test PRIVATE "${PROJECT_SOURCE_DIR}/ww/devices/tun")
+  target_link_libraries(tun_darwin_reader_test PRIVATE ww)
+  set_target_properties(tun_darwin_reader_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+  waterwall_register_native_test(waterwall.tun_darwin_reader_unit tun_darwin_reader_test
+    "unit;net;tun;darwin;receive" TIMEOUT 30)
+  waterwall_register_platform_native_unit(waterwall.tun_darwin_reader_unit tun_darwin_reader_test
+    "unit;net;tun;darwin;receive")
+endif()
+
 # A direct consumer verifies that XZ needs neither ww nor its public headers.
 if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS)
   waterwall_add_native_executable(xz_embedded_test SOURCES tests/unittests/base/xz_embedded_test.c)

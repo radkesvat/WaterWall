@@ -59,6 +59,8 @@ void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
 }
 
 #ifndef OS_LINUX
+static atomic_log_rate_limiter_t tun_oversized_read_log;
+
 // Hands whatever the drain cycle has already read to the reader session. Every
 // exit from tunDrainPackets() goes through this, so a device error never
 // strands packets that were read successfully before it.
@@ -76,7 +78,8 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
 {
     uint16_t queued_count = 0;
     sbuf_t  *bufs[kMaxReadDistributeQueueSize];
-    uint32_t read_size = tunDeviceMtu(tdev);
+    const uint32_t mtu       = tunDeviceMtu(tdev);
+    const uint32_t read_size = mtu + 1U;
 
     for (uint32_t i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
     {
@@ -135,24 +138,17 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
 
         sbufSetLength(bufs[queued_count], nread);
 
-        if (UNLIKELY(sbufGetLength(bufs[queued_count]) > read_size))
+        if (UNLIKELY(sbufGetLength(bufs[queued_count]) > mtu))
         {
-            LOGE("TunDevice: ReadThread: read packet size %d exceeds device MTU %u",
-                 sbufGetLength(bufs[queued_count]),
-                 read_size);
-            LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice 'device-mtu'");
+            if (atomicLogRateLimiterShouldLog(&tun_oversized_read_log, kTunPacketFailureLogIntervalMs))
+            {
+                LOGW("TunDevice: discarded oversized input on %s (%u bytes, device MTU %u)",
+                     tdev->name,
+                     sbufGetLength(bufs[queued_count]),
+                     mtu);
+            }
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
-
-            /*
-             * A misconfigured MTU is fatal for the process, but this runs on the
-             * device reader thread. Release everything this thread owns - the
-             * oversized buffer above, plus the batch accumulated so far - and
-             * report the loss so the read routine leaves through its normal exit
-             * path. tundeviceNoteUnexpectedThreadExit() then publishes the
-             * failure and owns the shutdown decision.
-             */
-            tunFlushReadBatch(tdev, bufs, queued_count);
-            return kTunDrainDeviceError;
+            continue;
         }
 
         queued_count++;
