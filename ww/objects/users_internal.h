@@ -55,6 +55,7 @@ typedef struct users_wireguard_allowed_ips_update_s
 struct user_config_prepared_patch_s
 {
     bool                                 consumed;
+    user_export_strings_t                export_strings;
     user_config_patch_t                  patch;
     user_update_t                        update;
     char                                *name, *email, *notes;
@@ -600,12 +601,12 @@ users_update_result_t usersValidateUpdateRequest(const user_update_t *update);
 void usersFreeUpdateStringCopies(char *name_copy, char *email_copy, char *notes_copy,
                                  users_wireguard_allowed_ips_update_t *wireguard_allowed_ips);
 
-users_update_result_t usersCopyUpdateStrings(const user_update_t *update, char **name_copy, char **email_copy,
-                                             char                                **notes_copy,
+users_update_result_t usersCopyUpdateStrings(const user_update_t *update, user_export_strings_t *export_strings,
+                                             char **name_copy, char **email_copy, char **notes_copy,
                                              users_wireguard_allowed_ips_update_t *wireguard_allowed_ips);
 
-users_update_result_t usersPrepareUpdate(const user_update_t *update, char **name_copy, char **email_copy,
-                                         char                                **notes_copy,
+users_update_result_t usersPrepareUpdate(const user_update_t *update, user_export_strings_t *export_strings,
+                                         char **name_copy, char **email_copy, char **notes_copy,
                                          users_wireguard_allowed_ips_update_t *wireguard_allowed_ips);
 
 users_update_result_t usersPreflightConfigIndexesLocked(users_t *users, user_t *user, const user_update_t *update,
@@ -613,19 +614,21 @@ users_update_result_t usersPreflightConfigIndexesLocked(users_t *users, user_t *
                                                         const users_wireguard_allowed_ips_update_t *allowed_ips,
                                                         bool bounded, size_t max_growth_bytes, uint64_t deadline_ms);
 
-void usersApplyConfigValues(user_t *user, const user_update_t *update, char **name_copy, char **email_copy,
-                            char **notes_copy, users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
-                            const user_config_patch_t *patch);
+void usersApplyConfigValues(user_t *user, const user_update_t *update, user_export_strings_t *export_strings,
+                            char **name_copy, char **email_copy, char **notes_copy,
+                            users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
+                            const user_config_patch_t            *patch);
 
 bool usersUpdateTouchesBandwidth(const user_update_t *update, const user_config_patch_t *patch);
 
-void usersCommitConfigUpdateLocked(users_t *users, user_t *user, const user_update_t *update, char **name_copy,
-                                   char **email_copy, char **notes_copy,
-                                   users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
-                                   const user_config_patch_t            *patch);
+void usersCommitConfigUpdateLocked(users_t *users, user_t *user, const user_update_t *update,
+                                   user_export_strings_t *export_strings, char **name_copy, char **email_copy,
+                                   char **notes_copy, users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
+                                   const user_config_patch_t *patch);
 
 users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users, user_t *user, const user_update_t *update,
-                                                           char **name_copy, char **email_copy, char **notes_copy,
+                                                           user_export_strings_t *export_strings, char **name_copy,
+                                                           char **email_copy, char **notes_copy,
                                                            users_wireguard_allowed_ips_update_t *wireguard_allowed_ips);
 
 users_update_result_t usersConfigPatchToUpdate(const user_config_patch_t *patch, user_update_t *out);
@@ -644,8 +647,9 @@ users_add_result_t usersCreationInspectNames(const users_t *users, size_t allowa
 
 users_update_result_t usersApplyPreparedConfigByIdentifier(users_t *users, uint64_t id,
                                                            user_config_prepared_patch_t *prepared, bool bounded,
-                                                           size_t max_growth_bytes, uint64_t deadline_ms,
-                                                           users_config_precommit_fn precommit, void *context);
+                                                           size_t max_growth_bytes, size_t max_export_bytes,
+                                                           uint64_t deadline_ms, users_config_precommit_fn precommit,
+                                                           void *context);
 
 void usersMoveRuntimeStateWithLocks(user_t *dest, user_t *src);
 

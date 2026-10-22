@@ -249,6 +249,36 @@ static void userReplaceString(char **dest, const char *value)
     *dest = copy;
 }
 
+static size_t userJsonEscapedByteCost(unsigned char c)
+{
+    return c == '"' || c == '\\'                                           ? 2U
+           : c >= 0x20U                                                    ? 1U
+           : c == '\b' || c == '\f' || c == '\n' || c == '\r' || c == '\t' ? 2U
+                                                                           : 6U;
+}
+
+user_export_string_measure_t userMeasureExportString(const char *text)
+{
+    user_export_string_measure_t measure = {0};
+    if (text == NULL)
+        return measure;
+    size_t length = 0;
+    while (text[length] != '\0')
+    {
+        size_t cost = userJsonEscapedByteCost((unsigned char) text[length]);
+        if (cost > SIZE_MAX - measure.escaped_bytes)
+        {
+            measure.result = kUserPublicTooLarge;
+            return measure;
+        }
+        measure.escaped_bytes += cost;
+        ++length;
+    }
+    if (! configLexicalCheckEncodingQuiet(text, length))
+        measure.result = kUserPublicInvalidEncoding;
+    return measure;
+}
+
 static void userFreePassword(char *password)
 {
     if (UNLIKELY(password == NULL))
@@ -593,9 +623,11 @@ bool userSetWireGuardAllowedIps(User *user, const char *value)
         return false;
     }
 
+    user_export_string_measure_t measurement = userMeasureExportString(normalized);
     rwlockWriteLock(&user->lock);
     memoryFree(user->wireguard_allowed_ips);
     user->wireguard_allowed_ips       = normalized;
+    user->export_strings.allowed_ips  = measurement;
     user->wireguard_allowed_ip        = ip;
     user->wireguard_allowed_mask      = mask;
     user->wireguard_allowed_ip_count  = count;
@@ -608,10 +640,11 @@ bool userSetWireGuardAllowedIps(User *user, const char *value)
 
 typedef struct user_snapshot_s
 {
-    char *name;
-    char *email;
-    char *notes;
-    char *wireguard_allowed_ips;
+    char                 *name;
+    char                 *email;
+    char                 *notes;
+    char                 *wireguard_allowed_ips;
+    user_export_strings_t export_strings;
 
     uint64_t id;
     hash_t   gid;
@@ -679,7 +712,8 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     rwlockReadLock(&mutable_src->lock);
     rwlockReadLock(&mutable_src->stats_lock);
 
-    snapshot->credentials = src->credentials;
+    snapshot->credentials    = src->credentials;
+    snapshot->export_strings = src->export_strings;
     userStringDuplicate(&snapshot->name, src->name);
     userStringDuplicate(&snapshot->password, src->password);
     snapshot->password_length = src->password == NULL ? 0 : stringLength(src->password);
@@ -717,6 +751,7 @@ bool userPreparePassword(user_prepared_password_t *prepared, const char *passwor
     prepared->password = memoryAllocate(password_length + 1U);
     memoryCopy(prepared->password, password, password_length + 1U);
     prepared->password_length = password_length;
+    prepared->password_export = userMeasureExportString(prepared->password);
     if (wCryptoSHA224(&prepared->sha224_pass, (const unsigned char *) prepared->password, password_length) !=
         kWCryptoOk)
         goto failure;
@@ -1324,6 +1359,7 @@ bool userCreate(User *user, const char *password)
         return false;
     }
 
+    discard userExportFixedOverhead();
     memoryZero(user, sizeof(*user));
     if (UNLIKELY(! rwlockTryInit(&user->lock)))
     {
@@ -1375,6 +1411,7 @@ static bool userInstallOwnedSnapshot(User *dest, user_snapshot_t *snapshot)
     dest->email                 = snapshot->email;
     dest->notes                 = snapshot->notes;
     dest->wireguard_allowed_ips = snapshot->wireguard_allowed_ips;
+    dest->export_strings        = snapshot->export_strings;
 
     dest->id                          = snapshot->id;
     dest->gid                         = snapshot->gid;
@@ -1415,6 +1452,7 @@ bool userMoveOwnedValue(User *dest, User *source)
     snapshot.notes                       = source->notes;
     snapshot.wireguard_allowed_ips       = source->wireguard_allowed_ips;
     snapshot.credentials                 = source->credentials;
+    snapshot.export_strings              = source->export_strings;
     snapshot.id                          = source->id;
     snapshot.gid                         = source->gid;
     snapshot.enabled                     = source->enabled;
@@ -1434,6 +1472,9 @@ bool userMoveOwnedValue(User *dest, User *source)
         return false;
     }
     source->name = source->password = source->email = source->notes = source->wireguard_allowed_ips = NULL;
+    source->password_length                                                                         = 0;
+    memoryZero(&source->password_export, sizeof(source->password_export));
+    memoryZero(&source->export_strings, sizeof(source->export_strings));
     userSnapshotDestroy(&snapshot);
     return true;
 }
@@ -1514,14 +1555,16 @@ static bool userInstallJsonAllowedIps(User *user, const char *value, user_allowe
     if (prepared->text != NULL)
     {
         memoryFree(user->wireguard_allowed_ips);
-        user->wireguard_allowed_ips = prepared->text;
-        prepared->text              = NULL;
-        user->allowed_ip            = prepared->value;
+        user->wireguard_allowed_ips      = prepared->text;
+        user->export_strings.allowed_ips = userMeasureExportString(prepared->text);
+        prepared->text                   = NULL;
+        user->allowed_ip                 = prepared->value;
     }
     return true;
 }
 
-bool userCreateFromJsonPreparedAllowedIps(User *user, const cJSON *user_json, user_allowed_ip_preparation_t *prepared)
+user_json_result_t userCreateFromJsonPreparedAllowedIpsResult(User *user, const cJSON *user_json,
+                                                              user_allowed_ip_preparation_t *prepared)
 {
     const char  *password = NULL;
     const char  *value    = NULL;
@@ -1534,15 +1577,15 @@ bool userCreateFromJsonPreparedAllowedIps(User *user, const cJSON *user_json, us
 
     if (UNLIKELY(user == NULL || ! cJSON_IsObject(user_json)))
     {
-        return false;
+        return kUserJsonInvalid;
     }
     if (UNLIKELY(! userJsonGetRequiredStringAliased(user_json, "password", "pass", &password)))
     {
-        return false;
+        return kUserJsonInvalid;
     }
     if (UNLIKELY(! userCreate(user, password)))
     {
-        return false;
+        return kUserJsonResourceFailure;
     }
 
     if (UNLIKELY(! userJsonReadOptionalString(user_json, "name", &name) ||
@@ -1556,15 +1599,24 @@ bool userCreateFromJsonPreparedAllowedIps(User *user, const cJSON *user_json, us
                  ! userJsonReadOptionalInt(user_json, "record-stat-interval-ms", &user->record_stat_interval_ms)))
     {
         userDestroy(user);
-        return false;
+        return kUserJsonInvalid;
     }
 
     if (name != NULL)
+    {
         userReplaceString(&user->name, name);
+        user->export_strings.name = userMeasureExportString(user->name);
+    }
     if (email != NULL)
+    {
         userReplaceString(&user->email, email);
+        user->export_strings.email = userMeasureExportString(user->email);
+    }
     if (notes != NULL)
+    {
         userReplaceString(&user->notes, notes);
+        user->export_strings.notes = userMeasureExportString(user->notes);
+    }
 
     limit    = cJSON_GetObjectItemCaseSensitive(user_json, "limit");
     timeinfo = cJSON_GetObjectItemCaseSensitive(user_json, "time");
@@ -1574,7 +1626,7 @@ bool userCreateFromJsonPreparedAllowedIps(User *user, const cJSON *user_json, us
                  ! userJsonReadStats(stats, &user->stats)))
     {
         userDestroy(user);
-        return false;
+        return kUserJsonInvalid;
     }
 
     if (UNLIKELY(! userJsonReadOptionalUint64Aliased(
@@ -1589,15 +1641,25 @@ bool userCreateFromJsonPreparedAllowedIps(User *user, const cJSON *user_json, us
                                                      &user->timeinfo.expire_after_first_usage_ms)))
     {
         userDestroy(user);
-        return false;
+        return kUserJsonInvalid;
     }
 
-    return true;
+    return kUserJsonOk;
+}
+
+bool userCreateFromJsonPreparedAllowedIps(User *user, const cJSON *json, user_allowed_ip_preparation_t *prepared)
+{
+    return userCreateFromJsonPreparedAllowedIpsResult(user, json, prepared) == kUserJsonOk;
+}
+
+user_json_result_t userCreateFromJsonResult(User *user, const cJSON *json)
+{
+    return userCreateFromJsonPreparedAllowedIpsResult(user, json, NULL);
 }
 
 bool userCreateFromJson(User *user, const cJSON *json)
 {
-    return userCreateFromJsonPreparedAllowedIps(user, json, NULL);
+    return userCreateFromJsonResult(user, json) == kUserJsonOk;
 }
 
 static void userJsonAddExportString(cJSON *json, const char *key, const char *text, bool required, bool placeholders)
@@ -1628,6 +1690,74 @@ static cJSON *userBuildJsonLocked(User *user, const user_stat_t *stats, bool pla
     userJsonAddLimitIfNotZero(json, &user->limit);
     userJsonAddStatsIfNotZero(json, stats);
     return json;
+}
+
+size_t userExportFixedOverhead(void)
+{
+    static atomic_size_t cached   = 0;
+    size_t               overhead = atomic_load(&cached);
+    if (overhead != 0)
+        return overhead;
+    /* Nonempty sentinels select every optional string, but placeholders avoid
+     * charging their content. UINT64_MAX exercises decimal-string encoding. */
+    user_t maximum   = {0};
+    char   present[] = "x";
+    maximum.name = maximum.password = maximum.email = maximum.notes = maximum.wireguard_allowed_ips = present;
+    maximum.id                                                                                      = UINT64_MAX;
+    maximum.gid                                                                                     = UINT64_MAX;
+    maximum.record_stat_interval_ms                                                                 = -1;
+    maximum.limit     = (user_limit_t) {.traffic   = {UINT64_MAX, UINT64_MAX, UINT64_MAX},
+                                        .bandwidth = {UINT64_MAX, UINT64_MAX},
+                                        .ips       = UINT64_MAX,
+                                        .devices   = UINT64_MAX,
+                                        .cons_in   = UINT64_MAX,
+                                        .cons_out  = UINT64_MAX};
+    maximum.timeinfo  = (user_time_info_t) {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX};
+    user_stat_t stats = {.ips      = UINT64_MAX,
+                         .devices  = UINT64_MAX,
+                         .cons_in  = UINT64_MAX,
+                         .cons_out = UINT64_MAX,
+                         .traffic  = {UINT64_MAX, UINT64_MAX}};
+    cJSON      *json  = userBuildJsonLocked(&maximum, &stats, true);
+    char       *text  = cJSON_PrintUnformatted(json);
+    overhead          = stringLength(text);
+    cJSON_free(text);
+    cJSON_Delete(json);
+    atomic_store(&cached, overhead);
+    return overhead;
+}
+
+user_public_result_t userMeasureExportFields(const user_export_strings_t        *strings,
+                                             const user_export_string_measure_t *password, size_t limit,
+                                             size_t *encoded_size)
+{
+    assert(strings != NULL && password != NULL && encoded_size != NULL);
+    *encoded_size                                = 0;
+    const user_export_string_measure_t *fields[] = {
+        &strings->name, password, &strings->email, &strings->notes, &strings->allowed_ips};
+    size_t size = userExportFixedOverhead();
+    if (size > limit)
+        return kUserPublicTooLarge;
+    for (size_t i = 0; i < ARRAY_SIZE(fields); ++i)
+    {
+        if (fields[i]->result != kUserPublicOk)
+            return fields[i]->result;
+        if (fields[i]->escaped_bytes > limit - size)
+            return kUserPublicTooLarge;
+        size += fields[i]->escaped_bytes;
+    }
+    *encoded_size = size;
+    return kUserPublicOk;
+}
+
+user_public_result_t userMeasureExportUpperBound(const user_t *user, size_t *encoded_size)
+{
+    assert(userObjectIsInitialized(user) && encoded_size != NULL);
+    rwlockReadLock((wrwlock_t *) &user->lock);
+    user_public_result_t result =
+        userMeasureExportFields(&user->export_strings, &user->password_export, SIZE_MAX, encoded_size);
+    rwlockReadUnlock((wrwlock_t *) &user->lock);
+    return result;
 }
 
 cJSON *userToJson(User *user)
@@ -1679,10 +1809,7 @@ user_public_result_t userCopyFullJsonBounded(User *user, size_t limit, cJSON **o
         while (text[length] != '\0')
         {
             unsigned char c    = (unsigned char) text[length];
-            size_t        cost = c == '"' || c == '\\'                                           ? 2U
-                                 : c >= 0x20U                                                    ? 1U
-                                 : c == '\b' || c == '\f' || c == '\n' || c == '\r' || c == '\t' ? 2U
-                                                                                                 : 6U;
+            size_t        cost = userJsonEscapedByteCost(c);
             if (cost > limit - size)
                 goto done;
             size += cost;

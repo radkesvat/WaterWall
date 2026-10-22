@@ -33,6 +33,7 @@
 #include "objects/users_internal.h"
 
 #if defined(OS_LINUX)
+#include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -2528,6 +2529,8 @@ static void testTrustedImportDerivationAndBoundedRows(void)
     cJSON *json = cJSON_Parse("[{\"id\":1,\"password\":\"trusted-first\",\"notes\":\"quote \\\" and \\n line\"},"
                               "{\"id\":2,\"password\":\"trusted-second\",\"wireguard-allowed-ips\":\"10.3.4.5/24\"}]");
     require(json != NULL, "trusted import JSON");
+    /* Fresh import derives credentials once; trusted copies preserve them and
+     * cached export charges, while explicit diagnostics still recompute. */
     resetCounters();
     require(usersFeedJsonRequiredIds(&users, json) && usersValidateStructure(&users), "trusted import failed");
     cJSON_Delete(json);
@@ -2691,6 +2694,120 @@ static void testPointerIndexAlignedKeys(void)
     users_pointer_map_t_drop(&map);
 }
 
+static void testExportLimitedTransactions(void)
+{
+    users_t users;
+    require(usersCreate(&users), "export policy collection setup failed");
+    const size_t notes_length = 6U * 1024U * 1024U;
+    char        *notes        = memoryAllocate(notes_length + 1U);
+    memset(notes, 'a', notes_length);
+    notes[notes_length]              = '\0';
+    user_config_patch_t       config = {.mask  = kUserConfigName | kUserConfigNotes | kUserConfigWireGuardAllowedIps,
+                                        .name  = "export \"name",
+                                        .notes = notes,
+                                        .wireguard_allowed_ips = "10.70.5.255/24"};
+    user_prepared_creation_t *creation;
+    require(usersPrepareNewUser(500, "export-password", &config, SIZE_MAX, 0, &creation) == kUsersAddResultOk,
+            "large valid export candidate preparation failed");
+    memoryFree(notes);
+    size_t allowance;
+    require(userMeasureExportUpperBound(&creation->user, &allowance) == kUserPublicOk && allowance > notes_length,
+            "large export candidate measurement failed");
+    size_t callbacks = 0;
+    require(usersTryAddPreparedUserWithExportLimit(
+                &users, creation, SIZE_MAX, 0, 0, configPrecommitRefuse, &callbacks) == kUsersAddResultTooLarge &&
+                usersCount(&users) == 0 && callbacks == 0,
+            "zero export allowance was treated as unlimited");
+    require(usersTryAddPreparedUserWithExportLimit(
+                &users, creation, SIZE_MAX, allowance - 1U, 0, configPrecommitRefuse, &callbacks) ==
+                    kUsersAddResultTooLarge &&
+                usersCount(&users) == 0 && callbacks == 0,
+            "one-byte-over candidate reached publication/precommit");
+    require(usersTryAddPreparedUserWithExportLimit(&users, creation, SIZE_MAX, allowance, 0, NULL, NULL) ==
+                kUsersAddResultOk,
+            "exact export allowance refused valid six-MiB record");
+    usersFreePreparedNewUser(creation);
+    user_t *stored = usersLookupByIdentifier(&users, 500);
+    require(stored != NULL && strcmp(stored->wireguard_allowed_ips, "10.70.5.0/24") == 0 &&
+                stored->export_strings.notes.escaped_bytes == notes_length,
+            "prepared creation lost normalized/cached fields");
+    user_config_patch_t           patch = {.mask = kUserConfigEmail, .email = "x"};
+    user_config_prepared_patch_t *prepared;
+    require(usersPrepareConfigPatch(&patch, SIZE_MAX, 0, &prepared) == kUsersUpdateResultOk,
+            "export patch preparation failed");
+    require(usersTryApplyPreparedConfigByIdentifierWithExportLimit(
+                &users, 500, prepared, SIZE_MAX, allowance, 0, configPrecommitRefuse, &callbacks) ==
+                    kUsersUpdateResultTooLarge &&
+                callbacks == 0 && stored->email[0] == '\0',
+            "oversize patch mutated old fields or reached precommit");
+    require(usersPatchConfigByIdentifierWithExportLimit(&users, 500, &patch, allowance) == kUsersUpdateResultTooLarge &&
+                stored->email[0] == '\0',
+            "blocking producer patch bypassed export policy");
+    require(usersTryApplyPreparedConfigByIdentifierWithExportLimit(
+                &users, 500, prepared, SIZE_MAX, allowance + 1U, 0, NULL, NULL) == kUsersUpdateResultOk &&
+                stored->export_strings.email.escaped_bytes == 1,
+            "refused patch was consumed or exact replacement charge lost");
+    usersFreePreparedConfigPatch(prepared);
+    patch.email = "";
+    require(usersPatchConfigByIdentifier(&users, 500, &patch) == kUsersUpdateResultOk,
+            "legacy unlimited patch wrapper failed");
+
+    user_prepared_password_change_t *password;
+    require(usersPreparePasswordChange("export-passwordX", SIZE_MAX, 0, &password) == kUsersPasswordOk,
+            "export password preparation failed");
+    require(usersTryChangePreparedPasswordByIdentifierWithExportLimit(
+                &users, 500, password, SIZE_MAX, allowance, 0, configPrecommitRefuse, &callbacks) ==
+                    kUsersPasswordTooLarge &&
+                callbacks == 0 && usersLookupByPassword(&users, "export-password") == stored &&
+                usersLookupByPassword(&users, "export-passwordX") == NULL,
+            "oversize password changed credential indexes or reached precommit");
+
+    /* Inaccessible interior pages prove that scalar edits and password checks
+     * never rescan unchanged large text. This is a read-work assertion, without
+     * a timing threshold or production instrumentation. */
+#if defined(OS_LINUX)
+    size_t    page_size       = (size_t) sysconf(_SC_PAGESIZE);
+    uintptr_t protected_begin = ((uintptr_t) stored->notes + page_size - 1U) / page_size * page_size;
+    void     *protected_text  = (void *) protected_begin;
+    require(mprotect(protected_text, page_size * 2U, PROT_NONE) == 0, "large-text protection failed");
+#endif
+    patch = (user_config_patch_t) {.mask = kUserConfigEnabled, .enabled = false};
+    require(usersPatchConfigByIdentifierWithExportLimit(&users, 500, &patch, allowance) == kUsersUpdateResultOk,
+            "scalar-only patch read unchanged large text");
+    size_t unchanged;
+    require(userMeasureExportUpperBound(stored, &unchanged) == kUserPublicOk && unchanged == allowance,
+            "scalar edit changed reserved export size");
+    require(usersTryChangePreparedPasswordByIdentifierWithExportLimit(
+                &users, 500, password, SIZE_MAX, allowance + 1U, 0, NULL, NULL) == kUsersPasswordOk,
+            "password policy scanned unchanged large text");
+#if defined(OS_LINUX)
+    require(mprotect(protected_text, page_size * 2U, PROT_READ | PROT_WRITE) == 0,
+            "large-text protection restoration failed");
+#endif
+    usersFreePreparedPasswordChange(password);
+    require(usersLookupByPassword(&users, "export-password") == NULL &&
+                usersLookupByPassword(&users, "export-passwordX") == stored,
+            "accepted password did not publish indexes");
+    allowance += 1U;
+    userAddTraffic(stored, UINT64_MAX, UINT64_MAX);
+    userMarkFirstUsage(stored, UINT64_MAX);
+    require(userMeasureExportUpperBound(stored, &unchanged) == kUserPublicOk && unchanged == allowance,
+            "traffic/first-use numeric growth changed the admission charge");
+    cJSON *row = NULL;
+    size_t exact;
+    require(usersCopyFullUserJsonAt(&users, 0, allowance, &row, &exact) == kUserPublicOk && exact <= allowance,
+            "admitted row stopped exporting after numeric growth");
+    cJSON_Delete(row);
+    users_t copied;
+    require(usersCreate(&copied) && usersCopy(&copied, &users), "measured collection copy failed");
+    require(userMeasureExportUpperBound(usersLookupByIdentifier(&copied, 500), &unchanged) == kUserPublicOk &&
+                unchanged == allowance && usersValidate(&copied),
+            "collection snapshot lost cached metadata");
+    usersDestroy(&copied);
+    require(usersValidate(&users), "export refusals corrupted lookup indexes");
+    usersDestroy(&users);
+}
+
 int main(void)
 {
     testCaseSet("users_index_test");
@@ -2698,6 +2815,7 @@ int main(void)
 
     testTrustedImportDerivationAndBoundedRows();
     testPointerIndexAlignedKeys();
+    testExportLimitedTransactions();
 #if defined(OS_LINUX) && defined(USERS_TEST_ALLOC_COUNTING)
     testCorruptionIsFatalWithoutRepair();
 #endif

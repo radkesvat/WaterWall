@@ -7,8 +7,10 @@
  * Limits: native execution covers the available platform lock implementation.
  */
 
+#include "objects/user_internal.h"
 #include "objects/users.h"
 #include "test_assert.h"
+#include "utils/json_helpers.h"
 #include "wthread.h"
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
@@ -113,7 +115,141 @@ static void testOwnedDetail(void)
 static void replaceStandaloneName(user_t *user, const char *name)
 {
     memoryFree(user->name);
-    user->name = stringDuplicate(name);
+    user->name                = stringDuplicate(name);
+    user->export_strings.name = userMeasureExportString(name);
+}
+
+static void checkCachedStrings(const user_t *user)
+{
+    const char *texts[] = {user->name, user->password, user->email, user->notes, user->wireguard_allowed_ips};
+    const user_export_string_measure_t *measures[] = {&user->export_strings.name,
+                                                      &user->password_export,
+                                                      &user->export_strings.email,
+                                                      &user->export_strings.notes,
+                                                      &user->export_strings.allowed_ips};
+    size_t                              total      = userExportFixedOverhead();
+    for (size_t i = 0; i < ARRAY_SIZE(texts); ++i)
+    {
+        cJSON *value   = cJSON_CreateString(texts[i] == NULL ? "" : texts[i]);
+        char  *encoded = cJSON_PrintUnformatted(value);
+        size_t bytes   = strlen(encoded) - 2U;
+        require(measures[i]->result == kUserPublicOk && measures[i]->escaped_bytes == bytes,
+                "cached charge differs from independent JSON escaping");
+        total += bytes;
+        cJSON_free(encoded);
+        cJSON_Delete(value);
+    }
+    size_t upper;
+    require(userMeasureExportUpperBound(user, &upper) == kUserPublicOk && upper == total,
+            "row upper bound differs from cached field charges");
+    cJSON *row     = userToJson((user_t *) user);
+    char  *encoded = cJSON_PrintUnformatted(row);
+    require(strlen(encoded) <= upper, "current exact row exceeds future-growth bound");
+    cJSON_free(encoded);
+    cJSON_Delete(row);
+}
+
+static void testCachedExportMeasurements(void)
+{
+    const char *texts[] = {"", "plain ASCII", "\xE2\x82\xAC \xF0\x9F\x8C\x8A", "quote\" slash\\", "\b\f\n\r\t\x01\x1F"};
+    for (size_t i = 0; i < ARRAY_SIZE(texts); ++i)
+    {
+        cJSON  *json = cJSON_CreateObject();
+        discard cJSON_AddStringToObject(json, "password", i == 0 ? "nonempty" : texts[i]);
+        discard cJSON_AddStringToObject(json, "name", texts[i]);
+        discard cJSON_AddStringToObject(json, "email", texts[i]);
+        discard cJSON_AddStringToObject(json, "notes", texts[i]);
+        discard cJSON_AddStringToObject(json, "wireguard-allowed-ips", " 10.42.7.255/24 ");
+        user_t  user, copy, moved;
+        require(userCreateFromJsonResult(&user, json) == kUserJsonOk, "measured import failed");
+        cJSON_Delete(json);
+        require(strcmp(user.wireguard_allowed_ips, "10.42.7.0/24") == 0, "CIDR was not normalized");
+        checkCachedStrings(&user);
+        require(userCopy(&copy, &user), "measured snapshot copy failed");
+        checkCachedStrings(&copy);
+        require(userMoveOwnedValue(&moved, &copy), "measured value move failed");
+        checkCachedStrings(&moved);
+        userDestroy(&copy);
+        require(userSetWireGuardAllowedIps(&user, ""), "Allowed-IP clearing failed");
+        require(userSetPassword(&user, "new \"\\\t password"), "standalone password replacement failed");
+        checkCachedStrings(&user);
+        userDestroy(&moved);
+        userDestroy(&user);
+    }
+    user_t invalid;
+    require(userCreate(&invalid, "valid"), "invalid generic text setup failed");
+    replaceStandaloneName(&invalid, "\xC0\x80");
+    size_t upper = 77;
+    require(invalid.export_strings.name.result == kUserPublicInvalidEncoding &&
+                userMeasureExportUpperBound(&invalid, &upper) == kUserPublicInvalidEncoding && upper == 0,
+            "invalid generic text was not represented safely");
+    userDestroy(&invalid);
+
+    user_t maximum;
+    require(userCreate(&maximum, "password"), "maximum metadata setup failed");
+    maximum.id = maximum.gid        = UINT64_MAX;
+    maximum.enabled                 = false;
+    maximum.record_stat_interval_ms = INT_MAX;
+    maximum.limit                   = (user_limit_t) {.traffic   = {UINT64_MAX, UINT64_MAX, UINT64_MAX},
+                                                      .bandwidth = {UINT64_MAX, UINT64_MAX},
+                                                      .ips       = UINT64_MAX,
+                                                      .devices   = UINT64_MAX,
+                                                      .cons_in   = UINT64_MAX,
+                                                      .cons_out  = UINT64_MAX};
+    maximum.timeinfo                = (user_time_info_t) {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX};
+    maximum.stats                   = (user_stat_t) {.ips      = UINT64_MAX,
+                                                     .devices  = UINT64_MAX,
+                                                     .cons_in  = UINT64_MAX,
+                                                     .cons_out = UINT64_MAX,
+                                                     .traffic  = {UINT64_MAX, UINT64_MAX}};
+    replaceStandaloneName(&maximum, "x");
+    memoryFree(maximum.email);
+    maximum.email                = stringDuplicate("x");
+    maximum.export_strings.email = userMeasureExportString(maximum.email);
+    memoryFree(maximum.notes);
+    maximum.notes                = stringDuplicate("x");
+    maximum.export_strings.notes = userMeasureExportString(maximum.notes);
+    require(userSetWireGuardAllowedIps(&maximum, "10.71.0.0/24"), "maximum CIDR setup failed");
+    checkCachedStrings(&maximum);
+    cJSON *row     = userToJson(&maximum);
+    char  *encoded = cJSON_PrintUnformatted(row);
+    require(userMeasureExportUpperBound(&maximum, &upper) == kUserPublicOk && strlen(encoded) + 12U == upper,
+            "maximum scalar serializer layout disagrees with fixed reserve");
+    cJSON_free(encoded);
+    cJSON_Delete(row);
+    userDestroy(&maximum);
+
+    users_t users;
+    require(usersCreate(&users), "generic metadata setup failed");
+    addUser(&users, 44);
+    user_t *stored = usersLookupByIdentifier(&users, 44);
+    require(usersSetUserName(&users, stored, "new \"name") &&
+                usersSetUserEmail(&users, stored, "\xE2\x82\xAC@example.test") &&
+                usersSetUserNotes(&users, stored, "notes\\\n\x01") &&
+                usersChangePassword(&users, stored, "generic \tpassword"),
+            "generic string setters failed");
+    checkCachedStrings(stored);
+    user_export_strings_t before = stored->export_strings;
+    user_update_t         update = {.mask                  = kUserUpdateName | kUserUpdateWireGuardAllowedIps,
+                                    .name                  = "refused",
+                                    .wireguard_allowed_ips = "bad-cidr"};
+    require(! usersUpdateUser(&users, stored, &update) &&
+                memcmp(&before, &stored->export_strings, sizeof(before)) == 0 &&
+                strcmp(stored->name, "new \"name") == 0,
+            "failed generic preparation changed cached fields");
+    checkCachedStrings(stored);
+    usersDestroy(&users);
+
+    require(usersCreate(&users), "name-map metadata setup failed");
+    cJSON *map = cJSON_CreateObject();
+    row        = cJSON_CreateObject();
+    discard cJSON_AddStringToObject(row, "password", "name-map-password");
+    discard jsonAddUint64ToObject(row, "id", 45);
+    discard cJSON_AddItemToObject(map, "mapped \"name", row);
+    require(usersFeedJson(&users, map), "name-map import failed");
+    cJSON_Delete(map);
+    checkCachedStrings(usersLookupByIdentifier(&users, 45));
+    usersDestroy(&users);
 }
 
 static void testBoundsAndEncoding(void)
@@ -306,6 +442,7 @@ int main(void)
     testBoundsAndEncoding();
     testPagesAndLocks();
     testConcurrentCoherence();
+    testCachedExportMeasurements();
     puts("user_public_views_test: all checks passed");
     return 0;
 }

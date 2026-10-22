@@ -898,11 +898,12 @@ void usersCommitReservedUserLocked(users_t *users, user_t *slot)
 /*
  * Commits a fully-initialized slot into the active set and every lookup index.
  *
- * When `prevalidated` is true the caller has already run
- * usersValidateNewUserNoFatalLocked() on the identical source under the same held
- * write lock, so the derived-password revalidation and duplicate-key probes here
- * would only repeat that work (recomputing SHA-224/256, the UUID form, and the
- * WireGuard key, plus every index lookup) for no benefit; they are skipped. The
+ * When `prevalidated` is true the caller has checked the identical source's
+ * indexes under the same held write lock. Fresh JSON construction derives
+ * credentials once; trusted copies preserve those validated values. Arbitrary
+ * checked-add callers also run usersValidateNewUserNoFatalLocked(), including
+ * the full derived-password diagnostic. Repeating those proofs here would
+ * recompute credentials or repeat duplicate probes, so they are skipped. The
  * capacity reservation and the index inserts always run, so a false return on the
  * prevalidated path reflects rejected capacity geometry. Publication thereafter
  * uses the shared reserved primitive; impossible index inconsistencies are fatal.

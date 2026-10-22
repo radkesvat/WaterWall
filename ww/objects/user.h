@@ -105,6 +105,20 @@ typedef enum user_public_result_e
     kUserPublicInvalidEncoding
 } user_public_result_t;
 
+/* Derived JSON content charge (quotes are part of the row's fixed overhead).
+ * Generic users may contain invalid UTF-8; result records that refusal without
+ * changing their text. Zeroed metadata describes an empty/absent string. */
+typedef struct user_export_string_measure_s
+{
+    size_t               escaped_bytes;
+    user_public_result_t result;
+} user_export_string_measure_t;
+
+typedef struct user_export_strings_s
+{
+    user_export_string_measure_t name, email, notes, allowed_ips;
+} user_export_strings_t;
+
 typedef enum user_public_name_state_e
 {
     kUserPublicNameComplete = 0,
@@ -272,6 +286,7 @@ typedef User          user_t;
 #define USER_CREDENTIAL_VALUE_FIELDS                                                                                   \
     char                                          *password;                                                           \
     size_t                                         password_length;                                                    \
+    user_export_string_measure_t                   password_export;                                                    \
     MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;                                                \
     uint8_t                                        sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];       \
     MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;                                                \
@@ -307,10 +322,11 @@ struct user_s
     wrwlock_t stats_lock;
     bool      initialized;
 
-    char *name;
-    char *email;
-    char *notes;
-    char *wireguard_allowed_ips;
+    char                 *name;
+    char                 *email;
+    char                 *notes;
+    char                 *wireguard_allowed_ips;
+    user_export_strings_t export_strings;
 
     uint64_t id;
     hash_t   gid;
@@ -362,6 +378,13 @@ struct user_s
 
 bool userCreate(User *user, const char *password);
 bool userCreateFromJson(User *user, const cJSON *user_json);
+typedef enum user_json_result_e
+{
+    kUserJsonOk = 0,
+    kUserJsonInvalid,
+    kUserJsonResourceFailure
+} user_json_result_t;
+user_json_result_t userCreateFromJsonResult(User *user, const cJSON *user_json);
 /* Standalone/deep-copy helpers. For users_t-owned users, prefer usersAddUser()/usersUpdateUser(). */
 bool userCopy(User *dest, const User *src);
 void userDestroy(User *user);
@@ -381,7 +404,14 @@ void                 userPublicDetailDestroy(user_public_detail_t *detail);
 void userRuntimeStateClear(user_runtime_stat_t *runtime);
 void userRuntimeStateMove(user_runtime_stat_t *dest, user_runtime_stat_t *src);
 
-cJSON *userToJson(User *user);
+cJSON                       *userToJson(User *user);
+user_export_string_measure_t userMeasureExportString(const char *text);
+/* Maximum emitted scalar widths and all five string keys/punctuation, derived
+ * from the full-row serializer. No arbitrary account text is read. */
+size_t userExportFixedOverhead(void);
+/* Configuration-only lock; constant work over cached string measurements.
+ * Includes future numeric/statistics growth, not just the current JSON row. */
+user_public_result_t userMeasureExportUpperBound(const user_t *user, size_t *encoded_size);
 
 /*
  * Parses a single WireGuard AllowedIPs CIDR. NULL/empty input is valid and

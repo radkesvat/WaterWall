@@ -114,8 +114,12 @@ users_update_result_t usersPrepareConfigPatch(const user_config_patch_t *patch, 
     prepared->patch                        = *patch;
     prepared->update                       = update;
     prepared->peak_bytes                   = peak;
-    result =
-        usersCopyUpdateStrings(&update, &prepared->name, &prepared->email, &prepared->notes, &prepared->allowed_ips);
+    result                                 = usersCopyUpdateStrings(&update,
+                                    &prepared->export_strings,
+                                    &prepared->name,
+                                    &prepared->email,
+                                    &prepared->notes,
+                                    &prepared->allowed_ips);
     if (result != kUsersUpdateResultOk)
     {
         usersFreePreparedConfigPatch(prepared);
@@ -237,10 +241,9 @@ size_t usersPreparedPasswordChangeCommitBytes(const user_prepared_password_chang
     return kUsersPasswordCommitScratchBytes;
 }
 
-users_password_result_t usersTryChangePreparedPasswordByIdentifier(users_t *users, uint64_t id,
-                                                                   user_prepared_password_change_t *prepared,
-                                                                   size_t max_working_bytes, uint64_t deadline_ms,
-                                                                   users_config_precommit_fn precommit, void *context)
+users_password_result_t usersTryChangePreparedPasswordByIdentifierWithExportLimit(
+    users_t *users, uint64_t id, user_prepared_password_change_t *prepared, size_t max_working_bytes,
+    size_t max_export_bytes, uint64_t deadline_ms, users_config_precommit_fn precommit, void *context)
 {
     assert(users != NULL && prepared != NULL && prepared->material.password != NULL);
     if (id == 0)
@@ -259,6 +262,15 @@ users_password_result_t usersTryChangePreparedPasswordByIdentifier(users_t *user
     {
         result = kUsersPasswordBusy;
         goto release_collection;
+    }
+    size_t encoded_size;
+    if (max_export_bytes != SIZE_MAX && userMeasureExportFields(&user->export_strings,
+                                                                &prepared->material.password_export,
+                                                                max_export_bytes,
+                                                                &encoded_size) != kUserPublicOk)
+    {
+        result = kUsersPasswordTooLarge;
+        goto release_user;
     }
     users_update_result_t preflight = usersPasswordPreflightLocked(users, user, &prepared->material);
     switch (preflight)
@@ -308,6 +320,15 @@ release_user:
 release_collection:
     rwlockWriteUnlock(&users->lock);
     return result;
+}
+
+users_password_result_t usersTryChangePreparedPasswordByIdentifier(users_t *users, uint64_t id,
+                                                                   user_prepared_password_change_t *prepared,
+                                                                   size_t max_working_bytes, uint64_t deadline_ms,
+                                                                   users_config_precommit_fn precommit, void *context)
+{
+    return usersTryChangePreparedPasswordByIdentifierWithExportLimit(
+        users, id, prepared, max_working_bytes, SIZE_MAX, deadline_ms, precommit, context);
 }
 
 /* Fresh accounts own their strings and native locks throughout preparation.
@@ -365,6 +386,7 @@ users_add_result_t usersPrepareNewUser(uint64_t id, const char *password, const 
     {
         usersApplyConfigValues(&prepared->user,
                                &patch->update,
+                               &patch->export_strings,
                                &patch->name,
                                &patch->email,
                                &patch->notes,
@@ -530,8 +552,10 @@ users_add_result_t usersCreationInspectNames(const users_t *users, size_t allowa
     return userDeadlineExpired(deadline_ms) ? kUsersAddResultTimeout : kUsersAddResultOk;
 }
 
-users_add_result_t usersTryAddPreparedUser(users_t *users, user_prepared_creation_t *prepared, size_t max_growth_bytes,
-                                           uint64_t deadline_ms, users_config_precommit_fn precommit, void *context)
+users_add_result_t usersTryAddPreparedUserWithExportLimit(users_t *users, user_prepared_creation_t *prepared,
+                                                          size_t max_growth_bytes, size_t max_export_bytes,
+                                                          uint64_t deadline_ms, users_config_precommit_fn precommit,
+                                                          void *context)
 {
     assert(users != NULL && prepared != NULL && prepared->user.initialized);
     if (userDeadlineExpired(deadline_ms))
@@ -546,6 +570,14 @@ users_add_result_t usersTryAddPreparedUser(users_t *users, user_prepared_creatio
     if (usersIDTableLookupLocked(users, candidate->id) != NULL)
     {
         result = kUsersAddResultDuplicateId;
+        goto unlock;
+    }
+    size_t encoded_size;
+    if (max_export_bytes != SIZE_MAX &&
+        userMeasureExportFields(
+            &candidate->export_strings, &candidate->password_export, max_export_bytes, &encoded_size) != kUserPublicOk)
+    {
+        result = kUsersAddResultTooLarge;
         goto unlock;
     }
     result = usersValidateNewUserIndexesLocked(users, candidate);
@@ -621,10 +653,18 @@ unlock:
     return result;
 }
 
+users_add_result_t usersTryAddPreparedUser(users_t *users, user_prepared_creation_t *prepared, size_t max_growth_bytes,
+                                           uint64_t deadline_ms, users_config_precommit_fn precommit, void *context)
+{
+    return usersTryAddPreparedUserWithExportLimit(
+        users, prepared, max_growth_bytes, SIZE_MAX, deadline_ms, precommit, context);
+}
+
 users_update_result_t usersApplyPreparedConfigByIdentifier(users_t *users, uint64_t id,
                                                            user_config_prepared_patch_t *prepared, bool bounded,
-                                                           size_t max_growth_bytes, uint64_t deadline_ms,
-                                                           users_config_precommit_fn precommit, void *context)
+                                                           size_t max_growth_bytes, size_t max_export_bytes,
+                                                           uint64_t deadline_ms, users_config_precommit_fn precommit,
+                                                           void *context)
 {
     assert(users != NULL && prepared != NULL && ! prepared->consumed);
     if (id == 0)
@@ -653,6 +693,27 @@ users_update_result_t usersApplyPreparedConfigByIdentifier(users_t *users, uint6
     }
     else
         rwlockWriteLock(&user->lock);
+    if (max_export_bytes != SIZE_MAX)
+    {
+        /* Only selected replacement charges overlay stored metadata. No old
+         * text or statistics are inspected for this policy decision. */
+        user_export_strings_t prospective = user->export_strings;
+        if ((prepared->update.mask & kUserUpdateName) != 0U)
+            prospective.name = prepared->export_strings.name;
+        if ((prepared->update.mask & kUserUpdateEmail) != 0U)
+            prospective.email = prepared->export_strings.email;
+        if ((prepared->update.mask & kUserUpdateNotes) != 0U)
+            prospective.notes = prepared->export_strings.notes;
+        if ((prepared->update.mask & kUserUpdateWireGuardAllowedIps) != 0U)
+            prospective.allowed_ips = prepared->export_strings.allowed_ips;
+        size_t encoded_size;
+        if (userMeasureExportFields(&prospective, &user->password_export, max_export_bytes, &encoded_size) !=
+            kUserPublicOk)
+        {
+            result = kUsersUpdateResultTooLarge;
+            goto unlock_user;
+        }
+    }
     if (usersUpdateTouchesBandwidth(&prepared->update, &prepared->patch))
     {
         if (bounded)
@@ -684,6 +745,7 @@ users_update_result_t usersApplyPreparedConfigByIdentifier(users_t *users, uint6
     usersCommitConfigUpdateLocked(users,
                                   user,
                                   &prepared->update,
+                                  &prepared->export_strings,
                                   &prepared->name,
                                   &prepared->email,
                                   &prepared->notes,
@@ -704,16 +766,26 @@ unlock_collection:
     return result;
 }
 
+users_update_result_t usersTryApplyPreparedConfigByIdentifierWithExportLimit(
+    users_t *users, uint64_t id, user_config_prepared_patch_t *prepared, size_t max_growth_bytes,
+    size_t max_export_bytes, uint64_t deadline_ms, users_config_precommit_fn precommit, void *context)
+{
+    return usersApplyPreparedConfigByIdentifier(
+        users, id, prepared, true, max_growth_bytes, max_export_bytes, deadline_ms, precommit, context);
+}
+
 users_update_result_t usersTryApplyPreparedConfigByIdentifier(users_t *users, uint64_t id,
                                                               user_config_prepared_patch_t *prepared,
                                                               size_t max_growth_bytes, uint64_t deadline_ms,
                                                               users_config_precommit_fn precommit, void *context)
 {
-    return usersApplyPreparedConfigByIdentifier(
-        users, id, prepared, true, max_growth_bytes, deadline_ms, precommit, context);
+    return usersTryApplyPreparedConfigByIdentifierWithExportLimit(
+        users, id, prepared, max_growth_bytes, SIZE_MAX, deadline_ms, precommit, context);
 }
 
-users_update_result_t usersPatchConfigByIdentifier(users_t *users, uint64_t id, const user_config_patch_t *patch)
+users_update_result_t usersPatchConfigByIdentifierWithExportLimit(users_t *users, uint64_t id,
+                                                                  const user_config_patch_t *patch,
+                                                                  size_t                     max_export_bytes)
 {
     assert(users != NULL && patch != NULL);
     if (id == 0)
@@ -722,8 +794,14 @@ users_update_result_t usersPatchConfigByIdentifier(users_t *users, uint64_t id, 
     users_update_result_t         result = usersPrepareConfigPatch(patch, SIZE_MAX, 0, &prepared);
     if (result == kUsersUpdateResultOk)
     {
-        result = usersApplyPreparedConfigByIdentifier(users, id, prepared, false, SIZE_MAX, 0, NULL, NULL);
+        result =
+            usersApplyPreparedConfigByIdentifier(users, id, prepared, false, SIZE_MAX, max_export_bytes, 0, NULL, NULL);
         usersFreePreparedConfigPatch(prepared);
     }
     return result;
+}
+
+users_update_result_t usersPatchConfigByIdentifier(users_t *users, uint64_t id, const user_config_patch_t *patch)
+{
+    return usersPatchConfigByIdentifierWithExportLimit(users, id, patch, SIZE_MAX);
 }

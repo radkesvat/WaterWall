@@ -176,14 +176,15 @@ void usersFreeUpdateStringCopies(char *name_copy, char *email_copy, char *notes_
     }
 }
 
-users_update_result_t usersCopyUpdateStrings(const user_update_t *update, char **name_copy, char **email_copy,
-                                             char                                **notes_copy,
+users_update_result_t usersCopyUpdateStrings(const user_update_t *update, user_export_strings_t *export_strings,
+                                             char **name_copy, char **email_copy, char **notes_copy,
                                              users_wireguard_allowed_ips_update_t *wireguard_allowed_ips)
 {
     *name_copy  = NULL;
     *email_copy = NULL;
     *notes_copy = NULL;
     memoryZero(wireguard_allowed_ips, sizeof(*wireguard_allowed_ips));
+    memoryZero(export_strings, sizeof(*export_strings));
 
     if ((update->mask & kUserUpdateName) != 0U)
         usersStringDuplicate(name_copy, update->name);
@@ -208,11 +209,20 @@ users_update_result_t usersCopyUpdateStrings(const user_update_t *update, char *
         }
     }
 
+    if ((update->mask & kUserUpdateName) != 0U)
+        export_strings->name = userMeasureExportString(*name_copy);
+    if ((update->mask & kUserUpdateEmail) != 0U)
+        export_strings->email = userMeasureExportString(*email_copy);
+    if ((update->mask & kUserUpdateNotes) != 0U)
+        export_strings->notes = userMeasureExportString(*notes_copy);
+    if ((update->mask & kUserUpdateWireGuardAllowedIps) != 0U)
+        export_strings->allowed_ips = userMeasureExportString(wireguard_allowed_ips->copy);
     return kUsersUpdateResultOk;
 }
 
-users_update_result_t usersPrepareUpdate(const user_update_t *update, char **name_copy, char **email_copy,
-                                         char **notes_copy, users_wireguard_allowed_ips_update_t *wireguard_allowed_ips)
+users_update_result_t usersPrepareUpdate(const user_update_t *update, user_export_strings_t *export_strings,
+                                         char **name_copy, char **email_copy, char **notes_copy,
+                                         users_wireguard_allowed_ips_update_t *wireguard_allowed_ips)
 {
     users_update_result_t result = usersValidateUpdateRequest(update);
     if (UNLIKELY(result != kUsersUpdateResultOk))
@@ -220,7 +230,7 @@ users_update_result_t usersPrepareUpdate(const user_update_t *update, char **nam
         return result;
     }
 
-    return usersCopyUpdateStrings(update, name_copy, email_copy, notes_copy, wireguard_allowed_ips);
+    return usersCopyUpdateStrings(update, export_strings, name_copy, email_copy, notes_copy, wireguard_allowed_ips);
 }
 
 users_update_result_t usersPreflightConfigIndexesLocked(users_t *users, user_t *user, const user_update_t *update,
@@ -291,25 +301,30 @@ users_update_result_t usersPreflightConfigIndexesLocked(users_t *users, user_t *
 
 /* Collection and user configuration write locks precede the first index erase.
  * Capacity and uniqueness are already established; no ordinary refusal follows. */
-void usersApplyConfigValues(user_t *user, const user_update_t *update, char **name_copy, char **email_copy,
-                            char **notes_copy, users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
-                            const user_config_patch_t *patch)
+void usersApplyConfigValues(user_t *user, const user_update_t *update, user_export_strings_t *export_strings,
+                            char **name_copy, char **email_copy, char **notes_copy,
+                            users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
+                            const user_config_patch_t            *patch)
 {
     if ((update->mask & kUserUpdateName) != 0U)
     {
         usersReplaceStringOwned(&user->name, name_copy);
+        user->export_strings.name = export_strings->name;
     }
     if ((update->mask & kUserUpdateEmail) != 0U)
     {
         usersReplaceStringOwned(&user->email, email_copy);
+        user->export_strings.email = export_strings->email;
     }
     if ((update->mask & kUserUpdateNotes) != 0U)
     {
         usersReplaceStringOwned(&user->notes, notes_copy);
+        user->export_strings.notes = export_strings->notes;
     }
     if ((update->mask & kUserUpdateWireGuardAllowedIps) != 0U)
     {
         usersReplaceStringOwned(&user->wireguard_allowed_ips, &wireguard_allowed_ips->copy);
+        user->export_strings.allowed_ips  = export_strings->allowed_ips;
         user->wireguard_allowed_ip        = wireguard_allowed_ips->ip;
         user->wireguard_allowed_mask      = wireguard_allowed_ips->mask;
         user->wireguard_allowed_ip_count  = wireguard_allowed_ips->count;
@@ -372,10 +387,10 @@ bool usersUpdateTouchesBandwidth(const user_update_t *update, const user_config_
            (patch != NULL && (patch->mask & (kUserConfigBandwidthUp | kUserConfigBandwidthDown)) != 0);
 }
 
-void usersCommitConfigUpdateLocked(users_t *users, user_t *user, const user_update_t *update, char **name_copy,
-                                   char **email_copy, char **notes_copy,
-                                   users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
-                                   const user_config_patch_t            *patch)
+void usersCommitConfigUpdateLocked(users_t *users, user_t *user, const user_update_t *update,
+                                   user_export_strings_t *export_strings, char **name_copy, char **email_copy,
+                                   char **notes_copy, users_wireguard_allowed_ips_update_t *wireguard_allowed_ips,
+                                   const user_config_patch_t *patch)
 {
     /*
      * Erase the old name entry while the old string is still alive, before
@@ -400,7 +415,8 @@ void usersCommitConfigUpdateLocked(users_t *users, user_t *user, const user_upda
         abortProgramNow(1);
     }
 
-    usersApplyConfigValues(user, update, name_copy, email_copy, notes_copy, wireguard_allowed_ips, patch);
+    usersApplyConfigValues(
+        user, update, export_strings, name_copy, email_copy, notes_copy, wireguard_allowed_ips, patch);
     if (usersUpdateTouchesBandwidth(update, patch))
         userBandwidthReconcileLocked(user, getHRTimeUs() / 1000U);
 
@@ -429,7 +445,8 @@ void usersCommitConfigUpdateLocked(users_t *users, user_t *user, const user_upda
 }
 
 users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users, user_t *user, const user_update_t *update,
-                                                           char **name_copy, char **email_copy, char **notes_copy,
+                                                           user_export_strings_t *export_strings, char **name_copy,
+                                                           char **email_copy, char **notes_copy,
                                                            users_wireguard_allowed_ips_update_t *wireguard_allowed_ips)
 {
     users_update_result_t result =
@@ -448,7 +465,8 @@ users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users, user_
     bool bandwidth_locked = usersUpdateTouchesBandwidth(update, NULL);
     if (bandwidth_locked)
         rwlockWriteLock(&user->stats_lock);
-    usersCommitConfigUpdateLocked(users, user, update, name_copy, email_copy, notes_copy, wireguard_allowed_ips, NULL);
+    usersCommitConfigUpdateLocked(
+        users, user, update, export_strings, name_copy, email_copy, notes_copy, wireguard_allowed_ips, NULL);
     if (bandwidth_locked)
         rwlockWriteUnlock(&user->stats_lock);
     rwlockWriteUnlock(&user->lock);
@@ -467,6 +485,7 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
     char                                *email_copy = NULL;
     char                                *notes_copy = NULL;
     users_wireguard_allowed_ips_update_t wireguard_allowed_ips;
+    user_export_strings_t                export_strings;
     users_update_result_t                result;
 
     if (UNLIKELY(users == NULL || user == NULL))
@@ -474,7 +493,7 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
         return false;
     }
 
-    result = usersPrepareUpdate(update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
+    result = usersPrepareUpdate(update, &export_strings, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
     if (UNLIKELY(result != kUsersUpdateResultOk))
     {
         return false;
@@ -488,7 +507,7 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
     else
     {
         result = usersApplyUpdateToExistingUserLocked(
-            users, user, update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
+            users, user, update, &export_strings, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
     }
     rwlockWriteUnlock(&users->lock);
 
@@ -503,6 +522,7 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha2
     char                                *email_copy = NULL;
     char                                *notes_copy = NULL;
     users_wireguard_allowed_ips_update_t wireguard_allowed_ips;
+    user_export_strings_t                export_strings;
     users_update_result_t                result;
     user_t                              *user;
 
@@ -511,7 +531,7 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha2
         return kUsersUpdateResultInvalidArgument;
     }
 
-    result = usersPrepareUpdate(update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
+    result = usersPrepareUpdate(update, &export_strings, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
     if (UNLIKELY(result != kUsersUpdateResultOk))
     {
         return result;
@@ -526,7 +546,7 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha2
     else
     {
         result = usersApplyUpdateToExistingUserLocked(
-            users, user, update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
+            users, user, update, &export_strings, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
     }
     rwlockWriteUnlock(&users->lock);
 

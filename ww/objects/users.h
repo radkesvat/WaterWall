@@ -159,7 +159,8 @@ typedef enum users_add_result_e
     kUsersAddResultResourceLimit,
     kUsersAddResultTimeout,
     kUsersAddResultPrecommitRejected,
-    kUsersAddResultCreationFailed
+    kUsersAddResultCreationFailed,
+    kUsersAddResultTooLarge
 } users_add_result_t;
 
 typedef enum users_update_result_e
@@ -181,7 +182,8 @@ typedef enum users_update_result_e
     kUsersUpdateResultResourceLimit,
     kUsersUpdateResultTimeout,
     kUsersUpdateResultPrecommitRejected,
-    kUsersUpdateResultRevisionExhausted
+    kUsersUpdateResultRevisionExhausted,
+    kUsersUpdateResultTooLarge
 } users_update_result_t;
 
 enum
@@ -280,6 +282,9 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha2
 /* Failure-atomic, ID-addressed configuration edit. Holds collection ownership
  * through commit and applies selected leaves under the user's lock. */
 users_update_result_t usersPatchConfigByIdentifier(users_t *users, uint64_t id, const user_config_patch_t *patch);
+users_update_result_t usersPatchConfigByIdentifierWithExportLimit(users_t *users, uint64_t id,
+                                                                  const user_config_patch_t *patch,
+                                                                  size_t                     max_export_bytes);
 typedef struct user_config_prepared_patch_s user_config_prepared_patch_t;
 /* Preparation owns selected strings and normalized routing data. The allowance
  * covers its allocation and peak transient normalization storage/scratch. A zero
@@ -317,7 +322,8 @@ typedef enum users_password_result_e
     kUsersPasswordTimeout,
     kUsersPasswordCredentialsExist,
     kUsersPasswordPreparationFailed,
-    kUsersPasswordPrecommitRejected
+    kUsersPasswordPrecommitRejected,
+    kUsersPasswordTooLarge
 } users_password_result_t;
 users_password_result_t usersPreparePasswordChange(const char *password, size_t max_owned_bytes, uint64_t deadline_ms,
                                                    user_prepared_password_change_t **out);
@@ -333,10 +339,20 @@ users_password_result_t usersTryChangePreparedPasswordByIdentifier(users_t *user
                                                                    user_prepared_password_change_t *prepared,
                                                                    size_t max_working_bytes, uint64_t deadline_ms,
                                                                    users_config_precommit_fn precommit, void *context);
-users_update_result_t   usersTryApplyPreparedConfigByIdentifier(users_t *users, uint64_t id,
-                                                                user_config_prepared_patch_t *prepared,
-                                                                size_t max_growth_bytes, uint64_t deadline_ms,
-                                                                users_config_precommit_fn precommit, void *context);
+/* Finite allowance includes the complete row and maximum future scalar growth.
+ * SIZE_MAX explicitly disables policy; zero permits no row. */
+users_password_result_t usersTryChangePreparedPasswordByIdentifierWithExportLimit(
+    users_t *users, uint64_t id, user_prepared_password_change_t *prepared, size_t max_working_bytes,
+    size_t max_export_bytes, uint64_t deadline_ms, users_config_precommit_fn precommit, void *context);
+users_update_result_t usersTryApplyPreparedConfigByIdentifier(users_t *users, uint64_t id,
+                                                              user_config_prepared_patch_t *prepared,
+                                                              size_t max_growth_bytes, uint64_t deadline_ms,
+                                                              users_config_precommit_fn precommit, void *context);
+/* Finite allowance includes the complete row and maximum future scalar growth.
+ * SIZE_MAX explicitly disables policy; zero permits no row. */
+users_update_result_t usersTryApplyPreparedConfigByIdentifierWithExportLimit(
+    users_t *users, uint64_t id, user_config_prepared_patch_t *prepared, size_t max_growth_bytes,
+    size_t max_export_bytes, uint64_t deadline_ms, users_config_precommit_fn precommit, void *context);
 /* Fresh private accounts only: preparation derives credentials and owns all
  * selected input before any shared lock. NULL/empty config uses userCreate()
  * defaults. The retained/peak accounting includes aligned private storage,
@@ -355,6 +371,12 @@ size_t             usersPreparedNewUserPeakBytes(const user_prepared_creation_t 
  * Caller frees the prepared account on every result, including success. */
 users_add_result_t usersTryAddPreparedUser(users_t *users, user_prepared_creation_t *prepared, size_t max_growth_bytes,
                                            uint64_t deadline_ms, users_config_precommit_fn precommit, void *context);
+/* Finite allowance includes the complete row and maximum future scalar growth.
+ * SIZE_MAX explicitly disables policy; zero permits no row. */
+users_add_result_t    usersTryAddPreparedUserWithExportLimit(users_t *users, user_prepared_creation_t *prepared,
+                                                             size_t max_growth_bytes, size_t max_export_bytes,
+                                                             uint64_t deadline_ms, users_config_precommit_fn precommit,
+                                                             void *context);
 bool                  usersSetUserName(users_t *users, user_t *user, const char *name);
 bool                  usersSetUserEmail(users_t *users, user_t *user, const char *email);
 bool                  usersSetUserNotes(users_t *users, user_t *user, const char *notes);
@@ -479,6 +501,18 @@ user_delivery_decision_t usersCommitDeliveryByIdentifier(users_t *users, uint64_
 /* Incremental fresh import with lexical, required nonzero IDs. Failure rolls back
  * this append only; existing records/handles remain. Credentials derive once. */
 bool usersFeedJsonRequiredIds(users_t *users, const cJSON *json);
+/* Preserve native/construction refusals for startup recovery decisions. */
+typedef enum users_json_result_e
+{
+    kUsersJsonOk,
+    kUsersJsonInvalid,
+    kUsersJsonResourceFailure
+} users_json_result_t;
+users_json_result_t usersFeedJsonRequiredIdsResult(users_t *users, const cJSON *json);
+/* Candidate must be an initialized, exclusively owned unpublished table. Swaps
+ * complete contents under dest's lock; candidate receives the old destination.
+ * No allocation or native construction can fail during publication. */
+void usersPublishCandidate(users_t *dest, users_t *candidate);
 /* Index/structural check for trusted fresh imports/copies. usersValidate remains
  * the full derived-credential diagnostic in every build configuration. */
 bool usersValidateStructure(const users_t *users);

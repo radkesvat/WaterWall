@@ -403,7 +403,8 @@ void usersApplyNameHint(user_t *user, const char *name_hint)
         return;
     char *name = stringDuplicate(name_hint);
     memoryFree(user->name);
-    user->name = name;
+    user->name                = name;
+    user->export_strings.name = userMeasureExportString(name);
 }
 
 static void usersLogNewUserRefusal(const user_t *user, users_add_result_t result)
@@ -439,15 +440,11 @@ static void usersLogNewUserRefusal(const user_t *user, users_add_result_t result
     LOGE("Users: %s while loading user \"%s\"", reason, usersUserNameForLog(user));
 }
 
-bool usersAppendJsonUserLocked(users_t *users, const cJSON *user_json, const char *name_hint, bool required_ids)
+static users_json_result_t usersAppendJsonUserResultLocked(users_t *users, const cJSON *user_json,
+                                                           const char *name_hint, bool required_ids, bool diagnose)
 {
-    user_t *slot;
-
-    if (UNLIKELY(! cJSON_IsObject(user_json)))
-    {
-        LOGE("Users: user entry must be a JSON object");
-        return false;
-    }
+    if (! cJSON_IsObject(user_json))
+        return kUsersJsonInvalid;
     if (required_ids)
     {
         const cJSON *id = cJSON_GetObjectItemCaseSensitive(user_json, "id");
@@ -457,26 +454,28 @@ bool usersAppendJsonUserLocked(users_t *users, const cJSON *user_json, const cha
         if (id == NULL || cJSON_IsNull(id) ||
             (cJSON_IsString(id) && (id->valuestring == NULL || id->valuestring[0] == '\0')) ||
             ! getUint64FromJson(&value, id) || value == 0)
-            return false;
+            return kUsersJsonInvalid;
     }
-    if (UNLIKELY(! usersReserveLocked(users, users->count + 1U)))
-    {
-        return false;
-    }
-
-    slot = usersStorageAtLocked(users, users->slot_count);
-    if (UNLIKELY(! userCreateFromJson(slot, user_json)))
-    {
-        LOGE("Users: failed to create user from JSON entry at index %zu", users->count);
-        return false;
-    }
+    if (! usersReserveLocked(users, users->count + 1U))
+        return kUsersJsonResourceFailure;
+    user_t                  *slot    = usersStorageAtLocked(users, users->slot_count);
+    const user_json_result_t created = userCreateFromJsonResult(slot, user_json);
+    if (created != kUserJsonOk)
+        return created == kUserJsonResourceFailure ? kUsersJsonResourceFailure : kUsersJsonInvalid;
     usersApplyNameHint(slot, name_hint);
-    users_add_result_t result = usersValidateNewUserIndexesLocked(users, slot);
+    const users_add_result_t result = usersValidateNewUserIndexesLocked(users, slot);
     if (result == kUsersAddResultOk && usersCommitNewUserLocked(users, slot, true))
-        return true;
-    usersLogNewUserRefusal(slot, result);
+        return kUsersJsonOk;
+    if (diagnose)
+        usersLogNewUserRefusal(slot, result);
     userDestroy(slot);
-    return false;
+    return result == kUsersAddResultOk || result == kUsersAddResultStorageUnavailable ? kUsersJsonResourceFailure
+                                                                                      : kUsersJsonInvalid;
+}
+
+bool usersAppendJsonUserLocked(users_t *users, const cJSON *user_json, const char *name_hint, bool required_ids)
+{
+    return usersAppendJsonUserResultLocked(users, user_json, name_hint, required_ids, true) == kUsersJsonOk;
 }
 
 /*
@@ -501,44 +500,30 @@ bool usersReserveForFeedLocked(users_t *users, const cJSON *container)
     return usersReserveLocked(users, total) && usersEnsureLookupCapacityLocked(users, total);
 }
 
+static users_json_result_t usersFeedContainerResultLocked(users_t *users, const cJSON *container, bool map,
+                                                          bool required_ids, bool diagnose)
+{
+    if (! usersReserveForFeedLocked(users, container))
+        return kUsersJsonResourceFailure;
+    const cJSON *entry;
+    cJSON_ArrayForEach(entry, container)
+    {
+        const users_json_result_t result =
+            usersAppendJsonUserResultLocked(users, entry, map ? entry->string : NULL, required_ids, diagnose);
+        if (result != kUsersJsonOk)
+            return result;
+    }
+    return kUsersJsonOk;
+}
+
 bool usersFeedJsonArrayLocked(users_t *users, const cJSON *array, bool required_ids)
 {
-    const cJSON *entry = NULL;
-
-    if (UNLIKELY(! usersReserveForFeedLocked(users, array)))
-    {
-        return false;
-    }
-
-    cJSON_ArrayForEach(entry, array)
-    {
-        if (UNLIKELY(! usersAppendJsonUserLocked(users, entry, NULL, required_ids)))
-        {
-            return false;
-        }
-    }
-
-    return true;
+    return usersFeedContainerResultLocked(users, array, false, required_ids, true) == kUsersJsonOk;
 }
 
 bool usersFeedJsonObjectMapLocked(users_t *users, const cJSON *object, bool required_ids)
 {
-    const cJSON *entry = NULL;
-
-    if (UNLIKELY(! usersReserveForFeedLocked(users, object)))
-    {
-        return false;
-    }
-
-    cJSON_ArrayForEach(entry, object)
-    {
-        if (UNLIKELY(! usersAppendJsonUserLocked(users, entry, entry->string, required_ids)))
-        {
-            return false;
-        }
-    }
-
-    return true;
+    return usersFeedContainerResultLocked(users, object, true, required_ids, true) == kUsersJsonOk;
 }
 
 bool usersJsonObjectLooksLikeSingleUser(const cJSON *json)
@@ -547,54 +532,36 @@ bool usersJsonObjectLooksLikeSingleUser(const cJSON *json)
            cJSON_IsString(cJSON_GetObjectItemCaseSensitive(json, "pass"));
 }
 
-/*
- * Accepted layouts:
- * - null, an empty array, or an empty object: no-op success.
- * - [user, ...]
- * - {"users": [user, ...]}
- * - {"name": user, ...}, where the object key is used as a username hint.
- * - A single user object when "password" or "pass" has a string value.
- */
-bool usersFeedJsonLocked(users_t *users, const cJSON *json, bool required_ids)
+/* Accepted layouts are null, arrays, {"users": [...]}, a single user, or a
+ * name-keyed map. Native construction failure is never structural invalidity. */
+static users_json_result_t usersFeedJsonResultLocked(users_t *users, const cJSON *json, bool required_ids,
+                                                     bool diagnose)
 {
-    if (UNLIKELY(json == NULL || cJSON_IsNull(json)))
-    {
-        return true;
-    }
+    if (json == NULL || cJSON_IsNull(json))
+        return kUsersJsonOk;
     if (cJSON_IsArray(json))
-    {
-        return usersFeedJsonArrayLocked(users, json, required_ids);
-    }
-    if (UNLIKELY(! cJSON_IsObject(json)))
-    {
-        LOGE("Users: JSON input must be an object, array, or null");
-        return false;
-    }
+        return usersFeedContainerResultLocked(users, json, false, required_ids, diagnose);
+    if (! cJSON_IsObject(json))
+        return kUsersJsonInvalid;
     if (json->child == NULL)
+        return kUsersJsonOk;
+    const cJSON *array = cJSON_GetObjectItemCaseSensitive(json, "users");
+    if (array != NULL)
     {
-        return true;
-    }
-
-    const cJSON *users_array = cJSON_GetObjectItemCaseSensitive(json, "users");
-    if (users_array != NULL)
-    {
-        if (UNLIKELY(cJSON_IsNull(users_array)))
-        {
-            return true;
-        }
-        if (UNLIKELY(! cJSON_IsArray(users_array)))
-        {
-            LOGE("Users: JSON field \"users\" must be an array");
-            return false;
-        }
-        return usersFeedJsonArrayLocked(users, users_array, required_ids);
+        if (cJSON_IsNull(array))
+            return kUsersJsonOk;
+        if (! cJSON_IsArray(array))
+            return kUsersJsonInvalid;
+        return usersFeedContainerResultLocked(users, array, false, required_ids, diagnose);
     }
     if (usersJsonObjectLooksLikeSingleUser(json))
-    {
-        return usersAppendJsonUserLocked(users, json, NULL, required_ids);
-    }
+        return usersAppendJsonUserResultLocked(users, json, NULL, required_ids, diagnose);
+    return usersFeedContainerResultLocked(users, json, true, required_ids, diagnose);
+}
 
-    return usersFeedJsonObjectMapLocked(users, json, required_ids);
+bool usersFeedJsonLocked(users_t *users, const cJSON *json, bool required_ids)
+{
+    return usersFeedJsonResultLocked(users, json, required_ids, true) == kUsersJsonOk;
 }
 
 bool usersValidateUserLookupKeysLocked(const users_t *users, bool credentials)
@@ -1694,6 +1661,26 @@ bool usersFeedJson(users_t *users, const cJSON *json)
 bool usersFeedJsonRequiredIds(users_t *users, const cJSON *json)
 {
     return usersFeedJsonPolicy(users, json, true);
+}
+
+users_json_result_t usersFeedJsonRequiredIdsResult(users_t *users, const cJSON *json)
+{
+    assert(users != NULL);
+    rwlockWriteLock(&users->lock);
+    const size_t              old_count = users->count, old_slot_count = users->slot_count;
+    const users_json_result_t result = usersFeedJsonResultLocked(users, json, true, false);
+    if (result != kUsersJsonOk)
+        usersRollbackFeedLocked(users, old_count, old_slot_count);
+    rwlockWriteUnlock(&users->lock);
+    return result;
+}
+
+void usersPublishCandidate(users_t *dest, users_t *candidate)
+{
+    assert(dest != NULL && candidate != NULL && dest != candidate);
+    rwlockWriteLock(&dest->lock);
+    usersSwapContentsLocked(dest, candidate);
+    rwlockWriteUnlock(&dest->lock);
 }
 
 bool usersValidateStructure(const users_t *users)

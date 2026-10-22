@@ -125,11 +125,14 @@ static void add(uint64_t id)
         source.gid     = 7;
         source.enabled = false;
         memoryFree(source.name);
-        source.name = stringDuplicate("Alice\"\n\t\\\001\342\202\254");
+        source.name                = stringDuplicate("Alice\"\n\t\\\001\342\202\254");
+        source.export_strings.name = userMeasureExportString(source.name);
         memoryFree(source.email);
-        source.email = stringDuplicate("alice@example.invalid");
+        source.email                = stringDuplicate("alice@example.invalid");
+        source.export_strings.email = userMeasureExportString(source.email);
         memoryFree(source.notes);
-        source.notes = stringDuplicate("public notes");
+        source.notes                = stringDuplicate("public notes");
+        source.export_strings.notes = userMeasureExportString(source.notes);
         twfRequire(userSetWireGuardAllowedIps(&source, "10.0.0.0/24"), "routing setup failed");
         source.limit    = (user_limit_t) {.traffic   = {11, 12, UINT64_MAX},
                                           .bandwidth = {13, 14},
