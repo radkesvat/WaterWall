@@ -2,6 +2,32 @@
 if(TARGET ww)
   if(LINUX)
     foreach(backend IN ITEMS mimalloc bypass)
+      set(cpp_memory_test_target cpp_allocation_test)
+      set(cpp_memory_test_name waterwall.cpp_allocation_unit)
+      set(cpp_memory_test_sources ${WATERWALL_UNIT_SOURCE_ROOT}/base/cpp_allocation_test.cc)
+      set(cpp_memory_test_bypass ${ALLOCATOR_BYPASS})
+      if(backend STREQUAL "bypass")
+        set(cpp_memory_test_target cpp_allocation_bypass_test)
+        set(cpp_memory_test_name waterwall.cpp_allocation_bypass_unit)
+        set(cpp_memory_test_bypass ON)
+        list(APPEND cpp_memory_test_sources ${WATERWALL_UNIT_SOURCE_ROOT}/base/cpp_allocation_backend.c)
+      endif()
+      # LINK_ONLY preserves ww's actual allocator-object propagation while keeping
+      # its C-only warnings and PCH away from this C++ consumer.
+      waterwall_add_native_executable(${cpp_memory_test_target} SUPPORT
+        SOURCES ${cpp_memory_test_sources}
+        INCLUDES "$<TARGET_PROPERTY:mimalloc-static,INTERFACE_INCLUDE_DIRECTORIES>"
+        DEFINITIONS WW_TEST_ALLOCATOR_BYPASS=$<BOOL:${cpp_memory_test_bypass}>
+        LIBRARIES "$<LINK_ONLY:ww>" waterwall_cpu_options waterwall_runtime_options)
+      target_compile_features(${cpp_memory_test_target} PRIVATE cxx_std_17)
+      set_target_properties(${cpp_memory_test_target} PROPERTIES UNITY_BUILD OFF DISABLE_PRECOMPILE_HEADERS ON)
+      target_link_options(${cpp_memory_test_target} PRIVATE
+        "-Wl,--wrap=memoryAllocate" "-Wl,--wrap=memoryFree"
+        "-Wl,--wrap=memoryAllocateAligned" "-Wl,--wrap=memoryFreeAligned")
+      add_waterwall_unit_test(${cpp_memory_test_name} ${cpp_memory_test_target} "unit;memory;allocation;cpp;failure")
+    endforeach()
+
+    foreach(backend IN ITEMS mimalloc bypass)
       if(backend STREQUAL "bypass")
         set(memory_test_target memory_allocation_bypass_test)
         set(memory_test_name waterwall.memory_allocation_bypass_unit)

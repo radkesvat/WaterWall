@@ -1641,6 +1641,26 @@ target_link_libraries(ww PUBLIC ${LIBS})
 # code generation. Auxiliary archives do not otherwise inherit ww's includes or
 # compile options, so attach only the small build-policy interface to them.
 target_link_libraries(ww PUBLIC waterwall_runtime_options)
+
+# Put the C++ allocation replacements directly on each runtime consumer's link
+# line. An unreferenced archive member can otherwise lose to the C++ runtime's
+# operators, depending on archive order or LTO. The object target also conveys
+# the C++ linker language without importing ww's C-only headers or warnings.
+add_library(waterwall_cpp_allocator OBJECT managers/cpp_allocator.cc)
+target_compile_features(waterwall_cpp_allocator PRIVATE cxx_std_17)
+target_include_directories(waterwall_cpp_allocator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libc)
+target_link_libraries(waterwall_cpp_allocator PRIVATE waterwall_runtime_options waterwall_cpu_options)
+set_target_properties(waterwall_cpp_allocator PROPERTIES
+    DISABLE_PRECOMPILE_HEADERS ON
+    UNITY_BUILD OFF
+)
+if(MSVC)
+    target_compile_options(waterwall_cpp_allocator PRIVATE /W4 /WX)
+else()
+    target_compile_options(waterwall_cpp_allocator PRIVATE -Wall -Wextra -Werror -pedantic)
+endif()
+target_link_libraries(ww INTERFACE waterwall_cpp_allocator "$<TARGET_OBJECTS:waterwall_cpp_allocator>")
+
 foreach(runtime_dependency IN ITEMS mimalloc-static maxminddb c-ares c-ares_static sodium nghttp2_static)
     if(TARGET ${runtime_dependency})
         waterwall_configure_runtime_dependency(${runtime_dependency})
@@ -1766,6 +1786,7 @@ if(ENABLE_ASAN)
         target_link_options(ww_lwip_engine_test PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
     endif()
     target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
+    target_compile_options(waterwall_cpp_allocator PRIVATE $<$<CONFIG:Debug>:-fsanitize=address>)
     target_compile_options(ww_lwip PRIVATE $<$<CONFIG:Debug>:-fsanitize=address>)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
 endif()
@@ -1775,11 +1796,13 @@ if(ENABLE_TSAN)
         target_link_options(ww_lwip_engine_test PUBLIC $<$<CONFIG:Debug>:-fsanitize=thread>)
     endif()
     target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=thread>)
+    target_compile_options(waterwall_cpp_allocator PRIVATE $<$<CONFIG:Debug>:-fsanitize=thread>)
     target_compile_options(ww_lwip PRIVATE $<$<CONFIG:Debug>:-fsanitize=thread>)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=thread>)
 endif()
 if(ENABLE_LSAN)
     target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=leak>)
+    target_compile_options(waterwall_cpp_allocator PRIVATE $<$<CONFIG:Debug>:-fsanitize=leak>)
     target_compile_options(ww_lwip PRIVATE $<$<CONFIG:Debug>:-fsanitize=leak>)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=leak>)
 endif()
@@ -1789,6 +1812,7 @@ if(ENABLE_USAN)
         target_link_options(ww_lwip_engine_test PUBLIC $<$<CONFIG:Debug>:-fsanitize=undefined>)
     endif()
     target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=undefined>)
+    target_compile_options(waterwall_cpp_allocator PRIVATE $<$<CONFIG:Debug>:-fsanitize=undefined>)
     target_compile_options(ww_lwip PRIVATE $<$<CONFIG:Debug>:-fsanitize=undefined>)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=undefined>)
 endif()
