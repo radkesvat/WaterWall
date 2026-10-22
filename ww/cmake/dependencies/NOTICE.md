@@ -27,6 +27,16 @@ is unchanged; these adaptations preserve runtime behavior. Clang 14 support
 adds explicit `typename` to dependent numeric aliases and uses brace initialization
 for the checked iterator's pointer aggregate, including fixed and dynamic spans.
 The pointer values, iterator checks, and numeric conversions stay unchanged.
+For MSVC, the standalone URL subset omits Chromium's compiler-policy rejection,
+uses an attribute query accepted by MSVC, and selects the existing portable
+checked/clamped arithmetic instead of GNU overflow intrinsics. Windows ARM64
+NEON detection recognizes `_M_ARM64`; numeric and iterator checks remain enabled.
+Windows QUICHE builds and header consumers define `NOMINMAX`, `NOGDI`, and
+`WIN32_LEAN_AND_MEAN` to keep Windows macros out of C++ and logging identifiers.
+MSVC consumers enable the conforming preprocessor for QUICHE's C++20 status
+macros. Two out-of-line defaulted comparisons explicitly compare their sole
+variant member. The WebTransport field table uses aggregate entries to retain
+constant initialization with MSVC; its names and member pointers are unchanged.
 The QUICHE structured-header and ACK-timestamp sources likewise use brace
 initialization for token, byte-sequence, and timestamp-encoder aggregates,
 preserving string copy/move, variant selection, and the timestamp exponent.

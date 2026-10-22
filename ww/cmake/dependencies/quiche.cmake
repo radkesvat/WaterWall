@@ -70,14 +70,15 @@ function(waterwall_enable_quiche)
     d8a701123250e03b3c0865babdfc78540d66374db78f74aafd09bf08545c00bd)
 
   # This Google URL pin assumes CWG2518, a newer constexpr std::string, and
-  # C++20 syntax that Clang 14 does not implement. Keep GCC 11 and Clang 14
+  # C++20 syntax that Clang 14 does not implement. Keep GCC 11, Clang 14 and MSVC
   # support through generated header overlays, leaving the source cache intact.
   # String-literal arrays have N >= 1, so the dependent assertion still rejects
   # every forbidden overload at instantiation. GURL has no constexpr instances.
   set(gurl_overlay "${CMAKE_BINARY_DIR}/ww-dependencies/googleurl-compat")
   foreach(header IN ITEMS base/strings/utf_string_conversions.h url/gurl.h
       base/numerics/safe_conversions_impl.h base/containers/checked_iterators.h
-      base/containers/span.h)
+      base/containers/span.h base/compiler_specific.h build/build_config.h
+      base/numerics/safe_math_shared_impl.h)
     file(READ "${ww_quic_googleurl_SOURCE_DIR}/${header}" contents)
     if(header STREQUAL "base/strings/utf_string_conversions.h")
       string(REPLACE "static_assert(false," "static_assert(N == 0," contents "${contents}")
@@ -101,6 +102,28 @@ function(waterwall_enable_quiche)
         string(REPLACE "AssumeValid(\n        data(), data() + ${bound}, data() + ${bound})"
           "AssumeValid{\n        data(), data() + ${bound}, data() + ${bound}}" contents "${contents}")
       endforeach()
+    elseif(header STREQUAL "base/compiler_specific.h")
+      # The standalone URL subset retains MSVC fallbacks for its attributes
+      # and numeric operations; Chromium's whole-project toolchain ban does
+      # not apply to this embedding.
+      string(REPLACE
+        "#if defined(COMPILER_MSVC) && !defined(__clang__)\n#error \"Only clang-cl is supported on Windows, see https://crbug.com/988071\"\n#endif"
+        "// WaterWall supports this standalone URL subset with MSVC."
+        contents "${contents}")
+      # MSVC rejects the keyword token in __has_cpp_attribute(gnu::const).
+      # HAS_ATTRIBUTE already resolves to zero without GNU attribute support.
+      string(REPLACE "#if __has_cpp_attribute(gnu::const)" "#if HAS_ATTRIBUTE(const)" contents "${contents}")
+    elseif(header STREQUAL "build/build_config.h")
+      # Windows ARM64 has mandatory NEON but MSVC advertises _M_ARM64 rather
+      # than the GNU/Clang __ARM_NEON macros.
+      string(REPLACE "(defined(__ARM_NEON__) || defined(__ARM_NEON))"
+        "(defined(__ARM_NEON__) || defined(__ARM_NEON) || defined(_M_ARM64))" contents "${contents}")
+    elseif(header STREQUAL "base/numerics/safe_math_shared_impl.h")
+      # MSVC has no GCC/Clang overflow builtins. Select the existing portable
+      # checked/clamped operations, preserving overflow detection.
+      string(REPLACE "#if defined(__asmjs__) || defined(__wasm__)"
+        "#if defined(__asmjs__) || defined(__wasm__) || (defined(_MSC_VER) && !defined(__clang__))"
+        contents "${contents}")
     endif()
     set(previous "")
     if(EXISTS "${gurl_overlay}/${header}")
@@ -246,6 +269,14 @@ function(waterwall_enable_quiche)
             "${value_type}{std::${operation}(value)}" aggregate_contents "${aggregate_contents}")
         endforeach()
       endforeach()
+      # MSVC rejects these out-of-line defaulted friend comparisons. Each
+      # class has only value_, so explicitly compare the same variant member.
+      string(REPLACE "bool operator==(const Item&, const Item&) = default;"
+        "bool operator==(const Item& lhs, const Item& rhs) { return lhs.value_ == rhs.value_; }"
+        aggregate_contents "${aggregate_contents}")
+      string(REPLACE "bool operator==(const ParameterizedMember&,\n                const ParameterizedMember&) = default;"
+        "bool operator==(const ParameterizedMember& lhs, const ParameterizedMember& rhs) { return lhs.value_ == rhs.value_; }"
+        aggregate_contents "${aggregate_contents}")
     else()
       string(REPLACE "TimestampDeltaEncoder encoder(exponent);" "TimestampDeltaEncoder encoder{exponent};"
         aggregate_contents "${aggregate_contents}")
@@ -268,6 +299,21 @@ function(waterwall_enable_quiche)
   file(READ "${headers_source}" headers_contents)
   string(REPLACE "static_assert(false);"
     "static_assert(kExpectedType != kExpectedType);" headers_contents "${headers_contents}")
+  # MSVC cannot constinit this std::make_pair/member-pointer expression. An
+  # aggregate keeps the same two binding types and constant initialization.
+  string(REPLACE [=[ABSL_CONST_INIT std::array kInitHeaderFields{
+    std::make_pair("u", &WebTransportInitHeader::initial_unidi_limit),
+    std::make_pair("bl", &WebTransportInitHeader::initial_incoming_bidi_limit),
+    std::make_pair("br", &WebTransportInitHeader::initial_outgoing_bidi_limit),
+};]=] [=[struct InitHeaderField {
+  const char* name;
+  uint64_t WebTransportInitHeader::*accessor;
+};
+ABSL_CONST_INIT std::array<InitHeaderField, 3> kInitHeaderFields{{
+    {"u", &WebTransportInitHeader::initial_unidi_limit},
+    {"bl", &WebTransportInitHeader::initial_incoming_bidi_limit},
+    {"br", &WebTransportInitHeader::initial_outgoing_bidi_limit},
+}};]=] headers_contents "${headers_contents}")
   set(previous_headers "")
   if(EXISTS "${headers_compat}")
     file(READ "${headers_compat}" previous_headers)
@@ -319,6 +365,13 @@ function(waterwall_enable_quiche)
   add_library(WaterWall::Quiche ALIAS waterwall_quiche)
   target_include_directories(waterwall_quiche SYSTEM PUBLIC "${ww_quiche_SOURCE_DIR}"
     "${ww_quiche_SOURCE_DIR}/quiche/common/platform/default" "${generated_root}")
+  if(WIN32)
+    # Windows headers otherwise define min/max and GDI's ERROR, which collide
+    # with the C++ API and QUICHE logging. Consumers include the same headers.
+    target_compile_definitions(waterwall_quiche PUBLIC NOMINMAX NOGDI WIN32_LEAN_AND_MEAN)
+  endif()
+  # QUICHE's public status macros use C++20 __VA_OPT__.
+  target_compile_options(waterwall_quiche PUBLIC $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:preprocessor>)
   target_link_libraries(waterwall_quiche PUBLIC WaterWall::BoringSSL
     protobuf::libprotobuf-lite waterwall_googleurl zlibstatic
     absl::algorithm_container absl::base absl::config absl::core_headers
