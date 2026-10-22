@@ -14,6 +14,28 @@ function(ww_lwip_replace_once file before after)
 endfunction()
 
 function(ww_apply_lwip_pretend_patch lwip_dir)
+    # Use the same checksum policy for ordinary dispatch and pretend admission.
+    # A first packet must be valid before any child or callback is published;
+    # redispatch after acceptance must not repeat transport checksum work.
+    ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"
+[=[  u8_t for_us = 0;]=]
+[=[  u8_t for_us = 0;
+  u8_t ww_checksum_checked = 0;]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"
+[=[  if (for_us) {
+    LWIP_DEBUGF(UDP_DEBUG | LWIP_DBG_TRACE, ("udp_input: calculating checksum\n"));]=]
+[=[  if (!ww_checksum_checked &&
+      (for_us || netif_is_flag_set(inp, NETIF_FLAG_PRETEND_UDP))) {
+    LWIP_DEBUGF(UDP_DEBUG | LWIP_DBG_TRACE, ("udp_input: calculating checksum\n"));]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"
+[=[#endif /* CHECKSUM_CHECK_UDP */
+    if (pbuf_remove_header(p, UDP_HLEN)) {]=]
+[=[#endif /* CHECKSUM_CHECK_UDP */
+    ww_checksum_checked = 1;
+  }
+
+  if (for_us) {
+    if (pbuf_remove_header(p, UDP_HLEN)) {]=])
     # RFC 791 identifies a datagram being reassembled by source, destination,
     # protocol, and identification. lwIP omits the protocol, so a TCP and a UDP
     # datagram between the same two addresses that happen to share an
@@ -1980,6 +2002,14 @@ udp_sendfrom(struct udp_pcb *pcb, struct pbuf *p,
     return ERR_IF;
   }
 
+  /* Rebinding must preserve list membership even on the pretend fast path. */
+  for (ipcb = udp_pcbs; ipcb != NULL; ipcb = ipcb->next) {
+    if (ipcb == pcb) {
+      rebind = 1;
+      break;
+    }
+  }
+
   if ((ipaddr == NULL) && (port == 0) && (pcb->netif_idx != NETIF_NO_INDEX)) {
     for (ipcb = udp_pcbs; ipcb != NULL; ipcb = ipcb->next) {
       if ((ipcb->pretend_netif_idx == pcb->netif_idx) &&
@@ -2001,8 +2031,15 @@ udp_sendfrom(struct udp_pcb *pcb, struct pbuf *p,
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/udp.c"
         [=[  rebind = 0;
-  /* Check for double bind and rebind of the same pcb */]=]
-        [=[  /* Check for double bind and rebind of the same pcb */]=])
+  /* Check for double bind and rebind of the same pcb */
+  for (ipcb = udp_pcbs; ipcb != NULL; ipcb = ipcb->next) {
+    /* is this UDP PCB already on active list? */
+    if (pcb == ipcb) {
+      rebind = 1;
+      break;
+    }
+  }]=]
+        [=[  /* Active-list membership was checked before pretend binding. */]=])
 
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/udp.c"

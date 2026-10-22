@@ -16,6 +16,16 @@
 #include "lwip/udp.h"
 #include "port_registry.h"
 
+_Static_assert(LWIP_ARRAYSIZE(tcp_pcb_lists) == NUM_TCP_PCB_LISTS, "TCP PCB lists must retain array extent");
+
+typedef enum
+{
+    kTcpPacket,
+    kUdpZeroChecksum,
+    kUdpValidChecksum,
+    kUdpInvalidChecksum
+} packet_kind_t;
+
 static pthread_barrier_t             rendezvous;
 static struct netif                  interfaces[2];
 static uint16_t                      automatic_tcp[2], automatic_udp[2];
@@ -63,8 +73,9 @@ static err_t init_netif(struct netif *netif)
     return ERR_OK;
 }
 static void inject(ww_lwip_engine_t *engine, uint16_t destination, uint8_t flags, uint32_t sequence, uint32_t ack,
-                   bool udp)
+                   packet_kind_t kind)
 {
+    const bool     udp       = kind != kTcpPacket;
     uint8_t        bytes[40] = {0x45};
     const unsigned length    = udp ? 29 : 40;
     put16(bytes + 2, (uint16_t) length);
@@ -80,6 +91,20 @@ static void inject(ww_lwip_engine_t *engine, uint16_t destination, uint8_t flags
     {
         put16(bytes + 24, 9);
         bytes[28] = 42;
+        if (kind != kUdpZeroChecksum)
+        {
+            uint8_t pseudo[21] = {0};
+            memcpy(pseudo, bytes + 12, 8);
+            pseudo[9] = 17;
+            put16(pseudo + 10, 9);
+            memcpy(pseudo + 12, bytes + 20, 9);
+            uint16_t sum = (uint16_t) ~wwLwipChecksum(pseudo, sizeof(pseudo));
+            if (sum == 0)
+                sum = UINT16_MAX;
+            memcpy(bytes + 26, &sum, sizeof(sum));
+            if (kind == kUdpInvalidChecksum)
+                bytes[28] ^= 1;
+        }
     }
     else
     {
@@ -136,11 +161,11 @@ static struct tcp_pcb *makeTimeWait(ww_lwip_engine_t *engine)
     uint32_t iss  = last_tcp_sequence;
     uint16_t port = pcb->local_port;
     CHECK(wwLwipTestPortOccupancy(kWwLwipTcp, port) == 1);
-    inject(engine, port, TCP_SYN | TCP_ACK, 9000, iss + 1, false);
+    inject(engine, port, TCP_SYN | TCP_ACK, 9000, iss + 1, kTcpPacket);
     CHECK(pcb->state == ESTABLISHED);
     CHECK(tcp_close(pcb) == ERR_OK);
     CHECK(pcb->state == FIN_WAIT_1);
-    inject(engine, port, TCP_FIN | TCP_ACK, 9001, iss + 2, false);
+    inject(engine, port, TCP_FIN | TCP_ACK, 9001, iss + 2, kTcpPacket);
     CHECK(pcb->state == TIME_WAIT && tcp_tw_pcbs == pcb);
     CHECK(wwLwipTestPortOccupancy(kWwLwipTcp, port) == 1);
     return pcb;
@@ -180,9 +205,19 @@ static void detailedChecks(ww_lwip_engine_t *engine)
     struct tcp_pcb *listener = tcp_listen(tcp);
     CHECK(listener != NULL);
     CHECK(wwLwipTestPortOccupancy(kWwLwipTcp, 49152) == 1);
-    inject(engine, 49152, TCP_SYN, 100, 0, false);
+    inject(engine, 49152, TCP_SYN, 100, 0, kTcpPacket);
     CHECK(tcp_active_pcbs != NULL && tcp_active_pcbs->state == SYN_RCVD);
+    struct tcp_pcb *child = tcp_active_pcbs;
+    CHECK(child->listener == (struct tcp_pcb_listen *) listener);
+    CHECK(tcp_pcb_lists[0] == &tcp_listen_pcbs.pcbs && tcp_pcb_lists[1] == &tcp_bound_pcbs);
+    CHECK(tcp_pcb_lists[2] == &tcp_active_pcbs && tcp_pcb_lists[3] == &tcp_tw_pcbs);
     CHECK(wwLwipTestPortOccupancy(kWwLwipTcp, 49152) == 2);
+    CHECK(tcp_close(listener) == ERR_OK);
+    CHECK(child->listener == NULL);
+    tcp = tcp_new();
+    CHECK(tcp != NULL && tcp_bind(tcp, IP_ADDR_ANY, 49153) == ERR_OK);
+    listener = tcp_listen(tcp);
+    CHECK(listener != NULL && child->listener == NULL);
     CHECK(tcp_close(listener) == ERR_OK);
     CHECK(wwLwipTestPortOccupancy(kWwLwipTcp, 49152) == 1);
     tcp_abort(tcp_active_pcbs);
@@ -256,18 +291,50 @@ static void detailedChecks(ww_lwip_engine_t *engine)
     registryExhaustion(kWwLwipUdp);
 
     netif_set_flags(&interfaces[owner], NETIF_FLAG_PRETEND);
+    for (unsigned head = 0; head != 2; ++head)
+    {
+        a = udp_new();
+        b = udp_new();
+        CHECK(a != NULL && b != NULL);
+        CHECK(udp_bind(head ? b : a, IP_ADDR_ANY, 49152) == ERR_OK);
+        CHECK(udp_bind(head ? a : b, IP_ADDR_ANY, 49153) == ERR_OK);
+        uint16_t old_port = a->local_port;
+        CHECK(udp_bind_netif(a, &interfaces[owner]) == ERR_OK);
+        CHECK(udp_bind(a, NULL, 0) == ERR_OK);
+        CHECK(a->local_port == 0 && a->ww_tracked_port == 0);
+        CHECK(wwLwipTestPortOccupancy(kWwLwipUdp, old_port) == 0);
+        CHECK(udp_pcbs == (head ? a : b));
+        CHECK(udp_pcbs->next == (head ? b : a) && udp_pcbs->next->next == NULL);
+        CHECK(udp_bind(a, NULL, 0) == ERR_USE);
+        CHECK(udp_bind_netif(b, &interfaces[owner]) == ERR_OK);
+        old_port = b->local_port;
+        CHECK(udp_bind(b, NULL, 0) == ERR_USE);
+        CHECK(b->local_port == old_port && b->pretend_netif_idx == NETIF_NO_INDEX);
+        CHECK(wwLwipTestPortOccupancy(kWwLwipUdp, old_port) == 1);
+        udp_remove(a);
+        udp_remove(b);
+        CHECK(udp_pcbs == NULL);
+    }
     a = udp_new();
     CHECK(a != NULL);
     CHECK(udp_bind_netif(a, &interfaces[owner]) == ERR_OK);
     CHECK(udp_bind(a, NULL, 0) == ERR_OK);
     udp_recv(a, acceptChild, NULL);
-    inject(engine, 49152, 0, 0, 0, true);
+    inject(engine, 49152, 0, 0, 0, kUdpInvalidChecksum);
+    CHECK(pretend_child == NULL && received == 0 && udp_pcbs == a && a->next == NULL);
+    CHECK(wwLwipTestPortOccupancy(kWwLwipUdp, 49152) == 0);
+    inject(engine, 49152, 0, 0, 0, kUdpValidChecksum);
     CHECK(pretend_child != NULL && received == 1);
     CHECK(wwLwipTestPortOccupancy(kWwLwipUdp, 49152) == 1);
+    struct udp_pcb *accepted = pretend_child;
+    inject(engine, 49152, 0, 0, 0, kUdpZeroChecksum);
+    CHECK(pretend_child == accepted && received == 2);
+    inject(engine, 49152, 0, 0, 0, kUdpInvalidChecksum);
+    CHECK(pretend_child == accepted && received == 2);
     udp_remove(pretend_child);
     pretend_child = NULL;
     refuse_child  = true;
-    inject(engine, 49152, 0, 0, 0, true);
+    inject(engine, 49152, 0, 0, 0, kUdpZeroChecksum);
     CHECK(wwLwipTestPortOccupancy(kWwLwipUdp, 49152) == 0);
     CHECK(refused_count == 1);
     udp_remove(a);

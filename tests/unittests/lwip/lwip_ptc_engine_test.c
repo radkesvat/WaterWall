@@ -40,12 +40,14 @@ typedef struct probe_s
     unsigned rewritten_hash_mismatches;
     bool     byte_reserved;
     sbuf_t  *tcp_input[2];
+    unsigned undelivered_udp[2];
 } probe_t;
 static fixture_t         fixtures[2];
 static probe_t           probes[2];
 static pthread_barrier_t barrier;
 static atomic_bool       finished[2];
 static uint32_t          fake_address;
+static void              stageUndeliveredChild(wid_t wid);
 
 void __real_nodemanagerQuiesceWorker(wid_t, const ww_lifecycle_context_t *);
 void __wrap_nodemanagerQuiesceWorker(wid_t, const ww_lifecycle_context_t *);
@@ -60,7 +62,19 @@ void __wrap_nodemanagerQuiesceWorker(wid_t wid, const ww_lifecycle_context_t *co
 void __wrap_nodemanagerStopWorkerResources(wid_t wid, const ww_lifecycle_context_t *context)
 {
     for (unsigned i = 0; i < 2; ++i)
+    {
+        interface_route_context_t *route = ((ptc_tstate_t *) tunnelGetState(fixtures[i].ptc))->routes_v4[wid];
+        CHECK(route != NULL && probes[wid].undelivered_udp[i] == (i == 0 ? 1U : 0U));
+        const uint8_t     index      = netif_get_index(&route->netif);
+        const uint32_t    generation = route->netif.ww_generation;
+        ww_lwip_engine_t *engine     = route->engine;
         ptcTunnelOnWorkerStop(fixtures[i].ptc, wid, context);
+        ww_lwip_engine_t *previous;
+        CHECK(wwLwipEngineEnter(engine, &previous));
+        for (struct udp_pcb *pcb = udp_pcbs; pcb != NULL; pcb = pcb->next)
+            CHECK(pcb->netif_idx != index || pcb->netif_generation != generation);
+        wwLwipEngineLeave(engine, previous);
+    }
     __real_nodemanagerStopWorkerResources(wid, context);
 }
 void __wrap_workerMessagesDestroyDetached(worker_message_queue_t *queue)
@@ -264,6 +278,8 @@ static void finishTimer(wtimer_t *timer)
     wid_t    wid = getLoopWorkerWID(weventGetLoop(timer));
     probe_t *p   = &probes[wid];
     CHECK(p->tcp == 2 && p->udp == 2 && p->init == 4);
+    if (p->undelivered_udp[0] == 0)
+        stageUndeliveredChild(wid);
     atomicStoreExplicit(&finished[wid], true, memory_order_release);
     if (wid == 0 && ! atomicLoadExplicit(&finished[1], memory_order_acquire))
     {
@@ -273,6 +289,41 @@ static void finishTimer(wtimer_t *timer)
     CHECK((wid == 0 ? workerInstallApplicationQuiesceRequest(getWorker(wid), wwLifecycleProcessShutdown())
                     : workerRequestQuiesceResult(getWorker(wid))) != kWorkerQuiesceRequestUnavailable);
 }
+
+static void acceptUndeliveredChild(void *argument, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *address,
+                                   u16_t port)
+{
+    interface_route_context_t *route = argument;
+    ptcUdpAccept(route, pcb, p, address, port);
+    CHECK(pcb->recv == ptcUdpReceived);
+    /* Model an accepted child whose initial delivery never acquires a line.
+     * The raw UDP dispatcher frees this datagram when no receiver is installed. */
+    udp_recv(pcb, NULL, NULL);
+    unsigned fixture = route->tunnel == fixtures[0].ptc ? 0 : 1;
+    ++probes[route->packet_wid].undelivered_udp[fixture];
+}
+
+static void stageUndeliveredChild(wid_t wid)
+{
+    fixture_t                 *fixture    = &fixtures[0];
+    line_t                    *line       = tunnelchainGetWorkerPacketLine(fixture->chain, wid);
+    interface_route_context_t *route      = ((ptc_tstate_t *) tunnelGetState(fixture->ptc))->routes_v4[wid];
+    const isize_t              flow_count = ptc_udp_flow_map_t_size(&route->udp_flows);
+    ww_lwip_engine_t          *previous;
+    CHECK(wwLwipEngineEnter(route->engine, &previous));
+    udp_recv(route->udp_pcb, acceptUndeliveredChild, route);
+    wwLwipEngineLeave(route->engine, previous);
+    sbuf_t *undelivered = packet(line, 17, fake_address, 0, 0, "world", 5);
+    PUT_BE16(sbufGetMutablePtr(undelivered) + 22, 82);
+    CHECK(calcFullPacketChecksum(sbufGetMutablePtr(undelivered), sbufGetLength(undelivered)));
+    inject(fixture, line, undelivered);
+    CHECK(probes[wid].undelivered_udp[0] == 1);
+    CHECK(ptc_udp_flow_map_t_size(&route->udp_flows) == flow_count);
+    CHECK(wwLwipEngineEnter(route->engine, &previous));
+    udp_recv(route->udp_pcb, ptcUdpAccept, route);
+    wwLwipEngineLeave(route->engine, previous);
+}
+
 static void setup(void *worker_ptr, void *a, void *b, void *c)
 {
     (void) a;
@@ -358,7 +409,7 @@ int main(void)
     for (unsigned i = 0; i < 2; ++i)
     {
         fixture_t *f                = &fixtures[i];
-        nodes[i].node_settings_json = cJSON_Parse("{\"fake-dns\":{\"cache-size\":2}}");
+        nodes[i].node_settings_json = cJSON_Parse("{\"fake-dns\":{\"cache-size\":2,\"ttl\":0}}");
         f->ptc                      = ptcTunnelCreate(&nodes[i]);
         CHECK(f->ptc);
         cJSON_Delete(nodes[i].node_settings_json);

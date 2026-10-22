@@ -157,10 +157,10 @@ static u32_t ww_tcp_reconcile_epoch;
          &tcp_active_pcbs, &tcp_tw_pcbs
 };]=]
 [=[#if WW_LWIP_WORKER_ENGINES
-struct tcp_pcb ***wwLwipTcpLists(void) {
-  struct tcp_pcb ***lists = wwLwipModuleState(kWwLwipState_tcp_lists);
-  lists[0] = &tcp_listen_pcbs.pcbs; lists[1] = &tcp_bound_pcbs;
-  lists[2] = &tcp_active_pcbs; lists[3] = &tcp_tw_pcbs;
+ww_tcp_pcb_lists_t *wwLwipTcpLists(void) {
+  ww_tcp_pcb_lists_t *lists = wwLwipModuleState(kWwLwipState_tcp_lists);
+  (*lists)[0] = &tcp_listen_pcbs.pcbs; (*lists)[1] = &tcp_bound_pcbs;
+  (*lists)[2] = &tcp_active_pcbs; (*lists)[3] = &tcp_tw_pcbs;
   return lists;
 }
 #else
@@ -171,8 +171,9 @@ struct tcp_pcb **const tcp_pcb_lists[] = {&tcp_listen_pcbs.pcbs, &tcp_bound_pcbs
     ww_lwip_replace_once("${lwip_dir}/src/include/lwip/priv/tcp_priv.h"
 [=[extern struct tcp_pcb ** const tcp_pcb_lists[NUM_TCP_PCB_LISTS];]=]
 [=[#if WW_LWIP_WORKER_ENGINES
-struct tcp_pcb ***wwLwipTcpLists(void);
-#define tcp_pcb_lists (wwLwipTcpLists())
+typedef struct tcp_pcb **ww_tcp_pcb_lists_t[NUM_TCP_PCB_LISTS];
+ww_tcp_pcb_lists_t *wwLwipTcpLists(void);
+#define tcp_pcb_lists (*wwLwipTcpLists())
 #else
 extern struct tcp_pcb ** const tcp_pcb_lists[NUM_TCP_PCB_LISTS];
 #endif]=])

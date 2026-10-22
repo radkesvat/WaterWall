@@ -119,6 +119,24 @@ static void ptcDestroyUdpFlowPcbs(interface_route_context_t *route)
             }
         }
     }
+
+    /* Acceptance publishes an exact-netif child before the first receive
+     * callback creates its normal line. The engine list owns that interim
+     * state too, including a child whose first delivery was refused. */
+    struct udp_pcb *pcb = udp_pcbs;
+    while (pcb != NULL)
+    {
+        struct udp_pcb *next = pcb->next;
+        if (pcb != route->udp_pcb && pcb->netif_idx == netif_get_index(&route->netif) &&
+            pcb->netif_generation == route->netif.ww_generation &&
+            pcb->pretend_netif_idx == netif_get_index(&route->netif) &&
+            pcb->pretend_netif_generation == route->netif.ww_generation)
+        {
+            udp_recv(pcb, NULL, NULL);
+            udp_remove(pcb);
+        }
+        pcb = next;
+    }
 }
 
 static void ptcDestroyRouteContext(interface_route_context_t *route)
