@@ -46,8 +46,10 @@ adaptation is generated in the build tree and preserves the read-only list.
 The WebTransport header parser's unsupported-template-branch assertion is made
 dependent for the same pre-CWG2518 compilers; its accepted types stay unchanged.
 
-Runtime dependencies use WaterWall's compiler/runtime, CPU and IPO policy. A
-separate native CMake host build produces the matching protoc without target
+Runtime dependencies use WaterWall's compiler/runtime, CPU and IPO policy.
+BoringSSL builds the linked `ssl`/`crypto` targets; its unused
+`pki` and `decrepit` targets are excluded from the default build.
+A separate native CMake host build produces the matching protoc without target
 toolchain, CPU, sanitizer or IPO flags; cross builds execute only this host tool.
 Its pinned sources are staged once under the shared host-build identity, so
 runtime build directories do not change the host compiler's source paths.

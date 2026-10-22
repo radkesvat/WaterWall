@@ -14,7 +14,9 @@ function(waterwall_enable_boringssl)
   set(BUILD_TESTING OFF)
   set(BORINGSSL_PREFIX WW_BSSL)
   set(boringssl_source "${PROJECT_SOURCE_DIR}/tunnels/TlsClient/boringssl")
-  add_subdirectory("${boringssl_source}" "${CMAKE_BINARY_DIR}/ww-dependencies/boringssl")
+  # Build the ssl/crypto closure requested by consumers. Upstream also defines
+  # unused pki/decrepit libraries, which must not join WaterWall's default build.
+  add_subdirectory("${boringssl_source}" "${CMAKE_BINARY_DIR}/ww-dependencies/boringssl" EXCLUDE_FROM_ALL)
 
   foreach(dependency IN ITEMS fipsmodule crypto ssl decrepit pki)
     if(TARGET ${dependency})
