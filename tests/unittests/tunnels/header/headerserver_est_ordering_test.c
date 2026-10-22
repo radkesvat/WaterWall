@@ -1,7 +1,8 @@
 /* HeaderServer Est ordering with a worker-zero loop/pool, an owning previous
  * mock and borrowing node/next mocks. Checks synchronous Est, nested ABC order,
  * close during Est, exact byte/entry reentry limits, state/buffer reclamation,
- * and (WW_HAVE_SPLICE) split headers, identity and PROXY modes via private pipes.
+ * protocol markers, metadata preservation and (WW_HAVE_SPLICE) split headers,
+ * identity and PROXY modes via private pipes.
  * Failures use _Exit(1); requires the fixture's GNU wrappers.
  * CTest: waterwall.headerserver_est_ordering_unit. */
 #include "HeaderServer/structure.h"
@@ -303,8 +304,160 @@ static void testHeaderSplice(void)
 }
 #endif
 
+static address_context_t protocol_source, protocol_destination;
+
+static void headerRequireContext(const address_context_t *actual, const address_context_t *expected)
+{
+    twfRequire(ipAddrEqualsExact(&actual->ip_address, &expected->ip_address) && actual->port == expected->port &&
+                   actual->domain == expected->domain && actual->domain_len == expected->domain_len &&
+                   actual->domain_strategy == expected->domain_strategy && actual->type_ip == expected->type_ip &&
+                   actual->domain_constant == expected->domain_constant &&
+                   actual->domain_resolved == expected->domain_resolved && actual->proto_tcp == expected->proto_tcp &&
+                   actual->proto_udp == expected->proto_udp && actual->proto_icmp == expected->proto_icmp &&
+                   actual->proto_packet == expected->proto_packet &&
+                   actual->optional_flags.detected_protocols == expected->optional_flags.detected_protocols,
+               "protocol override changed unrelated address metadata");
+}
+
+static void headerProtocolContexts(line_t *l, uint8_t protocol)
+{
+    address_context_t *src  = lineGetSourceAddressContext(l);
+    address_context_t *dest = lineGetDestinationAddressContext(l);
+    twfRequire(addresscontextSetIpAddress(src, "2001:db8::1") && addresscontextSetIpAddress(dest, "198.51.100.2"),
+               "protocol fixture endpoint setup");
+    twfRequire(addresscontextSetObservedDomain(src, (const uint8_t *) "source.example", 14) &&
+                   addresscontextSetObservedDomain(dest, (const uint8_t *) "destination.example", 19),
+               "protocol fixture domain setup");
+    src->port                               = 1234;
+    dest->port                              = 443;
+    src->domain_strategy                    = kDsOnlyIpV6;
+    dest->domain_strategy                   = kDsPreferIpV4;
+    src->optional_flags.detected_protocols  = kAddressContextProtocolTls;
+    dest->optional_flags.detected_protocols = kAddressContextProtocolHttp1 | kAddressContextRouteFlagPinnedDestination;
+    addresscontextSetOnlyProtocol(src, IP_PROTO_UDP);
+    dest->proto_tcp = dest->proto_udp = dest->proto_icmp = dest->proto_packet = true;
+
+    protocol_source      = *src;
+    protocol_destination = *dest;
+    addresscontextSetOnlyProtocol(&protocol_destination, protocol);
+}
+
+static void headerProtocolNextInit(est_fixture_t *f, line_t *l)
+{
+    headerRequireContext(lineGetSourceAddressContext(l), &protocol_source);
+    headerRequireContext(lineGetDestinationAddressContext(l), &protocol_destination);
+    initEst(f, l);
+}
+
+static sbuf_t *headerProtocolBytes(line_t *l, const void *data, uint32_t length, bool splice)
+{
+#if WW_HAVE_SPLICE
+    if (splice)
+        return headerPipe(l, data, length, 0);
+#else
+    discard splice;
+#endif
+    return estBytes(l, data, length);
+}
+
+static void testHeaderProtocol(void)
+{
+    const char   *settings[]  = {"{\"override\":\"dest_context->protocol\"}",
+                                 "{\"override\":\"line->dest_ctx->protocol\"}"};
+    const uint8_t protocols[] = {6, 17};
+    for (unsigned splice = 0; splice <= WW_HAVE_SPLICE; ++splice)
+    {
+        for (unsigned mode = 0; mode < 2; ++mode)
+        {
+            /* Header alone, coalesced data with reentrant ABC, and close in Init. */
+            for (unsigned scenario = 0; scenario < 3; ++scenario)
+            {
+                est_fixture_t f;
+                headerSetup(&f);
+                cJSON *json = cJSON_Parse(settings[mode]);
+                twfRequire(headerserverLoadSettings(tunnelGetState(f.node), json), "protocol override settings");
+                cJSON_Delete(json);
+                headerProtocolContexts(f.line, protocols[mode]);
+                f.on_init = headerProtocolNextInit;
+                f.on_est  = scenario == 1 ? nestedInput : scenario == 2 ? closeFromEst : NULL;
+                f.on_up   = scenario == 1 ? nestedAfterFirst : NULL;
+#if WW_HAVE_SPLICE
+                if (splice)
+                    f.next->fnPayloadU = f.prev->fnPayloadD = headerCapture;
+#endif
+                tunnelUpStreamInit(f.node, f.line);
+                twfRequire(f.init_count == 0, "protocol HeaderServer initialized next before its marker");
+                tunnelUpStreamPayload(f.node, f.line, headerProtocolBytes(f.line, "", 0, splice));
+                twfRequire(f.init_count == 0, "empty payload completed a protocol marker");
+                const uint8_t input[] = {protocols[mode], 'A'};
+                tunnelUpStreamPayload(
+                    f.node, f.line, headerProtocolBytes(f.line, input, scenario == 0 ? 1 : 2, splice));
+                twfRequire(f.init_count == 1 && f.est_count == (scenario == 2 ? 1U : 2U),
+                           "protocol marker changed synchronous Init/Est delivery");
+                if (scenario == 2)
+                    twfRequire(! lineIsAlive(f.line) && f.up_len == 0 && f.up_finish_count == 1,
+                               "protocol HeaderServer sent data after close during Init");
+                else
+                {
+                    twfRequire(f.up_len == (scenario == 0 ? 0U : 3U) &&
+                                   (scenario == 0 || memoryCompare(f.up, "ABC", 3) == 0),
+                               "protocol marker leaked or nested input overtook initial data");
+                    headerRequireBypassed(&f);
+                    tunnelUpStreamPayload(f.node, f.line, headerProtocolBytes(f.line, "U", 1, splice));
+                    tunnelDownStreamPayload(f.node, f.line, headerProtocolBytes(f.line, "D", 1, splice));
+                    twfRequire(f.up[f.up_len - 1] == 'U' && f.down_len == 1 && f.down[0] == 'D',
+                               "protocol bypass changed established payload");
+                    tunnelUpStreamFin(f.node, f.line);
+                    twfRequire(f.up_finish_count == 1 && f.down_finish_count == 0,
+                               "protocol bypass changed Finish direction");
+                    lineDestroy(f.line);
+                }
+                twfRequireLineStateZeroed(f.line, f.node, "protocol HeaderServer retained state after Finish");
+                estFixtureDestroy(&f);
+            }
+        }
+
+        const uint8_t invalid[] = {0, 1, 7, 16, 18, 255};
+        for (unsigned i = 0; i < sizeof(invalid); ++i)
+        {
+            est_fixture_t f;
+            headerSetup(&f);
+            ((headerserver_tstate_t *) tunnelGetState(f.node))->override_mode = kHeaderServerOverrideModeHeaderProtocol;
+            tunnelUpStreamInit(f.node, f.line);
+            const uint8_t input[] = {invalid[i], 'X'};
+            tunnelUpStreamPayload(f.node, f.line, headerProtocolBytes(f.line, input, sizeof(input), splice));
+            twfRequire(! lineIsAlive(f.line) && f.init_count == 0 && f.up_finish_count == 0 &&
+                           f.down_finish_count == 1 && f.up_len == 0,
+                       "invalid protocol marker did not close only its initialized owner");
+            twfRequireLineStateZeroed(f.line, f.node, "invalid protocol marker retained state");
+            estFixtureDestroy(&f);
+        }
+    }
+
+    for (unsigned downstream = 0; downstream < 2; ++downstream)
+    {
+        est_fixture_t f;
+        headerSetup(&f);
+        ((headerserver_tstate_t *) tunnelGetState(f.node))->override_mode = kHeaderServerOverrideModeHeaderProtocol;
+        tunnelUpStreamInit(f.node, f.line);
+        tunnelUpStreamPayload(f.node, f.line, estBytes(f.line, "", 0));
+        if (downstream)
+            tunnelDownStreamFin(f.node, f.line);
+        else
+        {
+            tunnelUpStreamFin(f.node, f.line);
+            lineDestroy(f.line);
+        }
+        twfRequire(f.init_count == 0 && f.up_finish_count == 0 && f.down_finish_count == downstream,
+                   "pending protocol Finish crossed an uninitialized direction");
+        twfRequireLineStateZeroed(f.line, f.node, "pending protocol Finish retained state");
+        estFixtureDestroy(&f);
+    }
+}
+
 int main(void)
 {
+    TEST_RUN_CASE(testHeaderProtocol);
     twfSetCase("reentry byte limit");
     testReentryLimit(overflowReentryBytes);
     twfSetCase("reentry entry limit");

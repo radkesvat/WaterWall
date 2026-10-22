@@ -1,5 +1,5 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HeaderServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HeaderServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -15,9 +15,10 @@ bypasses itself. Constant-port mode bypasses immediately after applying the port
 Pause/Resume are transparent and repeatable once the next side is initialized; they do not gate the initial replay.
 
 `HeaderServer` is the server-side reader for small connection metadata headers.
-It can do three different jobs:
+It can do four different jobs:
 
 - consume the WaterWall 2-byte port header from `HeaderClient` and write it into `dest_context->port`
+- consume the WaterWall 1-byte TCP/UDP header and replace only `dest_context->protocol`
 - consume HAProxy PROXY protocol v1 or v2 and write the advertised client IPv4 and port into `src_context`
 - set one constant destination port during upstream `Init`
 
@@ -79,6 +80,30 @@ The matching client-side `HeaderClient` should use:
   "next": "relay-connector"
 }
 ```
+
+### Restore only TCP/UDP identity
+
+Use this when the sender provides only the protocol and the destination address
+and port are already known:
+
+```json
+{
+  "name": "protocol-reader",
+  "type": "HeaderServer",
+  "settings": {
+    "override": "dest_context->protocol"
+  },
+  "next": "router-or-connector"
+}
+```
+
+Pair it with `HeaderClient.data = "dest_context->protocol"` for the sender's
+intended destination transport, or `"src_context->protocol"` for its accepted
+source transport. The server applies the marker before initializing `next`,
+without changing any address, port, or source metadata.
+
+UDP over a TCP carrier still requires separate datagram framing, such as the
+`UdpOverTcp` pair.
 
 ### Read source IP and port from PROXY protocol
 
@@ -164,6 +189,8 @@ Accepted values:
 | --- | --- |
 | `"dest_context->port"` | Read the 2-byte WaterWall upstream header and set `dest_ctx.port`. |
 | `"line->dest_ctx->port"` | Compatibility alias for `"dest_context->port"`. |
+| `"dest_context->protocol"` | Read the 1-byte WaterWall TCP/UDP header and replace only `dest_ctx.protocol`. |
+| `"line->dest_ctx->protocol"` | Alias for `"dest_context->protocol"`. |
 | `"proxy-protocol->source-fields"` | Read PROXY protocol v1 or v2, then set `src_ctx.ip` and `src_ctx.port`. |
 | `1` through `65535` | Set this constant destination port during upstream `Init`. |
 
@@ -186,6 +213,25 @@ across payload callbacks.
 
 Decoded ports below `10` are rejected to preserve the tunnel's existing
 conservative close behavior.
+
+## WaterWall Protocol Header Mode
+
+When `override` is `"dest_context->protocol"` or
+`"line->dest_ctx->protocol"`, `HeaderServer` waits for one upstream byte. It
+consumes `6` as TCP or `17` as UDP and replaces only:
+
+```text
+line->routing_context.dest_ctx.protocol
+```
+
+The marker is read once per normal layer-4 line. All source metadata and the
+destination address and port are preserved. The server applies the protocol
+before calling `next` Init, then forwards any remaining payload in order. Empty
+payload callbacks do not complete the header. Any other byte closes the line
+without initializing `next`.
+
+This is internal routing metadata, with no IP address, port, or PROXY protocol
+fields. It does not encode UDP datagram boundaries.
 
 ## PROXY Protocol Source-Fields Mode
 
@@ -277,6 +323,7 @@ The tunnel does not call `lineDestroy()` because it does not create the line.
 | Value | Size |
 | --- | --- |
 | WaterWall port header | `2 bytes` |
+| WaterWall protocol header | `1 byte` |
 | minimum accepted WaterWall header port | `10` |
 | PROXY protocol v1 header | up to `108 bytes` |
 | PROXY protocol v2 base header | `16 bytes` |
@@ -289,6 +336,7 @@ not require left padding.
 ## Notes and Caveats
 
 - Use WaterWall port-header mode with `HeaderClient.data = "src_context->port"`.
+- Use protocol-header mode with `HeaderClient.data = "src_context->protocol"` or `"dest_context->protocol"`; UDP over TCP needs separate datagram framing.
 - Use PROXY source-fields mode with a trusted PROXY sender.
 - PROXY source-fields mode is IPv4-only.
 - PROXY source-fields mode updates only `src_ctx`; it does not rewrite `dest_ctx`.
@@ -312,7 +360,7 @@ Source-backed metadata:
 ## Splice Support
 
 `HeaderServer` advertises `kNodeFlagSupportsSplice`. While waiting for a WaterWall
-port header or a PROXY protocol header, it materializes the entire received
+port/protocol header or a PROXY protocol header, it materializes the entire received
 payload with `sbufEnsureOrdinary()` before passing it to BufferStream. This also
 preserves any application bytes coalesced with the header. Once header routing
 is complete, both directions and the bounded initial-reentry queue preserve

@@ -7,7 +7,8 @@ typedef enum headerserver_override_mode_e
     kHeaderServerOverrideModeNone = 0,
     kHeaderServerOverrideModeConstant,
     kHeaderServerOverrideModeHeaderPort,
-    kHeaderServerOverrideModeProxyProtocolSourceFields
+    kHeaderServerOverrideModeProxyProtocolSourceFields,
+    kHeaderServerOverrideModeHeaderProtocol
 } headerserver_override_mode_e;
 
 typedef enum headerserver_phase_e
@@ -34,6 +35,7 @@ typedef struct headerserver_lstate_s
 enum
 {
     kHeaderServerHeaderSize                     = 2,
+    kHeaderServerProtocolHeaderSize             = 1,
     kHeaderServerMinAllowedPort                 = 10,
     kHeaderServerProxyProtocolV1MaxHeaderSize   = 108,
     kHeaderServerProxyProtocolV2SignatureSize   = 12,

@@ -17,8 +17,14 @@ static bool headerserverParsePort(uint16_t *out, const cJSON *value, const char 
 
 bool headerserverLoadSettings(headerserver_tstate_t *ts, const cJSON *settings)
 {
-    dynamic_value_t override = parseDynamicNumericValueFromJsonObject(
-        settings, "override", 3, "dest_context->port", "line->dest_ctx->port", "proxy-protocol->source-fields");
+    dynamic_value_t override = parseDynamicNumericValueFromJsonObject(settings,
+                                                                      "override",
+                                                                      5,
+                                                                      "dest_context->port",
+                                                                      "line->dest_ctx->port",
+                                                                      "proxy-protocol->source-fields",
+                                                                      "dest_context->protocol",
+                                                                      "line->dest_ctx->protocol");
 
     switch (override.status)
     {
@@ -31,6 +37,11 @@ bool headerserverLoadSettings(headerserver_tstate_t *ts, const cJSON *settings)
         ts->override_mode = kHeaderServerOverrideModeProxyProtocolSourceFields;
         return true;
 
+    case kDvsFourthOption:
+    case kDvsFifthOption:
+        ts->override_mode = kHeaderServerOverrideModeHeaderProtocol;
+        return true;
+
     case kDvsConstant: {
         const cJSON *override_json = cJSON_GetObjectItemCaseSensitive(settings, "override");
         ts->override_mode          = kHeaderServerOverrideModeConstant;
@@ -38,8 +49,8 @@ bool headerserverLoadSettings(headerserver_tstate_t *ts, const cJSON *settings)
     }
 
     default:
-        LOGF("HeaderServer: settings.override is required and must be a port number, \"dest_context->port\", or "
-             "\"proxy-protocol->source-fields\"");
+        LOGF("HeaderServer: settings.override is required and must be a port number, \"dest_context->port\", "
+             "\"dest_context->protocol\", or \"proxy-protocol->source-fields\"");
         return false;
     }
 }

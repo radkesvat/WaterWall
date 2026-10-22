@@ -12,6 +12,7 @@ waterwall.framed_keepalive_client_watchdog_splice_true,
 waterwall.framed_keepalive_server_splice_false, waterwall.framed_keepalive_server_splice_true,
 waterwall.framed_keepalive_splice_false, waterwall.framed_keepalive_splice_true,
 waterwall.framed_port_splice_false, waterwall.framed_port_splice_true,
+waterwall.framed_protocol_splice_false, waterwall.framed_protocol_splice_true,
 waterwall.framed_v1_splice_false, waterwall.framed_v1_splice_true, waterwall.framed_v2_splice_false,
 waterwall.framed_v2_splice_true. Limiter variants:
 waterwall.framed_softiplimiter_{vless,trojan}_splice_{false,true} and
@@ -118,6 +119,15 @@ def run(binary, mode, enabled):
                   "settings": {"simultaneous-tries-perline": 3}}, connector_node("carrier", PEER_PORT),
                  listener_node("peer", PEER_PORT, "server"),
                  {"name": "server", "type": "ConnectionFisherServer", "next": "backend"},
+                 connector_node("backend", BACKEND_PORT)]
+        prefix = b""
+    elif mode == "protocol":
+        nodes = [listener_node("app", APP_PORT, "client"),
+                 {"name": "client", "type": "HeaderClient", "next": "carrier",
+                  "settings": {"data": "src_context->protocol"}}, connector_node("carrier", PEER_PORT),
+                 listener_node("peer", PEER_PORT, "server"),
+                 {"name": "server", "type": "HeaderServer", "next": "backend",
+                  "settings": {"override": "dest_context->protocol"}},
                  connector_node("backend", BACKEND_PORT)]
         prefix = b""
     elif mode == "keepalive":

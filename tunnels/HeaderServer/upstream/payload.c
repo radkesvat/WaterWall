@@ -318,6 +318,24 @@ static headerserver_header_parse_result_t headerserverReadConfiguredHeader(tunne
         return kHeaderServerHeaderParseDone;
     }
 
+    case kHeaderServerOverrideModeHeaderProtocol: {
+        if (bufferstreamGetBufLen(&ls->read_stream) < kHeaderServerProtocolHeaderSize)
+        {
+            return kHeaderServerHeaderParseNeedMore;
+        }
+
+        uint8_t protocol = bufferstreamViewByteAt(&ls->read_stream, 0);
+        if (protocol != IP_PROTO_TCP && protocol != IP_PROTO_UDP)
+        {
+            LOGW("HeaderServer: received invalid header protocol %u, closing line", (unsigned int) protocol);
+            return kHeaderServerHeaderParseError;
+        }
+
+        lineReuseBuffer(l, bufferstreamReadExact(&ls->read_stream, kHeaderServerProtocolHeaderSize));
+        addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), protocol);
+        return kHeaderServerHeaderParseDone;
+    }
+
     case kHeaderServerOverrideModeProxyProtocolSourceFields:
         return headerserverReadProxyProtocol(ls, l);
 

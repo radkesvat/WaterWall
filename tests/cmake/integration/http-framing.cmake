@@ -31,10 +31,11 @@ add_waterwall_integration_test(waterwall.http_upgrade_custom_bidirectional_round
 add_waterwall_integration_test(waterwall.http_upgrade_custom_bidirectional_tcp_loopback http_upgrade_custom_bidirectional_tcp_loopback)
 # Exercise framed transforms and limiters across real TCP sockets.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND TARGET TcpListener AND TARGET TcpConnector)
-  foreach(mode IN ITEMS constant port v1 v2 keepalive keepalive_client keepalive_server keepalive_client_watchdog keepalive_client_timeout
+  foreach(mode IN ITEMS constant port v1 v2 protocol keepalive keepalive_client keepalive_server keepalive_client_watchdog keepalive_client_timeout
       softiplimiter_vless softiplimiter_trojan speedlimit_line speedlimit_worker speedlimit_all connectionfisher)
     if((mode MATCHES "^keepalive" AND TARGET KeepAliveClient AND TARGET KeepAliveServer)
        OR (mode MATCHES "^(constant|port|v1|v2)$" AND TARGET HeaderServer)
+       OR (mode STREQUAL "protocol" AND TARGET HeaderClient AND TARGET HeaderServer)
        OR (mode MATCHES "^softiplimiter" AND TARGET SoftIpLimiter)
        OR (mode MATCHES "^speedlimit" AND TARGET SpeedLimit)
        OR (mode STREQUAL "connectionfisher" AND TARGET ConnectionFisherClient AND TARGET ConnectionFisherServer))

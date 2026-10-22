@@ -48,6 +48,23 @@ static bool headerclientParseFrontendIpv4(headerclient_tstate_t *ts, const cJSON
 
 bool headerclientLoadSettings(headerclient_tstate_t *ts, const cJSON *settings)
 {
+    const cJSON *data_json = cJSON_GetObjectItemCaseSensitive(settings, "data");
+    if (cJSON_IsString(data_json) && data_json->valuestring != NULL)
+    {
+        if (stringCompare(data_json->valuestring, "src_context->protocol") == 0 ||
+            stringCompare(data_json->valuestring, "line->src_ctx->protocol") == 0)
+        {
+            ts->data_mode = kHeaderClientDataModeSourceProtocol;
+            return true;
+        }
+        if (stringCompare(data_json->valuestring, "dest_context->protocol") == 0 ||
+            stringCompare(data_json->valuestring, "line->dest_ctx->protocol") == 0)
+        {
+            ts->data_mode = kHeaderClientDataModeDestinationProtocol;
+            return true;
+        }
+    }
+
     dynamic_value_t data = parseDynamicNumericValueFromJsonObject(settings,
                                                                   "data",
                                                                   5,
@@ -74,8 +91,7 @@ bool headerclientLoadSettings(headerclient_tstate_t *ts, const cJSON *settings)
         break;
 
     case kDvsConstant: {
-        const cJSON *data_json = cJSON_GetObjectItemCaseSensitive(settings, "data");
-        ts->data_mode          = kHeaderClientDataModeConstant;
+        ts->data_mode = kHeaderClientDataModeConstant;
         if (! headerclientParsePort(&ts->constant_port, data_json, "settings.data"))
         {
             return false;
@@ -85,7 +101,8 @@ bool headerclientLoadSettings(headerclient_tstate_t *ts, const cJSON *settings)
 
     default:
         LOGF("HeaderClient: settings.data is required and must be a port number, \"src_context->port\", "
-             "\"proxy-protocol\", \"proxy-protocol-v1\", or \"proxy-protocol-v2\"");
+             "\"src_context->protocol\", \"dest_context->protocol\", \"proxy-protocol\", \"proxy-protocol-v1\", "
+             "or \"proxy-protocol-v2\"");
         return false;
     }
 

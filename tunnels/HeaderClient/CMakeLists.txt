@@ -3,7 +3,11 @@ add_library(HeaderClient STATIC
                     instance/api.c
                     instance/node.c
                     common/helpers.c
+                    common/line_state.c
+                    upstream/init.c
+                    upstream/fin.c
                     upstream/payload.c
+                    downstream/fin.c
 )
 
 target_include_directories(HeaderClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HeaderClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HeaderClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -12,18 +12,18 @@ It is most often used for one of two jobs:
 - passing WaterWall routing metadata to a paired `HeaderServer`
 - adding a HAProxy PROXY protocol header before traffic reaches a receiver that understands PROXY protocol
 
-`HeaderClient` does not open sockets and does not create lines. It only mutates the first upstream payload. It keeps no per-line state and permanently bypasses itself before handing that payload onward. The line's active-node mask enforces the one-time behavior. Later callbacks go directly to the adjacent active nodes. Pause/Resume remain transparent and repeatable throughout startup.
+`HeaderClient` does not open sockets and does not create lines. It only mutates the first upstream payload and permanently bypasses itself before handing that payload onward. Protocol modes keep a small per-line snapshot from `Init` until that handoff or `Finish`; port and PROXY modes keep no per-line state. The line's active-node mask enforces the one-time behavior. Later callbacks go directly to the adjacent active nodes. Pause/Resume remain transparent and repeatable throughout startup.
 
 ## What It Does
 
 - Requires `settings.data` to choose the one-time header format.
-- Immediately forwards upstream `Init` to `next`.
+- In protocol modes, validates and snapshots the selected protocol before forwarding upstream `Init` to `next`. Other modes forward `Init` immediately.
 - Prepends the configured header only on the first upstream payload.
-- Supports the old 2-byte WaterWall port header.
+- Supports the 2-byte WaterWall port header and a 1-byte TCP/UDP protocol header.
 - Supports IPv4-only HAProxy PROXY protocol v1 and v2 headers with a configured frontend IPv4 address.
 - Forwards every later upstream payload unchanged.
 - Forwards downstream payload, `Est`, `Pause`, and `Resume` unchanged.
-- Uses the default directional `Init` and `Finish` forwarding callbacks.
+- Clears the protocol snapshot before bypass or directional `Finish`; other modes use the default `Init` and `Finish` callbacks.
 
 ## Typical Placement
 
@@ -117,6 +117,31 @@ Relay side:
 ```
 
 With this layout, a connection accepted by the client side on public port `443` is relayed to `198.51.100.20:9000`, then the relay side connects to `127.0.0.1:443`.
+
+### Transfer only TCP/UDP identity
+
+When the receiver already knows the destination address and port, send only the
+intended destination protocol:
+
+```json
+{
+  "name": "protocol-header",
+  "type": "HeaderClient",
+  "settings": {
+    "data": "dest_context->protocol"
+  },
+  "next": "relay-connector"
+}
+```
+
+Pair this with `HeaderServer.settings.override = "dest_context->protocol"`.
+Use `"src_context->protocol"` instead when the receiver should identify the
+accepted source transport. The selected context must already specify exactly
+TCP or UDP during `HeaderClient`'s upstream `Init`; there is no fallback to the
+other context.
+
+This header carries no address or port. UDP over a TCP carrier still requires
+separate datagram framing, such as the `UdpOverTcp` pair.
 
 ### Force all relayed traffic to one backend port
 
@@ -226,6 +251,10 @@ Accepted values:
 | `1` through `65535` | Encode this constant port as the WaterWall 2-byte port header. |
 | `"src_context->port"` | Encode `line->routing_context.src_ctx.port` as the WaterWall 2-byte port header. |
 | `"line->src_ctx->port"` | Compatibility alias for `"src_context->port"`. |
+| `"src_context->protocol"` | Snapshot `src_ctx.protocol` during `Init` and encode TCP or UDP in a 1-byte header. |
+| `"line->src_ctx->protocol"` | Alias for `"src_context->protocol"`. |
+| `"dest_context->protocol"` | Snapshot `dest_ctx.protocol` during `Init` and encode TCP or UDP in a 1-byte header. |
+| `"line->dest_ctx->protocol"` | Alias for `"dest_context->protocol"`. |
 | `"proxy-protocol"` | Emit a PROXY protocol v2 header. |
 | `"proxy-protocol-v1"` | Emit a PROXY protocol v1 header. |
 | `"proxy-protocol-v2"` | Emit a PROXY protocol v2 header. |
@@ -247,6 +276,19 @@ to:
 ```
 
 The port header is a big-endian 16-bit value. It is sent only once per line. Later upstream payloads are forwarded exactly as received.
+
+For protocol modes, the first upstream payload becomes:
+
+```text
+1-byte protocol header | payload
+```
+
+The byte is `6` for TCP or `17` for UDP, sent only once per normal layer-4 line.
+It contains no IP address, port, or PROXY protocol fields. The client snapshots
+only the selected context during upstream `Init`, before calling `next` Init;
+subsequent connector changes to the routing context cannot change the header.
+If the selected protocol is unset, ambiguous, or unsupported, the client closes
+the line without initializing `next`.
 
 For PROXY protocol modes, `HeaderClient` emits an IPv4 TCP PROXY header. The source IP comes from `line->routing_context.src_ctx`. The destination IP comes from `settings.frontend-ipv4`; `dest_ctx` is not used for the PROXY destination because `TcpConnector` may rewrite `dest_ctx` to the backend it dials before the first payload is sent.
 
@@ -288,6 +330,23 @@ For the WaterWall 2-byte port header:
 }
 ```
 
+For the WaterWall 1-byte protocol header, use either client protocol context
+with this server setting:
+
+```json
+{
+  "name": "header-server",
+  "type": "HeaderServer",
+  "settings": {
+    "override": "dest_context->protocol"
+  },
+  "next": "router-or-connector"
+}
+```
+
+The server changes only `dest_ctx.protocol` before initializing the next node;
+source metadata, destination address, and destination port stay intact.
+
 For PROXY protocol source-field restoration:
 
 ```json
@@ -311,7 +370,7 @@ If `HeaderServer.settings.override` is a number, the server sets a constant dest
 
 | Direction | Behavior |
 | --- | --- |
-| upstream `Init` | Forward to `next`. |
+| upstream `Init` | In protocol modes, validate and snapshot the selected protocol, then forward to `next`; otherwise forward immediately. |
 | upstream first payload | Prepend the configured header, then forward to `next`. |
 | later upstream payload | Forward unchanged to `next`. |
 | upstream pause/resume | Forward to `next`. |
@@ -322,9 +381,10 @@ If `HeaderServer.settings.override` is a number, the server sets a constant dest
 
 ## Finish Behavior
 
-Before the first upstream payload, the default callbacks forward Finish in its
-received direction. After bypass, Finish travels directly to the next active node.
-The node has no per-line resources to clean up.
+Before the first upstream payload, protocol modes zero their per-line snapshot
+before forwarding Finish in its received direction. Other modes use the default
+Finish callbacks. After bypass, Finish travels directly to the next active node;
+the protocol snapshot has already been zeroed.
 
 On upstream `Finish`, `HeaderClient` forwards the finish to `next`.
 
@@ -337,6 +397,7 @@ The tunnel does not call `lineDestroy()` because it does not create the line.
 | Value | Size |
 | --- | --- |
 | WaterWall port header | `2 bytes` |
+| WaterWall protocol header | `1 byte` |
 | PROXY protocol v1 header | up to `108 bytes` |
 | PROXY protocol v2 header | `16` or `28 bytes` |
 | `required_padding_left` | `108 bytes` |
@@ -351,7 +412,8 @@ The node declares `required_padding_left = 108` because it prepends the largest 
 - PROXY protocol modes are IPv4-only for now.
 - PROXY protocol destination IP comes from `settings.frontend-ipv4`, not `dest_ctx`.
 - If one listener accepts traffic on multiple frontend IPv4 addresses, one fixed `frontend-ipv4` may not describe every accepted connection correctly.
-- The encoded value is taken when the first upstream payload arrives.
+- Protocol values are captured during upstream `Init`; port and PROXY fields are read when the first upstream payload arrives.
+- The protocol marker does not preserve UDP datagram boundaries; use separate framing when carrying UDP over TCP.
 - It only mutates the first upstream payload; the response path is transparent.
 
 ## Node Metadata
