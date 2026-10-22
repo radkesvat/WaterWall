@@ -156,11 +156,26 @@ static bool pressure(apiserver_lstate_t *ls)
      * to complete. Only queued work and raw backlog exert byte pressure. */
     assert(ls->input_bytes >= ls->header_size + ls->frame_used);
     size_t pressure_bytes = ls->input_bytes - (ls->header_size + ls->frame_used);
-    if (ls->request_count >= ts->limits.max_queued_requests + 1 ||
+    /* Completed requests keep their wire charge until their output drains.
+     * Reserve no memory here: predict whether those older bytes leave room for
+     * this frame (or any permitted next frame before its header is known).
+     * Raw/partial bytes already counted in input_bytes are part of that frame,
+     * not an additional missing-input charge. The FIFO is count-bounded. */
+    size_t completed_bytes = 0;
+    for (const api_request_t *r = ls->requests; r != NULL; r = r->next)
+    {
+        assert(r->wire_size <= ls->input_bytes - completed_bytes);
+        completed_bytes += r->wire_size;
+    }
+    const size_t next_frame =
+        (ls->header_size == sizeof(ls->header) ? ls->frame_size : ts->limits.max_request_envelope) + sizeof(ls->header);
+    assert(next_frame <= ts->limits.max_input_bytes);
+    const bool needs_room = completed_bytes > ts->limits.max_input_bytes - next_frame;
+    if (ls->request_count >= ts->limits.max_queued_requests + 1 || needs_room ||
         pressure_bytes >= ts->limits.max_input_bytes - ts->limits.max_input_bytes / 4 ||
         ls->input_fragments >= ts->limits.max_input_fragments - ts->limits.max_input_fragments / 4)
         paused = true;
-    else if (ls->request_count <= ts->limits.max_queued_requests / 2 &&
+    else if (! needs_room && ls->request_count <= ts->limits.max_queued_requests / 2 &&
              pressure_bytes <= ts->limits.max_input_bytes / 2 &&
              ls->input_fragments <= ts->limits.max_input_fragments / 2)
         paused = false;

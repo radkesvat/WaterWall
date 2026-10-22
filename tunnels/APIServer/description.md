@@ -1,5 +1,5 @@
 <!--
-Documentation version: 6
+Documentation version: 7
 Sync note: Keep synchronized with WaterWall-Docs/docs/02-noderefs/APIServer.mdx and the Persian node reference.
 -->
 
@@ -122,6 +122,16 @@ raw backlog and fragment/entry limits continue to exert pressure. Bounded parser
 continuations Resume the source when only incomplete input remains, so a permitted
 large request can finish even when its size exceeds the high watermark.
 
+Predictive pressure also pauses input when retained older complete/active requests leave too little input budget for
+the next frame: before its header is known, reserve room conceptually for `max_request_envelope + 4`; afterward use
+its declared complete size. Already buffered bytes are counted once. Completion and output drain release this hold
+and Resume autonomously. An incomplete frame alone cannot stay paused waiting for its own missing bytes. Pause is
+advisory: late, coalesced or noncooperating input still faces the unchanged hard caps and absolute frame deadline.
+
+`max_jobs=64` is a ceiling, not guaranteed concurrent capacity. With current defaults, the shared 64 MiB memory domain
+fits roughly seven small jobs with their 8 MiB handler allowances before substantial session storage; retained input,
+output and actual allocation geometry can reduce that count. Handler working allowance remains independent of the job ceiling.
+
 Working memory must accommodate the actual worker-pool allocation for a 4096-byte result plus 8192 bytes of parsing metadata. A smaller encoded response cap can still return a bounded `response_too_large` error for a valid result.
 
 Runtime JSON parsing keeps strict UTF-8, NUL, duplicate-key, depth/value and
@@ -131,7 +141,7 @@ a UTF-8 handler returns `invalid_response` with no result body; a valid oversize
 encoded result returns `response_too_large`. Both are post-dispatch errors, so a
 write may have committed. Base64 operations may return arbitrary bytes.
 
-Zero does not disable a protection. Trickle input does not reset frame assembly time. Gateway `timeout` and `invalid_encoding` errors close the connection. The request deadline ends when a complete response is published; delivery then has its separate output deadline. Disconnect and timeout abandon execution but retain job reservations until queued cancellation or a running bounded handler actually settles.
+Zero does not disable a protection. Trickle input does not reset frame assembly time. Malformed framing, malformed envelope/schema and invalid authentication close after at most one bounded error. Gateway `timeout` and `invalid_encoding` errors also close the connection. The request deadline ends when a complete response is published; delivery then has its separate output deadline. Disconnect and timeout abandon execution but retain job reservations until queued cancellation or a running bounded handler actually settles.
 
 ## Protocol And Examples
 

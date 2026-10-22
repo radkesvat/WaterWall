@@ -28,7 +28,7 @@ static node_t          node;
 static tunnel_chain_t *chain;
 static line_t         *line;
 static unsigned        calls, finishes, establishments, pauses, resumes, writes;
-static bool            close_est, close_output, pause_output, producer_paused, close_pause;
+static bool            close_est, close_output, pause_output, producer_paused, close_pause, close_resume;
 static uint8_t         captured[4 * 1024 * 1024];
 static size_t          captured_size;
 static size_t          timer_baseline;
@@ -250,6 +250,8 @@ static void onResume(tunnel_t *t, line_t *l)
     discard l;
     ++resumes;
     producer_paused = false;
+    if (close_resume)
+        sourceCloseLine(l);
 }
 static void onOutput(tunnel_t *t, line_t *l, sbuf_t *buffer)
 {
@@ -366,8 +368,9 @@ static void closeLine(void)
     cJSON_Delete(node.node_settings_json);
     memoryFree(node.type);
     require(held.callback == NULL && ! hold_message && ! hold_reply, "held detached completion leaked");
-    close_est = close_output = pause_output = refuse_timer = refuse_message = refuse_reply = close_pause = false;
-    nested_fragments                                                                                     = 0;
+    close_est = close_output = pause_output = refuse_timer = refuse_message = refuse_reply = close_pause =
+        close_resume                                                                       = false;
+    nested_fragments                                                                       = 0;
 }
 
 static void sendBytes(const void *bytes, size_t size)
@@ -619,6 +622,138 @@ static void incompletePressure(void)
             "reentrant pressure closure touched a partially grown frame");
     closeLine();
     memoryFree(bytes);
+}
+
+/* Padding keeps wire retention large while the dispatched body stays tiny. */
+static uint8_t *paddedInput(size_t envelope_size, size_t *wire_size)
+{
+    require(envelope_size >= strlen(request), "padding fixture geometry");
+    char *text = memoryAllocate(envelope_size + 1);
+    memcpy(text, request, strlen(request));
+    memset(text + strlen(request), ' ', envelope_size - strlen(request));
+    text[envelope_size] = 0;
+    uint8_t *bytes      = frame(text, wire_size);
+    memoryFree(text);
+    return bytes;
+}
+
+static void predictivePressure(void)
+{
+    size_t   first_size, next_size;
+    uint8_t *first = paddedInput(1900, &first_size);
+    uint8_t *next  = paddedInput(4096, &next_size);
+    for (unsigned mode = 0; mode < 4; ++mode)
+    {
+        cJSON *json = cJSON_Parse(settings);
+        cJSON_AddNumberToObject(json, "max_request_envelope", 4096);
+        cJSON_AddNumberToObject(json, "max_input_bytes", mode == 1 ? next_size : 5000);
+        char *text = cJSON_PrintUnformatted(json);
+        openSettings(text);
+        memoryFree(text);
+        cJSON_Delete(json);
+        tunnelUpStreamPause(api, line);
+        sendAsProducer(first, first_size);
+        require(producer_paused && pauses == 1 && state()->input_bytes == first_size,
+                "retained request did not predict maximum successor pressure");
+        for (unsigned i = 0; i < 4; ++i)
+            pump();
+        require(calls == 1 && captured_size == 0, "held output dispatched more than once");
+        if (mode == 2)
+        {
+            /* An advisory Pause does not admit excess late/coalesced bytes. */
+            sendBytes(next, next_size);
+            require(! lineIsAlive(line) && calls == 1, "late input exceeded the hard input cap");
+        }
+        else
+        {
+            sendBytes(next, 1);
+            require(producer_paused && state()->header_size == 1, "fragmented unknown header lost hold");
+            sendBytes(next + 1, 3);
+            require(producer_paused && state()->frame_size == 4096, "known maximum frame lost hold");
+            close_resume = mode == 3;
+            tunnelUpStreamResume(api, line);
+            if (mode == 3)
+                require(! lineIsAlive(line) && resumes == 1, "synchronous Resume Finish was unsafe");
+            else
+            {
+                require(lineIsAlive(line) && ! producer_paused && resumes == 1 && state()->input_bytes == 4,
+                        "output completion failed to Resume without new input");
+                sendAsProducer(next + 4, next_size - 4);
+                settle(2);
+                require(lineIsAlive(line) && state()->input_bytes == 0 && ! producer_paused,
+                        "incomplete-only successor failed to make progress");
+                size_t offset = 0;
+                for (unsigned i = 0; i < 2; ++i)
+                {
+                    cJSON *response = reply(&offset);
+                    require(strcmp(cJSON_GetObjectItemCaseSensitive(
+                                       cJSON_GetObjectItemCaseSensitive(response, "result"), "body")
+                                       ->valuestring,
+                                   " exact \"body\" \n") == 0,
+                            "padded requests lost FIFO body data");
+                    cJSON_Delete(response);
+                }
+                require(offset == captured_size, "predictive pressure duplicated output");
+            }
+        }
+        closeLine();
+    }
+    memoryFree(first);
+    memoryFree(next);
+}
+
+static void predictiveKnownFrame(void)
+{
+    size_t   first_size, next_size;
+    uint8_t *first = paddedInput(1900, &first_size);
+    cJSON   *json  = cJSON_Parse(request);
+    cJSON_ReplaceItemInObjectCaseSensitive(json, "id", cJSON_CreateString("second"));
+    cJSON_ReplaceItemInObjectCaseSensitive(json, "body", cJSON_CreateString("second body"));
+    char    *text = cJSON_PrintUnformatted(json);
+    uint8_t *next = frame(text, &next_size);
+    memoryFree(text);
+    cJSON_Delete(json);
+    json = cJSON_Parse(settings);
+    cJSON_AddNumberToObject(json, "max_request_envelope", 4096);
+    cJSON_AddNumberToObject(json, "max_input_bytes", 5000);
+    text = cJSON_PrintUnformatted(json);
+    openSettings(text);
+    memoryFree(text);
+    cJSON_Delete(json);
+    tunnelUpStreamPause(api, line);
+    sendAsProducer(first, first_size);
+    for (unsigned i = 0; i < 4; ++i)
+        pump();
+    require(producer_paused && pauses == 1 && calls == 1 && captured_size == 0,
+            "unknown successor did not pause behind retained output");
+    sendBytes(next, 1);
+    sendBytes(next + 1, 2);
+    require(producer_paused && state()->header_size == 3 && resumes == 0,
+            "partial successor header released predictive pressure early");
+    sendBytes(next + 3, 1);
+    require(lineIsAlive(line) && ! producer_paused && resumes == 1 && state()->header_size == 4 &&
+                state()->frame_size == next_size - 4 && state()->input_bytes == first_size + 4 &&
+                state()->request_count == 1 && calls == 1 && captured_size == 0,
+            "known smaller successor did not Resume while older output remained retained");
+    sendAsProducer(next + 4, next_size - 4);
+    require(state()->request_count == 2 && calls == 1 && captured_size == 0,
+            "small successor bypassed the held older response");
+    tunnelUpStreamResume(api, line);
+    settle(2);
+    size_t offset      = 0;
+    cJSON *first_reply = reply(&offset), *next_reply = reply(&offset);
+    require(strcmp(cJSON_GetObjectItemCaseSensitive(first_reply, "id")->valuestring, "a") == 0 &&
+                strcmp(cJSON_GetObjectItemCaseSensitive(next_reply, "id")->valuestring, "second") == 0 &&
+                strcmp(cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(next_reply, "result"), "body")
+                           ->valuestring,
+                       "second body") == 0 &&
+                offset == captured_size && lineIsAlive(line) && ! producer_paused && state()->input_bytes == 0,
+            "known smaller successor lost FIFO/exact dispatch or pressure settlement");
+    cJSON_Delete(first_reply);
+    cJSON_Delete(next_reply);
+    closeLine();
+    memoryFree(first);
+    memoryFree(next);
 }
 
 static void growthRefusalAndTimeout(void)
@@ -1249,6 +1384,8 @@ int main(void)
     TEST_RUN_CASE(framing);
     TEST_RUN_CASE(receivedAllocation);
     TEST_RUN_CASE(incompletePressure);
+    TEST_RUN_CASE(predictivePressure);
+    TEST_RUN_CASE(predictiveKnownFrame);
     TEST_RUN_CASE(growthRefusalAndTimeout);
     TEST_RUN_CASE(policyAndResults);
     TEST_RUN_CASE(quietRuntimeRequests);
