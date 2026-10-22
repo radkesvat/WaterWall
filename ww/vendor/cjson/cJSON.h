@@ -111,6 +111,13 @@ then using the CJSON_API_VISIBILITY flag to "export" the same symbols the way CJ
 #define cJSON_Object (1 << 6)
 #define cJSON_Raw    (1 << 7) /* raw json */
 
+/* Retain decoded NUL evidence for callers requiring exact C strings. Parsing
+ * and printing remain permissive; duplication preserves these flags even when
+ * copying the visible C-string prefix. String/key setters clear only the flag
+ * for the C string they replace. */
+#define cJSON_StringHasEmbeddedNul 1024
+#define cJSON_NameHasEmbeddedNul   2048
+
 #define cJSON_IsReference 256
 #define cJSON_StringIsConst 512
 

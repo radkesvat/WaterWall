@@ -482,6 +482,7 @@ CJSON_PUBLIC(char*) cJSON_SetValuestring(cJSON *object, const char *valuestring)
     if (strlen(valuestring) <= strlen(object->valuestring))
     {
         strcpy(object->valuestring, valuestring);
+        object->type &= ~cJSON_StringHasEmbeddedNul;
         return object->valuestring;
     }
     copy = (char*) cJSON_strdup((const unsigned char*)valuestring, &global_hooks);
@@ -494,6 +495,7 @@ CJSON_PUBLIC(char*) cJSON_SetValuestring(cJSON *object, const char *valuestring)
         cJSON_free(object->valuestring);
     }
     object->valuestring = copy;
+    object->type &= ~cJSON_StringHasEmbeddedNul;
 
     return copy;
 }
@@ -951,6 +953,10 @@ static cJSON_bool parse_string(cJSON * const item, parse_buffer * const input_bu
     *output_pointer = '\0';
 
     item->type = cJSON_String;
+    if (memchr(output, '\0', (size_t) (output_pointer - output)) != NULL)
+    {
+        item->type |= cJSON_StringHasEmbeddedNul;
+    }
     item->valuestring = (char*)output;
 
     input_buffer->offset = (size_t) (input_end - input_buffer->content);
@@ -1676,6 +1682,7 @@ static cJSON_bool parse_object(cJSON * const item, parse_buffer * const input_bu
 {
     cJSON *head = NULL; /* linked list head */
     cJSON *current_item = NULL;
+    int    name_flags   = 0;
 
     if (input_buffer->depth >= CJSON_NESTING_LIMIT)
     {
@@ -1740,6 +1747,7 @@ static cJSON_bool parse_object(cJSON * const item, parse_buffer * const input_bu
         /* swap valuestring and string, because we parsed the name */
         current_item->string = current_item->valuestring;
         current_item->valuestring = NULL;
+        name_flags                = (current_item->type & cJSON_StringHasEmbeddedNul) ? cJSON_NameHasEmbeddedNul : 0;
 
         if (cannot_access_at_index(input_buffer, 0) || (buffer_at_offset(input_buffer)[0] != ':'))
         {
@@ -1753,6 +1761,7 @@ static cJSON_bool parse_object(cJSON * const item, parse_buffer * const input_bu
         {
             goto fail; /* failed to parse value */
         }
+        current_item->type |= name_flags;
         buffer_skip_whitespace(input_buffer);
     }
     while (can_access_at_index(input_buffer, 0) && (buffer_at_offset(input_buffer)[0] == ','));
@@ -2022,7 +2031,7 @@ static cJSON *create_reference(const cJSON *item, const internal_hooks * const h
 
     memcpy(reference, item, sizeof(cJSON));
     reference->string = NULL;
-    reference->type |= cJSON_IsReference;
+    reference->type   = (reference->type | cJSON_IsReference) & ~cJSON_NameHasEmbeddedNul;
     reference->next = reference->prev = NULL;
     return reference;
 }
@@ -2114,7 +2123,7 @@ static cJSON_bool add_item_to_object(cJSON * const object, const char * const st
     }
 
     item->string = new_key;
-    item->type = new_type;
+    item->type   = new_type & ~cJSON_NameHasEmbeddedNul;
 
     return add_item_to_array(object, item);
 }
@@ -2440,7 +2449,7 @@ static cJSON_bool replace_item_in_object(cJSON *object, const char *string, cJSO
         return false;
     }
 
-    replacement->type &= ~cJSON_StringIsConst;
+    replacement->type &= ~(cJSON_StringIsConst | cJSON_NameHasEmbeddedNul);
 
     return cJSON_ReplaceItemViaPointer(object, get_object_item(object, string, case_sensitive), replacement);
 }

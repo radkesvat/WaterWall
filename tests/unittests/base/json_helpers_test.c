@@ -2,7 +2,8 @@
  * Covers: json helpers; the explicit inputs, callbacks and expected results below define this suite.
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
- * Cases: testJsonIntegerInRange
+ * Cases: integer ranges/provenance and opt-in exact strings across parse, duplicate,
+ * references and string/key replacement.
  * Checks: Assertion labels include: valid uint64 string was rejected; valid uint64 string produced the
  * wrong value; invalid uint64 string was accepted; rejected uint64 string modified the destination
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -181,6 +182,106 @@ static void testExactIntegers(void)
     cJSON_Delete(item);
 }
 
+/* Exact string checks are opt-in and inspect every matching object member.
+ * The ordinary parser and unrelated settings retain their permissive behavior. */
+static void testExactObjectFieldStrings(void)
+{
+    const struct
+    {
+        const char *source;
+        const char *key;
+        bool        exact;
+    } cases[] = {
+        {"{}", "value", true},
+        {"[]", "value", true},
+        {"{\"value\":42}", "value", true},
+        {"{\"value\":null}", "value", true},
+        {"{\"value\":\"\"}", "value", true},
+        {"{\"value\":\"literal\\\\u0000\"}", "value", true},
+        {"{\"\\u0076alue\":\"caf\xc3\xa9\"}", "value", true},
+        {"{\"value\":\"\\ud83d\\ude00\"}", "value", true},
+        {"{\"value\":\"bad\\u0000suffix\"}", "value", false},
+        {"{\"value\\u0000suffix\":false}", "value", false},
+        {"{\"value\\u0000suffix\":{}}", "value", false},
+        {"{\"value\":\"bad\xc0\xaf\"}", "value", false},
+        {"{\"bad\xc0\xaf\":true}", "bad\xc0\xaf", false},
+        {"{\"value\":true,\"value\\u0000suffix\":false}", "value", false},
+        {"{\"value\":\"good\",\"value\":\"bad\\u0000suffix\"}", "value", false},
+        {"{\"value\":\"good\",\"value\":\"bad\xc0\xaf\"}", "value", false},
+        {"{\"value\":true,\"value\":false}", "value", true},
+        {"{\"other\\u0000suffix\":\"bad\\u0000suffix\"}", "value", true},
+        {"{\"value\":{\"other\":\"bad\\u0000suffix\"}}", "value", true},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        cJSON *parsed = cJSON_Parse(cases[i].source);
+        require(parsed != NULL, "exact string fixture must retain permissive parsing");
+        require(jsonObjectFieldStringsAreExact(parsed, cases[i].key) == cases[i].exact,
+                "exact string helper returned the wrong lexical result");
+        cJSON *copy = cJSON_Duplicate(parsed, true);
+        require(copy != NULL && jsonObjectFieldStringsAreExact(copy, cases[i].key) == cases[i].exact,
+                "duplication changed exact string evidence");
+        cJSON_Delete(copy);
+        cJSON_Delete(parsed);
+    }
+    require(jsonObjectFieldStringsAreExact(NULL, "value"), "missing object should remain a schema concern");
+}
+
+static void testStringProvenanceMutations(void)
+{
+    cJSON *source = cJSON_Parse("{\"value\\u0000suffix\":\"bad\\u0000suffix\"}");
+    require(source != NULL, "provenance fixture failed to parse");
+    cJSON *value = cJSON_GetObjectItemCaseSensitive(source, "value");
+    require(value != NULL && (value->type & cJSON_NameHasEmbeddedNul) != 0 &&
+                (value->type & cJSON_StringHasEmbeddedNul) != 0,
+            "parser did not retain independent key and value evidence");
+    cJSON *reference = cJSON_CreateObject();
+    require(cJSON_AddItemReferenceToObject(reference, "reference", value), "reference creation failed");
+    cJSON *borrowed = cJSON_GetObjectItemCaseSensitive(reference, "reference");
+    require((borrowed->type & cJSON_NameHasEmbeddedNul) == 0 && (borrowed->type & cJSON_StringHasEmbeddedNul) != 0 &&
+                ! jsonObjectFieldStringsAreExact(reference, "reference"),
+            "reference replacement key changed value evidence");
+    require(cJSON_SetValuestring(borrowed, "fixed") == NULL && ! jsonObjectFieldStringsAreExact(reference, "reference"),
+            "refused borrowed string mutation erased its evidence");
+    cJSON *copy = cJSON_Duplicate(reference, true);
+    require(copy != NULL && ! jsonObjectFieldStringsAreExact(copy, "reference"),
+            "owned copy of reference lost value evidence");
+    cJSON_Delete(copy);
+    cJSON_Delete(reference);
+
+    require(cJSON_SetValuestring(value, "ok") != NULL, "owned string replacement failed");
+    require((value->type & cJSON_StringHasEmbeddedNul) == 0 && (value->type & cJSON_NameHasEmbeddedNul) != 0 &&
+                ! jsonObjectFieldStringsAreExact(source, "value"),
+            "value replacement did not preserve independent key evidence");
+    require(cJSON_DetachItemViaPointer(source, value) == value, "detach failed");
+    require(cJSON_AddItemToObject(source, "renamed", value), "renamed insertion failed");
+    require((value->type & cJSON_NameHasEmbeddedNul) == 0 && jsonObjectFieldStringsAreExact(source, "renamed"),
+            "object insertion retained stale key evidence");
+
+    cJSON *replacement = cJSON_Parse("{\"old\\u0000suffix\":\"bad\\u0000suffix\"}");
+    require(replacement != NULL, "replacement fixture failed to parse");
+    cJSON *new_value = cJSON_DetachItemFromObjectCaseSensitive(replacement, "old");
+    require(new_value != NULL && cJSON_ReplaceItemInObjectCaseSensitive(source, "renamed", new_value),
+            "object replacement failed");
+    require((new_value->type & cJSON_NameHasEmbeddedNul) == 0 && (new_value->type & cJSON_StringHasEmbeddedNul) != 0 &&
+                ! jsonObjectFieldStringsAreExact(source, "renamed"),
+            "object replacement did not separate key and value evidence");
+    require(cJSON_SetValuestring(new_value, "longer valid replacement") != NULL &&
+                jsonObjectFieldStringsAreExact(source, "renamed"),
+            "allocated string replacement retained stale value evidence");
+    cJSON_Delete(replacement);
+    cJSON_Delete(source);
+
+    source = cJSON_CreateObject();
+    require(cJSON_AddStringToObject(source, "value", "created") != NULL &&
+                jsonObjectFieldStringsAreExact(source, "value"),
+            "programmatic C strings acquired invalid provenance");
+    require(cJSON_AddStringToObject(source, "invalid-encoding", "bad\xc0\xaf") != NULL &&
+                ! jsonObjectFieldStringsAreExact(source, "invalid-encoding"),
+            "programmatic invalid UTF-8 bypassed exact string checking");
+    cJSON_Delete(source);
+}
+
 int main(void)
 {
     testCaseSet("json_helpers_test");
@@ -204,5 +305,7 @@ int main(void)
 
     testJsonIntegerInRange();
     testExactIntegers();
+    testExactObjectFieldStrings();
+    testStringProvenanceMutations();
     return 0;
 }

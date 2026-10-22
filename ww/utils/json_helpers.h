@@ -3,7 +3,41 @@
 
 #include "cJSON.h"
 #include "net/address_context.h"
+#include "node_builder/config_lexical.h"
 #include "objects/dynamic_value.h"
+
+/* Opt-in exact-string validation, independent of a node's setting names/types.
+ * Inspect every matching member: a malformed duplicate must not hide behind a
+ * valid first match. cJSON retains embedded-NUL evidence through duplication;
+ * invalid UTF-8 remains visible in the current decoded bytes. Missing fields
+ * and non-objects have no matching members; callers validate presence and type. */
+static inline bool jsonObjectFieldStringsAreExact(const cJSON *object, const char *key)
+{
+    assert(key != NULL);
+    if (! cJSON_IsObject(object))
+    {
+        return true;
+    }
+    for (const cJSON *field = object->child; field != NULL; field = field->next)
+    {
+        if (field->string == NULL || strcmp(field->string, key) != 0)
+        {
+            continue;
+        }
+        if ((field->type & cJSON_NameHasEmbeddedNul) != 0 ||
+            ! configLexicalCheckEncodingQuiet(field->string, strlen(field->string)))
+        {
+            return false;
+        }
+        if (cJSON_IsString(field) &&
+            ((field->type & cJSON_StringHasEmbeddedNul) != 0 || field->valuestring == NULL ||
+             ! configLexicalCheckEncodingQuiet(field->valuestring, strlen(field->valuestring))))
+        {
+            return false;
+        }
+    }
+    return true;
+}
 
 /* Wipe only strings owned by this tree, matching cJSON_Delete ownership.
  * Use before deleting credential-bearing trees after strict byte validation;

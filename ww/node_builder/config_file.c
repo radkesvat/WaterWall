@@ -12,9 +12,9 @@ static inline bool isJsonWhitespace(char c)
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
-/* These span helpers follow a tree already accepted by cJSON. They only retain
- * lexical facts for API-facing fields; they neither parse a second tree nor
- * impose the API's restrictions on unrelated configuration values. */
+/* These span helpers follow a tree already accepted by cJSON. They retain raw
+ * evidence for API configuration and variable substitution without imposing
+ * strict parsing on unrelated configuration values. */
 static size_t apiConfigSkipWhitespace(const char *text, size_t length, size_t offset)
 {
     while (offset < length && isJsonWhitespace(text[offset]))
@@ -641,7 +641,7 @@ static char *substituteVariables(const char *json_text, const cJSON *variables, 
 
         /* Preserve invalid string evidence through substitution: cJSON's
          * serializer truncates decoded NUL and could otherwise turn a malformed
-         * configured API token/selector into a valid prefix. Unrelated host
+         * configured string into a valid prefix. Unrelated host
          * values retain their permissive parsing and ordinary serialization. */
         const char *raw        = NULL;
         size_t      raw_length = 0;
