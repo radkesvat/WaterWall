@@ -299,7 +299,7 @@ Every setting above is validated rather than defaulted on error. Only an omitted
 the wrong JSON type, a fractional integer, or one outside the accepted range fails node creation and names the exact
 JSON path. A rejected DNS query also leaves the cache alone: the whole question section is parsed and validated before
 the first mapping is created. All unique A/IN names in one query are committed as one cache transaction; if they cannot
-coexist, or any allocation/insertion fails, the response contains no fake answers and the old forward map, reverse
+coexist within the lease policy, the response is SERVFAIL with no fake answers and the old forward map, reverse
 records, and LRU order remain unchanged. Duplicate questions reuse one mapping. The mask must be contiguous and leave
 at least one host bit: `/32` is rejected because it provides no indexed address space, while `/0` necessarily
 normalizes to the zero range and is rejected by the rule below. A cache may contain at most `2^(32 - prefix)` records,
@@ -311,6 +311,21 @@ The product limit of 262144 records bounds the eagerly allocated record index an
 power-of-two bucket count are all validated before either allocation is attempted.
 
 ### Example
+Names use ASCII letters, digits, hyphens and underscores inside labels. Label boundaries
+are represented only by DNS label lengths. The parser rejects embedded NUL, literal
+label dots, control bytes and other unsupported bytes before touching the cache.
+Accepted names are lowercased, and their explicit byte length equals their C-string
+length, so policy matching and resolution receive the same destination identity.
+
+Each successfully issued answer protects its mapping until the monotonic issuance
+time plus its advertised `ttl`. Every answer refreshes that lease. LRU eviction may
+reuse only expired, unpinned entries; if all slots are protected, a new mapping is
+refused with SERVFAIL without changing existing mappings or leases. Expired entries
+remain available until capacity requires reuse. The supported TTL range remains
+`0..2147483647` seconds: zero permits immediate reuse, while a long TTL can prevent
+new-name admission for a long time in a full cache. Clients must not keep using a
+fake address after its answer TTL, and downstream queueing should remain bounded.
+
 
 ```json
 {

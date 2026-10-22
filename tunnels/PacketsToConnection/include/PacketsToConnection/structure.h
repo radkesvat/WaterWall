@@ -162,6 +162,7 @@ struct ptc_fake_dns_entry_s
     char                 *domain;
     uint32_t              fake_addr_network;
     uint32_t              index;
+    uint64_t              lease_until_ms;
     uint8_t               domain_len;
 };
 

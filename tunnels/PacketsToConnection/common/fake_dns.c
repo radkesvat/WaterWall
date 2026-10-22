@@ -149,7 +149,14 @@ static bool ptcDnsReadQuestionName(const uint8_t *packet, uint32_t packet_len, u
 
         for (uint8_t i = 0; i < label_len; ++i)
         {
-            domain[out++] = asciiLower((char) packet[pos + i]);
+            const uint8_t ch = packet[pos + i];
+            /* The destination is shared by length-aware policy matching and a
+             * C-string resolver. Keep one unambiguous ASCII hostname identity;
+             * a literal dot inside a label cannot become a label separator. */
+            if (! ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' ||
+                   ch == '_'))
+                return false;
+            domain[out++] = asciiLower((char) ch);
         }
         pos += label_len;
     }
@@ -271,7 +278,7 @@ static void ptcFakeDnsDiscardStagedMappings(ptc_dns_mapping_t *mappings, uint8_t
  * after the whole reply is committed.
  */
 static bool ptcFakeDnsCommitQuestions(ptc_fake_dns_t *dns, ptc_dns_question_t *questions, int question_count,
-                                      ptc_dns_mapping_t *mappings, uint8_t *mapping_count_out)
+                                      ptc_dns_mapping_t *mappings, uint8_t *mapping_count_out, uint64_t now_ms)
 {
     uint8_t mapping_count = 0;
 
@@ -359,7 +366,8 @@ static bool ptcFakeDnsCommitQuestions(ptc_fake_dns_t *dns, ptc_dns_question_t *q
         }
         else
         {
-            while (victim != NULL && ptcFakeDnsEntryIsPinned(mappings, mapping_count, victim))
+            while (victim != NULL &&
+                   (victim->lease_until_ms > now_ms || ptcFakeDnsEntryIsPinned(mappings, mapping_count, victim)))
             {
                 victim = victim->next;
             }
@@ -428,6 +436,8 @@ static bool ptcFakeDnsCommitQuestions(ptc_fake_dns_t *dns, ptc_dns_question_t *q
     /* Apply successful lookup touches only after the transaction cannot fail. */
     for (uint8_t i = 0; i < mapping_count; ++i)
     {
+        const uint64_t ttl_ms             = (uint64_t) dns->ttl * 1000U;
+        mappings[i].entry->lease_until_ms = now_ms > UINT64_MAX - ttl_ms ? UINT64_MAX : now_ms + ttl_ms;
         if (! mappings[i].staged)
         {
             ptcFakeDnsTouch(dns, mappings[i].entry);
@@ -553,7 +563,9 @@ static int ptcFakeDnsBuildResponse(ptc_tstate_t *ts, const uint8_t *query, uint3
 
     uint8_t mapping_count = 0;
     mutexLock(&ts->dns_lock);
-    if (ptcFakeDnsCommitQuestions(&ts->fake_dns, questions, question_count, mappings, &mapping_count))
+    const bool committed = ptcFakeDnsCommitQuestions(
+        &ts->fake_dns, questions, question_count, mappings, &mapping_count, getHRTimeUs() / 1000ULL);
+    if (committed)
     {
         for (int i = 0; i < question_count; ++i)
         {
@@ -580,6 +592,8 @@ static int ptcFakeDnsBuildResponse(ptc_tstate_t *ts, const uint8_t *query, uint3
     memoryCopy(response, query, offset);
 
     uint16_t response_flags = (uint16_t) (0x8000U | 0x0080U | (query_flags & 0x7900U));
+    if (! committed)
+        response_flags |= 2U; /* SERVFAIL: retry after a protected slot becomes reusable. */
     ptcDnsWrite16(response + 2, response_flags);
     ptcDnsWrite16(response + 6, answer_count);
     ptcDnsWrite16(response + 8, 0);

@@ -41,6 +41,15 @@ endif()
 
 if(TARGET PacketsToConnection)
   if(TARGET ww_lwip_engine_test)
+  waterwall_add_native_executable(packetstoconnection_fake_dns_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_bridges/packetstoconnection_fake_dns_test.c)
+  target_include_directories(packetstoconnection_fake_dns_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection
+    ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/include/PacketsToConnection)
+  target_link_libraries(packetstoconnection_fake_dns_test PRIVATE PacketsToConnection ww)
+  add_dependencies(waterwall_unit_tests packetstoconnection_fake_dns_test)
+  add_waterwall_unit_test(waterwall.packetstoconnection_fake_dns_unit packetstoconnection_fake_dns_test
+    "unit;tunnels;packetstoconnection;dns")
     get_target_property(ptc_engine_sources PacketsToConnection SOURCES)
     list(TRANSFORM ptc_engine_sources PREPEND "${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/")
     add_library(ptc_engine_test STATIC ${ptc_engine_sources})
