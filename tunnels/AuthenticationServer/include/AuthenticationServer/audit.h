@@ -23,7 +23,7 @@ bool authenticationserverAuditConfigure(tunnel_t *t, node_t *node);
 typedef struct authenticationserver_audit_snapshot_s
 {
     bool        enabled, healthy;
-    uint64_t    queued_records, written_records, dropped_records, write_failures;
+    uint64_t    queued_records, written_records, dropped_records, write_failures, suppressed_rejections;
     const char *last_error;
 } authenticationserver_audit_snapshot_t;
 
@@ -42,7 +42,10 @@ void authenticationserverAuditSnapshot(const authenticationserver_audit_t    *au
  * Committed calls run immediately after the revision bump while state_lock is
  * held. id == 0 means unknown. fields contains only kUserConfig* bits and the two
  * audit markers above; operation/error must be static strings, never body data.
- * Borrowed actor/gateway strings are copied before returning. */
+ * Borrowed actor/gateway strings are copied before returning. Rejections share
+ * one node-wide sample per five monotonic seconds and are admitted only below
+ * 16 queued records. Intentional omissions accumulate separately from loss and
+ * attach to the next sample, or one server-sourced summary during drain. */
 void authenticationserverAuditRecordApi(authenticationserver_audit_t *audit, const node_api_call_context_t *context,
                                         const char *operation, uint64_t id, uint64_t revision, uint32_t fields,
                                         const char *error);

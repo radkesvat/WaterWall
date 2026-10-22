@@ -525,7 +525,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   target_link_libraries(authenticationserver_audit_test PRIVATE AuthenticationServer ww)
   target_link_options(authenticationserver_audit_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
-    "-Wl,--wrap=authenticationserverAuditWriterAppend" "-Wl,--wrap=authenticationserverSaveDatabaseLockedForReason")
+    "-Wl,--wrap=authenticationserverAuditWriterAppend" "-Wl,--wrap=authenticationserverAuditWriterClose"
+    "-Wl,--wrap=authenticationserverSaveDatabaseLockedForReason"
+    "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=gettimeofday")
   add_dependencies(waterwall_unit_tests authenticationserver_audit_test)
   add_waterwall_unit_test(waterwall.authenticationserver_audit_unit authenticationserver_audit_test
     "unit;authentication;audit;security;concurrency;tsan")

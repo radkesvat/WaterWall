@@ -101,7 +101,7 @@ def check_status(value, sessions, users=3, *, dirty=False):
     require(value["database_dirty"] is dirty and value["primary_checkpoint_valid"] is False,
             "Persistence dirty/checkpoint status changed without a primary save")
     require(value["audit"] == {"enabled": False, "healthy": True, "queued_records": "0",
-                                "written_records": "0", "dropped_records": "0", "write_failures": "0",
+                                "written_records": "0", "dropped_records": "0", "suppressed_rejections": "0", "write_failures": "0",
                                 "last_error": None}, "Disabled audit status changed")
     require(value["database_loaded"] is True and value["user_count"] == str(users)
             and value["configured_producer_count"] == "1"

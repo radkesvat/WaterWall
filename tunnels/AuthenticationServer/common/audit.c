@@ -5,13 +5,13 @@
  * diagnostics run on the dedicated writer, without any account/worker locks. */
 typedef struct authenticationserver_audit_record_s
 {
-    uint64_t    timestamp_ms, sequence, id, revision;
+    uint64_t    timestamp_ms, sequence, id, revision, suppressed_rejections;
     uint32_t    fields;
     const char *operation, *error;
     char        actor[kAuthenticationServerAuditLabelCap + 1];
     char        gateway_config[kAuthenticationServerAuditLabelCap + 1];
     char        gateway_node[kAuthenticationServerAuditLabelCap + 1];
-    bool        api, has_actor, has_gateway_config, has_gateway_node, truncated;
+    bool        api, server_summary, has_actor, has_gateway_config, has_gateway_node, truncated;
 } authenticationserver_audit_record_t;
 
 struct authenticationserver_audit_s
@@ -22,19 +22,22 @@ struct authenticationserver_audit_s
     wcondvar_t                           wake;
     bool                                 stopping;
     size_t                               head, count;
-    uint64_t                             sequence;
+    uint64_t                             sequence, pending_suppressed, next_rejection_ms;
+    bool                                 rejection_sample_seen, rejection_deadline_exhausted;
     authenticationserver_audit_record_t  records[kAuthenticationServerAuditQueueCap];
     char                                 config[kAuthenticationServerAuditLabelCap + 1];
     char                                 node[kAuthenticationServerAuditLabelCap + 1];
     char                                 instance[33];
     atomic_bool                          writer_failed;
-    atomic_ullong                        queued, written, dropped, write_failures;
+    atomic_ullong                        queued, written, dropped, write_failures, suppressed;
     atomic_int                           last_error;
 };
 
 enum
 {
-    kAuthenticationServerAuditQueueFull = 100,
+    kAuthenticationServerAuditRejectionIntervalMs = 5000,
+    kAuthenticationServerAuditRejectionQueueLimit = 16,
+    kAuthenticationServerAuditQueueFull           = 100,
     kAuthenticationServerAuditSequenceExhausted
 };
 
@@ -155,7 +158,7 @@ static void authenticationserverAuditRender(const authenticationserver_audit_t  
     AUTH_AUDIT_TEXT(",\"node\":");
     AUTH_AUDIT_STRING(audit->node);
     AUTH_AUDIT_TEXT(",\"source\":");
-    AUTH_AUDIT_STRING(record->api ? "api" : "producer");
+    AUTH_AUDIT_STRING(record->server_summary ? "server" : record->api ? "api" : "producer");
     AUTH_AUDIT_TEXT(",\"actor\":");
     AUTH_AUDIT_STRING(record->has_actor ? record->actor : NULL);
     AUTH_AUDIT_TEXT(",\"gateway_config\":");
@@ -189,7 +192,14 @@ static void authenticationserverAuditRender(const authenticationserver_audit_t  
         AUTH_AUDIT_STRING(fields[i]);
         comma = true;
     }
-    AUTH_AUDIT_TEXT("],\"identity_truncated\":");
+    if (record->error != NULL)
+    {
+        AUTH_AUDIT_TEXT("],\"node_suppressed_rejections\":");
+        authenticationserverAuditJsonU64(json, record->suppressed_rejections);
+        AUTH_AUDIT_TEXT(",\"identity_truncated\":");
+    }
+    else
+        AUTH_AUDIT_TEXT("],\"identity_truncated\":");
     AUTH_AUDIT_TEXT(record->truncated ? "true" : "false");
     AUTH_AUDIT_TEXT("}\n");
 #undef AUTH_AUDIT_TEXT
@@ -218,15 +228,27 @@ void authenticationserverAuditSnapshot(const authenticationserver_audit_t    *au
     *snapshot = (authenticationserver_audit_snapshot_t) {.healthy = true};
     if (audit == NULL)
         return;
-    snapshot->enabled         = true;
-    snapshot->queued_records  = atomicLoadU64Relaxed(&audit->queued);
-    snapshot->written_records = atomicLoadU64Relaxed(&audit->written);
-    snapshot->dropped_records = atomicLoadU64Relaxed(&audit->dropped);
-    snapshot->write_failures  = atomicLoadU64Relaxed(&audit->write_failures);
+    snapshot->enabled               = true;
+    snapshot->queued_records        = atomicLoadU64Relaxed(&audit->queued);
+    snapshot->written_records       = atomicLoadU64Relaxed(&audit->written);
+    snapshot->dropped_records       = atomicLoadU64Relaxed(&audit->dropped);
+    snapshot->write_failures        = atomicLoadU64Relaxed(&audit->write_failures);
+    snapshot->suppressed_rejections = atomicLoadU64Relaxed(&audit->suppressed);
     snapshot->last_error =
         authenticationserverAuditLastError(atomic_load_explicit(&audit->last_error, memory_order_relaxed));
     snapshot->healthy = ! atomic_load_explicit(&audit->writer_failed, memory_order_acquire) &&
                         snapshot->dropped_records == 0 && snapshot->write_failures == 0;
+}
+
+static void authenticationserverAuditSuppress(authenticationserver_audit_t *audit)
+{
+    /* The queue lock serializes writers of both counters. Readers only load the
+     * cumulative atomic; intentional omissions never change audit health. */
+    uint64_t total = atomicLoadU64Relaxed(&audit->suppressed);
+    if (total != UINT64_MAX)
+        atomicStoreU64Relaxed(&audit->suppressed, total + 1U);
+    if (audit->pending_suppressed != UINT64_MAX)
+        ++audit->pending_suppressed;
 }
 
 static void authenticationserverAuditDrop(authenticationserver_audit_t *audit, int error)
@@ -266,15 +288,37 @@ static WTHREAD_ROUTINE(authenticationserverAuditThread)
                 abortProgramNow(1);
             }
         }
+        authenticationserver_audit_record_t record;
         if (audit->count == 0)
         {
-            condmutexUnlock(&audit->lock);
-            break;
+            if (audit->pending_suppressed == 0)
+            {
+                condmutexUnlock(&audit->lock);
+                break;
+            }
+            if (audit->sequence == UINT64_MAX)
+            {
+                authenticationserverAuditDrop(audit, kAuthenticationServerAuditSequenceExhausted);
+                condmutexUnlock(&audit->lock);
+                break;
+            }
+            /* Submitters have quiesced. One fixed-storage node-wide summary
+             * follows all accepted records, without another queue or root. */
+            record                    = (authenticationserver_audit_record_t) {.timestamp_ms          = getTimeOfDayMS(),
+                                                                               .sequence              = ++audit->sequence,
+                                                                               .operation             = "rejection-summary",
+                                                                               .error                 = "suppressed-rejections",
+                                                                               .server_summary        = true,
+                                                                               .suppressed_rejections = audit->pending_suppressed};
+            audit->pending_suppressed = 0;
         }
-        authenticationserver_audit_record_t record = audit->records[audit->head];
-        audit->head                                = (audit->head + 1) % kAuthenticationServerAuditQueueCap;
-        --audit->count;
-        atomicSubU64Explicit(&audit->queued, 1, memory_order_relaxed);
+        else
+        {
+            record      = audit->records[audit->head];
+            audit->head = (audit->head + 1) % kAuthenticationServerAuditQueueCap;
+            --audit->count;
+            atomicSubU64Explicit(&audit->queued, 1, memory_order_relaxed);
+        }
         condmutexUnlock(&audit->lock);
 
         authenticationserver_audit_json_t json;
@@ -347,6 +391,7 @@ authenticationserver_audit_t *authenticationserverAuditCreate(const char *path, 
     atomic_init(&audit->written, 0);
     atomic_init(&audit->dropped, 0);
     atomic_init(&audit->write_failures, 0);
+    atomic_init(&audit->suppressed, 0);
     atomic_init(&audit->last_error, kAuthenticationServerAuditErrorNone);
     authenticationserverAuditCopyLabel(audit->config, config);
     authenticationserverAuditCopyLabel(audit->node, node);
@@ -419,25 +464,39 @@ static void authenticationserverAuditSubmit(authenticationserver_audit_t *audit,
     assert(! audit->stopping); /* Submitters quiesce before destruction. */
     if (atomic_load_explicit(&audit->writer_failed, memory_order_acquire))
         atomicAddU64Explicit(&audit->dropped, 1, memory_order_relaxed);
-    else if (audit->count == kAuthenticationServerAuditQueueCap)
-        authenticationserverAuditDrop(audit, kAuthenticationServerAuditQueueFull);
     else if (audit->sequence == UINT64_MAX)
         authenticationserverAuditDrop(audit, kAuthenticationServerAuditSequenceExhausted);
+    else if (error != NULL && (audit->count >= kAuthenticationServerAuditRejectionQueueLimit ||
+                               (audit->rejection_sample_seen && (audit->rejection_deadline_exhausted ||
+                                                                 getHRTimeUs() / 1000U < audit->next_rejection_ms))))
+        authenticationserverAuditSuppress(audit);
+    else if (audit->count == kAuthenticationServerAuditQueueCap)
+        authenticationserverAuditDrop(audit, kAuthenticationServerAuditQueueFull);
     else
     {
         authenticationserver_audit_record_t *record =
             &audit->records[(audit->head + audit->count) % kAuthenticationServerAuditQueueCap];
-        *record           = (authenticationserver_audit_record_t) {.timestamp_ms       = getTimeOfDayMS(),
-                                                                   .sequence           = ++audit->sequence,
-                                                                   .id                 = id,
-                                                                   .revision           = revision,
-                                                                   .fields             = fields,
-                                                                   .operation          = operation,
-                                                                   .error              = error,
-                                                                   .api                = api,
-                                                                   .has_actor          = actor != NULL,
-                                                                   .has_gateway_config = gateway_config != NULL,
-                                                                   .has_gateway_node   = gateway_node != NULL};
+        *record = (authenticationserver_audit_record_t) {.timestamp_ms       = getTimeOfDayMS(),
+                                                         .sequence           = ++audit->sequence,
+                                                         .id                 = id,
+                                                         .revision           = revision,
+                                                         .fields             = fields,
+                                                         .operation          = operation,
+                                                         .error              = error,
+                                                         .api                = api,
+                                                         .has_actor          = actor != NULL,
+                                                         .has_gateway_config = gateway_config != NULL,
+                                                         .has_gateway_node   = gateway_node != NULL};
+        if (error != NULL)
+        {
+            const uint64_t now                  = getHRTimeUs() / 1000U;
+            audit->rejection_sample_seen        = true;
+            audit->rejection_deadline_exhausted = now > UINT64_MAX - kAuthenticationServerAuditRejectionIntervalMs;
+            audit->next_rejection_ms =
+                audit->rejection_deadline_exhausted ? UINT64_MAX : now + kAuthenticationServerAuditRejectionIntervalMs;
+            record->suppressed_rejections = audit->pending_suppressed;
+            audit->pending_suppressed     = 0;
+        }
         record->truncated = authenticationserverAuditCopyLabel(record->actor, actor);
         record->truncated |= authenticationserverAuditCopyLabel(record->gateway_config, gateway_config);
         record->truncated |= authenticationserverAuditCopyLabel(record->gateway_node, gateway_node);

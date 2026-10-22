@@ -112,6 +112,7 @@ SCHEMAS = {
                    "last_success_age_ms": lambda value: value is None or valid_uint(value)},
                "audit": {"enabled": BOOL, "healthy": BOOL, "queued_records": valid_uint,
                          "written_records": valid_uint, "dropped_records": valid_uint,
+                         "suppressed_rejections": valid_uint,
                          "write_failures": valid_uint,
                          "last_error": lambda value: value is None or (isinstance(value, str) and value in AUDIT_ERRORS)}},
     "get-user": {**REVISION, "accounting_time_ms": valid_uint, "user": USER},

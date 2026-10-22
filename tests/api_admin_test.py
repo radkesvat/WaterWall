@@ -63,7 +63,7 @@ def status():
             "session_record_count": "0", "config_revision": "84", "stats_revision": "6", "edit_token": EDIT_TOKEN,
             "primary_save": {"last_result": "not_attempted", "last_attempt_age_ms": None, "last_success_age_ms": None},
             "audit": {"enabled": False, "healthy": True, "queued_records": "0", "written_records": "0",
-                      "dropped_records": "0", "write_failures": "0", "last_error": None}}
+                      "dropped_records": "0", "suppressed_rejections": "0", "write_failures": "0", "last_error": None}}
 
 
 def reply(body, code=0):
@@ -121,7 +121,7 @@ class AdminTest(unittest.TestCase):
         for error in (None, *sorted(CLIENT.AUDIT_ERRORS)):
             value = status()
             value["audit"].update(enabled=True, healthy=error is None, written_records=MAX_ID,
-                                  dropped_records="2", write_failures="1", last_error=error)
+                                  dropped_records="2", suppressed_rejections=MAX_ID, write_failures="1", last_error=error)
             result, text, diagnostic, call, _ = self.invoke(["status"], [reply(value)])
             self.assertEqual(result, 0)
             self.assertEqual(json.loads(text)["audit"], value["audit"])
@@ -129,7 +129,9 @@ class AdminTest(unittest.TestCase):
             self.assertEqual(call.call_count, 1)
         for field, bad in (("last_error", "PRIVATE_PASSWORD_SENTINEL"), ("last_error", []),
                            ("written_records", 1), ("dropped_records", "-1"),
-                           ("queued_records", "01"), ("healthy", 1), ("enabled", "false")):
+                           ("queued_records", "01"), ("suppressed_rejections", 1),
+                           ("suppressed_rejections", "18446744073709551616"),
+                           ("suppressed_rejections", "01"), ("healthy", 1), ("enabled", "false")):
             value = status()
             value["audit"][field] = bad
             result, text, diagnostic, call, _ = self.invoke(["status"], [reply(value)])

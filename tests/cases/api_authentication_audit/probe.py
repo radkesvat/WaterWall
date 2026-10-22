@@ -57,7 +57,7 @@ def main():
     with api.connect() as stream, stream.makefile("rb") as reader:
         initial = query(stream, reader, "ready", "status")
         api.require(initial["audit"] == {"enabled": True, "healthy": True, "queued_records": "0",
-                                         "written_records": "0", "dropped_records": "0", "write_failures": "0",
+                                         "written_records": "0", "dropped_records": "0", "suppressed_rejections": "0", "write_failures": "0",
                                          "last_error": None}, "Initial audit status changed")
         created = query(stream, reader, "create", "create-user",
                         {"id": "42", "password": SECRETS[2], "config": {"name": "Alice"}})
@@ -101,7 +101,7 @@ def main():
             health = query(stream, reader, "health", "status")["audit"]
             api.require(health["healthy"] and health["dropped_records"] == "0" and health["write_failures"] == "0",
                         "Healthy audit lost an event")
-            if health["written_records"] == "10" and health["queued_records"] == "0":
+            if int(health["written_records"]) + int(health["suppressed_rejections"]) == 10 and health["queued_records"] == "0":
                 break
             api.require(time.monotonic() < deadline, "Background audit writer did not flush all outcomes")
             time.sleep(0.01)
@@ -109,12 +109,18 @@ def main():
     raw = Path("administration.jsonl").read_text(encoding="utf-8")
     api.require(raw.endswith("\n") and all(secret not in raw for secret in SECRETS), "Audit leaked input or partial record")
     rows = [json.loads(line) for line in raw.splitlines()]
-    api.require(len(rows) == 10, "Reads/authentication or duplicate callbacks generated extra audit events")
+    rejections = [row for row in rows if row["outcome"] == "rejected"]
+    api.require(len(rows) + int(health["suppressed_rejections"]) == 10 and 1 <= len(rejections) <= 4,
+                "Sampled rejections and intentional suppression do not account for all outcomes")
     fields = {"timestamp_ms", "server_instance", "sequence", "config", "node", "source", "actor",
               "gateway_config", "gateway_node", "operation", "user_id", "outcome", "error",
               "config_revision", "fields", "identity_truncated"}
     for index, row in enumerate(rows, 1):
-        api.require(set(row) == fields and row["sequence"] == str(index), "Audit schema or accepted order changed")
+        expected_fields = fields | ({"node_suppressed_rejections"} if row["outcome"] == "rejected" else set())
+        api.require(set(row) == expected_fields and row["sequence"] == str(index), "Audit schema or accepted order changed")
+        if row["outcome"] == "rejected":
+            api.require(re.fullmatch(r"0|[1-9][0-9]*", row["node_suppressed_rejections"]) is not None,
+                        "Node-wide suppression count is not an exact unsigned decimal")
         api.require(re.fullmatch(r"[0-9a-f]{32}", row["server_instance"]) is not None
                     and row["server_instance"] == initial["edit_token"][:32], "Wrong server identity")
         api.require(row["config"] == "audit-fixture" and row["node"] == "accounts"
@@ -125,13 +131,16 @@ def main():
         else:
             api.require(row["source"] == "producer" and row["actor"] == "fixture-producer"
                         and row["gateway_config"] is None and row["gateway_node"] is None, "Wrong producer identity")
-    api.require([row["outcome"] for row in rows] ==
-                ["committed", "committed", "committed", "rejected", "rejected",
-                 "committed", "committed", "rejected", "rejected", "committed"], "Commit/refusal outcomes changed")
-    api.require(rows[1]["fields"] == ["enabled", "notes"] or set(rows[1]["fields"]) == {"enabled", "notes"},
-                "Update audit omitted field names")
-    api.require(rows[2]["fields"] == ["credentials"] and rows[3]["error"] == "conflict"
-                and rows[4]["error"] == "invalid_request", "Password/conflict event classification changed")
+    committed = [row for row in rows if row["outcome"] == "committed"]
+    api.require([row["operation"] for row in committed] ==
+                ["create-user", "update-user", "change-user-password", "AddNewUser", "UpdateUser", "update-user"],
+                "Audit omitted, duplicated or reordered a committed operation")
+    api.require(committed[1]["fields"] == ["enabled", "notes"] or
+                set(committed[1]["fields"]) == {"enabled", "notes"}, "Update audit omitted field names")
+    api.require(committed[2]["fields"] == ["credentials"] and rejections[0]["error"] == "conflict",
+                "Password/conflict event classification changed")
+    api.require(all(row["error"] in {"conflict", "invalid_request", "user-id-exists", "invalid-user-json"}
+                    for row in rejections), "Sampled rejection classification changed")
     revisions = [int(row["config_revision"]) for row in rows if row["outcome"] == "committed"]
     api.require(revisions == list(range(int(initial["config_revision"]) + 1,
                                         int(initial["config_revision"]) + 7)), "Audit lost committed revision order")

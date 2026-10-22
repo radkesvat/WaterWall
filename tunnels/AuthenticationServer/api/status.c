@@ -58,6 +58,8 @@ static void status(authenticationserver_json_writer_t *w, const void *value)
     AUTH_JSON_TEXT(",");
     NUMBER("dropped_records", s->audit.dropped_records);
     AUTH_JSON_TEXT(",");
+    NUMBER("suppressed_rejections", s->audit.suppressed_rejections);
+    AUTH_JSON_TEXT(",");
     NUMBER("write_failures", s->audit.write_failures);
     AUTH_JSON_TEXT(",\"last_error\":");
     if (s->audit.last_error != NULL)

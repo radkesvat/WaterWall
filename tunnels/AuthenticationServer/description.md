@@ -1,5 +1,5 @@
 <!--
-Documentation version: 163
+Documentation version: 164
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -15,8 +15,8 @@ from `AuthenticationClient`.
 
 - acts as the upstream end of a logical request/response chain
 - loads users from `db-path` into an in-memory `users_t`
-- falls back to `db-path.backup` if the primary JSON file cannot be loaded
-- restores the primary atomically while retaining the recovery backup
+- restores a missing or malformed primary only from a fully valid recovery backup
+- privately preserves malformed primary bytes before atomic restoration, retaining the recovery backup
 - periodically saves the in-memory users database
 - publishes the previous committed primary as recovery backup before atomically replacing the primary
 - can write hourly, daily, or weekly normal backup snapshots for operator use
@@ -160,10 +160,10 @@ current `MAX_PATH` bound, including archive/lock suffixes and resolved parent
 names; it reports unsupported lengths/basenames, failed parent resolution and
 actual protected-file overlaps separately. A resolution failure refuses startup.
 
-The node records successful and rejected `create-user`, `update-user` and
+The node records successful and samples rejected `create-user`, `update-user` and
 `change-user-password` attempts that reach their registered handlers. It also
-records the producer protocol's `AddNewUser` and `UpdateUser` outcomes, including
-permission refusals from an authenticated producer. Reads, authentication,
+records the producer protocol's committed `AddNewUser` and `UpdateUser` outcomes and samples
+rejections, including permission refusals from an authenticated producer. Reads, authentication,
 traffic batches and gateway rejections before target dispatch do not create
 administrative audit records. Unauthenticated producer refusals consume no queue slots or dropped-event counts.
 This is an account-administration trail, not a
@@ -176,12 +176,13 @@ Each UTF-8 JSON line contains these bounded, permitted fields:
 | `timestamp_ms` | UTC Unix wall-clock milliseconds as a decimal string; clock adjustments can move it backward. |
 | `server_instance`, `sequence` | Process-local server identity and accepted-record order; sequence is a decimal string. Use these to distinguish restarts and ordering. |
 | `config`, `node` | Logical target configuration and node names. |
-| `source`, `actor` | `api` and authenticated API client name, or `producer` and authenticated producer name. Unavailable identity is `null`. |
+| `source`, `actor` | `api` and authenticated API client name, or `producer` and authenticated producer name. A drain summary uses `server` with null actor. Unavailable identity is `null`. |
 | `gateway_config`, `gateway_node` | Logical APIServer identity for API calls; `null` for producer calls. A client name alone need not be globally unique. |
 | `operation`, `user_id` | Fixed operation name and canonical decimal account ID, or `null` when parsing did not establish an ID. |
 | `outcome`, `error` | `committed` with `null` error, or `rejected` with a fixed error code. |
 | `config_revision` | Exact committed configuration revision as a decimal string; `null` for rejection. |
 | `fields` | Public configuration leaf names selected by an edit, without values; creation/password operations use `account` and/or `credentials` markers. Same-value edits can still name their selected fields. |
+| `node_suppressed_rejections` | Optional exact decimal-string count of intentionally omitted rejections across this server, not the sampled actor/error. |
 | `identity_truncated` | Whether an actor/gateway label exceeded the bounded copied identity. Configured target/producer labels are validated when auditing is enabled. |
 
 Both sources use public field spelling such as `enabled`, `notes`,
@@ -196,15 +197,25 @@ A fixed 256-record queue separates account operations from file output. Its shor
 mutex protects bounded metadata copies only; JSON rendering, disk I/O, rotation
 and diagnostics run on one background writer. Queue-full or file failures never
 roll back account changes or turn a committed acknowledgement into failure.
-A full queue drops the new event and records degraded health. A file I/O failure
+A full queue drops a committed event and records degraded health. A file I/O failure
 faults the writer for this instance: uncertain/partial bytes are never followed by
 later records; queued and subsequent events are counted as dropped. Fix the
 underlying issue and restart to resume file output. Normal shutdown drains
 accepted records before freeing the writer; a previously faulted writer cannot
 recover missing records.
 
+Rejected operations are sampled at most once per five monotonic seconds per server instance, across API and
+producer callers, and only while FIFO occupancy is below 16 of 256 slots. Idle time does not accumulate a burst;
+committed records retain normal admission to every free slot. Intentional omissions increment the saturating
+`suppressed_rejections` counter without degrading health. The next admitted rejection carries their node-wide
+`node_suppressed_rejections` count, independent of that sample's identity/error. Orderly drain may append one
+`source: "server"`, `operation: "rejection-summary"`, `outcome: "rejected"`, `error: "suppressed-rejections"` record
+with null actor/gateway/user/revision and empty fields. Writer failure is checked before sampling: real record loss
+still increments `dropped_records` and latches unhealthy status. Routine malformed Ping/AddNewUser diagnostics use
+verbose debug logging; protocol refusals and real save/file/resource warnings remain.
+
 `status.audit` is always present. It contains `enabled`, `healthy`,
-`queued_records`, `written_records`, `dropped_records`, `write_failures` and
+`queued_records`, `written_records`, `dropped_records`, `suppressed_rejections`, `write_failures` and
 `last_error`. Counters are unsigned decimal strings and reset when this node is
 created. `queued_records` excludes the record currently being written;
 `written_records` counts successful append-and-flush operations. Independently
@@ -407,7 +418,7 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
 - `devices`
 - `connections-in` or `cons-in`
 - `connections-out` or `cons-out`
-- `speed`
+- `speed` (import-only statistics; the current normalized serializer omits it)
   Object with `up`/`down` or `u`/`d`.
 - `traffic`
   Object with `up`/`down` or `u`/`d`.
@@ -442,6 +453,29 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
 - Avoid editing both primary and backup files by hand while Waterwall is running. The periodic saver may overwrite
   manual edits with the current in-memory database state.
 
+### Synchronizable account admission
+
+Every account accepted by startup import, producer creation/configuration updates or administrative
+create/update/password transactions must fit one complete synchronization page. The bound subtracts the nine-byte
+response frame header and actual worst-case page metadata from the 16 MiB response payload. Each row reserves all
+possibly exported scalar fields at maximum serialized width, including currently omitted zero statistics and future
+traffic/first-use/time growth. It does not cap the aggregate table or shrink valid six-MiB rows.
+
+Five owned variable strings (name, password, email, notes and normalized Allowed IPs) retain derived JSON-escaped byte
+charges and encoding state. Preparation computes replacement charges; transactions overlay only selected fields under
+the configuration lock, without scanning unchanged large strings or taking statistics locks. String and metadata ownership
+move together through copies, imports, setters and prepared commits. Generic objects may retain unexportable text; the
+server imposes this policy. Exact bounded read serialization remains a defensive check.
+
+Refusals use producer `user-too-large` and administrative `user_too_large`, before insertion, precommit ACK, revision,
+index, dirty-state or file changes. The same rule rejects valid oversized imports at startup without backup fallback.
+This admission bound is separate from administrative request/working-memory and index-growth limits. At current default
+create allowance, index growth can refuse around 26,214 users. On the current 64-byte Allowed-IP tree-node layout,
+growing a full 8,192-capacity tree to 16,384 charges 1,048,640 bytes, exceeding a bounded configuration patch's 1 MiB
+growth allowance. Existing reserved capacity or other insertion paths can support more ranges: this is a growth
+boundary, not a table-size cap. These practical sizes depend on build/value geometry, not a guaranteed user-count
+limit or a new memory budget.
+
 ## Save Behavior
 
 Under the server state write lock, saving stages the proposed database in the primary directory, stages the
@@ -455,10 +489,14 @@ the recovery backup never receives that rejected proposal. History/pruning or di
 are logged and do not turn a committed addition into a rejected operation.
 
 All primary, recovery, history and staging outputs are private before their first secret byte: exclusive `0600`
-creation on POSIX and a protected Windows DACL granting the process user and SYSTEM access. Existing primary/recovery
-permissions are restricted when loading; permission failure rejects startup. Writes, flush, file sync and close are
-checked. Staging names are unique and are never startup recovery candidates. Cleanup removes only this operation's
-staging files. Normal process shutdown saves a loaded database. Startup rollback
+creation on POSIX and a protected Windows DACL granting the process user and SYSTEM access. Startup restricts existing
+primary and recovery files; a missing backup is allowed. An existing backup must have its permissions restricted even
+when the primary is valid, without reading or parsing the backup contents. Thus an empty or malformed backup does not
+prevent loading a valid primary, but a permission-restriction failure stops startup without replacing either file.
+Running as root is supported: existing files need not be owned by the process user, and permission restriction changes
+neither file ownership nor process privileges. Normal filesystem access and write errors still apply. Writes, flush,
+file sync and close are checked. Staging names are unique and are never startup recovery candidates. Cleanup removes
+only this operation's staging files. Normal process shutdown saves a loaded database. Startup rollback
 releases resources without a final save, preserving the primary and recovery bytes
 when later construction fails. Weekly history slots use the local Monday-based
 calendar, including weeks containing daylight-saving transitions or a year boundary.
@@ -491,15 +529,30 @@ nor all process copies are erased.
 
 ## Startup Recovery
 
-A valid primary is authoritative. If primary loading fails, the server validates `db-path.backup` and restores it
-through the same private atomic writer. The backup remains available throughout and after restoration. Historical
-snapshots are separate and are never automatic recovery candidates. If neither primary nor recovery backup is valid,
-node creation fails. A pre-existing backup has no provenance metadata proving when its contents committed.
+A valid primary is authoritative. A missing primary restores only from a fully valid, policy-compliant
+`db-path.backup`. Malformed JSON, truncated/empty files and structurally invalid account data first require complete
+backup validation, then exact original bytes are written to a unique private sibling `<db-path>.corrupt-<id>` with
+exclusive no-clobber creation. The archive must flush and close successfully before atomic restoration; its path and
+the recovery action are logged. Archive failure prevents replacement. Restoration failure retains the archive and
+unchanged backup. Archives belong to the operator, are not recovery/pruning candidates and are never deleted automatically.
+
+Read/open/close, permission, native-resource and candidate-construction failures stop startup without replacing either
+file. A structurally valid but unsynchronizable record also stops startup, even with a usable backup: repair the account
+identified by durable ID and the fixed size limit, without logging its text or credentials. Both database paths and
+contents remain intact. An oversized backup cannot restore a missing or malformed primary. Historical snapshots are
+never recovery candidates. A pre-existing backup has no provenance metadata proving when its contents committed.
+
+Normal-history retention keeps the snapshot just successfully written plus the lexically latest other matching
+same-database/same-mode periods that fit the limit. Thus clock reversal cannot prune the new snapshot itself, even at
+limit one. This is period-name ordering, not creation-time ordering. Same-period scheduling is unchanged. Delete failure
+is reported separately from primary success and leaves history retry eligible; unrelated files and corruption archives
+are excluded.
 
 ## Logic Explanation
 
 The server owns one authoritative table and store-level `config_revision` / `stats_revision` counters, initially 1.
-Configuration mutations bump the former; new usage batches and earliest first-use merges bump the latter. Independent point
+Configuration mutations bump the former. Every newly accepted usage batch bumps the latter once, including a
+zero-byte first-use observation; an exact replay creates no additional commit. Independent point
 reads share the state read lock. Authentication, saves and mutations hold its write lock. Whole-table/page reads share the read lock.
 
 ### Control Identity And Sessions
@@ -740,7 +793,9 @@ correlation ID.
 ### GetUserByPassword Module
 
 The `GetUserByPassword` module expects request data containing the exact plaintext password lookup key without a trailing
-NUL. The payload must be non-empty and must not contain embedded NUL bytes.
+NUL. The payload must be non-empty and must not contain embedded NUL bytes. Its limit is the existing producer
+request-data cap (16 MiB), subject also to the enclosing message geometry; there is no separate 1,024-byte password cap.
+Exact Unicode/whitespace bytes are retained. API body and prepared old-password working limits remain separate.
 
 For `Socks5Server`, that lookup key is the SOCKS username, a literal `:`, and the SOCKS password. For example, SOCKS
 credentials `alice` and `alice-secret` are looked up as `alice:alice-secret`.
@@ -922,7 +977,8 @@ input failures return a correlated Error response.
 On upstream `Init`, `AuthenticationServer` initializes its per-line buffer state and sends downstream `Est` toward the
 previous tunnel.
 
-On upstream payload, it buffers bytes, extracts every complete outer message, processes each contained request frame,
+Producer envelopes execute store mutations before reads under their selected state lock. Correlate replies by ID;
+response order need not match input order. On upstream payload, it buffers bytes, extracts every complete outer message, processes each contained request frame,
 and sends one combined response message downstream with `tunnelPrevDownStreamPayload()`.
 
 On upstream `Finish`, it destroys only its own per-line state. It does not call `lineDestroy()` because it did not
@@ -1004,6 +1060,8 @@ The body is exactly `{}`. A successful body has this shape:
 ```json
 {
   "database_loaded": true,
+  "database_dirty": false,
+  "primary_checkpoint_valid": true,
   "user_count": "1200",
   "configured_producer_count": "4",
   "session_record_count": "5",
@@ -1021,6 +1079,7 @@ The body is exactly `{}`. A successful body has this shape:
     "queued_records": "0",
     "written_records": "0",
     "dropped_records": "0",
+    "suppressed_rejections": "0",
     "write_failures": "0",
     "last_error": null
   }
@@ -1194,7 +1253,7 @@ maximally escaped request ID.
 
 Node-result failure codes are `invalid_request`, `conflict`, `busy`, `not_found`,
 `invalid_allowed_ips`, `name_exists`, `allowed_ips_overlap`, `resource_limit`,
-`response_too_large`, `timeout` and `revision_exhausted`. A returned operation-level
+`user_too_large`, `response_too_large`, `timeout` and `revision_exhausted`. A returned operation-level
 failure means this edit did not commit. `conflict` does not include a fresh token:
 reread and reconsider the intended changes. Configuration revision UINT64_MAX
 refuses further API and producer configuration mutations before changing accounts.
@@ -1294,7 +1353,7 @@ a later attempt with that ID returns `id_exists`.
 
 Node failures are `invalid_request`, `id_exists`, `name_exists`,
 `credentials_exist`, `invalid_allowed_ips`, `allowed_ips_overlap`, `busy`,
-`resource_limit`, `creation_failed`, `response_too_large`, `timeout` and
+`resource_limit`, `user_too_large`, `creation_failed`, `response_too_large`, `timeout` and
 `revision_exhausted`, in the usual fixed `{"error":{"code":"id_exists"}}`
 shape. Backend/crypto or native-lock initialization refusal is `creation_failed`.
 Earlier malformed-input, budget, backend or contention failures can precede
@@ -1412,7 +1471,7 @@ restriction. The prepared/decoded secret copies and replaced object-layer plaint
 owned cleanup paths. Raw transport and configuration buffers are not comprehensively wiped.
 
 Expected node errors are `invalid_request`, `conflict`, `not_found`,
-`credentials_exist`, `busy`, `resource_limit`, `password_change_failed`,
+`credentials_exist`, `busy`, `resource_limit`, `user_too_large`, `password_change_failed`,
 `response_too_large`, `timeout` and `revision_exhausted`. They use the fixed error
 body, and a returned node-operation failure guarantees this invocation did not
 commit. Budget, parsing, crypto and contention refusals can precede duplicate
@@ -1462,6 +1521,10 @@ Operation failures have a nonzero node result code and a small body such as
 applicable. Gateway authentication, permission, timeout and encoded-envelope
 errors retain the [APIServer](APIServer.mdx) contract. Retries and restarting a
 stale traversal are caller-controlled.
+
+Failed mandatory post-authentication/post-ACK pulls defer new reports. Frequent configuration edits can repeatedly
+restart traversals; clients keep the old cache. Missing-account usage debt is retained and can prevent installation.
+These policies provide no client crash recovery or durable usage journal.
 
 ## User Database Performance
 

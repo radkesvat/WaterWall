@@ -9,12 +9,44 @@
 #include "loggers/network_logger.h"
 #include "wthread.h"
 
-static twf_worker_env_t        env;
-static tunnel_t               *server;
-static node_api_call_context_t context;
-static wsem_t                  entered, release_writer;
-static atomic_bool             hold_append, fail_append;
-static bool                    fail_save;
+static twf_worker_env_t                      env;
+static tunnel_t                             *server;
+static node_api_call_context_t               context;
+static wsem_t                                entered, release_writer;
+static atomic_bool                           hold_append, fail_append;
+static bool                                  fail_save;
+static atomic_bool                           fail_summary, capture_close;
+static authenticationserver_audit_snapshot_t close_snapshot;
+static atomic_ullong                         test_monotonic_us, test_wall_ms;
+
+unsigned long long __real_getHRTimeUs(void);
+unsigned long long __wrap_getHRTimeUs(void);
+unsigned long long __wrap_getHRTimeUs(void)
+{
+    return atomic_load(&test_monotonic_us);
+}
+
+int __wrap_gettimeofday(struct timeval *value, void *zone);
+int __wrap_gettimeofday(struct timeval *value, void *zone)
+{
+    discard        zone;
+    const uint64_t ms = atomic_load(&test_wall_ms);
+    value->tv_sec     = (time_t) (ms / 1000U);
+    value->tv_usec    = (suseconds_t) ((ms % 1000U) * 1000U);
+    return 0;
+}
+
+static bool recordContainsSummary(const char *record, size_t length)
+{
+    const char   marker[]      = "\"operation\":\"rejection-summary\"";
+    const size_t marker_length = sizeof(marker) - 1;
+    if (length < marker_length)
+        return false;
+    for (size_t offset = 0; offset <= length - marker_length; ++offset)
+        if (memcmp(record + offset, marker, marker_length) == 0)
+            return true;
+    return false;
+}
 
 bool __real_authenticationserverAuditWriterAppend(authenticationserver_audit_writer_t *, const char *, size_t,
                                                   authenticationserver_audit_error_t *);
@@ -28,7 +60,8 @@ bool __wrap_authenticationserverAuditWriterAppend(authenticationserver_audit_wri
         semaphorePost(&entered);
         twfRequire(semaphoreWait(&release_writer), "writer release failed");
     }
-    if (atomic_exchange(&fail_append, false))
+    if (atomic_exchange(&fail_append, false) ||
+        (recordContainsSummary(record, length) && atomic_exchange(&fail_summary, false)))
     {
         *error =
             (authenticationserver_audit_error_t) {.code = kAuthenticationServerAuditErrorWrite, .native_error = EIO};
@@ -55,6 +88,18 @@ bool __wrap_authenticationserverSaveDatabaseLockedForReason(authenticationserver
 static authenticationserver_tstate_t *state(void)
 {
     return tunnelGetState(server);
+}
+
+bool __real_authenticationserverAuditWriterClose(authenticationserver_audit_writer_t *,
+                                                 authenticationserver_audit_error_t *);
+bool __wrap_authenticationserverAuditWriterClose(authenticationserver_audit_writer_t *,
+                                                 authenticationserver_audit_error_t *);
+bool __wrap_authenticationserverAuditWriterClose(authenticationserver_audit_writer_t *writer,
+                                                 authenticationserver_audit_error_t  *error)
+{
+    if (atomic_exchange(&capture_close, false))
+        authenticationserverAuditSnapshot(state()->audit, &close_snapshot);
+    return __real_authenticationserverAuditWriterClose(writer, error);
 }
 
 static void readToken(char token[49])
@@ -89,14 +134,14 @@ static cJSON *call(const char *operation, const char *body, const char *expected
 
 static void waitFor(uint64_t written, uint64_t failures)
 {
-    const uint64_t deadline = getHRTimeUs() + UINT64_C(5000000);
+    const uint64_t deadline = __real_getHRTimeUs() + UINT64_C(5000000);
     for (;;)
     {
         authenticationserver_audit_snapshot_t snapshot;
         authenticationserverAuditSnapshot(state()->audit, &snapshot);
         if (snapshot.written_records == written && snapshot.write_failures == failures && snapshot.queued_records == 0)
             return;
-        twfRequire(getHRTimeUs() < deadline, "audit writer did not settle");
+        twfRequire(__real_getHRTimeUs() < deadline, "audit writer did not settle");
         usleep(1000);
     }
 }
@@ -121,7 +166,10 @@ static unsigned inspectFile(const char *path, bool outcomes)
                        strstr(line, "PRIVATE_NOTE") == NULL,
                    "partial audit record or secret leaked");
         cJSON *json = cJSON_Parse(line);
-        twfRequire(cJSON_IsObject(json) && cJSON_GetArraySize(json) == 16, "audit schema changed");
+        twfRequire(cJSON_IsObject(json) &&
+                       cJSON_GetArraySize(json) ==
+                           (cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(json, "error")) ? 16 : 17),
+                   "audit schema changed");
         char sequence[24];
         snprintf(sequence, sizeof(sequence), "%u", count);
         expectText(json, "sequence", sequence);
@@ -148,6 +196,8 @@ static unsigned inspectFile(const char *path, bool outcomes)
 
 static void startAudit(const char *path)
 {
+    atomic_store(&test_monotonic_us, UINT64_C(1000000));
+    atomic_store(&test_wall_ms, UINT64_C(1792454400000));
     state()->audit =
         authenticationserverAuditCreate(path, 1024 * 1024, 2, "audit-unit", "accounts", state()->api_instance_id);
     twfRequire(state()->audit != NULL, "audit startup failed");
@@ -179,6 +229,7 @@ static void mutations(const char *path)
         body, sizeof(body), "{\"id\":\"42\",\"if_match\":\"%s\",\"password\":\"PRIVATE_PASSWORD_ROTATED\"}", token);
     cJSON_Delete(call("change-user-password", body, NULL));
     waitFor(4, 0);
+    atomic_fetch_add(&test_monotonic_us, UINT64_C(5000000));
     cJSON_Delete(call("change-user-password", "{\"password\":\"PRIVATE_PASSWORD_MALFORMED\",", "invalid_request"));
     waitFor(5, 0);
     stopAudit();
@@ -271,6 +322,134 @@ static void unauthenticatedRefusals(const char *path)
     twfRequireNoLeakedBuffers();
 }
 
+static void rejectionSampling(const char *path)
+{
+    startAudit(path);
+    atomic_store(&hold_append, true);
+    authenticationserverAuditRecordProducer(state()->audit, "producer", "UpdateUser", 42, 100, 0, NULL);
+    twfRequire(semaphoreWait(&entered), "sampling writer gate failed");
+    for (unsigned i = 0; i < 100; ++i)
+    {
+        if (i % 2)
+            authenticationserverAuditRecordApi(state()->audit, &context, "create-user", 42, 0, 0, "id_exists");
+        else
+            authenticationserverAuditRecordProducer(
+                state()->audit, i % 3 ? "other" : "producer", "UpdateUser", 42, 0, 0, "invalid-user");
+    }
+    atomic_store(&test_monotonic_us, UINT64_C(5999000));
+    atomic_store(&test_wall_ms, UINT64_C(1000)); /* Backward wall time cannot admit a sample. */
+    authenticationserverAuditRecordProducer(state()->audit, "third", "AddNewUser", 42, 0, 0, "invalid-user");
+    authenticationserver_audit_snapshot_t snapshot;
+    authenticationserverAuditSnapshot(state()->audit, &snapshot);
+    twfRequire(snapshot.healthy && snapshot.queued_records == 1 && snapshot.suppressed_rejections == 100 &&
+                   snapshot.dropped_records == 0,
+               "rejection rate or wall-clock immunity failed");
+    atomic_store(&test_monotonic_us, UINT64_C(6000000));
+    authenticationserverAuditRecordApi(state()->audit, &context, "update-user", 42, 0, 0, "conflict");
+    atomic_store(&test_monotonic_us, UINT64_C(600000000)); /* Idle time earns only one sample. */
+    authenticationserverAuditRecordProducer(state()->audit, "fourth", "AddNewUser", 42, 0, 0, "invalid-user");
+    authenticationserverAuditRecordProducer(state()->audit, "fifth", "UpdateUser", 42, 0, 0, "invalid-user");
+    for (unsigned i = 0; i < 13; ++i)
+        authenticationserverAuditRecordProducer(state()->audit, "producer", "UpdateUser", 42, 101 + i, 0, NULL);
+    atomic_fetch_add(&test_monotonic_us, UINT64_C(5000000));
+    authenticationserverAuditRecordApi(state()->audit, &context, "create-user", 42, 0, 0, "id_exists");
+    for (unsigned i = 16; i < kAuthenticationServerAuditQueueCap; ++i)
+        authenticationserverAuditRecordProducer(state()->audit, "producer", "UpdateUser", 42, 101 + i, 0, NULL);
+    authenticationserverAuditRecordApi(state()->audit, &context, "create-user", 42, 0, 0, "id_exists");
+    authenticationserverAuditSnapshot(state()->audit, &snapshot);
+    twfRequire(snapshot.healthy && snapshot.queued_records == kAuthenticationServerAuditQueueCap &&
+                   snapshot.suppressed_rejections == 103 && snapshot.dropped_records == 0 &&
+                   snapshot.last_error == NULL,
+               "reserved commit capacity or intentional suppression accounting failed");
+    cJSON *status_json = call("status", "{}", NULL);
+    expectText(cJSON_GetObjectItemCaseSensitive(status_json, "audit"), "suppressed_rejections", "103");
+    cJSON_Delete(status_json);
+    semaphorePost(&release_writer);
+    stopAudit();
+    twfRequire(inspectFile(path, false) == kAuthenticationServerAuditQueueCap + 2,
+               "sampling drain omitted accepted records or final aggregate");
+    FILE    *file = fopen(path, "rb");
+    char     line[kAuthenticationServerAuditRecordCap + 1];
+    unsigned index = 0, rejected = 0;
+    while (fgets(line, sizeof(line), file) != NULL)
+    {
+        ++index;
+        cJSON *json = cJSON_Parse(line);
+        if (! cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(json, "error")))
+        {
+            ++rejected;
+            expectText(json, "node_suppressed_rejections", index == 3 ? "100" : index == 258 ? "3" : "0");
+            if (index == 258)
+            {
+                expectText(json, "source", "server");
+                expectText(json, "operation", "rejection-summary");
+                expectText(json, "error", "suppressed-rejections");
+                expectText(json, "outcome", "rejected");
+                const char *nulls[] = {"actor", "gateway_config", "gateway_node", "user_id", "config_revision"};
+                for (unsigned i = 0; i < sizeof(nulls) / sizeof(nulls[0]); ++i)
+                    twfRequire(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(json, nulls[i])),
+                               "node-wide summary attributed to an individual operation");
+                twfRequire(cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(json, "fields")) == 0,
+                           "node-wide summary claimed account changes");
+            }
+        }
+        cJSON_Delete(json);
+    }
+    twfRequire(rejected == 4 && fclose(file) == 0, "rejection burst accumulated extra samples");
+}
+
+static void summaryFailure(const char *path)
+{
+    startAudit(path);
+    authenticationserverAuditRecordProducer(state()->audit, "producer", "UpdateUser", 42, 100, 0, NULL);
+    authenticationserverAuditRecordProducer(state()->audit, "producer", "UpdateUser", 42, 0, 0, "invalid-user");
+    for (unsigned i = 0; i < 23; ++i)
+        authenticationserverAuditRecordProducer(state()->audit, "other", "AddNewUser", 0, 0, 0, "invalid-user");
+    waitFor(2, 0);
+    atomic_store(&capture_close, true);
+    atomic_store(&fail_summary, true);
+    stopAudit();
+    twfRequire(! atomic_load(&capture_close) && ! atomic_load(&fail_summary) && ! close_snapshot.healthy &&
+                   close_snapshot.written_records == 2 && close_snapshot.queued_records == 0 &&
+                   close_snapshot.suppressed_rejections == 23 && close_snapshot.dropped_records == 1 &&
+                   close_snapshot.write_failures == 1 && strcmp(close_snapshot.last_error, "write") == 0,
+               "failed final aggregate counted suppressed events as lost records or hid writer failure");
+    twfRequire(inspectFile(path, false) == 2, "failed summary affected earlier accepted records");
+}
+
+static void appendSpanBoundaries(const char *path)
+{
+    authenticationserver_audit_error_t   error;
+    authenticationserver_audit_writer_t *writer = authenticationserverAuditWriterOpen(path, 1024, 2, &error);
+    twfRequire(writer != NULL, "span-check audit writer failed to open");
+    /* These complete JSONL records intentionally have no NUL terminator. */
+    const char ordinary[sizeof("{\"operation\":\"UpdateUser\",\"outcome\":\"committed\"}\n") - 1] =
+        "{\"operation\":\"UpdateUser\",\"outcome\":\"committed\"}\n";
+    const char summary[sizeof("{\"operation\":\"rejection-summary\"}\n") - 1] =
+        "{\"operation\":\"rejection-summary\"}\n";
+    const char   trailing[]    = "{\"operation\":\"UpdateUser\"}\n\"operation\":\"rejection-summary\"";
+    const size_t prefix_length = sizeof("{\"operation\":\"UpdateUser\"}\n") - 1;
+    atomic_store(&fail_summary, true);
+    twfRequire(__wrap_authenticationserverAuditWriterAppend(writer, trailing, prefix_length, &error) &&
+                   atomic_load(&fail_summary),
+               "summary marker outside the supplied record consumed the injected failure");
+    twfRequire(__wrap_authenticationserverAuditWriterAppend(writer, ordinary, sizeof(ordinary), &error) &&
+                   atomic_load(&fail_summary),
+               "nonterminated ordinary record consumed the summary failure");
+    twfRequire(! __wrap_authenticationserverAuditWriterAppend(writer, summary, sizeof(summary), &error) &&
+                   ! atomic_load(&fail_summary) && error.code == kAuthenticationServerAuditErrorWrite &&
+                   error.native_error == EIO,
+               "nonterminated summary record did not consume its injected failure");
+    twfRequire(authenticationserverAuditWriterClose(writer, &error), "span-check audit writer failed to close");
+
+    FILE *file = fopen(path, "rb");
+    char  written[sizeof(trailing) + sizeof(ordinary)];
+    twfRequire(file != NULL && fread(written, 1, sizeof(written), file) == prefix_length + sizeof(ordinary) &&
+                   feof(file) && ! ferror(file) && fclose(file) == 0 && memcmp(written, trailing, prefix_length) == 0 &&
+                   memcmp(written + prefix_length, ordinary, sizeof(ordinary)) == 0,
+               "span-check append wrote bytes outside the accepted records");
+}
+
 static void writerFailure(const char *path)
 {
     startAudit(path);
@@ -286,11 +465,12 @@ static void writerFailure(const char *path)
     twfRequire(state()->store.config_revision == revision + 1 &&
                    usersLookupByIdentifier(&state()->store.users, 44) != NULL,
                "failed audit writer changed account commitment");
+    authenticationserverAuditRecordProducer(state()->audit, "producer", "UpdateUser", 42, 0, 0, "invalid-user");
     authenticationserver_audit_snapshot_t snapshot;
     authenticationserverAuditSnapshot(state()->audit, &snapshot);
     twfRequire(snapshot.enabled && ! snapshot.healthy && snapshot.queued_records == 0 &&
-                   snapshot.written_records == 0 && snapshot.dropped_records == 3 && snapshot.write_failures == 1 &&
-                   strcmp(snapshot.last_error, "write") == 0,
+                   snapshot.written_records == 0 && snapshot.dropped_records == 4 && snapshot.write_failures == 1 &&
+                   snapshot.suppressed_rejections == 0 && strcmp(snapshot.last_error, "write") == 0,
                "failed writer did not account for queued and subsequent records");
     stopAudit();
     twfRequire(inspectFile(path, false) == 0, "injected failure unexpectedly wrote a record");
@@ -371,6 +551,7 @@ int main(void)
     state()->store.stats_revision  = 19;
     memset(state()->api_instance_id, 0x5a, 16);
     authenticationserverInitializeAccountingClock(state());
+    authenticationserverInitializeExportLimit(state());
     twfRequire(authenticationserverRegisterApi(server), "registration failed");
     context = (node_api_call_context_t) {.principal                = "administrator",
                                          .gateway_config           = "gateway-config",
@@ -381,8 +562,8 @@ int main(void)
     authenticationserver_audit_snapshot_t disabled;
     authenticationserverAuditSnapshot(NULL, &disabled);
     twfRequire(! disabled.enabled && disabled.healthy && disabled.queued_records == 0 &&
-                   disabled.written_records == 0 && disabled.dropped_records == 0 && disabled.write_failures == 0 &&
-                   disabled.last_error == NULL,
+                   disabled.written_records == 0 && disabled.dropped_records == 0 &&
+                   disabled.suppressed_rejections == 0 && disabled.write_failures == 0 && disabled.last_error == NULL,
                "disabled audit has nonempty telemetry");
     semaphoreInit(&entered, 0);
     semaphoreInit(&release_writer, 0);
@@ -390,19 +571,26 @@ int main(void)
     atomic_init(&fail_append, false);
     char directory[] = "/tmp/ww-audit-events-XXXXXX";
     twfRequire(mkdtemp(directory) != NULL, "temporary directory failed");
-    char paths[5][256], bad[256];
+    atomic_init(&test_monotonic_us, UINT64_C(1000000));
+    atomic_init(&test_wall_ms, UINT64_C(1792454400000));
+    atomic_init(&fail_summary, false);
+    atomic_init(&capture_close, false);
+    char paths[8][256], bad[256];
     snprintf(bad, sizeof(bad), "%s/missing/audit.jsonl", directory);
     twfRequire(authenticationserverAuditCreate(bad, 16384, 2, "audit-unit", "accounts", state()->api_instance_id) ==
                    NULL,
                "invalid audit path did not refuse startup");
-    for (unsigned i = 0; i < 5; ++i)
+    for (unsigned i = 0; i < 8; ++i)
         snprintf(paths[i], sizeof(paths[i]), "%s/audit-%u.jsonl", directory, i);
+    appendSpanBoundaries(paths[7]);
     mutations(paths[0]);
     queueAndDrain(paths[1]);
     writerFailure(paths[2]);
     producerRollback(paths[3]);
     unauthenticatedRefusals(paths[4]);
-    for (unsigned i = 0; i < 5; ++i)
+    rejectionSampling(paths[5]);
+    summaryFailure(paths[6]);
+    for (unsigned i = 0; i < 8; ++i)
     {
         char lock[300];
         snprintf(lock, sizeof(lock), "%.*s.lock", (int) sizeof(paths[i]) - 1, paths[i]);

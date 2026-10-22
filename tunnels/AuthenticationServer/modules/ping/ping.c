@@ -9,18 +9,20 @@ sbuf_t *authenticationserverPingHandle(const uint8_t correlation_id[kAuthenticat
     static const char ping_request[]  = "ping";
     static const char pong_response[] = "pong";
 
-    discard t;
-    discard session;
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    discard                        session;
 
     if (UNLIKELY(request_data_len != sizeof(ping_request) - 1U ||
                  memoryCompare(request_data, ping_request, sizeof(ping_request) - 1U) != 0))
     {
-        LOGW("AuthenticationServer: ping module received invalid %u-byte request data",
-             (unsigned int) request_data_len);
+        if (ts->verbose)
+            LOGD("AuthenticationServer: ping module received invalid %u-byte request data",
+                 (unsigned int) request_data_len);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-ping-request");
     }
 
-    LOGD("AuthenticationServer: ping module returning pong response");
+    if (ts->verbose)
+        LOGD("AuthenticationServer: ping module returning pong response");
     return authenticationserverCreateResponseFrame(l,
                                                    kAuthenticationServerResponseTypePong,
                                                    correlation_id,
