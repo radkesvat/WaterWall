@@ -332,6 +332,7 @@ jobs:
             pack_runtime: "ON"
           - preset: linux-clang-x64
             pack_runtime: "ON"
+            clang_version: "19"
           - preset: linux-gcc-x64-old-cpu
             pack_runtime: "ON"
           - preset: linux-gcc-arm64
@@ -340,6 +341,7 @@ jobs:
             pack_runtime: "OFF"
           - preset: linux-clang-avx512f-x64
             pack_runtime: "ON"
+            clang_version: "19"
 
           
     name: ${{ matrix.preset }}
@@ -363,6 +365,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build ccache iproute2 util-linux strace
 
+      - name: Install pinned Clang
+        if: matrix.clang_version != ''
+        shell: bash
+        env:
+          LLVM_VERSION: ${{ matrix.clang_version }}
+        run: |
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl --fail --silent --show-error --location https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/keyrings/llvm.asc >/dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/llvm.asc] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-${LLVM_VERSION} main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            "clang-${LLVM_VERSION}" "llvm-${LLVM_VERSION}" "lld-${LLVM_VERSION}"
+
       - name: Install TUN TCP benchmark dependency
         if: matrix.preset == 'linux-gcc-x64' && inputs.extended_tests
         run: sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y iperf3
@@ -376,11 +393,18 @@ jobs:
         run: ccache --zero-stats
 
       - name: Configure CMake
-        run: >
-          cmake --preset ${{ matrix.preset }}
-          -DWW_PACK_RUNTIME=${{ matrix.pack_runtime }}
-          -DBUILD_TESTING=ON
-          -DWATERWALL_ENABLE_TUN_TCP_SPEEDTEST=${{ matrix.preset == 'linux-gcc-x64' && inputs.extended_tests && 'ON' || 'OFF' }}
+        shell: bash
+        env:
+          CLANG_VERSION: ${{ matrix.clang_version }}
+        run: |
+          compiler_options=()
+          if [[ -n "${CLANG_VERSION}" ]]; then
+            compiler_options+=("-DCMAKE_C_COMPILER=clang-${CLANG_VERSION}" "-DCMAKE_CXX_COMPILER=clang++-${CLANG_VERSION}")
+          fi
+          cmake --preset ${{ matrix.preset }} "${compiler_options[@]}" \
+          -DWW_PACK_RUNTIME=${{ matrix.pack_runtime }} \
+          -DBUILD_TESTING=ON \
+          -DWATERWALL_ENABLE_TUN_TCP_SPEEDTEST=${{ matrix.preset == 'linux-gcc-x64' && inputs.extended_tests && 'ON' || 'OFF' }} \
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
