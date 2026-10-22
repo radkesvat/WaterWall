@@ -19,6 +19,7 @@ if(LINUX AND TARGET ConnectionToPackets AND TARGET PacketsToConnection)
     target_compile_definitions(${fragment_target} PRIVATE
       TEST_PACKETS_TO_CONNECTION=$<STREQUAL:${consumer},PacketsToConnection>)
     target_link_libraries(${fragment_target} PRIVATE ${consumer} ww)
+    target_link_options(${fragment_target} PRIVATE "-Wl,--wrap=bufferpoolReuseBuffer")
     add_dependencies(waterwall_unit_tests ${fragment_target})
     add_waterwall_unit_test(
       waterwall.${consumer_lower}_fragment_input_unit
@@ -40,7 +41,6 @@ if(TARGET ConnectionToPackets)
 endif()
 
 if(TARGET PacketsToConnection)
-  if(TARGET ww_lwip_engine_test)
   waterwall_add_native_executable(packetstoconnection_fake_dns_test SUPPORT SOURCES
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_bridges/packetstoconnection_fake_dns_test.c)
   target_include_directories(packetstoconnection_fake_dns_test PRIVATE
@@ -50,6 +50,7 @@ if(TARGET PacketsToConnection)
   add_dependencies(waterwall_unit_tests packetstoconnection_fake_dns_test)
   add_waterwall_unit_test(waterwall.packetstoconnection_fake_dns_unit packetstoconnection_fake_dns_test
     "unit;tunnels;packetstoconnection;dns")
+  if(TARGET ww_lwip_engine_test)
     get_target_property(ptc_engine_sources PacketsToConnection SOURCES)
     list(TRANSFORM ptc_engine_sources PREPEND "${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/")
     add_library(ptc_engine_test STATIC ${ptc_engine_sources})
@@ -136,7 +137,6 @@ if(TARGET ww_lwip_engine_test AND TARGET ConnectionToPackets)
 endif()
 
 if(LINUX AND TARGET ConnectionToPackets)
-  waterwall_add_native_executable(connectiontopackets_schedule_rejection_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_bridges/connectiontopackets_schedule_rejection_test.c
   waterwall_add_native_executable(connectiontopackets_handoff_test SUPPORT SOURCES
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_bridges/connectiontopackets_handoff_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}
@@ -150,6 +150,7 @@ if(LINUX AND TARGET ConnectionToPackets)
   add_dependencies(waterwall_unit_tests connectiontopackets_handoff_test)
   add_waterwall_unit_test(waterwall.connectiontopackets_handoff_unit connectiontopackets_handoff_test
     "unit;tunnels;connectiontopackets;buffers;ownership")
+  waterwall_add_native_executable(connectiontopackets_schedule_rejection_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_bridges/connectiontopackets_schedule_rejection_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}
 
     ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)

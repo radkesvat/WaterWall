@@ -569,6 +569,7 @@ typedef struct ctp_tstate_s
     quiescence_gate_t next_gate;
     quiescence_gate_t packet_ingress_gate;
     atomic_bool       stopping;
+    atomic_ullong     fragment_drops;
     bool              lwip_resources_destroyed;
     bool              flow_registry_initialized;
 } ctp_tstate_t;

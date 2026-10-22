@@ -60,12 +60,13 @@ packet therefore cannot leak its request into the next unrelated packet on the w
 
 For a complete IPv4 TCP or UDP packet, finalization repairs the IPv4 header and transport checksum.
 
-The packet input requires a complete IPv4 datagram. MF or a nonzero fragment
-offset is a runtime contract violation, reported with a fatal log and immediate
-process exit in both Debug and Release; DF alone is allowed. Reassemble at device
-ingress or before this node. The check applies before protocol/flow lookup and
-stack delivery, so even an unmatched fragment is not silently admitted or dropped.
-Malformed packet structure still follows the existing validation/drop path.
+The packet input accepts complete IPv4 datagrams. MF or a nonzero fragment
+offset causes a bounded drop before stack delivery; DF alone is allowed. Reassemble
+at device ingress or before this node when fragmented datagrams must be delivered.
+The first unsupported-fragment drop logs a warning; subsequent drops increment the
+instance counter, whose total is logged at destruction. Rejection releases the
+input resources, preserves the packet line and leaves other connections running.
+Malformed packet structure follows the existing validation/drop path.
 
 ## Flow Model
 
@@ -310,7 +311,6 @@ The product limit of 262144 records bounds the eagerly allocated record index an
 16 MiB on a 64-bit build. Allocation multiplication, signed map capacity, load-factor growth, and the map's next
 power-of-two bucket count are all validated before either allocation is attempted.
 
-### Example
 Names use ASCII letters, digits, hyphens and underscores inside labels. Label boundaries
 are represented only by DNS label lengths. The parser rejects embedded NUL, literal
 label dots, control bytes and other unsupported bytes before touching the cache.
@@ -326,6 +326,7 @@ remain available until capacity requires reuse. The supported TTL range remains
 new-name admission for a long time in a full cache. Clients must not keep using a
 fake address after its answer TTL, and downstream queueing should remain bounded.
 
+### Example
 
 ```json
 {
@@ -365,7 +366,7 @@ The key idea is that the previous side is packet-oriented, while the next side i
 
 - IPv6 is not implemented
 - upstream packet input must be a complete IPv4 datagram, including traffic addressed
-  to fake DNS. Fragments are fatal contract violations, not a special fake-DNS drop case
+  to fake DNS. Unsupported fragments are dropped before DNS or stack processing
 - the zero-copy receive path wraps each incoming packet in a pooled descriptor. TCP may
   retain it for out-of-order delivery. The pool remains sized from the shared lwIP
   budget, TCP flow target and fixed reserve; per-PCB `TCP_OOSEQ_MAX_PBUFS` and

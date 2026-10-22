@@ -209,6 +209,7 @@ typedef struct ptc_tstate_s
     line_t                    **owned_lines;
     uint32_t                    owned_worker_count;
     atomic_bool                 stopping;
+    atomic_ullong               fragment_drops;
     bool                        lwip_resources_destroyed;
 } ptc_tstate_t;
 

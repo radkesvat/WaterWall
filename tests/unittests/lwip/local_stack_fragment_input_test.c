@@ -21,6 +21,15 @@ typedef ctp_tstate_t test_state_t;
 
 static const bool ptc = TEST_PACKETS_TO_CONNECTION != 0;
 
+static unsigned recycled;
+void            __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
+void            __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
+void            __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
+{
+    ++recycled;
+    __real_bufferpoolReuseBuffer(pool, buf);
+}
+
 #include "fixtures/lwip/lwip_test_runtime.h"
 #include "fixtures/worker_registry_fixture.h"
 #include "loggers/internal_logger.h"
@@ -70,27 +79,33 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
     t->chain            = &chain;
     test_state_t *state = tunnelGetState(t);
     atomic_init(&state->stopping, false);
+    atomic_init(&state->fragment_drops, 0);
 #if ! TEST_PACKETS_TO_CONNECTION
     state->handoff_budget = ctpHandoffBudgetCreate(kCtpHandoffMaxBytes, kCtpHandoffMaxEntries);
     require(state->handoff_budget != NULL, "budget creation failed");
+    IP4_ADDR(&state->source_ip, 10, 0, 0, 2);
     quiescenceGateInit(&state->packet_ingress_gate);
     require(quiescenceGateOpen(&state->packet_ingress_gate), "input gate did not open");
 #endif
 
-    sbuf_t *buf = bufferpoolGetSmallBuffer(pool);
-    sbufSetLength(buf, 28U + (shifted ? 1U : 0U));
-    if (shifted)
-        sbufShiftRight(buf, 1);
-    uint8_t *packet = sbufGetMutablePtr(buf);
-    memoryZero(packet, 28);
-    packet[0] = 0x45;
-    packet[8] = 64;
-    packet[9] = protocol;
-    PUT_BE16(packet + 2, 28);
-    PUT_BE16(packet + 6, fragments);
-    PUT_BE32(packet + 12, UINT32_C(0x0a000001));
-    PUT_BE32(packet + 16, UINT32_C(0x0a000002));
-    sbufSetLength(buf, length);
+    recycled = 0;
+    for (unsigned repeat = 0; repeat < 2; ++repeat)
+    {
+        line.recalculate_checksum = true;
+        sbuf_t *buf               = bufferpoolGetSmallBuffer(pool);
+        sbufSetLength(buf, 28U + (shifted ? 1U : 0U));
+        if (shifted)
+            sbufShiftRight(buf, 1);
+        uint8_t *packet = sbufGetMutablePtr(buf);
+        memoryZero(packet, 28);
+        packet[0] = 0x45;
+        packet[8] = 64;
+        packet[9] = protocol;
+        PUT_BE16(packet + 2, 28);
+        PUT_BE16(packet + 6, fragments);
+        PUT_BE32(packet + 12, UINT32_C(0x0a000001));
+        PUT_BE32(packet + 16, UINT32_C(0x0a000002));
+        sbufSetLength(buf, length);
 
 #if TEST_PACKETS_TO_CONNECTION
     ptcTunnelUpStreamPayload(t, &line, buf);
@@ -99,7 +114,13 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
 #endif
 
     require(! line.recalculate_checksum && lineIsAlive(&line), "packet-line state was not preserved");
+    }
+    require(recycled >= 2, "rejected packets retained their input buffers");
 #if ! TEST_PACKETS_TO_CONNECTION
+    require(state->handoff_budget->bytes == 0 && state->handoff_budget->entries == 0,
+            "rejected input retained its copy");
+    quiescenceGateClose(&state->packet_ingress_gate);
+    require(quiescenceGateIsClosedAndQuiesced(&state->packet_ingress_gate), "input gate was not settled");
     ctpHandoffBudgetDetach(state->handoff_budget);
 #endif
     tunnelDestroy(t);
@@ -120,7 +141,7 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
     internaloggerDestroy();
 }
 
-static void checkInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_t length, bool fatal)
+static void checkInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_t length)
 {
     int logs[2];
     require(pipe(logs) == 0, "log pipe creation failed");
@@ -144,7 +165,7 @@ static void checkInput(uint16_t fragments, uint8_t protocol, bool shifted, uint3
     close(logs[0]);
     int status;
     require(waitpid(child, &status, 0) == child, "waitpid failed");
-    if (! WIFEXITED(status) || WEXITSTATUS(status) != (fatal ? 1 : 0))
+    if (! WIFEXITED(status) || WEXITSTATUS(status) != 0)
     {
         fprintf(stderr,
                 "%s input flags=%04x protocol=%u length=%u: %s\n",
@@ -155,14 +176,9 @@ static void checkInput(uint16_t fragments, uint8_t protocol, bool shifted, uint3
                 output);
         require(false, "unexpected packet-input exit status");
     }
-    if (fatal)
-    {
-        require(strstr(output, ptc ? "PacketsToConnection:" : "ConnectionToPackets:") != NULL,
-                "fatal diagnostic did not name the consumer");
-        require(strstr(output, "received an IPv4 fragment") != NULL &&
-                    strstr(output, "enable reassembly at packet ingress") != NULL,
-                "fragment rejection did not explain the input contract and remedy");
-    }
+    const char *first = strstr(output, "dropping unsupported IPv4 fragments");
+    require(first == NULL || strstr(first + 1, "dropping unsupported IPv4 fragments") == NULL,
+            "fragment diagnostics were not limited to the first drop");
 }
 
 int main(void)
@@ -171,16 +187,16 @@ int main(void)
     const uint16_t fragments[] = {IP_MF, 1, IP_MF | 1, IP_DF | IP_MF};
     for (size_t i = 0; i < ARRAY_SIZE(fragments); ++i)
     {
-        checkInput(fragments[i], IP_PROTO_TCP, false, 28, true);
-        checkInput(fragments[i], IP_PROTO_UDP, true, 28, true);
+        checkInput(fragments[i], IP_PROTO_TCP, false, 28);
+        checkInput(fragments[i], IP_PROTO_UDP, true, 28);
     }
-    // Unsupported protocols cannot bypass the fragment-input contract.
-    checkInput(IP_MF, IP_PROTO_ICMP, false, 28, true);
+    // Unsupported protocols and irrelevant destinations must also be harmless.
+    checkInput(IP_MF, IP_PROTO_ICMP, false, 28);
     // Ordinary/DF-only ICMP takes the existing unsupported-protocol drop.
-    checkInput(0, IP_PROTO_ICMP, false, 28, false);
-    checkInput(IP_DF, IP_PROTO_ICMP, true, 28, false);
-    checkInput(IP_MF, IP_PROTO_UDP, true, 19, false);
-    checkInput(IP_MF, IP_PROTO_UDP, false, 0, false);
+    checkInput(0, IP_PROTO_ICMP, false, 28);
+    checkInput(IP_DF, IP_PROTO_ICMP, true, 28);
+    checkInput(IP_MF, IP_PROTO_UDP, true, 19);
+    checkInput(IP_MF, IP_PROTO_UDP, false, 0);
     puts("Local-stack fragment-input tests passed");
     return 0;
 }

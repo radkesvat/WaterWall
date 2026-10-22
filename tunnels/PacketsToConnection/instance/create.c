@@ -102,6 +102,7 @@ tunnel_t *ptcTunnelCreate(node_t *node)
     quiescenceGateInit(&ts->output_gate);
     quiescenceGateInit(&ts->next_gate);
     atomic_init(&ts->stopping, false);
+    atomic_init(&ts->fragment_drops, 0);
     if (UNLIKELY(! mutexTryInit(&ts->owned_lines_lock)))
     {
         ptcFakeDnsDestroy(ts);

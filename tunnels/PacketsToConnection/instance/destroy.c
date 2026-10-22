@@ -46,6 +46,9 @@ void ptcTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
     mutexDestroy(&state->owned_lines_lock);
     mutexDestroy(&state->drain_lock);
     mutexDestroy(&state->dns_lock);
+    const uint64_t fragment_drops = atomicLoadU64Relaxed(&state->fragment_drops);
+    if (fragment_drops != 0)
+        LOGI("PacketsToConnection: unsupported IPv4 fragments dropped=%llu", (unsigned long long) fragment_drops);
 
     tunnelDestroy(t);
 }

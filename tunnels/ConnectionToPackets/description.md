@@ -117,12 +117,13 @@ stopping, or refused packet therefore cannot leak its request into the next unre
 
 For a complete IPv4 TCP or UDP packet, finalization repairs the IPv4 header and transport checksum.
 
-The packet input requires a complete IPv4 datagram. MF or a nonzero fragment
-offset is a runtime contract violation, reported with a fatal log and immediate
-process exit in both Debug and Release; DF alone is allowed. Reassemble at device
-ingress or before this node. The check applies before protocol/flow lookup and
-stack delivery, so even an unmatched fragment is not silently admitted or dropped.
-Malformed packet structure still follows the existing validation/drop path.
+The packet input accepts complete IPv4 datagrams. MF or a nonzero fragment
+offset causes a bounded drop before stack delivery; DF alone is allowed. Reassemble
+at device ingress or before this node when fragmented datagrams must be delivered.
+The first unsupported-fragment drop logs a warning; subsequent drops increment the
+instance counter, whose total is logged at destruction. Rejection releases the
+input resources, preserves the packet line and leaves other connections running.
+Malformed packet structure follows the existing validation/drop path.
 
 ## Fragmentation
 
@@ -141,7 +142,6 @@ Every output packet of one flow, including fragments, is sent to the same packet
 worker. TCP send MSS is derived from the configured MTU. Output fragmentation and
 input reassembly are separate responsibilities.
 
-## Settings
 Packet handoff copies in both directions share a per-instance limit of **16 MiB**
 (including message metadata and explicit alignment padding) and **4096 allocations**.
 Admission reserves both before allocation or copying. Output refusal returns lwIP
@@ -155,6 +155,7 @@ line-pool buffer per executing worker; after the neighbor takes ownership, that
 receiver enforces its own retention budget. The first refusal in each direction logs
 a warning, and destruction logs accumulated return/output refusal counters.
 
+## Settings
 
 | Setting | Required | Default | Meaning |
 | --- | --- | --- | --- |

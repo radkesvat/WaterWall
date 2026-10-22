@@ -61,6 +61,9 @@ void ctpTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
     }
 
     ctpHandoffBudgetDetach(ts->handoff_budget);
-    ts->handoff_budget = NULL;
+    ts->handoff_budget            = NULL;
+    const uint64_t fragment_drops = atomicLoadU64Relaxed(&ts->fragment_drops);
+    if (fragment_drops != 0)
+        LOGI("ConnectionToPackets: unsupported IPv4 fragments dropped=%llu", (unsigned long long) fragment_drops);
     tunnelDestroy(t);
 }

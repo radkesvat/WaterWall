@@ -280,16 +280,17 @@ tunnel_t *ctpTunnelCreate(node_t *node)
         .next_generation    = 0,
     };
     atomic_init(&ts->stopping, false);
+    atomic_init(&ts->fragment_drops, 0);
     quiescenceGateInit(&ts->prev_gate);
     quiescenceGateInit(&ts->next_gate);
     quiescenceGateInit(&ts->packet_ingress_gate);
-
     ts->handoff_budget = ctpHandoffBudgetCreate(kCtpHandoffMaxBytes, kCtpHandoffMaxEntries);
     if (ts->handoff_budget == NULL)
     {
         ctpTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
+
     // Shared bootstrap precedes worker traffic; individual engines stay lazy.
     initTcpIpStack();
 

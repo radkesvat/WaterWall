@@ -29,7 +29,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 199
+EXPECTED_TOTAL_ABORTS = 197
 
 
 # ---------------------------------------------------------------------------
@@ -441,13 +441,9 @@ MANIFEST = [
       "MuxServer: child CID index disagrees with ownership list",
       "MuxServer: parent child-count underflow"),
      "runtime link invariant: MuxServer child unlink would rewire invalid state"),
-    ("tunnels/PacketsToConnection/upstream/payload.c", "ptcTunnelUpStreamPayload", 1,
-     ("PacketsToConnection: received an IPv4 fragment",),
-     "runtime packet-input invariant: local stack requires a complete IPv4 datagram"),
-    ("tunnels/ConnectionToPackets/downstream/payload.c", "ctpTunnelDownStreamPayload", 2,
-     ("ConnectionToPackets: downstream Payload arrived on a normal line",
-      "ConnectionToPackets: received an IPv4 fragment"),
-     "runtime packet-input invariant: local stack requires a packet line and complete IPv4 datagram"),
+    ("tunnels/ConnectionToPackets/downstream/payload.c", "ctpTunnelDownStreamPayload", 1,
+     ("ConnectionToPackets: downstream Payload arrived on a normal line",),
+     "runtime packet-line invariant: packet input must use the chain-owned packet line"),
     ("tunnels/PacketsToConnection/common/helpers.c", "ptcOwnedLineRegister", 1,
      ("PacketsToConnection: invalid owned-line registration state",),
      "runtime ownership invariant: PacketsToConnection registration would index or relink invalid storage"),
@@ -588,6 +584,10 @@ MANIFEST = [
 # Category-C functions so it cannot be reintroduced unnoticed.
 
 EXCLUSIONS = [
+    ("tunnels/PacketsToConnection/upstream/payload.c", "ptcTunnelUpStreamPayload",
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     ("PacketsToConnection: dropping unsupported IPv4 fragments",),
+     "unsupported external fragments are bounded input drops"),
     # Leave delegates its fatal branch to a cold helper, keeping logger selection
     # out of the public header. Pin both the helper's abort above and this call.
     ("ww/base/quiescence_gate.h", "quiescenceGateLeave",
