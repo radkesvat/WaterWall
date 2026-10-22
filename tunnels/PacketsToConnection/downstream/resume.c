@@ -26,7 +26,8 @@ void ptcTunnelDownStreamResume(tunnel_t *t, line_t *l)
     if (ptcReturnReceiveCreditLocked(ls, paused))
     {
         ls->read_paused_len = 0;
-        tcp_output(ls->tcp_pcb);
+        if (ls->tcp_pcb != NULL)
+            tcp_output(ls->tcp_pcb);
     }
     wwLwipEngineLeave(ls->engine, previous);
 }

@@ -71,13 +71,15 @@ bool ptcPausedReadAccumulateLocked(ptc_lstate_t *ls, uint32_t amount)
 
 bool ptcReturnReceiveCreditLocked(ptc_lstate_t *ls, uint32_t amount)
 {
-    if (UNLIKELY(ls->kind != kPtcLineKindTcp || ls->tcp_pcb == NULL || amount > ls->rx_uncredited))
+    if (UNLIKELY(ls->kind != kPtcLineKindTcp || amount > ls->rx_uncredited))
     {
-        return ptcReceiveCreditFailureLocked(ls, "credit return underflow or detached PCB");
+        return ptcReceiveCreditFailureLocked(ls, "credit return underflow");
     }
 
     uint32_t remaining = amount;
-    while (remaining > 0)
+    /* A reset may detach the PCB before already accepted receive delivery or
+     * Resume runs. Settle those bytes without returning credit to a dead peer. */
+    while (ls->tcp_pcb != NULL && remaining > 0)
     {
         const uint16_t chunk = (uint16_t) min(remaining, (uint32_t) UINT16_MAX);
         tcp_recved(ls->tcp_pcb, chunk);

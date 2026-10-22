@@ -335,6 +335,38 @@ static void caseReentryAndFin(void)
     teardown(&f);
 }
 
+static void caseDetachedReceiveCredit(bool paused)
+{
+    twfSetCase("PTC reset settles queued receive credit without scheduling another close");
+    fixture_t f;
+    setup(&f);
+    submit(64);
+    if (paused)
+    {
+        ptcTunnelDownStreamPause(f.ptc, f.line);
+        runTask();
+    }
+    ptc_lstate_t     *ls = lineGetState(f.line, f.ptc);
+    ww_lwip_engine_t *previous;
+    twfRequire(wwLwipEngineEnter(f.engine, &previous), "reset fixture engine entry failed");
+    tcp_abort(ls->tcp_pcb);
+    wwLwipEngineLeave(f.engine, previous);
+    twfRequire(ls->tcp_pcb == NULL, "connection error did not detach its PCB");
+    if (paused)
+        ptcTunnelDownStreamResume(f.ptc, f.line);
+    else
+        runTask();
+    twfRequire(f.delivered == f.submitted && ls->rx_uncredited == 0 && ls->read_paused_len == 0,
+               "detached receive credit did not settle");
+    twfRequireEqualU32(task_count, 1, "ordinary PCB detach scheduled a redundant invariant-failure close");
+    lineRef(f.line);
+    runTask();
+    twfRequire(! lineIsAlive(f.line) && f.finishes == 1, "reset close did not retire its owned line once");
+    lineUnref(f.line);
+    f.line = NULL;
+    teardown(&f);
+}
+
 static void caseCloseDuringDelivery(bool during_init)
 {
     twfSetCase("PTC settles a detached receive when next closes reentrantly");
@@ -568,6 +600,8 @@ int main(void)
     ptcRxWrapperPoolInitializeOnce();
     caseBatchAndPause();
     caseReentryAndFin();
+    caseDetachedReceiveCredit(false);
+    caseDetachedReceiveCredit(true);
     caseCloseDuringDelivery(true);
     caseCloseDuringDelivery(false);
     caseBoundAndCancellation();
