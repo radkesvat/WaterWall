@@ -7,6 +7,8 @@
 
 uint64_t authenticationclientCounterDelta(uint64_t current, uint64_t baseline);
 
+void authenticationclientRequiredWorkFailed(tunnel_t *t, const char *operation);
+
 bool authenticationclientPendingAppend(authenticationclient_tstate_t *ts, uint32_t correlation_id, uint8_t request_type,
                                        uint64_t created_at_ms);
 
@@ -32,6 +34,13 @@ bool authenticationclientSendPing(tunnel_t *t);
 bool authenticationclientHasCatchup(const authenticationclient_tstate_t *ts);
 
 bool authenticationclientCaptureCatchup(tunnel_t *t);
+bool authenticationclientPrepareTableDebt(authenticationclient_tstate_t *ts, users_t *dest,
+                                          authenticationclient_accounting_entry_t **entries_out, size_t *count_out);
+void authenticationclientInstallDebt(authenticationclient_tstate_t           *ts,
+                                     authenticationclient_accounting_entry_t *entries, size_t count);
+void authenticationclientDeferPull(tunnel_t *t, authenticationclient_failure_t failure);
+bool authenticationclientRejectMissingBatch(tunnel_t *t, const uint8_t *data, uint32_t length);
+bool authenticationclientIdDetachedLocked(authenticationclient_tstate_t *ts, uint64_t id);
 
 bool authenticationclientSendPushUserStats(tunnel_t *t);
 

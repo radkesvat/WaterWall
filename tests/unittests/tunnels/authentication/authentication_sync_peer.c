@@ -141,11 +141,11 @@ void authTestPeerCredentials(tunnel_t *t, unsigned client, uint8_t token[64], ch
 
 size_t authTestPeerPadUsersResponse(tunnel_t *t, line_t *line, size_t json_length)
 {
-    authenticationserver_tstate_t *ts   = tunnelGetState(t);
-    user_t                        *user = usersLookupByIdentifier(&ts->store.users, 42);
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    rwlockWriteLock(&ts->state_lock);
+    user_t *user = usersLookupByIdentifier(&ts->store.users, 42);
     /* Keep the optional notes property present while measuring fixed overhead. */
     require(usersSetUserNotes(&ts->store.users, user, "a"), "seed notes failed");
-    rwlockReadLock(&ts->state_lock);
     require(ts->sessions_count != 0, "page padding requires an authenticated session");
     authenticationserver_session_t *session = ts->sessions[0];
     char                            epoch[65], digest[65] = {0}, sequence[24];
@@ -165,16 +165,25 @@ size_t authTestPeerPadUsersResponse(tunnel_t *t, line_t *line, size_t json_lengt
             "page padding metadata request failed");
     const size_t actual = sbufGetLength(frame) - kAuthenticationServerResponseHeaderSize;
     require(actual < json_length, "target page JSON is too small");
-    const size_t padding = json_length - actual + 1;
+    size_t upper;
+    require(userMeasureExportUpperBound(user, &upper) == kUserPublicOk && upper <= ts->max_user_export_bytes,
+            "seed row exceeds export admission");
+    /* The snapshot exporter enforces the conservative row allowance. The
+     * ingress transport fills the remaining wire space with legal whitespace. */
+    const size_t padding = min(json_length - actual + 1, ts->max_user_export_bytes - upper + 1);
     lineReuseBuffer(line, frame);
+    authenticationserverSnapshotRelease(ts, session);
     cJSON_free(text);
     cJSON_Delete(json);
-    rwlockReadUnlock(&ts->state_lock);
     char *notes = memoryAllocate(padding + 1);
     memset(notes, 'a', padding);
     notes[padding] = '\0';
     require(usersSetUserNotes(&ts->store.users, user, notes), "padded notes failed");
     memoryFree(notes);
+    require(userMeasureExportUpperBound(user, &upper) == kUserPublicOk && upper <= ts->max_user_export_bytes,
+            "padded row bypassed export admission");
+    authenticationserverBumpConfigRevision(t);
+    rwlockWriteUnlock(&ts->state_lock);
     return padding;
 }
 

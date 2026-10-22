@@ -9,6 +9,14 @@ typedef enum authenticationclient_first_usage_push_result_e
     kAuthenticationClientFirstUsagePushNotReady
 } authenticationclient_first_usage_push_result_t;
 
+/* Table ownership pins this immutable membership identity. Ordinary refreshes
+ * migrate the floor; removal and later recreation establish a new identity. */
+static bool authenticationclientHandleCurrentLocked(authenticationclient_tstate_t *ts, const user_handle_t *handle)
+{
+    user_t *user = ts->users == NULL ? NULL : usersLookupByIdentifier(ts->users, handle->user_id);
+    return user != NULL && handle->generation >= user->runtime.identity_generation_floor;
+}
+
 authenticationclient_state_t authenticationclientGetState(tunnel_t *t)
 {
     if (UNLIKELY(t == NULL))
@@ -154,6 +162,8 @@ static authenticationclient_user_lookup_result_t authenticationclientResolveCred
             break;
         }
     }
+    if (user != NULL && authenticationclientIdDetachedLocked(ts, userGetId(user)))
+        user = NULL;
     if (user != NULL)
     {
         if (kind == kAuthenticationClientCredentialPassword && ! userPasswordMatches(user, credential))
@@ -331,7 +341,8 @@ bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *hand
     {
         user = usersLookupByIdentifier(ts->users, handle->user_id);
     }
-    live = user != NULL && ! userRuntimeShouldClose(user, now_ms);
+    live = user != NULL && ! authenticationclientIdDetachedLocked(ts, handle->user_id) &&
+           ! userRuntimeShouldClose(user, now_ms);
     rwlockReadUnlock(&ts->users_lock);
 
     return live;
@@ -426,7 +437,8 @@ user_admission_result_t authenticationclientUserTryAdmitConnection(tunnel_t *t, 
 
     mutexLock(&ts->control_mutex);
     rwlockReadLock(&ts->users_lock);
-    if (authenticationclientCanAuthenticateLocked(ts))
+    if (authenticationclientCanAuthenticateLocked(ts) && authenticationclientHandleCurrentLocked(ts, handle) &&
+        ! authenticationclientIdDetachedLocked(ts, handle->user_id))
     {
         result = usersTryAdmitConnectionByIdentifier(ts->users, handle->user_id, ip_key, now_ms);
     }
@@ -449,7 +461,7 @@ void authenticationclientUserReleaseConnection(tunnel_t *t, const user_handle_t 
     // Releasing by stable handle key hits the user even after a refresh; live counters are migrated
     // across the refresh so the release lands on the object that counted this connection. A miss
     // (revoked user) is a harmless no-op.
-    if (LIKELY(ts->users != NULL))
+    if (authenticationclientHandleCurrentLocked(ts, handle))
     {
         usersReleaseConnectionByIdentifier(ts->users, handle->user_id, ip_key);
     }
@@ -490,7 +502,7 @@ static void authenticationclientFirstUsagePushOnWorker0(void *worker_ptr, void *
         authenticationclient_tstate_t *ts = tunnelGetState(t);
         mutexLock(&ts->control_mutex);
         const bool deferred = ts->push_in_flight || ts->pull_in_flight || ts->pull_required || ts->stats_push_refused ||
-                              ts->write_paused ||
+                              ts->write_paused || ts->pending_count >= ts->max_pending_requests ||
                               authenticationclientRetryNotBeforeLocked(ts) > authenticationclientLocalTimeMS();
         if (deferred)
         {
@@ -512,6 +524,7 @@ static authenticationclient_first_usage_push_result_t authenticationclientReques
     mutexLock(&ts->control_mutex);
     ts->push_requested = true;
     if (ts->push_in_flight || ts->pull_in_flight || ts->pull_required || ts->stats_push_refused || ts->write_paused ||
+        ts->pending_count >= ts->max_pending_requests ||
         authenticationclientRetryNotBeforeLocked(ts) > authenticationclientLocalTimeMS())
     {
         ts->first_usage_push_requested = true;
@@ -559,7 +572,8 @@ static bool authenticationclientAccountTraffic(tunnel_t *t, const user_handle_t 
     bool                           first_usage_push_needed = false;
 
     rwlockReadLock(&ts->users_lock);
-    if (ts->users != NULL && (! check_generation || handle->generation == ts->users_generation))
+    if (authenticationclientHandleCurrentLocked(ts, handle) &&
+        (! check_generation || handle->generation == ts->users_generation))
     {
         // AccountTraffic returns close=true when the user is gone (revoked), so a removed user's
         // traffic is rejected and the connection is torn down.
@@ -571,7 +585,14 @@ static bool authenticationclientAccountTraffic(tunnel_t *t, const user_handle_t 
                                                              now_ms,
                                                              found_out,
                                                              &first_usage_push_needed);
+        if (authenticationclientIdDetachedLocked(ts, handle->user_id))
+        {
+            should_close            = true;
+            first_usage_push_needed = false;
+        }
     }
+    else if (! check_generation)
+        should_close = true;
     rwlockReadUnlock(&ts->users_lock);
 
     if (first_usage_push_needed)
@@ -619,7 +640,9 @@ bool authenticationclientUserShouldClose(tunnel_t *t, const user_handle_t *handl
     if (LIKELY(ts->users != NULL))
     {
         // Returns true when the user is disabled, expired, over quota, or removed from the table.
-        should_close = usersRuntimeShouldCloseByIdentifier(ts->users, handle->user_id, now_ms);
+        should_close = ! authenticationclientHandleCurrentLocked(ts, handle) ||
+                       authenticationclientIdDetachedLocked(ts, handle->user_id) ||
+                       usersRuntimeShouldCloseByIdentifier(ts->users, handle->user_id, now_ms);
     }
     rwlockReadUnlock(&ts->users_lock);
 
@@ -687,7 +710,8 @@ bool authenticationclientUserObservePayload(tunnel_t *t, const user_handle_t *ha
     authenticationclient_tstate_t *ts                      = tunnelGetState(t);
     bool                           first_usage_push_needed = false;
     rwlockReadLock(&ts->users_lock);
-    bool close = ts->users == NULL ||
+    bool close = ! authenticationclientHandleCurrentLocked(ts, handle) ||
+                 authenticationclientIdDetachedLocked(ts, handle->user_id) ||
                  usersObserveTrafficByIdentifier(
                      ts->users, handle->user_id, upload_bytes, download_bytes, now_ms, &first_usage_push_needed);
     rwlockReadUnlock(&ts->users_lock);
@@ -733,8 +757,9 @@ uint64_t authenticationclientUserBandwidthRegister(tunnel_t *t, const user_handl
         if (record->id != 0)
             continue;
         rwlockReadLock(&ts->users_lock);
-        bool registered =
-            ts->users != NULL && usersBandwidthRegisterByIdentifier(ts->users, handle->user_id, direction, candidate);
+        bool registered = authenticationclientHandleCurrentLocked(ts, handle) &&
+                          ! authenticationclientIdDetachedLocked(ts, handle->user_id) &&
+                          usersBandwidthRegisterByIdentifier(ts->users, handle->user_id, direction, candidate);
         rwlockReadUnlock(&ts->users_lock);
         if (registered)
         {
@@ -756,7 +781,7 @@ void authenticationclientUserBandwidthSetEligible(tunnel_t *t, const user_handle
     assert(t != NULL && userHandleIsValid(handle) && ticket != 0);
     authenticationclient_tstate_t *ts = tunnelGetState(t);
     rwlockReadLock(&ts->users_lock);
-    if (ts->users != NULL)
+    if (authenticationclientHandleCurrentLocked(ts, handle))
         usersBandwidthSetEligibleByIdentifier(ts->users, handle->user_id, direction, ticket, eligible);
     rwlockReadUnlock(&ts->users_lock);
 }
@@ -782,7 +807,7 @@ void authenticationclientUserBandwidthCancel(tunnel_t *t, const user_handle_t *h
     {
         assert(record->direction == direction);
         rwlockReadLock(&ts->users_lock);
-        if (ts->users != NULL)
+        if (authenticationclientHandleCurrentLocked(ts, handle))
             usersBandwidthCancelByIdentifier(ts->users, handle->user_id, direction, ticket);
         rwlockReadUnlock(&ts->users_lock);
         authenticationclientBandwidthCostSubtract(&ts->bandwidth_queued_cost, record->cost);
@@ -805,7 +830,8 @@ bool authenticationclientUserBandwidthReserve(tunnel_t *t, const user_handle_t *
         cost.entries > 16384 - used->entries)
         goto done;
     rwlockReadLock(&ts->users_lock);
-    ok = ts->users != NULL &&
+    ok = authenticationclientHandleCurrentLocked(ts, handle) &&
+         ! authenticationclientIdDetachedLocked(ts, handle->user_id) &&
          usersBandwidthReserveByIdentifier(ts->users, handle->user_id, record->direction, ticket, cost);
     rwlockReadUnlock(&ts->users_lock);
     if (ok)
@@ -832,7 +858,7 @@ void authenticationclientUserBandwidthRelease(tunnel_t *t, const user_handle_t *
     if (record != NULL)
     {
         rwlockReadLock(&ts->users_lock);
-        if (ts->users != NULL)
+        if (authenticationclientHandleCurrentLocked(ts, handle))
             usersBandwidthReleaseByIdentifier(ts->users, handle->user_id, record->direction, ticket, cost);
         rwlockReadUnlock(&ts->users_lock);
         authenticationclientBandwidthCostSubtract(&record->cost, cost);
@@ -849,7 +875,8 @@ user_bandwidth_result_t authenticationclientUserBandwidthPreview(tunnel_t *t, co
     authenticationclient_tstate_t *ts     = tunnelGetState(t);
     user_bandwidth_result_t        result = {.decision = kUserDeliveryReject};
     rwlockReadLock(&ts->users_lock);
-    if (ts->users != NULL)
+    if (authenticationclientHandleCurrentLocked(ts, handle) &&
+        ! authenticationclientIdDetachedLocked(ts, handle->user_id))
         result = usersBandwidthPreviewByIdentifier(ts->users, handle->user_id, direction, ticket, bytes, datagram);
     rwlockReadUnlock(&ts->users_lock);
     return result;
@@ -863,7 +890,8 @@ user_delivery_decision_t authenticationclientUserCommitDelivery(tunnel_t *t, con
     authenticationclient_tstate_t *ts     = tunnelGetState(t);
     user_delivery_decision_t       result = kUserDeliveryReject;
     rwlockReadLock(&ts->users_lock);
-    if (ts->users != NULL)
+    if (authenticationclientHandleCurrentLocked(ts, handle) &&
+        ! authenticationclientIdDetachedLocked(ts, handle->user_id))
         result = usersCommitDeliveryByIdentifier(
             ts->users, handle->user_id, direction, ticket, bytes, datagram, more, ts->traffic_multiplier);
     rwlockReadUnlock(&ts->users_lock);

@@ -366,6 +366,14 @@ static bool authenticationserverMaybeWriteNormalBackup(authenticationserver_tsta
         return true;
     }
 
+    const uint64_t monotonic_ms = getHRTimeUs() / 1000U;
+    if (ts->normal_backups_retry_pending && monotonic_ms < ts->normal_backups_retry_at_ms)
+        return true;
+    /* Failed optional writes retry at most once per minute, independently of
+     * primary saves. A successful write commits its slot even if pruning fails. */
+    ts->normal_backups_retry_pending = true;
+    ts->normal_backups_retry_at_ms   = monotonic_ms + 60U * 1000U;
+
     time_t now = time(NULL);
     if (UNLIKELY(now == (time_t) -1))
     {
@@ -383,6 +391,7 @@ static bool authenticationserverMaybeWriteNormalBackup(authenticationserver_tsta
 
     if (ts->normal_backups_last_slot == slot)
     {
+        ts->normal_backups_retry_pending = false;
         return true;
     }
 
@@ -413,12 +422,13 @@ static bool authenticationserverMaybeWriteNormalBackup(authenticationserver_tsta
         return false;
     }
 
+    ts->normal_backups_last_slot     = slot;
+    ts->normal_backups_retry_pending = false;
     if (UNLIKELY(! authenticationserverPruneNormalBackups(ts, prefix, path)))
     {
-        return false;
+        LOGW("AuthenticationServer: normal backup was saved but history pruning failed; pruning will retry with the "
+             "next snapshot");
     }
-
-    ts->normal_backups_last_slot = slot;
 
     LOGD("AuthenticationServer: wrote normal %s backup \"%s\"",
          authenticationserverNormalBackupsModeName(ts->normal_backups_mode),
@@ -465,18 +475,42 @@ static authenticationserver_load_result_t authenticationserverLoadUsersFromPath(
     }
     /* Parse the complete owned byte span; retain malformed source bytes until
      * a validated backup and a successfully closed private archive exist. */
-    cJSON *json = configLexicalParseBoundedQuietWithCleanup(
-        candidate->bytes, candidate->length, CJSON_NESTING_LIMIT, SIZE_MAX, authenticationserverWipeJsonStrings);
+    /* Some editors add one UTF-8 signature. Only the database reader accepts
+     * it; keep the original span intact for an exact corruption archive. */
+    const size_t           bom = candidate->length >= 3 && memcmp(candidate->bytes, "\xef\xbb\xbf", 3) == 0 ? 3U : 0U;
+    config_lexical_error_t error;
+    cJSON                 *json = configLexicalParseBoundedWithError(candidate->bytes + bom,
+                                                     candidate->length - bom,
+                                                     CJSON_NESTING_LIMIT,
+                                                     SIZE_MAX,
+                                                     authenticationserverWipeJsonStrings,
+                                                     &error);
     if (json == NULL)
     {
-        LOGW("AuthenticationServer: users database \"%s\" is malformed", path);
+        LOGW("AuthenticationServer: users database \"%s\" is malformed: %s at byte %zu",
+             path,
+             error.category,
+             error.offset + bom);
         return kAuthenticationServerLoadMalformed;
     }
     authenticationserver_load_result_t result = kAuthenticationServerLoadResourceFailure;
     candidate->initialized                    = usersCreate(&candidate->users);
     if (candidate->initialized)
     {
-        const users_json_result_t imported = usersFeedJsonRequiredIdsResult(&candidate->users, json);
+        users_json_diagnostic_t   diagnostic;
+        const users_json_result_t imported =
+            usersFeedJsonRequiredIdsResultDetailed(&candidate->users, json, &diagnostic);
+        if (imported != kUsersJsonOk)
+        {
+            if (diagnostic.entry_index == SIZE_MAX)
+                LOGW("AuthenticationServer: database \"%s\" import refused: %s (container)", path, diagnostic.reason);
+            else
+                LOGW("AuthenticationServer: database \"%s\" import refused at entry %zu, id=%" PRIu64 ": %s",
+                     path,
+                     diagnostic.entry_index,
+                     diagnostic.id,
+                     diagnostic.reason);
+        }
         if (imported == kUsersJsonOk)
         {
             result = usersValidateStructure(&candidate->users) ? kAuthenticationServerLoadValid
@@ -526,6 +560,8 @@ static void authenticationserverRecordPrimarySave(authenticationserver_tstate_t 
 static bool authenticationserverHistoryDue(authenticationserver_tstate_t *ts)
 {
     if (ts->normal_backups_mode == kAuthenticationServerNormalBackupsDisabled)
+        return false;
+    if (ts->normal_backups_retry_pending && getHRTimeUs() / 1000U < ts->normal_backups_retry_at_ms)
         return false;
     const time_t now = time(NULL);
     uint64_t     slot;
@@ -659,7 +695,10 @@ bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
         authenticationserverLoadUsersFromPath(ts, ts->db_path, &primary);
     bool ok = primary_result == kAuthenticationServerLoadValid;
     if (ok)
+    {
         usersPublishCandidate(&ts->store.users, &primary.users);
+        LOGI("AuthenticationServer: loaded %zu users from database \"%s\"", usersCount(&ts->store.users), ts->db_path);
+    }
     else if (primary_result == kAuthenticationServerLoadMissing || primary_result == kAuthenticationServerLoadMalformed)
     {
         const authenticationserver_load_result_t backup_result =
@@ -678,7 +717,9 @@ bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
             if (ok)
             {
                 usersPublishCandidate(&ts->store.users, &backup.users);
-                LOGI("AuthenticationServer: restored users database \"%s\" from validated backup \"%s\"",
+                LOGW("AuthenticationServer: restored %zu users to database \"%s\" from validated backup \"%s\"; newer "
+                     "primary changes may be absent",
+                     usersCount(&ts->store.users),
                      ts->db_path,
                      ts->backup_path);
             }
@@ -686,6 +727,11 @@ bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
                 LOGE("AuthenticationServer: restoration failed; corruption archive retained at \"%s\"", archive);
             memoryFree(archive);
         }
+        else if (primary_result == kAuthenticationServerLoadMissing &&
+                 backup_result == kAuthenticationServerLoadMissing)
+            LOGE("AuthenticationServer: database \"%s\" and its backup do not exist; create the database with "
+                 "{\"users\":[]} before first start",
+                 ts->db_path);
         else
             LOGE("AuthenticationServer: recovery unavailable; primary and backup databases preserved");
     }

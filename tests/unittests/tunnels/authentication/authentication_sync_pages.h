@@ -123,7 +123,7 @@ static void testMalformedPagesAndBackoff(void)
                     state(0)->last_failure == kAuthenticationClientFailureInvalidResponse &&
                     authenticationclientCanAuthenticate(clients[0]),
                 "malformed page replaced cache, escaped validation or lost cached admission");
-        pump(10);
+        pump(1000);
         require(state(0)->users_generation == generation + 1 && state(0)->sync_retry_streak == 0 &&
                     ! state(0)->staging.active,
                 "valid retry did not recover a discarded private traversal");
@@ -179,7 +179,7 @@ static void testMalformedPagesAndBackoff(void)
             "wrong page checkpoint cleared debt, installed a table or bypassed continuity handling");
     teardown();
 
-    /* Each reconnect authenticates and accepts page one before page two fails.
+    /* Each retry accepts page one before page two fails.
      * Session, Pong and intermediate progress must preserve the failure streak. */
     setup(129);
     start(0);
@@ -191,25 +191,25 @@ static void testMalformedPagesAndBackoff(void)
     {
         authenticationclient_tstate_t *ts    = state(0);
         const uint64_t                 now   = authenticationclientLocalTimeMS();
-        const uint64_t                 delay = streak == 1 ? 10 : streak == 2 ? 1000 : 2000;
-        require(ts->sync_retry_streak == streak && ts->sync_retry_not_before_ms == now + delay &&
-                    ts->control_line == NULL && ! ts->staging.active && ts->reconnect_timer != NULL &&
+        const uint64_t                 delay = streak <= 2 ? 1000 : 2000;
+        require(ts->sync_retry_streak == streak && ts->pull_retry_not_before_ms == now + delay &&
+                    ts->control_line != NULL && ! ts->staging.active && ts->progress_timer != NULL &&
                     ts->users_generation == stable_generation && authenticationclientCanAuthenticate(clients[0]),
                 "repeated bad pages lost their fixed exponential retry deadline or old cache");
         const unsigned requests = page_requests;
         authenticationclientRequestPull(clients[0]);
         authenticationclientResumeSync(clients[0]);
         authenticationclientOpenControlLine(clients[0]);
-        require(page_requests == requests && ts->control_line == NULL && ts->progress_timer == NULL &&
-                    ts->sync_retry_not_before_ms == now + delay,
+        require(page_requests == requests && ts->control_line != NULL && ts->progress_timer != NULL &&
+                    ts->pull_retry_not_before_ms == now + delay,
                 "direct work bypassed or extended a failed-page retry deadline");
         hold_page_position = 128;
         pump((unsigned) delay);
         require(held_request != NULL && ts->authenticated && ts->staging.active && ts->staging.position == 128 &&
-                    ts->sync_retry_streak == streak && ts->sync_retry_not_before_ms == now + delay,
+                    ts->sync_retry_streak == streak && ts->pull_retry_not_before_ms == now + delay,
                 "Session or valid intermediate page reset the failed-refresh streak");
         require(authenticationclientSendPing(clients[0]) && ts->sync_retry_streak == streak &&
-                    ts->sync_retry_not_before_ms == now + delay && ts->staging.position == 128,
+                    ts->pull_retry_not_before_ms == now + delay && ts->staging.position == 128,
                 "valid Pong reset retry history or changed page progress");
         if (streak < 3)
         {

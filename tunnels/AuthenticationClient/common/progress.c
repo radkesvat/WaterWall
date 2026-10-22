@@ -1,8 +1,16 @@
 #include "internal.h"
 #include "loggers/network_logger.h"
 
-static void progressFailure(const char *operation)
+void authenticationclientRequiredWorkFailed(tunnel_t *t, const char *operation)
 {
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    mutexLock(&ts->control_mutex);
+    const bool stopping = ts->stopping;
+    mutexUnlock(&ts->control_mutex);
+    /* Worker 0 admission closes before the node receives its quiesce hook.
+     * A callback already in progress may still try to arm its next wakeup. */
+    if (stopping || wloopQuiesceRequested(getWorkerLoop(0)))
+        return;
     LOGF("AuthenticationClient: could not admit required %s", operation);
     if (! requestProgramShutdown(1))
     {
@@ -26,28 +34,36 @@ void authenticationclientScheduleSyncProgress(tunnel_t *t)
     assert(currentThreadOwnsWorker(0));
     authenticationclient_tstate_t *ts = tunnelGetState(t);
     mutexLock(&ts->control_mutex);
+    const uint64_t now       = wloopNowMonotonicMS(getWorkerLoop(0));
+    const bool     reporting = ! ts->pull_required && (ts->push_requested || ts->pending_batch != NULL ||
+                                                   ts->catchup_capture_needed || authenticationclientHasCatchup(ts));
     const bool needed = ts->started && ! ts->stopping && ! ts->continuity_error && ts->authenticated && ts->connected &&
                         ! ts->write_paused && ts->pending_count < ts->max_pending_requests &&
                         (wloopNowMonotonicMS(getWorkerLoop(0)) >= authenticationclientRetryNotBeforeLocked(ts)) &&
                         ! ts->auth_in_flight && ! ts->pull_in_flight && ! ts->push_in_flight &&
                         (ts->pull_requested || ts->pull_required || ts->staging.active || ts->push_requested ||
-                         ts->pending_batch != NULL || ts->catchup_capture_needed || ts->catchup_entries_count != 0);
+                         ts->pending_batch != NULL || ts->catchup_capture_needed || authenticationclientHasCatchup(ts));
+    uint32_t delay = ! reporting && now < ts->pull_retry_not_before_ms
+                         ? (uint32_t) min(ts->pull_retry_not_before_ms - now, (uint64_t) UINT32_MAX)
+                         : 1U;
+    if (! ts->pull_required && ! ts->staging.active && ts->pending_batch == NULL && ts->catchup_capture_needed &&
+        now < ts->catchup_retry_not_before_ms)
+    {
+        uint64_t due = ts->catchup_retry_not_before_ms;
+        if (ts->pull_requested)
+            due = min(due, ts->pull_retry_not_before_ms);
+        delay = due > now ? (uint32_t) min(due - now, (uint64_t) UINT32_MAX) : 1U;
+    }
     mutexUnlock(&ts->control_mutex);
     if (! needed || ts->progress_timer != NULL)
         return;
     /* Independent of optional jobs; nonzero delay also bounds retry and
      * synchronous fixture/reentrant transports to one continuation per turn. */
-    ts->progress_timer = wtimerAdd(getWorkerLoop(0), syncProgress, 1, 1);
+    ts->progress_timer = wtimerAdd(getWorkerLoop(0), syncProgress, delay, 1);
     if (ts->progress_timer != NULL)
         weventSetUserData(ts->progress_timer, t);
     else
-    {
-        mutexLock(&ts->control_mutex);
-        const bool stopping = ts->stopping;
-        mutexUnlock(&ts->control_mutex);
-        if (! stopping && ! wloopQuiesceRequested(getWorkerLoop(0)))
-            progressFailure("synchronization progress timer");
-    }
+        authenticationclientRequiredWorkFailed(t, "synchronization progress timer");
 }
 
 static void reconnectCancelled(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
@@ -101,13 +117,7 @@ void authenticationclientScheduleReconnect(tunnel_t *t)
         const worker_message_submit_result_e result =
             sendWorkerMessageForceQueueWithCleanup(0, reconnectOnWorker0, reconnectCancelled, t, NULL, NULL);
         if (result != kWorkerMessageSubmitAccepted)
-        {
-            mutexLock(&ts->control_mutex);
-            const bool stopping = ts->stopping;
-            mutexUnlock(&ts->control_mutex);
-            if (! stopping)
-                progressFailure("reconnect work");
-        }
+            authenticationclientRequiredWorkFailed(t, "reconnect work");
         return;
     }
     if (ts->reconnect_timer != NULL)
@@ -117,7 +127,7 @@ void authenticationclientScheduleReconnect(tunnel_t *t)
     ts->reconnect_due_ms = delay > UINT64_MAX - now ? UINT64_MAX : now + delay;
     ts->reconnect_timer  = wtimerAdd(getWorkerLoop(0), authenticationclientReconnectTimerCallback, delay, 1);
     if (ts->reconnect_timer == NULL)
-        progressFailure("reconnect timer");
+        authenticationclientRequiredWorkFailed(t, "reconnect timer");
     else
         weventSetUserData(ts->reconnect_timer, t);
 }
@@ -134,7 +144,7 @@ void authenticationclientReconnectTimerCallback(wtimer_t *timer)
         if (! wtimerReset(timer, (uint32_t) min(ts->reconnect_due_ms - now, (uint64_t) UINT32_MAX)))
         {
             ts->reconnect_timer = NULL;
-            progressFailure("reconnect timer reset");
+            authenticationclientRequiredWorkFailed(t, "reconnect timer reset");
         }
         return;
     }
@@ -186,5 +196,5 @@ void authenticationclientUpdateRequestTimer(tunnel_t *t)
     if (ts->request_timer != NULL)
         weventSetUserData(ts->request_timer, t);
     else
-        progressFailure("request deadline timer");
+        authenticationclientRequiredWorkFailed(t, "request deadline timer");
 }

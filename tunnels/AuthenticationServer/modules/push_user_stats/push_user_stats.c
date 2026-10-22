@@ -53,13 +53,57 @@ static sbuf_t *acknowledge(line_t *l, const uint8_t correlation_id[4], const aut
     return response;
 }
 
+static void statsExactNumber(cJSON *object, const char *key, uint64_t value)
+{
+    char text[24];
+    snprintf(text, sizeof(text), "%" PRIu64, value);
+    discard cJSON_AddStringToObject(object, key, text);
+}
+
+/* This correlated refusal proves that the exact next batch was not committed.
+ * The client can preserve every obligation, release its immutable attempt and
+ * rebuild at the same sequence after refreshing account membership. */
+static sbuf_t *missingAccounts(line_t *line, const uint8_t correlation_id[4],
+                               const authenticationserver_auth_client_t *client, uint64_t sequence,
+                               const sha256_hash_t *digest, const stats_entry_t *entries, size_t count)
+{
+    char epoch[65] = {0}, attempt[65] = {0}, checkpoint[65] = {0};
+    memoryCopy(epoch, client->accounting_epoch, 64);
+    asciiHexEncodeBytesLower(digest->bytes, sizeof(digest->bytes), (uint8_t *) attempt);
+    asciiHexEncodeBytesLower(client->last_digest, sizeof(client->last_digest), (uint8_t *) checkpoint);
+    cJSON  *json = cJSON_CreateObject();
+    discard cJSON_AddStringToObject(json, "error", "usage-accounts-missing");
+    discard cJSON_AddStringToObject(json, "epoch", epoch);
+    statsExactNumber(json, "sequence", sequence);
+    discard cJSON_AddStringToObject(json, "digest", attempt);
+    statsExactNumber(json, "checkpoint-sequence", client->last_sequence);
+    discard cJSON_AddStringToObject(json, "checkpoint-digest", checkpoint);
+    cJSON  *missing = cJSON_AddArrayToObject(json, "missing-ids");
+    for (size_t i = 0; i < count; ++i)
+        if (entries[i].user == NULL)
+        {
+            char id[24];
+            snprintf(id, sizeof(id), "%" PRIu64, entries[i].id);
+            discard cJSON_AddItemToArray(missing, cJSON_CreateString(id));
+        }
+    char   *text     = cJSON_PrintUnformatted(json);
+    sbuf_t *response = authenticationserverCreateResponseFrame(
+        line, kAuthenticationServerResponseTypeError, correlation_id, (const uint8_t *) text, (uint32_t) strlen(text));
+    cJSON_free(text);
+    cJSON_Delete(json);
+    return response;
+}
+
 sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
                                                 tunnel_t *t, line_t *l, authenticationserver_session_t *session,
                                                 const uint8_t *request_data, uint32_t request_data_len)
 {
     authenticationserver_tstate_t      *ts       = tunnelGetState(t);
     authenticationserver_auth_client_t *client   = session->accounting_client;
-    cJSON *json = configLexicalParseQuiet((const char *) request_data, request_data_len, 8);
+    /* Root plus three key/value pairs, then each row's object and four pairs.
+     * Bound the tree before allocation, including malformed wide arrays. */
+    cJSON *json = configLexicalParseBoundedQuiet(
+        (const char *) request_data, request_data_len, 3, 7U + 9U * kAuthenticationServerMaxBatchEntries);
     const cJSON                        *epoch    = cJSON_GetObjectItemCaseSensitive(json, "epoch");
     uint64_t                            sequence = 0;
     const char                         *error    = "invalid-usage-batch";
@@ -117,19 +161,26 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
         error = "usage-sequence-invalid";
         goto rejected;
     }
-    /* Account existence applies only to a new batch. Exact replay remains
-     * acknowledgeable after an accepted account is edited or removed. */
-    for (int i = 0; i < count; ++i)
-    {
-        stats_entry_t *current = &entries[i];
-        current->user = usersLookupByIdentifier(&ts->store.users, current->id);
-        if (current->user == NULL)
-            goto rejected;
-    }
     qsort(entries, (size_t) count, sizeof(*entries), compareEntries);
     for (int i = 1; i < count; ++i)
         if (entries[i - 1].id == entries[i].id)
             goto rejected;
+    /* Account existence applies only to a new batch. Exact replay remains
+     * acknowledgeable after an accepted account is edited or removed. */
+    bool missing = false;
+    for (int i = 0; i < count; ++i)
+    {
+        stats_entry_t *current = &entries[i];
+        current->user = usersLookupByIdentifier(&ts->store.users, current->id);
+        missing |= current->user == NULL;
+    }
+    if (missing)
+    {
+        sbuf_t *response = missingAccounts(l, correlation_id, client, sequence, &digest, entries, (size_t) count);
+        memoryFree(entries);
+        cJSON_Delete(json);
+        return response;
+    }
 
     /* state_lock serializes validation, mutation and checkpoint publication.
      * All fallible preconditions precede these infallible per-user operations. */

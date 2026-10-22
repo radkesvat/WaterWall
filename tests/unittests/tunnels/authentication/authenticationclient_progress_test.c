@@ -198,6 +198,17 @@ static void teardown(void)
                "stop left control resources alive");
     memoryFree(ts->pending_requests);
     cJSON_free(ts->pending_batch);
+    memoryFree(ts->pending_entries);
+    if (ts->users != NULL)
+    {
+        usersDestroy(ts->users);
+        memoryFreeAligned(ts->users);
+    }
+    if (ts->sync_baseline_users != NULL)
+    {
+        usersDestroy(ts->sync_baseline_users);
+        memoryFreeAligned(ts->sync_baseline_users);
+    }
     memoryFree(ts->name);
     memoryFree(ts->secret);
     mutexDestroy(&ts->control_mutex);
@@ -361,7 +372,7 @@ static void captureCapacityWarning(int level, const char *data, int length)
 {
     discard level;
     discard length;
-    if (strstr(data, "pending request table is full") != NULL)
+    if (strstr(data, "AuthenticationClient: pending request") != NULL)
         ++capacity_warnings;
 }
 
@@ -604,12 +615,117 @@ static void testRepeatedSyncBackoff(void)
     teardown();
 }
 
+static void testCredentialRejectionBackoff(void)
+{
+    authenticationclient_tstate_t *ts = setup();
+    ts->reconnect_interval_ms         = 0;
+    const uint64_t now                = getHRTimeUs() / 1000;
+    for (uint32_t attempt = 1; attempt <= 5; ++attempt)
+    {
+        authenticationclientRecordFailure(
+            client, kAuthenticationClientFailureCredentialRejected, kAuthenticationClientRequestTypeAuthenticate);
+        const uint64_t delay = attempt <= 2 ? 1000 : UINT64_C(1000) << (attempt - 2);
+        twfRequire(ts->sync_retry_streak == attempt && ts->sync_retry_not_before_ms == now + delay,
+                   "credential rejection bypassed bounded retry backoff");
+        authenticationclientScheduleReconnect(client);
+        twfRequire(inits == 0 && ! ts->reconnect_work_pending && ts->reconnect_timer != NULL,
+                   "credential rejection queued an immediate retry");
+    }
+    teardown();
+}
+
+static void testFirstUseWaitsForPendingCapacity(void)
+{
+    authenticationclient_tstate_t *ts = setup();
+    ts->max_pending_requests          = 1;
+    ts->request_timeout_ms            = 0;
+    ts->traffic_multiplier            = kUserTrafficMultiplierScale;
+    ts->users_generation              = 1;
+    ts->users                         = memoryAllocateAligned(sizeof(*ts->users), 32);
+    ts->sync_baseline_users           = memoryAllocateAligned(sizeof(*ts->sync_baseline_users), 32);
+    twfRequire(usersCreate(ts->users) && usersCreate(ts->sync_baseline_users), "first-use tables");
+    cJSON *json = cJSON_Parse("[{\"id\":42,\"password\":\"first-use-capacity\"}]");
+    twfRequire(usersFeedJsonRequiredIds(ts->users, json) && usersCopy(ts->sync_baseline_users, ts->users),
+               "first-use account fixture");
+    cJSON_Delete(json);
+    user_t *user = usersLookupByIdentifier(ts->users, 42);
+    userInstallClientClock(user, 100000, 100000, 100000);
+    authenticationclientOpenControlLine(client);
+    ts->connected = ts->authenticated = ts->users_loaded = ts->clock_loaded = true;
+    ts->pull_requested = ts->pull_required = false;
+    memset(ts->accounting_epoch, 'a', 64);
+    twfRequire(authenticationclientSendPing(client), "first-use capacity Ping");
+    const uint32_t      ping   = last_id;
+    const user_handle_t handle = {.user_id = 42, .generation = 1};
+    for (unsigned i = 0; i < 20; ++i)
+    {
+        twfRequire(authenticationclientUserAddTraffic(client, &handle, 1, 0), "first-use traffic");
+        pump(1);
+        twfRequire(ts->first_usage_push_requested && ts->first_usage_push_deferred &&
+                       user->runtime.first_usage_push_requested && ts->progress_timer == NULL && sends == 1,
+                   "pending capacity reset first-use latches or repeatedly scheduled work");
+    }
+    reply(25, ping, true);
+    twfRequire(sends == 2 && last_type == kAuthenticationClientRequestTypePushUserStats &&
+                   ts->pending_entries_count == 1 && ts->pending_entries[0].delta.u == 20,
+               "Pong needed another packet to continue first-use reporting");
+    teardown();
+}
+
+static void testAdmissionClosesBeforeNodeQuiesce(void)
+{
+    for (unsigned mode = 0; mode < 5; ++mode)
+    {
+        authenticationclient_tstate_t *ts          = setup();
+        wtimer_t                      *reset_timer = NULL;
+        if (mode == 0)
+        {
+            authenticationclientOpenControlLine(client);
+            ts->connected = ts->authenticated = true;
+            twfRequire(authenticationclientSendPing(client), "shutdown deadline fixture");
+            wtimerDelete(ts->request_timer);
+            ts->request_timer = NULL;
+        }
+        else if (mode == 3)
+        {
+            authenticationclientScheduleReconnect(client);
+            reset_timer = ts->reconnect_timer;
+            twfRequire(reset_timer != NULL, "shutdown reset fixture");
+        }
+        workerMessagesCloseAdmission(&env.worker);
+        twfRequire(wloopRequestQuiesce(env.loop) && ! ts->stopping, "shutdown admission fixture");
+        if (mode == 0)
+            authenticationclientUpdateRequestTimer(client);
+        else if (mode == 1 || mode == 2)
+        {
+            ts->reconnect_interval_ms = mode == 1 ? 0 : 5000;
+            authenticationclientScheduleReconnect(client);
+        }
+        else if (mode == 3)
+        {
+            authenticationclientReconnectTimerCallback(reset_timer);
+            wtimerDelete(reset_timer);
+        }
+        else
+        {
+            ts->pull_interval_ms = 1000;
+            twfRequire(! authenticationclientStartSyncTimer(client), "closed admission armed sync timer");
+        }
+        twfRequire(ts->request_timer == NULL && ts->reconnect_timer == NULL && ! ts->reconnect_work_pending,
+                   "closed admission retained a required callback root");
+        teardown();
+    }
+}
+
 int main(void)
 {
     twfSetCase("authenticationclient request and reconnect progress");
     twfRequire(createNetworkLogger(NULL, false) != NULL, "logger setup failed");
     twfRequire(userTestRuntimeInitialize(), "user runtime initialization failed");
     testRepeatedSyncBackoff();
+    testCredentialRejectionBackoff();
+    testFirstUseWaitsForPendingCapacity();
+    testAdmissionClosesBeforeNodeQuiesce();
     testRetryProgress();
     testDeadlinesAndMalformed();
     testPausedProgress();

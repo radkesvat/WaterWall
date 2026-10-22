@@ -19,11 +19,6 @@ static uint32_t authenticationserverReadNetworkUI32(const uint8_t *src)
     return ntohl(network_value);
 }
 
-static uint32_t authenticationserverCorrelationIdRead(const uint8_t src[kAuthenticationServerCorrelationIdSize])
-{
-    return authenticationserverReadNetworkUI32(src);
-}
-
 static void authenticationserverWriteNetworkUI64(uint8_t *dest, uint64_t value)
 {
     dest[0] = (uint8_t) (value >> 56U);
@@ -476,6 +471,19 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
                 return false;
             }
 
+            /* Preserve one correlated refusal slot for every remaining frame.
+             * A large read after a committed mutation must not discard the
+             * mutation's acknowledgement or close an otherwise valid envelope. */
+            static const char too_large[] = "response-too-large";
+            const size_t      error_size  = kAuthenticationServerResponseHeaderSize + sizeof(too_large) - 1U;
+            const size_t      reserved    = (frame_count - count - 1U) * error_size;
+            const size_t      used        = sbufGetLength(response) - kAuthenticationServerResponseEnvelopeHeaderSize;
+            if (sbufGetLength(response_frame) > kAuthenticationServerMaxResponsePayload - reserved - used)
+            {
+                lineReuseBuffer(l, response_frame);
+                response_frame = authenticationserverCreateErrorResponseFrame(l, correlation_id, too_large);
+            }
+
             if (UNLIKELY(! authenticationserverAppendResponseFrame(l, &response, response_frame)))
             {
                 lineReuseBuffer(l, response);
@@ -513,13 +521,22 @@ static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l,
     bool                         write_lock;
     if (LIKELY(authenticationserverValidateRequestPayload(payload, frames, &count, &write_lock)))
     {
+        /* Anonymous non-public operations only produce bounded refusals. Check
+         * their token under a shared lock before admitting exclusive work. A
+         * session pointer never survives the unlock; dispatch revalidates it. */
+        rwlockReadLock(&ts->state_lock);
         if (write_lock)
         {
-            rwlockWriteLock(&ts->state_lock);
-        }
-        else
-        {
-            rwlockReadLock(&ts->state_lock);
+            bool public_write = false;
+            for (size_t i = 0; i < count; ++i)
+                public_write |=
+                    frames[i].module != NULL && frames[i].module->write_lock && frames[i].module->public_access;
+            write_lock = public_write || authenticationserverSessionFindByTokenLocked(t, token) != NULL;
+            if (write_lock)
+            {
+                rwlockReadUnlock(&ts->state_lock);
+                rwlockWriteLock(&ts->state_lock);
+            }
         }
         result = authenticationserverBuildResponseMessageLocked(t, l, token, payload, frames, count, response_out);
         if (write_lock)

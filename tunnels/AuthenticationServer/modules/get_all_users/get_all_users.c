@@ -75,6 +75,138 @@ void authenticationserverInitializeExportLimit(authenticationserver_tstate_t *ts
     cJSON_Delete(page);
 }
 
+/* One immutable encoded table may be shared by sessions that acquire the same
+ * configuration and accounting revision. Only session references retain it. */
+struct authenticationserver_snapshot_s
+{
+    size_t   refs, count, charge, capacity;
+    size_t  *offsets;
+    char    *rows;
+    uint64_t config_revision, stats_revision;
+};
+
+void authenticationserverSnapshotRelease(authenticationserver_tstate_t *ts, authenticationserver_session_t *session)
+{
+    authenticationserver_snapshot_t *snapshot = session->snapshot;
+    if (snapshot == NULL)
+        return;
+    session->snapshot = NULL;
+    assert(snapshot->refs != 0);
+    if (--snapshot->refs != 0)
+        return;
+    assert(ts->snapshot_bytes >= snapshot->charge);
+    ts->snapshot_bytes -= snapshot->charge;
+    memorySecureZero(snapshot->rows, snapshot->capacity);
+    memoryFree(snapshot->rows);
+    memoryFree(snapshot->offsets);
+    memoryFree(snapshot);
+}
+
+void authenticationserverSnapshotsExpire(authenticationserver_tstate_t *ts, uint64_t now_ms)
+{
+    const uint64_t timeout = ts->snapshot_idle_timeout_ms != 0 ? ts->snapshot_idle_timeout_ms
+                                                               : kAuthenticationServerDefaultSnapshotIdleTimeoutMs;
+    for (uint32_t i = 0; i < ts->sessions_count; ++i)
+    {
+        authenticationserver_session_t *session = ts->sessions[i];
+        if (session->snapshot != NULL && now_ms - session->snapshot_last_page_ms >= timeout)
+            authenticationserverSnapshotRelease(ts, session);
+    }
+}
+
+static const char *acquireSnapshot(authenticationserver_tstate_t *ts, authenticationserver_session_t *session)
+{
+    authenticationserverSnapshotRelease(ts, session);
+    for (uint32_t i = 0; i < ts->sessions_count; ++i)
+    {
+        authenticationserver_snapshot_t *other = ts->sessions[i]->snapshot;
+        if (other != NULL && other->config_revision == ts->store.config_revision &&
+            other->stats_revision == ts->store.stats_revision)
+        {
+            ++other->refs;
+            session->snapshot          = other;
+            session->snapshot_sequence = session->accounting_client->last_sequence;
+            return NULL;
+        }
+    }
+    const size_t maximum =
+        ts->snapshot_max_bytes != 0 ? ts->snapshot_max_bytes : kAuthenticationServerDefaultSnapshotMaxBytes;
+    const size_t count = usersCount(&ts->store.users);
+    size_t       offsets_bytes;
+    if (count == SIZE_MAX || ! memoryTryComputeArraySize(count + 1U, sizeof(size_t), &offsets_bytes) ||
+        ts->snapshot_bytes > maximum || sizeof(authenticationserver_snapshot_t) > maximum - ts->snapshot_bytes ||
+        offsets_bytes > maximum - ts->snapshot_bytes - sizeof(authenticationserver_snapshot_t))
+        return "snapshot-resource-limit";
+    size_t available = maximum - ts->snapshot_bytes - sizeof(authenticationserver_snapshot_t) - offsets_bytes;
+    size_t capacity = 0, largest_row = 0;
+    for (size_t i = 0; i < count; ++i)
+    {
+        size_t size;
+        if (userMeasureExportUpperBound(usersGetAtConst(&ts->store.users, i), &size) != kUserPublicOk)
+            return "invalid-user-record";
+        if (size > ts->max_user_export_bytes)
+            return "user-too-large";
+        /* cJSON's preallocated printer needs five spare bytes. Every stored
+         * row keeps one NUL; reserve all five so no row can overlap capacity. */
+        if (size > available || available - size < 5U)
+            return "snapshot-resource-limit";
+        capacity += size + 5U;
+        available -= size + 5U;
+        largest_row = max(largest_row, size);
+    }
+    /* Full user JSON has fewer than 128 fixed nodes/keys. The scalar-only
+     * measurement printer and key storage fit in 16 KiB; arbitrary copied
+     * strings are bounded by the row's encoded upper bound. The row prints
+     * directly into final storage, without a second table or blob allocation. */
+    const size_t fixed_scratch = 128U * sizeof(cJSON) + 16384U;
+    if (largest_row > available || fixed_scratch > available - largest_row)
+        return "snapshot-resource-limit";
+    const size_t scratch = fixed_scratch + largest_row;
+    const size_t charge  = sizeof(authenticationserver_snapshot_t) + offsets_bytes + capacity;
+    ts->snapshot_bytes += charge + scratch;
+    authenticationserver_snapshot_t *snapshot = memoryAllocateZero(sizeof(*snapshot));
+    *snapshot                                 = (authenticationserver_snapshot_t) {.refs            = 1,
+                                                                                   .count           = count,
+                                                                                   .charge          = charge,
+                                                                                   .capacity        = capacity,
+                                                                                   .offsets         = memoryAllocate(offsets_bytes),
+                                                                                   .rows            = capacity != 0 ? memoryAllocate(capacity) : NULL,
+                                                                                   .config_revision = ts->store.config_revision,
+                                                                                   .stats_revision  = ts->store.stats_revision};
+    session->snapshot                         = snapshot;
+    session->snapshot_sequence                = session->accounting_client->last_sequence;
+    size_t      used                          = 0;
+    const char *error                         = NULL;
+    for (size_t i = 0; i < count; ++i)
+    {
+        cJSON                     *row = NULL;
+        size_t                     encoded;
+        const user_public_result_t result =
+            usersCopyFullUserJsonAt(&ts->store.users, i, ts->max_user_export_bytes, &row, &encoded);
+        if (result != kUserPublicOk)
+        {
+            error = result == kUserPublicTooLarge ? "user-too-large" : "invalid-user-record";
+            break;
+        }
+        assert(encoded + 5U <= capacity - used && encoded + 5U <= INT_MAX);
+        const bool printed = cJSON_PrintPreallocated(row, snapshot->rows + used, (int) (encoded + 5U), false);
+        authenticationserverWipeJsonStrings(row);
+        cJSON_Delete(row);
+        if (! printed)
+        {
+            error = "invalid-user-record";
+            break;
+        }
+        snapshot->offsets[i] = used;
+        used += encoded + 1U;
+    }
+    snapshot->offsets[count] = used;
+    ts->snapshot_bytes -= scratch;
+    if (error != NULL)
+        authenticationserverSnapshotRelease(ts, session);
+    return error;
+}
+
 sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
                                               tunnel_t *t, line_t *l, authenticationserver_session_t *session,
                                               const uint8_t *request_data, uint32_t request_data_len)
@@ -118,7 +250,8 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
         goto refused;
     if ((cursor_json == NULL) != (total_json == NULL) || (validate && cursor_json == NULL))
         goto refused;
-    const size_t total = usersCount(&ts->store.users);
+    const uint64_t now_ms = getHRTimeUs() / 1000U;
+    authenticationserverSnapshotsExpire(ts, now_ms);
     if (cursor_json != NULL)
     {
         uint64_t supplied_total;
@@ -127,105 +260,104 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
             ! authenticationserverApiCursorDecode(cursor_json->valuestring, &cursor) ||
             ! pageUnsigned(request, "total", &supplied_total))
             goto refused;
-        if (memcmp(cursor.instance_id, ts->api_instance_id, 16) != 0 || cursor.revision != ts->store.config_revision)
+        if (session->snapshot == NULL || memcmp(cursor.instance_id, ts->api_instance_id, 16) != 0 ||
+            cursor.revision != session->snapshot->config_revision || session->snapshot_sequence != sequence)
         {
             error = "stale_cursor";
             goto refused;
         }
+        const size_t total = session->snapshot->count;
         if (supplied_total != total || cursor.position > total ||
             (validate ? cursor.position != total : cursor.position == total))
             goto refused;
     }
-    authenticationserver_page_view_t view = {
-        .config_revision = ts->store.config_revision, .position = (size_t) cursor.position, .total = total};
+    else if ((error = acquireSnapshot(ts, session)) != NULL)
+        goto refused;
+
+    authenticationserver_snapshot_t *snapshot = session->snapshot;
+    session->snapshot_last_page_ms            = getHRTimeUs() / 1000U;
+    authenticationserver_page_view_t view     = {
+            .config_revision = snapshot->config_revision, .position = (size_t) cursor.position, .total = snapshot->count};
     memoryCopy(view.instance_id, ts->api_instance_id, sizeof(view.instance_id));
-    char              instance[33], digest_text[65];
-    static const char hex[] = "0123456789abcdef";
-    for (size_t i = 0; i < 16; ++i)
-    {
-        instance[2 * i]     = hex[ts->api_instance_id[i] >> 4];
-        instance[2 * i + 1] = hex[ts->api_instance_id[i] & 15];
-    }
+    char instance[33], digest_text[65];
+    asciiHexEncodeBytesLower(ts->api_instance_id, sizeof(ts->api_instance_id), (uint8_t *) instance);
     instance[32] = 0;
-    for (size_t i = 0; i < sizeof(checkpoint->last_digest); ++i)
-    {
-        digest_text[2 * i]     = hex[checkpoint->last_digest[i] >> 4];
-        digest_text[2 * i + 1] = hex[checkpoint->last_digest[i] & 15];
-    }
-    digest_text[64]    = 0;
-    page               = createPageMetadata(instance,
+    asciiHexEncodeBytesLower(checkpoint->last_digest, sizeof(checkpoint->last_digest), (uint8_t *) digest_text);
+    digest_text[64] = 0;
+    page            = createPageMetadata(instance,
                               epoch->valuestring,
                               digest_text,
                               checkpoint->last_sequence,
-                              ts->store.config_revision,
-                              ts->store.stats_revision,
+                              snapshot->config_revision,
+                              snapshot->stats_revision,
                               getTimeOfDayMS(),
                               authenticationserverAccountingTimeMS(ts),
-                              total,
+                              snapshot->count,
                               view.position);
-    cJSON       *users = cJSON_GetObjectItemCaseSensitive(page, "users");
-    const size_t hard  = kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize;
-    size_t       count = 0, row_bytes = 0;
-    while (! validate && view.position + count < total && count < kAuthenticationUsersPageMaxUsers)
+    /* Reserve maximum-width count/cursor metadata once, then append the stored
+     * rows directly to a bounded frame. No row strings or JSON trees are copied. */
+    pageNumber(page, "count", UINT64_MAX);
+    text                  = cJSON_PrintUnformatted(page);
+    const size_t overhead = strlen(text);
+    cJSON_free(text);
+    text                = NULL;
+    const size_t hard   = kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize;
+    const size_t target = kAuthenticationUsersPageTargetBytes - kAuthenticationServerResponseEnvelopeHeaderSize -
+                          kAuthenticationServerResponseHeaderSize;
+    size_t count = 0, row_bytes = 0;
+    while (! validate && view.position + count < snapshot->count && count < kAuthenticationUsersPageMaxUsers)
     {
-        pagePosition(page, &view, count + 1, false);
-        /* Measure metadata without constructing the next user's owned strings. */
-        cJSON  *empty = cJSON_CreateArray();
-        discard cJSON_DetachItemFromObjectCaseSensitive(page, "users");
-        discard cJSON_AddItemToObject(page, "users", empty);
-        text                  = cJSON_PrintUnformatted(page);
-        const size_t overhead = strlen(text) + count; /* Between-row commas. */
-        cJSON_free(text);
-        text = NULL;
-        /* Restore ownership of previously admitted rows after metadata measuring. */
-        discard cJSON_DetachItemFromObjectCaseSensitive(page, "users");
-        cJSON_Delete(empty);
-        discard      cJSON_AddItemToObject(page, "users", users);
-        const size_t target = kAuthenticationUsersPageTargetBytes - kAuthenticationServerResponseEnvelopeHeaderSize -
-                              kAuthenticationServerResponseHeaderSize;
-        const size_t         allowance = overhead + row_bytes < target ? target - overhead - row_bytes : 0;
-        cJSON               *row       = NULL;
-        size_t               encoded   = 0;
-        user_public_result_t result =
-            usersCopyFullUserJsonAt(&ts->store.users, view.position + count, allowance, &row, &encoded);
-        if (count == 0 && result == kUserPublicTooLarge && overhead < hard)
-            result = usersCopyFullUserJsonAt(&ts->store.users, view.position, hard - overhead, &row, &encoded);
-        if (result == kUserPublicTooLarge && count != 0)
-            break;
-        if (result != kUserPublicOk)
+        const size_t index   = view.position + count;
+        const size_t encoded = snapshot->offsets[index + 1U] - snapshot->offsets[index] - 1U;
+        const size_t added   = encoded + (count != 0);
+        if (overhead > hard || added > hard - overhead - row_bytes)
         {
-            error = result == kUserPublicTooLarge ? "user-too-large" : "invalid-user-record";
+            if (count != 0)
+                break;
+            error = "user-too-large";
             goto refused;
         }
-        discard cJSON_AddItemToArray(users, row);
-        row_bytes += encoded;
+        if (count != 0 && overhead + row_bytes + added > target)
+            break;
+        row_bytes += added;
         ++count;
-        if (overhead + row_bytes > target)
-            break; /* Exceptional first row. */
     }
     pagePosition(page, &view, count, validate);
-    text = authenticationserverSerializeResponseJson(page);
-    if (text == NULL)
+    text              = cJSON_PrintUnformatted(page);
+    const char *array = strstr(text, "\"users\":[]");
+    assert(array != NULL);
+    const size_t prefix        = (size_t) (array + strlen("\"users\":[") - text);
+    const size_t metadata_size = strlen(text);
+    const size_t length        = metadata_size + row_bytes;
+    assert(length <= hard);
+    sbuf_t *response =
+        authenticationserverCreateResponseFrame(l, kAuthenticationServerResponseTypeUsers, correlation_id, NULL, 0);
+    response = sbufReserveSpace(response, (uint32_t) length + kAuthenticationServerResponseHeaderSize);
+    sbufSetLength(response, (uint32_t) length + kAuthenticationServerResponseHeaderSize);
+    const uint32_t network_length = htonl((uint32_t) length);
+    memoryCopy(sbufGetMutablePtr(response) + 1 + kAuthenticationServerCorrelationIdSize, &network_length, 4);
+    uint8_t *output = sbufGetMutablePtr(response) + kAuthenticationServerResponseHeaderSize;
+    memoryCopy(output, text, prefix);
+    size_t used = prefix;
+    for (size_t i = 0; i < count; ++i)
     {
-        error = "user-too-large";
-        goto refused;
+        if (i != 0)
+            output[used++] = ',';
+        const size_t index = view.position + i;
+        const size_t size  = snapshot->offsets[index + 1U] - snapshot->offsets[index] - 1U;
+        memoryCopy(output + used, snapshot->rows + snapshot->offsets[index], size);
+        used += size;
     }
-    sbuf_t *response = authenticationserverCreateResponseFrame(
-        l, kAuthenticationServerResponseTypeUsers, correlation_id, (const uint8_t *) text, (uint32_t) strlen(text));
-    authenticationserverWipeJsonStrings(page);
+    memoryCopy(output + used, text + prefix, metadata_size - prefix);
     cJSON_Delete(page);
     cJSON_Delete(request);
-    memorySecureZero(text, strlen(text));
     cJSON_free(text);
+    if (validate)
+        authenticationserverSnapshotRelease(ts, session);
     return response;
 refused:
-    authenticationserverWipeJsonStrings(page);
     cJSON_Delete(page);
     cJSON_Delete(request);
-    if (text != NULL)
-    {
-        memorySecureZero(text, strlen(text));
-        cJSON_free(text);
-    }
+    cJSON_free(text);
     return authenticationserverCreateErrorResponseFrame(l, correlation_id, error);
 }

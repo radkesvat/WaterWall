@@ -94,6 +94,7 @@ static const authenticationserver_module_t kAuthenticationServerModules[] = {
         .name              = "GetUsersPage",
         .handler           = authenticationserverGetAllUsersHandle,
         .require_user_pull = true,
+        .write_lock        = true, /* Snapshot acquisition and session lease. */
     },
     {
         .request_type       = kAuthenticationServerRequestTypePushUserStats,

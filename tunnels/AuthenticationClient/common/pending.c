@@ -109,7 +109,7 @@ void authenticationclientMarkRequestInFlightLocked(authenticationclient_tstate_t
     case kAuthenticationClientRequestTypeAuthenticate:
         ts->auth_in_flight = in_flight;
         break;
-    case kAuthenticationClientRequestTypeGetAllUsers:
+    case kAuthenticationClientRequestTypeGetUsersPage:
         ts->pull_in_flight = in_flight;
         break;
     case kAuthenticationClientRequestTypePushUserStats:

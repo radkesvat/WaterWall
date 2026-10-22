@@ -48,6 +48,7 @@ static uint32_t                   last_correlation;
 static uint64_t                   captured_sequence;
 static int                        captured_owner;
 static unsigned                   clock_fault;
+static unsigned                   missing_proof_fault;
 static char                      *captured_batch;
 static sbuf_t                    *held_request, *saved_ack, *saved_session;
 static bool                       hold_pull, hold_push, pause_before_session, pause_before_ack;
@@ -165,6 +166,35 @@ static void output(tunnel_t *t, line_t *l, sbuf_t *b)
         lineReuseBuffer(l, b);
         in_server = previous_clock;
         return;
+    }
+    if (sbufGetLength(b) > 29 && bytes[20] == kAuthenticationClientResponseTypeError && bytes[29] == '{')
+    {
+        cJSON       *proof = cJSON_ParseWithLength((const char *) bytes + 29, sbufGetLength(b) - 29);
+        const cJSON *error = cJSON_GetObjectItemCaseSensitive(proof, "error");
+        if (cJSON_IsString(error) && strcmp(error->valuestring, "usage-accounts-missing") == 0)
+        {
+            captured_sequence = UINT64_MAX; /* A proved rejection permits reconstruction at the same sequence. */
+            if (missing_proof_fault != 0)
+            {
+                cJSON *field =
+                    cJSON_GetObjectItemCaseSensitive(proof, missing_proof_fault == 1 ? "digest" : "checkpoint-digest");
+                require(cJSON_IsString(field), "missing-account proof digest fixture");
+                field->valuestring[0] = field->valuestring[0] == 'a' ? 'b' : 'a';
+                missing_proof_fault   = 0;
+                char          *text   = cJSON_PrintUnformatted(proof);
+                const uint32_t length = (uint32_t) strlen(text);
+                b                     = sbufReserveSpace(b, 29 + length);
+                sbufSetLength(b, 29 + length);
+                uint32_t number = htonl(25 + length);
+                memoryCopy(sbufGetMutablePtr(b), &number, 4);
+                number = htonl(length);
+                memoryCopy(sbufGetMutablePtr(b) + 25, &number, 4);
+                memoryCopy(sbufGetMutablePtr(b) + 29, text, length);
+                cJSON_free(text);
+                bytes = sbufGetRawPtr(b);
+            }
+        }
+        cJSON_Delete(proof);
     }
     if (sbufGetLength(b) >= 29)
         last_response = bytes[20];
@@ -347,11 +377,11 @@ static void setup(unsigned users)
         require(pools[i] != NULL, "pool creation failed");
         wios[i]        = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 8);
         workers[i].wid = i;
-        workers[i].buffer_pool    = pools[i];
-        workers[i].wios_pool      = wios[i];
-        loops[i]                  = wloopCreate(WLOOP_FLAG_AUTO_FREE, pools[i], i);
-        workers[i].loop           = loops[i];
-        loops[i]->status          = WLOOP_STATUS_RUNNING;
+        workers[i].buffer_pool = pools[i];
+        workers[i].wios_pool   = wios[i];
+        loops[i]               = wloopCreate(WLOOP_FLAG_AUTO_FREE, pools[i], i);
+        workers[i].loop        = loops[i];
+        loops[i]->status       = WLOOP_STATUS_RUNNING;
         mutexInit(&workers[i].control_mutex);
         testWorkerBindWID(i);
         workerMessagesInit(&workers[i]);
@@ -1854,9 +1884,9 @@ static void testConcurrentAndSubsets(void)
             "ACK cleared an observation outside its bounded snapshot");
     requireSyncPhase("refresh_required");
     pump(1); /* required post-ACK refresh */
-    require(state(0)->catchup_entries_count == 4097 && state(0)->catchup_entries[0].delta.u == 0 &&
-                state(0)->catchup_entries[0].first_usage_at_ms == 0,
-            "partial ACK did not retain settled slots beside pending catch-up");
+    require(state(0)->catchup_entries_count == 1 && state(0)->catchup_entries[0].id == 42 + 4096 &&
+                state(0)->catchup_entries[0].delta.u == 1,
+            "partial ACK did not compact settled debt while retaining unsent catch-up");
     requireSyncPhase("catchup_pending");
     discard userAccountTraffic(usersLookupByIdentifier(state(0)->users, 42), 100, 0, 0, NULL);
     pump(1); /* remaining captured user, despite continuing hot-account traffic */
@@ -1933,9 +1963,9 @@ static void testCachedAdmissionAndRejection(void)
     memoryFree(state(0)->secret);
     state(0)->secret = stringDuplicate("secret");
     drop_auth        = 1;
-    pump(10);
-    require(state(0)->auth_rejected, "lost authorization reply cleared rejection");
     pump(1000);
+    require(state(0)->auth_rejected, "lost authorization reply cleared rejection");
+    pump(2000);
     require(! state(0)->auth_rejected && authenticationclientCanAuthenticate(clients[0]),
             "validated authorization did not clear block");
     /* Old correlated Authenticate id cannot revoke a newly authorized cache. */
@@ -1974,7 +2004,7 @@ static void testInvalidClockRefresh(void)
     start(0);
     require(! authenticationclientCanAuthenticate(clients[0]) && ! state(0)->users_loaded,
             "malformed first pull enabled cache");
-    pump(10);
+    pump(1000);
     require(authenticationclientCanAuthenticate(clients[0]), "valid retry failed");
     user_t *user = usersLookupByIdentifier(state(0)->users, 42);
     discard userAccountTraffic(user, 4, 0, 0, NULL);
@@ -1987,7 +2017,7 @@ static void testInvalidClockRefresh(void)
         require(state(0)->users_generation == generation && local(0, false) == 4 &&
                     user->client_time.first_report_ms == observation && authenticationclientCanAuthenticate(clients[0]),
                 "invalid clock replaced old cache/evidence");
-        pump(10);
+        pump(1000);
         pump(1);
         pump(1);
         pump(1);
@@ -3201,7 +3231,7 @@ static void testPagedTablesAndAggregateLimits(void)
                 state(0)->last_failure == kAuthenticationClientFailureSyncLimit && ! state(0)->staging.active,
             "declared count limit replaced cache or retained staging");
     state(0)->sync_max_users = 129;
-    pump(10);
+    pump(1000);
     require(state(0)->users_generation == generation + 1, "count equality did not recover");
     hold_final_page = true;
     authenticationclientRequestPull(clients[0]);
@@ -3257,12 +3287,12 @@ static void testPagedConfigurationAndLiveDeltas(void)
     authenticationclientRequestPull(clients[0]);
     authTestPeerPassword(server);
     deliverHeldRequest();
-    require(state(0)->users_generation == stable && state(0)->last_failure == kAuthenticationClientFailureRemoteError &&
-                ! state(0)->staging.active && authenticationclientCanAuthenticate(clients[0]),
-            "config edit after first page published mixed configuration");
-    pump(10);
-    require(state(0)->users_generation == stable + 1 && state(0)->sync_retry_streak == 0,
-            "stale traversal did not restart and atomically recover");
+    require(state(0)->users_generation == stable + 1 && ! state(0)->staging.active &&
+                authenticationclientCanAuthenticate(clients[0]),
+            "config edit invalidated the retained traversal snapshot");
+    authenticationclientRequestPull(clients[0]);
+    require(state(0)->users_generation == stable + 2 && state(0)->sync_retry_streak == 0,
+            "later traversal did not install the edited snapshot");
     user_handle_t handle;
     require(authenticationclientGetUserByPassword(clients[0], "changed", &handle), "coherent edited credential absent");
 
@@ -3272,11 +3302,9 @@ static void testPagedConfigurationAndLiveDeltas(void)
     require(held_request != NULL && state(0)->staging.complete, "final validation was not independently pending");
     authTestPeerSetConfigRevision(server, state(0)->staging.config_revision + 1);
     deliverHeldRequest();
-    require(state(0)->users_generation == validated && ! state(0)->staging.active &&
+    require(state(0)->users_generation == validated + 1 && ! state(0)->staging.active &&
                 authenticationclientCanAuthenticate(clients[0]),
-            "edit before validation published stale traversal");
-    pump(10);
-    require(state(0)->users_generation == validated + 1, "final-validation stale cursor did not recover");
+            "edit before validation invalidated an immutable snapshot");
     teardown();
 }
 
@@ -3427,7 +3455,7 @@ static void testStatisticsMayChangeBetweenPages(void)
     userGetStats(late, &stats);
     userGetStats(usersLookupByIdentifier(state(0)->sync_baseline_users, 42 + 256), &baseline);
     require(! state(0)->staging.active && state(0)->local_stats_revision == first_stats &&
-                state(0)->remote_stats_revision > first_stats && stats.traffic.u == 15 && baseline.traffic.u == 15 &&
+                state(0)->remote_stats_revision > first_stats && stats.traffic.u == 0 && baseline.traffic.u == 0 &&
                 pulls == after_foreign && after_foreign > traversals,
             "stats-only update restarted paging or became local debt");
     const unsigned attempts = page_requests;
@@ -3438,6 +3466,206 @@ static void testStatisticsMayChangeBetweenPages(void)
     teardown();
 }
 
+static void testOrphanDebtAndProvedBatchRejection(void)
+{
+    for (unsigned fault = 0; fault < 3; ++fault)
+    {
+        setup(2);
+        start(0);
+        user_handle_t removed   = {.generation = state(0)->users_generation, .user_id = 42};
+        user_handle_t surviving = {.generation = state(0)->users_generation, .user_id = 43};
+        user_ip_key_t ip        = {.type = 4, .bytes = {192, 0, 2, 44}};
+        require(authenticationclientUserTryAdmitConnection(clients[0], &removed, &ip, 100000) == kUserAdmissionOk,
+                "removed-account reservation fixture");
+        const uint64_t ticket = authenticationclientUserBandwidthRegister(clients[0], &removed, kUserBandwidthUpload);
+        const buffer_budget_cost_t cost = {.bytes = 1, .charge = 64, .entries = 1};
+        require(ticket != 0 && authenticationclientUserBandwidthReserve(clients[0], &removed, ticket, cost),
+                "removed-account shaping fixture");
+        require(authenticationclientUserAddTraffic(clients[0], &removed, 7, 0) &&
+                    authenticationclientUserAddTraffic(clients[0], &surviving, 9, 0),
+                "removed-account traffic");
+        authTestPeerRemoveUser(server);
+        missing_proof_fault = fault;
+        hold_final_page     = fault == 0;
+        authenticationclientRequestPush(clients[0]);
+        if (fault != 0)
+        {
+            require(state(0)->pending_batch != NULL && state(0)->next_batch_sequence == 1 &&
+                        authTestPeerSequence(server, 0) == 0 && state(0)->orphan_debt_count == 0 &&
+                        authTestPeerStats(server, 43).traffic.u == 0,
+                    "unmatched rejection proof settled an uncertain batch or consumed debt");
+            authenticationclientUserReleaseConnection(clients[0], &removed, &ip);
+            authenticationclientUserBandwidthCancel(clients[0], &removed, kUserBandwidthUpload, ticket);
+            teardown();
+            continue;
+        }
+        require(held_request != NULL && state(0)->pending_batch == NULL && state(0)->next_batch_sequence == 1 &&
+                    state(0)->orphan_debt_count == 1 && authTestPeerSequence(server, 0) == 0,
+                "proved no-commit response advanced the checkpoint or lost the refresh barrier");
+        user_handle_t lookup;
+        require(! authenticationclientGetUserByPassword(clients[0], "account-0", &lookup) &&
+                    authenticationclientUserTryAdmitConnection(clients[0], &removed, &ip, 100000) ==
+                        kUserAdmissionInvalid &&
+                    authenticationclientUserShouldClose(clients[0], &removed, 100000) &&
+                    authenticationclientUserCommitDelivery(
+                        clients[0], &removed, kUserBandwidthUpload, ticket, 1, false, false) == kUserDeliveryReject,
+                "authoritatively absent account admitted or forwarded after rejection proof");
+        require(authenticationclientUserAccountTraffic(clients[0], &removed, 3, 0, 100000),
+                "already-produced orphan traffic did not request connection closure");
+        deliverHeldRequest();
+        for (unsigned i = 0; i < 8; ++i)
+            pump(1);
+        require(usersLookupByIdentifier(state(0)->users, 42) == NULL && state(0)->orphan_debt_count == 1 &&
+                    state(0)->pending_batch == NULL && authTestPeerStats(server, 43).traffic.u == 9 &&
+                    authTestPeerSequence(server, 0) == 1,
+                "removed ID stalled survivor reporting or duplicated the reconstructed batch");
+        authenticationclient_status_t status;
+        authenticationclientStatusSnapshot(clients[0], true, 1024 * 1024, 0, &status);
+        require(status.orphan_debt_count == 1 && status.locally_unacknowledged_upload_bytes == 10,
+                "orphan status lost already-produced usage");
+        const unsigned attempts = pushes;
+        for (unsigned i = 0; i < 20; ++i)
+            pump(1);
+        require(pushes == attempts && state(0)->progress_timer == NULL, "orphan-only debt spun reporting work");
+        authTestPeerInsertUser(server, 42, "account-0");
+        authenticationclientRequestPull(clients[0]);
+        for (unsigned i = 0; i < 8; ++i)
+            pump(1);
+        require(state(0)->orphan_debt_count == 0 && state(0)->catchup_entries_count == 0 &&
+                    authTestPeerStats(server, 42).traffic.u == 10 && authTestPeerStats(server, 43).traffic.u == 9 &&
+                    state(0)->pending_batch == NULL,
+                "returning durable ID lost or duplicated retained orphan debt");
+        user_handle_t recreated;
+        require(authenticationclientGetUserByPassword(clients[0], "account-0", &recreated) &&
+                    authenticationclientUserTryAdmitConnection(clients[0], &recreated, &ip, 100000) == kUserAdmissionOk,
+                "recreated account admission fixture");
+        authenticationclientUserReleaseConnection(clients[0], &removed, &ip);
+        authenticationclientUserBandwidthCancel(clients[0], &removed, kUserBandwidthUpload, ticket);
+        user_t *recreated_user = usersLookupByIdentifier(state(0)->users, 42);
+        require(recreated_user->runtime.active_cons_out == 1 && state(0)->bandwidth_ticket_count == 0 &&
+                    state(0)->bandwidth_queued_cost.bytes == 0 &&
+                    authenticationclientUserAccountTraffic(clients[0], &removed, 100, 0, 100000) &&
+                    authenticationclientUserShouldClose(clients[0], &removed, 100000) && local(0, false) == 10,
+                "pre-removal handle consumed recreated capacity or charged the new account");
+        require(! authenticationclientUserAccountTraffic(clients[0], &surviving, 1, 0, 100000),
+                "ordinary refresh revoked a continuously present handle");
+        authenticationclientUserReleaseConnection(clients[0], &recreated, &ip);
+        require(recreated_user->runtime.active_cons_out == 0, "new account reservation did not release");
+        teardown();
+    }
+}
+
+static void testOrphanFirstUseAge(void)
+{
+    for (unsigned acknowledged = 0; acknowledged < 2; ++acknowledged)
+    {
+        setup(1);
+        start(0);
+        if (acknowledged)
+        {
+            traffic(0, 3);
+            authenticationclientRequestPush(clients[0]);
+        }
+        traffic(0, 5);
+        user_t        *before = usersLookupByIdentifier(state(0)->users, 42);
+        const uint64_t origin = before->client_time.first_local_ms;
+        const uint64_t report = before->client_time.first_report_ms;
+        authTestPeerRemoveUser(server);
+        authenticationclientRequestPull(clients[0]);
+        require(state(0)->orphan_debt_count == 1 && state(0)->catchup_entries[0].first_usage_at_ms == report,
+                "missing account lost its original first-use evidence");
+        pump(250);
+        authTestPeerInsertUser(server, 42, "account-0");
+        const user_update_t expiry = {.mask = kUserUpdateTimeInfo, .timeinfo.expire_after_first_usage_ms = 100};
+        authTestPeerSetUser(server, 42, &expiry);
+        hold_push = true;
+        authenticationclientRequestPull(clients[0]);
+        pump(1);
+        user_t       *restored = usersLookupByIdentifier(state(0)->users, 42);
+        user_handle_t handle;
+        require(held_request != NULL && restored->client_time.first_local_ms == origin &&
+                    restored->client_time.first_report_ms == report && restored->client_view_expired &&
+                    ! authenticationclientGetUserByPassword(clients[0], "account-0", &handle),
+                "orphan reattachment restarted first-use expiry before its ACK");
+        deliverHeldRequest();
+        for (unsigned i = 0; i < 4; ++i)
+            pump(1);
+        require(authTestPeerStats(server, 42).traffic.u == 5 && state(0)->orphan_debt_count == 0 &&
+                    state(0)->catchup_entries_count == 0,
+                "orphan expiry restoration duplicated already-acknowledged traffic or lost new debt");
+        teardown();
+    }
+}
+
+static void testOrphanLedgerBudget(void)
+{
+    setup(2);
+    start(0);
+    authenticationclient_tstate_t *ts = state(0);
+    ts->catchup_entries               = memoryCalloc(64, sizeof(*ts->catchup_entries));
+    ts->catchup_entries_count = ts->orphan_debt_count = 64;
+    for (size_t i = 0; i < 64; ++i)
+        ts->catchup_entries[i] = (authenticationclient_accounting_entry_t) {
+            .id = 1000 + i, .delta = {.u = 1}, .first_usage_at_ms = 1, .detached = true};
+    const uint64_t                           generation = ts->users_generation;
+    authenticationclient_accounting_entry_t *retained   = ts->catchup_entries;
+    ts->sync_max_bytes                                  = 4096;
+    authTestPeerRemoveUser(server);
+    authenticationclientRequestPull(clients[0]);
+    require(ts->last_failure == kAuthenticationClientFailureSyncLimit && ts->users_generation == generation &&
+                ts->catchup_entries == retained && ts->catchup_entries_count == 64 && ts->orphan_debt_count == 64 &&
+                usersLookupByIdentifier(ts->users, 42) != NULL && retained[63].delta.u == 1,
+            "ledger capacity refusal changed active config or erased retained obligations");
+    ts->catchup_capture_needed = true;
+    authenticationclientResumeSync(clients[0]);
+    const uint64_t retry = ts->catchup_retry_not_before_ms;
+    require(retry > authenticationclientLocalTimeMS(), "ledger refusal had no bounded retry deadline");
+    for (unsigned i = 0; i < 20; ++i)
+    {
+        authenticationclientResumeSync(clients[0]);
+        pump(1);
+        require(ts->catchup_retry_not_before_ms == retry && ts->catchup_capture_needed &&
+                    ts->catchup_entries == retained && ts->progress_timer != NULL &&
+                    ts->progress_timer->next_timeout / 1000 >= retry,
+                "persistent ledger refusal spun or lost retained capture work");
+    }
+    ts->sync_max_bytes = 1024 * 1024;
+    pump(1000);
+    require(ts->users_generation == generation + 1 && ts->orphan_debt_count == 64 &&
+                usersLookupByIdentifier(ts->users, 42) == NULL && ts->progress_timer == NULL,
+            "bounded ledger retry did not preserve orphan debt while publishing config");
+    teardown();
+}
+
+static void testFailedPullDoesNotStopReporting(void)
+{
+    setup(2);
+    start(0);
+    state(0)->sync_max_users = 1;
+    authenticationclientRequestPull(clients[0]);
+    require(state(0)->pull_deferred && ! state(0)->pull_required && state(0)->connected &&
+                state(0)->last_failure == kAuthenticationClientFailureSyncLimit,
+            "failed refresh retained the new-batch barrier");
+    for (unsigned i = 0; i < 3; ++i)
+    {
+        traffic(0, 5);
+        authenticationclientRequestPush(clients[0]);
+        pump(1);
+        require(authTestPeerStats(server, 42).traffic.u == (i + 1) * 5 && state(0)->pending_batch == NULL,
+                "persistent pull limit stopped independent usage reporting");
+    }
+    const unsigned attempts = pulls;
+    pump(1000);
+    require(pulls > attempts && state(0)->pull_deferred && authenticationclientCanAuthenticate(clients[0]),
+            "reporting starved the failed-refresh retry");
+    state(0)->sync_max_users = 2;
+    pump(1000);
+    require(! state(0)->pull_deferred && ! state(0)->pull_required && state(0)->sync_retry_streak == 0 &&
+                authTestPeerStats(server, 42).traffic.u == 15 && local(0, false) == 15,
+            "successful refresh did not reconcile the independently reported baseline");
+    teardown();
+}
+
 #include "authentication_sync_pages.h"
 
 int main(void)
@@ -3445,6 +3673,10 @@ int main(void)
     testCaseSet("authentication sync loss and continuity");
     require(createNetworkLogger(NULL, false) != NULL, "logger failed");
     require(userTestRuntimeInitialize(), "crypto failed");
+    testOrphanDebtAndProvedBatchRejection();
+    testFailedPullDoesNotStopReporting();
+    testOrphanLedgerBudget();
+    testOrphanFirstUseAge();
     testMalformedPagesAndBackoff();
     testPerPageClockInstallation();
     testPagingPreservesRuntimeAndFractionalCarry();

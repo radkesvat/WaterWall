@@ -1117,7 +1117,7 @@ static void testBackwardHistoryRetention(void)
     use_test_clock = true;
     test_clock_us  = 1000000;
     /* Dates jump backward twice, then forward; limit one pins each new current. */
-    const unsigned days[]    = {22, 23, 20, 19, 24, 24, 25};
+    const unsigned days[]    = {22, 23, 20, 19, 24, 24, 25, 26};
     uint64_t       last_slot = 0;
     for (unsigned i = 0; i < sizeof(days) / sizeof(days[0]); ++i)
     {
@@ -1138,9 +1138,8 @@ static void testBackwardHistoryRetention(void)
                    "history work changed committed primary outcome");
         if (i == 6)
         {
-            twfRequire(! fail_history_remove && ts.normal_backups_last_slot == last_slot,
-                       "failed history deletion consumed successful-history marker");
-            twfRequire(authenticationserverSaveDatabase(&ts), "history deletion retry failed");
+            twfRequire(! fail_history_remove && ts.normal_backups_last_slot != last_slot,
+                       "prune failure lost the successful snapshot marker");
         }
         char period[32];
         snprintf(period, sizeof(period), "%04d%02d%02d.json", 2026, 10, days[i]);
@@ -1168,7 +1167,7 @@ static void testBackwardHistoryRetention(void)
                     }
                 }
             }
-        twfRequire(closedir(dir) == 0 && current && count <= ts.normal_backups_count_limit,
+        twfRequire(closedir(dir) == 0 && current && count <= ts.normal_backups_count_limit + (i == 6),
                    "new backward snapshot was pruned or retention exceeded");
         if (i == 2)
             twfRequire(latest_other, "backward pruning removed the latest other period");
@@ -1426,8 +1425,12 @@ static void testCleanPeriodicSaving(void)
     writes                 = private_writes;
     ts.normal_backups_path = directory;
     twfRequire(authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic) &&
+                   private_writes == writes && ts.normal_backups_last_slot == slot,
+               "optional history failure rewrote a clean primary before its retry deadline");
+    test_clock_us += 60000000;
+    twfRequire(authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic) &&
                    private_writes > writes && ts.normal_backups_last_slot != slot,
-               "due history was not retried");
+               "due history was not retried after backoff");
     ts.normal_backups_mode = kAuthenticationServerNormalBackupsDisabled;
     twfRequire(remove(primary) == 0, "clean primary removal failed");
     backup = readFile(ts.backup_path);
@@ -1525,6 +1528,84 @@ static void testOwnedDatabaseCredentialWiping(void)
     twfRequire(remove(primary) == 0 && rmdir(directory) == 0, "database wipe cleanup failed");
 }
 
+static char   load_diagnostic[8192];
+static size_t load_diagnostic_size;
+static void   captureLoadDiagnostic(int level, const char *bytes, int length)
+{
+    discard level;
+    twfRequire(length >= 0 && (size_t) length < sizeof(load_diagnostic) - load_diagnostic_size,
+               "load diagnostic overflow");
+    memoryCopy(load_diagnostic + load_diagnostic_size, bytes, (size_t) length);
+    load_diagnostic_size += (size_t) length;
+    load_diagnostic[load_diagnostic_size] = 0;
+}
+
+static void testDatabaseBomAndDiagnostics(void)
+{
+    char directory[] = "/tmp/ww-database-diagnostics-XXXXXX";
+    twfRequire(mkdtemp(directory) != NULL, "diagnostic database directory failed");
+    snprintf(primary, sizeof(primary), "%s/users.json", directory);
+    char backup[520];
+    snprintf(backup, sizeof(backup), "%s.backup", primary);
+    authenticationserver_tstate_t ts = {.db_path = primary};
+    authenticationserverInitializeExportLimit(&ts);
+    twfRequire(usersCreate(&ts.store.users), "diagnostic users failed");
+    logger_handler old = loggerGetHandle(getNetworkLogger());
+    loggerSetHandler(getNetworkLogger(), captureLoadDiagnostic);
+    load_diagnostic_size = 0;
+    twfRequire(! authenticationserverLoadDatabase(&ts) && strstr(load_diagnostic, "do not exist") != NULL &&
+                   strstr(load_diagnostic, "{\"users\":[]}") != NULL,
+               "missing database bootstrap was not explained");
+    memoryFree(ts.backup_path);
+    ts.backup_path = NULL;
+    static const char edited[] =
+        "\xef\xbb\xbf{\"users\":[{\"id\":42,\"password\":\"private-bom-secret\",\"enabled\":false}]}";
+    static const char older[] = "{\"users\":[{\"id\":42,\"password\":\"older-private-secret\",\"enabled\":true}]}";
+    twfRequire(authenticationserverPrivateWrite(primary, edited, sizeof(edited) - 1) &&
+                   authenticationserverPrivateWrite(backup, older, sizeof(older) - 1),
+               "BOM seed failed");
+    load_diagnostic_size = 0;
+    twfRequire(authenticationserverLoadDatabase(&ts) && strstr(load_diagnostic, "loaded 1 users") != NULL,
+               "one leading database BOM was rejected");
+    user_t *user = usersLookupByIdentifier(&ts.store.users, 42);
+    twfRequire(user != NULL && ! user->enabled && userPasswordMatches(user, "private-bom-secret"),
+               "BOM-prefixed disable edit was replaced by older credentials");
+    requirePrivateFileEquals(primary, edited, sizeof(edited) - 1);
+    requirePrivateFileEquals(backup, older, sizeof(older) - 1);
+    memoryFree(ts.backup_path);
+    ts.backup_path                = NULL;
+    static const char duplicate[] = "{\"users\":[{\"id\":42,\"password\":\"private-rejected-secret\"}],\"users\":[]}";
+    twfRequire(authenticationserverPrivateWrite(primary, duplicate, sizeof(duplicate) - 1), "duplicate seed failed");
+    load_diagnostic_size = 0;
+    twfRequire(authenticationserverLoadDatabase(&ts) && strstr(load_diagnostic, "duplicate key") != NULL &&
+                   strstr(load_diagnostic, "at byte") != NULL && strstr(load_diagnostic, "restored 1 users") != NULL &&
+                   strstr(load_diagnostic, "private-rejected-secret") == NULL,
+               "lexical recovery diagnostic missing or exposed input contents");
+    memoryFree(ts.backup_path);
+    ts.backup_path = NULL;
+    static const char invalid_user[] =
+        "{\"users\":[{\"id\":42,\"password\":\"private-refused-secret\",\"enabled\":42}]}";
+    twfRequire(authenticationserverPrivateWrite(primary, invalid_user, sizeof(invalid_user) - 1),
+               "invalid account seed failed");
+    load_diagnostic_size = 0;
+    twfRequire(authenticationserverLoadDatabase(&ts) && strstr(load_diagnostic, "entry 0, id=42") != NULL &&
+                   strstr(load_diagnostic, "private-refused-secret") == NULL,
+               "account refusal lacks safe location or exposed credentials");
+    loggerSetHandler(getNetworkLogger(), old);
+    memoryFree(ts.backup_path);
+    usersDestroy(&ts.store.users);
+    DIR           *dir = opendir(directory);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL)
+        if (entry->d_name[0] != '.')
+        {
+            char path[1024];
+            snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+            twfRequire(remove(path) == 0, "diagnostic database cleanup failed");
+        }
+    twfRequire(closedir(dir) == 0 && rmdir(directory) == 0, "diagnostic directory cleanup failed");
+}
+
 int main(void)
 {
     twfSetCase("authenticationserver private storage and commit");
@@ -1540,6 +1621,7 @@ int main(void)
     testExistingBackupPermissions();
     testRootDatabasePermissions();
     testMalformedDatabaseRecovery();
+    testDatabaseBomAndDiagnostics();
     testLoadFailurePreservation();
     testBackwardHistoryRetention();
     testCalendarWeeksAndLayouts();

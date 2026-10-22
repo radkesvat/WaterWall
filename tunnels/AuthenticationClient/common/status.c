@@ -27,7 +27,7 @@ static bool deadlineExpired(uint64_t deadline_ms)
     return deadline_ms != 0 && authenticationclientLocalTimeMS() >= deadline_ms;
 }
 
-/* control_mutex and users_lock pin tables, and worker 0 owns all collection
+/* users_lock pins tables, and worker 0 owns all collection
  * membership changes. Traffic workers mutate user values, never membership.
  * Therefore count, preflight and copy cannot race a collection resize. */
 static bool accountingCopy(authenticationclient_tstate_t *ts, size_t allowance, uint64_t deadline_ms,
@@ -204,11 +204,13 @@ void authenticationclientRecordFailure(tunnel_t *t, authenticationclient_failure
     ts->last_failure_operation = operation;
     ts->last_failure_ms        = now;
     if (! ts->stopping && failure != kAuthenticationClientFailureNone &&
-        failure != kAuthenticationClientFailureContinuity && failure != kAuthenticationClientFailureCredentialRejected)
+        failure != kAuthenticationClientFailureContinuity)
     {
         if (ts->sync_retry_streak != UINT32_MAX)
             ++ts->sync_retry_streak;
         uint64_t delay = ts->reconnect_interval_ms;
+        if (failure == kAuthenticationClientFailureCredentialRejected)
+            delay = max(delay, UINT64_C(1000));
         if (ts->sync_retry_streak > 1)
         {
             const uint64_t base = max((uint64_t) ts->reconnect_interval_ms, UINT64_C(1000));
@@ -263,43 +265,47 @@ void authenticationclientStatusSnapshot(tunnel_t *t, bool include_accounting, si
     size_t          count             = 0;
     mutexLock(&ts->control_mutex);
     rwlockReadLock(&ts->users_lock);
-    out->started                     = ts->started;
-    out->stopping                    = ts->stopping;
-    out->connected                   = ts->connected;
-    out->authenticated               = ts->authenticated;
-    out->auth_rejected               = ts->auth_rejected;
-    out->continuity_error            = ts->continuity_error;
-    out->users_loaded                = ts->users_loaded;
-    out->clock_loaded                = ts->clock_loaded;
-    out->users_count                 = usersCount(ts->users);
-    out->traffic_multiplier          = ts->traffic_multiplier;
-    out->blocking_reason             = authenticationclientBlockingReasonLocked(ts);
-    out->can_authenticate            = authenticationclientCanAuthenticateLocked(ts);
-    out->state                       = authenticationclientStateLocked(ts);
-    out->write_paused                = ts->write_paused;
-    out->auth_in_flight              = ts->auth_in_flight;
-    out->pull_in_flight              = ts->pull_in_flight;
-    out->traversal_active            = ts->staging.active;
-    out->sync_staged_users           = ts->staging.position;
-    out->sync_staged_bytes           = ts->staging.encoded_bytes;
-    out->sync_total_users            = ts->staging.total;
-    out->push_in_flight              = ts->push_in_flight;
-    out->pull_requested              = ts->pull_requested;
-    out->pull_required               = ts->pull_required;
-    out->push_requested              = ts->push_requested;
-    out->first_usage_push_requested  = ts->first_usage_push_requested;
-    out->first_usage_push_deferred   = ts->first_usage_push_deferred;
-    out->catchup_capture_needed      = ts->catchup_capture_needed;
-    out->retained_catchup_slots      = ts->catchup_entries_count;
-    out->reconnect_queued            = ts->reconnect_work_pending;
-    out->pending_request_count       = ts->pending_count;
-    out->unresolved_batch            = ts->pending_batch != NULL;
-    out->batch_sequence              = ts->next_batch_sequence;
-    out->batch_entry_count           = ts->pending_entries_count;
-    out->batch_size                  = ts->pending_batch_length;
-    out->sync_retry_streak           = ts->sync_retry_streak;
-    out->sync_retry_failure          = ts->sync_retry_failure;
-    out->sync_retry_remaining_ms     = elapsed(ts->sync_retry_not_before_ms, now);
+    out->started                    = ts->started;
+    out->stopping                   = ts->stopping;
+    out->connected                  = ts->connected;
+    out->authenticated              = ts->authenticated;
+    out->auth_rejected              = ts->auth_rejected;
+    out->continuity_error           = ts->continuity_error;
+    out->users_loaded               = ts->users_loaded;
+    out->clock_loaded               = ts->clock_loaded;
+    out->users_count                = usersCount(ts->users);
+    out->traffic_multiplier         = ts->traffic_multiplier;
+    out->blocking_reason            = authenticationclientBlockingReasonLocked(ts);
+    out->can_authenticate           = authenticationclientCanAuthenticateLocked(ts);
+    out->state                      = authenticationclientStateLocked(ts);
+    out->write_paused               = ts->write_paused;
+    out->auth_in_flight             = ts->auth_in_flight;
+    out->pull_in_flight             = ts->pull_in_flight;
+    out->traversal_active           = ts->staging.active;
+    out->sync_staged_users          = ts->staging.position;
+    out->sync_staged_bytes          = ts->staging.encoded_bytes;
+    out->sync_total_users           = ts->staging.total;
+    out->push_in_flight             = ts->push_in_flight;
+    out->pull_requested             = ts->pull_requested;
+    out->pull_required              = ts->pull_required;
+    out->push_requested             = ts->push_requested;
+    out->first_usage_push_requested = ts->first_usage_push_requested;
+    out->first_usage_push_deferred  = ts->first_usage_push_deferred;
+    out->catchup_capture_needed     = ts->catchup_capture_needed;
+    out->retained_catchup_slots     = ts->catchup_entries_count;
+    out->orphan_debt_count          = ts->orphan_debt_count;
+    out->reconnect_queued           = ts->reconnect_work_pending;
+    out->pending_request_count      = ts->pending_count;
+    out->unresolved_batch           = ts->pending_batch != NULL;
+    out->batch_sequence             = ts->next_batch_sequence;
+    out->batch_entry_count          = ts->pending_entries_count;
+    out->batch_size                 = ts->pending_batch_length;
+    out->sync_retry_streak          = ts->sync_retry_streak;
+    out->sync_retry_failure         = ts->sync_retry_failure;
+    out->sync_retry_remaining_ms =
+        elapsed(max(max(authenticationclientRetryNotBeforeLocked(ts), ts->pull_retry_not_before_ms),
+                    ts->catchup_retry_not_before_ms),
+                now);
     out->retry_deadline_valid        = ts->reconnect_timer != NULL;
     out->retry_remaining_ms          = elapsed(ts->reconnect_due_ms, loop_now);
     out->request_deadline_valid      = ts->request_timer != NULL;
@@ -321,11 +327,11 @@ void authenticationclientStatusSnapshot(tunnel_t *t, bool include_accounting, si
     out->last_failure_age_ms         = elapsed(now, ts->last_failure_ms);
     out->accounting_state =
         include_accounting ? kAuthenticationClientAccountingUnavailable : kAuthenticationClientAccountingNotRequested;
+    mutexUnlock(&ts->control_mutex);
     out->sampling_started_ms = authenticationclientLocalTimeMS();
     const bool sampled = include_accounting && accountingCopy(ts, working_allowance, deadline_ms, &entries, &count);
     out->sampling_finished_ms = authenticationclientLocalTimeMS();
     rwlockReadUnlock(&ts->users_lock);
-    mutexUnlock(&ts->control_mutex);
     if (sampled && accountingAggregate(entries, count, deadline_ms, out))
         out->accounting_state = kAuthenticationClientAccountingAvailable;
     memoryFree(entries);

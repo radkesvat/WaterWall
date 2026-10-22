@@ -43,7 +43,7 @@ void authenticationclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_
 
     if (ts->verbose)
     {
-        LOGD("AuthenticationClient: worker 0 stopping; deleting timers and closing control line if needed");
+        LOGD("AuthenticationClient: worker 0 quiescing; deleting timers");
     }
 
     authenticationclientDeleteTimer(&ts->ping_timer);

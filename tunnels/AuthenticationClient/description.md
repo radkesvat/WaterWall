@@ -1,5 +1,5 @@
 <!--
-Documentation version: 161
+Documentation version: 162
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -210,24 +210,26 @@ All five interval settings accept plain JSON integers from `0` through `21474836
 `max-pending-requests` accepts integers from `1` through `2147483647`.
 Defaults apply only when a setting is absent. Present values with fractions, decimal or exponent spelling,
 strings, `null`, or values outside the range are rejected at startup; they are never rounded or wrapped.
-The existing meaning of an explicitly configured `0` is preserved for each interval.
+The existing meaning of an explicitly configured `0` is preserved for each interval. Duplicate recognized settings are rejected,
+and `verbose` accepts only a JSON Boolean.
 
 `ping-interval-ms` sends authenticated `Ping` requests and also retries `Authenticate` while the transport is connected
 but not authenticated.
 
-`pull-interval-ms` enables periodic revision checks for `GetUsersPage`. A value of `0` disables timer-driven pulls, but
-the client still completes a required refresh after successful authentication and every matching usage ACK, including replay ACKs.
+`pull-interval-ms` enables periodic full `GetUsersPage` traversals. A value of `0` disables timer-driven pulls, but
+authentication and every matching usage ACK still request a refresh. A failed refresh retries independently while
+usage reporting continues from the last installed baseline.
 
 `push-interval-ms` enables periodic `PushUserStats`. A value of `0` disables periodic pushes. Other tunnels can still
 ask for a push through the internal API.
 
 When pull or push is enabled, one `sync_timer` runs at the shortest enabled pull/push interval. Each sync tick checks
 which jobs are due and attempts `PushUserStats` first. `GetUsersPage` starts a traversal when configuration revisions differ or the pull cadence is due.
-Statistics revision differences follow the configured cadence because a paged snapshot samples mixed times.
+Statistics revision differences follow the configured cadence; response-envelope revisions can be newer than the retained snapshot.
 Periodic ticks during a traversal join it. An explicit `authenticationclientRequestPull()` during a traversal instead
 coalesces into one later traversal; installation preserves that explicit demand.
 
-`reconnect-interval-ms` controls reconnect delay after the control transport closes. A value of `0` queues a retry for a later loop turn. Repeated retry requests preserve the first positive deadline.
+`reconnect-interval-ms` controls reconnect delay after the control transport closes. A value of `0` queues a retry for a later loop turn. Repeated retry requests preserve the first positive deadline. Credential rejection has a minimum one-second delay and participates in exponential backoff, even when the configured reconnect interval is zero.
 
 `request-timeout-ms` closes and reconnects the control line if any request stays pending longer than the configured
 time using an independent worker-0 deadline timer, even with ping/pull/push disabled. A value of `0` disables it.
@@ -353,6 +355,10 @@ including internal whitespace, excluding page metadata, commas and brackets. Adm
 charges before constructing additional users; the client never reserves the advertised total in advance. Limit failure
 reports `sync_limit`, drops staging and retains the usable cache and all usage debt. These are traversal admission bounds,
 not an exact RAM cap: active/baseline/staged tables, indexes, JSON and shaping queues consume additional memory.
+The same `sync-max-bytes` also bounds retained-accounting ledger preparation, including the old and replacement arrays
+while they coexist, the accounting snapshot, and a possible realloc replacement. If cumulative orphan obligations exhaust this allowance, installation reports `sync_limit` and
+preserves the old cache and every obligation; it never drops debt to make room. Capture budget refusal retains its
+work and retries no more often than once per second, rather than polling at the short progress cadence.
 Changing these limits requires ordinary configuration restart; restarting does not recover accounting state.
 
 Initial request data is an object with `epoch`, exact decimal-string `sequence` and 64-lowercase-hex `digest` for the
@@ -365,16 +371,19 @@ Each page contains `instance`, `config-revision`, `stats-revision`, `total`, `po
 Every 64-bit numeric field is an exact decimal string. Positions are contiguous and each nonempty ordinary page advances.
 The empty database produces one complete empty data page. After the last data page (`complete:true`, `validated:false`),
 the client sends its terminal cursor/total with `validate:true`. The server checks the configuration/checkpoint again
-under its state lock and returns `validated:true`, zero count and empty users. It retains no frozen full-table snapshot.
+under its state lock and returns `validated:true`, zero count and empty users. The server retains a bounded immutable
+snapshot for the traversal; current configuration edits do not invalidate it. Snapshot budget or idle-expiry refusal
+can require retry. Snapshot configuration/statistics revisions stay fixed and may be older than the enclosing response's
+live revision hints. Each page carries fresh paired clock samples for its own receipt-time projection.
 
-A configuration edit, including a same-value edit, makes continuation/final validation return `stale_cursor`. The client
-discards staging and restarts from page one after backoff while serving its old cache. Traffic/first-use changes by
-other producers do not invalidate the cursor. Statistics are sampled at different times: the installed stats revision
-is the first page's conservative sample; latest observed remote revisions remain separate. Ordinary cadence governs
-later statistics refreshes, preventing a mixed-time snapshot from creating an immediate refresh loop.
-Frequent configuration edits can repeatedly restart traversal. A failed mandatory refresh defers new usage reports;
-missing-account debt is retained and can prevent installation. Cached service continues under locally known limits,
-but these policies do not provide crash recovery.
+A failed traversal discards staging and retries with backoff on the same authenticated connection. With an installed
+cache, new usage batches may run between attempts against the unchanged baseline; no batch crosses an active traversal.
+Due refresh retries take a turn even when reporting stays busy. Protocol/checkpoint contradictions still stop continuity.
+A missing account no longer blocks installation: its unacknowledged bytes and first-use evidence remain in a bounded
+orphan ledger, excluded from outgoing batches while absent. Other accounts continue synchronizing. If the same durable
+ID returns, its debt is merged into local quota totals and reported exactly once. Original local first-use origin and
+elapsed-age evidence are restored before the new clock projection, so absence cannot restart first-use expiry. Cached service continues under locally
+known limits; no process-crash recovery is provided.
 
 No table/generation changes before successful final validation. All fallible preparation completes before runtime
 migration. Installation merges current local deltas, observations, multiplier carry, reservations, bandwidth queues and
@@ -387,13 +396,13 @@ Absolute `request-timeout-ms` applies separately to every page and final validat
 complete traversal can take longer than that timeout overall. Disconnect, timeout, malformed/no-progress page, conflict
 or limit refusal releases staging only. Quiescence settles callbacks/timers before releasing owned state.
 
-Repeated failed synchronization uses a monotonic retry streak. The first ordinary retry retains `reconnect-interval-ms`,
-including a force-queued zero delay. Repeated failures start at `max(reconnect-interval-ms,1000)` and double to
+Repeated failed synchronization uses a monotonic retry streak. Page failures and credential refusals wait at least one
+second. The first ordinary transport retry retains `reconnect-interval-ms`, including a force-queued zero delay. Repeated failures start at `max(reconnect-interval-ms,1000)` and double to
 `max(base,60000)`, with additive jitter from zero through one quarter of that delay. The effective deadline also honors
 the stats-refusal floor of 30 seconds (or a larger configured interval). Requests, Resume, timers and first use cannot
 bypass it; independent retry wakeups work with optional intervals zero. Session, Pong and intermediate pages do not reset
 the streak; complete installation does. Status exposes `sync_retry_streak`, `sync_retry_remaining_ms`,
-`sync_retry_failure`, `traversal_active`, `sync_staged_users`, `sync_staged_bytes` and `sync_total_users` without secrets.
+`sync_retry_failure`, `orphan_debt_count`, `traversal_active`, `sync_staged_users`, `sync_staged_bytes` and `sync_total_users` without secrets.
 
 ## Local Users Table
 
@@ -469,8 +478,9 @@ It separates `can_authenticate` and `blocking_reason` from transport `connected`
 `sync_phase`. A valid cache can admit new traffic during an outage; explicit credential rejection can block admission
 while `users_loaded` remains true. Blocking precedence is stopping, not started, continuity error, credential rejection,
 unusable cache/clock, then none. Queue/in-flight flags, unresolved batch sequence/count/size, remaining request/retry
-limits, applied/observed revisions and success/failure history are included. `retained_catchup_slots` counts storage slots,
-including settled entries, and is not an owed-user count.
+limits, applied/observed revisions and success/failure history are included. `retained_catchup_slots` counts retained obligations,
+while `orphan_debt_count` counts retained obligations for authoritatively absent IDs. An otherwise idle client with only
+these obligations reports `sync_phase: "orphan_debt"`; it does not repeatedly schedule unsendable batches.
 
 When captured usage or first-use observations await their next batch, `sync_phase` is `catchup_pending`.
 Capture, required refresh and in-flight operations retain their more specific phases. An `idle` client may still have
@@ -493,7 +503,7 @@ remain represented. First-use counts use explicit unacknowledged observation sta
 assuming any batch timestamp is unacknowledged. Exhausted counters and aggregate overflow set `accounting_lower_bound`,
 including when the represented amount is zero.
 
-Sampling uses coherent per-user copies over the reported monotonic interval; traffic continues between samples. It pins
+Sampling releases the admission/control mutex before copying accounting under the table lock. It uses coherent per-user copies over the reported monotonic interval; traffic continues between samples. It pins
 the tables, preflights temporary storage against the handler reservation and performs bounded linear scan/radix-merge
 work with deadline checks. Insufficient allowance or elapsed deadline preserves basic status and returns accounting as
 `unavailable`. Queries never modify counters, baselines, observations, batches, retry state or synchronization scheduling.
@@ -566,14 +576,17 @@ The live enforcement helpers resolve handles by durable id instead of rejecting 
 refresh bumped the local users generation. A miss means the user disappeared from the refreshed table. The `now_ms`
 argument for these helpers is in the client's local monotonic clock domain, because expiry has already been projected
 onto that clock when the users table was installed.
+A handle also belongs to one continuous membership lifetime. Ordinary refreshes preserve its validity, but removal
+and recreation of the same durable ID establish a new generation floor. Old handles remain revoked and cannot charge
+the recreated account or release its connection/IP reservations; old shaping tickets still release client-owned costs.
 
 `authenticationclientRequestPull()` and `authenticationclientRequestPush()` use the current control line. Foreign
 callers queue work to worker 0. Desired jobs coalesce while disconnected, paused or blocked by another synchronization
 operation. A pull cannot replace the baseline during an unresolved push, and a push cannot overtake an active pull.
-After authentication or a usage ACK, the required full pull completes before the next new usage batch. A retained batch
-is replayed before this pull after reconnect. Once the required pull completes, a waiting push takes precedence over
-ordinary periodic or explicit pulls, so repeated pull requests cannot indefinitely delay usage reporting. If there is
-no usage to push, an ordinary queued pull can proceed immediately.
+After authentication or a usage ACK, a refresh is requested. A retained uncertain batch replays before this pull.
+A failed non-accounting refresh permits new reports from the existing baseline between retry attempts; a later successful
+refresh reconciles those acknowledged totals before normal cadence resumes. A due failed-refresh retry takes a turn
+before another new batch, and otherwise a waiting push precedes ordinary pulls.
 Credential eligibility checks enabled state, expiry and traffic quota; saved connection, IP, device and speed gauges do
 not block lookup. Live capacity is reserved separately by the atomic runtime admission helper.
 
@@ -586,7 +599,8 @@ The client synchronizes already-charged traffic deltas and first-use accounting 
 ```
 
 It retains the exact payload and an owned snapshot of included IDs, counter totals and first-use observations for the tunnel lifetime until an ACK matches epoch, sequence
-and SHA-256 digest. Send refusal, timeout, malformed replies and transport/session loss preserve both owners.
+and SHA-256 digest, or the server proves the exact attempt did not commit. Send refusal, timeout, malformed replies
+and transport/session loss preserve both owners.
 Retries use the same bytes with a fresh correlation ID and the current token. Batches contain at most 4096 entries;
 only represented users/directions advance on ACK. Sequence numbers never wrap, and empty batches are not sent.
 ID, sequence and first-use timestamp are nonzero. Both byte deltas may be zero for an unacknowledged observation,
@@ -594,14 +608,15 @@ including when counters saturate. ACK marks only included observations acknowled
 and elapsed age. Later positive reports still carry the same producer timestamp.
 The root has exactly `epoch`, `sequence`, `users`; each entry has exactly `id`, `up`, `down`, `first-usage-at-ms`, all required. Unknown,
 duplicate or nontraffic fields reject the request. Complete valid JSON/UTF-8, no raw/escaped NUL or trailing data,
-and an eight-container depth bound are required within the existing authentication message budget.
+and a three-container depth bound with at most 36,871 lexical values (including keys) are required within the existing authentication message budget.
 Plain integer tokens through INT64_MAX and decimal strings through UINT64_MAX are exact; integer readers reject
 fractional, decimal/exponent, negative, nonfinite and overflowing input.
 
 If `A` is current local traffic, `B` its acknowledged baseline and `S` the batch snapshot, ACK advances `B` to `S`
 for that subset. New traffic stays in `A`. A subsequent pull installs global counters `G + (A - B)` with baseline `G`.
-Every ACK, including a duplicate, requires a full pull before the next new usage batch so server-owned first-use time
-and other clients' usage arrive.
+Every ACK, including a duplicate, requests a full pull so server-owned first-use time and other clients' usage arrive.
+If that refresh fails for a non-accounting reason, subsequent reports keep the current acknowledged baseline and the
+configuration refresh retries independently.
 First-use work and blocked desired pushes/pulls remain pending until they can run.
 First-use reporting also remains deferred while a required/in-flight pull blocks it; its global latch and per-user
 request flags are preserved. Pull completion continues the remembered push without another packet. Paused writes
@@ -616,6 +631,15 @@ traffic, explicit requests and Resume cannot bypass it. A Session does not clear
 batch's matching ACK clears it. Status reports bounded `stats_push_denied` or `stats_push_rejected` failure classes and
 the actual retry/debt state. Remote error diagnostics escape at most 128 input bytes and explicitly mark truncation.
 
+A correlated `usage-accounts-missing` error carries a JSON proof with `epoch`, attempted `sequence` and `digest`,
+`checkpoint-sequence`, `checkpoint-digest`, and nonempty `missing-ids`. Numeric values are decimal strings. The client
+checks the exact retained bytes, enrolled epoch, preceding checkpoint and membership of every missing ID before
+releasing the rejected attempt. No baseline, sequence or debt is consumed. It retains the missing obligations separately,
+blocks their new admissions and forwarding immediately, and requests authoritative config. Already-produced traffic
+still accounts until existing callers close; connection and shaping releases retain their normal cleanup paths.
+A later batch may reuse that sequence for the surviving IDs because the proof establishes that the earlier attempt
+never committed. Unknown, malformed or mismatched errors preserve the uncertain batch unchanged.
+
 Until the retained batch settles, no full pull may overtake it: the cache can remain stale as during a control outage,
 and later local traffic accumulates separately. Recovery requires the same live server accounting epoch. Permissions
 are startup settings; changing them and restarting does not promise recovery of a lost process-local checkpoint.
@@ -626,7 +650,7 @@ Complete refreshes use bounded pages and retain the accounting barrier through f
 
 Reconnect order is Authenticate/resume epoch, replay retained batch if present, validate ACK, then full pull.
 After that refresh, the client captures owed relative deltas and observations, including traffic during recovery,
-and automatically drains them in bounded batches with a required refresh after every ACK. This works with all optional
+and automatically drains sendable obligations in bounded batches, requesting a refresh after every ACK. This works with all optional
 intervals zero. A nonzero worker-0 progress timer yields between catch-up steps and retries resource refusals; failure
 to establish required scheduling requests orderly shutdown. Quiescence detaches the timer and does not rearm it.
 The capture is finite under continuing traffic and survives aggregate counter rebasing from other producers.
@@ -638,7 +662,7 @@ counter rebasing clears it. Final tunnel destruction releases this RAM state wit
 The server retains a bounded checkpoint per configured client beyond session expiry/replacement. Independent client
 processes need different configured names. A lost/superseded epoch with an unresolved batch enters
 `kAuthenticationClientStateContinuityError`, keeps the batch, closes the transport and stops automatic synchronization
-until the operator resolves the accounting condition. No reconciliation/reset API is provided. With no uncertain batch, fresh enrollment and pull can resume. This guarantee covers
+until the operator resolves the accounting condition. No reconciliation/reset API is provided. With no uncertain batch, continuity loss during Authenticate can resume through fresh enrollment and pull; a contradiction inside a page remains terminal. This guarantee covers
 connection loss while both processes run; it does not provide accounting recovery across process crashes/restarts.
 An ACK means acceptance in server memory, not a disk save. Periodic/final database saving does not persist accounting
 checkpoints. Client restart may lose unreported usage; server restart may lose acknowledged usage since its last

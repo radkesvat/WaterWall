@@ -29,10 +29,11 @@ static void authenticationserverSessionDestroyFields(authenticationserver_sessio
     memoryZero(session, sizeof(*session));
 }
 
-static void authenticationserverSessionFree(authenticationserver_session_t *session)
+static void authenticationserverSessionFree(authenticationserver_tstate_t *ts, authenticationserver_session_t *session)
 {
     assert(session != NULL);
 
+    authenticationserverSnapshotRelease(ts, session);
     authenticationserverSessionDestroyFields(session);
     memoryFree(session);
 }
@@ -158,6 +159,15 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
 
     if (UNLIKELY(client == NULL))
     {
+        if (ts->authentication_failures != UINT64_MAX)
+            ++ts->authentication_failures;
+        const uint64_t now_ms = getHRTimeUs() / 1000U;
+        if (now_ms >= ts->authentication_failure_log_at_ms)
+        {
+            LOGW("AuthenticationServer: producer authentication rejected; total failures=%" PRIu64,
+                 ts->authentication_failures);
+            ts->authentication_failure_log_at_ms = now_ms + 5000U;
+        }
         return NULL;
     }
 
@@ -178,7 +188,7 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
 
     if (UNLIKELY(! authenticationserverGenerateUniqueToken(t, session->token)))
     {
-        authenticationserverSessionFree(session);
+        authenticationserverSessionFree(ts, session);
         return NULL;
     }
 
@@ -195,7 +205,7 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
         uint8_t epoch[64];
         if (! authenticationserverGenerateUniqueToken(t, epoch))
         {
-            authenticationserverSessionFree(session);
+            authenticationserverSessionFree(ts, session);
             return NULL;
         }
         memoryCopy(client->accounting_epoch, epoch, sizeof(epoch));
@@ -244,7 +254,7 @@ static void authenticationserverSessionRemoveAtLocked(authenticationserver_tstat
     assert(index < ts->sessions_count);
 
     // sessions[0..sessions_count) is compact and populated; active-range loops rely on this.
-    authenticationserverSessionFree(ts->sessions[index]);
+    authenticationserverSessionFree(ts, ts->sessions[index]);
 
     const uint32_t last_index = ts->sessions_count - 1U;
     if (LIKELY(index < last_index))
@@ -289,6 +299,7 @@ void authenticationserverSessionsExpireIdle(tunnel_t *t)
 
     rwlockWriteLock(&ts->state_lock);
     const uint32_t now_ms = getTickMS();
+    authenticationserverSnapshotsExpire(ts, getHRTimeUs() / 1000U);
     for (uint32_t i = 0; i < ts->sessions_count;)
     {
         authenticationserver_session_t *session          = ts->sessions[i];
@@ -337,7 +348,7 @@ void authenticationserverSessionsDestroy(authenticationserver_tstate_t *ts)
 
     for (uint32_t i = 0; i < ts->sessions_count; ++i)
     {
-        authenticationserverSessionFree(ts->sessions[i]);
+        authenticationserverSessionFree(ts, ts->sessions[i]);
         ts->sessions[i] = NULL;
     }
 

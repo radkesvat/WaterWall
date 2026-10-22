@@ -57,18 +57,12 @@ CATEGORY_B = [
     # ------------------------------------------------------------------
     # Converted by the orderly-runtime-failure audit.
     # ------------------------------------------------------------------
-    ("tunnels/AuthenticationClient/instance/start.c", "authenticationclientStartPingTimer",
+    ("tunnels/AuthenticationClient/common/progress.c", "authenticationclientRequiredWorkFailed",
      ("1",),
-     ("AuthenticationClient: failed to create ping timer",),
-     "worker-0 startup task: required ping timer could not be created"),
-    ("tunnels/AuthenticationClient/common/sync.c", "authenticationclientStartSyncTimer",
-     ("1",),
-     ("AuthenticationClient: failed to create sync timer",),
-     "worker-0 startup task: required sync timer could not be created"),
-    ("tunnels/AuthenticationClient/common/progress.c", "progressFailure",
-     ("1",),
-     ("AuthenticationClient: could not admit required %s",),
-     "required reconnect work or independent deadline timer could not be admitted"),
+     ("mutexUnlock(&ts->control_mutex);",
+      "if (stopping || wloopQuiesceRequested(getWorkerLoop(0)))",
+      "return;", "AuthenticationClient: could not admit required %s"),
+     "required work refusal outside orderly worker quiescence"),
     ("tunnels/PacketsToStream/instance/start.c", "packetstostreamStartWorkerTimer",
      ("1",),
      ("PacketsToStream: failed to create sensitive-mode timer on worker %u",),
@@ -138,6 +132,14 @@ CATEGORY_B = [
 #   (relative path, function, ordered snippets, description)
 
 CALLER_STOPS = [
+    ("tunnels/AuthenticationClient/instance/start.c", "authenticationclientStartPingTimer",
+     ('authenticationclientRequiredWorkFailed(t, "ping timer");',
+      "return false;", "weventSetUserData(ts->ping_timer, t);"),
+     "failed ping timer delegates shutdown policy and stops initialization"),
+    ("tunnels/AuthenticationClient/common/sync.c", "authenticationclientStartSyncTimer",
+     ('authenticationclientRequiredWorkFailed(t, "sync timer");',
+      "return false;", "weventSetUserData(ts->sync_timer, t);"),
+     "failed sync timer delegates shutdown policy and stops initialization"),
     ("ww/devices/tun/tun_windows.c", "tunWindowsReaderReady",
      ("quiescenceGateLeave(&reader->gate);", "tunWindowsReaderRequestShutdown(failed);"),
      "Windows native notification releases admission before reporting required-post failure"),

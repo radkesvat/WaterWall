@@ -16,6 +16,9 @@ typedef struct authenticationclient_accounting_entry_s
     user_ud_t totals;
     user_ud_t delta;
     uint64_t  first_usage_at_ms;
+    uint64_t  first_local_at_ms, first_usage_age_ms, age_sample_ms;
+    bool      age_valid;
+    bool      detached; /* Authoritatively absent; retain debt without sending it. */
 } authenticationclient_accounting_entry_t;
 
 /* Owned traversal metadata. No page is published before final validation. */
@@ -84,14 +87,14 @@ typedef struct authenticationclient_status_s
     uint32_t sync_retry_streak;
     uint64_t sync_retry_remaining_ms;
     authenticationclient_failure_t sync_retry_failure;
-    uint64_t users_count, pending_request_count, retained_catchup_slots;
-    uint32_t traffic_multiplier; /* Fixed-point thousandths, as configured. */
-    uint64_t batch_sequence, batch_entry_count, batch_size;
-    uint64_t retry_remaining_ms, request_remaining_ms;
-    uint64_t applied_config_revision, applied_stats_revision, applied_revision_generation;
-    uint64_t remote_config_revision, remote_stats_revision, remote_revision_generation;
-    bool     auth_success_valid, pull_success_valid, ack_success_valid;
-    uint64_t auth_success_age_ms, pull_success_age_ms, ack_success_age_ms;
+    uint64_t                       users_count, pending_request_count, retained_catchup_slots, orphan_debt_count;
+    uint32_t                       traffic_multiplier; /* Fixed-point thousandths, as configured. */
+    uint64_t                       batch_sequence, batch_entry_count, batch_size;
+    uint64_t                       retry_remaining_ms, request_remaining_ms;
+    uint64_t                       applied_config_revision, applied_stats_revision, applied_revision_generation;
+    uint64_t                       remote_config_revision, remote_stats_revision, remote_revision_generation;
+    bool                           auth_success_valid, pull_success_valid, ack_success_valid;
+    uint64_t                       auth_success_age_ms, pull_success_age_ms, ack_success_age_ms;
     authenticationclient_failure_t last_failure;
     uint8_t                        last_failure_operation;
     uint64_t                       last_failure_age_ms;
@@ -117,8 +120,8 @@ typedef struct authenticationclient_tstate_s
     char *name;
     char *secret;
 
-    users_t *users;
-    users_t *sync_baseline_users;
+    users_t                       *users;
+    users_t                       *sync_baseline_users;
     authenticationclient_staging_t staging; /* Worker 0, released after callbacks settle. */
     uint64_t                       sync_max_users, sync_max_bytes;
     /* Worker-0 owned value snapshots; no pointers into a replaceable table. */
@@ -126,7 +129,9 @@ typedef struct authenticationclient_tstate_s
     size_t                                   pending_entries_count;
     authenticationclient_accounting_entry_t *catchup_entries;
     size_t                                   catchup_entries_count;
+    size_t                                   orphan_debt_count;
     bool                                     catchup_capture_needed;
+    uint64_t                                 catchup_retry_not_before_ms; /* Worker 0. */
     wrwlock_t                                users_lock;
     uint64_t                                 users_generation;
 
@@ -156,21 +161,23 @@ typedef struct authenticationclient_tstate_s
     bool                                     continuity_error;
     bool                                     stats_push_refused;
     bool                                     pull_requested;
-    bool pull_required; /* Refresh after authentication or ACK, before a new usage batch. */
-    bool push_requested;
+    bool     pull_required; /* Refresh after authentication or ACK, before a new usage batch. */
+    bool     pull_deferred; /* A failed refresh permits reporting from the unchanged baseline. */
+    bool     push_requested;
+    uint64_t pull_retry_not_before_ms;
 
-    line_t   *control_line;
-    wtimer_t *ping_timer;
-    wtimer_t *sync_timer;
-    wtimer_t *reconnect_timer;
-    wtimer_t *request_timer;
-    wtimer_t *progress_timer;
-    uint64_t  reconnect_due_ms;
-    uint64_t  stats_retry_not_before_ms;
+    line_t                        *control_line;
+    wtimer_t                      *ping_timer;
+    wtimer_t                      *sync_timer;
+    wtimer_t                      *reconnect_timer;
+    wtimer_t                      *request_timer;
+    wtimer_t                      *progress_timer;
+    uint64_t                       reconnect_due_ms;
+    uint64_t                       stats_retry_not_before_ms;
     uint64_t                       sync_retry_not_before_ms;
     uint32_t                       sync_retry_streak;
     authenticationclient_failure_t sync_retry_failure;
-    uint64_t  request_deadline_ms;
+    uint64_t                       request_deadline_ms;
 
     uint8_t  token[64];
     char     accounting_epoch[65];

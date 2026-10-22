@@ -114,6 +114,33 @@ static bool authenticationclientParseSettings(authenticationclient_tstate_t *ts,
         return false;
     }
 
+    static const char *const known[] = {"name",
+                                        "secret",
+                                        "verbose",
+                                        "traffic-multiplier",
+                                        "sync-max-users",
+                                        "sync-max-bytes",
+                                        "ping-interval-ms",
+                                        "pull-interval-ms",
+                                        "push-interval-ms",
+                                        "reconnect-interval-ms",
+                                        "request-timeout-ms",
+                                        "max-pending-requests"};
+    uint32_t                 seen    = 0;
+    for (const cJSON *item = settings->child; item != NULL; item = item->next)
+        for (size_t i = 0; i < sizeof(known) / sizeof(known[0]); ++i)
+            if (item->string != NULL && strcmp(item->string, known[i]) == 0)
+            {
+                const uint32_t bit = UINT32_C(1) << i;
+                if ((seen & bit) != 0)
+                {
+                    LOGE("AuthenticationClient: duplicate %s setting", known[i]);
+                    return false;
+                }
+                seen |= bit;
+                break;
+            }
+
     if (UNLIKELY(! getStringFromJsonObject(&ts->name, settings, "name") || ts->name[0] == '\0'))
     {
         LOGF("JSON Error: AuthenticationClient->settings->name (string field) : invalid value");
@@ -132,7 +159,11 @@ static bool authenticationclientParseSettings(authenticationclient_tstate_t *ts,
         return false;
     }
 
-    getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+    if (jsonGetObjectBoolean(settings, "verbose", &ts->verbose) == kJsonValueInvalid)
+    {
+        LOGE("AuthenticationClient: verbose must be a Boolean");
+        return false;
+    }
 
     if (! authenticationclientReadSyncLimit(
             settings, "sync-max-users", kAuthenticationDefaultSyncMaxUsers, &ts->sync_max_users) ||

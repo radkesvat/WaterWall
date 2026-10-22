@@ -8,6 +8,14 @@
 #define WW_HOST_NODE_JSON_LIMIT  (8U * 1024U * 1024U)
 #define WW_HOST_JSON_DEPTH_LIMIT 128U
 
+/* Static category text never contains source bytes. Tree-wide checks report
+ * the document-end offset; lexical and syntax errors report their byte position. */
+typedef struct config_lexical_error_s
+{
+    const char *category;
+    size_t      offset;
+} config_lexical_error_t;
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -29,6 +37,10 @@ extern "C"
      * This does not expose partial trees discarded inside cJSON on syntax errors. */
     cJSON *configLexicalParseBoundedQuietWithCleanup(const char *input, size_t length, size_t max_depth,
                                                      size_t max_values, void (*before_delete)(cJSON *));
+    /* Quiet parse with the same cleanup contract. A non-NULL error is cleared
+     * on entry and receives a source-free reason if parsing fails. */
+    cJSON *configLexicalParseBoundedWithError(const char *input, size_t length, size_t max_depth, size_t max_values,
+                                              void (*before_delete)(cJSON *), config_lexical_error_t *error);
 
 #ifdef __cplusplus
 }

@@ -30,9 +30,10 @@ bool authenticationclientRequestMayBeSentLocked(authenticationclient_tstate_t *t
     {
         return false;
     }
-    if (request_type == kAuthenticationClientRequestTypeGetAllUsers)
+    if (request_type == kAuthenticationClientRequestTypeGetUsersPage)
     {
-        return ! ts->pull_in_flight && ! ts->push_in_flight && ts->pending_batch == NULL;
+        return ! ts->pull_in_flight && ! ts->push_in_flight && ts->pending_batch == NULL &&
+               wloopNowMonotonicMS(getWorkerLoop(0)) >= ts->pull_retry_not_before_ms;
     }
     if (request_type == kAuthenticationClientRequestTypePushUserStats)
     {
@@ -94,7 +95,7 @@ bool authenticationclientSendGetAllUsers(tunnel_t *t)
         mutexUnlock(&ts->control_mutex);
         return false; /* An explicit new pull coalesces behind the current traversal. */
     }
-    const bool allowed = authenticationclientRequestMayBeSentLocked(ts, kAuthenticationClientRequestTypeGetAllUsers);
+    const bool allowed = authenticationclientRequestMayBeSentLocked(ts, kAuthenticationClientRequestTypeGetUsersPage);
     if (allowed)
         ts->pull_requested = false;
     mutexUnlock(&ts->control_mutex);
@@ -119,6 +120,8 @@ void authenticationclientResumeSync(tunnel_t *t)
     const bool pull          = ts->pull_requested;
     const bool required_pull = ts->pull_required || ts->staging.active;
     const bool push          = ts->push_requested;
+    const bool retry_pull =
+        ts->pull_deferred && pull && wloopNowMonotonicMS(getWorkerLoop(0)) >= ts->pull_retry_not_before_ms;
     mutexUnlock(&ts->control_mutex);
     if (! authenticated)
         discard authenticationclientSendAuthenticate(t);
@@ -133,7 +136,7 @@ void authenticationclientResumeSync(tunnel_t *t)
         if (allowed)
             discard authenticationclientSendUsersPage(t);
     }
-    else if (required_pull)
+    else if (required_pull || retry_pull)
         discard authenticationclientSendGetAllUsers(t);
     else if (ts->catchup_capture_needed && ! authenticationclientCaptureCatchup(t))
         authenticationclientScheduleSyncProgress(t);
@@ -261,11 +264,7 @@ bool authenticationclientStartSyncTimer(tunnel_t *t)
     ts->sync_timer = wtimerAdd(getWorkerLoop(0), authenticationclientSyncTimerCallback, sync_interval_ms, INFINITE);
     if (UNLIKELY(ts->sync_timer == NULL))
     {
-        LOGF("AuthenticationClient: failed to create sync timer");
-        if (! requestProgramShutdown(1))
-        {
-            abortProgramNow(1);
-        }
+        authenticationclientRequiredWorkFailed(t, "sync timer");
         return false;
     }
     weventSetUserData(ts->sync_timer, t);
@@ -327,7 +326,7 @@ void authenticationclientSyncTimerCallback(wtimer_t *timer)
 
     ts->last_pull_sync_ms = now_ms;
     mutexLock(&ts->control_mutex);
-    const bool traversal_active = ts->staging.active || ts->pull_in_flight;
+    const bool traversal_active = ts->staging.active;
     mutexUnlock(&ts->control_mutex);
     /* Periodic demand joins the current traversal. Only explicit requests
      * latch a subsequent traversal while the active cache still looks old. */

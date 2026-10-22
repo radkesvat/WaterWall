@@ -173,67 +173,53 @@ bool authenticationclientSendUsersPage(tunnel_t *t)
     return sent;
 }
 
-/* users_lock pins the current active values throughout preparation and commit.
- * Missing accounts with known debt/observations are a refusal, never a prune. */
-static bool mergeCurrentTraffic(authenticationclient_tstate_t *ts, users_t *dest)
-{
-    for (size_t i = 0; i < usersCount(ts->users); ++i)
-    {
-        user_accounting_snapshot_t current;
-        userGetAccountingSnapshot(usersGetAt(ts->users, i), &current);
-        user_stat_t baseline = {0};
-        user_t     *base     = usersLookupByIdentifier(ts->sync_baseline_users, current.id);
-        if (base != NULL)
-            userGetStats(base, &baseline);
-        const uint64_t upload   = authenticationclientCounterDelta(current.traffic.u, baseline.traffic.u);
-        const uint64_t download = authenticationclientCounterDelta(current.traffic.d, baseline.traffic.d);
-        if (upload == 0 && download == 0 && ! current.observation_pending)
-            continue;
-        if (usersLookupByIdentifier(dest, current.id) == NULL ||
-            usersAddTrafficByIdentifier(dest, current.id, upload, download) != kUsersUpdateResultOk)
-            return false;
-    }
-    for (size_t i = 0; i < ts->catchup_entries_count; ++i)
-    {
-        const authenticationclient_accounting_entry_t *owed = &ts->catchup_entries[i];
-        if ((owed->delta.u != 0 || owed->delta.d != 0 || owed->first_usage_at_ms != 0) &&
-            usersLookupByIdentifier(dest, owed->id) == NULL)
-            return false;
-    }
-    return true;
-}
-
-static bool installStaging(tunnel_t *t, uint64_t generation)
+static authenticationclient_failure_t installStaging(tunnel_t *t, uint64_t generation)
 {
     authenticationclient_tstate_t  *ts    = tunnelGetState(t);
     authenticationclient_staging_t *stage = &ts->staging;
     if (usersCount(stage->users) != stage->total || ! usersValidateStructure(stage->users))
-        return false;
+        return kAuthenticationClientFailureInvalidResponse;
     size_t covered = 0;
     for (size_t i = 0; i < stage->clock_count; ++i)
     {
         if (stage->clocks[i].position != covered || stage->clocks[i].count > stage->total - covered)
-            return false;
+            return kAuthenticationClientFailureInvalidResponse;
         covered += stage->clocks[i].count;
     }
     if (covered != stage->total)
-        return false;
+        return kAuthenticationClientFailureInvalidResponse;
     users_t *baseline = createBaseline(stage->users);
     if (baseline == NULL)
-        return false;
+        return kAuthenticationClientFailureInvalidResponse;
     rwlockWriteLock(&ts->users_lock);
-    if (! mergeCurrentTraffic(ts, stage->users))
+    authenticationclient_accounting_entry_t *debt       = NULL;
+    size_t                                   debt_count = 0;
+    if (! authenticationclientPrepareTableDebt(ts, stage->users, &debt, &debt_count))
     {
         rwlockWriteUnlock(&ts->users_lock);
         authenticationclientDestroyUsers(baseline);
-        return false;
+        return kAuthenticationClientFailureSyncLimit;
     }
     users_t *old = ts->users, *old_baseline = ts->sync_baseline_users;
+    for (size_t i = 0; i < usersCount(stage->users); ++i)
+        usersGetAt(stage->users, i)->runtime.identity_generation_floor = ts->users_generation + 1;
     /* All fallible work is complete. Migration cannot refuse initialized tables. */
     if (! usersMigrateRuntimeStateByIdentifier(stage->users, old))
     {
         LOGF("AuthenticationClient: invalid runtime migration state");
         abortProgramNow(1);
+    }
+    for (size_t i = 0; i < debt_count; ++i)
+    {
+        const authenticationclient_accounting_entry_t *entry = &debt[i];
+        user_t                                        *user  = usersLookupByIdentifier(stage->users, entry->id);
+        if (user != NULL)
+            userRestoreClientObservation(user,
+                                         entry->first_usage_at_ms,
+                                         entry->first_local_at_ms,
+                                         entry->first_usage_age_ms,
+                                         entry->age_sample_ms,
+                                         entry->age_valid);
     }
     /* Migration replaces clocks; reproject with EACH page's original receipt. */
     for (size_t i = 0; i < stage->clock_count; ++i)
@@ -246,12 +232,13 @@ static bool installStaging(tunnel_t *t, uint64_t generation)
                                    clock->received_at_ms);
     }
     usersResetFirstUsagePushRequests(stage->users);
+    authenticationclientInstallDebt(ts, debt, debt_count);
     ts->users               = stage->users;
     stage->users            = NULL;
     ts->sync_baseline_users = baseline;
     ++ts->users_generation;
     ts->local_config_revision     = stage->config_revision;
-    ts->local_stats_revision      = stage->stats_revision; /* First-page conservative sample. */
+    ts->local_stats_revision      = stage->stats_revision; /* Immutable snapshot revision. */
     ts->local_revision_generation = generation;
     ts->users_loaded = ts->clock_loaded = true;
     rwlockWriteUnlock(&ts->users_lock);
@@ -259,6 +246,8 @@ static bool installStaging(tunnel_t *t, uint64_t generation)
     authenticationclientDiscardStaging(ts);
     mutexLock(&ts->control_mutex);
     ts->pull_required              = false;
+    ts->pull_deferred              = false;
+    ts->pull_retry_not_before_ms   = 0;
     ts->first_usage_push_requested = false;
     ts->first_usage_push_deferred  = false;
     ts->last_pull_success_ms       = authenticationclientLocalTimeMS();
@@ -270,7 +259,7 @@ static bool installStaging(tunnel_t *t, uint64_t generation)
     if (ts->catchup_capture_needed)
         discard authenticationclientCaptureCatchup(t);
     LOGI("AuthenticationClient: pulled %zu users from server", installed_count);
-    return true;
+    return kAuthenticationClientFailureNone;
 }
 
 authenticationclient_failure_t authenticationclientAcceptUsersPage(tunnel_t *t, const uint8_t *data, uint32_t length,
@@ -314,8 +303,8 @@ authenticationclient_failure_t authenticationclientAcceptUsersPage(tunnel_t *t, 
     uint64_t     config, stats, total, position, count, sequence, server_time, accounting_time;
     const cJSON *instance = FIELD("instance"), *cursor = FIELD("cursor"), *epoch = FIELD("epoch"),
                 *digest = FIELD("digest"), *users = FIELD("users");
-    if (! decimal(FIELD("config-revision"), &config) || config != config_revision ||
-        ! decimal(FIELD("stats-revision"), &stats) || stats != stats_revision || ! decimal(FIELD("total"), &total) ||
+    if (! decimal(FIELD("config-revision"), &config) || config > config_revision ||
+        ! decimal(FIELD("stats-revision"), &stats) || stats > stats_revision || ! decimal(FIELD("total"), &total) ||
         ! decimal(FIELD("position"), &position) || ! decimal(FIELD("count"), &count) ||
         ! decimal(FIELD("sequence"), &sequence) || ! decimal(FIELD("server-time-ms"), &server_time) ||
         ! decimal(FIELD("accounting-time-ms"), &accounting_time) || accounting_time == 0 || ! hexText(instance, 32) ||
@@ -342,7 +331,7 @@ authenticationclient_failure_t authenticationclientAcceptUsersPage(tunnel_t *t, 
         complete != (position + count == total) || strncmp(cursor->valuestring, instance->valuestring, 32) != 0 ||
         hex64(cursor->valuestring + 32) != config || hex64(cursor->valuestring + 48) != position + count ||
         (! first && (strcmp(instance->valuestring, stage->instance) != 0 || config != stage->config_revision ||
-                     total != stage->total)) ||
+                     total != stage->total || stats != stage->stats_revision)) ||
         validated != stage->complete || (validated && (count != 0 || ! complete)) ||
         (! validated && count == 0 && total != 0))
         goto done;
@@ -356,7 +345,10 @@ authenticationclient_failure_t authenticationclientAcceptUsersPage(tunnel_t *t, 
     }
     if (validated)
     {
-        if (strcmp(cursor->valuestring, stage->cursor) != 0 || ! installStaging(t, generation))
+        if (strcmp(cursor->valuestring, stage->cursor) != 0)
+            goto done;
+        result = installStaging(t, generation);
+        if (result != kAuthenticationClientFailureNone)
             goto done;
     }
     else

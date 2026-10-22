@@ -128,6 +128,48 @@ static void clientSettings(void)
     }
 }
 
+static void clientBooleanAndDuplicateSettings(void)
+{
+    static const char *const invalid[] = {"\"verbose\":\"true\"",
+                                          "\"verbose\":null",
+                                          "\"verbose\":1",
+                                          "\"verbose\":[]",
+                                          "\"verbose\":false,\"verbose\":true",
+                                          "\"ping-interval-ms\":1,\"ping-interval-ms\":2",
+                                          "\"pull-interval-ms\":1,\"pull-interval-ms\":2",
+                                          "\"push-interval-ms\":1,\"push-interval-ms\":2",
+                                          "\"reconnect-interval-ms\":1,\"reconnect-interval-ms\":2",
+                                          "\"request-timeout-ms\":1,\"request-timeout-ms\":2",
+                                          "\"max-pending-requests\":1,\"max-pending-requests\":2",
+                                          "\"sync-max-users\":1,\"sync-max-users\":2",
+                                          "\"sync-max-bytes\":1,\"sync-max-bytes\":2",
+                                          "\"traffic-multiplier\":1,\"traffic-multiplier\":2",
+                                          "\"name\":\"duplicate\"",
+                                          "\"secret\":\"duplicate\""};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid) + 2; ++i)
+    {
+        char        input[512];
+        const char *fields = i < ARRAY_SIZE(invalid)    ? invalid[i]
+                             : i == ARRAY_SIZE(invalid) ? "\"verbose\":false"
+                                                        : "\"verbose\":true";
+        snprintf(input, sizeof(input), "{\"name\":\"edge\",\"secret\":\"secret\",%s}", fields);
+        testCaseSet(fields);
+        cJSON *settings = cJSON_Parse(input);
+        require(settings != NULL, "client settings shape fixture");
+        char      name[] = "client", next[] = "transport";
+        node_t    node = {.name = name, .next = next, .node_settings_json = settings};
+        tunnel_t *t    = authenticationclientTunnelCreate(&node);
+        require((t != NULL) == (i >= ARRAY_SIZE(invalid)), "client accepted loose Boolean or duplicate setting");
+        if (t != NULL)
+        {
+            require(((authenticationclient_tstate_t *) tunnelGetState(t))->verbose == (i == ARRAY_SIZE(invalid) + 1),
+                    "client Boolean setting was not preserved");
+            authenticationclientTunnelDestroy(t, wwLifecycleStartupRollback());
+        }
+        cJSON_Delete(settings);
+    }
+}
+
 static void requireDatabaseUnchanged(const char *path)
 {
     static const char expected[]               = "{\"users\":[]}\n";
@@ -210,6 +252,36 @@ static void serverSettings(const char *database, const char *history)
     }
 }
 
+static void serverSnapshotSettings(const char *database)
+{
+    static const char *const keys[]   = {"snapshot-max-bytes", "snapshot-idle-timeout-ms"};
+    static const char *const values[] = {"0", "null", "1.5", "\"1\"", "true", "1", "4096"};
+    for (size_t key = 0; key < ARRAY_SIZE(keys); ++key)
+        for (size_t sample = 0; sample < ARRAY_SIZE(values) + 1; ++sample)
+        {
+            testCaseSet(keys[key]);
+            cJSON  *settings = cJSON_Parse("{\"file-save-rate-ms\":10000,\"auth-clients\":[{\"name\":\"edge\","
+                                           "\"secret\":\"secret\"}]}");
+            discard cJSON_AddStringToObject(settings, "db-path", database);
+            if (sample < ARRAY_SIZE(values))
+                discard cJSON_AddItemToObject(settings, keys[key], cJSON_Parse(values[sample]));
+            else
+            {
+                discard cJSON_AddNumberToObject(settings, keys[key], 1);
+                discard cJSON_AddNumberToObject(settings, keys[key], 2);
+            }
+            char      name[] = "snapshot-settings";
+            node_t    node   = {.name = name, .node_settings_json = settings};
+            tunnel_t *t      = authenticationserverTunnelCreate(&node);
+            require((t != NULL) == (sample == 5 || sample == 6),
+                    "snapshot setting accepted invalid or duplicate input");
+            if (t != NULL)
+                authenticationserverTunnelDestroy(t, wwLifecycleStartupRollback());
+            cJSON_Delete(settings);
+            requireDatabaseUnchanged(database);
+        }
+}
+
 int main(void)
 {
     testCaseSet("authentication numeric settings");
@@ -231,7 +303,9 @@ int main(void)
     require(file != NULL && fputs("{\"users\":[]}\n", file) >= 0 && fclose(file) == 0,
             "numeric database fixture creation failed");
     clientSettings();
+    clientBooleanAndDuplicateSettings();
     serverSettings(database, history);
+    serverSnapshotSettings(database);
     testCaseSet("authentication numeric settings cleanup");
     require(unlink(database) == 0 && rmdir(directory) == 0, "numeric fixture directory cleanup failed");
     nodeApiRegistryDestroy();

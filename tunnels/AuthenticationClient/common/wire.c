@@ -72,7 +72,7 @@ static const char *authenticationclientRequestTypeName(uint8_t request_type)
         return "AddNewUser";
     case kAuthenticationClientRequestTypeUpdateUser:
         return "UpdateUser";
-    case kAuthenticationClientRequestTypeGetAllUsers:
+    case kAuthenticationClientRequestTypeGetUsersPage:
         return "GetUsersPage";
     case kAuthenticationClientRequestTypeAuthenticate:
         return "Authenticate";
@@ -185,7 +185,7 @@ bool authenticationclientSendRequest(tunnel_t *t, uint8_t request_type, const ui
     if (UNLIKELY(! authenticationclientPendingAppend(ts, correlation_id, request_type, now_ms)))
     {
         mutexUnlock(&ts->control_mutex);
-        LOGW("AuthenticationClient: pending request table is full");
+        LOGW("AuthenticationClient: pending request storage is unavailable");
         return false;
     }
     authenticationclientMarkRequestInFlightLocked(ts, request_type, true);

@@ -31,12 +31,14 @@ static tunnel_t                  *client, *server, *transport;
 static line_t                    *observed_line;
 static bool                       capture, fragment, raw, inject, finish_output, finish_input, flood;
 static bool                       client_nested, client_flood;
+static bool                       pad_next_users_response;
 static uint8_t                   *captured;
 static size_t                     captured_length;
 static uint32_t                   response_ids[8];
 static unsigned                   response_count, nested_count;
 static uint64_t                   delivered;
 static uint32_t                   response_remaining, largest_response;
+static uint32_t                   response_padding;
 static unsigned                   nested_suffix_mode;
 
 static authenticationclient_tstate_t *state(void)
@@ -110,10 +112,37 @@ static void output(tunnel_t *t, line_t *l, sbuf_t *b)
         require(sbufGetLength(b) >= 4, "short response prefix");
         memoryCopy(&size, sbufGetRawPtr(b), 4);
         response_remaining = ntohl(size) + 4;
-        largest_response   = max(largest_response, response_remaining);
+        if (pad_next_users_response)
+        {
+            const uint32_t maximum =
+                kAuthenticationClientMaxResponsePayload + kAuthenticationClientResponseEnvelopeHeaderSize;
+            const uint8_t *prefix = sbufGetRawPtr(b);
+            require(sbufGetLength(b) >= 29 && prefix[20] == kAuthenticationClientResponseTypeUsers &&
+                        response_remaining <= maximum,
+                    "maximum ingress padding requires a bounded Users response");
+            uint32_t json_length;
+            memoryCopy(&json_length, prefix + 25, 4);
+            require(ntohl(json_length) == response_remaining - 29,
+                    "maximum ingress padding requires exactly one response frame");
+            response_padding = maximum - response_remaining;
+            put32(sbufGetMutablePtr(b), maximum - 4);
+            put32(sbufGetMutablePtr(b) + 25, maximum - 29);
+            pad_next_users_response = false;
+        }
+        largest_response = max(largest_response, response_remaining + response_padding);
     }
     require(sbufGetLength(b) <= response_remaining, "response chunks crossed envelope boundary");
     response_remaining -= sbufGetLength(b);
+    if (response_remaining == 0 && response_padding != 0)
+    {
+        /* Keep the real admitted row intact while exercising the exact legal
+         * wire limit, including the server's normal output chunk boundaries. */
+        const uint32_t length = sbufGetLength(b);
+        b                     = sbufReserveSpace(b, length + response_padding);
+        memset(sbufGetMutablePtr(b) + length, ' ', response_padding);
+        sbufSetLength(b, length + response_padding);
+        response_padding = 0;
+    }
     if (capture)
     {
         captured = memoryReAllocate(captured, captured_length + sbufGetLength(b));
@@ -250,6 +279,8 @@ static void setup(uint32_t medium)
 {
     capture = fragment = raw = inject = finish_output = finish_input = flood = false;
     client_nested = client_flood = false;
+    pad_next_users_response      = false;
+    response_padding             = 0;
     captured                     = NULL;
     captured_length = delivered = 0;
     response_count = nested_count = 0;
@@ -268,14 +299,14 @@ static void setup(uint32_t medium)
     pools[0] = bufferpoolCreate(ordinary[0], ordinary[1], ordinary[2], 4, 128 * 1024, medium, 4096, 1048576, 1048576);
     require(pools[0] != NULL, "pool creation failed");
     bufferpoolUpdateAllocationPaddings(pools[0], 64, 64, 64, 64);
-    wio_master            = masterpoolCreateWithCapacity(16);
-    wios[0]               = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 8);
-    worker.wid            = 0;
-    worker.buffer_pool    = pools[0];
-    worker.wios_pool      = wios[0];
-    loops[0]              = wloopCreate(WLOOP_FLAG_AUTO_FREE, pools[0], 0);
-    worker.loop           = loops[0];
-    loops[0]->status      = WLOOP_STATUS_RUNNING;
+    wio_master         = masterpoolCreateWithCapacity(16);
+    wios[0]            = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 8);
+    worker.wid         = 0;
+    worker.buffer_pool = pools[0];
+    worker.wios_pool   = wios[0];
+    loops[0]           = wloopCreate(WLOOP_FLAG_AUTO_FREE, pools[0], 0);
+    worker.loop        = loops[0];
+    loops[0]->status   = WLOOP_STATUS_RUNNING;
     mutexInit(&worker.control_mutex);
     testWorkerBindWID(0);
     message_master = masterpoolCreateWithCapacity(16);
@@ -379,7 +410,8 @@ static void testMaximumResponse(uint32_t medium, bool fragmented)
     require(authenticationclientIsReady(client), "initial fragmented exchange failed");
     const size_t notes = authTestPeerPadUsersResponse(
         server, observed_line, kAuthenticationClientMaxResponsePayload - kAuthenticationClientResponseHeaderSize);
-    delivered = 0;
+    delivered               = 0;
+    pad_next_users_response = true;
     authenticationclientRequestPull(client);
     require(state()->control_line == observed_line && authenticationclientIsReady(client),
             "maximum legal Users response disconnected the client");
@@ -400,7 +432,8 @@ static void testCombinedResponses(void)
     start();
     const size_t notes = authTestPeerPadUsersResponse(
         server, observed_line, kAuthenticationClientMaxResponsePayload - kAuthenticationClientResponseHeaderSize);
-    capture = true;
+    capture                 = true;
+    pad_next_users_response = true;
     authenticationclientRequestPull(client);
     require(captured_length ==
                 kAuthenticationClientMaxResponsePayload + kAuthenticationClientResponseEnvelopeHeaderSize,

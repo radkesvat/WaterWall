@@ -85,7 +85,7 @@ static const char *operationName(uint8_t operation)
     {
     case kAuthenticationClientRequestTypeAuthenticate:
         return "authenticate";
-    case kAuthenticationClientRequestTypeGetAllUsers:
+    case kAuthenticationClientRequestTypeGetUsersPage:
         return "pull";
     case kAuthenticationClientRequestTypePushUserStats:
         return "push";
@@ -119,10 +119,12 @@ static const char *syncPhase(const authenticationclient_status_t *s)
     /* Capture publishes only owed entries; ACK clears the array when the last
      * obligation settles. Nonempty storage proves pending work at worker-0
      * callback boundaries, even though some retained slots may be settled. */
-    if (s->retained_catchup_slots != 0)
+    if (s->retained_catchup_slots > s->orphan_debt_count)
         return "catchup_pending";
     if (s->push_requested || s->pull_requested)
         return "queued";
+    if (s->orphan_debt_count != 0)
+        return "orphan_debt";
     return "idle";
 }
 
@@ -236,6 +238,7 @@ static api_result_t statusApi(tunnel_t *t, sbuf_t *message, const node_api_call_
     U64(users_count);
     U64(pending_request_count);
     U64(retained_catchup_slots);
+    U64(orphan_debt_count);
     STATUS_OPTIONAL("batch_sequence", snapshot.unresolved_batch, snapshot.batch_sequence);
     U64(batch_entry_count);
     U64(batch_size);

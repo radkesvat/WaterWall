@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "../common/internal.h"
 
 #include "loggers/network_logger.h"
 
@@ -19,11 +19,7 @@ static bool authenticationclientStartPingTimer(worker_t *worker, tunnel_t *t, au
     ts->ping_timer = wtimerAdd(worker->loop, authenticationclientPingTimerCallback, ts->ping_interval_ms, INFINITE);
     if (UNLIKELY(ts->ping_timer == NULL))
     {
-        LOGF("AuthenticationClient: failed to create ping timer");
-        if (! requestProgramShutdown(1))
-        {
-            abortProgramNow(1);
-        }
+        authenticationclientRequiredWorkFailed(t, "ping timer");
         return false;
     }
 
@@ -54,8 +50,7 @@ static void authenticationclientStartOnWorker0(void *worker_ptr, void *arg1, voi
     authenticationclient_tstate_t *ts = tunnelGetState(t);
 
     mutexLock(&ts->control_mutex);
-    ts->started  = true;
-    ts->stopping = false;
+    ts->started = true;
     mutexUnlock(&ts->control_mutex);
 
     if (ts->verbose)

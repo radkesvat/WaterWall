@@ -66,6 +66,18 @@ static authenticationserver_private_read_result_t privateMissingPath(const char 
     memoryFree(parent);
     return result;
 }
+static bool privateRegularFileInfo(HANDLE handle, const char *path, BY_HANDLE_FILE_INFORMATION *info)
+{
+    if (! GetFileInformationByHandle(handle, info))
+        return false;
+    if ((info->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+    {
+        LOGE("AuthenticationServer: refusing reparse point at private database path \"%s\"", path);
+        return false;
+    }
+    return (info->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
 #endif
 
 authenticationserver_private_read_result_t authenticationserverPrivateProbe(const char *path)
@@ -80,15 +92,18 @@ authenticationserver_private_read_result_t authenticationserverPrivateProbe(cons
                                                                               : kAuthenticationServerPrivateReadError;
     }
     BY_HANDLE_FILE_INFORMATION info;
-    bool                       ok = GetFileInformationByHandle(handle, &info) &&
-              ! (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) &&
-              (info.nFileSizeHigh != 0 || info.nFileSizeLow != 0);
+    bool ok = privateRegularFileInfo(handle, path, &info) && (info.nFileSizeHigh != 0 || info.nFileSizeLow != 0);
     if (! CloseHandle(handle))
         ok = false;
 #else
     const int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0)
-        return errno == ENOENT ? kAuthenticationServerPrivateReadAbsent : kAuthenticationServerPrivateReadError;
+    {
+        const int error = errno;
+        if (error == ELOOP)
+            LOGE("AuthenticationServer: refusing symbolic link at private database path \"%s\"", path);
+        return error == ENOENT ? kAuthenticationServerPrivateReadAbsent : kAuthenticationServerPrivateReadError;
+    }
     struct stat info;
     bool        ok = fstat(fd, &info) == 0 && S_ISREG(info.st_mode) && info.st_size > 0;
     if (close(fd) != 0)
@@ -115,8 +130,7 @@ authenticationserver_private_read_result_t authenticationserverPrivateRestrictIf
     PACL                       acl     = NULL;
     BOOL                       present = FALSE, defaulted = FALSE;
     BY_HANDLE_FILE_INFORMATION info;
-    bool                       ok = GetFileInformationByHandle(handle, &info) &&
-              ! (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) &&
+    bool                       ok = privateRegularFileInfo(handle, path, &info) &&
               GetSecurityDescriptorDacl(security, &present, &acl, &defaulted) && present &&
               SetSecurityInfo(handle,
                               SE_FILE_OBJECT,
@@ -131,7 +145,12 @@ authenticationserver_private_read_result_t authenticationserverPrivateRestrictIf
 #else
     int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0)
-        return errno == ENOENT ? kAuthenticationServerPrivateReadAbsent : kAuthenticationServerPrivateReadError;
+    {
+        const int error = errno;
+        if (error == ELOOP)
+            LOGE("AuthenticationServer: refusing symbolic link at private database path \"%s\"", path);
+        return error == ENOENT ? kAuthenticationServerPrivateReadAbsent : kAuthenticationServerPrivateReadError;
+    }
     struct stat info;
     bool        ok = fstat(fd, &info) == 0 && S_ISREG(info.st_mode) && fchmod(fd, S_IRUSR | S_IWUSR) == 0;
     if (close(fd) != 0)
@@ -328,9 +347,8 @@ static authenticationserver_private_read_result_t privateRead(const char *path, 
     }
     BY_HANDLE_FILE_INFORMATION info;
     LARGE_INTEGER              file_size = {0};
-    bool                       ok        = GetFileInformationByHandle(handle, &info) &&
-              ! (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) &&
-              GetFileSizeEx(handle, &file_size) && (allow_empty ? file_size.QuadPart >= 0 : file_size.QuadPart > 0) &&
+    bool                       ok = privateRegularFileInfo(handle, path, &info) && GetFileSizeEx(handle, &file_size) &&
+              (allow_empty ? file_size.QuadPart >= 0 : file_size.QuadPart > 0) &&
               (uint64_t) file_size.QuadPart < SIZE_MAX && authenticationserverPrivateRestrict(path);
     if (ok)
     {
@@ -350,7 +368,12 @@ static authenticationserver_private_read_result_t privateRead(const char *path, 
 #else
     int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0)
-        return errno == ENOENT ? kAuthenticationServerPrivateReadAbsent : kAuthenticationServerPrivateReadError;
+    {
+        const int error = errno;
+        if (error == ELOOP)
+            LOGE("AuthenticationServer: refusing symbolic link at private database path \"%s\"", path);
+        return error == ENOENT ? kAuthenticationServerPrivateReadAbsent : kAuthenticationServerPrivateReadError;
+    }
     struct stat info;
     bool ok = fstat(fd, &info) == 0 && S_ISREG(info.st_mode) && (allow_empty ? info.st_size >= 0 : info.st_size > 0) &&
               (uintmax_t) info.st_size < SIZE_MAX && fchmod(fd, S_IRUSR | S_IWUSR) == 0;

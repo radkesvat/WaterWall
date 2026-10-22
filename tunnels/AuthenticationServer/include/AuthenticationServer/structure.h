@@ -33,8 +33,13 @@ typedef enum authenticationserver_normal_backups_mode_e
     kAuthenticationServerNormalBackupsWeekly
 } authenticationserver_normal_backups_mode_t;
 
+typedef struct authenticationserver_snapshot_s authenticationserver_snapshot_t;
+
 typedef struct authenticationserver_session_s
 {
+    authenticationserver_snapshot_t    *snapshot;
+    uint64_t                            snapshot_last_page_ms;
+    uint64_t                            snapshot_sequence;
     uint8_t     token[64];
     char       *client_name;
     authenticationserver_auth_client_t *accounting_client;
@@ -66,11 +71,17 @@ typedef struct authenticationserver_tstate_s
     uint32_t                                   session_idle_timeout_ms;
     uint32_t                                   normal_backups_count_limit;
     uint64_t                                   normal_backups_last_slot;
+    uint64_t                                   normal_backups_retry_at_ms;
+    uint64_t                                   authentication_failures;
+    uint64_t                                   authentication_failure_log_at_ms;
     uint64_t                                   accounting_anchor_ms;
     uint64_t                                   accounting_monotonic_ms;
     uint64_t                                   primary_save_last_attempt_ms;
     uint64_t                                   primary_save_last_success_ms;
     size_t                                     max_user_export_bytes;
+    size_t                                     snapshot_max_bytes;
+    size_t                                     snapshot_bytes;
+    uint32_t                                   snapshot_idle_timeout_ms;
     authenticationserver_normal_backups_mode_t normal_backups_mode;
     authenticationserver_save_result_t         primary_save_last_result;
     bool                                       primary_save_last_attempt_valid;
@@ -79,6 +90,7 @@ typedef struct authenticationserver_tstate_s
     bool                                       database_dirty;
     bool                                       primary_checkpoint_valid;
     bool                                       periodic_save_seen;
+    bool                                       normal_backups_retry_pending;
     bool                                       verbose;
 } authenticationserver_tstate_t;
 
@@ -122,6 +134,8 @@ enum
     kAuthenticationServerDefaultNormalBackupsCountLimit = 10U,
     kAuthenticationServerDefaultSessionIdleTimeoutMs    = 10U * 60U * 1000U,
     kAuthenticationServerSessionExpirySweepMs           = 60U * 1000U,
+    kAuthenticationServerDefaultSnapshotMaxBytes        = 256U * 1024U * 1024U,
+    kAuthenticationServerDefaultSnapshotIdleTimeoutMs   = 60U * 1000U,
 
     kAuthenticationServerRequestTypePing                  = kAuthenticationRequestTypePing,
     kAuthenticationServerRequestTypeGetUserBySHA256Hex    = kAuthenticationRequestTypeGetUserBySHA256Hex,
@@ -188,6 +202,9 @@ bool     authenticationserverSaveDatabaseLockedForReason(authenticationserver_ts
                                                          authenticationserver_save_reason_t reason);
 void     authenticationserverSaveTimerCallback(wtimer_t *timer);
 void     authenticationserverSessionExpiryTimerCallback(wtimer_t *timer);
+/* state_lock is held exclusively, or all producers have quiesced. */
+void authenticationserverSnapshotRelease(authenticationserver_tstate_t *ts, authenticationserver_session_t *session);
+void authenticationserverSnapshotsExpire(authenticationserver_tstate_t *ts, uint64_t now_ms);
 void     authenticationserverGetRevisions(tunnel_t *t, uint64_t *config_revision, uint64_t *stats_revision);
 void     authenticationserverBumpConfigRevision(tunnel_t *t);
 void     authenticationserverBumpStatsRevision(tunnel_t *t);

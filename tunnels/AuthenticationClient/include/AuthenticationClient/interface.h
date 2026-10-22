@@ -30,6 +30,11 @@ WW_EXPORT node_t nodeAuthenticationClientGet(void);
 /*
  * Internal Waterwall API.
  *
+ * Legacy lookup and ordinary handle helpers return an invalid/unavailable result
+ * for a NULL tunnel. The payload
+ * observation and bandwidth helpers require a non-NULL tunnel and valid handle;
+ * callers also own their documented direction/ticket preconditions.
+ *
  * Other tunnels should include this header and use handles plus copy-out helpers.
  * The AuthenticationClient never exposes user_t pointers from its private users_t
  * table; returned handles are value identifiers keyed by durable user id.

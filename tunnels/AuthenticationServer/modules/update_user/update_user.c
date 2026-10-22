@@ -228,7 +228,7 @@ sbuf_t *authenticationserverUpdateUserHandle(const uint8_t correlation_id[kAuthe
                                              const uint8_t *request_data, uint32_t request_data_len)
 {
     authenticationserver_tstate_t *ts    = tunnelGetState(t);
-    cJSON                         *json  = configLexicalParseQuiet((const char *) request_data, request_data_len, 8);
+    cJSON *json = configLexicalParseBoundedQuiet((const char *) request_data, request_data_len, 4, 64);
     user_config_patch_t            patch = {0};
     uint64_t                       id    = 0;
     if (json == NULL || ! parsePatch(json, &patch, &id))

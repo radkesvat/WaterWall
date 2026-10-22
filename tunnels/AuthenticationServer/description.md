@@ -1,5 +1,5 @@
 <!--
-Documentation version: 164
+Documentation version: 165
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -82,13 +82,19 @@ It must not have a `next` node.
 ### `settings`
 
 - `db-path` `(string)`
-  Path to the users JSON database file.
+  Path to an existing users JSON database file. For first start, create it with `{"users":[]}`; an absent or empty file does not create a new database automatically. The primary and `.backup` must be regular files, not symbolic links (or Windows reparse points).
 
 - `file-save-rate-ms` `(positive integer)`
   Periodic save interval in milliseconds.
 
 - `session-idle-timeout-ms` `(optional positive integer, default: 600000)`
   Default session inactivity timeout in milliseconds. `600000` is 10 minutes.
+
+- `snapshot-max-bytes` `(optional positive integer, default: 268435456)`
+  Aggregate producer snapshot allowance in bytes, including encoded records, row offsets, snapshot metadata and temporary row-construction storage. Sessions acquiring identical configuration/statistics revisions share storage. A new capture that does not fit returns `snapshot-resource-limit`; existing captures remain intact.
+
+- `snapshot-idle-timeout-ms` `(optional positive integer, default: 60000)`
+  Idle lease for a producer traversal. Every successful page renews it. Terminal validation, a replacement traversal, session replacement/expiry and shutdown release references; idle leases are also reclaimed before page acquisition and by the session sweep. Progressing traversals have no fixed total-duration limit.
 
 - `verbose` `(optional boolean, default: false)`
   Enables focused debug logs for line lifecycle, module dispatch, permission refusals and response queue/send flow.
@@ -114,10 +120,10 @@ It must not have a `next` node.
   fits 16,375 bytes. Credentials are never truncated.
 
 `file-save-rate-ms`, both the server-wide and per-client `session-idle-timeout-ms`, and
-`normal-backups-count-limit` accept plain JSON integers from `1` through `2147483647` (`INT_MAX`).
+`normal-backups-count-limit` and `snapshot-idle-timeout-ms` accept plain JSON integers from `1` through `2147483647` (`INT_MAX`).
 `file-save-rate-ms` is required. Optional defaults or the per-client inherited timeout apply only when the setting
 is absent. Present zero, negative, fractional, decimal/exponent, string, `null`, or out-of-range values fail startup
-before timers or backup retention use the value.
+before timers or backup retention use the value. `snapshot-max-bytes` uses the same exact-integer rules, with a maximum of the smaller of `SIZE_MAX` and `INT64_MAX`.
 
 ## Administrative Audit Log
 
@@ -310,11 +316,11 @@ restores existing records and indexes; allocated capacity may remain.
 The saver always rewrites the database in the normalized `{"users": [...]}` form.
 
 Before importing any layout, the file reader keeps the exact byte count and validates
-the complete JSON document. Trailing non-whitespace bytes, concatenated documents,
+the complete JSON document. One leading UTF-8 BOM is accepted for database files only. Trailing non-whitespace bytes, concatenated documents,
 raw or decoded NUL, invalid UTF-8 and duplicate decoded object keys reject the file.
 Ordinary trailing JSON whitespace is allowed. An invalid primary follows the normal
 backup-recovery path. These checks retain the existing cJSON nesting limit and do
-not impose API-envelope byte or value-count limits on database files.
+not impose API-envelope byte or value-count limits on database files. Rejection logs contain a static reason and byte offset, never source text; tree-wide duplicate-key/number-range checks report the document-end offset. Account refusals identify the zero-based entry and durable ID when available. A normal load and a restore both log the loaded user count.
 
 In this example, `password` is still the authentication lookup key. The `id` is a separate durable user identity: keep it
 unique and stable for that user so Waterwall can do safe, fast lookups and carry local runtime state across user-table
@@ -474,7 +480,7 @@ create allowance, index growth can refuse around 26,214 users. On the current 64
 growing a full 8,192-capacity tree to 16,384 charges 1,048,640 bytes, exceeding a bounded configuration patch's 1 MiB
 growth allowance. Existing reserved capacity or other insertion paths can support more ranges: this is a growth
 boundary, not a table-size cap. These practical sizes depend on build/value geometry, not a guaranteed user-count
-limit or a new memory budget.
+limit or a new memory budget. Increase APIServer `handler_working_memory` when the create transaction needs more index-growth allowance; the bounded Allowed-IP update allowance remains 1 MiB. These request limits are independent of the producer snapshot allowance.
 
 ## Save Behavior
 
@@ -508,7 +514,7 @@ history slot is due. The first periodic save, explicit forced saves, producer `A
 still save. A successful producer creation saves the candidate and earlier dirty changes before its revision bump;
 failure rolls it back while preserving earlier dirty state. Configuration/statistics commits mark dirty; exact usage
 replay and session enrollment do not. A primary commit clears dirty even if optional history output fails; its history
-slot remains due for retry. Missing-primary repair and backup protection remain unchanged.
+slot remains due, with failed optional writes retried no more than once per minute. During that backoff, otherwise clean periodic ticks skip full saves. A successfully written history snapshot records its slot even if pruning fails; pruning retries with the next period snapshot. Missing-primary repair and backup protection remain unchanged.
 
 Skipped ticks leave `.backup` and primary-save result/age telemetry unchanged. `database_dirty` and
 `primary_checkpoint_valid` are process-local status facts. File open/type/empty/access/close failures are failures,
@@ -522,7 +528,7 @@ identified stale private staging files. Never use broad wildcard deletion while 
 contain plaintext credentials and are not startup recovery candidates.
 
 The server securely wipes its owned producer secrets, decoded Authenticate fields and temporary password lookup copies
-before release. Page rendering also clears its locally owned JSON/string copy before freeing it. APIServer and
+before release. Snapshot capture clears temporary credential-bearing JSON trees, and the encoded snapshot rows are securely wiped when their last session reference is released. APIServer and
 the dispatcher separately clear their owned secret copies at final release. Configuration trees, parser-internal
 partial trees, transferred transport/handler buffers and OS copies remain outside these guarantees; neither files
 nor all process copies are erased.
@@ -545,15 +551,14 @@ never recovery candidates. A pre-existing backup has no provenance metadata prov
 Normal-history retention keeps the snapshot just successfully written plus the lexically latest other matching
 same-database/same-mode periods that fit the limit. Thus clock reversal cannot prune the new snapshot itself, even at
 limit one. This is period-name ordering, not creation-time ordering. Same-period scheduling is unchanged. Delete failure
-is reported separately from primary success and leaves history retry eligible; unrelated files and corruption archives
-are excluded.
+is reported separately from primary success; the successful snapshot slot remains recorded and the next snapshot retries pruning. Unrelated files and corruption archives are excluded.
 
 ## Logic Explanation
 
 The server owns one authoritative table and store-level `config_revision` / `stats_revision` counters, initially 1.
 Configuration mutations bump the former. Every newly accepted usage batch bumps the latter once, including a
 zero-byte first-use observation; an exact replay creates no additional commit. Independent point
-reads share the state read lock. Authentication, saves and mutations hold its write lock. Whole-table/page reads share the read lock.
+reads share the state read lock. Authentication, saves, mutations and producer snapshot/page operations hold its write lock.
 
 ### Control Identity And Sessions
 
@@ -567,7 +572,7 @@ Its Session response contains 128 bytes: a 64-byte token followed by a 64-byte e
 bytes encoded as lowercase hexadecimal. A reconnecting running client includes `epoch` in Authenticate to resume it.
 A missing or superseded checkpoint returns `accounting-continuity-lost`; it is never silently initialized for a retry.
 Fresh enrollment without an epoch replaces the checkpoint and invalidates previous sessions for that identity.
-`Authenticate` inside an already authenticated envelope is rejected with `already-authenticated`.
+`Authenticate` inside an already authenticated envelope is rejected with `already-authenticated`. Credential failures are counted process-locally and logged at most once per five seconds with the total count, without caller-controlled names or secrets; they do not occupy audit queue slots.
 
 ### Usage Accounting
 
@@ -584,8 +589,8 @@ a valid next-sequence report is accepted even if its first-use minimum is unchan
 integer tokens or decimal strings through UINT64_MAX. Decimal/exponent number tokens are rejected by integer readers.
 The root permits only `epoch`, `sequence` and `users`; each entry permits only `id`, `up`, `down` and `first-usage-at-ms`, all required.
 Unknown or duplicate decoded keys reject the entire request, including nontraffic statistics, other timestamps and absolute
-traffic totals. The complete byte span must be valid JSON/UTF-8 with no trailing data, raw/escaped NUL or more than eight
-nested containers. These checks do not impose host-configuration file-size limits; authentication payload budgets apply.
+traffic totals. The complete byte span must be valid JSON/UTF-8 with no trailing data, raw/escaped NUL or more than three
+nested containers and 36,871 lexical values. These checks do not impose host-configuration file-size limits; authentication payload budgets apply.
 The authenticated configured identity supplies the checkpoint key; payload fields cannot choose another identity.
 
 Under one state write lock, the server validates epoch and sequence and hashes the exact payload bytes with SHA-256.
@@ -601,8 +606,7 @@ The client validates all three batch identity fields, advances only the acknowle
 authoritative totals and first-use time. Pull installation preserves local post-snapshot traffic as `G + (A - B)`.
 No full table is installed while a batch remains unresolved. Reconnect order is authenticate/resume, replay pending
 batch, validate ACK, then pull. Blocked pull/push requests coalesce until this ordering permits them.
-The client completes the required pull after authentication or each ACK before creating another usage batch. It then
-gives a waiting push priority over ordinary periodic or explicit pulls; recurring pulls cannot starve usage reporting.
+The client attempts a required pull after authentication or each ACK before ordinary reporting. A failed refresh may yield to new usage reporting against the unchanged installed baseline between traversals; no push overlaps active staging. A waiting push takes priority over ordinary periodic or explicit pulls.
 
 Epoch/checkpoint state is runtime-only. Accounting continuity across process crashes or restarts is not provided.
 An unresolved batch whose continuity is lost stays identifiable and stops automatic synchronization for operator
@@ -669,7 +673,7 @@ payload and sends it with the response envelope:
 
 Both revisions start at `1` when the tunnel is created. Configuration-changing requests such as `AddNewUser` and
 `UpdateUser` increment the configuration revision. Traffic-stat updates increment the statistics revision when they
-actually apply a non-zero traffic delta.
+accept a new batch, including a first-use-only or zero-traffic batch. Exact replay does not change either revision.
 
 This keeps the request/response transport extensible for additional request types.
 
@@ -818,12 +822,12 @@ format described above. The submitted user must contain a non-zero unique `id`/`
 
 The module validates the complete payload before constructing credentials: UTF-8 must
 be valid, object keys must be unique after decoding, raw/decoded NUL is forbidden,
-and only JSON whitespace may follow the object. Malformed input leaves users,
+and only JSON whitespace may follow the object. Before tree allocation, nesting is limited to four containers and lexical values to 256 (including object keys). Malformed input leaves users,
 configuration revisions and database files unchanged. Valid Unicode password bytes
 and the `password`/`pass` aliases retain their normal meaning. It then checks that
 the user can be created and that the new user's id, name, and password hashes do not
 conflict with existing users. If validation passes, the user
-is added to the in-memory database and the users file is saved immediately through the private atomic commit sequence.
+is added to the in-memory database and the users file is saved immediately through the private atomic commit sequence. Bulk administrative imports should use the bounded `create-user` management operation when periodic persistence is sufficient; producer `AddNewUser` intentionally retains its per-account save-before-ack durability.
 If that immediate save fails, the module attempts to roll back the in-memory add and returns a save error.
 
 On success it returns response type `0` and response data equal to `user-added`.
@@ -868,7 +872,7 @@ Dotted paths mean nested objects. Zero clears the corresponding limit/expiry. In
 decimal strings through UINT64_MAX are supported; negatives, fractions, decimal/exponent tokens and overflow reject.
 At least one editable leaf is required. Null, empty supplied containers, unknown/case-variant/alias keys, duplicate
 decoded keys, malformed UTF-8, raw/escaped NUL, excessive nesting and trailing non-whitespace data reject the whole
-patch. `stats`, passwords/hashes/credentials, alternate IDs, runtime/client-view fields, creation time and first-use time
+patch. Parsing admits at most four nested containers and 64 lexical values, including object keys, before allocating a JSON tree. `stats`, passwords/hashes/credentials, alternate IDs, runtime/client-view fields, creation time and first-use time
 are forbidden, including their top-level aliases. A valid field alongside a forbidden one does not apply.
 
 Name and Allowed-IP indexes are prepared before commit. Unknown ID, duplicate name, invalid/overlapping CIDR and
@@ -912,8 +916,7 @@ acknowledged accounting checkpoint. Sequence and digest are zero at enrollment:
 ```
 
 A continuation adds `"cursor":"<64 lowercase hex characters>"` and `"total":"130"`. The cursor encodes the 16-byte
-server instance ID, 64-bit configuration revision and 64-bit next collection position, in that order. It is a stateless
-position hint and grants no permission. The request is at most 1024 bytes, uses strict quiet JSON with depth two and
+server instance ID, captured 64-bit configuration revision and 64-bit next collection position, in that order. It refers to the current session's retained snapshot and grants no permission. The request is at most 1024 bytes, uses strict quiet JSON with depth two and
 16 values, rejects unknown/duplicate fields, and uses canonical unsigned decimal strings for sequence and total.
 
 Each response has type `3` and this schema (all unsigned 64-bit metadata are decimal strings):
@@ -942,23 +945,29 @@ The `users` array contains exactly `count` complete user records, including cred
 of complete encoded response and at most 128 users. A first record larger than that target occupies a page by itself,
 up to the existing 16 MiB hard response framing limit after all metadata/frame overhead. `user-too-large` rejects a
 record that cannot fit; fields are never truncated. Size admission precedes copying arbitrary-length row strings, and
-only bounded page state is retained. No frozen full-table snapshot is kept on the server.
+the first request captures an immutable encoded table under the server write lock. Capture is O(N) and blocks other server state work until complete. Sessions acquiring the same configuration and statistics revision share it; active traversals keep their records across later edits. Aggregate storage, including capture scratch, is bounded by `snapshot-max-bytes`. The management API's `list-users` continues using live revision-bound cursors.
 
 A last data page has `complete:true`, `validated:false` and a terminal cursor. The client must then send that cursor,
 the same total/checkpoint and `"validate":true`. The server returns a small `complete:true,validated:true` response,
 with `position == total`, `count:"0"` and an empty `users` array. An empty table has one empty complete data page and
 uses the same final validation. Validation acknowledges no usage.
 
-Any configuration edit, including a same-value edit, invalidates continuation/final validation with `stale_cursor`.
-Wrong totals or positions return `invalid_cursor`; epoch/sequence/digest contradictions return
-`accounting-continuity-lost`. Traffic/first-use changes from other producers do not invalidate configuration cursors.
-Each page samples statistics and clocks separately, so the installed statistics revision is a conservative first-page
-revision, not an atomic whole-table statistics snapshot. Per-page request deadlines allow a progressing traversal to
-outlast the former single-response deadline. The client serves its old cache until final validation and atomic install.
+Configuration and statistics edits do not invalidate an acquired snapshot. Wrong totals or positions return
+`invalid_cursor`; absent, expired or replaced snapshots and a changed session checkpoint return `stale_cursor`.
+Epoch/sequence/digest contradictions return `accounting-continuity-lost`. Snapshot acquisition can return
+`snapshot-resource-limit` without disturbing other sessions. The client serves its old cache until final validation
+and atomic install. Final validation releases that session's snapshot reference.
 
-The server executes page reads under the envelope's existing shared state lock (exclusive for a mixed mutation
-envelope), releases it before transport callbacks, and never recursively acquires it in the handler. The 64-frame cap,
-entry-session authorization, token revalidation and bounded response queue remain in force.
+Every page carries the snapshot's fixed configuration and statistics revisions. The outer response envelope still
+reports live store revisions, which may be newer; snapshot metadata is the traversal basis. Wall/accounting samples
+are fresh for each response, so a slow traversal does not extend account expiry. Per-page deadlines and a renewable
+idle lease allow a progressing traversal to continue across concurrent administrative edits.
+
+Page operations acquire the envelope's exclusive state lock for snapshot/reference work and release it before
+transport callbacks. The 64-frame cap, entry-session authorization, token revalidation and bounded response queue
+remain in force. Anonymous envelopes without Authenticate use only a shared lock to produce refusals. If responses
+would exhaust the combined 16 MiB payload, oversized frames become correlated `response-too-large` errors while
+space is reserved for every sibling response; earlier mutation acknowledgements remain deliverable.
 
 `server-time-ms` and positive `accounting-time-ms` are response-only values. Absolute dates use the wall sample; the
 accounting clock advances from its construction wall/monotonic anchor without rebasing on later wall corrections.
@@ -967,10 +976,10 @@ The client preserves each page's clock pair and receipt time when installing tha
 ### PushUserStats Module
 
 The payload is the immutable `epoch` / `sequence` / `users` delta batch described above. The complete batch is
-validated before mutation. Success returns type `0` and JSON identifying the accepted epoch, sequence and exact
+validated before mutation. Before tree allocation it permits depth three and at most 36,871 lexical values: seven root values plus nine per entry for the 4,096-entry maximum, counting keys. Success returns type `0` and JSON identifying the accepted epoch, sequence and exact
 payload digest, with `needs-pull: true`. Replaying the last identical batch returns the same accounting confirmation
 without applying it again, even if an account has since changed or disappeared. Permission, epoch, sequence and
-input failures return a correlated Error response.
+input failures return a correlated Error response. A next batch containing absent account IDs receives an Error whose JSON body has `error:"usage-accounts-missing"`, the exact attempted `epoch`, decimal-string `sequence`, request SHA-256 `digest`, current `checkpoint-sequence`/`checkpoint-digest`, and a nonempty `missing-ids` array of decimal strings. This proves that no entry in that exact attempt was applied. The client validates the proof before releasing its immutable attempt, retains every usage obligation, refreshes membership and may rebuild at the same next sequence. An exact replay of an already accepted batch is still acknowledged before checking account existence.
 
 ## Lifecycle Behavior
 
@@ -1013,6 +1022,7 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
   active/baseline/staged tables, indexes, parsing and runtime queues consume additional RAM. Account count is not a
   fixed users-per-16-MiB estimate.
 
+- Per-line input/output limits do not bound the number of connections using one producer token. Apply listener connection limits when exposing the producer endpoint; `snapshot-max-bytes` bounds snapshots only.
 - This node does not require left padding and does not prepend in-place.
 - This node is not a packet tunnel and does not use packet-line semantics.
 
@@ -1522,9 +1532,11 @@ applicable. Gateway authentication, permission, timeout and encoded-envelope
 errors retain the [APIServer](APIServer.mdx) contract. Retries and restarting a
 stale traversal are caller-controlled.
 
-Failed mandatory post-authentication/post-ACK pulls defer new reports. Frequent configuration edits can repeatedly
-restart traversals; clients keep the old cache. Missing-account usage debt is retained and can prevent installation.
-These policies provide no client crash recovery or durable usage journal.
+A failed mandatory refresh may yield to usage reporting against the unchanged installed baseline between traversals.
+Active producer snapshots survive concurrent configuration edits. Missing-account usage obligations remain in a separate
+ledger, allow installation of the authoritative table, and reattach if that durable ID returns; they are never silently
+dropped or reported against an absent account. An unresolved immutable batch still blocks publication unless its exact
+no-commit refusal is validated. There is no client crash recovery or durable usage journal.
 
 ## User Database Performance
 
@@ -1536,9 +1548,8 @@ These policies provide no client crash recovery or durable usage journal.
 - All keyed lookups (SHA-224, SHA-256, UUID, WireGuard public key, durable id,
   non-empty name) are average O(1); WireGuard Allowed-IP address lookup and
   range-overlap detection are O(log M) through an ordered interval index.
-- Accounting retains only the last sequence/digest per configured client; synchronization builds one bounded page at a time.
-- Read-only request messages (`Ping`, credential lookups and `GetUsersPage`) share the server state read lock and
-  may execute concurrently. Authentication, user mutations and statistics mutations take the state write lock for
+- Accounting retains only the last sequence/digest per configured client; synchronization retains shared, globally bounded encoded snapshots and emits one bounded page at a time.
+- `Ping` and credential lookups share the server state read lock and may execute concurrently. Producer snapshot/page operations, authentication, user mutations and statistics mutations take the state write lock for
   the whole envelope. Mixed envelopes use the strongest lock required by their module descriptors.
 
 ## Node Metadata

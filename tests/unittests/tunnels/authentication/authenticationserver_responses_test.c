@@ -8,6 +8,29 @@
 #include "loggers/network_logger.h"
 #include "node_builder/config_lexical.h"
 
+static const char *parse_watch;
+static unsigned    parse_calls;
+static wrwlock_t  *write_lock_watch;
+static unsigned    watched_writes;
+
+cJSON *__real_cJSON_ParseWithLengthOpts(const char *, size_t, const char **, cJSON_bool);
+cJSON *__wrap_cJSON_ParseWithLengthOpts(const char *, size_t, const char **, cJSON_bool);
+cJSON *__wrap_cJSON_ParseWithLengthOpts(const char *text, size_t length, const char **end, cJSON_bool terminated)
+{
+    if (text == parse_watch)
+        ++parse_calls;
+    return __real_cJSON_ParseWithLengthOpts(text, length, end, terminated);
+}
+
+int __real_pthread_rwlock_wrlock(pthread_rwlock_t *lock);
+int __wrap_pthread_rwlock_wrlock(pthread_rwlock_t *lock);
+int __wrap_pthread_rwlock_wrlock(pthread_rwlock_t *lock)
+{
+    if (lock == write_lock_watch)
+        ++watched_writes;
+    return __real_pthread_rwlock_wrlock(lock);
+}
+
 static char       *secret_watch, *decoded_watch, *serialized_watch;
 static size_t      secret_watch_length, decoded_watch_length, serialized_watch_length;
 static unsigned    secret_wiped, decoded_wiped, serialized_wiped;
@@ -221,6 +244,7 @@ static void teardown(void)
     twfLinePoolTeardown(&lines);
     authenticationserver_tstate_t *ts = tunnelGetState(server);
     authenticationserverSessionsDestroy(ts);
+    twfRequire(ts->snapshot_bytes == 0, "session destruction leaked snapshot storage");
     authenticationserverAuthClientsDestroy(ts);
     usersDestroy(&ts->store.users);
     rwlockDestroy(&ts->state_lock);
@@ -585,6 +609,101 @@ static void producerSession(void)
     twfRequire(((authenticationserver_tstate_t *) tunnelGetState(server))->sessions_count == 1, "producer auth failed");
 }
 
+static void testProducerParserBudgets(void)
+{
+    setup();
+    producerSession();
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    ts->sessions[0]->allow_user_write = ts->sessions[0]->allow_stats_push = true;
+    const uint8_t correlation[4]                                          = {0};
+    const uint8_t operations[] = {kAuthenticationServerRequestTypePushUserStats,
+                                  kAuthenticationServerRequestTypeUpdateUser,
+                                  kAuthenticationServerRequestTypeAddNewUser};
+    char         *wide         = memoryAllocate(80010);
+    memoryCopy(wide, "{\"x\":[", 6);
+    for (size_t i = 0; i < 40000; ++i)
+    {
+        wide[6 + 2 * i] = '0';
+        wide[7 + 2 * i] = i == 39999 ? ']' : ',';
+    }
+    wide[80006] = '}';
+    wide[80007] = 0;
+    for (size_t i = 0; i < ARRAY_SIZE(operations); ++i)
+    {
+        parse_watch   = wide;
+        parse_calls   = 0;
+        sbuf_t *reply = authenticationserverDispatchRequest(
+            operations[i], correlation, server, line, ts->sessions[0], (const uint8_t *) wide, 80007);
+        parse_watch = NULL;
+        twfRequire(reply != NULL && sbufReadUI8(reply) == kAuthenticationServerResponseTypeError && parse_calls == 0 &&
+                       usersCount(&ts->store.users) == 0 && ts->auth_clients[0].last_sequence == 0,
+                   "wide producer body allocated a tree or changed the store/checkpoint");
+        lineReuseBuffer(line, reply);
+        static const char shallow[] = "{\"x\":[]}";
+        parse_watch                 = shallow;
+        parse_calls                 = 0;
+        reply                       = authenticationserverDispatchRequest(
+            operations[i], correlation, server, line, ts->sessions[0], (const uint8_t *) shallow, sizeof(shallow) - 1U);
+        parse_watch = NULL;
+        twfRequire(reply != NULL && parse_calls == 1, "producer parser budget fixture bypassed parsing");
+        lineReuseBuffer(line, reply);
+    }
+    memoryFree(wide);
+    teardown();
+
+    setup();
+    ts               = tunnelGetState(server);
+    write_lock_watch = &ts->state_lock;
+    watched_writes   = 0;
+    producerResponse(kAuthenticationServerRequestTypeUpdateUser, "{}", 2, "authentication-required");
+    twfRequire(watched_writes == 0, "anonymous mutation request acquired exclusive state lock");
+    producerSession();
+    twfRequire(watched_writes == 1, "Authenticate did not acquire exclusive state lock");
+    write_lock_watch = NULL;
+    teardown();
+}
+
+static void testSnapshotBudgetAndLease(void)
+{
+    setup();
+    producerSession();
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    char                           request[512], cursor[65];
+    pageRequest(request, NULL, 0, false);
+    ts->snapshot_max_bytes = 1;
+    producerResponse(kAuthenticationServerRequestTypeGetUsersPage, request, strlen(request), "snapshot-resource-limit");
+    twfRequire(ts->snapshot_bytes == 0 && ts->sessions[0]->snapshot == NULL, "snapshot refusal leaked storage");
+    ts->snapshot_max_bytes = kAuthenticationServerDefaultSnapshotMaxBytes;
+    cJSON *page = producerResponse(kAuthenticationServerRequestTypeGetUsersPage, request, strlen(request), NULL);
+    strcpy(cursor, cJSON_GetObjectItemCaseSensitive(page, "cursor")->valuestring);
+    cJSON_Delete(page);
+    twfRequire(ts->snapshot_bytes != 0, "snapshot did not charge metadata");
+    const size_t                   charged = ts->snapshot_bytes;
+    authenticationserver_session_t sibling = {.accounting_client = ts->sessions[0]->accounting_client,
+                                              .allow_user_pull   = true};
+    memoryCopy(sibling.accounting_epoch, ts->sessions[0]->accounting_epoch, sizeof(sibling.accounting_epoch));
+    const uint8_t correlation[4] = {0};
+    sbuf_t       *shared         = authenticationserverDispatchRequest(kAuthenticationServerRequestTypeGetUsersPage,
+                                                         correlation,
+                                                         server,
+                                                         line,
+                                                         &sibling,
+                                                         (const uint8_t *) request,
+                                                         (uint32_t) strlen(request));
+    twfRequire(shared != NULL && sbufReadUI8(shared) == kAuthenticationServerResponseTypeUsers &&
+                   sibling.snapshot == ts->sessions[0]->snapshot && ts->snapshot_bytes == charged,
+               "identical table capture did not share bounded storage");
+    lineReuseBuffer(line, shared);
+    authenticationserverSnapshotRelease(ts, &sibling);
+    twfRequire(ts->snapshot_bytes == charged, "one snapshot reference freed another session's rows");
+    authenticationserverSnapshotsExpire(
+        ts, ts->sessions[0]->snapshot_last_page_ms + kAuthenticationServerDefaultSnapshotIdleTimeoutMs);
+    twfRequire(ts->snapshot_bytes == 0 && ts->sessions[0]->snapshot == NULL, "expired snapshot retained storage");
+    pageRequest(request, cursor, 0, true);
+    producerResponse(kAuthenticationServerRequestTypeGetUsersPage, request, strlen(request), "stale_cursor");
+    teardown();
+}
+
 static void testProducerPages(void)
 {
     setup();
@@ -609,13 +728,22 @@ static void testProducerPages(void)
                "first producer page boundary failed");
     strcpy(cursor, cJSON_GetObjectItemCaseSensitive(page, "cursor")->valuestring);
     cJSON_Delete(page);
+    const uint64_t captured_stats = ts->store.stats_revision;
     authenticationserverBumpStatsRevision(server);
+    const user_config_patch_t changed = {.mask = kUserConfigNotes, .notes = "changed during traversal"};
+    twfRequire(usersPatchConfigByIdentifier(&ts->store.users, 129, &changed) == kUsersUpdateResultOk,
+               "snapshot edit failed");
+    authenticationserverBumpConfigRevision(server);
     pageRequest(text, cursor, 130, false);
     page = producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), NULL);
     twfRequire(pageValue(page, "position") == 128 && pageValue(page, "count") == 2 &&
                    cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(page, "complete")) &&
                    cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(page, "validated")),
                "terminal data page failed");
+    twfRequire(pageValue(page, "stats-revision") == captured_stats &&
+                   cJSON_GetObjectItemCaseSensitive(
+                       cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(page, "users"), 0), "notes") == NULL,
+               "concurrent edit changed captured page or accounting revision");
     strcpy(terminal, cJSON_GetObjectItemCaseSensitive(page, "cursor")->valuestring);
     cJSON_Delete(page);
     pageRequest(text, terminal, 130, true);
@@ -624,8 +752,9 @@ static void testProducerPages(void)
                    cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(page, "validated")),
                "final page validation failed");
     cJSON_Delete(page);
+    twfRequire(ts->snapshot_bytes == 0, "terminal validation retained its snapshot");
     pageRequest(text, cursor, 131, false);
-    producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), "invalid_cursor");
+    producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), "stale_cursor");
     authenticationserverBumpConfigRevision(server);
     pageRequest(text, terminal, 130, true);
     producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), "stale_cursor");
@@ -884,6 +1013,74 @@ static void testBoundedProducerLookups(void)
     teardown();
 }
 
+static void testCombinedResponseOverflow(void)
+{
+    setup();
+    producerSession();
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    ts->sessions[0]->allow_user_write = true;
+    user_t source;
+    twfRequire(userCreate(&source, "aggregate-overflow"), "aggregate user failed");
+    userSetId(&source, 1);
+    source.notes = memoryAllocate(9U * 1024U * 1024U + 1U);
+    memset(source.notes, 'x', 9U * 1024U * 1024U);
+    source.notes[9U * 1024U * 1024U] = 0;
+    source.export_strings.notes      = userMeasureExportString(source.notes);
+    twfRequire(usersAddUser(&ts->store.users, &source), "aggregate insertion failed");
+    userDestroy(&source);
+    const uint8_t operations[] = {kAuthenticationServerRequestTypeUpdateUser,
+                                  kAuthenticationServerRequestTypeGetUserByPassword,
+                                  kAuthenticationServerRequestTypeGetUserByPassword};
+    const char   *data[]       = {"{\"id\":1,\"enabled\":false}", "aggregate-overflow", "aggregate-overflow"};
+    size_t        size         = kAuthenticationServerRequestEnvelopeHeaderSize;
+    for (size_t i = 0; i < ARRAY_SIZE(data); ++i)
+        size += kAuthenticationServerRequestHeaderSize + strlen(data[i]);
+    sbuf_t *input = bufferpoolGetBestFit(env.pool, (uint32_t) size, 64);
+    sbufSetLength(input, (uint32_t) size);
+    uint8_t *bytes  = sbufGetMutablePtr(input);
+    uint32_t number = htonl((uint32_t) size - 4U);
+    memoryCopy(bytes, &number, 4);
+    memoryCopy(bytes + 4, ts->sessions[0]->token, 64);
+    size_t offset = kAuthenticationServerRequestEnvelopeHeaderSize;
+    for (size_t i = 0; i < ARRAY_SIZE(data); ++i)
+    {
+        bytes[offset] = operations[i];
+        number        = htonl((uint32_t) i + 1U);
+        memoryCopy(bytes + offset + 1, &number, 4);
+        number = htonl((uint32_t) strlen(data[i]));
+        memoryCopy(bytes + offset + 5, &number, 4);
+        memoryCopy(bytes + offset + 9, data[i], strlen(data[i]));
+        offset += 9U + strlen(data[i]);
+    }
+    memoryFree(received);
+    received        = NULL;
+    received_length = 0;
+    tunnelUpStreamPayload(server, line, input);
+    twfRequire(lineIsAlive(line) && ! usersLookupByIdentifier(&ts->store.users, 1)->enabled,
+               "aggregate response failure lost committed mutation or closed line");
+    offset = kAuthenticationServerResponseEnvelopeHeaderSize;
+    for (size_t i = 0; i < 3; ++i)
+    {
+        twfRequire(received_length - offset >= 9U, "aggregate response lost a correlation");
+        uint32_t id, length;
+        memoryCopy(&id, received + offset + 1, 4);
+        memoryCopy(&length, received + offset + 5, 4);
+        length                 = ntohl(length);
+        const uint8_t expected = i == 0   ? kAuthenticationServerResponseTypeOk
+                                 : i == 1 ? kAuthenticationServerResponseTypeUser
+                                          : kAuthenticationServerResponseTypeError;
+        twfRequire(ntohl(id) == i + 1U && received[offset] == expected && length <= received_length - offset - 9U,
+                   "aggregate response changed outcome or correlation");
+        if (i == 2)
+            twfRequire(length == strlen("response-too-large") &&
+                           memcmp(received + offset + 9, "response-too-large", length) == 0,
+                       "aggregate overflow was not a correlated refusal");
+        offset += 9U + length;
+    }
+    twfRequire(offset == received_length, "aggregate response has unexpected trailing bytes");
+    teardown();
+}
+
 static void testProducerDirtyBoundaries(void)
 {
     setup();
@@ -999,11 +1196,14 @@ int main(void)
     testAuthenticateValidation();
     testGeometricConstruction();
     testSessionAtEnvelopeEntry();
+    testProducerParserBudgets();
+    testSnapshotBudgetAndLease();
     testProducerPages();
     testCanonicalProducerLookups();
     testLongPasswordsAndAdmission();
     testMaximumSynchronizableRecord();
     testBoundedProducerLookups();
+    testCombinedResponseOverflow();
     testProducerDirtyBoundaries();
     testOwnedProducerSecretWiping();
     testOwnedLookupSecretWiping();

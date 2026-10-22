@@ -149,6 +149,19 @@ static void authenticationserverInitializeCallbacks(tunnel_t *t)
     t->onDestroy       = &authenticationserverTunnelDestroy;
 }
 
+static bool authenticationserverSettingUnique(const cJSON *settings, const char *name)
+{
+    bool seen = false;
+    for (const cJSON *item = settings->child; item != NULL; item = item->next)
+        if (item->string != NULL && strcmp(item->string, name) == 0)
+        {
+            if (seen)
+                return false;
+            seen = true;
+        }
+    return true;
+}
+
 static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts, node_t *node)
 {
     const cJSON *settings = node->node_settings_json;
@@ -193,6 +206,24 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
         return false;
     }
     ts->session_idle_timeout_ms = (uint32_t) session_idle_timeout_ms;
+
+    int64_t snapshot_max_bytes = kAuthenticationServerDefaultSnapshotMaxBytes;
+    int64_t snapshot_idle_ms   = kAuthenticationServerDefaultSnapshotIdleTimeoutMs;
+    if (! authenticationserverSettingUnique(settings, "snapshot-max-bytes") ||
+        ! authenticationserverSettingUnique(settings, "snapshot-idle-timeout-ms") ||
+        jsonGetObjectIntegerInRange(
+            settings, "snapshot-max-bytes", 1, (int64_t) min(SIZE_MAX, (uint64_t) INT64_MAX), &snapshot_max_bytes) ==
+            kJsonValueInvalid ||
+        jsonGetObjectIntegerInRange(settings, "snapshot-idle-timeout-ms", 1, INT_MAX, &snapshot_idle_ms) ==
+            kJsonValueInvalid)
+    {
+        LOGF("JSON Error: AuthenticationServer snapshot limits must be unique positive host-representable integers; "
+             "snapshot-idle-timeout-ms must not exceed %d",
+             INT_MAX);
+        return false;
+    }
+    ts->snapshot_max_bytes       = (size_t) snapshot_max_bytes;
+    ts->snapshot_idle_timeout_ms = (uint32_t) snapshot_idle_ms;
 
     if (UNLIKELY(! authenticationserverParseNormalBackups(ts, settings)))
     {

@@ -9,6 +9,21 @@ static void authenticationclientEscapeError(const uint8_t *data, uint32_t length
 static void authenticationclientHandleError(tunnel_t *t, line_t *l, uint8_t request_type, const uint8_t *data,
                                             uint32_t length);
 
+void authenticationclientDeferPull(tunnel_t *t, authenticationclient_failure_t failure)
+{
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    authenticationclientDiscardStaging(ts);
+    authenticationclientRecordFailure(t, failure, kAuthenticationClientRequestTypeGetUsersPage);
+    mutexLock(&ts->control_mutex);
+    ts->pull_retry_not_before_ms = max(ts->sync_retry_not_before_ms, authenticationclientLocalTimeMS() + 1000);
+    ts->sync_retry_not_before_ms = 0;
+    ts->pull_requested           = true;
+    ts->pull_deferred            = true;
+    ts->pull_required            = ! ts->users_loaded;
+    mutexUnlock(&ts->control_mutex);
+    authenticationclientResumeSync(t);
+}
+
 static bool authenticationclientErrorEquals(const uint8_t *data, uint32_t length, const char *expected)
 {
     return length == stringLength(expected) && memoryEqual(data, expected, length);
@@ -50,9 +65,15 @@ static void authenticationclientHandleError(tunnel_t *t, line_t *l, uint8_t requ
                                             uint32_t length)
 {
     authenticationclient_tstate_t *ts = tunnelGetState(t);
-    const bool continuity             = authenticationclientErrorEquals(data, length, "accounting-continuity-lost");
-    const bool push                   = request_type == kAuthenticationClientRequestTypePushUserStats;
-    const bool inconsistent           = (push || request_type == kAuthenticationClientRequestTypeGetAllUsers) &&
+    if (request_type == kAuthenticationClientRequestTypePushUserStats &&
+        authenticationclientRejectMissingBatch(t, data, length))
+    {
+        authenticationclientResumeSync(t);
+        return;
+    }
+    const bool continuity   = authenticationclientErrorEquals(data, length, "accounting-continuity-lost");
+    const bool push         = request_type == kAuthenticationClientRequestTypePushUserStats;
+    const bool inconsistent = (push || request_type == kAuthenticationClientRequestTypeGetUsersPage) &&
                               (authenticationclientErrorEquals(data, length, "usage-replay-conflict") ||
                                authenticationclientErrorEquals(data, length, "usage-sequence-invalid"));
     const bool credential_rejected = request_type == kAuthenticationClientRequestTypeAuthenticate &&
@@ -65,6 +86,12 @@ static void authenticationclientHandleError(tunnel_t *t, line_t *l, uint8_t requ
     }
     const bool authentication = authenticationclientErrorEquals(data, length, "authentication-required");
     const bool denied         = push && authenticationclientErrorEquals(data, length, "stats-push-not-allowed");
+    if (request_type == kAuthenticationClientRequestTypeGetUsersPage && ! continuity && ! inconsistent &&
+        ! authentication)
+    {
+        authenticationclientDeferPull(t, kAuthenticationClientFailureRemoteError);
+        return;
+    }
     authenticationclientRecordFailure(t,
                                       continuity || inconsistent ? kAuthenticationClientFailureContinuity
                                       : credential_rejected      ? kAuthenticationClientFailureCredentialRejected
@@ -167,30 +194,30 @@ void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint8_t res
         ts->auth_rejected           = false;
         ts->catchup_capture_needed  = true;
         ts->pull_requested          = true;
-        ts->pull_required           = true;
+        ts->pull_required           = ! ts->users_loaded || ! ts->pull_deferred;
         ts->last_auth_success_ms    = authenticationclientLocalTimeMS();
         ts->last_auth_success_valid = true;
         mutexUnlock(&ts->control_mutex);
         authenticationclientResumeSync(t);
         return;
     }
-    case kAuthenticationClientRequestTypeGetAllUsers: {
+    case kAuthenticationClientRequestTypeGetUsersPage: {
         authenticationclient_failure_t failure = kAuthenticationClientFailureInvalidResponse;
         if (response_type == kAuthenticationClientResponseTypeUsers && ts->pending_batch == NULL)
             failure = authenticationclientAcceptUsersPage(
                 t, data, data_len, config_revision, stats_revision, generation, received_at_ms);
         if (failure != kAuthenticationClientFailureNone)
         {
-            authenticationclientRecordFailure(t, failure, request_type);
             if (failure == kAuthenticationClientFailureContinuity)
             {
+                authenticationclientRecordFailure(t, failure, request_type);
                 mutexLock(&ts->control_mutex);
                 ts->continuity_error = true;
                 mutexUnlock(&ts->control_mutex);
                 authenticationclientCloseControlLine(t, l, true);
             }
             else
-                authenticationclientRecoverControlLine(t, l, true);
+                authenticationclientDeferPull(t, failure);
             return;
         }
         break;
