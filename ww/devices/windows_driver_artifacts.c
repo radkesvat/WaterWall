@@ -43,11 +43,11 @@ static void driverReportResidue(const wchar_t *path, DWORD error)
     LOGW("DriverArtifacts: retained protected path %s, code: %lu", utf8, error);
 }
 
-static HANDLE driverLockDirectory(const wchar_t *path)
+static HANDLE driverLockDirectory(const wchar_t *path, DWORD sharing)
 {
     return CreateFileW(path,
                        FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
-                       FILE_SHARE_READ,
+                       sharing,
                        NULL,
                        OPEN_EXISTING,
                        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
@@ -93,7 +93,7 @@ static bool driverPinRoot(HANDLE root_handle, wchar_t *root)
             continue;
         saved      = root[i];
         root[i]    = 0;
-        HANDLE pin = driverLockDirectory(root);
+        HANDLE pin = driverLockDirectory(root, FILE_SHARE_READ | FILE_SHARE_WRITE);
         root[i]    = saved;
         if (pin == INVALID_HANDLE_VALUE)
             return false;
@@ -197,7 +197,7 @@ static bool driverDirectoryPrepare(void)
         SetLastError(ERROR_BAD_PATHNAME);
         return false;
     }
-    HANDLE                     root_lock = driverLockDirectory(root);
+    HANDLE                     root_lock = driverLockDirectory(root, FILE_SHARE_READ | FILE_SHARE_WRITE);
     BY_HANDLE_FILE_INFORMATION info;
     if (root_lock == INVALID_HANDLE_VALUE)
         return false;
@@ -247,7 +247,7 @@ static bool driverDirectoryPrepare(void)
         directory[0] = 0;
         goto fail;
     }
-    directory_lock = driverLockDirectory(directory);
+    directory_lock = driverLockDirectory(directory, FILE_SHARE_READ);
     if (directory_lock == INVALID_HANDLE_VALUE)
     {
         directory_lock = NULL;

@@ -27,6 +27,7 @@ static bool         fail_unload;
 static bool         missing_export;
 static unsigned int load_calls;
 static unsigned int unload_calls;
+static unsigned int ancestor_pin_opens;
 
 /* Capture the Win32 error before reporting can change it. */
 
@@ -48,6 +49,20 @@ static unsigned int unload_calls;
 static BOOL WINAPI fixtureWrite(HANDLE file, LPCVOID bytes, DWORD length, LPDWORD written, LPOVERLAPPED overlapped)
 {
     return WriteFile(file, bytes, short_write && length != 0 ? length - 1 : length, written, overlapped);
+}
+
+static HANDLE WINAPI fixtureCreateFile(LPCWSTR path, DWORD access, DWORD sharing, LPSECURITY_ATTRIBUTES security,
+                                       DWORD disposition, DWORD flags, HANDLE template_file)
+{
+    if (access == (FILE_TRAVERSE | FILE_READ_ATTRIBUTES))
+    {
+        const bool private_directory = wcsstr(path, L"Waterwall-drivers-") != NULL;
+        require(sharing == (private_directory ? FILE_SHARE_READ : FILE_SHARE_READ | FILE_SHARE_WRITE),
+                "directory pin changed replacement protection or denied ancestor write sharing");
+        if (! private_directory)
+            ++ancestor_pin_opens;
+    }
+    return CreateFileW(path, access, sharing, security, disposition, flags, template_file);
 }
 
 static DWORD WINAPI fixtureTemp(DWORD length, LPWSTR path)
@@ -171,10 +186,12 @@ const unsigned int  windivert_sys_len = sizeof(windivert_sys);
 #define WriteFile    fixtureWrite
 #define GetTempPathW fixtureTemp
 #define DeleteFileW  fixtureDelete
+#define CreateFileW  fixtureCreateFile
 #include "../../../ww/devices/windows_driver_artifacts.c"
 #undef WriteFile
 #undef GetTempPathW
 #undef DeleteFileW
+#undef CreateFileW
 
 #define LoadLibraryExW fixtureLoad
 #define FreeLibrary    fixtureUnload
@@ -257,6 +274,7 @@ int main(void)
 
     require(windowsDriverArtifactPrepare(kWindowsDriverWintun, bytes, sizeof(bytes), &path), "prepare failed");
     const wchar_t *again = NULL;
+    require(ancestor_pin_opens != 0, "fixture did not inspect ancestor pin sharing");
     require(windowsDriverArtifactPrepare(kWindowsDriverWintun, bytes, sizeof(bytes), &again) && path == again,
             "immutable reuse did not retain the same artifact");
     HANDLE writable = CreateFileW(
