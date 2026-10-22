@@ -36,6 +36,8 @@ add_library(BrotliDec OBJECT
     brotli/common/dictionary.c
 )
 
+waterwall_configure_runtime_dependency(BrotliDec)
+
 target_include_directories(BrotliDec PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/brotli/include
 )
@@ -91,49 +93,14 @@ target_include_directories(TlsClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
 
 
 
-#==============================================================================
-# BoringSSL Configuration
-#==============================================================================
-
-set(WW_BORINGSSL_PREFIX WW_BSSL)
-set(BORINGSSL_PREFIX ${WW_BORINGSSL_PREFIX})
-
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/boringssl boringssl)
-
-foreach(runtime_dependency IN ITEMS BrotliDec fipsmodule crypto ssl decrepit pki)
-    if(TARGET ${runtime_dependency})
-        waterwall_configure_runtime_dependency(${runtime_dependency})
-    endif()
-endforeach()
-
-target_include_directories(DecompressBrotli PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/boringssl/include
-)
-target_compile_definitions(DecompressBrotli PRIVATE BORINGSSL_PREFIX=${WW_BORINGSSL_PREFIX})
-
-target_link_libraries(DecompressBrotli PRIVATE crypto ssl)
-
-target_include_directories(TlsClient PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/boringssl/include
-)
-target_compile_definitions(TlsClient PRIVATE BORINGSSL_PREFIX=${WW_BORINGSSL_PREFIX})
+# BoringSSL is shared with the QUIC nodes and initialized independently of
+# TlsClient by the root dependency provider.
+target_link_libraries(DecompressBrotli PRIVATE WaterWall::BoringSSL)
+target_link_libraries(TlsClient PRIVATE WaterWall::BoringSSL)
 
 #==============================================================================
 # Platform-specific Configurations
 #==============================================================================
-
-if(APPLE)
-    target_compile_options(ssl PRIVATE -Wno-shorten-64-to-32)
-    target_compile_options(crypto PRIVATE -Wno-shorten-64-to-32)
-    target_compile_options(pki PRIVATE -Wno-shorten-64-to-32)
-    target_compile_options(fipsmodule PRIVATE -Wno-shorten-64-to-32)
-    target_compile_options(decrepit PRIVATE -Wno-shorten-64-to-32)
-endif()
-
-# Fix for MinGW64 format string warnings
-if(TARGET bssl AND WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(bssl PRIVATE -Wno-format)
-endif()
 
 # GCC (notably 15.x on MinGW/UCRT64) emits false-positive -Warray-bounds /
 # -Wstringop-overflow when it inlines the AVX2 _mm256_store path of
@@ -150,23 +117,12 @@ if(NOT MSVC)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wno-free-nonheap-object" CACHE STRING "Linker flags" FORCE)
 endif()
 
-set_target_properties(crypto PROPERTIES UNITY_BUILD OFF)
-set_target_properties(ssl PROPERTIES UNITY_BUILD OFF)
-set_target_properties(pki PROPERTIES UNITY_BUILD OFF)
-set_target_properties(fipsmodule PROPERTIES UNITY_BUILD OFF)
-set_target_properties(decrepit PROPERTIES UNITY_BUILD OFF)
-
-if(TARGET bssl AND NOT APPLE)
-    set_target_properties(bssl PROPERTIES UNITY_BUILD OFF)
-endif()
-
-
 #==============================================================================
 # Final Library Linkage
 #==============================================================================
 
 target_link_libraries(TlsClient PUBLIC TlsRecordShapingCommon)
-target_link_libraries(TlsClient PRIVATE StreamFragmenter ww BrotliDec DecompressBrotli crypto ssl)
+target_link_libraries(TlsClient PRIVATE StreamFragmenter ww BrotliDec DecompressBrotli)
 if(NOT APPLE)
     target_precompile_headers(TlsClient REUSE_FROM ww)
 endif()

@@ -1,0 +1,33 @@
+{
+  "name": "quic-stream-server",
+  "nodes": [
+    {
+      "name": "carrier",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 4433
+      },
+      "next": "quic"
+    },
+    {
+      "name": "quic",
+      "type": "QuicServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "protocol": "h3",
+        "carrier-mode": "stream"
+      },
+      "next": "application"
+    },
+    {
+      "name": "application",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9000
+      }
+    }
+  ]
+}

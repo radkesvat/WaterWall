@@ -1,0 +1,34 @@
+{
+  "name": "quic-stream-client",
+  "nodes": [
+    {
+      "name": "application",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1080
+      },
+      "next": "quic"
+    },
+    {
+      "name": "quic",
+      "type": "QuicClient",
+      "settings": {
+        "sni": "quic.example.test",
+        "verify": true,
+        "ca-file": "server.crt",
+        "protocol": "h3",
+        "carrier-mode": "stream"
+      },
+      "next": "carrier"
+    },
+    {
+      "name": "carrier",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 4433
+      }
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "name": "quic-vless-udp-speedtest",
+  "nodes": [
+    {
+      "name": "speed-client",
+      "type": "SpeedTestClient",
+      "next": "vless-client",
+      "settings": {
+        "mode": "tcp",
+        "direction": "bidirectional",
+        "duration-ms": 3000,
+        "warmup-ms": 250,
+        "report-interval-ms": 1000,
+        "connection-count": 2,
+        "payload-size": 65536,
+        "timeout-ms": 30000,
+        "verify-payload": true,
+        "json-summary": true,
+        "terminate-on-complete": true
+      }
+    },
+    {
+      "name": "vless-client",
+      "type": "VlessClient",
+      "next": "quic-client",
+      "settings": {
+        "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+        "address": "127.0.0.1",
+        "port": 443,
+        "protocol": "tcp"
+      }
+    },
+    {
+      "name": "quic-client",
+      "type": "QuicClient",
+      "next": "udp-out",
+      "settings": {
+        "sni": "tls.integration.test",
+        "verify": true,
+        "ca-file": "server.crt",
+        "carrier-mode": "datagram"
+      }
+    },
+    {
+      "name": "udp-out",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29845,
+        "balance-mode": "packet"
+      }
+    },
+    {
+      "name": "udp-in",
+      "type": "UdpListener",
+      "next": "quic-server",
+      "settings": {"address": "127.0.0.1", "port": 29845}
+    },
+    {
+      "name": "quic-server",
+      "type": "QuicServer",
+      "next": "vless-server",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "carrier-mode": "datagram"
+      }
+    },
+    {
+      "name": "vless-server",
+      "type": "VlessServer",
+      "next": "speed-server",
+      "settings": {
+        "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+        "connect": true,
+        "udp": false
+      }
+    },
+    {
+      "name": "speed-server",
+      "type": "SpeedTestServer",
+      "settings": {"json-summary": true, "quiet": false}
+    }
+  ]
+}

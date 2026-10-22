@@ -1,0 +1,34 @@
+{
+  "log": {
+    "path": "log/",
+    "internal": {
+      "loglevel": "INFO",
+      "file": "internal.log",
+      "console": true
+    },
+    "core": {
+      "loglevel": "INFO",
+      "file": "core.log",
+      "console": true
+    },
+    "network": {
+      "loglevel": "INFO",
+      "file": "network.log",
+      "console": true
+    },
+    "dns": {
+      "loglevel": "INFO",
+      "file": "dns.log",
+      "console": true
+    }
+  },
+  "configs": [
+    "config.json"
+  ],
+  "misc": {
+    "workers": 2,
+    "ram-profile": "client",
+    "mtu": 1500,
+    "try-enabling-bbr": false
+  }
+}

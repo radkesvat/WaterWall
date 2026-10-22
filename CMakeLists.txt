@@ -246,6 +246,8 @@ option(router_enable_quic_sniffing      "Enable Router QUIC SNI sniffing support
 option(router_enable_http2_sniffing     "Enable Router HTTP/2 plaintext domain sniffing support (requires nghttp2)" TRUE)
 option(INCLUDE_TLS_CLIENT               "link TLSClient staticly to the core"                                       TRUE)
 option(INCLUDE_TLS_SERVER               "link TLSServer staticly to the core"                                       TRUE)
+option(INCLUDE_QUIC_CLIENT              "link QuicClient statically to the core"                                   TRUE)
+option(INCLUDE_QUIC_SERVER              "link QuicServer statically to the core"                                   TRUE)
 option(INCLUDE_TROJAN_CLIENT            "link TrojanClient staticly to the core"                                    TRUE)
 option(INCLUDE_TROJAN_SERVER            "link TrojanServer staticly to the core"                                    TRUE)
 option(INCLUDE_VLESS_CLIENT             "link VlessClient staticly to the core"                                     TRUE)
@@ -565,6 +567,14 @@ endif()
 
 #--------------------------------------------------------------------------------
 # Tunnel Libraries
+
+if(INCLUDE_TLS_CLIENT OR INCLUDE_QUIC_CLIENT OR INCLUDE_QUIC_SERVER)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/ww/cmake/dependencies/boringssl.cmake")
+endif()
+if(INCLUDE_QUIC_CLIENT OR INCLUDE_QUIC_SERVER)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/ww/cmake/dependencies/quiche.cmake")
+  add_subdirectory(tunnels/Internals/QuicCommon)
+endif()
 #--------------------------------------------------------------------------------
 
 if(INCLUDE_TLS_CLIENT OR INCLUDE_TLS_SERVER)
@@ -1005,6 +1015,20 @@ if(INCLUDE_OPENSSL_SERVER)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/openssl)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} OpenSSLServer)
 endif()
+
+#quic client/server
+foreach(quic_role IN ITEMS CLIENT SERVER)
+  if(INCLUDE_QUIC_${quic_role})
+    if(quic_role STREQUAL "CLIENT")
+      set(quic_node QuicClient)
+    else()
+      set(quic_node QuicServer)
+    endif()
+    target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_QUIC_${quic_role}=1)
+    add_subdirectory(tunnels/${quic_node})
+    target_link_libraries(${WATERWALL_APPLICATION_TARGET} ${quic_node})
+  endif()
+endforeach()
 
 #tls client
 if(INCLUDE_TLS_CLIENT)
