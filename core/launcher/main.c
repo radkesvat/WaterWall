@@ -81,6 +81,9 @@ int waterwallInnerMain(int argc, char **argv)
                 }
             }
         }
+#ifdef OS_WINDOWS
+        launcherExtractApplicationOnJsonError();
+#endif
         if (json != NULL)
         {
             cJSON_Delete(json);

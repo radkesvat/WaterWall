@@ -75,6 +75,17 @@ with tempfile.TemporaryDirectory(prefix='Waterwall fixture spaces ') as temporar
                           (['--restricted-config', '-c:stdin'], b'{}\0bad')]:
         code, out, err = run(launcher, options, data)
         assert code != 0 and b'snapshot:' not in out, (code, out, err)
+        if b'Extracted application binary:' in err:
+            import re
+            match = re.search(r'Extracted application binary:\s*(.*)', err.decode(errors='replace'))
+            if match:
+                win_path = match.group(1).strip()
+                if args.wine:
+                    posix_path = Path(subprocess.check_output(['winepath', '-u', win_path], env=env, timeout=15).decode().strip())
+                else:
+                    posix_path = Path(win_path)
+                assert posix_path.exists(), f'fallback binary was not extracted: {posix_path}'
+                posix_path.unlink()
         assert not list(extraction.iterdir()), list(extraction.iterdir())
 
     # Wine substitutes its own TEMP for an invalid directory before our process

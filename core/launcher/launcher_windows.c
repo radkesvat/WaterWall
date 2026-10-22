@@ -1113,3 +1113,80 @@ done:
     ExitProcess(started ? status : 1);
     return 1;
 }
+
+void launcherExtractApplicationOnJsonError(void)
+{
+    if (waterwallRuntimeLength == 0 || waterwallRuntimeLength > SIZE_MAX || waterwallPackedLength == 0)
+        return;
+
+    wchar_t temp_dir[32768];
+    DWORD   len = GetTempPathW(32768, temp_dir);
+    if (len == 0 || len >= 32700)
+        return;
+
+    wchar_t app_exe[64];
+    lazyLoadWideString(transf_waterwall_application_exe,
+                       sizeof(transf_waterwall_application_exe),
+                       app_exe,
+                       sizeof(app_exe) / sizeof(wchar_t));
+
+    wchar_t target_path[32768];
+    int     target_len;
+    if (len > 0 && temp_dir[len - 1] == L'\\')
+    {
+        target_len = swprintf(target_path, 32768, L"%ls%ls", temp_dir, app_exe);
+    }
+    else
+    {
+        target_len = swprintf(target_path, 32768, L"%ls\\%ls", temp_dir, app_exe);
+    }
+    SecureZeroMemory(app_exe, sizeof(app_exe));
+    if (target_len < 0)
+        return;
+
+    uint8_t *decoded = malloc((size_t) waterwallRuntimeLength);
+    if (decoded == NULL)
+        return;
+
+    wwXzDecoderInit();
+    if (wwXzDecode(waterwallPackedBytes,
+                   waterwallPackedLength,
+                   decoded,
+                   (size_t) waterwallRuntimeLength,
+                   (size_t) waterwallRuntimeLength) != WW_XZ_OK ||
+        ! validImage(decoded, (size_t) waterwallRuntimeLength))
+    {
+        free(decoded);
+        return;
+    }
+
+    HANDLE file = CreateFileW(target_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        free(decoded);
+        return;
+    }
+
+    BOOL success = TRUE;
+    for (size_t written = 0; written < (size_t) waterwallRuntimeLength;)
+    {
+        size_t remaining = (size_t) waterwallRuntimeLength - written;
+        DWORD  chunk     = remaining > 1024 * 1024 ? 1024 * 1024 : (DWORD) remaining;
+        DWORD  count     = 0;
+        if (! WriteFile(file, decoded + written, chunk, &count, NULL) || count == 0)
+        {
+            success = FALSE;
+            break;
+        }
+        written += count;
+    }
+
+    FlushFileBuffers(file);
+    CloseHandle(file);
+    free(decoded);
+
+    if (success)
+    {
+        fprintf(stderr, "Info: if you believe the application unpacker and launcher is not validating JSON correctly, you can find the extracted application binary at: %ls for your own debugging.", target_path);
+    }
+}

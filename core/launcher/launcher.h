@@ -10,3 +10,7 @@
  * On Windows, borrows session-owned lifecycle handles. */
 int launcherExecute(char *input, size_t length, const char *source, int argc, char *const argv[],
                     const waterwall_startup_options_t *options);
+
+#ifdef _WIN32
+void launcherExtractApplicationOnJsonError(void);
+#endif
