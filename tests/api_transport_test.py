@@ -45,6 +45,7 @@ class Stream:
         self.timeouts = []
         self.closed = False
         self.reads = 0
+        self.read_requests = []
 
     def __enter__(self):
         return self
@@ -69,6 +70,7 @@ class Stream:
 
     def recv(self, length):
         self.reads += 1
+        self.read_requests.append(length)
         if self.on_read:
             self.on_read()
         length = min(length, self.fragment)
@@ -105,6 +107,66 @@ class TransportTest(unittest.TestCase):
         self.assertEqual(length, len(stream.sent[0]) - 4)
         self.assertEqual(json.loads(stream.sent[0][4:]), envelope)
 
+    def test_read_exact_requests_at_most_64_kib(self):
+        for length, requests in ((0, []), (1, [1]), (65535, [65535]), (65536, [65536]),
+                                 (65537, [65536, 1]), (131072, [65536, 65536]),
+                                 (131073, [65536, 65536, 1])):
+            with self.subTest(length=length):
+                payload = bytes(range(256)) * (length // 256) + b"x" * (length % 256)
+                stream = Stream(payload, fragment=131073)
+                self.assertEqual(API.read_exact(stream, length), payload)
+                self.assertEqual(stream.read_requests, requests)
+                self.assertEqual(stream.data, b"")
+        payload = b"x" * 131073
+        stream = Stream(payload, fragment=7000)
+        self.assertEqual(API.read_exact(stream, len(payload)), payload)
+        self.assertGreater(stream.reads, 3)
+        self.assertEqual(stream.read_requests[:2], [65536, 65536])
+        self.assertTrue(all(0 < length <= 65536 for length in stream.read_requests))
+
+    def test_large_frame_reads_remain_bounded_and_exact(self):
+        reply = response()
+        reply["result"]["body"] = "x" * 131072
+        encoded = frame(reply)
+        stream = Stream(encoded, fragment=len(encoded))
+        self.assertEqual(self.invoke(stream), reply)
+        self.assertEqual(stream.read_requests, [4, 65536, 65536, len(encoded) - 4 - 131072])
+        self.assertEqual(stream.data, b"")
+        stream = Stream(b"x" * 65536, fragment=65536)
+        with self.assertRaises(ValueError):
+            API.read_exact(stream, 65537)
+        self.assertEqual(stream.read_requests, [65536, 1])
+
+    def test_chunk_boundaries_keep_original_deadline(self):
+        clock = [0.0]
+
+        def advance():
+            clock[0] += 0.6
+
+        stream = Stream(b"x" * 131073, fragment=65536, on_read=advance)
+        with patch.object(API.time, "monotonic", side_effect=lambda: clock[0]):
+            with self.assertRaises(TimeoutError):
+                API.read_exact(stream, 131073, deadline=1.0)
+        self.assertEqual(stream.read_requests, [65536, 65536])
+        self.assertEqual(len(stream.data), 1)
+        self.assertEqual(stream.timeouts[0], 1.0)
+        self.assertAlmostEqual(stream.timeouts[1], 0.4)
+        # Even a complete final chunk cannot turn an expired overall call into
+        # success. The call's final deadline check also includes reply parsing.
+        clock[0] = 0.0
+        reply = response()
+        reply["result"]["body"] = "x" * 131072
+        encoded = frame(reply)
+
+        def short_advance():
+            clock[0] += 0.3
+
+        stream = Stream(encoded, fragment=65536, on_read=short_advance)
+        with patch.object(API.time, "monotonic", side_effect=lambda: clock[0]):
+            self.assert_failed(stream, timeout=1.0)
+        self.assertEqual(stream.read_requests, [4, 65536, 65536, len(encoded) - 4 - 131072])
+        self.assertEqual(stream.data, b"")
+
     def test_gateway_and_node_error_are_returned(self):
         gateway = {"id": "request-1", "error": {"code": "forbidden", "message": "Operation is forbidden."},
                    "result": None}
@@ -125,6 +187,7 @@ class TransportTest(unittest.TestCase):
         stream = Stream(struct.pack("!I", 1025) + b"body-not-read", fragment=4)
         self.assert_failed(stream, max_response_bytes=1024)
         self.assertEqual(stream.reads, 1)
+        self.assertEqual(stream.read_requests, [4])
 
     def test_invalid_outer_json_and_schema(self):
         bad = [b'{"id":"request-1","id":"request-1","error":null,"result":null}',

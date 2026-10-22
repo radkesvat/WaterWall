@@ -103,9 +103,10 @@ class ClientOutcomeTest(unittest.TestCase):
                                                     operation=operation)
                 self.assertEqual(result, 1)
                 self.assertNotIn("outcome unknown", diagnostic)
-                result, _, diagnostic = self.invoke({"error": {"code": "forbidden"}}, operation=operation)
-                self.assertEqual(result, 2)
-                self.assertNotIn("outcome unknown", diagnostic)
+                for code in ("forbidden", "busy", "shutting_down"):
+                    result, _, diagnostic = self.invoke({"error": {"code": code}}, operation=operation)
+                    self.assertEqual(result, 2)
+                    self.assertNotIn("outcome unknown", diagnostic)
                 for response in (None, self.reply(0, {}), {"error": {"code": "invalid_response"}},
                                  {"error": {"code": "response_too_large"}}):
                     result, _, diagnostic = self.invoke(response, operation=operation)

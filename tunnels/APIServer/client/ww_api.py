@@ -18,6 +18,7 @@ import time
 
 
 DEFAULT_MAX_BYTES = 1024 * 1024
+READ_CHUNK_BYTES = 64 * 1024
 GATEWAY_ERRORS = frozenset({
     "invalid_request", "invalid_encoding", "unauthorized", "forbidden", "target_not_found",
     "ambiguous_target", "unsupported_api", "unsupported_operation", "unsupported_content_type",
@@ -148,7 +149,7 @@ def read_exact(stream, length, *, deadline=None):
     while len(chunks) < length:
         if deadline is not None:
             stream.settimeout(_remaining(deadline))
-        chunk = stream.recv(length - len(chunks))
+        chunk = stream.recv(min(length - len(chunks), READ_CHUNK_BYTES))
         if not chunk:
             raise ValueError("Connection closed before the API frame was complete.")
         chunks.extend(chunk)

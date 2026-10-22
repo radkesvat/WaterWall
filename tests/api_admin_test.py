@@ -358,15 +358,19 @@ class AdminTest(unittest.TestCase):
                 self.assertNotIn(API_TOKEN, str(caught.exception))
 
     def test_pre_dispatch_gateway_refusals_are_definite(self):
-        for code in ("forbidden", "unauthorized", "unsupported_operation", "target_not_found", "ambiguous_target"):
-            with self.subTest(code=code):
-                result, text, errors, call, _ = self.invoke(
-                    ["users", "disable", LARGE_ID, "--if-match", EDIT_TOKEN],
-                    [{"error": {"code": code, "message": "PRIVATE_PASSWORD_SENTINEL"}, "result": None}])
-                self.assertEqual(result, 2)
-                self.assertEqual(text, "")
-                self.assertNotIn("outcome unknown", errors.lower())
-                call.assert_called_once()
+        for command in (["users", "create", LARGE_ID, "--password-stdin"],
+                        ["users", "disable", LARGE_ID, "--if-match", EDIT_TOKEN],
+                        ["users", "change-password", LARGE_ID, "--if-match", EDIT_TOKEN, "--password-stdin"]):
+            for code in ("forbidden", "unauthorized", "unsupported_operation", "target_not_found", "ambiguous_target",
+                         "busy", "shutting_down"):
+                with self.subTest(command=command, code=code):
+                    result, text, errors, call, _ = self.invoke(
+                        command, [{"error": {"code": code, "message": "PRIVATE_PASSWORD_SENTINEL"}, "result": None}],
+                        stdin=PASSWORD.encode("utf-8"))
+                    self.assertEqual(result, 2)
+                    self.assertEqual(text, "")
+                    self.assertNotIn("outcome unknown", errors.lower())
+                    call.assert_called_once()
 
     def test_invalid_handler_response_is_uncertain_for_every_write(self):
         self.assertIn("invalid_response", CLIENT.GATEWAY_ERRORS)

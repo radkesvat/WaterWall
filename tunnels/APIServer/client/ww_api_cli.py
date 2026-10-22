@@ -20,7 +20,7 @@ WRITES = frozenset({"create-user", "update-user", "change-user-password"})
 PRE_DISPATCH_ERRORS = frozenset({
     "invalid_request", "invalid_encoding", "unauthorized", "forbidden",
     "target_not_found", "ambiguous_target", "unsupported_api",
-    "unsupported_operation", "unsupported_content_type",
+    "unsupported_operation", "unsupported_content_type", "busy", "shutting_down",
 })
 
 

@@ -83,11 +83,22 @@ not a disk save or an AuthenticationClient refresh.
 
 The `status` result always includes `audit`. When logging is disabled it reports
 `enabled: false`, `healthy: true`, zero counters and `last_error: null`. When
-enabled, inspect `healthy`, `dropped_records`, `write_failures` and `last_error`;
+enabled, inspect `healthy`, `dropped_records`, `write_failures` and `last_error`.
+
+`suppressed_rejections` separately counts intentionally sampled-out refusals and
+does not make audit unhealthy. A sampled record's `node_suppressed_rejections`
+describes omissions across the server, independently of that record's actor.
 `queued_records` is pending queue depth and `written_records` counts flushed
 records. Counters are process-local decimal strings. An unhealthy audit does not
 mean an account change failed: inspect the operation's actual result. Audit
 settings belong to AuthenticationServer; the CLI does not enable or rotate files.
+
+Gateway `busy` and `shutting_down` are definite pre-dispatch refusals for
+create/update/password commands; the handler did not run. Returned node errors
+keep their separate meaning. Writes make one attempt and never retry
+automatically. Transport loss, timeout, malformed replies and response-size
+failures can leave the outcome unknown. Frame reads request at most 64 KiB from
+the socket at once and share one absolute monotonic deadline across all chunks.
 
 ## Output and exit status
 
