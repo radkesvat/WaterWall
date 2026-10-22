@@ -100,6 +100,36 @@
       "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false }
     },
     {
+      "name": "reality-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26635,
+        "nodelay": true,
+        "large-send-buffer": 4096
+      },
+      "next": "reality-server"
+    },
+    {
+      "name": "reality-server",
+      "type": "RealityServer",
+      "settings": {
+        "destination": "reality-destination",
+        "password": "fallback-integration-secret"
+      },
+      "next": "reality-protected"
+    },
+    {
+      "name": "reality-protected",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 9, "fastopen": false }
+    },
+    {
+      "name": "reality-destination",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false }
+    },
+    {
       "name": "ordinary-listener",
       "type": "TcpListener",
       "settings": {

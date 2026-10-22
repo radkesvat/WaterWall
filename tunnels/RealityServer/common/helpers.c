@@ -560,7 +560,10 @@ static bool realityserverInitializeProtectedNext(tunnel_t *t, line_t *l)
 
     if (! ls->protected_init_sent)
     {
-        ls->protected_init_sent = true;
+        /* The cover and protected branches share this line. */
+        l->fallback_mode              = false;
+        l->fallback_peer_write_closed = false;
+        ls->protected_init_sent       = true;
         if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
         {
             return false;

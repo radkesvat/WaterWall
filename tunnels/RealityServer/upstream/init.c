@@ -7,6 +7,7 @@ void realityserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     realityserverLinestateInitialize(ls, lineGetBufferPool(l));
     ls->destination_init_sent = true;
+    lineMarkFallback(l);
 
     lineCallWithRef(l, tunnelUpStreamInit, ts->destination_tunnel);
 }

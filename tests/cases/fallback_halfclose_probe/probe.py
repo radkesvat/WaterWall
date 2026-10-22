@@ -1,4 +1,4 @@
-"""Exercise real local fallback half/full closes for TLS, VLESS and Trojan, plus
+"""Exercise real local fallback half/full closes for TLS, VLESS, Trojan and Reality, plus
 an ordinary connector control. Check response draining, local discard, backend
 retirement and idle expiry. CTest: waterwall.fallback_halfclose_probe. The existing
 runner supplies a private Linux network namespace and owns the runtime.
@@ -109,7 +109,8 @@ def main():
         listener.listen()
         listener.settimeout(5)
         with ThreadPoolExecutor(max_workers=1) as executor:
-            for name, port in (("tls", 26630), ("vless", 26631), ("trojan", 26632)):
+            for name, port in (("tls", 26630), ("vless", 26631), ("trojan", 26632),
+                               ("reality", 26635)):
                 run_case(listener, executor, f"{name} half-close", port, True,
                          idle=name == "tls")
                 run_case(listener, executor, f"{name} full close", port, False)

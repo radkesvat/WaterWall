@@ -258,6 +258,8 @@ static void serverNextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void serverNextInit(tunnel_t *t, line_t *l)
 {
     server_lifecycle_context_t *context = serverContext(t);
+    requireServer(! lineIsFallback(l) && ! l->fallback_peer_write_closed,
+                  "camouflage fallback state reached protected Init");
     serverEvent(context, 'I');
     if (context->kill_on_protected_init)
     {
@@ -900,6 +902,82 @@ static void testServerTerminalReentry(void)
     serverFixtureDestroy(&fixture);
 }
 
+static void serverDestinationFallbackInit(tunnel_t *t, line_t *l)
+{
+    server_lifecycle_context_t *context = serverContext(t);
+    realityserver_lstate_t     *ls      = lineGetState(l, context->reality);
+    requireServer(lineIsFallback(l) && ! l->fallback_peer_write_closed && ls->mode == kRealityServerModePending &&
+                      ls->destination_init_sent,
+                  "destination Init did not receive initialized fallback state");
+    serverEvent(context, 'i');
+}
+
+static void serverFallbackPrevFinish(tunnel_t *t, line_t *l)
+{
+    requireServer(lineFallbackShouldLinger(l), "destination half-close lost fallback state before owner Finish");
+    serverPrevFinish(t, l);
+}
+
+static void testServerDestinationFallbackLifecycle(void)
+{
+    for (uint8_t visitor = 0; visitor <= 1; ++visitor)
+    {
+        server_lifecycle_fixture_t fixture;
+        serverFixtureInitialize(&fixture);
+        serverFixtureAddDestination(&fixture);
+        realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+        realityserverLinestateDestroy(ls);
+        fixture.destination->fnInitU        = serverDestinationFallbackInit;
+        fixture.prev->fnFinD                = serverFallbackPrevFinish;
+        fixture.context.kill_on_prev_finish = true;
+
+        realityserverTunnelUpStreamInit(fixture.reality, fixture.line);
+        requireServer(strcmp(fixture.context.events, "i") == 0, "server did not initialize the destination once");
+        if (visitor != 0)
+        {
+            const uint8_t invalid_tls_prefix = 0x01;
+            requireServer(realityserverProcessUpstream(
+                              fixture.reality, fixture.line, serverBufferFromBytes(&fixture, &invalid_tls_prefix, 1)) &&
+                              ls->mode == kRealityServerModeVisitor && lineIsFallback(fixture.line),
+                          "visitor selection lost destination fallback state");
+        }
+
+        lineMarkFallbackPeerWriteClosed(fixture.line);
+        realityserverTunnelDownStreamFinish(fixture.reality, fixture.line);
+        requireServer(! lineIsAlive(fixture.line) && strcmp(fixture.context.events, visitor != 0 ? "iTD" : "iD") == 0,
+                      "destination half-close did not finish only toward the owner");
+        serverFixtureDestroy(&fixture);
+    }
+}
+
+static void testServerTls12AuthorizationClearsFallback(const reality_v2_record_profile_t *profile)
+{
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+    prepareServerPendingProfile(&fixture, kRealityV2Tls12, profile);
+    lineMarkFallback(fixture.line);
+
+    const uint8_t application = 0x5a;
+    requireServer(realityserverProcessUpstream(fixture.reality,
+                                               fixture.line,
+                                               buildServerInboundRecord(&fixture,
+                                                                        kRealityV2Tls12,
+                                                                        profile,
+                                                                        kRealityV2RecordKindApplicationData,
+                                                                        &application,
+                                                                        sizeof(application),
+                                                                        0)),
+                  "TLS 1.2 fallback fixture did not authorize");
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+    requireServer(ls->mode == kRealityServerModeAuthorized && ls->destination_up_finished && ls->protected_init_sent &&
+                      ! lineIsFallback(fixture.line) && ! fixture.line->fallback_peer_write_closed &&
+                      strcmp(fixture.context.events, "FIA") == 0,
+                  "TLS 1.2 authorization did not retire fallback before protected routing");
+    realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+}
+
 static void testServerUnauthenticatedCloseModes(void)
 {
     const uint8_t modes[] = {
@@ -1219,6 +1297,7 @@ static void testServerTls13AuthenticatedHandoff(void)
     server_lifecycle_fixture_t fixture;
     serverFixtureInitialize(&fixture);
     serverFixtureAddDestination(&fixture);
+    lineMarkFallback(fixture.line);
     fixture.prev->fnPayloadD = serverHandoffPrevPayload;
 
     const reality_v2_record_profile_t profile = {
@@ -2217,6 +2296,7 @@ static void testServerTls13DestinationCallbacksStaySuppressed(void)
 {
     server_lifecycle_fixture_t fixture;
     prepareServerTls13ReentryFixture(&fixture);
+    lineMarkFallback(fixture.line);
     fixture.context.inject_destination_callbacks_on_ack = true;
     requireServer(
         realityserverProcessUpstream(
@@ -2229,6 +2309,7 @@ static void testServerTls13DestinationCallbacksStaySuppressed(void)
                       fixture.context.cover_downstream_bytes == 0 && strcmp(fixture.context.events, "K") == 0,
                   "destination callbacks escaped while the downstream cutoff was active");
 
+    lineMarkFallbackPeerWriteClosed(fixture.line);
     requireServer(
         realityserverProcessUpstream(fixture.reality,
                                      fixture.line,
@@ -2357,6 +2438,7 @@ void realityTestServerCloseLifecycle(void)
     {
         if (versions[i] == kRealityV2Tls12)
         {
+            testServerTls12AuthorizationClearsFallback(&profiles[i]);
             runFirstFatalAuthorization(versions[i], &profiles[i]);
             runServerFragmentedAlert(versions[i], &profiles[i]);
             testServerCoalescedRecords(versions[i], &profiles[i], false);
@@ -2364,6 +2446,7 @@ void realityTestServerCloseLifecycle(void)
         }
     }
     testServerTerminalReentry();
+    testServerDestinationFallbackLifecycle();
     testServerUnauthenticatedCloseModes();
     testServerProgressiveVisitorPrefixForwarding();
     testServerPendingPrefixFlushesBeforeFinish();
