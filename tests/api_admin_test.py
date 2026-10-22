@@ -317,6 +317,20 @@ class AdminTest(unittest.TestCase):
                 self.assertNotIn("outcome unknown", errors.lower())
                 call.assert_called_once()
 
+    def test_user_too_large_refusals_are_definite_for_account_mutations(self):
+        commands = (["users", "create", LARGE_ID, "--password-stdin"],
+                    ["users", "update", LARGE_ID, "--if-match", EDIT_TOKEN, "--set", "notes=expanded"],
+                    ["users", "change-password", LARGE_ID, "--if-match", EDIT_TOKEN, "--password-stdin"])
+        for command in commands:
+            with self.subTest(command=command):
+                result, text, errors, call, _ = self.invoke(
+                    command, [reply({"error": {"code": "user_too_large"}}, 1)], stdin=PASSWORD.encode("utf-8"))
+                self.assertEqual(result, 1)
+                self.assertEqual(text, "")
+                self.assertEqual(errors, "Node error: user_too_large.\n")
+                self.assertNotIn("outcome unknown", errors.lower())
+                call.assert_called_once()
+
     def test_local_output_failure_after_acknowledgement_does_not_retry(self):
         result, text, errors, call, _ = self.invoke(
             ["users", "disable", LARGE_ID, "--if-match", EDIT_TOKEN], output_failure=True)

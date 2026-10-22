@@ -24,7 +24,7 @@ BODY_LIMIT = 32768
 NODE_ERRORS = {
     "invalid_request", "conflict", "busy", "not_found", "invalid_cursor", "stale_cursor",
     "invalid_allowed_ips", "name_exists", "allowed_ips_overlap", "resource_limit",
-    "response_too_large", "record_too_large", "invalid_record_encoding", "timeout",
+    "response_too_large", "record_too_large", "user_too_large", "invalid_record_encoding", "timeout",
     "revision_exhausted", "id_exists", "credentials_exist", "creation_failed",
     "password_change_failed",
 }
