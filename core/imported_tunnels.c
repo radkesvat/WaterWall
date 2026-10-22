@@ -2,13 +2,6 @@
 #include "loggers/core_logger.h"
 #include "wwapi.h"
 
-#ifdef INCLUDE_QUIC_CLIENT
-#include "QuicClient/interface.h"
-#endif
-#ifdef INCLUDE_QUIC_SERVER
-#include "QuicServer/interface.h"
-#endif
-
 #if defined(__MINGW32__) && defined(__GNUC__) && ! defined(__clang__)
 #define IMPORTED_TUNNEL_REGISTRATION_BOUNDARY __attribute__((noinline))
 #else
@@ -153,6 +146,14 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 
 #ifdef INCLUDE_TLS_CLIENT
 #include "TlsClient/interface.h"
+#endif
+
+#ifdef INCLUDE_QUIC_CLIENT
+#include "QuicClient/interface.h"
+#endif
+
+#ifdef INCLUDE_QUIC_SERVER
+#include "QuicServer/interface.h"
 #endif
 
 #ifdef INCLUDE_TLS_SERVER
@@ -515,6 +516,7 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
 #ifdef INCLUDE_QUIC_CLIENT
     USING(QuicClient);
 #endif
+
 #ifdef INCLUDE_QUIC_SERVER
     USING(QuicServer);
 #endif
