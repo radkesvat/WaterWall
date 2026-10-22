@@ -211,9 +211,11 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
     int64_t snapshot_idle_ms   = kAuthenticationServerDefaultSnapshotIdleTimeoutMs;
     if (! authenticationserverSettingUnique(settings, "snapshot-max-bytes") ||
         ! authenticationserverSettingUnique(settings, "snapshot-idle-timeout-ms") ||
-        jsonGetObjectIntegerInRange(
-            settings, "snapshot-max-bytes", 1, (int64_t) min(SIZE_MAX, (uint64_t) INT64_MAX), &snapshot_max_bytes) ==
-            kJsonValueInvalid ||
+        jsonGetObjectIntegerInRange(settings,
+                                    "snapshot-max-bytes",
+                                    1,
+                                    (int64_t) min((uint64_t) SIZE_MAX, (uint64_t) INT64_MAX),
+                                    &snapshot_max_bytes) == kJsonValueInvalid ||
         jsonGetObjectIntegerInRange(settings, "snapshot-idle-timeout-ms", 1, INT_MAX, &snapshot_idle_ms) ==
             kJsonValueInvalid)
     {
