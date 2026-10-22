@@ -23,6 +23,13 @@ bool deviceFlowAffineWID(const uint8_t *packet, uint32_t length, wid_t *out_wid)
  */
 void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count);
 
+/* Nonblocking variant for readers without a capacity-wait mechanism. Requires
+ * a configured byte/packet budget and worker FIFO. Takes every buffer; when
+ * capacity is exhausted, drops the unadmitted remainder of the read batch.
+ * Accepted packets retain their per-worker order. The caller owns only its
+ * finite read batch and fragment staging outside the dispatch budget. */
+void deviceFlowAffinityPostBatchDroppingOverflow(device_reader_session_t *session, sbuf_t **bufs, unsigned int count);
+
 /* TUN GSO output is already segmented into unfragmented IP packets.
  * Post it with the ordinary flow hash and stable per-worker bucket ordering,
  * transferring each buffer's pre-allocation budget reservation as well.

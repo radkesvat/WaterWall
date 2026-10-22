@@ -101,7 +101,7 @@ static unsigned int deviceFlowAffinityAppend(device_reader_session_t *session, s
  */
 static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_t **dispatch, const uint8_t *wids,
                                          const size_t *charges, unsigned int dispatch_count,
-                                         DeviceReaderPrepareFn prepare)
+                                         DeviceReaderPrepareFn prepare, bool nonblocking)
 {
     uint16_t counts[kDeviceFlowAffinityBuckets]  = {0};
     uint16_t offsets[kDeviceFlowAffinityBuckets] = {0};
@@ -139,10 +139,35 @@ static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_
         uint16_t posted    = 0;
         while (remaining > 0)
         {
-            const uint16_t     chunk = min(remaining, session->batch_capacity);
+            uint16_t           chunk = min(remaining, session->batch_capacity);
             const unsigned int first = (unsigned int) offsets[wid] + posted;
             bool               accepted;
-            if (charges == NULL)
+            if (nonblocking)
+            {
+                chunk            = min(chunk, session->output_packet_limit);
+                size_t   charge  = 0;
+                uint16_t fitting = 0;
+                while (fitting < chunk)
+                {
+                    const size_t next = sbufGetAllocationCharge(sorted[first + fitting]);
+                    if (next > session->output_charge_limit - charge)
+                        break;
+                    charge += next;
+                    ++fitting;
+                }
+                chunk = fitting;
+                const device_reader_post_result_e result =
+                    chunk != 0 ? deviceReaderSessionTryPost(session, (wid_t) wid, &sorted[first], chunk)
+                               : kDeviceReaderPostCapacity;
+                accepted = result == kDeviceReaderPostAccepted;
+                if (result == kDeviceReaderPostCapacity)
+                {
+                    /* Capacity refusal retains the whole chunk. Include it
+                     * in the unposted remainder settled below. */
+                    chunk = 0;
+                }
+            }
+            else if (charges == NULL)
             {
                 accepted = deviceReaderSessionPost(session, (wid_t) wid, &sorted[first], chunk);
             }
@@ -172,7 +197,8 @@ static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_
     return true;
 }
 
-void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count)
+static void deviceFlowAffinityPostBatchInternal(device_reader_session_t *session, sbuf_t **bufs, unsigned int count,
+                                                bool nonblocking)
 {
     assert(session != NULL);
     assert(bufs != NULL);
@@ -189,7 +215,8 @@ void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs
             dispatch_count = deviceFlowAffinityAppend(session, bufs[i], dispatch, wids, dispatch_count);
         }
 
-        const bool admitted = deviceFlowAffinityPostSorted(session, dispatch, wids, NULL, dispatch_count, NULL);
+        const bool admitted =
+            deviceFlowAffinityPostSorted(session, dispatch, wids, NULL, dispatch_count, NULL, nonblocking);
 
         if (! admitted)
         {
@@ -208,6 +235,17 @@ void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs
     }
 }
 
+void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count)
+{
+    deviceFlowAffinityPostBatchInternal(session, bufs, count, false);
+}
+
+void deviceFlowAffinityPostBatchDroppingOverflow(device_reader_session_t *session, sbuf_t **bufs, unsigned int count)
+{
+    assert(session != NULL && session->worker_queues != NULL && session->output_charge_limit != 0);
+    deviceFlowAffinityPostBatchInternal(session, bufs, count, true);
+}
+
 void deviceFlowAffinityPostGsoBatch(device_reader_session_t *session, sbuf_t **bufs, const size_t *charges,
                                     unsigned int count, DeviceReaderPrepareFn prepare)
 {
@@ -224,7 +262,7 @@ void deviceFlowAffinityPostGsoBatch(device_reader_session_t *session, sbuf_t **b
             wids[i] = (uint8_t) deviceFlowAffinitySelectWID(bufs[i]);
         }
 
-        if (! deviceFlowAffinityPostSorted(session, bufs, wids, charges, chunk_count, prepare))
+        if (! deviceFlowAffinityPostSorted(session, bufs, wids, charges, chunk_count, prepare, false))
         {
             for (unsigned int i = chunk_count; i < count; ++i)
             {

@@ -33,6 +33,8 @@ enum
 {
     kTunWriteQueueMax           = 1024,
     kMaxReadDistributeQueueSize = 128,
+    kTunReaderQueueBytes        = 8 * 1024 * 1024,
+    kTunReaderQueuePackets      = 1024,
     kTunReaderStopPollMs        = 100
 };
 
@@ -253,7 +255,7 @@ static void tunFlushReadBatch(tun_device_t *tdev, sbuf_t **bufs, uint16_t queued
 {
     if (LIKELY(queued_count > 0))
     {
-        deviceFlowAffinityPostBatch(tdev->reader_session, bufs, queued_count);
+        deviceFlowAffinityPostBatchDroppingOverflow(tdev->reader_session, bufs, queued_count);
     }
 }
 
@@ -1225,6 +1227,21 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, bool multi_queue_r
         memoryFree(tdev->name);
         bufferpoolDestroy(tdev->reader_buffer_pool);
         close(tdev->handle);
+        memoryFree(tdev);
+        return NULL;
+    }
+
+    if (! deviceReaderSessionConfigureOutputBudget(
+            tdev->reader_session, kTunReaderQueueBytes, kTunReaderQueuePackets) ||
+        ! deviceReaderSessionEnableWorkerQueue(tdev->reader_session))
+    {
+        LOGE("TunDevice: failed to configure bounded reader dispatch");
+        tunWriterDestroy(&tdev->writer);
+        deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
+        deviceReaderSessionUnref(tdev->reader_session);
+        bufferpoolDestroy(tdev->reader_buffer_pool);
+        close(tdev->handle);
+        memoryFree(tdev->name);
         memoryFree(tdev);
         return NULL;
     }

@@ -101,13 +101,13 @@ static void WINAPI fixtureSetWait(PTP_WAIT wait, HANDLE event, PFILETIME timeout
 #define requestProgramShutdown                 fixtureShutdownRequest
 #define SetThreadpoolWait                      fixtureSetWait
 #define CreateThreadpoolWait                   fixtureCreateWait
-#define deviceFlowAffinityPostBatch            fixtureDistribute
+#define deviceFlowAffinityPostBatchDroppingOverflow            fixtureDistribute
 #include "../../../ww/devices/tun/tun_windows.c"
 #undef sendWorkerMessageForceQueueWithCleanup
 #undef requestProgramShutdown
 #undef CreateThreadpoolWait
 #undef SetThreadpoolWait
-#undef deviceFlowAffinityPostBatch
+#undef deviceFlowAffinityPostBatchDroppingOverflow
 
 static void testMinimumIpv4Write(void)
 {

@@ -34,6 +34,8 @@ enum
     kTunWriteQueueMax           = 4096,
     kMaxReadDistributeQueueSize = 128,
     kTunReaderBatchBytes        = 256 * 1024,
+    kTunReaderQueueBytes        = 8 * 1024 * 1024,
+    kTunReaderQueuePackets      = 1024,
     kTunDiscardReportIntervalMs = 1000
 };
 
@@ -639,7 +641,7 @@ static void tunWindowsReaderRun(worker_t *worker, void *arg1, void *arg2, void *
     if (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
     {
         if (count != 0)
-            deviceFlowAffinityPostBatch(tdev->reader_session, bufs, count);
+            deviceFlowAffinityPostBatchDroppingOverflow(tdev->reader_session, bufs, count);
         /* Clear before rearming: an already-signaled event can notify at once. */
         atomicStoreExplicit(&reader->pending, false, memory_order_release);
         if (empty)
@@ -1397,6 +1399,15 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, bool multi_qu
         memoryFree(tdev->name);
         bufferpoolDestroy(tdev->reader_buffer_pool);
         memoryFree(tdev);
+        return NULL;
+    }
+
+    if (! deviceReaderSessionConfigureOutputBudget(
+            tdev->reader_session, kTunReaderQueueBytes, kTunReaderQueuePackets) ||
+        ! deviceReaderSessionEnableWorkerQueue(tdev->reader_session))
+    {
+        LOGE("TunDevice: failed to configure bounded reader dispatch");
+        tundeviceDestroy(tdev);
         return NULL;
     }
 

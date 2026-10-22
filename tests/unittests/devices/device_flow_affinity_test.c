@@ -178,6 +178,17 @@ bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid,
     return capturePost(target_wid, bufs, count);
 }
 
+device_reader_post_result_e deviceReaderSessionTryPost(device_reader_session_t *session, wid_t target_wid,
+                                                       sbuf_t **bufs, unsigned int count)
+{
+    discard session;
+    discard target_wid;
+    discard bufs;
+    discard count;
+    require(false, "blocking affinity dispatch unexpectedly selected nonblocking admission");
+    return kDeviceReaderPostClosed;
+}
+
 void deviceReaderSessionReleaseOutput(device_reader_session_t *session, size_t exact_charge)
 {
     discard session;

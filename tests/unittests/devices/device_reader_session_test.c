@@ -23,6 +23,7 @@
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
+#include "devices/device_flow_affinity.h"
 #include "devices/device_reader_session.h"
 #include "net/packet_batch.h"
 
@@ -1658,6 +1659,72 @@ static void testConcurrentProducerBudget(test_env_t *env)
     deviceReaderSessionUnref(session);
 }
 
+/* Exercise the actual nonblocking affinity -> FIFO path with only five
+ * ordinary packets. The consumer is held by the captured scheduler, so no
+ * network traffic or resource-exhaustion workload is involved. */
+static void testBoundedAffinityDispatch(test_env_t *env)
+{
+    for (unsigned int mode = 0; mode < 3; ++mode)
+    {
+        resetCapturedMessages();
+        testWorkerBindWID(0);
+        reader_probe_t           probe   = {0};
+        device_reader_session_t *session = createSession(env, &probe, 4);
+        sbuf_t                  *buffers[5];
+        for (unsigned int i = 0; i < ARRAY_SIZE(buffers); ++i)
+        {
+            buffers[i] = bufferpoolGetSmallBuffer(env->worker_buffer_pool);
+            memoryZero(sbufGetMutablePtr(buffers[i]), 20);
+            sbufSetLength(buffers[i], 20);
+            uint8_t *bytes = sbufGetMutablePtr(buffers[i]);
+            bytes[0]       = 0x45;
+            bytes[8]       = 64;
+            bytes[9]       = 253;
+            PUT_BE16(bytes + 2, 20);
+            PUT_BE32(bytes + 12, 0x0a000001);
+            PUT_BE32(bytes + 16, 0xc0000201);
+            writeIpv4Checksum(bytes);
+        }
+        const size_t charge = sbufGetAllocationCharge(buffers[0]);
+        /* Exercise packet and allocation-byte ceilings independently, and a
+         * legal read buffer larger than the entire configured byte budget. */
+        const size_t byte_limit = mode == 0 ? charge * 5 : (mode == 1 ? charge * 2 : charge - 1);
+        require(deviceReaderSessionConfigureOutputBudget(session, byte_limit, mode == 0 ? 2 : 5) &&
+                    deviceReaderSessionEnableWorkerQueue(session) && deviceReaderSessionBegin(session) != 0,
+                "could not configure bounded affinity fixture");
+        tracked_reuse_pool = env->worker_buffer_pool;
+        deviceFlowAffinityPostBatchDroppingOverflow(session, buffers, ARRAY_SIZE(buffers));
+        const unsigned int accepted = mode == 2 ? 0 : 2;
+        require(atomicLoadRelaxed(&session->output_packets) == accepted &&
+                    atomic_load_explicit(&session->output_charge, memory_order_relaxed) == accepted * charge &&
+                    tracked_reuse_count == ARRAY_SIZE(buffers) - accepted,
+                "bounded affinity did not settle excess packets or exceeded its limit");
+        require(probe.delivered == 0 && captured_message_count == (accepted != 0 ? 1U : 0U),
+                "bounded affinity blocked or bypassed the queued consumer");
+        if (accepted != 0)
+        {
+            deliverWorkerQueueMessage(0);
+            require(probe.delivered == accepted, "admitted affinity packet was lost");
+            requireOutputBudgetEmpty(session);
+            testWorkerBindWID(0);
+            sbuf_t *next = bufferpoolGetSmallBuffer(env->worker_buffer_pool);
+            sbufSetLength(next, 0);
+            deviceFlowAffinityPostBatchDroppingOverflow(session, &next, 1);
+            require(captured_message_count == 2, "freed capacity did not admit another batch");
+            deviceReaderSessionEnd(session);
+            testWorkerUnbindWID();
+            cleanupMessage(1);
+            testWorkerBindWID(0);
+            requireOutputBudgetEmpty(session);
+            require(probe.delivered == accepted, "closed generation delivered queued input");
+        }
+        else
+            deviceReaderSessionEnd(session);
+        tracked_reuse_pool = NULL;
+        deviceReaderSessionUnref(session);
+    }
+}
+
 int main(void)
 {
     testCaseSet("device_reader_session_test");
@@ -1683,6 +1750,7 @@ int main(void)
     testWorkerQueueStopWakesOrdinaryCapacityWait(&env);
     testEndWaitQuiescesCapacityNotification(&env);
     testNonblockingBatchCapacityAndRetainedOwnership(&env);
+    testBoundedAffinityDispatch(&env);
     testSameWorkerPostsKeepExistingFifo(&env);
     testReceiveBurstBoundsAndSettlement(&env);
     testReceiveBurstPreservesQueuedAndForeignWork(&env);

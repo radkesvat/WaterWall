@@ -113,12 +113,12 @@ static void fixtureDistribute(device_reader_session_t *session, sbuf_t **buffers
 #define readv                                       fixtureReadv
 #define bufferpoolGetSmallBuffer                    fixtureGetBuffer
 #define bufferpoolReuseBuffer                       fixtureReuseBuffer
-#define deviceFlowAffinityPostBatch fixtureDistribute
+#define deviceFlowAffinityPostBatchDroppingOverflow fixtureDistribute
 #include "../../../ww/devices/tun/tun_darwin.c"
 #undef readv
 #undef bufferpoolGetSmallBuffer
 #undef bufferpoolReuseBuffer
-#undef deviceFlowAffinityPostBatch
+#undef deviceFlowAffinityPostBatchDroppingOverflow
 
 static void runDrainCase(buffer_pool_t *pool, const char *name, const native_record_t *input, unsigned input_count,
                          const expected_packet_t *expected, unsigned output_count, tun_drain_result_t result)
