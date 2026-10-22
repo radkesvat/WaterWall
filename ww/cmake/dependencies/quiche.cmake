@@ -69,17 +69,38 @@ function(waterwall_enable_quiche)
     "https://codeload.github.com/google/gurl/tar.gz/94ff147fe0b96b4cca5d6d316b9af6210c0b8051"
     d8a701123250e03b3c0865babdfc78540d66374db78f74aafd09bf08545c00bd)
 
-  # This Google URL pin assumes CWG2518 and a newer constexpr std::string.
-  # Keep the supported GCC 11 preset by overlaying only these two headers.
+  # This Google URL pin assumes CWG2518, a newer constexpr std::string, and
+  # C++20 syntax that Clang 14 does not implement. Keep GCC 11 and Clang 14
+  # support through generated header overlays, leaving the source cache intact.
   # String-literal arrays have N >= 1, so the dependent assertion still rejects
   # every forbidden overload at instantiation. GURL has no constexpr instances.
   set(gurl_overlay "${CMAKE_BINARY_DIR}/ww-dependencies/googleurl-compat")
-  foreach(header IN ITEMS base/strings/utf_string_conversions.h url/gurl.h)
+  foreach(header IN ITEMS base/strings/utf_string_conversions.h url/gurl.h
+      base/numerics/safe_conversions_impl.h base/containers/checked_iterators.h
+      base/containers/span.h)
     file(READ "${ww_quic_googleurl_SOURCE_DIR}/${header}" contents)
     if(header STREQUAL "base/strings/utf_string_conversions.h")
       string(REPLACE "static_assert(false," "static_assert(N == 0," contents "${contents}")
-    else()
+    elseif(header STREQUAL "url/gurl.h")
       string(REPLACE "constexpr friend auto operator<=>" "friend auto operator<=>" contents "${contents}")
+    elseif(header STREQUAL "base/numerics/safe_conversions_impl.h")
+      foreach(dependent_type IN ITEMS "IntegerForDigitsAndSignImpl<Size, IsSigned>::type"
+          "BigEnoughPromotionImpl<Lhs, Rhs>::type" "FastIntegerArithmeticPromotionImpl<Lhs, Rhs>::type"
+          "T::value_type" "UnderlyingTypeImpl<T>::type")
+        string(REPLACE "${dependent_type}" "typename ${dependent_type}" contents "${contents}")
+      endforeach()
+    elseif(header STREQUAL "base/containers/checked_iterators.h")
+      foreach(current IN ITEMS start current)
+        string(REPLACE "AssumeValid(start, ${current}, end)" "AssumeValid{start, ${current}, end}"
+          contents "${contents}")
+      endforeach()
+    elseif(header STREQUAL "base/containers/span.h")
+      foreach(bound IN ITEMS extent "size()")
+        string(REPLACE "AssumeValid(data(), data(), data() + ${bound})"
+          "AssumeValid{data(), data(), data() + ${bound}}" contents "${contents}")
+        string(REPLACE "AssumeValid(\n        data(), data() + ${bound}, data() + ${bound})"
+          "AssumeValid{\n        data(), data() + ${bound}, data() + ${bound}}" contents "${contents}")
+      endforeach()
     endif()
     set(previous "")
     if(EXISTS "${gurl_overlay}/${header}")
@@ -210,6 +231,35 @@ function(waterwall_enable_quiche)
   endif()
   list(REMOVE_ITEM quiche_sources "${config_source}")
   list(APPEND quiche_sources "${config_compat}")
+
+  # Clang 14 needs braces for these aggregates. Preserve the initialization
+  # values, selected std::variant alternatives, and string copy/move.
+  foreach(source IN ITEMS quiche/common/structured_headers.cc quiche/quic/core/quic_ack_timestamp_list.cc)
+    get_filename_component(filename "${source}" NAME)
+    set(aggregate_source "${ww_quiche_SOURCE_DIR}/${source}")
+    set(aggregate_compat "${CMAKE_BINARY_DIR}/ww-dependencies/quiche-compat/${filename}")
+    file(READ "${aggregate_source}" aggregate_contents)
+    if(filename STREQUAL "structured_headers.cc")
+      foreach(value_type IN ITEMS Token ByteSequence)
+        foreach(operation IN ITEMS string move)
+          string(REPLACE "${value_type}(std::${operation}(value))"
+            "${value_type}{std::${operation}(value)}" aggregate_contents "${aggregate_contents}")
+        endforeach()
+      endforeach()
+    else()
+      string(REPLACE "TimestampDeltaEncoder encoder(exponent);" "TimestampDeltaEncoder encoder{exponent};"
+        aggregate_contents "${aggregate_contents}")
+    endif()
+    set(previous_aggregate "")
+    if(EXISTS "${aggregate_compat}")
+      file(READ "${aggregate_compat}" previous_aggregate)
+    endif()
+    if(NOT aggregate_contents STREQUAL previous_aggregate)
+      file(WRITE "${aggregate_compat}" "${aggregate_contents}")
+    endif()
+    list(REMOVE_ITEM quiche_sources "${aggregate_source}")
+    list(APPEND quiche_sources "${aggregate_compat}")
+  endforeach()
 
   # As above for Google URL, defer this forbidden-template-branch assertion
   # until instantiation on compilers predating CWG2518.

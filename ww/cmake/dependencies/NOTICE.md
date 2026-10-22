@@ -20,10 +20,16 @@ It excludes test, tool, fuzzing, QBONE, MOQT and auxiliary target groups. Raw QU
 sessions do not instantiate HTTP sessions. Google URL uses the upstream
 `url_idna_ascii_only.cc` implementation and does not link ICU.
 
-Two generated Google URL header overlays retain GCC 11 support: literal-only
+Generated Google URL header overlays retain GCC 11 support: literal-only
 template guards use a dependent assertion, and the GURL ordering function does
 not require libstdc++'s newer constexpr string comparison. The downloaded source
-is unchanged; both adaptations preserve runtime behavior.
+is unchanged; these adaptations preserve runtime behavior. Clang 14 support
+adds explicit `typename` to dependent numeric aliases and uses brace initialization
+for the checked iterator's pointer aggregate, including fixed and dynamic spans.
+The pointer values, iterator checks, and numeric conversions stay unchanged.
+The QUICHE structured-header and ACK-timestamp sources likewise use brace
+initialization for token, byte-sequence, and timestamp-encoder aggregates,
+preserving string copy/move, variant selection, and the timestamp exponent.
 The QUICHE config source also uses `const` for its empty static option vector,
 since libstdc++ 11 does not yet support literal `std::vector` instances. This
 adaptation is generated in the build tree and preserves the read-only list.
