@@ -40,9 +40,74 @@
 #include "wthread.h"
 #include "wwapi.h"
 
+#include "fixtures/user_runtime.h"
 #include "test_assert.h"
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
+
+/* Exact chosen home buckets exercise the dependency independently of the
+ * production randomized hash. Low 32 bits distinguish keys sharing a home. */
+static size_t collisionHomeHash(const uint64_t *key)
+{
+    return (size_t) (*key >> 32U);
+}
+#define i_type collision_map_t
+#define i_key  uint64_t
+#define i_val  uint64_t
+#define i_hash collisionHomeHash
+#include "stc/hmap.h"
+
+static void testSaturatedHashDistances(void)
+{
+    collision_map_t map = {0};
+    require(collision_map_t_reserve(&map, 4096), "collision map reserve failed");
+    /* Existing short-distance entries must survive displacement by the long
+     * cluster, including displacement after metadata saturation. */
+    for (uint64_t i = 0; i < 128; ++i)
+    {
+        uint64_t key = ((1200U + i * 7U) << 32U) | 1U;
+        require(collision_map_t_insert(&map, key, key).inserted, "sparse insert failed");
+    }
+    for (uint64_t i = 1; i <= 3000; ++i)
+        require(collision_map_t_insert(&map, i, i).inserted, "colliding insertion refused or lost uniqueness");
+    for (unsigned phase = 0; phase < 2; ++phase)
+    {
+        for (uint64_t i = 1; i <= 3000; ++i)
+        {
+            const collision_map_t_value *found = collision_map_t_get(&map, i);
+            require(found != NULL && found->second == i, "saturated cluster lost a key");
+            require(! collision_map_t_insert(&map, i, 0).inserted, "saturated cluster accepted duplicate");
+        }
+        for (uint64_t i = 0; i < 128; ++i)
+        {
+            uint64_t                     key   = ((1200U + i * 7U) << 32U) | 1U;
+            const collision_map_t_value *found = collision_map_t_get(&map, key);
+            require(found != NULL && found->second == key, "displacement lost another home bucket");
+        }
+        require(collision_map_t_reserve(&map, 10000), "collision rehash failed");
+    }
+    /* A second cluster crosses the physical end of the bucket array. */
+    for (uint64_t i = 1; i <= 1400; ++i)
+    {
+        uint64_t key = (UINT64_C(16300) << 32U) | i;
+        require(collision_map_t_insert(&map, key, i).inserted, "wrapped cluster insertion failed");
+    }
+    for (uint64_t i = 1; i <= 3000; ++i)
+        require(collision_map_t_erase(&map, i) == 1, "backward shift lost colliding key");
+    for (uint64_t i = 1400; i != 0; --i)
+    {
+        uint64_t key = (UINT64_C(16300) << 32U) | i;
+        require(collision_map_t_erase(&map, key) == 1, "wrapped backward shift lost key");
+    }
+    require(collision_map_t_size(&map) == 128, "collision erase left phantom occupancy");
+    for (uint64_t i = 0; i < 128; ++i)
+    {
+        uint64_t key = ((1200U + i * 7U) << 32U) | 1U;
+        require(collision_map_t_erase(&map, key) == 1, "erase moved a key before its home");
+    }
+    require(collision_map_t_size(&map) == 0, "collision map did not drain");
+    collision_map_t_drop(&map);
+}
 
 #if defined(WW_SYNC_INIT_TEST_SEAM)
 static atomic_size_t g_native_init_calls, g_native_init_failure, g_native_resources;
@@ -979,6 +1044,10 @@ static void testNativeCopy(void)
     addUser(&src, 1, "copy-pw-one");
     addNamedUser(&src, 2, "copy-pw-two", "named-two");
     addAllowedIpUser(&src, 3, "copy-pw-three", "10.9.0.0/24");
+    user_t      *shaped = usersLookupByIdentifier(&src, 2);
+    user_limit_t limits = shaped->limit;
+    limits.bandwidth.u  = 100;
+    require(usersSetUserLimit(&src, shaped, &limits), "copy bandwidth policy setup failed");
     require(usersValidate(&src), "src table failed validation");
 
     /* Give a src user some process-local runtime state that must NOT be copied. */
@@ -1009,6 +1078,9 @@ static void testNativeCopy(void)
     user_t *dst2 = usersLookupByIdentifier(&dest, 2);
     require(src2->runtime.ip_usage_count == 1, "src lost its runtime state");
     require(dst2->runtime.ip_usage_count == 0, "runtime state leaked into the copy");
+    require(dst2->runtime.bandwidth[kUserBandwidthUpload].policy_valid &&
+                dst2->runtime.bandwidth[kUserBandwidthUpload].rate == 100,
+            "copied user deferred initial bandwidth policy until first traffic");
 
     /* Mutating src must not affect the independent dest. */
     require(usersRemoveUser(&src, src1), "failed to remove from src");
@@ -2808,10 +2880,178 @@ static void testExportLimitedTransactions(void)
     usersDestroy(&users);
 }
 
+static void testShiftedIdsAndCollidingNames(void)
+{
+    users_t users;
+    require(usersCreate(&users), "shifted-ID collection setup failed");
+    uint64_t candidate = 0;
+    for (uint64_t i = 1; i <= 1100; ++i)
+    {
+        char             name[48], password[48];
+        users_name_key_t key = {.name = name};
+        do
+            snprintf(name, sizeof(name), "collision-name-%" PRIu64, ++candidate);
+        while ((usersNameKeyHash(&key) & 4095U) != 2030U);
+        snprintf(password, sizeof(password), "shifted-ID-password-%" PRIu64, i);
+        addNamedUser(&users, i << 12U, password, name);
+    }
+    for (uint64_t i = 1; i <= 1100; ++i)
+    {
+        user_t *found = usersLookupByIdentifier(&users, i << 12U);
+        require(found != NULL && usersFindByNameLocked(&users, found->name, NULL) == found,
+                "shifted ID or colliding name vanished");
+    }
+    cJSON *duplicate = cJSON_Parse("{\"id\":4194304,\"password\":\"duplicate-shifted-ID\"}");
+    require(usersAddUserFromJsonChecked(&users, duplicate) == kUsersAddResultDuplicateId &&
+                usersCount(&users) == 1100 && usersValidateStructure(&users),
+            "lost shifted ID allowed duplicate insertion or corrupted collection");
+    cJSON_Delete(duplicate);
+    for (uint64_t i = 1100; i != 0; --i)
+    {
+        user_t *found = usersLookupByIdentifier(&users, i << 12U);
+        require(found != NULL && usersRemoveUser(&users, found), "colliding collection removal failed");
+    }
+    require(usersCount(&users) == 0 && usersValidateStructure(&users), "colliding collection did not drain");
+    usersDestroy(&users);
+}
+
+static void testCollidingIpChurn(void)
+{
+    enum
+    {
+        count = 1100
+    };
+    user_ip_key_t *keys      = memoryAllocate(count * sizeof(*keys));
+    uint64_t       candidate = 0;
+    for (size_t i = 0; i < count; ++i)
+    {
+        user_ip_key_t key = {.type = 6};
+        uint8_t       encoded[1U + sizeof(key.bytes)];
+        /* A single IPv6 /64 supplies all candidates. Use the same byte layout
+         * as the production hash without exposing a hash-replacement seam. */
+        key.bytes[0] = 0x20;
+        key.bytes[1] = 0x01;
+        key.bytes[2] = 0x0d;
+        key.bytes[3] = 0xb8;
+        do
+        {
+            ++candidate;
+            memoryCopy(key.bytes + 8, &candidate, sizeof(candidate));
+            encoded[0] = key.type;
+            memoryCopy(encoded + 1, key.bytes, sizeof(key.bytes));
+        } while ((userIndexHashBytes(encoded, sizeof(encoded)) & 4095U) != 2030U);
+        keys[i] = key;
+    }
+    user_t user = {0};
+    require(userCreate(&user, "colliding-active-ip-password"), "colliding IP user setup failed");
+    for (unsigned round = 0; round < 4; ++round)
+    {
+        for (unsigned pass = 0; pass < 2; ++pass)
+            for (size_t i = 0; i < count; ++i)
+                require(userTryAdmitConnection(&user, &keys[i], 1000) == kUserAdmissionOk,
+                        "colliding IP admission failed");
+        require(user.runtime.ip_usage_count == count, "colliding live IP acquired a duplicate reservation");
+        for (unsigned pass = 0; pass < 2; ++pass)
+            for (size_t i = count; i != 0; --i)
+                userReleaseConnection(&user, &keys[i - 1U]);
+        require(user.runtime.ip_usage_count == 0 && user.runtime.active_cons_out == 0 && user.runtime.ip_index == NULL,
+                "reverse release retained phantom active IPs");
+    }
+    userDestroy(&user);
+    memoryFree(keys);
+}
+
+static void testImportDiagnostics(void)
+{
+    const char *inputs[] = {
+        "[false]",
+        "[{\"password\":\"missing-ID\"}]",
+        "[{\"id\":4,\"password\":\"one\"},{\"id\":4,\"password\":\"two\"}]",
+        "[{\"id\":7,\"password\":\"one\",\"name\":\"same\"},{\"id\":8,\"password\":\"two\",\"name\":\"same\"}]",
+        "{\"users\":false}"};
+    const char    *reasons[]   = {"invalid account object",
+                                  "missing or invalid required durable id",
+                                  "duplicate durable id",
+                                  "duplicate username",
+                                  "invalid accounts container"};
+    const size_t   positions[] = {0, 0, 1, 1, SIZE_MAX};
+    const uint64_t ids[]       = {0, 0, 4, 8, 0};
+    for (size_t i = 0; i < sizeof(inputs) / sizeof(inputs[0]); ++i)
+    {
+        users_t users;
+        require(usersCreate(&users), "diagnostic collection setup failed");
+        cJSON                  *json = cJSON_Parse(inputs[i]);
+        users_json_diagnostic_t diagnostic;
+        require(usersFeedJsonRequiredIdsResultDetailed(&users, json, &diagnostic) == kUsersJsonInvalid &&
+                    diagnostic.entry_index == positions[i] && diagnostic.id == ids[i] &&
+                    strcmp(diagnostic.reason, reasons[i]) == 0 && usersCount(&users) == 0,
+                "import diagnostic lost safe reason, identity, position or rollback");
+        cJSON_Delete(json);
+        usersDestroy(&users);
+    }
+    users_t users;
+    require(usersCreate(&users), "resource diagnostic setup failed");
+    cJSON *json = cJSON_Parse("{\"id\":9,\"password\":\"native-refusal\"}");
+#if defined(WW_SYNC_INIT_TEST_SEAM)
+    atomic_store(&g_native_init_failure, atomic_load(&g_native_init_calls) + 1U);
+    require(usersAddUserFromJsonChecked(&users, json) == kUsersAddResultStorageUnavailable,
+            "checked JSON add reported native refusal as invalid user");
+    atomic_store(&g_native_init_failure, 0);
+#endif
+    users_json_diagnostic_t diagnostic;
+    require(usersFeedJsonRequiredIdsResultDetailed(&users, json, &diagnostic) == kUsersJsonOk &&
+                diagnostic.reason == NULL && diagnostic.entry_index == SIZE_MAX && diagnostic.id == 0,
+            "successful import retained a failure diagnostic");
+    cJSON_Delete(json);
+    usersDestroy(&users);
+}
+
+static void testCredentialIndexWiping(void)
+{
+    users_t users;
+    require(usersCreate(&users), "credential index wipe setup failed");
+    addUser(&users, 1, "credential-storage-one");
+    addUser(&users, 2, "credential-storage-two");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    size_t wipes        = g_secret_wipes;
+    g_secret_free_watch = users.sha224_table->map.table;
+    g_secret_free_bytes = (size_t) users.sha224_table->map.bucket_count * sizeof(*users.sha224_table->map.table);
+    require(usersSHA224TableReserve(users.sha224_table, 4096), "credential rehash failed");
+    require(g_secret_wipes == wipes + 1U, "credential rehash did not wipe retired array");
+#endif
+    user_t *first = usersLookupByIdentifier(&users, 1);
+    require(first != NULL, "credential wipe account disappeared");
+    users_sha224_key_t      key   = usersSHA224KeyFromBytes(first->sha224_pass.bytes);
+    users_sha224_map_t_iter entry = users_sha224_map_t_find(&users.sha224_table->map, key);
+    require(entry.ref != NULL, "credential wipe index entry disappeared");
+    size_t hole = (size_t) (entry.ref - users.sha224_table->map.table);
+    require(first != NULL && usersRemoveUser(&users, first), "credential wipe removal failed");
+    while (users.sha224_table->map.meta[hole].dist != 0)
+        hole = (hole + 1U) & ((size_t) users.sha224_table->map.bucket_count - 1U);
+    const uint8_t *erased = (const uint8_t *) &users.sha224_table->map.table[hole];
+    for (size_t i = 0; i < sizeof(*users.sha224_table->map.table); ++i)
+        require(erased[i] == 0, "erasure retained an inactive credential copy");
+    require(usersClear(&users), "credential wipe clear failed");
+    const uint8_t *bytes  = (const uint8_t *) users.sha224_table->map.table;
+    size_t         length = (size_t) users.sha224_table->map.bucket_count * sizeof(*users.sha224_table->map.table);
+    for (size_t i = 0; i < length; ++i)
+        require(bytes[i] == 0, "clear retained credential index bytes");
+    usersDestroy(&users);
+}
+
 int main(void)
 {
     testCaseSet("users_index_test");
-    require(wCryptoGlobalInit() == kWCryptoOk, "crypto global initialization failed");
+    require(userTestRuntimeInitialize(), "crypto global initialization failed");
+    const uint64_t first_seed = userIndexHashSeed();
+    require(first_seed != 0 && userIndexHashSeed() == first_seed,
+            "process hash seed changed or truncated after first initialization");
+
+    testSaturatedHashDistances();
+    testShiftedIdsAndCollidingNames();
+    testCollidingIpChurn();
+    testImportDiagnostics();
+    testCredentialIndexWiping();
 
     testTrustedImportDerivationAndBoundedRows();
     testPointerIndexAlignedKeys();
@@ -2869,5 +3109,6 @@ int main(void)
     require(atomic_load(&g_native_resources) == 0, "users index fixture leaked native resources");
 #endif
     printf("users_index_test: all checks passed\n");
+    userTestRuntimeCleanup();
     return 0;
 }

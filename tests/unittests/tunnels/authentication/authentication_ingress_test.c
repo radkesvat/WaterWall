@@ -3,6 +3,7 @@
  * callback reentry and terminal cleanup, with both supported medium pool tiers. */
 #include "AuthenticationClient/structure.h"
 #include "authentication_sync_peer.h"
+#include "fixtures/user_runtime.h"
 #include "loggers/network_logger.h"
 #include "test_assert.h"
 #include "wevent.h"
@@ -639,7 +640,7 @@ int main(void)
 {
     testCaseSet("authentication ingress framing and retention");
     require(createNetworkLogger(NULL, false) != NULL, "logger initialization failed");
-    require(globalstateInitializeSecureRandom() && wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
+    require(userTestRuntimeInitialize(), "random/crypto initialization failed");
     testMaximumResponse(32 * 1024, false);
     testMaximumResponse(64 * 1024, false);
     testMaximumResponse(32 * 1024, true);
@@ -654,8 +655,7 @@ int main(void)
     testTerminalPaths();
     testPreauthRetention();
     testNestedSuccessorAllowance();
-    wCryptoGlobalCleanup();
-    globalstateDestroySecureRandom();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     return 0;
 }

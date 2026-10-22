@@ -728,6 +728,8 @@ CPMAddPackage(
     DOWNLOAD_ONLY True
 )
 if(stc_ADDED)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/dependencies/stc.cmake")
+    waterwall_prepare_stc("${stc_SOURCE_DIR}" stc_SOURCE_DIR)
     target_compile_definitions(ww PUBLIC STC_STATIC=1 STC_ALLOCATOR=c)
     target_include_directories(ww PUBLIC ${stc_SOURCE_DIR}/include)
     set(stc_SOURCE_DIR "${stc_SOURCE_DIR}" PARENT_SCOPE)

@@ -4,6 +4,7 @@
 #include "AuthenticationServer/api.h"
 #include "AuthenticationServer/structure.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/user_runtime.h"
 #include "loggers/network_logger.h"
 #include "node_builder/config_lexical.h"
 
@@ -988,8 +989,7 @@ int main(void)
 {
     twfSetCase("authenticationserver response bounds and FIFO");
     twfRequire(createNetworkLogger(NULL, false) != NULL, "logger initialization failed");
-    twfRequire(globalstateInitializeSecureRandom() && wCryptoGlobalInit() == kWCryptoOk,
-               "crypto initialization failed");
+    twfRequire(userTestRuntimeInitialize(), "crypto initialization failed");
     testTinyRequestsAndBounds();
     testMaximumAndReentry(false, false);
     testMaximumAndReentry(true, false);
@@ -1007,8 +1007,7 @@ int main(void)
     testProducerDirtyBoundaries();
     testOwnedProducerSecretWiping();
     testOwnedLookupSecretWiping();
-    wCryptoGlobalCleanup();
-    globalstateDestroySecureRandom();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     return 0;
 }

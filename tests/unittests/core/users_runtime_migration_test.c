@@ -18,6 +18,7 @@
  */
 #include "loggers/internal_logger.h"
 
+#include "fixtures/user_runtime.h"
 #include "test_assert.h"
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
@@ -857,6 +858,8 @@ static void testRuntimeMigrationPreservesActiveIpByIdentifier(void)
     require(old_user != NULL && new_user != NULL, "failed to look users up by id");
     require(old_user->timeinfo.first_usage_at_ms == 0, "old user first usage was unexpectedly marked");
     require(new_user->timeinfo.first_usage_at_ms == 0, "refreshed user unexpectedly had first usage");
+    old_user->runtime.identity_generation_floor = 7;
+    new_user->runtime.identity_generation_floor = 20;
 
     require(usersMigrateRuntimeStateByIdentifier(&new_users, &old_users), "runtime migration failed");
 
@@ -865,6 +868,8 @@ static void testRuntimeMigrationPreservesActiveIpByIdentifier(void)
     require(old_user != NULL && new_user != NULL, "users disappeared after migration");
     require(old_user->runtime.active_cons_out == 0, "old user kept migrated active connection count");
     require(old_user->runtime.ip_usage_count == 0, "old user kept migrated IP usage entries");
+    require(new_user->runtime.identity_generation_floor == 7 && old_user->runtime.identity_generation_floor == 0,
+            "continuous membership did not preserve its original handle generation floor");
     require(new_user->timeinfo.first_usage_at_ms == 0, "new user unexpectedly inherited first usage");
 
     require(usersTryAdmitConnectionByIdentifier(&new_users, user_id, &ip2, 2000) == kUserAdmissionIpLimited,
@@ -1517,6 +1522,47 @@ static void testEarliestFirstUseMerge(void)
 }
 
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
+static void testRestoreRetainedFirstUse(void)
+{
+    atomic_store(&client_clock_test, true);
+    atomic_store(&client_clock_ms, 0);
+    user_t original, restored;
+    require(userCreate(&original, "retained-clock-original"), "retained clock origin setup");
+    original.timeinfo.first_usage_at_ms           = 4800;
+    original.timeinfo.expire_after_first_usage_ms = 300;
+    userInstallClientClock(&original, 10000, 5000, 0);
+    require(! userAccountTraffic(&original, 1, 0, 0, NULL), "retained first-use observation");
+    user_accounting_snapshot_t evidence;
+    userGetAccountingSnapshot(&original, &evidence);
+    require(evidence.first_local_at_ms == 0 && evidence.first_usage_at_ms == 5000 && evidence.age_valid &&
+                evidence.first_usage_age_ms == 200,
+            "accounting snapshot lost original local origin or older server age");
+    userDestroy(&original);
+
+    atomic_store(&client_clock_ms, 120);
+    require(userCreate(&restored, "retained-clock-reappeared"), "retained clock destination setup");
+    restored.timeinfo.expire_after_first_usage_ms = 300;
+    userRestoreClientObservation(&restored,
+                                 evidence.first_usage_at_ms,
+                                 evidence.first_local_at_ms,
+                                 evidence.first_usage_age_ms,
+                                 evidence.age_sample_ms,
+                                 evidence.age_valid);
+    userInstallClientClock(&restored, 1, 1, 120);
+    require(userIsExpired(&restored, 120) && restored.client_time.age_ms >= 320 && restored.client_time.observed &&
+                ! restored.client_time.observation_acked && restored.client_time.first_local_ms == 0 &&
+                restored.client_time.first_report_ms == 5000,
+            "reappearing account reset retained origin or elapsed expiry");
+    require(restored.timeinfo.first_usage_at_ms == 0,
+            "local observation restore overwrote authoritative first-use configuration");
+    userRestoreClientObservation(&restored, 6000, 100, 1, 120, true);
+    require(restored.client_time.age_ms >= 320 && restored.client_time.first_report_ms == 5000 &&
+                restored.client_time.first_local_ms == 0,
+            "younger retained evidence extended a known countdown");
+    userDestroy(&restored);
+    atomic_store(&client_clock_test, false);
+}
+
 static void testLocalFirstUseClockAndEdits(void)
 {
     atomic_store(&client_clock_test, true);
@@ -1993,7 +2039,7 @@ int main(void)
     loggerSetHandler(test_logger, testLogCaptureHandler);
     setInternalLogger(test_logger);
 
-    require(wCryptoGlobalInit() == kWCryptoOk, "crypto global initialization failed");
+    require(userTestRuntimeInitialize(), "crypto global initialization failed");
     testDuplicateCredentialLogsOmitCredentials();
     testCryptoFailureDoesNotPublishCredentials();
     testIdentifierLookupAndJsonRoundTrip();
@@ -2016,6 +2062,7 @@ int main(void)
     testBandwidthConcurrentAndFinalQuota();
     testBandwidthRateTransitions();
     testLocalFirstUseClockAndEdits();
+    testRestoreRetainedFirstUse();
     testFirstUseRacesAndMigration();
     testDiscountedFirstUseStartsBeforeWholeByteCharge();
 #endif
@@ -2027,7 +2074,7 @@ int main(void)
     testScaledTrafficConcurrentCarry();
     testFirstUsagePushRequestFlagIsOneShot();
     testTrafficStatsJsonUsesExactBytes();
-    wCryptoGlobalCleanup();
+    userTestRuntimeCleanup();
     internaloggerDestroy();
     return 0;
 }

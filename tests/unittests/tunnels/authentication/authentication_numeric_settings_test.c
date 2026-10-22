@@ -3,6 +3,7 @@
  * started: valid settings are inspected before timers or retention work begin,
  * and every constructor is destroyed with startup rollback. */
 #include "AuthenticationClient/structure.h"
+#include "fixtures/user_runtime.h"
 /* The node-private size aliases share names; the state types do not. */
 #define kTunnelStateSize kAuthenticationServerNumericTunnelStateSize
 #define kLineStateSize   kAuthenticationServerNumericLineStateSize
@@ -212,8 +213,7 @@ static void serverSettings(const char *database, const char *history)
 int main(void)
 {
     testCaseSet("authentication numeric settings");
-    require(createNetworkLogger(NULL, false) != NULL && globalstateInitializeSecureRandom() &&
-                wCryptoGlobalInit() == kWCryptoOk,
+    require(createNetworkLogger(NULL, false) != NULL && userTestRuntimeInitialize(),
             "numeric fixture initialization failed");
     /* Registration validates the client API's worker 0. No loops or lines are
      * required until Start, which this constructor-only fixture never invokes. */
@@ -238,8 +238,7 @@ int main(void)
     GSTATE.flag_initialized = false;
     GSTATE.workers          = NULL;
     GSTATE.workers_count    = 0;
-    wCryptoGlobalCleanup();
-    globalstateDestroySecureRandom();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     return 0;
 }

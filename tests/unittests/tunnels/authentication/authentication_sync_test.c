@@ -3,6 +3,7 @@
 #include "AuthenticationClient/structure.h"
 #include "api/node_api.h"
 #include "authentication_sync_peer.h"
+#include "fixtures/user_runtime.h"
 #include "loggers/network_logger.h"
 #include "test_assert.h"
 #include "wevent.h"
@@ -3443,7 +3444,7 @@ int main(void)
 {
     testCaseSet("authentication sync loss and continuity");
     require(createNetworkLogger(NULL, false) != NULL, "logger failed");
-    require(globalstateInitializeSecureRandom() && wCryptoGlobalInit() == kWCryptoOk, "crypto failed");
+    require(userTestRuntimeInitialize(), "crypto failed");
     testMalformedPagesAndBackoff();
     testPerPageClockInstallation();
     testPagingPreservesRuntimeAndFractionalCarry();
@@ -3497,8 +3498,7 @@ int main(void)
     testRejectionsAndContinuity();
     testConcurrentAndSubsets();
     testBatchConstructionRefusal();
-    wCryptoGlobalCleanup();
-    globalstateDestroySecureRandom();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     return 0;
 }

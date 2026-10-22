@@ -1,3 +1,4 @@
+#include "fixtures/user_runtime.h"
 /* CTest: waterwall.authenticationserver_create_api_unit
  * Registered create-only handler: strict schema, fresh-account defaults and
  * credentials, refusal atomicity, contention, concurrency, persistence and real
@@ -796,7 +797,7 @@ static void detachedDelivery(void)
 int main(void)
 {
     twfSetCase("AuthenticationServer create-user API");
-    twfRequire(createNetworkLogger(NULL, false) != NULL && wCryptoGlobalInit() == kWCryptoOk,
+    twfRequire(createNetworkLogger(NULL, false) != NULL && userTestRuntimeInitialize(),
                "runtime initialization failed");
     twfWorkerEnvSetup(&env, 8192, 32);
     nodeApiRegistryInitialize();
@@ -857,7 +858,7 @@ int main(void)
     tunnelDestroy(server);
     nodeApiRegistryDestroy();
     twfWorkerEnvTeardown(&env);
-    wCryptoGlobalCleanup();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     return 0;
 }

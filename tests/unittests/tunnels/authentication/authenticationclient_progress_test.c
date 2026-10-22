@@ -2,6 +2,7 @@
  * Real worker queue, control lines, timers and parsing with a controlled clock. */
 #include "AuthenticationClient/structure.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/user_runtime.h"
 #include "loggers/network_logger.h"
 #include <pthread.h>
 
@@ -607,6 +608,7 @@ int main(void)
 {
     twfSetCase("authenticationclient request and reconnect progress");
     twfRequire(createNetworkLogger(NULL, false) != NULL, "logger setup failed");
+    twfRequire(userTestRuntimeInitialize(), "user runtime initialization failed");
     testRepeatedSyncBackoff();
     testRetryProgress();
     testDeadlinesAndMalformed();
@@ -614,6 +616,7 @@ int main(void)
     testPendingCapacityProgress();
     testRefusalClassificationAndDiagnostics();
     testOwnedAuthenticateCleanup();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     return 0;
 }

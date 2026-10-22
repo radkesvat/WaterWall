@@ -17,6 +17,7 @@
 #include "fixtures/protocols/splice_source.h"
 #include "fixtures/splice_inventory.h"
 
+#include "fixtures/user_runtime.h"
 #include "test_assert.h"
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
@@ -1793,7 +1794,6 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     require(! lineIsAlive(client) && strstr(received, "502"), "informational limit");
     lineUnref(client);
 
-    require(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization");
     tunnel_t                      *auth = tunnelCreate(NULL, sizeof(authenticationclient_tstate_t), 0);
     authenticationclient_tstate_t *ats  = tunnelGetState(auth);
     require(mutexTryInit(&ats->control_mutex) && rwlockTryInit(&ats->users_lock), "auth locks");
@@ -1932,6 +1932,7 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
 
 int main(void)
 {
+    require(userTestRuntimeInitialize(), "user runtime initialization");
     testSpliceInventoryInitialize(64);
     testCaseSet("http_proxy_server_lifecycle_test");
     runSuite(32768, 32768);
@@ -1941,5 +1942,6 @@ int main(void)
     for (representation = 1; representation <= 2; ++representation)
         runSuite(32768, 32768);
 #endif
+    userTestRuntimeCleanup();
     return 0;
 }

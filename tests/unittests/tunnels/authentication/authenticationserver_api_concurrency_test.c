@@ -1,3 +1,4 @@
+#include "fixtures/user_runtime.h"
 /* CTest: waterwall.authenticationserver_api_concurrency_unit
  * Real construction/rollback, descriptor metadata, barrier-held query locks,
  * alternate calling worker, owned reads concurrent with configuration/usage,
@@ -568,10 +569,9 @@ static void requireRecoveryFilesUnchanged(const char *primary, const char *backu
 int main(void)
 {
     twfSetCase("authenticationserver API concurrency and lifecycle");
-    twfRequire(createNetworkLogger(NULL, false) != NULL && wCryptoGlobalInit() == kWCryptoOk, "runtime setup failed");
+    twfRequire(createNetworkLogger(NULL, false) != NULL && userTestRuntimeInitialize(), "runtime setup failed");
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, 8192, 0);
-    twfRequire(globalstateInitializeSecureRandom(), "secure random initialization failed");
     nodeApiRegistryInitialize();
     char directory[] = "/tmp/ww-auth-api-concurrency-XXXXXX";
     twfRequire(mkdtemp(directory) != NULL, "temporary directory creation failed");
@@ -669,8 +669,8 @@ int main(void)
     memoryFree(persisted);
     nodeApiRegistryDestroy();
     cJSON_Delete(settings);
-    globalstateDestroySecureRandom();
     twfWorkerEnvTeardown(&env);
+    userTestRuntimeCleanup();
     twfRequire(remove(primary) == 0 && remove(backup) == 0 && rmdir(directory) == 0,
                "temporary database cleanup failed");
     puts("authenticationserver_api_concurrency_test: all checks passed");

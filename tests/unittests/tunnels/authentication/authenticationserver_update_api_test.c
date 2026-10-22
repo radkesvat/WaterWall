@@ -1,3 +1,4 @@
+#include "fixtures/user_runtime.h"
 /* CTest: waterwall.authenticationserver_update_api_unit
  * Strict conditional edits through the registered handler, refusal atomicity,
  * barrier-controlled contention/CAS, and real dispatcher late/lost completion.
@@ -690,7 +691,7 @@ static void detachedDelivery(void)
 int main(void)
 {
     twfSetCase("AuthenticationServer conditional update API");
-    twfRequire(createNetworkLogger(NULL, false) != NULL && wCryptoGlobalInit() == kWCryptoOk, "runtime init failed");
+    twfRequire(createNetworkLogger(NULL, false) != NULL && userTestRuntimeInitialize(), "runtime init failed");
     twfWorkerEnvSetup(&env, 8192, 32);
     nodeApiRegistryInitialize();
     server = tunnelCreate(NULL, sizeof(authenticationserver_tstate_t), 0);
@@ -750,7 +751,7 @@ int main(void)
     tunnelDestroy(server);
     nodeApiRegistryDestroy();
     twfWorkerEnvTeardown(&env);
-    wCryptoGlobalCleanup();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     return 0;
 }

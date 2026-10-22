@@ -10,6 +10,25 @@
 #include "wsocket.h"
 #include "wtime.h"
 
+uint64_t userIndexHashSeed(void)
+{
+    static atomic_ullong seed  = ATOMIC_VAR_INIT(0);
+    uint64_t             value = atomicLoadU64Relaxed(&seed);
+    if (value == 0)
+    {
+        uint64_t candidate;
+        do
+            candidate = fastRand64();
+        while (candidate == 0);
+        uint64_t expected = 0;
+        if (atomicCompareExchangeU64Explicit(&seed, &expected, candidate, memory_order_relaxed, memory_order_relaxed))
+            value = candidate;
+        else
+            value = expected;
+    }
+    return value;
+}
+
 struct user_bandwidth_waiter_s
 {
     uint64_t                 ticket;
@@ -716,7 +735,7 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     snapshot->export_strings = src->export_strings;
     userStringDuplicate(&snapshot->name, src->name);
     userStringDuplicate(&snapshot->password, src->password);
-    snapshot->password_length = src->password == NULL ? 0 : stringLength(src->password);
+    snapshot->password_length = src->password_length;
     userStringDuplicate(&snapshot->email, src->email);
     userStringDuplicate(&snapshot->notes, src->notes);
     userStringDuplicate(&snapshot->wireguard_allowed_ips, src->wireguard_allowed_ips);
@@ -749,7 +768,9 @@ bool userPreparePassword(user_prepared_password_t *prepared, const char *passwor
     assert(prepared != NULL && password != NULL && password_length != 0);
     memoryZero(prepared, sizeof(*prepared));
     prepared->password = memoryAllocate(password_length + 1U);
-    memoryCopy(prepared->password, password, password_length + 1U);
+    assert(stringLength(password) == password_length);
+    memoryCopy(prepared->password, password, password_length);
+    prepared->password[password_length] = '\0';
     prepared->password_length = password_length;
     prepared->password_export = userMeasureExportString(prepared->password);
     if (wCryptoSHA224(&prepared->sha224_pass, (const unsigned char *) prepared->password, password_length) !=
@@ -1190,7 +1211,7 @@ static size_t userIpKeyHash(const user_ip_key_t *key)
     uint8_t buffer[1U + sizeof(key->bytes)];
     buffer[0] = key->type;
     memoryCopy(&buffer[1], key->bytes, sizeof(key->bytes));
-    return (size_t) calcHashBytes(buffer, sizeof(buffer));
+    return userIndexHashBytes(buffer, sizeof(buffer));
 }
 
 #define i_type user_ip_index_map_t // NOLINT
@@ -1359,7 +1380,10 @@ bool userCreate(User *user, const char *password)
         return false;
     }
 
+    /* Warm immutable process caches before publishing a user to collection
+     * transactions, which must not pay their first-use setup under a lock. */
     discard userExportFixedOverhead();
+    discard userIndexHashSeed();
     memoryZero(user, sizeof(*user));
     if (UNLIKELY(! rwlockTryInit(&user->lock)))
     {
@@ -1488,25 +1512,9 @@ void userDestroy(User *user)
 
     userDestroyStrings(user);
     userRuntimeStateClear(&user->runtime);
-    memorySecureZero(&user->sha224_pass, sizeof(user->sha224_pass));
-    memorySecureZero(&user->sha256_pass, sizeof(user->sha256_pass));
-    memorySecureZero(user->uuid_pass, sizeof(user->uuid_pass));
-    memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
-    memoryZero(&user->limit, sizeof(user->limit));
-    memoryZero(&user->timeinfo, sizeof(user->timeinfo));
-    memoryZero(&user->wireguard_allowed_ip, sizeof(user->wireguard_allowed_ip));
-    memoryZero(&user->wireguard_allowed_mask, sizeof(user->wireguard_allowed_mask));
-    memoryZero(&user->stats, sizeof(user->stats));
-    user->id                          = 0;
-    user->enabled                     = false;
-    user->wireguard_allowed_ip_count  = 0;
-    user->wireguard_allowed_ip_family = 0;
-    user->wireguard_allowed_ip_prefix = 0;
-    user->wireguard_allowed_ips_valid = false;
-
     rwlockDestroy(&user->stats_lock);
     rwlockDestroy(&user->lock);
-    memoryZero(user, sizeof(*user));
+    memorySecureZero(user, sizeof(*user));
 }
 
 bool userChangePassword(User *user, const char *password)
@@ -1517,7 +1525,7 @@ bool userChangePassword(User *user, const char *password)
     if (! userPreparePassword(&prepared, password, stringLength(password)))
         return false;
     rwlockWriteLock(&user->lock);
-    userCommitPreparedPasswordLocked(user, &prepared, user->password == NULL ? 0 : stringLength(user->password));
+    userCommitPreparedPasswordLocked(user, &prepared, user->password_length);
     rwlockWriteUnlock(&user->lock);
     userFreePreparedPassword(&prepared);
     return true;
@@ -1858,7 +1866,7 @@ bool userPasswordMatches(User *user, const char *password)
     if (LIKELY(! userStringIsEmpty(user->password)))
     {
         const size_t password_len = stringLength(password);
-        result = stringLength(user->password) == password_len && memoryEqual(user->password, password, password_len);
+        result = user->password_length == password_len && memoryEqual(user->password, password, password_len);
     }
     rwlockReadUnlock(&user->lock);
     return result;
@@ -1881,10 +1889,10 @@ bool userPasswordDataValid(User *user)
     rwlockReadLock(&user->lock);
     if (! userStringIsEmpty(user->password) && user->sha224_pass_valid && user->sha256_pass_valid)
     {
-        result = wCryptoSHA224(&sha224, (const unsigned char *) user->password, stringLength(user->password)) ==
-                     kWCryptoOk &&
-                 wCryptoSHA256(&sha256, (const unsigned char *) user->password, stringLength(user->password)) ==
-                     kWCryptoOk &&
+        const size_t length = stringLength(user->password);
+        result              = length == user->password_length &&
+                 wCryptoSHA224(&sha224, (const unsigned char *) user->password, length) == kWCryptoOk &&
+                 wCryptoSHA256(&sha256, (const unsigned char *) user->password, length) == kWCryptoOk &&
                  memoryEqual(&sha256, &user->sha256_pass, sizeof(sha256)) &&
                  memoryEqual(&sha224, &user->sha224_pass, sizeof(sha224));
         if (result)
@@ -2189,14 +2197,43 @@ void userInstallClientClock(User *user, uint64_t server_time_ms, uint64_t accoun
     rwlockWriteUnlock(&user->lock);
 }
 
+void userRestoreClientObservation(User *user, uint64_t report_ms, uint64_t local_ms, uint64_t age_ms,
+                                  uint64_t age_sample_ms, bool age_valid)
+{
+    assert(userObjectIsInitialized(user));
+    rwlockWriteLock(&user->lock);
+    user_client_time_t *time = &user->client_time;
+    uint64_t            now  = userClientAdvanceAgeLocked(user, getHRTimeUs() / 1000U);
+    if (report_ms != 0)
+    {
+        time->first_local_ms    = time->observed ? min(time->first_local_ms, local_ms) : local_ms;
+        time->first_report_ms   = time->observed ? min(time->first_report_ms, report_ms) : report_ms;
+        time->observed          = true;
+        time->observation_acked = false;
+    }
+    if (age_valid)
+    {
+        time->age_ms       = max(time->age_ms, userSaturatingAdd(age_ms, userSaturatingSub(now, age_sample_ms)));
+        time->age_valid    = true;
+        time->future_valid = false;
+    }
+    now = userClientAdvanceAgeLocked(user, now);
+    userClientProjectExpiryLocked(user, now);
+    rwlockWriteUnlock(&user->lock);
+}
+
 void userGetAccountingSnapshot(User *user, user_accounting_snapshot_t *snapshot)
 {
     assert(userObjectIsInitialized(user) && snapshot != NULL);
     rwlockReadLock(&user->lock);
     rwlockReadLock(&user->stats_lock);
-    *snapshot = (user_accounting_snapshot_t) {.id                = user->id,
-                                              .traffic           = user->stats.traffic,
-                                              .first_usage_at_ms = user->client_time.first_report_ms,
+    *snapshot = (user_accounting_snapshot_t) {.id                 = user->id,
+                                              .traffic            = user->stats.traffic,
+                                              .first_usage_at_ms  = user->client_time.first_report_ms,
+                                              .first_local_at_ms  = user->client_time.first_local_ms,
+                                              .first_usage_age_ms = user->client_time.age_ms,
+                                              .age_sample_ms      = user->client_time.age_sample_ms,
+                                              .age_valid          = user->client_time.age_valid,
                                               .observation_pending =
                                                   user->client_time.observed && ! user->client_time.observation_acked};
     rwlockReadUnlock(&user->stats_lock);

@@ -137,7 +137,7 @@ users_update_result_t usersChangePasswordLocked(users_t *users, user_t *user, co
     else if (result == kUsersUpdateResultDuplicateWireGuardPublicKey)
         LOGE("Users: duplicate WireGuard public key while updating user \"%s\"", usersUserNameForLog(user));
     if (result == kUsersUpdateResultOk)
-        usersCommitPasswordLocked(users, user, &prepared, user->password == NULL ? 0 : stringLength(user->password));
+        usersCommitPasswordLocked(users, user, &prepared, user->password_length);
     rwlockWriteUnlock(&user->lock);
     userFreePreparedPassword(&prepared);
     return result;

@@ -73,22 +73,22 @@ enum
 
 static size_t usersSHA224KeyHash(const users_sha224_key_t *key)
 {
-    return (size_t) calcHashBytes(key->bytes, SHA224_DIGEST_SIZE);
+    return userIndexHashBytes(key->bytes, SHA224_DIGEST_SIZE);
 }
 
 static size_t usersSHA256KeyHash(const users_sha256_key_t *key)
 {
-    return (size_t) calcHashBytes(key->bytes, SHA256_DIGEST_SIZE);
+    return userIndexHashBytes(key->bytes, SHA256_DIGEST_SIZE);
 }
 
 static size_t usersUUIDKeyHash(const users_uuid_key_t *key)
 {
-    return (size_t) calcHashBytes(key->bytes, kWwUuidBytesLen);
+    return userIndexHashBytes(key->bytes, kWwUuidBytesLen);
 }
 
 static size_t usersWireGuardPublicKeyHash(const users_wireguard_publickey_key_t *key)
 {
-    return (size_t) calcHashBytes(key->bytes, USER_WIREGUARD_PUBLICKEY_SIZE);
+    return userIndexHashBytes(key->bytes, USER_WIREGUARD_PUBLICKEY_SIZE);
 }
 
 static bool usersSHA224KeyEq(const users_sha224_key_t *a, const users_sha224_key_t *b)
@@ -122,11 +122,19 @@ static bool usersWireGuardPublicKeyEq(const users_wireguard_publickey_key_t *a,
     return memoryCompare(a->bytes, b->bytes, USER_WIREGUARD_PUBLICKEY_SIZE) == 0;
 }
 
+static void usersCredentialIndexFree(void *pointer, size_t size)
+{
+    if (pointer != NULL)
+        memorySecureZero(pointer, size);
+    memoryFree(pointer);
+}
+
 #define i_type users_sha224_map_t // NOLINT
 #define i_key  users_sha224_key_t // NOLINT
 #define i_val  user_t *           // NOLINT
 #define i_hash usersSHA224KeyHash // NOLINT
 #define i_eq   usersSHA224KeyEq   // NOLINT
+#include "objects/users_credential_allocator.inc"
 #include "stc/hmap.h"
 #undef i_eq
 #undef i_hash
@@ -139,6 +147,7 @@ static bool usersWireGuardPublicKeyEq(const users_wireguard_publickey_key_t *a,
 #define i_val  user_t *           // NOLINT
 #define i_hash usersSHA256KeyHash // NOLINT
 #define i_eq   usersSHA256KeyEq   // NOLINT
+#include "objects/users_credential_allocator.inc"
 #include "stc/hmap.h"
 #undef i_eq
 #undef i_hash
@@ -151,6 +160,7 @@ static bool usersWireGuardPublicKeyEq(const users_wireguard_publickey_key_t *a,
 #define i_val  user_t *         // NOLINT
 #define i_hash usersUUIDKeyHash // NOLINT
 #define i_eq   usersUUIDKeyEq   // NOLINT
+#include "objects/users_credential_allocator.inc"
 #include "stc/hmap.h"
 #undef i_eq
 #undef i_hash
@@ -163,6 +173,7 @@ static bool usersWireGuardPublicKeyEq(const users_wireguard_publickey_key_t *a,
 #define i_val  user_t *                        // NOLINT
 #define i_hash usersWireGuardPublicKeyHash     // NOLINT
 #define i_eq   usersWireGuardPublicKeyEq       // NOLINT
+#include "objects/users_credential_allocator.inc"
 #include "stc/hmap.h"
 #undef i_eq
 #undef i_hash
@@ -170,10 +181,17 @@ static bool usersWireGuardPublicKeyEq(const users_wireguard_publickey_key_t *a,
 #undef i_key
 #undef i_type
 
+static size_t usersIDKeyHash(const uint64_t *key)
+{
+    return userIndexHashBytes(key, sizeof(*key));
+}
+
 #define i_type users_id_map_t // NOLINT
 #define i_key  uint64_t       // NOLINT
 #define i_val  user_t *       // NOLINT
+#define i_hash usersIDKeyHash // NOLINT
 #include "stc/hmap.h"
+#undef i_hash
 #undef i_val
 #undef i_key
 #undef i_type
@@ -192,7 +210,7 @@ typedef struct users_name_key_s
 
 static size_t usersNameKeyHash(const users_name_key_t *key)
 {
-    return (size_t) calcHashBytes(key->name, stringLength(key->name));
+    return userIndexHashBytes(key->name, stringLength(key->name));
 }
 
 static bool usersNameKeyEq(const users_name_key_t *a, const users_name_key_t *b)
@@ -217,7 +235,7 @@ static size_t usersPointerKeyHash(const uintptr_t *key)
 {
     /* STC's default integer multiplication preserves aligned low bits. Stable
      * user blocks can otherwise exceed its finite probe-distance encoding. */
-    return (size_t) calcHashBytes(key, sizeof(*key));
+    return userIndexHashBytes(key, sizeof(*key));
 }
 
 #define i_type users_pointer_map_t // NOLINT
@@ -555,7 +573,7 @@ void usersCommitReservedCredentialsLocked(users_t *users, user_t *slot);
 
 void usersCommitReservedUserLocked(users_t *users, user_t *slot);
 
-bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalidated);
+bool usersCommitNewUserLocked(users_t *users, user_t *slot);
 
 void usersDuplicateResultConsider(const users_t *users, users_duplicate_result_t *best, user_t *owner,
                                   users_add_result_t result, uint8_t priority);

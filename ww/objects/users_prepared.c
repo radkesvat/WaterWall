@@ -5,7 +5,7 @@ users_update_result_t usersConfigPatchToUpdate(const user_config_patch_t *patch,
     assert(patch != NULL && out != NULL);
     if (patch->mask == 0)
         return kUsersUpdateResultInvalidArgument;
-    if ((patch->mask & ~((1U << 18U) - 1U)) != 0U)
+    if ((patch->mask & ~kKnownUserConfigMask) != 0U)
         return kUsersUpdateResultUnknownFields;
     user_update_t update = {0};
     if ((patch->mask & kUserConfigName) != 0U)

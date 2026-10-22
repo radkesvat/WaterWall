@@ -1,3 +1,4 @@
+#include "fixtures/user_runtime.h"
 /* CTest: waterwall.authenticationserver_api_unit
  * Direct registered provider: strict bodies, credential-free schemas, exact IDs,
  * bounded pagination/cursors, budgets, corrupt records and side-effect freedom.
@@ -516,7 +517,7 @@ static void readOnly(void)
 int main(void)
 {
     twfSetCase("AuthenticationServer registered read-only views");
-    twfRequire(createNetworkLogger(NULL, false) != NULL && wCryptoGlobalInit() == kWCryptoOk, "runtime init failed");
+    twfRequire(createNetworkLogger(NULL, false) != NULL && userTestRuntimeInitialize(), "runtime init failed");
     twfWorkerEnvSetup(&env, 8192, 32);
     nodeApiRegistryInitialize();
     server = tunnelCreate(NULL, sizeof(authenticationserver_tstate_t), 0);
@@ -557,7 +558,7 @@ int main(void)
     tunnelDestroy(server);
     nodeApiRegistryDestroy();
     twfWorkerEnvTeardown(&env);
-    wCryptoGlobalCleanup();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     return 0;
 }

@@ -2,6 +2,8 @@
 
 /*
  * User model, lifecycle, JSON persistence, and usage helpers.
+ * Construction requires the runtime random and crypto providers initialized
+ * by createGlobalState(); direct embedding callers establish those first.
  *
  * Ownership:
  * - user_t itself is caller-owned. userCreate(), userCreateFromJson(), and
@@ -246,6 +248,9 @@ typedef struct user_runtime_stat_s
     user_bandwidth_state_t bandwidth[2];
     buffer_budget_cost_t   queued_cost;
     size_t                 bandwidth_waiter_count;
+    /* AuthenticationClient's oldest valid handle generation for continuous
+     * membership. Runtime migration preserves it; fresh identities set it anew. */
+    uint64_t               identity_generation_floor;
     uint64_t               active_cons_out;
     user_ip_usage_t       *ip_usages;
     size_t                 ip_usage_count;
@@ -276,6 +281,8 @@ typedef struct user_accounting_snapshot_s
     uint64_t  id;
     user_ud_t traffic;
     uint64_t  first_usage_at_ms;
+    uint64_t  first_local_at_ms, first_usage_age_ms, age_sample_ms;
+    bool      age_valid;
     bool      observation_pending;
 } user_accounting_snapshot_t;
 
@@ -377,6 +384,8 @@ struct user_s
 };
 
 bool userCreate(User *user, const char *password);
+/* Import aliases prefer a present primary field, including null/empty values.
+ * Top-level time leaves override their nested `time` counterparts. */
 bool userCreateFromJson(User *user, const cJSON *user_json);
 typedef enum user_json_result_e
 {
@@ -462,6 +471,8 @@ uint64_t userGetId(User *user);
 /* Standalone setters must not mutate indexed accounts: use collection transactions. */
 void userSetId(User *user, uint64_t id);
 bool userIsDisabled(User *user);
+/* now_ms is monotonic milliseconds for an installed client expiry projection,
+ * and Unix epoch milliseconds otherwise. */
 bool userIsExpired(User *user, uint64_t now_ms);
 bool userIsActive(User *user, uint64_t now_ms);
 bool userIsTrafficLimited(User *user);
@@ -474,6 +485,8 @@ bool userHasReachedLimit(User *user);
  *
  * These operate on the process-local user_s.runtime state and are independent
  * from the serialized user_s.stats counters.
+ * Admission/ShouldClose take monotonic milliseconds with an installed client
+ * expiry projection, and Unix epoch milliseconds otherwise.
  */
 user_admission_result_t userTryAdmitConnection(User *user, const user_ip_key_t *ip_key, uint64_t now_ms);
 void                    userReleaseConnection(User *user, const user_ip_key_t *ip_key);
@@ -500,6 +513,11 @@ void userMarkFirstUsage(User *user, uint64_t now_ms);
  * the earliest nonzero instant. The caller clamps future producer estimates. */
 void userMergeFirstUsage(User *user, uint64_t first_usage_at_ms);
 void userInstallClientClock(User *user, uint64_t server_time_ms, uint64_t accounting_time_ms, uint64_t received_at_ms);
+/* Restore retained local evidence after runtime migration and before installing
+ * the new table's clock/configuration projection. A zero report restores age
+ * only. Local origins may be zero; age/sample use the process monotonic clock. */
+void userRestoreClientObservation(User *user, uint64_t report_ms, uint64_t local_ms, uint64_t age_ms,
+                                  uint64_t age_sample_ms, bool age_valid);
 void userGetAccountingSnapshot(User *user, user_accounting_snapshot_t *snapshot);
 void userAcknowledgeObservation(User *user, uint64_t first_usage_at_ms);
 void userAddTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes);
@@ -508,6 +526,9 @@ void userAddConnection(User *user, bool inbound);
 void userRemoveConnection(User *user, bool inbound);
 void userSetIpCount(User *user, uint64_t ips);
 void userSetDeviceCount(User *user, uint64_t devices);
+/* Manual projection override; does not discard installed client-clock or
+ * unacknowledged first-use evidence. The next traffic observation with an
+ * installed clock recomputes its projection, including after valid=false. */
 void userSetClientViewExpiry(User *user, uint64_t expires_at_ms, bool valid);
 void userGetTimeInfo(User *user, user_time_info_t *timeinfo);
 void userGetStats(User *user, user_stat_t *stats);

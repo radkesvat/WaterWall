@@ -7,6 +7,7 @@
  * Limits: native execution covers the available platform lock implementation.
  */
 
+#include "fixtures/user_runtime.h"
 #include "objects/user_internal.h"
 #include "objects/users.h"
 #include "test_assert.h"
@@ -437,12 +438,13 @@ static void testConcurrentCoherence(void)
 int main(void)
 {
     testCaseSet("user_public_views_test");
-    require(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
+    require(userTestRuntimeInitialize(), "crypto initialization failed");
     testOwnedDetail();
     testBoundsAndEncoding();
     testPagesAndLocks();
     testConcurrentCoherence();
     testCachedExportMeasurements();
     puts("user_public_views_test: all checks passed");
+    userTestRuntimeCleanup();
     return 0;
 }

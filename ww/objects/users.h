@@ -6,7 +6,8 @@
  * - users_t owns every user_t it returns.
  * - Returned user_t pointers point into users_t-owned storage and remain valid
  *   until that specific user is removed, usersClear(), usersDestroy(), or a
- *   successful non-self usersCopy() replaces this destination. Copy invalidates
+ *   successful non-self usersCopy() or usersPublishCandidate() replaces this
+ *   destination. Replacement invalidates
  *   every old destination user/string pointer; failure preserves the destination.
  *   Other users keep stable object addresses across add/remove operations, but
  *   index ordering may change after removal.
@@ -135,7 +136,8 @@ enum
     kUserConfigConnectionsIn         = 1U << 14U,
     kUserConfigConnectionsOut        = 1U << 15U,
     kUserConfigExpireAt              = 1U << 16U,
-    kUserConfigExpireAfterFirstUsage = 1U << 17U
+    kUserConfigExpireAfterFirstUsage = 1U << 17U,
+    kKnownUserConfigMask             = (1U << 18U) - 1U
 };
 
 typedef enum users_add_result_e
@@ -394,6 +396,8 @@ users_update_result_t usersAddTrafficByIdentifier(users_t *users, uint64_t id, u
  * dest, keyed by durable id. The function acquires both database write locks
  * and each matched pair's user locks, then stats locks, in address order; callers
  * must not hold any of those locks.
+ * Destination runtime reservations and client-clock evidence are replaced;
+ * use a fresh/unpublished destination without independently live reservations.
  */
 bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src);
 /* Owned accounting values, captured under collection -> user -> stats locks.
@@ -498,7 +502,10 @@ user_delivery_decision_t usersCommitDeliveryByIdentifier(users_t *users, uint64_
                                                          user_bandwidth_direction_t direction, uint64_t ticket,
                                                          uint64_t bytes, bool datagram, bool more, uint32_t multiplier);
 
-/* Incremental fresh import with lexical, required nonzero IDs. Failure rolls back
+/* Null input or {"users":null} imports no records. A `users` member takes
+ * precedence over other container fields; a single user or name-keyed map is
+ * accepted only without that member.
+ * Incremental fresh import with lexical, required nonzero IDs. Failure rolls back
  * this append only; existing records/handles remain. Credentials derive once. */
 bool usersFeedJsonRequiredIds(users_t *users, const cJSON *json);
 /* Preserve native/construction refusals for startup recovery decisions. */
@@ -509,9 +516,22 @@ typedef enum users_json_result_e
     kUsersJsonResourceFailure
 } users_json_result_t;
 users_json_result_t usersFeedJsonRequiredIdsResult(users_t *users, const cJSON *json);
+/* Failure details contain no names or credentials. entry_index is zero-based,
+ * or SIZE_MAX for a container failure; id is zero when unavailable. reason is
+ * a static diagnostic class string, NULL on success. */
+typedef struct users_json_diagnostic_s
+{
+    size_t      entry_index;
+    uint64_t    id;
+    const char *reason;
+} users_json_diagnostic_t;
+users_json_result_t usersFeedJsonRequiredIdsResultDetailed(users_t *users, const cJSON *json,
+                                                           users_json_diagnostic_t *diagnostic);
 /* Candidate must be an initialized, exclusively owned unpublished table. Swaps
  * complete contents under dest's lock; candidate receives the old destination.
- * No allocation or native construction can fail during publication. */
+ * No allocation or native construction can fail during publication. Old
+ * destination pointers now belong to candidate and expire when it is destroyed;
+ * runtime state is not migrated between the old and new users. */
 void usersPublishCandidate(users_t *dest, users_t *candidate);
 /* Index/structural check for trusted fresh imports/copies. usersValidate remains
  * the full derived-credential diagnostic in every build configuration. */

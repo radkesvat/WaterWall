@@ -29,7 +29,11 @@ bool USERS_FIXED_FN(EnsureCapacity)(users_t *users, size_t count)
 void USERS_FIXED_FN(Clear)(USERS_FIXED_TABLE *table)
 {
     if (table != NULL)
+    {
         USERS_FIXED_MAP(_clear)(&table->map);
+        if (table->map.table != NULL)
+            memorySecureZero(table->map.table, (size_t) table->map.bucket_count * sizeof(*table->map.table));
+    }
 }
 
 void USERS_FIXED_FN(Destroy)(USERS_FIXED_TABLE *table)
@@ -67,7 +71,13 @@ bool USERS_FIXED_FN(EraseLocked)(users_t *users, const user_t *user, const uint8
         LOGE("Users: " USERS_FIXED_LABEL " entry to erase has invalid ownership (corrupted index)");
         return false;
     }
+    size_t hole = (size_t) (it.ref - table->map.table);
     USERS_FIXED_MAP(_erase_entry)(&table->map, it.ref);
+    /* Backward shifting leaves one inactive copy of the final credential. */
+    const size_t mask = (size_t) table->map.bucket_count - 1U;
+    while (table->map.meta[hole].dist != 0)
+        hole = (hole + 1U) & mask;
+    memorySecureZero(&table->map.table[hole], sizeof(*table->map.table));
     return true;
 }
 

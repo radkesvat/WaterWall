@@ -1,6 +1,15 @@
 #pragma once
 #include "objects/user.h"
 
+/* Stable for the process lifetime. Requires the normal runtime random setup;
+ * randomized hashing prevents reusable external collision sets. */
+uint64_t userIndexHashSeed(void);
+
+static inline size_t userIndexHashBytes(const void *bytes, size_t size)
+{
+    return (size_t) calcHashBytesSeed(bytes, size, userIndexHashSeed());
+}
+
 /* Configuration ownership is held while admitting and constructing an owned row. */
 user_public_result_t userCopyFullJsonBounded(User *user, size_t limit, cJSON **out, size_t *encoded_size);
 /* Fresh initialized destination locks; transfers owned values without native-lock copying. */

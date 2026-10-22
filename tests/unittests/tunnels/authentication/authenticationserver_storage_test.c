@@ -3,6 +3,7 @@
 #include "AuthenticationServer/structure.h"
 #include "common/private_file.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/user_runtime.h"
 #include "loggers/network_logger.h"
 
 #include <pthread.h>
@@ -1527,7 +1528,7 @@ static void testOwnedDatabaseCredentialWiping(void)
 int main(void)
 {
     twfSetCase("authenticationserver private storage and commit");
-    twfRequire(createNetworkLogger(NULL, false) != NULL && wCryptoGlobalInit() == kWCryptoOk, "runtime setup failed");
+    twfRequire(createNetworkLogger(NULL, false) != NULL && userTestRuntimeInitialize(), "runtime setup failed");
     for (fault_t selected = kNone; selected <= kMissingPublication; ++selected)
     {
         testCommit(022, selected, false);
@@ -1545,7 +1546,7 @@ int main(void)
     testCleanPeriodicSaving();
     testOwnedDatabaseCredentialWiping();
     twfRequire(private_writes > 0, "no actual private file writes were exercised");
-    wCryptoGlobalCleanup();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     return 0;
 }

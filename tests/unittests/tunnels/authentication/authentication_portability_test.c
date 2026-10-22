@@ -3,6 +3,7 @@
  * supplies an isolated working directory; this fixture creates a private child.
  * No sockets, worker loops, permission assumptions under root, or fault wrappers. */
 #include "AuthenticationServer/api.h"
+#include "fixtures/user_runtime.h"
 #include "loggers/network_logger.h"
 #include "node_builder/config_lexical.h"
 #include "private_file.h"
@@ -327,7 +328,7 @@ static void boundedCredentialRow(void)
 int main(void)
 {
     testCaseSet("authentication_portability_test");
-    require(createNetworkLogger(NULL, false) != NULL && wCryptoGlobalInit() == kWCryptoOk,
+    require(createNetworkLogger(NULL, false) != NULL && userTestRuntimeInitialize(),
             "portable logger/crypto initialization failed");
     createPrivateDirectory();
     strictCidrs();
@@ -340,7 +341,7 @@ int main(void)
 #else
     require(rmdir(directory) == 0, "portable private-directory cleanup failed");
 #endif
-    wCryptoGlobalCleanup();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     return 0;
 }

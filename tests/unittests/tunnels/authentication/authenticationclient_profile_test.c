@@ -11,6 +11,7 @@
  * CTest: waterwall.authenticationclient_profile_unit
  */
 #include "AuthenticationClient/structure.h"
+#include "fixtures/user_runtime.h"
 
 #include "test_assert.h"
 
@@ -295,7 +296,7 @@ int main(void)
 {
     testCaseSet("authenticationclient_profile_test");
     require(createNetworkLogger(NULL, false) != NULL, "network logger initialization failed");
-    require(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
+    require(userTestRuntimeInitialize(), "crypto initialization failed");
     for (lookup_kind_t kind = kLookupSha224; kind <= kLookupPassword; ++kind)
     {
         profile_fixture_t fixture;
@@ -307,7 +308,7 @@ int main(void)
         fixtureDestroy(&fixture);
     }
     testOwnedSecretCleanup();
-    wCryptoGlobalCleanup();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     puts("AuthenticationClient owned credential profiles passed");
     return 0;

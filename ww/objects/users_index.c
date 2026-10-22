@@ -898,91 +898,18 @@ void usersCommitReservedUserLocked(users_t *users, user_t *slot)
 /*
  * Commits a fully-initialized slot into the active set and every lookup index.
  *
- * When `prevalidated` is true the caller has checked the identical source's
- * indexes under the same held write lock. Fresh JSON construction derives
+ * The caller has checked the identical source's indexes under the same held
+ * write lock. Fresh JSON construction derives
  * credentials once; trusted copies preserve those validated values. Arbitrary
  * checked-add callers also run usersValidateNewUserNoFatalLocked(), including
  * the full derived-password diagnostic. Repeating those proofs here would
  * recompute credentials or repeat duplicate probes, so they are skipped. The
- * capacity reservation and the index inserts always run, so a false return on the
- * prevalidated path reflects rejected capacity geometry. Publication thereafter
+ * capacity reservation and the index inserts always run, so a false return
+ * reflects rejected capacity geometry. Publication thereafter
  * uses the shared reserved primitive; impossible index inconsistencies are fatal.
  */
-bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalidated)
+bool usersCommitNewUserLocked(users_t *users, user_t *slot)
 {
-    if (! prevalidated)
-    {
-        if (UNLIKELY(! slot->sha224_pass_valid))
-        {
-            LOGE("Users: user \"%s\" does not have a usable SHA-224 password hash", usersUserNameForLog(slot));
-            return false;
-        }
-        if (UNLIKELY(! slot->sha256_pass_valid))
-        {
-            LOGE("Users: user \"%s\" does not have a usable SHA-256 password hash", usersUserNameForLog(slot));
-            return false;
-        }
-        if (UNLIKELY(! userPasswordDataValid(slot)))
-        {
-            LOGE("Users: user \"%s\" has inconsistent password lookup data", usersUserNameForLog(slot));
-            return false;
-        }
-        if (UNLIKELY(! usersAllowedIpUserFieldsIndexable(slot)))
-        {
-            LOGE("Users: user \"%s\" has inconsistent WireGuard Allowed-IP range data", usersUserNameForLog(slot));
-            return false;
-        }
-        if (UNLIKELY(usersFindByNameLocked(users, slot->name, NULL) != NULL))
-        {
-            LOGE("Users: duplicate username \"%s\" in user database", slot->name);
-            return false;
-        }
-        if (UNLIKELY(usersSHA224TableLookupLocked(users, slot->sha224_pass.bytes) != NULL))
-        {
-            LOGE("Users: duplicate SHA-224 lookup key while loading user \"%s\"", usersUserNameForLog(slot));
-            return false;
-        }
-        if (UNLIKELY(usersSHA256TableLookupLocked(users, slot->sha256_pass.bytes) != NULL))
-        {
-            LOGE("Users: duplicate SHA-256 lookup key while loading user \"%s\"", usersUserNameForLog(slot));
-            return false;
-        }
-        if (UNLIKELY(slot->uuid_pass_valid && usersUUIDTableLookupLocked(users, slot->uuid_pass) != NULL))
-        {
-            LOGE("Users: duplicate UUID credential while loading user \"%s\"", usersUserNameForLog(slot));
-            return false;
-        }
-        if (UNLIKELY(slot->wireguard_publickey_valid &&
-                     usersWireGuardPublicKeyTableLookupLocked(users, slot->wireguard_publickey) != NULL))
-        {
-            LOGE("Users: duplicate WireGuard public key while loading user \"%s\"", usersUserNameForLog(slot));
-            return false;
-        }
-        bool range_ok = true;
-        if (UNLIKELY(usersFindWireGuardAllowedIpsOverlapLocked(users,
-                                                               slot->wireguard_allowed_ips_valid,
-                                                               &slot->wireguard_allowed_ip,
-                                                               &slot->wireguard_allowed_mask,
-                                                               slot->wireguard_allowed_ip_family,
-                                                               NULL,
-                                                               &range_ok) != NULL))
-        {
-            LOGE("Users: overlapping WireGuard allowed IPs \"%s\" while loading user \"%s\"",
-                 slot->wireguard_allowed_ips,
-                 usersUserNameForLog(slot));
-            return false;
-        }
-        if (UNLIKELY(! range_ok))
-        {
-            LOGE("Users: user \"%s\" has an unparseable WireGuard Allowed-IP range", usersUserNameForLog(slot));
-            return false;
-        }
-        if (UNLIKELY(slot->id != 0 && usersIDTableLookupLocked(users, slot->id) != NULL))
-        {
-            LOGE("Users: duplicate id %" PRIu64 " while loading user \"%s\"", slot->id, usersUserNameForLog(slot));
-            return false;
-        }
-    }
     if (UNLIKELY(! usersEnsureLookupCapacityLocked(users, users->count + 1U)))
     {
         return false;

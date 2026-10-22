@@ -1,3 +1,4 @@
+#include "fixtures/user_runtime.h"
 /* CTest: waterwall.authenticationserver_password_api_unit
  * Strict registered credentials-only conditional mutation, preservation, bounded
  * admission and detached reply loss. Handlers consume owned buffers, no line. */
@@ -816,7 +817,7 @@ static void detachedDelivery(void)
 int main(void)
 {
     twfSetCase("AuthenticationServer change-user-password API");
-    twfRequire(createNetworkLogger(NULL, false) && wCryptoGlobalInit() == kWCryptoOk, "runtime init failed");
+    twfRequire(createNetworkLogger(NULL, false) && userTestRuntimeInitialize(), "runtime init failed");
     twfWorkerEnvSetup(&env, 8192, 32);
     nodeApiRegistryInitialize();
     server = tunnelCreate(NULL, sizeof(authenticationserver_tstate_t), 0);
@@ -901,7 +902,7 @@ int main(void)
     tunnelDestroy(server);
     nodeApiRegistryDestroy();
     twfWorkerEnvTeardown(&env);
-    wCryptoGlobalCleanup();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     return 0;
 }

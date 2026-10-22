@@ -1,3 +1,4 @@
+#include "fixtures/user_runtime.h"
 /* CTest: waterwall.authenticationserver_audit_unit
  * Real registered mutations plus a gated file append: redaction, exact outcome,
  * bounded queue overflow, failed writer isolation, copied actors and shutdown drain.
@@ -539,7 +540,7 @@ static void producerRollback(const char *path)
 int main(void)
 {
     twfSetCase("AuthenticationServer administrative audit");
-    twfRequire(createNetworkLogger(NULL, false) && wCryptoGlobalInit() == kWCryptoOk, "runtime init failed");
+    twfRequire(createNetworkLogger(NULL, false) && userTestRuntimeInitialize(), "runtime init failed");
     twfWorkerEnvSetup(&env, 8192, 32);
     nodeApiRegistryInitialize();
     server = tunnelCreate(NULL, sizeof(authenticationserver_tstate_t), 0);
@@ -605,7 +606,7 @@ int main(void)
     tunnelDestroy(server);
     nodeApiRegistryDestroy();
     twfWorkerEnvTeardown(&env);
-    wCryptoGlobalCleanup();
+    userTestRuntimeCleanup();
     networkloggerDestroy();
     return 0;
 }
