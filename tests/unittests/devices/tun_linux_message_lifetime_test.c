@@ -15,6 +15,7 @@
 #include "devices/tun/tun_linux_gso_write.h"
 #include "devices/tun/tun_linux_internal.h"
 #include "devices/tun/tun_linux_offload.h"
+#include "devices/tun/tun_linux_private.h"
 #include "loggers/internal_logger.h"
 #include "lwip/engine_runtime.h"
 #include "lwip/ip.h"
@@ -1327,6 +1328,41 @@ static tun_device_t *createRunningOffloadReaderDevice(TunReadEventHandle callbac
             "GSO setup skipped or repeated one negotiated descriptor step");
     require(bringUpDevice(tdev), "GSO reader-device bring-up failed");
     return tdev;
+}
+
+static void testInactiveReaderRemovesReadInterest(void)
+{
+    for (unsigned stopping = 0; stopping < 2; ++stopping)
+    {
+        resetReaderFixture(0);
+        resetShutdownRequests();
+        resetIoInjection();
+        tun_device_t *tdev = createRunningReaderDevice();
+        require((reader_io.events & WW_READ) != 0, "active reader installs read interest");
+
+        const injected_io_result_t read_result = {.result = -1, .error = EAGAIN};
+        armDeviceReads(&read_result, 1);
+        reader_ready_callback(&reader_io);
+        require(observed_read_calls == 1 && (reader_io.events & WW_READ) != 0, "active EAGAIN preserves read interest");
+
+        /* Keep the reader gate open to model the interval before the shutdown
+         * coordinator closes it on a different worker. */
+        if (stopping)
+            tunLifecycleTransitionToStopping(&tdev->lifecycle);
+        else
+            require(tunLifecycleTransitionToFailed(&tdev->lifecycle, NULL), "publish inactive reader state");
+        armDeviceReads(&read_result, 1);
+        reader_ready_callback(&reader_io);
+        require(observed_read_calls == 0, "inactive reader must not enter native read");
+        require((reader_io.events & WW_READ) == 0, "inactive reader must remove level-triggered read interest");
+        require(shutdown_request_calls == 0, "inactivity alone must not request another shutdown");
+        require(watcher_detach_calls == 0, "later owner quiescence retains watcher detachment ownership");
+
+        resetIoInjection();
+        require(bringDownDevice(tdev), "inactive reader cleanup");
+        require(watcher_detach_calls == 1, "inactive reader watcher settles exactly once");
+        destroyDevice(tdev);
+    }
 }
 
 static void testChecksumOnlyNegotiation(void)
@@ -3676,6 +3712,7 @@ int main(void)
     loggerSetHandler(logger, captureTunLog);
     setInternalLogger(logger);
     checkSumInit();
+    testInactiveReaderRemovesReadInterest();
     testSameWorkerTunBurstCoalescesTcpAcks(&env);
     testChecksumOnlyNegotiation();
     testDnsMutationCleanup();

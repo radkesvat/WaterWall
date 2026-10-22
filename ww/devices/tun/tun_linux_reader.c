@@ -539,7 +539,8 @@ static void tunReaderRun(tun_worker_reader_t *lane, worker_t *worker)
          * lifecycle closure or read failure while the generation is pinned. */
         if (local_burst)
             deviceReaderSessionEndBurst(&burst);
-        if (atomicLoadExplicit(&lane->waiting, memory_order_acquire) || failed)
+        if (atomicLoadExplicit(&lane->waiting, memory_order_acquire) || failed ||
+            ! tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)) || ! quiescenceGateIsActive(&generation->gate))
             wioDel(lane->io, WW_READ);
         else if (wioAdd(lane->io, tunReaderOnReady, WW_READ) != 0)
             failed = true;
