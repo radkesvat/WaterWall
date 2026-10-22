@@ -881,7 +881,7 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
         return false;
     }
 
-    const char *const argv[] = {"ifconfig", tdev->name, "inet", ip_prefix, "-alias", NULL};
+    const char *const argv[] = {"ifconfig", tdev->name, "inet", ip_prefix, "alias", NULL};
     if (tunRunCommand("ifconfig", argv) != 0)
     {
         LOGE("TunDevice: error setting ip address");
