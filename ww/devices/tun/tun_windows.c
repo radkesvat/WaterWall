@@ -145,9 +145,7 @@ bool tundeviceIsUp(const tun_device_t *tdev)
 
 static bool tunWindowsSetMtu(tun_device_t *tdev)
 {
-    NET_LUID    luid;
-    NET_IFINDEX index;
-    MIB_IFROW   if_row;
+    MIB_IPINTERFACE_ROW if_row;
 
     if (tdev->adapter_handle == NULL)
     {
@@ -155,26 +153,21 @@ static bool tunWindowsSetMtu(tun_device_t *tdev)
         return false;
     }
 
-    WintunGetAdapterLUID(tdev->adapter_handle, &luid);
-
-    NETIO_STATUS status = ConvertInterfaceLuidToIndex(&luid, &index);
-    if (status != NO_ERROR)
-    {
-        LOGE("TunDevice: failed to resolve adapter interface index, code: %lu", status);
-        return false;
-    }
-
-    memoryZero(&if_row, sizeof(if_row));
-    if_row.dwIndex   = index;
-    DWORD last_error = GetIfEntry(&if_row);
+    InitializeIpInterfaceEntry(&if_row);
+    if_row.Family = AF_INET;
+    WintunGetAdapterLUID(tdev->adapter_handle, &if_row.InterfaceLuid);
+    NETIO_STATUS last_error = GetIpInterfaceEntry(&if_row);
     if (last_error != NO_ERROR)
     {
         LOGE("TunDevice: failed to query adapter interface row, code: %lu", last_error);
         return false;
     }
 
-    if_row.dwMtu = tunDeviceMtu(tdev);
-    last_error   = SetIfEntry(&if_row);
+    if_row.NlMtu = tunDeviceMtu(tdev);
+    /* GetIpInterfaceEntry may return a prefix length that the IPv4 setter
+     * rejects. Preserve all other mutable settings from the queried row. */
+    if_row.SitePrefixLength = 0;
+    last_error              = SetIpInterfaceEntry(&if_row);
     if (last_error != NO_ERROR)
     {
         LOGE("TunDevice: failed to set adapter MTU, code: %lu", last_error);

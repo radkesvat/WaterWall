@@ -5,8 +5,11 @@
 #include "devices/device_flow_affinity.h"
 #include "fixtures/worker_registry_fixture.h"
 #include "test_assert.h"
+#include "wintun.h"
 #include "worker_messages.h"
 #include "wwapi.h"
+#include <iphlpapi.h>
+#include <netioapi.h>
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
@@ -97,17 +100,72 @@ static void fixtureDistribute(device_reader_session_t *session, sbuf_t **buffers
 
 static void WINAPI fixtureSetWait(PTP_WAIT wait, HANDLE event, PFILETIME timeout);
 
+static NETIO_STATUS mtu_query_status;
+static NETIO_STATUS mtu_set_status;
+static unsigned int mtu_queries, mtu_sets;
+
+static void WINAPI fixtureInitializeIpInterface(PMIB_IPINTERFACE_ROW row)
+{
+    memoryZero(row, sizeof(*row));
+}
+
+static NETIO_STATUS WINAPI fixtureGetIpInterface(PMIB_IPINTERFACE_ROW row)
+{
+    require(row->Family == AF_INET && row->InterfaceLuid.Value == 789, "MTU query selected wrong interface");
+    ++mtu_queries;
+    row->NlMtu              = 1500;
+    row->Metric             = 17;
+    row->UseAutomaticMetric = FALSE;
+    row->SitePrefixLength   = 64;
+    return mtu_query_status;
+}
+
+static NETIO_STATUS WINAPI fixtureSetIpInterface(PMIB_IPINTERFACE_ROW row)
+{
+    ++mtu_sets;
+    require(row->Family == AF_INET && row->InterfaceLuid.Value == 789 && row->NlMtu == 1400 &&
+                row->SitePrefixLength == 0 && row->Metric == 17 && ! row->UseAutomaticMetric,
+            "MTU update changed interface identity/settings or omitted IPv4 prefix normalization");
+    return mtu_set_status;
+}
+
+static void WINAPI fixtureAdapterLuid(WINTUN_ADAPTER_HANDLE adapter, NET_LUID *luid)
+{
+    require(adapter == (WINTUN_ADAPTER_HANDLE) (uintptr_t) 456, "MTU query used wrong adapter");
+    luid->Value = 789;
+}
+
 #define sendWorkerMessageForceQueueWithCleanup fixtureQueue
 #define requestProgramShutdown                 fixtureShutdownRequest
 #define SetThreadpoolWait                      fixtureSetWait
 #define CreateThreadpoolWait                   fixtureCreateWait
-#define deviceFlowAffinityPostBatchDroppingOverflow            fixtureDistribute
+#define deviceFlowAffinityPostBatchDroppingOverflow fixtureDistribute
+#define GetIpInterfaceEntry                         fixtureGetIpInterface
+#define SetIpInterfaceEntry                         fixtureSetIpInterface
+#define InitializeIpInterfaceEntry                  fixtureInitializeIpInterface
 #include "../../../ww/devices/tun/tun_windows.c"
 #undef sendWorkerMessageForceQueueWithCleanup
 #undef requestProgramShutdown
 #undef CreateThreadpoolWait
 #undef SetThreadpoolWait
 #undef deviceFlowAffinityPostBatchDroppingOverflow
+#undef GetIpInterfaceEntry
+#undef SetIpInterfaceEntry
+#undef InitializeIpInterfaceEntry
+
+static void testIpv4MtuConfiguration(void)
+{
+    tun_device_t device         = {.adapter_handle = (HANDLE) (uintptr_t) 456, .mtu = 1400};
+    wintun_api.get_adapter_luid = fixtureAdapterLuid;
+    require(tunWindowsSetMtu(&device) && mtu_queries == 1 && mtu_sets == 1, "MTU success did not update IP row");
+    mtu_query_status = ERROR_NOT_FOUND;
+    require(! tunWindowsSetMtu(&device) && mtu_queries == 2 && mtu_sets == 1, "MTU query failure was ignored");
+    mtu_query_status = NO_ERROR;
+    mtu_set_status   = ERROR_ACCESS_DENIED;
+    require(! tunWindowsSetMtu(&device) && mtu_queries == 3 && mtu_sets == 2, "MTU set failure was ignored");
+    device.adapter_handle = NULL;
+    require(! tunWindowsSetMtu(&device) && mtu_queries == 3, "missing adapter reached IP configuration");
+}
 
 static void testMinimumIpv4Write(void)
 {
@@ -414,6 +472,7 @@ int main(void)
     testCaseSet("tun_windows_reader");
     InitializeCriticalSection(&capture_lock);
     require(createInternalLogger(NULL, false) != NULL, "cannot initialize logger");
+    testIpv4MtuConfiguration();
     test_worker_registry_t registry = {0};
     GSTATE.workers_count            = 1;
     GSTATE.ram_profile              = 1;
