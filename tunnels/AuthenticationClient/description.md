@@ -1,5 +1,5 @@
 <!--
-Documentation version: 160
+Documentation version: 161
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -216,7 +216,7 @@ The existing meaning of an explicitly configured `0` is preserved for each inter
 but not authenticated.
 
 `pull-interval-ms` enables periodic revision checks for `GetUsersPage`. A value of `0` disables timer-driven pulls, but
-the client still pulls once after successful authentication and when the server reports `needs-pull`.
+the client still completes a required refresh after successful authentication and every matching usage ACK, including replay ACKs.
 
 `push-interval-ms` enables periodic `PushUserStats`. A value of `0` disables periodic pushes. Other tunnels can still
 ask for a push through the internal API.
@@ -224,11 +224,19 @@ ask for a push through the internal API.
 When pull or push is enabled, one `sync_timer` runs at the shortest enabled pull/push interval. Each sync tick checks
 which jobs are due and attempts `PushUserStats` first. `GetUsersPage` starts a traversal when configuration revisions differ or the pull cadence is due.
 Statistics revision differences follow the configured cadence because a paged snapshot samples mixed times.
+Periodic ticks during a traversal join it. An explicit `authenticationclientRequestPull()` during a traversal instead
+coalesces into one later traversal; installation preserves that explicit demand.
 
 `reconnect-interval-ms` controls reconnect delay after the control transport closes. A value of `0` queues a retry for a later loop turn. Repeated retry requests preserve the first positive deadline.
 
 `request-timeout-ms` closes and reconnects the control line if any request stays pending longer than the configured
 time using an independent worker-0 deadline timer, even with ping/pull/push disabled. A value of `0` disables it.
+
+`max-pending-requests` is a request-admission ceiling. A full table retains desired pulls, pushes and catch-up work
+until a matching response frees capacity; it does not repeatedly build batches, warn or arm a short retry timer.
+The response is semantically validated and enrollment/ACK/error processing finishes before queued work resumes.
+Local send rollback schedules a deferred continuation; stale correlations release no capacity. With request timeout
+and optional jobs disabled, an unanswered request may wait indefinitely without busy retry.
 
 `verbose` enables focused debug logs for the control-line lifecycle, reconnect decisions, timer ticks, and
 request/response correlation flow. It does not log secrets, session tokens, passwords, or raw users JSON.
@@ -364,6 +372,9 @@ discards staging and restarts from page one after backoff while serving its old 
 other producers do not invalidate the cursor. Statistics are sampled at different times: the installed stats revision
 is the first page's conservative sample; latest observed remote revisions remain separate. Ordinary cadence governs
 later statistics refreshes, preventing a mixed-time snapshot from creating an immediate refresh loop.
+Frequent configuration edits can repeatedly restart traversal. A failed mandatory refresh defers new usage reports;
+missing-account debt is retained and can prevent installation. Cached service continues under locally known limits,
+but these policies do not provide crash recovery.
 
 No table/generation changes before successful final validation. All fallible preparation completes before runtime
 migration. Installation merges current local deltas, observations, multiplier carry, reservations, bandwidth queues and
@@ -652,7 +663,7 @@ All protocol timers live on worker 0, the same worker as the owned control line:
 
 `sync_timer` drives both user-table pull and stats push using the shortest enabled pull/push interval. Each tick checks
 the independent pull/push cadence, queues `PushUserStats` first when due, then queues `GetUsersPage` when revisions
-differ or the pull cadence is due without a fresher equal-revision response.
+differ or the pull cadence is due. Periodic ticks join an active traversal; explicit pull requests retain one later traversal.
 
 `reconnect_timer` preserves the first positive retry deadline, rechecking actual monotonic due time. Zero-delay
 retries use queued work, never recursive opening from Finish. A mutex-protected latch is published before queue
@@ -679,8 +690,7 @@ Downstream `Finish` means the next side closed the transport. The client:
 5. Preserves an unresolved usage batch and outstanding catch-up debt, then schedules reconnect unless stopping or in continuity error.
 
 When the client itself closes the control line, such as during worker-0 shutdown or malformed response handling, it
-destroys its local line state first, then sends `tunnelNextUpStreamFinish()`, then destroys the owned line if it is still
-alive.
+destroys its local line state first, then sends `tunnelNextUpStreamFinish()`, then destroys the owned line. The outward Finish does not callback toward its sender.
 
 Response payload parsing holds a temporary line reference. If a re-entrant callback closes the line, the parser stops and
 returns without touching destroyed line state.

@@ -83,6 +83,7 @@ static void fixtureSetup(authenticationclient_fixture_t *fixture)
     ts->pull_interval_ms      = kTestSyncIntervalMs;
     ts->push_interval_ms      = kTestSyncIntervalMs;
     ts->reconnect_interval_ms = kTestReconnectDelayMs;
+    ts->max_pending_requests  = 64;
     ts->started               = true;
 }
 

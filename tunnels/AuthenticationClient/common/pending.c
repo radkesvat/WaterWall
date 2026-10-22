@@ -126,12 +126,19 @@ void authenticationclientRemovePendingById(tunnel_t *t, uint32_t correlation_id)
     uint8_t                        request_type = 0;
 
     mutexLock(&ts->control_mutex);
-    if (LIKELY(authenticationclientPendingRemove(ts, correlation_id, &request_type)))
+    const bool removed = authenticationclientPendingRemove(ts, correlation_id, &request_type);
+    if (removed)
     {
         authenticationclientMarkRequestInFlightLocked(ts, request_type, false);
     }
     mutexUnlock(&ts->control_mutex);
-    authenticationclientUpdateRequestTimer(t);
+    if (removed)
+    {
+        authenticationclientUpdateRequestTimer(t);
+        /* Local send rollback releases capacity without a response callback.
+         * Defer continuation until the caller has restored its desired work. */
+        authenticationclientScheduleSyncProgress(t);
+    }
 }
 
 bool authenticationclientCloseTimedOutControlLine(tunnel_t *t)

@@ -567,7 +567,8 @@ static void testRecurringPullDoesNotStarvePush(void)
         traffic(0, 10);
         ts->last_pull_sync_ms = ts->last_push_sync_ms = getTickMS() - 1000;
         authenticationclientSyncTimerCallback(ts->sync_timer);
-        require(ts->pull_requested && ts->push_requested && pushes == i, "timer work was not coalesced");
+        require(! ts->pull_requested && ts->push_requested && pushes == i,
+                "periodic pull duplicated a traversal or lost the waiting push");
         hold_pull = true;
         deliverHeldRequest();
         require(pushes == i + 1, "recurring pull starved a waiting usage push");
@@ -617,6 +618,54 @@ static void testRequiredPullBeforeQueuedPush(void)
     require(pushes == 3 && authTestPeerStats(server, 42).traffic.u == 22 && local(0, true) == 22,
             "post-ACK refresh lost or duplicated queued usage");
     teardown();
+}
+
+static void testPeriodicAndExplicitPullCoalescing(void)
+{
+    for (unsigned boundary = 0; boundary < 2; ++boundary)
+        for (unsigned explicit_pull = 0; explicit_pull < 2; ++explicit_pull)
+        {
+            setup(257);
+            start(0);
+            authenticationclient_tstate_t *ts = state(0);
+            ts->pull_interval_ms              = 1000;
+            require(authenticationclientStartSyncTimer(clients[0]), "periodic pull timer creation failed");
+            const uint64_t generation = ts->users_generation;
+            const unsigned traversals = pulls;
+            /* First response advertises a revision newer than the active cache.
+             * Timer ticks must still join this unpublished traversal. */
+            authTestPeerSetConfigRevision(server, ts->local_config_revision + 1);
+            if (boundary == 0)
+                hold_page_position = 128;
+            else
+                hold_final_page = true;
+            authenticationclientRequestPull(clients[0]);
+            require(held_request != NULL && ts->staging.active && ts->pull_in_flight && ! ts->pull_requested &&
+                        ts->users_generation == generation,
+                    "periodic coalescing traversal did not hold its publication barrier");
+            for (unsigned tick = 0; tick < 5; ++tick)
+            {
+                ts->last_pull_sync_ms = getTickMS() - 1000;
+                authenticationclientSyncTimerCallback(ts->sync_timer);
+                require(! ts->pull_requested && pulls == traversals + 1 && ts->pending_batch == NULL,
+                        "periodic tick latched another traversal or crossed the usage barrier");
+            }
+            if (explicit_pull)
+            {
+                authenticationclientRequestPull(clients[0]);
+                authenticationclientRequestPull(clients[0]);
+                ts->last_pull_sync_ms = getTickMS() - 1000;
+                authenticationclientSyncTimerCallback(ts->sync_timer);
+                require(ts->pull_requested, "periodic tick erased explicit pull demand");
+            }
+            deliverHeldRequest();
+            pump(1);
+            require(ts->users_generation == generation + 1 + explicit_pull && pulls == traversals + 1 + explicit_pull &&
+                        ! ts->staging.active && ! ts->pull_requested && ! ts->pull_in_flight &&
+                        ts->progress_timer == NULL,
+                    "periodic/explicit demand installed an incorrect number of traversals");
+            teardown();
+        }
 }
 
 static void testEmptyPushDoesNotDropPull(void)
@@ -3442,6 +3491,7 @@ int main(void)
     testStrictTrafficBatches();
     testLossAndOrdering();
     testRecurringPullDoesNotStarvePush();
+    testPeriodicAndExplicitPullCoalescing();
     testRequiredPullBeforeQueuedPush();
     testEmptyPushDoesNotDropPull();
     testRejectionsAndContinuity();

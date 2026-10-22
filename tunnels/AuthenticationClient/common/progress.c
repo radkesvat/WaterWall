@@ -27,11 +27,11 @@ void authenticationclientScheduleSyncProgress(tunnel_t *t)
     authenticationclient_tstate_t *ts = tunnelGetState(t);
     mutexLock(&ts->control_mutex);
     const bool needed = ts->started && ! ts->stopping && ! ts->continuity_error && ts->authenticated && ts->connected &&
-                        ! ts->write_paused &&
+                        ! ts->write_paused && ts->pending_count < ts->max_pending_requests &&
                         (wloopNowMonotonicMS(getWorkerLoop(0)) >= authenticationclientRetryNotBeforeLocked(ts)) &&
                         ! ts->auth_in_flight && ! ts->pull_in_flight && ! ts->push_in_flight &&
-                        (ts->pull_required || ts->staging.active || ts->push_requested || ts->pending_batch != NULL ||
-                         ts->catchup_capture_needed || ts->catchup_entries_count != 0);
+                        (ts->pull_requested || ts->pull_required || ts->staging.active || ts->push_requested ||
+                         ts->pending_batch != NULL || ts->catchup_capture_needed || ts->catchup_entries_count != 0);
     mutexUnlock(&ts->control_mutex);
     if (! needed || ts->progress_timer != NULL)
         return;

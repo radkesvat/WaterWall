@@ -24,14 +24,21 @@ static master_pool_t   *messages;
 static tunnel_t        *client, *transport;
 static tunnel_chain_t  *chain;
 static unsigned         inits, finishes, depth, maximum_depth, other_work;
-static bool             fail_init, establish;
+static unsigned         sends, capacity_warnings;
+static bool             fail_init, establish, finish_payload;
 static uint32_t         last_id;
+static uint8_t          last_type, reply_type;
 static bool             inspect_authentication, refuse_serialization;
 static const cJSON     *authentication_json;
 static const char      *authentication_secret;
 static char            *authentication_text;
 static size_t           authentication_secret_length, authentication_text_length;
 static unsigned         wiped_json_secrets, wiped_texts, forwarded_authentication;
+
+/* Private send/rollback seams exercise capacity released before wire delivery. */
+bool authenticationclientSendRequest(tunnel_t *t, uint8_t request_type, const uint8_t *request_data,
+                                     uint32_t request_data_len);
+void authenticationclientRemovePendingById(tunnel_t *t, uint32_t correlation_id);
 
 char *__real_cJSON_PrintUnformatted(const cJSON *json);
 char *__wrap_cJSON_PrintUnformatted(const cJSON *json);
@@ -97,7 +104,8 @@ static void finish(tunnel_t *t, line_t *l)
 }
 static void payload(tunnel_t *t, line_t *l, sbuf_t *b)
 {
-    discard t;
+    ++sends;
+    last_type = ((const uint8_t *) sbufGetRawPtr(b))[68];
     memoryCopy(&last_id, (const uint8_t *) sbufGetRawPtr(b) + 69, 4);
     last_id = ntohl(last_id);
     if (inspect_authentication)
@@ -114,6 +122,8 @@ static void payload(tunnel_t *t, line_t *l, sbuf_t *b)
         ++forwarded_authentication;
     }
     lineReuseBuffer(l, b);
+    if (finish_payload)
+        tunnelPrevDownStreamFinish(t, l);
 }
 static void other(void *worker, void *a, void *b, void *c)
 {
@@ -133,8 +143,10 @@ static authenticationclient_tstate_t *setup(void)
 {
     atomicStoreU64(&clock_us, 100000000);
     inits = finishes = depth = maximum_depth = other_work = 0;
-    fail_init = establish = false;
-    retry_random          = 0;
+    sends = capacity_warnings = 0;
+    fail_init = establish = finish_payload = false;
+    reply_type                             = kAuthenticationClientResponseTypePong;
+    retry_random                           = 0;
     twfWorkerEnvSetup(&env, 8192, 0);
     messages = masterpoolCreateWithCapacity(16);
     workerMessagesInstallMasterPoolCallbacks(messages);
@@ -210,7 +222,7 @@ static void reply(uint32_t body, uint32_t id, bool valid)
     memoryCopy(sbufGetMutablePtr(b), &network, 4);
     if (valid)
     {
-        sbufGetMutablePtr(b)[20] = kAuthenticationClientResponseTypePong;
+        sbufGetMutablePtr(b)[20] = reply_type;
         network                  = htonl(id);
         memoryCopy(sbufGetMutablePtr(b) + 21, &network, 4);
     }
@@ -341,6 +353,100 @@ static void testPausedProgress(void)
     }
     authenticationclientTunnelDownStreamResume(client, ts->control_line);
     twfRequire(ts->pull_in_flight && ts->pending_count == 1, "Resume did not continue remembered synchronization");
+    teardown();
+}
+
+static void captureCapacityWarning(int level, const char *data, int length)
+{
+    discard level;
+    discard length;
+    if (strstr(data, "pending request table is full") != NULL)
+        ++capacity_warnings;
+}
+
+static void testPendingCapacityProgress(void)
+{
+    for (unsigned mode = 0; mode < 4; ++mode)
+    {
+        authenticationclient_tstate_t *ts = setup();
+        ts->max_pending_requests          = 1;
+        ts->request_timeout_ms            = mode == 0 ? 0 : 100;
+        authenticationclientOpenControlLine(client);
+        ts->connected = ts->authenticated = true;
+        ts->pull_requested = ts->pull_required = false;
+        twfRequire(authenticationclientSendPing(client), "capacity Ping failed");
+        const uint32_t ping     = last_id;
+        logger_handler original = getNetworkLoggerHandle();
+        loggerSetHandler(getNetworkLogger(), captureCapacityWarning);
+        authenticationclientRequestPull(client);
+        authenticationclientRequestPush(client);
+        for (unsigned i = 0; i < 20; ++i)
+        {
+            authenticationclientResumeSync(client);
+            authenticationclientScheduleSyncProgress(client);
+            pump(1);
+            twfRequire(sends == 1 && ts->pending_count == 1 && ts->progress_timer == NULL &&
+                           ts->pending_batch == NULL && ts->pull_requested && ts->push_requested,
+                       "full pending table sent, rebuilt a batch, lost demand or spun its progress timer");
+        }
+        loggerSetHandler(getNetworkLogger(), original);
+        twfRequire(capacity_warnings == 0, "ordinary pending capacity pressure emitted a warning");
+        wtimer_t *deadline = ts->request_timer;
+        reply(25, ping + 1, true);
+        twfRequire(sends == 1 && ts->pending_count == 1 && ts->progress_timer == NULL && ts->request_timer == deadline,
+                   "stale Pong freed capacity or invented a wakeup");
+        if (mode == 2)
+        {
+            reply_type = kAuthenticationClientResponseTypeSession;
+            reply(25, ping, true);
+            twfRequire(sends == 1 && ts->control_line == NULL &&
+                           ts->last_failure == kAuthenticationClientFailureInvalidResponse,
+                       "invalid matching response resumed queued work before semantic validation");
+        }
+        else if (mode == 3)
+        {
+            pump(80);
+            twfRequire(sends == 1 && ts->control_line == NULL &&
+                           ts->last_failure == kAuthenticationClientFailureTimeout,
+                       "full pending table prevented the absolute request timeout");
+        }
+        else
+        {
+            finish_payload = mode == 1;
+            reply(25, ping, true);
+            twfRequire(sends == 2 && last_type == kAuthenticationClientRequestTypeGetUsersPage &&
+                           (finish_payload ? ts->control_line == NULL : ts->pull_in_flight),
+                       "matching Pong did not autonomously resume queued work or handle synchronous Finish");
+        }
+        teardown();
+    }
+
+    authenticationclient_tstate_t *ts = setup();
+    ts->max_pending_requests          = 1;
+    authenticationclientOpenControlLine(client);
+    ts->connected = ts->authenticated = true;
+    ts->pull_required                 = false;
+    ts->pull_requested                = true;
+    twfRequire(! authenticationclientSendRequest(
+                   client, kAuthenticationClientRequestTypePing, NULL, kAuthenticationClientMaxRequestData + 1U) &&
+                   ts->pending_count == 0 && ts->progress_timer != NULL && sends == 0,
+               "local send rollback did not defer a capacity continuation");
+    pump(1);
+    twfRequire(sends == 1 && ts->pull_in_flight, "rollback continuation lost an explicit ordinary pull");
+    teardown();
+
+    ts = setup();
+    authenticationclientOpenControlLine(client);
+    ts->connected = ts->authenticated = true;
+    ts->pull_required                 = false;
+    ts->pull_requested                = true;
+    authenticationclientRemovePendingById(client, 999);
+    twfRequire(ts->progress_timer == NULL, "stale rollback correlation invented a continuation");
+    authenticationclientScheduleSyncProgress(client);
+    twfRequire(ts->progress_timer != NULL, "ordinary explicit pull was missing from runnable work");
+    authenticationclientTunnelOnQuiesceRequest(client, wwLifecycleProcessShutdown());
+    pump(1);
+    twfRequire(sends == 0 && ts->progress_timer == NULL, "quiescence rearmed capacity continuation");
     teardown();
 }
 
@@ -505,6 +611,7 @@ int main(void)
     testRetryProgress();
     testDeadlinesAndMalformed();
     testPausedProgress();
+    testPendingCapacityProgress();
     testRefusalClassificationAndDiagnostics();
     testOwnedAuthenticateCleanup();
     networkloggerDestroy();

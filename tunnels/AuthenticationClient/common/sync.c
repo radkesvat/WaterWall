@@ -15,6 +15,7 @@ static bool authenticationclientUsersLoaded(tunnel_t *t);
 bool authenticationclientRequestMayBeSentLocked(authenticationclient_tstate_t *ts, uint8_t request_type)
 {
     if (UNLIKELY(ts->stopping || ts->continuity_error || ! ts->connected || ts->write_paused ||
+                 ts->pending_count >= ts->max_pending_requests ||
                  (wloopNowMonotonicMS(getWorkerLoop(0)) < authenticationclientRetryNotBeforeLocked(ts)) ||
                  ts->control_line == NULL))
     {
@@ -325,5 +326,11 @@ void authenticationclientSyncTimerCallback(wtimer_t *timer)
     }
 
     ts->last_pull_sync_ms = now_ms;
-    discard authenticationclientSendGetAllUsers(t);
+    mutexLock(&ts->control_mutex);
+    const bool traversal_active = ts->staging.active || ts->pull_in_flight;
+    mutexUnlock(&ts->control_mutex);
+    /* Periodic demand joins the current traversal. Only explicit requests
+     * latch a subsequent traversal while the active cache still looks old. */
+    if (! traversal_active)
+        discard authenticationclientSendGetAllUsers(t);
 }

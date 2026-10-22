@@ -127,9 +127,9 @@ void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint8_t res
     }
     const uint64_t generation = ts->remote_revision_generation;
     mutexUnlock(&ts->control_mutex);
-    authenticationclientUpdateRequestTimer(t);
     if (! found)
         return; /* A stale correlation cannot enroll or settle accounting. */
+    authenticationclientUpdateRequestTimer(t);
     if (response_type == kAuthenticationClientResponseTypeError)
     {
         authenticationclientHandleError(t, l, request_type, data, data_len);
