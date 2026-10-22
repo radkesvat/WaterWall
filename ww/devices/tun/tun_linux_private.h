@@ -24,8 +24,8 @@ enum
     kTunOffloadPendingChargeLimit    = 8 * 1024 * 1024,
     kTunOffloadLogIntervalMs         = 5000,
 #endif
-    kLinuxRouteFlagUp      = 0x1,
-    kLinuxRouteFlagGateway = 0x2
+    kLinuxRouteFlagUp     = 0x1,
+    kLinuxRouteFlagReject = 0x200
 };
 
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in the reader session");

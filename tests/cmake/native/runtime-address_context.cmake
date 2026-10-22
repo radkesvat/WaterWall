@@ -284,6 +284,8 @@
       ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_config.c
       ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_io.c)
     target_link_options(tun_linux_command_test PRIVATE
+      "-Wl,--wrap=fopen"
+      "-Wl,--wrap=ioctl"
       "-Wl,--wrap=procRunArgvWithDeadline"
       "-Wl,--wrap=procCommandResultDrop"
     )

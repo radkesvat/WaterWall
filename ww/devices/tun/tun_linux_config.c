@@ -197,8 +197,8 @@ static bool tunDetectDefaultRouteV4(char *ifname, size_t ifname_len)
         discard use;
 
         if (fields == 8 && destination == 0 && mask == 0 &&
-            (flags & (kLinuxRouteFlagUp | kLinuxRouteFlagGateway)) == (kLinuxRouteFlagUp | kLinuxRouteFlagGateway) &&
-            metric < best_metric)
+            (flags & (kLinuxRouteFlagUp | kLinuxRouteFlagReject)) == kLinuxRouteFlagUp &&
+            (! found || metric < best_metric))
         {
             stringCopyN(best_iface, iface, sizeof(best_iface));
             best_metric = metric;
@@ -252,15 +252,14 @@ static bool tunDetectDefaultRouteV6(char *ifname, size_t ifname_len)
                             &use,
                             &flags,
                             iface);
-        discard source;
-        discard source_prefix;
         discard next_hop;
         discard refcnt;
         discard use;
 
-        if (fields == 10 && destination_prefix == 0 && tunDefaultRouteHexIsZero(destination) &&
-            (flags & (kLinuxRouteFlagUp | kLinuxRouteFlagGateway)) == (kLinuxRouteFlagUp | kLinuxRouteFlagGateway) &&
-            metric < best_metric)
+        if (fields == 10 && destination_prefix == 0 && tunDefaultRouteHexIsZero(destination) && source_prefix == 0 &&
+            tunDefaultRouteHexIsZero(source) &&
+            (flags & (kLinuxRouteFlagUp | kLinuxRouteFlagReject)) == kLinuxRouteFlagUp &&
+            (! found || metric < best_metric))
         {
             stringCopyN(best_iface, iface, sizeof(best_iface));
             best_metric = metric;
