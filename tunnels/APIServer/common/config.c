@@ -1,24 +1,5 @@
 #include "APIServer/structure.h"
 
-static bool knownKeys(const cJSON *object, const char *const *names, size_t count)
-{
-    if (! cJSON_IsObject(object))
-        return false;
-    for (const cJSON *item = object->child; item; item = item->next)
-    {
-        size_t i = 0;
-        for (; i < count; ++i)
-            if (strcmp(item->string, names[i]) == 0)
-                break;
-        if (i == count)
-            return false;
-        for (const cJSON *prior = object->child; prior != item; prior = prior->next)
-            if (strcmp(prior->string, item->string) == 0)
-                return false;
-    }
-    return true;
-}
-
 static const char *label(const cJSON *object, const char *key, size_t bound)
 {
     const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, key);
@@ -51,6 +32,7 @@ bool apiserverLoadSettings(apiserver_tstate_t *ts, const cJSON *settings)
                                                   "max_jobs",
                                                   "handler_working_memory",
                                                   "max_memory",
+                                                  "max_unauthenticated_memory",
                                                   "frame_timeout_ms",
                                                   "request_timeout_ms",
                                                   "output_timeout_ms",
@@ -59,7 +41,7 @@ bool apiserverLoadSettings(apiserver_tstate_t *ts, const cJSON *settings)
     static const char *const permission_keys[] = {"config", "node", "operations"};
     const size_t             mib               = 1024U * 1024U;
     api_limits_t            *l                 = &ts->limits;
-    if (! knownKeys(settings, settings_keys, sizeof(settings_keys) / sizeof(*settings_keys)) ||
+    if (! apiserverObjectKeysValid(settings, settings_keys, ARRAY_SIZE(settings_keys)) ||
         ! limit(settings, "max_request_envelope", mib, 64 * mib, &l->max_request_envelope) ||
         ! limit(settings, "max_response_envelope", mib, 64 * mib, &l->max_response_envelope) ||
         ! limit(settings, "max_input_bytes", 2 * mib, 256 * mib, &l->max_input_bytes) ||
@@ -70,6 +52,12 @@ bool apiserverLoadSettings(apiserver_tstate_t *ts, const cJSON *settings)
         ! limit(settings, "max_jobs", 64, 65536, &l->max_jobs) ||
         ! limit(settings, "handler_working_memory", 8 * mib, 1024 * mib, &l->handler_working_memory) ||
         ! limit(settings, "max_memory", 64 * mib, 2048 * mib, &l->max_memory))
+        return false;
+    if (! limit(settings,
+                "max_unauthenticated_memory",
+                max(l->max_line_memory, l->max_memory / 4),
+                l->max_memory,
+                &l->max_unauthenticated_memory))
         return false;
     size_t timeout;
 #define API_TIMEOUT(field, value)                                                                                      \
@@ -94,6 +82,8 @@ bool apiserverLoadSettings(apiserver_tstate_t *ts, const cJSON *settings)
     if (l->max_input_bytes < l->max_request_envelope + 4 || l->max_line_memory < line_geometry ||
         l->max_response_envelope < 1024 ||
         l->handler_working_memory < kApiMinimumResultAllowance + kApiHandlerMetadataAllowance ||
+        l->max_unauthenticated_memory < l->max_line_memory ||
+        l->max_unauthenticated_memory > l->max_memory - min(l->max_memory, job_geometry) ||
         l->max_memory < l->max_line_memory + job_geometry)
         return false;
     const cJSON *clients      = cJSON_GetObjectItemCaseSensitive(settings, "clients");
@@ -105,7 +95,8 @@ bool apiserverLoadSettings(apiserver_tstate_t *ts, const cJSON *settings)
         const char *name  = label(entry, "name", 256);
         const char *token = label(entry, "token", 64);
         uint8_t     bytes[32];
-        if (! knownKeys(entry, client_keys, 3) || ! name || ! apiserverTokenDecode(token, bytes))
+        if (! apiserverObjectKeysValid(entry, client_keys, ARRAY_SIZE(client_keys)) || ! name ||
+            ! apiserverTokenDecode(token, bytes))
             return false;
         for (api_client_t *prior = ts->clients; prior; prior = prior->next)
             if (strcmp(prior->name, name) == 0 || wCryptoEqual(prior->token, bytes, sizeof(bytes)))
@@ -125,8 +116,8 @@ bool apiserverLoadSettings(apiserver_tstate_t *ts, const cJSON *settings)
             const char  *node            = label(permission, "node", 256);
             const cJSON *operations      = cJSON_GetObjectItemCaseSensitive(permission, "operations");
             int          operation_count = cJSON_GetArraySize(operations);
-            if (! knownKeys(permission, permission_keys, 3) || ! config || ! node || ! cJSON_IsArray(operations) ||
-                operation_count < 1 || operation_count > 64)
+            if (! apiserverObjectKeysValid(permission, permission_keys, ARRAY_SIZE(permission_keys)) || ! config ||
+                ! node || ! cJSON_IsArray(operations) || operation_count < 1 || operation_count > 64)
                 return false;
             for (const cJSON *op = operations->child; op; op = op->next)
             {

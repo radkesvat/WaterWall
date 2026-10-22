@@ -62,7 +62,8 @@ Replace the token placeholder with a fresh random token, for example from
 from traffic-user passwords and AuthenticationClient's upstream secret.
 Diagnostics remain accessible while AuthenticationClient is offline or rejected.
 
-APIServer clears its owned decoded bodies, request tokens, buffered frame and response bytes,
+APIServer clears each decoded request token immediately after credential verification, including refusal.
+Schema-invalid requests clear unused tokens during parsing. It also clears owned decoded bodies, buffered frame and response bytes,
 and configured binary tokens before releasing them. Consumed or discarded input bytes are cleared
 before their buffers return to the pool. Complete parsed JSON trees are cleared on both acceptance
 and later validation refusal. Detached API jobs clear their owned request/response copies at final
@@ -104,6 +105,7 @@ All fields below are positive finite integers. Startup rejects inconsistent geom
 | `max_jobs` | 64 | Admitted unfinished jobs per instance. |
 | `handler_working_memory` | 8388608 | Reserved temporary allowance for each handler. |
 | `max_memory` | 67108864 | Aggregate retained memory and working reservations per instance. |
+| `max_unauthenticated_memory` | 16777216 | Aggregate retained memory for connections that have not supplied valid credentials. |
 | `frame_timeout_ms` | 15000 | Absolute frame assembly deadline from first-fragment arrival, including queue residence. |
 | `request_timeout_ms` | 10000 | Complete-request admission through response publication, including FIFO and worker wait. |
 | `output_timeout_ms` | 15000 | Response publication through transport handoff, including paused time. |
@@ -131,6 +133,14 @@ advisory: late, coalesced or noncooperating input still faces the unchanged hard
 `max_jobs=64` is a ceiling, not guaranteed concurrent capacity. With current defaults, the shared 64 MiB memory domain
 fits roughly seven small jobs with their 8 MiB handler allowances before substantial session storage; retained input,
 output and actual allocation geometry can reduce that count. Handler working allowance remains independent of the job ceiling.
+
+Before a connection supplies valid credentials, every retained allocation also consumes the separate
+`max_unauthenticated_memory` allowance. Its default is the larger of `max_line_memory` and one quarter of
+`max_memory`; startup requires room for one complete line and leaves aggregate headroom for a handler job.
+Successful credential verification releases this extra charge, including when the requested operation is forbidden.
+Every later envelope still verifies its own credentials. Anonymous capacity exhaustion closes the affected line;
+existing authenticated connections retain access to the remaining aggregate budget. Session-count and CPU limits
+remain shared, so endpoint reachability restrictions are still useful.
 
 Working memory must accommodate the actual worker-pool allocation for a 4096-byte result plus 8192 bytes of parsing metadata. A smaller encoded response cap can still return a bounded `response_too_large` error for a valid result.
 
@@ -170,7 +180,8 @@ before deciding whether to submit another request.
 
 ## Lifecycle And Metadata
 
-APIServer borrows every accepted normal line and never calls `lineDestroy()`. It initializes session state before establishing the previous side and produces replies downstream. One operation executes at a time per connection; admitted pipelined requests wait in FIFO order. Output Pause/Resume controls its reply producer while hard budgets and deadlines remain active. Detached cross-worker jobs carry session/request tokens; only the connection's worker resolves a live session and accesses its line. Shutdown closes global API admission before target quiescence, and actual line owners drain accepted lines before final registry destruction.
+APIServer borrows every accepted normal line and never calls `lineDestroy()`. It initializes session state before establishing the previous side and produces replies downstream. Keep client pipelining shallow enough that queued requests can finish within `request_timeout_ms`.
+A queued timeout closes the connection to preserve response order. One operation executes at a time per connection; admitted pipelined requests wait in FIFO order. Output Pause/Resume controls its reply producer while hard budgets and deadlines remain active. Detached cross-worker jobs carry session/request tokens; only the connection's worker resolves a live session and accesses its line. Shutdown closes global API admission before target quiescence, and actual line owners drain accepted lines before final registry destruction.
 
 | Property | Value |
 | --- | --- |

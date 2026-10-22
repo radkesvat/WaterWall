@@ -41,6 +41,7 @@ typedef struct api_limits_s
     size_t   max_jobs;
     size_t   handler_working_memory;
     size_t   max_memory;
+    size_t   max_unauthenticated_memory;
     uint32_t frame_timeout_ms;
     uint32_t request_timeout_ms;
     uint32_t output_timeout_ms;
@@ -81,6 +82,7 @@ typedef struct apiserver_lstate_s
     api_request_t              *requests;
     api_request_t              *requests_tail;
     size_t                      request_count;
+    size_t                      request_wire_bytes;
     node_api_job_t             *job;
     uint8_t                    *output;
     size_t                      output_size;
@@ -90,6 +92,7 @@ typedef struct apiserver_lstate_s
     bool                        processing : 1;
     bool                        close_after_output : 1;
     bool                        quiesced : 1;
+    bool                        authenticated : 1;
 } apiserver_lstate_t;
 
 typedef struct apiserver_tstate_s
@@ -97,6 +100,7 @@ typedef struct apiserver_tstate_s
     api_limits_t         limits;
     api_client_t        *clients;
     node_api_domain_t   *domain;
+    node_api_domain_t   *unauthenticated_domain;
     apiserver_lstate_t **sessions;
     atomic_uint          session_count;
     atomic_ullong        serial;
@@ -105,8 +109,10 @@ typedef struct apiserver_tstate_s
 
 bool        apiserverLoadSettings(apiserver_tstate_t *ts, const cJSON *settings);
 void        apiserverFreeSettings(apiserver_tstate_t *ts);
+/* Consumes/wipes the decoded token. authenticated distinguishes valid credentials
+ * from later selector/permission refusals; every envelope still verifies its token. */
 const char *apiserverAuthorize(apiserver_tstate_t *ts, api_request_t *request, tunnel_t **target,
-                               const node_api_operation_t **operation);
+                               const node_api_operation_t **operation, bool *authenticated);
 
 /* Owner-worker session storage. Failed initialization leaves no reservation or
  * registry entry; the Init callback must notify the source owner of rejection. */
@@ -114,6 +120,7 @@ bool     apiserverLinestateInitialize(tunnel_t *t, line_t *line);
 void     apiserverLinestateDestroy(apiserver_lstate_t *ls);
 bool     apiserverReserve(apiserver_lstate_t *ls, size_t charge);
 void     apiserverRelease(apiserver_lstate_t *ls, size_t charge);
+void     apiserverMarkAuthenticated(apiserver_lstate_t *ls);
 void     apiserverAbandonJob(apiserver_lstate_t *ls);
 uint64_t apiserverNextToken(apiserver_tstate_t *ts);
 

@@ -1,6 +1,6 @@
 #include "APIServer/codec.h"
 
-static bool keys(const cJSON *object, const char *const *allowed, size_t count)
+bool apiserverObjectKeysValid(const cJSON *object, const char *const *allowed, size_t count)
 {
     if (! cJSON_IsObject(object))
         return false;
@@ -12,6 +12,9 @@ static bool keys(const cJSON *object, const char *const *allowed, size_t count)
                 break;
         if (i == count)
             return false;
+        for (const cJSON *prior = object->child; prior != item; prior = prior->next)
+            if (strcmp(prior->string, item->string) == 0)
+                return false;
     }
     return true;
 }
@@ -65,17 +68,18 @@ void apiserverRequestParse(api_request_t *r, const char *bytes, size_t length)
         goto done;
     if (! stringField(json, "id", r->id, sizeof(r->id)))
         goto done;
-    if (! keys(json, outer, sizeof(outer) / sizeof(*outer)))
+    if (! apiserverObjectKeysValid(json, outer, ARRAY_SIZE(outer)))
         goto done;
     const cJSON *selector = cJSON_GetObjectItemCaseSensitive(json, "selector");
     const cJSON *config   = cJSON_GetObjectItemCaseSensitive(selector, "config");
-    if (! keys(selector, selector_keys, 2) || ! stringField(selector, "node", r->node, sizeof(r->node)) ||
+    if (! apiserverObjectKeysValid(selector, selector_keys, ARRAY_SIZE(selector_keys)) ||
+        ! stringField(selector, "node", r->node, sizeof(r->node)) ||
         (config && ! stringField(selector, "config", r->config, sizeof(r->config))) ||
         ! stringField(json, "operation", r->operation, sizeof(r->operation)) ||
         ! stringField(json, "content_type", r->content_type, sizeof(r->content_type)))
         goto done;
     const cJSON *auth = cJSON_GetObjectItemCaseSensitive(json, "auth");
-    if (cJSON_IsObject(auth) && ! keys(auth, auth_keys, 2))
+    if (cJSON_IsObject(auth) && ! apiserverObjectKeysValid(auth, auth_keys, ARRAY_SIZE(auth_keys)))
         goto done;
     const cJSON *token = cJSON_GetObjectItemCaseSensitive(auth, "token");
     if (! stringField(auth, "client", r->client, sizeof(r->client)) || ! cJSON_IsString(token) ||
@@ -114,6 +118,8 @@ void apiserverRequestParse(api_request_t *r, const char *bytes, size_t length)
     r->error = NULL;
     r->close = false;
 done:
+    if (r->error != NULL)
+        memorySecureZero(r->token, sizeof(r->token));
     jsonWipeStrings(json);
     cJSON_Delete(json);
 }
@@ -282,9 +288,9 @@ api_response_measure_t apiserverResponseMeasure(const char *id, const char *erro
 size_t apiserverResponseSize(const char *id, const char *error, const node_api_operation_t *op, enum api_result_e code,
                              const uint8_t *body, size_t length)
 {
-    writer_t w = {0};
-    response(&w, id, error, op, code, body, length);
-    return w.size;
+    size_t  size;
+    discard apiserverResponseMeasure(id, error, op, code, body, length, &size);
+    return size;
 }
 
 void apiserverResponseWrite(char *dest, const char *id, const char *error, const node_api_operation_t *op,

@@ -1,7 +1,7 @@
 #include "APIServer/structure.h"
 
 const char *apiserverAuthorize(apiserver_tstate_t *ts, api_request_t *r, tunnel_t **target,
-                               const node_api_operation_t **operation)
+                               const node_api_operation_t **operation, bool *authenticated)
 {
     api_client_t *client = ts->clients;
     for (; client; client = client->next)
@@ -9,6 +9,8 @@ const char *apiserverAuthorize(apiserver_tstate_t *ts, api_request_t *r, tunnel_
             break;
     uint8_t unknown[32] = {0};
     bool    equal       = wCryptoEqual(client ? client->token : unknown, r->token, 32);
+    memorySecureZero(r->token, sizeof(r->token));
+    *authenticated = client != NULL && equal;
     if (! client || ! equal)
     {
         r->close = true;

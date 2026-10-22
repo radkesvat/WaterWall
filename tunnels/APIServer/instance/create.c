@@ -38,6 +38,12 @@ tunnel_t *apiserverTunnelCreate(node_t *node)
         apiserverDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
+    ts->unauthenticated_domain = nodeApiDomainCreate(ts->limits.max_unauthenticated_memory, 1, apiserverComplete, t);
+    if (! ts->unauthenticated_domain)
+    {
+        apiserverDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
     ts->sessions = memoryAllocateZero(getWorkersCount() * sizeof(*ts->sessions));
     nodeApiRequireEnabled();
     return t;

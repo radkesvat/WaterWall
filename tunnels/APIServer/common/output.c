@@ -13,8 +13,9 @@ bool apiserverPublishResponse(apiserver_lstate_t *ls, const char *error, const n
         error  = measured == kApiResponseInvalid ? "invalid_response" : "response_too_large";
         length = apiserverResponseSize(ls->requests->id, error, NULL, kApiResultError, NULL, 0);
     }
-    if (length > ts->limits.max_response_envelope || length > UINT32_MAX || length > SIZE_MAX - 4 ||
-        ! apiserverReserve(ls, length + 4))
+    /* The bounded fallback error fits even the minimum configured envelope. */
+    assert(length <= ts->limits.max_response_envelope && length <= UINT32_MAX && length <= SIZE_MAX - 4);
+    if (! apiserverReserve(ls, length + 4))
         return false;
     ls->output_size = length + 4;
     ls->output      = memoryAllocate(ls->output_size);

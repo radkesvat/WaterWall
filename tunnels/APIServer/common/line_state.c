@@ -4,11 +4,19 @@
 bool apiserverReserve(apiserver_lstate_t *ls, size_t charge)
 {
     apiserver_tstate_t *ts = tunnelGetState(ls->tunnel);
-    if (! nodeApiDomainTryReserve(ts->domain, charge))
+    if (! ls->authenticated && ! nodeApiDomainTryReserve(ts->unauthenticated_domain, charge))
         return false;
+    if (! nodeApiDomainTryReserve(ts->domain, charge))
+    {
+        if (! ls->authenticated)
+            nodeApiDomainRelease(ts->unauthenticated_domain, charge);
+        return false;
+    }
     if (! bufferbudgetTryAcquire(&ls->budget, (buffer_budget_cost_t) {.charge = charge}))
     {
         nodeApiDomainRelease(ts->domain, charge);
+        if (! ls->authenticated)
+            nodeApiDomainRelease(ts->unauthenticated_domain, charge);
         return false;
     }
     return true;
@@ -19,6 +27,17 @@ void apiserverRelease(apiserver_lstate_t *ls, size_t charge)
     apiserver_tstate_t *ts = tunnelGetState(ls->tunnel);
     bufferbudgetRelease(&ls->budget, (buffer_budget_cost_t) {.charge = charge});
     nodeApiDomainRelease(ts->domain, charge);
+    if (! ls->authenticated)
+        nodeApiDomainRelease(ts->unauthenticated_domain, charge);
+}
+
+void apiserverMarkAuthenticated(apiserver_lstate_t *ls)
+{
+    if (ls->authenticated)
+        return;
+    apiserver_tstate_t *ts = tunnelGetState(ls->tunnel);
+    nodeApiDomainRelease(ts->unauthenticated_domain, bufferbudgetGetUsage(&ls->budget).charge);
+    ls->authenticated = true;
 }
 
 void apiserverAbandonJob(apiserver_lstate_t *ls)

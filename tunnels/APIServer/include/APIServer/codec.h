@@ -2,6 +2,9 @@
 
 #include "wwapi.h"
 
+/* Require an object containing only permitted, uniquely named fields. */
+bool apiserverObjectKeysValid(const cJSON *object, const char *const *allowed, size_t count);
+
 typedef struct api_request_s
 {
     struct api_request_s *next;

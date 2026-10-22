@@ -31,6 +31,7 @@ static void check(cJSON *settings, bool expected)
         require(ts.limits.max_request_envelope == 1048576 && ts.limits.max_response_envelope == 1048576,
                 "default envelope limits");
         require(ts.limits.max_line_memory == 8388608 && ts.limits.max_memory == 67108864, "default memory geometry");
+        require(ts.limits.max_unauthenticated_memory == 16777216, "default anonymous memory budget");
     }
     apiserverFreeSettings(&ts);
     require(ts.clients == NULL, "partial policy cleanup");
@@ -112,6 +113,7 @@ static void limitValidation(void)
                                          "max_jobs",
                                          "handler_working_memory",
                                          "max_memory",
+                                         "max_unauthenticated_memory",
                                          "frame_timeout_ms",
                                          "request_timeout_ms",
                                          "output_timeout_ms",
@@ -129,14 +131,21 @@ static void limitValidation(void)
             check(json, false);
         }
     }
-    static const char *const geometry[] = {
-        "max_response_envelope", "max_input_bytes", "max_line_memory", "max_memory", "handler_working_memory"};
+    static const char *const geometry[] = {"max_response_envelope",
+                                           "max_input_bytes",
+                                           "max_line_memory",
+                                           "max_memory",
+                                           "handler_working_memory",
+                                           "max_unauthenticated_memory"};
     for (size_t i = 0; i < ARRAY_SIZE(geometry); ++i)
     {
         cJSON *json = validSettings();
         cJSON_AddItemToObject(json, geometry[i], cJSON_CreateInt64(1));
         check(json, false);
     }
+    cJSON *json = validSettings();
+    cJSON_AddNumberToObject(json, "max_unauthenticated_memory", 67108864);
+    check(json, false); /* Anonymous storage must leave room for handler admission. */
 }
 
 static void gatewayIdentityValidation(void)

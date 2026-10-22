@@ -359,6 +359,8 @@ static void closeLine(void)
     size_t              bytes, jobs;
     nodeApiDomainGetUsage(ts->domain, &bytes, &jobs);
     require(bytes == 0 && jobs == 0 && atomicLoad(&ts->session_count) == 0, "API reservation/session leak");
+    nodeApiDomainGetUsage(ts->unauthenticated_domain, &bytes, &jobs);
+    require(bytes == 0 && jobs == 0, "API unauthenticated reservation leak");
     require(getWorkerLoop(0)->ntimers == timer_baseline, "API timer leak");
     api->onDestroy(api, wwLifecycleStartupRollback());
     nodeApiUnregister(&target);
@@ -1050,15 +1052,23 @@ static void preparedDescriptor(void)
     while (permission && strcmp(permission->operation, "echo") != 0)
         permission = permission->next;
     require(permission != NULL, "prepared echo permission missing");
-    require(request_state.error == NULL && apiserverAuthorize(ts, &request_state, &resolved, &operation) == NULL &&
-                resolved == &target && operation == permission->descriptor,
+    bool authenticated = false;
+    require(request_state.error == NULL &&
+                apiserverAuthorize(ts, &request_state, &resolved, &operation, &authenticated) == NULL &&
+                authenticated && resolved == &target && operation == permission->descriptor,
             "authorization did not reuse its prepared immutable descriptor");
+    for (size_t i = 0; i < sizeof(request_state.token); ++i)
+        require(request_state.token[i] == 0, "authorization retained decoded token");
+    memcpy(request_state.token, ts->clients->token, sizeof(request_state.token));
     strcpy(request_state.operation, "unlisted");
-    require(strcmp(apiserverAuthorize(ts, &request_state, &resolved, &operation), "forbidden") == 0,
+    require(strcmp(apiserverAuthorize(ts, &request_state, &resolved, &operation, &authenticated), "forbidden") == 0 &&
+                authenticated,
             "absent exact permission used an unsupported-operation fallback");
+    memcpy(request_state.token, ts->clients->token, sizeof(request_state.token));
     request_state.config[0] = '\0';
     strcpy(request_state.node, "duplicate");
-    require(strcmp(apiserverAuthorize(ts, &request_state, &resolved, &operation), "ambiguous_target") == 0,
+    require(strcmp(apiserverAuthorize(ts, &request_state, &resolved, &operation, &authenticated), "ambiguous_target") ==
+                0,
             "allowlist filtering suppressed global selector ambiguity");
     memoryFree(request_state.body);
     closeLine();
@@ -1293,6 +1303,37 @@ static void lateCompletionAndReuse(void)
     closeLine();
 }
 
+static void unauthenticatedBudget(void)
+{
+    openLine();
+    apiserver_tstate_t *ts = tunnelGetState(api);
+    sendRequest(request);
+    require(state()->authenticated && state()->job != NULL, "valid credentials did not promote session");
+    size_t bytes, jobs;
+    nodeApiDomainGetUsage(ts->unauthenticated_domain, &bytes, &jobs);
+    require(bytes == 0 && jobs == 0, "authenticated session remained charged as anonymous");
+    for (size_t i = 0; i < sizeof(state()->requests->token); ++i)
+        require(state()->requests->token[i] == 0, "queued job retained decoded token");
+    line_t *authenticated = line;
+    secondLine();
+    require(! state()->authenticated, "new line inherited authentication");
+    nodeApiDomainGetUsage(ts->unauthenticated_domain, &bytes, &jobs);
+    const size_t reserved = ts->limits.max_unauthenticated_memory - bytes;
+    require(nodeApiDomainTryReserve(ts->unauthenticated_domain, reserved), "anonymous budget fixture");
+    const uint8_t partial = 0;
+    sendBytes(&partial, 1);
+    require(! lineIsAlive(line) && lineIsAlive(authenticated), "anonymous refusal closed an authenticated line");
+    nodeApiDomainGetUsage(ts->unauthenticated_domain, &bytes, &jobs);
+    require(bytes == reserved && jobs == 0, "anonymous refusal leaked reservations");
+    releaseLine(line);
+    line = authenticated;
+    sendRequest(request);
+    settle(2);
+    require(lineIsAlive(line), "anonymous pressure prevented authenticated jobs");
+    nodeApiDomainRelease(ts->unauthenticated_domain, reserved);
+    closeLine();
+}
+
 static void partialOutputExpiry(void)
 {
     char *large = changedRequest("operation", "large");
@@ -1396,6 +1437,7 @@ int main(void)
     TEST_RUN_CASE(timerReuse);
     TEST_RUN_CASE(deadlinesAndRefusal);
     TEST_RUN_CASE(hardLimits);
+    TEST_RUN_CASE(unauthenticatedBudget);
     TEST_RUN_CASE(lateCompletionAndReuse);
     TEST_RUN_CASE(partialOutputExpiry);
     TEST_RUN_CASE(shutdownCase);

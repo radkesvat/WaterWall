@@ -38,7 +38,12 @@ static bool startRequest(apiserver_lstate_t *ls)
     const node_api_operation_t *op     = NULL;
     const char                 *error  = r->error;
     if (! error)
-        error = apiserverAuthorize(ts, r, &target, &op);
+    {
+        bool authenticated = false;
+        error              = apiserverAuthorize(ts, r, &target, &op, &authenticated);
+        if (authenticated)
+            apiserverMarkAuthenticated(ls);
+    }
     if (error)
         return apiserverPublishResponse(ls, error, NULL, kApiResultError, NULL, 0);
     ls->request_token = apiserverNextToken(ts);
@@ -78,16 +83,7 @@ static uint64_t minimum(uint64_t current, uint64_t value)
 
 bool apiserverArmTimer(apiserver_lstate_t *ls)
 {
-    if (ls->quiesced)
-    {
-        if (ls->timer)
-        {
-            weventSetUserData(ls->timer, NULL);
-            wtimerDelete(ls->timer);
-            ls->timer = NULL;
-        }
-        return true;
-    }
+    assert(! ls->quiesced);
     apiserver_tstate_t *ts  = tunnelGetState(ls->tunnel);
     uint64_t            now = nodeApiNowMs();
     uint64_t            due = UINT64_MAX;
@@ -161,12 +157,8 @@ static bool pressure(apiserver_lstate_t *ls)
      * this frame (or any permitted next frame before its header is known).
      * Raw/partial bytes already counted in input_bytes are part of that frame,
      * not an additional missing-input charge. The FIFO is count-bounded. */
-    size_t completed_bytes = 0;
-    for (const api_request_t *r = ls->requests; r != NULL; r = r->next)
-    {
-        assert(r->wire_size <= ls->input_bytes - completed_bytes);
-        completed_bytes += r->wire_size;
-    }
+    const size_t completed_bytes = ls->request_wire_bytes;
+    assert(completed_bytes <= ls->input_bytes);
     const size_t next_frame =
         (ls->header_size == sizeof(ls->header) ? ls->frame_size : ts->limits.max_request_envelope) + sizeof(ls->header);
     assert(next_frame <= ts->limits.max_input_bytes);
@@ -175,7 +167,7 @@ static bool pressure(apiserver_lstate_t *ls)
         pressure_bytes >= ts->limits.max_input_bytes - ts->limits.max_input_bytes / 4 ||
         ls->input_fragments >= ts->limits.max_input_fragments - ts->limits.max_input_fragments / 4)
         paused = true;
-    else if (! needs_room && ls->request_count <= ts->limits.max_queued_requests / 2 &&
+    else if (ls->request_count <= ts->limits.max_queued_requests / 2 &&
              pressure_bytes <= ts->limits.max_input_bytes / 2 &&
              ls->input_fragments <= ts->limits.max_input_fragments / 2)
         paused = false;

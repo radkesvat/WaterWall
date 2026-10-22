@@ -4,11 +4,13 @@ void apiserverReleaseRequest(apiserver_lstate_t *ls)
 {
     api_request_t *request = ls->requests;
     assert(request != NULL && ls->input_bytes >= request->wire_size);
+    assert(ls->request_wire_bytes >= request->wire_size);
     ls->requests = request->next;
     if (! ls->requests)
         ls->requests_tail = NULL;
     --ls->request_count;
     ls->input_bytes -= request->wire_size;
+    ls->request_wire_bytes -= request->wire_size;
     apiserverRelease(ls, request->charge);
     apiserverRequestClear(request);
     memoryFree(request);
@@ -22,6 +24,8 @@ static void appendRequest(apiserver_lstate_t *ls, api_request_t *r)
         ls->requests = r;
     ls->requests_tail = r;
     ++ls->request_count;
+    assert(r->wire_size <= ls->input_bytes - ls->request_wire_bytes);
+    ls->request_wire_bytes += r->wire_size;
 }
 
 bool apiserverFramingError(apiserver_lstate_t *ls, const char *error)

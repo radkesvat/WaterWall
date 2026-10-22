@@ -7,6 +7,8 @@ void apiserverDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
     assert(atomic_load(&ts->session_count) == 0);
     if (ts->domain)
         nodeApiDomainDestroy(ts->domain);
+    if (ts->unauthenticated_domain)
+        nodeApiDomainDestroy(ts->unauthenticated_domain);
     memoryFree(ts->sessions);
     apiserverFreeSettings(ts);
     tunnelDestroy(t);
