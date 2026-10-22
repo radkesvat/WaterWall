@@ -789,35 +789,57 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     if (security == NULL)
         goto done;
     SECURITY_ATTRIBUTES sa = {sizeof(sa), security, FALSE};
+    wchar_t             dir_fmt[64];
+    lazyLoadWideString(transf_waterwall_directory_format,
+                       sizeof(transf_waterwall_directory_format),
+                       dir_fmt,
+                       sizeof(dir_fmt) / sizeof(wchar_t));
     for (unsigned attempt = 0; attempt < 32; ++attempt)
     {
         if (! bootstrapContinue(stop))
+        {
+            SecureZeroMemory(dir_fmt, sizeof(dir_fmt));
             goto done;
+        }
         LARGE_INTEGER counter;
         QueryPerformanceCounter(&counter);
         if (swprintf(directory,
                      32768,
-                     L"%lsWaterwall-%lu-%llx-%u",
+                     dir_fmt,
                      root,
                      GetCurrentProcessId(),
                      (unsigned long long) counter.QuadPart,
                      attempt) < 0)
+        {
+            SecureZeroMemory(dir_fmt, sizeof(dir_fmt));
             goto done;
+        }
         if (CreateDirectoryW(directory, &sa))
         {
             owns_directory = 1;
             break;
         }
         if (GetLastError() != ERROR_ALREADY_EXISTS)
+        {
+            SecureZeroMemory(dir_fmt, sizeof(dir_fmt));
             goto done;
+        }
     }
+    SecureZeroMemory(dir_fmt, sizeof(dir_fmt));
     if (! owns_directory)
         goto done;
     directory_lock = lockDirectory(directory);
     if (directory_lock == INVALID_HANDLE_VALUE || ! GetFileInformationByHandle(directory_lock, &info) ||
         (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
         goto done;
-    if (swprintf(executable, 32768, L"%ls\\waterwall_application.exe", directory) < 0)
+    wchar_t app_exe[64];
+    lazyLoadWideString(transf_waterwall_application_exe,
+                       sizeof(transf_waterwall_application_exe),
+                       app_exe,
+                       sizeof(app_exe) / sizeof(wchar_t));
+    int exe_len = swprintf(executable, 32768, L"%ls\\%ls", directory, app_exe);
+    SecureZeroMemory(app_exe, sizeof(app_exe));
+    if (exe_len < 0)
         goto done;
     operation = (lazy_str_t) LAZY_STR(op_writing_restored_executable);
     file      = CreateFileW(executable, GENERIC_WRITE, 0, &sa, CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY, NULL);

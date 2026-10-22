@@ -175,4 +175,41 @@ static inline const char *lazyStr(const lazy_str_t *str, char *buf, size_t buf_s
     return lazyLoadString(str->transf_data, str->len, buf, buf_size);
 }
 
+static inline const wchar_t *lazyLoadWideString(const uint8_t *transf_data, size_t len, wchar_t *buf, size_t buf_chars)
+{
+    if (transf_data == NULL || len == 0 || len >= buf_chars)
+    {
+        if (buf_chars > 0)
+            buf[0] = L'\0';
+        return L"";
+    }
+    char abuf[256];
+    if (len >= sizeof(abuf))
+    {
+        if (buf_chars > 0)
+            buf[0] = L'\0';
+        return L"";
+    }
+    memcpy(abuf, transf_data, len);
+    transform((uint8_t *) abuf, len);
+    abuf[len] = '\0';
+
+    for (size_t i = 0; i <= len; i++)
+        buf[i] = (wchar_t) (unsigned char) abuf[i];
+
+    SecureZeroMemory(abuf, sizeof(abuf));
+    return buf;
+}
+
+static inline const wchar_t *lazyWideStr(const lazy_str_t *str, wchar_t *buf, size_t buf_chars)
+{
+    if (str == NULL)
+    {
+        if (buf_chars > 0)
+            buf[0] = L'\0';
+        return L"";
+    }
+    return lazyLoadWideString(str->transf_data, str->len, buf, buf_chars);
+}
+
 #endif /* WW_LAZY_LOADER_H */

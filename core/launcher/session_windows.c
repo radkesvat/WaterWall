@@ -10,6 +10,7 @@
 #include <wchar.h>
 
 static lazy_dll_t lazy_kernel32 = {transf_kernel32, sizeof(transf_kernel32), NULL};
+static lazy_dll_t lazy_advapi32 = {transf_advapi32, sizeof(transf_advapi32), NULL};
 
 LAZY_WRAPPER(HANDLE, NULL, lazy_kernel32, CreateJobObjectW, (LPSECURITY_ATTRIBUTES lpJobAttributes, LPCWSTR lpName),
              (lpJobAttributes, lpName))
@@ -29,6 +30,8 @@ LAZY_WRAPPER(HANDLE, NULL, lazy_kernel32, OpenProcess, (DWORD dwDesiredAccess, B
 LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, ReadProcessMemory,
              (HANDLE hProcess, LPCVOID lpBaseAddress, LPVOID lpBuffer, SIZE_T nSize, SIZE_T *lpNumberOfBytesRead),
              (hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesRead))
+LAZY_WRAPPER(BOOLEAN, FALSE, lazy_advapi32, SystemFunction036, (PVOID RandomBuffer, ULONG RandomBufferLength),
+             (RandomBuffer, RandomBufferLength))
 
 #define CreateJobObjectW         lazy_CreateJobObjectW
 #define AssignProcessToJobObject lazy_AssignProcessToJobObject
@@ -38,6 +41,7 @@ LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, ReadProcessMemory,
 #define TerminateProcess         lazy_TerminateProcess
 #define OpenProcess              lazy_OpenProcess
 #define ReadProcessMemory        lazy_ReadProcessMemory
+#define SystemFunction036        lazy_SystemFunction036
 
 /* An existing record is never reused. The containing directory must be protected
  * by the client throughout launch/recovery. All dynamic fields use Interlocked
@@ -218,17 +222,17 @@ bool launcherSessionStart(waterwall_startup_options_t *options)
         return false;
     SECURITY_ATTRIBUTES sa = {sizeof(sa), security, FALSE};
     unsigned char       random[16];
-    typedef BOOLEAN(WINAPI * random_fn)(PVOID, ULONG);
-    HMODULE   advapi = LoadLibraryW(L"advapi32.dll");
-    random_fn random_bytes =
-        advapi == NULL ? NULL : (random_fn) (uintptr_t) GetProcAddress(advapi, "SystemFunction036");
-    if (random_bytes == NULL || ! random_bytes(random, sizeof(random)))
+    if (! SystemFunction036(random, sizeof(random)))
     {
         LocalFree(security);
         return false;
     }
-    wcscpy(local_record.job_name, L"Local\\Waterwall.Session.");
-    size_t prefix = wcslen(local_record.job_name);
+    wchar_t job_prefix[40];
+    lazyLoadWideString(
+        transf_session_job_prefix, sizeof(transf_session_job_prefix), job_prefix, sizeof(job_prefix) / sizeof(wchar_t));
+    wcscpy(local_record.job_name, job_prefix);
+    size_t prefix = wcslen(job_prefix);
+    SecureZeroMemory(job_prefix, sizeof(job_prefix));
     for (size_t i = 0; i < sizeof(random); ++i)
         swprintf(local_record.job_name + prefix + i * 2, 3, L"%02x", random[i]);
     session_job = CreateJobObjectW(&sa, local_record.job_name);
@@ -246,7 +250,11 @@ bool launcherSessionStart(waterwall_startup_options_t *options)
         return false;
     }
     wchar_t stop_name[96];
-    swprintf(stop_name, 96, L"%ls.Stop", local_record.job_name);
+    wchar_t stop_fmt[16];
+    lazyLoadWideString(
+        transf_session_stop_format, sizeof(transf_session_stop_format), stop_fmt, sizeof(stop_fmt) / sizeof(wchar_t));
+    swprintf(stop_name, 96, stop_fmt, local_record.job_name);
+    SecureZeroMemory(stop_fmt, sizeof(stop_fmt));
     stop_event       = CreateEventW(&sa, TRUE, FALSE, stop_name);
     ready_event      = CreateEventW(&sa, TRUE, FALSE, NULL);
     completion_event = CreateEventW(&sa, TRUE, FALSE, NULL);
@@ -504,10 +512,15 @@ static DWORD WINAPI recoveryDeadline(void *unused)
 
 static bool sessionRecordValid(const session_record_t *saved)
 {
+    wchar_t job_prefix[40];
+    lazyLoadWideString(
+        transf_session_job_prefix, sizeof(transf_session_job_prefix), job_prefix, sizeof(job_prefix) / sizeof(wchar_t));
+    size_t prefix_len   = wcslen(job_prefix);
+    bool   prefix_match = (wcsncmp(saved->job_name, job_prefix, prefix_len) == 0);
+    SecureZeroMemory(job_prefix, sizeof(job_prefix));
     if (saved->magic != SESSION_MAGIC || saved->size != sizeof(*saved) || saved->pid == 0 ||
         saved->effects.magic != WW_SESSION_EFFECT_MAGIC || saved->reason < kReasonNone ||
-        saved->reason > kReasonForced || wcsncmp(saved->job_name, L"Local\\Waterwall.Session.", 24) != 0 ||
-        wcsnlen(saved->job_name, 80) != 56)
+        saved->reason > kReasonForced || ! prefix_match || wcsnlen(saved->job_name, 80) != 56)
         return false;
     const LONG flags[] = {saved->started,
                           saved->ready,
@@ -596,7 +609,11 @@ int launcherSessionRecover(const char *path)
         }
     }
     wchar_t stop_name[96];
-    swprintf(stop_name, 96, L"%ls.Stop", saved.job_name);
+    wchar_t stop_fmt[16];
+    lazyLoadWideString(
+        transf_session_stop_format, sizeof(transf_session_stop_format), stop_fmt, sizeof(stop_fmt) / sizeof(wchar_t));
+    swprintf(stop_name, 96, stop_fmt, saved.job_name);
+    SecureZeroMemory(stop_fmt, sizeof(stop_fmt));
     HANDLE stop = OpenEventW(EVENT_MODIFY_STATE, FALSE, stop_name);
     if (stop != NULL)
     {

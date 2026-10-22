@@ -3,6 +3,7 @@
 #include "launcher.h"
 #include "startup_options.h"
 #ifdef _WIN32
+#include "lazy_loader.h"
 #include "session_windows.h"
 #endif
 
@@ -36,7 +37,10 @@ int waterwallInnerMain(int argc, char **argv)
         return launcherSessionRecover(options.recover_file);
     if (! launcherSessionStart(&options))
     {
-        fprintf(stderr, "Could not initialize Waterwall session (Windows error %lu)\n", GetLastError());
+        char msg[128];
+        lazyLoadString(transf_log_session_init_failed, sizeof(transf_log_session_init_failed), msg, sizeof(msg));
+        fprintf(stderr, msg, GetLastError());
+        SecureZeroMemory(msg, sizeof(msg));
         return 1;
     }
 #endif

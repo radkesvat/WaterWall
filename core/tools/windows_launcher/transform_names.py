@@ -87,6 +87,7 @@ PROC_NAMES = [
     "GetTokenInformation",
     "ConvertSidToStringSidW",
     "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+    "SystemFunction036",
     # ntdll procedures
     "NtQueryObject",
 ]
@@ -115,6 +116,15 @@ LOG_STRINGS = [
         "assigning child job (an incompatible enclosing job may reject admission)",
     ),
     ("op_waiting_for_child_exit", "waiting for child exit"),
+]
+
+# Runner and application strings used in core/launcher
+RUNNER_STRINGS = [
+    ("waterwall_application_exe", "waterwall_application.exe"),
+    ("waterwall_directory_format", "%lsWaterwall-%lu-%llx-%u"),
+    ("session_job_prefix", "Local\\Waterwall.Session."),
+    ("session_stop_format", "%ls.Stop"),
+    ("log_session_init_failed", "Could not initialize Waterwall session (Windows error %lu)\n"),
 ]
 
 
@@ -154,6 +164,12 @@ def generate_header_content() -> str:
         lines.append(format_c_array(var_name, original_str))
 
     lines.append("")
+    lines.append("/* Transformed runner and application strings */")
+
+    for var_name, original_str in RUNNER_STRINGS:
+        lines.append(format_c_array(var_name, original_str))
+
+    lines.append("")
     lines.append("#endif /* WW_LAZY_NAMES_H */")
     lines.append("")
     return "\n".join(lines)
@@ -181,6 +197,13 @@ def verify_names() -> bool:
         dec = transform(enc).decode("ascii")
         if dec != original:
             print(f"FAIL: Log string {original!r} != {dec!r}", file=sys.stderr)
+            all_ok = False
+
+    for _, original in RUNNER_STRINGS:
+        enc = transform(original.encode("ascii"))
+        dec = transform(enc).decode("ascii")
+        if dec != original:
+            print(f"FAIL: Runner string {original!r} != {dec!r}", file=sys.stderr)
             all_ok = False
 
     return all_ok
@@ -217,7 +240,7 @@ def main():
     if args.verify:
         if verify_names():
             print(
-                f"All {len(DLL_NAMES) + len(PROC_NAMES) + len(LOG_STRINGS)} names and strings verified successfully."
+                f"All {len(DLL_NAMES) + len(PROC_NAMES) + len(LOG_STRINGS) + len(RUNNER_STRINGS)} names and strings verified successfully."
             )
             return 0
         return 1
