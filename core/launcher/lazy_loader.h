@@ -17,13 +17,51 @@
 #define LOAD_LIBRARY_SEARCH_SYSTEM32 0x00000800
 #endif
 
-static inline uint8_t reverse_bits(uint8_t x)
+static inline uint8_t transform_mix(uint8_t nibble, uint8_t key)
 {
-    x = (uint8_t) (((x & 0xF0) >> 4) | ((x & 0x0F) << 4));
-    x = (uint8_t) (((x & 0xCC) >> 2) | ((x & 0x33) << 2));
-    x = (uint8_t) (((x & 0xAA) >> 1) | ((x & 0x55) << 1));
+    uint8_t x = (uint8_t) ((nibble + key) & 0x0F);
+    x         = (uint8_t) (x ^ (((x << 1) | (x >> 3)) & 0x0F));
+    x         = (uint8_t) ((9 * x + 5) & 0x0F);
+    return (uint8_t) ((x ^ (x >> 2)) & 0x0F);
+}
 
-    return x;
+static inline uint8_t transform_scramble(uint8_t byte)
+{
+    static const uint8_t round_keys[8] = {0x3, 0xC, 0x5, 0xA, 0xE, 0x1, 0x7, 0xB};
+    uint8_t              left          = (uint8_t) ((byte >> 4) & 0x0F);
+    uint8_t              right         = (uint8_t) (byte & 0x0F);
+
+    for (size_t i = 0; i < 8; i++)
+    {
+        uint8_t new_right = (uint8_t) (left ^ transform_mix(right, round_keys[i]));
+        left              = right;
+        right             = new_right;
+    }
+
+    return (uint8_t) ((left << 4) | right);
+}
+
+static inline uint8_t transform_unscramble(uint8_t byte)
+{
+    static const uint8_t round_keys[8] = {0x3, 0xC, 0x5, 0xA, 0xE, 0x1, 0x7, 0xB};
+    uint8_t              left          = (uint8_t) ((byte >> 4) & 0x0F);
+    uint8_t              right         = (uint8_t) (byte & 0x0F);
+
+    for (size_t i = 8; i > 0; i--)
+    {
+        uint8_t new_left = (uint8_t) (right ^ transform_mix(left, round_keys[i - 1]));
+        right            = left;
+        left             = new_left;
+    }
+
+    return (uint8_t) ((left << 4) | right);
+}
+
+static inline uint8_t transform_byte(uint8_t byte)
+{
+    const uint8_t key   = 0xA5;
+    uint8_t       mixed = (uint8_t) (transform_scramble(byte) ^ key);
+    return transform_unscramble(mixed);
 }
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -34,12 +72,11 @@ __declspec(noinline)
 static void
 transform(uint8_t *data, size_t length)
 {
-    volatile uint8_t *d   = (volatile uint8_t *) data;
-    const uint8_t     key = 0xA5; /* 10100101 */
+    volatile uint8_t *d = (volatile uint8_t *) data;
 
     for (size_t i = 0; i < length; i++)
     {
-        d[i] = reverse_bits(d[i]) ^ key;
+        d[i] = transform_byte(d[i]);
     }
 }
 

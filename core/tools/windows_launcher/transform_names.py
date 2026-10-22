@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Transform Windows API and DLL names for lazy loading.
 
-Uses the bit-reversal and XOR-key transformation from helper.txt to obfuscate
+Uses the nonlinear Feistel permutation and XOR-key transformation to obfuscate
 DLL and procedure names, generating C byte arrays to be decrypted lazily at runtime.
 """
 
@@ -9,25 +9,69 @@ import argparse
 from pathlib import Path
 import sys
 
-KEY = 0xA5  # 10100101
+KEY = 0xA5
+
+ROUND_KEYS = (0x3, 0xC, 0x5, 0xA,
+              0xE, 0x1, 0x7, 0xB)
 
 
-def reverse_bits(x: int) -> int:
-    """Reverse the 8 bits of byte x."""
-    x = ((x & 0xF0) >> 4) | ((x & 0x0F) << 4)
-    x = ((x & 0xCC) >> 2) | ((x & 0x33) << 2)
-    x = ((x & 0xAA) >> 1) | ((x & 0x55) << 1)
-    return x
+def mix(nibble: int, key: int) -> int:
+    """Nonlinear 4-bit mixing function."""
+    x = (nibble + key) & 0x0F
+
+    # Rotate and mix bits
+    x ^= ((x << 1) | (x >> 3)) & 0x0F
+
+    # Modular arithmetic
+    x = (9 * x + 5) & 0x0F
+
+    # Additional bit mixing
+    return (x ^ (x >> 2)) & 0x0F
+
+
+def scramble(byte: int) -> int:
+    """Eight-round Feistel permutation."""
+    left = byte >> 4
+    right = byte & 0x0F
+
+    for key in ROUND_KEYS:
+        left, right = right, left ^ mix(right, key)
+
+    return (left << 4) | right
+
+
+def unscramble(byte: int) -> int:
+    """Inverse of the Feistel permutation."""
+    left = byte >> 4
+    right = byte & 0x0F
+
+    for key in reversed(ROUND_KEYS):
+        left, right = right ^ mix(left, key), left
+
+    return (left << 4) | right
+
+
+def transform_byte(byte: int) -> int:
+    """Self-inverse nonlinear transformation."""
+    if not 0 <= byte <= 255:
+        raise ValueError("Expected an 8-bit byte")
+
+    mixed = scramble(byte) ^ KEY
+    return unscramble(mixed)
+
+
+# Precompute all 256 transformations for efficiency.
+TABLE = bytes(transform_byte(x) for x in range(256))
 
 
 def transform(data: bytes) -> bytes:
-    """Apply bit-reversal and XOR key transformation to data bytes.
+    """Fast transformation of arbitrary byte sequences.
 
-    Because reverse_bits is an involution and KEY (0xA5) is a bit-palindrome,
-    applying transform twice restores the original data:
+    Because transform_byte is an involution (self-inverse), applying
+    transform twice restores the original data:
         transform(transform(data)) == data
     """
-    return bytes(reverse_bits(b) ^ KEY for b in data)
+    return data.translate(TABLE)
 
 
 # Windows DLL and API names used in core/launcher
