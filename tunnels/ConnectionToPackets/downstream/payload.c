@@ -22,6 +22,9 @@ typedef struct ctp_inject_msg_s
      */
     struct pbuf_custom pbuf;
 
+    ctp_handoff_budget_t *budget;
+    size_t                charge;
+
     tunnel_t            *tunnel;
     ctp_frag_key_t       delivery_key;
     ctp_flow_key_t       key;
@@ -66,8 +69,10 @@ _Static_assert(offsetof(ctp_inject_msg_t, data) % MEM_ALIGNMENT == 0,
 void ctpInjectMessageDestroy(void *payload)
 {
     ctp_inject_msg_t *msg = payload;
-
+    ctp_handoff_budget_t *budget = msg->budget;
+    const size_t          charge = msg->charge;
     memoryFreeAligned(msg);
+    ctpHandoffRelease(budget, charge);
 }
 
 /*
@@ -205,7 +210,7 @@ static ctp_frag_publish_result_t ctpInjectPublish(tunnel_t *t, const ctp_flow_ke
         return (ctp_frag_publish_result_t) {.accepted = true};
     }
 
-    memoryFreeAligned(msg);
+    ctpInjectMessageDestroy(msg);
     return (ctp_frag_publish_result_t) {.accepted = false};
 }
 
@@ -421,7 +426,7 @@ bool ctpBuildPacketView(tunnel_t *t, const uint8_t *packet, uint32_t packet_len,
  * is padded up to its own alignment, and offsetof() is what the payload actually
  * starts at.
  */
-static ctp_inject_msg_t *ctpAllocatePacketMessage(uint32_t len)
+static ctp_inject_msg_t *ctpAllocatePacketMessage(ctp_handoff_budget_t *budget, uint32_t len)
 {
     // An IPv4 packet cannot exceed this, and pbuf_alloced_custom() takes a
     // u16_t length, so a larger value could never be injected anyway. Checking
@@ -431,11 +436,17 @@ static ctp_inject_msg_t *ctpAllocatePacketMessage(uint32_t len)
         return NULL;
     }
 
-    ctp_inject_msg_t *msg = memoryAllocateAligned(offsetof(ctp_inject_msg_t, data) + (size_t) len, MEM_ALIGNMENT);
+    const size_t size   = offsetof(ctp_inject_msg_t, data) + (size_t) len;
+    const size_t charge = size + max((size_t) MEM_ALIGNMENT, sizeof(void *));
+    if (! ctpHandoffReserve(budget, charge, true))
+        return NULL;
+    ctp_inject_msg_t *msg = memoryAllocateAligned(size, MEM_ALIGNMENT);
 
     assert(((uintptr_t) msg->data % MEM_ALIGNMENT) == 0);
 
     msg->tunnel             = NULL;
+    msg->budget             = budget;
+    msg->charge             = charge;
     msg->len                = len;
     msg->has_delivery_token = false;
     return msg;
@@ -469,7 +480,8 @@ void ctpTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     /* Copy into the aligned injection allocation before any typed packet access. */
-    ctp_inject_msg_t *msg = ctpAllocatePacketMessage(sbufGetLength(buf));
+    ctp_tstate_t     *ts  = tunnelGetState(t);
+    ctp_inject_msg_t *msg = ctpAllocatePacketMessage(ts->handoff_budget, sbufGetLength(buf));
     if (UNLIKELY(msg == NULL))
     {
         lineReuseBuffer(l, buf);

@@ -71,6 +71,8 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
     test_state_t *state = tunnelGetState(t);
     atomic_init(&state->stopping, false);
 #if ! TEST_PACKETS_TO_CONNECTION
+    state->handoff_budget = ctpHandoffBudgetCreate(kCtpHandoffMaxBytes, kCtpHandoffMaxEntries);
+    require(state->handoff_budget != NULL, "budget creation failed");
     quiescenceGateInit(&state->packet_ingress_gate);
     require(quiescenceGateOpen(&state->packet_ingress_gate), "input gate did not open");
 #endif
@@ -97,6 +99,9 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
 #endif
 
     require(! line.recalculate_checksum && lineIsAlive(&line), "packet-line state was not preserved");
+#if ! TEST_PACKETS_TO_CONNECTION
+    ctpHandoffBudgetDetach(state->handoff_budget);
+#endif
     tunnelDestroy(t);
     testWorkerUnbindWID();
     testWorkerRegistryRestore(&registry);

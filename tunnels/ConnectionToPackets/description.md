@@ -142,6 +142,19 @@ worker. TCP send MSS is derived from the configured MTU. Output fragmentation an
 input reassembly are separate responsibilities.
 
 ## Settings
+Packet handoff copies in both directions share a per-instance limit of **16 MiB**
+(including message metadata and explicit alignment padding) and **4096 allocations**.
+Admission reserves both before allocation or copying. Output refusal returns lwIP
+`ERR_MEM`; TCP retains its stack retry behavior and UDP follows its send-error/drop
+policy. Return input that exceeds the budget is dropped, allowing TCP retransmission;
+this never discards already accepted application stream bytes. Dispatch remains
+queued even on the same worker. Cancellation, stale flow, shutdown and delivery
+release each charge once; injected custom pbufs keep their charge until actual free,
+using budget storage that can outlive the tunnel. Egress temporarily copies into one
+line-pool buffer per executing worker; after the neighbor takes ownership, that
+receiver enforces its own retention budget. The first refusal in each direction logs
+a warning, and destruction logs accumulated return/output refusal counters.
+
 
 | Setting | Required | Default | Meaning |
 | --- | --- | --- | --- |

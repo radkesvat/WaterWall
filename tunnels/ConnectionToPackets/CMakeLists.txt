@@ -9,6 +9,7 @@ add_library(ConnectionToPackets STATIC
                     instance/stop.c
                     instance/chain.c
                     common/helpers.c
+                    common/handoff.c
                     common/line_state.c
                     common/drain.c
                     common/flow.c

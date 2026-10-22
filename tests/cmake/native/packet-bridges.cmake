@@ -137,6 +137,19 @@ endif()
 
 if(LINUX AND TARGET ConnectionToPackets)
   waterwall_add_native_executable(connectiontopackets_schedule_rejection_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_bridges/connectiontopackets_schedule_rejection_test.c
+  waterwall_add_native_executable(connectiontopackets_handoff_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_bridges/connectiontopackets_handoff_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+    ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)
+  target_include_directories(connectiontopackets_handoff_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/ConnectionToPackets
+    ${CMAKE_SOURCE_DIR}/tunnels/ConnectionToPackets/include/ConnectionToPackets)
+  target_link_options(connectiontopackets_handoff_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=memoryFree")
+  target_link_libraries(connectiontopackets_handoff_test PRIVATE ConnectionToPackets ww)
+  add_dependencies(waterwall_unit_tests connectiontopackets_handoff_test)
+  add_waterwall_unit_test(waterwall.connectiontopackets_handoff_unit connectiontopackets_handoff_test
+    "unit;tunnels;connectiontopackets;buffers;ownership")
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}
 
     ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)

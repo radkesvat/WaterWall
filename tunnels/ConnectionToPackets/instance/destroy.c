@@ -60,5 +60,7 @@ void ctpTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
         ts->netifs_count = 0;
     }
 
+    ctpHandoffBudgetDetach(ts->handoff_budget);
+    ts->handoff_budget = NULL;
     tunnelDestroy(t);
 }

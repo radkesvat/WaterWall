@@ -12,16 +12,26 @@
  */
 typedef struct ctp_packet_emit_msg_s
 {
+    ctp_handoff_budget_t *budget;
+    size_t                charge;
     uint32_t len;
     uint8_t  data[];
 } ctp_packet_emit_msg_t;
+
+static void ctpEmitPacketDestroy(ctp_packet_emit_msg_t *msg)
+{
+    ctp_handoff_budget_t *budget = msg->budget;
+    const size_t          charge = msg->charge;
+    memoryFree(msg);
+    ctpHandoffRelease(budget, charge);
+}
 
 static void ctpEmitPacketCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
     discard reason;
     discard arg1;
     discard arg3;
-    memoryFree(arg2);
+    ctpEmitPacketDestroy(arg2);
 }
 
 static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
@@ -39,7 +49,7 @@ static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
     // admission has closed. Do not extend it into a neighbouring callback.
     if (UNLIKELY(packet_line == NULL || ctpTunnelIsStopping(t)))
     {
-        memoryFree(packet_msg);
+        ctpEmitPacketDestroy(packet_msg);
         return;
     }
 
@@ -48,7 +58,7 @@ static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
 
     sbufSetLength(buf, packet_msg->len);
     memoryCopy(sbufGetMutablePtr(buf), packet_msg->data, packet_msg->len);
-    memoryFree(packet_msg);
+    ctpEmitPacketDestroy(packet_msg);
 
     /*
      * Enter after allocation and hold admission across the callback. Shutdown
@@ -166,7 +176,12 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
         return ERR_VAL;
     }
 
-    ctp_packet_emit_msg_t *packet_msg = memoryAllocate(sizeof(*packet_msg) + p->tot_len);
+    const size_t charge = sizeof(ctp_packet_emit_msg_t) + (size_t) p->tot_len;
+    if (! ctpHandoffReserve(ts->handoff_budget, charge, false))
+        return ERR_MEM;
+    ctp_packet_emit_msg_t *packet_msg = memoryAllocate(charge);
+    packet_msg->budget                = ts->handoff_budget;
+    packet_msg->charge                = charge;
     packet_msg->len = p->tot_len;
     pbufLargeCopyToPtr(p, packet_msg->data);
 

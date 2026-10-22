@@ -34,6 +34,28 @@ typedef struct ctp_netif_ctx_s ctp_netif_ctx_t;
 typedef struct ctp_lstate_s    ctp_lstate_t;
 typedef struct ctp_tcp_drain_s ctp_tcp_drain_t;
 
+enum
+{
+    kCtpHandoffMaxBytes   = 16U * 1024U * 1024U,
+    kCtpHandoffMaxEntries = 4096U
+};
+
+/* Shared by both packet directions. Every message retains this object until
+ * its allocation is freed, including custom pbufs outliving tunnel teardown. */
+typedef struct ctp_handoff_budget_s
+{
+    wmutex_t lock;
+    size_t   max_bytes, max_entries;
+    size_t   bytes, entries;
+    uint64_t ingress_refused, egress_refused;
+    bool     detached;
+} ctp_handoff_budget_t;
+
+ctp_handoff_budget_t *ctpHandoffBudgetCreate(size_t max_bytes, size_t max_entries);
+bool                  ctpHandoffReserve(ctp_handoff_budget_t *budget, size_t charge, bool ingress);
+void                  ctpHandoffRelease(ctp_handoff_budget_t *budget, size_t charge);
+void                  ctpHandoffBudgetDetach(ctp_handoff_budget_t *budget);
+
 typedef enum ctp_line_kind_e
 {
     kCtpLineKindNone = 0,
@@ -511,6 +533,7 @@ typedef struct ctp_tstate_s
     /* Intrusive, allocation-free terminal handoff indexed by owner worker. */
     line_t **terminal_lines;
     ctp_lstate_t **owned_lines;
+    ctp_handoff_budget_t *handoff_budget;
 
     wrwlock_t      flows_lock;
     ctp_flow_map_t flows;               /* protected by flows_lock */

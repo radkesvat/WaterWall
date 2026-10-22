@@ -284,6 +284,12 @@ tunnel_t *ctpTunnelCreate(node_t *node)
     quiescenceGateInit(&ts->next_gate);
     quiescenceGateInit(&ts->packet_ingress_gate);
 
+    ts->handoff_budget = ctpHandoffBudgetCreate(kCtpHandoffMaxBytes, kCtpHandoffMaxEntries);
+    if (ts->handoff_budget == NULL)
+    {
+        ctpTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
     // Shared bootstrap precedes worker traffic; individual engines stay lazy.
     initTcpIpStack();
 
