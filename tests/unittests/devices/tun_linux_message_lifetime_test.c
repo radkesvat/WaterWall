@@ -22,6 +22,7 @@
 #include "lwip/netif.h"
 #include "lwip/priv/tcp_priv.h"
 #include "lwip/ww_lwip.h"
+#include "packet_tunnel.h"
 #include "wchecksum.h"
 #include "wevent.h"
 #include "wfrand.h"
@@ -134,6 +135,8 @@ static unsigned              watcher_detach_calls;
 
 static sbuf_t                  *expected_discarded_buffer;
 static unsigned int             expected_discard_count;
+static sbuf_t                  *expected_recycled_buffer;
+static unsigned int             expected_recycle_count;
 static device_reader_session_t *tracked_session;
 static master_pool_t           *tracked_message_pool;
 static unsigned int             tracked_session_free_count;
@@ -939,6 +942,8 @@ void __wrap_masterpoolDestroy(master_pool_t *pool)
 
 void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
 {
+    if (buf == expected_recycled_buffer)
+        ++expected_recycle_count;
     if (writer_batch_probe)
     {
         for (unsigned i = 0; i < writer_batch_count; ++i)
@@ -1381,6 +1386,50 @@ static void testInactiveReaderRemovesReadInterest(void)
         require(watcher_detach_calls == 1, "inactive reader watcher settles exactly once");
         destroyDevice(tdev);
     }
+}
+
+static void testMinimumIpv4Write(void)
+{
+    resetReaderFixture(0);
+    resetShutdownRequests();
+    resetIoInjection();
+    tun_device_t *tdev       = createRunningDevice();
+    uint8_t       packet[20] = {0x45, 0, 0, 20};
+    require(packettunnelFinalizeChecksumRequest(false, packet, sizeof(packet)), "minimum IPv4 header is accepted");
+    require(! packettunnelFinalizeChecksumRequest(false, packet, sizeof(packet) - 1), "short IPv4 header is refused");
+    packet[3] = 21;
+    require(! packettunnelFinalizeChecksumRequest(false, packet, sizeof(packet)),
+            "inconsistent IPv4 length is refused");
+    packet[3] = 20;
+
+    sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
+    memoryCopy(sbufGetMutablePtr(buf), packet, sizeof(packet));
+    sbufSetLength(buf, sizeof(packet));
+    expected_recycled_buffer                = buf;
+    expected_recycle_count                  = 0;
+    expected_raw_write                      = packet;
+    expected_raw_write_length               = sizeof(packet);
+    const injected_io_result_t write_result = {.result = sizeof(packet)};
+    armDeviceWrites(&write_result, 1);
+    require(queueWriterPacket(tdev, buf), "minimum IPv4 packet reaches writer admission");
+    runWriterMessages();
+    require(observed_write_calls == 1 && expected_recycle_count == 1, "minimum IPv4 write transfers its buffer once");
+    expected_recycled_buffer = NULL;
+    require(shutdown_request_calls == 0 && tundeviceIsUp(tdev), "minimum IPv4 write keeps device active");
+
+    resetIoInjection();
+    require(bringDownDevice(tdev), "minimum IPv4 writer cleanup");
+    buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
+    memoryCopy(sbufGetMutablePtr(buf), packet, sizeof(packet));
+    sbufSetLength(buf, sizeof(packet));
+    expected_recycled_buffer = buf;
+    expected_recycle_count   = 0;
+    require(! queueWriterPacket(tdev, buf), "down writer refuses minimum IPv4 packet normally");
+    require(expected_recycle_count == 0, "refused packet remains caller-owned");
+    bufferpoolReuseBuffer(getWorkerBufferPool(0), buf);
+    require(expected_recycle_count == 1, "refused packet returned exactly once by caller");
+    expected_recycled_buffer = NULL;
+    destroyDevice(tdev);
 }
 
 static void testChecksumOnlyNegotiation(void)
@@ -3732,6 +3781,7 @@ int main(void)
     checkSumInit();
     testReaderMessageCapacity();
     testInactiveReaderRemovesReadInterest();
+    testMinimumIpv4Write();
     testSameWorkerTunBurstCoalescesTcpAcks(&env);
     testChecksumOnlyNegotiation();
     testDnsMutationCleanup();

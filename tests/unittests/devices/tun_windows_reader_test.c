@@ -109,6 +109,22 @@ static void WINAPI fixtureSetWait(PTP_WAIT wait, HANDLE event, PFILETIME timeout
 #undef SetThreadpoolWait
 #undef deviceFlowAffinityPostBatch
 
+static void testMinimumIpv4Write(void)
+{
+    tun_device_t device = {0};
+    tunWriterInit(&device.writer);
+    sbuf_t *packet = sbufCreate(20);
+    sbufSetLength(packet, 20);
+    memoryZero(sbufGetMutablePtr(packet), 20);
+    uint8_t *bytes = sbufGetMutablePtr(packet);
+    bytes[0]       = 0x45;
+    PUT_BE16(bytes + 2, 20);
+    require(! tundeviceWrite(&device, packet), "closed writer accepted a minimum IPv4 packet");
+    require(sbufGetLength(packet) == 20, "writer refusal changed caller-owned packet");
+    sbufDestroy(packet);
+    tunWriterDestroy(&device.writer);
+}
+
 static void WINAPI fixtureSetWait(PTP_WAIT wait, HANDLE event, PFILETIME timeout)
 {
     if (event != NULL && stop_during_rearm)
@@ -418,6 +434,7 @@ int main(void)
     wintun_api.release_receive_packet = fixtureRelease;
     wintun_api.end_session            = fixtureEnd;
     testDeferredBoundedReadAndWake();
+    testMinimumIpv4Write();
     testByteAndOversizedQuanta();
     testStopRestartAndLateSettlement();
     testStartupRefusalAndTerminalReceive();

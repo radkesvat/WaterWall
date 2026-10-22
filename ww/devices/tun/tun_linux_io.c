@@ -417,7 +417,7 @@ static bool tundeviceShouldLogRefusal(void)
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
 #if ! defined(OS_BSD)
-    assert(sbufGetLength(buf) > sizeof(struct iphdr));
+    assert(sbufGetLength(buf) >= sizeof(struct iphdr));
 #endif
 
     switch (tunWriterTrySend(&tdev->writer, buf))

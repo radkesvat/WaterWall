@@ -1266,7 +1266,7 @@ static bool tundeviceShouldLogRefusal(void)
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     // minimum length of an IP header is 20 bytes
-    assert(sbufGetLength(buf) > 20);
+    assert(sbufGetLength(buf) >= 20);
 
     switch (tunWriterTrySend(&tdev->writer, buf))
     {
