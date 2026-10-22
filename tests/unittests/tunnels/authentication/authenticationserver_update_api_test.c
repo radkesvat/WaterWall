@@ -363,6 +363,28 @@ static void conflictsAndRefusal(void)
     twfRequire(! u->enabled && usersValidate(&state()->store.users), "precommit refusal corrupted account/indexes");
 }
 
+static void exportAllowance(void)
+{
+    user_t candidate;
+    twfRequire(userCreate(&candidate, "export-update"), "export patch candidate");
+    candidate.id = 99002;
+    twfRequire(usersAddUser(&state()->store.users, &candidate), "export patch insertion");
+    userDestroy(&candidate);
+    user_t *stored = usersLookupByIdentifier(&state()->store.users, 99002);
+    size_t  required;
+    twfRequire(userMeasureExportUpperBound(stored, &required) == kUserPublicOk, "export patch measure");
+    const size_t saved             = state()->max_user_export_bytes;
+    state()->max_user_export_bytes = required;
+    edit(99002, "{\"notes\":\"x\"}", "user_too_large");
+    twfRequire(stored->notes == NULL || stored->notes[0] == 0, "refused patch changed text");
+    edit(99002, "{\"enabled\":false}", NULL);
+    state()->max_user_export_bytes = required + 1;
+    edit(99002, "{\"notes\":\"x\"}", NULL);
+    edit(99002, "{\"notes\":\"xx\"}", "user_too_large");
+    twfRequire(strcmp(stored->notes, "x") == 0, "one-byte oversized patch changed text");
+    state()->max_user_export_bytes = saved;
+}
+
 static void acknowledgementPoolCharge(void)
 {
     /* A small error fits the 128-byte tier, while the fixed 256-byte success
@@ -681,6 +703,7 @@ int main(void)
     ts->store.stats_revision  = 19;
     memset(ts->api_instance_id, 0x5a, sizeof(ts->api_instance_id));
     authenticationserverInitializeAccountingClock(ts);
+    authenticationserverInitializeExportLimit(ts);
     user_t source;
     twfRequire(userCreate(&source, "CREDENTIAL_SENTINEL"), "user creation failed");
     source.id                         = 42;
@@ -689,13 +712,15 @@ int main(void)
     source.timeinfo.first_usage_at_ms = 456;
     source.stats.traffic              = (user_ud_t) {100, 200};
     memoryFree(source.name);
-    source.name = stringDuplicate("original");
+    source.name                = stringDuplicate("original");
+    source.export_strings.name = userMeasureExportString(source.name);
     twfRequire(usersAddUser(&ts->store.users, &source), "fixture add failed");
     userDestroy(&source);
     twfRequire(userCreate(&source, "other-password"), "second user creation failed");
     source.id = 43;
     memoryFree(source.name);
-    source.name = stringDuplicate("occupied");
+    source.name                = stringDuplicate("occupied");
+    source.export_strings.name = userMeasureExportString(source.name);
     twfRequire(userSetWireGuardAllowedIps(&source, "10.9.0.0/24") && usersAddUser(&ts->store.users, &source),
                "second add failed");
     userDestroy(&source);
@@ -716,6 +741,7 @@ int main(void)
     lockRefusal();
     twoWriters();
     laterPersistence();
+    exportAllowance();
     detachedDelivery();
     twfRequire(usersValidate(&ts->store.users), "final user/index validation failed");
     nodeApiUnregister(server);

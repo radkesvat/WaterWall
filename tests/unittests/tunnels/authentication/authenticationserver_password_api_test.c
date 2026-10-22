@@ -485,6 +485,24 @@ static void duplicatesAndFailures(void)
     memoryFree(huge);
 }
 
+static void exportAllowance(void)
+{
+    addUser(99003, "export-password");
+    user_t *stored = usersLookupByIdentifier(&state()->store.users, 99003);
+    size_t  required;
+    twfRequire(userMeasureExportUpperBound(stored, &required) == kUserPublicOk, "export password measure");
+    const size_t saved             = state()->max_user_export_bytes;
+    state()->max_user_export_bytes = required;
+    rotate(99003, "export-passwordx", "user_too_large");
+    twfRequire(usersLookupByPassword(&state()->store.users, "export-password") == stored &&
+                   usersLookupByPassword(&state()->store.users, "export-passwordx") == NULL,
+               "refused password changed indexes");
+    rotate(99003, "export-password", NULL);
+    state()->max_user_export_bytes = required + 1;
+    rotate(99003, "export-passwordx", NULL);
+    state()->max_user_export_bytes = saved;
+}
+
 static void workingBudget(void)
 {
     char match[49], body[512];
@@ -810,6 +828,7 @@ int main(void)
     state()->store.stats_revision  = 19;
     memset(state()->api_instance_id, 0x5a, 16);
     authenticationserverInitializeAccountingClock(state());
+    authenticationserverInitializeExportLimit(state());
     addUser(42, "initial-secret");
     addUser(43, "98765432-1234-4234-8234-123456789abc");
     addUser(UINT64_C(9007199254740993), "initial-large-id");
@@ -868,6 +887,7 @@ int main(void)
     twfRequire(producer.last_sequence == 9 && producer.accounting_epoch[0] == 0x6a && producer.last_digest[0] == 0x7b &&
                    u->client_view_expires_at_ms == 2345 && u->client_view_expiry_valid && u->client_view_expired,
                "password change altered producer checkpoint or expiry projection");
+    exportAllowance();
     detachedDelivery();
     state()->store.config_revision = UINT64_MAX - 1;
     rotate(42, "maximum-revision-password", NULL);

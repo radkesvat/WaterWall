@@ -446,6 +446,23 @@ static void duplicatesAndFailures(void)
     twfRequire(usersValidate(&state()->store.users), "refusal corrupted indexes");
 }
 
+static void exportAllowance(void)
+{
+    user_t candidate;
+    twfRequire(userCreate(&candidate, "export-create"), "export candidate creation");
+    candidate.id = 99001;
+    size_t required;
+    twfRequire(userMeasureExportUpperBound(&candidate, &required) == kUserPublicOk, "export measure");
+    userDestroy(&candidate);
+    const size_t saved             = state()->max_user_export_bytes;
+    state()->max_user_export_bytes = required - 1;
+    create(99001, "export-create", "{}", "user_too_large");
+    twfRequire(usersLookupByIdentifier(&state()->store.users, 99001) == NULL, "oversized creation published");
+    state()->max_user_export_bytes = required;
+    create(99001, "export-create", "{}", NULL);
+    state()->max_user_export_bytes = saved;
+}
+
 static void acknowledgementPoolCharge(void)
 {
     master_pool_t *masters[3];
@@ -792,6 +809,7 @@ int main(void)
     state()->store.stats_revision  = 19;
     memset(state()->api_instance_id, 0x5a, 16);
     authenticationserverInitializeAccountingClock(state());
+    authenticationserverInitializeExportLimit(state());
     user_t source;
     twfRequire(userCreate(&source, "existing-secret"), "existing user create failed");
     source.id                         = 42;
@@ -827,6 +845,7 @@ int main(void)
                    memcmp(&existing->client_time, &client_time, sizeof(client_time)) == 0 &&
                    state()->store.stats_revision == stats_revision + 1,
                "creation changed existing accounting/runtime state");
+    exportAllowance();
     detachedDelivery();
     state()->store.config_revision = UINT64_MAX - 1;
     create(300, "maximum-revision", NULL, NULL);

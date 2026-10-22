@@ -34,6 +34,8 @@ static const char *authenticationserverUsersAddResultError(users_add_result_t re
         return "user-wireguard-allowed-ips-overlap";
     case kUsersAddResultStorageUnavailable:
         return "storage-unavailable";
+    case kUsersAddResultTooLarge:
+        return "user-too-large";
     /* Bounded API-only refusals are unreachable through this blocking producer
      * path. Keep its existing generic diagnostic if that contract changes. */
     case kUsersAddResultBusy:
@@ -71,7 +73,8 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
 
     if (UNLIKELY(request_data_len == 0))
     {
-        LOGW("AuthenticationServer: AddNewUser received an empty JSON payload");
+        if (ts->verbose)
+            LOGD("AuthenticationServer: AddNewUser received an empty JSON payload");
         return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, "invalid-user-json");
     }
 
@@ -82,19 +85,22 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
                                                                  authenticationserverWipeJsonStrings);
     if (UNLIKELY(user_json == NULL))
     {
-        LOGW("AuthenticationServer: AddNewUser received malformed JSON");
+        if (ts->verbose)
+            LOGD("AuthenticationServer: AddNewUser received malformed JSON");
         return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, "invalid-user-json");
     }
     if (UNLIKELY(! cJSON_IsObject(user_json)))
     {
-        LOGW("AuthenticationServer: AddNewUser JSON payload is not a user object");
+        if (ts->verbose)
+            LOGD("AuthenticationServer: AddNewUser JSON payload is not a user object");
         authenticationserverWipeJsonStrings(user_json);
         cJSON_Delete(user_json);
         return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, "invalid-user-json");
     }
     if (UNLIKELY(! authenticationserverUserJsonWireGuardAllowedIpsValid(user_json)))
     {
-        LOGW("AuthenticationServer: AddNewUser rejected user JSON: invalid-wireguard-allowed-ips");
+        if (ts->verbose)
+            LOGD("AuthenticationServer: AddNewUser rejected user JSON: invalid-wireguard-allowed-ips");
         authenticationserverWipeJsonStrings(user_json);
         cJSON_Delete(user_json);
         return authenticationserverAddUserRejected(
@@ -102,24 +108,37 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
     }
 
     memoryZero(&user, sizeof(user));
-    if (UNLIKELY(! userCreateFromJson(&user, user_json)))
+    const user_json_result_t create_result = userCreateFromJsonResult(&user, user_json);
+    if (UNLIKELY(create_result != kUserJsonOk))
     {
-        LOGW("AuthenticationServer: AddNewUser JSON payload is not a valid user");
+        const bool resource_failure = create_result == kUserJsonResourceFailure;
+        if (resource_failure)
+            LOGW("AuthenticationServer: AddNewUser could not initialize user resources");
+        else if (ts->verbose)
+            LOGD("AuthenticationServer: AddNewUser JSON payload is not a valid user");
         authenticationserverWipeJsonStrings(user_json);
         cJSON_Delete(user_json);
-        return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, "invalid-user");
+        return authenticationserverAddUserRejected(
+            t, l, session, correlation_id, audit_id, resource_failure ? "storage-unavailable" : "invalid-user");
     }
     authenticationserverWipeJsonStrings(user_json);
     cJSON_Delete(user_json);
 
     if (UNLIKELY(! authenticationserverUserHasRequiredId(&user)))
     {
-        LOGW("AuthenticationServer: AddNewUser rejected user JSON: user-id-required");
+        if (ts->verbose)
+            LOGD("AuthenticationServer: AddNewUser rejected user JSON: user-id-required");
         userDestroy(&user);
         return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, "user-id-required");
     }
 
     audit_id = userGetId(&user);
+    size_t export_bytes;
+    if (userMeasureExportUpperBound(&user, &export_bytes) != kUserPublicOk || export_bytes > ts->max_user_export_bytes)
+    {
+        userDestroy(&user);
+        return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, "user-too-large");
+    }
     memoryCopy(added_sha256, user.sha256_pass.bytes, SHA256_DIGEST_SIZE);
     users_add_result_t add_result = usersAddUserChecked(&ts->store.users, &user);
     userDestroy(&user);
@@ -127,7 +146,14 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
     if (UNLIKELY(add_result != kUsersAddResultOk))
     {
         const char *error = authenticationserverUsersAddResultError(add_result);
-        LOGW("AuthenticationServer: AddNewUser rejected user JSON: %s", error);
+        if (add_result == kUsersAddResultStorageUnavailable)
+            LOGW("AuthenticationServer: AddNewUser could not initialize account storage");
+        else if (add_result == kUsersAddResultInvalidUser)
+            /* This private candidate already passed construction; revalidation
+             * also performs credential-backend operations that may fail. */
+            LOGW("AuthenticationServer: AddNewUser could not revalidate initialized user credentials");
+        else if (ts->verbose)
+            LOGD("AuthenticationServer: AddNewUser rejected user JSON: %s", error);
         return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, error);
     }
 

@@ -16,6 +16,8 @@ const char *authenticationserverPasswordChangeError(users_password_result_t resu
         return "not_found";
     case kUsersPasswordResourceLimit:
         return "resource_limit";
+    case kUsersPasswordTooLarge:
+        return "user_too_large";
     case kUsersPasswordTimeout:
     case kUsersPasswordPrecommitRejected:
         return "timeout";
@@ -67,13 +69,14 @@ const char *authenticationserverApplyConditionalPasswordChange(tunnel_t         
     {
         password_change_acknowledgement_t ack = {.request = request, .call = context, .buffer = ack_buffer};
         users_password_result_t           result =
-            usersTryChangePreparedPasswordByIdentifier(&ts->store.users,
-                                                       request->id,
-                                                       request->password,
-                                                       working_allowance,
-                                                       context->deadline_ms,
-                                                       preparePasswordChangeAcknowledgement,
-                                                       &ack);
+            usersTryChangePreparedPasswordByIdentifierWithExportLimit(&ts->store.users,
+                                                                      request->id,
+                                                                      request->password,
+                                                                      working_allowance,
+                                                                      ts->max_user_export_bytes,
+                                                                      context->deadline_ms,
+                                                                      preparePasswordChangeAcknowledgement,
+                                                                      &ack);
         if (result == kUsersPasswordOk)
         {
             /* This exact transaction already owns its complete ACK. Delivery

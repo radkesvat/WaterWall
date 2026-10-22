@@ -29,6 +29,8 @@ const char *authenticationserverConfigCreateError(users_add_result_t result)
         return "busy";
     case kUsersAddResultResourceLimit:
         return "resource_limit";
+    case kUsersAddResultTooLarge:
+        return "user_too_large";
     case kUsersAddResultTimeout:
     case kUsersAddResultPrecommitRejected:
         return "timeout";
@@ -75,12 +77,13 @@ const char *authenticationserverApplyCreate(tunnel_t *t, authenticationserver_cr
     else
     {
         creation_acknowledgement_t ack    = {.state = ts, .request = request, .call = context, .buffer = ack_buffer};
-        users_add_result_t         result = usersTryAddPreparedUser(&ts->store.users,
-                                                            request->candidate,
-                                                            growth_allowance,
-                                                            context->deadline_ms,
-                                                            prepareCreateAcknowledgement,
-                                                            &ack);
+        users_add_result_t         result = usersTryAddPreparedUserWithExportLimit(&ts->store.users,
+                                                                           request->candidate,
+                                                                           growth_allowance,
+                                                                           ts->max_user_export_bytes,
+                                                                           context->deadline_ms,
+                                                                           prepareCreateAcknowledgement,
+                                                                           &ack);
         if (result == kUsersAddResultOk)
         {
             /* All expected failures precede publication. The ACK names this

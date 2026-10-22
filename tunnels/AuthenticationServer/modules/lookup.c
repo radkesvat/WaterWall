@@ -11,7 +11,7 @@ sbuf_t *authenticationserverLookup(const uint8_t correlation_id[kAuthenticationS
     user_public_result_t result;
     if (kind == kAuthLookupPassword)
     {
-        if (length == 0 || length > kAuthenticationServerMaxPasswordLength || memchr(data, 0, length) != NULL)
+        if (length == 0 || length > kAuthenticationServerMaxRequestData || memchr(data, 0, length) != NULL)
             return authenticationserverCreateErrorResponseFrame(l, correlation_id, invalid_error);
         char *password = memoryAllocate((size_t) length + 1);
         memoryCopy(password, data, length);

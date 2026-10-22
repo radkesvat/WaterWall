@@ -20,6 +20,8 @@ const char *authenticationserverConfigUpdateError(users_update_result_t result)
     case kUsersUpdateResultCapacityRejected:
     case kUsersUpdateResultResourceLimit:
         return "resource_limit";
+    case kUsersUpdateResultTooLarge:
+        return "user_too_large";
     case kUsersUpdateResultUserNotFound:
         return "not_found";
     case kUsersUpdateResultDuplicateName:
@@ -75,11 +77,12 @@ const char *authenticationserverApplyConditionalUpdate(tunnel_t *t, authenticati
     else
     {
         acknowledgement_t     ack    = {.request = request, .call = context, .buffer = ack_buffer};
-        users_update_result_t result = usersTryApplyPreparedConfigByIdentifier(
+        users_update_result_t result = usersTryApplyPreparedConfigByIdentifierWithExportLimit(
             &ts->store.users,
             request->id,
             request->patch,
             min(growth_allowance, (size_t) kAuthenticationServerUpdateGrowthCap),
+            ts->max_user_export_bytes,
             context->deadline_ms,
             prepareUpdateAcknowledgement,
             &ack);

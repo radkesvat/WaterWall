@@ -28,6 +28,53 @@ static bool pageUnsigned(const cJSON *json, const char *key, uint64_t *number)
     return cJSON_IsString(item) && authenticationserverApiUnsignedDecimal(item->valuestring, number);
 }
 
+/* Shared by admission geometry and real responses. Each changing number is
+ * represented as an exact decimal string; the synthetic page reserves its
+ * maximum width even when a live page currently uses a shorter value. */
+static cJSON *createPageMetadata(const char *instance, const char *epoch, const char *digest, uint64_t sequence,
+                                 uint64_t config, uint64_t stats, uint64_t wall, uint64_t accounting, uint64_t total,
+                                 uint64_t position)
+{
+    cJSON  *page = cJSON_CreateObject();
+    discard cJSON_AddStringToObject(page, "instance", instance);
+    discard cJSON_AddStringToObject(page, "epoch", epoch);
+    discard cJSON_AddStringToObject(page, "digest", digest);
+    pageNumber(page, "sequence", sequence);
+    pageNumber(page, "config-revision", config);
+    pageNumber(page, "stats-revision", stats);
+    pageNumber(page, "server-time-ms", wall);
+    pageNumber(page, "accounting-time-ms", accounting);
+    pageNumber(page, "total", total);
+    pageNumber(page, "position", position);
+    pageNumber(page, "count", 0);
+    char cursor[65];
+    memset(cursor, 'f', 64);
+    cursor[64] = 0;
+    discard cJSON_AddStringToObject(page, "cursor", cursor);
+    discard cJSON_AddBoolToObject(page, "complete", false);
+    discard cJSON_AddBoolToObject(page, "validated", false);
+    discard cJSON_AddArrayToObject(page, "users");
+    return page;
+}
+
+void authenticationserverInitializeExportLimit(authenticationserver_tstate_t *ts)
+{
+    char instance[33], token[65];
+    memset(instance, 'f', sizeof(instance) - 1);
+    memset(token, 'f', sizeof(token) - 1);
+    instance[sizeof(instance) - 1] = token[sizeof(token) - 1] = 0;
+    cJSON *page                                               = createPageMetadata(
+        instance, token, token, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX);
+    pageNumber(page, "count", UINT64_MAX);
+    char        *text     = cJSON_PrintUnformatted(page);
+    const size_t overhead = strlen(text);
+    const size_t data_cap = kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize;
+    assert(overhead < data_cap);
+    ts->max_user_export_bytes = data_cap - overhead;
+    cJSON_free(text);
+    cJSON_Delete(page);
+}
+
 sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
                                               tunnel_t *t, line_t *l, authenticationserver_session_t *session,
                                               const uint8_t *request_data, uint32_t request_data_len)
@@ -92,7 +139,6 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
     authenticationserver_page_view_t view = {
         .config_revision = ts->store.config_revision, .position = (size_t) cursor.position, .total = total};
     memoryCopy(view.instance_id, ts->api_instance_id, sizeof(view.instance_id));
-    page = cJSON_CreateObject();
     char              instance[33], digest_text[65];
     static const char hex[] = "0123456789abcdef";
     for (size_t i = 0; i < 16; ++i)
@@ -106,18 +152,18 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
         digest_text[2 * i]     = hex[checkpoint->last_digest[i] >> 4];
         digest_text[2 * i + 1] = hex[checkpoint->last_digest[i] & 15];
     }
-    digest_text[64] = 0;
-    discard cJSON_AddStringToObject(page, "instance", instance);
-    discard cJSON_AddStringToObject(page, "epoch", epoch->valuestring);
-    discard cJSON_AddStringToObject(page, "digest", digest_text);
-    pageNumber(page, "sequence", checkpoint->last_sequence);
-    pageNumber(page, "config-revision", ts->store.config_revision);
-    pageNumber(page, "stats-revision", ts->store.stats_revision);
-    pageNumber(page, "server-time-ms", getTimeOfDayMS());
-    pageNumber(page, "accounting-time-ms", authenticationserverAccountingTimeMS(ts));
-    pageNumber(page, "total", total);
-    pageNumber(page, "position", view.position);
-    cJSON       *users = cJSON_AddArrayToObject(page, "users");
+    digest_text[64]    = 0;
+    page               = createPageMetadata(instance,
+                              epoch->valuestring,
+                              digest_text,
+                              checkpoint->last_sequence,
+                              ts->store.config_revision,
+                              ts->store.stats_revision,
+                              getTimeOfDayMS(),
+                              authenticationserverAccountingTimeMS(ts),
+                              total,
+                              view.position);
+    cJSON       *users = cJSON_GetObjectItemCaseSensitive(page, "users");
     const size_t hard  = kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize;
     size_t       count = 0, row_bytes = 0;
     while (! validate && view.position + count < total && count < kAuthenticationUsersPageMaxUsers)

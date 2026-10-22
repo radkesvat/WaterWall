@@ -30,6 +30,16 @@ typedef enum fault_e
     kProbeClose
 } fault_t;
 static fault_t  fault;
+static unsigned rwlock_failure_after;
+static unsigned credential_failure_after;
+static unsigned producer_log_count;
+static int      producer_log_level;
+static char     producer_log[1024];
+static bool     collide_archive, fail_history_remove, fail_backup_read;
+static bool     fail_backup_permissions, require_nonblocking_backup;
+static int      backup_fd = -1;
+static unsigned backup_data_reads;
+static char     collision_path[1024];
 static char     primary[512];
 static unsigned private_writes;
 static unsigned stage_writes, directory_syncs;
@@ -41,6 +51,46 @@ static bool     inspect_owned_credentials;
 static char    *read_watch, *password_watch, *serialized_watch;
 static size_t   read_watch_length, password_watch_length, serialized_watch_length;
 static unsigned owned_credentials_wiped;
+
+int __real_pthread_rwlock_init(pthread_rwlock_t *lock, const pthread_rwlockattr_t *attr);
+int __wrap_pthread_rwlock_init(pthread_rwlock_t *lock, const pthread_rwlockattr_t *attr);
+int __wrap_pthread_rwlock_init(pthread_rwlock_t *lock, const pthread_rwlockattr_t *attr)
+{
+    if (rwlock_failure_after != 0 && --rwlock_failure_after == 0)
+        return EAGAIN;
+    return __real_pthread_rwlock_init(lock, attr);
+}
+
+wcrypto_status_t __real_wCryptoSHA224(sha224_hash_t *out, const unsigned char *input, size_t length);
+wcrypto_status_t __wrap_wCryptoSHA224(sha224_hash_t *out, const unsigned char *input, size_t length);
+wcrypto_status_t __wrap_wCryptoSHA224(sha224_hash_t *out, const unsigned char *input, size_t length)
+{
+    if (credential_failure_after != 0 && --credential_failure_after == 0)
+        return kWCryptoBackendFailed;
+    return __real_wCryptoSHA224(out, input, length);
+}
+
+static void captureProducerLog(int level, const char *bytes, int length)
+{
+    twfRequire(length >= 0 && (size_t) length < sizeof(producer_log), "producer diagnostic exceeded fixture buffer");
+    ++producer_log_count;
+    producer_log_level = level;
+    memoryCopy(producer_log, bytes, (size_t) length);
+    producer_log[length] = '\0';
+}
+
+int __real_remove(const char *path);
+int __wrap_remove(const char *path);
+int __wrap_remove(const char *path)
+{
+    if (fail_history_remove && strstr(path, "/authenticationserver-") != NULL)
+    {
+        fail_history_remove = false;
+        errno               = EIO;
+        return -1;
+    }
+    return __real_remove(path);
+}
 
 void __real_memoryFree(void *pointer);
 void __wrap_memoryFree(void *pointer);
@@ -126,6 +176,9 @@ int __real_open(const char *path, int flags, ...);
 int __wrap_open(const char *path, int flags, ...);
 int __wrap_open(const char *path, int flags, ...)
 {
+    const bool is_backup = stringEndsWith(path, ".backup");
+    if (is_backup && require_nonblocking_backup)
+        twfRequire((flags & O_NONBLOCK) != 0, "backup permission probe could block on a FIFO");
     mode_t mode = 0;
     if ((flags & O_CREAT) != 0)
     {
@@ -136,6 +189,16 @@ int __wrap_open(const char *path, int flags, ...)
         twfRequire(mode == 0600 && (flags & O_EXCL) != 0, "secret creation was not private and exclusive");
         if (use_test_clock && strstr(path, "/authenticationserver-") != NULL)
             test_clock_us += 30000U; /* Optional work follows the primary outcome. */
+        if (collide_archive && strstr(path, ".corrupt-") != NULL)
+        {
+            collide_archive = false;
+            snprintf(collision_path, sizeof(collision_path), "%s", path);
+            int existing = __real_open(path, flags, mode);
+            twfRequire(existing >= 0 && write(existing, "collision", 9) == 9 && close(existing) == 0,
+                       "archive collision fixture failed");
+            errno = EEXIST;
+            return -1;
+        }
         if (fault == kOpen)
         {
             fault = kNone;
@@ -143,18 +206,29 @@ int __wrap_open(const char *path, int flags, ...)
             return -1;
         }
     }
+    if (fail_backup_read && stringEndsWith(path, ".backup") && (flags & O_ACCMODE) == O_RDONLY)
+    {
+        fail_backup_read = false;
+        errno            = EACCES;
+        return -1;
+    }
     if (fault == kReadOpen && strcmp(path, primary) == 0 && (flags & O_ACCMODE) == O_RDONLY)
     {
         fault = kNone;
         errno = EIO;
         return -1;
     }
-    return __real_open(path, flags, mode);
+    const int fd = __real_open(path, flags, mode);
+    if (is_backup && fd >= 0)
+        backup_fd = fd;
+    return fd;
 }
 int __real_close(int fd);
 int __wrap_close(int fd);
 int __wrap_close(int fd)
 {
+    if (fd == backup_fd)
+        backup_fd = -1;
     const int result = __real_close(fd);
     if (fault == kProbeClose)
     {
@@ -168,6 +242,8 @@ size_t __real_fread(void *ptr, size_t size, size_t count, FILE *stream);
 size_t __wrap_fread(void *ptr, size_t size, size_t count, FILE *stream);
 size_t __wrap_fread(void *ptr, size_t size, size_t count, FILE *stream)
 {
+    if (fileno(stream) == backup_fd)
+        ++backup_data_reads;
     if (inspect_owned_credentials)
     {
         twfRequire(read_watch == NULL, "prior database read not released");
@@ -218,6 +294,8 @@ int __real_fclose(FILE *stream);
 int __wrap_fclose(FILE *stream);
 int __wrap_fclose(FILE *stream)
 {
+    if (fileno(stream) == backup_fd)
+        backup_fd = -1;
     bool read_close = fault == kReadClose && (fcntl(fileno(stream), F_GETFL) & O_ACCMODE) == O_RDONLY;
     int  result     = __real_fclose(stream);
     if (fault == kClose || read_close)
@@ -251,6 +329,12 @@ int __real_fchmod(int fd, mode_t mode);
 int __wrap_fchmod(int fd, mode_t mode);
 int __wrap_fchmod(int fd, mode_t mode)
 {
+    if (fail_backup_permissions && fd == backup_fd)
+    {
+        fail_backup_permissions = false;
+        errno                   = EPERM;
+        return -1;
+    }
     if (fault == kPermissions)
     {
         fault = kNone;
@@ -345,6 +429,7 @@ static void testCommit(mode_t mask, fault_t selected, bool was_dirty)
     tunnel_t *server = tunnelCreate(NULL, sizeof(authenticationserver_tstate_t), 0);
     twfRequire(server != NULL, "server construction failed");
     authenticationserver_tstate_t *ts = tunnelGetState(server);
+    authenticationserverInitializeExportLimit(ts);
     rwlockinit(&ts->state_lock);
     twfRequire(usersCreate(&ts->store.users), "users construction failed");
     ts->db_path = primary;
@@ -550,6 +635,7 @@ static void testCalendarWeeksAndLayouts(void)
                    authenticationserverPrivateProbe(directory) == kAuthenticationServerPrivateReadError,
                "nonregular primary was accepted");
     authenticationserver_tstate_t ts = {0};
+    authenticationserverInitializeExportLimit(&ts);
     rwlockinit(&ts.state_lock);
     twfRequire(usersCreate(&ts.store.users), "calendar users creation failed");
     ts.db_path                   = primary;
@@ -638,26 +724,173 @@ static void requirePrivateFileEquals(const char *path, const char *expected, siz
 {
     char  *actual = NULL;
     size_t length = 0;
-    twfRequire(authenticationserverPrivateRead(path, &actual, &length) == kAuthenticationServerPrivateReadSuccess &&
+    twfRequire(authenticationserverPrivateReadForLoad(path, &actual, &length) ==
+                       kAuthenticationServerPrivateReadSuccess &&
                    length == expected_length && memcmp(actual, expected, length) == 0,
                "rejected input changed persisted bytes");
     memorySecureZero(actual, length);
     memoryFree(actual);
 }
 
-static void testMalformedDatabaseRecovery(void)
+static void testExistingBackupPermissions(void)
 {
-    static const char trailing[]      = "{\"users\":[]}garbage";
-    static const char concatenated[]  = "{\"users\":[]}{\"users\":[]}";
-    static const char raw_nul[]       = "{\"users\":[]}\0garbage";
-    static const char decoded_nul[]   = "{\"users\":[{\"id\":43,\"password\":\"abc\\u0000suffix\"}]}";
-    static const char duplicate_key[] = "{\"users\":[],\"us\\u0065rs\":[]}";
-    static const char invalid_utf8[]  = "{\"users\":[{\"id\":43,\"password\":\"bad\xc0\xaf\"}]}";
+    char directory[] = "/tmp/ww-backup-permissions-XXXXXX";
+    twfRequire(mkdtemp(directory) != NULL, "backup permissions directory failed");
+    snprintf(primary, sizeof(primary), "%s/users.json", directory);
+    char backup[520], target[520];
+    snprintf(backup, sizeof(backup), "%s.backup", primary);
+    snprintf(target, sizeof(target), "%s/target", directory);
+    static const char             good[]      = "{\"users\":[{\"id\":42,\"password\":\"primary-secret\"}]}";
+    static const char             malformed[] = "{invalid-backup";
+    authenticationserver_tstate_t ts          = {.db_path = primary};
+    authenticationserverInitializeExportLimit(&ts);
+    twfRequire(usersCreate(&ts.store.users), "backup permissions users failed");
+    twfRequire(authenticationserverPrivateWrite(primary, good, sizeof(good) - 1), "backup permissions primary failed");
     static const struct
     {
         const char *bytes;
         size_t      length;
-    } invalid[]                   = {{trailing, sizeof(trailing) - 1},
+        mode_t      mode;
+    } cases[] = {{malformed, sizeof(malformed) - 1, 0644}, {"", 0, 0666}};
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        twfRequire(authenticationserverPrivateWrite(backup, cases[i].bytes, cases[i].length) &&
+                       chmod(backup, cases[i].mode) == 0,
+                   "permissive backup fixture failed");
+        struct stat before, after;
+        twfRequire(stat(backup, &before) == 0, "could not inspect permissive backup");
+        const unsigned reads = backup_data_reads, writes = private_writes;
+        reload(&ts);
+        twfRequire(stat(backup, &after) == 0 && (after.st_mode & 0777) == 0600 && after.st_dev == before.st_dev &&
+                       after.st_ino == before.st_ino,
+                   "startup did not restrict the existing backup in place");
+        twfRequire(backup_data_reads == reads && private_writes == writes && usersCount(&ts.store.users) == 1 &&
+                       userPasswordMatches(usersLookupByIdentifier(&ts.store.users, 42), "primary-secret"),
+                   "valid primary startup read or replaced the backup");
+        requirePrivateFileEquals(backup, cases[i].bytes, cases[i].length);
+        requirePrivateFileEquals(primary, good, sizeof(good) - 1);
+    }
+    twfRequire(remove(backup) == 0, "backup absence fixture failed");
+    reload(&ts);
+    struct stat info;
+    twfRequire(lstat(backup, &info) != 0 && errno == ENOENT,
+               "valid primary startup required or created a missing backup");
+
+    twfRequire(authenticationserverPrivateWrite(backup, malformed, sizeof(malformed) - 1) && chmod(backup, 0644) == 0,
+               "backup permission refusal fixture failed");
+    struct stat primary_before, backup_before;
+    twfRequire(stat(primary, &primary_before) == 0 && stat(backup, &backup_before) == 0,
+               "could not inspect permission refusal files");
+    memoryFree(ts.backup_path);
+    ts.backup_path                = NULL;
+    fail_backup_permissions       = true;
+    const unsigned refused_writes = private_writes, refused_reads = backup_data_reads;
+    twfRequire(! authenticationserverLoadDatabase(&ts) && ! fail_backup_permissions &&
+                   private_writes == refused_writes && backup_data_reads == refused_reads &&
+                   usersCount(&ts.store.users) == 1 &&
+                   userPasswordMatches(usersLookupByIdentifier(&ts.store.users, 42), "primary-secret"),
+               "backup permission refusal published users or wrote database files");
+    twfRequire(stat(primary, &info) == 0 && info.st_dev == primary_before.st_dev &&
+                   info.st_ino == primary_before.st_ino && stat(backup, &info) == 0 &&
+                   info.st_dev == backup_before.st_dev && info.st_ino == backup_before.st_ino &&
+                   (info.st_mode & 0777) == 0644,
+               "backup permission refusal replaced a database file");
+    requirePrivateFileEquals(primary, good, sizeof(good) - 1);
+    requirePrivateFileEquals(backup, malformed, sizeof(malformed) - 1);
+
+    twfRequire(remove(backup) == 0 && authenticationserverPrivateWrite(target, malformed, sizeof(malformed) - 1) &&
+                   chmod(target, 0644) == 0 && symlink(target, backup) == 0,
+               "backup symlink fixture failed");
+    memoryFree(ts.backup_path);
+    ts.backup_path = NULL;
+    twfRequire(! authenticationserverLoadDatabase(&ts) && stat(target, &info) == 0 && (info.st_mode & 0777) == 0644 &&
+                   lstat(backup, &info) == 0 && S_ISLNK(info.st_mode),
+               "backup permission probe followed or replaced a symlink");
+    requirePrivateFileEquals(target, malformed, sizeof(malformed) - 1);
+    twfRequire(remove(backup) == 0 && remove(target) == 0 && mkdir(backup, 0755) == 0 && chmod(backup, 0755) == 0,
+               "backup directory fixture failed");
+    memoryFree(ts.backup_path);
+    ts.backup_path = NULL;
+    twfRequire(! authenticationserverLoadDatabase(&ts) && stat(backup, &info) == 0 && S_ISDIR(info.st_mode) &&
+                   (info.st_mode & 0777) == 0755,
+               "backup permission probe accepted or chmodded a directory");
+    twfRequire(rmdir(backup) == 0 && mkfifo(backup, 0644) == 0 && chmod(backup, 0644) == 0,
+               "backup FIFO fixture failed");
+    memoryFree(ts.backup_path);
+    ts.backup_path             = NULL;
+    require_nonblocking_backup = true;
+    twfRequire(! authenticationserverLoadDatabase(&ts) && stat(backup, &info) == 0 && S_ISFIFO(info.st_mode) &&
+                   (info.st_mode & 0777) == 0644,
+               "backup permission probe accepted or chmodded a FIFO");
+    require_nonblocking_backup = false;
+    requirePrivateFileEquals(primary, good, sizeof(good) - 1);
+    memoryFree(ts.backup_path);
+    usersDestroy(&ts.store.users);
+    twfRequire(remove(backup) == 0 && remove(primary) == 0 && rmdir(directory) == 0,
+               "backup permissions cleanup failed");
+}
+
+static void testRootDatabasePermissions(void)
+{
+    if (geteuid() != 0)
+        return;
+    char directory[] = "/tmp/ww-root-database-XXXXXX";
+    twfRequire(mkdtemp(directory) != NULL, "root database directory failed");
+    snprintf(primary, sizeof(primary), "%s/users.json", directory);
+    char backup[520];
+    snprintf(backup, sizeof(backup), "%s.backup", primary);
+    static const char             good[]  = "{\"users\":[{\"id\":42,\"password\":\"root-secret\"}]}";
+    static const char             older[] = "{\"users\":[{\"id\":42,\"password\":\"older-secret\"}]}";
+    authenticationserver_tstate_t ts      = {.db_path = primary, .database_loaded = true};
+    authenticationserverInitializeExportLimit(&ts);
+    rwlockinit(&ts.state_lock);
+    twfRequire(usersCreate(&ts.store.users), "root database users failed");
+    const uid_t owners[] = {0, 65534};
+    for (size_t i = 0; i < sizeof(owners) / sizeof(owners[0]); ++i)
+    {
+        twfRequire(authenticationserverPrivateWrite(primary, good, sizeof(good) - 1) &&
+                       authenticationserverPrivateWrite(backup, older, sizeof(older) - 1) &&
+                       chown(primary, owners[i], (gid_t) -1) == 0 && chown(backup, owners[i], (gid_t) -1) == 0 &&
+                       chmod(primary, 0000) == 0 && chmod(backup, 0000) == 0,
+                   "root-owned or foreign-owned database fixture failed");
+        reload(&ts);
+        struct stat info;
+        twfRequire(stat(primary, &info) == 0 && info.st_uid == owners[i] && (info.st_mode & 0777) == 0600 &&
+                       stat(backup, &info) == 0 && info.st_uid == owners[i] && (info.st_mode & 0777) == 0600,
+                   "root startup rejected or changed database ownership");
+        requirePrivateFileEquals(primary, good, sizeof(good) - 1);
+        requirePrivateFileEquals(backup, older, sizeof(older) - 1);
+        twfRequire(authenticationserverSaveDatabase(&ts), "root database save failed");
+        reload(&ts);
+        twfRequire(usersCount(&ts.store.users) == 1 &&
+                       userPasswordMatches(usersLookupByIdentifier(&ts.store.users, 42), "root-secret") &&
+                       stat(primary, &info) == 0 && (info.st_mode & 0777) == 0600 && stat(backup, &info) == 0 &&
+                       (info.st_mode & 0777) == 0600,
+                   "root database save and reload changed credentials or exposed files");
+    }
+    memoryFree(ts.backup_path);
+    usersDestroy(&ts.store.users);
+    rwlockDestroy(&ts.state_lock);
+    twfRequire(remove(backup) == 0 && remove(primary) == 0 && rmdir(directory) == 0, "root database cleanup failed");
+}
+
+static void testMalformedDatabaseRecovery(void)
+{
+    static const char invalid_account[] = "{\"users\":[{\"id\":43,\"password\":42}]}";
+    static const char trailing[]        = "{\"users\":[]}garbage";
+    static const char concatenated[]    = "{\"users\":[]}{\"users\":[]}";
+    static const char raw_nul[]         = "{\"users\":[]}\0garbage";
+    static const char decoded_nul[]     = "{\"users\":[{\"id\":43,\"password\":\"abc\\u0000suffix\"}]}";
+    static const char duplicate_key[]   = "{\"users\":[],\"us\\u0065rs\":[]}";
+    static const char invalid_utf8[]    = "{\"users\":[{\"id\":43,\"password\":\"bad\xc0\xaf\"}]}";
+    static const struct
+    {
+        const char *bytes;
+        size_t      length;
+    } invalid[]                   = {{"", 0},
+                                     {"{", 1},
+                                     {invalid_account, sizeof(invalid_account) - 1},
+                                     {trailing, sizeof(trailing) - 1},
                                      {concatenated, sizeof(concatenated) - 1},
                                      {raw_nul, sizeof(raw_nul) - 1},
                                      {decoded_nul, sizeof(decoded_nul) - 1},
@@ -670,6 +903,7 @@ static void testMalformedDatabaseRecovery(void)
     char backup[520];
     snprintf(backup, sizeof(backup), "%s.backup", primary);
     authenticationserver_tstate_t ts = {.db_path = primary, .database_loaded = true};
+    authenticationserverInitializeExportLimit(&ts);
     rwlockinit(&ts.state_lock);
     twfRequire(usersCreate(&ts.store.users), "malformed database users failed");
     for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
@@ -678,6 +912,29 @@ static void testMalformedDatabaseRecovery(void)
                        authenticationserverPrivateWrite(backup, seed, sizeof(seed) - 1),
                    "malformed database seed failed");
         reload(&ts);
+        DIR           *archives = opendir(directory);
+        struct dirent *archive_entry;
+        unsigned       archive_count = 0;
+        bool           found_exact   = false;
+        while ((archive_entry = readdir(archives)) != NULL)
+            if (strstr(archive_entry->d_name, ".corrupt-") != NULL)
+            {
+                ++archive_count;
+                char   path[1024], *bytes;
+                size_t length;
+                snprintf(path, sizeof(path), "%s/%s", directory, archive_entry->d_name);
+                twfRequire(authenticationserverPrivateReadForLoad(path, &bytes, &length) ==
+                               kAuthenticationServerPrivateReadSuccess,
+                           "corruption archive unreadable");
+                found_exact |= length == invalid[i].length && memcmp(bytes, invalid[i].bytes, length) == 0;
+                struct stat info;
+                twfRequire(stat(path, &info) == 0 && (info.st_mode & 0777) == 0600,
+                           "corruption archive permissions are not private");
+                memorySecureZero(bytes, length);
+                memoryFree(bytes);
+            }
+        twfRequire(closedir(archives) == 0 && archive_count == i + 1 && found_exact,
+                   "malformed bytes were not archived exactly once");
         user_t *user = usersLookupByIdentifier(&ts.store.users, 42);
         twfRequire(usersCount(&ts.store.users) == 1 && user != NULL && userPasswordMatches(user, "recovered-secret"),
                    "malformed primary bypassed recovery or changed the recovered credential");
@@ -703,8 +960,235 @@ static void testMalformedDatabaseRecovery(void)
     memoryFree(ts.backup_path);
     usersDestroy(&ts.store.users);
     rwlockDestroy(&ts.state_lock);
-    twfRequire(remove(backup) == 0 && remove(primary) == 0 && rmdir(directory) == 0,
-               "malformed database cleanup failed");
+    DIR           *dir = opendir(directory);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL)
+        if (entry->d_name[0] != '.')
+        {
+            char path[1024];
+            snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+            twfRequire(remove(path) == 0, "malformed database file cleanup failed");
+        }
+    twfRequire(closedir(dir) == 0 && rmdir(directory) == 0, "malformed database cleanup failed");
+}
+
+static void testLoadFailurePreservation(void)
+{
+    char directory[] = "/tmp/ww-load-preservation-XXXXXX";
+    twfRequire(mkdtemp(directory) != NULL, "load preservation directory failed");
+    snprintf(primary, sizeof(primary), "%s/users.json", directory);
+    char backup[520];
+    snprintf(backup, sizeof(backup), "%s.backup", primary);
+    static const char             good[]      = "{\"users\":[{\"id\":42,\"password\":\"good\"}]}";
+    static const char             older[]     = "{\"users\":[{\"id\":42,\"password\":\"older\"}]}";
+    static const char             malformed[] = "{truncated";
+    authenticationserver_tstate_t ts          = {.db_path = primary};
+    authenticationserverInitializeExportLimit(&ts);
+    twfRequire(usersCreate(&ts.store.users), "load preservation users failed");
+    const fault_t failures[] = {kReadOpen, kRead, kReadClose};
+    for (unsigned i = 0; i < 6; ++i)
+    {
+        twfRequire(authenticationserverPrivateWrite(primary, good, sizeof(good) - 1) &&
+                       authenticationserverPrivateWrite(backup, older, sizeof(older) - 1),
+                   "load failure seed failed");
+        fault                = i < 3 ? failures[i] : kNone;
+        rwlock_failure_after = i < 3 ? 0 : i - 2; /* candidate, user config, user stats locks */
+        twfRequire(! authenticationserverLoadDatabase(&ts) && fault == kNone && rwlock_failure_after == 0 &&
+                       usersCount(&ts.store.users) == 0,
+                   "native failure triggered database fallback or publication");
+        requirePrivateFileEquals(primary, good, sizeof(good) - 1);
+        requirePrivateFileEquals(backup, older, sizeof(older) - 1);
+        memoryFree(ts.backup_path);
+        ts.backup_path = NULL;
+    }
+    /* Valid primary is authoritative, even when backup cannot be parsed. */
+    twfRequire(authenticationserverPrivateWrite(backup, malformed, sizeof(malformed) - 1) &&
+                   authenticationserverLoadDatabase(&ts),
+               "valid primary consulted invalid backup");
+    twfRequire(userPasswordMatches(usersLookupByIdentifier(&ts.store.users, 42), "good"), "valid primary did not win");
+    memoryFree(ts.backup_path);
+    ts.backup_path = NULL;
+    /* Policy failures preserve both files, including when backup is usable. */
+    size_t allowance;
+    twfRequire(userMeasureExportUpperBound(usersLookupByIdentifier(&ts.store.users, 42), &allowance) == kUserPublicOk,
+               "could not measure policy fixture");
+    ts.max_user_export_bytes = allowance - 1;
+    twfRequire(authenticationserverPrivateWrite(backup, older, sizeof(older) - 1) &&
+                   ! authenticationserverLoadDatabase(&ts),
+               "oversized primary fell back to backup");
+    requirePrivateFileEquals(primary, good, sizeof(good) - 1);
+    requirePrivateFileEquals(backup, older, sizeof(older) - 1);
+    memoryFree(ts.backup_path);
+    ts.backup_path = NULL;
+    twfRequire(authenticationserverPrivateWrite(primary, malformed, sizeof(malformed) - 1) &&
+                   ! authenticationserverLoadDatabase(&ts),
+               "oversized backup became recovery source");
+    requirePrivateFileEquals(primary, malformed, sizeof(malformed) - 1);
+    requirePrivateFileEquals(backup, older, sizeof(older) - 1);
+    memoryFree(ts.backup_path);
+    ts.backup_path = NULL;
+    authenticationserverInitializeExportLimit(&ts);
+    /* Missing or unreadable backups do not authorize an archive or replacement. */
+    twfRequire(remove(backup) == 0 && ! authenticationserverLoadDatabase(&ts),
+               "missing backup replaced malformed primary");
+    requirePrivateFileEquals(primary, malformed, sizeof(malformed) - 1);
+    memoryFree(ts.backup_path);
+    ts.backup_path = NULL;
+    twfRequire(authenticationserverPrivateWrite(backup, older, sizeof(older) - 1), "backup reseed failed");
+    fail_backup_read = true;
+    twfRequire(! authenticationserverLoadDatabase(&ts) && ! fail_backup_read,
+               "unreadable backup replaced malformed primary");
+    requirePrivateFileEquals(primary, malformed, sizeof(malformed) - 1);
+    requirePrivateFileEquals(backup, older, sizeof(older) - 1);
+    memoryFree(ts.backup_path);
+    ts.backup_path = NULL;
+    /* Each archive-stage refusal leaves the primary and validated backup intact. */
+    const fault_t archive_failures[] = {kOpen, kWrite, kFlush, kSync, kClose};
+    for (size_t i = 0; i < sizeof(archive_failures) / sizeof(archive_failures[0]); ++i)
+    {
+        fault = archive_failures[i];
+        twfRequire(! authenticationserverLoadDatabase(&ts) && fault == kNone,
+                   "archive failure allowed database replacement");
+        requirePrivateFileEquals(primary, malformed, sizeof(malformed) - 1);
+        requirePrivateFileEquals(backup, older, sizeof(older) - 1);
+        memoryFree(ts.backup_path);
+        ts.backup_path = NULL;
+    }
+    /* Collision retry cannot clobber even an existing candidate name. A failed
+     * restore keeps the successful archive and the old in-memory table. */
+    collide_archive = true;
+    fault           = kPrimaryRename;
+    twfRequire(! authenticationserverLoadDatabase(&ts) && ! collide_archive && fault == kNone &&
+                   userPasswordMatches(usersLookupByIdentifier(&ts.store.users, 42), "good"),
+               "failed restore published candidate or lost archive");
+    requirePrivateFileEquals(primary, malformed, sizeof(malformed) - 1);
+    requirePrivateFileEquals(backup, older, sizeof(older) - 1);
+    requirePrivateFileEquals(collision_path, "collision", 9);
+    unsigned       archived = 0;
+    DIR           *dir      = opendir(directory);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL)
+        if (strstr(entry->d_name, ".corrupt-") != NULL)
+        {
+            char path[1024];
+            snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+            if (strcmp(path, collision_path) != 0)
+            {
+                requirePrivateFileEquals(path, malformed, sizeof(malformed) - 1);
+                ++archived;
+            }
+        }
+    twfRequire(closedir(dir) == 0 && archived == 1, "restoration failure lost its exact corruption archive");
+    memoryFree(ts.backup_path);
+    usersDestroy(&ts.store.users);
+    dir = opendir(directory);
+    while ((entry = readdir(dir)) != NULL)
+        if (entry->d_name[0] != '.')
+        {
+            char path[1024];
+            snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+            twfRequire(remove(path) == 0, "load preservation file cleanup failed");
+        }
+    twfRequire(closedir(dir) == 0 && rmdir(directory) == 0, "load preservation cleanup failed");
+}
+
+static void testBackwardHistoryRetention(void)
+{
+    char directory[] = "/tmp/ww-history-backward-XXXXXX";
+    twfRequire(mkdtemp(directory) != NULL, "history backward directory failed");
+    snprintf(primary, sizeof(primary), "%s/users.json", directory);
+    static const char seed[] = "{\"users\":[{\"id\":1,\"password\":\"history\"}]}";
+    twfRequire(authenticationserverPrivateWrite(primary, seed, sizeof(seed) - 1), "history seed failed");
+    authenticationserver_tstate_t ts = {.db_path                    = primary,
+                                        .database_loaded            = true,
+                                        .normal_backups_mode        = kAuthenticationServerNormalBackupsDaily,
+                                        .normal_backups_path        = directory,
+                                        .normal_backups_count_limit = 2};
+    authenticationserverInitializeExportLimit(&ts);
+    rwlockinit(&ts.state_lock);
+    twfRequire(usersCreate(&ts.store.users) && authenticationserverLoadDatabase(&ts), "history initial load failed");
+    char unrelated[1024], corrupt[1024];
+    snprintf(unrelated, sizeof(unrelated), "%s/unrelated.json", directory);
+    snprintf(corrupt, sizeof(corrupt), "%s.corrupt-sentinel", primary);
+    twfRequire(authenticationserverPrivateWrite(unrelated, "keep", 4) &&
+                   authenticationserverPrivateWrite(corrupt, "preserved", 9),
+               "history unrelated seed failed");
+    use_test_clock = true;
+    test_clock_us  = 1000000;
+    /* Dates jump backward twice, then forward; limit one pins each new current. */
+    const unsigned days[]    = {22, 23, 20, 19, 24, 24, 25};
+    uint64_t       last_slot = 0;
+    for (unsigned i = 0; i < sizeof(days) / sizeof(days[0]); ++i)
+    {
+        struct tm local = {.tm_year = 126, .tm_mon = 9, .tm_mday = (int) days[i], .tm_hour = 12, .tm_isdst = -1};
+        test_wall_time  = mktime(&local);
+        if (i == 3)
+            ts.normal_backups_count_limit = 1;
+        if (i == 6)
+            fail_history_remove = true;
+        const user_config_patch_t patch = {.mask  = kUserConfigNotes,
+                                           .notes = i == 2   ? "backward-new"
+                                                    : i == 3 ? "backward-again"
+                                                             : "forward"};
+        twfRequire(usersPatchConfigByIdentifier(&ts.store.users, 1, &patch) == kUsersUpdateResultOk,
+                   "history notes setup failed");
+        twfRequire(authenticationserverSaveDatabase(&ts) &&
+                       ts.primary_save_last_result == kAuthenticationServerSaveSuccess,
+                   "history work changed committed primary outcome");
+        if (i == 6)
+        {
+            twfRequire(! fail_history_remove && ts.normal_backups_last_slot == last_slot,
+                       "failed history deletion consumed successful-history marker");
+            twfRequire(authenticationserverSaveDatabase(&ts), "history deletion retry failed");
+        }
+        char period[32];
+        snprintf(period, sizeof(period), "%04d%02d%02d.json", 2026, 10, days[i]);
+        unsigned       count        = 0;
+        bool           current      = false;
+        bool           latest_other = false;
+        DIR           *dir          = opendir(directory);
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL)
+            if (stringStartsWith(entry->d_name, "authenticationserver-"))
+            {
+                ++count;
+                latest_other |= stringEndsWith(entry->d_name, "20261023.json");
+                if (stringEndsWith(entry->d_name, period))
+                {
+                    current = true;
+                    if (i == 2 || i == 3)
+                    {
+                        char path[1024];
+                        snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+                        char *text = readFile(path);
+                        twfRequire(strstr(text, i == 2 ? "backward-new" : "backward-again") != NULL,
+                                   "backward current history content was discarded");
+                        memoryFree(text);
+                    }
+                }
+            }
+        twfRequire(closedir(dir) == 0 && current && count <= ts.normal_backups_count_limit,
+                   "new backward snapshot was pruned or retention exceeded");
+        if (i == 2)
+            twfRequire(latest_other, "backward pruning removed the latest other period");
+        last_slot = ts.normal_backups_last_slot;
+        requirePrivateFileEquals(unrelated, "keep", 4);
+        requirePrivateFileEquals(corrupt, "preserved", 9);
+    }
+    use_test_clock = false;
+    usersDestroy(&ts.store.users);
+    rwlockDestroy(&ts.state_lock);
+    memoryFree(ts.backup_path);
+    DIR           *dir = opendir(directory);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL)
+        if (entry->d_name[0] != '.')
+        {
+            char path[1024];
+            snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+            twfRequire(remove(path) == 0, "history file cleanup failed");
+        }
+    twfRequire(closedir(dir) == 0 && rmdir(directory) == 0, "history directory cleanup failed");
 }
 
 static void testProducerJsonValidation(void)
@@ -737,6 +1221,7 @@ static void testProducerJsonValidation(void)
     twfRequire(server != NULL, "producer JSON server failed");
     authenticationserver_tstate_t *ts = tunnelGetState(server);
     ts->db_path                       = primary;
+    authenticationserverInitializeExportLimit(ts);
     rwlockinit(&ts->state_lock);
     twfRequire(usersCreate(&ts->store.users) && authenticationserverLoadDatabase(ts), "producer JSON load failed");
     ts->database_loaded       = true;
@@ -777,6 +1262,76 @@ static void testProducerJsonValidation(void)
         requirePrivateFileEquals(primary, seed, sizeof(seed) - 1);
         requirePrivateFileEquals(ts->backup_path, backup_seed, sizeof(backup_seed) - 1);
     }
+    static const char proposed[] =
+        "{\"id\":43,\"password\":\"diagnostic-private-password\",\"name\":\"diagnostic-private-name\","
+        "\"email\":\"diagnostic-private-email\",\"notes\":\"diagnostic-private-notes\"}";
+    static const struct
+    {
+        const char *json;
+        const char *error;
+        unsigned    fail_lock;
+        unsigned    fail_crypto;
+    } refused[] = {
+        {proposed, "storage-unavailable", 1, 0},
+        {proposed, "storage-unavailable", 2, 0},
+        {proposed, "storage-unavailable", 3, 0},
+        {proposed, "storage-unavailable", 4, 0},
+        {proposed, "storage-unavailable", 5, 0},
+        {proposed, "storage-unavailable", 6, 0},
+        {proposed, "storage-unavailable", 0, 1},
+        {proposed, "invalid-user", 0, 2},
+        {"{\"password\":\"diagnostic-private-password\"}trailing", "invalid-user-json", 0, 0},
+        {"{\"id\":43,\"password\":42}", "invalid-user", 0, 0},
+        {"{\"id\":43,\"password\":\"diagnostic-private-password\",\"enabled\":42}", "invalid-user", 0, 0},
+        {"{\"id\":42,\"password\":\"diagnostic-private-password\"}", "user-id-exists", 0, 0},
+    };
+    logger_handler previous_handler = loggerGetHandle(getNetworkLogger());
+    loggerSetHandler(getNetworkLogger(), captureProducerLog);
+    loggerSetLevel(getNetworkLogger(), LOG_LEVEL_DEBUG);
+    ts->verbose = false;
+    for (size_t i = 0; i < sizeof(refused) / sizeof(refused[0]); ++i)
+    {
+        const unsigned writes           = private_writes;
+        const bool     resource_failure = refused[i].fail_lock != 0 || refused[i].fail_crypto;
+        rwlock_failure_after            = refused[i].fail_lock;
+        credential_failure_after        = refused[i].fail_crypto;
+        producer_log_count              = 0;
+        producer_log[0]                 = '\0';
+        rwlockWriteLock(&ts->state_lock);
+        sbuf_t *response = authenticationserverDispatchRequest(kAuthenticationServerRequestTypeAddNewUser,
+                                                               correlation,
+                                                               server,
+                                                               line,
+                                                               &session,
+                                                               (const uint8_t *) refused[i].json,
+                                                               (uint32_t) strlen(refused[i].json));
+        rwlockWriteUnlock(&ts->state_lock);
+        twfRequire(rwlock_failure_after == 0 && credential_failure_after == 0, "producer fault was not exercised");
+        const size_t error_length = strlen(refused[i].error);
+        twfRequire(response != NULL &&
+                       sbufGetLength(response) == kAuthenticationServerResponseHeaderSize + error_length &&
+                       ((const uint8_t *) sbufGetRawPtr(response))[0] == kAuthenticationServerResponseTypeError &&
+                       memcmp((const uint8_t *) sbufGetRawPtr(response) + kAuthenticationServerResponseHeaderSize,
+                              refused[i].error,
+                              error_length) == 0,
+                   "producer did not distinguish resource failure from invalid input");
+        lineReuseBuffer(line, response);
+        twfRequire(producer_log_count == (resource_failure ? 1U : 0U) &&
+                       (! resource_failure || (producer_log_level == LOG_LEVEL_WARN &&
+                                               strstr(producer_log, "AddNewUser could not") != NULL)) &&
+                       strstr(producer_log, "diagnostic-private-") == NULL,
+                   "producer diagnostic was missing, duplicated, unredacted or emitted for invalid input");
+        twfRequire(
+            usersCount(&ts->store.users) == 1 && usersLookupByIdentifier(&ts->store.users, 43) == NULL &&
+                usersLookupByPassword(&ts->store.users, "committed") == usersLookupByIdentifier(&ts->store.users, 42) &&
+                usersValidate(&ts->store.users) && ts->store.config_revision == 84 && ! ts->database_dirty &&
+                private_writes == writes && ts->primary_save_last_result == kAuthenticationServerSaveNotAttempted,
+            "producer resource or input refusal mutated accounts, indexes, revision or save state");
+        requirePrivateFileEquals(primary, seed, sizeof(seed) - 1);
+        requirePrivateFileEquals(ts->backup_path, backup_seed, sizeof(backup_seed) - 1);
+    }
+    loggerSetHandler(getNetworkLogger(), previous_handler);
+    loggerSetLevel(getNetworkLogger(), DEFAULT_LOG_LEVEL);
     static const char *valid[]     = {"{\"id\":43,\"password\":\"caf\\u00e9-\\ud83d\\udd10\"}\r\n",
                                       "{\"id\":44,\"pass\":\"\xe9\x9b\xaa-\xf0\x9f\x94\x91\"}"};
     static const char *passwords[] = {"caf\xc3\xa9-\xf0\x9f\x94\x90", "\xe9\x9b\xaa-\xf0\x9f\x94\x91"};
@@ -819,6 +1374,7 @@ static void testCleanPeriodicSaving(void)
     static const char seed[] = "{\"users\":[{\"id\":1,\"password\":\"one\"}]}";
     twfRequire(authenticationserverPrivateWrite(primary, seed, sizeof(seed) - 1), "clean-save seed failed");
     authenticationserver_tstate_t ts = {0};
+    authenticationserverInitializeExportLimit(&ts);
     rwlockinit(&ts.state_lock);
     twfRequire(usersCreate(&ts.store.users), "clean-save users failed");
     ts.db_path = primary;
@@ -881,9 +1437,14 @@ static void testCleanPeriodicSaving(void)
     memoryFree(backup);
     memoryFree(after);
     twfRequire(authenticationserverPrivateWrite(primary, "", 0), "empty primary fixture failed");
+    backup = readFile(ts.backup_path);
     twfRequire(! authenticationserverSaveDatabaseForReason(&ts, kAuthenticationServerSavePeriodic) &&
                    ts.primary_save_last_result == kAuthenticationServerSaveFailure,
                "empty primary was a successful clean skip");
+    after = readFile(ts.backup_path);
+    twfRequire(strcmp(backup, after) == 0, "truncated primary rotated over healthy recovery bytes");
+    memoryFree(backup);
+    memoryFree(after);
     twfRequire(remove(primary) == 0 && authenticationserverSaveDatabase(&ts), "forced repair failed");
     const fault_t probe_faults[] = {kReadOpen, kProbeClose};
     for (size_t i = 0; i < sizeof(probe_faults) / sizeof(probe_faults[0]); ++i)
@@ -923,6 +1484,7 @@ static void testOwnedDatabaseCredentialWiping(void)
     static const char seed[] = "{\"users\":[{\"id\":1,\"password\":\"owned-database-secret\"}]}";
     twfRequire(authenticationserverPrivateWrite(primary, seed, sizeof(seed) - 1), "database wipe seed failed");
     authenticationserver_tstate_t ts = {.db_path = primary, .database_loaded = true};
+    authenticationserverInitializeExportLimit(&ts);
     rwlockinit(&ts.state_lock);
     twfRequire(usersCreate(&ts.store.users), "database wipe users failed");
     owned_credentials_wiped   = 0;
@@ -974,7 +1536,11 @@ int main(void)
     testCommit(022, kNone, true);
     testCommit(022, kWrite, true);
     testProducerJsonValidation();
+    testExistingBackupPermissions();
+    testRootDatabasePermissions();
     testMalformedDatabaseRecovery();
+    testLoadFailurePreservation();
+    testBackwardHistoryRetention();
     testCalendarWeeksAndLayouts();
     testCleanPeriodicSaving();
     testOwnedDatabaseCredentialWiping();

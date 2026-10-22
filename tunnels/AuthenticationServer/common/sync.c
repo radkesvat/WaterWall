@@ -60,10 +60,11 @@ bool authenticationserverUserHasRequiredId(const user_t *user)
 users_update_result_t authenticationserverPatchConfigAndBumpRevision(tunnel_t *t, uint64_t id,
                                                                      const user_config_patch_t *patch)
 {
-    authenticationserver_tstate_t *ts     = tunnelGetState(t);
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
     if (ts->store.config_revision == UINT64_MAX)
         return kUsersUpdateResultRevisionExhausted;
-    users_update_result_t          result = usersPatchConfigByIdentifier(&ts->store.users, id, patch);
+    users_update_result_t result =
+        usersPatchConfigByIdentifierWithExportLimit(&ts->store.users, id, patch, ts->max_user_export_bytes);
 
     if (LIKELY(result == kUsersUpdateResultOk))
     {

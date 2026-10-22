@@ -70,6 +70,7 @@ typedef struct authenticationserver_tstate_s
     uint64_t                                   accounting_monotonic_ms;
     uint64_t                                   primary_save_last_attempt_ms;
     uint64_t                                   primary_save_last_success_ms;
+    size_t                                     max_user_export_bytes;
     authenticationserver_normal_backups_mode_t normal_backups_mode;
     authenticationserver_save_result_t         primary_save_last_result;
     bool                                       primary_save_last_attempt_valid;
@@ -118,7 +119,6 @@ enum
     kAuthenticationServerMaxBatchEntries            = kAuthenticationMaxBatchEntries,
     kAuthenticationServerMaxFramesPerEnvelope = 64,
     kAuthenticationServerResponseQueueCap               = 4,
-    kAuthenticationServerMaxPasswordLength              = 1024U,
     kAuthenticationServerDefaultNormalBackupsCountLimit = 10U,
     kAuthenticationServerDefaultSessionIdleTimeoutMs    = 10U * 60U * 1000U,
     kAuthenticationServerSessionExpirySweepMs           = 60U * 1000U,
@@ -186,12 +186,13 @@ bool     authenticationserverSaveDatabaseForReason(authenticationserver_tstate_t
                                                    authenticationserver_save_reason_t reason);
 bool     authenticationserverSaveDatabaseLockedForReason(authenticationserver_tstate_t     *ts,
                                                          authenticationserver_save_reason_t reason);
-void authenticationserverSaveTimerCallback(wtimer_t *timer);
-void authenticationserverSessionExpiryTimerCallback(wtimer_t *timer);
-void authenticationserverGetRevisions(tunnel_t *t, uint64_t *config_revision, uint64_t *stats_revision);
-void authenticationserverBumpConfigRevision(tunnel_t *t);
-void authenticationserverBumpStatsRevision(tunnel_t *t);
+void     authenticationserverSaveTimerCallback(wtimer_t *timer);
+void     authenticationserverSessionExpiryTimerCallback(wtimer_t *timer);
+void     authenticationserverGetRevisions(tunnel_t *t, uint64_t *config_revision, uint64_t *stats_revision);
+void     authenticationserverBumpConfigRevision(tunnel_t *t);
+void     authenticationserverBumpStatsRevision(tunnel_t *t);
 void     authenticationserverInitializeAccountingClock(authenticationserver_tstate_t *ts);
+void     authenticationserverInitializeExportLimit(authenticationserver_tstate_t *ts);
 uint64_t authenticationserverAccountingTimeMS(const authenticationserver_tstate_t *ts);
 /* Called inside the request's state_lock write serialization. */
 users_update_result_t           authenticationserverPatchConfigAndBumpRevision(tunnel_t *t, uint64_t id,

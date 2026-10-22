@@ -471,7 +471,9 @@ static void budgetsAndRecords(void)
     cJSON_Delete(call("list-users", "{\"limit\":1}", NULL));
     patch = (user_config_patch_t) {.mask = kUserConfigName | kUserConfigNotes, .name = "\355\240\200", .notes = ""};
     rwlockWriteLock(&ts->state_lock);
-    twfRequire(authenticationserverPatchConfigAndBumpRevision(server, UINT64_MAX, &patch) == kUsersUpdateResultOk,
+    /* Bypass server admission only to exercise defensive reads of generic
+     * objects whose stored text cannot be exported. */
+    twfRequire(usersPatchConfigByIdentifier(&ts->store.users, UINT64_MAX, &patch) == kUsersUpdateResultOk,
                "malformed config setup failed");
     rwlockWriteUnlock(&ts->state_lock);
     expectError("get-user", "{\"id\":\"18446744073709551615\"}", "invalid_record_encoding");
@@ -526,6 +528,7 @@ int main(void)
     ts->store.config_revision = 84;
     ts->store.stats_revision  = 1902;
     authenticationserverInitializeAccountingClock(ts);
+    authenticationserverInitializeExportLimit(ts);
     memset(ts->api_instance_id, 0x5a, sizeof(ts->api_instance_id));
     twfRequire(authenticationserverRegisterApi(server), "registration failed");
     context      = (node_api_call_context_t) {.principal                = "tester",

@@ -18,6 +18,7 @@ tunnel_t *authTestPeerCreate(uint32_t offset)
     t->fnResumeU                      = authenticationserverTunnelUpStreamResume;
     authenticationserver_tstate_t *ts = tunnelGetState(t);
     authenticationserverInitializeAccountingClock(ts);
+    authenticationserverInitializeExportLimit(ts);
     rwlockinit(&ts->state_lock);
     require(usersCreate(&ts->store.users), "peer users failed");
     ts->store.config_revision = ts->store.stats_revision = 1;

@@ -1,6 +1,7 @@
 /* CTest: waterwall.authenticationserver_responses_unit
  * Real request parsing and response FIFO; bounded charge, reentry and terminal ownership. */
 #include "../../../../tunnels/Internals/AuthenticationCommon/stream.h"
+#include "AuthenticationServer/api.h"
 #include "AuthenticationServer/structure.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "loggers/network_logger.h"
@@ -197,6 +198,7 @@ static authenticationserver_lstate_t *setup(void)
     authenticationserver_tstate_t *ts = tunnelGetState(server);
     rwlockinit(&ts->state_lock);
     authenticationserverInitializeAccountingClock(ts);
+    authenticationserverInitializeExportLimit(ts);
     twfRequire(usersCreate(&ts->store.users), "users construction failed");
     twfLinePoolSetup(&lines, server->lstate_size, 4);
     line = twfLinePoolCreateLine(&lines);
@@ -647,7 +649,8 @@ static void testProducerPages(void)
     userSetId(&source, 1);
     source.notes = memoryAllocate(300001);
     memset(source.notes, 'x', 300000);
-    source.notes[300000] = 0;
+    source.notes[300000]        = 0;
+    source.export_strings.notes = userMeasureExportString(source.notes);
     twfRequire(usersAddUser(&ts->store.users, &source), "exceptional row insert failed");
     userDestroy(&source);
     page = producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), NULL);
@@ -659,6 +662,7 @@ static void testProducerPages(void)
     huge->notes = memoryAllocate(17 * 1024 * 1024 + 1);
     memset(huge->notes, 'x', 17 * 1024 * 1024);
     huge->notes[17 * 1024 * 1024] = 0;
+    huge->export_strings.notes    = userMeasureExportString(huge->notes);
     producerResponse(kAuthenticationServerRequestTypeGetUsersPage, text, strlen(text), "user-too-large");
     teardown();
 }
@@ -730,6 +734,102 @@ static void testCanonicalProducerLookups(void)
     teardown();
 }
 
+static void testLongPasswordsAndAdmission(void)
+{
+    setup();
+    producerSession();
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    for (size_t n = 1024; n <= 8192; n = n == 1024 ? 1025 : n == 1025 ? 8192 : 8193)
+    {
+        char *password = memoryAllocate(n + 1);
+        memset(password, 'p', n);
+        memcpy(password, " \342\202\254", 4);
+        password[n - 1] = ' ';
+        password[n]     = 0;
+        user_t source;
+        twfRequire(userCreate(&source, password), "long credential creation");
+        userSetId(&source, n);
+        twfRequire(usersAddUser(&ts->store.users, &source), "long credential insertion");
+        userDestroy(&source);
+        cJSON *row = producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, password, n, NULL);
+        twfRequire(strcmp(cJSON_GetObjectItemCaseSensitive(row, "password")->valuestring, password) == 0,
+                   "long password bytes changed");
+        cJSON_Delete(row);
+        memorySecureZero(password, n);
+        memoryFree(password);
+    }
+    producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, "", 0, "invalid-password");
+    user_t *stored = usersLookupByIdentifier(&ts->store.users, 1024);
+    size_t  required;
+    twfRequire(userMeasureExportUpperBound(stored, &required) == kUserPublicOk, "producer export measurement");
+    const size_t saved                = ts->max_user_export_bytes;
+    ts->max_user_export_bytes         = required;
+    ts->sessions[0]->allow_user_write = true;
+    const uint64_t revision           = ts->store.config_revision;
+    const char     update[]           = "{\"id\":\"1024\",\"notes\":\"x\"}";
+    producerResponse(kAuthenticationServerRequestTypeUpdateUser, update, sizeof(update) - 1, "user-too-large");
+    twfRequire(ts->store.config_revision == revision && ! ts->database_dirty &&
+                   (stored->notes == NULL || stored->notes[0] == 0),
+               "producer policy refusal changed state");
+    const char add[]          = "{\"id\":\"909\",\"password\":\"oversize-add\"}";
+    ts->max_user_export_bytes = 0;
+    producerResponse(kAuthenticationServerRequestTypeAddNewUser, add, sizeof(add) - 1, "user-too-large");
+    ts->max_user_export_bytes = saved;
+    teardown();
+}
+
+static void testMaximumSynchronizableRecord(void)
+{
+    setup();
+    producerSession();
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    user_t                         source;
+    twfRequire(userCreate(&source, "maximum-sync"), "maximum sync candidate");
+    userSetId(&source, 1);
+    size_t fixed;
+    twfRequire(userMeasureExportUpperBound(&source, &fixed) == kUserPublicOk && fixed < ts->max_user_export_bytes,
+               "maximum sync geometry");
+    const size_t length = ts->max_user_export_bytes - fixed;
+    memoryFree(source.notes);
+    source.notes = memoryAllocate(length + 2);
+    memset(source.notes, 'x', length + 1);
+    source.notes[length]        = 0;
+    source.export_strings.notes = userMeasureExportString(source.notes);
+    size_t measured;
+    twfRequire(userMeasureExportUpperBound(&source, &measured) == kUserPublicOk &&
+                   measured == ts->max_user_export_bytes && usersAddUser(&ts->store.users, &source),
+               "admission boundary row did not fit");
+    user_t *stored = usersLookupByIdentifier(&ts->store.users, 1);
+    userMergeFirstUsage(stored, UINT64_MAX);
+    userAddTraffic(stored, UINT64_MAX, UINT64_MAX);
+    char request_text[512];
+    pageRequest(request_text, NULL, 0, false);
+    cJSON *page =
+        producerResponse(kAuthenticationServerRequestTypeGetUsersPage, request_text, strlen(request_text), NULL);
+    twfRequire(pageValue(page, "count") == 1 && received_length <= kAuthenticationServerMaxResponsePayload +
+                                                                       kAuthenticationServerResponseEnvelopeHeaderSize,
+               "maximum-growth admitted row failed synchronization");
+    cJSON_Delete(page);
+    /* A valid producer request still fits its wire cap while the conservative
+     * complete-page allowance rejects this one-byte-larger candidate. */
+    source.notes[length]        = 'x';
+    source.notes[length + 1]    = 0;
+    source.export_strings.notes = userMeasureExportString(source.notes);
+    userSetId(&source, 2);
+    cJSON *json = userToJson(&source);
+    char  *text = cJSON_PrintUnformatted(json);
+    twfRequire(strlen(text) < kAuthenticationServerMaxRequestData, "oversized row fixture exceeded request cap");
+    ts->sessions[0]->allow_user_write = true;
+    producerResponse(kAuthenticationServerRequestTypeAddNewUser, text, strlen(text), "user-too-large");
+    twfRequire(usersCount(&ts->store.users) == 1 && ! ts->database_dirty, "policy rejection published account");
+    memorySecureZero(text, strlen(text));
+    cJSON_free(text);
+    authenticationserverWipeJsonStrings(json);
+    cJSON_Delete(json);
+    userDestroy(&source);
+    teardown();
+}
+
 static void testBoundedProducerLookups(void)
 {
     setup();
@@ -739,7 +839,8 @@ static void testBoundedProducerLookups(void)
     twfRequire(userCreate(&source, "bounded-lookup"), "bounded lookup user failed");
     userSetId(&source, 1);
     memoryFree(source.notes);
-    source.notes = stringDuplicate("x");
+    source.notes                = stringDuplicate("x");
+    source.export_strings.notes = userMeasureExportString(source.notes);
     twfRequire(usersAddUser(&ts->store.users, &source), "bounded lookup insertion failed");
     userDestroy(&source);
     user_t      *stored       = usersLookupByIdentifier(&ts->store.users, 1);
@@ -752,9 +853,10 @@ static void testBoundedProducerLookups(void)
     memoryFree(stored->notes);
     stored->notes = memoryAllocate(notes_length + 2U);
     memset(stored->notes, 'x', notes_length + 1U);
-    stored->notes[notes_length] = '\0';
-    lookup_text_watch           = stored->notes;
-    lookup_text_copies          = 0;
+    stored->notes[notes_length]  = '\0';
+    stored->export_strings.notes = userMeasureExportString(stored->notes);
+    lookup_text_watch            = stored->notes;
+    lookup_text_copies           = 0;
     json = producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, "bounded-lookup", 14, NULL);
     twfRequire(received_length == maximum + kAuthenticationServerResponseEnvelopeHeaderSize +
                                       kAuthenticationServerResponseHeaderSize &&
@@ -765,6 +867,7 @@ static void testBoundedProducerLookups(void)
 
     stored->notes[notes_length]     = 'x';
     stored->notes[notes_length + 1] = '\0';
+    stored->export_strings.notes    = userMeasureExportString(stored->notes);
     lookup_text_copies              = 0;
     producerResponse(kAuthenticationServerRequestTypeGetUserByPassword, "bounded-lookup", 14, "response-too-large");
     producerResponse(kAuthenticationServerRequestTypeGetUserBySHA224,
@@ -898,6 +1001,8 @@ int main(void)
     testSessionAtEnvelopeEntry();
     testProducerPages();
     testCanonicalProducerLookups();
+    testLongPasswordsAndAdmission();
+    testMaximumSynchronizableRecord();
     testBoundedProducerLookups();
     testProducerDirtyBoundaries();
     testOwnedProducerSecretWiping();

@@ -31,6 +31,8 @@ static const char *authenticationserverUsersUpdateResultError(users_update_resul
         return "password-update-disabled";
     case kUsersUpdateResultRevisionExhausted:
         return "revision-exhausted";
+    case kUsersUpdateResultTooLarge:
+        return "user-too-large";
     case kUsersUpdateResultBusy:
     case kUsersUpdateResultResourceLimit:
     case kUsersUpdateResultTimeout:

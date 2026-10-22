@@ -27,6 +27,18 @@ typedef enum authenticationserver_private_read_result_e
     kAuthenticationServerPrivateReadAbsent,
     kAuthenticationServerPrivateReadError
 } authenticationserver_private_read_result_t;
+/* Restrict an existing regular file without reading its contents. Missing is
+ * allowed to callers that do not require a recovery file; all other refusals
+ * remain errors. Does not follow links or require ownership by the current UID. */
+authenticationserver_private_read_result_t authenticationserverPrivateRestrictIfPresent(const char *path);
 authenticationserver_private_read_result_t authenticationserverPrivateRead(const char *path, char **data,
                                                                            size_t *length);
 authenticationserver_private_read_result_t authenticationserverPrivateProbe(const char *path);
+
+/* Loader-only mode: an empty regular file is readable malformed input. Ordinary
+ * reads/probes must still reject emptiness so saves preserve the recovery copy. */
+authenticationserver_private_read_result_t authenticationserverPrivateReadForLoad(const char *path, char **data,
+                                                                                  size_t *length);
+/* Exclusive, private sibling; exact bytes are flushed and closed before success.
+ * Caller owns the returned path, and the archive is never automatically removed. */
+bool authenticationserverPrivateArchive(const char *destination, const void *data, size_t length, char **archive_path);

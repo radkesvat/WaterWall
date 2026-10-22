@@ -197,8 +197,8 @@ static bool authenticationserverBackupPathListAppend(authenticationserver_backup
         if (UNLIKELY(new_capacity > SIZE_MAX / sizeof(*list->items)))
             return false;
         char **new_items = memoryReAllocate(list->items, sizeof(*new_items) * new_capacity);
-        list->items    = new_items;
-        list->capacity = new_capacity;
+        list->items      = new_items;
+        list->capacity   = new_capacity;
     }
 
     list->items[list->count] = stringDuplicate(path);
@@ -314,7 +314,8 @@ static bool authenticationserverCollectNormalBackupFiles(authenticationserver_ts
 #endif
 }
 
-static bool authenticationserverPruneNormalBackups(authenticationserver_tstate_t *ts, const char *prefix)
+static bool authenticationserverPruneNormalBackups(authenticationserver_tstate_t *ts, const char *prefix,
+                                                   const char *current_path)
 {
     authenticationserver_backup_path_list_t list = {0};
 
@@ -333,22 +334,28 @@ static bool authenticationserverPruneNormalBackups(authenticationserver_tstate_t
     qsort(list.items, list.count, sizeof(*list.items), authenticationserverCompareBackupPaths);
 
     size_t remove_count = list.count - (size_t) ts->normal_backups_count_limit;
-    for (size_t i = 0; i < remove_count; ++i)
+    bool   ok           = true;
+    for (size_t i = 0; i < list.count && remove_count != 0; ++i)
     {
+        if (stringCompare(list.items[i], current_path) == 0)
+            continue;
         if (UNLIKELY(remove(list.items[i]) != 0))
         {
             LOGW("AuthenticationServer: failed to remove expired normal backup \"%s\": %s",
                  list.items[i],
                  strerror(errno));
+            ok = false;
+            break; /* Retain later periods and retry this oldest deletion. */
         }
         else
         {
+            --remove_count;
             LOGD("AuthenticationServer: removed expired normal backup \"%s\"", list.items[i]);
         }
     }
 
     authenticationserverBackupPathListDestroy(&list);
-    return true;
+    return ok;
 }
 
 static bool authenticationserverMaybeWriteNormalBackup(authenticationserver_tstate_t *ts, const char *json_text,
@@ -406,7 +413,7 @@ static bool authenticationserverMaybeWriteNormalBackup(authenticationserver_tsta
         return false;
     }
 
-    if (UNLIKELY(! authenticationserverPruneNormalBackups(ts, prefix)))
+    if (UNLIKELY(! authenticationserverPruneNormalBackups(ts, prefix, path)))
     {
         return false;
     }
@@ -419,66 +426,86 @@ static bool authenticationserverMaybeWriteNormalBackup(authenticationserver_tsta
     return true;
 }
 
-static bool authenticationserverLoadUsersFromPath(authenticationserver_tstate_t *ts, const char *path)
+typedef enum authenticationserver_load_result_e
 {
-    char  *json_text   = NULL;
-    size_t json_length = 0;
-    if (UNLIKELY(authenticationserverPrivateRead(path, &json_text, &json_length) !=
-                 kAuthenticationServerPrivateReadSuccess))
-    {
-        LOGW("AuthenticationServer: could not read users database \"%s\"", path);
-        return false;
-    }
+    kAuthenticationServerLoadValid,
+    kAuthenticationServerLoadMissing,
+    kAuthenticationServerLoadResourceFailure,
+    kAuthenticationServerLoadMalformed,
+    kAuthenticationServerLoadPolicyFailure
+} authenticationserver_load_result_t;
 
-    /* Keep the file's full byte span, including NULs. Database imports retain
-     * cJSON's depth policy and have no API-envelope byte/value limit. */
-    cJSON *json = configLexicalParseBoundedQuietWithCleanup(
-        json_text, json_length, CJSON_NESTING_LIMIT, SIZE_MAX, authenticationserverWipeJsonStrings);
-    if (UNLIKELY(json == NULL))
-    {
-        LOGW("AuthenticationServer: could not parse users database \"%s\"", path);
-        memorySecureZero(json_text, json_length);
-        memoryFree(json_text);
-        return false;
-    }
+typedef struct authenticationserver_database_candidate_s
+{
+    users_t users;
+    bool    initialized;
+    char   *bytes;
+    size_t  length;
+} authenticationserver_database_candidate_t;
 
-    users_t candidate;
-    bool    ok = usersCreate(&candidate);
-    if (ok)
-    {
-        ok = usersFeedJsonRequiredIds(&candidate, json) && usersValidateStructure(&candidate) &&
-             usersCopy(&ts->store.users, &candidate);
-        usersDestroy(&candidate);
-    }
-    if (! ok)
-        LOGW("AuthenticationServer: users database \"%s\" has invalid users or required IDs", path);
-
-    if (LIKELY(ok))
-    {
-        LOGI("AuthenticationServer: loaded %zu users from \"%s\"", usersCount(&ts->store.users), path);
-    }
-
-    authenticationserverWipeJsonStrings(json);
-    cJSON_Delete(json);
-    memorySecureZero(json_text, json_length);
-    memoryFree(json_text);
-    return ok;
+static void authenticationserverCandidateDestroy(authenticationserver_database_candidate_t *candidate)
+{
+    if (candidate->initialized)
+        usersDestroy(&candidate->users);
+    memorySecureZero(candidate->bytes, candidate->length);
+    memoryFree(candidate->bytes);
 }
 
-static bool authenticationserverRewritePrimaryFromMemory(authenticationserver_tstate_t *ts)
+static authenticationserver_load_result_t authenticationserverLoadUsersFromPath(
+    authenticationserver_tstate_t *ts, const char *path, authenticationserver_database_candidate_t *candidate)
 {
-    char  *json_text = NULL;
-    size_t json_len  = 0;
-
-    if (UNLIKELY(! authenticationserverBuildUsersJson(ts, &json_text, &json_len)))
+    const authenticationserver_private_read_result_t read =
+        authenticationserverPrivateReadForLoad(path, &candidate->bytes, &candidate->length);
+    if (read == kAuthenticationServerPrivateReadAbsent)
+        return kAuthenticationServerLoadMissing;
+    if (read != kAuthenticationServerPrivateReadSuccess)
     {
-        return false;
+        LOGE("AuthenticationServer: users database read failed for \"%s\"; preserving database files", path);
+        return kAuthenticationServerLoadResourceFailure;
     }
-
-    bool ok = authenticationserverWriteJsonFile(ts->db_path, json_text, json_len);
-    memorySecureZero(json_text, json_len);
-    cJSON_free(json_text);
-    return ok;
+    /* Parse the complete owned byte span; retain malformed source bytes until
+     * a validated backup and a successfully closed private archive exist. */
+    cJSON *json = configLexicalParseBoundedQuietWithCleanup(
+        candidate->bytes, candidate->length, CJSON_NESTING_LIMIT, SIZE_MAX, authenticationserverWipeJsonStrings);
+    if (json == NULL)
+    {
+        LOGW("AuthenticationServer: users database \"%s\" is malformed", path);
+        return kAuthenticationServerLoadMalformed;
+    }
+    authenticationserver_load_result_t result = kAuthenticationServerLoadResourceFailure;
+    candidate->initialized                    = usersCreate(&candidate->users);
+    if (candidate->initialized)
+    {
+        const users_json_result_t imported = usersFeedJsonRequiredIdsResult(&candidate->users, json);
+        if (imported == kUsersJsonOk)
+        {
+            result = usersValidateStructure(&candidate->users) ? kAuthenticationServerLoadValid
+                                                               : kAuthenticationServerLoadMalformed;
+            for (size_t i = 0; result == kAuthenticationServerLoadValid && i < usersCount(&candidate->users); ++i)
+            {
+                const user_t              *user = usersGetAtConst(&candidate->users, i);
+                size_t                     bytes;
+                const user_public_result_t measured = userMeasureExportUpperBound(user, &bytes);
+                if (measured != kUserPublicOk || bytes > ts->max_user_export_bytes)
+                {
+                    LOGE("AuthenticationServer: database user id=%" PRIu64
+                         " rejected: user-too-large (export limit=%zu bytes); preserving database files",
+                         user->id,
+                         ts->max_user_export_bytes);
+                    result = kAuthenticationServerLoadPolicyFailure;
+                }
+            }
+        }
+        else if (imported == kUsersJsonInvalid)
+            result = kAuthenticationServerLoadMalformed;
+    }
+    authenticationserverWipeJsonStrings(json);
+    cJSON_Delete(json);
+    if (result == kAuthenticationServerLoadResourceFailure)
+        LOGE("AuthenticationServer: users database construction failed for \"%s\"; preserving database files", path);
+    else if (result == kAuthenticationServerLoadMalformed)
+        LOGW("AuthenticationServer: users database \"%s\" has invalid accounts or required IDs", path);
+    return result;
 }
 
 /* Caller holds state_lock exclusively. These facts are process-local and do
@@ -511,8 +538,8 @@ static bool authenticationserverHistoryDue(authenticationserver_tstate_t *ts)
 bool authenticationserverSaveDatabaseLockedForReason(authenticationserver_tstate_t     *ts,
                                                      authenticationserver_save_reason_t reason)
 {
-    char  *json_text = NULL;
-    size_t json_len  = 0;
+    char      *json_text      = NULL;
+    size_t     json_len       = 0;
     const bool first_periodic = reason == kAuthenticationServerSavePeriodic && ! ts->periodic_save_seen;
     if (reason == kAuthenticationServerSavePeriodic)
         ts->periodic_save_seen = true;
@@ -614,51 +641,57 @@ bool authenticationserverSaveDatabase(authenticationserver_tstate_t *ts)
 bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
 {
     ts->backup_path = authenticationserverCreateBackupPath(ts->db_path);
-    if (UNLIKELY(ts->backup_path == NULL))
+    if (ts->backup_path == NULL)
     {
-        LOGE("AuthenticationServer: backup path is too large for \"%s\"", ts->db_path);
+        LOGE("AuthenticationServer: backup path is too large");
         return false;
     }
-
-    LOGI("AuthenticationServer: loading users database from \"%s\"", ts->db_path);
-    if ((isFile(ts->db_path) && ! authenticationserverPrivateRestrict(ts->db_path)) ||
-        (isFile(ts->backup_path) && ! authenticationserverPrivateRestrict(ts->backup_path)))
+    /* A valid primary does not require parsing the backup, but an existing
+     * recovery file still contains credentials and must be private at startup. */
+    if (authenticationserverPrivateRestrictIfPresent(ts->backup_path) == kAuthenticationServerPrivateReadError)
     {
-        LOGE("AuthenticationServer: refusing database with unrestrictable permissions");
+        LOGE("AuthenticationServer: could not secure recovery database \"%s\"; preserving database files",
+             ts->backup_path);
         return false;
     }
-    if (LIKELY(authenticationserverLoadUsersFromPath(ts, ts->db_path)))
+    authenticationserver_database_candidate_t primary = {0}, backup = {0};
+    const authenticationserver_load_result_t  primary_result =
+        authenticationserverLoadUsersFromPath(ts, ts->db_path, &primary);
+    bool ok = primary_result == kAuthenticationServerLoadValid;
+    if (ok)
+        usersPublishCandidate(&ts->store.users, &primary.users);
+    else if (primary_result == kAuthenticationServerLoadMissing || primary_result == kAuthenticationServerLoadMalformed)
     {
-        return true;
+        const authenticationserver_load_result_t backup_result =
+            authenticationserverLoadUsersFromPath(ts, ts->backup_path, &backup);
+        if (backup_result == kAuthenticationServerLoadValid)
+        {
+            char *archive = NULL;
+            ok            = primary_result == kAuthenticationServerLoadMissing ||
+                 authenticationserverPrivateArchive(ts->db_path, primary.bytes, primary.length, &archive);
+            if (archive != NULL)
+                LOGW("AuthenticationServer: preserved malformed primary database as \"%s\" before recovery", archive);
+            if (! ok)
+                LOGE("AuthenticationServer: corruption archive failed; primary database preserved");
+            if (ok)
+                ok = authenticationserverPrivateWrite(ts->db_path, backup.bytes, backup.length);
+            if (ok)
+            {
+                usersPublishCandidate(&ts->store.users, &backup.users);
+                LOGI("AuthenticationServer: restored users database \"%s\" from validated backup \"%s\"",
+                     ts->db_path,
+                     ts->backup_path);
+            }
+            else if (archive != NULL)
+                LOGE("AuthenticationServer: restoration failed; corruption archive retained at \"%s\"", archive);
+            memoryFree(archive);
+        }
+        else
+            LOGE("AuthenticationServer: recovery unavailable; primary and backup databases preserved");
     }
-
-    LOGW("AuthenticationServer: primary users database \"%s\" could not be loaded; attempting recovery from \"%s\"",
-         ts->db_path,
-         ts->backup_path);
-
-    if (UNLIKELY(! isFile(ts->backup_path)))
-    {
-        LOGE("AuthenticationServer: recovery failed because backup file \"%s\" does not exist", ts->backup_path);
-        return false;
-    }
-
-    if (UNLIKELY(! authenticationserverLoadUsersFromPath(ts, ts->backup_path)))
-    {
-        LOGE("AuthenticationServer: recovery failed because backup file \"%s\" is not valid", ts->backup_path);
-        return false;
-    }
-
-    if (UNLIKELY(! authenticationserverRewritePrimaryFromMemory(ts)))
-    {
-        LOGE("AuthenticationServer: recovery failed because recovered data could not be written to \"%s\"",
-             ts->db_path);
-        return false;
-    }
-
-    LOGI("AuthenticationServer: recovered users database from backup \"%s\"", ts->backup_path);
-
-    LOGI("AuthenticationServer: recovery complete; rewrote primary users database \"%s\"", ts->db_path);
-    return true;
+    authenticationserverCandidateDestroy(&backup);
+    authenticationserverCandidateDestroy(&primary);
+    return ok;
 }
 
 void authenticationserverSaveTimerCallback(wtimer_t *timer)

@@ -584,7 +584,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
     "-Wl,--wrap=open" "-Wl,--wrap=fread" "-Wl,--wrap=fwrite" "-Wl,--wrap=fflush" "-Wl,--wrap=fclose"
     "-Wl,--wrap=fsync" "-Wl,--wrap=fchmod" "-Wl,--wrap=rename" "-Wl,--wrap=close"
     "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=time" "-Wl,--wrap=memoryFree"
-    "-Wl,--wrap=cJSON_ParseWithLengthOpts" "-Wl,--wrap=cJSON_PrintBuffered")
+    "-Wl,--wrap=cJSON_ParseWithLengthOpts" "-Wl,--wrap=cJSON_PrintBuffered"
+    "-Wl,--wrap=pthread_rwlock_init" "-Wl,--wrap=remove" "-Wl,--wrap=wCryptoSHA224")
   add_dependencies(waterwall_unit_tests authenticationserver_storage_test)
   add_waterwall_unit_test(waterwall.authenticationserver_storage_unit authenticationserver_storage_test
     "unit;authentication;storage")
