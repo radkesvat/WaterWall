@@ -1646,8 +1646,9 @@ target_link_libraries(ww PUBLIC waterwall_runtime_options)
 
 # Put the C++ allocation replacements directly on each runtime consumer's link
 # line. An unreferenced archive member can otherwise lose to the C++ runtime's
-# operators, depending on archive order or LTO. The object target also conveys
-# the C++ linker language without importing ww's C-only headers or warnings.
+# operators, depending on archive order or LTO. A direct ww dependency also
+# carries the C++ linker language to consumers that only contain C sources.
+# Keep the allocator independent of ww's C-only headers and warnings.
 add_library(waterwall_cpp_allocator OBJECT managers/cpp_allocator.cc)
 target_compile_features(waterwall_cpp_allocator PRIVATE cxx_std_17)
 target_include_directories(waterwall_cpp_allocator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libc)
@@ -1661,7 +1662,10 @@ if(MSVC)
 else()
     target_compile_options(waterwall_cpp_allocator PRIVATE -Wall -Wextra -Werror -pedantic)
 endif()
-target_link_libraries(ww INTERFACE waterwall_cpp_allocator "$<TARGET_OBJECTS:waterwall_cpp_allocator>")
+target_link_libraries(ww
+    PRIVATE waterwall_cpp_allocator
+    INTERFACE "$<TARGET_OBJECTS:waterwall_cpp_allocator>"
+)
 
 foreach(runtime_dependency IN ITEMS mimalloc-static maxminddb c-ares c-ares_static sodium nghttp2_static)
     if(TARGET ${runtime_dependency})
