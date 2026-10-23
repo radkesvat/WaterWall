@@ -21,6 +21,7 @@
  * suites.
  */
 #include "TlsClient/structure.h"
+#include "wevent.h"
 
 #include "test_assert.h"
 
@@ -1485,6 +1486,108 @@ static void testOrdinaryHandshakePendingDrain(unsigned mode)
     fixtureDestroy(&fixture);
 }
 
+static void testReceiveRetirementDrainsPendingPlaintext(bool finish_on_resume)
+{
+    tlsclient_lifecycle_fixture_t fixture;
+    fixtureInitialize(&fixture);
+    tlsclient_tstate_t *ts         = tunnelGetState(fixture.tls);
+    tlsclient_lstate_t *ls         = lineGetState(fixture.line, fixture.tls);
+    ts->handshake_takeover_enabled = false;
+    ts->record_shaping             = (tlsrecordshaping_config_t) {
+                    .enabled                   = true,
+                    .sender_role               = kTlsRecordShapingSenderClient,
+                    .first_application_records = 4,
+                    .outcome_count             = 1,
+    };
+    ts->record_shaping.outcomes[0] = (tlsrecordshaping_outcome_t) {
+        .probability       = 100,
+        .has_delay         = true,
+        .delay_probability = 100,
+        .delay_ms          = {.minimum = 1000, .maximum = 1000},
+    };
+    tlsrecordshapingOutputQueueInitialize(&ls->shaping_output, fixture.pool);
+    requireTlsClient(SSL_set_tls13_record_padding_callback(
+                         ls->ssl, tlsclientRecordPaddingCallback, ls, kTlsRecordShapingMaxPaddingBytes),
+                     "TLS receive-retirement fixture could not enable shaping");
+    wloop_t **saved_loops = GSTATE.shortcut_loops;
+    wloop_t  *loops[1]    = {wloopCreate(0, fixture.pool, 0)};
+    requireTlsClient(loops[0] != NULL, "TLS receive-retirement fixture could not create its loop");
+    GSTATE.shortcut_loops = loops;
+
+    SSL_CTX *server_ctx = NULL;
+    SSL     *server     = createTls13Server(&server_ctx, 0);
+    BIO_set_mem_eof_return(ls->rbio, -1);
+    BIO_set_mem_eof_return(ls->wbio, -1);
+    fixture.context.upstream_capture = SSL_get_rbio(server);
+    tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 81920, 'A'));
+    tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 1, 'B'));
+
+    int n = SSL_connect(ls->ssl);
+    requireTlsClient(n < 0 && SSL_get_error(ls->ssl, n) == SSL_ERROR_WANT_READ &&
+                         transferBio(ls->wbio, SSL_get_rbio(server)),
+                     "TLS receive-retirement fixture did not send ClientHello");
+    n = SSL_accept(server);
+    requireTlsClient(n < 0 && SSL_get_error(server, n) == SSL_ERROR_WANT_READ,
+                     "TLS receive-retirement server did not produce its handshake flight");
+    sbuf_t *flight = drainBioToBuffer(&fixture, SSL_get_wbio(server));
+    requireTlsClient(flight != NULL, "TLS receive-retirement server flight missing");
+    tlsclientTunnelDownStreamPayload(fixture.tls, fixture.line, flight);
+    requireTlsClient(ls->handshake_completed && ls->shaping_state.application_records_seen == 4 &&
+                         tlsrecordshapingOutputQueueCount(&ls->shaping_output) == 4 &&
+                         ls->shaping_output_timer != NULL && ls->shaping_producer_paused &&
+                         ls->pending_plaintext != NULL && sbufGetLength(ls->pending_plaintext) == 16384 &&
+                         bufferqueueGetBufLen(&ls->bq) == 1 && ls->plaintext_producer_paused && ls->source_paused,
+                     "TLS receive-retirement fixture did not stop at its four-record shaping boundary");
+    requireTlsClient(completeServerHandshake(server), "TLS receive-retirement server handshake failed");
+
+    /* Make queued ciphertext due without dispatching the timer: an inbound
+     * callback must release plaintext even when it wins the final-record drain. */
+    loops[0]->cur_time_ms += 2000;
+    requireTlsClient(SSL_write(server, "peer", 4) == 4,
+                     "TLS receive-retirement server could not send its application record");
+    sbuf_t *incoming = drainBioToBuffer(&fixture, SSL_get_wbio(server));
+    requireTlsClient(incoming != NULL, "TLS receive-retirement server record missing");
+    fixture.context.finish_on_source_resume = finish_on_resume;
+    tlsclientTunnelDownStreamPayload(fixture.tls, fixture.line, incoming);
+    if (finish_on_resume)
+    {
+        requireTlsClient(! lineIsAlive(fixture.line) && fixture.context.source_resume_count == 1 &&
+                             strcmp(fixture.context.events, "U") == 0,
+                         "TLS receive-retirement Resume did not safely finish the line");
+    }
+    else
+    {
+        requireTlsClient(lineIsAlive(fixture.line) && ls->shaping_retired && ls->shaping_output_timer == NULL,
+                         "TLS receive path did not retire its final shaped records and timer");
+        requireTlsClient(
+            ls->pending_plaintext == NULL && bufferqueueGetBufCount(&ls->bq) == 0 &&
+                ls->pending_reservation.budget == NULL && bufferbudgetGetUsage(&ls->pending_budget).entries == 0 &&
+                ! ls->plaintext_producer_paused && ! ls->source_paused && fixture.context.source_resume_count == 1,
+            "TLS receive-path retirement stranded queued plaintext or its source pressure");
+    }
+
+    uint8_t plaintext[81921];
+    size_t  received = 0;
+    while (received < sizeof(plaintext))
+    {
+        n = SSL_read(server, plaintext + received, (int) (sizeof(plaintext) - received));
+        requireTlsClient(n > 0, "TLS receive-retirement wakeup lost plaintext at the peer");
+        received += (size_t) n;
+    }
+    for (size_t i = 0; i < sizeof(plaintext) - 1; ++i)
+        requireTlsClient(plaintext[i] == 'A', "TLS receive-retirement wakeup reordered the active plaintext head");
+    requireTlsClient(plaintext[sizeof(plaintext) - 1] == 'B',
+                     "TLS receive-retirement wakeup lost the queued plaintext tail");
+
+    if (! finish_on_resume)
+        tlsclientTunnelUpStreamFinish(fixture.tls, fixture.line);
+    SSL_free(server);
+    SSL_CTX_free(server_ctx);
+    wloopDestroy(&loops[0]);
+    GSTATE.shortcut_loops = saved_loops;
+    fixtureDestroy(&fixture);
+}
+
 static void testSourcePauseCanCloseQueuedPlaintext(void)
 {
     tlsclient_lifecycle_fixture_t fixture;
@@ -1500,9 +1603,14 @@ static void testSourcePauseCanCloseQueuedPlaintext(void)
 int main(void)
 {
     testCaseSet("tlsclient_close_lifecycle_test");
+    requireTlsClient(globalstateInitializeSecureRandom(), "TLS test secure random initialization failed");
+    requireTlsClient(frandGlobalInit(), "TLS test fast random initialization failed");
+    frandInit();
     testPendingPlaintextLimits();
     testTransportEstCanCloseBeforeHandshake();
     testSourcePauseCanCloseQueuedPlaintext();
+    testReceiveRetirementDrainsPendingPlaintext(false);
+    testReceiveRetirementDrainsPendingPlaintext(true);
     testOrdinaryHandshakePendingDrain(0);
     testOrdinaryHandshakePendingDrain(1);
     testOrdinaryHandshakePendingDrain(2);
@@ -1526,5 +1634,8 @@ int main(void)
     testPostHandshakeCloseNotifyClosesDirectly();
     testPostHandshakeCorruptionClosesFatally();
     testPostHandshakeOutputReentryDestroysStateSafely();
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
     return 0;
 }
