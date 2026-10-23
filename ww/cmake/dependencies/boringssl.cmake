@@ -18,6 +18,15 @@ function(waterwall_enable_boringssl)
   # unused pki/decrepit libraries, which must not join WaterWall's default build.
   add_subdirectory("${boringssl_source}" "${CMAKE_BINARY_DIR}/ww-dependencies/boringssl" EXCLUDE_FROM_ALL)
 
+  if(MSVC)
+    # _HAS_EXCEPTIONS changes the MSVC STL exception-class ABI. BoringSSL's
+    # private override must not disagree with QUICHE and the other C++ users
+    # linked into WaterWall; keep the application's normal exception policy.
+    get_directory_property(boringssl_definitions DIRECTORY "${boringssl_source}" COMPILE_DEFINITIONS)
+    list(REMOVE_ITEM boringssl_definitions "_HAS_EXCEPTIONS=0")
+    set_property(DIRECTORY "${boringssl_source}" PROPERTY COMPILE_DEFINITIONS "${boringssl_definitions}")
+  endif()
+
   foreach(dependency IN ITEMS fipsmodule crypto ssl decrepit pki)
     if(TARGET ${dependency})
       waterwall_configure_runtime_dependency(${dependency})

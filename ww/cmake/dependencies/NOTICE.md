@@ -49,6 +49,8 @@ dependent for the same pre-CWG2518 compilers; its accepted types stay unchanged.
 Runtime dependencies use WaterWall's compiler/runtime, CPU and IPO policy.
 BoringSSL builds the linked `ssl`/`crypto` targets; its unused
 `pki` and `decrepit` targets are excluded from the default build.
+On MSVC, the embedding removes BoringSSL's private `_HAS_EXCEPTIONS=0` override
+so its STL exception classes share the application's and QUICHE's ABI.
 A separate native CMake host build produces the matching protoc without target
 toolchain, CPU, sanitizer or IPO flags; cross builds execute only this host tool.
 Its pinned sources are staged once under the shared host-build identity, so
