@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "managers/signal_manager.h"
 
 bool ptcNextGateEnter(tunnel_t *t)
 {
@@ -290,7 +291,7 @@ bool ptcRequiredControlRefusedLocked(ptc_lstate_t *ls, const char *operation)
     mutexUnlock(&state->owned_lines_lock);
 
     LOGE("PacketsToConnection: required owner control '%s' was refused; flow detached", operation);
-    if (! requestProgramShutdown(1))
+    if (! signalmanagerRequestShutdownPreservingAcceptedStatus(1))
     {
         abortProgramNow(1);
     }

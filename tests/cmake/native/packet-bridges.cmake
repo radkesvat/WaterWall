@@ -157,6 +157,7 @@ if(LINUX AND TARGET ConnectionToPackets)
 
   target_link_options(connectiontopackets_schedule_rejection_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=signalmanagerRequestShutdownPreservingAcceptedStatus"
     "-Wl,--wrap=lineScheduleTask"
     "-Wl,--wrap=lineScheduleTaskWithBuf"
 
@@ -178,6 +179,7 @@ if(LINUX AND TARGET PacketsToConnection)
     ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)
 
   target_link_options(packetstoconnection_schedule_rejection_test PRIVATE
+    "-Wl,--wrap=signalmanagerRequestShutdownPreservingAcceptedStatus"
     "-Wl,--wrap=tcp_write"
     "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
     "-Wl,--wrap=memoryAllocate"
@@ -196,6 +198,23 @@ if(LINUX AND TARGET PacketsToConnection)
     packetstoconnection_schedule_rejection_test
     "unit;tunnels;packetstoconnection;lwip;scheduling;rejection;credit;buffers;ownership"
   )
+endif()
+
+if(LINUX AND TARGET ctp_engine_test AND TARGET ptc_engine_test)
+  foreach(bridge IN ITEMS connectiontopackets packetstoconnection)
+    set(race_target "${bridge}_shutdown_refusal_test")
+    waterwall_add_native_executable(${race_target} SUPPORT SOURCES
+      ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_bridges/bridge_shutdown_refusal_test.c
+      ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)
+    target_compile_definitions(${race_target} PRIVATE
+      TEST_CONNECTION_TO_PACKETS=$<STREQUAL:${bridge},connectiontopackets>)
+    target_link_libraries(${race_target} PRIVATE ctp_engine_test ptc_engine_test ww_test_support)
+    target_link_options(${race_target} PRIVATE "-Wl,--wrap=lineScheduleTask"
+      "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=nodemanagerStopWorkerResources")
+    add_dependencies(waterwall_unit_tests ${race_target})
+    add_waterwall_unit_test(waterwall.${bridge}_shutdown_refusal_unit ${race_target}
+      "unit;tunnels;${bridge};lwip;shutdown;thread;scheduling;ownership")
+  endforeach()
 endif()
 
 

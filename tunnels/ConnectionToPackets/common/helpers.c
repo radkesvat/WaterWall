@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "managers/signal_manager.h"
 
 /* Deadlines are observed by different event workers. Use one monotonic clock,
  * independent of each loop's cached time. */
@@ -133,7 +134,7 @@ bool ctpRequiredControlRefusedLocked(tunnel_t *t, ctp_lstate_t *ls, const char *
     ctpTerminalEnqueue(t, ls);
 
     LOGE("ConnectionToPackets: required owner control '%s' was refused; flow detached", operation);
-    if (! requestProgramShutdown(1))
+    if (! signalmanagerRequestShutdownPreservingAcceptedStatus(1))
     {
         abortProgramNow(1);
     }

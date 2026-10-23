@@ -24,6 +24,12 @@
 #include "lwip/stats.h"
 #include "lwip/tcpip.h"
 
+bool __wrap_signalmanagerRequestShutdownPreservingAcceptedStatus(int exit_code);
+bool __wrap_signalmanagerRequestShutdownPreservingAcceptedStatus(int exit_code)
+{
+    return __wrap_requestProgramShutdown(exit_code);
+}
+
 typedef enum ptc_submit_expectation_e
 {
     kPtcSubmitNone = 0,
@@ -279,6 +285,31 @@ static void caseOwnerRetryRefusalPublishesAndDrainsOwnedLine(void)
     lineUnref(line);
     fixture.line = NULL;
 
+    ptcFixtureTeardown(&fixture);
+}
+
+static void refusalWithoutOrderlyHandoff(void *argument)
+{
+    ptc_fixture_t *fixture = argument;
+    ptc_lstate_t  *ls      = lineGetState(fixture->line, fixture->ptc);
+    g_submit_expectation   = kPtcSubmitControl;
+    enterEngine();
+    discard ptcTcpPollCallback(ls, ls->tcp_pcb);
+    leaveEngine();
+}
+
+static void caseRefusalWithoutOrderlyHandoffAborts(void)
+{
+    twfSetCase("PTC terminal refusal aborts when orderly handoff is unavailable");
+    ptc_fixture_t fixture;
+    ptcFixtureSetup(&fixture);
+    discard ptcAttachTestPcb(&fixture, ptcTcpPcbUsed());
+    ((ptc_lstate_t *) lineGetState(fixture.line, fixture.ptc))->write_poll_armed = true;
+    tosResetProcessApi(false);
+    tosRequireChildExit("PTC refused orderly handoff", refusalWithoutOrderlyHandoff, &fixture, kTosChildFallbackAbort);
+    tosResetProcessApi(true);
+    ptcCloseLineForStop(fixture.ptc, fixture.line);
+    fixture.line = NULL;
     ptcFixtureTeardown(&fixture);
 }
 
@@ -711,6 +742,7 @@ int main(void)
     for (unsigned mode = 0; mode < 4; ++mode)
         caseScaledSendCapacity(mode);
     caseOwnerRetryRefusalPublishesAndDrainsOwnedLine();
+    caseRefusalWithoutOrderlyHandoffAborts();
     caseErrorClearsRouteBeforeTerminalClose();
     caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf();
 

@@ -24,6 +24,12 @@
 #include "lwip/stats.h"
 #include "lwip/tcpip.h"
 
+bool __wrap_signalmanagerRequestShutdownPreservingAcceptedStatus(int exit_code);
+bool __wrap_signalmanagerRequestShutdownPreservingAcceptedStatus(int exit_code)
+{
+    return __wrap_requestProgramShutdown(exit_code);
+}
+
 typedef enum ctp_submit_expectation_e
 {
     kCtpSubmitNone = 0,
@@ -295,6 +301,33 @@ static void caseOwnerRetryRefusalPublishesAndDrainsTerminalLine(void)
     ctpFixtureTeardown(&fixture);
 }
 
+static void refusalWithoutOrderlyHandoff(void *argument)
+{
+    ctp_fixture_t *fixture = argument;
+    ctp_lstate_t  *ls      = lineGetState(fixture->line, fixture->ctp);
+    g_submit_expectation   = kCtpSubmitControl;
+    enterEngine();
+    discard ctpTcpPollCallback(ls, ls->tcp_pcb);
+    leaveEngine();
+}
+
+static void caseRefusalWithoutOrderlyHandoffAborts(void)
+{
+    twfSetCase("CTP terminal refusal aborts when orderly handoff is unavailable");
+    ctp_fixture_t fixture;
+    ctpFixtureSetup(&fixture);
+    discard       ctpAttachTestPcb(&fixture, ctpTcpPcbUsed());
+    ctp_lstate_t *ls     = lineGetState(fixture.line, fixture.ctp);
+    ls->connected        = true;
+    ls->write_blocked    = true;
+    ls->write_poll_armed = true;
+    tosResetProcessApi(false);
+    tosRequireChildExit("CTP refused orderly handoff", refusalWithoutOrderlyHandoff, &fixture, kTosChildFallbackAbort);
+    tosResetProcessApi(true);
+    ctpCloseFixtureLine(&fixture);
+    ctpFixtureTeardown(&fixture);
+}
+
 static void caseCreditedDeliveryRefusalTransfersBufferAndRetainsPbuf(void)
 {
     twfSetCase("ConnectionToPackets credited TCP delivery refusal");
@@ -441,6 +474,7 @@ int main(void)
     caseStopOrdering(true);
     caseStopOrdering(false);
     caseOwnerRetryRefusalPublishesAndDrainsTerminalLine();
+    caseRefusalWithoutOrderlyHandoffAborts();
     caseCreditedDeliveryRefusalTransfersBufferAndRetainsPbuf();
 
     wwLwipEngineSharedCleanup();
