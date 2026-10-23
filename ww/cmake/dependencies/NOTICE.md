@@ -53,3 +53,9 @@ A separate native CMake host build produces the matching protoc without target
 toolchain, CPU, sanitizer or IPO flags; cross builds execute only this host tool.
 Its pinned sources are staged once under the shared host-build identity, so
 runtime build directories do not change the host compiler's source paths.
+The staged host protobuf sources backport upstream
+[`3b1ba48c`](https://github.com/protocolbuffers/protobuf/commit/3b1ba48c73767c4bab099a91f63d3b20e04750f0):
+the JSON field map holds its recursive variant through `std::unique_ptr`, avoiding
+incomplete-type instantiation with MSVC and older Clang in C++20. Access and
+insertion follow the upstream fix, preserving repeated-field moves. The source
+cache and runtime protobuf-lite sources remain unchanged.

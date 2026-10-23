@@ -22,6 +22,38 @@ foreach(dependency IN ITEMS ABSEIL PROTOBUF)
     file(COPY "${WW_${dependency}_SOURCE}/" DESTINATION "${host_source}")
     file(WRITE "${host_source}/.waterwall-source-ready" "${dependency}\n")
   endif()
+  if(dependency STREQUAL "PROTOBUF")
+    # Backport protobuf 3b1ba48c73767c4bab099a91f63d3b20e04750f0: the JSON
+    # field map must not instantiate its recursive variant before the enclosing
+    # message is complete (MSVC and older Clang with C++20). Always regenerate
+    # these two staged files from the pristine pin, including for cached builds.
+    set(json_directory "src/google/protobuf/json/internal")
+    foreach(json_file IN ITEMS untyped_message.h untyped_message.cc)
+      file(READ "${WW_PROTOBUF_SOURCE}/${json_directory}/${json_file}" contents)
+      if(json_file STREQUAL "untyped_message.h")
+        string(REPLACE "std::visit(SizeVisitor{}, it->second)"
+          "std::visit(SizeVisitor{}, *it->second)" contents "${contents}")
+        string(REPLACE "std::get_if<T>(&it->second)"
+          "std::get_if<T>(it->second.get())" contents "${contents}")
+        string(REPLACE "std::get_if<std::vector<T>>(&it->second)"
+          "std::get_if<std::vector<T>>(it->second.get())" contents "${contents}")
+        string(REPLACE "absl::flat_hash_map<int32_t, Value> fields_;"
+          "absl::flat_hash_map<int32_t, std::unique_ptr<Value>> fields_;" contents "${contents}")
+      else()
+        string(REPLACE
+          "auto emplace_result = fields_.try_emplace(number, std::forward<T>(value));\n  if (emplace_result.second) {"
+          "auto emplace_result = fields_.try_emplace(number);\n  if (emplace_result.second) {\n    emplace_result.first->second =\n        std::make_unique<Value>(std::forward<T>(value));"
+          contents "${contents}")
+        string(REPLACE "Value& slot = emplace_result.first->second;"
+          "Value& slot = *emplace_result.first->second;" contents "${contents}")
+      endif()
+      set(patched_file "${host_source}/${json_directory}/${json_file}")
+      file(READ "${patched_file}" previous)
+      if(NOT contents STREQUAL previous)
+        file(WRITE "${patched_file}" "${contents}")
+      endif()
+    endforeach()
+  endif()
   set(WW_${dependency}_SOURCE "${host_source}")
 endforeach()
 
