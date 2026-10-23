@@ -17,6 +17,7 @@ if(TARGET APIServer)
     target_link_libraries(apiserver_session_test PRIVATE APIServer ww)
     target_link_options(apiserver_session_test PRIVATE
       "-Wl,--wrap=memoryFree"
+      "-Wl,--wrap=apiserverResponseWrite"
       "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=wtimerAdd" "-Wl,--wrap=wtimerReset"
       "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup" "-Wl,--wrap=nodemanagerResolveApiTarget")
     add_dependencies(waterwall_unit_tests apiserver_session_test)

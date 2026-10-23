@@ -33,6 +33,7 @@ static uint8_t         captured[4 * 1024 * 1024];
 static size_t          captured_size;
 static size_t          timer_baseline;
 static unsigned        nested_fragments;
+static uint64_t        response_serialized_at_ms;
 
 static void sendBytes(const void *bytes, size_t size);
 
@@ -73,6 +74,25 @@ static void watchErasure(void *pointer, size_t offset, size_t size)
             return;
         }
     require(false, "secret release observation capacity");
+}
+
+void __real_apiserverResponseWrite(char *, const char *, const char *, const node_api_operation_t *, enum api_result_e,
+                                   const uint8_t *, size_t);
+void __wrap_apiserverResponseWrite(char *, const char *, const char *, const node_api_operation_t *, enum api_result_e,
+                                   const uint8_t *, size_t);
+void __wrap_apiserverResponseWrite(char *dest, const char *id, const char *error, const node_api_operation_t *operation,
+                                   enum api_result_e code, const uint8_t *body, size_t length)
+{
+    __real_apiserverResponseWrite(dest, id, error, operation, code, body, length);
+    if (response_serialized_at_ms != 0)
+    {
+        apiserver_lstate_t *ls = lineGetState(line, api);
+        require(error == NULL && code == kApiResultOk && (uint8_t *) dest == ls->output + 4,
+                "serialization clock seam missed the successful response");
+        watchErasure(ls->output, 0, ls->output_size);
+        now_us                    = response_serialized_at_ms * 1000;
+        response_serialized_at_ms = 0;
+    }
 }
 
 uint64_t __wrap_getHRTimeUs(void);
@@ -1194,6 +1214,61 @@ static void deadlinesAndRefusal(void)
     closeLine();
 }
 
+static void responsePublicationDeadline(void)
+{
+    /* Cross the boundary only after the real encoder has finished. The handler
+     * and dispatcher completion checks therefore both ran within the window. */
+    for (unsigned late = 0; late < 2; ++late)
+    {
+        openLine();
+        sendRequest(request);
+        response_serialized_at_ms = state()->requests->deadline_ms + late;
+        const unsigned before     = erased_count;
+        settle(1);
+        require(response_serialized_at_ms == 0, "serialization clock seam did not run");
+        expectError("timeout");
+        require(! lineIsAlive(line) && finishes == 1 && writes == 1,
+                "late publication did not emit one timeout and close");
+        require(erased_count == before + 1, "late unpublished response missed secure release");
+        closeLine();
+    }
+
+    openLine();
+    tunnelUpStreamPause(api, line);
+    sendRequest(request);
+    const uint64_t deadline   = state()->requests->deadline_ms;
+    response_serialized_at_ms = deadline - 1;
+    unsigned before           = erased_count;
+    for (unsigned i = 0; i < 4; ++i)
+        pump();
+    require(response_serialized_at_ms == 0 && state()->output && state()->requests->deadline_ms == 0 &&
+                state()->output_deadline ==
+                    deadline - 1 + ((apiserver_tstate_t *) tunnelGetState(api))->limits.output_timeout_ms,
+            "timely serialization did not start the independent output window");
+    require(lineIsAlive(line) && captured_size == 0, "paused timely response outlived its request window incorrectly");
+    tunnelUpStreamResume(api, line);
+    settle(1);
+    size_t offset = 0;
+    cJSON *json   = reply(&offset);
+    require(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(json, "error")) && offset == captured_size &&
+                lineIsAlive(line),
+            "timely paused result became a timeout or closed the line");
+    cJSON_Delete(json);
+    require(erased_count == before + 1, "timely encoded response missed secure release");
+    closeLine();
+
+    openLine();
+    sendRequest(request);
+    sendRequest(request);
+    response_serialized_at_ms = state()->requests->deadline_ms + 1;
+    before                    = erased_count;
+    settle(1);
+    require(! lineIsAlive(line) && captured_size == 0 && finishes == 1,
+            "queued expiry emitted an out-of-order frame or dispatched another request");
+    require(erased_count == before + 1, "queued expiry retained the unpublished successful response");
+    closeLine();
+}
+
 static void hardLimits(void)
 {
     openWithLimit("max_sessions", 1);
@@ -1436,6 +1511,7 @@ int main(void)
     TEST_RUN_CASE(preparedDescriptor);
     TEST_RUN_CASE(timerReuse);
     TEST_RUN_CASE(deadlinesAndRefusal);
+    TEST_RUN_CASE(responsePublicationDeadline);
     TEST_RUN_CASE(hardLimits);
     TEST_RUN_CASE(unauthenticatedBudget);
     TEST_RUN_CASE(lateCompletionAndReuse);

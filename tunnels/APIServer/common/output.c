@@ -24,9 +24,22 @@ bool apiserverPublishResponse(apiserver_lstate_t *ls, const char *error, const n
     ls->output[2]   = (uint8_t) (length >> 8);
     ls->output[3]   = (uint8_t) length;
     apiserverResponseWrite((char *) ls->output + 4, ls->requests->id, error, op, code, body, body_size);
+    const uint64_t now = nodeApiNowMs();
+    if (ls->requests->deadline_ms && now >= ls->requests->deadline_ms && (! error || strcmp(error, "timeout") != 0))
+    {
+        /* Encoding is part of the request window. Nothing has reached the
+         * transport yet, so replace the late result with one closing timeout.
+         * A committed handler mutation remains committed. */
+        memorySecureZero(ls->output, ls->output_size);
+        memoryFree(ls->output);
+        apiserverRelease(ls, ls->output_size);
+        ls->output      = NULL;
+        ls->output_size = 0;
+        return apiserverPublishResponse(ls, "timeout", NULL, kApiResultError, NULL, 0);
+    }
     /* Request and output windows are separate, including during transport Pause. */
     ls->requests->deadline_ms = 0;
-    ls->output_deadline       = nodeApiNowMs() + ts->limits.output_timeout_ms;
+    ls->output_deadline       = now + ts->limits.output_timeout_ms;
     ls->close_after_output    = ls->requests->close || (error && strcmp(error, "timeout") == 0);
     return true;
 }
