@@ -18,7 +18,9 @@ if(TARGET ww AND UNIX)
     WW_BENCHMARK_BUILD_TREE="${WW_BENCHMARK_BUILD_TREE}"
     WW_BENCHMARK_BUILD_CONFIG="$<CONFIG>")
 
-  add_executable(device_writer_channel_benchmark EXCLUDE_FROM_ALL device_writer_channel_benchmark.c)
+  add_executable(device_writer_channel_benchmark EXCLUDE_FROM_ALL
+    device_writer_channel_benchmark.c
+    ${CMAKE_SOURCE_DIR}/ww/devices/device_writer_channel.c)
   target_link_libraries(device_writer_channel_benchmark PRIVATE ww)
 
   add_executable(users_benchmark EXCLUDE_FROM_ALL users_benchmark.c)

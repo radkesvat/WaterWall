@@ -90,7 +90,6 @@ add_library(ww STATIC
     devices/device_reader_session.c
     devices/device_reader_budget.c
     devices/device_reader_dispatch.c
-    devices/device_writer_channel.c
     devices/tun/tun_writer.c
     devices/raw/raw_writer.c
     
@@ -1755,7 +1754,6 @@ if(BUILD_TESTING)
         devices/device_reader_session.c
         devices/device_reader_budget.c
         devices/device_reader_dispatch.c
-        devices/device_writer_channel.c
         devices/tun/tun_writer.c
         devices/raw/raw_writer.c
         devices/tun/tun_linux.c
