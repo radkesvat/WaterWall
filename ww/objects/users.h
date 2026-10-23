@@ -403,6 +403,27 @@ bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src);
 /* Owned accounting values, captured under collection -> user -> stats locks.
  * False on unrepresentable array geometry; heap OOM is fatal. Free with memoryFree(). */
 bool usersSnapshotAccounting(const users_t *users, user_accounting_snapshot_t **entries_out, size_t *count_out);
+
+/* Owned credential values; callers must wipe their copied storage when done. */
+typedef struct user_uuid_candidate_s
+{
+    uint64_t user_id;
+    uint8_t  uuid[kWwUuidBytesLen];
+} user_uuid_candidate_t;
+
+enum
+{
+    kUsersUuidCandidatePageMax = 256U
+};
+
+/* Copies at most max_rows source rows (1..kUsersUuidCandidatePageMax), skipping
+ * rows without a UUID or durable id. entries_out has room for max_rows values.
+ * The caller owns all copied bytes. No allocation or database pointer escapes.
+ * Position at count is a successful empty terminal page; a position beyond count
+ * returns false, clears count/next, and leaves entries unchanged. Membership must
+ * be pinned externally across calls when several pages form one snapshot. */
+bool                  usersCopyUUIDCandidatePage(const users_t *users, size_t position, size_t max_rows,
+                                                 user_uuid_candidate_t *entries_out, size_t *count_out, size_t *next_position_out);
 users_update_result_t usersSetFirstUsageIfMissingBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                                           uint64_t first_usage_at_ms, bool *changed);
 users_update_result_t usersSetFirstUsageIfMissingByIdentifier(users_t *users, uint64_t id, uint64_t first_usage_at_ms,

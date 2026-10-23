@@ -3039,6 +3039,53 @@ static void testCredentialIndexWiping(void)
     usersDestroy(&users);
 }
 
+static void testUuidCandidatePages(void)
+{
+    users_t users;
+    require(usersCreate(&users), "UUID candidate page setup failed");
+    for (uint64_t id = 1; id <= kUsersUuidCandidatePageMax; ++id)
+    {
+        char password[48];
+        snprintf(password, sizeof(password), "page-plain-%" PRIu64, id);
+        addUser(&users, id, password);
+    }
+    const char *first  = "00112233-4455-6677-8899-aabbccddeeff";
+    const char *second = "10112233-4455-6677-8899-aabbccddeeff";
+    addUser(&users, 257, first);
+    addUser(&users, 0, "20112233-4455-6677-8899-aabbccddeeff");
+    addUser(&users, 259, second);
+    require(usersSetUserEnabled(&users, usersLookupByIdentifier(&users, 259), false), "disable UUID candidate failed");
+    user_uuid_candidate_t entries[kUsersUuidCandidatePageMax] = {0};
+    size_t                count = SIZE_MAX, next = SIZE_MAX;
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    allocationCountBegin();
+#endif
+    require(usersCopyUUIDCandidatePage(&users, 0, kUsersUuidCandidatePageMax, entries, &count, &next) && count == 0 &&
+                next == kUsersUuidCandidatePageMax,
+            "UUID page scanned beyond its source-row bound");
+    require(usersCopyUUIDCandidatePage(&users, next, 3, entries, &count, &next) && count == 2 && next == 259 &&
+                entries[0].user_id == 257 && entries[1].user_id == 259,
+            "UUID page lost disabled accounts or included an id-less account");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    require(allocationCountEnd() == 0, "UUID candidate page allocated storage");
+#endif
+    uint8_t expected[kWwUuidBytesLen];
+    require(wwUuidParseString(first, expected) && memoryEqual(entries[0].uuid, expected, sizeof(expected)),
+            "UUID page copied the wrong credential");
+    require(usersChangePassword(&users, usersLookupByIdentifier(&users, 257), "rotated-plain"),
+            "UUID candidate rotation failed");
+    require(memoryEqual(entries[0].uuid, expected, sizeof(expected)), "UUID candidate borrowed mutable user storage");
+    const user_uuid_candidate_t saved = entries[0];
+    require(usersCopyUUIDCandidatePage(&users, 259, 1, entries, &count, &next) && count == 0 && next == 259,
+            "UUID terminal page did not remain empty");
+    require(! usersCopyUUIDCandidatePage(&users, SIZE_MAX, 1, entries, &count, &next) && count == 0 && next == 0 &&
+                memoryEqual(&saved, entries, sizeof(saved)),
+            "out-of-range UUID page changed caller storage");
+    memorySecureZero(entries, sizeof(entries));
+    memorySecureZero(expected, sizeof(expected));
+    usersDestroy(&users);
+}
+
 int main(void)
 {
     testCaseSet("users_index_test");
@@ -3052,6 +3099,7 @@ int main(void)
     testCollidingIpChurn();
     testImportDiagnostics();
     testCredentialIndexWiping();
+    testUuidCandidatePages();
 
     testTrustedImportDerivationAndBoundedRows();
     testPointerIndexAlignedKeys();

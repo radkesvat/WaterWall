@@ -1030,6 +1030,16 @@ if(PROJECT_REQUIRES_OPENSSL)
             ${WW_OPENSSL_CPM_OPTIONS}
         )
 
+        # Consumers may need capability checks before the wrapper generates
+        # opensslv.h. Record the version of the source archive we actually own;
+        # externally supplied OpenSSL targets do not receive this assertion.
+        get_target_property(WW_OPENSSL_CRYPTO_REAL_TARGET OpenSSL::Crypto ALIASED_TARGET)
+        if(NOT WW_OPENSSL_CRYPTO_REAL_TARGET)
+            set(WW_OPENSSL_CRYPTO_REAL_TARGET OpenSSL::Crypto)
+        endif()
+        set_property(TARGET ${WW_OPENSSL_CRYPTO_REAL_TARGET}
+                     PROPERTY WW_PINNED_OPENSSL_VERSION "4.0.1")
+
         set(ENV{CC} "${WW_OPENSSL_PREV_ENV_CC}")
         set(ENV{CXX} "${WW_OPENSSL_PREV_ENV_CXX}")
         set(ENV{AR} "${WW_OPENSSL_PREV_ENV_AR}")

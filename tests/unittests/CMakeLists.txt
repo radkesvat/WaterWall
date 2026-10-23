@@ -80,3 +80,5 @@ include("${CMAKE_SOURCE_DIR}/tests/cmake/native/support-linkage.cmake")
 include("${CMAKE_SOURCE_DIR}/tests/cmake/native/api_core.cmake")
 
 include("${CMAKE_SOURCE_DIR}/tests/cmake/native/usercontroller.cmake")
+
+include("${CMAKE_SOURCE_DIR}/tests/cmake/native/vmess.cmake")

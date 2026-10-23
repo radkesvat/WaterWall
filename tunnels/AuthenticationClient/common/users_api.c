@@ -65,6 +65,64 @@ uint64_t authenticationclientUsersGeneration(tunnel_t *t)
     return generation;
 }
 
+authenticationclient_uuid_snapshot_result_t authenticationclientGetUUIDSource(
+    tunnel_t *t, authenticationclient_uuid_source_t *source_out)
+{
+    assert(source_out != NULL);
+    *source_out = (authenticationclient_uuid_source_t) {0};
+    if (t == NULL)
+        return kAuthenticationClientUuidSnapshotUnavailable;
+    authenticationclient_tstate_t              *ts     = tunnelGetState(t);
+    authenticationclient_uuid_snapshot_result_t result = kAuthenticationClientUuidSnapshotUnavailable;
+    mutexLock(&ts->control_mutex);
+    rwlockReadLock(&ts->users_lock);
+    if (authenticationclientCanAuthenticateLocked(ts))
+    {
+        const size_t count = usersCount(ts->users);
+        if (count > ts->sync_max_users || ts->sync_max_users > SIZE_MAX || ts->sync_max_bytes > SIZE_MAX)
+            result = kAuthenticationClientUuidSnapshotLimit;
+        else
+        {
+            *source_out = (authenticationclient_uuid_source_t) {.users_generation = ts->users_generation,
+                                                                .total_users      = count,
+                                                                .max_users        = (size_t) ts->sync_max_users,
+                                                                .max_bytes        = (size_t) ts->sync_max_bytes};
+            result      = kAuthenticationClientUuidSnapshotOk;
+        }
+    }
+    rwlockReadUnlock(&ts->users_lock);
+    mutexUnlock(&ts->control_mutex);
+    return result;
+}
+
+authenticationclient_uuid_snapshot_result_t authenticationclientCopyUUIDCandidatePage(
+    tunnel_t *t, uint64_t expected_generation, size_t position, size_t max_rows,
+    authenticationclient_uuid_candidate_t *entries_out, size_t *count_out, size_t *next_position_out)
+{
+    assert(expected_generation != 0 && max_rows > 0 && max_rows <= kUsersUuidCandidatePageMax);
+    assert(entries_out != NULL && count_out != NULL && next_position_out != NULL);
+    *count_out = *next_position_out = 0;
+    if (t == NULL)
+        return kAuthenticationClientUuidSnapshotUnavailable;
+    authenticationclient_tstate_t              *ts     = tunnelGetState(t);
+    authenticationclient_uuid_snapshot_result_t result = kAuthenticationClientUuidSnapshotUnavailable;
+    mutexLock(&ts->control_mutex);
+    rwlockReadLock(&ts->users_lock);
+    if (authenticationclientCanAuthenticateLocked(ts))
+    {
+        if (expected_generation != ts->users_generation)
+            result = kAuthenticationClientUuidSnapshotChanged;
+        else if (usersCount(ts->users) > ts->sync_max_users ||
+                 ! usersCopyUUIDCandidatePage(ts->users, position, max_rows, entries_out, count_out, next_position_out))
+            result = kAuthenticationClientUuidSnapshotLimit;
+        else
+            result = kAuthenticationClientUuidSnapshotOk;
+    }
+    rwlockReadUnlock(&ts->users_lock);
+    mutexUnlock(&ts->control_mutex);
+    return result;
+}
+
 void authenticationclientUserProfileClear(authenticationclient_user_profile_t *profile)
 {
     if (profile == NULL)
@@ -113,10 +171,11 @@ typedef enum authenticationclient_credential_kind_e
  * userCopyAccess holds configuration/stats ownership for eligibility and profile. */
 static authenticationclient_user_lookup_result_t authenticationclientResolveCredential(
     tunnel_t *t, authenticationclient_credential_kind_t kind, const void *credential, user_handle_t *handle_out,
-    authenticationclient_user_profile_t *profile_out, const char *fn_name)
+    authenticationclient_user_profile_t *profile_out, const user_handle_t *expected_identity, const char *fn_name)
 {
     authenticationclientAssertProfileEmpty(profile_out, fn_name);
     if (UNLIKELY(t == NULL || credential == NULL || handle_out == NULL ||
+                 (expected_identity != NULL && ! userHandleIsValid(expected_identity)) ||
                  (kind == kAuthenticationClientCredentialPassword && ((const char *) credential)[0] == '\0')))
     {
         if (handle_out != NULL)
@@ -163,6 +222,11 @@ static authenticationclient_user_lookup_result_t authenticationclientResolveCred
         }
     }
     if (user != NULL && authenticationclientIdDetachedLocked(ts, userGetId(user)))
+        user = NULL;
+    if (user != NULL && expected_identity != NULL &&
+        (expected_identity->generation > ts->users_generation ||
+         expected_identity->generation < user->runtime.identity_generation_floor ||
+         expected_identity->user_id != userGetId(user)))
         user = NULL;
     if (user != NULL)
     {
@@ -211,6 +275,7 @@ bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA25
                                                  sha256,
                                                  handle_out,
                                                  NULL,
+                                                 NULL,
                                                  "authenticationclientGetUserBySHA256") ==
            kAuthenticationClientUserLookupOk;
 }
@@ -230,6 +295,7 @@ bool authenticationclientGetUserBySHA224WithProfile(tunnel_t *t, const uint8_t s
                                                  sha224,
                                                  handle_out,
                                                  profile_out,
+                                                 NULL,
                                                  "authenticationclientGetUserBySHA224WithProfile") ==
            kAuthenticationClientUserLookupOk;
 }
@@ -248,7 +314,23 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByUUIDWithP
                                                  uuid,
                                                  handle_out,
                                                  profile_out,
+                                                 NULL,
                                                  "authenticationclientGetUserByUUIDWithProfile");
+}
+
+authenticationclient_user_lookup_result_t authenticationclientResolveUUIDCandidateWithProfile(
+    tunnel_t *t, uint64_t source_generation, const authenticationclient_uuid_candidate_t *candidate,
+    user_handle_t *handle_out, authenticationclient_user_profile_t *profile_out)
+{
+    const user_handle_t expected_identity = {.generation = source_generation,
+                                             .user_id    = candidate != NULL ? candidate->user_id : 0};
+    return authenticationclientResolveCredential(t,
+                                                 kAuthenticationClientCredentialUUID,
+                                                 candidate != NULL ? candidate->uuid : NULL,
+                                                 handle_out,
+                                                 profile_out,
+                                                 &expected_identity,
+                                                 "authenticationclientResolveUUIDCandidateWithProfile");
 }
 
 bool authenticationclientGetUserByWireGuardPublicKey(tunnel_t      *t,
@@ -268,6 +350,7 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByWireGuard
                                                  publickey,
                                                  handle_out,
                                                  profile_out,
+                                                 NULL,
                                                  "authenticationclientGetUserByWireGuardPublicKeyWithProfile");
 }
 
@@ -321,6 +404,7 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordW
                                                  password,
                                                  handle_out,
                                                  profile_out,
+                                                 NULL,
                                                  "authenticationclientGetUserByPasswordWithProfile");
 }
 

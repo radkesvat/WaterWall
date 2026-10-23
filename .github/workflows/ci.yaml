@@ -428,7 +428,9 @@ jobs:
         run: bash tests/run_test_lane.sh support build/${{ matrix.preset }} Release --no-tests=error
       - name: Deterministic functional integration tests
         if: matrix.preset == 'linux-gcc-x64'
-        run: bash tests/run_test_lane.sh functional build/${{ matrix.preset }} Release --no-tests=error
+        run: |
+          cmake --build --preset ${{ matrix.preset }} --config Release --target waterwall_vmess_reference
+          bash tests/run_test_lane.sh functional build/${{ matrix.preset }} Release --no-tests=error
       - name: External network integration tests
         if: matrix.preset == 'linux-gcc-x64'
         run: bash tests/run_test_lane.sh external build/${{ matrix.preset }} Release --no-tests=error

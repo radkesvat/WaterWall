@@ -242,7 +242,11 @@ void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint8_t res
     default:
         break;
     }
-    if (! ts->staging.active && (ts->catchup_capture_needed || authenticationclientHasCatchup(ts)))
+    /* A directly adjacent peer may reply synchronously. Do not let every data
+     * page replenish this same response drain without returning to the loop.
+     * The last page may validate immediately: validation imports no new rows. */
+    if ((ts->staging.active && ! ts->staging.complete) ||
+        (! ts->staging.active && (ts->catchup_capture_needed || authenticationclientHasCatchup(ts))))
         authenticationclientScheduleSyncProgress(t);
     else
         authenticationclientResumeSync(t);

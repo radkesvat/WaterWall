@@ -130,7 +130,10 @@ void authenticationclientResumeSync(tunnel_t *t)
     else if (ts->staging.active)
     {
         mutexLock(&ts->control_mutex);
+        /* The published continuation owns the next page. Reentrant Resume and
+         * explicit demand must not undo the yield after a synchronous reply. */
         const bool allowed =
+            (ts->staging.complete || ts->progress_timer == NULL) &&
             authenticationclientRequestMayBeSentLocked(ts, kAuthenticationClientRequestTypeGetUsersPage);
         mutexUnlock(&ts->control_mutex);
         if (allowed)
