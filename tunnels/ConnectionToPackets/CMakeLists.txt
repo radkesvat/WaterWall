@@ -13,7 +13,6 @@ add_library(ConnectionToPackets STATIC
                     common/line_state.c
                     common/drain.c
                     common/flow.c
-                    common/frag.c
                     common/netif.c
                     common/tcp.c
                     common/udp.c

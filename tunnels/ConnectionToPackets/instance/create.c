@@ -299,7 +299,7 @@ tunnel_t *ctpTunnelCreate(node_t *node)
     ts->netifs_count   = getWorkersCount();
     ts->netifs         = memoryAllocateZero(sizeof(*ts->netifs) * ts->netifs_count);
     ts->terminal_lines = memoryAllocateZero(sizeof(*ts->terminal_lines) * ts->netifs_count);
-    ts->owned_lines    = memoryAllocateZero(sizeof(*ts->owned_lines) * ts->netifs_count);
+    ts->active_lines   = memoryAllocateZero(sizeof(*ts->active_lines) * ts->netifs_count);
     if (UNLIKELY(! ctpFlowRegistryInitialize(ts)))
     {
         ctpTunnelDestroy(t, wwLifecycleStartupRollback());

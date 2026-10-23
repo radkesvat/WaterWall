@@ -16,7 +16,6 @@ enum
 static atomic_log_rate_limiter_t g_tombstone_evict_log;
 
 static bool ctpFlowRegisterAt(tunnel_t *t, ctp_lstate_t *ls, void *pcb, uint8_t protocol, uint64_t now_ms);
-static void ctpFlowRetireAt(tunnel_t *t, ctp_lstate_t *ls, bool graceful, uint64_t now_ms);
 
 bool ctpFlowRegistryInitialize(ctp_tstate_t *ts)
 {
@@ -36,7 +35,6 @@ bool ctpFlowRegistryInitialize(ctp_tstate_t *ts)
     ts->tomb_count      = 0;
 
     assert(ctp_flow_map_t_capacity(&ts->flows) >= 128);
-    ctpFragTableInitialize(ts);
 
     ts->flow_registry_initialized = true;
     return true;
@@ -49,7 +47,6 @@ void ctpFlowRegistryDestroy(ctp_tstate_t *ts)
         return;
     }
 
-    ctpFragTableDestroy(ts, ctpInjectMessageDestroy);
     ctp_flow_map_t_drop(&ts->flows);
     memoryFree(ts->tombstones);
     ts->tombstones = NULL;
@@ -232,58 +229,6 @@ void ctpFlowUnregister(tunnel_t *t, ctp_lstate_t *ls)
 }
 
 /*
- * Marks the entry as a tombstone: the borrowed line is gone but lwIP still owns
- * a closing pcb, so the tuple must keep resolving to the same worker and netif
- * until the close completes or the grace period expires.
- *
- * There is no timer. One worker timer per graceful close made both the timer
- * queue and shutdown cost grow with connection churn. The deadline goes into the
- * entry and into the retirement ring, which is what actually bounds how many
- * tombstones can exist at once.
- */
-void ctpFlowRetire(tunnel_t *t, ctp_lstate_t *ls, bool graceful)
-{
-    ctpFlowRetireAt(t, ls, graceful, ctpNowMs());
-}
-
-static void ctpFlowRetireAt(tunnel_t *t, ctp_lstate_t *ls, bool graceful, uint64_t now_ms)
-{
-    ctp_tstate_t *ts = tunnelGetState(t);
-
-    if (! ls->flow_registered)
-    {
-        return;
-    }
-
-    if (! graceful)
-    {
-        ctpFlowUnregister(t, ls);
-        return;
-    }
-
-    const uint64_t expires_at = now_ms + (uint64_t) kCtpFlowCloseGraceMs;
-
-    rwlockWriteLock(&ts->flows_lock);
-
-    ctp_flow_map_t_iter it = ctp_flow_map_t_find(&ts->flows, ls->flow_key);
-    if (it.ref != NULL && it.ref->second.generation == ls->generation)
-    {
-        // lwIP owns the pcb from here on, so this node must never touch it again.
-        it.ref->second.pcb           = NULL;
-        it.ref->second.lstate        = NULL;
-        it.ref->second.detached      = true;
-        it.ref->second.expires_at_ms = expires_at;
-
-        ctpTombstonePushLocked(ts, &ls->flow_key, ls->generation, expires_at, now_ms);
-    }
-
-    rwlockWriteUnlock(&ts->flows_lock);
-
-    ls->flow_registered = false;
-    ls->generation      = 0;
-}
-
-/*
  * The line is finishing but its pcb is not: a drain has taken it over and is
  * still writing bytes the application handed this node before it closed.
  *
@@ -360,8 +305,8 @@ static bool ctpFlowEntryIsRoutable(const ctp_flow_entry_t *entry, uint64_t now_m
     return ! entry->detached || now_ms < entry->expires_at_ms;
 }
 
-bool ctpFlowLookupWithLockHeld(ctp_tstate_t *ts, const ctp_flow_key_t *key, uint64_t now_ms, wid_t *out_wid,
-                               uint64_t *out_generation)
+static bool ctpFlowLookupWithLockHeld(ctp_tstate_t *ts, const ctp_flow_key_t *key, uint64_t now_ms, wid_t *out_wid,
+                                      uint64_t *out_generation)
 {
     ctp_flow_map_t_iter it = ctp_flow_map_t_find(&ts->flows, *key);
     if (it.ref == NULL || ! ctpFlowEntryIsRoutable(&it.ref->second, now_ms))

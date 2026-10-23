@@ -14,8 +14,8 @@ typedef struct ctp_packet_emit_msg_s
 {
     ctp_handoff_budget_t *budget;
     size_t                charge;
-    uint32_t len;
-    uint8_t  data[];
+    uint32_t              len;
+    uint8_t               data[];
 } ctp_packet_emit_msg_t;
 
 static void ctpEmitPacketDestroy(ctp_packet_emit_msg_t *msg)
@@ -182,7 +182,7 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     ctp_packet_emit_msg_t *packet_msg = memoryAllocate(charge);
     packet_msg->budget                = ts->handoff_budget;
     packet_msg->charge                = charge;
-    packet_msg->len = p->tot_len;
+    packet_msg->len                   = p->tot_len;
     pbufLargeCopyToPtr(p, packet_msg->data);
 
     const wid_t packet_wid = ctpSelectPacketWorkerLocked(ctx, packet_msg->data, packet_msg->len);
@@ -235,9 +235,9 @@ ctp_netif_ctx_t *ctpEnsureNetifLocked(tunnel_t *t, wid_t wid)
     }
 
     ctp_netif_ctx_t *ctx = memoryAllocateZero(sizeof(ctp_netif_ctx_t));
-    ctx->engine = wwLwipEngineCurrent();
-    ctx->tunnel = t;
-    ctx->wid    = wid;
+    ctx->engine          = wwLwipEngineCurrent();
+    ctx->tunnel          = t;
+    ctx->wid             = wid;
 
     if (netif_add_noaddr(&ctx->netif, ctx, ctpNetifInit, ip_input) == NULL)
     {
@@ -297,7 +297,7 @@ void ctpDestroyLwipResources(tunnel_t *t)
     for (wid_t wid = 0; wid < ts->netifs_count; ++wid)
     {
         if ((ts->netifs != NULL && ts->netifs[wid] != NULL) ||
-            (ts->owned_lines != NULL && ts->owned_lines[wid] != NULL))
+            (ts->active_lines != NULL && ts->active_lines[wid] != NULL))
         {
             LOGF("ConnectionToPackets: node stop preceded owner drain/Finish");
             abortProgramNow(1);
@@ -307,7 +307,7 @@ void ctpDestroyLwipResources(tunnel_t *t)
     if (ts->flow_registry_initialized)
     {
         /* Every engine's netif was purged by its owner before the Drained
-         * barrier. Only detached routing records and staged bytes remain. */
+         * barrier. Only detached routing records remain. */
         rwlockWriteLock(&ts->flows_lock);
         c_foreach(i, ctp_flow_map_t, ts->flows)
         {
@@ -315,7 +315,6 @@ void ctpDestroyLwipResources(tunnel_t *t)
         }
         ctp_flow_map_t_clear(&ts->flows);
         ts->tomb_head = ts->tomb_count = 0;
-        ctpFragClearAfterNetifPurgeLocked(t);
         rwlockWriteUnlock(&ts->flows_lock);
     }
     ts->lwip_resources_destroyed = true;

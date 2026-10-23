@@ -294,199 +294,6 @@ enum
 };
 
 /*
- * Return-fragment association.
- *
- * Only fragment offset zero carries the transport ports, so the flow registry -
- * which is keyed on them - can match that one fragment and nothing else. This
- * table remembers what fragment zero resolved to, keyed on the IPv4 reassembly
- * identity, so every other fragment of the same datagram reaches the same worker
- * and therefore the same netif. Fragments that arrive before fragment zero are
- * held here, bounded, until it resolves them or the entry expires.
- *
- * Fragments of one datagram *must* land on one worker: lwIP reassembles them
- * into a single pbuf and then delivers it on whichever netif completed it, so
- * splitting them across per-worker netifs would hand the finished datagram to
- * the wrong flow's stack.
- *
- * It lives under the same `flows_lock` as the registry. The fragment path needs
- * both a registry lookup and a table mutation, and one lock removes any question
- * of ordering between them; the cost is that the fragment path takes the write
- * lock while the ordinary lookup path keeps sharing the read lock.
- */
-enum
-{
-    kCtpFragTimeoutMs             = 15U * 1000U, /* IP_REASS_MAXAGE, so no later than lwIP */
-    kCtpFragMaxAssociations       = 128,
-    kCtpFragMaxPendingPerDatagram = 16, /* an 8 KiB datagram at the 576 minimum MTU */
-    kCtpFragMaxPendingBytesTotal  = 1U * 1024U * 1024U,
-
-    /*
-     * Distinct byte ranges one datagram may be split into before this node gives
-     * up on it. A well-behaved sender produces one contiguous run, so anything
-     * needing more than this is either pathological reordering or a peer trying
-     * to make the table do work.
-     */
-    kCtpFragMaxRanges = 16,
-
-    /*
-     * How long a purge barrier that could not be queued waits before it is
-     * retried. Short, because until it runs its association holds one of the
-     * slots above - but not zero, so sustained allocator pressure cannot turn
-     * every arriving packet into another failed attempt.
-     */
-    kCtpFragPurgeRetryMs = 250,
-
-    /*
-     * The largest reassembled transport payload lwIP will accept: it rebuilds
-     * the datagram with a 20-byte header and rejects a total above 65535, so
-     * anything larger is refused here rather than tracked to a completion the
-     * real reassembler would never reach.
-     */
-    kCtpFragMaxDatagramLen = 65535U - IP_HLEN
-};
-
-/*
- * What an association is currently doing. `unresolved` and `resolved` are the
- * ordinary states; the other two exist to keep this table from feeding lwIP a
- * datagram it would merge with one it already holds.
- */
-typedef enum ctp_frag_state_e
-{
-    /* Fragment zero has not arrived, so nothing has been published yet. */
-    kCtpFragStateUnresolved = 0,
-
-    /* Bound to a flow; fragments route straight through. */
-    kCtpFragStateResolved,
-
-    /*
-     * Coverage is complete and the batch is being published outside the lock.
-     * The entry stays in the map for that window so a reused identification
-     * cannot enqueue newer fragments ahead of the batch that finishes the old
-     * datagram; matching traffic is dropped until the erase.
-     */
-    kCtpFragStatePublishing,
-
-    /*
-     * A collision or failed/cleaned injection may have left fragments inside
-     * lwIP. Its reassembly list is keyed on source, destination, protocol and
-     * identification alone, so injecting a new datagram would merge the two.
-     * The identity is refused until the owner-worker FIFO purges that exact
-     * reassembly key.
-     */
-    kCtpFragStatePoisoned
-} ctp_frag_state_t;
-
-typedef struct ctp_frag_key_s
-{
-    uint32_t remote_addr_network;
-    uint32_t local_addr_network;
-    uint16_t ident; /* host order */
-    uint8_t  protocol;
-} ctp_frag_key_t;
-
-typedef struct ctp_frag_pending_s
-{
-    void    *payload;
-    uint32_t len;
-} ctp_frag_pending_t;
-
-typedef struct ctp_frag_publish_result_s
-{
-    /* Publishing consumes the injection message on acceptance and refusal. */
-    bool  accepted;
-} ctp_frag_publish_result_t;
-
-/* One received byte range of a datagram, half-open, kept sorted and disjoint. */
-typedef struct ctp_frag_range_s
-{
-    uint32_t begin;
-    uint32_t end;
-} ctp_frag_range_t;
-
-/*
- * `final_end` is zero until the fragment with MF clear arrives; from then on it
- * is the datagram's total transport length. Exact coverage moves the association
- * to publishing; the owner-worker FIFO barrier retires it only after queued
- * injection is settled and the matching lwIP reassembly object is purged.
- *
- * `ranges` mirrors what lwIP's reassembler will have accepted, so it merges only
- * on adjacency: lwIP is built with IP_REASS_CHECK_OVERLAP and discards a
- * duplicate or overlapping fragment outright. Merging an overlap here would let
- * this table call a datagram complete - and retire the identity - while lwIP
- * still has a hole in it.
- */
-typedef struct ctp_frag_entry_s
-{
-    ctp_flow_key_t     flow_key;   /* valid once resolved */
-    uint64_t           generation; /* valid once resolved */
-    uint64_t           serial;     /* exact association identity for queued purge barriers */
-    uint64_t           expires_at_ms;
-    ctp_frag_pending_t pending[kCtpFragMaxPendingPerDatagram];
-    ctp_frag_range_t   ranges[kCtpFragMaxRanges];
-    uint32_t           final_end;
-
-    /*
-     * Publish batches that have left classification but have not finished
-     * enqueueing toward the owner worker.
-     *
-     * A batch is detached under the lock and enqueued after it is released, so
-     * two workers can be between those points at once. The purge barrier that
-     * releases the lwIP reassembly key must reach the owner worker *behind*
-     * every one of them: a fragment enqueued after the barrier would rebuild a
-     * partial reassembly under an identification the table has already handed
-     * back, and the next datagram to reuse it would be merged with the remains.
-     * A barrier is therefore requested freely but queued only at zero.
-     */
-    uint16_t outstanding_publishes;
-
-    /*
-     * Fragments accepted by the owner worker's queue but not yet settled at
-     * its exact lwIP netif. The scalar is bounded by IPv4's datagram size; the
-     * corresponding key/serial token travels in the already-bounded injection
-     * message rather than retaining an entry pointer across workers.
-     */
-    uint16_t pending_deliveries;
-
-    uint8_t range_count;
-    uint8_t pending_count;
-    uint8_t state; /* ctp_frag_state_t */
-    wid_t   wid;
-
-    /* A barrier is owed for this association. */
-    bool purge_required;
-
-    /* ...and has been handed to the owner worker's queue. */
-    bool purge_queued;
-} ctp_frag_entry_t;
-
-static inline size_t ctpFragKeyHash(const ctp_frag_key_t *key)
-{
-    uint64_t value = (((uint64_t) key->remote_addr_network) << 32U) ^ key->local_addr_network;
-    value ^= ((uint64_t) key->ident) << 16U;
-    value ^= ((uint64_t) key->protocol) << 48U;
-    value ^= value >> 33U;
-    value *= 0xFF51AFD7ED558CCDULL;
-    value ^= value >> 33U;
-    value *= 0xC4CEB9FE1A85EC53ULL;
-    value ^= value >> 33U;
-    return (size_t) value;
-}
-
-#define i_type ctp_frag_map_t   // NOLINT
-#define i_key  ctp_frag_key_t   // NOLINT
-#define i_val  ctp_frag_entry_t // NOLINT
-#define i_hash ctpFragKeyHash   // NOLINT
-#define i_eq(x, y)                                                                                                     \
-    ((x)->remote_addr_network == (y)->remote_addr_network && (x)->local_addr_network == (y)->local_addr_network &&     \
-     (x)->ident == (y)->ident && (x)->protocol == (y)->protocol) // NOLINT
-#include "stc/hmap.h"
-#undef i_eq
-#undef i_hash
-#undef i_val
-#undef i_key
-#undef i_type
-
-/*
  * One ordinary lwIP netif per event worker. All of them carry the same
  * configured virtual source address: a flow is only ever injected into the
  * netif of the worker that owns its normal line, and every pcb is pinned to its
@@ -495,10 +302,10 @@ static inline size_t ctpFragKeyHash(const ctp_frag_key_t *key)
  */
 struct ctp_netif_ctx_s
 {
-    struct netif netif;
-    tunnel_t    *tunnel;
-    wid_t        wid;
-    bool         added;
+    struct netif      netif;
+    tunnel_t         *tunnel;
+    wid_t             wid;
+    bool              added;
     ww_lwip_engine_t *engine;
     ctp_tcp_drain_t  *drains;
 
@@ -532,16 +339,13 @@ typedef struct ctp_tstate_s
 
     /* Intrusive, allocation-free terminal handoff indexed by owner worker. */
     line_t **terminal_lines;
-    ctp_lstate_t **owned_lines;
+    /* Active borrowed-line state; source owners retain line destruction. */
+    ctp_lstate_t        **active_lines;
     ctp_handoff_budget_t *handoff_budget;
 
     wrwlock_t      flows_lock;
-    ctp_flow_map_t flows;               /* protected by flows_lock */
-    ctp_frag_map_t frags;               /* protected by flows_lock */
-    uint32_t       frag_pending_bytes;  /* protected by flows_lock */
-    uint64_t       frag_next_expiry_ms; /* protected by flows_lock; 0 = nothing pending */
-    uint64_t       frag_next_serial;    /* protected by flows_lock; never zero */
-    uint64_t       next_generation;     /* protected by flows_lock; never zero */
+    ctp_flow_map_t flows;           /* protected by flows_lock */
+    uint64_t       next_generation; /* protected by flows_lock; never zero */
 
     /*
      * Retirement order for detached entries, all under flows_lock. Heap rather
@@ -553,17 +357,17 @@ typedef struct ctp_tstate_s
     uint32_t             tomb_count; /* records in the ring, <= kCtpMaxTombstones */
 
     /* Worker-local netif drain lists share this short count/byte allowance. */
-    wmutex_t         drain_lock;
-    uint32_t         drain_bytes;
-    uint32_t         drain_count;
+    wmutex_t drain_lock;
+    uint32_t drain_bytes;
+    uint32_t drain_count;
 
     /* An unset address or zero port inherits that field from the line. */
     address_context_t target_addr;
-    ip4_addr_t source_ip;
-    uint32_t   mtu;
-    uint32_t   connect_timeout_ms;
-    uint32_t   max_pending_bytes;
-    int        domain_strategy;
+    ip4_addr_t        source_ip;
+    uint32_t          mtu;
+    uint32_t          connect_timeout_ms;
+    uint32_t          max_pending_bytes;
+    int               domain_strategy;
 
     quiescence_gate_t prev_gate;
     quiescence_gate_t next_gate;
@@ -586,12 +390,12 @@ typedef struct ctp_domain_resolver_lstate_s
 
 struct ctp_lstate_s
 {
-    tunnel_t *tunnel;
-    line_t   *line;
+    tunnel_t         *tunnel;
+    line_t           *line;
     ww_lwip_engine_t *engine;
     ctp_netif_ctx_t  *netif_ctx;
-    ctp_lstate_t     *owned_prev;
-    ctp_lstate_t     *owned_next;
+    ctp_lstate_t     *active_prev;
+    ctp_lstate_t     *active_next;
 
     union {
         struct tcp_pcb *tcp_pcb; /* protected by the owner engine */
@@ -641,7 +445,6 @@ struct ctp_lstate_s
 
     /* Owner-local latch bounds queued retry tasks from poll and sent callbacks. */
     bool write_retry_queued;
-    bool refused_retry_queued;
 };
 
 enum
@@ -699,7 +502,6 @@ bool ctpFlowRegistryInitialize(ctp_tstate_t *ts);
 void ctpFlowRegistryDestroy(ctp_tstate_t *ts);
 bool ctpFlowRegister(tunnel_t *t, ctp_lstate_t *ls, void *pcb, uint8_t protocol);
 void ctpFlowUnregister(tunnel_t *t, ctp_lstate_t *ls);
-void ctpFlowRetire(tunnel_t *t, ctp_lstate_t *ls, bool graceful);
 
 /*
  * Hands a registry entry from a line to a drain and back again. Both run under
@@ -711,92 +513,6 @@ bool ctpFlowLookup(tunnel_t *t, const ctp_flow_key_t *key, wid_t *out_wid, uint6
 bool ctpFlowStillOwns(tunnel_t *t, const ctp_flow_key_t *key, uint64_t generation, wid_t wid);
 void ctpDetachWorkerLines(tunnel_t *t, wid_t wid);
 void ctpDestroyWorkerNetif(tunnel_t *t, wid_t wid);
-
-/*
- * Registry lookup for a caller that already holds `flows_lock`. Only the
- * fragment path needs it: that path takes the write lock to mutate the
- * association table and must resolve fragment zero without releasing it.
- *
- * `now_ms` is what keeps an expired tombstone from answering. It is a parameter
- * rather than a call to the clock so the fragment path can use the same instant
- * it is classifying the fragment against.
- */
-bool ctpFlowLookupWithLockHeld(ctp_tstate_t *ts, const ctp_flow_key_t *key, uint64_t now_ms, wid_t *out_wid,
-                               uint64_t *out_generation);
-
-// ---------------------------------------------------------------------------
-// common/frag.c - return-fragment association, also under flows_lock
-// ---------------------------------------------------------------------------
-
-/*
- * The fragment table never allocates or inspects packet bytes: the caller hands
- * it an already-copied payload and the two callbacks that dispose of one. That
- * keeps the injection message layout private to downstream/payload.c and avoids
- * a second copy of every fragment.
- *
- * ctpFragHandlePacket() takes ownership of `payload` unconditionally. It either
- * publishes it, holds it until fragment zero resolves the datagram, or discards
- * it - never returns it to the caller.
- */
-typedef ctp_frag_publish_result_t (*ctp_frag_publish_fn)(tunnel_t *t, const ctp_flow_key_t *flow_key,
-                                                         uint64_t generation, wid_t wid, const ctp_frag_key_t *frag_key,
-                                                         uint64_t serial, void *payload);
-typedef void (*ctp_frag_discard_fn)(void *payload);
-typedef bool (*ctp_frag_purge_schedule_fn)(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, wid_t wid);
-
-void ctpFragTableInitialize(ctp_tstate_t *ts);
-void ctpFragTableDestroy(ctp_tstate_t *ts, ctp_frag_discard_fn release);
-/* Caller holds flows_lock for writing. */
-void ctpFragClearLocked(ctp_tstate_t *ts, ctp_frag_discard_fn release);
-/* Caller holds flows_lock after every still-present netif was purged. */
-void ctpFragClearAfterNetifPurgeLocked(tunnel_t *t);
-/*
- * What one fragment says about its place in the datagram. The table needs all of
- * it to know when the datagram is complete: `is_first_fragment` alone cannot
- * distinguish an in-flight datagram from a finished one.
- */
-typedef struct ctp_frag_span_s
-{
-    uint32_t offset;      /* transport-payload offset in bytes */
-    uint32_t payload_len; /* this fragment's transport payload length */
-    bool     is_first;    /* offset == 0 */
-    bool     is_last;     /* MF clear */
-} ctp_frag_span_t;
-
-/*
- * The validated routing view of one return packet. `flow_key` is meaningful
- * only for an unfragmented packet or fragment zero; nonzero fragments are
- * associated by `frag_key` without parsing transport bytes.
- */
-typedef struct ctp_packet_view_s
-{
-    ctp_flow_key_t  flow_key;
-    ctp_frag_key_t  frag_key;
-    ctp_frag_span_t span;
-    bool            is_fragment;
-} ctp_packet_view_t;
-
-bool ctpBuildPacketView(tunnel_t *t, const uint8_t *packet, uint32_t packet_len, ctp_packet_view_t *out_view);
-
-void ctpFragHandlePacket(tunnel_t *t, const ctp_frag_key_t *frag_key, const ctp_flow_key_t *zero_flow_key,
-                         const ctp_frag_span_t *span, void *payload, uint32_t len, ctp_frag_publish_fn publish,
-                         ctp_frag_discard_fn release, ctp_frag_purge_schedule_fn schedule_purge);
-
-/* Called by the owner-worker barrier after the exact lwIP reassembly key is purged. */
-void ctpFragRetirePurged(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, bool exact_absence);
-
-/*
- * Settles one exact delivery token after the owner worker either offered the
- * packet successfully to lwIP or cleaned/refused it.
- */
-void ctpFragSettleDelivery(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, bool delivered,
-                           ctp_frag_purge_schedule_fn schedule_purge);
-// ---------------------------------------------------------------------------
-// downstream/payload.c
-// ---------------------------------------------------------------------------
-
-/* Releases one staged return packet. Matches ctp_frag_discard_fn. */
-void ctpInjectMessageDestroy(void *payload);
 
 // ---------------------------------------------------------------------------
 // common/helpers.c - shared open/close/scheduling helpers
@@ -852,7 +568,6 @@ void               ctpPacketIngressGateLeave(tunnel_t *t);
 bool               ctpRequiredControlRefusedLocked(tunnel_t *t, ctp_lstate_t *ls, const char *operation);
 void               ctpDrainTerminalLinesOnCurrentWorker(tunnel_t *t, wid_t wid);
 void               ctpTerminalCancel(ctp_lstate_t *ls);
-void               ctpRefusedDataRetryTask(tunnel_t *t, line_t *l);
 
 /*
  * The monotonic clock behind every deadline this node stores. It is callable

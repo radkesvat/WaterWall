@@ -143,7 +143,7 @@ void __wrap_nodemanagerStopWorkerResources(wid_t wid, const ww_lifecycle_context
         require(lineIsAlive(normal_line), "CTP destroyed its borrowed normal line");
         require(neighbor_finishes == 0, "CTP reflected a Finish during source settlement");
         lineDestroy(normal_line);
-        require(state->owned_lines[wid] == NULL, "source Finish retained CTP inventory");
+        require(state->active_lines[wid] == NULL, "source Finish retained CTP inventory");
 #else
         ptc_tstate_t *state = tunnelGetState(bridge);
         require(state->owned_lines[wid] == NULL, "PTC owner drain retained its normal line");
@@ -243,7 +243,7 @@ static void setupBridge(void)
     require(ctpFlowRegistryInitialize(state), "CTP registry initialization failed");
     state->netifs_count   = 2;
     state->netifs         = memoryAllocateZero(2 * sizeof(*state->netifs));
-    state->owned_lines    = memoryAllocateZero(2 * sizeof(*state->owned_lines));
+    state->active_lines   = memoryAllocateZero(2 * sizeof(*state->active_lines));
     state->terminal_lines = memoryAllocateZero(2 * sizeof(*state->terminal_lines));
     atomic_init(&state->stopping, false);
     atomic_init(&state->fragment_drops, 0);

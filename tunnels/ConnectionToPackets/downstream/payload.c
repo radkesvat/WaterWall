@@ -2,6 +2,14 @@
 
 #include "loggers/network_logger.h"
 
+/* Routing identity for one complete return packet; fragments are classified
+ * only to reject them before transport parsing or worker handoff. */
+typedef struct ctp_packet_view_s
+{
+    ctp_flow_key_t flow_key;
+    bool           is_fragment;
+} ctp_packet_view_t;
+
 /*
  * One validated return packet on its way to the worker that owns its flow.
  *
@@ -9,9 +17,8 @@
  * matched under, and the bytes. No line or line-state pointer is retained, so a
  * flow retired between lookup and delivery simply fails the revalidation.
  *
- * The tuple and generation are filled in at publish time rather than at
- * allocation: a fragment that arrives before fragment zero is copied here first
- * and only learns which flow it belongs to once fragment zero resolves it.
+ * The tuple and generation are copied from the synchronized flow registry
+ * before the detached bytes are queued to the normal line's owner engine.
  */
 typedef struct ctp_inject_msg_s
 {
@@ -25,38 +32,19 @@ typedef struct ctp_inject_msg_s
     ctp_handoff_budget_t *budget;
     size_t                charge;
 
-    tunnel_t            *tunnel;
-    ctp_frag_key_t       delivery_key;
-    ctp_flow_key_t       key;
-    uint64_t             generation;
-    uint64_t             delivery_serial;
-    uint32_t             len;
-    wid_t                wid;
-    bool                 has_delivery_token;
+    tunnel_t      *tunnel;
+    ctp_flow_key_t key;
+    uint64_t       generation;
+    uint32_t       len;
+    wid_t          wid;
 
     /*
-     * pbuf_alloced_custom() makes payload alignment the caller's problem, and
-     * lwIP then reads this memory as `struct ip_hdr`, `struct tcp_hdr` and
-     * u32_t checksum words. Without the specifier the ordinary field layout put
-     * this at offset 68, so every injected packet handed lwIP a payload that
-     * MEM_ALIGNMENT says cannot be relied on.
+     * pbuf_alloced_custom() leaves payload alignment to its caller. Explicit
+     * alignment keeps typed IP/TCP header and checksum reads valid regardless
+     * of the scalar routing metadata preceding these bytes.
      */
     _Alignas(MEM_ALIGNMENT) uint8_t data[];
 } ctp_inject_msg_t;
-
-/*
- * A FIFO barrier queued behind every injection message for one completed or
- * poisoned datagram. It removes precisely that netif's lwIP reassembly object
- * before the outer association makes the IPv4 identification reusable.
- */
-typedef struct ctp_frag_purge_msg_s
-{
-    tunnel_t      *tunnel;
-    ctp_frag_key_t key;
-    uint64_t       serial;
-} ctp_frag_purge_msg_t;
-
-static bool ctpFragSchedulePurge(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, wid_t wid);
 
 /*
  * `_Alignas` above fixes the offset within the struct; ctpAllocatePacketMessage()
@@ -66,9 +54,9 @@ static bool ctpFragSchedulePurge(tunnel_t *t, const ctp_frag_key_t *frag_key, ui
 _Static_assert(offsetof(ctp_inject_msg_t, data) % MEM_ALIGNMENT == 0,
                "the injected packet payload must start on a MEM_ALIGNMENT boundary");
 
-void ctpInjectMessageDestroy(void *payload)
+static void ctpInjectMessageDestroy(void *payload)
 {
-    ctp_inject_msg_t *msg = payload;
+    ctp_inject_msg_t     *msg    = payload;
     ctp_handoff_budget_t *budget = msg->budget;
     const size_t          charge = msg->charge;
     memoryFreeAligned(msg);
@@ -77,8 +65,8 @@ void ctpInjectMessageDestroy(void *payload)
 
 /*
  * Called by lwIP when it is finished with an injected packet, possibly from its
- * owner-loop timer dispatch and possibly seconds later - a fragment waiting for
- * reassembly or a segment in TCP's out-of-order queue both hold one this long.
+ * owner-loop timer dispatch and possibly seconds later when TCP keeps an
+ * out-of-order segment or refuses delivery until resources become available.
  * The message came from the global allocator rather than a worker-local pool
  * precisely so any thread may release it.
  */
@@ -89,15 +77,11 @@ static void ctpInjectPbufFree(struct pbuf *p)
 
 static void ctpInjectPacketCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
-    discard              reason;
-    discard              arg2;
-    discard              arg3;
-    ctp_inject_msg_t    *msg           = arg1;
-    tunnel_t            *t             = msg->tunnel;
-    if (t != NULL && msg->has_delivery_token)
-    {
-        ctpFragSettleDelivery(t, &msg->delivery_key, msg->delivery_serial, false, ctpFragSchedulePurge);
-    }
+    discard           reason;
+    discard           arg2;
+    discard           arg3;
+    ctp_inject_msg_t *msg = arg1;
+    tunnel_t         *t   = msg->tunnel;
     if (t != NULL && currentThreadOwnsWorker(msg->wid))
         ctpDrainTerminalLinesOnCurrentWorker(t, msg->wid);
     ctpInjectMessageDestroy(msg);
@@ -115,13 +99,8 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
     assert(currentThreadOwnsWorker(worker->wid) && msg->wid == worker->wid);
     /* Lookup is repeated on the application owner. The registry lock is
      * released before selecting the engine and delivering any packet. */
-    bool handed_to_lwip  = false;
-    bool exact_netif     = false;
-    bool delivered       = false;
-
-    const bool           has_delivery_token = msg->has_delivery_token;
-    const ctp_frag_key_t delivery_key       = msg->delivery_key;
-    const uint64_t       delivery_serial    = msg->delivery_serial;
+    bool handed_to_lwip = false;
+    bool exact_netif    = false;
 
     ctp_netif_ctx_t *ctx = (ts->netifs != NULL && worker->wid < ts->netifs_count) ? ts->netifs[worker->wid] : NULL;
     if (ctx != NULL && ctx->added && ctx->tunnel == t && ctx->wid == worker->wid &&
@@ -134,14 +113,8 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
         ctpFlowStillOwns(t, &msg->key, msg->generation, worker->wid))
     {
 
-        /*
-         * The message is wrapped rather than copied into a pool pbuf. That
-         * removes the second full copy of every return packet, and it makes
-         * each wire packet exactly one pbuf: lwIP charges reassembly against
-         * `pbuf_clen()`, so a 9000-byte packet copied into 1500-byte pool
-         * buffers used to consume six units of a budget expressed in
-         * fragments.
-         */
+        /* The detached allocation supplies one aligned custom pbuf. Its
+         * bytes and handoff charge remain owned until the stack releases it. */
         msg->pbuf.custom_free_function = ctpInjectPbufFree;
 
         struct pbuf *p =
@@ -154,11 +127,10 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
         else
         {
             /* input may synchronously free the custom pbuf and `msg`. */
-            msg->tunnel                    = NULL;
-            handed_to_lwip                 = true;
+            msg->tunnel    = NULL;
+            handed_to_lwip = true;
 
             const err_t input_result = (err_t) wwLwipEngineInput(ctx->engine, p, &ctx->netif);
-            delivered                = input_result == ERR_OK;
             if (input_result != ERR_OK)
             {
                 pbuf_free(p);
@@ -166,13 +138,7 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
         }
     }
 
-
     ctpDrainTerminalLinesOnCurrentWorker(t, worker->wid);
-
-    if (has_delivery_token)
-    {
-        ctpFragSettleDelivery(t, &delivery_key, delivery_serial, delivered, ctpFragSchedulePurge);
-    }
 
     if (! handed_to_lwip)
     {
@@ -180,22 +146,13 @@ static void ctpInjectPacketOnWorker(worker_t *worker, void *arg1, void *arg2, vo
     }
 }
 
-static ctp_frag_publish_result_t ctpInjectPublish(tunnel_t *t, const ctp_flow_key_t *flow_key, uint64_t generation,
-                                                  wid_t wid, const ctp_frag_key_t *frag_key, uint64_t serial,
-                                                  void *payload)
+static bool ctpInjectPublish(tunnel_t *t, const ctp_flow_key_t *flow_key, uint64_t generation, wid_t wid,
+                             ctp_inject_msg_t *msg)
 {
-    ctp_inject_msg_t *msg = payload;
-
     msg->tunnel     = t;
     msg->key        = *flow_key;
     msg->generation = generation;
     msg->wid        = wid;
-    if (frag_key != NULL)
-    {
-        msg->delivery_key       = *frag_key;
-        msg->delivery_serial    = serial;
-        msg->has_delivery_token = true;
-    }
 
     /*
      * Always queued, even when the owner is this worker: injecting inline would
@@ -207,72 +164,11 @@ static ctp_frag_publish_result_t ctpInjectPublish(tunnel_t *t, const ctp_flow_ke
             wid, (WorkerMessageCallback) ctpInjectPacketOnWorker, ctpInjectPacketCleanup, msg, NULL, NULL) ==
         kWorkerMessageSubmitAccepted)
     {
-        return (ctp_frag_publish_result_t) {.accepted = true};
+        return true;
     }
 
     ctpInjectMessageDestroy(msg);
-    return (ctp_frag_publish_result_t) {.accepted = false};
-}
-
-static void ctpFragPurgeCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
-{
-    discard               reason;
-    discard               arg2;
-    discard               arg3;
-    ctp_frag_purge_msg_t *msg = arg1;
-    memoryFree(msg);
-}
-
-static void ctpFragPurgeOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
-{
-    discard arg2;
-    discard arg3;
-
-    ctp_frag_purge_msg_t *msg = arg1;
-    tunnel_t             *t   = msg->tunnel;
-    ctp_tstate_t         *ts  = tunnelGetState(t);
-
-
-    ctp_netif_ctx_t *ctx = (ts->netifs != NULL && worker->wid < ts->netifs_count) ? ts->netifs[worker->wid] : NULL;
-
-    bool exact_absence = false;
-    if (ctx != NULL && ctx->added && ctx->tunnel == t && ctx->wid == worker->wid)
-    {
-        ip4_addr_t source      = {.addr = msg->key.remote_addr_network};
-        ip4_addr_t destination = {.addr = msg->key.local_addr_network};
-
-        ww_lwip_engine_t *previous;
-        const bool        entered = wwLwipEngineEnter(ctx->engine, &previous);
-        assert(entered);
-        discard entered;
-        discard ip4_reass_purge(&ctx->netif, &source, &destination, msg->key.protocol, msg->key.ident);
-        wwLwipEngineLeave(ctx->engine, previous);
-        exact_absence = true;
-    }
-
-
-    /*
-     * Reached only after every earlier injection task for this datagram has
-     * either handed its pbuf to lwIP or discarded it. If Stop removed the netif
-     * first, its netif-wide purge supplied the same guarantee.
-     */
-    ctpFragRetirePurged(t, &msg->key, msg->serial, exact_absence);
-    memoryFree(msg);
-}
-
-static bool ctpFragSchedulePurge(tunnel_t *t, const ctp_frag_key_t *frag_key, uint64_t serial, wid_t wid)
-{
-    ctp_frag_purge_msg_t *msg = memoryAllocate(sizeof(*msg));
-
-    *msg = (ctp_frag_purge_msg_t) {
-        .tunnel = t,
-        .key    = *frag_key,
-        .serial = serial,
-    };
-
-    return sendWorkerMessageForceQueueWithCleanup(
-               wid, (WorkerMessageCallback) ctpFragPurgeOnWorker, ctpFragPurgeCleanup, msg, NULL, NULL) ==
-           kWorkerMessageSubmitAccepted;
+    return false;
 }
 
 static bool ctpValidateIpv4Packet(const uint8_t *packet, uint32_t packet_len, const struct ip_hdr *iphdr,
@@ -300,9 +196,8 @@ static bool ctpValidateIpv4Packet(const uint8_t *packet, uint32_t packet_len, co
 
     /*
      * Checked here rather than left to lwIP. ip4_input() drops a packet whose
-     * header checksum fails, so a corrupt fragment would otherwise be recorded
-     * as coverage for a datagram the stack never received a byte of - and the
-     * association would then retire on a completion that never happened.
+     * header checksum fails. Reject corrupt return input before looking up a
+     * flow or queueing detached bytes to its owner.
      */
     if (UNLIKELY(inet_chksum(iphdr, (u16_t) header_len) != 0))
     {
@@ -313,16 +208,9 @@ static bool ctpValidateIpv4Packet(const uint8_t *packet, uint32_t packet_len, co
     return true;
 }
 
-/*
- * Classifies the packet and builds whichever keys it can carry.
- *
- * A return packet's source is the remote peer and its destination is this
- * node's virtual local endpoint, which is exactly the orientation the registry
- * key was published in. A fragment at a nonzero offset has no transport header
- * at all, so it is identified by the IPv4 reassembly tuple instead and routed
- * through the association table.
- */
-bool ctpBuildPacketView(tunnel_t *t, const uint8_t *packet, uint32_t packet_len, ctp_packet_view_t *out_view)
+/* Classify one IPv4 return packet. Fragments are identified for the public
+ * ingress drop before any transport-header access or owner handoff. */
+static bool ctpBuildPacketView(tunnel_t *t, const uint8_t *packet, uint32_t packet_len, ctp_packet_view_t *out_view)
 {
     ctp_tstate_t        *ts    = tunnelGetState(t);
     const struct ip_hdr *iphdr = (const struct ip_hdr *) packet;
@@ -364,47 +252,14 @@ bool ctpBuildPacketView(tunnel_t *t, const uint8_t *packet, uint32_t packet_len,
         return false;
     }
 
-    if (is_fragment && header_len != IP_HLEN)
-    {
-        // ip4_reass() refuses any fragment carrying IP options, so one accepted
-        // here would occupy an association and record coverage for a datagram
-        // lwIP is never going to assemble.
-        return false;
-    }
-
-    *out_view = (ctp_packet_view_t) {
-        .frag_key =
-            {
-                .remote_addr_network = iphdr->src.addr,
-                .local_addr_network  = iphdr->dest.addr,
-                .ident               = lwip_ntohs(IPH_ID(iphdr)),
-                .protocol            = protocol,
-            },
-        .span =
-            {
-                // The offset field counts eight-byte units of transport payload.
-                .offset      = (uint32_t) (offset_field & IP_OFFMASK) * 8U,
-                .payload_len = packet_len - header_len,
-                .is_first    = ! has_offset,
-                .is_last     = ! more_fragments,
-            },
-        .is_fragment = is_fragment,
-    };
-
-    if (out_view->is_fragment && ! out_view->span.is_first)
-    {
-        // No transport header here; the association table supplies the flow.
+    *out_view = (ctp_packet_view_t) {.is_fragment = is_fragment};
+    if (is_fragment)
         return true;
-    }
 
     const uint32_t transport_len = packet_len - header_len;
-    const uint32_t min_transport =
-        out_view->is_fragment ? 4U : ((protocol == IP_PROTO_TCP) ? (uint32_t) TCP_HLEN : (uint32_t) UDP_HLEN);
-
+    const uint32_t min_transport = protocol == IP_PROTO_TCP ? TCP_HLEN : UDP_HLEN;
     if (transport_len < min_transport)
-    {
         return false;
-    }
 
     const uint8_t *transport = ((const uint8_t *) iphdr) + header_len;
 
@@ -444,11 +299,10 @@ static ctp_inject_msg_t *ctpAllocatePacketMessage(ctp_handoff_budget_t *budget, 
 
     assert(((uintptr_t) msg->data % MEM_ALIGNMENT) == 0);
 
-    msg->tunnel             = NULL;
-    msg->budget             = budget;
-    msg->charge             = charge;
-    msg->len                = len;
-    msg->has_delivery_token = false;
+    msg->tunnel = NULL;
+    msg->budget = budget;
+    msg->charge = charge;
+    msg->len    = len;
     return msg;
 }
 
@@ -523,7 +377,7 @@ void ctpTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     wid_t    owner_wid  = 0;
     uint64_t generation = 0;
 
-    if (! view.is_fragment && ! ctpFlowLookup(t, &view.flow_key, &owner_wid, &generation))
+    if (! ctpFlowLookup(t, &view.flow_key, &owner_wid, &generation))
     {
         LOGD("ConnectionToPackets: dropping a return packet that matches no registered flow");
         ctpInjectMessageDestroy(msg);
@@ -531,30 +385,6 @@ void ctpTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (! view.is_fragment)
-    {
-        discard ctpInjectPublish(t, &view.flow_key, generation, owner_wid, NULL, 0, msg);
-        ctpPacketIngressGateLeave(t);
-        return;
-    }
-
-    /*
-     * Fragments go through the association table instead: only offset zero
-     * carries the ports the registry is keyed on, and every fragment of one
-     * datagram has to reach the same worker for lwIP to reassemble it into that
-     * worker's netif. The table takes ownership of `msg` either way, so its
-     * length is read before handing it over.
-     */
-    const uint32_t packet_len = msg->len;
-
-    ctpFragHandlePacket(t,
-                        &view.frag_key,
-                        &view.flow_key,
-                        &view.span,
-                        msg,
-                        packet_len,
-                        ctpInjectPublish,
-                        ctpInjectMessageDestroy,
-                        ctpFragSchedulePurge);
+    discard ctpInjectPublish(t, &view.flow_key, generation, owner_wid, msg);
     ctpPacketIngressGateLeave(t);
 }

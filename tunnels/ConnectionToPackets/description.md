@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ConnectionToPackets.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ConnectionToPackets.mdx, and all files must keep the same documentation version.
 -->
 
@@ -317,9 +317,8 @@ queued without bound.
   Publishing `stopping` alone does not detach a PCB: close performs the real idempotent owner-side cleanup.
   Every queued task enters the relevant gate, so a rejected task suppresses its data and lifecycle events
   toward either neighbour, while close paths stay live so borrowed lines can still be released by their owners.
-- Creation publishes no partially usable bridge: the per-worker netif array, initial flow and fragment map capacities,
-  and fixed tombstone ring are mandatory. If any allocation is unavailable, initialized pieces
-  are unwound and node creation returns failure before a flow callback can run.
+- Creation establishes the per-worker netif array, initial flow map capacity and fixed tombstone ring before
+  any flow callback can run. Heap allocation failure is fatal; other constructor failures unwind initialized resources.
 - lwIP replays refused receive data from its owner-loop timer. Delivery retains the existing pbuf/credit and queued
   callback contract, including data-plus-FIN replay. A required control enqueue refusal first detaches
   the exact PCB callbacks and route inside the owner engine and publishes the borrowed line in the preallocated
@@ -358,6 +357,10 @@ reference pbufs; TCP may retain those pbufs for out-of-order delivery.
 `PacketsToConnection` derives its wrapper pool from the shared budget, TCP flow
 target and a fixed reserve. Per-PCB `TCP_OOSEQ_MAX_PBUFS` limits bound one TCP
 peer's retained input. This change does not resize the shared pools.
+
+TCP send/receive windows are protocol ceilings, not 2 MiB reserved per connection.
+Several stalled senders compete for the same segment and heap pools; full-MSS copies,
+small packets and ACK/control output consume different resource classes.
 
 These pools are static and shared across workers. Lower the cache variables to trade concurrency for memory;
 a value large enough to overflow lwIP's `u16_t` pool counters fails the build instead of silently truncating.

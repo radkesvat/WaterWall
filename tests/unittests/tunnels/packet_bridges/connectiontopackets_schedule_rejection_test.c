@@ -39,14 +39,14 @@ typedef enum ctp_submit_expectation_e
 
 typedef struct ctp_fixture_s
 {
-    twf_worker_env_t env;
-    twf_trace_t      trace;
-    tunnel_t        *prev;
-    tunnel_t        *ctp;
-    tunnel_chain_t  *chain;
-    line_t          *line;
-    line_t          *packet_line;
-    uint32_t         owner_finish_calls;
+    twf_worker_env_t  env;
+    twf_trace_t       trace;
+    tunnel_t         *prev;
+    tunnel_t         *ctp;
+    tunnel_chain_t   *chain;
+    line_t           *line;
+    line_t           *packet_line;
+    uint32_t          owner_finish_calls;
     ww_lwip_engine_t *engine;
 } ctp_fixture_t;
 
@@ -56,7 +56,24 @@ static ctp_submit_expectation_t g_submit_expectation;
 static uint32_t                 g_schedule_calls;
 static uint32_t                 g_buffer_settlements;
 static ww_lwip_engine_t        *test_previous;
-static void                     enterEngine(void)
+static unsigned                 tcp_write_calls, tcp_write_fail_call, tcp_output_calls;
+err_t                           __real_tcp_write(struct tcp_pcb *, const void *, u16_t, u8_t);
+err_t                           __wrap_tcp_write(struct tcp_pcb *, const void *, u16_t, u8_t);
+err_t                           __wrap_tcp_write(struct tcp_pcb *pcb, const void *data, u16_t length, u8_t flags)
+{
+    if (++tcp_write_calls == tcp_write_fail_call)
+        return ERR_MEM;
+    return __real_tcp_write(pcb, data, length, flags);
+}
+err_t __real_tcp_output(struct tcp_pcb *);
+err_t __wrap_tcp_output(struct tcp_pcb *);
+err_t __wrap_tcp_output(struct tcp_pcb *pcb)
+{
+    ++tcp_output_calls;
+    return __real_tcp_output(pcb);
+}
+
+static void enterEngine(void)
 {
     twfRequire(wwLwipEngineEnter(g_fixture->engine, &test_previous), "test engine entry refused");
 }
@@ -174,8 +191,8 @@ static void ctpFixtureSetup(ctp_fixture_t *fixture)
     ctp_tstate_t *state   = tunnelGetState(fixture->ctp);
     state->netifs_count   = 1;
     state->terminal_lines = memoryAllocateZero(sizeof(*state->terminal_lines));
-    state->owned_lines    = memoryAllocateZero(sizeof(*state->owned_lines));
-    twfRequire(state->owned_lines != NULL, "failed to allocate owner inventory");
+    state->active_lines   = memoryAllocateZero(sizeof(*state->active_lines));
+    twfRequire(state->active_lines != NULL, "failed to allocate active inventory");
     twfRequire(state->terminal_lines != NULL, "failed to allocate the CTP terminal registry");
     twfRequire(rwlockTryInit(&state->flows_lock), "failed to initialize the CTP flow lock");
     atomic_init(&state->stopping, false);
@@ -190,10 +207,10 @@ static void ctpFixtureSetup(ctp_fixture_t *fixture)
     ctpLinestateInitialize(lineGetState(fixture->line, fixture->ctp), fixture->ctp, fixture->line, kCtpLineKindTcp);
 
     ((ctp_lstate_t *) lineGetState(fixture->line, fixture->ctp))->engine = fixture->engine;
-    g_fixture            = fixture;
-    g_submit_expectation = kCtpSubmitNone;
-    g_schedule_calls     = 0;
-    g_buffer_settlements = 0;
+    g_fixture                                                            = fixture;
+    g_submit_expectation                                                 = kCtpSubmitNone;
+    g_schedule_calls                                                     = 0;
+    g_buffer_settlements                                                 = 0;
 }
 
 static void ctpFixtureRequirePacketLineAlive(const ctp_fixture_t *fixture)
@@ -210,8 +227,8 @@ static void ctpFixtureTeardown(ctp_fixture_t *fixture)
 
     ctp_tstate_t *state = tunnelGetState(fixture->ctp);
     rwlockDestroy(&state->flows_lock);
-    twfRequire(state->owned_lines[0] == NULL, "borrowed line inventory not empty");
-    memoryFree(state->owned_lines);
+    twfRequire(state->active_lines[0] == NULL, "borrowed line inventory not empty");
+    memoryFree(state->active_lines);
     memoryFree(state->terminal_lines);
     state->terminal_lines = NULL;
 
@@ -378,7 +395,7 @@ static void casePendingBudgetAllowsOneReadOfHeadroom(uint32_t pool_size)
     twfSetCase("CTP admits a 1 MiB delivery with pool-independent headroom and rejects bytes beyond bounded headroom");
     g_pool_size             = pool_size;
     const uint32_t headroom = 1024U * 1024U;
-    ctp_fixture_t fixture;
+    ctp_fixture_t  fixture;
     ctpFixtureSetup(&fixture);
     ctp_tstate_t *ts      = tunnelGetState(fixture.ctp);
     ctp_lstate_t *ls      = lineGetState(fixture.line, fixture.ctp);
@@ -462,6 +479,99 @@ static void caseStopOrdering(bool node_first)
     ctpFixtureTeardown(&fixture);
 }
 
+/* Frozen O2 checks: normal 2 MiB snd_buf; 100 KiB FIFO head plus a
+ * distinct follower; full flush, second-write ERR_MEM, and actual zero capacity. */
+static uint8_t sendByte(uint32_t offset)
+{
+    return (uint8_t) ((offset * 19U) ^ (offset >> 8U));
+}
+
+static sbuf_t *sendBuffer(ctp_fixture_t *fixture, uint32_t offset, uint32_t length)
+{
+    sbuf_t *buf = bufferpoolGetBestFit(fixture->env.pool, length, 0);
+    sbufSetLength(buf, length);
+    for (uint32_t i = 0; i < length; ++i)
+        sbufGetMutablePtr(buf)[i] = sendByte(offset + i);
+    return buf;
+}
+
+static void requireQueuedBytes(struct tcp_pcb *pcb, uint32_t expected)
+{
+    uint32_t offset = 0;
+    for (struct tcp_seg *seg = pcb->unsent; seg != NULL; seg = seg->next)
+    {
+        uint8_t bytes[TCP_MSS];
+        twfRequire(seg->len <= sizeof(bytes), "CTP queued an oversized segment");
+        twfRequire(pbuf_copy_partial(seg->p, bytes, seg->len, seg->p->tot_len - seg->len) == seg->len,
+                   "could not inspect CTP queued bytes");
+        for (uint32_t i = 0; i < seg->len; ++i)
+            twfRequire(bytes[i] == sendByte(offset + i), "CTP changed, duplicated or reordered FIFO bytes");
+        offset += seg->len;
+    }
+    twfRequireEqualU32(offset, expected, "CTP admitted the wrong byte count");
+}
+
+static void caseScaledSendCapacity(unsigned mode)
+{
+    twfSetCase("CTP drains scaled TCP capacity, preserves refused prefix and resumes FIFO");
+    enum
+    {
+        length = 100U * 1024U,
+        later  = 3333U
+    };
+    ctp_fixture_t fixture;
+    ctpFixtureSetup(&fixture);
+    const uint32_t  baseline = ctpTcpPcbUsed();
+    struct tcp_pcb *pcb      = ctpAttachTestPcb(&fixture, baseline);
+    ctp_lstate_t   *ls       = lineGetState(fixture.line, fixture.ctp);
+    ls->connected            = true;
+    bufferqueuePushBack(&ls->pending_queue, sendBuffer(&fixture, 0, length));
+    bufferqueuePushBack(&ls->pending_queue, sendBuffer(&fixture, length, later));
+    enterEngine();
+    twfRequire(pcb->snd_buf == 2U * 1024U * 1024U, "CTP test lost normal scaled send capacity");
+    pcb->state       = ESTABLISHED;
+    pcb->mss         = TCP_MSS;
+    pcb->snd_wnd_max = TCP_WND;
+    IP_ADDR4(&pcb->remote_ip, 192, 0, 2, 1);
+    TCP_REG_ACTIVE(pcb);
+    tcp_nagle_disable(pcb);
+    if (mode == 2)
+        pcb->snd_buf = 0;
+    tcp_write_calls = tcp_output_calls = 0;
+    tcp_write_fail_call                = mode == 1 ? 2 : 0;
+    const ctp_flush_result_t result    = ctpFlushPendingLocked(ls);
+    tcp_write_fail_call                = 0;
+    const uint32_t admitted            = mode == 0 ? length + later : mode == 1 ? UINT16_MAX : 0;
+    requireQueuedBytes(pcb, admitted);
+    twfRequire(tcp_output_calls == (admitted != 0 ? 1U : 0U), "CTP did not output the successful prefix exactly once");
+    if (mode == 0)
+        twfRequire(result == kCtpFlushProgressed && ! ls->write_blocked && ! ls->write_poll_armed &&
+                       bufferqueueGetBufCount(&ls->pending_queue) == 0 && tcp_write_calls == 3,
+                   "CTP stopped solely at the 16-bit write boundary");
+    else
+    {
+        twfRequire(result == kCtpFlushRetryable && ls->write_blocked && ls->write_poll_armed &&
+                       bufferqueueGetBufCount(&ls->pending_queue) == 2,
+                   "CTP lost a blocked FIFO entry");
+        const sbuf_t *suffix = bufferqueueFront(&ls->pending_queue);
+        twfRequire(sbufGetLength(suffix) == length - admitted, "CTP retained copied bytes or lost its suffix");
+        const uint8_t *bytes = sbufGetRawPtr(suffix);
+        for (uint32_t i = 0; i < length - admitted; ++i)
+            twfRequire(bytes[i] == sendByte(admitted + i), "CTP shifted its refused suffix incorrectly");
+        if (mode == 2)
+            pcb->snd_buf = 2U * 1024U * 1024U;
+        twfRequire(ctpFlushPendingLocked(ls) == kCtpFlushProgressed, "CTP retry did not drain available capacity");
+        requireQueuedBytes(pcb, length + later);
+        twfRequire(! ls->write_blocked && ! ls->write_poll_armed && bufferqueueGetBufCount(&ls->pending_queue) == 0,
+                   "CTP retry retained pressure or queued storage");
+    }
+    leaveEngine();
+    twfRequireNoLeakedBuffers();
+    ctpCloseFixtureLine(&fixture);
+    twfRequireEqualU32(ctpTcpPcbUsed(), baseline, "CTP scaled send test leaked its PCB");
+    ctpFixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     twfRequire(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
@@ -470,6 +580,8 @@ int main(void)
     const uint32_t headroom_pool_sizes[] = {4096, 65536, 131072, 4U * 1024U * 1024U};
     for (size_t i = 0; i < ARRAY_SIZE(headroom_pool_sizes); ++i)
         casePendingBudgetAllowsOneReadOfHeadroom(headroom_pool_sizes[i]);
+    for (unsigned mode = 0; mode < 3; ++mode)
+        caseScaledSendCapacity(mode);
     caseTerminalPayloadReentry();
     caseStopOrdering(true);
     caseStopOrdering(false);

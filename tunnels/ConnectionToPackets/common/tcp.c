@@ -30,10 +30,9 @@ struct tcp_pcb *ctpTcpDetachCallbacksLocked(ctp_lstate_t *ls)
      * flight, but it will find no pcb and do nothing, so the slot it was holding
      * is free.
      */
-    ls->write_poll_armed     = false;
-    ls->write_retry_queued   = false;
-    ls->refused_retry_queued = false;
-    ls->tcp_pcb              = NULL;
+    ls->write_poll_armed   = false;
+    ls->write_retry_queued = false;
+    ls->tcp_pcb            = NULL;
     return pcb;
 }
 
@@ -150,13 +149,13 @@ bool ctpTcpOpenFlow(tunnel_t *t, line_t *l, ctp_lstate_t *ls, const ip_addr_t *d
     }
 
     ls->netif_ctx = ctx;
-    ls->tcp_pcb  = pcb;
-    ls->flow_key = (ctp_flow_key_t) {
-        .remote_addr_network = ip_2_ip4(dest_ip)->addr,
-        .local_addr_network  = ip4_addr_get_u32(&ts->source_ip),
-        .remote_port         = dest_port,
-        .local_port          = pcb->local_port,
-        .protocol            = IP_PROTO_TCP,
+    ls->tcp_pcb   = pcb;
+    ls->flow_key  = (ctp_flow_key_t) {
+         .remote_addr_network = ip_2_ip4(dest_ip)->addr,
+         .local_addr_network  = ip4_addr_get_u32(&ts->source_ip),
+         .remote_port         = dest_port,
+         .local_port          = pcb->local_port,
+         .protocol            = IP_PROTO_TCP,
     };
 
     if (! ctpFlowRegister(t, ls, pcb, IP_PROTO_TCP))
@@ -211,7 +210,7 @@ ctp_flush_result_t ctpFlushPendingLocked(ctp_lstate_t *ls)
     /*
      * Every owner-engineed write to a pcb funnels through here, so this is where
      * the stopping gate has to be rechecked: drain closes the pcb and clears
-     * ls->tcp_pcb under this same lock, and a task that took the lock first
+     * ls->tcp_pcb in that owner-engine scope; a task entering the engine first
      * would otherwise still be holding the pre-quiesce pointer.
      */
     if (UNLIKELY(ctpTunnelIsStopping(ls->tunnel)))
@@ -261,8 +260,8 @@ ctp_flush_result_t ctpFlushPendingLocked(ctp_lstate_t *ls)
 
             sbufShiftRight(buf, write_len);
             bufferqueuePushFront(&ls->pending_queue, buf);
-            result = kCtpFlushRetryable;
-            break;
+            /* tcp_write takes 16-bit lengths while scaled snd_buf is wider.
+             * Re-read actual capacity and continue with this same FIFO head. */
         }
 
         if (wrote_any)
@@ -411,6 +410,9 @@ err_t ctpTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
     tunnel_t *t = ls->tunnel;
     line_t   *l = ls->line;
 
+    assert(currentThreadOwnsWorker(lineGetWID(ls->line)));
+    assert(wwLwipEngineCurrent() == ls->engine);
+
     if (err != ERR_OK)
     {
         // A terminal receive error. Close from this side too and let the owner
@@ -464,38 +466,6 @@ err_t ctpTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
             }
         }
         return aborted ? ERR_ABRT : ERR_OK;
-    }
-
-    const wid_t owner_wid = lineGetWID(l);
-    if (UNLIKELY(! currentThreadOwnsWorker(owner_wid)))
-    {
-        /*
-         * The read buffer would have to come from the owner's pool, which this
-         * thread may not touch. Injection is always posted to the owner, so this
-         * is an unsupported foreign callback and cannot borrow the local pool.
-         */
-        if (! ls->refused_retry_queued)
-        {
-            ls->refused_retry_queued         = true;
-            line_task_submit_result_e result = kLineTaskSubmitRejectedSettled;
-            if (lineIsAlive(l))
-            {
-                result = lineScheduleTask(l, ctpRefusedDataRetryTask, t, NULL);
-            }
-            if (result == kLineTaskSubmitRejectedSettled)
-            {
-                ls->refused_retry_queued = false;
-                if (ctpRequiredControlRefusedLocked(t, ls, "refused TCP data replay"))
-                {
-                    return ERR_ABRT;
-                }
-            }
-            else
-            {
-                assert(result == kLineTaskSubmitAcceptedAsync);
-            }
-        }
-        return ERR_MEM;
     }
 
     const uint32_t received = p->tot_len;
@@ -566,13 +536,11 @@ err_t ctpTcpSentCallback(void *arg, struct tcp_pcb *tpcb, u16_t len)
 
     /*
      * tcp_sent only fires from ACK processing in tcp_input(), which for this pcb
-     * always runs on the injection worker - the owner. The guard keeps a future
-     * lwIP path from letting the flush touch a foreign worker's buffer pool.
+     * always runs inside the injection worker's owner engine. The same owner
+     * dispatches protocol timers and refused-data retries.
      */
-    if (UNLIKELY(! currentThreadOwnsWorker(lineGetWID(ls->line))))
-    {
-        return ctpQueueWriteRetryLocked(ls) ? ERR_ABRT : ERR_OK;
-    }
+    assert(currentThreadOwnsWorker(lineGetWID(ls->line)));
+    assert(wwLwipEngineCurrent() == ls->engine);
 
     const ctp_flush_result_t flushed = ctpFlushPendingLocked(ls);
 

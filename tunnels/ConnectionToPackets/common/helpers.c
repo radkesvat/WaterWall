@@ -338,7 +338,7 @@ bool ctpDetachFlowLocked(tunnel_t *t, ctp_lstate_t *ls, bool graceful)
             udp_remove(pcb);
         }
         // A datagram flow has nothing left to exchange, so no tombstone is kept.
-        ctpFlowRetire(t, ls, false);
+        ctpFlowUnregister(t, ls);
         return false;
     }
 
@@ -373,7 +373,7 @@ bool ctpDetachFlowLocked(tunnel_t *t, ctp_lstate_t *ls, bool graceful)
 
     if (pcb == NULL)
     {
-        ctpFlowRetire(t, ls, false);
+        ctpFlowUnregister(t, ls);
         return false;
     }
 
@@ -413,7 +413,7 @@ bool ctpDetachFlowLocked(tunnel_t *t, ctp_lstate_t *ls, bool graceful)
     }
 
     // No exchange ever happened, so there is nothing for a tombstone to route.
-    ctpFlowRetire(t, ls, false);
+    ctpFlowUnregister(t, ls);
     return false;
 }
 
@@ -773,31 +773,6 @@ void ctpResumeWriteTask(tunnel_t *t, line_t *l)
     ctpApplyWriteBackpressure(t, l);
 }
 
-void ctpRefusedDataRetryTask(tunnel_t *t, line_t *l)
-{
-    if (! lineIsAlive(l))
-    {
-        return;
-    }
-
-    ctp_lstate_t *ls = lineGetState(l, t);
-    if (ls->tunnel == NULL)
-    {
-        return;
-    }
-
-    ww_lwip_engine_t *previous;
-    const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
-    assert(entered);
-    discard entered;
-    ls->refused_retry_queued = false;
-    if (ls->tcp_pcb != NULL && ! ctpTunnelIsStopping(t))
-    {
-        discard tcp_process_refused_data(ls->tcp_pcb);
-    }
-    wwLwipEngineLeave(ls->engine, previous);
-}
-
 /*
  * Publishes the current send-window state toward prev. The caller must treat the
  * line as possibly destroyed afterwards: both branches call into prev.
@@ -837,10 +812,10 @@ void ctpDetachWorkerLines(tunnel_t *t, wid_t wid)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
     assert(currentThreadOwnsWorker(wid));
-    if (ts->owned_lines == NULL)
+    if (ts->active_lines == NULL)
         return;
     assert(wid < ts->netifs_count);
-    for (ctp_lstate_t *ls = ts->owned_lines[wid]; ls != NULL; ls = ls->owned_next)
+    for (ctp_lstate_t *ls = ts->active_lines[wid]; ls != NULL; ls = ls->active_next)
     {
         ctpCancelConnectDeadline(ls);
         if (ls->engine != NULL)

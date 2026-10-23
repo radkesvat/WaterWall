@@ -21,11 +21,11 @@ void ctpLinestateInitialize(ctp_lstate_t *ls, tunnel_t *t, line_t *l, ctp_line_k
 
     assert(currentThreadOwnsWorker(lineGetWID(l)));
     ctp_tstate_t *ts = tunnelGetState(t);
-    assert(ts->owned_lines != NULL && lineGetWID(l) < ts->netifs_count);
-    ls->owned_next = ts->owned_lines[lineGetWID(l)];
-    if (ls->owned_next != NULL)
-        ls->owned_next->owned_prev = ls;
-    ts->owned_lines[lineGetWID(l)] = ls;
+    assert(ts->active_lines != NULL && lineGetWID(l) < ts->netifs_count);
+    ls->active_next = ts->active_lines[lineGetWID(l)];
+    if (ls->active_next != NULL)
+        ls->active_next->active_prev = ls;
+    ts->active_lines[lineGetWID(l)] = ls;
 }
 
 void ctpLinestateDestroy(ctp_lstate_t *ls)
@@ -35,15 +35,15 @@ void ctpLinestateDestroy(ctp_lstate_t *ls)
 
     assert(currentThreadOwnsWorker(wid));
     ctp_tstate_t *ts = tunnelGetState(ls->tunnel);
-    if (ls->owned_prev != NULL)
-        ls->owned_prev->owned_next = ls->owned_next;
+    if (ls->active_prev != NULL)
+        ls->active_prev->active_next = ls->active_next;
     else
     {
-        assert(ts->owned_lines[wid] == ls);
-        ts->owned_lines[wid] = ls->owned_next;
+        assert(ts->active_lines[wid] == ls);
+        ts->active_lines[wid] = ls->active_next;
     }
-    if (ls->owned_next != NULL)
-        ls->owned_next->owned_prev = ls->owned_prev;
+    if (ls->active_next != NULL)
+        ls->active_next->active_prev = ls->active_prev;
     ctpTerminalCancel(ls);
 
     /*

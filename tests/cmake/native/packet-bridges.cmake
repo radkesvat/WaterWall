@@ -167,12 +167,15 @@ if(LINUX AND TARGET ConnectionToPackets)
   target_link_options(connectiontopackets_schedule_rejection_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
     "-Wl,--wrap=signalmanagerRequestShutdownPreservingAcceptedStatus"
+    "-Wl,--wrap=tcp_write"
+    "-Wl,--wrap=tcp_output"
     "-Wl,--wrap=lineScheduleTask"
     "-Wl,--wrap=lineScheduleTaskWithBuf"
 
 
   )
-  target_link_libraries(connectiontopackets_schedule_rejection_test PRIVATE ctp_engine_test)
+  # Large copied writes need the production payload-pool geometry.
+  target_link_libraries(connectiontopackets_schedule_rejection_test PRIVATE ConnectionToPackets ww)
   add_dependencies(waterwall_unit_tests connectiontopackets_schedule_rejection_test)
   add_waterwall_unit_test(
     waterwall.connectiontopackets_schedule_rejection_unit

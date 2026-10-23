@@ -240,8 +240,7 @@ int main(void)
         ctp_inject_msg_t *msg = ctpAllocatePacketMessage(state->handoff_budget, 48);
         twfRequire(msg != NULL, "input admission did not recover");
         refuse_queue = mode == 0;
-        twfRequire(ctpInjectPublish(t, &key, 1, 0, NULL, 0, msg).accepted == ! refuse_queue,
-                   "input publication result");
+        twfRequire(ctpInjectPublish(t, &key, 1, 0, msg) == ! refuse_queue, "input publication result");
         if (mode == 1)
             settle(&env.worker, true);
         if (mode == 2 || mode == 3)
@@ -258,7 +257,7 @@ int main(void)
     flow_alive               = true;
     ctp_inject_msg_t *msg    = ctpAllocatePacketMessage(state->handoff_budget, 48);
     const size_t      charge = msg->charge;
-    twfRequire(ctpInjectPublish(t, &key, 1, 0, NULL, 0, msg).accepted, "retained input publication");
+    twfRequire(ctpInjectPublish(t, &key, 1, 0, msg), "retained input publication");
     settle(&env.worker, false);
     twfRequire(retained_pbuf != NULL && state->handoff_budget->bytes == charge && state->handoff_budget->entries == 1,
                "custom pbuf charge was released at dispatch instead of actual free");
