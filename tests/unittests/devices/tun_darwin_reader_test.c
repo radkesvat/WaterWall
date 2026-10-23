@@ -129,8 +129,9 @@ static void runDrainCase(buffer_pool_t *pool, const char *name, const native_rec
     expected_packets = expected;
     expected_count   = output_count;
     reads = delivered = checkouts = recycles = 0;
+    char                    device_name[]    = "utun-fixture";
     device_reader_session_t session          = {.reader_buffer_pool = pool};
-    tun_device_t            device           = {.name               = "utun-fixture",
+    tun_device_t            device           = {.name               = device_name,
                                                 .handle             = kFixtureFd,
                                                 .reader_session     = &session,
                                                 .reader_buffer_pool = pool,
