@@ -14,6 +14,50 @@ function(ww_lwip_replace_once file before after)
 endfunction()
 
 function(ww_apply_lwip_pretend_patch lwip_dir)
+    # Bound ordinary UDP before checksum work, PCB selection or pretend admission.
+    # UDP-Lite uses this field for checksum coverage, not datagram length.
+    ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"
+[=[    UDP_STATS_INC(udp.lenerr);
+    UDP_STATS_INC(udp.drop);
+    MIB2_STATS_INC(mib2.udpinerrors);
+    pbuf_free(p);
+    goto end;
+  }
+
+  udphdr = (struct udp_hdr *)p->payload;]=]
+[=[    goto ww_udp_lenerr;
+  }
+
+  udphdr = (struct udp_hdr *)p->payload;
+
+#if LWIP_UDPLITE
+  if (ip_current_header_proto() != IP_PROTO_UDPLITE)
+#endif /* LWIP_UDPLITE */
+  {
+    const u16_t udp_length = lwip_ntohs(udphdr->len);
+    if ((udp_length < UDP_HLEN) || (udp_length > p->tot_len)) {
+      LWIP_DEBUGF(UDP_DEBUG,
+                  ("udp_input: invalid UDP length %"U16_F" for %"U16_F" transport bytes\n",
+                   udp_length, p->tot_len));
+      goto ww_udp_lenerr;
+    }
+    if (udp_length < p->tot_len) {
+      pbuf_realloc(p, udp_length);
+    }
+  }]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"
+[=[end:
+  PERF_STOP("udp_input");
+  return;]=]
+[=[end:
+  PERF_STOP("udp_input");
+  return;
+ww_udp_lenerr:
+  UDP_STATS_INC(udp.lenerr);
+  UDP_STATS_INC(udp.drop);
+  MIB2_STATS_INC(mib2.udpinerrors);
+  pbuf_free(p);
+  goto end;]=])
     # Use the same checksum policy for ordinary dispatch and pretend admission.
     # A first packet must be valid before any child or callback is published;
     # redispatch after acceptance must not repeat transport checksum work.

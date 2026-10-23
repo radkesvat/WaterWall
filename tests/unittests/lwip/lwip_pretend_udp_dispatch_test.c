@@ -3,7 +3,7 @@
  * this suite.
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
- * Cases: runFixture
+ * Cases: runFixture, runBoundaryFixture
  * Checks: Exact return/byte/order and resource-count oracles in the explicit case bodies.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
@@ -47,7 +47,16 @@ typedef struct udp_dispatch_fixture_s
     atomic_bool      completed;
 } udp_dispatch_fixture_t;
 
-
+typedef struct udp_datagram_case_s
+{
+    const char *name;
+    uint16_t    declared_length;
+    uint16_t    wire_payload_length;
+    uint16_t    delivered_length;
+    bool        accepted;
+    bool        chained;
+    bool        corrupt_checksum;
+} udp_datagram_case_t;
 
 static void fixtureFail(udp_dispatch_fixture_t *fixture, const char *message)
 {
@@ -221,13 +230,39 @@ static void writeIpv4Checksum(uint8_t *packet)
     PUT_BE16(packet + 10, (uint16_t) ~sum);
 }
 
-static bool injectIpv4UdpDatagram(udp_dispatch_fixture_t *fixture, const udp_flow_probe_t *flow,
-                                  uint16_t identification)
+static uint16_t udpChecksum(const uint8_t *packet, uint16_t length)
+{
+    uint32_t sum = IP_PROTO_UDP + length;
+
+    for (uint32_t offset = 12; offset < 20; offset += 2)
+    {
+        sum += GET_BE16(packet + offset);
+    }
+    for (uint32_t offset = 0; offset < length; offset += 2)
+    {
+        sum += (uint32_t) packet[20 + offset] << 8U;
+        if (offset + 1U < length)
+        {
+            sum += packet[20 + offset + 1U];
+        }
+    }
+    while ((sum >> 16U) != 0)
+    {
+        sum = (sum & UINT32_C(0xFFFF)) + (sum >> 16U);
+    }
+    return (uint16_t) ~sum;
+}
+
+static bool injectIpv4UdpBoundary(udp_dispatch_fixture_t *fixture, const udp_flow_probe_t *flow,
+                                  uint16_t identification, const udp_datagram_case_t *test_case, bool checksum)
 {
     input_pbuf_t   input         = {0};
-    const uint16_t packet_length = (uint16_t) (20U + UDP_HLEN + flow->payload_length);
+    input_pbuf_t   tail          = {0};
+    const uint16_t packet_length = (uint16_t) (20U + UDP_HLEN + test_case->wire_payload_length);
+    const uint16_t first_length  = test_case->chained ? 20U + UDP_HLEN + 2U : packet_length;
 
     input.custom.custom_free_function = inputPbufFree;
+    tail.custom.custom_free_function  = inputPbufFree;
     input.bytes[0]                    = 0x45;
     input.bytes[8]                    = 64;
     input.bytes[9]                    = IP_PROTO_UDP;
@@ -237,22 +272,77 @@ static bool injectIpv4UdpDatagram(udp_dispatch_fixture_t *fixture, const udp_flo
     memoryCopy(input.bytes + 16, &ip_2_ip4(&flow->destination)->addr, sizeof(ip_2_ip4(&flow->destination)->addr));
     PUT_BE16(input.bytes + 20, flow->source_port);
     PUT_BE16(input.bytes + 22, flow->destination_port);
-    PUT_BE16(input.bytes + 24, (uint16_t) (UDP_HLEN + flow->payload_length));
+    PUT_BE16(input.bytes + 24, test_case->declared_length);
     PUT_BE16(input.bytes + 26, 0);
-    memoryCopy(input.bytes + 20 + UDP_HLEN, flow->payload, flow->payload_length);
+    memoryCopy(input.bytes + 20 + UDP_HLEN, flow->payload, test_case->wire_payload_length);
+    if (checksum)
+    {
+        uint16_t checksum_value = UINT16_C(0x1234);
+        if (test_case->declared_length >= UDP_HLEN && test_case->declared_length <= packet_length - 20U)
+        {
+            checksum_value = udpChecksum(input.bytes, test_case->declared_length);
+            if (checksum_value == 0)
+            {
+                checksum_value = UINT16_MAX;
+            }
+            if (test_case->corrupt_checksum)
+            {
+                checksum_value ^= UINT16_C(0x8000);
+                if (checksum_value == 0)
+                {
+                    checksum_value = 1;
+                }
+            }
+        }
+        PUT_BE16(input.bytes + 26, checksum_value);
+        if (test_case->accepted && test_case->declared_length < packet_length - 20U &&
+            ! fixtureExpect(fixture,
+                            udpChecksum(input.bytes, (uint16_t) (packet_length - 20U)) != 0,
+                            "trailing bytes did not distinguish the declared UDP checksum span"))
+        {
+            return false;
+        }
+    }
     writeIpv4Checksum(input.bytes);
 
-    struct pbuf *p = pbuf_alloced_custom(PBUF_RAW, packet_length, PBUF_REF, &input.custom, input.bytes, packet_length);
+    struct pbuf *p = pbuf_alloced_custom(PBUF_RAW, first_length, PBUF_REF, &input.custom, input.bytes, first_length);
     if (! fixtureExpect(fixture, p != NULL, "failed to allocate a custom ingress pbuf"))
     {
         return false;
     }
+    if (test_case->chained)
+    {
+        const uint16_t tail_length = packet_length - first_length;
+        memoryCopy(tail.bytes, input.bytes + first_length, tail_length);
+        struct pbuf *q = pbuf_alloced_custom(PBUF_RAW, tail_length, PBUF_REF, &tail.custom, tail.bytes, tail_length);
+        if (! fixtureExpect(fixture, q != NULL, "failed to allocate a custom chained ingress pbuf"))
+        {
+            pbuf_free(p);
+            return false;
+        }
+        pbuf_cat(p, q);
+    }
 
-    if (! fixtureExpect(fixture, ip_input(p, &fixture->netif) == ERR_OK, "IPv4 input rejected a valid UDP datagram"))
+    if (! fixtureExpect(fixture, ip_input(p, &fixture->netif) == ERR_OK, "IPv4 input failed to consume a UDP datagram"))
     {
         return false;
     }
-    return fixtureExpect(fixture, input.free_count == 1, "ingress pbuf was not released exactly once");
+    return fixtureExpect(fixture, input.free_count == 1, "ingress pbuf was not released exactly once") &&
+           fixtureExpect(fixture,
+                         tail.free_count == (test_case->chained ? 1U : 0U),
+                         "chained ingress pbuf was not released exactly once");
+}
+
+static bool injectIpv4UdpDatagram(udp_dispatch_fixture_t *fixture, const udp_flow_probe_t *flow,
+                                  uint16_t identification)
+{
+    const udp_datagram_case_t test_case = {
+        .declared_length     = (uint16_t) (UDP_HLEN + flow->payload_length),
+        .wire_payload_length = flow->payload_length,
+        .delivered_length    = flow->payload_length,
+        .accepted            = true,
+    };
+    return injectIpv4UdpBoundary(fixture, flow, identification, &test_case, false);
 }
 
 static bool setupFixture(udp_dispatch_fixture_t *fixture)
@@ -396,6 +486,45 @@ static void runFixture(void *argument)
     atomicStoreExplicit(&fixture->completed, true, memory_order_release);
 }
 
+static void runBoundaryFixture(const udp_datagram_case_t *test_case, bool checksum)
+{
+    static const uint8_t   payload[] = "prefix-trailer";
+    udp_dispatch_fixture_t fixture   = {0};
+    udp_flow_probe_t      *flow      = &fixture.flows[0];
+    char                   name[128];
+
+    snprintf(name, sizeof(name), "lwip_udp_length_%s_%s", test_case->name, checksum ? "checksum" : "zero_checksum");
+    testCaseSet(name);
+    IP4_ADDR(ip_2_ip4(&flow->source), 198, 51, 100, 40);
+    IP_SET_TYPE(&flow->source, IPADDR_TYPE_V4);
+    IP4_ADDR(ip_2_ip4(&flow->destination), 203, 0, 113, 50);
+    IP_SET_TYPE(&flow->destination, IPADDR_TYPE_V4);
+    flow->source_port      = 41002;
+    flow->destination_port = 53001;
+    flow->payload          = payload;
+    flow->payload_length   = test_case->delivered_length;
+
+    if (setupFixture(&fixture))
+    {
+        discard        injectIpv4UdpBoundary(&fixture, flow, 3, test_case, checksum);
+        const uint32_t expected_callbacks = test_case->accepted ? 1U : 0U;
+        fixtureExpect(
+            &fixture, flow->accept_count == expected_callbacks, "UDP length admission created an unexpected child");
+        fixtureExpect(&fixture,
+                      flow->receive_count == expected_callbacks,
+                      "UDP length admission delivered an unexpected datagram count");
+        if (! test_case->accepted)
+        {
+            fixtureExpect(&fixture,
+                          flow->child == NULL && udp_pcbs == fixture.listener && fixture.listener->next == NULL,
+                          "rejected UDP input published a connected PCB");
+        }
+    }
+    cleanupFixture(&fixture);
+    require(fixture.failure == NULL,
+            fixture.failure != NULL ? fixture.failure : "boundary fixture failed without a diagnostic");
+}
+
 int main(void)
 {
     testCaseSet("lwip_pretend_udp_dispatch_test");
@@ -405,8 +534,37 @@ int main(void)
     lwipTestEngineBegin(1);
     atomic_init(&fixture.completed, false);
     runFixture(&fixture);
-    lwipTestEngineEnd();
     require(fixture.failure == NULL, fixture.failure != NULL ? fixture.failure : "fixture failed without a diagnostic");
+    static const udp_datagram_case_t cases[] = {
+        {.name = "zero", .declared_length = 0, .wire_payload_length = 13},
+        {.name = "short_header", .declared_length = 7, .wire_payload_length = 13},
+        {.name = "oversized", .declared_length = 22, .wire_payload_length = 13},
+        {.name = "empty", .declared_length = 8, .accepted = true},
+        {.name = "empty_with_trailer", .declared_length = 8, .wire_payload_length = 13, .accepted = true},
+        {.name = "full", .declared_length = 21, .wire_payload_length = 13, .delivered_length = 13, .accepted = true},
+        {.name = "prefix", .declared_length = 13, .wire_payload_length = 13, .delivered_length = 5, .accepted = true},
+        {.name                = "chained_prefix",
+         .declared_length     = 13,
+         .wire_payload_length = 13,
+         .delivered_length    = 5,
+         .accepted            = true,
+         .chained             = true},
+        {.name = "chained_empty", .declared_length = 8, .wire_payload_length = 13, .accepted = true, .chained = true},
+        {.name                = "invalid_checksum",
+         .declared_length     = 21,
+         .wire_payload_length = 13,
+         .delivered_length    = 13,
+         .corrupt_checksum    = true},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        if (! cases[i].corrupt_checksum)
+        {
+            runBoundaryFixture(&cases[i], false);
+        }
+        runBoundaryFixture(&cases[i], true);
+    }
+    lwipTestEngineEnd();
     lwipTestRuntimeCleanup();
     puts("lwIP pretend UDP dispatch tests passed");
     return 0;

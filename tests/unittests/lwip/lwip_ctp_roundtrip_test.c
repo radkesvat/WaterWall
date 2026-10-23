@@ -27,6 +27,9 @@
             abort();                                                                                                   \
         }                                                                                                              \
     } while (0)
+
+#include "lwip_udp_length_cases.h"
+
 static tunnel_t         *ctp, *ptc, *resolver, *source, *wire, *echo;
 static tunnel_chain_t   *chain;
 static node_t            ctp_node, ptc_node;
@@ -38,6 +41,9 @@ static uint16_t          local_ports[2][2];
 static uint16_t          ports[2], expected_local[2];
 static bool              reserve_bytes[2];
 static unsigned          reserved_count[2];
+static unsigned          udp_length_received[2];
+static bool              udp_length_started[2];
+static uint64_t          udp_length_generation[2];
 
 void __real_nodemanagerQuiesceWorker(wid_t, const ww_lifecycle_context_t *);
 void __wrap_nodemanagerQuiesceWorker(wid_t, const ww_lifecycle_context_t *);
@@ -144,16 +150,72 @@ static void sourceEst(tunnel_t *t, line_t *l)
     ++established[lineGetWID(l)];
     tunnelNextUpStreamPayload(t, l, bytes(l, protocolOf(l) == 0 ? "tcp-echo" : "udp-echo"));
 }
+
+static void udpLengthMatrix(line_t *line)
+{
+    const wid_t   wid         = lineGetWID(line);
+    ctp_lstate_t *ls          = lineGetState(line, ctp);
+    line_t       *packet_line = tunnelchainGetWorkerPacketLine(chain, wid);
+    CHECK(ls->flow_registered && ls->udp_pcb != NULL);
+    udp_length_started[wid]    = true;
+    udp_length_generation[wid] = ls->generation;
+    for (unsigned input = 0; input < kUdpLengthInputs; ++input)
+    {
+        const udp_length_case_t *row    = &udp_length_cases[input / 2];
+        const unsigned           length = 20 + row->available;
+        sbuf_t                  *buf    = bufferpoolGetBestFit(lineGetBufferPool(packet_line), length, 0);
+        CHECK(buf != NULL);
+        sbufSetLength(buf, length);
+        uint8_t *p = sbufGetMutablePtr(buf);
+        memset(p, 0, length);
+        p[0] = 0x45;
+        p[8] = 64;
+        p[9] = 17;
+        PUT_BE16(p + 2, length);
+        memcpy(p + 12, &ls->flow_key.remote_addr_network, 4);
+        memcpy(p + 16, &ls->flow_key.local_addr_network, 4);
+        PUT_BE16(p + 20, ls->flow_key.remote_port);
+        PUT_BE16(p + 22, ls->flow_key.local_port);
+        PUT_BE16(p + 24, row->available);
+        memcpy(p + 28, udp_length_payload, row->available - 8);
+        CHECK(calcFullPacketChecksum(p, length));
+        udpLengthSetHeader(p, input);
+        ctpTunnelDownStreamPayload(ctp, packet_line, buf);
+        CHECK(lineIsAlive(packet_line));
+        CHECK(ls->flow_registered && ls->generation == udp_length_generation[wid]);
+    }
+}
+
 static void sourcePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     CHECK(t == source && wwLwipEngineCurrent() == NULL && currentThreadOwnsWorker(lineGetWID(l)));
-    unsigned proto = protocolOf(l);
+    unsigned    proto = protocolOf(l);
+    const wid_t wid   = lineGetWID(l);
+    if (proto == 1 && udp_length_started[wid])
+    {
+        unsigned expected_input = 0;
+        unsigned delivery       = 0;
+        for (; expected_input < kUdpLengthInputs; ++expected_input)
+            if (udp_length_cases[expected_input / 2].delivered >= 0 && delivery++ == udp_length_received[wid])
+                break;
+        CHECK(expected_input < kUdpLengthInputs);
+        const udp_length_case_t *row = &udp_length_cases[expected_input / 2];
+        CHECK(sbufGetLength(buf) == (unsigned) row->delivered);
+        CHECK(memcmp(sbufGetRawPtr(buf), udp_length_payload, (unsigned) row->delivered) == 0);
+        ++udp_length_received[wid];
+        ctp_lstate_t *ls = lineGetState(l, ctp);
+        CHECK(ls->flow_registered && ls->generation == udp_length_generation[wid]);
+        lineReuseBuffer(l, buf);
+        return;
+    }
     CHECK(sbufGetLength(buf) == 8);
     CHECK(memcmp(sbufGetRawPtr(buf), proto == 0 ? "tcp-echo" : "udp-echo", 8) == 0);
     ++received[lineGetWID(l)][proto];
     lineReuseBuffer(l, buf);
     if (proto == 0)
         closeClient(lineGetWID(l), proto);
+    else
+        udpLengthMatrix(l);
 }
 static void sourceFinish(tunnel_t *t, line_t *l)
 {
@@ -229,6 +291,11 @@ static void finishTimer(wtimer_t *timer)
 {
     wid_t wid = getLoopWorkerWID(weventGetLoop(timer));
     CHECK(established[wid] == 2 && received[wid][0] == 1 && received[wid][1] == 1);
+    CHECK(udp_length_started[wid] && udp_length_received[wid] == kUdpLengthDeliveries);
+    ctp_tstate_t *ts = tunnelGetState(ctp);
+    mutexLock(&ts->handoff_budget->lock);
+    CHECK(ts->handoff_budget->bytes == 0 && ts->handoff_budget->entries == 0);
+    mutexUnlock(&ts->handoff_budget->lock);
     atomicStoreExplicit(&finished[wid], true, memory_order_release);
     if (wid == 0 && ! atomicLoadExplicit(&finished[1], memory_order_acquire))
     {

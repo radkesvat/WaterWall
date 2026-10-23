@@ -29,6 +29,8 @@ void      ipoverriderDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
         }                                                                                                              \
     } while (0)
 
+#include "lwip_udp_length_cases.h"
+
 typedef struct fixture_s
 {
     tunnel_t       *ptc, *prev, *next;
@@ -41,6 +43,9 @@ typedef struct probe_s
     bool     byte_reserved;
     sbuf_t  *tcp_input[2];
     unsigned undelivered_udp[2];
+    unsigned udp_length_init[2][kUdpLengthInputs];
+    unsigned udp_length_payload[2][kUdpLengthInputs];
+    unsigned udp_length_next[2];
 } probe_t;
 static fixture_t         fixtures[2];
 static probe_t           probes[2];
@@ -48,6 +53,9 @@ static pthread_barrier_t barrier;
 static atomic_bool       finished[2];
 static uint32_t          fake_address;
 static void              stageUndeliveredChild(wid_t wid);
+static unsigned          ownedLineCount(tunnel_t *t, wid_t wid);
+static unsigned          routeChildCount(interface_route_context_t *route);
+static void              udpLengthMatrix(fixture_t *fixture, line_t *packet_line);
 
 void __real_nodemanagerQuiesceWorker(wid_t, const ww_lifecycle_context_t *);
 void __wrap_nodemanagerQuiesceWorker(wid_t, const ww_lifecycle_context_t *);
@@ -69,6 +77,7 @@ void __wrap_nodemanagerStopWorkerResources(wid_t wid, const ww_lifecycle_context
         const uint32_t    generation = route->netif.ww_generation;
         ww_lwip_engine_t *engine     = route->engine;
         ptcTunnelOnWorkerStop(fixtures[i].ptc, wid, context);
+        CHECK(lineIsAlive(tunnelchainGetWorkerPacketLine(fixtures[i].chain, wid)));
         ww_lwip_engine_t *previous;
         CHECK(wwLwipEngineEnter(engine, &previous));
         for (struct udp_pcb *pcb = udp_pcbs; pcb != NULL; pcb = pcb->next)
@@ -203,12 +212,39 @@ static void opened(tunnel_t *t, line_t *line)
 {
     CHECK(wwLwipEngineCurrent() == NULL && currentThreadOwnsWorker(lineGetWID(line)));
     CHECK(strcmp(lineGetDestinationAddressContext(line)->domain, "shared.test") == 0);
+    const unsigned port = lineGetDestinationAddressContext(line)->port;
+    if (port >= kUdpLengthFirstPort && port < kUdpLengthFirstPort + kUdpLengthInputs)
+    {
+        const unsigned input = port - kUdpLengthFirstPort;
+        CHECK(udp_length_cases[input / 2].delivered >= 0);
+        CHECK(++probes[lineGetWID(line)].udp_length_init[fixtureFor(t) - fixtures][input] == 1);
+        tunnelPrevDownStreamEst(t, line);
+        return;
+    }
     ++probes[lineGetWID(line)].init;
     tunnelPrevDownStreamEst(t, line);
 }
 static void payload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     CHECK(wwLwipEngineCurrent() == NULL);
+    const unsigned port = lineGetDestinationAddressContext(line)->port;
+    if (port >= kUdpLengthFirstPort && port < kUdpLengthFirstPort + kUdpLengthInputs)
+    {
+        const unsigned           input = port - kUdpLengthFirstPort;
+        const udp_length_case_t *row   = &udp_length_cases[input / 2];
+        CHECK(row->delivered >= 0 && sbufGetLength(buf) == (unsigned) row->delivered);
+        CHECK(memcmp(sbufGetRawPtr(buf), udp_length_payload, (unsigned) row->delivered) == 0);
+        CHECK(++probes[lineGetWID(line)].udp_length_payload[fixtureFor(t) - fixtures][input] == 1);
+        fixture_t  *fixture = fixtureFor(t);
+        const wid_t wid     = lineGetWID(line);
+        lineReuseBuffer(line, buf);
+        lineRef(line);
+        tunnelPrevDownStreamFinish(t, line);
+        CHECK(! lineIsAlive(line));
+        lineUnref(line);
+        udpLengthMatrix(fixture, tunnelchainGetWorkerPacketLine(fixture->chain, wid));
+        return;
+    }
     if (lineGetDestinationAddressContext(line)->proto_tcp)
     {
         sbuf_t **input = &probes[lineGetWID(line)].tcp_input[fixtureFor(t) - fixtures];
@@ -218,7 +254,9 @@ static void payload(tunnel_t *t, line_t *line, sbuf_t *buf)
             *input = NULL;
         }
     }
-    const bool close = lineGetDestinationAddressContext(line)->proto_tcp || fixtureFor(t) == &fixtures[1];
+    const bool  close        = lineGetDestinationAddressContext(line)->proto_tcp || fixtureFor(t) == &fixtures[1];
+    const bool  start_matrix = ! lineGetDestinationAddressContext(line)->proto_tcp && fixtureFor(t) == &fixtures[1];
+    const wid_t wid          = lineGetWID(line);
     lineRef(line);
     tunnelPrevDownStreamPayload(t, line, buf);
     if (close)
@@ -227,6 +265,8 @@ static void payload(tunnel_t *t, line_t *line, sbuf_t *buf)
         CHECK(! lineIsAlive(line));
     }
     lineUnref(line);
+    if (start_matrix)
+        udpLengthMatrix(&fixtures[0], tunnelchainGetWorkerPacketLine(fixtures[0].chain, wid));
 }
 static void finishedLine(tunnel_t *t, line_t *line)
 {
@@ -278,6 +318,21 @@ static void finishTimer(wtimer_t *timer)
     wid_t    wid = getLoopWorkerWID(weventGetLoop(timer));
     probe_t *p   = &probes[wid];
     CHECK(p->tcp == 2 && p->udp == 2 && p->init == 4);
+    for (unsigned fixture = 0; fixture < 2; ++fixture)
+    {
+        for (unsigned input = 0; input < kUdpLengthInputs; ++input)
+        {
+            const unsigned expected = udp_length_cases[input / 2].delivered >= 0 ? 1U : 0U;
+            CHECK(p->udp_length_init[fixture][input] == expected);
+            CHECK(p->udp_length_payload[fixture][input] == expected);
+        }
+        interface_route_context_t *route     = ((ptc_tstate_t *) tunnelGetState(fixtures[fixture].ptc))->routes_v4[wid];
+        const unsigned             remaining = fixture == 0 ? 1U : 0U;
+        CHECK(ptc_udp_flow_map_t_size(&route->udp_flows) == remaining);
+        CHECK(routeChildCount(route) == remaining + p->undelivered_udp[fixture]);
+        CHECK(ownedLineCount(fixtures[fixture].ptc, wid) == remaining);
+        CHECK(p->udp_length_next[fixture] == kUdpLengthInputs);
+    }
     if (p->undelivered_udp[0] == 0)
         stageUndeliveredChild(wid);
     atomicStoreExplicit(&finished[wid], true, memory_order_release);
@@ -322,6 +377,68 @@ static void stageUndeliveredChild(wid_t wid)
     CHECK(wwLwipEngineEnter(route->engine, &previous));
     udp_recv(route->udp_pcb, ptcUdpAccept, route);
     wwLwipEngineLeave(route->engine, previous);
+}
+
+static unsigned ownedLineCount(tunnel_t *t, wid_t wid)
+{
+    ptc_tstate_t *state = tunnelGetState(t);
+    unsigned      count = 0;
+    mutexLock(&state->owned_lines_lock);
+    for (line_t *line = state->owned_lines[wid]; line != NULL;)
+    {
+        ++count;
+        ptc_lstate_t *ls = lineGetState(line, t);
+        line             = ls->owned_next;
+    }
+    mutexUnlock(&state->owned_lines_lock);
+    return count;
+}
+
+static unsigned routeChildCount(interface_route_context_t *route)
+{
+    unsigned          count = 0;
+    ww_lwip_engine_t *previous;
+    CHECK(wwLwipEngineEnter(route->engine, &previous));
+    for (struct udp_pcb *pcb = udp_pcbs; pcb != NULL; pcb = pcb->next)
+        if (pcb != route->udp_pcb && pcb->netif_idx == netif_get_index(&route->netif) &&
+            pcb->netif_generation == route->netif.ww_generation)
+            ++count;
+    wwLwipEngineLeave(route->engine, previous);
+    return count;
+}
+
+static void udpLengthMatrix(fixture_t *fixture, line_t *packet_line)
+{
+    const wid_t                wid   = lineGetWID(packet_line);
+    interface_route_context_t *route = ((ptc_tstate_t *) tunnelGetState(fixture->ptc))->routes_v4[wid];
+    unsigned                  *next  = &probes[wid].udp_length_next[fixture - fixtures];
+    while (*next < kUdpLengthInputs)
+    {
+        const unsigned           input    = (*next)++;
+        const udp_length_case_t *row      = &udp_length_cases[input / 2];
+        const unsigned           added    = row->delivered >= 0 ? 1U : 0U;
+        const isize_t            flows    = ptc_udp_flow_map_t_size(&route->udp_flows);
+        const unsigned           children = routeChildCount(route);
+        const unsigned           owned    = ownedLineCount(fixture->ptc, wid);
+        sbuf_t  *buf   = packet(packet_line, 17, fake_address, 0, 0, udp_length_payload, row->available - 8);
+        uint8_t *bytes = sbufGetMutablePtr(buf);
+        PUT_BE16(bytes + 22, kUdpLengthFirstPort + input);
+        udpLengthSetHeader(bytes, input);
+        /* Direct ingress preserves our declared-span checksum. The ordinary
+         * fixture's tuple rewriter intentionally recalculates whole packets. */
+        ptcTunnelUpStreamPayload(fixture->ptc, packet_line, buf);
+        CHECK(lineIsAlive(packet_line));
+        CHECK(ptc_udp_flow_map_t_size(&route->udp_flows) == flows + added);
+        CHECK(routeChildCount(route) == children + added);
+        CHECK(ownedLineCount(fixture->ptc, wid) == owned + added);
+        /* The bounded engine fixture has only eight shared UDP PCBs. Retire
+         * each accepted test flow in its real delivery callback before the
+         * next packet, keeping room for both workers' original roundtrips. */
+        if (added != 0)
+            return;
+    }
+    if (fixture == &fixtures[0])
+        udpLengthMatrix(&fixtures[1], tunnelchainGetWorkerPacketLine(fixtures[1].chain, wid));
 }
 
 static void setup(void *worker_ptr, void *a, void *b, void *c)
@@ -379,7 +496,7 @@ static void setup(void *worker_ptr, void *a, void *b, void *c)
         inject(&fixtures[i], line, packet(line, 17, fake_address, 0, 0, "world", 5));
         interface_route_context_t *route = ((ptc_tstate_t *) tunnelGetState(fixtures[i].ptc))->routes_v4[wid];
         CHECK(route && route->packet_wid == wid && route->engine == wwLwipRuntimeGet(wid));
-        const bool trusted = packettunnelTrustedChecksumsActive(fixtures[i].ptc);
+        const bool trusted         = packettunnelTrustedChecksumsActive(fixtures[i].ptc);
         const bool trusted_receive = packettunnelTrustedReceiveChecksumsActive(fixtures[i].ptc);
         CHECK((route->netif.ww_partial_transport_checksum != 0) == trusted);
         CHECK((route->netif.ww_trusted_receive_checksums != 0) == trusted_receive);
