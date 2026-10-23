@@ -15,7 +15,6 @@ typedef struct tun_offload_reader_s
     sbuf_t                  *scratch;
     tun_linux_offload_plan_t pending_plan;
     bool                     pending;
-    bool                     waiting_for_capacity;
     uint64_t                 ordinary_records;
     uint64_t                 gso_aggregates;
     uint64_t                 checksum_completions;
@@ -144,7 +143,7 @@ static bool tunOffloadWorkStep(device_reader_session_t *session, void *context, 
         sbuf_t *output = fit.allocation_charge <= work->output_charge
                              ? bufferpoolGetBestFit(pool, segment_length, work->padding)
                              : sbufCreateWithPadding(segment_length, work->padding);
-        if (UNLIKELY(output == NULL || sbufGetAllocationCharge(output) > work->output_charge))
+        if (UNLIKELY(sbufGetAllocationCharge(output) > work->output_charge))
         {
             LOGF("TunDevice: GSO output allocation violated its prepaid worker allowance");
             abortProgramNow(1);
@@ -323,8 +322,7 @@ static bool tunReaderPostOffload(tun_worker_reader_t *lane, worker_t *worker)
         LOGF("TunDevice: validated offload record has no flow identity");
         abortProgramNow(1);
     }
-    const bool compact =
-        reader->pending_plan.action == kTunLinuxOffloadChecksum && ! reader->pending_plan.transport_assured;
+    const bool        compact = reader->pending_plan.action != kTunLinuxOffloadSegment;
     const uint16_t padding = max(bufferpoolGetLargeBufferPadding(worker->buffer_pool), (uint16_t) kTunVirtioHeaderSize);
     buffer_pool_fit_t fit  = {0};
     if (compact && ! bufferpoolQueryBestFit(worker->buffer_pool, reader->pending_plan.ip_length, padding, &fit))
@@ -668,7 +666,7 @@ void tunReaderCloseWait(tun_device_t *tdev)
  * ordinary work item. Configuration is one-time even if later GSO setup fails. */
 bool tunConfigureWorkerOffload(tun_device_t *tdev)
 {
-    size_t         maximum_charge = sbufGetAllocationCharge(tdev->offload_scratch);
+    size_t         maximum_charge = tdev->offload_scratch_charge;
     buffer_pool_t *pool           = tdev->reader_buffer_pool;
     const uint16_t padding        = bufferpoolGetSmallBufferPadding(pool);
     const uint32_t lengths[]      = {tdev->mtu,
@@ -722,8 +720,7 @@ bool tunConfigureWorkerGso(tun_device_t *tdev)
             }
             maximum_charge = max(maximum_charge, fit.allocation_charge);
         }
-        if (maximum_charge + sbufGetAllocationCharge(tdev->offload_scratch) + sizeof(tun_offload_work_t) >
-            kTunOffloadPendingChargeLimit)
+        if (maximum_charge + tdev->offload_scratch_charge + sizeof(tun_offload_work_t) > kTunOffloadPendingChargeLimit)
         {
             return false;
         }

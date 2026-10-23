@@ -63,8 +63,10 @@ struct tun_device_s
     int                             queue_fds[UINT8_MAX + 1U];
     bool                            trusted_checksums;
     atomic_bool                     gso_write_disabled;
-    /* Allocated before publication so unavailable offload storage can fall back. */
-    sbuf_t *offload_scratch;
+    /* Validated before publication; each active reader owns its actual scratch. */
+    uint32_t offload_scratch_capacity;
+    uint16_t offload_scratch_padding;
+    size_t   offload_scratch_charge;
     /* Output allowance and this chain's padding, captured before publication. */
     size_t               gso_output_charge[UINT8_MAX + 1U];
     uint16_t             offload_output_padding[UINT8_MAX + 1U];

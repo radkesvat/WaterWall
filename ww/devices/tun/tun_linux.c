@@ -54,7 +54,9 @@ bool tundeviceEnableTrustedChecksums(tun_device_t *tdev)
     {
         return false;
     }
-    assert(tdev->offload_scratch != NULL && tdev->reader_session->worker_queues != NULL);
+    assert(tdev->offload_scratch_capacity >= kTunOffloadPacketStorageCapacity &&
+           tdev->offload_scratch_padding >= kTunVirtioHeaderSize && tdev->offload_scratch_charge > 0 &&
+           tdev->reader_session->worker_queues != NULL);
     assert(deviceReaderSessionOutputWakeFd(tdev->reader_session) >= 0);
     return tundeviceEnableTrustedReceiveChecksums(tdev);
 }
@@ -101,16 +103,6 @@ static bool tunSetCloseOnExec(int fd)
 
 static bool tunCreateStopPipe(int fds[2])
 {
-#if defined(OS_LINUX)
-    if (pipe2(fds, O_NONBLOCK | O_CLOEXEC) == 0)
-    {
-        return true;
-    }
-    if (errno != ENOSYS && errno != EINVAL)
-    {
-        return false;
-    }
-#endif
     if (pipe(fds) != 0)
     {
         return false;
@@ -479,7 +471,7 @@ static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool checks
 {
     assert(! gso_requested || checksum_setup);
     *out_gso_enabled = false;
-    int fd           = open("/dev/net/tun", O_RDWR);
+    int fd           = open("/dev/net/tun", O_RDWR | O_CLOEXEC);
     if (fd < 0)
     {
         *out_reason = "opening /dev/net/tun";
@@ -762,7 +754,6 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_q
 #ifdef OS_LINUX
                             .checksum_offload_enabled = checksum_offload_enabled,
                             .gso_enabled              = gso_enabled,
-                            .offload_scratch          = NULL,
                             .interface_preexisting    = interface_preexisting
 #else
                             .gso_enabled = false
@@ -806,14 +797,16 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_q
         }
         else
         {
-            tdev->offload_scratch = sbufCreateWithPadding(scratch_fit.payload_capacity, scratch_fit.left_padding);
-            if (UNLIKELY(sbufGetLeftCapacity(tdev->offload_scratch) < kTunVirtioHeaderSize ||
-                         sbufGetMaximumWriteableSize(tdev->offload_scratch) < kTunOffloadPacketStorageCapacity))
+            if (UNLIKELY(scratch_fit.left_padding < kTunVirtioHeaderSize ||
+                         scratch_fit.payload_capacity < kTunOffloadPacketStorageCapacity))
             {
-                LOGF("TunDevice: offload scratch allocation violates required geometry");
+                LOGF("TunDevice: offload scratch query violates required geometry");
                 abortProgramNow(1);
             }
-            else if (! tunConfigureWorkerOffload(tdev))
+            tdev->offload_scratch_capacity = scratch_fit.payload_capacity;
+            tdev->offload_scratch_padding  = scratch_fit.left_padding;
+            tdev->offload_scratch_charge   = scratch_fit.allocation_charge;
+            if (! tunConfigureWorkerOffload(tdev))
             {
                 const int budget_errno = errno;
                 LOGW("TunDevice: offload worker-budget setup failed for %s (errno %d: %s); falling back to raw-IP TUN",
@@ -869,11 +862,9 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_q
     }
     if (offload_fallback)
     {
-        if (tdev->offload_scratch != NULL)
-        {
-            sbufDestroy(tdev->offload_scratch);
-            tdev->offload_scratch = NULL;
-        }
+        tdev->offload_scratch_capacity = 0;
+        tdev->offload_scratch_padding  = 0;
+        tdev->offload_scratch_charge   = 0;
         if (tdev->handle >= 0)
         {
             close(tdev->handle);
@@ -965,12 +956,6 @@ fail_after_session:
         close(tdev->queue_fds[i]);
 #endif
     memoryFree(tdev->name);
-#ifdef OS_LINUX
-    if (tdev->offload_scratch != NULL)
-    {
-        sbufDestroy(tdev->offload_scratch);
-    }
-#endif
     deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
     bufferpoolDestroy(tdev->reader_buffer_pool);
     deviceReaderSessionUnref(tdev->reader_session);
@@ -1005,10 +990,6 @@ void tundeviceDestroy(tun_device_t *tdev)
     memoryFree(tdev->name);
 #ifdef OS_LINUX
     tunLinuxDnsDropSnapshot(tdev);
-    if (tdev->offload_scratch != NULL)
-    {
-        sbufDestroy(tdev->offload_scratch);
-    }
 #endif
     deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
     bufferpoolDestroy(tdev->reader_buffer_pool);

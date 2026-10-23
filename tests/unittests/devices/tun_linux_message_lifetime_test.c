@@ -191,6 +191,8 @@ void                           __real_bufferpoolReuseBuffer(buffer_pool_t *pool,
 void                           __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
 sbuf_t *__real_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capacity, uint16_t pad_left);
 sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capacity, uint16_t pad_left);
+sbuf_t *__real_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
+sbuf_t *__wrap_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
 void                           __real_sbufDestroy(sbuf_t *buf);
 void                           __wrap_sbufDestroy(sbuf_t *buf);
 bool __wrap_tunLinuxGsoMaxSegmentsConfigure(const char *ifname, uint32_t requested, uint32_t *active);
@@ -322,6 +324,56 @@ static unsigned int             receive_checksum_completions;
 static device_reader_session_t *gso_probe_session;
 static sbuf_t                  *gso_scratch_buffer;
 static unsigned int             gso_scratch_destroy_count;
+static bool                     record_startup_packet_allocations;
+static unsigned                 startup_packet_allocations;
+static bool                     compact_probe, compact_allocation_pending;
+static size_t                   compact_packet_charge, compact_metadata_charge;
+static void                    *compact_context;
+static const void              *compact_read_storage;
+static unsigned                 compact_work_posts;
+
+void *__real_memoryAllocate(size_t size);
+void *__wrap_memoryAllocate(size_t size);
+bool  __real_deviceReaderSessionTryReserveWork(device_reader_session_t *, size_t, unsigned);
+bool  __wrap_deviceReaderSessionTryReserveWork(device_reader_session_t *, size_t, unsigned);
+bool  __real_deviceReaderSessionPostWork(device_reader_session_t *, wid_t, void *, DeviceReaderWorkFn,
+                                         DeviceReaderWorkCleanupFn, size_t, unsigned);
+bool  __wrap_deviceReaderSessionPostWork(device_reader_session_t *, wid_t, void *, DeviceReaderWorkFn,
+                                         DeviceReaderWorkCleanupFn, size_t, unsigned);
+
+void *__wrap_memoryAllocate(size_t size)
+{
+    void *result = __real_memoryAllocate(size);
+    if (compact_allocation_pending)
+    {
+        compact_allocation_pending = false;
+        compact_metadata_charge    = size;
+        compact_context            = result;
+    }
+    return result;
+}
+
+bool __wrap_deviceReaderSessionTryReserveWork(device_reader_session_t *session, size_t charge, unsigned packets)
+{
+    const bool accepted = __real_deviceReaderSessionTryReserveWork(session, charge, packets);
+    if (compact_probe && accepted)
+        compact_allocation_pending = true;
+    return accepted;
+}
+
+bool __wrap_deviceReaderSessionPostWork(device_reader_session_t *session, wid_t wid, void *context,
+                                        DeviceReaderWorkFn step, DeviceReaderWorkCleanupFn cleanup, size_t charge,
+                                        unsigned packets)
+{
+    if (compact_probe)
+    {
+        require(context == compact_context && compact_metadata_charge != 0 &&
+                    charge == compact_packet_charge + compact_metadata_charge && packets == 1,
+                "ordinary assured work charged scratch, extra output allowance or more than one slot");
+        ++compact_work_posts;
+    }
+    return __real_deviceReaderSessionPostWork(session, wid, context, step, cleanup, charge, packets);
+}
 static bool                     deliver_fragment_batch;
 static const uint8_t           *expected_raw_write;
 static size_t                   expected_raw_write_length;
@@ -441,6 +493,7 @@ int __wrap_open(const char *path, int flags, ...)
 
     if (strcmp(path, "/dev/net/tun") == 0)
     {
+        require(flags == (O_RDWR | O_CLOEXEC), "primary TUN open omitted close-on-exec or changed access flags");
         active_offload_mask = 0;
         if (++tun_open_calls == fail_tun_open_call)
         {
@@ -449,7 +502,9 @@ int __wrap_open(const char *path, int flags, ...)
         }
         // Remembered so error injection can target the device handle only, and
         // never the stop pipe the reader also read()s from.
-        tun_handle_fd = __real_open("/dev/null", O_RDWR);
+        tun_handle_fd = __real_open("/dev/null", flags);
+        require(tun_handle_fd >= 0 && (__real_fcntl(tun_handle_fd, F_GETFD) & FD_CLOEXEC) != 0,
+                "substitute primary TUN descriptor did not preserve close-on-exec");
         return tun_handle_fd;
     }
 
@@ -635,6 +690,13 @@ ssize_t __wrap_read(int fd, void *buf, size_t count)
         require(observed_read_calls < injected_read_count,
                 "the reader kept reading a device that reported a permanent error");
         const unsigned int index = observed_read_calls++;
+        if (compact_probe && injected_reads[index].bytes != NULL)
+        {
+            if (compact_read_storage == NULL)
+                compact_read_storage = buf;
+            else
+                require(buf == compact_read_storage, "ordinary assured work transferred reader scratch");
+        }
         checkInFlightExpectations(index + 1);
         if (injected_reads[index].bytes != NULL)
         {
@@ -976,6 +1038,13 @@ sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capaci
         gso_scratch_buffer = buf;
     }
     return buf;
+}
+
+sbuf_t *__wrap_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
+{
+    if (record_startup_packet_allocations && minimum_capacity >= kTunOffloadPacketStorageCapacity)
+        ++startup_packet_allocations;
+    return __real_sbufCreateWithPadding(minimum_capacity, pad_left);
 }
 
 void __wrap_sbufDestroy(sbuf_t *buf)
@@ -1595,6 +1664,78 @@ static void testOffloadResourceFallbacks(void)
                 "GSO downgrade published the wrong mode");
         require(bringUpDevice(tdev) && bringDownDevice(tdev), "downgraded device could not start and stop");
         destroyDevice(tdev);
+    }
+}
+
+static void testOffloadScratchGeometryWithoutStartupAllocation(test_env_t *env)
+{
+    const uint16_t paddings[] = {0, 96};
+    for (unsigned p = 0; p < ARRAY_SIZE(paddings); ++p)
+    {
+        master_pool_t *large  = masterpoolCreateWithCapacity(4);
+        master_pool_t *medium = masterpoolCreateWithCapacity(4);
+        master_pool_t *small  = masterpoolCreateWithCapacity(4);
+        master_pool_t *splice = masterpoolCreateWithCapacity(4);
+        buffer_pool_t *isolated =
+            bufferpoolCreate(large, medium, small, 4, 8192, MEDIUM_BUFFER_SIZE_RAM_HIGH, 4096, 8192, 8192);
+        require(isolated != NULL, "scratch-geometry worker pool construction failed");
+        bufferpoolUpdateAllocationPaddings(isolated, paddings[p], paddings[p], paddings[p], paddings[p]);
+        env->buffer_pools[0]                  = isolated;
+        GSTATE.workers[0].buffer_pool         = isolated;
+        GSTATE.masterpool_buffer_pools_large  = large;
+        GSTATE.masterpool_buffer_pools_medium = medium;
+        GSTATE.masterpool_buffer_pools_small  = small;
+
+        for (unsigned mode = 0; mode < 2; ++mode)
+        {
+            resetGsoSetup();
+            resetReaderFixture(0);
+            resetIoInjection();
+            resetCapturedMessages();
+            startup_packet_allocations        = 0;
+            record_startup_packet_allocations = true;
+            tun_device_t *tdev                = tundeviceCreate(
+                "ww-lifetime-test", mode != 0, true, 1500, NULL, observeReadCallback, kDeviceFragmentPreserve);
+            record_startup_packet_allocations = false;
+            require(tdev != NULL && tdev->checksum_offload_enabled && tdev->gso_enabled == (mode != 0),
+                    "scratch-geometry fixture lost negotiated offload capability");
+            require(startup_packet_allocations == 0,
+                    "device construction retained an unused packet scratch allocation");
+            buffer_pool_fit_t fit;
+            require(bufferpoolQueryBestFit(tdev->reader_buffer_pool,
+                                           kTunOffloadPacketStorageCapacity,
+                                           max(paddings[p], (uint16_t) kTunVirtioHeaderSize),
+                                           &fit),
+                    "scratch-geometry query failed");
+            require(tdev->offload_scratch_capacity == fit.payload_capacity &&
+                        tdev->offload_scratch_padding == fit.left_padding &&
+                        tdev->offload_scratch_charge == fit.allocation_charge,
+                    "stored scratch geometry or prepaid charge changed");
+            require(bringUpDevice(tdev) && gso_scratch_buffer != NULL, "real reader did not allocate its own scratch");
+            require(sbufGetTotalCapacityNoPadding(gso_scratch_buffer) == tdev->offload_scratch_capacity &&
+                        sbufGetLeftPadding(gso_scratch_buffer) == tdev->offload_scratch_padding &&
+                        sbufGetAllocationCharge(gso_scratch_buffer) == tdev->offload_scratch_charge,
+                    "real reader scratch disagrees with the validated capacity, padding or charge");
+            require(bringDownDevice(tdev) && gso_scratch_destroy_count == 1,
+                    "real reader scratch was not released once at stop");
+            destroyDevice(tdev);
+            require(gso_scratch_destroy_count == 1, "device teardown released reader scratch twice");
+        }
+
+        env->buffer_pools[0]                  = env->worker_buffer_pool;
+        GSTATE.workers[0].buffer_pool         = env->worker_buffer_pool;
+        GSTATE.masterpool_buffer_pools_large  = env->large_master;
+        GSTATE.masterpool_buffer_pools_medium = env->medium_master;
+        GSTATE.masterpool_buffer_pools_small  = env->small_master;
+        bufferpoolDestroy(isolated);
+        masterpoolMakeEmpty(large);
+        masterpoolMakeEmpty(medium);
+        masterpoolMakeEmpty(small);
+        masterpoolMakeEmpty(splice);
+        masterpoolDestroy(large);
+        masterpoolDestroy(medium);
+        masterpoolDestroy(small);
+        masterpoolDestroy(splice);
     }
 }
 
@@ -2770,10 +2911,80 @@ static void observeTrustedOrdinary(tun_device_t *tdev, void *userdata, sbuf_t *b
     ordinary_checksum_fixture_t *fixture = userdata;
     require(currentThreadOwnsWorker(wid) && fixture->delivered < fixture->count, "trusted ordinary delivery");
     const unsigned index = fixture->delivered++;
+    if (compact_probe)
+        require(buf != gso_scratch_buffer && sbufGetAllocationCharge(buf) == compact_packet_charge,
+                "ordinary assured delivery did not own the queried compact allocation");
     require(sbufGetLength(buf) == fixture->lengths[index] &&
                 memoryEqual(sbufGetRawPtr(buf), fixture->packets[index], fixture->lengths[index]),
             "trusted ordinary assurance or reader fallback changed bytes/order");
     bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+}
+
+static void testTrustedOrdinaryCompactBudget(bool gso_requested, bool data_valid)
+{
+    resetShutdownRequests();
+    resetIoInjection();
+    resetCapturedMessages();
+    resetGsoSetup();
+    resetReaderFixture(0);
+    ordinary_checksum_fixture_t fixture = {0};
+    tun_device_t               *tdev    = tundeviceCreate(
+        "ww-lifetime-test", gso_requested, true, 1500, &fixture, observeTrustedOrdinary, kDeviceFragmentReassemble);
+    require(tdev && tundeviceEnableTrustedChecksums(tdev) && bringUpDevice(tdev), "compact trusted setup failed");
+    uint8_t record[kGsoFixtureRecordLength];
+    makeSmallGsoRecord(record);
+    require(tunLinuxOffloadEncodeWrite(record + 10, kGsoFixtureIpLength, record), "compact partial seed failed");
+    if (data_valid)
+    {
+        memoryZero(record, 10);
+        record[0] = VIRTIO_NET_HDR_F_DATA_VALID;
+    }
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        fixture.lengths[i] = kGsoFixtureIpLength;
+        memoryCopy(fixture.packets[i], record + 10, kGsoFixtureIpLength);
+    }
+    fixture.count = 2;
+    buffer_pool_fit_t fit;
+    require(bufferpoolQueryBestFit(
+                getCurrentWorkerBufferPool(),
+                kGsoFixtureIpLength,
+                max(bufferpoolGetLargeBufferPadding(getCurrentWorkerBufferPool()), (uint16_t) kTunVirtioHeaderSize),
+                &fit),
+            "compact charge query failed");
+    compact_packet_charge                  = fit.allocation_charge;
+    compact_read_storage                   = NULL;
+    compact_work_posts                     = 0;
+    gso_probe_session                      = tunLinuxReaderSession(tdev);
+    gso_probe_session->output_packet_limit = 2;
+    require(deviceReaderSessionTryReserveWork(gso_probe_session, 1, 1), "reserve competing slot");
+    compact_probe                      = true;
+    const injected_io_result_t input[] = {{.result = sizeof(record), .bytes = record},
+                                          {.result = sizeof(record), .bytes = record},
+                                          {.result = -1, .error = EAGAIN},
+                                          {.result = -1, .error = EIO}};
+    armDeviceReads(input, ARRAY_SIZE(input));
+    drive_worker_delivery        = true;
+    gso_deliver_after_read_calls = 3;
+    inside_reader_callback       = true;
+    reader_ready_callback(&reader_io);
+    inside_reader_callback = false;
+    runReaderMessages();
+    require(compact_work_posts == 1 && captured_message_count == 1 && observed_read_calls == 2,
+            "one compact assured packet did not fit one available slot while the next retained reader ownership");
+    deviceReaderSessionReleaseWork(gso_probe_session, 1, 1);
+    runReaderUntilIdle();
+    require(compact_work_posts == 2 && fixture.delivered == 2 && capacity_resumes == 1 &&
+                queued_checksum_completions == 0 && receive_checksum_completions == 0,
+            "ordinary assurance, one-slot pressure or compact FIFO changed");
+    require(atomicLoadRelaxed(&gso_probe_session->output_packets) == 0 &&
+                atomic_load_explicit(&gso_probe_session->output_charge, memory_order_acquire) == 0,
+            "compact ordinary settlement retained credits");
+    compact_probe = false;
+    resetIoInjection();
+    require(bringDownDevice(tdev), "compact trusted stop failed");
+    destroyDevice(tdev);
+    resetCapturedMessages();
 }
 
 static void testTrustedChecksumOnlyFallback(void)
@@ -3399,7 +3610,7 @@ static void testGsoPendingAggregateSettlesAfterStop(void)
     require(observed_read_calls == 2 && callback_count == 0 && prepared_gso_segments == 0 &&
                 captured_message_count == 1,
             "reader stop did not retain exactly one queued GSO output");
-    require(gso_scratch_destroy_count == 0, "reader exit destroyed device-owned GSO scratch before restart");
+    require(gso_scratch_destroy_count == 0, "reader exit destroyed the queued worker-owned aggregate before restart");
     require(atomic_load_explicit(&session->output_packets, memory_order_acquire) == 2 &&
                 atomic_load_explicit(&session->output_charge, memory_order_acquire) > 0,
             "reader exit prematurely settled a worker-owned GSO output");
@@ -3409,8 +3620,8 @@ static void testGsoPendingAggregateSettlesAfterStop(void)
     tracked_session_free_count = 0;
     tracked_pool_destroy_count = 0;
     require(bringDownDevice(tdev), "pending GSO reader did not bring down after exit");
-    require(bringUpDevice(tdev), "GSO device did not restart with its retained scratch allocation");
-    require(gso_scratch_destroy_count == 0, "GSO scratch was destroyed before the restarted device stopped");
+    require(bringUpDevice(tdev), "GSO device did not restart while its old aggregate remained queued");
+    require(gso_scratch_destroy_count == 0, "queued aggregate was destroyed before the restarted device stopped");
     require(bringDownDevice(tdev), "restarted GSO device did not stop");
     destroyDevice(tdev);
     require(gso_scratch_destroy_count == 0, "device destroy released worker-owned aggregate storage");
@@ -3787,6 +3998,7 @@ int main(void)
     testDnsMutationCleanup();
     testGsoNegotiationAndRawFallback();
     testOffloadResourceFallbacks();
+    testOffloadScratchGeometryWithoutStartupAllocation(&env);
     testChecksumOnlyRejectsGso();
     testTrustedChecksumOnlyFallback();
     testTrustedRawWriterKeepsCompleteChecksums();
@@ -3802,6 +4014,8 @@ int main(void)
         testOrdinaryChecksumReaderFallback(gso_requested, true);
         testOrdinaryChecksumReaderFallback(gso_requested, false);
         testTrustedHandoff(gso_requested, false, false);
+        testTrustedOrdinaryCompactBudget(gso_requested, false);
+        testTrustedOrdinaryCompactBudget(gso_requested, true);
         testTrustedHandoff(gso_requested, true, false);
         testTrustedHandoff(gso_requested, false, true);
         testGsoWriterFramingAndPacketOutcomes(gso_requested);
