@@ -184,7 +184,8 @@ static void testPacketWarnings(buffer_pool_t *pool)
         warning_now_ms  = 0;
         packet_warnings = native_writes = checkouts = recycles = 0;
         warning_match                                          = mode == 0 ? "exceeds device MTU" : "writing to device";
-        tun_device_t device = {.name = "utun-warning-fixture", .handle = kFixtureFd, .mtu = kFixtureMtu};
+        char         device_name[]                             = "utun-warning-fixture";
+        tun_device_t device = {.name = device_name, .handle = kFixtureFd, .mtu = kFixtureMtu};
         atomic_init(&device.lifecycle, kTunLifecycleUp);
         worker_t worker = {.buffer_pool = pool};
         for (unsigned burst = 0; burst < 2; ++burst)
