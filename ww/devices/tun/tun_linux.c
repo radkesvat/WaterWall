@@ -933,6 +933,12 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_q
     deviceFragAffinityEnableShared(tdev->reader_session->frag_affinity,
                                    bufferpoolGetLargeBufferPadding(tdev->reader_buffer_pool));
 #else
+    if (! deviceReaderSessionConfigureOutputBudget(tdev->reader_session, 8U * 1024U * 1024U, 1024) ||
+        ! deviceReaderSessionEnableWorkerQueue(tdev->reader_session))
+    {
+        LOGE("TunDevice: failed to configure bounded reader dispatch");
+        goto fail_after_session;
+    }
     if (! tunCreateStopPipe(tdev->linux_pipe_fds))
     {
         LOGE("TunDevice: failed to create pipe for linux_pipe_fds");

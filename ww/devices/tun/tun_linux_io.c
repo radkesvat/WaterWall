@@ -68,7 +68,7 @@ static void tunFlushReadBatch(tun_device_t *tdev, sbuf_t **bufs, uint16_t queued
 {
     if (queued_count > 0)
     {
-        deviceFlowAffinityPostBatch(tdev->reader_session, bufs, queued_count);
+        deviceFlowAffinityPostBatchDroppingOverflow(tdev->reader_session, bufs, queued_count);
     }
 }
 

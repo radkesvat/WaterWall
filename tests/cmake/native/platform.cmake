@@ -1,4 +1,16 @@
 # Root/platform registrations, including standalone archive and Windows seams.
+if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND CMAKE_SYSTEM_NAME MATCHES "^(FreeBSD|OpenBSD|NetBSD)$")
+  waterwall_add_native_executable(tun_bsd_reader_test SUPPORT SOURCES tests/unittests/devices/tun_bsd_reader_test.c)
+  target_include_directories(tun_bsd_reader_test PRIVATE "${PROJECT_SOURCE_DIR}/ww/devices/tun")
+  target_link_libraries(tun_bsd_reader_test PRIVATE ww)
+  target_link_options(tun_bsd_reader_test PRIVATE "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup")
+  set_target_properties(tun_bsd_reader_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+  waterwall_register_native_test(waterwall.tun_bsd_reader_unit tun_bsd_reader_test
+    "unit;net;tun;bsd;receive;budget" TIMEOUT 30)
+  waterwall_register_platform_native_unit(waterwall.tun_bsd_reader_unit tun_bsd_reader_test
+    "unit;net;tun;bsd;receive;budget")
+endif()
+
 if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND APPLE)
   waterwall_add_native_executable(tun_darwin_reader_test SUPPORT SOURCES tests/unittests/devices/tun_darwin_reader_test.c)
   target_include_directories(tun_darwin_reader_test PRIVATE "${PROJECT_SOURCE_DIR}/ww/devices/tun")
