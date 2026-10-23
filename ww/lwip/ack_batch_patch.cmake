@@ -12,6 +12,9 @@ function(ww_apply_lwip_ack_batch_patch lwip_dir)
   /* Intrusive ordinary-ACK intent; detached before purge/free or batch output. */
   struct tcp_pcb *ww_ack_next;
   struct tcp_pcb **ww_ack_previous;
+  /* Right edge of the last non-RST ACK accepted by local output. */
+  u32_t ww_rcv_advertised_edge;
+  u8_t ww_rcv_advertised_valid;
 #endif
 
   /* ports are in host byte order */]=])
@@ -85,9 +88,86 @@ void wwLwipEngineCancelAck(struct tcp_pcb *pcb);
 ]=]
 [=[  LWIP_ERROR("tcp_recved: invalid pcb", pcb != NULL, return);
 #if WW_LWIP_WORKER_ENGINES
-  ww_window_was_open = RCV_WND_SCALE(pcb, pcb->rcv_ann_wnd) != 0;
+  ww_window_was_open = pcb->ww_rcv_advertised_valid &&
+      TCP_SEQ_GT(pcb->ww_rcv_advertised_edge, pcb->rcv_nxt);
 #endif
 ]=])
+
+    # Record the constructed wire window, not the intended unquantized window.
+    # Snapshot before IP output can prepend headers or release a control pbuf.
+    ww_lwip_replace_once("${lwip_dir}/src/core/tcp_out.c"
+[=[/**
+ * Called by tcp_output() to actually send a TCP segment over IP.]=]
+[=[#if WW_LWIP_WORKER_ENGINES
+struct ww_tcp_advertisement {
+  u32_t edge;
+  u8_t valid;
+};
+
+static struct ww_tcp_advertisement
+ww_tcp_capture_advertisement(const struct tcp_pcb *pcb, const struct tcp_hdr *header)
+{
+  struct ww_tcp_advertisement advertised = {0, 0};
+  u32_t window;
+  if ((pcb == NULL) || ((TCPH_FLAGS(header) & (TCP_ACK | TCP_RST)) != TCP_ACK)) {
+    return advertised;
+  }
+  window = lwip_ntohs(header->wnd);
+#if LWIP_WND_SCALE
+  if (((TCPH_FLAGS(header) & TCP_SYN) == 0) && ((pcb->flags & TF_WND_SCALE) != 0)) {
+    window <<= pcb->rcv_scale;
+  }
+#endif
+  advertised.edge = lwip_ntohl(header->ackno) + window;
+  advertised.valid = 1;
+  return advertised;
+}
+
+static void
+ww_tcp_commit_advertisement(struct tcp_pcb *pcb, struct ww_tcp_advertisement advertised, err_t err)
+{
+  if (advertised.valid && (err == ERR_OK)) {
+    pcb->ww_rcv_advertised_edge = advertised.edge;
+    pcb->ww_rcv_advertised_valid = 1;
+    /* A successful control/piggyback ACK also satisfies queued ACK intent. */
+    tcp_clear_flags(pcb, TF_ACK_DELAY | TF_ACK_NOW);
+  }
+}
+#endif
+
+/**
+ * Called by tcp_output() to actually send a TCP segment over IP.]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/tcp_out.c"
+[=[  NETIF_SET_HINTS(netif, &(pcb->netif_hints));
+  err = ip_output_if(seg->p, &pcb->local_ip, &pcb->remote_ip, pcb->ttl,
+                     pcb->tos, IP_PROTO_TCP, netif);
+  NETIF_RESET_HINTS(netif);]=]
+[=[#if WW_LWIP_WORKER_ENGINES
+  const struct ww_tcp_advertisement ww_advertised = ww_tcp_capture_advertisement(pcb, seg->tcphdr);
+#endif
+  NETIF_SET_HINTS(netif, &(pcb->netif_hints));
+  err = ip_output_if(seg->p, &pcb->local_ip, &pcb->remote_ip, pcb->ttl,
+                     pcb->tos, IP_PROTO_TCP, netif);
+  NETIF_RESET_HINTS(netif);
+#if WW_LWIP_WORKER_ENGINES
+  ww_tcp_commit_advertisement(pcb, ww_advertised, err);
+#endif]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/tcp_out.c"
+[=[  TCP_STATS_INC(tcp.xmit);
+  err = ip_output_if(p, src, dst, ttl, tos, IP_PROTO_TCP, netif);
+  NETIF_RESET_HINTS(netif);]=]
+[=[#if WW_LWIP_WORKER_ENGINES
+  const struct ww_tcp_advertisement ww_advertised =
+      ww_tcp_capture_advertisement(pcb, (const struct tcp_hdr *)p->payload);
+#endif
+  TCP_STATS_INC(tcp.xmit);
+  err = ip_output_if(p, src, dst, ttl, tos, IP_PROTO_TCP, netif);
+  NETIF_RESET_HINTS(netif);
+#if WW_LWIP_WORKER_ENGINES
+  /* Non-RST ACK emitters supply a mutable connected PCB. The const private
+     signature additionally permits RST callers, which are excluded above. */
+  ww_tcp_commit_advertisement(LWIP_CONST_CAST(struct tcp_pcb *, pcb), ww_advertised, err);
+#endif]=])
 
     ww_lwip_replace_once("${lwip_dir}/src/core/tcp.c"
 [=[  if (wnd_inflation >= TCP_WND_UPDATE_THRESHOLD) {
