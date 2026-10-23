@@ -394,7 +394,9 @@ bool authenticationclientAcknowledgeUsageBatch(tunnel_t *t, const uint8_t *data,
     authenticationclient_tstate_t *ts = tunnelGetState(t);
     if (ts->pending_batch == NULL)
         return false;
-    cJSON        *json     = cJSON_ParseWithLength((const char *) data, length);
+    /* One flat ACK object, four keys and four scalar values. Validate the whole
+     * document before any receipt can settle the retained accounting batch. */
+    cJSON        *json     = configLexicalParseBoundedQuiet((const char *) data, length, 1, 9);
     const cJSON  *epoch    = cJSON_GetObjectItemCaseSensitive(json, "epoch");
     const cJSON  *digest   = cJSON_GetObjectItemCaseSensitive(json, "digest");
     const cJSON  *pull     = cJSON_GetObjectItemCaseSensitive(json, "needs-pull");

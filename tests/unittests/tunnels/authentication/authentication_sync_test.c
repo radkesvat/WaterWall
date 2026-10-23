@@ -48,6 +48,7 @@ static uint32_t                   last_correlation;
 static uint64_t                   captured_sequence;
 static int                        captured_owner;
 static unsigned                   clock_fault;
+static unsigned                   ack_fault;
 static unsigned                   missing_proof_fault;
 static char                      *captured_batch;
 static sbuf_t                    *held_request, *saved_ack, *saved_session;
@@ -147,6 +148,48 @@ static sbuf_t *faultClockMetadata(sbuf_t *b)
     return b;
 }
 
+static sbuf_t *faultUsageAck(sbuf_t *b)
+{
+    char     text[512];
+    uint32_t length = sbufGetLength(b) - 29;
+    require(length + 32 < sizeof(text), "ACK fault fixture exceeds scratch capacity");
+    memoryCopy(text, (const uint8_t *) sbufGetRawPtr(b) + 29, length);
+    text[length]         = '\0';
+    size_t      at       = length - 1;
+    const char *addition = ",\"needs-pull\":false";
+    if (ack_fault == 1)
+    {
+        at       = length;
+        addition = "!";
+    }
+    else if (ack_fault == 3 || ack_fault == 4)
+    {
+        const char *key   = ack_fault == 3 ? "\"epoch\":\"" : "\"digest\":\"";
+        const char *value = strstr(text, key);
+        require(value != NULL, "ACK fault field is absent");
+        const char *end = strchr(value + strlen(key), '"');
+        require(end != NULL, "ACK fault field is unterminated");
+        at       = (size_t) (end - text);
+        addition = "\\u0000other";
+    }
+    else if (ack_fault == 5)
+        addition = ",\"extra\":\"\xff\"";
+    const size_t extra = strlen(addition);
+    memoryMove(text + at + extra, text + at, length - at);
+    memoryCopy(text + at, addition, extra);
+    length += (uint32_t) extra;
+    b = sbufReserveSpace(b, 29 + length);
+    require(sbufGetMaximumWriteableSize(b) >= 29 + length, "ACK fault buffer capacity");
+    uint32_t number = htonl(25 + length);
+    memoryCopy(sbufGetMutablePtr(b), &number, 4);
+    number = htonl(length);
+    memoryCopy(sbufGetMutablePtr(b) + 25, &number, 4);
+    memoryCopy(sbufGetMutablePtr(b) + 29, text, length);
+    sbufSetLength(b, 29 + length);
+    ack_fault = 0;
+    return b;
+}
+
 static void output(tunnel_t *t, line_t *l, sbuf_t *b)
 {
     discard    t;
@@ -226,6 +269,8 @@ static void output(tunnel_t *t, line_t *l, sbuf_t *b)
             --corrupt_ack;
             sbufGetMutablePtr(b)[29] = '!';
         }
+        if (ack_fault != 0)
+            b = faultUsageAck(b);
     }
     if ((last_response == kAuthenticationClientResponseTypeSession && pause_before_session) ||
         (last_response == kAuthenticationClientResponseTypeOk && pause_before_ack))
@@ -347,6 +392,7 @@ static void setup(unsigned users)
     atomicStoreU64(&client_wall_ms, 7000000);
     in_server      = false;
     clock_fault    = 0;
+    ack_fault      = 0;
     captured_owner = -1;
     clients[0] = clients[1] = NULL;
     drop_before = drop_ack = corrupt_ack = drop_auth = pushes = pulls = 0;
@@ -2129,6 +2175,75 @@ static void testCatchupInterruptionAndCaptureRefusal(void)
     teardown();
 }
 
+static void testMalformedUsageAcksPreserveAccounting(void)
+{
+    static const char *const cases[] = {
+        "usage ACK trailing input",
+        "usage ACK duplicate field",
+        "usage ACK decoded NUL epoch",
+        "usage ACK decoded NUL digest",
+        "usage ACK invalid UTF-8",
+    };
+    for (unsigned fault = 1; fault <= sizeof(cases) / sizeof(cases[0]); ++fault)
+    {
+        testCaseSet(cases[fault - 1]);
+        setup(1);
+        start(0);
+        disconnect(0);
+        discard userAccountTraffic(usersLookupByIdentifier(state(0)->users, 42), 5, 7, 0, NULL);
+        pump(10);
+        hold_push = true;
+        pump(1);
+        authenticationclient_tstate_t *ts = state(0);
+        require(held_request != NULL && ts->pending_batch != NULL && ts->pending_entries_count == 1 &&
+                    ts->catchup_entries_count == 1,
+                "malformed ACK fixture did not retain a catch-up batch");
+        char                                    *pending        = ts->pending_batch;
+        const uint32_t                           pending_length = ts->pending_batch_length;
+        char                                    *expected       = stringDuplicate(pending);
+        authenticationclient_accounting_entry_t *entries = ts->pending_entries, *debt = ts->catchup_entries;
+        uint8_t expected_entries[sizeof(*entries)], expected_debt[sizeof(*debt)], checkpoint[32];
+        memoryCopy(expected_entries, entries, sizeof(expected_entries));
+        memoryCopy(expected_debt, debt, sizeof(expected_debt));
+        memoryCopy(checkpoint, ts->last_ack_digest, sizeof(checkpoint));
+        const uint64_t             sequence = ts->next_batch_sequence, last_ack = ts->last_ack_sequence;
+        user_accounting_snapshot_t before, after;
+        userGetAccountingSnapshot(usersLookupByIdentifier(ts->users, 42), &before);
+        require(before.observation_pending && local(0, true) == 0, "malformed ACK observation fixture");
+        ack_fault = fault;
+        deliverHeldRequest();
+        userGetAccountingSnapshot(usersLookupByIdentifier(ts->users, 42), &after);
+        require(ack_fault == 0 && ts->last_failure == kAuthenticationClientFailureInvalidResponse &&
+                    ts->pending_batch == pending && ts->pending_batch_length == pending_length &&
+                    memoryEqual(ts->pending_batch, expected, pending_length),
+                "malformed ACK consumed or changed the immutable retry payload");
+        require(ts->pending_entries == entries && ts->pending_entries_count == 1 &&
+                    memoryEqual(entries, expected_entries, sizeof(expected_entries)) && ts->catchup_entries == debt &&
+                    ts->catchup_entries_count == 1 && memoryEqual(debt, expected_debt, sizeof(expected_debt)) &&
+                    ts->orphan_debt_count == 0 && local(0, true) == 0 && local(0, false) == 5,
+                "malformed ACK consumed accounting entries, baseline or debt");
+        require(ts->next_batch_sequence == sequence && ts->last_ack_sequence == last_ack &&
+                    memoryEqual(ts->last_ack_digest, checkpoint, sizeof(checkpoint)) && after.observation_pending &&
+                    after.first_usage_at_ms == before.first_usage_at_ms &&
+                    after.first_local_at_ms == before.first_local_at_ms,
+                "malformed ACK advanced the checkpoint or settled first-use evidence");
+        require(authTestPeerStats(server, 42).traffic.u == 5 && authTestPeerStats(server, 42).traffic.d == 7,
+                "malformed ACK fixture did not commit the server batch");
+        retryConnection(0);
+        pump(1);
+        pump(1);
+        userGetAccountingSnapshot(usersLookupByIdentifier(ts->users, 42), &after);
+        require(ts->pending_batch == NULL && ts->pending_entries_count == 0 && ts->catchup_entries_count == 0 &&
+                    ts->last_ack_sequence == sequence && ts->next_batch_sequence == sequence + 1 &&
+                    local(0, true) == 5 && ! after.observation_pending && pushes == 2 &&
+                    authTestPeerStats(server, 42).traffic.u == 5 && authTestPeerStats(server, 42).traffic.d == 7,
+                "valid replay failed to settle exactly once after malformed ACK");
+        memoryFree(expected);
+        teardown();
+    }
+    testCaseSet("authentication sync loss and continuity");
+}
+
 static void testCatchupSurvivesSaturatedRebase(void)
 {
     setup(1);
@@ -3673,6 +3788,7 @@ int main(void)
     testCaseSet("authentication sync loss and continuity");
     require(createNetworkLogger(NULL, false) != NULL, "logger failed");
     require(userTestRuntimeInitialize(), "crypto failed");
+    testMalformedUsageAcksPreserveAccounting();
     testOrphanDebtAndProvedBatchRejection();
     testFailedPullDoesNotStopReporting();
     testOrphanLedgerBudget();
