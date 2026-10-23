@@ -35,8 +35,10 @@ Windows QUICHE builds and header consumers define `NOMINMAX`, `NOGDI`, and
 `WIN32_LEAN_AND_MEAN` to keep Windows macros out of C++ and logging identifiers.
 MSVC consumers enable the conforming preprocessor for QUICHE's C++20 status
 macros. Two out-of-line defaulted comparisons explicitly compare their sole
-variant member. The WebTransport field table uses aggregate entries to retain
-constant initialization with MSVC; its names and member pointers are unchanged.
+variant member. WebTransport field bindings use ordinary pointers into each
+call's header instead of constant-initialized member pointers rejected by MSVC
+on x64/ARM64. Names, field order and const serialization are preserved, with no
+global initialization.
 The QUICHE structured-header and ACK-timestamp sources likewise use brace
 initialization for token, byte-sequence, and timestamp-encoder aggregates,
 preserving string copy/move, variant selection, and the timestamp exponent.

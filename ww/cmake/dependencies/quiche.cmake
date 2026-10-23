@@ -303,21 +303,30 @@ function(waterwall_enable_quiche)
   file(READ "${headers_source}" headers_contents)
   string(REPLACE "static_assert(false);"
     "static_assert(kExpectedType != kExpectedType);" headers_contents "${headers_contents}")
-  # MSVC cannot constinit this std::make_pair/member-pointer expression. An
-  # aggregate keeps the same two binding types and constant initialization.
+  # MSVC rejects constant initialization of the member-pointer table on x64
+  # and ARM64. Bind ordinary pointers to each call's header instead; this also
+  # preserves constness for serialization without any global initialization.
   string(REPLACE [=[ABSL_CONST_INIT std::array kInitHeaderFields{
     std::make_pair("u", &WebTransportInitHeader::initial_unidi_limit),
     std::make_pair("bl", &WebTransportInitHeader::initial_incoming_bidi_limit),
     std::make_pair("br", &WebTransportInitHeader::initial_outgoing_bidi_limit),
-};]=] [=[struct InitHeaderField {
-  const char* name;
-  uint64_t WebTransportInitHeader::*accessor;
-};
-ABSL_CONST_INIT std::array<InitHeaderField, 3> kInitHeaderFields{{
-    {"u", &WebTransportInitHeader::initial_unidi_limit},
-    {"bl", &WebTransportInitHeader::initial_incoming_bidi_limit},
-    {"br", &WebTransportInitHeader::initial_outgoing_bidi_limit},
-}};]=] headers_contents "${headers_contents}")
+};]=] [=[template <typename Header>
+auto InitHeaderFields(Header& header) {
+  return std::array{
+      std::make_pair("u", &header.initial_unidi_limit),
+      std::make_pair("bl", &header.initial_incoming_bidi_limit),
+      std::make_pair("br", &header.initial_outgoing_bidi_limit),
+  };
+}]=] headers_contents "${headers_contents}")
+  string(REPLACE ": kInitHeaderFields) {\n      if (field_name_a"
+    ": InitHeaderFields(output)) {\n      if (field_name_a" headers_contents "${headers_contents}")
+  string(REPLACE "output.*field_accessor = value;" "*field_accessor = value;"
+    headers_contents "${headers_contents}")
+  string(REPLACE "members.reserve(kInitHeaderFields.size());"
+    "const auto fields = InitHeaderFields(header);\n  members.reserve(fields.size());"
+    headers_contents "${headers_contents}")
+  string(REPLACE ": kInitHeaderFields) {" ": fields) {" headers_contents "${headers_contents}")
+  string(REPLACE "header.*field_accessor" "*field_accessor" headers_contents "${headers_contents}")
   set(previous_headers "")
   if(EXISTS "${headers_compat}")
     file(READ "${headers_compat}" previous_headers)

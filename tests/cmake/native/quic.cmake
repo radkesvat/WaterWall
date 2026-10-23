@@ -1,3 +1,12 @@
+if(TARGET WaterWall::Quiche)
+  waterwall_add_native_executable(quic_web_transport_headers_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/quic/quic_web_transport_headers_test.cc
+    LIBRARIES WaterWall::Quiche)
+  target_compile_features(quic_web_transport_headers_test PRIVATE cxx_std_20)
+  set_target_properties(quic_web_transport_headers_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+  add_waterwall_unit_test(waterwall.quic_web_transport_headers_unit quic_web_transport_headers_test "unit;quic;build")
+endif()
+
 # Compile the production C carrier directly: no socket, WW runtime or C++ engine
 # is needed to exercise its fragmentation/admission/ownership boundary.
 if(TARGET QuicCommon)
