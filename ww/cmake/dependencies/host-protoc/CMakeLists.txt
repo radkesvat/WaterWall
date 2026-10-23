@@ -28,3 +28,14 @@ add_subdirectory("${WW_PROTOBUF_SOURCE}" protobuf EXCLUDE_FROM_ALL)
 set_target_properties(protoc PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
   RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin")
+if(MINGW)
+  # The host tool runs on the target's PATH; do not load compiler runtime DLLs
+  # from a different MinGW architecture.
+  target_link_options(protoc PRIVATE -static)
+endif()
+
+# Excluded subdirectories are omitted from the parent Visual Studio solution
+# unless a parent target depends on them. Give every generator one root target
+# that brings in protoc and only the libraries it needs.
+add_custom_target(waterwall_host_protoc)
+add_dependencies(waterwall_host_protoc protoc)

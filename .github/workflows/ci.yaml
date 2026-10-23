@@ -796,12 +796,25 @@ jobs:
       - name: Reset ccache statistics
         run: ccache --zero-stats
 
+      - name: Install native protoc compiler
+        if: matrix.msys == 'MINGW32'
+        run: pacman -S --needed --noconfirm mingw-w64-x86_64-gcc
+
       - name: Configure CMake
         shell: msys2 {0}
         run: |
           mkdir -p build/ci-diagnostics
           set -o pipefail
+          host_protoc_args=()
+          if [[ '${{ matrix.msys }}' == 'MINGW32' ]]; then
+            # protoc runs on the x64 runner; only the application targets x86.
+            host_protoc_args+=(
+              "-DWW_HOST_PROTOC_CC=$(cygpath -m /mingw64/bin/gcc.exe)"
+              "-DWW_HOST_PROTOC_CXX=$(cygpath -m /mingw64/bin/g++.exe)"
+            )
+          fi
           cmake --preset ${{ matrix.preset }} \
+            "${host_protoc_args[@]}" \
             -DCPM_SOURCE_CACHE="${{ env.cpm-path }}" \
             -DDISABLE_PRECOMPILED_HEADERS=ON \
             -DWW_PACK_RUNTIME=ON -DBUILD_TESTING=ON \
