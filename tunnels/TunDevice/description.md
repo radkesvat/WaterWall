@@ -1,5 +1,5 @@
 <!--
-Documentation version: 160
+Documentation version: 162
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TunDevice.mdx, and all files must keep the same documentation version.
 -->
 
@@ -28,17 +28,43 @@ Linux uses worker-owned receive queues. With the default `multi-queue: true`, a
 newly created interface attempts one queue per event worker with fixed kernel
 steering; unavailable multiqueue or
 steering falls back to one queue owned by worker 0. Existing single-queue
-interfaces remain supported. Steering groups IPv4 packets by address pair and
-protocol so fragments keep one reader; the normal full flow hash still selects
-the processing worker. Multiple connections between the same address pair and
-protocol share a receive queue. Startup logs the active queue count. Queue
+interfaces remain supported. Unfragmented IPv4 TCP/UDP uses the same symmetric
+address/port/protocol hash as processing-worker affinity, allowing connections
+between the same hosts to use different receive queues. All fragments use an
+address-pair/protocol fallback so one datagram keeps one reader. Fragmented and
+ordinary packets of one connection can have different readers and can reorder;
+the shared fragment table retains reassembly and processing-worker affinity.
+Other protocols and portless short packets use the fallback; malformed packets
+and unsupported IP versions select queue zero for downstream validation.
+Startup logs the active queue count. Queue
 selection is independent of `gso`. Set `multi-queue: false` to use one receive
 queue owned by worker 0 while retaining all configured processing workers.
 
 Windows receives on worker 0 using Wintun event notifications. Linux and Windows
 have no dedicated application TUN reader thread. Reads use bounded batches and
 preserve flow ownership; the other workers continue processing their flows.
-Darwin/BSD retain their existing reader backend.
+Darwin/BSD use external reader threads with their own buffer pools.
+
+Windows, macOS and BSD limit queued receive packets to 8 MiB of retained buffer
+allocation and 1,024 packets per device. Admission never waits on a worker:
+when either limit is reached, the unadmitted remainder of the current read
+batch is dropped. Later reads can use capacity released by delivery or cleanup.
+The current read batch contains at most 128 packets on Windows/macOS. On BSD,
+its size depends on the RAM profile, reaching 256 packets with the `server`
+profile. This batch, bounded fragment storage, and queue metadata are separate
+from the allocation budget. Accepted packets keep
+their per-worker order. macOS also reads one byte beyond `device-mtu` so oversized
+frames are discarded with a rate-limited diagnostic rather than mistaken for
+exactly-MTU input.
+
+Ordinary Linux offload records, including assured `DATA_VALID` and matching
+`NEEDS_CSUM` packets, copy only their IP bytes into a best-fit allocation. They
+reserve that allocation and work metadata, one packet slot and no segmentation
+output allowance; the reader keeps its scratch for reuse. TCPv4 GSO work retains
+its aggregate allocation, output allowance and two-slot reservation. A direct
+trusted TUN/PTC pair can deliver an assured TCPv4 GSO aggregate intact; other
+consumers receive MTU-sized segments. Startup keeps validated scratch geometry
+rather than an unused packet allocation.
 
 ## Typical Placement
 
@@ -177,13 +203,19 @@ Full-route example with local ranges excluded:
   Default: `false`
 
 - `route-cidrs` `(array of strings)`
-  CIDRs to route toward the TUN interface when routing is enabled.
+  IPv4 CIDRs to route toward the TUN interface when routing is enabled.
+
+  An enabled capture list containing any IPv6 CIDR is rejected during node creation,
+  before exclusions or route installation. Mixed IPv4/IPv6 lists are also rejected,
+  including IPv6 entries that exclusions would remove. `"route-table": "off"`
+  installs no routes and leaves capture CIDRs unused.
 
   Default: the IPv4 full route, `"0.0.0.0/0"`.
   Default routes are installed as split `/1` routes so the existing system default route does not need to be replaced.
 
 - `route-exclude-cidrs` `(array of strings)`
   CIDRs to leave out of the routes installed by `route-cidrs`.
+  Opposite-family exclusions have no effect on IPv4 capture routes.
 
   This is useful when `route-cidrs` is global and some local, management, or upstream endpoint ranges must keep using the existing system route.
 
@@ -307,15 +339,22 @@ When payload reaches `TunDevice` from upstream or downstream:
 
 Both upstream and downstream payload handlers write to the same TUN device.
 
-Payload callbacks validate and try the existing thread-safe writer FIFO without
-waiting for capacity or performing native I/O. This enqueue-only guarantee allows
-an immediately adjacent PTC on the packet worker to deliver its final sbuf directly.
+Payload callbacks validate and append to the current event worker's output FIFO
+without waiting for capacity or performing native I/O. One deferred flush per
+worker performs native writes and recycles buffers through that worker's existing
+pool. TUN has no dedicated writer thread or writer pool. Workers can write
+concurrently; each worker preserves its FIFO order. Direct PTC flows remain on
+their owning packet worker; output on different workers has no shared FIFO order.
+Device-wide admission bounds queued and active output.
+This enqueue-only guarantee allows an immediately adjacent PTC on the packet
+worker to deliver its final sbuf directly.
 
-On an active GSO device with a direct trusted Linux pair, the writer combines compatible adjacent
-TCP data packets into bounded scatter/gather GSO records. It takes only packets
-already available, never waits to fill a batch, and retains packet order. At most
-64 packets and 256 KiB of allocation charge form a batch, with one lookahead;
-each GSO record stays within 65,535 IPv4 bytes. Original packets must still fit
+On an active GSO device with a direct trusted Linux pair, each worker combines
+compatible adjacent TCP data packets into bounded scatter/gather GSO records. It
+takes only packets already available, never waits to fill a batch, and retains
+packet order. A flush processes at most 64 packets and 256 KiB of allocation
+charge; a larger single allocation progresses alone. Remaining packets schedule
+another deferred flush. Each GSO record stays within 65,535 IPv4 bytes. Original packets must still fit
 MTU. UDP, fragments, controls, incompatible TCP packets, interposed nodes and
 `gso:false` keep individual packet writes. Checksum-only writes still include the
 virtio header: ordinary untrusted packets use zero metadata and complete bytes;
