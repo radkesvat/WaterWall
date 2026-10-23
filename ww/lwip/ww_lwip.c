@@ -174,71 +174,83 @@ bool wwLwipShutdown(void)
     return true;
 }
 
-void printIPPacketInfo(const char *prefix, const unsigned char *buffer)
+/* snprintf/vsnprintf report the desired length even after truncation. Keep
+ * only bytes actually present so the next append never advances out of bounds. */
+static void packetInfoAppend(char *output, size_t capacity, size_t *used, const char *format, ...)
 {
-    char  logbuf[256];
-    int   rem = sizeof(logbuf);
-    char *ptr = logbuf;
-    int   ret;
+    if (*used >= capacity - 1)
+        return;
 
-    uint8_t version = buffer[0] >> 4;
+    va_list arguments;
+    va_start(arguments, format);
+    const int result = vsnprintf(output + *used, capacity - *used, format, arguments);
+    va_end(arguments);
+    if (result > 0)
+        *used += min((size_t) result, capacity - *used - 1);
+    output[*used] = '\0';
+}
 
-    if (version == 4)
+void printIPPacketInfo(const char *prefix, const unsigned char *buffer, size_t length)
+{
+    assert(prefix != NULL && (buffer != NULL || length == 0));
+    char          logbuf[256] = {0};
+    size_t        used        = 0;
+    const uint8_t version     = length != 0 ? buffer[0] >> 4 : 0;
+
+    if (length == 0)
+        packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Empty packet, Data: ", prefix);
+    else if (version == 4 && length < IP_HLEN)
+        packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Truncated IPv4 header, Data: ", prefix);
+    else if (version == 4)
     {
-        struct ip_hdr *ip_header = (struct ip_hdr *) buffer;
-        ip4_addr_t     src_addr, dst_addr;
-        memoryCopy(&src_addr, &ip_header->src.addr, sizeof(ip4_addr_t));
-        memoryCopy(&dst_addr, &ip_header->dest.addr, sizeof(ip4_addr_t));
-
-        char src_ip[40];
-        char dst_ip[40];
-
-        stringCopyN(src_ip, ip4addr_ntoa(&src_addr), 40);
-        stringCopyN(dst_ip, ip4addr_ntoa(&dst_addr), 40);
-        ret = snprintf(ptr,
-                       (size_t) rem,
-                       "%s : Packet v4 %s From %s to %s, Data: ",
-                       prefix,
-                       IP_PROTO_STR(ip_header->_proto),
-                       src_ip,
-                       dst_ip);
+        const size_t header_length = (buffer[0] & 15U) * 4U;
+        if (header_length < IP_HLEN)
+            packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Invalid IPv4 header, Data: ", prefix);
+        else if (header_length > length)
+            packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Truncated IPv4 header, Data: ", prefix);
+        else
+        {
+            ip4_addr_t source, destination;
+            memoryCopy(&source.addr, buffer + 12, sizeof(source.addr));
+            memoryCopy(&destination.addr, buffer + 16, sizeof(destination.addr));
+            char source_text[IP4ADDR_STRLEN_MAX], destination_text[IP4ADDR_STRLEN_MAX];
+            ip4addr_ntoa_r(&source, source_text, sizeof(source_text));
+            ip4addr_ntoa_r(&destination, destination_text, sizeof(destination_text));
+            packetInfoAppend(logbuf,
+                             sizeof(logbuf),
+                             &used,
+                             "%s : Packet v4 %s From %s to %s, Data: ",
+                             prefix,
+                             IP_PROTO_STR(buffer[9]),
+                             source_text,
+                             destination_text);
+        }
     }
+    else if (version == 6 && length < IP6_HLEN)
+        packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Truncated IPv6 header, Data: ", prefix);
     else if (version == 6)
     {
-        struct ip6_hdr *ip6_header = (struct ip6_hdr *) buffer;
-        ip6_addr_t      src_addr, dst_addr;
-        memoryCopy(&src_addr, &ip6_header->src, sizeof(ip6_addr_t));
-        memoryCopy(&dst_addr, &ip6_header->dest, sizeof(ip6_addr_t));
-        char src_ip[40];
-        char dst_ip[40];
-
-        stringCopyN(src_ip, ip6addr_ntoa(&src_addr), 40);
-        stringCopyN(dst_ip, ip6addr_ntoa(&dst_addr), 40);
-        ret = snprintf(ptr,
-                       (size_t) rem,
-                       "%s : Packet v6 %s From %s to %s, Data: ",
-                       prefix,
-                       IP_PROTO_STR(ip6_header->_nexth),
-                       src_ip,
-                       dst_ip);
+        ip6_addr_t source = {0}, destination = {0};
+        memoryCopy(source.addr, buffer + 8, sizeof(source.addr));
+        memoryCopy(destination.addr, buffer + 24, sizeof(destination.addr));
+        char source_text[IP6ADDR_STRLEN_MAX], destination_text[IP6ADDR_STRLEN_MAX];
+        ip6addr_ntoa_r(&source, source_text, sizeof(source_text));
+        ip6addr_ntoa_r(&destination, destination_text, sizeof(destination_text));
+        packetInfoAppend(logbuf,
+                         sizeof(logbuf),
+                         &used,
+                         "%s : Packet v6 %s From %s to %s, Data: ",
+                         prefix,
+                         IP_PROTO_STR(buffer[6]),
+                         source_text,
+                         destination_text);
     }
     else
-    {
-        ret = snprintf(ptr, (size_t) rem, "%s : Unknown IP version, Data: ", prefix);
-    }
+        packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Unknown IP version, Data: ", prefix);
 
-    ptr += ret;
-    rem -= ret;
-
-    for (int i = 0; i < 16; i++)
-    {
-        ret = snprintf(ptr, (size_t) rem, "%02x ", buffer[i]);
-        ptr += ret;
-        rem -= ret;
-    }
-    *ptr = '\0';
-
-    LOGD(logbuf);
+    for (size_t i = 0; i < min(length, (size_t) 16); ++i)
+        packetInfoAppend(logbuf, sizeof(logbuf), &used, "%02x ", buffer[i]);
+    LOGD("%s", logbuf);
 }
 
 static void printTcpPacketFlagsInfoNoNewLIne(u8_t flags)

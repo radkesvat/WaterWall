@@ -1,4 +1,13 @@
 # Explicit native registrations; included in dependency order by unittests/CMakeLists.txt.
+if(LINUX AND TARGET ww)
+  waterwall_add_native_executable(lwip_packet_info_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/lwip/lwip_packet_info_test.c)
+  target_link_libraries(lwip_packet_info_test PRIVATE ww_test_support ww)
+  add_dependencies(waterwall_unit_tests lwip_packet_info_test)
+  add_waterwall_unit_test(waterwall.lwip_packet_info_unit lwip_packet_info_test
+    "unit;net;lwip;logging;bounds")
+endif()
+
 if(TARGET ConnectionToPackets AND TARGET TcpUdpConnector)
   waterwall_add_native_executable(transport_classifier_matrix_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/transport_classifier_matrix_test.c)
   target_link_libraries(transport_classifier_matrix_test PRIVATE ConnectionToPackets TcpUdpConnector ww)

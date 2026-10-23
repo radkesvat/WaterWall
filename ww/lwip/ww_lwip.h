@@ -125,7 +125,9 @@ void     wwLwipTestSerializeTcpIsnTuple(uint8_t output[kWwLwipTcpIsnTupleSize], 
 // ------------------------------------------------------------------------
 // Function Prototypes for Debug and Packet Info
 // ------------------------------------------------------------------------
-void printIPPacketInfo(const char *prefix, const unsigned char *buffer);
+/* Log at most sixteen available bytes. Empty input permits buffer == NULL;
+ * prefix is a valid C string. Packet storage may have arbitrary alignment. */
+void printIPPacketInfo(const char *prefix, const unsigned char *buffer, size_t length);
 void printTcpPacketInfo(struct tcp_hdr *tcphdr);
 void printTcpPacketFlagsInfo(u8_t flags);
 

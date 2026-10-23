@@ -56,7 +56,7 @@ static void logPacket(sbuf_t *buf)
     }
 #endif
 
-    printIPPacketInfo("TunDevice recv", sbufGetRawPtr(buf));
+    printIPPacketInfo("TunDevice recv", sbufGetRawPtr(buf), sbufGetLength(buf));
 
 afterlog:;
 
@@ -108,7 +108,7 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
 #if LOG_PACKET_INFO
-    printIPPacketInfo("TunDevice write", sbufGetRawPtr(buf));
+    printIPPacketInfo("TunDevice write", sbufGetRawPtr(buf), sbufGetLength(buf));
 #endif
 
     if (UNLIKELY(! tundeviceIsUp(tdev)))
