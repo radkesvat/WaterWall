@@ -6,12 +6,15 @@
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "fixtures/user_runtime.h"
 #include "loggers/network_logger.h"
-#include "node_builder/config_lexical.h"
 
 static const char *parse_watch;
 static unsigned    parse_calls;
 static wrwlock_t  *write_lock_watch;
 static unsigned    watched_writes;
+static char       *secret_watch, *decoded_watch, *serialized_watch;
+static size_t      secret_watch_length, decoded_watch_length, serialized_watch_length;
+static unsigned    secret_wiped, decoded_wiped, serialized_wiped;
+static bool        inspect_auth_secret, inspect_user_json, refuse_serialization;
 
 cJSON *__real_cJSON_ParseWithLengthOpts(const char *, size_t, const char **, cJSON_bool);
 cJSON *__wrap_cJSON_ParseWithLengthOpts(const char *, size_t, const char **, cJSON_bool);
@@ -19,7 +22,17 @@ cJSON *__wrap_cJSON_ParseWithLengthOpts(const char *text, size_t length, const c
 {
     if (text == parse_watch)
         ++parse_calls;
-    return __real_cJSON_ParseWithLengthOpts(text, length, end, terminated);
+    cJSON *json = __real_cJSON_ParseWithLengthOpts(text, length, end, terminated);
+    if (inspect_auth_secret)
+    {
+        cJSON *secret = cJSON_GetObjectItemCaseSensitive(json, "secret");
+        if (cJSON_IsString(secret))
+        {
+            decoded_watch        = secret->valuestring;
+            decoded_watch_length = strlen(decoded_watch);
+        }
+    }
+    return json;
 }
 
 int __real_pthread_rwlock_wrlock(pthread_rwlock_t *lock);
@@ -31,10 +44,6 @@ int __wrap_pthread_rwlock_wrlock(pthread_rwlock_t *lock)
     return __real_pthread_rwlock_wrlock(lock);
 }
 
-static char       *secret_watch, *decoded_watch, *serialized_watch;
-static size_t      secret_watch_length, decoded_watch_length, serialized_watch_length;
-static unsigned    secret_wiped, decoded_wiped, serialized_wiped;
-static bool        inspect_auth_secret, inspect_user_json, refuse_serialization;
 static const char *lookup_text_watch;
 static unsigned    lookup_text_copies;
 cJSON             *__real_cJSON_AddStringToObject(cJSON *object, const char *name, const char *string);
@@ -83,23 +92,6 @@ void __wrap_memoryFree(void *pointer)
     }
     __real_memoryFree(pointer);
 }
-cJSON *__real_configLexicalParseBoundedQuiet(const char *, size_t, size_t, size_t);
-cJSON *__wrap_configLexicalParseBoundedQuiet(const char *, size_t, size_t, size_t);
-cJSON *__wrap_configLexicalParseBoundedQuiet(const char *text, size_t length, size_t depth, size_t values)
-{
-    cJSON *json = __real_configLexicalParseBoundedQuiet(text, length, depth, values);
-    if (inspect_auth_secret)
-    {
-        cJSON *secret = cJSON_GetObjectItemCaseSensitive(json, "secret");
-        if (cJSON_IsString(secret))
-        {
-            decoded_watch        = secret->valuestring;
-            decoded_watch_length = strlen(decoded_watch);
-        }
-    }
-    return json;
-}
-
 cJSON_bool __real_cJSON_PrintPreallocated(cJSON *json, char *buffer, const int length, const cJSON_bool format);
 cJSON_bool __wrap_cJSON_PrintPreallocated(cJSON *json, char *buffer, const int length, const cJSON_bool format);
 cJSON_bool __wrap_cJSON_PrintPreallocated(cJSON *json, char *buffer, const int length, const cJSON_bool format)

@@ -596,7 +596,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   target_link_libraries(authenticationserver_responses_test PRIVATE AuthenticationServer ww)
   target_link_options(authenticationserver_responses_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
-    "-Wl,--wrap=sbufCreateWithPadding" "-Wl,--wrap=memoryFree" "-Wl,--wrap=configLexicalParseBoundedQuiet"
+    "-Wl,--wrap=sbufCreateWithPadding" "-Wl,--wrap=memoryFree"
     "-Wl,--wrap=cJSON_PrintPreallocated" "-Wl,--wrap=cJSON_AddStringToObject" "-Wl,--wrap=cJSON_SetValuestring"
     "-Wl,--wrap=cJSON_ParseWithLengthOpts" "-Wl,--wrap=pthread_rwlock_wrlock")
   add_dependencies(waterwall_unit_tests authenticationserver_responses_test)

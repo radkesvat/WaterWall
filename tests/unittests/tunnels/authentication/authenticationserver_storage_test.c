@@ -1,5 +1,8 @@
 /* CTest: waterwall.authenticationserver_storage_unit
- * Fault actual file operations, execute AddNewUser and reload primary/recovery. */
+ * Fault actual file operations, execute AddNewUser, reload primary/recovery and
+ * observe decoded credential cleanup on rejected management requests. */
+#include "AuthenticationServer/api.h"
+#include "AuthenticationServer/edit_token.h"
 #include "AuthenticationServer/structure.h"
 #include "common/private_file.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
@@ -103,7 +106,7 @@ void __wrap_memoryFree(void *pointer)
                               : pointer == password_watch ? password_watch_length
                                                           : serialized_watch_length;
         for (size_t i = 0; i < length; ++i)
-            twfRequire(((const uint8_t *) pointer)[i] == 0, "database credential copy reached free unwiped");
+            twfRequire(((const uint8_t *) pointer)[i] == 0, "owned credential copy reached free unwiped");
         if (pointer == read_watch)
             read_watch = NULL;
         else if (pointer == password_watch)
@@ -121,6 +124,8 @@ static void watchDatabasePassword(cJSON *json)
     cJSON *password = cJSON_GetObjectItemCaseSensitive(row != NULL ? row : json, "password");
     if (password == NULL)
         password = cJSON_GetObjectItemCaseSensitive(row != NULL ? row : json, "pass");
+    if (password == NULL)
+        password = cJSON_GetObjectItemCaseSensitive(json, "secret");
     if (cJSON_IsString(password))
     {
         twfRequire(password_watch == NULL, "prior database JSON password not released");
@@ -1191,6 +1196,93 @@ static void testBackwardHistoryRetention(void)
     twfRequire(closedir(dir) == 0 && rmdir(directory) == 0, "history directory cleanup failed");
 }
 
+static void testRejectedCredentialWiping(tunnel_t *server, line_t *line, buffer_pool_t *pool)
+{
+    static const struct
+    {
+        const char    *operation;
+        NodeApiHandler handler;
+        const char    *body;
+    } cases[] = {
+        {"create-user",
+         authenticationserverApiCreateUser,
+         "{\"id\":\"43\",\"password\":\"decoded-create-secret\",\"\\u0069d\":\"44\"}"},
+        {"create-user", authenticationserverApiCreateUser, "{\"id\":\"43\",\"password\":\"decoded-create-secret\"}{}"},
+        {"change-user-password",
+         authenticationserverApiChangeUserPassword,
+         "{\"id\":\"42\",\"if_match\":\"%s\",\"password\":\"decoded-password-secret\",\"id\":\"42\"}"},
+        {"change-user-password",
+         authenticationserverApiChangeUserPassword,
+         "{\"id\":\"42\",\"if_match\":\"%s\",\"password\":\"decoded-password-secret\"}!"},
+        {"Authenticate", NULL, "{\"name\":\"edge\",\"secret\":\"decoded-producer-secret\",\"name\":\"other\"}"},
+        {"Authenticate", NULL, "{\"name\":\"edge\",\"secret\":\"decoded-producer-secret\"}!"},
+    };
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    char                           token[49];
+    authenticationserverEditTokenFormat(ts->api_instance_id, ts->store.config_revision, token);
+    const uint8_t correlation[4] = {0};
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        char      body[256];
+        const int length = snprintf(body, sizeof(body), cases[i].body, token);
+        twfRequire(length > 0 && (size_t) length < sizeof(body), "credential rejection fixture overflow");
+        const unsigned wiped      = owned_credentials_wiped;
+        const unsigned writes     = private_writes;
+        inspect_owned_credentials = true;
+        if (cases[i].handler != NULL)
+        {
+            node_api_call_context_t context = {.operation                = cases[i].operation,
+                                               .principal                = "credential-admin",
+                                               .deadline_ms              = UINT64_MAX,
+                                               .max_response_body_size   = kAuthenticationServerApiBodyCap,
+                                               .working_memory_allowance = 1024 * 1024};
+            sbuf_t                 *input   = bufferpoolGetBestFit(pool, (uint32_t) length, 0);
+            memoryCopy(sbufGetMutablePtr(input), body, (size_t) length);
+            sbufSetLength(input, (uint32_t) length);
+            api_result_t result = cases[i].handler(server, input, &context);
+            twfRequire(result.result_code == kApiResultError && result.buffer != NULL,
+                       "malformed credential request did not return an API error");
+            cJSON       *response = cJSON_ParseWithLength(sbufGetRawPtr(result.buffer), sbufGetLength(result.buffer));
+            const cJSON *code =
+                cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(response, "error"), "code");
+            twfRequire(cJSON_IsString(code) && strcmp(code->valuestring, "invalid_request") == 0,
+                       "malformed credential request changed its API refusal");
+            cJSON_Delete(response);
+            bufferpoolReuseBuffer(pool, result.buffer);
+        }
+        else
+        {
+            rwlockWriteLock(&ts->state_lock);
+            sbuf_t *response = authenticationserverDispatchRequest(kAuthenticationServerRequestTypeAuthenticate,
+                                                                   correlation,
+                                                                   server,
+                                                                   line,
+                                                                   NULL,
+                                                                   (const uint8_t *) body,
+                                                                   (uint32_t) length);
+            rwlockWriteUnlock(&ts->state_lock);
+            static const char error[] = "invalid-auth-request";
+            twfRequire(response != NULL &&
+                           sbufGetLength(response) == kAuthenticationServerResponseHeaderSize + sizeof(error) - 1 &&
+                           sbufReadUI8(response) == kAuthenticationServerResponseTypeError &&
+                           memcmp((const uint8_t *) sbufGetRawPtr(response) + kAuthenticationServerResponseHeaderSize,
+                                  error,
+                                  sizeof(error) - 1) == 0,
+                       "malformed credential request changed its producer refusal");
+            lineReuseBuffer(line, response);
+        }
+        inspect_owned_credentials = false;
+        twfRequire(password_watch == NULL && owned_credentials_wiped == wiped + 1,
+                   "credential lexical refusal did not erase its decoded secret before free");
+        twfRequire(usersCount(&ts->store.users) == 1 && usersLookupByIdentifier(&ts->store.users, 43) == NULL &&
+                       usersLookupByPassword(&ts->store.users, "committed") ==
+                           usersLookupByIdentifier(&ts->store.users, 42) &&
+                       ts->store.config_revision == 84 && ! ts->database_dirty && ts->sessions_count == 0 &&
+                       ts->sessions == NULL && private_writes == writes,
+                   "credential lexical refusal changed accounts, sessions or persistence");
+    }
+}
+
 static void testProducerJsonValidation(void)
 {
     static const char trailing[]      = "{\"id\":43,\"password\":\"proposed\"}garbage";
@@ -1233,6 +1325,7 @@ static void testProducerJsonValidation(void)
     line_t                        *line           = twfLinePoolCreateLine(&lines);
     authenticationserver_session_t session        = {.allow_user_write = true};
     const uint8_t                  correlation[4] = {0};
+    testRejectedCredentialWiping(server, line, env.pool);
     for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
     {
         const unsigned writes     = private_writes;

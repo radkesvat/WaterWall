@@ -15,7 +15,8 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-auth-request");
     }
 
-    cJSON *json = configLexicalParseBoundedQuiet((const char *) request_data, request_data_len, 2, 8);
+    cJSON *json = configLexicalParseBoundedQuietWithCleanup(
+        (const char *) request_data, request_data_len, 2, 8, authenticationserverWipeJsonStrings);
     if (UNLIKELY(! cJSON_IsObject(json)))
     {
         authenticationserverWipeJsonStrings(json);
