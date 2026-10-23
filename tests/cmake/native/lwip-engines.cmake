@@ -1,5 +1,11 @@
 # Explicit native registrations; included in dependency order by unittests/CMakeLists.txt.
 if(TARGET ww_lwip_engine_test)
+  add_test(NAME waterwall.lwip_patch_helpers_unit COMMAND ${CMAKE_COMMAND}
+    "-DPATCH_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+    "-DPATCH_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/lwip-patch-helpers/$<CONFIG>"
+    -P ${CMAKE_SOURCE_DIR}/tests/cmake/lwip_patch_helpers_test.cmake)
+  set_tests_properties(waterwall.lwip_patch_helpers_unit PROPERTIES
+    LABELS "unit;net;lwip;cmake" TIMEOUT 30)
   # Keep reuse layouts/options consistent across the private stack and fixture.
   get_target_property(lwip_reuse_sources ww_lwip_engine_test SOURCES)
   get_target_property(lwip_reuse_source_dir ww_lwip_engine_test SOURCE_DIR)

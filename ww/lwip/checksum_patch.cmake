@@ -149,13 +149,17 @@ function(ww_apply_lwip_checksum_patch lwip_dir)
   }
 ]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/tcp_out.c"
-[=[  IF__NETIF_CHECKSUM_ENABLED(netif, NETIF_CHECKSUM_GEN_TCP) {]=]
+[=[  IF__NETIF_CHECKSUM_ENABLED(netif, NETIF_CHECKSUM_GEN_TCP) {
+#if TCP_CHECKSUM_ON_COPY]=]
 [=[  if (NETIF_CHECKSUM_ENABLED(netif, NETIF_CHECKSUM_GEN_TCP) &&
-      !wwLwipPartialTransportOutput(netif, seg->p, &pcb->local_ip, &pcb->remote_ip, IP_HLEN)) {]=])
+      !wwLwipPartialTransportOutput(netif, seg->p, &pcb->local_ip, &pcb->remote_ip, IP_HLEN)) {
+#if TCP_CHECKSUM_ON_COPY]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/tcp_out.c"
-[=[  IF__NETIF_CHECKSUM_ENABLED(netif, NETIF_CHECKSUM_GEN_TCP) {]=]
+[=[  IF__NETIF_CHECKSUM_ENABLED(netif, NETIF_CHECKSUM_GEN_TCP) {
+    struct tcp_hdr *tcphdr = (struct tcp_hdr *)p->payload;]=]
 [=[  if (NETIF_CHECKSUM_ENABLED(netif, NETIF_CHECKSUM_GEN_TCP) &&
-      !wwLwipPartialTransportOutput(netif, p, src, dst, IP_HLEN)) {]=])
+      !wwLwipPartialTransportOutput(netif, p, src, dst, IP_HLEN)) {
+    struct tcp_hdr *tcphdr = (struct tcp_hdr *)p->payload;]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/tcp_out.c"
 [=[    if ((seg->flags & TF_SEG_DATA_CHECKSUMMED) == 0) {
       LWIP_ASSERT("data included but not checksummed",

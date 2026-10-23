@@ -197,18 +197,18 @@ ip6_reass(struct pbuf *p)
 #endif
 ]=])
     ww_lwip_replace_once("${lwip_dir}/src/include/lwip/stats.h"
-[=[#define MEM_STATS_INC(x)]=]
+[=[#define MEM_STATS_INC(x) STATS_INC(mem.x)]=]
 [=[#if WW_LWIP_WORKER_ENGINES
 struct stats_ *wwLwipSharedStats(void);
 #define WW_LWIP_HEAP_STATS (wwLwipSharedStats()->mem)
 #else
 #define WW_LWIP_HEAP_STATS lwip_stats.mem
 #endif
-#define MEM_STATS_INC(x)]=])
-    file(READ "${lwip_dir}/src/include/lwip/stats.h" content)
-    string(REPLACE "lwip_stats.mem." "WW_LWIP_HEAP_STATS." content "${content}")
-    string(REPLACE "&lwip_stats.mem," "&WW_LWIP_HEAP_STATS," content "${content}")
-    file(WRITE "${lwip_dir}/src/include/lwip/stats.h" "${content}")
+#define MEM_STATS_INC(x) STATS_INC(mem.x)]=])
+    ww_lwip_replace_all("${lwip_dir}/src/include/lwip/stats.h"
+        "lwip_stats.mem." "WW_LWIP_HEAP_STATS." 3)
+    ww_lwip_replace_all("${lwip_dir}/src/include/lwip/stats.h"
+        "&lwip_stats.mem," "&WW_LWIP_HEAP_STATS," 1)
     ww_lwip_replace_once("${lwip_dir}/src/include/lwip/stats.h"
 [=[#define MEM_STATS_INC(x) STATS_INC(mem.x)]=]
 [=[#define MEM_STATS_INC(x) ++WW_LWIP_HEAP_STATS.x]=])
@@ -224,12 +224,10 @@ struct stats_ *wwLwipSharedStats(void);
 [=[#include "lwip/opt.h"]=]
 [=[#include "lwip/opt.h"
 #include "lwip/sys.h"]=])
-    file(READ "${lwip_dir}/src/core/tcp.c" content)
-    string(REPLACE "MEMP_STATS_DEC(err, MEMP_TCP_PCB);" "SYS_ARCH_LOCKED(MEMP_STATS_DEC(err, MEMP_TCP_PCB));" content "${content}")
-    file(WRITE "${lwip_dir}/src/core/tcp.c" "${content}")
-    file(READ "${lwip_dir}/src/core/ipv6/nd6.c" content)
-    string(REPLACE "ww_ctx_nd6_queue_size++;" "if (new_entry != NULL) { ww_ctx_nd6_queue_size++; }" content "${content}")
-    file(WRITE "${lwip_dir}/src/core/ipv6/nd6.c" "${content}")
+    ww_lwip_replace_all("${lwip_dir}/src/core/tcp.c"
+        "MEMP_STATS_DEC(err, MEMP_TCP_PCB);" "SYS_ARCH_LOCKED(MEMP_STATS_DEC(err, MEMP_TCP_PCB));" 4)
+    ww_lwip_replace_all("${lwip_dir}/src/core/ipv6/nd6.c"
+        "ww_ctx_nd6_queue_size++;" "if (new_entry != NULL) { ww_ctx_nd6_queue_size++; }" 2)
     ww_lwip_replace_once("${lwip_dir}/src/core/stats.c"
 [=[#include "lwip/debug.h"]=]
 [=[#include "lwip/debug.h"

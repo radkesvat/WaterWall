@@ -1,3 +1,8 @@
+Historical notes below. Current lwIP transformations are the canonical
+ww/lwip/*_patch.cmake recipes, applied in order by ww/CMakeLists.txt to a
+pristine pinned copy before its success stamp is written. Change those recipes,
+not generated build/*/patched-deps sources or the dependency cache.
+
 disabled some warnings for msvc, some changes in cmake
 
 RENAME THESE GLOBALLY

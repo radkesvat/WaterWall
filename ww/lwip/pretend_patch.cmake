@@ -1,16 +1,23 @@
-function(ww_lwip_replace_once file before after)
+function(ww_lwip_replace_all file before after expected_count)
     file(READ "${file}" content)
-    string(FIND "${content}" "${before}" found)
-    if(found EQUAL -1)
-        message(FATAL_ERROR "Waterwall lwIP pretend patch failed for ${file}")
+    if("${before}" STREQUAL "")
+        message(FATAL_ERROR "WaterWall lwIP patch failed for ${file}: empty replacement anchor")
     endif()
-
     string(LENGTH "${before}" before_len)
-    string(SUBSTRING "${content}" 0 ${found} content_prefix)
-    math(EXPR suffix_start "${found} + ${before_len}")
-    string(SUBSTRING "${content}" ${suffix_start} -1 content_suffix)
-    set(content "${content_prefix}${after}${content_suffix}")
+    string(LENGTH "${content}" original_len)
+    string(REPLACE "${before}" "" without_matches "${content}")
+    string(LENGTH "${without_matches}" without_len)
+    math(EXPR actual_count "(${original_len} - ${without_len}) / ${before_len}")
+    if(NOT actual_count EQUAL expected_count)
+        message(FATAL_ERROR
+            "WaterWall lwIP patch failed for ${file}: expected ${expected_count} occurrences, found ${actual_count}")
+    endif()
+    string(REPLACE "${before}" "${after}" content "${content}")
     file(WRITE "${file}" "${content}")
+endfunction()
+
+function(ww_lwip_replace_once file before after)
+    ww_lwip_replace_all("${file}" "${before}" "${after}" 1)
 endfunction()
 
 function(ww_apply_lwip_pretend_patch lwip_dir)
@@ -100,13 +107,11 @@ ww_udp_lenerr:
    (IPH_PROTO(iphdrA) == IPH_PROTO(iphdrB)) && \
    (IPH_ID(iphdrA) == IPH_ID(iphdrB)))]=])
 
-    # The reassembly list is one process-global chain, but this process runs many
-    # netifs that deliberately share a virtual address: ConnectionToPackets gives
-    # every event worker its own netif carrying the same `source-ipv4`. Two
-    # datagrams from one peer to that address, with the same protocol and the same
-    # identification, routed to different workers, therefore match each other's
-    # reassembly object and get spliced together - and the identification is a
-    # 16-bit field a busy peer wraps in seconds.
+    # Reassembly lists are owner-engine local; pool budgets remain shared. An
+    # engine can host multiple ConnectionToPackets netifs carrying the same
+    # `source-ipv4`. Datagrams from one peer to that address with the same
+    # protocol and identification must remain separate across those netifs;
+    # engine isolation alone does not distinguish instances on one worker.
     #
     # Adding the ingress netif to the key is what separates them. lwIP does not
     # pass the netif into ip4_reass(), and ip_data.current_input_netif is only
@@ -1903,7 +1908,8 @@ err_t            udp_sendto     (struct udp_pcb *pcb, struct pbuf *p,]=])
 
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/udp.c"
-        [=[    /* compare PCB local addr+port to UDP destination addr+port */]=]
+        [=[    /* compare PCB local addr+port to UDP destination addr+port */
+    if ((pcb->local_port == dest) &&]=]
         [=[    if ((pcb->pretend_netif_idx != NETIF_NO_INDEX) &&
         (pcb->pretend_netif_idx == netif_get_index(inp)) &&
         (pcb->pretend_netif_generation == inp->ww_generation)) {
@@ -1920,7 +1926,8 @@ err_t            udp_sendto     (struct udp_pcb *pcb, struct pbuf *p,]=])
       continue;
     }
 
-    /* compare PCB local addr+port to UDP destination addr+port */]=])
+    /* compare PCB local addr+port to UDP destination addr+port */
+    if ((pcb->local_port == dest) &&]=])
 
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/udp.c"
