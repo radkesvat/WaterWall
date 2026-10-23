@@ -13,7 +13,9 @@
  *   index ordering may change after removal.
  * - Removed user pointers become invalid immediately. Removed storage is not
  *   reused until usersClear()/usersDestroy(), so stale pointers do not silently
- *   become another active user during normal removal.
+ *   become another active user during normal removal. The explicitly unpublished
+ *   last-addition rollback helper is the sole exception and requires continuous
+ *   external exclusive ownership with no pointer publication.
  * - usersAddUser() copies the supplied user into users_t-owned storage.
  *
  * Thread safety:
@@ -64,7 +66,8 @@
  * - Removal erases the victim's index entries, then swaps the last active user
  *   into the freed slot, so items[] ordering may change but every remaining
  *   user keeps a stable object address. The victim's stable storage slot is not
- *   reused until usersClear()/usersDestroy().
+ *   reused until usersClear()/usersDestroy(), except for an unpublished last
+ *   addition reclaimed by its exclusively owning transaction.
  * - Add/update/remove are failure-atomic: a failure before the commit point
  *   leaves the table and every index unchanged. An impossible failure after an
  *   irreversible commit emits a fixed fatal diagnostic and terminates directly;
@@ -245,6 +248,9 @@ users_add_result_t usersAddUserChecked(users_t *users, const user_t *user);
 bool               usersAddUserFromJson(users_t *users, const cJSON *json);
 users_add_result_t usersAddUserFromJsonChecked(users_t *users, const cJSON *json);
 bool               usersFeedJson(users_t *users, const cJSON *json);
+/* Trusted, credential-bearing full-table export. Caller owns the returned JSON
+ * tree. Allocates for every account while holding the collection read lock;
+ * public status callers should use the existing redacted projections. */
 cJSON             *usersToJson(const users_t *users);
 bool               usersClear(users_t *users);
 
@@ -261,6 +267,8 @@ user_t       *usersLookupByWireGuardAllowedIp(users_t *users, const ip_addr_t *i
 const user_t *usersLookupByWireGuardAllowedIpConst(const users_t *users, const ip_addr_t *ip);
 user_t       *usersLookupByIdentifier(users_t *users, uint64_t id);
 const user_t *usersLookupByIdentifierConst(const users_t *users, uint64_t id);
+/* Trusted credential-bearing account exports; caller owns each returned JSON
+ * tree. Public status callers should use the existing redacted projections. */
 cJSON        *usersUserToJsonBySHA224(const users_t *users, const uint8_t sha224[SHA224_DIGEST_SIZE]);
 cJSON        *usersUserToJsonBySHA256(const users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
 cJSON        *usersUserToJsonByIdentifier(const users_t *users, uint64_t id);
@@ -276,6 +284,15 @@ const user_t *usersLookupByPasswordConst(const users_t *users, const char *passw
 bool usersRemoveUser(users_t *users, user_t *user);
 bool usersRemoveUserBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
 bool usersRemoveUserByIdentifier(users_t *users, uint64_t id);
+
+/* Reclaim only the most recent addition, before its enclosing transaction
+ * commits or exposes any pointer to it. Caller must continuously hold external
+ * exclusive transaction ownership from successful insertion through rollback.
+ * Acquires the collection write lock internally; caller must not hold that lock.
+ * A missing ID or mismatch with either the last active item or last allocated
+ * slot is a fatal invariant violation. Erases indexes and destroys the account
+ * without allocating, retaining capacity for reuse. Never use for normal removal. */
+void usersRollbackUnpublishedLastUserByIdentifier(users_t *users, uint64_t id);
 
 bool                  usersChangePassword(users_t *users, user_t *user, const char *password);
 bool                  usersUpdateUser(users_t *users, user_t *user, const user_update_t *update);
@@ -309,8 +326,10 @@ size_t                usersPreparedConfigPatchPeakBytes(const user_config_prepar
 typedef bool (*users_config_precommit_fn)(void *context);
 /* Credential-only preparation and failure-atomic bounded replacement. Neither
  * the opaque preparation nor this path owns/copies a user or native lock.
- * Preparation caps its password at 32 KiB; the try transaction separately
- * admits the old plaintext through 32 KiB plus its terminator. No index grows,
+ * Preparation caps its password at 32 KiB; the try transaction admits the old
+ * password's cached length under the existing locks, retaining its 32 KiB limit
+ * and bounded cleanup of that allocation including its terminator. Deadline
+ * checks bracket precommit. No index grows,
  * no statistics lock is acquired, and only the target's configuration is locked.
  * Free the preparation on every result, including success. */
 typedef struct user_prepared_password_change_s user_prepared_password_change_t;

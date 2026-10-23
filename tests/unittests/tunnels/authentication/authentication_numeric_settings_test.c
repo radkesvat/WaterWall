@@ -1,5 +1,5 @@
 /* CTest: waterwall.authentication_numeric_settings_unit
- * Exercise the real constructors with exact JSON number tokens. No node is
+ * Exercise the real constructors with exact JSON number and Boolean tokens. No node is
  * started: valid settings are inspected before timers or retention work begin,
  * and every constructor is destroyed with startup rollback. */
 #include "AuthenticationClient/structure.h"
@@ -282,6 +282,84 @@ static void serverSnapshotSettings(const char *database)
         }
 }
 
+static void serverBooleanSettings(const char *database)
+{
+    static const char *const fields[] = {"verbose", "allow-stats-push", "allow-user-pull", "allow-user-write"};
+    static const struct
+    {
+        const char *json;
+        const char *duplicate;
+        bool        accepted;
+        bool        value;
+    } cases[] = {{NULL, NULL, true, false},
+                 {"false", NULL, true, false},
+                 {"true", NULL, true, true},
+                 {"\"true\"", NULL, false, false},
+                 {"\"false\"", NULL, false, false},
+                 {"0", NULL, false, false},
+                 {"1", NULL, false, false},
+                 {"null", NULL, false, false},
+                 {"[]", NULL, false, false},
+                 {"{}", NULL, false, false},
+                 {"false", "true", false, false},
+                 {"true", "false", false, false},
+                 {"false", "false", false, false},
+                 {"true", "true", false, false}};
+    for (size_t field = 0; field < ARRAY_SIZE(fields); ++field)
+        for (size_t sample = 0; sample < ARRAY_SIZE(cases); ++sample)
+        {
+            char context[192];
+            snprintf(context,
+                     sizeof(context),
+                     "server %s%s=%s%s%s",
+                     field == 0 ? "" : "auth-clients[1].",
+                     fields[field],
+                     cases[sample].json == NULL ? "<absent>" : cases[sample].json,
+                     cases[sample].duplicate == NULL ? "" : ", duplicate=",
+                     cases[sample].duplicate == NULL ? "" : cases[sample].duplicate);
+            testCaseSet(context);
+            cJSON *settings =
+                cJSON_Parse("{\"verbose\":true,\"file-save-rate-ms\":10000,\"auth-clients\":["
+                            "{\"name\":\"first\",\"secret\":\"first-secret\",\"allow-stats-push\":true,"
+                            "\"allow-user-pull\":false,\"allow-user-write\":true},"
+                            "{\"name\":\"second\",\"secret\":\"second-secret\",\"allow-stats-push\":false,"
+                            "\"allow-user-pull\":true,\"allow-user-write\":false}]}");
+            require(settings != NULL, "server Boolean settings fixture did not parse");
+            discard cJSON_AddStringToObject(settings, "db-path", database);
+            cJSON  *target = field == 0
+                                 ? settings
+                                 : cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(settings, "auth-clients"), 1);
+            setNumberToken(target, fields[field], cases[sample].json);
+            if (cases[sample].duplicate != NULL)
+                discard cJSON_AddItemToObject(target, fields[field], cJSON_Parse(cases[sample].duplicate));
+            char      name[] = "server-booleans";
+            node_t    node   = {.name = name, .node_settings_json = settings};
+            tunnel_t *t      = authenticationserverTunnelCreate(&node);
+            require((t != NULL) == cases[sample].accepted, "server accepted loose Boolean or duplicate setting");
+            if (t != NULL)
+            {
+                const authenticationserver_tstate_t *ts = tunnelGetState(t);
+                require(ts->verbose == (field == 0 ? cases[sample].value : true) && ts->auth_clients_count == 2,
+                        "server Boolean value or producer count changed");
+                for (size_t producer = 0; producer < 2; ++producer)
+                {
+                    const authenticationserver_auth_client_t *client = &ts->auth_clients[producer];
+                    const bool stats = producer == 1 && field == 1 ? cases[sample].value : producer == 0;
+                    const bool pull  = producer == 1 && field == 2 ? cases[sample].value : producer == 1;
+                    const bool write = producer == 1 && field == 3 ? cases[sample].value : producer == 0;
+                    require(client->allow_stats_push == stats && client->allow_user_pull == pull &&
+                                client->allow_user_write == write,
+                            "server Boolean setting changed sibling permissions");
+                }
+                require(ts->save_timer == NULL && ts->session_expiry_timer == NULL && ts->sessions_count == 0,
+                        "server Boolean constructor started runtime work");
+                authenticationserverTunnelDestroy(t, wwLifecycleStartupRollback());
+            }
+            requireDatabaseUnchanged(database);
+            cJSON_Delete(settings);
+        }
+}
+
 int main(void)
 {
     testCaseSet("authentication numeric settings");
@@ -306,6 +384,7 @@ int main(void)
     clientBooleanAndDuplicateSettings();
     serverSettings(database, history);
     serverSnapshotSettings(database);
+    serverBooleanSettings(database);
     testCaseSet("authentication numeric settings cleanup");
     require(unlink(database) == 0 && rmdir(directory) == 0, "numeric fixture directory cleanup failed");
     nodeApiRegistryDestroy();

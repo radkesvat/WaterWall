@@ -292,12 +292,11 @@ users_password_result_t usersTryChangePreparedPasswordByIdentifierWithExportLimi
     }
     if (result != kUsersPasswordOk)
         goto release_user;
-    size_t old_password_length = 0;
-    if (user->password != NULL)
+    const size_t old_password_length = user->password_length;
+    if (old_password_length > kUsersPasswordTextLimit)
     {
-        result = usersPasswordAdmitLength(user->password, kUsersPasswordTextLimit, deadline_ms, &old_password_length);
-        if (result != kUsersPasswordOk)
-            goto release_user;
+        result = kUsersPasswordResourceLimit;
+        goto release_user;
     }
     if (userDeadlineExpired(deadline_ms))
     {

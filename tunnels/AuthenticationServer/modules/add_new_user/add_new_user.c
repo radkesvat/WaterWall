@@ -64,7 +64,6 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
                                              const uint8_t *request_data, uint32_t request_data_len)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
-    uint8_t                        added_sha256[SHA256_DIGEST_SIZE];
     user_t                         user;
     uint64_t                       audit_id = 0;
 
@@ -136,7 +135,6 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
         userDestroy(&user);
         return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, "user-too-large");
     }
-    memoryCopy(added_sha256, user.sha256_pass.bytes, SHA256_DIGEST_SIZE);
     users_add_result_t add_result = usersAddUserChecked(&ts->store.users, &user);
     userDestroy(&user);
 
@@ -158,11 +156,7 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
     if (UNLIKELY(! authenticationserverSaveDatabaseLockedForReason(ts, kAuthenticationServerSaveProducerCreate)))
     {
         LOGW("AuthenticationServer: AddNewUser failed to save database after adding user; rolling back in-memory add");
-        if (UNLIKELY(! usersRemoveUserBySHA256(&ts->store.users, added_sha256)))
-        {
-            LOGF("AuthenticationServer: AddNewUser could not roll back its exclusively owned account");
-            abortProgramNow(1);
-        }
+        usersRollbackUnpublishedLastUserByIdentifier(&ts->store.users, audit_id);
         ts->database_dirty = was_dirty;
         return authenticationserverAddUserRejected(t, l, session, correlation_id, audit_id, "database-save-failed");
     }

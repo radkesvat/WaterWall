@@ -20,6 +20,18 @@ uint32_t __wrap_fastRand32(void)
 static atomic_ullong     now_us;
 static atomic_ullong     server_wall_ms, client_wall_ms;
 static thread_local bool in_server;
+static unsigned          fail_server_rng_call, server_rng_calls;
+bool                     __real_secureRandomBytes(void *bytes, size_t size);
+bool                     __wrap_secureRandomBytes(void *bytes, size_t size);
+bool                     __wrap_secureRandomBytes(void *bytes, size_t size)
+{
+    if (in_server && fail_server_rng_call != 0 && ++server_rng_calls == fail_server_rng_call)
+    {
+        fail_server_rng_call = 0;
+        return false;
+    }
+    return __real_secureRandomBytes(bytes, size);
+}
 int                      __wrap_gettimeofday(struct timeval *tv, void *tz);
 int                      __wrap_gettimeofday(struct timeval *tv, void *tz)
 {
@@ -390,10 +402,11 @@ static void setup(unsigned users)
     atomicStoreU64(&now_us, 100000000);
     atomicStoreU64(&server_wall_ms, 1000000);
     atomicStoreU64(&client_wall_ms, 7000000);
-    in_server      = false;
-    clock_fault    = 0;
-    ack_fault      = 0;
-    captured_owner = -1;
+    in_server            = false;
+    fail_server_rng_call = server_rng_calls = 0;
+    clock_fault                             = 0;
+    ack_fault                               = 0;
+    captured_owner                          = -1;
     clients[0] = clients[1] = NULL;
     drop_before = drop_ack = corrupt_ack = drop_auth = pushes = pulls = 0;
     page_requests                                                     = 0;
@@ -2175,6 +2188,134 @@ static void testCatchupInterruptionAndCaptureRefusal(void)
     teardown();
 }
 
+static void testResumeTokenFailurePreservesAccounting(void)
+{
+    testCaseSet("resume token failure preserves cached authentication");
+    setup(1);
+    start(0);
+    disconnect(0);
+    discard userAccountTraffic(usersLookupByIdentifier(state(0)->users, 42), 5, 7, 0, NULL);
+    pump(10);
+    hold_push = true;
+    pump(1);
+    authenticationclient_tstate_t *ts = state(0);
+    require(held_request != NULL && ts->pending_batch != NULL && ts->pending_entries_count == 1 &&
+                ts->catchup_entries_count == 1,
+            "token failure fixture did not retain a catch-up batch");
+    drop_ack = 1;
+    deliverHeldRequest();
+    require(ts->control_line == NULL && ts->pending_batch != NULL && authTestPeerSequence(server, 0) == 1,
+            "token failure fixture did not lose an accepted batch ACK");
+
+    char                                    *pending = ts->pending_batch, *expected = stringDuplicate(pending);
+    const uint32_t                           pending_length = ts->pending_batch_length;
+    authenticationclient_accounting_entry_t *entries = ts->pending_entries, *debt = ts->catchup_entries;
+    uint8_t expected_entries[sizeof(*entries)], expected_debt[sizeof(*debt)], checkpoint[SHA256_DIGEST_SIZE];
+    memoryCopy(expected_entries, entries, sizeof(expected_entries));
+    memoryCopy(expected_debt, debt, sizeof(expected_debt));
+    memoryCopy(checkpoint, ts->last_ack_digest, sizeof(checkpoint));
+    const uint64_t sequence = ts->next_batch_sequence, last_ack = ts->last_ack_sequence;
+    char           epoch[65];
+    memoryCopy(epoch, ts->accounting_epoch, sizeof(epoch));
+    uint8_t old_token[64], current_token[64];
+    char    old_epoch[65], current_epoch[65];
+    authTestPeerCredentials(server, 0, old_token, old_epoch);
+    char                      *before = authTestPeerSnapshot(server);
+    user_accounting_snapshot_t before_user, after_user;
+    userGetAccountingSnapshot(usersLookupByIdentifier(ts->users, 42), &before_user);
+
+    fail_server_rng_call = 1;
+    retryConnection(0);
+    require(fail_server_rng_call == 0 && server_rng_calls == 1,
+            "resume token RNG fault did not run at its intended position");
+    require(last_response == kAuthenticationClientResponseTypeError &&
+                ts->last_failure == kAuthenticationClientFailureRemoteError && ! ts->auth_rejected &&
+                ! ts->continuity_error && authenticationclientCanAuthenticate(clients[0]),
+            "token creation failure rejected usable cached credentials");
+    require(ts->pending_batch == pending && ts->pending_batch_length == pending_length &&
+                memoryEqual(pending, expected, pending_length) && ts->pending_entries == entries &&
+                ts->pending_entries_count == 1 && memoryEqual(entries, expected_entries, sizeof(expected_entries)) &&
+                ts->catchup_entries == debt && ts->catchup_entries_count == 1 &&
+                memoryEqual(debt, expected_debt, sizeof(expected_debt)) && ts->orphan_debt_count == 0 &&
+                local(0, true) == 0 && local(0, false) == 5,
+            "token creation failure changed immutable usage, baseline or retained debt");
+    userGetAccountingSnapshot(usersLookupByIdentifier(ts->users, 42), &after_user);
+    require(ts->next_batch_sequence == sequence && ts->last_ack_sequence == last_ack &&
+                memoryEqual(ts->last_ack_digest, checkpoint, sizeof(checkpoint)) &&
+                memoryEqual(ts->accounting_epoch, epoch, sizeof(epoch)) && after_user.observation_pending &&
+                after_user.first_usage_at_ms == before_user.first_usage_at_ms &&
+                after_user.first_local_at_ms == before_user.first_local_at_ms,
+            "token creation failure changed client checkpoint or first-use evidence");
+    char *after = authTestPeerSnapshot(server);
+    authTestPeerCredentials(server, 0, current_token, current_epoch);
+    require(strcmp(before, after) == 0 && memoryEqual(old_token, current_token, sizeof(old_token)) &&
+                strcmp(old_epoch, current_epoch) == 0,
+            "token creation failure changed the old server session or checkpoint");
+    user_handle_t handle;
+    user_ip_key_t ip = {.type = 4, .bytes = {192, 0, 2, 1}};
+    require(authenticationclientGetUserByPassword(clients[0], "account-0", &handle) &&
+                authenticationclientUserTryAdmitConnection(
+                    clients[0], &handle, &ip, authenticationclientLocalTimeMS()) == kUserAdmissionOk,
+            "token creation failure disabled cached lookup or admission");
+    authenticationclientUserReleaseConnection(clients[0], &handle, &ip);
+    const uint64_t now = authenticationclientLocalTimeMS(), due = ts->reconnect_due_ms;
+    require(ts->control_line == NULL && ts->reconnect_timer != NULL && due >= now + 1000 && due <= now + 75000 &&
+                ts->sync_retry_not_before_ms <= due,
+            "token creation failure did not schedule bounded reconnect backoff");
+    pump((unsigned) (due - now - 1));
+    require(ts->control_line == NULL && pushes == 1 && server_rng_calls == 1,
+            "token creation failure retried before its deadline");
+    retryConnection(0);
+    pump(1);
+    pump(1);
+    require(ts->pending_batch == NULL && ts->pending_entries_count == 0 && ts->catchup_entries_count == 0 &&
+                ts->last_ack_sequence == sequence && ts->next_batch_sequence == sequence + 1 && local(0, true) == 5 &&
+                pushes == 2 && authTestPeerSequence(server, 0) == 1 && authTestPeerStats(server, 42).traffic.u == 5 &&
+                authTestPeerStats(server, 42).traffic.d == 7 && authenticationclientIsReady(clients[0]),
+            "retry after token creation failure lost usage or charged exact replay twice");
+    memoryFree(expected);
+    cJSON_free(before);
+    cJSON_free(after);
+    teardown();
+}
+
+static void testFreshEpochFailurePreservesSession(void)
+{
+    testCaseSet("fresh epoch failure preserves prior session and checkpoint");
+    setup(1);
+    start(0);
+    traffic(0, 10);
+    authenticationclientRequestPush(clients[0]);
+    require(authTestPeerSequence(server, 0) == 1, "epoch failure fixture has no accepted checkpoint");
+    uint8_t token[64], current_token[64];
+    char    epoch[65], current_epoch[65];
+    authTestPeerCredentials(server, 0, token, epoch);
+    char   *before = authTestPeerSnapshot(server);
+    line_t *line   = lineCreate(chain->line_pools, 0);
+    tunnelUpStreamInit(server, line);
+    static const char enroll[]        = "{\"name\":\"edge-a\",\"secret\":\"secret\"}";
+    const uint8_t     empty_token[64] = {0};
+    raw_response[0]                   = -1;
+    fail_server_rng_call              = 2;
+    rawRequest(line, empty_token, kAuthenticationClientRequestTypeAuthenticate, enroll, sizeof(enroll) - 1);
+    require(fail_server_rng_call == 0 && server_rng_calls == 2,
+            "fresh epoch RNG fault did not run at its intended position");
+    require(raw_response[0] == kAuthenticationClientResponseTypeError &&
+                strcmp(raw_body[0], "session-unavailable") == 0,
+            "epoch creation failure was misclassified as invalid credentials");
+    char *after = authTestPeerSnapshot(server);
+    authTestPeerCredentials(server, 0, current_token, current_epoch);
+    require(strcmp(before, after) == 0 && memoryEqual(token, current_token, sizeof(token)) &&
+                strcmp(epoch, current_epoch) == 0 && authTestPeerSequence(server, 0) == 1,
+            "epoch creation failure replaced a session, epoch or accounting checkpoint");
+    cJSON_free(before);
+    cJSON_free(after);
+    tunnelUpStreamFin(server, line);
+    lineDestroy(line);
+    teardown();
+    testCaseSet("authentication sync loss and continuity");
+}
+
 static void testMalformedUsageAcksPreserveAccounting(void)
 {
     static const char *const cases[] = {
@@ -3788,6 +3929,8 @@ int main(void)
     testCaseSet("authentication sync loss and continuity");
     require(createNetworkLogger(NULL, false) != NULL, "logger failed");
     require(userTestRuntimeInitialize(), "crypto failed");
+    testFreshEpochFailurePreservesSession();
+    testResumeTokenFailurePreservesAccounting();
     testMalformedUsageAcksPreserveAccounting();
     testOrphanDebtAndProvedBatchRejection();
     testFailedPullDoesNotStopReporting();

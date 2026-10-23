@@ -171,6 +171,8 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
         return NULL;
     }
 
+    *error = "session-unavailable";
+
     if (resume_epoch != NULL &&
         (client->accounting_epoch[0] == 0 ||
          ! memoryEqual(resume_epoch, client->accounting_epoch, sizeof(client->accounting_epoch))))

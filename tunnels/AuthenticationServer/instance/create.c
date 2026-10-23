@@ -184,7 +184,12 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
         return false;
     }
 
-    getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+    if (! authenticationserverSettingUnique(settings, "verbose") ||
+        jsonGetObjectBoolean(settings, "verbose", &ts->verbose) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: AuthenticationServer->settings->verbose must be a unique Boolean");
+        return false;
+    }
 
     int64_t file_save_rate_ms = 0;
     if (UNLIKELY(jsonGetObjectIntegerInRange(settings, "file-save-rate-ms", 1, INT_MAX, &file_save_rate_ms) !=
@@ -291,9 +296,30 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
             return false;
         }
 
-        getBoolFromJsonObjectOrDefault(&client->allow_stats_push, client_json, "allow-stats-push", false);
-        getBoolFromJsonObjectOrDefault(&client->allow_user_pull, client_json, "allow-user-pull", false);
-        getBoolFromJsonObjectOrDefault(&client->allow_user_write, client_json, "allow-user-write", false);
+        if (! authenticationserverSettingUnique(client_json, "allow-stats-push") ||
+            jsonGetObjectBoolean(client_json, "allow-stats-push", &client->allow_stats_push) == kJsonValueInvalid)
+        {
+            LOGF("JSON Error: AuthenticationServer->settings->auth-clients[%u]->allow-stats-push must be a unique "
+                 "Boolean",
+                 (unsigned int) index);
+            return false;
+        }
+        if (! authenticationserverSettingUnique(client_json, "allow-user-pull") ||
+            jsonGetObjectBoolean(client_json, "allow-user-pull", &client->allow_user_pull) == kJsonValueInvalid)
+        {
+            LOGF("JSON Error: AuthenticationServer->settings->auth-clients[%u]->allow-user-pull must be a unique "
+                 "Boolean",
+                 (unsigned int) index);
+            return false;
+        }
+        if (! authenticationserverSettingUnique(client_json, "allow-user-write") ||
+            jsonGetObjectBoolean(client_json, "allow-user-write", &client->allow_user_write) == kJsonValueInvalid)
+        {
+            LOGF("JSON Error: AuthenticationServer->settings->auth-clients[%u]->allow-user-write must be a unique "
+                 "Boolean",
+                 (unsigned int) index);
+            return false;
+        }
 
         int64_t client_session_idle_timeout_ms = ts->session_idle_timeout_ms;
         if (UNLIKELY(jsonGetObjectIntegerInRange(

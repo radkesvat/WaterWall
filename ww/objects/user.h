@@ -413,6 +413,8 @@ void                 userPublicDetailDestroy(user_public_detail_t *detail);
 void userRuntimeStateClear(user_runtime_stat_t *runtime);
 void userRuntimeStateMove(user_runtime_stat_t *dest, user_runtime_stat_t *src);
 
+/* Trusted full export including credentials. The caller owns the returned tree
+ * and must delete it with cJSON_Delete(); use public projections for diagnostics. */
 cJSON                       *userToJson(User *user);
 user_export_string_measure_t userMeasureExportString(const char *text);
 /* Maximum emitted scalar widths and all five string keys/punctuation, derived
@@ -426,7 +428,9 @@ user_public_result_t userMeasureExportUpperBound(const user_t *user, size_t *enc
  * Parses a single WireGuard AllowedIPs CIDR. NULL/empty input is valid and
  * means "not configured"; in that case valid_out is false and normalized_out
  * receives an allocated empty string when requested. normalized_out is owned by
- * the caller and must be released with memoryFree().
+ * the caller and must be released with memoryFree(). IPv4-mapped IPv6 CIDRs
+ * retain IPv6 family: ::ffff:10.0.0.1/128 is distinct from 10.0.0.1/32 for
+ * collection address lookup and overlap checks.
  */
 bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_addr_t *ip_out, ip_addr_t *mask_out,
                                   uint8_t *family_out, uint8_t *prefix_out, uint64_t *count_out, bool *valid_out);

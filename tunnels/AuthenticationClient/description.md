@@ -1,5 +1,5 @@
 <!--
-Documentation version: 162
+Documentation version: 163
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -433,6 +433,8 @@ immutable first-local-traffic observations through deduplicated batches. Local e
 valid table and clock pair, during stopping, after terminal continuity failure, or after an explicit correlated
 Authenticate `authentication-failed` response, new admissions reject. A validated successful Session clears that
 credential-rejection block; disconnects, malformed responses, timeouts and `authentication-required` do not clear it.
+`session-unavailable` reports a transient server capacity or token/epoch generation failure after credentials
+matched. It uses the generic remote-error reconnect path, preserving usable cached admission and pending accounting.
 `GetState()` and `IsReady()` continue to describe the control session. Password, SHA224, SHA256, UUID, exported
 WireGuard-key lookup and connection admission recheck availability under control-mutex then users-lock ordering.
 
@@ -540,7 +542,7 @@ credential-family lookups remain available. `UserObservePayload` starts first us
 charges exactly forwarded bytes after bandwidth admission. `UserBandwidthRegister/SetEligible/Cancel/Reserve/Release/Preview`
 manage directional fair turns and retained costs. `UserAccountTraffic` provides immediate measured accounting for existing
 callers. The older `UserAddTraffic` is generation-sensitive and may reject a handle after refresh; ongoing enforcement
-and the current observation/delivery path resolve durable IDs. Getters/copy-outs, handles and explicit pull/push remain.
+and the current observation/delivery path resolve durable IDs plus the membership-generation floor. Getters/copy-outs, handles and explicit pull/push remain.
 
 Available internal operations:
 
@@ -567,8 +569,10 @@ authenticationclientRequestPull(t)
 authenticationclientRequestPush(t)
 ```
 
-`authenticationclientUserToJson()` and `authenticationclientUsersToJson()` return new `cJSON` objects owned by the
-caller. Stats are copied into caller storage. Traffic updates are applied through the handle's durable id; the caller
+`authenticationclientUserToJson()` and `authenticationclientUsersToJson()` are trusted full exports containing
+credentials, including plaintext passwords. They return new `cJSON` trees owned by the caller, who must delete them.
+The whole-table helper allocates and copies every account while holding table and collection read locks. Use existing
+redacted status/projection APIs for public diagnostics. Stats are copied into caller storage. Traffic updates are applied through the handle's durable id; the caller
 never mutates a `user_t` directly. Both traffic helpers accept actual measured upload/download bytes; callers must not
 pre-multiply them. Stats copy-outs contain charged usage.
 

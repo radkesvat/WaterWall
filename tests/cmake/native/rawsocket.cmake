@@ -622,7 +622,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationClient)
     target_link_libraries(authentication_sync_test PRIVATE UserController)
     target_compile_definitions(authentication_sync_test PRIVATE AUTHENTICATION_SYNC_HAVE_CONTROLLER=1)
   endif()
-  target_link_options(authentication_sync_test PRIVATE "-Wl,--wrap=gettimeofday" "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=usersSnapshotAccounting" "-Wl,--wrap=fastRand32")
+  target_link_options(authentication_sync_test PRIVATE "-Wl,--wrap=gettimeofday" "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=usersSnapshotAccounting" "-Wl,--wrap=fastRand32" "-Wl,--wrap=secureRandomBytes")
   add_dependencies(waterwall_unit_tests authentication_sync_test)
   # The 4097-account boundary exercises software X25519 under ASan as well.
   add_waterwall_unit_test(waterwall.authentication_sync_unit authentication_sync_test "unit;authentication;accounting;worker;line" 300)

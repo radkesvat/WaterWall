@@ -1,5 +1,5 @@
 <!--
-Documentation version: 165
+Documentation version: 166
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -125,6 +125,11 @@ It must not have a `next` node.
 is absent. Present zero, negative, fractional, decimal/exponent, string, `null`, or out-of-range values fail startup
 before timers or backup retention use the value. `snapshot-max-bytes` uses the same exact-integer rules, with a maximum of the smaller of `SIZE_MAX` and `INT64_MAX`.
 
+`verbose` and each producer's `allow-stats-push`, `allow-user-pull` and `allow-user-write`
+accept only JSON Booleans and default to `false` when absent. Other types (including `null`,
+strings and numbers) and duplicate occurrences of these fields in the same object fail startup.
+Diagnostics identify the field and, for a producer permission, its array index.
+
 ## Administrative Audit Log
 
 Omitting `audit-log` disables this feature. To enable it, add this object inside
@@ -197,7 +202,9 @@ derived credential, producer secret, token, request body or edited field value
 is included. A successful event is queued at the actual revision commit, before
 reply delivery. Losing a reply does not change that event into a rejection.
 Producer `AddNewUser` retains its existing save-and-rollback behavior: a failed
-save followed by rollback is rejected, not committed.
+save followed by rollback is rejected, not committed. The server reclaims only this unpublished last addition's
+storage slot while continuously holding its exclusive transaction lock; retries reuse retained capacity.
+Ordinary removal still retains stable slots and invalidates the removed pointer.
 
 A fixed 256-record queue separates account operations from file output. Its short
 mutex protects bounded metadata copies only; JSON rendering, disk I/O, rotation
@@ -553,6 +560,13 @@ same-database/same-mode periods that fit the limit. Thus clock reversal cannot p
 limit one. This is period-name ordering, not creation-time ordering. Same-period scheduling is unchanged. Delete failure
 is reported separately from primary success; the successful snapshot slot remains recorded and the next snapshot retries pruning. Unrelated files and corruption archives are excluded.
 
+IPv4-mapped IPv6 Allowed-IP ranges retain the IPv6 family: `::ffff:10.0.0.1/128` is distinct from
+IPv4 `10.0.0.1/32` for address lookup and overlap detection. Accepted CIDRs are not converted across families.
+
+Native full JSON exports (`userToJson()`, `usersToJson()` and `usersUserToJson*()`) are trusted,
+credential-bearing APIs. Callers own and must delete returned trees. Whole-table exports allocate and copy every
+account under a collection read lock; public status callers should use the existing redacted projections.
+
 ## Logic Explanation
 
 The server owns one authoritative table and store-level `config_revision` / `stats_revision` counters, initially 1.
@@ -572,6 +586,9 @@ Its Session response contains 128 bytes: a 64-byte token followed by a 64-byte e
 bytes encoded as lowercase hexadecimal. A reconnecting running client includes `epoch` in Authenticate to resume it.
 A missing or superseded checkpoint returns `accounting-continuity-lost`; it is never silently initialized for a retry.
 Fresh enrollment without an epoch replaces the checkpoint and invalidates previous sessions for that identity.
+Only a failed name/secret match returns `authentication-failed`. After a valid match, capacity or token/epoch
+generation refusal returns `session-unavailable`. This transient error preserves any old session, epoch and
+checkpoint, and the client's already usable cache and pending accounting while it reconnects with bounded backoff.
 `Authenticate` inside an already authenticated envelope is rejected with `already-authenticated`. Credential failures are counted process-locally and logged at most once per five seconds with the total count, without caller-controlled names or secrets; they do not occupy audit queue slots.
 
 ### Usage Accounting
@@ -1475,9 +1492,11 @@ Preparation and credential derivation happen once before shared locking. The
 transaction tries state, collection and target configuration write locks, without
 waiting or taking the statistics lock. It uses reserved credential-index capacity
 rather than growing/rehashing maps or scanning users. The existing password must
-terminate within 32 KiB plus one terminator byte; a larger imported value returns
+have a cached owned length of at most 32 KiB, admitted under the existing locks without rescanning the old
+plaintext; a larger imported value returns
 `resource_limit` without change. This is an operation bound, not a database import
-restriction. The prepared/decoded secret copies and replaced object-layer plaintext are securely wiped on their
+restriction. New external passwords still receive bounded validation. Deadline checks remain before and after
+precommit; replacement cleanup still performs work proportional to the replaced allocation. The prepared/decoded secret copies and replaced object-layer plaintext are securely wiped on their
 owned cleanup paths. Raw transport and configuration buffers are not comprehensively wiped.
 
 Expected node errors are `invalid_request`, `conflict`, `not_found`,

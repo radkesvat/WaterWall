@@ -38,8 +38,10 @@ WW_EXPORT node_t nodeAuthenticationClientGet(void);
  * Other tunnels should include this header and use handles plus copy-out helpers.
  * The AuthenticationClient never exposes user_t pointers from its private users_t
  * table; returned handles are value identifiers keyed by durable user id.
- * Generation-gated read helpers may reject handles after a full GetAllUsers
- * replacement, while enforcement helpers resolve by durable user id only.
+ * Generation-gated read helpers may require the exact current table generation.
+ * Enforcement helpers resolve by durable user id and the membership-generation
+ * floor: refresh preserves continuous membership; removal/recreation revokes old
+ * handles even if the durable id is reused.
  */
 WW_EXPORT authenticationclient_state_t authenticationclientGetState(tunnel_t *t);
 WW_EXPORT bool                         authenticationclientIsReady(tunnel_t *t);
@@ -90,6 +92,11 @@ WW_EXPORT authenticationclient_user_lookup_result_t authenticationclientGetUserB
     tunnel_t *t, const char *password, user_handle_t *handle_out, authenticationclient_user_profile_t *profile_out);
 WW_EXPORT bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *handle);
 
+/* Trusted, credential-bearing full exports; returned trees belong to the caller
+ * and must be deleted with cJSON_Delete(). The whole-table export allocates and
+ * serializes every account while holding table/collection read locks. Use the
+ * existing redacted status/projection APIs for public diagnostics. The single
+ * user export requires the handle's exact current table generation. */
 WW_EXPORT cJSON *authenticationclientUserToJson(tunnel_t *t, const user_handle_t *handle);
 WW_EXPORT cJSON *authenticationclientUsersToJson(tunnel_t *t);
 WW_EXPORT bool   authenticationclientUserGetStats(tunnel_t *t, const user_handle_t *handle, user_stat_t *stats_out);
@@ -104,7 +111,8 @@ WW_EXPORT void authenticationclientRequestPush(tunnel_t *t);
 /*
  * Live connection-admission and enforcement helpers for traffic-serving nodes
  * such as UserController. They resolve the handle against the current local
- * users table by durable user id and run the matching runtime helper.
+ * users table by durable user id plus its membership-generation floor and run
+ * the matching runtime helper. Recreated ids do not revive old handles.
  * They touch only process-local runtime state and cumulative traffic counters, never synced
  * configuration. now_ms is in the local monotonic domain used for admission/sweeps.
  * Traffic accounting samples fresh time inside the user write lock, records first

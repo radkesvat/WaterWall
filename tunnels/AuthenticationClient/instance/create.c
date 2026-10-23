@@ -41,18 +41,7 @@ static bool authenticationclientReadInteger(const cJSON *settings, const char *n
 static bool authenticationclientReadTrafficMultiplier(const cJSON *settings, uint32_t *out)
 {
     *out                 = kUserTrafficMultiplierScale;
-    const cJSON *setting = NULL;
-    for (const cJSON *item = settings->child; item != NULL; item = item->next)
-    {
-        if (item->string == NULL || strcmp(item->string, "traffic-multiplier") != 0)
-            continue;
-        if (setting != NULL)
-        {
-            LOGE("AuthenticationClient: duplicate traffic-multiplier setting");
-            return false;
-        }
-        setting = item;
-    }
+    const cJSON *setting = cJSON_GetObjectItemCaseSensitive(settings, "traffic-multiplier");
     if (setting == NULL)
         return true;
 
@@ -79,15 +68,8 @@ static bool authenticationclientReadTrafficMultiplier(const cJSON *settings, uin
 
 static bool authenticationclientReadSyncLimit(const cJSON *settings, const char *name, uint64_t fallback, uint64_t *out)
 {
-    const cJSON *value = NULL;
-    for (const cJSON *item = settings->child; item != NULL; item = item->next)
-        if (item->string != NULL && strcmp(item->string, name) == 0)
-        {
-            if (value != NULL)
-                return false;
-            value = item;
-        }
-    *out = fallback;
+    const cJSON *value = cJSON_GetObjectItemCaseSensitive(settings, name);
+    *out               = fallback;
     if (value == NULL)
         return true;
     if (! cJSON_IsNumber(value) || ! getUint64FromJson(out, value) || *out == 0 || *out > SIZE_MAX)

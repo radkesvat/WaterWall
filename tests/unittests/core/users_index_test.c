@@ -649,6 +649,61 @@ static void addAllowedIpUser(users_t *users, uint64_t id, const char *password, 
     userDestroy(&user);
 }
 
+static void testUnpublishedLastRollback(void)
+{
+    users_t users;
+    require(usersCreate(&users), "rollback table creation failed");
+    user_t *survivor = addNamedUser(&users, 1, "rollback-survivor", "survivor");
+    addUser(&users, 2, "rollback-normal-removal");
+    user_t *removed = usersLookupByIdentifier(&users, 2);
+    require(usersRemoveUser(&users, removed) && usersCount(&users) == 1 && users.slot_count == 2,
+            "ordinary removal did not retain its storage slot");
+    static const char password[] = "12345678-1234-1234-1234-123456789abc";
+    addAllowedIpUser(&users, 3, password, "10.9.8.7/32");
+    user_t *candidate = usersLookupByIdentifier(&users, 3);
+    require(candidate != NULL && candidate != removed && usersSetUserName(&users, candidate, "unpublished"),
+            "rollback candidate reused ordinarily removed storage or could not be named");
+    const sha224_hash_t sha224 = candidate->sha224_pass;
+    const sha256_hash_t sha256 = candidate->sha256_pass;
+    uint8_t             uuid[kWwUuidBytesLen], publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
+    memoryCopy(uuid, candidate->uuid_pass, sizeof(uuid));
+    memoryCopy(publickey, candidate->wireguard_publickey, sizeof(publickey));
+    ip_addr_t ip = parseIp("10.9.8.7");
+    require(usersCount(&users) == 2 && users.slot_count == 3 && usersLookupByUUID(&users, uuid) == candidate &&
+                usersLookupByWireGuardPublicKey(&users, publickey) == candidate &&
+                usersLookupByWireGuardAllowedIp(&users, &ip) == candidate,
+            "rollback candidate indexes were not installed");
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    allocationCountBegin();
+#endif
+    usersRollbackUnpublishedLastUserByIdentifier(&users, 3);
+#if defined(USERS_TEST_ALLOC_COUNTING)
+    require(allocationCountEnd() == 0, "unpublished rollback allocated storage");
+#endif
+    require(usersCount(&users) == 1 && users.slot_count == 2 && ! usersContainsUser(&users, candidate) &&
+                usersLookupByIdentifier(&users, 3) == NULL && usersLookupByPassword(&users, password) == NULL &&
+                usersLookupBySHA224(&users, sha224.bytes) == NULL &&
+                usersLookupBySHA256(&users, sha256.bytes) == NULL && usersLookupByUUID(&users, uuid) == NULL &&
+                usersLookupByWireGuardPublicKey(&users, publickey) == NULL &&
+                usersLookupByWireGuardAllowedIp(&users, &ip) == NULL &&
+                usersFindByNameLocked(&users, "unpublished", NULL) == NULL,
+            "unpublished rollback retained storage or an index entry");
+    require(usersLookupByIdentifier(&users, 1) == survivor &&
+                usersLookupByPassword(&users, "rollback-survivor") == survivor &&
+                strcmp(survivor->name, "survivor") == 0 && usersValidate(&users),
+            "unpublished rollback moved or changed a published user");
+    addAllowedIpUser(&users, 4, password, "10.9.8.7/32");
+    require(usersLookupByIdentifier(&users, 4) == candidate && candidate != removed && users.slot_count == 3 &&
+                usersSetUserName(&users, candidate, "unpublished") && usersValidate(&users),
+            "unpublished slot or erased lookup keys were not reusable");
+    require(usersRemoveUserByIdentifier(&users, 4), "normal removal after rollback failed");
+    addAllowedIpUser(&users, 5, password, "10.9.8.7/32");
+    require(usersLookupByIdentifier(&users, 5) != candidate && usersLookupByIdentifier(&users, 5) != removed &&
+                users.slot_count == 4 && usersLookupByIdentifier(&users, 1) == survivor && usersValidate(&users),
+            "normal removal reused previously published storage after rollback");
+    usersDestroy(&users);
+}
+
 static user_t *addNamedAllowedIpUser(users_t *users, uint64_t id, const char *password, const char *name,
                                      const char *cidr)
 {
@@ -2555,6 +2610,7 @@ static void testPreparedPasswordReservedUuidCapacity(void)
 static bool passwordExpireAfterAck(void *context)
 {
     ++*(unsigned *) context;
+    require(g_creation_clock_reads == 2U, "password precommit did not follow the entry and precommit deadline checks");
     g_creation_clock_expire_at = g_creation_clock_reads + 1U;
     return true;
 }
@@ -2574,11 +2630,13 @@ static void testPreparedPasswordDeadlines(void)
         unsigned callbacks         = 0;
         g_creation_clock_us        = UINT64_C(1000000);
         g_creation_clock_reads     = 0;
-        g_creation_clock_expire_at = stage == 0 ? 3U : 0U;
+        g_creation_clock_expire_at = stage == 0 ? 2U : 0U;
         require(usersTryChangePreparedPasswordByIdentifier(
                     &users, 1, prepared, SIZE_MAX, 1500, passwordExpireAfterAck, &callbacks) == kUsersPasswordTimeout &&
                     callbacks == stage,
-                "password deadline crossed bounded scan or final commit boundary");
+                "password deadline crossed precommit or final commit boundary");
+        require(g_creation_clock_reads == 2U + stage,
+                "password deadline did not target the precise precommit boundary");
         g_creation_clock_us        = 0;
         g_creation_clock_expire_at = 0;
         require(userPasswordMatches(target, long_password) && usersValidate(&users),
@@ -3061,6 +3119,7 @@ int main(void)
 #endif
     testNameIndex();
     testPointerIndexAndRemoval();
+    testUnpublishedLastRollback();
     testStrictAllowedIps();
     testImportLayoutsAndReservation();
     testAllowedIpIndex();

@@ -8,6 +8,7 @@
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "fixtures/user_runtime.h"
 #include "loggers/network_logger.h"
+#include "objects/users_internal.h"
 
 #include <pthread.h>
 
@@ -417,6 +418,164 @@ static authenticationserver_status_t statusSnapshot(tunnel_t *server)
     twfRequire(authenticationserverStatusSnapshot(server, 0, &snapshot) == kAuthenticationServerStatusOk,
                "status snapshot failed");
     return snapshot;
+}
+
+static void testRepeatedProducerSaveRollback(void)
+{
+    char directory[] = "/tmp/ww-auth-rollback-XXXXXX";
+    twfRequire(mkdtemp(directory) != NULL, "rollback directory failed");
+    snprintf(primary, sizeof(primary), "%s/users.json", directory);
+    fault                     = kNone;
+    static const char empty[] = "{\"users\":[]}";
+    twfRequire(authenticationserverPrivateWrite(primary, empty, sizeof(empty) - 1U), "rollback seed failed");
+    twf_worker_env_t env;
+    twfWorkerEnvSetup(&env, 8192, 32);
+    tunnel_t *server = tunnelCreate(NULL, sizeof(authenticationserver_tstate_t), 0);
+    twfRequire(server != NULL, "rollback server failed");
+    authenticationserver_tstate_t *ts = tunnelGetState(server);
+    authenticationserverInitializeExportLimit(ts);
+    rwlockinit(&ts->state_lock);
+    twfRequire(usersCreate(&ts->store.users), "rollback users failed");
+    ts->db_path = primary;
+    twfRequire(authenticationserverLoadDatabase(ts), "rollback database load failed");
+    ts->database_loaded = true;
+    user_t *existing[kUsersBlockSize];
+    for (uint64_t id = 1; id <= kUsersBlockSize; ++id)
+    {
+        char password[48], name[48];
+        snprintf(password, sizeof(password), "rollback-existing-%" PRIu64, id);
+        snprintf(name, sizeof(name), "existing-%" PRIu64, id);
+        user_t user = {0};
+        twfRequire(userCreate(&user, password), "rollback existing user failed");
+        userSetId(&user, id);
+        twfRequire(usersAddUser(&ts->store.users, &user), "rollback existing insertion failed");
+        userDestroy(&user);
+        existing[id - 1U] = usersLookupByIdentifier(&ts->store.users, id);
+        twfRequire(usersSetUserName(&ts->store.users, existing[id - 1U], name), "rollback existing name failed");
+    }
+    ts->store.config_revision = 84;
+    ts->store.stats_revision  = 1902;
+    use_test_clock            = true;
+    test_clock_us             = UINT64_C(1000000);
+    twfRequire(authenticationserverSaveDatabase(ts), "rollback baseline save failed");
+    const uint64_t baseline_success_ms = ts->primary_save_last_success_ms;
+    char          *baseline            = readFile(primary);
+    twfRequire(baseline != NULL && ts->store.users.slot_count == kUsersBlockSize &&
+                   ts->store.users.slot_count == ts->store.users.slot_capacity,
+               "rollback fixture did not start at the storage boundary");
+    ts->database_dirty                          = true;
+    authenticationserver_auth_client_t producer = {.last_sequence = 9};
+    memset(producer.accounting_epoch, 0x6a, sizeof(producer.accounting_epoch));
+    memset(producer.last_digest, 0x7b, sizeof(producer.last_digest));
+    const authenticationserver_auth_client_t checkpoint = producer;
+    authenticationserver_session_t           session    = {.allow_user_write = true, .accounting_client = &producer};
+    twf_line_pool_t                          lines;
+    twfLinePoolSetup(&lines, 0, 2);
+    line_t           *line                 = twfLinePoolCreateLine(&lines);
+    static const char addition[]           = "{\"id\":65,\"password\":\"12345678-1234-1234-1234-123456789abc\","
+                                             "\"name\":\"rollback-candidate\",\"wireguard-allowed-ips\":\"10.9.8.7/32\"}";
+    const uint8_t     correlation[4]       = {0};
+    size_t            first_capacities[12] = {0};
+    for (unsigned attempt = 0; attempt < 129; ++attempt)
+    {
+        test_clock_us += 1000U;
+        fault = kOpen;
+        rwlockWriteLock(&ts->state_lock);
+        sbuf_t *response = authenticationserverDispatchRequest(kAuthenticationServerRequestTypeAddNewUser,
+                                                               correlation,
+                                                               server,
+                                                               line,
+                                                               &session,
+                                                               (const uint8_t *) addition,
+                                                               sizeof(addition) - 1U);
+        rwlockWriteUnlock(&ts->state_lock);
+        static const char error[] = "database-save-failed";
+        twfRequire(fault == kNone && response != NULL &&
+                       sbufGetLength(response) == kAuthenticationServerResponseHeaderSize + sizeof(error) - 1U &&
+                       ((const uint8_t *) sbufGetRawPtr(response))[0] == kAuthenticationServerResponseTypeError &&
+                       memcmp((const uint8_t *) sbufGetRawPtr(response) + kAuthenticationServerResponseHeaderSize,
+                              error,
+                              sizeof(error) - 1U) == 0,
+                   "rollback retry missed the save failure or changed its reply");
+        lineReuseBuffer(line, response);
+        users_t *users = &ts->store.users;
+        twfRequire(usersCount(users) == kUsersBlockSize && users->slot_count == kUsersBlockSize,
+                   "failed producer save retained an unpublished stable slot");
+        const size_t capacities[] = {users->capacity,
+                                     users->slot_capacity,
+                                     users->block_count,
+                                     users->block_capacity,
+                                     users->sha224_table->map.bucket_count,
+                                     users->sha256_table->map.bucket_count,
+                                     users->uuid_table->map.bucket_count,
+                                     users->wireguard_publickey_table->map.bucket_count,
+                                     users->id_table->map.bucket_count,
+                                     users->name_table->map.bucket_count,
+                                     users->pointer_table->map.bucket_count,
+                                     users_allowed_ip_map_t_capacity(&users->allowed_ip_table->map)};
+        if (attempt == 0)
+            memoryCopy(first_capacities, capacities, sizeof(capacities));
+        twfRequire(memcmp(first_capacities, capacities, sizeof(capacities)) == 0,
+                   "failed producer retries kept growing retained capacity");
+        twfRequire(usersLookupByIdentifier(users, 65) == NULL &&
+                       usersLookupByPassword(users, "12345678-1234-1234-1234-123456789abc") == NULL &&
+                       usersFindByNameLocked(users, "rollback-candidate", NULL) == NULL &&
+                       usersAllowedIpTableSize(users->allowed_ip_table) == 0 && usersValidate(users),
+                   "failed producer retry retained candidate indexes");
+        for (uint64_t id = 1; id <= kUsersBlockSize; ++id)
+        {
+            char password[48];
+            snprintf(password, sizeof(password), "rollback-existing-%" PRIu64, id);
+            twfRequire(usersLookupByIdentifier(users, id) == existing[id - 1U] &&
+                           usersLookupByPassword(users, password) == existing[id - 1U],
+                       "rollback retry moved or changed an existing account");
+        }
+        twfRequire(ts->database_dirty && ts->primary_checkpoint_valid && ts->store.config_revision == 84 &&
+                       ts->store.stats_revision == 1902 && producer.last_sequence == checkpoint.last_sequence &&
+                       memcmp(producer.accounting_epoch,
+                              checkpoint.accounting_epoch,
+                              sizeof(producer.accounting_epoch)) == 0 &&
+                       memcmp(producer.last_digest, checkpoint.last_digest, sizeof(producer.last_digest)) == 0,
+                   "rollback retry changed dirty state, revisions or checkpoint");
+        twfRequire(ts->primary_save_last_result == kAuthenticationServerSaveFailure &&
+                       ts->primary_save_last_attempt_valid && ts->primary_save_last_success_valid &&
+                       ts->primary_save_last_attempt_ms == test_clock_us / 1000U &&
+                       ts->primary_save_last_success_ms == baseline_success_ms,
+                   "rollback retry lost save-failure telemetry or earlier success");
+        char *retained = readFile(primary);
+        twfRequire(retained != NULL && strcmp(retained, baseline) == 0, "rollback retry changed the primary database");
+        memoryFree(retained);
+    }
+    rwlockWriteLock(&ts->state_lock);
+    sbuf_t *response = authenticationserverDispatchRequest(kAuthenticationServerRequestTypeAddNewUser,
+                                                           correlation,
+                                                           server,
+                                                           line,
+                                                           &session,
+                                                           (const uint8_t *) addition,
+                                                           sizeof(addition) - 1U);
+    rwlockWriteUnlock(&ts->state_lock);
+    twfRequire(response != NULL &&
+                   ((const uint8_t *) sbufGetRawPtr(response))[0] == kAuthenticationServerResponseTypeOk &&
+                   usersCount(&ts->store.users) == kUsersBlockSize + 1U &&
+                   ts->store.users.slot_count == kUsersBlockSize + 1U && ts->store.config_revision == 85 &&
+                   ! ts->database_dirty && ts->primary_save_last_result == kAuthenticationServerSaveSuccess,
+               "producer addition did not recover after removing the save fault");
+    lineReuseBuffer(line, response);
+    reload(ts);
+    twfRequire(usersLookupByIdentifier(&ts->store.users, 65) != NULL && usersValidate(&ts->store.users),
+               "successful retry was not persisted");
+    use_test_clock = false;
+    memoryFree(baseline);
+    lineDestroy(line);
+    twfLinePoolTeardown(&lines);
+    usersDestroy(&ts->store.users);
+    rwlockDestroy(&ts->state_lock);
+    twfRequire(remove(primary) == 0 && remove(ts->backup_path) == 0 && rmdir(directory) == 0,
+               "rollback fixture cleanup failed");
+    memoryFree(ts->backup_path);
+    tunnelDestroy(server);
+    twfWorkerEnvTeardown(&env);
 }
 
 static void testCommit(mode_t mask, fault_t selected, bool was_dirty)
@@ -1710,6 +1869,7 @@ int main(void)
     }
     testCommit(022, kNone, true);
     testCommit(022, kWrite, true);
+    testRepeatedProducerSaveRollback();
     testProducerJsonValidation();
     testExistingBackupPermissions();
     testRootDatabasePermissions();

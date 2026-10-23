@@ -1300,6 +1300,28 @@ bool usersRemoveUserByIdentifier(users_t *users, uint64_t id)
     return result;
 }
 
+void usersRollbackUnpublishedLastUserByIdentifier(users_t *users, uint64_t id)
+{
+    assert(users != NULL && id != 0);
+
+    rwlockWriteLock(&users->lock);
+    user_t *user = usersIDTableLookupLocked(users, id);
+    if (UNLIKELY(user == NULL || users->count == 0 || users->slot_count == 0 ||
+                 users->items[users->count - 1U] != user ||
+                 usersStorageAtLocked(users, users->slot_count - 1U) != user))
+    {
+        LOGF("Users: unpublished rollback did not identify the last active storage slot");
+        abortProgramNow(1);
+    }
+    if (UNLIKELY(! usersRemoveUserLocked(users, user)))
+    {
+        LOGF("Users: unpublished rollback could not remove its exclusively owned account");
+        abortProgramNow(1);
+    }
+    users->slot_count -= 1U;
+    rwlockWriteUnlock(&users->lock);
+}
+
 bool usersChangePassword(users_t *users, user_t *user, const char *password)
 {
     users_update_result_t result;

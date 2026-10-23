@@ -1,5 +1,5 @@
 <!--
-Documentation version: 7
+Documentation version: 8
 Sync note: Keep synchronized with WaterWall-Docs/docs/02-noderefs/APIServer.mdx and the Persian node reference.
 -->
 
@@ -110,6 +110,23 @@ All fields below are positive finite integers. Startup rejects inconsistent geom
 | `request_timeout_ms` | 10000 | Complete-request admission through response publication, including FIFO and worker wait. |
 | `output_timeout_ms` | 15000 | Response publication through transport handoff, including paused time. |
 | `idle_timeout_ms` | 60000 | Idle connection with no frame, request or output in progress. |
+
+The enforced per-setting maxima are 64 MiB for each request/response envelope, 256 MiB for input,
+1 GiB for each line/handler memory allowance, 2 GiB aggregate memory, 65,536 sessions/jobs/input fragments,
+1,024 queued requests, and `UINT32_MAX` (4,294,967,295) milliseconds for each timeout.
+`max_unauthenticated_memory` is bounded by `max_memory` and the geometry below. Client configuration allows
+1–256 clients, 1–512 allow entries per client and 1–64 operations per entry. Client names and configuration/node
+labels are nonempty and at most 256 UTF-8 bytes; operation names are nonempty and at most 64 bytes.
+Tokens must encode exactly 32 bytes as 64 hexadecimal characters; `*` labels/operations are rejected.
+
+These maxima cannot be selected independently. With `R = max_request_envelope`, `S = max_response_envelope`,
+`I = max_input_bytes`, `H = handler_working_memory`, and `J = H + 2*R + 2*S + 128 KiB`, startup requires:
+
+- `I >= R + 4` and `S >= 1024`.
+- `max_line_memory >= I + max(2*(R + 1), 3*R + 2) + S + 128 KiB`.
+- `H` covers the worker-pool allocation for a 4096-byte result plus 8192 bytes of metadata.
+- `max_memory >= max_line_memory + J`.
+- `max_line_memory <= max_unauthenticated_memory <= max_memory - J`.
 
 A length header records the declared envelope size without allocating its body.
 Frame storage grows geometrically for received bytes; reservations cover both old

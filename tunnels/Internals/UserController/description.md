@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UserController.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UserController.mdx, and all files must keep the same documentation version.
 -->
 
@@ -92,6 +92,9 @@ uses that node instance; it does not create an authentication client.
 - `sweep-interval-ms` `(optional integer, default: 1000)`
   How often each worker checks open managed lines for disabled, expired, removed, or over-quota users that have gone
   idle and are not currently sending payloads.
+
+`UserController` does not enforce live `devices` occupancy. Stored/exported device limits and diagnostic device
+gauges remain available; they do not provide a live device reservation limit.
 
 ## Enforced Limits
 
