@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3);
+static void  ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3);
 static err_t ptcCreateTcpListener(interface_route_context_t *route_ctx);
 static err_t ptcCreateUdpListener(interface_route_context_t *route_ctx);
 
@@ -72,7 +72,8 @@ static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
     }
 
     line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), worker->wid);
-    if (UNLIKELY(packet_line == NULL || ptcTunnelIsStopping(t)))
+    assert(packet_line != NULL);
+    if (UNLIKELY(ptcTunnelIsStopping(t)))
     {
         quiescenceGateLeave(&state->output_gate);
         bufferpoolReuseBuffer(worker->buffer_pool, buf);
@@ -104,21 +105,9 @@ static err_t interfaceInit(struct netif *netif)
 
 static void ptcDestroyUdpFlowPcbs(interface_route_context_t *route)
 {
-    c_foreach(i, ptc_udp_flow_map_t, route->udp_flows)
-    {
-        line_t *line = i.ref->second;
-        if (line != NULL && lineIsAlive(line))
-        {
-            ptc_lstate_t *ls = lineGetState(line, route->tunnel);
-            if (ls->kind == kPtcLineKindUdp && ls->udp_pcb != NULL)
-            {
-                udp_recv(ls->udp_pcb, NULL, NULL);
-                udp_remove(ls->udp_pcb);
-                ls->udp_pcb   = NULL;
-                ls->route_ctx = NULL;
-            }
-        }
-    }
+    /* Owner drain unregisters every normal UDP line before route teardown.
+     * A route-construction rollback has never published one. */
+    assert(ptc_udp_flow_map_t_is_empty(&route->udp_flows));
 
     /* Acceptance publishes an exact-netif child before the first receive
      * callback creates its normal line. The engine list owns that interim

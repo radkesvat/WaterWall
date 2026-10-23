@@ -80,7 +80,7 @@ static struct pbuf *makeCustomInput(sbuf_t *buf, uint16_t length, uint16_t trim_
     PUT_BE16(bytes + 2, total);
     for (uint32_t i = 0; i < length; ++i)
         bytes[header + i] = (uint8_t) (fixture->submitted + i);
-    ptcFragmentAdmissionTestSubmitPacketToStack(buf, &fixture->route.netif);
+    ptcReceiveAdmissionTestSubmitPacketToStack(buf, &fixture->route.netif);
     struct pbuf *p = captured_input;
     captured_input = NULL;
     twfRequire(p != NULL && ((my_custom_pbuf_t *) p)->sbuf == buf, "fixture did not retain the original RX sbuf");
@@ -239,7 +239,6 @@ static void setup(fixture_t *f)
     ts->owned_worker_count = 1;
     ts->owned_lines        = memoryAllocateZero(sizeof(*ts->owned_lines));
     twfRequire(ts->owned_lines != NULL, "receive fixture owner registry allocation failed");
-    mutexInit(&ts->owned_lines_lock);
     mutexInit(&ts->drain_lock);
     atomic_init(&ts->stopping, false);
     quiescenceGateInit(&ts->output_gate);
@@ -276,7 +275,6 @@ static void teardown(fixture_t *f)
     ptc_tstate_t *ts = tunnelGetState(f->ptc);
     twfRequire(ts->owned_lines[0] == NULL, "receive teardown left an owned line");
     twfRequire(f->route.drains == NULL && ts->drain_count == 0, "receive teardown retained its closing PCB");
-    mutexDestroy(&ts->owned_lines_lock);
     mutexDestroy(&ts->drain_lock);
     memoryFree(ts->owned_lines);
     twfRequire(lineIsAlive(tunnelchainGetWorkerPacketLine(f->chain, 0)), "receive path destroyed its packet line");

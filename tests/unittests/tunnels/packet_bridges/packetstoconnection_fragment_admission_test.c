@@ -44,7 +44,7 @@ typedef struct input_probe_s
 static unsigned recycled;
 void            __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
 void            __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
-void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
+void            __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
 {
     ++recycled;
     __real_bufferpoolReuseBuffer(pool, buf);
@@ -73,7 +73,7 @@ static void writeIpv4Checksum(uint8_t *packet)
     PUT_BE16(packet + 10, (uint16_t) ~sum);
 }
 
-static void fillFragment(sbuf_t *buf, uint16_t identification, bool shifted)
+static void fillPacket(sbuf_t *buf, uint16_t identification, bool shifted)
 {
     enum
     {
@@ -94,11 +94,11 @@ static void fillFragment(sbuf_t *buf, uint16_t identification, bool shifted)
     packet[9] = IP_PROTO_UDP;
     PUT_BE16(packet + 2, kPacketBytes);
     PUT_BE16(packet + 4, identification);
-    PUT_BE16(packet + 6, UINT16_C(0x2000));
     PUT_BE32(packet + 12, UINT32_C(0x0A000001));
     PUT_BE32(packet + 16, UINT32_C(0xC0000201));
     PUT_BE16(packet + 20, 5900);
     PUT_BE16(packet + 22, 53);
+    PUT_BE16(packet + 24, kPayloadBytes);
     writeIpv4Checksum(packet);
 }
 
@@ -114,12 +114,12 @@ static void testStorage(test_env_t *env, bool shifted, bool fail_wrapper)
     input_probe_t probe = {0};
     struct netif  netif = {.input = captureInput, .state = &probe};
     sbuf_t       *buf   = bufferpoolGetSmallBuffer(env->worker_pool);
-    fillFragment(buf, 42, shifted);
-    ptc_fragment_admission_test_hooks_t hooks = {.fail_rx_wrapper_allocation = fail_wrapper};
-    ptcFragmentAdmissionTestInstallHooks(&hooks);
+    fillPacket(buf, 42, shifted);
+    ptc_receive_admission_test_hooks_t hooks = {.fail_rx_wrapper_allocation = fail_wrapper};
+    ptcReceiveAdmissionTestInstallHooks(&hooks);
     recycled = 0;
     retained = NULL;
-    ptcFragmentAdmissionTestSubmitPacketToStack(buf, &netif);
+    ptcReceiveAdmissionTestSubmitPacketToStack(buf, &netif);
     if (fail_wrapper)
         require(probe.input_calls == 0 && recycled == 1, "refusal leaked or delivered");
     else
@@ -130,7 +130,7 @@ static void testStorage(test_env_t *env, bool shifted, bool fail_wrapper)
         retained = NULL;
         require(recycled == 1U + (unsigned) shifted, "pbuf failed exactly-once storage release");
     }
-    ptcFragmentAdmissionTestInstallHooks(NULL);
+    ptcReceiveAdmissionTestInstallHooks(NULL);
 }
 
 static void testInvalidCopyLength(test_env_t *env, uint32_t length)
@@ -145,7 +145,7 @@ static void testInvalidCopyLength(test_env_t *env, uint32_t length)
         memoryZero(sbufGetMutablePtr(buf), length);
     recycled = 0;
     retained = NULL;
-    ptcFragmentAdmissionTestSubmitPacketToStack(buf, &netif);
+    ptcReceiveAdmissionTestSubmitPacketToStack(buf, &netif);
     require(probe.input_calls == 0 && retained == NULL && recycled == 1,
             "invalid aligned-copy length was delivered or leaked");
 }
@@ -223,6 +223,6 @@ int main(void)
 
     lwipTestEngineEnd();
     lwipTestRuntimeCleanup();
-    puts("PacketsToConnection fragment-admission tests passed");
+    puts("PacketsToConnection receive-storage admission tests passed");
     return 0;
 }

@@ -205,18 +205,18 @@ typedef struct ptc_tstate_s
     wmutex_t                    dns_lock;
     uint32_t                    drain_bytes;
     uint32_t                    drain_count;
-    wmutex_t                    owned_lines_lock;
-    line_t                    **owned_lines;
-    uint32_t                    owned_worker_count;
-    atomic_bool                 stopping;
-    atomic_ullong               fragment_drops;
-    bool                        lwip_resources_destroyed;
+    /* Each slot and its intrusive links are confined to that event worker. */
+    line_t      **owned_lines;
+    uint32_t      owned_worker_count;
+    atomic_bool   stopping;
+    atomic_ullong fragment_drops;
+    bool          lwip_resources_destroyed;
 } ptc_tstate_t;
 
 typedef struct ptc_lstate_s
 {
-    tunnel_t *tunnel;
-    line_t   *line;
+    tunnel_t         *tunnel;
+    line_t           *line;
     ww_lwip_engine_t *engine;
 
     union {
@@ -255,7 +255,6 @@ typedef struct ptc_lstate_s
     bool               next_init_sent;
     bool               write_poll_armed;
     bool               write_retry_queued;
-    bool               refused_retry_queued;
     bool               owned_registered;
     /* Set inside the owner engine after required scheduled control is
      * refused. The existing owned-line registry is the allocation-free final
@@ -338,22 +337,22 @@ void ptcRxWrapperPoolInitializeOnce(void);
  * callback commits the transfer only after deferred delivery is admitted. */
 my_custom_pbuf_t *ptcReusableReceiveBuffer(struct pbuf *p, buffer_pool_t *pool, wid_t owner_wid);
 
-#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
+#ifdef PTC_RECEIVE_ADMISSION_TEST_HOOKS
 /*
- * This unit-only seam drives the final fragment-admission boundary without a
+ * This unit-only seam drives the final receive-storage boundary without a
  * full packet tunnel/route fixture.  The production PacketsToConnection
  * library is compiled without it, so no hook load or allocation branch reaches
  * device traffic.
  */
 
-typedef struct ptc_fragment_admission_test_hooks_s
+typedef struct ptc_receive_admission_test_hooks_s
 {
-    void                        *context;
-    bool                         fail_rx_wrapper_allocation;
-} ptc_fragment_admission_test_hooks_t;
+    void *context;
+    bool  fail_rx_wrapper_allocation;
+} ptc_receive_admission_test_hooks_t;
 
-void ptcFragmentAdmissionTestInstallHooks(const ptc_fragment_admission_test_hooks_t *hooks);
-void ptcFragmentAdmissionTestSubmitPacketToStack(sbuf_t *buf, struct netif *inp);
+void ptcReceiveAdmissionTestInstallHooks(const ptc_receive_admission_test_hooks_t *hooks);
+void ptcReceiveAdmissionTestSubmitPacketToStack(sbuf_t *buf, struct netif *inp);
 #endif
 
 void ptcDetachTcpPcbLocked(ptc_lstate_t *ls);
@@ -384,7 +383,6 @@ void ptcDeliverPayloadTask(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ptcCloseLineTask(tunnel_t *t, line_t *l);
 void ptcResumeUpstreamTask(tunnel_t *t, line_t *l);
 void ptcWriteRetryTask(tunnel_t *t, line_t *l);
-void ptcRefusedDataRetryTask(tunnel_t *t, line_t *l);
 bool ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings);
 void ptcFakeDnsDestroy(ptc_tstate_t *ts);
 /* True when fake DNS is enabled and this is the address it answers on. */
@@ -405,10 +403,10 @@ ptc_fake_dns_result_t ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_
  * Netif output only inlines a certified enqueue-only sink; arbitrary neighbours
  * stay queued. Consumes response on success and failure.
  */
-bool  ptcFakeDnsPublishResponseLocked(tunnel_t *t, line_t *packet_line, sbuf_t *response, const ip4_addr_t *source,
-                                      const ip4_addr_t *destination);
-bool  ptcFakeDnsApplyMappedDestination(tunnel_t *t, address_context_t *dest_ctx, const ip_addr_t *ip, uint16_t port,
-                                       uint8_t protocol);
+bool ptcFakeDnsPublishResponseLocked(tunnel_t *t, line_t *packet_line, sbuf_t *response, const ip4_addr_t *source,
+                                     const ip4_addr_t *destination);
+bool ptcFakeDnsApplyMappedDestination(tunnel_t *t, address_context_t *dest_ctx, const ip_addr_t *ip, uint16_t port,
+                                      uint8_t protocol);
 interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t packet_wid);
 void                       ptcDestroyWorkerRoute(tunnel_t *t, wid_t wid);
 void                       ptcDestroyLwipResources(tunnel_t *t);

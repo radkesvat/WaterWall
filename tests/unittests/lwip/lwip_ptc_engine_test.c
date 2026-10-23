@@ -383,14 +383,13 @@ static unsigned ownedLineCount(tunnel_t *t, wid_t wid)
 {
     ptc_tstate_t *state = tunnelGetState(t);
     unsigned      count = 0;
-    mutexLock(&state->owned_lines_lock);
+    CHECK(currentThreadOwnsWorker(wid));
     for (line_t *line = state->owned_lines[wid]; line != NULL;)
     {
         ++count;
         ptc_lstate_t *ls = lineGetState(line, t);
         line             = ls->owned_next;
     }
-    mutexUnlock(&state->owned_lines_lock);
     return count;
 }
 

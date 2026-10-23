@@ -43,7 +43,6 @@ void ptcTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
         memoryFree(state->owned_lines);
         state->owned_lines = NULL;
     }
-    mutexDestroy(&state->owned_lines_lock);
     mutexDestroy(&state->drain_lock);
     mutexDestroy(&state->dns_lock);
     const uint64_t fragment_drops = atomicLoadU64Relaxed(&state->fragment_drops);

@@ -8,10 +8,17 @@ add_library(PacketsToConnection STATIC
                     instance/pre_stop.c
                     instance/stop.c
                     common/helpers.c
+                    common/line_lifecycle.c
+                    common/write.c
+                    common/delivery.c
+                    common/udp_idle.c
                     common/netif.c
                     common/credit.c
                     common/drain.c
-                    common/fake_dns.c
+                    common/fake_dns_settings.c
+                    common/fake_dns_cache.c
+                    common/fake_dns_parse.c
+                    common/fake_dns_packet.c
                     common/line_state.c
                     common/tcp.c
                     common/udp.c

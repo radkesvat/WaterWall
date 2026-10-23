@@ -12,7 +12,10 @@ static uint64_t fakeNowUs(void)
     return fake_now_ms * 1000U;
 }
 #define getHRTimeUs fakeNowUs
-#include "common/fake_dns.c"
+#include "common/fake_dns_cache.c"
+#include "common/fake_dns_packet.c"
+#include "common/fake_dns_parse.c"
+#include "common/fake_dns_settings.c"
 #undef getHRTimeUs
 
 static uint32_t appendQuestion(uint8_t *query, uint32_t offset, const uint8_t *label, uint8_t length)

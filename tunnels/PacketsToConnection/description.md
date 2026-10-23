@@ -1,5 +1,5 @@
 <!--
-Documentation version: 161
+Documentation version: 162
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketsToConnection.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketsToConnection.mdx, and all files must keep the same documentation version.
 -->
 
@@ -144,8 +144,9 @@ Important internal rules:
 - packets emitted back to the packet side use the worker packet line for that packet worker
 - the worker-local netifs use the instance `mtu`, so a response larger than it leaves as IPv4 fragments
   rather than as one oversized raw packet the packet topology could not carry. Fake-DNS replies go out through that
-  same netif rather than straight at the neighbour: a maximum multi-question answer is around 776 bytes, past common
-  small IPv4 MTUs. PTC accepts the core's legal minimum MTU of 68 bytes. The reply is submitted as a UDP datagram
+  same netif rather than straight at the neighbour: echoed question names and answer records make reply sizes
+  variable, and replies can exceed small IPv4 MTUs. PTC accepts the core's legal minimum MTU of 68 bytes.
+  The reply is copied into a stack-owned `PBUF_RAM` and submitted as a UDP datagram
   through `ip4_output_if()`, so lwIP constructs
   the IPv4 header, allocates the shared identification value, and applies fragmentation with stack-owned offsets, MF
   flags, per-fragment lengths, and checksums. That publication happens inside the owner engine, which is legal

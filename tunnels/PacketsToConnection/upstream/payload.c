@@ -9,12 +9,12 @@ enum
 
 static atomic_log_rate_limiter_t rx_pool_exhaustion_log;
 
-#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
-static ptc_fragment_admission_test_hooks_t ptc_fragment_admission_test_hooks;
+#ifdef PTC_RECEIVE_ADMISSION_TEST_HOOKS
+static ptc_receive_admission_test_hooks_t ptc_receive_admission_test_hooks;
 
-void ptcFragmentAdmissionTestInstallHooks(const ptc_fragment_admission_test_hooks_t *hooks)
+void ptcReceiveAdmissionTestInstallHooks(const ptc_receive_admission_test_hooks_t *hooks)
 {
-    ptc_fragment_admission_test_hooks = hooks != NULL ? *hooks : (ptc_fragment_admission_test_hooks_t) {0};
+    ptc_receive_admission_test_hooks = hooks != NULL ? *hooks : (ptc_receive_admission_test_hooks_t) {0};
 }
 
 #endif
@@ -24,14 +24,9 @@ static bool ptcPacketNeedsAlignedCopy(const sbuf_t *buf)
     return ((uintptr_t) sbufGetRawPtr(buf) % MEM_ALIGNMENT) != 0;
 }
 
-/*
- * One wrapper per pbuf this node hands to lwIP, held for as long as lwIP keeps
- * the pbuf: a fragment waiting for reassembly and a TCP segment waiting in the
- * out-of-order queue both pin one. The shared reassembly budget in lwipopts.h is
- * therefore the lower bound - a pool of 10 could not carry a single fragmented
- * 8 KiB datagram - and the headroom on top of it covers ordinary in-flight
- * traffic. Exhaustion drops the packet and is reported below, never fatal.
- */
+/* One wrapper per input packet, retained while TCP keeps its pbuf in the
+ * receive/retry or out-of-order queues. Exhaustion remains a bounded packet
+ * drop; ordinary and shifted packets share exactly the same wrapper lifetime. */
 LWIP_MEMPOOL_DECLARE(RX_POOL, WW_LWIP_RX_WRAPPER_POOL_SIZE, sizeof(my_custom_pbuf_t), "Zero-copy RX PBUF pool")
 
 static wonce_t g_rx_pool_once = WONCE_INIT;
@@ -140,66 +135,12 @@ static sbuf_t *ptcAcquireAlignedCopy(buffer_pool_t *pool, sbuf_t *src)
     return dst;
 }
 
-/*
- * The reassembly identity of one IPv4 fragment.
- */
-typedef struct ptc_fragment_key_s
-{
-    ip4_addr_t source;
-    ip4_addr_t destination;
-    uint16_t   identification;
-    uint8_t    protocol;
-} ptc_fragment_key_t;
-
-/*
- * Reads the reassembly identity out of an IPv4 packet, if it has one.
- *
- * Only a fragment has reassembly state to purge.
- */
-static bool ptcReadFragmentKey(const sbuf_t *buf, ptc_fragment_key_t *out)
-{
-    const uint8_t *packet = sbufGetRawPtr(buf);
-    const uint32_t length = sbufGetLength(buf);
-
-    if (length < IP_HLEN || (packet[0] >> 4U) != 4)
-    {
-        return false;
-    }
-
-    const uint16_t fragment_bits = GET_BE16(packet + 6);
-    if ((fragment_bits & (IP_MF | IP_OFFMASK)) == 0)
-    {
-        return false;
-    }
-
-    // Byte reads, because this runs before the alignment decision below.
-    memoryCopy(&out->source.addr, packet + 12, sizeof(out->source.addr));
-    memoryCopy(&out->destination.addr, packet + 16, sizeof(out->destination.addr));
-    out->protocol       = packet[9];
-    out->identification = GET_BE16(packet + 4);
-    return true;
-}
-
-/* Remove any incomplete prefix when stack input cannot accept this fragment.
- * Requires the current owner engine; lower-level fragment tests use this path. */
-static void ptcPurgeRefusedFragmentLocked(const ptc_fragment_key_t *key, struct netif *inp)
-{
-    discard ip4_reass_purge(inp, &key->source, &key->destination, key->protocol, key->identification);
-}
-
 static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
 {
     // Runs on the packet line's event worker; record that identity with the
     // pbuf so a later deferred free knows whose pool the sbuf came from.
     const wid_t    origin_wid  = getCurrentWorkerWID();
     buffer_pool_t *origin_pool = getWorkerBufferPool(origin_wid);
-
-    /*
-     * Read before the buffer can change hands: on the aligned-copy path `buf` is
-     * replaced, and on the success path lwIP owns it.
-     */
-    ptc_fragment_key_t fragment_key;
-    const bool         is_fragment = ptcReadFragmentKey(buf, &fragment_key);
 
     /*
      * Packet transforms may leave the sbuf cursor at any byte alignment. Keep
@@ -227,10 +168,6 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
 
         if (UNLIKELY(aligned == NULL))
         {
-            if (is_fragment)
-            {
-                ptcPurgeRefusedFragmentLocked(&fragment_key, inp);
-            }
             bufferpoolReuseBuffer(origin_pool, buf);
             return;
         }
@@ -240,10 +177,10 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
     }
 
     my_custom_pbuf_t *custombuf =
-#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
-        ptc_fragment_admission_test_hooks.fail_rx_wrapper_allocation ? NULL :
+#ifdef PTC_RECEIVE_ADMISSION_TEST_HOOKS
+        ptc_receive_admission_test_hooks.fail_rx_wrapper_allocation ? NULL :
 #endif
-                                                                     (my_custom_pbuf_t *) LWIP_MEMPOOL_ALLOC(RX_POOL);
+                                                                    (my_custom_pbuf_t *) LWIP_MEMPOOL_ALLOC(RX_POOL);
     if (custombuf == NULL)
     {
         // Shared by every worker, so the gate has to be atomic. A silent drop
@@ -252,10 +189,6 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
         {
             LOGW("PacketsToConnection: dropping a packet, the zero-copy RX wrapper pool (%d) is exhausted",
                  (int) WW_LWIP_RX_WRAPPER_POOL_SIZE);
-        }
-        if (is_fragment)
-        {
-            ptcPurgeRefusedFragmentLocked(&fragment_key, inp);
         }
         bufferpoolReuseBuffer(origin_pool, buf);
         return;
@@ -273,10 +206,6 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
         PBUF_RAW, sbufGetLength(buf), PBUF_REF, &custombuf->p, sbufGetMutablePtr(buf), sbufGetLength(buf));
     if (p == NULL)
     {
-        if (is_fragment)
-        {
-            ptcPurgeRefusedFragmentLocked(&fragment_key, inp);
-        }
         bufferpoolReuseBuffer(origin_pool, buf);
         LWIP_MEMPOOL_FREE(RX_POOL, custombuf);
         return;
@@ -285,20 +214,12 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
     /* Input may synchronously free the custom pbuf and its sbuf. */
     if (wwLwipEngineInput(wwLwipEngineCurrent(), p, inp) != ERR_OK)
     {
-        if (is_fragment)
-        {
-            discard ip4_reass_purge(inp,
-                                    &fragment_key.source,
-                                    &fragment_key.destination,
-                                    fragment_key.protocol,
-                                    fragment_key.identification);
-        }
         pbuf_free(p);
     }
 }
 
-#ifdef PTC_FRAGMENT_ADMISSION_TEST_HOOKS
-void ptcFragmentAdmissionTestSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
+#ifdef PTC_RECEIVE_ADMISSION_TEST_HOOKS
+void ptcReceiveAdmissionTestSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
 {
     ptcSubmitPacketToStack(buf, inp);
 }

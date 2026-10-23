@@ -40,7 +40,7 @@ void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err)
         return;
     }
 
-    ls->tcp_pcb = NULL;
+    ls->tcp_pcb   = NULL;
     ls->route_ctx = NULL;
 
     if (lineIsAlive(ls->line))
@@ -69,6 +69,9 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
         }
         return ERR_OK;
     }
+
+    assert(currentThreadOwnsWorker(lineGetWID(ls->line)));
+    assert(wwLwipEngineCurrent() == ls->engine);
 
     if (err != ERR_OK)
     {
@@ -119,31 +122,6 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
     }
 
     wid_t owner_wid = lineGetWID(ls->line);
-    if (UNLIKELY(! currentThreadOwnsWorker(owner_wid)))
-    {
-        if (! ls->refused_retry_queued)
-        {
-            ls->refused_retry_queued         = true;
-            line_task_submit_result_e result = kLineTaskSubmitRejectedSettled;
-            if (lineIsAlive(ls->line))
-            {
-                result = lineScheduleTask(ls->line, ptcRefusedDataRetryTask, ls->tunnel, NULL);
-            }
-            if (result == kLineTaskSubmitRejectedSettled)
-            {
-                ls->refused_retry_queued = false;
-                if (ptcRequiredControlRefusedLocked(ls, "refused TCP data replay"))
-                {
-                    return ERR_ABRT;
-                }
-            }
-            else
-            {
-                assert(result == kLineTaskSubmitAcceptedAsync);
-            }
-        }
-        return ERR_MEM;
-    }
 
     if (! lineIsAlive(ls->line))
     {

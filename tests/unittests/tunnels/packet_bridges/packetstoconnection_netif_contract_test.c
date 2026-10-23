@@ -53,7 +53,6 @@ static void destroy(tunnel_t *t)
     memoryFree(ts->routes_v4);
     mutexDestroy(&ts->drain_lock);
     mutexDestroy(&ts->dns_lock);
-    mutexDestroy(&ts->owned_lines_lock);
     tunnelDestroy(t);
 }
 

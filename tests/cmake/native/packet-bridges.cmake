@@ -102,7 +102,7 @@ if(TARGET PacketsToConnection)
     waterwall_add_native_executable(packetstoconnection_fragment_admission_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_bridges/packetstoconnection_fragment_admission_test.c
       ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/upstream/payload.c)
     target_compile_definitions(packetstoconnection_fragment_admission_test PRIVATE
-      PTC_FRAGMENT_ADMISSION_TEST_HOOKS=1
+      PTC_RECEIVE_ADMISSION_TEST_HOOKS=1
     )
     target_include_directories(packetstoconnection_fragment_admission_test PRIVATE
       ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/include
@@ -235,7 +235,7 @@ if(LINUX AND TARGET PacketsToConnection)
     ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/upstream/payload.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}
     ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)
-  target_compile_definitions(packetstoconnection_receive_batch_test PRIVATE PTC_FRAGMENT_ADMISSION_TEST_HOOKS=1)
+  target_compile_definitions(packetstoconnection_receive_batch_test PRIVATE PTC_RECEIVE_ADMISSION_TEST_HOOKS=1)
   target_include_directories(packetstoconnection_receive_batch_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/PacketsToConnection/include/PacketsToConnection
   )

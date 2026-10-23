@@ -40,13 +40,13 @@ typedef enum ptc_submit_expectation_e
 
 typedef struct ptc_fixture_s
 {
-    twf_worker_env_t env;
-    twf_trace_t      trace;
-    tunnel_t        *ptc;
-    tunnel_t        *next;
-    tunnel_chain_t  *chain;
-    line_t          *line;
-    line_t          *packet_line;
+    twf_worker_env_t  env;
+    twf_trace_t       trace;
+    tunnel_t         *ptc;
+    tunnel_t         *next;
+    tunnel_chain_t   *chain;
+    line_t           *line;
+    line_t           *packet_line;
     ww_lwip_engine_t *engine;
 } ptc_fixture_t;
 
@@ -183,7 +183,6 @@ static void ptcFixtureSetup(ptc_fixture_t *fixture)
     state->max_pending_bytes   = kPtcDefaultMaxPendingBytes;
     state->max_pending_entries = kPtcMaxPendingEntries;
     twfRequire(state->owned_lines != NULL, "failed to allocate the PTC owner registry");
-    mutexInit(&state->owned_lines_lock);
     atomic_init(&state->stopping, false);
     quiescenceGateInit(&state->output_gate);
     quiescenceGateInit(&state->next_gate);
@@ -212,7 +211,6 @@ static void ptcFixtureTeardown(ptc_fixture_t *fixture)
 
     ptc_tstate_t *state = tunnelGetState(fixture->ptc);
     twfRequire(state->owned_lines[0] == NULL, "PacketsToConnection owner registry was not drained");
-    mutexDestroy(&state->owned_lines_lock);
     memoryFree(state->owned_lines);
     state->owned_lines = NULL;
 
@@ -313,6 +311,55 @@ static void caseRefusalWithoutOrderlyHandoffAborts(void)
     ptcFixtureTeardown(&fixture);
 }
 
+typedef struct corrupt_ack_s
+{
+    ptc_fixture_t *fixture;
+    unsigned       mode;
+} corrupt_ack_t;
+
+static void corruptAckAccounting(void *argument)
+{
+    const corrupt_ack_t *test = argument;
+    ptc_lstate_t        *ls   = lineGetState(test->fixture->line, test->fixture->ptc);
+    enterEngine();
+    ptcReserveWriteSlots(ls);
+    ptcAckQueuePushBack(ls, NULL, 19);
+    sbuf_ack_t *ack = sbuf_ack_queue_t_front_mut(&ls->ack_queue);
+    if (test->mode == 3)
+    {
+        ls->pending_bytes = 18;
+        ptcAckQueuePopFront(ls);
+    }
+    else
+    {
+        if (test->mode == 0)
+            ack->written = 20;
+        else if (test->mode == 1)
+            ack->written = 19;
+        else
+            ack->buf = bufferpoolGetSmallBuffer(lineGetBufferPool(ls->line));
+        discard ptcTcpSendCompleteCallback(ls, ls->tcp_pcb, 19);
+    }
+    leaveEngine();
+}
+
+static void caseCorruptAckAccountingAborts(void)
+{
+    twfSetCase("PTC corrupted ACK ownership/accounting aborts in Release and Debug");
+    tosResetProcessApi(true);
+    ptc_fixture_t fixture;
+    ptcFixtureSetup(&fixture);
+    discard ptcAttachTestPcb(&fixture, ptcTcpPcbUsed());
+    for (unsigned mode = 0; mode < 4; ++mode)
+    {
+        corrupt_ack_t test = {.fixture = &fixture, .mode = mode};
+        tosRequireChildExit("PTC corrupted ACK accounting", corruptAckAccounting, &test, kTosChildDirectAbort);
+    }
+    ptcCloseLineForStop(fixture.ptc, fixture.line);
+    fixture.line = NULL;
+    ptcFixtureTeardown(&fixture);
+}
+
 static void caseErrorClearsRouteBeforeTerminalClose(void)
 {
     twfSetCase("PTC error clears its route before refused terminal reconciliation");
@@ -400,7 +447,7 @@ static void casePendingBudgetAllowsOneReadOfHeadroom(uint32_t pool_size)
     twfSetCase("PTC admits a 1 MiB delivery with pool-independent headroom and rejects bytes beyond bounded headroom");
     g_pool_size             = pool_size;
     const uint32_t headroom = 1024U * 1024U;
-    ptc_fixture_t fixture;
+    ptc_fixture_t  fixture;
     ptcFixtureSetup(&fixture);
     const uint32_t pcb_baseline = ptcTcpPcbUsed();
     discard        ptcAttachTestPcb(&fixture, pcb_baseline);
@@ -743,6 +790,7 @@ int main(void)
         caseScaledSendCapacity(mode);
     caseOwnerRetryRefusalPublishesAndDrainsOwnedLine();
     caseRefusalWithoutOrderlyHandoffAborts();
+    caseCorruptAckAccountingAborts();
     caseErrorClearsRouteBeforeTerminalClose();
     caseCreditedDeliveryRefusalRollsBackCreditAndRetainsPbuf();
 

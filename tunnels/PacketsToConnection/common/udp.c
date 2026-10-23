@@ -71,11 +71,7 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
     if (flow_it.ref != ptc_udp_flow_map_t_end(&route_ctx->udp_flows).ref)
     {
         line = flow_it.ref->second;
-        if (! lineIsAlive(line))
-        {
-            ptc_udp_flow_map_t_erase_at(&route_ctx->udp_flows, flow_it);
-            line = NULL;
-        }
+        assert(lineIsAlive(line));
     }
 
     if (line == NULL)
