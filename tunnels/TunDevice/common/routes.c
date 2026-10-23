@@ -461,10 +461,18 @@ bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings
         goto done;
     }
 
+    for (size_t i = 0; i < routes.count; ++i)
+    {
+        if (routes.items[i].family != AF_INET)
+        {
+            LOGF("TunDevice: capture supports IPv4 routes only; route-cidrs contains an IPv6 route");
+            goto done;
+        }
+    }
+
     if (! found_routes)
     {
-        const char *default_route = addressIsIp6(state->ip_present) ? "::/0" : "0.0.0.0/0";
-        if (! routeListParseAndAppend(&routes, default_route, "TunDevice->settings->route-cidrs"))
+        if (! routeListParseAndAppend(&routes, "0.0.0.0/0", "TunDevice->settings->route-cidrs"))
         {
             goto done;
         }

@@ -430,6 +430,16 @@
     )
 
     if(TARGET TunDevice)
+      waterwall_add_native_executable(tundevice_routes_configuration_test SUPPORT SOURCES
+        ${WATERWALL_UNIT_SOURCE_ROOT}/devices/tundevice_routes_configuration_test.c)
+      target_link_libraries(tundevice_routes_configuration_test PRIVATE TunDevice ww_test_support)
+      target_link_options(tundevice_routes_configuration_test PRIVATE
+        "-Wl,--wrap=tundeviceCreate" "-Wl,--wrap=tundeviceAddRoute"
+        "-Wl,--wrap=tundeviceDetectDefaultInterface")
+      add_dependencies(waterwall_unit_tests tundevice_routes_configuration_test)
+      add_waterwall_unit_test(waterwall.tundevice_routes_configuration_unit tundevice_routes_configuration_test
+        "unit;net;tun;linux;configuration;routes")
+
       waterwall_add_native_executable(tundevice_gso_configuration_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/devices/tundevice_gso_configuration_test.c)
   target_link_libraries(tundevice_gso_configuration_test PRIVATE ww_test_support)
       target_link_libraries(tundevice_gso_configuration_test PRIVATE TunDevice)
