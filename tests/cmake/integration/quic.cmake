@@ -9,11 +9,16 @@ if(TARGET QuicClient AND TARGET QuicServer AND
     set_tests_properties(${quic_case} PROPERTIES TIMEOUT 65)
     add_waterwall_test_labels(${quic_case} "integration" "tunnels" "quic")
   endforeach()
-  add_waterwall_isolated_test(waterwall.quic_config_startup
-    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/quic_config_validation_test.py"
-    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
-  set_tests_properties(waterwall.quic_config_startup PROPERTIES TIMEOUT 180)
-  add_waterwall_test_labels(waterwall.quic_config_startup "integration" "tunnels" "quic" "configuration" "negative")
+  # Each constructor has over a hundred startup cases. Give the roles separate
+  # scheduling slots so packed startup cost does not accumulate in one test.
+  foreach(quic_role IN ITEMS client server)
+    set(quic_config_case waterwall.quic_config_startup_${quic_role})
+    add_waterwall_isolated_test(${quic_config_case}
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/quic_config_validation_test.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${quic_role}")
+    set_tests_properties(${quic_config_case} PROPERTIES TIMEOUT 180)
+    add_waterwall_test_labels(${quic_config_case} "integration" "tunnels" "quic" "configuration" "negative")
+  endforeach()
   if(TARGET VlessClient AND TARGET VlessServer AND TARGET SpeedTestClient AND TARGET SpeedTestServer)
     add_waterwall_isolated_test(waterwall.quic_speedtest_vless_udp
       "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/quic_integration.py"

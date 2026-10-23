@@ -8,9 +8,12 @@ Consumed setting names and the node envelope reject embedded-NUL aliases,
 including duplicate fields and names/whole settings supplied through variables;
 unrelated unknown settings retain their existing policy.
 Canonical local certificate/key inputs are copied into each private directory.
-CTest: waterwall.quic_config_startup, under the loopback namespace wrapper.
+CTest: waterwall.quic_config_startup_{client,server}, under the loopback
+namespace wrapper. Each role owns an independent CTest budget; individual
+startup and shutdown deadlines apply unchanged to every configuration.
 """
 
+import argparse
 import copy
 import json
 import os
@@ -99,8 +102,8 @@ def run_case(binary, role, case, settings, error=None, *, variable_key=None,
                 f"{role}/{case}: missing QUIC/{error!r} diagnostic\n{output}"
 
 
-def run(binary):
-    for role in ("client", "server"):
+def run(binary, roles=("client", "server")):
+    for role in roles:
         base = ({"sni": "tls.integration.test"} if role == "client" else
                 {"cert-file": "server.crt", "key-file": "server.key"})
         run_case(binary, role, "defaults", base)
@@ -208,5 +211,9 @@ def run(binary):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("binary", type=Path)
+    parser.add_argument("role", nargs="?", choices=("client", "server"))
+    arguments = parser.parse_args()
     install_termination_handler()
-    run(str(Path(sys.argv[1]).resolve()))
+    run(str(arguments.binary.resolve()), (arguments.role,) if arguments.role else ("client", "server"))
