@@ -7,6 +7,7 @@
 #include "wwapi.h"
 
 #include "devices/device_flow_affinity.h"
+#include "loggers/log_rate_limiter.h"
 #include "test_assert.h"
 
 #include <arpa/inet.h>
@@ -39,6 +40,33 @@ static const native_record_t   *records;
 static const expected_packet_t *expected_packets;
 static unsigned                 record_count, reads, expected_count, delivered, checkouts, recycles;
 static sbuf_t                  *outstanding[kFixtureBurst];
+static uint64_t                 warning_now_ms;
+static unsigned                 packet_warnings, native_writes;
+static const char              *warning_match;
+
+static bool fixtureWarningGate(atomic_log_rate_limiter_t *limiter, uint64_t interval)
+{
+    return atomicLogRateLimiterShouldLogAt(limiter, interval, warning_now_ms);
+}
+
+static void captureWarning(int level, const char *bytes, int length)
+{
+    discard      level;
+    char         text[512];
+    const size_t size = min((size_t) max(length, 0), sizeof(text) - 1);
+    memcpy(text, bytes, size);
+    text[size] = '\0';
+    if (warning_match != NULL && strstr(text, warning_match) != NULL)
+        ++packet_warnings;
+}
+
+static ssize_t fixtureWritev(int fd, const struct iovec *iov, int count)
+{
+    require(fd == kFixtureFd && count == 2 && iov[0].iov_len == 4, "utun output framing changed");
+    ++native_writes;
+    errno = EAGAIN;
+    return -1;
+}
 
 static sbuf_t *fixtureGetBuffer(buffer_pool_t *pool)
 {
@@ -111,11 +139,15 @@ static void fixtureDistribute(device_reader_session_t *session, sbuf_t **buffers
 }
 
 #define readv                                       fixtureReadv
+#define writev                                      fixtureWritev
+#define atomicLogRateLimiterShouldLog               fixtureWarningGate
 #define bufferpoolGetSmallBuffer                    fixtureGetBuffer
 #define bufferpoolReuseBuffer                       fixtureReuseBuffer
 #define deviceFlowAffinityPostBatchDroppingOverflow fixtureDistribute
 #include "../../../ww/devices/tun/tun_darwin.c"
 #undef readv
+#undef writev
+#undef atomicLogRateLimiterShouldLog
 #undef bufferpoolGetSmallBuffer
 #undef bufferpoolReuseBuffer
 #undef deviceFlowAffinityPostBatchDroppingOverflow
@@ -141,6 +173,50 @@ static void runDrainCase(buffer_pool_t *pool, const char *name, const native_rec
     require(checkouts == recycles, "receive retained a checked-out buffer");
     for (unsigned i = 0; i < ARRAY_SIZE(outstanding); ++i)
         require(outstanding[i] == NULL, "receive retained a staged buffer");
+}
+
+static void testPacketWarnings(buffer_pool_t *pool)
+{
+    loggerSetHandler(getInternalLogger(), captureWarning);
+    for (unsigned mode = 0; mode < 2; ++mode)
+    {
+        atomicLogRateLimiterInitialize(mode == 0 ? &tun_oversized_output_log : &tun_transient_write_log);
+        warning_now_ms  = 0;
+        packet_warnings = native_writes = checkouts = recycles = 0;
+        warning_match                                          = mode == 0 ? "exceeds device MTU" : "writing to device";
+        tun_device_t device = {.name = "utun-warning-fixture", .handle = kFixtureFd, .mtu = kFixtureMtu};
+        atomic_init(&device.lifecycle, kTunLifecycleUp);
+        worker_t worker = {.buffer_pool = pool};
+        for (unsigned burst = 0; burst < 2; ++burst)
+        {
+            sbuf_t        *buffers[4];
+            const unsigned count = burst == 0 ? 4 : 1;
+            for (unsigned i = 0; i < count; ++i)
+            {
+                buffers[i] = fixtureGetBuffer(pool);
+                sbufSetLength(buffers[i], mode == 0 ? kFixtureMtu + 1 : 20);
+                ((uint8_t *) sbufGetMutablePtr(buffers[i]))[0] = 0x45;
+            }
+            require(tunWriteBatch(&device, &worker, buffers, count), "packet warning changed device lifecycle");
+            require(packet_warnings == burst + 1 && recycles == 4 + burst,
+                    "output warning burst was unbounded or failed to settle every buffer");
+            warning_now_ms += kTunPacketWarningIntervalMs;
+        }
+        require(native_writes == (mode == 0 ? 0 : 5), "transient output/drop behavior changed");
+    }
+    atomicLogRateLimiterInitialize(&tun_short_frame_log);
+    warning_match   = "short utun frame";
+    packet_warnings = 0;
+    warning_now_ms  = 0;
+    native_record_t short_frames[kFixtureBurst];
+    for (unsigned i = 0; i < ARRAY_SIZE(short_frames); ++i)
+        short_frames[i] = (native_record_t) {3, 0, 0};
+    runDrainCase(pool, "bounded short-frame warnings", short_frames, ARRAY_SIZE(short_frames), NULL, 0, kTunDrainAgain);
+    require(packet_warnings == 1, "short-frame warning burst was unbounded");
+    warning_now_ms += kTunPacketWarningIntervalMs;
+    runDrainCase(
+        pool, "short-frame warning interval resumes", short_frames, ARRAY_SIZE(short_frames), NULL, 0, kTunDrainAgain);
+    require(packet_warnings == 2, "short-frame warnings did not resume after interval");
 }
 
 int main(void)
@@ -193,6 +269,7 @@ int main(void)
                  0,
                  kTunDrainAgain);
 
+    testPacketWarnings(pool);
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large);
     masterpoolMakeEmpty(medium);

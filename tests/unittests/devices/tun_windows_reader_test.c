@@ -4,6 +4,7 @@
  * CTest: waterwall.tun_windows_reader_unit */
 #include "devices/device_flow_affinity.h"
 #include "fixtures/worker_registry_fixture.h"
+#include "loggers/log_rate_limiter.h"
 #include "test_assert.h"
 #include "wintun.h"
 #include "worker_messages.h"
@@ -45,6 +46,32 @@ static HANDLE           stop_done;
 static bool             stop_during_rearm;
 static atomic_uint      foreign_notifications;
 static atomic_uint      refusals;
+static uint64_t         warning_now_ms;
+static unsigned         packet_warnings, output_recycles;
+static bool             count_output_recycles;
+
+static bool fixtureWarningGate(atomic_log_rate_limiter_t *limiter, uint64_t interval)
+{
+    return atomicLogRateLimiterShouldLogAt(limiter, interval, warning_now_ms);
+}
+
+static void captureWarning(int level, const char *bytes, int length)
+{
+    discard      level;
+    char         text[512];
+    const size_t size = min((size_t) max(length, 0), sizeof(text) - 1);
+    memcpy(text, bytes, size);
+    text[size] = '\0';
+    if (strstr(text, "exceeds device MTU") != NULL)
+        ++packet_warnings;
+}
+
+static void fixtureReuseBuffer(buffer_pool_t *pool, sbuf_t *buffer)
+{
+    if (count_output_recycles)
+        ++output_recycles;
+    bufferpoolReuseBuffer(pool, buffer);
+}
 
 static worker_message_submit_result_e fixtureQueue(wid_t wid, WorkerMessageCallback callback,
                                                    WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
@@ -143,6 +170,8 @@ static void WINAPI fixtureAdapterLuid(WINTUN_ADAPTER_HANDLE adapter, NET_LUID *l
 #define GetIpInterfaceEntry                         fixtureGetIpInterface
 #define SetIpInterfaceEntry                         fixtureSetIpInterface
 #define InitializeIpInterfaceEntry                  fixtureInitializeIpInterface
+#define atomicLogRateLimiterShouldLog               fixtureWarningGate
+#define bufferpoolReuseBuffer                       fixtureReuseBuffer
 #include "../../../ww/devices/tun/tun_windows.c"
 #undef sendWorkerMessageForceQueueWithCleanup
 #undef requestProgramShutdown
@@ -152,6 +181,34 @@ static void WINAPI fixtureAdapterLuid(WINTUN_ADAPTER_HANDLE adapter, NET_LUID *l
 #undef GetIpInterfaceEntry
 #undef SetIpInterfaceEntry
 #undef InitializeIpInterfaceEntry
+#undef atomicLogRateLimiterShouldLog
+#undef bufferpoolReuseBuffer
+
+static void testOversizedOutputWarnings(buffer_pool_t *pool)
+{
+    atomicLogRateLimiterInitialize(&tun_oversized_output_log);
+    loggerSetHandler(getInternalLogger(), captureWarning);
+    warning_now_ms  = 0;
+    packet_warnings = output_recycles = 0;
+    tun_device_t device               = {.mtu = 1500};
+    atomic_init(&device.lifecycle, kTunLifecycleUp);
+    for (unsigned burst = 0; burst < 2; ++burst)
+    {
+        sbuf_t        *buffers[4];
+        const unsigned count = burst == 0 ? 4 : 1;
+        for (unsigned i = 0; i < count; ++i)
+        {
+            buffers[i] = bufferpoolGetSmallBuffer(pool);
+            sbufSetLength(buffers[i], 1501);
+        }
+        count_output_recycles = true;
+        require(tunWriteBatch(&device, getCurrentWorker(), buffers, count), "oversized drop failed device lifecycle");
+        count_output_recycles = false;
+        require(packet_warnings == burst + 1 && output_recycles == 4 + burst,
+                "oversized output warnings were unbounded or leaked a buffer");
+        warning_now_ms += kTunDiscardReportIntervalMs;
+    }
+}
 
 static void testIpv4MtuConfiguration(void)
 {
@@ -499,6 +556,7 @@ int main(void)
     testStartupRefusalAndTerminalReceive();
     testStopRacesWithAdmittedRearm();
     testRefusedNativeNotification();
+    testOversizedOutputWarnings(pool);
     require(tokenCount() == 0 && atomicLoadRelaxed(&foreign_notifications) > 0 && ends == 12,
             "fixture missed foreign notification or leaked sessions");
     bufferpoolDestroy(pool);

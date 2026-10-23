@@ -39,6 +39,8 @@ enum
     kTunDiscardReportIntervalMs = 1000
 };
 
+static atomic_log_rate_limiter_t tun_oversized_output_log;
+
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in the reader session");
 
 // tun_windows_receive_policy.h is included before <windows.h> and is compiled on
@@ -703,9 +705,10 @@ static bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, siz
 
         if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
         {
-            LOGW("TunDevice: discarded a packet -> size %d exceeds device MTU %u",
-                 sbufGetLength(buf),
-                 tunDeviceMtu(tdev));
+            if (atomicLogRateLimiterShouldLog(&tun_oversized_output_log, kTunDiscardReportIntervalMs))
+                LOGW("TunDevice: discarded a packet -> size %d exceeds device MTU %u",
+                     sbufGetLength(buf),
+                     tunDeviceMtu(tdev));
 
             bufferpoolReuseBuffer(worker->buffer_pool, buf);
             continue;

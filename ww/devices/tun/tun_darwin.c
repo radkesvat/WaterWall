@@ -35,8 +35,13 @@ enum
     kMaxReadDistributeQueueSize = 128,
     kTunReaderQueueBytes        = 8 * 1024 * 1024,
     kTunReaderQueuePackets      = 1024,
-    kTunReaderStopPollMs        = 100
+    kTunReaderStopPollMs        = 100,
+    kTunPacketWarningIntervalMs = 1000
 };
+
+static atomic_log_rate_limiter_t tun_oversized_output_log;
+static atomic_log_rate_limiter_t tun_transient_write_log;
+static atomic_log_rate_limiter_t tun_short_frame_log;
 
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in the reader session");
 
@@ -327,7 +332,8 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
 
         if (nread <= (int) sizeof(family))
         {
-            LOGW("TunDevice: dropping short utun frame of size %d", nread);
+            if (atomicLogRateLimiterShouldLog(&tun_short_frame_log, kTunPacketWarningIntervalMs))
+                LOGW("TunDevice: dropping short utun frame of size %d", nread);
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
             continue;
         }
@@ -442,9 +448,10 @@ static bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, siz
 
         if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
         {
-            LOGW("TunDevice: discarded a packet -> size %d exceeds device MTU %u",
-                 sbufGetLength(buf),
-                 tunDeviceMtu(tdev));
+            if (atomicLogRateLimiterShouldLog(&tun_oversized_output_log, kTunPacketWarningIntervalMs))
+                LOGW("TunDevice: discarded a packet -> size %d exceeds device MTU %u",
+                     sbufGetLength(buf),
+                     tunDeviceMtu(tdev));
             bufferpoolReuseBuffer(worker->buffer_pool, buf);
             continue;
         }
@@ -489,10 +496,11 @@ static bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, siz
         {
             if (tunIoErrnoIsTransient(write_errno) || tunWriteErrnoIsPacketLocal(write_errno))
             {
-                LOGW("TunDevice: discarded a packet, writing to device %s failed with errno %d (%s)",
-                     tdev->name,
-                     write_errno,
-                     strerror(write_errno));
+                if (atomicLogRateLimiterShouldLog(&tun_transient_write_log, kTunPacketWarningIntervalMs))
+                    LOGW("TunDevice: discarded a packet, writing to device %s failed with errno %d (%s)",
+                         tdev->name,
+                         write_errno,
+                         strerror(write_errno));
                 continue;
             }
 
