@@ -116,12 +116,17 @@ class DatagramRelay:
         except BaseException as error:
             self.errors.append(error)
 
-    def __exit__(self, exc_type, exc, traceback):
+    def stop_forwarding(self):
         self.stop.set()
         self.thread.join(timeout=2)
-        self.front.close()
-        self.back.close()
         assert not self.thread.is_alive(), "datagram relay did not stop"
+
+    def __exit__(self, exc_type, exc, traceback):
+        try:
+            self.stop_forwarding()
+        finally:
+            self.front.close()
+            self.back.close()
         if exc_type is None:
             assert not self.errors, self.errors
             assert all(self.applied.values()), f"impairment was not exercised: {self.applied}"
@@ -262,6 +267,12 @@ def roundtrip(binary, mode):
                     assert exact(client, len(download)) == download, "QUIC download changed byte order"
                     if isinstance(relay, StreamRelay):
                         relay.transfer_complete.set()
+                    elif isinstance(relay, DatagramRelay):
+                        # Both payloads are verified. Stop forwarding while the
+                        # runtime's carrier sockets are still open, so a late
+                        # datagram cannot turn orderly shutdown into ECONNREFUSED.
+                        # Keep the relay sockets open until the runtime exits.
+                        relay.stop_forwarding()
                     client.shutdown(socket.SHUT_RDWR)
                     orderly_stop(process)
                     task.result(timeout=20)
