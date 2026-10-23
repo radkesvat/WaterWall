@@ -1924,8 +1924,12 @@ err_t            udp_sendto     (struct udp_pcb *pcb, struct pbuf *p,]=])
 
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/udp.c"
-        [=[                if (q != NULL) {]=]
-        [=[                if ((q != NULL) && (pcb->pretend_netif_idx == NETIF_NO_INDEX)) {]=])
+        [=[              if (mpcb->recv != NULL) {
+                struct pbuf *q;
+                q = pbuf_clone(PBUF_RAW, PBUF_POOL, p);]=]
+        [=[              if ((mpcb->recv != NULL) && (pcb->pretend_netif_idx == NETIF_NO_INDEX)) {
+                struct pbuf *q;
+                q = pbuf_clone(PBUF_RAW, PBUF_POOL, p);]=])
 
     ww_lwip_replace_once(
         "${lwip_dir}/src/core/udp.c"
