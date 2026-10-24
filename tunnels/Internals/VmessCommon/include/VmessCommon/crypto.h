@@ -6,7 +6,10 @@ enum
 {
     VMESS_REQUEST_PREFIX_SIZE        = 42,
     VMESS_REQUEST_HEADER_MAX         = 316,
+    VMESS_REQUEST_WIRE_MAX           = 374,
     VMESS_RESPONSE_HEADER_SIZE       = 38,
+    VMESS_RESPONSE_HEADER_MAX        = 259,
+    VMESS_RESPONSE_WIRE_MAX          = 293,
     VMESS_MAX_BODY_WIRE_SIZE         = 65551,
     VMESS_SECURITY_AES128_GCM        = 3,
     VMESS_SECURITY_CHACHA20_POLY1305 = 4,
@@ -57,6 +60,10 @@ typedef struct vmess_kdf_segment_s
 WCRYPTO_MUST_USE wcrypto_status_t vmessKdf(const uint8_t *key, size_t key_length, const vmess_kdf_segment_t *path,
                                            size_t path_count, uint8_t out[32]);
 WCRYPTO_MUST_USE wcrypto_status_t vmessPrepareKey(const uint8_t uuid[16], vmess_prepared_key_t *out);
+/* Timestamp and random bytes are explicit; callers obtain fresh material when
+ * committing the first request. No mutable AuthID trial context is needed. */
+WCRYPTO_MUST_USE wcrypto_status_t vmessAuthIdCreate(const vmess_prepared_key_t *key, uint64_t timestamp,
+                                                    const uint8_t random[4], uint8_t out[16]);
 WCRYPTO_MUST_USE wcrypto_status_t vmessAuthIdInit(vmess_auth_id_ctx_t *ctx);
 void                              vmessAuthIdDestroy(vmess_auth_id_ctx_t *ctx);
 /* AuthenticationFailed means CRC mismatch and permits the next candidate.
@@ -73,10 +80,26 @@ WCRYPTO_MUST_USE wcrypto_status_t vmessRequestHeaderOpen(const uint8_t cmd_key[1
                                                          size_t encrypted_length, vmess_request_header_t *out);
 WCRYPTO_MUST_USE wcrypto_status_t vmessRequestHeaderParse(const uint8_t *plaintext, size_t length,
                                                           vmess_request_header_t *out);
+bool                              vmessModeValid(uint8_t security, uint8_t options, uint8_t command);
+/* Emits AuthID, sealed length, nonce and sealed request. Padding is 0..15 bytes;
+ * it is independent of body padding. Outputs must not overlap the inputs. */
+WCRYPTO_MUST_USE wcrypto_status_t vmessRequestHeaderSeal(const uint8_t cmd_key[16], const uint8_t auth_id[16],
+                                                         const uint8_t nonce[8], const vmess_request_header_t *header,
+                                                         const uint8_t *padding, size_t padding_length, uint8_t *out,
+                                                         size_t capacity, size_t *wire_length);
 WCRYPTO_MUST_USE wcrypto_status_t vmessResponseKeys(const uint8_t request_key[16], const uint8_t request_iv[16],
                                                     uint8_t response_key[16], uint8_t response_iv[16]);
 WCRYPTO_MUST_USE wcrypto_status_t vmessResponseHeaderSeal(const uint8_t response_key[16], const uint8_t response_iv[16],
                                                           uint8_t response, uint8_t out[VMESS_RESPONSE_HEADER_SIZE]);
+/* Use the derived response keys. Authenticate this fixed prefix before retaining
+ * the bounded payload. Response options/commands are consumed without applying
+ * remote account or endpoint changes. */
+WCRYPTO_MUST_USE wcrypto_status_t vmessResponseLengthOpen(const uint8_t response_key[16], const uint8_t response_iv[16],
+                                                          const uint8_t encrypted_length[18],
+                                                          uint16_t     *plaintext_length);
+WCRYPTO_MUST_USE wcrypto_status_t vmessResponseHeaderOpen(const uint8_t response_key[16], const uint8_t response_iv[16],
+                                                          uint8_t expected_response, const uint8_t *encrypted_header,
+                                                          size_t encrypted_length);
 
 typedef struct vmess_body_ctx_s
 {
@@ -85,6 +108,7 @@ typedef struct vmess_body_ctx_s
     void    *shake;
     uint8_t  key[32];
     uint8_t  length_key[32];
+    uint8_t  length_iv[16];
     uint8_t  iv[16];
     uint32_t counter;
     uint32_t pending_wire_length;
@@ -101,6 +125,10 @@ typedef struct vmess_body_ctx_s
 /* All contexts must start zeroed. Failure leaves a destroyable context. */
 WCRYPTO_MUST_USE wcrypto_status_t vmessBodyInit(vmess_body_ctx_t *ctx, const uint8_t key[16], const uint8_t iv[16],
                                                 uint8_t security, uint8_t options, uint8_t command, bool encrypt);
+/* Before processing the first record, response-direction authenticated lengths
+ * use the request key/IV, independently of response body encryption/masking. */
+WCRYPTO_MUST_USE wcrypto_status_t vmessBodySetLengthMaterial(vmess_body_ctx_t *ctx, const uint8_t request_key[16],
+                                                             const uint8_t request_iv[16]);
 void                              vmessBodyDestroy(vmess_body_ctx_t *ctx);
 size_t                            vmessBodyLengthSize(const vmess_body_ctx_t *ctx);
 size_t                            vmessBodyMaxPlaintext(const vmess_body_ctx_t *ctx);

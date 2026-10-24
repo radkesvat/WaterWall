@@ -50,6 +50,10 @@ static bool initializeCrypto(vmessserver_lstate_t *ls)
                       request->options,
                       request->command,
                       true) == kWCryptoOk;
+    if (ok && (request->options & VMESS_OPTION_AUTH_LENGTH) != 0)
+    {
+        ok = vmessBodySetLengthMaterial(&ls->output_crypto, request->key, request->iv) == kWCryptoOk;
+    }
     memorySecureZero(response_key, sizeof(response_key));
     memorySecureZero(response_iv, sizeof(response_iv));
     return ok;

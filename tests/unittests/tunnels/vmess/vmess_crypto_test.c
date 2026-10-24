@@ -10,7 +10,7 @@
  */
 #include "wwapi.h"
 
-#include "VmessServer/crypto.h"
+#include "VmessCommon/crypto.h"
 #include "test_assert.h"
 #include "vectors.h"
 
@@ -173,6 +173,239 @@ static void testBodyVectors(void)
     }
 }
 
+static void testClientHeaders(void)
+{
+    vmess_prepared_key_t key;
+    require(vmessPrepareKey(vector_uuid, &key) == kWCryptoOk, "client UUID preparation failed");
+    const uint8_t random[] = {1, 2, 3, 4};
+    uint8_t       auth_id[16];
+    require(vmessAuthIdCreate(&key, UINT64_C(1700000000), random, auth_id) == kWCryptoOk, "AuthID construction failed");
+    equal(auth_id, vector_request, 16, "independent AuthID creation vector differs");
+    require(vmessAuthIdCreate(&key, UINT64_MAX, random, auth_id) == kWCryptoInvalidArgument,
+            "negative wire timestamp accepted");
+    vmess_request_header_t header;
+    require(vmessRequestHeaderParse(vector_plain_header, sizeof(vector_plain_header), &header) == kWCryptoOk,
+            "client request model failed");
+    uint8_t       output[VMESS_REQUEST_WIRE_MAX];
+    size_t        length    = 0;
+    const uint8_t padding[] = {0xee, 0xee, 0xee};
+    require(vmessRequestHeaderSeal(key.cmd_key,
+                                   vector_request,
+                                   vector_request + 34,
+                                   &header,
+                                   padding,
+                                   sizeof(padding),
+                                   output,
+                                   sizeof(output),
+                                   &length) == kWCryptoOk,
+            "client request seal failed");
+    require(length == sizeof(vector_request), "client request wire length differs");
+    equal(output, vector_request, length, "independent request seal differs");
+    header.command = 2;
+    require(vmessRequestHeaderSeal(key.cmd_key,
+                                   vector_request,
+                                   vector_request + 34,
+                                   &header,
+                                   padding,
+                                   sizeof(padding),
+                                   output,
+                                   sizeof(output),
+                                   &length) == kWCryptoOk,
+            "client UDP request seal failed");
+    equal(output, vector_request_udp, length, "independent UDP request seal differs");
+    header.command        = 1;
+    header.address_type   = 3;
+    header.address_length = 16;
+    for (size_t i = 0; i < 16; ++i)
+    {
+        header.address[i] = (uint8_t) i;
+    }
+    require(vmessRequestHeaderSeal(
+                key.cmd_key, vector_request, vector_request + 34, &header, NULL, 0, output, sizeof(output), &length) ==
+                kWCryptoOk,
+            "client IPv6 request seal failed");
+    require(length == sizeof(vector_request_ipv6), "IPv6 request size differs");
+    equal(output, vector_request_ipv6, length, "independent IPv6 request seal differs");
+    header.address_type   = 2;
+    header.address_length = 255;
+    memset(header.address, 'a', sizeof(header.address));
+    uint8_t maximum_padding[15];
+    for (size_t i = 0; i < sizeof(maximum_padding); ++i)
+    {
+        maximum_padding[i] = (uint8_t) i;
+    }
+    require(vmessRequestHeaderSeal(key.cmd_key,
+                                   vector_request,
+                                   vector_request + 34,
+                                   &header,
+                                   maximum_padding,
+                                   sizeof(maximum_padding),
+                                   output,
+                                   sizeof(output),
+                                   &length) == kWCryptoOk,
+            "maximum domain/padding request rejected");
+    require(length == VMESS_REQUEST_WIRE_MAX, "maximum request size differs");
+    equal(output, vector_request_domain_max, length, "independent maximum request seal differs");
+    vmess_request_header_t parsed;
+    require(vmessRequestHeaderOpen(key.cmd_key,
+                                   output,
+                                   output + 34,
+                                   output + VMESS_REQUEST_PREFIX_SIZE,
+                                   length - VMESS_REQUEST_PREFIX_SIZE,
+                                   &parsed) == kWCryptoOk,
+            "maximum sealed request not accepted");
+    require(parsed.address_length == 255 && parsed.address_type == 2, "maximum domain lost");
+    require(vmessRequestHeaderSeal(key.cmd_key,
+                                   vector_request,
+                                   vector_request + 34,
+                                   &header,
+                                   maximum_padding,
+                                   sizeof(maximum_padding),
+                                   output,
+                                   sizeof(output) - 1,
+                                   &length) == kWCryptoInputTooLarge &&
+                length == 0,
+            "undersized request output accepted");
+    require(vmessRequestHeaderSeal(key.cmd_key,
+                                   vector_request,
+                                   vector_request + 34,
+                                   &header,
+                                   maximum_padding,
+                                   16,
+                                   output,
+                                   sizeof(output),
+                                   &length) == kWCryptoInvalidArgument,
+            "oversized header padding accepted");
+    header.address[254] = 0;
+    require(vmessRequestHeaderSeal(
+                key.cmd_key, vector_request, vector_request + 34, &header, NULL, 0, output, sizeof(output), &length) ==
+                kWCryptoInvalidArgument,
+            "NUL in domain accepted");
+    header.address_length = 0;
+    require(vmessRequestHeaderSeal(
+                key.cmd_key, vector_request, vector_request + 34, &header, NULL, 0, output, sizeof(output), &length) ==
+                kWCryptoInvalidArgument,
+            "empty domain accepted");
+    header.address_type   = 1;
+    header.address_length = 16;
+    require(vmessRequestHeaderSeal(
+                key.cmd_key, vector_request, vector_request + 34, &header, NULL, 0, output, sizeof(output), &length) ==
+                kWCryptoInvalidArgument,
+            "wrong literal address width accepted");
+    header.address_length = 4;
+    header.port           = 0;
+    require(vmessRequestHeaderSeal(
+                key.cmd_key, vector_request, vector_request + 34, &header, NULL, 0, output, sizeof(output), &length) ==
+                kWCryptoInvalidArgument,
+            "zero request port accepted");
+    wCryptoZero(&key, sizeof(key));
+    wCryptoZero(&header, sizeof(header));
+    wCryptoZero(&parsed, sizeof(parsed));
+}
+
+static void testClientResponses(void)
+{
+    uint8_t key[16], iv[16];
+    require(vmessResponseKeys(vector_key, vector_iv, key, iv) == kWCryptoOk, "client response keys failed");
+    equal(key, vector_response_key, sizeof(key), "independent response key differs");
+    equal(iv, vector_response_iv, sizeof(iv), "independent response IV differs");
+    const struct
+    {
+        const uint8_t *wire;
+        size_t         length;
+        bool           valid_length;
+        bool           valid_header;
+    } cases[] = {
+        {vector_response, sizeof(vector_response), true, true},
+        {vector_response_command, sizeof(vector_response_command), true, true},
+        {vector_response_command_max, sizeof(vector_response_command_max), true, true},
+        {vector_response_wrong_marker, sizeof(vector_response_wrong_marker), true, false},
+        {vector_response_short_command, sizeof(vector_response_short_command), true, false},
+        {vector_response_zero_command, sizeof(vector_response_zero_command), true, false},
+        {vector_response_too_short, sizeof(vector_response_too_short), false, false},
+        {vector_response_too_large, sizeof(vector_response_too_large), false, false},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        uint16_t         length = UINT16_MAX;
+        wcrypto_status_t status = vmessResponseLengthOpen(key, iv, cases[i].wire, &length);
+        require((status == kWCryptoOk) == cases[i].valid_length, "response length validity differs");
+        require(length == (cases[i].valid_length ? cases[i].length - 34 : 0), "response length result differs");
+        status = vmessResponseHeaderOpen(key, iv, 61, cases[i].wire + 18, cases[i].length - 18);
+        require((status == kWCryptoOk) == cases[i].valid_header, "response grammar/marker validity differs");
+    }
+    for (size_t truncated = 0; truncated < 20; ++truncated)
+    {
+        require(vmessResponseHeaderOpen(key, iv, 61, vector_response + 18, truncated) != kWCryptoOk,
+                "truncated response accepted");
+    }
+    uint8_t tampered[sizeof(vector_response)];
+    memcpy(tampered, vector_response, sizeof(tampered));
+    tampered[17] ^= 1;
+    uint16_t length = UINT16_MAX;
+    require(vmessResponseLengthOpen(key, iv, tampered, &length) == kWCryptoAuthenticationFailed && length == 0,
+            "corrupt response length tag accepted");
+    memcpy(tampered, vector_response, sizeof(tampered));
+    tampered[sizeof(tampered) - 1] ^= 1;
+    require(vmessResponseHeaderOpen(key, iv, 61, tampered + 18, sizeof(tampered) - 18) == kWCryptoAuthenticationFailed,
+            "corrupt response header tag accepted");
+    const struct
+    {
+        uint8_t        security;
+        uint8_t        options;
+        const uint8_t *wire;
+        size_t         length;
+    } records[] = {
+        {3, 13, vector_response_frame_3_13, sizeof(vector_response_frame_3_13)},
+        {3, 29, vector_response_frame_3_29, sizeof(vector_response_frame_3_29)},
+        {4, 13, vector_response_frame_4_13, sizeof(vector_response_frame_4_13)},
+        {4, 29, vector_response_frame_4_29, sizeof(vector_response_frame_4_29)},
+    };
+    for (size_t i = 0; i < sizeof(records) / sizeof(records[0]); ++i)
+    {
+        vmess_body_ctx_t rx = {0};
+        require(vmessBodyInit(&rx, key, iv, records[i].security, records[i].options, 1, false) == kWCryptoOk,
+                "response body init failed");
+        if ((records[i].options & VMESS_OPTION_AUTH_LENGTH) != 0)
+        {
+            require(vmessBodySetLengthMaterial(&rx, vector_key, vector_iv) == kWCryptoOk,
+                    "response authenticated-length material failed");
+        }
+        uint32_t wire_length = 0;
+        size_t   prefix      = vmessBodyLengthSize(&rx);
+        require(vmessBodyLengthOpen(&rx, records[i].wire, prefix, &wire_length) == kWCryptoOk &&
+                    wire_length + prefix == records[i].length,
+                "response body length differs");
+        uint8_t output[256];
+        size_t  plain_length = 0;
+        bool    eof          = false;
+        require(
+            vmessBodyOpen(&rx, records[i].wire + prefix, wire_length, output, sizeof(output), &plain_length, &eof) ==
+                    kWCryptoOk &&
+                plain_length == 5 && ! eof,
+            "response body decode failed");
+        equal(output, "reply", 5, "response body vector differs");
+        vmess_body_ctx_t tx = {0};
+        require(vmessBodyInit(&tx, key, iv, records[i].security, records[i].options, 1, true) == kWCryptoOk,
+                "response body sender init failed");
+        if ((records[i].options & VMESS_OPTION_AUTH_LENGTH) != 0)
+        {
+            require(vmessBodySetLengthMaterial(&tx, vector_key, vector_iv) == kWCryptoOk,
+                    "response sender authenticated-length material failed");
+        }
+        size_t emitted = 0;
+        require(vmessBodySeal(&tx, (const uint8_t *) "reply", 5, false, output, sizeof(output), &emitted) ==
+                        kWCryptoOk &&
+                    emitted == records[i].length,
+                "response body sender size differs");
+        equal(output, records[i].wire, prefix + 5 + 16, "independent response seal differs before random padding");
+        vmessBodyDestroy(&tx);
+        vmessBodyDestroy(&rx);
+    }
+    wCryptoZero(key, sizeof(key));
+    wCryptoZero(iv, sizeof(iv));
+}
+
 static void testEofAndCounter(void)
 {
     uint8_t          output[256];
@@ -208,6 +441,33 @@ static void testEofAndCounter(void)
     require(vmessBodyLengthOpen(&rx, vector_last_counter, 2, &length) == kVmessCounterExhausted,
             "inbound nonce counter wrapped");
     vmessBodyDestroy(&rx);
+
+    const uint8_t *last_frames[] = {vector_last_counter_auth_aes, vector_last_counter_auth_chacha};
+    for (uint8_t security = 3; security <= 4; ++security)
+    {
+        const uint8_t *frame = last_frames[security - 3];
+        require(vmessBodyInit(&rx, vector_key, vector_iv, security, 29, 1, false) == kWCryptoOk,
+                "authenticated last-frame receiver init failed");
+        rx.counter = UINT16_MAX;
+        require(vmessBodyLengthOpen(&rx, frame, 18, &length) == kWCryptoOk,
+                "authenticated last inbound length rejected");
+        require(vmessBodyOpen(&rx, frame + 18, length, output, sizeof(output), &plain_length, &eof) == kWCryptoOk &&
+                    plain_length == 4 && ! eof,
+                "authenticated counter 65535 inbound data rejected");
+        equal(output, "last", 4, "authenticated final nonce plaintext differs");
+        require(vmessBodyLengthOpen(&rx, frame, 18, &length) == kVmessCounterExhausted,
+                "authenticated inbound nonce wrapped");
+        vmessBodyDestroy(&rx);
+        require(vmessBodyInit(&tx, vector_key, vector_iv, security, 29, 1, true) == kWCryptoOk,
+                "authenticated final sender init failed");
+        tx.counter = UINT16_MAX;
+        require(vmessBodySeal(&tx, (const uint8_t *) "x", 1, false, output, sizeof(output), &output_length) ==
+                    kVmessCounterExhausted,
+                "authenticated final outgoing nonce used for data");
+        require(vmessBodySeal(&tx, NULL, 0, true, output, sizeof(output), &output_length) == kWCryptoOk,
+                "authenticated reserved outgoing nonce could not seal EOF");
+        vmessBodyDestroy(&tx);
+    }
 }
 
 static void testLargeAndFailure(void)
@@ -257,6 +517,26 @@ static void testLargeAndFailure(void)
 
 static void testModes(void)
 {
+    for (uint8_t security = 3; security <= 5; ++security)
+    {
+        for (uint8_t command = 1; command <= 2; ++command)
+        {
+            for (unsigned options = 0; options <= UINT8_MAX; ++options)
+            {
+                bool expected = options == 1 || options == 5;
+                if (security == VMESS_SECURITY_NONE)
+                {
+                    expected |= command == 1 ? options == 0 : options == 13;
+                }
+                else
+                {
+                    expected |= options == 13 || options == 17 || options == 21 || options == 29;
+                }
+                require(vmessModeValid(security, (uint8_t) options, command) == expected,
+                        "shared mode validation differs from supported option matrix");
+            }
+        }
+    }
     vmess_body_ctx_t ctx = {0};
     require(vmessBodyInit(&ctx, vector_key, vector_iv, 5, 0, 1, true) == kWCryptoOk && ctx.raw,
             "raw NONE TCP rejected");
@@ -287,6 +567,8 @@ int main(void)
     require(globalstateInitializeSecureRandom() && frandGlobalInit(), "random initialization failed");
     TEST_RUN_CASE(testKdf);
     TEST_RUN_CASE(testHeaders);
+    TEST_RUN_CASE(testClientHeaders);
+    TEST_RUN_CASE(testClientResponses);
     TEST_RUN_CASE(testBodyVectors);
     TEST_RUN_CASE(testEofAndCounter);
     TEST_RUN_CASE(testLargeAndFailure);

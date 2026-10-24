@@ -1,7 +1,7 @@
 #pragma once
 
 #include "AuthenticationClient/interface.h"
-#include "crypto.h"
+#include "VmessCommon/crypto.h"
 #include "replay.h"
 #include "wwapi.h"
 

@@ -1,9 +1,9 @@
-#include "VmessServer/crypto.h"
+#include "VmessCommon/crypto.h"
 
 #include <openssl/evp.h>
 
 #if OPENSSL_VERSION_NUMBER < 0x30300000L
-#error "VmessServer requires OpenSSL 3.3 or newer for streaming SHAKE128"
+#error "VMess requires OpenSSL 3.3 or newer for streaming SHAKE128"
 #endif
 
 /* Wire behavior follows V2Fly v5.53.0 proxy/vmess/{aead,encoding}.
@@ -24,6 +24,14 @@ static void write16(uint8_t *p, uint16_t value)
 {
     p[0] = (uint8_t) (value >> 8);
     p[1] = (uint8_t) value;
+}
+
+static void write32(uint8_t *p, uint32_t value)
+{
+    p[0] = (uint8_t) (value >> 24);
+    p[1] = (uint8_t) (value >> 16);
+    p[2] = (uint8_t) (value >> 8);
+    p[3] = (uint8_t) value;
 }
 
 static uint32_t crc32Ieee(const uint8_t *p, size_t length)
@@ -174,6 +182,35 @@ wcrypto_status_t vmessAuthIdInit(vmess_auth_id_ctx_t *ctx)
     return kWCryptoOk;
 }
 
+wcrypto_status_t vmessAuthIdCreate(const vmess_prepared_key_t *key, uint64_t timestamp, const uint8_t random[4],
+                                   uint8_t out[16])
+{
+    assert(key && random && out);
+    if ((timestamp >> 63) != 0)
+    {
+        return kWCryptoInvalidArgument;
+    }
+    uint8_t plain[16] = {0};
+    write32(plain, (uint32_t) (timestamp >> 32));
+    write32(plain + 4, (uint32_t) timestamp);
+    memcpy(plain + 8, random, 4);
+    write32(plain + 12, crc32Ieee(plain, 12));
+    EVP_CIPHER_CTX *ctx          = EVP_CIPHER_CTX_new();
+    int             written      = 0;
+    int             final_length = 0;
+    bool            ok = ctx != NULL && EVP_EncryptInit_ex(ctx, EVP_aes_128_ecb(), NULL, key->auth_key, NULL) == 1 &&
+              EVP_CIPHER_CTX_set_padding(ctx, 0) == 1 &&
+              EVP_EncryptUpdate(ctx, out, &written, plain, sizeof(plain)) == 1 && written == 16 &&
+              EVP_EncryptFinal_ex(ctx, out + written, &final_length) == 1 && final_length == 0;
+    EVP_CIPHER_CTX_free(ctx);
+    wCryptoZero(plain, sizeof(plain));
+    if (! ok)
+    {
+        wCryptoZero(out, 16);
+    }
+    return ok ? kWCryptoOk : kWCryptoBackendFailed;
+}
+
 void vmessAuthIdDestroy(vmess_auth_id_ctx_t *ctx)
 {
     assert(ctx != NULL);
@@ -279,9 +316,9 @@ static wcrypto_status_t requestDerived(const uint8_t cmd_key[16], const uint8_t 
     return vmessKdf(cmd_key, 16, path, 3, out);
 }
 
-static wcrypto_status_t requestOpen(const uint8_t cmd_key[16], const uint8_t auth_id[16], const uint8_t nonce[8],
-                                    bool length_field, const uint8_t *input, size_t length, uint8_t *out,
-                                    size_t capacity)
+static wcrypto_status_t requestCrypt(const uint8_t cmd_key[16], const uint8_t auth_id[16], const uint8_t nonce[8],
+                                     bool length_field, bool encrypt, const uint8_t *input, size_t length, uint8_t *out,
+                                     size_t capacity)
 {
     uint8_t          key[32] = {0};
     uint8_t          iv[32]  = {0};
@@ -294,7 +331,7 @@ static wcrypto_status_t requestOpen(const uint8_t cmd_key[16], const uint8_t aut
     }
     if (status == kWCryptoOk)
     {
-        status = headerAead(key, iv, false, auth_id, 16, input, length, out, capacity);
+        status = headerAead(key, iv, encrypt, auth_id, 16, input, length, out, capacity);
     }
     wCryptoZero(key, sizeof(key));
     wCryptoZero(iv, sizeof(iv));
@@ -307,8 +344,9 @@ wcrypto_status_t vmessRequestLengthOpen(const uint8_t cmd_key[16], const uint8_t
 {
     uint8_t plain[2] = {0};
     assert(cmd_key && auth_id && encrypted_length && nonce && plaintext_length);
-    wcrypto_status_t status = requestOpen(cmd_key, auth_id, nonce, true, encrypted_length, 18, plain, sizeof(plain));
-    *plaintext_length       = 0;
+    wcrypto_status_t status =
+        requestCrypt(cmd_key, auth_id, nonce, true, false, encrypted_length, 18, plain, sizeof(plain));
+    *plaintext_length = 0;
     if (status == kWCryptoOk)
     {
         *plaintext_length = read16(plain);
@@ -321,7 +359,7 @@ wcrypto_status_t vmessRequestLengthOpen(const uint8_t cmd_key[16], const uint8_t
     return status;
 }
 
-static bool validMode(uint8_t security, uint8_t options, uint8_t command)
+bool vmessModeValid(uint8_t security, uint8_t options, uint8_t command)
 {
     if ((command != 1 && command != 2) ||
         (options & ~(VMESS_OPTION_CHUNK | VMESS_OPTION_MASK | VMESS_OPTION_PADDING | VMESS_OPTION_AUTH_LENGTH)) != 0)
@@ -349,7 +387,7 @@ wcrypto_status_t vmessRequestHeaderParse(const uint8_t *plaintext, size_t length
     assert(plaintext != NULL && out != NULL);
     memset(out, 0, sizeof(*out));
     if (length < 45 || length > VMESS_REQUEST_HEADER_MAX || plaintext[0] != 1 || plaintext[36] != 0 ||
-        ! validMode(plaintext[35] & 15, plaintext[34], plaintext[37]) ||
+        ! vmessModeValid(plaintext[35] & 15, plaintext[34], plaintext[37]) ||
         read32(plaintext + length - 4) != fnv1a32(plaintext, length - 4))
     {
         return kWCryptoInvalidArgument;
@@ -394,13 +432,88 @@ wcrypto_status_t vmessRequestHeaderOpen(const uint8_t cmd_key[16], const uint8_t
     {
         return kWCryptoInvalidArgument;
     }
-    wcrypto_status_t status =
-        requestOpen(cmd_key, auth_id, nonce, false, encrypted_header, encrypted_length, plaintext, sizeof(plaintext));
+    wcrypto_status_t status = requestCrypt(
+        cmd_key, auth_id, nonce, false, false, encrypted_header, encrypted_length, plaintext, sizeof(plaintext));
     if (status == kWCryptoOk)
     {
         status = vmessRequestHeaderParse(plaintext, encrypted_length - 16, out);
     }
     wCryptoZero(plaintext, sizeof(plaintext));
+    return status;
+}
+
+wcrypto_status_t vmessRequestHeaderSeal(const uint8_t cmd_key[16], const uint8_t auth_id[16], const uint8_t nonce[8],
+                                        const vmess_request_header_t *header, const uint8_t *padding,
+                                        size_t padding_length, uint8_t *out, size_t capacity, size_t *wire_length)
+{
+    assert(cmd_key && auth_id && nonce && header && wire_length);
+    assert((padding != NULL || padding_length == 0) && (out != NULL || capacity == 0));
+    *wire_length = 0;
+    if (header->version != 1 || header->port == 0 || padding_length > 15 ||
+        ! vmessModeValid(header->security, header->options, header->command) ||
+        (header->address_type == 1   ? header->address_length != 4
+         : header->address_type == 3 ? header->address_length != 16
+         : header->address_type == 2
+             ? header->address_length == 0 || memchr(header->address, 0, header->address_length) != NULL
+             : true))
+    {
+        return kWCryptoInvalidArgument;
+    }
+    size_t plain_length = 41 + (header->address_type == 2 ? 1 : 0) + header->address_length + padding_length + 4;
+    size_t total_length = VMESS_REQUEST_PREFIX_SIZE + plain_length + 16;
+    if (capacity < total_length)
+    {
+        return kWCryptoInputTooLarge;
+    }
+    uint8_t plain[VMESS_REQUEST_HEADER_MAX] = {0};
+    plain[0]                                = 1;
+    memcpy(plain + 1, header->iv, 16);
+    memcpy(plain + 17, header->key, 16);
+    plain[33] = header->response;
+    plain[34] = header->options;
+    plain[35] = (uint8_t) ((padding_length << 4) | header->security);
+    plain[37] = header->command;
+    write16(plain + 38, header->port);
+    plain[40]  = header->address_type;
+    size_t pos = 41;
+    if (header->address_type == 2)
+    {
+        plain[pos++] = header->address_length;
+    }
+    memcpy(plain + pos, header->address, header->address_length);
+    pos += header->address_length;
+    if (padding_length != 0)
+    {
+        memcpy(plain + pos, padding, padding_length);
+    }
+    write32(plain + plain_length - 4, fnv1a32(plain, plain_length - 4));
+    uint8_t length[2];
+    write16(length, (uint16_t) plain_length);
+    memcpy(out, auth_id, 16);
+    memcpy(out + 34, nonce, 8);
+    wcrypto_status_t status = requestCrypt(cmd_key, auth_id, nonce, true, true, length, sizeof(length), out + 16, 18);
+    if (status == kWCryptoOk)
+    {
+        status = requestCrypt(cmd_key,
+                              auth_id,
+                              nonce,
+                              false,
+                              true,
+                              plain,
+                              plain_length,
+                              out + VMESS_REQUEST_PREFIX_SIZE,
+                              capacity - VMESS_REQUEST_PREFIX_SIZE);
+    }
+    wCryptoZero(plain, sizeof(plain));
+    wCryptoZero(length, sizeof(length));
+    if (status == kWCryptoOk)
+    {
+        *wire_length = total_length;
+    }
+    else
+    {
+        wCryptoZero(out, total_length);
+    }
     return status;
 }
 
@@ -461,6 +574,73 @@ wcrypto_status_t vmessResponseHeaderSeal(const uint8_t response_key[16], const u
     return status;
 }
 
+static wcrypto_status_t responseOpen(const uint8_t response_key[16], const uint8_t response_iv[16], bool length_field,
+                                     const uint8_t *input, size_t length, uint8_t *out, size_t capacity)
+{
+    uint8_t          key[32] = {0};
+    uint8_t          iv[32]  = {0};
+    wcrypto_status_t status =
+        kdfLabel(response_key, length_field ? "AEAD Resp Header Len Key" : "AEAD Resp Header Key", key);
+    if (status == kWCryptoOk)
+    {
+        status = kdfLabel(response_iv, length_field ? "AEAD Resp Header Len IV" : "AEAD Resp Header IV", iv);
+    }
+    if (status == kWCryptoOk)
+    {
+        status = headerAead(key, iv, false, NULL, 0, input, length, out, capacity);
+    }
+    wCryptoZero(key, sizeof(key));
+    wCryptoZero(iv, sizeof(iv));
+    return status;
+}
+
+wcrypto_status_t vmessResponseLengthOpen(const uint8_t response_key[16], const uint8_t response_iv[16],
+                                         const uint8_t encrypted_length[18], uint16_t *plaintext_length)
+{
+    assert(response_key && response_iv && encrypted_length && plaintext_length);
+    *plaintext_length         = 0;
+    uint8_t          plain[2] = {0};
+    wcrypto_status_t status = responseOpen(response_key, response_iv, true, encrypted_length, 18, plain, sizeof(plain));
+    if (status == kWCryptoOk)
+    {
+        uint16_t length = read16(plain);
+        if (length < 4 || length > VMESS_RESPONSE_HEADER_MAX)
+        {
+            status = kWCryptoInvalidArgument;
+        }
+        else
+        {
+            *plaintext_length = length;
+        }
+    }
+    wCryptoZero(plain, sizeof(plain));
+    return status;
+}
+
+wcrypto_status_t vmessResponseHeaderOpen(const uint8_t response_key[16], const uint8_t response_iv[16],
+                                         uint8_t expected_response, const uint8_t *encrypted_header,
+                                         size_t encrypted_length)
+{
+    assert(response_key && response_iv && encrypted_header);
+    if (encrypted_length < 20 || encrypted_length > VMESS_RESPONSE_HEADER_MAX + 16)
+    {
+        return kWCryptoInvalidArgument;
+    }
+    uint8_t          plain[VMESS_RESPONSE_HEADER_MAX] = {0};
+    wcrypto_status_t status =
+        responseOpen(response_key, response_iv, false, encrypted_header, encrypted_length, plain, sizeof(plain));
+    if (status == kWCryptoOk && plain[0] != expected_response)
+    {
+        status = kWCryptoAuthenticationFailed;
+    }
+    if (status == kWCryptoOk && ((size_t) plain[3] + 4 != encrypted_length - 16 || (plain[2] == 0 && plain[3] != 0)))
+    {
+        status = kWCryptoInvalidArgument;
+    }
+    wCryptoZero(plain, sizeof(plain));
+    return status;
+}
+
 static bool chachaKey(const uint8_t key[16], uint8_t out[32])
 {
     return digest(EVP_md5(), key, 16, out, 16) && digest(EVP_md5(), out, 16, out + 16, 16);
@@ -484,7 +664,7 @@ wcrypto_status_t vmessBodyInit(vmess_body_ctx_t *ctx, const uint8_t key[16], con
                                uint8_t options, uint8_t command, bool encrypt)
 {
     assert(ctx && key && iv && ctx->cipher == NULL && ctx->length_cipher == NULL && ctx->shake == NULL);
-    if (! validMode(security, options, command))
+    if (! vmessModeValid(security, options, command))
     {
         return kWCryptoInvalidArgument;
     }
@@ -493,6 +673,7 @@ wcrypto_status_t vmessBodyInit(vmess_body_ctx_t *ctx, const uint8_t key[16], con
     ctx->encrypt  = encrypt;
     ctx->raw      = security == VMESS_SECURITY_NONE && (options & VMESS_OPTION_CHUNK) == 0;
     memcpy(ctx->iv, iv, 16);
+    memcpy(ctx->length_iv, iv, 16);
     memcpy(ctx->key, key, 16);
     uint8_t          derived[32] = {0};
     wcrypto_status_t status      = kWCryptoBackendFailed;
@@ -547,6 +728,36 @@ wcrypto_status_t vmessBodyInit(vmess_body_ctx_t *ctx, const uint8_t key[16], con
 fail:
     wCryptoZero(derived, sizeof(derived));
     vmessBodyDestroy(ctx);
+    return status;
+}
+
+wcrypto_status_t vmessBodySetLengthMaterial(vmess_body_ctx_t *ctx, const uint8_t request_key[16],
+                                            const uint8_t request_iv[16])
+{
+    assert(ctx && request_key && request_iv && ctx->length_cipher != NULL && ctx->counter == 0 && ! ctx->pending &&
+           ! ctx->failed && ! ctx->ended);
+    uint8_t          derived[32] = {0};
+    wcrypto_status_t status      = kdfLabel(request_key, "auth_len", derived);
+    if (status == kWCryptoOk)
+    {
+        if (ctx->security == VMESS_SECURITY_CHACHA20_POLY1305)
+        {
+            status = chachaKey(derived, ctx->length_key) ? kWCryptoOk : kWCryptoBackendFailed;
+        }
+        else
+        {
+            memcpy(ctx->length_key, derived, 16);
+        }
+    }
+    if (status == kWCryptoOk)
+    {
+        memcpy(ctx->length_iv, request_iv, 16);
+    }
+    else
+    {
+        ctx->failed = true;
+    }
+    wCryptoZero(derived, sizeof(derived));
     return status;
 }
 
@@ -623,7 +834,8 @@ wcrypto_status_t vmessBodyLengthOpen(vmess_body_ctx_t *ctx, const uint8_t *prefi
     {
         uint8_t nonce[12];
         uint8_t plain[2] = {0};
-        bodyNonce(ctx, nonce);
+        memcpy(nonce, ctx->length_iv, sizeof(nonce));
+        write16(nonce, (uint16_t) ctx->counter);
         wcrypto_status_t status = aead(ctx->length_cipher,
                                        bodyAlgorithm(ctx),
                                        false,
@@ -761,12 +973,15 @@ wcrypto_status_t vmessBodySeal(vmess_body_ctx_t *ctx, const uint8_t *plaintext, 
     if ((ctx->options & VMESS_OPTION_AUTH_LENGTH) != 0)
     {
         uint8_t length[2];
+        uint8_t length_nonce[12];
+        memcpy(length_nonce, ctx->length_iv, sizeof(length_nonce));
+        write16(length_nonce, (uint16_t) ctx->counter);
         write16(length, (uint16_t) (body_length - 16));
         status = aead(ctx->length_cipher,
                       bodyAlgorithm(ctx),
                       true,
                       ctx->length_key,
-                      nonce,
+                      length_nonce,
                       NULL,
                       0,
                       length,

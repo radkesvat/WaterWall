@@ -502,7 +502,9 @@ set(WW_CHECKSUM_SSE3 ${WW_CHECKSUM_SSE3} CACHE INTERNAL "Enable Checksum() to us
 ################################################################################
 # Crypto Backend Source Selection
 ################################################################################
-if(WCRYPTO_BACKEND_OPENSSL)
+# VMess uses OpenSSL's streaming SHAKE directly, independently of the selected
+# generic crypto backend. Do not force WCRYPTO_BACKEND_OPENSSL for that use.
+if(WCRYPTO_BACKEND_OPENSSL OR INCLUDE_VMESS_SERVER OR INCLUDE_VMESS_CLIENT)
     set(PROJECT_REQUIRES_OPENSSL TRUE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
 endif()
 

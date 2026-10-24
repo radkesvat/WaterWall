@@ -74,21 +74,43 @@ response += AESGCM(kdf(response_key, b"AEAD Resp Header Key")[:16]).encrypt(
     kdf(response_iv, b"AEAD Resp Header IV")[:12], bytes([61, 0, 0, 0]), None)
 
 
-def frames(security, options, payloads, start=0):
-    stream = hashlib.shake_128(iv).digest(2 * len(payloads) * 2)
+def response_envelope(payload):
+    length = AESGCM(kdf(response_key, b"AEAD Resp Header Len Key")[:16]).encrypt(
+        kdf(response_iv, b"AEAD Resp Header Len IV")[:12], struct.pack(">H", len(payload)), None)
+    return length + AESGCM(kdf(response_key, b"AEAD Resp Header Key")[:16]).encrypt(
+        kdf(response_iv, b"AEAD Resp Header IV")[:12], payload, None)
+
+
+def request_envelope(address_type, address, padding):
+    address_field = bytes([address_type]) + (bytes([len(address)]) if address_type == 2 else b"") + address
+    payload = b"\x01" + iv + key + bytes([61, 13, (len(padding) << 4) | 3, 0, 1])
+    payload += struct.pack(">H", 443) + address_field + padding
+    payload += fnv(payload)
+    return (auth + request_part(b"VMess Header AEAD Key_Length", b"VMess Header AEAD Nonce_Length",
+                                struct.pack(">H", len(payload))) + nonce8 +
+            request_part(b"VMess Header AEAD Key", b"VMess Header AEAD Nonce", payload))
+
+
+def frames(security, options, payloads, start=0, body_key=key, body_iv=iv,
+           length_key=None, length_iv=None):
+    length_key = body_key if length_key is None else length_key
+    length_iv = body_iv if length_iv is None else length_iv
+    stream = hashlib.shake_128(body_iv).digest(2 * len(payloads) * 2)
     cursor = 0
     for counter, payload in enumerate(payloads, start):
         padding = 0
         if options & 8:
             padding = int.from_bytes(stream[cursor:cursor + 2], "big") % 64
             cursor += 2
-        nonce = struct.pack(">H", counter) + iv[2:12]
+        nonce = struct.pack(">H", counter) + body_iv[2:12]
         algorithm = AESGCM if security == 3 else ChaCha20Poly1305
         converted = lambda value: value if security == 3 else chacha_key(value)
-        encrypted = payload if security == 5 else algorithm(converted(key)).encrypt(nonce, payload, None)
+        encrypted = payload if security == 5 else algorithm(converted(body_key)).encrypt(nonce, payload, None)
         size = len(encrypted) + padding
         if options & 16:
-            prefix = algorithm(converted(kdf(key, b"auth_len")[:16])).encrypt(nonce, struct.pack(">H", size - 16), None)
+            length_nonce = struct.pack(">H", counter) + length_iv[2:12]
+            prefix = algorithm(converted(kdf(length_key, b"auth_len")[:16])).encrypt(
+                length_nonce, struct.pack(">H", size - 16), None)
         else:
             mask = 0
             if options & 4:
@@ -114,6 +136,23 @@ for name, value in [("vector_uuid", uuid), ("vector_cmd", cmd), ("vector_auth_ke
                     ("vector_plain_header_udp", plain_udp), ("vector_request_udp", request_udp)]:
     array(name, value)
 
+array("vector_request_ipv6", request_envelope(3, bytes(range(16)), b""))
+array("vector_request_domain_max", request_envelope(2, b"a" * 255, bytes(range(15))))
+array("vector_response_command", response_envelope(bytes([61, 0xFF, 1, 3]) + b"abc"))
+array("vector_response_command_max", response_envelope(bytes([61, 0xFF, 255, 255]) + bytes(range(255))))
+array("vector_response_wrong_marker", response_envelope(bytes([62, 0, 0, 0])))
+array("vector_response_short_command", response_envelope(bytes([61, 0, 1, 4]) + b"abc"))
+array("vector_response_zero_command", response_envelope(bytes([61, 0, 0, 1, 0])))
+array("vector_response_too_short", response_envelope(bytes([61, 0, 0])))
+array("vector_response_too_large", response_envelope(bytes(260)))
+array("vector_response_key", response_key)
+array("vector_response_iv", response_iv)
+for security in (3, 4):
+    for options in (13, 29):
+        array(f"vector_response_frame_{security}_{options}",
+              next(frames(security, options, [b"reply"], body_key=response_key, body_iv=response_iv,
+                          length_key=key, length_iv=iv))[0])
+
 payloads = [b"Hello VMess", bytes(range(31)), b""]
 records = []
 for security in (3, 4, 5):
@@ -127,6 +166,8 @@ for security in (3, 4, 5):
 lines.extend(["typedef struct { uint8_t security, options, command, index, padding; const uint8_t *wire; size_t length; } vmess_vector_t;",
               "static const vmess_vector_t vector_frames[] = {", *records, "};", ""])
 array("vector_last_counter", next(frames(3, 1, [b"last"], 65535))[0])
+array("vector_last_counter_auth_aes", next(frames(3, 29, [b"last"], 65535))[0])
+array("vector_last_counter_auth_chacha", next(frames(4, 29, [b"last"], 65535))[0])
 large = next(frames(3, 17, [b"Z" * 65535]))[0]
 array("vector_large_prefix", large[:18])
 array("vector_large_hash", hashlib.sha256(large).digest())
