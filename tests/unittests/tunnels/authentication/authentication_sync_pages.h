@@ -117,7 +117,7 @@ static void testMalformedPagesAndBackoff(void)
         const uint64_t generation = state(0)->users_generation;
         auth_page_fault           = faults[i];
         auth_page_fault_position  = 128;
-        authenticationclientRequestPull(clients[0]);
+        requestPull(clients[0]);
         require(auth_page_fault == kAuthPageFaultNone && state(0)->users_generation == generation &&
                     ! state(0)->staging.active && ! state(0)->continuity_error &&
                     state(0)->last_failure == kAuthenticationClientFailureInvalidResponse &&
@@ -134,7 +134,7 @@ static void testMalformedPagesAndBackoff(void)
     const uint64_t generation = state(0)->users_generation;
     auth_page_fault           = kAuthPageFaultCorrelation;
     auth_page_fault_position  = 128;
-    authenticationclientRequestPull(clients[0]);
+    requestPull(clients[0]);
     require(auth_page_original != NULL && state(0)->staging.active && state(0)->staging.position == 128 &&
                 state(0)->pull_in_flight && state(0)->pending_count == 1 && state(0)->users_generation == generation &&
                 state(0)->sync_retry_streak == 0,
@@ -143,6 +143,7 @@ static void testMalformedPagesAndBackoff(void)
     sbuf_t *late_page  = sbufDuplicate(valid_page);
     auth_page_original = NULL;
     tunnelDownStreamPayload(clients[0], state(0)->control_line, valid_page);
+    drainPageProgress();
     require(state(0)->users_generation == generation + 1 && ! state(0)->staging.active,
             "ignored stale correlation prevented the current page from completing");
     disconnect(0);
@@ -170,7 +171,7 @@ static void testMalformedPagesAndBackoff(void)
     traffic(0, 9);
     auth_page_fault          = kAuthPageFaultCheckpoint;
     auth_page_fault_position = 128;
-    authenticationclientRequestPull(clients[0]);
+    requestPull(clients[0]);
     require(auth_page_fault == kAuthPageFaultNone && state(0)->continuity_error &&
                 state(0)->last_failure == kAuthenticationClientFailureContinuity &&
                 state(0)->users_generation == checkpoint_generation && local(0, false) == 9 &&
@@ -186,7 +187,7 @@ static void testMalformedPagesAndBackoff(void)
     const uint64_t stable_generation = state(0)->users_generation;
     auth_page_fault                  = kAuthPageFaultMissingCount;
     auth_page_fault_position         = 128;
-    authenticationclientRequestPull(clients[0]);
+    requestPull(clients[0]);
     for (uint32_t streak = 1; streak <= 3; ++streak)
     {
         authenticationclient_tstate_t *ts    = state(0);
@@ -197,7 +198,7 @@ static void testMalformedPagesAndBackoff(void)
                     ts->users_generation == stable_generation && authenticationclientCanAuthenticate(clients[0]),
                 "repeated bad pages lost their fixed exponential retry deadline or old cache");
         const unsigned requests = page_requests;
-        authenticationclientRequestPull(clients[0]);
+        requestPull(clients[0]);
         authenticationclientResumeSync(clients[0]);
         authenticationclientOpenControlLine(clients[0]);
         require(page_requests == requests && ts->control_line != NULL && ts->progress_timer != NULL &&

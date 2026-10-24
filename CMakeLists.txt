@@ -251,6 +251,7 @@ option(INCLUDE_QUIC_SERVER              "link QuicServer statically to the core"
 option(INCLUDE_TROJAN_CLIENT            "link TrojanClient staticly to the core"                                    TRUE)
 option(INCLUDE_TROJAN_SERVER            "link TrojanServer staticly to the core"                                    TRUE)
 option(INCLUDE_VLESS_CLIENT             "link VlessClient staticly to the core"                                     TRUE)
+option(INCLUDE_VMESS_SERVER             "link VmessServer statically to the core"                                    TRUE)
 option(INCLUDE_VLESS_SERVER             "link VlessServer staticly to the core"                                     TRUE)
 option(INCLUDE_HTTP_SERVER              "link HttpServer staticly to the core"                                      TRUE)
 option(INCLUDE_HTTP_PROXY_CLIENT "link HttpProxyClient statically to the core" TRUE)
@@ -302,7 +303,7 @@ if((INCLUDE_HTTP_PROXY_CLIENT OR INCLUDE_TCPCONNECTOR OR INCLUDE_UDP_CONNECTOR O
 endif()
 
 # Determine if OpenSSL is required based on included tunnels
-if(INCLUDE_TLS_SERVER OR router_enable_quic_sniffing)
+if(INCLUDE_TLS_SERVER OR router_enable_quic_sniffing OR INCLUDE_VMESS_SERVER)
   set(PROJECT_REQUIRES_OPENSSL TRUE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
 else()
   set(PROJECT_REQUIRES_OPENSSL FALSE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
@@ -1082,6 +1083,16 @@ if(INCLUDE_VLESS_SERVER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/VlessServer)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/VlessServer)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} VlessServer)
+endif()
+
+if(INCLUDE_VMESS_SERVER)
+  if(NOT INCLUDE_USER_CONTROLLER)
+    message(FATAL_ERROR "VmessServer requires INCLUDE_USER_CONTROLLER because auth mode creates an internal UserController")
+  endif()
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_VMESS_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/VmessServer)
+  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/VmessServer)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} VmessServer)
 endif()
 
 #trojan auth server

@@ -12,6 +12,7 @@
  */
 #include "AuthenticationClient/structure.h"
 #include "fixtures/user_runtime.h"
+#include "wthread.h"
 
 #include "test_assert.h"
 
@@ -39,7 +40,7 @@ typedef struct profile_fixture_s
     uint8_t       publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
 } profile_fixture_t;
 
-static unsigned copy_calls;
+static atomic_u32_t copy_calls;
 static void    *sensitive_release;
 static size_t   sensitive_length;
 static unsigned wiped_releases;
@@ -70,7 +71,7 @@ char *__wrap_stringDuplicate(const char *source);
 
 char *__wrap_stringDuplicate(const char *source)
 {
-    ++copy_calls;
+    atomicIncU32(&copy_calls);
     return __real_stringDuplicate(source);
 }
 
@@ -89,6 +90,8 @@ static void fixtureCreate(profile_fixture_t *fixture, lookup_kind_t kind)
     state->clock_loaded     = true;
     state->users_loaded     = true;
     state->users_generation = 7;
+    state->sync_max_users   = 100000;
+    state->sync_max_bytes   = 268435456;
     user_t user;
     require(userCreate(&user, fixture->password), "user construction failed");
     userSetId(&user, 42);
@@ -149,8 +152,8 @@ static void testSuccess(const profile_fixture_t *fixture)
     require(sensitive_release == NULL && wiped_releases == before + 1, "profile password release was not observed");
     require(profile.name == NULL && profile.password == NULL, "profile clear left owned fields");
 
-    copy_calls = 0;
-    require(lookup(fixture, &handle, NULL) && userHandleIsValid(&handle) && copy_calls == 0,
+    atomicStoreU32(&copy_calls, 0);
+    require(lookup(fixture, &handle, NULL) && userHandleIsValid(&handle) && atomicLoadU32(&copy_calls) == 0,
             "handle-only lookup attempted a profile allocation");
 }
 
@@ -292,6 +295,174 @@ static void testOwnedSecretCleanup(void)
     }
 }
 
+static void replaceUuidTable(profile_fixture_t *fixture, uint64_t id, const char *password, const char *name)
+{
+    users_t replacement;
+    require(usersCreate(&replacement), "replacement table construction failed");
+    user_t *fresh = NULL;
+    if (id != 0)
+    {
+        user_t user;
+        require(userCreate(&user, password), "replacement user construction failed");
+        userSetId(&user, id);
+        require(usersAddUser(&replacement, &user), "replacement user insertion failed");
+        userDestroy(&user);
+        fresh = usersLookupByIdentifier(&replacement, id);
+        require(fresh != NULL && usersSetUserName(&replacement, fresh, name), "replacement user naming failed");
+    }
+    authenticationclient_tstate_t *ts = tunnelGetState(fixture->tunnel);
+    mutexLock(&ts->control_mutex);
+    rwlockWriteLock(&ts->users_lock);
+    if (fresh != NULL)
+        fresh->runtime.identity_generation_floor = ts->users_generation + 1;
+    require(usersMigrateRuntimeStateByIdentifier(&replacement, &fixture->users), "replacement migration failed");
+    usersPublishCandidate(&fixture->users, &replacement);
+    ++ts->users_generation;
+    rwlockWriteUnlock(&ts->users_lock);
+    mutexUnlock(&ts->control_mutex);
+    usersDestroy(&replacement);
+    fixture->user = fresh;
+}
+
+static void testUuidSourceAndRevalidation(void)
+{
+    profile_fixture_t fixture;
+    fixtureCreate(&fixture, kLookupUuid);
+    authenticationclient_tstate_t *ts               = tunnelGetState(fixture.tunnel);
+    fixture.user->runtime.identity_generation_floor = 7;
+    authenticationclient_uuid_source_t source       = {0};
+    require(authenticationclientGetUUIDSource(fixture.tunnel, &source) == kAuthenticationClientUuidSnapshotOk &&
+                source.users_generation == 7 && source.total_users == 1 && source.max_users == 100000 &&
+                source.max_bytes == 268435456,
+            "UUID source metadata lost its installed table or bounds");
+    authenticationclient_uuid_candidate_t candidate = {0};
+    size_t                                count = SIZE_MAX, next = SIZE_MAX;
+    require(authenticationclientCopyUUIDCandidatePage(fixture.tunnel, 7, 0, 1, &candidate, &count, &next) ==
+                    kAuthenticationClientUuidSnapshotOk &&
+                count == 1 && next == 1 && candidate.user_id == 42 &&
+                memoryEqual(candidate.uuid, fixture.uuid, sizeof(candidate.uuid)),
+            "UUID source did not copy its account");
+    const authenticationclient_uuid_candidate_t original = candidate;
+    replaceUuidTable(&fixture, 42, fixture.password, "renamed");
+    require(authenticationclientCopyUUIDCandidatePage(fixture.tunnel, 7, 0, 1, &candidate, &count, &next) ==
+                    kAuthenticationClientUuidSnapshotChanged &&
+                count == 0 && next == 0 && memoryEqual(&candidate, &original, sizeof(candidate)),
+            "UUID source mixed table generations or wrote a stale page");
+    user_handle_t                       handle  = {0};
+    authenticationclient_user_profile_t profile = {0};
+    require(authenticationclientResolveUUIDCandidateWithProfile(fixture.tunnel, 7, &candidate, &handle, &profile) ==
+                    kAuthenticationClientUserLookupOk &&
+                handle.generation == 8 && handle.user_id == 42 && strcmp(profile.name, "renamed") == 0 &&
+                strcmp(profile.password, fixture.password) == 0,
+            "continuous UUID identity did not resolve the current profile and generation");
+    authenticationclientUserProfileClear(&profile);
+    require(authenticationclientResolveUUIDCandidateWithProfile(fixture.tunnel, 9, &candidate, &handle, &profile) ==
+                    kAuthenticationClientUserLookupUserNotFound &&
+                ! userHandleIsValid(&handle) && profile.name == NULL,
+            "future UUID candidate generation was accepted");
+    require(authenticationclientResolveUUIDCandidateWithProfile(fixture.tunnel, 0, &candidate, &handle, NULL) ==
+                    kAuthenticationClientUserLookupInvalidArgument &&
+                ! userHandleIsValid(&handle),
+            "zero UUID candidate generation was accepted");
+    require(usersSetUserEnabled(&fixture.users, fixture.user, false), "candidate disable failed");
+    require(authenticationclientResolveUUIDCandidateWithProfile(fixture.tunnel, 7, &candidate, &handle, &profile) ==
+                    kAuthenticationClientUserLookupUserDisabled &&
+                profile.name == NULL && profile.password == NULL,
+            "UUID candidate bypassed current eligibility");
+    require(usersSetUserEnabled(&fixture.users, fixture.user, true), "candidate enable failed");
+    require(usersChangePassword(&fixture.users, fixture.user, "rotated-plain"), "candidate rotation failed");
+    require(authenticationclientResolveUUIDCandidateWithProfile(fixture.tunnel, 7, &candidate, &handle, NULL) ==
+                kAuthenticationClientUserLookupUserNotFound,
+            "rotated UUID candidate was accepted");
+    replaceUuidTable(&fixture, 43, fixture.password, "reassigned");
+    require(authenticationclientResolveUUIDCandidateWithProfile(fixture.tunnel, 7, &candidate, &handle, NULL) ==
+                kAuthenticationClientUserLookupUserNotFound,
+            "reassigned UUID candidate changed account identity");
+    require(authenticationclientCopyUUIDCandidatePage(fixture.tunnel, 9, 0, 1, &candidate, &count, &next) ==
+                    kAuthenticationClientUuidSnapshotOk &&
+                candidate.user_id == 43,
+            "reassigned UUID candidate was not visible to a fresh snapshot");
+    replaceUuidTable(&fixture, 0, NULL, NULL);
+    require(authenticationclientGetUUIDSource(fixture.tunnel, &source) == kAuthenticationClientUuidSnapshotOk &&
+                source.total_users == 0 && source.users_generation == 10,
+            "empty installed UUID source was unavailable");
+    require(authenticationclientCopyUUIDCandidatePage(fixture.tunnel, 10, 0, 1, &candidate, &count, &next) ==
+                    kAuthenticationClientUuidSnapshotOk &&
+                count == 0 && next == 0,
+            "empty UUID source did not return a terminal page");
+    replaceUuidTable(&fixture, 43, fixture.password, "recreated");
+    require(authenticationclientResolveUUIDCandidateWithProfile(fixture.tunnel, 9, &candidate, &handle, NULL) ==
+                kAuthenticationClientUserLookupUserNotFound,
+            "recreated UUID identity accepted an old candidate");
+    require(authenticationclientResolveUUIDCandidateWithProfile(fixture.tunnel, 11, &candidate, &handle, NULL) ==
+                    kAuthenticationClientUserLookupOk &&
+                handle.generation == 11,
+            "new incarnation UUID candidate did not authenticate");
+    ts->stopping = true;
+    require(authenticationclientGetUUIDSource(fixture.tunnel, &source) ==
+                    kAuthenticationClientUuidSnapshotUnavailable &&
+                source.users_generation == 0 && source.total_users == 0 && source.max_bytes == 0,
+            "unavailable UUID source exposed metadata");
+    require(authenticationclientCopyUUIDCandidatePage(fixture.tunnel, 11, 0, 1, &candidate, &count, &next) ==
+                    kAuthenticationClientUuidSnapshotUnavailable &&
+                count == 0 && next == 0,
+            "UUID page bypassed admission closure");
+    require(authenticationclientResolveUUIDCandidateWithProfile(fixture.tunnel, 11, &candidate, &handle, &profile) ==
+                    kAuthenticationClientUserLookupUsersUnavailable &&
+                ! userHandleIsValid(&handle) && profile.name == NULL && profile.password == NULL,
+            "UUID candidate bypassed admission closure");
+    memorySecureZero(&candidate, sizeof(candidate));
+    fixtureDestroy(&fixture);
+}
+
+static WTHREAD_ROUTINE(replaceUuidTables)
+{
+    profile_fixture_t *fixture = userdata;
+    for (unsigned i = 0; i < 64; ++i)
+        replaceUuidTable(fixture, 42, fixture->password, (i & 1U) != 0 ? "alice" : "bob");
+    return 0;
+}
+
+static void testUuidConcurrentRefresh(void)
+{
+    profile_fixture_t fixture;
+    fixtureCreate(&fixture, kLookupUuid);
+    fixture.user->runtime.identity_generation_floor = 7;
+    wthread_t writer;
+    require(threadCreate(&writer, replaceUuidTables, &fixture) == kWThreadErrorNone, "UUID refresh writer failed");
+    for (unsigned i = 0; i < 1024; ++i)
+    {
+        authenticationclient_uuid_source_t source;
+        require(authenticationclientGetUUIDSource(fixture.tunnel, &source) == kAuthenticationClientUuidSnapshotOk,
+                "concurrent UUID source was unavailable");
+        authenticationclient_uuid_candidate_t       candidate = {0};
+        size_t                                      count, next;
+        authenticationclient_uuid_snapshot_result_t result = authenticationclientCopyUUIDCandidatePage(
+            fixture.tunnel, source.users_generation, 0, 1, &candidate, &count, &next);
+        if (result == kAuthenticationClientUuidSnapshotChanged)
+        {
+            require(count == 0 && next == 0 && candidate.user_id == 0, "concurrent stale page published an identity");
+            continue;
+        }
+        require(result == kAuthenticationClientUuidSnapshotOk && count == 1 && next == 1 && candidate.user_id == 42,
+                "concurrent UUID page returned a partial identity");
+        user_handle_t                       handle  = {0};
+        authenticationclient_user_profile_t profile = {0};
+        require(authenticationclientResolveUUIDCandidateWithProfile(
+                    fixture.tunnel, source.users_generation, &candidate, &handle, &profile) ==
+                        kAuthenticationClientUserLookupOk &&
+                    handle.user_id == 42 && handle.generation >= source.users_generation && profile.name != NULL &&
+                    profile.password != NULL &&
+                    (strcmp(profile.name, "alice") == 0 || strcmp(profile.name, "bob") == 0) &&
+                    strcmp(profile.password, fixture.password) == 0,
+                "concurrent refresh mixed credential identity, profile or generation");
+        authenticationclientUserProfileClear(&profile);
+        memorySecureZero(&candidate, sizeof(candidate));
+    }
+    require(threadJoin(writer) == 0, "UUID refresh writer join failed");
+    fixtureDestroy(&fixture);
+}
+
 int main(void)
 {
     testCaseSet("authenticationclient_profile_test");
@@ -307,6 +478,8 @@ int main(void)
         testEligibilityAndAdmission(&fixture);
         fixtureDestroy(&fixture);
     }
+    testUuidSourceAndRevalidation();
+    testUuidConcurrentRefresh();
     testOwnedSecretCleanup();
     userTestRuntimeCleanup();
     networkloggerDestroy();

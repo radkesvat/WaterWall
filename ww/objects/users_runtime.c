@@ -92,6 +92,38 @@ bool usersSnapshotAccounting(const users_t *users, user_accounting_snapshot_t **
     return true;
 }
 
+bool usersCopyUUIDCandidatePage(const users_t *users, size_t position, size_t max_rows,
+                                user_uuid_candidate_t *entries_out, size_t *count_out, size_t *next_position_out)
+{
+    assert(users != NULL && entries_out != NULL && count_out != NULL && next_position_out != NULL);
+    assert(max_rows > 0 && max_rows <= kUsersUuidCandidatePageMax);
+    *count_out         = 0;
+    *next_position_out = 0;
+    rwlockReadLock((wrwlock_t *) &users->lock);
+    if (position > users->count)
+    {
+        rwlockReadUnlock((wrwlock_t *) &users->lock);
+        return false;
+    }
+    const size_t end = position + min(max_rows, users->count - position);
+    for (size_t i = position; i < end; ++i)
+    {
+        user_t *user = usersGetAtLocked(users, i);
+        rwlockReadLock(&user->lock);
+        if (user->id != 0 && user->uuid_pass_valid)
+        {
+            user_uuid_candidate_t *entry = &entries_out[*count_out];
+            entry->user_id               = user->id;
+            memoryCopy(entry->uuid, user->uuid_pass, sizeof(entry->uuid));
+            ++*count_out;
+        }
+        rwlockReadUnlock(&user->lock);
+    }
+    *next_position_out = end;
+    rwlockReadUnlock((wrwlock_t *) &users->lock);
+    return true;
+}
+
 bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src)
 {
     if (UNLIKELY(dest == NULL || src == NULL))

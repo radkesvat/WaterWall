@@ -172,6 +172,10 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "TrojanServer/interface.h"
 #endif
 
+#ifdef INCLUDE_VMESS_SERVER
+#include "VmessServer/interface.h"
+#endif
+
 #ifdef INCLUDE_VLESS_SERVER
 #include "VlessServer/interface.h"
 #endif
@@ -535,6 +539,10 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_TROJAN_SERVER
     USING(TrojanServer);
+#endif
+
+#ifdef INCLUDE_VMESS_SERVER
+    USING(VmessServer);
 #endif
 
 #ifdef INCLUDE_VLESS_SERVER

@@ -80,6 +80,7 @@
                 "WCRYPTO_BACKEND_OPENSSL": false,
                 "WCRYPTO_BACKEND_SODIUM": false,
                 "INCLUDE_TLS_SERVER": false,
+                "INCLUDE_VMESS_SERVER": false,
                 "router_enable_quic_sniffing": false
             }
         },
@@ -96,6 +97,7 @@
                 "WCRYPTO_BACKEND_OPENSSL": false,
                 "WCRYPTO_BACKEND_SODIUM": true,
                 "INCLUDE_TLS_SERVER": false,
+                "INCLUDE_VMESS_SERVER": false,
                 "router_enable_quic_sniffing": false
             }
         },
@@ -135,14 +137,16 @@
             "cacheVariables": {
                 "ENABLE_ASAN": true,
                 "ENABLE_USAN": true,
-                "INCLUDE_TLS_SERVER": true
+                "INCLUDE_TLS_SERVER": true,
+                "INCLUDE_VMESS_SERVER": true
             }
         },
         {
             "name": "linux-software-crypto-tls",
             "inherits": "linux-software-crypto",
             "cacheVariables": {
-                "INCLUDE_TLS_SERVER": true
+                "INCLUDE_TLS_SERVER": true,
+                "INCLUDE_VMESS_SERVER": true
             }
         },
         {

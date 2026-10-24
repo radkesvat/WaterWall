@@ -49,6 +49,40 @@ WW_EXPORT bool                         authenticationclientIsReady(tunnel_t *t);
 WW_EXPORT bool     authenticationclientCanAuthenticate(tunnel_t *t);
 WW_EXPORT uint64_t authenticationclientUsersGeneration(tunnel_t *t);
 
+typedef user_uuid_candidate_t authenticationclient_uuid_candidate_t;
+
+typedef struct authenticationclient_uuid_source_s
+{
+    uint64_t users_generation;
+    size_t   total_users;
+    size_t   max_users;
+    size_t   max_bytes;
+} authenticationclient_uuid_source_t;
+
+typedef enum authenticationclient_uuid_snapshot_result_e
+{
+    kAuthenticationClientUuidSnapshotOk,
+    kAuthenticationClientUuidSnapshotUnavailable,
+    kAuthenticationClientUuidSnapshotChanged,
+    kAuthenticationClientUuidSnapshotLimit
+} authenticationclient_uuid_snapshot_result_t;
+
+/* Constant-work metadata for the installed, admission-capable RAM table. Limits
+ * are this client's sync-max-users/sync-max-bytes, not a process-wide RAM cap.
+ * Failure clears source_out. NULL tunnels report Unavailable. */
+WW_EXPORT authenticationclient_uuid_snapshot_result_t
+authenticationclientGetUUIDSource(tunnel_t *t, authenticationclient_uuid_source_t *source_out);
+
+/* Copy at most max_rows SOURCE rows, not matched UUIDs; max_rows is 1..256
+ * (kUsersUuidCandidatePageMax) and entries_out has that many slots. Each call
+ * checks expected_generation under table ownership. Changed/Unavailable/Limit
+ * clears count/next and leaves entries unchanged. Success may return no UUIDs
+ * before the terminal source position. Values are owned copies; securely wipe
+ * them after use. No crypto, allocation, or caller callback runs under the locks. */
+WW_EXPORT authenticationclient_uuid_snapshot_result_t authenticationclientCopyUUIDCandidatePage(
+    tunnel_t *t, uint64_t expected_generation, size_t position, size_t max_rows,
+    authenticationclient_uuid_candidate_t *entries_out, size_t *count_out, size_t *next_position_out);
+
 WW_EXPORT bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password, user_handle_t *handle_out);
 WW_EXPORT authenticationclient_user_lookup_result_t
 authenticationclientGetUserByPasswordWithResult(tunnel_t *t, const char *password, user_handle_t *handle_out);
@@ -85,6 +119,14 @@ WW_EXPORT bool authenticationclientGetUserBySHA224WithProfile(tunnel_t *t, const
 WW_EXPORT authenticationclient_user_lookup_result_t authenticationclientGetUserByUUIDWithProfile(
     tunnel_t *t, const uint8_t uuid[kWwUuidBytesLen], user_handle_t *handle_out,
     authenticationclient_user_profile_t *profile_out);
+/* Resolve a copied candidate only if its UUID still belongs to the same durable
+ * id and continuously present membership. A full refresh preserves matching
+ * identities; removal/recreation, reassignment, or future generations fail with
+ * UserNotFound. Current eligibility/profile and the returned current-generation
+ * handle are resolved together. No snapshot pointer is retained. */
+WW_EXPORT authenticationclient_user_lookup_result_t authenticationclientResolveUUIDCandidateWithProfile(
+    tunnel_t *t, uint64_t source_generation, const authenticationclient_uuid_candidate_t *candidate,
+    user_handle_t *handle_out, authenticationclient_user_profile_t *profile_out);
 WW_EXPORT authenticationclient_user_lookup_result_t authenticationclientGetUserByWireGuardPublicKeyWithProfile(
     tunnel_t *t, const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE], user_handle_t *handle_out,
     authenticationclient_user_profile_t *profile_out);
