@@ -29,6 +29,20 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
   endforeach()
 endif()
 
+function(set_waterwall_vmess_interop_properties test_name)
+  set_tests_properties(${test_name} PROPERTIES TIMEOUT 75)
+  list(FIND ARGN "--scenario" scenario_index)
+  if(scenario_index GREATER_EQUAL 0)
+    math(EXPR scenario_index "${scenario_index} + 1")
+    list(GET ARGN ${scenario_index} scenario)
+    if(scenario STREQUAL "long" OR scenario STREQUAL "strict")
+      # These 65k stop-and-wait exchanges need CPU time even in isolated namespaces.
+      # Preserve their fixed workload deadline without contention from other tests.
+      set_tests_properties(${test_name} PROPERTIES RUN_SERIAL TRUE)
+    endif()
+  endif()
+endfunction()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
    TARGET VmessServer AND TARGET TcpListener AND TARGET TcpConnector)
   function(add_waterwall_vmess_interop test_suffix)
@@ -44,7 +58,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
     add_waterwall_isolated_test(${test_name}
       "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/vmess_interop.py"
       "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${reference}" ${VMESS_UNPARSED_ARGUMENTS})
-    set_tests_properties(${test_name} PROPERTIES TIMEOUT 75)
+    set_waterwall_vmess_interop_properties(${test_name} ${VMESS_UNPARSED_ARGUMENTS})
     add_waterwall_test_labels(${test_name} "integration" "tunnels" "vmess" "interoperability")
     if(NOT WATERWALL_ENABLE_INTEGRATION_TEST_NETNS)
       set_tests_properties(${test_name} PROPERTIES RESOURCE_LOCK waterwall_vmess_ports)
@@ -101,7 +115,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
     add_waterwall_isolated_test(${test_name}
       "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/vmess_client_interop.py"
       "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${reference}" ${VMESS_UNPARSED_ARGUMENTS})
-    set_tests_properties(${test_name} PROPERTIES TIMEOUT 75)
+    set_waterwall_vmess_interop_properties(${test_name} ${VMESS_UNPARSED_ARGUMENTS})
     add_waterwall_test_labels(${test_name} "integration" "tunnels" "vmess" "client" "interoperability")
     if(NOT WATERWALL_ENABLE_INTEGRATION_TEST_NETNS)
       set_tests_properties(${test_name} PROPERTIES RESOURCE_LOCK waterwall_vmess_client_ports)

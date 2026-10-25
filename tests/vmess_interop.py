@@ -303,7 +303,8 @@ def long_case(args, client, waterwall, backend):
     # exchange: the next request does not exist until the previous reply arrived.
     # The relay accepts exactly one transport; reconnects cannot complete here.
     count = 65535 if args.scenario == "strict" else LONG_RECORDS
-    deadline = time.monotonic() + 65
+    started = time.monotonic()
+    deadline = started + 65
     client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
     def target():
@@ -325,7 +326,9 @@ def long_case(args, client, waterwall, backend):
             payload = ordinal.to_bytes(4, "big")
             client.sendall(payload)
             assert exact(client, 4) == payload, f"long reply changed at record {ordinal}"
-            assert time.monotonic() < deadline, "long session exceeded its fixed 65-second workload deadline"
+            now = time.monotonic()
+            assert now < deadline, ("long session exceeded its fixed 65-second workload deadline "
+                                    f"after {ordinal + 1}/{count} completed exchanges in {now - started:.3f}s")
         if args.scenario == "strict":
             with contextlib.suppress(BrokenPipeError, ConnectionResetError):
                 client.sendall(b"last")
@@ -356,6 +359,11 @@ def udp_case(args, reference, waterwall, backend):
             secondary.bind((host, TARGET_PORT + 1))
             secondary.settimeout(10)
             targets.append((secondary, TARGET_PORT + 1))
+        if args.reference_kind == "v2ray":
+            # V2Ray accepts SOCKS TCP requests before starting its UDP worker.
+            # UDP ASSOCIATE alone is not proof that the returned relay is bound.
+            wait_log(reference, reference.log_path,
+                     f"transport/internet/udp: listening UDP on {relay[0]}:{relay[1]}")
         payloads = [b"a", bytes(range(31)), bytes(range(256)) * 2, bytes(range(240)) * 5, b"last"]
         if args.packet_encoding == "packetaddr":
             # The envelope makes an empty datagram a nonempty VMess record.
@@ -368,11 +376,27 @@ def udp_case(args, reference, waterwall, backend):
                 payloads.insert(-1, b"")
             else:
                 print("Unsupported peer-client cell: V2Ray SOCKS inbound drops empty datagrams before packetaddr", flush=True)
-        for payload in payloads:
+        requests_sent = 0
+
+        def receive(sock, phase, destination):
+            try:
+                return sock.recvfrom(65535)
+            except socket.timeout as error:
+                raise TimeoutError(
+                    f"VMess UDP {phase} timed out after {sock.gettimeout()}s; "
+                    f"peer={args.reference_kind}, encoding={args.packet_encoding}, "
+                    f"payload={payload_index + 1}/{len(payloads)} ({len(payload)} bytes), "
+                    f"requests_sent={requests_sent}, last_request_bytes={sent_bytes}, "
+                    f"source={client.getsockname()}, relay={relay}, destination={destination}, "
+                    f"receiver={sock.getsockname()}, waterwall_exit={waterwall.poll()}, "
+                    f"reference_exit={reference.poll()}") from error
+
+        for payload_index, payload in enumerate(payloads):
             pending = []
             for target, port in targets:
                 prefix = b"\x00\x00\x00" + address_type + address + port.to_bytes(2, "big")
-                client.sendto(prefix + payload, relay)
+                sent_bytes = client.sendto(prefix + payload, relay)
+                requests_sent += 1
                 if args.scenario == "packetaddr_capacity" and target is secondary:
                     target.settimeout(0.3)
                     try:
@@ -380,13 +404,13 @@ def udp_case(args, reference, waterwall, backend):
                     except socket.timeout:
                         continue
                     raise AssertionError("packetaddr destination cap admitted a second protected backend")
-                data, origin = target.recvfrom(65535)
+                data, origin = receive(target, "backend receive", (host, port))
                 assert data == payload, f"VMess changed UDP input: expected {len(payload)} bytes, received {len(data)} bytes"
                 pending.append((target, origin, prefix))
             # Reverse replies so each envelope must preserve its own target.
             for target, origin, prefix in reversed(pending):
                 target.sendto(payload[::-1], origin)
-                received, _ = client.recvfrom(65535)
+                received, _ = receive(client, "reply receive", target.getsockname())
                 assert received == prefix + payload[::-1], "VMess changed UDP reply boundary/address/content"
         stop_waterwall(waterwall)
 

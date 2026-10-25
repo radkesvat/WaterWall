@@ -483,7 +483,8 @@ def long_case(args, client, waterwall, backend):
     # Each request waits for its echo, forcing distinct nonempty VMess records
     # in both directions. One accepted relay transport excludes reconnection.
     count = 65535 if args.scenario == "strict" else LONG_RECORDS
-    deadline = time.monotonic() + 65
+    started = time.monotonic()
+    deadline = started + 65
     client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
     def target():
@@ -501,7 +502,9 @@ def long_case(args, client, waterwall, backend):
             payload = ordinal.to_bytes(4, "big")
             client.sendall(payload)
             assert exact(client, 4) == payload, f"long reply changed at record {ordinal}"
-            assert time.monotonic() < deadline, "long session exceeded its fixed 65-second workload deadline"
+            now = time.monotonic()
+            assert now < deadline, ("long session exceeded its fixed 65-second workload deadline "
+                                    f"after {ordinal + 1}/{count} completed exchanges in {now - started:.3f}s")
         if args.scenario == "strict":
             with contextlib.suppress(BrokenPipeError, ConnectionResetError):
                 client.sendall(b"last")

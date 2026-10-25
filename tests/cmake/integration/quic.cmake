@@ -11,12 +11,13 @@ if(TARGET QuicClient AND TARGET QuicServer AND
   endforeach()
   # Each constructor has over a hundred startup cases. Give the roles separate
   # scheduling slots so packed startup cost does not accumulate in one test.
+  # Allow cumulative packed launches while keeping per-case startup/shutdown deadlines unchanged.
   foreach(quic_role IN ITEMS client server)
     set(quic_config_case waterwall.quic_config_startup_${quic_role})
     add_waterwall_isolated_test(${quic_config_case}
       "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/quic_config_validation_test.py"
       "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${quic_role}")
-    set_tests_properties(${quic_config_case} PROPERTIES TIMEOUT 180)
+    set_tests_properties(${quic_config_case} PROPERTIES TIMEOUT 360)
     add_waterwall_test_labels(${quic_config_case} "integration" "tunnels" "quic" "configuration" "negative")
   endforeach()
   if(TARGET VlessClient AND TARGET VlessServer AND TARGET SpeedTestClient AND TARGET SpeedTestServer)
