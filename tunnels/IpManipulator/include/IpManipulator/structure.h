@@ -3,6 +3,7 @@
 #include "wwapi.h"
 
 #include "flow_table.h"
+#include "packet_affinity.h"
 
 /*
  * True when a packet line may join a retained group owned by @p owner_wid.
@@ -442,6 +443,9 @@ typedef struct ipmanipulator_tstate_s
     int trick_proto_swap_tcp_number;
     int trick_proto_swap_udp_number;
 
+    packet_affinity_t *decoded_upstream_affinity;
+    packet_affinity_t *decoded_downstream_affinity;
+
     int trick_sni_blender_packets_count;
     int trick_sni_blender_packets_delay_max;
     int trick_packet_duplicate_count;
@@ -569,12 +573,14 @@ void ipmanipulatorUpStreamInit(tunnel_t *t, line_t *l);
 void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void ipmanipulatorDownStreamPayloadAfterDecode(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ipmanipulatorDownStreamPayloadAfterSmuggleFin(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 void ipmanipulatorLinestateInitialize(ipmanipulator_lstate_t *ls);
 void ipmanipulatorLinestateDestroy(ipmanipulator_lstate_t *ls);
 
 void ipmanipulatorSendUpstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf);
+void ipmanipulatorSendUpstreamDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ipmanipulatorSendDownstreamEncoded(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ipmanipulatorSendDownstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ipmanipulatorEmitUpstream(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);

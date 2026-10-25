@@ -21,7 +21,6 @@ root = Path(__file__).resolve().parents[1]
 # Each file must reset the reader pool's ownership and retire the generation's
 # buffers together, in that order, at every point where the reader was joined.
 sources = (
-    "ww/devices/capture/capture_linux.c",
     "ww/devices/capture/capture_windows.c",
     "ww/devices/tun/tun_linux.c",
     "ww/devices/tun/tun_darwin.c",
@@ -49,6 +48,17 @@ for relative in sources:
         between = text[reset.end():retire.start()]
         if between.strip():
             raise SystemExit(f"{relative}: the generation retire does not immediately follow the ownership reset")
+
+# Linux Capture's worker readers use detached shared-fragment storage. Native
+# ownership must return to the coordinator before fragment retirement; there is
+# no external reader pool whose thread ownership needs resetting.
+capture_source = (root / "ww/devices/capture/capture_linux.c").read_text(encoding="utf-8")
+capture_down = capture_source[capture_source.index("bool caputredeviceBringDown("):]
+capture_down = capture_down[:capture_down.index("\n}\n") + 2]
+if not (capture_down.index("captureReaderCloseWait") <
+        capture_down.index("captureReaderDestroy") <
+        capture_down.index("deviceReaderSessionRetireGenerationBuffers")):
+    raise SystemExit("Linux Capture retires shared fragments before worker-reader quiescence")
 
 end_source = (root / "ww/devices/device_reader_session.c").read_text(encoding="utf-8")
 end_body = end_source[end_source.index("void deviceReaderSessionEnd("):]

@@ -13,6 +13,7 @@
 #include "wlibc.h"
 
 #ifdef OS_UNIX
+#include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #if defined(OS_LINUX)
@@ -155,6 +156,11 @@ static inline void execCmdCloseInheritedFds(long open_max)
 }
 #endif
 
+/* Run every progress registration on this thread. Returns whether registrations
+ * exist. The same bounded, nonblocking and non-reentrant callback contract as
+ * procCommandProgressRegister() applies. */
+bool procCommandProgressRun(void);
+
 // blocking io
 /**
  * @brief Execute a shell command and capture a short prefix of its output.
@@ -204,6 +210,15 @@ static cmd_result_t execCmd(const char *str)
     size_t used = 0;
     for (;;)
     {
+        if (procCommandProgressRun())
+        {
+            struct pollfd output = {.fd = output_pipe[0], .events = POLLIN};
+            const int     ready  = poll(&output, 1, 5);
+            if (ready == 0 || (ready < 0 && errno == EINTR))
+                continue;
+            if (ready < 0)
+                break;
+        }
         char    read_buf[256];
         ssize_t nread = read(output_pipe[0], read_buf, sizeof(read_buf));
         if (nread > 0)
@@ -232,8 +247,17 @@ static cmd_result_t execCmd(const char *str)
     close(output_pipe[0]);
 
     int status = 0;
-    while (waitpid(pid, &status, 0) < 0)
+    for (;;)
     {
+        const bool  progress = procCommandProgressRun();
+        const pid_t reaped   = waitpid(pid, &status, progress ? WNOHANG : 0);
+        if (reaped == pid)
+            break;
+        if (reaped == 0)
+        {
+            usleep(5000);
+            continue;
+        }
         if (errno == EINTR)
         {
             continue;
@@ -301,6 +325,23 @@ typedef struct proc_command_result_s
     bool timed_out;
 } proc_command_result_t;
 
+/* Caller-owned progress registration for command waits on one coordinator
+ * thread. Register and unregister on that same thread; keep the record and its
+ * context alive while registered. The runner owns `next`. Callbacks perform
+ * bounded, nonblocking work and must not modify registrations, reap command
+ * children or recursively invoke command/progress functions. POSIX execCmd()
+ * and procRunArgvWithDeadline() service registrations during their parent waits.
+ * No worker thread is created. */
+typedef struct proc_command_progress_s
+{
+    void (*callback)(void *context);
+    void                           *context;
+    struct proc_command_progress_s *next;
+} proc_command_progress_t;
+
+void procCommandProgressRegister(proc_command_progress_t *progress);
+void procCommandProgressUnregister(proc_command_progress_t *progress);
+
 /**
  * @brief Policy knobs for procRunArgvWithDeadline().
  *
@@ -312,12 +353,23 @@ typedef struct proc_command_result_s
  * plus, on failure, up to the termination grace and normal scheduler overhead.
  * `max_output_bytes` is a hard stdout byte limit and must be nonzero; it stops
  * an always-readable producer from keeping the drain loop busy indefinitely.
+ *
+ * Optional `progress` runs on the calling parent thread between bounded output
+ * batches and throughout child waiting, including termination and reaping after
+ * failure, in addition to every registration on that thread. If either exists,
+ * waits are sliced to at most 5 ms (excluding scheduler delays). It has the same
+ * nonblocking/non-reentrant contract as registered progress; keep its context
+ * alive and `options` unchanged until return. Callback time counts against the
+ * command deadline. With neither callback nor registration, ordinary waiting
+ * has no periodic progress wakes.
  */
 typedef struct proc_command_options_s
 {
     uint32_t timeout_ms;
     uint32_t terminate_grace_ms;
     size_t   max_output_bytes;
+    void (*progress)(void *context);
+    void *progress_context;
 } proc_command_options_t;
 
 /**

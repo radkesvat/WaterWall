@@ -1001,5 +1001,17 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         return NULL;
     }
 
+    if (state->trick_proto_swap)
+    {
+        state->decoded_upstream_affinity   = packetAffinityCreate(t, ipmanipulatorSendUpstreamDuplicates);
+        state->decoded_downstream_affinity = packetAffinityCreate(t, ipmanipulatorDownStreamPayloadAfterDecode);
+        if (state->decoded_upstream_affinity == NULL || state->decoded_downstream_affinity == NULL)
+        {
+            LOGE("IpManipulator: failed to initialize decoded packet affinity");
+            ipmanipulatorDestroy(t, wwLifecycleStartupRollback());
+            return NULL;
+        }
+    }
+
     return t;
 }

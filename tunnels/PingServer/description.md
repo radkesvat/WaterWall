@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Keep this file aligned with WaterWall-Docs/docs/02-noderefs/PingServer.mdx.
 -->
 
@@ -8,6 +8,13 @@ Sync note: Keep this file aligned with WaterWall-Docs/docs/02-noderefs/PingServe
 `PingServer` is the server-side endpoint of Ping wire v2. It is an IPv4-only,
 pure packet tunnel with no line state and one bounded synchronized Echo
 correlation and replay tracker for the whole node.
+
+After decoding an Echo Request, inner TCP/UDP packets use the shared transport
+flow worker before forwarding upstream. Correlation, replay checks and any
+generated Echo Reply remain on the arrival worker. Preserved inner fragments
+share the complete flow's worker; later fragments wait for the leading fragment
+to identify its ports. A single worker needs no handoff. Other decoded protocols
+and unrelated or unmatched ICMP retain their current worker and packet bytes.
 
 Use it opposite `PingClient`:
 

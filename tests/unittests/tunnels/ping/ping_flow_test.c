@@ -3,7 +3,8 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseCrossWorkerCorrelationAndSequence, casePeerRequestReplay, caseUnrelatedIpv4Options,
- * casePacketDiagnostics, caseGeneratedReplyLineSurvivalGuard, caseInvalidReplySettings
+ * casePacketDiagnostics, caseGeneratedReplyLineSurvivalGuard, caseInvalidReplySettings,
+ * caseDecodedTransportAffinity, caseDecodedFragmentAffinity, caseDecodedHandoffRefusal
  * Checks: Assertion labels include: Ping diagnostic exceeds capture capacity; Ping rejection did not emit
  * exactly one diagnostic; Ping rejection diagnostic is not ERROR level; Ping diagnostic omitted the
  * specific failure reason
@@ -15,8 +16,19 @@
 
 #include "PingClient/structure.h"
 #include "PingServer/structure.h"
+#include "devices/device_flow_affinity.h"
 
 #include "fixtures/failure/tunnel_orderly_shutdown_harness.h"
+
+sbuf_t *__real_sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *buffer);
+sbuf_t *__wrap_sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *buffer);
+
+sbuf_t *__wrap_sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *buffer)
+{
+    // The duplicate helper acquires from its own translation unit, bypassing
+    // GNU --wrap on the individual pool getters. Record the new ownership here.
+    return twfTrackAcquired(__real_sbufDuplicateByPool(pool, buffer));
+}
 
 enum
 {
@@ -33,6 +45,8 @@ typedef struct captured_packet_s
 {
     uint8_t  bytes[kFlowPacketBytes];
     uint32_t length;
+    wid_t    wid;
+    bool     checksum_requested;
 } captured_packet_t;
 
 typedef struct flow_fixture_s flow_fixture_t;
@@ -145,8 +159,11 @@ static void sinkPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     twfRequire(sink->count < kFlowPacketCapacity, "Ping flow sink capacity exceeded");
     twfRequire(sbufGetLength(buf) <= kFlowPacketBytes, "Ping flow sink packet is too large");
 
-    captured_packet_t *packet = &sink->packets[sink->count++];
-    packet->length            = sbufGetLength(buf);
+    captured_packet_t *packet  = &sink->packets[sink->count++];
+    packet->length             = sbufGetLength(buf);
+    packet->wid                = lineGetWID(l);
+    packet->checksum_requested = lineGetRecalculateChecksum(l);
+    twfRequire(lineIsOnCurrentWorker(l), "Ping published on another worker's packet line");
     memoryCopy(packet->bytes, sbufGetRawPtr(buf), packet->length);
 
     twfRequire(sink->fixture->event_count + 1U < sizeof(sink->fixture->events), "Ping flow event trace overflow");
@@ -215,13 +232,13 @@ static cJSON *endpointSettings(bool server, const char *send_replies_json)
     return settings;
 }
 
-static void fixtureSetup(flow_fixture_t *fixture, bool server, const char *send_replies_json)
+static void fixtureSetupWorkers(flow_fixture_t *fixture, bool server, const char *send_replies_json, wid_t workers)
 {
     memoryZero(fixture, sizeof(*fixture));
     fixture->server = server;
 
-    tosWorkerEnvSetup(&fixture->env, kFlowWorkers, 8192, kMaxAllowedPacketLength);
-    for (wid_t wid = 0; wid < kFlowWorkers; ++wid)
+    tosWorkerEnvSetup(&fixture->env, workers, 8192, kMaxAllowedPacketLength);
+    for (wid_t wid = 0; wid < workers; ++wid)
     {
         bufferpoolUpdateAllocationPaddings(fixture->env.pools[wid],
                                            kPingWireEncapsulationOverhead,
@@ -246,12 +263,12 @@ static void fixtureSetup(flow_fixture_t *fixture, bool server, const char *send_
     tunnelBind(fixture->prev, fixture->endpoint);
     tunnelBind(fixture->endpoint, fixture->next);
 
-    fixture->chain = memoryAllocateZero(sizeof(tunnel_chain_t) + sizeof(generic_pool_t *) * kFlowWorkers);
+    fixture->chain = memoryAllocateZero(sizeof(tunnel_chain_t) + sizeof(generic_pool_t *) * workers);
     twfRequire(fixture->chain != NULL, "failed to allocate Ping flow chain");
-    fixture->chain->workers_count = kFlowWorkers;
+    fixture->chain->workers_count = workers;
     fixture->chain->packet_lines  = fixture->packet_lines;
     fixture->endpoint->chain      = fixture->chain;
-    for (wid_t wid = 0; wid < kFlowWorkers; ++wid)
+    for (wid_t wid = 0; wid < workers; ++wid)
     {
         fixture->packet_lines[wid] = createPacketLine(wid);
     }
@@ -262,9 +279,14 @@ static void fixtureSetup(flow_fixture_t *fixture, bool server, const char *send_
     twfRequire(wwStartupSucceeded(result), "Ping endpoint startup failed in flow fixture");
 }
 
+static void fixtureSetup(flow_fixture_t *fixture, bool server, const char *send_replies_json)
+{
+    fixtureSetupWorkers(fixture, server, send_replies_json, kFlowWorkers);
+}
+
 static void fixtureTeardown(flow_fixture_t *fixture)
 {
-    for (wid_t wid = 0; wid < kFlowWorkers; ++wid)
+    for (wid_t wid = 0; wid < fixture->env.count; ++wid)
     {
         twfRequire(lineIsAlive(fixture->packet_lines[wid]), "Ping endpoint destroyed a worker packet line");
         twfLineDestroy(fixture->packet_lines[wid]);
@@ -329,6 +351,48 @@ static sbuf_t *peerRequest(flow_fixture_t *fixture, line_t *line, uint16_t seque
     const ping_wire_config_t peer    = peerConfig(fixture);
     twfRequire(pingwireBuildEchoRequest(request, &peer, sequence), "failed to build peer Echo Request");
     return request;
+}
+
+static captured_packet_t captureBuffer(const sbuf_t *buffer)
+{
+    captured_packet_t captured = {.length = sbufGetLength(buffer)};
+    twfRequire(captured.length <= sizeof(captured.bytes), "Ping fixture capture exceeds storage");
+    memoryCopy(captured.bytes, sbufGetRawPtr(buffer), captured.length);
+    return captured;
+}
+
+static sbuf_t *makeTransportPacket(line_t *line, uint8_t protocol, wid_t target)
+{
+    sbuf_t  *buffer = makeInnerPacket(line, 64);
+    uint8_t *packet = sbufGetMutablePtr(buffer);
+    packet[9]       = protocol;
+    memoryZero(packet + IP_HLEN, 20);
+    PUT_BE16(packet + IP_HLEN + 2, 443);
+    if (protocol == IP_PROTO_TCP)
+    {
+        packet[IP_HLEN + 12] = 0x50;
+        packet[IP_HLEN + 13] = 0x18;
+    }
+    else
+        PUT_BE16(packet + IP_HLEN + 4, 64 - IP_HLEN);
+    wid_t selected = UINT8_MAX;
+    for (unsigned port = 1; port <= UINT16_MAX; ++port)
+    {
+        PUT_BE16(packet + IP_HLEN, port);
+        twfRequire(deviceFlowAffineWID(packet, sbufGetLength(buffer), &selected),
+                   "transport fixture has no flow worker");
+        if (selected == target)
+            break;
+    }
+    twfRequire(selected == target && calcFullPacketChecksum(packet, sbufGetLength(buffer)),
+               "failed to construct transport packet for the requested worker");
+    return buffer;
+}
+
+static void wrapPeerRequest(flow_fixture_t *fixture, sbuf_t *buffer, uint16_t sequence)
+{
+    const ping_wire_config_t peer = peerConfig(fixture);
+    twfRequire(pingwireBuildEchoRequest(buffer, &peer, sequence), "failed to wrap the transport fixture");
 }
 
 static void sendLocal(flow_fixture_t *fixture, wid_t wid, sbuf_t *buf)
@@ -454,6 +518,7 @@ static void caseCrossWorkerCorrelationAndSequence(flow_fixture_t *fixture)
     const captured_packet_t *passed = &unmatched->packets[unmatched->count - 1U];
     twfRequire(passed->length == mismatch_length && memoryEqual(passed->bytes, expected, mismatch_length),
                "mismatched reply did not pass through unchanged");
+    twfRequire(passed->wid == 3, "unmatched genuine ICMP was redistributed as decoded tunnel data");
 
     for (wid_t wid = 0; wid < kFlowWorkers; ++wid)
     {
@@ -491,9 +556,9 @@ static void casePeerRequestReplay(flow_fixture_t *fixture)
                        "peer request reply emission did not honor send-replies");
     twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "peer request did not deliver one inner packet");
     const captured_packet_t *decoded = &decodedInnerSink(fixture)->packets[0];
-    twfRequire(decoded->length == wire_request.length - kPingWireEncapsulationOverhead &&
+    twfRequire(decoded->wid == 1 && decoded->length == wire_request.length - kPingWireEncapsulationOverhead &&
                    memoryEqual(decoded->bytes, wire_request.bytes + kPingWireEncapsulationOverhead, decoded->length),
-               "peer request did not preserve the complete inner packet");
+               "opaque peer request did not preserve its arrival worker and complete inner packet");
 
     sendInbound(fixture, 2, bufferFromCapture(fixture->packet_lines[2], &wire_request));
     twfRequire(atomicLoadU64Relaxed(&reply_ids->last_reply_ms) == (send_replies ? cached_ms : cached_ms - 1),
@@ -521,6 +586,118 @@ static void casePeerRequestReplay(flow_fixture_t *fixture)
     }
     wloopUpdateTime(fixture->env.loops[1]);
     wloopUpdateTime(fixture->env.loops[2]);
+}
+
+static void caseDecodedTransportAffinity(flow_fixture_t *fixture)
+{
+    twfSetCase(fixture->server ? "PingServer decoded transport affinity" : "PingClient decoded transport affinity");
+    const wid_t   target      = fixture->env.count == 1 ? 0 : 2;
+    const wid_t   arrivals[]  = {0, (wid_t) (fixture->env.count - 1)};
+    const uint8_t protocols[] = {IP_PROTO_TCP, IP_PROTO_UDP};
+    for (unsigned protocol = 0; protocol < ARRAY_SIZE(protocols); ++protocol)
+    {
+        resetSinks(fixture);
+        captured_packet_t expected      = {0};
+        captured_packet_t first_request = {0};
+        for (unsigned i = 0; i < ARRAY_SIZE(arrivals); ++i)
+        {
+            sbuf_t *request = makeTransportPacket(fixture->packet_lines[arrivals[i]], protocols[protocol], target);
+            expected        = captureBuffer(request);
+            wrapPeerRequest(fixture, request, (uint16_t) (1000 + protocol * 4 + i));
+            if (i == 0)
+                first_request = captureBuffer(request);
+            sendInbound(fixture, arrivals[i], request);
+            twfRequireEqualU32(generatedReplySink(fixture)->count,
+                               endpointSendsReplies(fixture) ? i + 1 : 0,
+                               "decoded handoff delayed or duplicated the outer Echo Reply");
+            if (endpointSendsReplies(fixture))
+                twfRequire(generatedReplySink(fixture)->packets[i].wid == arrivals[i],
+                           "outer Echo Reply left the arrival worker");
+            twfRequireEqualU32(decodedInnerSink(fixture)->count,
+                               fixture->env.count == 1 ? i + 1 : 0,
+                               "decoded packet bypassed target-worker ownership or lost the inline fast path");
+        }
+        // The replay is recognized on a different outer worker even while both
+        // original decoded packets are still queued to their transport worker.
+        sendInbound(fixture, arrivals[1], bufferFromCapture(fixture->packet_lines[arrivals[1]], &first_request));
+        tosPumpWorker(&fixture->env, target);
+        flow_sink_t *decoded = decodedInnerSink(fixture);
+        twfRequireEqualU32(decoded->count, 2, "cross-worker replay duplicated or lost a decoded transport packet");
+        for (unsigned i = 0; i < decoded->count; ++i)
+            twfRequire(decoded->packets[i].wid == target && ! decoded->packets[i].checksum_requested &&
+                           decoded->packets[i].length == expected.length &&
+                           memoryEqual(decoded->packets[i].bytes, expected.bytes, expected.length),
+                       "decoded transport changed worker, checksum state or packet bytes");
+    }
+}
+
+static void caseDecodedFragmentAffinity(flow_fixture_t *fixture)
+{
+    twfSetCase(fixture->server ? "PingServer decoded fragment affinity" : "PingClient decoded fragment affinity");
+    resetSinks(fixture);
+    const wid_t             target         = 2;
+    sbuf_t                 *whole          = makeTransportPacket(fixture->packet_lines[0], IP_PROTO_UDP, target);
+    const captured_packet_t expected_whole = captureBuffer(whole);
+    sbuf_t                 *first          = bufferFromCapture(fixture->packet_lines[0], &expected_whole);
+    sbufSetLength(first, 36);
+    PUT_BE16(sbufGetMutablePtr(first) + 2, 36);
+    PUT_BE16(sbufGetMutablePtr(first) + 6, IP_MF);
+    twfRequire(calcIpv4HeaderChecksum(sbufGetMutablePtr(first), sbufGetLength(first)),
+               "first fragment checksum failed");
+    const captured_packet_t expected_first = captureBuffer(first);
+    sbuf_t                 *last           = bufferFromCapture(fixture->packet_lines[3], &expected_whole);
+    memoryMove(sbufGetMutablePtr(last) + IP_HLEN, sbufGetMutablePtr(last) + 36, 28);
+    sbufSetLength(last, 48);
+    PUT_BE16(sbufGetMutablePtr(last) + 2, 48);
+    PUT_BE16(sbufGetMutablePtr(last) + 6, 2);
+    twfRequire(calcIpv4HeaderChecksum(sbufGetMutablePtr(last), sbufGetLength(last)), "last fragment checksum failed");
+    const captured_packet_t expected_last = captureBuffer(last);
+    wrapPeerRequest(fixture, last, 2000);
+    sendInbound(fixture, 3, last);
+    twfRequireEqualU32(
+        decodedInnerSink(fixture)->count, 0, "later inner fragment escaped before its transport owner was known");
+    wrapPeerRequest(fixture, first, 2001);
+    sendInbound(fixture, 0, first);
+    tosPumpWorker(&fixture->env, target);
+    flow_sink_t *decoded = decodedInnerSink(fixture);
+    twfRequireEqualU32(decoded->count, 2, "decoded leading fragment did not release the staged tail");
+    bool saw_first = false;
+    bool saw_last  = false;
+    for (unsigned i = 0; i < decoded->count; ++i)
+    {
+        const captured_packet_t *packet = &decoded->packets[i];
+        twfRequire(packet->wid == target && ! packet->checksum_requested,
+                   "inner fragments did not use the true UDP flow worker");
+        saw_first |=
+            packet->length == expected_first.length && memoryEqual(packet->bytes, expected_first.bytes, packet->length);
+        saw_last |=
+            packet->length == expected_last.length && memoryEqual(packet->bytes, expected_last.bytes, packet->length);
+    }
+    twfRequire(saw_first && saw_last, "decoded fragment bytes changed");
+    wrapPeerRequest(fixture, whole, 2002);
+    sendInbound(fixture, 1, whole);
+    tosPumpWorker(&fixture->env, target);
+    twfRequireEqualU32(decoded->count, 3, "complete packet following fragments was lost");
+    twfRequire(decoded->packets[2].wid == target && decoded->packets[2].length == expected_whole.length &&
+                   memoryEqual(decoded->packets[2].bytes, expected_whole.bytes, expected_whole.length),
+               "fragmented and complete packets of one transport flow selected different workers");
+}
+
+static void caseDecodedHandoffRefusal(flow_fixture_t *fixture)
+{
+    twfSetCase(fixture->server ? "PingServer decoded handoff refusal" : "PingClient decoded handoff refusal");
+    resetSinks(fixture);
+    sbuf_t *request = makeTransportPacket(fixture->packet_lines[0], IP_PROTO_TCP, 2);
+    wrapPeerRequest(fixture, request, 3000);
+    const unsigned references = atomicLoadRelaxed(&fixture->packet_lines[2]->refc);
+    workerMessagesCloseAdmission(&fixture->env.workers[2]);
+    sendInbound(fixture, 0, request);
+    tosPumpWorker(&fixture->env, 2);
+    twfRequireEqualU32(decodedInnerSink(fixture)->count, 0, "refused handoff published on another worker");
+    twfRequireEqualU32(atomicLoadRelaxed(&fixture->packet_lines[2]->refc),
+                       references,
+                       "refused decoded handoff retained a packet-line reference");
+    twfRequire(workerMessagesOpenAdmission(&fixture->env.workers[2]), "could not reopen test worker admission");
 }
 
 static void caseUnrelatedIpv4Options(flow_fixture_t *fixture)
@@ -699,6 +876,9 @@ static void runEndpointCases(bool server, const char *send_replies_json)
     caseCrossWorkerCorrelationAndSequence(&fixture);
     caseUnrelatedIpv4Options(&fixture);
     casePeerRequestReplay(&fixture);
+    caseDecodedTransportAffinity(&fixture);
+    caseDecodedFragmentAffinity(&fixture);
+    caseDecodedHandoffRefusal(&fixture);
     if (expected_replies)
     {
         caseGeneratedReplyLineSurvivalGuard(&fixture);
@@ -726,6 +906,10 @@ int main(void)
         runEndpointCases(server != 0, NULL);
         runEndpointCases(server != 0, "false");
         runEndpointCases(server != 0, "true");
+        flow_fixture_t single;
+        fixtureSetupWorkers(&single, server != 0, "true", 1);
+        caseDecodedTransportAffinity(&single);
+        fixtureTeardown(&single);
     }
 
     wCryptoGlobalCleanup();

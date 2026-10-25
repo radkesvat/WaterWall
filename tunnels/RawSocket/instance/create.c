@@ -193,6 +193,7 @@ tunnel_t *rawsocketCreate(node_t *node)
 
     t->onStart          = &rawsocketOnStart;
     t->onQuiesceRequest = &rawsocketOnQuiesceRequest;
+    t->onWorkerQuiesce  = &rawsocketOnWorkerQuiesce;
     t->onQuiesceWait    = &rawsocketOnQuiesceWait;
     t->onDestroy        = &rawsocketDestroy;
 
@@ -228,6 +229,15 @@ tunnel_t *rawsocketCreate(node_t *node)
         return NULL;
     }
     state->skip_sysctl = cJSON_IsTrue(skip_sysctl);
+
+    const cJSON *multi_queue = cJSON_GetObjectItemCaseSensitive(settings, "multi-queue");
+    if (multi_queue != NULL && ! cJSON_IsBool(multi_queue))
+    {
+        LOGF("JSON Error: RawSocket->settings->multi-queue (boolean field) : expected true or false");
+        rawsocketDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+    state->multi_queue_requested = multi_queue == NULL || cJSON_IsTrue(multi_queue);
 
     const cJSON *bypass_conntrack = cJSON_GetObjectItemCaseSensitive(settings, "bypass-conntrack");
     if (bypass_conntrack != NULL && ! cJSON_IsBool(bypass_conntrack))

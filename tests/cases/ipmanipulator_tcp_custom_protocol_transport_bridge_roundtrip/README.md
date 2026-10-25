@@ -12,7 +12,7 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 - `custom-to-tcp`: `IpManipulator` → `server-bridge`
 - `server-bridge`: `Bridge` paired with `client-bridge`
 
-Scenario choices: `tester-client.packet-mode=true`, `tester-client.packet-ipv4={"source-ip": "10.86.0.1", "dest-ip": "10.86.0.2", "transport": "tcp", "ttl": 64}`, `tester-server.packet-mode=true`, `tester-server.packet-ipv4={"source-ip": "10.86.0.1", "dest-ip": "10.86.0.2", "transport": "tcp", "ttl": 64}`. These values define the workload/edge case and are not tuning advice.
+Scenario choices: `tester-client.packet-mode=true`, `tester-client.packet-ipv4={"source-ip": "10.86.0.1", "dest-ip": "10.86.0.2", "transport": "tcp", "ttl": 64, "worker-affine-flow": true}`, `tester-server.packet-mode=true`, `tester-server.packet-ipv4={"source-ip": "10.86.0.1", "dest-ip": "10.86.0.2", "transport": "tcp", "ttl": 64, "worker-affine-flow": true}`. These values define the workload/edge case and are not tuning advice. Worker-affine source ports keep four distinct transport flows on their expected workers after decoding, while retaining six verified chunks per worker.
 
 CTest selections and overrides:
 

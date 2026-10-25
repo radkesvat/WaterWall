@@ -1,6 +1,7 @@
 /*
  * Covers: Verifies the Linux NFQUEUE netlink parser with synthetic messages, including capture-length
- * byte order, malformed attributes, payload cursor exposure, and truncated-prefix packet-id recovery.
+ * byte order, malformed attributes, payload cursor exposure, truncated-prefix packet-id recovery,
+ * and nonblocking receive/verdict ownership across syscall refusal and interruption.
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
  * Cases: testValidPayload, testExposePayloadView, testCaptureLengthDiscard,
@@ -21,18 +22,109 @@
 
 #include "devices/capture/capture_linux_checksum.h"
 #include "devices/capture/capture_linux_internal.h"
+#include "devices/capture/capture_linux_nfqueue.h"
 #include "devices/device_packet_checksum.h"
 
 #include <arpa/inet.h>
+#include <linux/netfilter.h>
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_queue.h>
 #include <linux/netlink.h>
+#include <poll.h>
 #include <sys/socket.h>
 
 enum
 {
-    kTestPacketId = 0x10203040U
+    kTestPacketId = 0x10203040U,
+    kTestSocket   = 71,
+    kTestQueue    = 377
 };
+
+typedef struct nfqueue_io_fixture_s
+{
+    _Alignas(ww_max_align_t) uint8_t message[kCaptureLinuxNetfilterReadBufferSize];
+    size_t                       message_length;
+    size_t                       datagram_length;
+    unsigned int                 receive_calls;
+    unsigned int                 verdict_calls;
+    unsigned int                 poll_calls;
+    unsigned int                 receive_failures;
+    unsigned int                 verdict_failures;
+    int                          receive_errno;
+    int                          verdict_errno;
+    bool                         short_verdict;
+    struct nfqnl_msg_verdict_hdr last_verdict;
+    uint16_t                     last_queue;
+} nfqueue_io_fixture_t;
+
+static nfqueue_io_fixture_t io_fixture;
+
+ssize_t __wrap_recvmsg(int fd, struct msghdr *message, int flags);
+ssize_t __wrap_sendto(int fd, const void *data, size_t length, int flags, const struct sockaddr *destination,
+                      socklen_t address_length);
+int     __wrap_poll(struct pollfd *fds, nfds_t count, int timeout);
+
+ssize_t __wrap_recvmsg(int fd, struct msghdr *message, int flags)
+{
+    require(fd == kTestSocket, "receive used the wrong NFQUEUE socket");
+    require((flags & (MSG_DONTWAIT | MSG_TRUNC)) == (MSG_DONTWAIT | MSG_TRUNC),
+            "receive did not request nonblocking truncation detection");
+    ++io_fixture.receive_calls;
+    if (io_fixture.receive_failures != 0)
+    {
+        --io_fixture.receive_failures;
+        errno = io_fixture.receive_errno;
+        return -1;
+    }
+    require(message->msg_iovlen == 1, "receive changed packet storage shape");
+    require(message->msg_namelen == sizeof(struct sockaddr_nl), "receive did not provide Netlink address storage");
+    struct sockaddr_nl *address = message->msg_name;
+    *address                    = (struct sockaddr_nl) {.nl_family = AF_NETLINK};
+    const size_t copied         = min(io_fixture.message_length, message->msg_iov[0].iov_len);
+    memoryCopy(message->msg_iov[0].iov_base, io_fixture.message, copied);
+    message->msg_flags = io_fixture.datagram_length > message->msg_iov[0].iov_len ? MSG_TRUNC : 0;
+    return (ssize_t) io_fixture.datagram_length;
+}
+
+ssize_t __wrap_sendto(int fd, const void *data, size_t length, int flags, const struct sockaddr *destination,
+                      socklen_t address_length)
+{
+    require(fd == kTestSocket, "verdict used the wrong NFQUEUE socket");
+    require((flags & MSG_DONTWAIT) != 0, "verdict send can block");
+    require(address_length == sizeof(struct sockaddr_nl), "verdict Netlink address has wrong length");
+    const struct sockaddr_nl *address = (const struct sockaddr_nl *) destination;
+    require(address->nl_family == AF_NETLINK && address->nl_pid == 0 && address->nl_groups == 0,
+            "verdict did not target the kernel");
+
+    const struct nlmsghdr *header = data;
+    require(header->nlmsg_len == length, "verdict message length mismatch");
+    require(header->nlmsg_type == ((NFNL_SUBSYS_QUEUE << 8) | NFQNL_MSG_VERDICT), "wrong verdict message type");
+    require(header->nlmsg_flags == NLM_F_REQUEST, "verdict unexpectedly requests an ACK");
+    const struct nfgenmsg *generic = NLMSG_DATA(header);
+    io_fixture.last_queue          = ntohs(generic->res_id);
+    const struct nfattr *attribute = NFM_NFA(generic);
+    require(attribute->nfa_type == NFQA_VERDICT_HDR && NFA_PAYLOAD(attribute) == sizeof(io_fixture.last_verdict),
+            "verdict attribute geometry mismatch");
+    memoryCopy(&io_fixture.last_verdict, NFA_DATA(attribute), sizeof(io_fixture.last_verdict));
+    ++io_fixture.verdict_calls;
+    if (io_fixture.verdict_failures != 0)
+    {
+        --io_fixture.verdict_failures;
+        errno = io_fixture.verdict_errno;
+        return -1;
+    }
+    return (ssize_t) length - (io_fixture.short_verdict ? 1 : 0);
+}
+
+int __wrap_poll(struct pollfd *fds, nfds_t count, int timeout)
+{
+    discard fds;
+    discard count;
+    discard timeout;
+    ++io_fixture.poll_calls;
+    errno = EIO;
+    return -1;
+}
 
 typedef struct nfqueue_message_builder_s
 {
@@ -40,7 +132,6 @@ typedef struct nfqueue_message_builder_s
     size_t           capacity;
     struct nlmsghdr *nlh;
 } nfqueue_message_builder_t;
-
 
 static size_t nfqueueAttrOffset(void)
 {
@@ -444,6 +535,149 @@ static void testCaptureIpv4Bounds(void)
     }
 }
 
+static void prepareReceivedPacket(void)
+{
+    memoryZero(&io_fixture, sizeof(io_fixture));
+    uint8_t packet[64];
+    makeIpv4Packet(packet, sizeof(packet), IP_PROTO_TCP);
+    nfqueue_message_builder_t builder;
+    nfqueueBuilderInit(&builder, io_fixture.message, sizeof(io_fixture.message));
+    nfqueueBuilderAppendPacketHeader(&builder);
+    nfqueueBuilderAppendPayload(&builder, packet, sizeof(packet));
+    io_fixture.message_length  = nfqueueBuilderLen(&builder);
+    io_fixture.datagram_length = io_fixture.message_length;
+}
+
+static void testReceiveLeavesVerdictWithCaller(void)
+{
+    prepareReceivedPacket();
+    sbuf_t  *buffer    = sbufCreate(kCaptureLinuxNetfilterReadBufferSize);
+    uint32_t packet_id = 0;
+    require(netfilterReceivePacket(kTestSocket, buffer, &packet_id) == kNetfilterPacketReady,
+            "nonblocking receive did not expose a ready IPv4 packet");
+    require(packet_id == htonl(kTestPacketId), "receive did not retain the network-order packet id");
+    require(sbufGetLength(buffer) == 64 && ((const uint8_t *) sbufGetRawPtr(buffer))[0] == 0x45,
+            "receive did not expose just the IP payload");
+    require(io_fixture.verdict_calls == 0 && io_fixture.poll_calls == 0, "receive sent a verdict or waited for I/O");
+
+    uint8_t packet[64];
+    memoryCopy(packet, sbufGetRawPtr(buffer), sizeof(packet));
+    io_fixture.verdict_failures = 1;
+    io_fixture.verdict_errno    = EAGAIN;
+    require(netfilterTrySendVerdict(kTestSocket, kTestQueue, packet_id, NF_DROP) == kNetfilterVerdictWouldBlock,
+            "full verdict socket did not return without waiting");
+    require(io_fixture.receive_calls == 1 && memoryCompare(packet, sbufGetRawPtr(buffer), sizeof(packet)) == 0,
+            "refused verdict consumed another packet or changed retained input");
+
+    /* Stop may change an unsent active DROP to inactive ACCEPT. No verdict was
+     * committed on EAGAIN, so the retained id is still the exact obligation. */
+    require(netfilterTrySendVerdict(kTestSocket, kTestQueue, packet_id, NF_ACCEPT) == kNetfilterVerdictSent,
+            "retained verdict could not complete after writable readiness");
+    require(io_fixture.last_queue == kTestQueue && io_fixture.last_verdict.id == packet_id &&
+                ntohl(io_fixture.last_verdict.verdict) == NF_ACCEPT,
+            "resumed verdict lost its queue, packet id or stop disposition");
+    require(io_fixture.poll_calls == 0, "nonblocking verdict sender entered poll");
+    sbufDestroy(buffer);
+}
+
+static void testReceiveDiscardRetainsVerdictId(void)
+{
+    prepareReceivedPacket();
+    sbuf_t  *buffer            = sbufCreate(kCaptureLinuxNetfilterReadBufferSize);
+    uint32_t packet_id         = 0;
+    io_fixture.datagram_length = kCaptureLinuxNetfilterReadBufferSize + 128U;
+    require(netfilterReceivePacket(kTestSocket, buffer, &packet_id) == kNetfilterPacketDiscarded &&
+                packet_id == htonl(kTestPacketId),
+            "truncated packet lost its required verdict id");
+
+    prepareReceivedPacket();
+    sbufReset(buffer);
+    const size_t payload_offset =
+        nfqueueAttrOffset() + NFA_ALIGN(NFA_LENGTH(sizeof(struct nfqnl_msg_packet_hdr))) + NFA_LENGTH(0);
+    io_fixture.message[payload_offset] = 0x65;
+    require(netfilterReceivePacket(kTestSocket, buffer, &packet_id) == kNetfilterPacketMalformedDiscarded &&
+                packet_id == htonl(kTestPacketId),
+            "malformed IP packet lost its required verdict id");
+
+    prepareReceivedPacket();
+    sbufReset(buffer);
+    ((struct nlmsghdr *) io_fixture.message)->nlmsg_type = NLMSG_NOOP;
+    packet_id                                            = 77;
+    require(netfilterReceivePacket(kTestSocket, buffer, &packet_id) == kNetfilterPacketError && packet_id == 77,
+            "unidentified message fabricated a verdict id");
+    require(io_fixture.verdict_calls == 0 && io_fixture.poll_calls == 0,
+            "discard receive sent a verdict or waited for I/O");
+    sbufDestroy(buffer);
+}
+
+static void testReceiveRefusalAndInterruption(void)
+{
+    sbuf_t   *buffer     = sbufCreate(kCaptureLinuxNetfilterReadBufferSize);
+    const int failures[] = {EAGAIN, EIO};
+    for (size_t i = 0; i < sizeof(failures) / sizeof(failures[0]); ++i)
+    {
+        prepareReceivedPacket();
+        uint32_t packet_id          = 77;
+        io_fixture.receive_failures = 1;
+        io_fixture.receive_errno    = failures[i];
+        const netfilter_packet_result_t expected =
+            failures[i] == EAGAIN ? kNetfilterPacketWouldBlock : kNetfilterPacketError;
+        require(netfilterReceivePacket(kTestSocket, buffer, &packet_id) == expected && packet_id == 77,
+                "receive failure changed packet ownership");
+        require(io_fixture.receive_calls == 1 && io_fixture.poll_calls == 0,
+                "receive failure retried or entered a wait");
+    }
+
+    prepareReceivedPacket();
+    uint32_t packet_id          = 77;
+    io_fixture.receive_failures = kCaptureInterruptedRetryBudget;
+    io_fixture.receive_errno    = EINTR;
+    require(netfilterReceivePacket(kTestSocket, buffer, &packet_id) == kNetfilterPacketYield && packet_id == 77,
+            "repeated receive interruptions did not yield without consuming a packet");
+    require(io_fixture.receive_calls == kCaptureInterruptedRetryBudget && io_fixture.poll_calls == 0,
+            "receive interruption budget was not bounded");
+    require(netfilterReceivePacket(kTestSocket, buffer, &packet_id) == kNetfilterPacketReady,
+            "receive continuation could not recover after interrupted quantum");
+
+    prepareReceivedPacket();
+    sbufReset(buffer);
+    io_fixture.receive_failures = 1;
+    io_fixture.receive_errno    = EINTR;
+    require(netfilterReceivePacket(kTestSocket, buffer, &packet_id) == kNetfilterPacketReady &&
+                io_fixture.receive_calls == 2,
+            "transient receive interruption did not retry");
+    sbufDestroy(buffer);
+}
+
+static void testVerdictFailuresAndInterruption(void)
+{
+    prepareReceivedPacket();
+    io_fixture.verdict_failures = kCaptureInterruptedRetryBudget;
+    io_fixture.verdict_errno    = EINTR;
+    require(netfilterTrySendVerdict(kTestSocket, kTestQueue, htonl(kTestPacketId), NF_DROP) == kNetfilterVerdictYield,
+            "repeated verdict interruptions did not yield");
+    require(io_fixture.verdict_calls == kCaptureInterruptedRetryBudget && io_fixture.poll_calls == 0,
+            "verdict interruption budget was not bounded");
+    require(netfilterTrySendVerdict(kTestSocket, kTestQueue, htonl(kTestPacketId), NF_DROP) == kNetfilterVerdictSent,
+            "verdict continuation could not recover after interrupted quantum");
+
+    prepareReceivedPacket();
+    io_fixture.verdict_failures = 1;
+    io_fixture.verdict_errno    = EINTR;
+    require(netfilterTrySendVerdict(kTestSocket, kTestQueue, htonl(kTestPacketId), NF_DROP) == kNetfilterVerdictSent &&
+                io_fixture.verdict_calls == 2,
+            "transient verdict interruption did not retry");
+    io_fixture.verdict_failures = 1;
+    io_fixture.verdict_errno    = EIO;
+    require(netfilterTrySendVerdict(kTestSocket, kTestQueue, htonl(kTestPacketId), NF_DROP) == kNetfilterVerdictError,
+            "fatal verdict error was not reported");
+    io_fixture.short_verdict = true;
+    require(netfilterTrySendVerdict(kTestSocket, kTestQueue, htonl(kTestPacketId), NF_DROP) == kNetfilterVerdictError &&
+                errno == EIO,
+            "short Netlink send was accepted as a committed verdict");
+    require(io_fixture.poll_calls == 0, "verdict failure path waited for I/O");
+}
+
 int main(void)
 {
     testCaseSet("capture_linux_nfqueue_test");
@@ -463,6 +697,10 @@ int main(void)
     testOpaqueCapturePayload();
     testCaptureOffloadCompletion();
     testCaptureIpv4Bounds();
+    testReceiveLeavesVerdictWithCaller();
+    testReceiveDiscardRetainsVerdictId();
+    testReceiveRefusalAndInterruption();
+    testVerdictFailuresAndInterruption();
 
     return 0;
 }

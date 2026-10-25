@@ -178,5 +178,11 @@ tunnel_t *pingclientCreate(node_t *node)
     state->wire.tos = (uint8_t) tos;
     atomicStoreRelaxed(&state->next_sequence, (unsigned int) sequence_start);
     atomicLogRateLimiterInitialize(&state->drop_log_limiter);
+    state->decoded_affinity = packetAffinityCreate(t, tunnelPrevDownStreamPayload);
+    if (state->decoded_affinity == NULL)
+    {
+        pingclientDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
     return t;
 }

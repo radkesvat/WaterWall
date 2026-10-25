@@ -278,11 +278,12 @@ static void deviceFragSweep(device_frag_affinity_table_t *table, uint64_t now)
         }
     }
 }
-device_frag_affinity_table_t *deviceFragAffinityCreate(buffer_pool_t *pool, device_fragment_policy_t policy)
+static device_frag_affinity_table_t *deviceFragCreate(buffer_pool_t *pool, device_fragment_policy_t policy, bool shared,
+                                                      uint16_t padding)
 {
     if (policy != kDeviceFragmentReassemble && policy != kDeviceFragmentPreserve)
         return NULL;
-    if (! pool)
+    if (! pool && ! shared)
         return NULL;
     device_frag_affinity_table_t *table = memoryAllocateZero(sizeof(*table));
     if (! table)
@@ -295,7 +296,17 @@ device_frag_affinity_table_t *deviceFragAffinityCreate(buffer_pool_t *pool, devi
     table->release_pool    = pool;
     table->policy          = policy;
     table->generation_open = true;
+    table->shared          = shared;
+    table->shared_padding  = padding;
     return table;
+}
+device_frag_affinity_table_t *deviceFragAffinityCreate(buffer_pool_t *pool, device_fragment_policy_t policy)
+{
+    return deviceFragCreate(pool, policy, false, 0);
+}
+device_frag_affinity_table_t *deviceFragAffinityCreateShared(device_fragment_policy_t policy, uint16_t padding)
+{
+    return deviceFragCreate(NULL, policy, true, padding);
 }
 void deviceFragAffinityEnableShared(device_frag_affinity_table_t *table, uint16_t padding)
 {
@@ -541,7 +552,7 @@ device_frag_affinity_action_t deviceFragAffinityOffer(device_frag_affinity_table
         deviceFragAffinityParse(packet, length, table != NULL && table->trusted_ipv4_header, &view);
     if (parsed == kDeviceFragParseNotFragment)
         return kDeviceFragAffinityNotFragment;
-    assert(table && table->release_pool);
+    assert(table && (table->shared || table->release_pool));
     mutexLock(&table->lock);
     device_frag_affinity_action_t result =
         deviceFragOfferLocked(table, &view, parsed, buf, out, getHRTimeUs() / 1000ULL);

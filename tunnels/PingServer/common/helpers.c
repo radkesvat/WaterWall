@@ -184,5 +184,5 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     discard stripped;
 
     lineSetRecalculateChecksum(l, false);
-    tunnelNextUpStreamPayload(t, l, buf);
+    packetAffinityForward(state->decoded_affinity, l, buf);
 }

@@ -92,6 +92,28 @@ if(TARGET IpManipulator)
     "unit;tunnels;ipmanipulator;protoswap;checksum"
   )
 
+  if(LINUX)
+    waterwall_add_native_executable(ipmanipulator_affinity_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/ipmanipulator/ipmanipulator_affinity_test.c)
+    target_include_directories(ipmanipulator_affinity_test PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+      ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+      ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
+    )
+    target_link_libraries(ipmanipulator_affinity_test PRIVATE IpManipulator ww)
+    target_link_options(ipmanipulator_affinity_test PRIVATE
+      -Wl,--wrap=sendWorkerMessageForceQueueBestEffortWithCleanup
+      -Wl,--wrap=smugglefintrickDownStreamPayload
+      -Wl,--wrap=sbufDestroy
+      -Wl,--wrap=bufferpoolReuseBuffer
+    )
+    add_dependencies(waterwall_unit_tests ipmanipulator_affinity_test)
+    add_waterwall_unit_test(
+      waterwall.ipmanipulator_affinity_unit
+      ipmanipulator_affinity_test
+      "unit;tunnels;ipmanipulator;protoswap;affinity;fragments;lifecycle"
+    )
+  endif()
+
   waterwall_add_native_executable(ipmanipulator_egress_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/ipmanipulator/ipmanipulator_egress_test.c)
   target_include_directories(ipmanipulator_egress_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include

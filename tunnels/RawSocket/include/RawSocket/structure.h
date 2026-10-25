@@ -21,13 +21,14 @@ typedef struct rawsocket_tstate_s
     packet_lifecycle_anchor_t lifecycle_anchor;
     device_fragment_policy_t  fragment_policy;
 
-    capture_device_t *capture_device;
-    ipmask_t         *capture_ranges;
-    uint32_t          capture_range_count;
+    capture_device_t         *capture_device;
+    ipmask_t                 *capture_ranges;
+    uint32_t                  capture_range_count;
     capture_protocol_filter_t capture_protocol_filter;
-    char             *capture_device_name;
-    bool              skip_sysctl;
-    uint32_t          except_fwmark;
+    char                     *capture_device_name;
+    bool                      skip_sysctl;
+    bool                      multi_queue_requested;
+    uint32_t                  except_fwmark;
 
     char         *raw_device_name;
     raw_device_t *raw_device;
@@ -51,6 +52,7 @@ WW_EXPORT api_result_t rawsocketApi(tunnel_t *instance, sbuf_t *message);
 
 void rawsocketOnStart(tunnel_t *t);
 void rawsocketOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void rawsocketOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void rawsocketOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, wid_t wid);

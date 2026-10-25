@@ -38,7 +38,6 @@ bool              __wrap_rawdeviceBringDown(raw_device_t *rdev);
 void              __wrap_capturedeviceDestroy(capture_device_t *cdev);
 void              __wrap_rawdeviceDestroy(raw_device_t *rdev);
 
-
 static void notifyCleanup(char marker)
 {
     if (notify_fd >= 0)
@@ -100,6 +99,7 @@ raw_device_t *__wrap_rawdeviceCreate(const char *name, uint32_t mark, bool bypas
 bool __wrap_caputredeviceBringUp(capture_device_t *cdev)
 {
     require(cdev == &fake_capture_device, "RawSocket brought up an unexpected capture device");
+    require(cdev->multi_queue, "RawSocket did not apply its multi-queue setting before capture activation");
     require(fake_raw_device_up, "RawSocket activated capture before the raw writer was ready");
     notifyCleanup('c');
     return false;
@@ -158,7 +158,7 @@ static void runRawSocketStartWithCaptureBringupFailure(int write_fd)
 
     node_t   sink_node = {.type = (char[]) {"TunDevice"}};
     tunnel_t prev      = {.fnPayloadD = noopPayload, .node = &sink_node};
-    t->prev       = &prev;
+    t->prev            = &prev;
 
     ipmask_t capture_range;
     memoryZero(&capture_range, sizeof(capture_range));
@@ -166,14 +166,15 @@ static void runRawSocketStartWithCaptureBringupFailure(int write_fd)
     char capture_name[] = "capture-test";
     char raw_name[]     = "raw-test";
 
-    rawsocket_tstate_t *state  = tunnelGetState(t);
-    state->capture_device_name = capture_name;
-    state->raw_device_name     = raw_name;
-    state->capture_ranges      = &capture_range;
-    state->capture_range_count = 1;
-    state->fragment_policy     = kDeviceFragmentPreserve;
-    state->skip_sysctl         = true;
-    state->firewall_mark       = 7;
+    rawsocket_tstate_t *state    = tunnelGetState(t);
+    state->capture_device_name   = capture_name;
+    state->raw_device_name       = raw_name;
+    state->capture_ranges        = &capture_range;
+    state->capture_range_count   = 1;
+    state->fragment_policy       = kDeviceFragmentPreserve;
+    state->skip_sysctl           = true;
+    state->multi_queue_requested = true;
+    state->firewall_mark         = 7;
     captureProtocolFilterExclude(&state->capture_protocol_filter, 1);
     captureProtocolFilterExclude(&state->capture_protocol_filter, 6);
 

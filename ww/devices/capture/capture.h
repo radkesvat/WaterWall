@@ -11,16 +11,23 @@ typedef struct capture_device_s capture_device_t;
  * and userdata remain live through the call under the reader delivery gate. */
 typedef void (*CaptureReadEventHandle)(capture_device_t *cdev, void *userdata, sbuf_t *buf, wid_t tid);
 
-/* All calls require a live handle. RequestStop only signals the reader; BringDown
- * joins it and releases active capture resources. IsUp retains the published
+/* All calls require a live handle. RequestStop closes delivery and receive
+ * admission; BringDown quiesces readers and releases active capture resources. IsUp retains the published
  * compatibility status (a relaxed atomic load), including startup/stop timing.
  * Create/BringUp run on an event worker before publication. The lifecycle owner
- * serializes stop, join and destruction; destruction follows producer quiescence.
+ * serializes stop, wait and destruction; destruction follows producer quiescence.
+ * Linux BringUp, BringDown and Destroy share the lifecycle coordinator thread;
+ * its command-progress registration services every inactive device during waits.
  * IsUp is a snapshot, not a lifetime reference or permission to race destruction. */
 bool capturedeviceIsUp(const capture_device_t *cdev);
 bool caputredeviceBringUp(capture_device_t *cdev);
 bool capturedeviceRequestStop(capture_device_t *cdev);
 bool caputredeviceBringDown(capture_device_t *cdev);
+/* Exclusive inactive configuration. Linux defaults to one receive queue per
+ * event worker, falling back to worker 0. Other platforms retain their reader. */
+void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled);
+/* Called on each event worker during quiescence, before BringDown. */
+void capturedeviceWorkerQuiesce(capture_device_t *cdev, wid_t wid);
 
 /* skip_sysctl suppresses only optional Linux kernel tuning. bypass_conntrack
  * controls Linux NOTRACK rules; NFQUEUE capture remains enabled either way. */

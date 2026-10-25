@@ -142,6 +142,54 @@ void procCommandResultDrop(proc_command_result_t *out)
     memoryZero(out, sizeof(*out));
 }
 
+static thread_local proc_command_progress_t *command_progress_head;
+#ifndef NDEBUG
+static thread_local bool command_progress_running;
+#endif
+
+void procCommandProgressRegister(proc_command_progress_t *progress)
+{
+    assert(progress != NULL && progress->callback != NULL && ! command_progress_running);
+    for (proc_command_progress_t *entry = command_progress_head; entry != NULL; entry = entry->next)
+        assert(entry != progress);
+    progress->next        = command_progress_head;
+    command_progress_head = progress;
+}
+
+void procCommandProgressUnregister(proc_command_progress_t *progress)
+{
+    assert(progress != NULL && ! command_progress_running);
+    proc_command_progress_t **entry = &command_progress_head;
+    while (*entry != progress)
+    {
+        assert(*entry != NULL);
+        entry = &(*entry)->next;
+    }
+    *entry         = progress->next;
+    progress->next = NULL;
+}
+
+static bool runCommandProgress(void (*callback)(void *context), void *context)
+{
+    assert(! command_progress_running);
+#ifndef NDEBUG
+    command_progress_running = true;
+#endif
+    for (proc_command_progress_t *entry = command_progress_head; entry != NULL; entry = entry->next)
+        entry->callback(entry->context);
+    if (callback != NULL)
+        callback(context);
+#ifndef NDEBUG
+    command_progress_running = false;
+#endif
+    return command_progress_head != NULL;
+}
+
+bool procCommandProgressRun(void)
+{
+    return runCommandProgress(NULL, NULL);
+}
+
 #if defined(OS_LINUX)
 
 enum
@@ -150,7 +198,8 @@ enum
     kProcCommandInitialCapacity = 4096,
     // Polling interval used while waiting for a child that has closed stdout, and
     // while observing the direct child during the post-SIGTERM grace period.
-    kProcCommandChildPollUs = 2000,
+    kProcCommandChildPollUs    = 2000,
+    kProcCommandProgressPollMs = 5,
     // Reads per drain pass. A producer that keeps the pipe continuously non-empty
     // never yields EAGAIN, so an unbounded pass can hold the loop past the
     // deadline. 32 * 4096 is two pipe buffers, so an ordinary burst still drains
@@ -188,20 +237,41 @@ static void recordChildStatus(proc_command_result_t *out, int status)
     }
 }
 
-// Blocking, EINTR-safe reap of the direct child. Records its exit/signal status.
-static bool waitpidEintrSafe(pid_t pid, proc_command_result_t *out)
+static void commandProgress(const proc_command_options_t *options)
 {
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0)
+    discard runCommandProgress(options->progress, options->progress_context);
+}
+
+static bool commandHasProgress(const proc_command_options_t *options)
+{
+    return options->progress != NULL || command_progress_head != NULL;
+}
+
+// EINTR-safe reap of the direct child. Preserve periodic progress while waiting
+// for SIGKILL to take effect when the caller services another resource.
+static bool waitpidEintrSafe(pid_t pid, const proc_command_options_t *options, proc_command_result_t *out)
+{
+    for (;;)
     {
-        if (errno == EINTR)
+        commandProgress(options);
+        int         status = 0;
+        const pid_t reaped = waitpid(pid, &status, commandHasProgress(options) ? WNOHANG : 0);
+        if (reaped == pid)
+        {
+            recordChildStatus(out, status);
+            return true;
+        }
+        if (reaped == 0)
+        {
+            usleep(kProcCommandChildPollUs);
+            continue;
+        }
+        if (reaped < 0 && errno == EINTR)
         {
             continue;
         }
         return false;
     }
-    recordChildStatus(out, status);
-    return true;
 }
 
 // Remaining time until the monotonic deadline in whole milliseconds (rounded
@@ -218,7 +288,7 @@ static int remainingDeadlineMs(uint64_t deadline_us)
 }
 
 // Bounded termination and reaping. Signals the child process group with SIGTERM,
-// waits up to `grace_ms` for the direct child to exit, then escalates by
+// waits up to `terminate_grace_ms` for the direct child to exit, then escalates by
 // signalling the whole process group with SIGKILL, and only then reaps the
 // direct child. The group SIGKILL happens even when the direct child has already
 // exited, because a SIGTERM-ignoring descendant can outlive its parent and would
@@ -230,13 +300,14 @@ static int remainingDeadlineMs(uint64_t deadline_us)
 // reserved. Reaping first could free the PID and let the group/fallback signal
 // reach an unrelated process that reused it. No path here returns with a known
 // live or zombie direct child.
-static void terminateAndReapChild(pid_t pid, uint32_t grace_ms, proc_command_result_t *out)
+static void terminateAndReapChild(pid_t pid, const proc_command_options_t *options, proc_command_result_t *out)
 {
     signalChildGroup(pid, SIGTERM);
 
-    const uint64_t grace_deadline_us = (uint64_t) getHRTimeUs() + ((uint64_t) grace_ms * 1000U);
+    const uint64_t grace_deadline_us = (uint64_t) getHRTimeUs() + ((uint64_t) options->terminate_grace_ms * 1000U);
     for (;;)
     {
+        commandProgress(options);
         siginfo_t info;
         info.si_pid      = 0;
         const int waited = waitid(P_PID, (id_t) pid, &info, WEXITED | WNOHANG | WNOWAIT);
@@ -262,7 +333,7 @@ static void terminateAndReapChild(pid_t pid, uint32_t grace_ms, proc_command_res
 
     // Now reap the direct child. It is either an unreaped zombie observed above,
     // or guaranteed to exit promptly under the SIGKILL; either way this completes.
-    (void) waitpidEintrSafe(pid, out);
+    (void) waitpidEintrSafe(pid, options, out);
 }
 
 // Grow the capture buffer to hold `additional` more bytes plus a NUL, never
@@ -413,7 +484,7 @@ bool procRunArgvWithDeadline(const char *file, const char *const argv[], const p
         out->spawn_failed = true;
         close(output_pipe[0]);
         output_pipe[0] = -1;
-        terminateAndReapChild(pid, options->terminate_grace_ms, out);
+        terminateAndReapChild(pid, options, out);
         return false;
     }
 
@@ -431,6 +502,7 @@ bool procRunArgvWithDeadline(const char *file, const char *const argv[], const p
     bool child_reaped = false;
     while (! pipe_eof || ! child_reaped)
     {
+        commandProgress(options);
         const int remaining = remainingDeadlineMs(deadline_us);
         if (remaining == 0)
         {
@@ -440,8 +512,11 @@ bool procRunArgvWithDeadline(const char *file, const char *const argv[], const p
 
         if (! pipe_eof)
         {
-            struct pollfd pfd = {.fd = output_pipe[0], .events = POLLIN, .revents = 0};
-            const int     pr  = poll(&pfd, 1, remaining);
+            struct pollfd pfd     = {.fd = output_pipe[0], .events = POLLIN, .revents = 0};
+            const int     wait_ms = commandHasProgress(options) && remaining > kProcCommandProgressPollMs
+                                        ? kProcCommandProgressPollMs
+                                        : remaining;
+            const int     pr      = poll(&pfd, 1, wait_ms);
             if (pr < 0)
             {
                 if (errno == EINTR)
@@ -454,8 +529,7 @@ bool procRunArgvWithDeadline(const char *file, const char *const argv[], const p
             }
             if (pr == 0)
             {
-                timed_out = true;
-                break;
+                continue; // A progress slice may expire before the command deadline.
             }
 
             // Drain what is currently available after POLLIN/POLLHUP, bounded so
@@ -542,7 +616,7 @@ bool procRunArgvWithDeadline(const char *file, const char *const argv[], const p
     // reap here when the deadline expired or an I/O error broke out early.
     if (failed || ! child_reaped)
     {
-        terminateAndReapChild(pid, options->terminate_grace_ms, out);
+        terminateAndReapChild(pid, options, out);
         return false;
     }
 

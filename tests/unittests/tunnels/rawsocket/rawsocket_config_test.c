@@ -4,7 +4,7 @@
  * topology is implied.
  * Cases: testAliasesAcceptSingleAndArray, testMissingOrEmptyCaptureListEnablesWriteOnlyMode,
  * testSkipSysctlSetting, testInvalidCaptureElementIsRejected, testConntrackSetting,
- * testProtocolExclusions
+ * testProtocolExclusions, testMultiQueueSetting
  * Checks: Assertion labels include: RawSocket did not default fragment-policy to reassemble; RawSocket
  * rejected a supported capture-ip/capture-ips shape; RawSocket loaded the wrong number of capture
  * ranges; RawSocket loaded a single IPv4 range incorrectly
@@ -145,6 +145,37 @@ static void testInvalidCaptureElementIsRejected(void)
     destroyRawSocket(t, settings);
 }
 
+static void testMultiQueueSetting(void)
+{
+    const char *const enabled[] = {"{}", "{\"multi-queue\":true}"};
+    for (size_t i = 0; i < ARRAY_SIZE(enabled); ++i)
+    {
+        cJSON    *settings;
+        tunnel_t *t = createRawSocket(enabled[i], &settings);
+        require(t != NULL && ((rawsocket_tstate_t *) tunnelGetState(t))->multi_queue_requested,
+                "RawSocket did not enable capture multi-queue by default or explicit setting");
+        require(t->onWorkerQuiesce == rawsocketOnWorkerQuiesce,
+                "RawSocket did not register capture watcher detachment on worker quiescence");
+        destroyRawSocket(t, settings);
+    }
+
+    cJSON    *settings;
+    tunnel_t *t = createRawSocket("{\"multi-queue\":false}", &settings);
+    require(t != NULL && ! ((rawsocket_tstate_t *) tunnelGetState(t))->multi_queue_requested,
+            "RawSocket did not retain multi-queue=false");
+    destroyRawSocket(t, settings);
+
+    const char *const invalid[] = {"null", "0", "1", "\"true\"", "[]", "{}"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        char json[64];
+        snprintf(json, sizeof(json), "{\"multi-queue\":%s}", invalid[i]);
+        t = createRawSocket(json, &settings);
+        require(t == NULL, "RawSocket accepted a non-boolean multi-queue setting");
+        destroyRawSocket(t, settings);
+    }
+}
+
 static void testConntrackSetting(void)
 {
     static const char *enabled[] = {"{}", "{\"bypass-conntrack\":true}"};
@@ -224,6 +255,7 @@ int main(void)
     testAliasesAcceptSingleAndArray();
     testMissingOrEmptyCaptureListEnablesWriteOnlyMode();
     testSkipSysctlSetting();
+    testMultiQueueSetting();
     testInvalidCaptureElementIsRejected();
     testConntrackSetting();
     testProtocolExclusions();

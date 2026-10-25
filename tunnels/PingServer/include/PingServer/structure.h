@@ -1,12 +1,14 @@
 #pragma once
 
 #include "PingCommon/ping_wire.h"
+#include "packet_affinity.h"
 #include "wwapi.h"
 
 typedef struct pingserver_tstate_s
 {
     ping_wire_config_t             wire;
     ping_wire_tracker_t           *tracker;
+    packet_affinity_t             *decoded_affinity;
     ping_wire_reply_id_generator_t reply_ids;
     atomic_uint                    next_sequence;
     atomic_log_rate_limiter_t      drop_log_limiter;

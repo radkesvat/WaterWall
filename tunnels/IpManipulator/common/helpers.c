@@ -1204,6 +1204,11 @@ static bool ipmanipulatorPacketUsesMappedProtocol(const ipmanipulator_tstate_t *
     }
 
     uint8_t protocol = IPH_PROTO(ipheader);
+    if ((protocol == IPPROTO_TCP && state->trick_proto_swap_tcp_number != -1) ||
+        (protocol == IPPROTO_UDP && state->trick_proto_swap_udp_number != -1))
+    {
+        return false;
+    }
     return protocol == state->trick_proto_swap_tcp_number || protocol == state->trick_proto_swap_udp_number;
 }
 
@@ -1224,12 +1229,13 @@ static bool ipmanipulatorHasTcpBitActionsForDirection(const ipmanipulator_tstate
 }
 
 static bool ipmanipulatorPrepareSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, bool upstream,
-                                                   bool apply_portghost)
+                                                   bool apply_portghost, bool *decoded)
 {
     ipmanipulator_tstate_t *state                = tunnelGetState(t);
     bool                    recalculate_checksum = lineGetRecalculateChecksum(l);
     bool                    ghost_applied        = false;
     sbuf_t                 *buf                  = *buf_ptr;
+    *decoded                                     = false;
 
     if (apply_portghost)
     {
@@ -1248,7 +1254,8 @@ static bool ipmanipulatorPrepareSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_
     if (upstream && state->trick_proto_swap)
     {
         const bool decoding = ipmanipulatorPacketUsesMappedProtocol(state, buf);
-        if (protoswapApply(t, l, buf) && decoding && lineGetRecalculateChecksum(l) &&
+        *decoded            = protoswapApply(t, l, buf) && decoding;
+        if (*decoded && lineGetRecalculateChecksum(l) &&
             calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
         {
             lineSetRecalculateChecksum(l, false);
@@ -1262,12 +1269,23 @@ static bool ipmanipulatorPrepareSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_
 static bool ipmanipulatorForwardSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward,
                                                    bool upstream, bool apply_portghost)
 {
-    if (! ipmanipulatorPrepareSingleEgressPacket(t, l, &buf, upstream, apply_portghost))
+    bool decoded;
+    if (! ipmanipulatorPrepareSingleEgressPacket(t, l, &buf, upstream, apply_portghost, &decoded))
     {
         return lineIsAlive(l);
     }
 
-    forward(t, l, buf);
+    if (decoded && forward == ipmanipulatorSendUpstreamDuplicates && getWorkersCount() > 1)
+    {
+        /* Final egress already applied every transform. Resume only the fixed
+         * final callback so a handoff cannot encode or ghost the packet again. */
+        ipmanipulator_tstate_t *state = tunnelGetState(t);
+        packetAffinityForward(state->decoded_upstream_affinity, l, buf);
+    }
+    else
+    {
+        forward(t, l, buf);
+    }
     return lineIsAlive(l);
 }
 
@@ -2885,7 +2903,7 @@ static void ipmanipulatorSendWithDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf,
     lineUnref(l);
 }
 
-static void ipmanipulatorSendUpstreamDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf)
+void ipmanipulatorSendUpstreamDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     ipmanipulatorSendWithDuplicates(t, l, buf, tunnelNextUpStreamPayload);
 }

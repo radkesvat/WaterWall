@@ -1,309 +1,593 @@
-#include "capture_linux_checksum.h"
-#include "capture_linux_internal.h"
-#include "capture_private.h"
-#include "devices/device_flow_affinity.h"
-#include "devices/device_fragment_policy.h"
-#include "generic_pool.h"
-#include "global_state.h"
-#include "loggers/internal_logger.h"
-#include "worker.h"
-#include "wproc.h"
-#include "wtime.h"
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <linux/filter.h>
-#include <linux/if_ether.h>
-#include <linux/ipv6.h>
-#include <linux/netfilter.h>
-#include <linux/netfilter/nfnetlink.h>
-#include <linux/netfilter/nfnetlink_queue.h>
-#include <linux/netfilter/xt_bpf.h>
-#include <linux/netlink.h>
-#include <netinet/in.h>
-#include <netinet/ip.h>
-#include <poll.h>
-#include <sys/ioctl.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
 #include "capture_linux_nfqueue.h"
 #include "capture_linux_private.h"
-#include "capture_linux_rules.h"
+#include "devices/device_flow_affinity.h"
+#include "global_state.h"
+#include "loggers/internal_logger.h"
+#include "worker_messages.h"
+#include "wproc.h"
+#include "wtime.h"
+#include <linux/netfilter.h>
+#include <netinet/in.h>
+#include <unistd.h>
 
-static void capturedeviceRecordNetfilterDiscard(capture_device_t *cdev)
+typedef struct capture_reader_generation_s capture_reader_generation_t;
+typedef struct capture_worker_reader_s
 {
-    log_rate_limiter_report_t report =
-        logRateLimiterRecord(&cdev->netfilter_discard_log_limiter, kCaptureDiscardReportIntervalMs);
-    if (! report.should_log)
+    capture_reader_generation_t *generation;
+    wid_t                        wid;
+    wio_t                       *io;
+    wtimer_t                    *verdict_timer;
+    atomic_bool                  scheduled;
+    atomic_bool                  waiting;
+    sbuf_t                      *scratch;
+    bool                         verdict_pending;
+    uint32_t                     packet_id;
+    uint32_t                     verdict;
+    uint64_t                     verdict_deadline_us;
+    netfilter_packet_result_t    packet_result;
+    sbuf_t                      *pending_bufs[kDeviceFragAffinityMaxStagedPerEntry + 1];
+    wid_t                        pending_wids[kDeviceFragAffinityMaxStagedPerEntry + 1];
+    unsigned                     pending_first;
+    unsigned                     pending_count;
+    log_rate_limiter_t           discard_log;
+    uint64_t                     received;
+} capture_worker_reader_t;
+
+struct capture_reader_generation_s
+{
+    atomic_uint              references;
+    atomic_uint              attached;
+    quiescence_gate_t        gate;
+    capture_device_t        *device;
+    device_reader_session_t *session;
+    uint16_t                 count;
+    uint16_t                 service_next;
+    wid_t                    opaque_next;
+    /* Only the serialized lifecycle coordinator accesses these fields. */
+    bool                    coordinator_owned;
+    proc_command_progress_t command_progress;
+    capture_worker_reader_t lanes[];
+};
+
+static void captureReaderUnref(capture_reader_generation_t *generation)
+{
+    if (atomicSubExplicit(&generation->references, 1, memory_order_acq_rel) == 1)
     {
+        assert(quiescenceGateIsClosedAndQuiesced(&generation->gate));
+        assert(atomicLoadRelaxed(&generation->attached) == 0);
+        deviceReaderSessionUnref(generation->session);
+        memoryFree(generation);
+    }
+}
+
+static void captureReaderDetach(capture_worker_reader_t *lane)
+{
+    assert(currentThreadOwnsWorker(lane->wid));
+    if (lane->verdict_timer != NULL)
+    {
+        wtimerDelete(lane->verdict_timer);
+        lane->verdict_timer = NULL;
+    }
+    if (lane->io != NULL)
+    {
+        wio_t *io = lane->io;
+        lane->io  = NULL;
+        weventSetUserData(io, NULL);
+        wioReleaseNoClose(io);
+        atomicSubExplicit(&lane->generation->attached, 1, memory_order_release);
+        captureReaderUnref(lane->generation);
+    }
+}
+
+static void captureReaderMessage(worker_t *worker, void *arg1, void *arg2, void *arg3);
+static void captureReaderCancel(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
+{
+    discard                  arg3;
+    capture_worker_reader_t *lane = arg1;
+    if (arg2 != NULL &&
+        (reason == kWorkerMessageCancelEnqueueFailure ||
+         (reason == kWorkerMessageCancelTargetUnavailable && quiescenceGateIsActive(&lane->generation->gate))))
+    {
+        LOGF("CaptureDevice: required receive notification could not reach its worker");
+        abortProgramNow(1);
+    }
+    atomicStoreExplicit(&lane->scheduled, false, memory_order_release);
+    captureReaderUnref(lane->generation);
+}
+
+static bool captureReaderSchedule(capture_worker_reader_t *lane, bool required)
+{
+    if (atomicExchangeExplicit(&lane->scheduled, true, memory_order_acq_rel))
+        return true;
+    atomicIncExplicit(&lane->generation->references, memory_order_relaxed);
+    return sendWorkerMessageForceQueueWithCleanup(lane->wid,
+                                                  (WorkerMessageCallback) captureReaderMessage,
+                                                  captureReaderCancel,
+                                                  lane,
+                                                  required ? lane : NULL,
+                                                  NULL) == kWorkerMessageSubmitAccepted;
+}
+
+void captureReaderCapacityReady(void *context)
+{
+    capture_device_t            *device = context;
+    capture_reader_generation_t *generation =
+        (capture_reader_generation_t *) atomicLoadExplicit(&device->reader_notify, memory_order_acquire);
+    if (generation == NULL)
         return;
-    }
-
-    LOGW("CaptureDevice: discarded %llu truncated or oversized netfilter packet(s) over %llums (total=%llu)",
-         LLU(report.events),
-         LLU(report.elapsed_ms),
-         LLU(report.total));
+    /* Session notification admission pins the device and reader generation. */
+    for (uint16_t i = 0; i < generation->count; ++i)
+        if (atomicLoadExplicit(&generation->lanes[i].waiting, memory_order_acquire))
+            discard captureReaderSchedule(&generation->lanes[i], true);
 }
 
-static void capturedeviceReportPendingNetfilterDiscards(capture_device_t *cdev)
+static bool captureReaderPost(capture_worker_reader_t *lane)
 {
-    log_rate_limiter_report_t report = logRateLimiterFlush(&cdev->netfilter_discard_log_limiter);
-    if (! report.should_log)
+    while (lane->pending_first < lane->pending_count)
     {
-        return;
-    }
-
-    LOGW("CaptureDevice: discarded %llu truncated or oversized netfilter packet(s) before reader exit (total=%llu)",
-         LLU(report.events),
-         LLU(report.total));
-}
-
-WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
-{
-    capture_device_t *cdev          = userdata;
-    int               reader_socket = -1;
-    struct pollfd     fds[2];
-    fds[1].fd     = cdev->linux_pipe_fds[0];
-    fds[0].events = POLLIN;
-    fds[1].events = POLLIN;
-
-    // Readiness is published only after all non-socket polling state is built.
-    // The handshake supplies the stable socket reference and the next action is
-    // entering the bounded poll loop.
-    if (! captureLinuxReaderPublishReady(cdev, &reader_socket))
-    {
-        return 0;
-    }
-    fds[0].fd = reader_socket;
-
-    while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
-    {
-        int ret = poll(fds, 2, kCaptureReaderPollTimeoutMs);
-        if (ret < 0)
-        {
-            if (errno == EINTR)
-            {
-                continue; // Interrupted by signal, just retry
-            }
-            LOGE("CaptureDevice: Exit read routine due to poll failed with error %d (%s)", errno, strerror(errno));
-            break;
-        }
-
-        if (ret == 0)
-        {
-            // Bounded-timeout tick. This is the guaranteed exit path: if the wake
-            // token could not be written, `running == false` is still observed
-            // here, so BringDown's join cannot block forever.
-            continue;
-        }
-
-        if (fds[1].revents & POLLIN)
-        {
-            char    drain_byte;
-            ssize_t drain_res = read(cdev->linux_pipe_fds[0], &drain_byte, 1);
-            discard drain_res;
-            LOGW("CaptureDevice: Exit read routine due to pipe event");
-            break;
-        }
-
-        // Check for socket errors
-        if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
-        {
-            int       socket_error = 0;
-            socklen_t err_len      = sizeof(socket_error);
-            getsockopt(reader_socket, SOL_SOCKET, SO_ERROR, &socket_error, &err_len);
-            LOGE("CaptureDevice: Exit read routine due to socket error event: %s%s%s, socket error: %d (%s)",
-                 (fds[0].revents & POLLERR) ? "POLLERR " : "",
-                 (fds[0].revents & POLLHUP) ? "POLLHUP " : "",
-                 (fds[0].revents & POLLNVAL) ? "POLLNVAL " : "",
-                 socket_error,
-                 strerror(socket_error));
-            break;
-        }
-
-        if (fds[0].revents & POLLIN)
-        {
-            uint16_t queued_count = 0;
-            sbuf_t  *bufs[kMaxReadDistributeQueueSize];
-
-            // Drain multiple packets while the socket remains readable
-            for (uint32_t i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
-            {
-                // Stop may be requested after poll() made the socket readable.
-                // Observe it before every packet so one wakeup cannot multiply
-                // the verdict deadline across an entire RAM_PROFILE batch.
-                if (! atomicLoadExplicit(&cdev->running, memory_order_relaxed))
-                {
-                    break;
-                }
-
-                bool leave_drain_loop = false;
-                bufs[queued_count]    = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
-                bufs[queued_count]    = sbufReserveSpace(bufs[queued_count], kNetfilterReadBufferSize);
-
-                netfilter_packet_result_t packet_result =
-                    netfilterGetPacket(cdev, reader_socket, cdev->queue_number, bufs[queued_count]);
-
-                switch (packet_result)
-                {
-                case kNetfilterPacketReady:
-                    // Length was set in netfilterGetPacket via sbufSetLength.
-                    queued_count++;
-                    break;
-
-                case kNetfilterPacketAccepted:
-                    // Capture is not active yet, or shutdown has begun. The
-                    // packet was returned to the host stack with NF_ACCEPT and
-                    // must never be dispatched through RawSocket.
-                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
-                    continue;
-
-                case kNetfilterPacketDiscarded:
-                    capturedeviceRecordNetfilterDiscard(cdev);
-                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
-                    continue;
-
-                case kNetfilterPacketMalformedDiscarded:
-                    LOGW("CaptureDevice: discarded a malformed netfilter message or invalid IPv4 packet after "
-                         "sending NF_DROP");
-                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
-                    continue;
-
-                case kNetfilterPacketWouldBlock:
-                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
-                    if (queued_count > 0)
-                    {
-                        deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
-                        queued_count = 0;
-                    }
-                    leave_drain_loop = true;
-                    break;
-
-                case kNetfilterPacketEof:
-                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
-                    if (queued_count > 0)
-                    {
-                        deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
-                        queued_count = 0;
-                    }
-                    capturedeviceReportPendingNetfilterDiscards(cdev);
-                    LOGE("CaptureDevice: Exit read routine due to End Of File");
-                    return 0;
-
-                case kNetfilterPacketError:
-                default: {
-                    int saved_errno = errno;
-                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
-                    if (queued_count > 0)
-                    {
-                        deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
-                        queued_count = 0;
-                    }
-                    LOGW("CaptureDevice: failed to read a packet from netfilter socket, errno is %d (%s)",
-                         saved_errno,
-                         strerror(saved_errno));
-                    capturedeviceReportPendingNetfilterDiscards(cdev);
-                    return 0;
-                }
-                }
-
-                if (leave_drain_loop)
-                {
-                    break;
-                }
-            }
-
-            // Distribute all accumulated packets in one batch
-            if (queued_count > 0)
-            {
-                deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
-            }
-            continue;
-        }
-
-        // If we get here, poll returned > 0 but none of our expected events occurred
-        LOGE("CaptureDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, fd[1].revents=0x%x",
-             fds[0].revents,
-             fds[1].revents);
-        capturedeviceReportPendingNetfilterDiscards(cdev);
-        return 0;
-    }
-
-    capturedeviceReportPendingNetfilterDiscards(cdev);
-    return 0;
-}
-
-// Return every packet the kernel still holds for this queue to the host stack.
-//
-// Removing the last iptables rule stops new packets from being enqueued, but
-// anything the kernel queued just before that is still waiting for a verdict.
-// The reader cannot be relied on to have taken it: its drain is bounded per
-// wakeup, and the stop pipe is handled before the queue socket, so it can exit
-// with the socket still readable. On the successful-cleanup path the queue
-// socket is then left open, so those packets would sit unverdicted until the
-// device is destroyed or brought back up.
-//
-// Called only after the reader thread has been joined, so this owner has
-// exclusive use of the descriptor and no synchronization is needed.
-// `capture_active` is already false by then, so netfilterGetPacket() issues
-// NF_ACCEPT for each packet on its own.
-bool capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_fd, uint64_t deadline_us)
-{
-    // A standalone buffer rather than one from cdev->reader_buffer_pool: that
-    // pool is bound to the reader thread on first use, and this runs on the
-    // lifecycle owner's thread. Nothing here is dispatched, so one buffer is
-    // reused for the whole drain and released on the way out.
-    sbuf_t *buf = sbufCreate(kNetfilterReadBufferSize);
-
-    for (uint32_t drained = 0;; ++drained)
-    {
-        if ((uint64_t) getHRTimeUs() >= deadline_us)
-        {
-            errno = ETIMEDOUT;
-            LOGW("CaptureDevice: residual acceptance deadline expired for queue %u after %u packet(s)",
-                 cdev->queue_number,
-                 drained);
-            sbufDestroy(buf);
+        const unsigned i = lane->pending_first;
+        atomicStoreExplicit(&lane->waiting, true, memory_order_release);
+        const device_reader_post_result_e result =
+            deviceReaderSessionTryPost(lane->generation->session, lane->pending_wids[i], &lane->pending_bufs[i], 1);
+        if (result == kDeviceReaderPostCapacity)
             return false;
-        }
-        sbufReset(buf);
-        buf = sbufReserveSpace(buf, kNetfilterReadBufferSize);
+        atomicStoreExplicit(&lane->waiting, false, memory_order_release);
+        ++lane->pending_first;
+    }
+    lane->pending_first = lane->pending_count = 0;
+    return true;
+}
 
-        const netfilter_packet_result_t packet_result =
-            netfilterGetPacketUntil(cdev, socket_fd, cdev->queue_number, buf, deadline_us);
-
-        // The drain never dispatches: the reader session is already ended, and a
-        // verdict was sent for every result except WouldBlock/Eof/Error.
-        if (packet_result == kNetfilterPacketWouldBlock || packet_result == kNetfilterPacketEof)
+static void captureReaderPrepare(capture_worker_reader_t *lane, sbuf_t *buffer)
+{
+    device_frag_affinity_result_t       fragment;
+    const device_frag_affinity_action_t action = deviceFragAffinityOffer(
+        lane->generation->session->frag_affinity, sbufGetRawPtr(buffer), sbufGetLength(buffer), buffer, &fragment);
+    assert(lane->pending_count == 0);
+    if (action == kDeviceFragAffinityConsumedDrop || action == kDeviceFragAffinityStaged)
+        return;
+    if (action == kDeviceFragAffinityComplete)
+        buffer = fragment.completed;
+    if (action == kDeviceFragAffinityDispatch)
+    {
+        for (unsigned i = 0; i < fragment.released_count; ++i)
         {
-            // The queue is empty: every packet it still held has been verdicted.
-            sbufDestroy(buf);
+            lane->pending_bufs[lane->pending_count]   = fragment.released[i];
+            lane->pending_wids[lane->pending_count++] = fragment.wid;
+        }
+    }
+    wid_t          wid    = fragment.wid;
+    const uint8_t *packet = sbufGetRawPtr(buffer);
+    if (action != kDeviceFragAffinityDispatch && packet[9] != IPPROTO_TCP && packet[9] != IPPROTO_UDP)
+    {
+        /* Opaque transport identity is unavailable before transforms decode
+         * it. Multiple native queues already distribute these packets; retain
+         * their receive worker. A single reader distributes processing in turn. */
+        capture_reader_generation_t *generation = lane->generation;
+        wid                                     = generation->count > 1 ? lane->wid : generation->opaque_next;
+        if (generation->count == 1)
+            generation->opaque_next = (wid_t) ((generation->opaque_next + 1U) % getWorkersCount());
+    }
+    else if (action != kDeviceFragAffinityDispatch &&
+             ! deviceFlowAffineWID(sbufGetRawPtr(buffer), sbufGetLength(buffer), &wid))
+        wid = getNextDistributionWID();
+    lane->pending_bufs[lane->pending_count]   = buffer;
+    lane->pending_wids[lane->pending_count++] = wid;
+}
+
+static void captureReaderDiscard(capture_worker_reader_t *lane)
+{
+    const log_rate_limiter_report_t report = logRateLimiterRecord(&lane->discard_log, kCaptureDiscardReportIntervalMs);
+    if (report.should_log)
+        LOGW("CaptureDevice: discarded %llu malformed, truncated or oversized packets (total=%llu)",
+             LLU(report.events),
+             LLU(report.total));
+}
+
+/* One syscall primitive at a time. A read record stays in scratch until its
+ * verdict succeeds. Stop can convert an unsent DROP to ACCEPT without exposing
+ * the packet through both the host stack and WaterWall. */
+static netfilter_verdict_result_t captureReaderVerdict(capture_worker_reader_t *lane, bool active)
+{
+    capture_linux_queue_t *queue = &lane->generation->device->queues[lane->wid];
+    if (! active)
+        lane->verdict = NF_ACCEPT;
+    if ((uint64_t) getHRTimeUs() >= lane->verdict_deadline_us)
+    {
+        errno = ETIMEDOUT;
+        return kNetfilterVerdictError;
+    }
+    const netfilter_verdict_result_t result =
+        netfilterTrySendVerdict(queue->fd, queue->number, lane->packet_id, lane->verdict);
+    if (result != kNetfilterVerdictSent)
+        return result;
+    lane->verdict_pending = false;
+    if (active && lane->verdict == NF_DROP && lane->packet_result == kNetfilterPacketReady)
+    {
+        sbuf_t *buffer = lane->scratch;
+        lane->scratch  = NULL;
+        captureReaderPrepare(lane, buffer);
+    }
+    else if (active && lane->verdict == NF_DROP)
+        captureReaderDiscard(lane);
+    return result;
+}
+
+static netfilter_packet_result_t captureReaderReceive(capture_worker_reader_t *lane, buffer_pool_t *pool, bool active)
+{
+    if (lane->scratch == NULL)
+        lane->scratch =
+            pool != NULL
+                ? bufferpoolGetBestFit(pool, kNetfilterReadBufferSize, 0)
+                : sbufCreateWithPadding(kNetfilterReadBufferSize,
+                                        bufferpoolGetSmallBufferPadding(lane->generation->device->reader_buffer_pool));
+    sbufReset(lane->scratch);
+    const netfilter_packet_result_t result =
+        netfilterReceivePacket(lane->generation->device->queues[lane->wid].fd, lane->scratch, &lane->packet_id);
+    if (result == kNetfilterPacketReady || result == kNetfilterPacketDiscarded ||
+        result == kNetfilterPacketMalformedDiscarded)
+    {
+        lane->packet_result       = result;
+        lane->verdict             = active ? NF_DROP : NF_ACCEPT;
+        lane->verdict_pending     = true;
+        lane->verdict_deadline_us = (uint64_t) getHRTimeUs() + (uint64_t) kNetfilterIoDeadlineMs * 1000;
+        ++lane->received;
+    }
+    return result;
+}
+
+static void captureReaderRun(capture_worker_reader_t *lane, worker_t *worker);
+static void captureReaderOnReady(wio_t *io)
+{
+    capture_worker_reader_t *lane = weventGetUserdata(io);
+    if (lane != NULL)
+        captureReaderRun(lane, getCurrentWorker());
+}
+
+static void captureReaderTimeout(wtimer_t *timer)
+{
+    capture_worker_reader_t *lane = weventGetUserdata(timer);
+    lane->verdict_timer           = NULL;
+    captureReaderRun(lane, getCurrentWorker());
+}
+
+static bool captureReaderRead(capture_worker_reader_t *lane, worker_t *worker)
+{
+    capture_device_t *device = lane->generation->device;
+    unsigned          bytes  = 0;
+    for (unsigned attempts = 0; attempts < 256 && bytes < 256U * 1024U; ++attempts)
+    {
+        if (! captureLifecycleIsActive(captureLifecycleLoad(&device->lifecycle)))
             return true;
-        }
-
-        if (packet_result == kNetfilterPacketError)
+        if (! captureReaderPost(lane))
+            return true;
+        if (lane->verdict_pending)
         {
-            // The rules are gone and the reader is stopped, so nothing can
-            // recover the remainder. Report it instead of spinning on the error.
-            LOGW("CaptureDevice: stopped draining residual packets from queue %u: %s",
-                 cdev->queue_number,
-                 strerror(errno));
-            sbufDestroy(buf);
-            return false;
+            const netfilter_verdict_result_t result =
+                captureReaderVerdict(lane, atomicLoadRelaxed(&device->capture_active));
+            if (result == kNetfilterVerdictError)
+                return false;
+            if (result == kNetfilterVerdictYield)
+                discard captureReaderSchedule(lane, true);
+            if (result != kNetfilterVerdictSent)
+                return true;
+            continue;
         }
-
-        // Exactly one receive beyond the packet budget is allowed as the
-        // emptiness probe. EAGAIN/Eof above makes a queue containing exactly
-        // the budget successful; receiving another packet verdicts it before
-        // failing closed and disabling the queue.
-        if (drained >= (uint32_t) kNetfilterResidualPacketBudget)
-        {
-            errno = EOVERFLOW;
-            LOGW("CaptureDevice: residual acceptance budget for queue %u ended after %u packet(s)",
-                 cdev->queue_number,
-                 drained + 1U);
-            sbufDestroy(buf);
+        const netfilter_packet_result_t result =
+            captureReaderReceive(lane, worker->buffer_pool, atomicLoadRelaxed(&device->capture_active));
+        if (result == kNetfilterPacketError || result == kNetfilterPacketEof)
             return false;
+        if (result == kNetfilterPacketYield)
+            discard captureReaderSchedule(lane, true);
+        if (result == kNetfilterPacketWouldBlock || result == kNetfilterPacketYield)
+            return true;
+        bytes += sbufGetLength(lane->scratch);
+    }
+    discard captureReaderPost(lane);
+    return true;
+}
+
+static void captureReaderRun(capture_worker_reader_t *lane, worker_t *worker)
+{
+    capture_reader_generation_t *generation = lane->generation;
+    assert(worker->wid == lane->wid);
+    if (! quiescenceGateEnter(&generation->gate))
+    {
+        captureReaderDetach(lane);
+        return;
+    }
+    capture_device_t *device = generation->device;
+    bool              failed = false;
+    if (lane->io == NULL)
+    {
+        const int fd = device->queues[lane->wid].fd;
+        wio_t    *io = wioGet(worker->loop, fd);
+        if (io == NULL || wioGetFD(io) != fd)
+        {
+            if (io != NULL)
+                wioReleaseNoClose(io);
+            failed = true;
+        }
+        else
+        {
+            lane->io = io;
+            atomicIncExplicit(&generation->references, memory_order_relaxed);
+            atomicIncExplicit(&generation->attached, memory_order_relaxed);
+            weventSetUserData(io, lane);
         }
     }
+    if (! failed)
+    {
+        device_reader_burst_t burst;
+        const bool            local = deviceReaderSessionTryBeginBurst(generation->session, worker, &burst);
+        failed                      = ! captureReaderRead(lane, worker);
+        if (local)
+            deviceReaderSessionEndBurst(&burst);
+        if (! lane->verdict_pending && lane->verdict_timer != NULL)
+        {
+            wtimerDelete(lane->verdict_timer);
+            lane->verdict_timer = NULL;
+        }
+        if (lane->verdict_pending && lane->verdict_timer == NULL && ! failed)
+        {
+            const uint64_t now = (uint64_t) getHRTimeUs();
+            const uint32_t delay =
+                lane->verdict_deadline_us > now ? (uint32_t) ((lane->verdict_deadline_us - now + 999) / 1000) : 1;
+            lane->verdict_timer = wtimerAdd(worker->loop, captureReaderTimeout, delay, 1);
+            if (lane->verdict_timer == NULL)
+                failed = true;
+            else
+                weventSetUserData(lane->verdict_timer, lane);
+        }
+        wioDel(lane->io, WW_READ | WW_WRITE);
+        if (! failed && ! atomicLoadExplicit(&lane->waiting, memory_order_acquire) &&
+            captureLifecycleIsActive(captureLifecycleLoad(&device->lifecycle)) &&
+            quiescenceGateIsActive(&generation->gate))
+            failed = wioAdd(lane->io, captureReaderOnReady, lane->verdict_pending ? WW_WRITE : WW_READ) != 0;
+    }
+    capture_lifecycle_state_t from;
+    const bool                transitioned = failed && captureLifecycleTransitionToFailed(&device->lifecycle, &from);
+    if (transitioned)
+    {
+        atomicStoreRelaxed(&device->up, false);
+        atomicStoreRelaxed(&device->capture_active, false);
+        deviceReaderSessionEndRequest(generation->session);
+    }
+    const bool shutdown = transitioned && from == kCaptureLifecycleUp;
+    quiescenceGateLeave(&generation->gate);
+    if (shutdown)
+    {
+        LOGE("CaptureDevice: worker %u receive/verdict failure: %s", (unsigned) worker->wid, strerror(errno));
+        if (! requestProgramShutdown(1))
+            abortProgramNow(1);
+    }
+}
+
+static void captureReaderMessage(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard                      arg2;
+    discard                      arg3;
+    capture_worker_reader_t     *lane       = arg1;
+    capture_reader_generation_t *generation = lane->generation;
+    atomicStoreExplicit(&lane->scheduled, false, memory_order_release);
+    captureReaderRun(lane, worker);
+    captureReaderUnref(generation);
+}
+
+void captureReaderOpen(capture_device_t *device)
+{
+    assert(device->reader == NULL && device->queue_count > 0);
+    capture_reader_generation_t *generation =
+        memoryAllocateZero(sizeof(*generation) + device->queue_count * sizeof(generation->lanes[0]));
+    generation->device            = device;
+    generation->session           = device->reader_session;
+    generation->count             = device->queue_count;
+    generation->coordinator_owned = true;
+    atomicStoreRelaxed(&generation->references, 1);
+    deviceReaderSessionRef(generation->session);
+    quiescenceGateInit(&generation->gate);
+    device->reader = generation;
+    for (uint16_t i = 0; i < generation->count; ++i)
+    {
+        generation->lanes[i].generation = generation;
+        generation->lanes[i].wid        = (wid_t) i;
+    }
+    atomicStoreExplicit(&device->reader_notify, (uintptr_t) generation, memory_order_release);
+    generation->command_progress = (proc_command_progress_t) {.callback = captureReaderService, .context = device};
+    procCommandProgressRegister(&generation->command_progress);
+}
+
+bool captureReaderStart(capture_device_t *device)
+{
+    capture_reader_generation_t *generation = device->reader;
+    assert(generation != NULL);
+    if (! quiescenceGateOpen(&generation->gate))
+        return false;
+    generation->coordinator_owned = false;
+    for (uint16_t i = 0; i < generation->count; ++i)
+        if (! captureReaderSchedule(&generation->lanes[i], false))
+            return false;
+    return true;
+}
+
+void captureReaderCloseRequest(capture_device_t *device)
+{
+    capture_reader_generation_t *generation = device->reader;
+    if (generation == NULL)
+        return;
+    quiescenceGateClose(&generation->gate);
+    for (uint16_t i = 0; i < generation->count; ++i)
+        discard captureReaderSchedule(&generation->lanes[i], true);
+}
+
+void capturedeviceWorkerQuiesce(capture_device_t *device, wid_t wid)
+{
+    assert(currentThreadOwnsWorker(wid));
+    if (device->reader != NULL && wid < device->reader->count)
+        captureReaderDetach(&device->reader->lanes[wid]);
+}
+
+static void captureReaderTakeCoordinatorOwnership(capture_reader_generation_t *generation)
+{
+    if (generation->coordinator_owned)
+        return;
+    generation->coordinator_owned = true;
+    /* Worker watchers and admitted callbacks have surrendered native ownership.
+     * Keep unsent verdicts for coordinator NF_ACCEPT service during rule cleanup. */
+    for (uint16_t i = 0; i < generation->count; ++i)
+    {
+        capture_worker_reader_t *lane = &generation->lanes[i];
+        for (unsigned j = lane->pending_first; j < lane->pending_count; ++j)
+            sbufDestroy(lane->pending_bufs[j]);
+        lane->pending_first = lane->pending_count = 0;
+        if (lane->verdict_pending)
+            lane->verdict_deadline_us = (uint64_t) getHRTimeUs() + (uint64_t) kNetfilterIoDeadlineMs * 1000;
+    }
+}
+
+void captureReaderCloseWait(capture_device_t *device)
+{
+    capture_reader_generation_t *generation = device->reader;
+    if (generation == NULL)
+        return;
+    quiescenceGateWaitQuiesced(&generation->gate, quiescenceGateYieldThread, NULL);
+    worker_t *worker = tryGetCurrentWorker();
+    if (worker != NULL && worker->wid < generation->count)
+        captureReaderDetach(&generation->lanes[worker->wid]);
+    while (atomicLoadExplicit(&generation->attached, memory_order_acquire) != 0)
+        quiescenceGateYieldThread(NULL);
+    captureReaderTakeCoordinatorOwnership(generation);
+}
+
+static bool captureReaderServicePass(capture_device_t *device)
+{
+    capture_reader_generation_t *generation = device->reader;
+    if (generation == NULL)
+        return true;
+    /* Before startup releases workers_run_flag, the coordinator remains the
+     * sole native reader even after activation messages were queued. Otherwise
+     * closed/quiesced admission plus detached watchers proves the handoff. */
+    assert(generation->coordinator_owned || ! atomicLoadExplicit(&GSTATE.workers_run_flag, memory_order_acquire));
+    assert(atomicLoadRelaxed(&generation->attached) == 0);
+    /* Bound the whole device's work, including malformed input and EINTR.
+     * Round robin prevents an active queue from starving another queue. */
+    bool     quiet = true;
+    unsigned bytes = 0;
+    for (unsigned attempts = 0; attempts < 256 && bytes < 256U * 1024U; ++attempts)
+    {
+        capture_worker_reader_t *lane = &generation->lanes[generation->service_next];
+        generation->service_next      = (uint16_t) ((generation->service_next + 1U) % generation->count);
+        capture_linux_queue_t *queue  = &device->queues[lane->wid];
+        if (queue->fd < 0)
+            continue;
+        /* An activated device must keep capturing while later startup commands
+         * run. Detached buffers enter the session FIFO; no tunnel callback runs
+         * until its worker starts. Inactive and stopped devices accept instead. */
+        const bool active = atomicLoadRelaxed(&device->capture_active);
+        if (active && ! captureReaderPost(lane))
+        {
+            quiet = false;
+            continue;
+        }
+        bool failed = false;
+        if (lane->verdict_pending)
+        {
+            quiet  = false;
+            failed = captureReaderVerdict(lane, active) == kNetfilterVerdictError;
+        }
+        else
+        {
+            const netfilter_packet_result_t result = captureReaderReceive(lane, NULL, active);
+            quiet &= result == kNetfilterPacketWouldBlock;
+            failed = result == kNetfilterPacketError || result == kNetfilterPacketEof;
+            if (lane->verdict_pending)
+                bytes += sbufGetLength(lane->scratch);
+        }
+        if (failed)
+        {
+            LOGE("CaptureDevice: coordinator queue %u failed: %s", queue->number, strerror(errno));
+            close(queue->fd);
+            queue->fd                 = -1;
+            device->queue_restartable = false;
+            lane->verdict_pending     = false;
+            capture_lifecycle_state_t previous;
+            if (captureLifecycleTransitionToFailed(&device->lifecycle, &previous))
+            {
+                atomicStoreRelaxed(&device->capture_active, false);
+                atomicStoreRelaxed(&device->up, false);
+                deviceReaderSessionEndRequest(generation->session);
+                if (previous == kCaptureLifecycleUp)
+                    startupFailureRecord(1);
+            }
+        }
+    }
+    return quiet;
+}
+
+void captureReaderService(void *context)
+{
+    capture_device_t            *device     = context;
+    capture_reader_generation_t *generation = device->reader;
+    if (generation == NULL)
+        return;
+    if (! generation->coordinator_owned)
+    {
+        if (quiescenceGateIsClosedAndQuiesced(&generation->gate) &&
+            atomicLoadExplicit(&generation->attached, memory_order_acquire) == 0)
+            captureReaderTakeCoordinatorOwnership(generation);
+        else if (atomicLoadExplicit(&GSTATE.workers_run_flag, memory_order_acquire))
+            return;
+    }
+    discard captureReaderServicePass(device);
+}
+
+bool captureReaderDrain(capture_device_t *device)
+{
+    if (device->reader == NULL)
+        return true;
+    const uint64_t deadline = (uint64_t) getHRTimeUs() + (uint64_t) kNetfilterIoDeadlineMs * 1000;
+    uint64_t       initial  = 0;
+    for (uint16_t i = 0; i < device->reader->count; ++i)
+        initial += device->reader->lanes[i].received;
+    /* A complete quiet pass must actually read EAGAIN from every lane; merely
+     * completing a pending verdict does not prove its queue empty. */
+    for (;;)
+    {
+        if (captureReaderServicePass(device))
+            return device->queue_restartable;
+        /* A verdict-stalled device must not strand other detached queues while
+         * its own residual drain waits for kernel send capacity. */
+        discard  procCommandProgressRun();
+        uint64_t received = 0;
+        for (uint16_t i = 0; i < device->reader->count; ++i)
+            received += device->reader->lanes[i].received;
+        if (received - initial >= kNetfilterResidualPacketBudget || (uint64_t) getHRTimeUs() >= deadline)
+            break;
+        /* Only the exclusive lifecycle coordinator may wait. Normal reads and
+         * supervisor progress callbacks never sleep or poll for capacity. */
+        wwSleepMS(1);
+    }
+    LOGE("CaptureDevice: residual queue drain exceeded its packet/time bound");
+    return false;
+}
+
+void captureReaderDestroy(capture_device_t *device)
+{
+    capture_reader_generation_t *generation = device->reader;
+    if (generation == NULL)
+        return;
+    assert(quiescenceGateIsClosedAndQuiesced(&generation->gate));
+    assert(atomicLoadRelaxed(&generation->attached) == 0);
+    for (uint16_t i = 0; i < generation->count; ++i)
+    {
+        capture_worker_reader_t *lane = &generation->lanes[i];
+        if (lane->scratch != NULL)
+            sbufDestroy(lane->scratch);
+        for (unsigned j = lane->pending_first; j < lane->pending_count; ++j)
+            sbufDestroy(lane->pending_bufs[j]);
+    }
+    procCommandProgressUnregister(&generation->command_progress);
+    atomicStoreExplicit(&device->reader_notify, (uintptr_t) NULL, memory_order_release);
+    device->reader = NULL;
+    captureReaderUnref(generation);
 }

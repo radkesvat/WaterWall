@@ -20,6 +20,7 @@ typedef enum capture_rule_state_e
 typedef struct capture_range_rule_states_s
 {
     capture_rule_state_t queue;
+    capture_rule_state_t opaque;
     capture_rule_state_t notrack;
 } capture_range_rule_states_t;
 #endif
@@ -33,50 +34,38 @@ struct capture_device_s
     bool   reader_exit_confirmed;
 
 #else
-    int      socket;
-    int      linux_pipe_fds[2]; // used for signaling read thread to stop
-    uint32_t queue_number;
-    char   **capture_cidrs;
-    uint32_t capture_range_count;
-    bool     bypass_conntrack;
-    char     protocol_filter[kCaptureLinuxProtocolFilterSize];
-    // Serialized Linux rule/resource state, independent of `up`. Each CIDR's
-    // INPUT queue and raw PREROUTING NOTRACK rules are tracked independently
-    // because a timed-out iptables mutation may have
-    // committed before its command was terminated.
-    capture_range_rule_states_t *rule_states;
-    uint64_t                     rule_token;
-    // Cleared when a terminal lifecycle failure closes the NFQUEUE socket.
-    // Such an object may retry rule cleanup, but must never bind or start again.
-    bool queue_restartable;
-    // Reader state and queue-socket ownership are synchronized by this mutex.
-    // A successfully created thread remains joinable even after it exits.
-    wcond_mutex_t   reader_state_mutex;
-    wcondvar_t      reader_state_changed;
-    bool            reader_thread_joinable;
-    bool            reader_ready;
-    bool            reader_failed;
-    bool            reader_stop_requested;
-    // Set by terminal lifecycle cleanup while a reader owns `socket`. The
-    // reader wrapper closes it only after the routine has stopped using its
-    // copied descriptor.
-    bool               close_queue_on_reader_exit;
-    atomic_bool        capture_active;
-    int                netfilter_queue_number;
-    log_rate_limiter_t netfilter_discard_log_limiter;
+    /* The lifecycle coordinator owns native queues until worker activation and
+     * after owner quiescence. No external Linux reader thread exists. */
+    struct capture_reader_generation_s *reader;
+    atomic_uintptr_t                    reader_notify;
+    uint16_t                            queue_count;
+    struct capture_linux_queue_s       *queues;
+    char                              **capture_cidrs;
+    uint32_t                            capture_range_count;
+    bool                                bypass_conntrack;
+    bool                                multi_queue;
+    bool                                skip_sysctl;
+    char                                protocol_filter[kCaptureLinuxProtocolFilterSize];
+    capture_range_rule_states_t        *rule_states;
+    uint64_t                            rule_token;
+    bool                                queue_restartable;
+    atomic_bool                         capture_active;
 #endif
-    bool      drop_captured_packet;
-    void     *userdata;
-    wthread_t read_thread;
-
+    bool  drop_captured_packet;
+    void *userdata;
+#ifdef OS_WIN
+    wthread_t       read_thread;
     wthread_routine routine_reader;
+#endif
 
     device_reader_session_t *reader_session;
     buffer_pool_t           *reader_buffer_pool;
 
     CaptureReadEventHandle read_event_callback;
 
-    atomic_int  lifecycle;
+    atomic_int lifecycle;
+#ifdef OS_WIN
     atomic_bool running;
+#endif
     atomic_bool up;
 };

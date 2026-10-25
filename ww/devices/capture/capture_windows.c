@@ -651,3 +651,15 @@ void capturedeviceDestroy(capture_device_t *cdev)
 
     memoryFree(cdev);
 }
+
+void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled)
+{
+    discard cdev;
+    discard enabled;
+}
+
+void capturedeviceWorkerQuiesce(capture_device_t *cdev, wid_t wid)
+{
+    discard cdev;
+    discard wid;
+}

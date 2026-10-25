@@ -180,5 +180,11 @@ tunnel_t *pingserverCreate(node_t *node)
     state->wire.tos = (uint8_t) tos;
     atomicStoreRelaxed(&state->next_sequence, (unsigned int) sequence_start);
     atomicLogRateLimiterInitialize(&state->drop_log_limiter);
+    state->decoded_affinity = packetAffinityCreate(t, tunnelNextUpStreamPayload);
+    if (state->decoded_affinity == NULL)
+    {
+        pingserverDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
     return t;
 }

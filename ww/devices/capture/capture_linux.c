@@ -1,586 +1,199 @@
-#include "capture_linux_checksum.h"
-#include "capture_linux_internal.h"
-#include "capture_private.h"
-#include "devices/device_flow_affinity.h"
-#include "devices/device_fragment_policy.h"
-#include "devices/device_pool.h"
-#include "generic_pool.h"
-#include "global_state.h"
-#include "loggers/internal_logger.h"
-#include "worker.h"
-#include "wproc.h"
-#include "wtime.h"
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <linux/filter.h>
-#include <linux/if_ether.h>
-#include <linux/ipv6.h>
-#include <linux/netfilter.h>
-#include <linux/netfilter/nfnetlink.h>
-#include <linux/netfilter/nfnetlink_queue.h>
-#include <linux/netfilter/xt_bpf.h>
-#include <linux/netlink.h>
-#include <netinet/in.h>
-#include <netinet/ip.h>
-#include <poll.h>
-#include <sys/ioctl.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
 #include "capture_linux_nfqueue.h"
 #include "capture_linux_private.h"
 #include "capture_linux_rules.h"
+#include "devices/device_pool.h"
+#include "global_state.h"
+#include "loggers/internal_logger.h"
+#include <linux/netfilter/nfnetlink_queue.h>
+#include <linux/netlink.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
-// -----------------------------------------------------------------------------
-// Stop-pipe helpers
-// -----------------------------------------------------------------------------
-//
-// The stop pipe lives for the whole lifetime of capture_device_t, so a wake
-// token left behind by one BringDown would be consumed by the *next* BringUp's
-// reader, which would then exit immediately while the device still reported
-// success. Both lifecycle boundaries therefore enforce the same invariant: the
-// pipe is empty. Both ends are nonblocking so neither draining nor a corrupted
-// or unexpectedly full wake channel can block lifecycle teardown.
-
-// Make one stop-pipe descriptor nonblocking while preserving its other flags.
-bool capturedeviceMakeStopPipeNonblocking(int pipe_fd)
-{
-    int flags = fcntl(pipe_fd, F_GETFL, 0);
-    if (flags < 0)
-    {
-        LOGE("CaptureDevice: failed to read stop pipe flags: %s", strerror(errno));
-        return false;
-    }
-    if ((flags & O_NONBLOCK) != 0)
-    {
-        return true;
-    }
-    if (fcntl(pipe_fd, F_SETFL, flags | O_NONBLOCK) < 0)
-    {
-        LOGE("CaptureDevice: failed to set the stop pipe nonblocking: %s", strerror(errno));
-        return false;
-    }
-    return true;
-}
-
-static bool capturedeviceRetryInterrupted(uint32_t *interruptions)
-{
-    *interruptions += 1U;
-    if (*interruptions >= (uint32_t) kCaptureInterruptedRetryBudget)
-    {
-        errno = EINTR;
-        return false;
-    }
-    return true;
-}
-
-// Read the stop pipe until it is empty. Never blocks: the read end is
-// nonblocking, so EAGAIN/EWOULDBLOCK is the normal successful terminator. EOF
-// means the write end is gone, which is a lifecycle failure rather than an empty
-// pipe, and is reported as such.
-bool capturedeviceDrainStopPipe(capture_device_t *cdev)
-{
-    uint32_t interruptions = 0;
-    for (;;)
-    {
-        char    drain_buffer[64];
-        ssize_t drained = read(cdev->linux_pipe_fds[0], drain_buffer, sizeof(drain_buffer));
-        if (drained > 0)
-        {
-            continue;
-        }
-        if (drained == 0)
-        {
-            LOGE("CaptureDevice: stop pipe reported EOF while draining; its write end is gone");
-            return false;
-        }
-        if (errno == EINTR)
-        {
-            if (! capturedeviceRetryInterrupted(&interruptions))
-            {
-                LOGE("CaptureDevice: stop-pipe drain exceeded its interrupted-syscall budget");
-                return false;
-            }
-            continue;
-        }
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-        {
-            return true;
-        }
-        LOGE("CaptureDevice: failed to drain the stop pipe: %d (%s)", errno, strerror(errno));
-        return false;
-    }
-}
-
-// Write exactly one wake token so a reader blocked in poll() leaves its loop.
-static bool capturedeviceWriteStopToken(capture_device_t *cdev)
-{
-    uint32_t interruptions = 0;
-    for (;;)
-    {
-        ssize_t written = write(cdev->linux_pipe_fds[1], "x", 1);
-        if (written == 1)
-        {
-            return true;
-        }
-        if (written < 0 && errno == EINTR)
-        {
-            if (! capturedeviceRetryInterrupted(&interruptions))
-            {
-                LOGE("CaptureDevice: stop-token delivery exceeded its interrupted-syscall budget");
-                return false;
-            }
-            continue;
-        }
-        LOGE("CaptureDevice: failed to wake the reader through the stop pipe: wrote %zd, errno %d (%s)",
-             written,
-             errno,
-             strerror(errno));
-        return false;
-    }
-}
-
-static void capturedeviceLogSocketBufferSize(int socket_fd, int option, const char *name)
-{
-    int       actual = 0;
-    socklen_t len    = sizeof(actual);
-
-    if (getsockopt(socket_fd, SOL_SOCKET, option, &actual, &len) != 0)
-    {
-        LOGW("CaptureDevice: failed to read actual %s: %s", name, strerror(errno));
-        return;
-    }
-
-    LOGD("CaptureDevice: actual %s is %d bytes", name, actual);
-}
-
-static void capturedeviceDisableQueue(capture_device_t *cdev, const char *reason)
-{
-    condmutexLock(&cdev->reader_state_mutex);
-    const bool was_restartable = cdev->queue_restartable;
-    cdev->queue_restartable    = false;
-
-    int  socket_fd = -1;
-    bool deferred  = false;
-    if (cdev->reader_thread_joinable && cdev->socket >= 0)
-    {
-        // The reader may still be using the numeric descriptor it copied
-        // during its readiness handshake. Let its wrapper close the queue only
-        // after the routine returns, so close()+FD reuse cannot redirect a
-        // later poll/recvmsg/verdict to an unrelated object.
-        cdev->close_queue_on_reader_exit = true;
-        deferred                         = true;
-    }
-    else
-    {
-        socket_fd    = cdev->socket;
-        cdev->socket = -1;
-    }
-    condmutexUnlock(&cdev->reader_state_mutex);
-
-    if (! was_restartable && socket_fd < 0 && ! deferred)
-    {
-        return;
-    }
-    if (deferred)
-    {
-        LOGW("CaptureDevice: queue %u will close when its reader exits after %s", cdev->queue_number, reason);
-        return;
-    }
-    if (socket_fd >= 0 && close(socket_fd) != 0)
-    {
-        LOGE("CaptureDevice: failed to close NFQUEUE socket while making queue %u fail-open: %s",
-             cdev->queue_number,
-             strerror(errno));
-    }
-
-    LOGW("CaptureDevice: queue %u is closed and the device is non-restartable after %s", cdev->queue_number, reason);
-}
-
-static void captureDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
+static void captureDeliverPacket(void *device, sbuf_t *buffer, wid_t wid)
 {
     capture_device_t *cdev = device;
-    cdev->read_event_callback(cdev, cdev->userdata, buf, wid);
+    cdev->read_event_callback(cdev, cdev->userdata, buffer, wid);
 }
 
-bool captureLinuxReaderPublishReady(capture_device_t *cdev, int *reader_socket)
+static void captureCloseQueues(capture_device_t *cdev)
 {
-    if (cdev == NULL || reader_socket == NULL)
+    for (uint16_t i = 0; i < cdev->queue_count; ++i)
     {
+        if (cdev->queues[i].fd >= 0)
+            close(cdev->queues[i].fd);
+        cdev->queues[i].fd = -1;
+    }
+}
+
+static void captureReleaseQueues(capture_device_t *cdev)
+{
+    assert(capturedevicePendingRangeCount(cdev) == 0 && cdev->reader == NULL);
+    captureCloseQueues(cdev);
+    memoryFree(cdev->queues);
+    memoryFree(cdev->rule_states);
+    cdev->queues      = NULL;
+    cdev->rule_states = NULL;
+    cdev->queue_count = 0;
+}
+
+static bool captureConfigureQueueLimits(capture_linux_queue_t *queue, uint16_t count)
+{
+    /* These are device-wide ceilings, divided over its fixed queue set. Linux
+     * may cap SO_RCVBUF further according to host policy. */
+    int receive_bytes = kNetfilterSocketRecvBuffer / count;
+    return netfilterSetQueueLength(queue->fd, queue->number, kNetfilterQueueLen / count) &&
+           setsockopt(queue->fd, SOL_SOCKET, SO_RCVBUF, &receive_bytes, sizeof(receive_bytes)) == 0;
+}
+
+static bool captureOpenQueue(capture_linux_queue_t *queue, uint16_t count)
+{
+    const int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, NETLINK_NETFILTER);
+    if (fd < 0)
         return false;
-    }
-
-    condmutexLock(&cdev->reader_state_mutex);
-    const bool ready = ! cdev->reader_stop_requested &&
-                       captureLifecycleIsActive(captureLifecycleLoad(&cdev->lifecycle)) &&
-                       atomicLoadRelaxed(&cdev->running) && ! cdev->reader_failed && cdev->socket >= 0;
-    if (ready)
-    {
-        *reader_socket     = cdev->socket;
-        cdev->reader_ready = true;
-        condvarBroadCast(&cdev->reader_state_changed);
-    }
-    condmutexUnlock(&cdev->reader_state_mutex);
-    return ready;
+    struct sockaddr_nl address = {.nl_family = AF_NETLINK};
+    if (bind(fd, (struct sockaddr *) &address, sizeof(address)) != 0)
+        goto failed;
+    const int one = 1;
+    if (setsockopt(fd, SOL_NETLINK, NETLINK_NO_ENOBUFS, &one, sizeof(one)) != 0)
+        LOGW("CaptureDevice: unable to suppress Netlink overflow notifications: %s", strerror(errno));
+    queue->fd = fd;
+    if (! netfilterSetConfig(fd, NFQNL_CFG_CMD_BIND, queue->number, 0) ||
+        ! netfilterSetParams(fd, queue->number, NFQNL_COPY_PACKET, kMaxAllowedPacketLength) ||
+        ! captureConfigureQueueLimits(queue, count))
+        goto failed;
+    return true;
+failed:
+    close(fd);
+    queue->fd = -1;
+    return false;
 }
 
-static WTHREAD_ROUTINE(capturedeviceReaderThreadMain) // NOLINT
+static bool captureUseSingleQueue(capture_device_t *cdev)
 {
-    assert(! currentThreadIsWorker());
-    capture_device_t *cdev = userdata;
-    discard           cdev->routine_reader(cdev);
-
-    capture_lifecycle_state_t failed_from      = kCaptureLifecycleDown;
-    bool                      lifecycle_failed = false;
-    condmutexLock(&cdev->reader_state_mutex);
-    /*
-     * The mutex acquisition order decides whether Stop or reader exit won.
-     * `running` is only a loop hint and cannot provide a "fresh" classification
-     * of an exit racing the lifecycle owner.
-     */
-    const bool unexpected_exit = ! cdev->reader_stop_requested;
-    cdev->reader_ready         = false;
-    if (unexpected_exit)
+    assert(capturedevicePendingRangeCount(cdev) == 0 && cdev->reader == NULL);
+    for (uint16_t i = 1; i < cdev->queue_count; ++i)
     {
-        lifecycle_failed                 = captureLifecycleTransitionToFailed(&cdev->lifecycle, &failed_from);
-        cdev->reader_failed              = true;
-        cdev->queue_restartable          = false;
-        cdev->close_queue_on_reader_exit = cdev->socket >= 0;
-        atomicStoreRelaxed(&cdev->capture_active, false);
-        atomicStoreRelaxed(&cdev->up, false);
-        atomicStoreRelaxed(&cdev->running, false);
+        if (cdev->queues[i].fd >= 0)
+            close(cdev->queues[i].fd);
+        cdev->queues[i].fd = -1;
     }
-
-    const bool close_queue = cdev->close_queue_on_reader_exit;
-    int        socket_fd   = -1;
-    if (close_queue)
-    {
-        socket_fd                        = cdev->socket;
-        cdev->socket                     = -1;
-        cdev->close_queue_on_reader_exit = false;
-    }
-
-    // The routine has returned, so its copied descriptor is no longer in use.
-    // Close before broadcasting failure/exit state to the lifecycle owner.
-    if (socket_fd >= 0 && close(socket_fd) != 0)
-    {
-        LOGE("CaptureDevice: failed to close NFQUEUE socket after reader exit for queue %u: %s",
-             cdev->queue_number,
-             strerror(errno));
-    }
-    condvarBroadCast(&cdev->reader_state_changed);
-    condmutexUnlock(&cdev->reader_state_mutex);
-
-    if (close_queue)
-    {
-        LOGW("CaptureDevice: queue %u closed after its reader stopped using the descriptor", cdev->queue_number);
-    }
-    if (unexpected_exit)
-    {
-        LOGE("CaptureDevice: reader exited unexpectedly; queue %u was closed to make remaining rules fail-open",
-             cdev->queue_number);
-    }
-    if (lifecycle_failed && failed_from == kCaptureLifecycleUp && ! requestProgramShutdown(1))
-    {
-        abortProgramNow(1);
-    }
-    return 0;
+    cdev->queue_count                  = 1;
+    cdev->queues[0].steering_filter[0] = '\0';
+    return captureConfigureQueueLimits(&cdev->queues[0], 1);
 }
 
-static void capturedeviceDeactivate(capture_device_t *cdev)
+static bool captureOpenQueues(capture_device_t *cdev)
 {
-    // These atomics carry mode/status values only; the reader mutex owns the
-    // reader lifecycle and descriptor publication.
-    atomicStoreRelaxed(&cdev->capture_active, false);
-    atomicStoreRelaxed(&cdev->up, false);
-    deviceReaderSessionEnd(cdev->reader_session);
-}
-
-static bool capturedeviceStopReader(capture_device_t *cdev)
-{
-    captureLifecycleTransitionToStopping(&cdev->lifecycle);
-
-    condmutexLock(&cdev->reader_state_mutex);
-    cdev->reader_stop_requested = true;
-    const bool      joinable    = cdev->reader_thread_joinable;
-    const wthread_t thread      = cdev->read_thread;
-    condmutexUnlock(&cdev->reader_state_mutex);
-
-    const bool was_running = atomicExchangeExplicit(&cdev->running, false, memory_order_relaxed);
-
-    bool result = true;
-    if (joinable)
+    uint16_t count = cdev->multi_queue ? getWorkersCount() : 1;
+    uint16_t first;
+    if (! capturedeviceChooseQueueRange(count, &first))
     {
-        if (was_running)
-        {
-            result = capturedeviceWriteStopToken(cdev);
-        }
-
-        // Safe to join even when the wake write above failed: the reader's poll
-        // is bounded and re-checks `running`, so it leaves on its own.
-        const bool joined = safeThreadJoin(thread);
-        result            = joined && result;
-
-        if (joined)
-        {
-            condmutexLock(&cdev->reader_state_mutex);
-            cdev->reader_thread_joinable = false;
-            cdev->reader_ready           = false;
-            // Captured before the pending-close branch below can clear it, so the
-            // drain runs on both paths: the queue socket is still open either way.
-            const int drain_fd = cdev->socket;
-            // Defensive fallback: every lifecycle-created reader runs through
-            // the wrapper above, but after join it is safe for this owner to
-            // finish any still-pending close without risking descriptor reuse.
-            int socket_fd = -1;
-            if (cdev->close_queue_on_reader_exit)
-            {
-                socket_fd                        = cdev->socket;
-                cdev->socket                     = -1;
-                cdev->close_queue_on_reader_exit = false;
-            }
-            condmutexUnlock(&cdev->reader_state_mutex);
-
-            // Close, join, retire: End poisons the fragment generation but
-            // leaves its staged reader buffers alone, because the reader still
-            // owned this pool. Only here does the lifecycle thread own it.
-            bufferpoolResetThreadOwnership(cdev->reader_buffer_pool);
-            deviceReaderSessionRetireGenerationBuffers(cdev->reader_session);
-
-            // Must precede the close below: closing the queue socket makes the
-            // kernel drop whatever is still enqueued.
-            if (drain_fd >= 0)
-            {
-                const uint64_t teardown_deadline_us =
-                    (uint64_t) getHRTimeUs() + (uint64_t) kNetfilterIoDeadlineMs * 1000U;
-                const bool drain_ok = capturedeviceDrainResidualQueue(cdev, drain_fd, teardown_deadline_us);
-                result              = drain_ok && result;
-                if (! drain_ok)
-                {
-                    capturedeviceDisableQueue(cdev, "residual queue drain failure");
-                }
-            }
-
-            if (socket_fd >= 0 && close(socket_fd) != 0)
-            {
-                LOGE("CaptureDevice: failed to close NFQUEUE socket after joining queue %u reader: %s",
-                     cdev->queue_number,
-                     strerror(errno));
-            }
-        }
-        else
-        {
-            // The reader may still own both the queue descriptor and stop pipe.
-            // Do not close, clear joinability, or drain anything until a later
-            // teardown attempt successfully joins it.
+        if (count == 1 || ! capturedeviceChooseQueueRange(1, &first))
             return false;
-        }
+        count = 1;
+        LOGW("CaptureDevice: no multiqueue range available; using worker 0");
     }
-
-    // Only after joining does the lifecycle owner have exclusive pipe access.
-    result = capturedeviceDrainStopPipe(cdev) && result;
-    return result;
+    size_t state_count;
+    size_t state_bytes;
+    if (! memoryTryComputeArraySize(cdev->capture_range_count, count, &state_count) ||
+        ! memoryTryComputeArraySize(state_count, sizeof(*cdev->rule_states), &state_bytes))
+        return false;
+    cdev->queues      = memoryAllocateZero((size_t) count * sizeof(*cdev->queues));
+    cdev->rule_states = memoryAllocateZero(state_bytes);
+    cdev->queue_count = count;
+    for (uint16_t i = 0; i < count; ++i)
+    {
+        cdev->queues[i].fd     = -1;
+        cdev->queues[i].number = first + i;
+    }
+    for (uint16_t i = 0; i < count; ++i)
+    {
+        if (! captureOpenQueue(&cdev->queues[i], count))
+        {
+            LOGW("CaptureDevice: queue %u setup failed: %s", cdev->queues[i].number, strerror(errno));
+            if (i == 0 || ! captureUseSingleQueue(cdev))
+            {
+                captureReleaseQueues(cdev);
+                return false;
+            }
+            LOGW("CaptureDevice: extra receive queues unavailable; using worker 0");
+            break;
+        }
+        if (count > 1)
+            captureLinuxBuildSteeringFilter(count, i, cdev->queues[i].steering_filter);
+    }
+    GSTATE.capturedevice_queue_start_number = (uint16_t) (first + cdev->queue_count);
+    return true;
 }
 
 bool capturedeviceReaderOperational(capture_device_t *cdev)
 {
-    condmutexLock(&cdev->reader_state_mutex);
-    const bool operational = captureLifecycleIsActive(captureLifecycleLoad(&cdev->lifecycle)) &&
-                             cdev->reader_thread_joinable && cdev->reader_ready && ! cdev->reader_failed &&
-                             ! cdev->reader_stop_requested && cdev->queue_restartable && cdev->socket >= 0 &&
-                             atomicLoadRelaxed(&cdev->running);
-    condmutexUnlock(&cdev->reader_state_mutex);
-    return operational;
-}
-
-static bool capturedeviceStartReader(capture_device_t *cdev)
-{
-    /*
-     * Device bring-up runs on a worker. Copy its pool geometry to the device-owned
-     * reader pool; the auxiliary reader stays unregistered and never accesses
-     * worker-local state.
-     */
-    buffer_pool_t *worker_pool = getCurrentWorkerBufferPool();
-
-    devicePoolUpdatePadding(cdev->reader_buffer_pool, worker_pool);
-
-    capturedeviceDeactivate(cdev);
-    condmutexLock(&cdev->reader_state_mutex);
-    assert(! cdev->reader_thread_joinable);
-    cdev->reader_ready               = false;
-    cdev->reader_failed              = false;
-    cdev->reader_stop_requested      = false;
-    cdev->close_queue_on_reader_exit = false;
-    condmutexUnlock(&cdev->reader_state_mutex);
-
-    if (deviceReaderSessionBegin(cdev->reader_session) == 0)
-    {
-        LOGE("CaptureDevice: failed to open reader delivery generation");
+    if (! captureLifecycleIsActive(captureLifecycleLoad(&cdev->lifecycle)) || ! cdev->queue_restartable ||
+        cdev->reader == NULL)
         return false;
-    }
-    atomicStoreRelaxed(&cdev->running, true);
-    wthread_error_t error = threadCreate(&cdev->read_thread, capturedeviceReaderThreadMain, cdev);
-    if (UNLIKELY(error != kWThreadErrorNone))
-    {
-        LOGE("CaptureDevice: failed to create reader thread: error %u (%s)", error, strerror((int) error));
-        atomicStoreRelaxed(&cdev->running, false);
-        capturedeviceDeactivate(cdev);
-        return false;
-    }
-
-    condmutexLock(&cdev->reader_state_mutex);
-    cdev->reader_thread_joinable      = true;
-    const unsigned long long deadline = getTimeOfDayMS() + kCaptureReaderReadyTimeoutMs;
-    while (! cdev->reader_ready && ! cdev->reader_failed)
-    {
-        const unsigned long long now = getTimeOfDayMS();
-        if (now >= deadline)
-        {
-            break;
-        }
-        const unsigned long long remaining = deadline - now;
-        const unsigned int wait_ms = remaining > (unsigned long long) UINT_MAX ? UINT_MAX : (unsigned int) remaining;
-        discard            condvarWaitFor(&cdev->reader_state_changed, &cdev->reader_state_mutex, wait_ms);
-    }
-    const bool ready = cdev->reader_ready && ! cdev->reader_failed;
-    if (! ready && ! cdev->reader_failed)
-    {
-        cdev->reader_failed = true;
-    }
-    condmutexUnlock(&cdev->reader_state_mutex);
-
-    if (! ready)
-    {
-        LOGE("CaptureDevice: reader failed or did not become ready within %u ms",
-             (unsigned int) kCaptureReaderReadyTimeoutMs);
-        capturedeviceDeactivate(cdev);
-        discard capturedeviceStopReader(cdev);
-        capturedeviceDisableQueue(cdev, "reader readiness failure");
-        return false;
-    }
-
+    for (uint16_t i = 0; i < cdev->queue_count; ++i)
+        if (cdev->queues[i].fd < 0)
+            return false;
     return true;
-}
-
-static bool capturedeviceActivate(capture_device_t *cdev)
-{
-    condmutexLock(&cdev->reader_state_mutex);
-    const bool can_activate = cdev->reader_thread_joinable && cdev->reader_ready && ! cdev->reader_failed &&
-                              ! cdev->reader_stop_requested && cdev->queue_restartable && cdev->socket >= 0 &&
-                              atomicLoadRelaxed(&cdev->running) &&
-                              captureLifecycleTransitionStartingToUp(&cdev->lifecycle);
-    if (can_activate)
-    {
-        atomicStoreRelaxed(&cdev->up, true);
-        atomicStoreRelaxed(&cdev->capture_active, true);
-    }
-    condmutexUnlock(&cdev->reader_state_mutex);
-    return can_activate;
-}
-
-static void capturedeviceRollbackStartup(capture_device_t *cdev)
-{
-    captureLifecycleTransitionToStopping(&cdev->lifecycle);
-    capturedeviceDeactivate(cdev);
-    const bool cleanup_complete = capturedeviceRemoveInstalledRules(cdev);
-    if (! cleanup_complete)
-    {
-        LOGE("CaptureDevice: startup rollback left rules pending or unknown for %u capture ranges",
-             capturedevicePendingRangeCount(cdev));
-    }
-    if (capturedevicePendingRangeCount(cdev) != 0)
-    {
-        // Request closure before stopping. The inactive reader keeps accepting
-        // packets until it exits, then its wrapper closes the queue without any
-        // close()+descriptor-reuse race.
-        capturedeviceDisableQueue(cdev, "unresolved startup rollback");
-    }
-    const bool reader_stop_ok = capturedeviceStopReader(cdev);
-    condmutexLock(&cdev->reader_state_mutex);
-    const bool reader_joinable = cdev->reader_thread_joinable;
-    condmutexUnlock(&cdev->reader_state_mutex);
-    if (! reader_stop_ok)
-    {
-        LOGE("CaptureDevice: reader shutdown during startup rollback was incomplete");
-    }
-    if (! reader_joinable)
-    {
-        captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
-    }
 }
 
 bool capturedeviceIsUp(const capture_device_t *cdev)
 {
     assert(cdev != NULL);
-    return atomicLoadExplicit(&cdev->up, memory_order_relaxed);
+    return atomicLoadRelaxed(&cdev->up);
+}
+
+void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled)
+{
+    assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown && cdev->reader == NULL);
+    cdev->multi_queue = enabled;
 }
 
 bool caputredeviceBringUp(capture_device_t *cdev)
 {
-    capturedeviceDeactivate(cdev);
-
-    // Pending rules while no reader is running must never keep targeting a bound
-    // queue. Close first, retry cleanup, and refuse restart even if that retry
-    // succeeds because the NFQUEUE socket cannot be safely reconstructed here.
-    if (capturedevicePendingRangeCount(cdev) != 0)
-    {
-        capturedeviceDisableQueue(cdev, "pending cleanup at bring-up");
-        if (! capturedeviceRemoveInstalledRules(cdev))
-        {
-            LOGE("CaptureDevice: refusing to bring up %s while rules for %u capture ranges remain pending or unknown",
-                 cdev->name,
-                 capturedevicePendingRangeCount(cdev));
-            return false;
-        }
-    }
-
-    condmutexLock(&cdev->reader_state_mutex);
-    const bool restartable = cdev->queue_restartable && cdev->socket >= 0 && ! cdev->reader_thread_joinable;
-    condmutexUnlock(&cdev->reader_state_mutex);
-    if (! restartable)
-    {
-        LOGE("CaptureDevice: refusing to bring up %s because its queue or reader lifecycle is not restartable",
-             cdev->name);
+    if (! cdev->queue_restartable || ! captureLifecycleTransitionDownToStarting(&cdev->lifecycle))
         return false;
-    }
+    /* Inactive coordinator scratch can become the first active worker packet.
+     * Capture finalized chain padding before either source allocates buffers. */
+    devicePoolUpdatePadding(cdev->reader_buffer_pool, getCurrentWorkerBufferPool());
+    deviceFragAffinityEnableShared(cdev->reader_session->frag_affinity,
+                                   bufferpoolGetSmallBufferPadding(cdev->reader_buffer_pool));
+    capturedeviceApplySysctls(cdev->skip_sysctl);
+    if (! captureOpenQueues(cdev) || deviceReaderSessionBegin(cdev->reader_session) == 0)
+        goto failed;
 
-    if (! capturedeviceDrainStopPipe(cdev))
+    captureReaderOpen(cdev);
+
+    /* Before capture activation, the command supervisor services these queues
+     * with NF_ACCEPT. No packet can enter the chain before its queued Init. */
+    if (! capturedeviceInstallRuleKind(cdev, false))
     {
-        LOGE("CaptureDevice: refusing to bring up %s because its stop pipe could not be drained", cdev->name);
-        return false;
+        if (cdev->queue_count == 1 || ! capturedeviceRemoveInstalledRules(cdev) ||
+            capturedevicePendingRangeCount(cdev) != 0 || ! captureReaderDrain(cdev))
+            goto failed;
+        captureReaderDestroy(cdev);
+        if (! captureUseSingleQueue(cdev))
+            goto failed;
+        captureReaderOpen(cdev);
+        LOGW("CaptureDevice: multiqueue routing unavailable; using worker 0");
+        if (! capturedeviceInstallRuleKind(cdev, false))
+            goto failed;
     }
-
-    if (! captureLifecycleTransitionDownToStarting(&cdev->lifecycle))
-    {
-        LOGE("CaptureDevice: device cannot be started in current lifecycle state");
-        return false;
-    }
-
-    if (! capturedeviceStartReader(cdev))
-    {
-        captureLifecycleTransitionToStopping(&cdev->lifecycle);
-        condmutexLock(&cdev->reader_state_mutex);
-        const bool reader_joinable = cdev->reader_thread_joinable;
-        condmutexUnlock(&cdev->reader_state_mutex);
-        if (! reader_joinable)
-        {
-            captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
-        }
-        return false;
-    }
-
-    // When enabled, exempt incoming traffic only after its INPUT capture rules
-    // and reader exist. Rollback removes every rule actually installed.
-    if (! capturedeviceInstallRuleKind(cdev, false) ||
-        (cdev->bypass_conntrack && ! capturedeviceInstallRuleKind(cdev, true)) || ! capturedeviceActivate(cdev))
-    {
-        capturedeviceRollbackStartup(cdev);
-        return false;
-    }
-
-    assert(capturedevicePendingRangeCount(cdev) == cdev->capture_range_count);
-    LOGI("CaptureDevice: device %s is now up", cdev->name);
+    if ((cdev->bypass_conntrack && ! capturedeviceInstallRuleKind(cdev, true)) ||
+        ! capturedeviceReaderOperational(cdev) || ! captureLifecycleTransitionStartingToUp(&cdev->lifecycle))
+        goto failed;
+    atomicStoreRelaxed(&cdev->capture_active, true);
+    atomicStoreRelaxed(&cdev->up, true);
+    if (! captureReaderStart(cdev))
+        goto failed;
+    LOGI("CaptureDevice: %s up with %u worker-owned receive queue(s), %s",
+         cdev->name,
+         cdev->queue_count,
+         cdev->queue_count > 1 ? "TCP/UDP flow steering; opaque round robin" : "worker 0 reads; all workers process");
     return true;
+failed:
+    discard caputredeviceBringDown(cdev);
+    return false;
 }
 
 bool capturedeviceRequestStop(capture_device_t *cdev)
@@ -589,41 +202,32 @@ bool capturedeviceRequestStop(capture_device_t *cdev)
     atomicStoreRelaxed(&cdev->capture_active, false);
     atomicStoreRelaxed(&cdev->up, false);
     deviceReaderSessionEndRequest(cdev->reader_session);
+    captureReaderCloseRequest(cdev);
     return true;
 }
 
 bool caputredeviceBringDown(capture_device_t *cdev)
 {
-    captureLifecycleTransitionToStopping(&cdev->lifecycle);
-
-    // From this point every newly received packet is accepted back to the host
-    // stack while rules are removed. The raw writer may remain up until this
-    // function returns.
-    capturedeviceDeactivate(cdev);
-
-    // Keep the reader consuming and accepting while iptables cleanup may block.
+    discard capturedeviceRequestStop(cdev);
+    deviceReaderSessionEndWait(cdev->reader_session);
+    captureReaderCloseWait(cdev);
+    /* All owner watchers are detached. The coordinator now services inactive
+     * NF_ACCEPT verdicts throughout supervised rule removal, including timeout
+     * cleanup, without an auxiliary application reader thread. */
     bool result = capturedeviceRemoveInstalledRules(cdev);
-
-    if (capturedevicePendingRangeCount(cdev) != 0)
+    result      = captureReaderDrain(cdev) && result;
+    captureCloseQueues(cdev);
+    captureReaderDestroy(cdev);
+    deviceReaderSessionRetireGenerationBuffers(cdev->reader_session);
+    if (capturedevicePendingRangeCount(cdev) == 0)
+        captureReleaseQueues(cdev);
+    else
     {
-        // Request closure before stopping. The inactive reader keeps accepting
-        // packets until its routine returns, then its wrapper closes the queue.
-        capturedeviceDisableQueue(cdev, "incomplete rule cleanup during bring-down");
-        result = false;
+        cdev->queue_restartable = false;
+        LOGE("CaptureDevice: rule cleanup incomplete; closed queues bypass capture. Remaining WWCAP_NOTRACK rules "
+             "must be removed to restore host connection tracking");
     }
-
-    const bool reader_stop_ok = capturedeviceStopReader(cdev);
-    result                    = reader_stop_ok && result;
-
-    condmutexLock(&cdev->reader_state_mutex);
-    const bool reader_joinable = cdev->reader_thread_joinable;
-    condmutexUnlock(&cdev->reader_state_mutex);
-    if (! reader_joinable)
-    {
-        captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
-        LOGI("CaptureDevice: device %s is now down", cdev->name);
-    }
-
+    captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
     return result;
 }
 
@@ -637,332 +241,72 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         LOGE("CaptureDevice: no capture ranges configured");
         return NULL;
     }
-
-    /* Best-effort kernel tuning; capture startup must continue if a sysctl fails. */
-    capturedeviceApplySysctls(skip_sysctl);
-
-    int socket_netfilter = socket(AF_NETLINK, SOCK_RAW, NETLINK_NETFILTER);
-    if (socket_netfilter < 0)
+    size_t range_bytes;
+    if (! memoryTryComputeArraySize(capture_range_count, sizeof(char *), &range_bytes))
+        return NULL;
+    buffer_pool_t *pool = devicePoolCreate(getCurrentWorkerBufferPool(), 0);
+    if (pool == NULL)
+        return NULL;
+    buffer_pool_fit_t fit;
+    if (! bufferpoolQueryBestFit(pool, kNetfilterReadBufferSize, 0, &fit) ||
+        fit.allocation_charge > kCaptureReaderChargeLimit)
     {
-        LOGE("CaptureDevice: unable to create a netfilter socket");
+        LOGE("CaptureDevice: receive allocation exceeds the device dispatch budget");
+        bufferpoolDestroy(pool);
         return NULL;
     }
-
-    struct sockaddr_nl nl_addr;
-    memoryZero(&nl_addr, sizeof(nl_addr));
-    nl_addr.nl_family = AF_NETLINK;
-    nl_addr.nl_pid    = 0;
-
-    if (bind(socket_netfilter, (struct sockaddr *) &nl_addr, sizeof(nl_addr)) != 0)
-    {
-        LOGE("CaptureDevice: unable to bind netfilter socket to current process");
-        close(socket_netfilter);
-        return NULL;
-    }
-
-    int flags = fcntl(socket_netfilter, F_GETFL, 0);
-    if (flags < 0)
-    {
-        const int saved_errno = errno;
-        LOGE("CaptureDevice: failed to get NFQUEUE socket flags for O_NONBLOCK: %s", strerror(saved_errno));
-        close(socket_netfilter);
-        errno = saved_errno;
-        return NULL;
-    }
-    if (fcntl(socket_netfilter, F_SETFL, flags | O_NONBLOCK) < 0)
-    {
-        const int saved_errno = errno;
-        LOGE("CaptureDevice: failed to set O_NONBLOCK on NFQUEUE socket: %s", strerror(saved_errno));
-        close(socket_netfilter);
-        errno = saved_errno;
-        return NULL;
-    }
-
-    // Best-effort: avoid ENOBUFS notifications waking us up.
-    {
-        int one = 1;
-        if (setsockopt(socket_netfilter, SOL_NETLINK, NETLINK_NO_ENOBUFS, &one, sizeof(one)) < 0)
-        {
-            LOGW("CaptureDevice: failed to set NETLINK_NO_ENOBUFS: %s", strerror(errno));
-        }
-    }
-
-    if (! netfilterSetConfig(socket_netfilter, NFQNL_CFG_CMD_PF_UNBIND, 0, PF_INET))
-    {
-        LOGE("CaptureDevice: unable to unbind netfilter from PF_INET");
-        close(socket_netfilter);
-        return NULL;
-    }
-    if (! netfilterSetConfig(socket_netfilter, NFQNL_CFG_CMD_PF_BIND, 0, PF_INET))
-    {
-        LOGE("CaptureDevice: unable to bind netfilter to PF_INET");
-        close(socket_netfilter);
-        return NULL;
-    }
-    uint16_t selected_queue_number = 0;
-    if (! capturedeviceChooseQueueNumber(&selected_queue_number))
-    {
-        close(socket_netfilter);
-        return NULL;
-    }
-    int queue_number = selected_queue_number;
-
-    size_t capture_cidrs_size;
-    if (! memoryTryComputeArraySize(capture_range_count, sizeof(char *), &capture_cidrs_size))
-    {
-        LOGE("CaptureDevice: capture range vector is too large");
-        close(socket_netfilter);
-        return NULL;
-    }
-    char **capture_cidrs = memoryAllocateZero(capture_cidrs_size);
-
+    capture_device_t *cdev    = memoryAllocateZero(sizeof(*cdev));
+    cdev->name                = stringDuplicate(name);
+    cdev->capture_cidrs       = memoryAllocateZero(range_bytes);
+    cdev->capture_range_count = capture_range_count;
     for (uint32_t i = 0; i < capture_range_count; ++i)
-    {
-        capture_cidrs[i] = capturedeviceFormatCidrString(&capture_ranges[i]);
-    }
-
-    if (! netfilterSetConfig(socket_netfilter, NFQNL_CFG_CMD_BIND, queue_number, 0))
-    {
-        LOGE("CaptureDevice: unable to bind netfilter to queue number %u", queue_number);
-        close(socket_netfilter);
-        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
-        return NULL;
-    }
-
-    uint32_t range = kMaxAllowedPacketLength;
-    if (! netfilterSetParams(socket_netfilter, queue_number, NFQNL_COPY_PACKET, range))
-    {
-        LOGE("CaptureDevice: unable to set netfilter into copy packet mode with maximum "
-             "packet payload copy size %u",
-             range);
-
-        close(socket_netfilter);
-        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
-        return NULL;
-    }
-    if (! netfilterSetQueueLength(socket_netfilter, queue_number, kNetfilterQueueLen))
-    {
-        LOGE("CaptureDevice: unable to set netfilter queue maximum length to %u", kNetfilterQueueLen);
-
-        close(socket_netfilter);
-        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
-        return NULL;
-    }
-    int rcvbuf_size = kNetfilterSocketRecvBuffer;
-    if (setsockopt(socket_netfilter, SOL_SOCKET, SO_RCVBUF, &rcvbuf_size, sizeof(rcvbuf_size)) < 0)
-    {
-        LOGE("CaptureDevice: failed to set SO_RCVBUF: %s", strerror(errno));
-        close(socket_netfilter);
-        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
-        return NULL;
-    }
-    capturedeviceLogSocketBufferSize(socket_netfilter, SO_RCVBUF, "SO_RCVBUF");
-
-    /*
-     * Device bring-up/creation runs on an event worker even though the reader
-     * and writer threads it manages stay unregistered. Read that worker's pool
-     * geometry once here and copy it onto the device-owned pools; the auxiliary
-     * threads never touch worker-local state themselves.
-     */
-    buffer_pool_t *worker_pool = getCurrentWorkerBufferPool();
-
-    buffer_pool_t *reader_bpool = devicePoolCreate(worker_pool, 0);
-    if (UNLIKELY(reader_bpool == NULL))
-    {
-        LOGE("CaptureDevice: failed to construct reader buffer pool");
-        close(socket_netfilter);
-        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
-        return NULL;
-    }
-    if (UNLIKELY(bufferpoolGetSmallBufferSize(reader_bpool) < kNetfilterReadBufferSize))
-    {
-        LOGE("CaptureDevice: Linux capture requires small buffers of at least %u bytes, configured size is %u",
-             kNetfilterReadBufferSize,
-             bufferpoolGetSmallBufferSize(reader_bpool));
-        close(socket_netfilter);
-        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
-        bufferpoolDestroy(reader_bpool);
-        return NULL;
-    }
-
-    uint64_t rule_token = fastRand64();
-
-    size_t rule_states_size;
-    if (! memoryTryComputeArraySize(capture_range_count, sizeof(capture_range_rule_states_t), &rule_states_size))
-    {
-        bufferpoolDestroy(reader_bpool);
-        close(socket_netfilter);
-        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
-        return NULL;
-    }
-    capture_range_rule_states_t *rule_states = memoryAllocateZero(rule_states_size);
-    capture_device_t            *cdev        = memoryAllocate(sizeof(capture_device_t));
-    char                        *device_name = stringDuplicate(name);
-    if (UNLIKELY(device_name == NULL))
-    {
-        memoryFree(rule_states);
-        memoryFree(cdev);
-        bufferpoolDestroy(reader_bpool);
-        close(socket_netfilter);
-        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
-        return NULL;
-    }
-
-    *cdev = (capture_device_t) {.name                   = device_name,
-                                .running                = false,
-                                .up                     = false,
-                                .routine_reader         = captureLinuxReadRoutine,
-                                .socket                 = socket_netfilter,
-                                .queue_number           = queue_number,
-                                .read_event_callback    = cb,
-                                .userdata               = userdata,
-                                .reader_session         = NULL,
-                                .netfilter_queue_number = queue_number,
-                                .capture_cidrs          = capture_cidrs,
-                                .capture_range_count    = capture_range_count,
-                                .bypass_conntrack       = bypass_conntrack,
-                                .rule_states            = rule_states,
-                                .rule_token             = rule_token,
-                                .queue_restartable      = true,
-                                .reader_buffer_pool     = reader_bpool};
-    captureLinuxBuildProtocolFilter(protocol_filter, cdev->protocol_filter);
+        cdev->capture_cidrs[i] = capturedeviceFormatCidrString(&capture_ranges[i]);
+    cdev->multi_queue         = true;
+    cdev->bypass_conntrack    = bypass_conntrack;
+    cdev->skip_sysctl         = skip_sysctl;
+    cdev->rule_token          = fastRand64();
+    cdev->queue_restartable   = true;
+    cdev->reader_buffer_pool  = pool;
+    cdev->read_event_callback = cb;
+    cdev->userdata            = userdata;
     atomic_init(&cdev->lifecycle, kCaptureLifecycleDown);
-    if (condmutexInit(&cdev->reader_state_mutex) != 0)
+    captureLinuxBuildProtocolFilter(protocol_filter, cdev->protocol_filter);
+    cdev->reader_session =
+        deviceReaderSessionCreate(RAM_PROFILE * 2, 1, cdev, captureDeliverPacket, pool, fragment_policy);
+    if (cdev->reader_session == NULL)
     {
-        LOGE("CaptureDevice: failed to initialize reader state mutex");
+        capturedeviceFreeCidrs(cdev->capture_cidrs, capture_range_count);
         memoryFree(cdev->name);
-        capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
-        memoryFree(cdev->rule_states);
-        bufferpoolDestroy(cdev->reader_buffer_pool);
-        close(cdev->socket);
+        bufferpoolDestroy(pool);
         memoryFree(cdev);
         return NULL;
     }
-    if (condvarInit(&cdev->reader_state_changed) != 0)
+    if (! deviceReaderSessionConfigureOutputBudget(
+            cdev->reader_session, kCaptureReaderChargeLimit, kCaptureReaderPacketLimit) ||
+        ! deviceReaderSessionEnableWorkerQueue(cdev->reader_session))
     {
-        LOGE("CaptureDevice: failed to initialize reader state condition variable");
-        condmutexDestroy(&cdev->reader_state_mutex);
-        memoryFree(cdev->name);
-        capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
-        memoryFree(cdev->rule_states);
-        bufferpoolDestroy(cdev->reader_buffer_pool);
-        close(cdev->socket);
-        memoryFree(cdev);
+        capturedeviceDestroy(cdev);
         return NULL;
     }
-    if (pipe(cdev->linux_pipe_fds) != 0)
-    {
-        LOGE("CaptureDevice: failed to create pipe for linux_pipe_fds");
-        contvarDestroy(&cdev->reader_state_changed);
-        condmutexDestroy(&cdev->reader_state_mutex);
-        memoryFree(cdev->name);
-        capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
-        memoryFree(cdev->rule_states);
-        bufferpoolDestroy(cdev->reader_buffer_pool);
-        close(cdev->socket);
-        memoryFree(cdev);
-        return NULL;
-    }
-
-    // Both ends are nonblocking. The read side makes lifecycle draining safe;
-    // the write side ensures wake delivery can fail observably instead of
-    // blocking before the reader join. The reader also observes `running` on a
-    // bounded poll, so one best-effort token is sufficient.
-    if (! capturedeviceMakeStopPipeNonblocking(cdev->linux_pipe_fds[0]) ||
-        ! capturedeviceMakeStopPipeNonblocking(cdev->linux_pipe_fds[1]))
-    {
-        close(cdev->linux_pipe_fds[0]);
-        close(cdev->linux_pipe_fds[1]);
-        contvarDestroy(&cdev->reader_state_changed);
-        condmutexDestroy(&cdev->reader_state_mutex);
-        memoryFree(cdev->name);
-        capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
-        memoryFree(cdev->rule_states);
-        bufferpoolDestroy(cdev->reader_buffer_pool);
-        close(cdev->socket);
-        memoryFree(cdev);
-        return NULL;
-    }
-
-    cdev->reader_session = deviceReaderSessionCreate(
-        RAM_PROFILE * 2, kMaxReadDistributeQueueSize, cdev, captureDeliverPacket, reader_bpool, fragment_policy);
-    if (UNLIKELY(cdev->reader_session == NULL))
-    {
-        LOGE("CaptureDevice: failed to allocate reader session");
-        close(cdev->linux_pipe_fds[0]);
-        close(cdev->linux_pipe_fds[1]);
-        contvarDestroy(&cdev->reader_state_changed);
-        condmutexDestroy(&cdev->reader_state_mutex);
-        memoryFree(cdev->name);
-        capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
-        memoryFree(cdev->rule_states);
-        bufferpoolDestroy(cdev->reader_buffer_pool);
-        close(cdev->socket);
-        memoryFree(cdev);
-        return NULL;
-    }
-
-    /* Queue-number ownership is published only with the complete device. */
-    GSTATE.capturedevice_queue_start_number = (uint16_t) ((uint32_t) selected_queue_number + 1U);
-
+    deviceReaderSessionConfigureCapacityNotify(cdev->reader_session, captureReaderCapacityReady, cdev);
     return cdev;
 }
 
 void capturedeviceDestroy(capture_device_t *cdev)
 {
-    condmutexLock(&cdev->reader_state_mutex);
-    const bool reader_joinable = cdev->reader_thread_joinable;
-    condmutexUnlock(&cdev->reader_state_mutex);
-    deviceReaderSessionEnd(cdev->reader_session);
-    if (captureLifecycleLoad(&cdev->lifecycle) != kCaptureLifecycleDown || atomicLoadRelaxed(&cdev->up) ||
-        reader_joinable)
-    {
-        discard caputredeviceBringDown(cdev);
-    }
-
-    condmutexLock(&cdev->reader_state_mutex);
-    const bool reader_still_joinable = cdev->reader_thread_joinable;
-    condmutexUnlock(&cdev->reader_state_mutex);
-    if (reader_still_joinable)
-    {
-        LOGF("CaptureDevice: refusing to destroy device while reader ownership remains");
-        abortProgramNow(1);
-    }
-
+    discard caputredeviceBringDown(cdev);
     if (capturedevicePendingRangeCount(cdev) != 0)
     {
-        // A down device has no reader. Close before the final cleanup attempt so
-        // any still-installed NFQUEUE rule is fail-open throughout that bounded retry.
-        capturedeviceDisableQueue(cdev, "pending cleanup during destruction");
         discard capturedeviceRemoveInstalledRules(cdev);
+        if (capturedevicePendingRangeCount(cdev) != 0)
+            LOGE("CaptureDevice: %s destroyed with unresolved owned firewall rules", cdev->name);
     }
-    const uint32_t pending_range_count = capturedevicePendingRangeCount(cdev);
-    if (pending_range_count != 0)
-    {
-        LOGE("CaptureDevice: closing queue %u with rules for %u capture ranges still pending or outcome-unknown; "
-             "--queue-bypass covers remaining NFQUEUE rules only. Remaining WWCAP_NOTRACK rules must be removed "
-             "from raw PREROUTING to restore tracking",
-             cdev->queue_number,
-             pending_range_count);
-    }
-
-    condmutexLock(&cdev->reader_state_mutex);
-    const int socket_fd = cdev->socket;
-    cdev->socket        = -1;
-    condmutexUnlock(&cdev->reader_state_mutex);
-    if (socket_fd >= 0)
-    {
-        close(socket_fd);
-    }
-    memoryFree(cdev->name);
-    capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
-    memoryFree(cdev->rule_states);
     deviceReaderSessionRetireProducerBuffers(cdev->reader_session);
     bufferpoolDestroy(cdev->reader_buffer_pool);
     deviceReaderSessionUnref(cdev->reader_session);
-    close(cdev->linux_pipe_fds[0]);
-    close(cdev->linux_pipe_fds[1]);
-    contvarDestroy(&cdev->reader_state_changed);
-    condmutexDestroy(&cdev->reader_state_mutex);
+    memoryFree(cdev->rule_states);
+    memoryFree(cdev->queues);
+    capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
+    memoryFree(cdev->name);
     memoryFree(cdev);
 }

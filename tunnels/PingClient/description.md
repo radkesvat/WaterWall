@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Keep this file aligned with WaterWall-Docs/docs/02-noderefs/PingClient.mdx.
 -->
 
@@ -10,6 +10,13 @@ tunnel that carries one complete inner IPv4 packet in one real ICMP Echo
 Request. It is a pure packet tunnel (`packettunnelCreate()`), has no line
 state, and uses one bounded synchronized correlation and replay tracker for the
 whole node.
+
+After decoding an Echo Request, inner TCP/UDP packets use the shared transport
+flow worker before forwarding downstream. Correlation, replay checks and any
+generated Echo Reply remain on the arrival worker. Preserved inner fragments
+share the complete flow's worker; later fragments wait for the leading fragment
+to identify its ports. A single worker needs no handoff. Other decoded protocols
+and unrelated or unmatched ICMP retain their current worker and packet bytes.
 
 Use it with `PingServer` in this order:
 

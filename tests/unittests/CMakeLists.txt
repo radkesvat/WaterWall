@@ -46,6 +46,7 @@ include("${CMAKE_SOURCE_DIR}/tests/cmake/TestHelpers.cmake")
 
 include("${CMAKE_SOURCE_DIR}/tests/cmake/native/lwip-engines.cmake")
 include("${CMAKE_SOURCE_DIR}/tests/cmake/native/tun-queues.cmake")
+include("${CMAKE_SOURCE_DIR}/tests/cmake/native/capture-steering.cmake")
 include("${CMAKE_SOURCE_DIR}/tests/cmake/native/fragmenter.cmake")
 include("${CMAKE_SOURCE_DIR}/tests/cmake/native/quic.cmake")
 include("${CMAKE_SOURCE_DIR}/tests/cmake/native/api.cmake")

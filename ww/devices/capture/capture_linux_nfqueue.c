@@ -269,18 +269,16 @@ static bool netfilterWaitForAck(int netfilter_socket, uint32_t sequence, uint64_
     }
 }
 
-/* Send one message and, for configuration requests, its matching ACK before an absolute deadline. */
-static bool netfilterSendMessageUntil(int netfilter_socket, uint16_t nl_type, int nfa_type, uint16_t res_id, bool ack,
-                                      const void *msg, size_t size, uint64_t deadline_us)
+static size_t netfilterBuildMessage(uint8_t *buff, uint16_t nl_type, int nfa_type, uint16_t res_id, bool ack,
+                                    const void *msg, size_t size)
 {
     if (size > NETFILTER_MAX_PAYLOAD_SIZE)
     {
         errno = EMSGSIZE;
-        return false;
+        return 0;
     }
 
     const size_t nl_size = NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct nfgenmsg))) + NFA_ALIGN(NFA_LENGTH(size));
-    _Alignas(ww_max_align_t) uint8_t buff[NETFILTER_MESSAGE_BUFFER_SIZE];
     memoryZero(buff, nl_size);
     struct nlmsghdr *nl_hdr = (struct nlmsghdr *) buff;
 
@@ -305,6 +303,19 @@ static bool netfilterSendMessageUntil(int netfilter_socket, uint16_t nl_type, in
     nl_attr->nfa_len           = NFA_LENGTH(size);
 
     memoryMove(NFA_DATA(nl_attr), msg, size);
+    return nl_size;
+}
+
+/* Send one message and, for configuration requests, its matching ACK before an absolute deadline. */
+static bool netfilterSendMessageUntil(int netfilter_socket, uint16_t nl_type, int nfa_type, uint16_t res_id, bool ack,
+                                      const void *msg, size_t size, uint64_t deadline_us)
+{
+    _Alignas(ww_max_align_t) uint8_t buff[NETFILTER_MESSAGE_BUFFER_SIZE];
+    const size_t                     nl_size = netfilterBuildMessage(buff, nl_type, nfa_type, res_id, ack, msg, size);
+    if (nl_size == 0)
+    {
+        return false;
+    }
 
     struct sockaddr_nl nl_addr;
     memoryZero(&nl_addr, sizeof(nl_addr));
@@ -320,7 +331,7 @@ static bool netfilterSendMessageUntil(int netfilter_socket, uint16_t nl_type, in
         return true;
     }
 
-    return netfilterWaitForAck(netfilter_socket, nl_hdr->nlmsg_seq, deadline_us);
+    return netfilterWaitForAck(netfilter_socket, ((const struct nlmsghdr *) buff)->nlmsg_seq, deadline_us);
 }
 
 /* Send one independently bounded message on the normal configuration/reader path. */
@@ -610,18 +621,44 @@ static bool netfilterSendVerdictUntil(int netfilter_socket, uint16_t qnumber, ui
                                      deadline_us);
 }
 
-static bool netfilterSendVerdict(int netfilter_socket, uint16_t qnumber, uint32_t packet_id, uint32_t verdict)
+netfilter_verdict_result_t netfilterTrySendVerdict(int netfilter_socket, uint16_t qnumber, uint32_t packet_id,
+                                                   uint32_t verdict)
 {
-    const uint64_t deadline_us = (uint64_t) getHRTimeUs() + (uint64_t) kNetfilterIoDeadlineMs * 1000U;
-    return netfilterSendVerdictUntil(netfilter_socket, qnumber, packet_id, verdict, deadline_us);
+    const struct nfqnl_msg_verdict_hdr nl_verdict = {.verdict = htonl(verdict), .id = packet_id};
+    _Alignas(ww_max_align_t) uint8_t   buff[NETFILTER_MESSAGE_BUFFER_SIZE];
+    const size_t                       nl_size = netfilterBuildMessage(
+        buff, NFQNL_MSG_VERDICT, NFQA_VERDICT_HDR, qnumber, false, &nl_verdict, sizeof(nl_verdict));
+    assert(nl_size != 0);
+    const struct sockaddr_nl nl_addr = {.nl_family = AF_NETLINK};
+
+    for (uint32_t attempts = 0; attempts < kCaptureInterruptedRetryBudget; ++attempts)
+    {
+        const ssize_t result =
+            sendto(netfilter_socket, buff, nl_size, MSG_DONTWAIT, (const struct sockaddr *) &nl_addr, sizeof(nl_addr));
+        if (result == (ssize_t) nl_size)
+        {
+            return kNetfilterVerdictSent;
+        }
+        if (result >= 0)
+        {
+            errno = EIO;
+            return kNetfilterVerdictError;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return kNetfilterVerdictWouldBlock;
+        }
+        if (errno != EINTR)
+        {
+            return kNetfilterVerdictError;
+        }
+    }
+    return kNetfilterVerdictYield;
 }
 
-/*
- * Get a packet from netfilter.
- */
-netfilter_packet_result_t netfilterGetPacketUntil(capture_device_t *cdev, int netfilter_socket, uint16_t qnumber,
-                                                  sbuf_t *buff, uint64_t verdict_deadline_us)
+netfilter_packet_result_t netfilterReceivePacket(int netfilter_socket, sbuf_t *buff, uint32_t *packet_id)
 {
+    assert(packet_id != NULL);
     assert(sbufGetMaximumWriteableSize(buff) >= kNetfilterReadBufferSize);
     if (UNLIKELY(sbufGetMaximumWriteableSize(buff) < kNetfilterReadBufferSize))
     {
@@ -646,9 +683,9 @@ netfilter_packet_result_t netfilterGetPacketUntil(capture_device_t *cdev, int ne
         {
             break;
         }
-        if (! netfilterRetryInterruptedUntil(verdict_deadline_us, &interruptions))
+        if (++interruptions >= kCaptureInterruptedRetryBudget)
         {
-            return kNetfilterPacketError;
+            return kNetfilterPacketYield;
         }
     }
 
@@ -676,20 +713,15 @@ netfilter_packet_result_t netfilterGetPacketUntil(capture_device_t *cdev, int ne
         result > (ssize_t) kNetfilterReadBufferSize ? (size_t) kNetfilterReadBufferSize : (size_t) result;
     if ((msg.msg_flags & MSG_TRUNC) != 0 || result > (ssize_t) kNetfilterReadBufferSize)
     {
-        uint32_t packet_id = 0;
-        if (! captureLinuxNetfilterTryReadPacketIdFromPrefix(message, copied_len, &packet_id))
+        uint32_t truncated_packet_id = 0;
+        if (! captureLinuxNetfilterTryReadPacketIdFromPrefix(message, copied_len, &truncated_packet_id))
         {
             LOGW("CaptureDevice: oversized netfilter datagram did not contain a complete packet id");
             errno = EBADMSG;
             return kNetfilterPacketError;
         }
-        const bool active = atomicLoadRelaxed(&cdev->capture_active);
-        if (! netfilterSendVerdictUntil(
-                netfilter_socket, qnumber, packet_id, active ? NF_DROP : NF_ACCEPT, verdict_deadline_us))
-        {
-            return kNetfilterPacketError;
-        }
-        return active ? kNetfilterPacketDiscarded : kNetfilterPacketAccepted;
+        *packet_id = truncated_packet_id;
+        return kNetfilterPacketDiscarded;
     }
 
     sbufSetLength(buff, (uint32_t) copied_len);
@@ -703,26 +735,11 @@ netfilter_packet_result_t netfilterGetPacketUntil(capture_device_t *cdev, int ne
             errno = EBADMSG;
             return kNetfilterPacketError;
         }
-        const bool active = atomicLoadRelaxed(&cdev->capture_active);
-        if (! netfilterSendVerdictUntil(
-                netfilter_socket, qnumber, packet_view.packet_id, active ? NF_DROP : NF_ACCEPT, verdict_deadline_us))
-        {
-            return kNetfilterPacketError;
-        }
-        return active ? kNetfilterPacketMalformedDiscarded : kNetfilterPacketAccepted;
+        *packet_id = packet_view.packet_id;
+        return kNetfilterPacketMalformedDiscarded;
     }
 
-    const bool active = atomicLoadRelaxed(&cdev->capture_active);
-    if (! netfilterSendVerdictUntil(
-            netfilter_socket, qnumber, packet_view.packet_id, active ? NF_DROP : NF_ACCEPT, verdict_deadline_us))
-    {
-        return kNetfilterPacketError;
-    }
-    if (! active)
-    {
-        return kNetfilterPacketAccepted;
-    }
-
+    *packet_id = packet_view.packet_id;
     if (parse_result == kNetfilterPacketParseDiscarded)
     {
         return kNetfilterPacketDiscarded;
@@ -736,6 +753,33 @@ netfilter_packet_result_t netfilterGetPacketUntil(capture_device_t *cdev, int ne
         return kNetfilterPacketMalformedDiscarded;
     }
     return kNetfilterPacketReady;
+}
+
+netfilter_packet_result_t netfilterGetPacketUntil(capture_device_t *cdev, int netfilter_socket, uint16_t qnumber,
+                                                  sbuf_t *buff, uint64_t verdict_deadline_us)
+{
+    uint32_t                        packet_id = 0;
+    const netfilter_packet_result_t result    = netfilterReceivePacket(netfilter_socket, buff, &packet_id);
+    switch (result)
+    {
+    case kNetfilterPacketReady:
+    case kNetfilterPacketDiscarded:
+    case kNetfilterPacketMalformedDiscarded:
+        break;
+    case kNetfilterPacketYield:
+        errno = ETIMEDOUT;
+        return kNetfilterPacketError;
+    default:
+        return result;
+    }
+
+    const bool active = atomicLoadRelaxed(&cdev->capture_active);
+    if (! netfilterSendVerdictUntil(
+            netfilter_socket, qnumber, packet_id, active ? NF_DROP : NF_ACCEPT, verdict_deadline_us))
+    {
+        return kNetfilterPacketError;
+    }
+    return active ? result : kNetfilterPacketAccepted;
 }
 
 netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int netfilter_socket, uint16_t qnumber,

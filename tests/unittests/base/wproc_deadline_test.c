@@ -5,6 +5,8 @@
  * Cases: testDirectArgvSuccessCapturesStdout, testClosedStdinAndStdoutStillCapturesStdout,
  * testSilentBlockingToolTimesOut, testClosedStdoutThenBlockStillTimesOut,
  * testPartialOutputThenBlockTimesOut, testSigtermIgnoringToolIsEscalatedToSigkill,
+ * testProgressReleasesQuietChild, testRegisteredProgress, testExecCmdRegisteredProgress,
+ * testProgressContinuesDuringFailureCleanup,
  * testShellDescendantLosesWholeProcessGroup, testShellCommandSucceedsWithoutTrailingNewline; the driver
  * lists the remaining cases
  * Checks: Assertion labels include: a clean direct-argv command must succeed; a clean command must record a
@@ -80,6 +82,194 @@ static proc_command_options_t makeOptions(uint32_t timeout_ms, size_t max_output
     const proc_command_options_t options = {
         .timeout_ms = timeout_ms, .terminate_grace_ms = kTerminateGraceMs, .max_output_bytes = max_output_bytes};
     return options;
+}
+
+typedef struct command_progress_probe_s
+{
+    proc_command_result_t *result;
+    pid_t                  parent_pid;
+    unsigned int           calls;
+    unsigned int           cleanup_calls;
+    int                    release_fd;
+} command_progress_probe_t;
+
+static void recordCommandProgress(void *context)
+{
+    command_progress_probe_t *probe = context;
+    require(getpid() == probe->parent_pid, "progress must run only in the calling parent");
+    ++probe->calls;
+    if (probe->result->timed_out || probe->result->output_too_large)
+    {
+        ++probe->cleanup_calls;
+    }
+    if (probe->release_fd >= 0 && probe->calls == 6)
+    {
+        require(write(probe->release_fd, "x", 1) == 1, "progress could not release the quiet child");
+    }
+}
+
+static void testProgressReleasesQuietChild(void)
+{
+    // The child cannot exit until progress has run repeatedly. Exercise both
+    // stdout polling and the waitpid path after EOF, without timing thresholds.
+    for (unsigned int close_stdout = 0; close_stdout < 2; ++close_stdout)
+    {
+        char release_path[] = "/tmp/waterwall-wproc-release-XXXXXX";
+        int  release_fd     = mkstemp(release_path);
+        require(release_fd >= 0, "could not create the child release file");
+        char tool[64];
+        writeTempTool(tool,
+                      sizeof(tool),
+                      "#!/bin/sh\nif [ \"$2\" = closed ]; then exec 1>&-; fi\n"
+                      "while [ ! -s \"$1\" ]; do sleep 0.01; done\n");
+
+        const char *const        argv[]  = {tool, release_path, close_stdout ? "closed" : "open", NULL};
+        proc_command_options_t   options = makeOptions(kGenerousDeadlineMs, kDefaultMaxOutput);
+        proc_command_result_t    result;
+        command_progress_probe_t probe = {.result = &result, .parent_pid = getpid(), .release_fd = release_fd};
+        options.progress               = recordCommandProgress;
+        options.progress_context       = &probe;
+        require(procRunArgvWithDeadline(tool, argv, &options, &result),
+                "recurring progress must release a quiet child before the actual deadline");
+        require(probe.calls >= 6, "a quiet child needs repeated progress calls");
+        require(! result.timed_out && probe.cleanup_calls == 0,
+                "a progress poll slice must not be treated as the command deadline");
+        procCommandResultDrop(&result);
+        requireNoChildren("the progress-released command left an unreaped child");
+        require(close(release_fd) == 0, "could not close the child release file");
+        require(unlink(release_path) == 0, "could not remove the child release file");
+        require(unlink(tool) == 0, "could not remove fake tool");
+    }
+}
+
+static void testRegisteredProgress(void)
+{
+    char      release_path[] = "/tmp/waterwall-wproc-registered-XXXXXX";
+    const int release_fd     = mkstemp(release_path);
+    require(release_fd >= 0, "could not create registered-progress release file");
+    const char *const argv[] = {"sh", "-c", "while [ ! -s \"$1\" ]; do sleep 0.01; done", "sh", release_path, NULL};
+    proc_command_options_t   options = makeOptions(kGenerousDeadlineMs, kDefaultMaxOutput);
+    proc_command_result_t    result;
+    command_progress_probe_t first              = {.result = &result, .parent_pid = getpid(), .release_fd = -1};
+    command_progress_probe_t second             = {.result = &result, .parent_pid = getpid(), .release_fd = release_fd};
+    proc_command_progress_t  first_registration = {.callback = recordCommandProgress, .context = &first};
+    proc_command_progress_t  second_registration = {.callback = recordCommandProgress, .context = &second};
+    procCommandProgressRegister(&first_registration);
+    procCommandProgressRegister(&second_registration);
+    require(procRunArgvWithDeadline("/bin/sh", argv, &options, &result),
+            "registered resources must make progress during commands with ordinary options");
+    require(first.calls >= 6 && second.calls == first.calls && ! result.timed_out,
+            "quiet command did not service both registered resources on each progress slice");
+    procCommandResultDrop(&result);
+
+    // Remove an interior registration while retaining the head, and combine
+    // registered service with an explicit per-command callback.
+    const unsigned first_calls  = first.calls;
+    unsigned       second_calls = second.calls;
+    procCommandProgressUnregister(&first_registration);
+    command_progress_probe_t per_command = {.result = &result, .parent_pid = getpid(), .release_fd = -1};
+    options.progress                     = recordCommandProgress;
+    options.progress_context             = &per_command;
+    const char *const quick[]            = {"/bin/true", NULL};
+    require(procRunArgvWithDeadline(quick[0], quick, &options, &result), "command with mixed progress failed");
+    require(first.calls == first_calls && second.calls > second_calls && per_command.calls > 0,
+            "unregister lost another resource or suppressed explicit progress");
+    procCommandResultDrop(&result);
+
+    second_calls = second.calls;
+    procCommandProgressUnregister(&second_registration);
+    options.progress         = NULL;
+    options.progress_context = NULL;
+    require(procRunArgvWithDeadline(quick[0], quick, &options, &result), "ordinary command after unregister failed");
+    require(first.calls == first_calls && second.calls == second_calls,
+            "unregistered resources remained reachable by later commands");
+    procCommandResultDrop(&result);
+    requireNoChildren("registered-progress command left an unreaped child");
+    require(close(release_fd) == 0 && unlink(release_path) == 0, "could not remove registered-progress release file");
+}
+
+static void testExecCmdRegisteredProgress(void)
+{
+    for (unsigned close_stdout = 0; close_stdout < 2; ++close_stdout)
+    {
+        char      release_path[] = "/tmp/waterwall-exec-progress-XXXXXX";
+        const int release_fd     = mkstemp(release_path);
+        require(release_fd >= 0, "could not create shell-command release file");
+        proc_command_result_t    observation = {0};
+        command_progress_probe_t first       = {.result = &observation, .parent_pid = getpid(), .release_fd = -1};
+        command_progress_probe_t second = {.result = &observation, .parent_pid = getpid(), .release_fd = release_fd};
+        proc_command_progress_t  first_registration  = {.callback = recordCommandProgress, .context = &first};
+        proc_command_progress_t  second_registration = {.callback = recordCommandProgress, .context = &second};
+        procCommandProgressRegister(&first_registration);
+        procCommandProgressRegister(&second_registration);
+        // Bound the fixture's own wait so a broken progress path fails with
+        // status 99; execCmd itself keeps its unlimited script semantics.
+        char command[512];
+        snprintf(command,
+                 sizeof(command),
+                 "%s i=0; while [ ! -s '%s' ] && [ \"$i\" -lt 100 ]; do i=$((i+1)); sleep 0.01; done; "
+                 "[ -s '%s' ] || exit 99; %s exit 7",
+                 close_stdout ? "exec 1>&-;" : "",
+                 release_path,
+                 release_path,
+                 close_stdout ? "" : "printf 'registered';");
+        const cmd_result_t result = execCmd(command);
+        require(result.exit_code == 7 && strcmp(result.output, close_stdout ? "" : "registered") == 0,
+                "shell-command progress lost script exit status/output or did not release its wait");
+        require(first.calls >= 6 && first.calls == second.calls,
+                "quiet shell command did not repeatedly service every registered resource");
+        procCommandProgressUnregister(&first_registration);
+        procCommandProgressUnregister(&second_registration);
+        requireNoChildren("shell-command progress left an unreaped child");
+        require(close(release_fd) == 0 && unlink(release_path) == 0, "could not remove shell-command release file");
+    }
+}
+
+static void testProgressContinuesDuringFailureCleanup(bool registered)
+{
+    for (unsigned int overflow = 0; overflow < 2; ++overflow)
+    {
+        char tool[64];
+        // Ignoring TERM survives exec. The direct child must stay alive for the
+        // whole grace period after either timeout or an output-limit failure.
+        writeTempTool(tool, sizeof(tool), "#!/bin/sh\ntrap '' TERM\nprintf 'ready for cleanup'\nexec sleep 30\n");
+        const char *const        argv[]  = {tool, NULL};
+        proc_command_options_t   options = makeOptions(kShortDeadlineMs, overflow ? 8 : kDefaultMaxOutput);
+        proc_command_result_t    result;
+        command_progress_probe_t probe  = {.result = &result, .parent_pid = getpid(), .release_fd = -1};
+        command_progress_probe_t other  = {.result = &result, .parent_pid = getpid(), .release_fd = -1};
+        proc_command_progress_t  first  = {.callback = recordCommandProgress, .context = &probe};
+        proc_command_progress_t  second = {.callback = recordCommandProgress, .context = &other};
+        if (registered)
+        {
+            procCommandProgressRegister(&first);
+            procCommandProgressRegister(&second);
+        }
+        else
+        {
+            options.progress         = recordCommandProgress;
+            options.progress_context = &probe;
+        }
+        const uint64_t start = monotonicMs();
+        require(! procRunArgvWithDeadline(tool, argv, &options, &result),
+                "a blocked or oversized command must fail while providing progress");
+        const uint64_t elapsed = monotonicMs() - start;
+        require(result.timed_out == ! overflow && result.output_too_large == (bool) overflow,
+                "progress must preserve the original command failure");
+        require(result.exit_code == 128 + SIGKILL, "the TERM-ignoring child must survive until escalation");
+        require(probe.cleanup_calls >= 3, "progress must recur throughout termination grace after failure");
+        if (registered)
+        {
+            require(other.cleanup_calls == probe.cleanup_calls,
+                    "failure cleanup stopped servicing one registered resource");
+            procCommandProgressUnregister(&second);
+            procCommandProgressUnregister(&first);
+        }
+        require(elapsed < kTimeoutUpperBoundMs, "progress must preserve the bounded command deadline");
+        procCommandResultDrop(&result);
+        requireNoChildren("failure cleanup with progress left an unreaped child");
+        require(unlink(tool) == 0, "could not remove fake tool");
+    }
 }
 
 static void testDirectArgvSuccessCapturesStdout(void)
@@ -468,6 +658,11 @@ int main(void)
 {
     testCaseSet("wproc_deadline_test");
     testDirectArgvSuccessCapturesStdout();
+    testProgressReleasesQuietChild();
+    testRegisteredProgress();
+    testExecCmdRegisteredProgress();
+    testProgressContinuesDuringFailureCleanup(false);
+    testProgressContinuesDuringFailureCleanup(true);
     testClosedStdinAndStdoutStillCapturesStdout();
     testSilentBlockingToolTimesOut();
     testClosedStdoutThenBlockStillTimesOut();

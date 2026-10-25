@@ -3,7 +3,6 @@
 #include "capture_protocol_filter.h"
 #include "shiftbuffer.h"
 #include "wlibc.h"
-#include "wthread.h"
 
 enum
 {
@@ -69,28 +68,8 @@ void                           capturedeviceApplySysctls(bool skip_sysctl);
 // `iptables -S INPUT` snapshot. This prevents an old fail-open rule from
 // becoming active again merely because a later process reused its queue number.
 bool capturedeviceSelectUnusedQueueNumber(const char *input_rules, uint16_t start, uint16_t *selected);
-
-// Stop-pipe lifecycle seams. The pipe lives for the whole lifetime of a
-// capture_device_t, so both BringUp and BringDown must be able to assert that it
-// contains no unread wake token. These are exposed only so the focused lifecycle
-// unit test can drive them without a real NFQUEUE socket or root.
-struct capture_device_s;
-
-// Make one stop-pipe descriptor nonblocking, preserving its other flags.
-bool capturedeviceMakeStopPipeNonblocking(int pipe_fd);
-
-// Read the stop pipe until empty. Retries on EINTR, treats EAGAIN/EWOULDBLOCK as
-// successful completion, and reports EOF or any other error as a failure. Never
-// blocks.
-bool capturedeviceDrainStopPipe(struct capture_device_s *cdev);
-
-// The production NFQUEUE reader. Exposed so the lifecycle test can prove that its
-// poll() is bounded and that `running == false` alone terminates it, which is
-// what keeps BringDown's join from deadlocking when the wake write fails.
-WTHREAD_ROUTINE(captureLinuxReadRoutine);
-
-// Publish the readiness handshake after a reader has taken a stable queue-socket
-// reference and is about to enter its poll loop. Test readers use the same seam.
-bool captureLinuxReaderPublishReady(struct capture_device_s *cdev, int *reader_socket);
+/* Select count adjacent unreferenced queues. A selected range never wraps at
+ * UINT16_MAX; the search for its first queue retains uint16_t wraparound. */
+bool capturedeviceSelectUnusedQueueRange(const char *input_rules, uint16_t start, uint16_t count, uint16_t *selected);
 
 #endif

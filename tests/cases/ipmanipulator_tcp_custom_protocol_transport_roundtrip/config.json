@@ -11,7 +11,8 @@
           "source-ip": "10.85.0.1",
           "dest-ip": "10.85.0.2",
           "transport": "tcp",
-          "ttl": 64
+          "ttl": 64,
+          "worker-affine-flow": true
         }
       },
       "next": "tcp-to-custom"
@@ -42,7 +43,8 @@
           "source-ip": "10.85.0.1",
           "dest-ip": "10.85.0.2",
           "transport": "tcp",
-          "ttl": 64
+          "ttl": 64,
+          "worker-affine-flow": true
         }
       }
     }

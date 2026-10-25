@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Exercise real capture/conntrack rules inside run_in_network_namespace.sh. CTest:
 waterwall.capture_linux_conntrack_enabled, waterwall.capture_linux_notrack,
-waterwall.capture_linux_protocols_bypass, waterwall.capture_linux_protocols_tracked."""
+waterwall.capture_linux_protocols_bypass, waterwall.capture_linux_protocols_tracked,
+waterwall.capture_linux_queues_multi, waterwall.capture_linux_queues_single."""
 
 import argparse
+import contextlib
 import json
 from pathlib import Path
 import re
+import selectors
 import socket
 import struct
 import sys
@@ -53,6 +56,7 @@ def send_ipv4(sender, source, destination, protocol, payload, ident, fragmented=
     pieces = [(0, 0, payload)]
     if fragmented:
         pieces = [(0, 0x2000, payload[:800]), (100, 0, payload[800:])]
+    sent_packets = []
     for offset, flags, body in pieces:
         header = struct.pack(
             "!BBHHHBBH4s4s", 0x45, 0, 20 + len(body), ident, flags | offset,
@@ -60,6 +64,8 @@ def send_ipv4(sender, source, destination, protocol, payload, ident, fragmented=
         )
         header = header[:10] + struct.pack("!H", checksum(header)) + header[12:]
         sender.send(bytes(12) + b"\x08\x00" + header + body)
+        sent_packets.append(header + body)
+    return sent_packets
 
 
 def send_packet(sender, source, destination, port, payload, ident, fragmented=False, ttl=64):
@@ -192,7 +198,7 @@ def run(binary, directory, bypass_conntrack, exclude_protocols):
         with (directory / "stdout.log").open("w") as log:
             with Process([binary], cwd=directory, log=log, cleanup_signal=signal.SIGTERM, terminate_timeout=15) as process:
                 deadline = time.monotonic() + 10
-                while "CaptureDevice: device notrack-test is now up" not in (directory / "stdout.log").read_text():
+                while "CaptureDevice: notrack-test up with 1 worker-owned receive queue(s)" not in (directory / "stdout.log").read_text():
                     if process.poll() is not None or time.monotonic() >= deadline:
                         raise AssertionError("capture did not become ready")
                     time.sleep(0.05)
@@ -234,23 +240,208 @@ def run(binary, directory, bypass_conntrack, exclude_protocols):
                 expect_counters((2, 4) if bypass_conntrack else (0, 6))
 
 
+def queue_statistics():
+    # NFQUEUE's proc row reports queue number, peer, backlog, copy settings,
+    # kernel drops, userspace drops and the monotonically assigned packet ID.
+    rows = {}
+    for line in Path("/proc/net/netfilter/nfnetlink_queue").read_text().splitlines():
+        fields = [int(value) for value in line.split()]
+        assert len(fields) >= 8, line
+        rows[fields[0]] = {"pending": fields[2], "dropped": fields[5],
+                           "user_dropped": fields[6], "sequence": fields[7]}
+    return rows
+
+
+class PacketCollector:
+    """Read the ordinary IPv4 framing on every real worker-owned TCP carrier."""
+
+    def __init__(self, stack):
+        self.stack = stack
+        self.listener = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(16)
+        self.listener.setblocking(False)
+        self.selector = stack.enter_context(selectors.DefaultSelector())
+        self.selector.register(self.listener, selectors.EVENT_READ)
+        self.buffers = {}
+        self.packets = {}
+        self.delivered = {}
+
+    def wait(self, process, predicate, deadline):
+        while not predicate():
+            process.check_running("capture exited while collecting worker output")
+            remaining = deadline - time.monotonic()
+            assert remaining > 0, ("capture collector timed out", len(self.buffers), len(self.packets))
+            for key, _ in self.selector.select(min(remaining, 0.1)):
+                stream = key.fileobj
+                if stream is self.listener:
+                    stream, _ = self.listener.accept()
+                    self.stack.enter_context(stream)
+                    stream.setblocking(False)
+                    self.selector.register(stream, selectors.EVENT_READ)
+                    self.buffers[stream] = bytearray()
+                    self.delivered[stream] = 0
+                    continue
+                data = stream.recv(65535)
+                assert data, "worker carrier closed before capture finished"
+                buffer = self.buffers[stream]
+                buffer.extend(data)
+                while len(buffer) >= 20:
+                    length = struct.unpack_from("!H", buffer, 2)[0]
+                    assert buffer[0] >> 4 == 4 and length >= 20, bytes(buffer[:20])
+                    if len(buffer) < length:
+                        break
+                    packet = bytes(buffer[:length])
+                    del buffer[:length]
+                    ident = struct.unpack_from("!H", packet, 4)[0]
+                    assert ident not in self.packets, ("duplicate captured packet", ident)
+                    self.packets[ident] = packet
+                    self.delivered[stream] += 1
+
+
+def run_queue_receive(binary, directory, single_queue):
+    command("sysctl", "-qw", "net.ipv4.conf.all.rp_filter=0", "net.ipv4.conf.lo.rp_filter=0",
+            "net.ipv4.conf.lo.accept_local=1", "net.ipv4.conf.lo.route_localnet=1")
+    workers = 4
+    baseline_tasks = None
+    # The write-only baseline has the same worker/carrier topology and avoids
+    # assuming how many unrelated runtime service threads an installation uses.
+    for capture in (False, True):
+        case = directory / ("capture" if capture else "write-only")
+        case.mkdir()
+        with contextlib.ExitStack() as stack:
+            collector = PacketCollector(stack)
+            settings = {"raw-device-name": "queue-writer", "capture-device-name": "queue-test",
+                        "fragment-policy": "preserve-fragments", "skip-sysctl": True}
+            if capture:
+                settings.update({"capture-ips": ["127.0.0.2"], "capture-filter-mode": "source-ip",
+                                 "multi-queue": not single_queue, "dont-capture-protocols": [253]})
+            nodes = [
+                {"name": "capture", "type": "RawSocket", "next": "packets", "settings": settings},
+                {"name": "packets", "type": "PacketsToStream", "next": "output"},
+                {"name": "output", "type": "TcpConnector", "settings": {
+                    "address": "127.0.0.1", "port": collector.listener.getsockname()[1]}},
+            ]
+            core = {"configs": ["config.json"],
+                    "misc": {"workers": workers, "ram-profile": "client", "mtu": 1500,
+                             "try-enabling-bbr": False},
+                    "log": {"path": "log/", **{
+                        name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
+                        for name in ("internal", "core", "network", "dns")}}}
+            (case / "config.json").write_text(json.dumps({"name": "capture-queues", "nodes": nodes}))
+            (case / "core.json").write_text(json.dumps(core))
+            log = stack.enter_context((case / "stdout.log").open("w"))
+            with Process([binary], cwd=case, log=log, cleanup_signal=signal.SIGTERM,
+                         terminate_timeout=15) as process:
+                deadline = time.monotonic() + 15
+                collector.wait(process, lambda: len(collector.buffers) == workers, deadline)
+                task_count = len(list(Path(f"/proc/{process.child.pid}/task").iterdir()))
+                if not capture:
+                    baseline_tasks = task_count
+                    assert "WWCAP_" not in iptables("-S", "INPUT")
+                else:
+                    assert task_count == baseline_tasks, ("capture added a reader thread", baseline_tasks, task_count)
+                    rules = [line for line in iptables("-S", "INPUT").splitlines() if "WWCAP_" in line]
+                    queue_numbers = {int(re.search(r"--queue-num (\d+)", line)[1]) for line in rules}
+                    assert len(queue_numbers) == (1 if single_queue else workers), rules
+                    assert len(rules) == (1 if single_queue else workers * 2), rules
+                    if not single_queue:
+                        opaque_rules = [line for line in rules if "WWCAP_OPAQUE_" in line]
+                        assert len(opaque_rules) == workers and sum("--mode nth" in line for line in opaque_rules) == workers - 1, rules
+                    before = queue_statistics()
+                    assert queue_numbers == set(before), before
+
+                    sender = stack.enter_context(socket.socket(socket.AF_PACKET, socket.SOCK_RAW,
+                                                                socket.htons(0x0800)))
+                    sender.bind(("lo", 0))
+                    expected = {}
+                    # Fixed IP pair and destination ports: only source ports
+                    # change within each protocol's 128 independent flows.
+                    for protocol in (socket.IPPROTO_UDP, socket.IPPROTO_TCP):
+                        protocol_before = queue_statistics()
+                        for number in range(128):
+                            ident = 1000 + protocol * 128 + number
+                            payload = struct.pack("!I", ident) + b"worker-owned-capture"
+                            if protocol == socket.IPPROTO_UDP:
+                                body = struct.pack("!HHHH", 20000 + number, 49000, len(payload) + 8, 0) + payload
+                            else:
+                                body = struct.pack("!HHIIBBHHH", 22000 + number, 49001,
+                                                   ident, 0, 0x50, 2, 32768, 0, 0) + payload
+                            expected[ident] = send_ipv4(sender, "127.0.0.2", "127.0.0.1",
+                                                        protocol, body, ident)[0]
+                            if (number + 1) % 16 == 0:
+                                collector.wait(process, lambda: len(collector.packets) == len(expected),
+                                               time.monotonic() + 5)
+                        protocol_after = queue_statistics()
+                        protocol_deltas = {queue: protocol_after[queue]["sequence"]
+                                           - protocol_before[queue]["sequence"] for queue in queue_numbers}
+                        assert all(delta > 0 for delta in protocol_deltas.values()), \
+                            ("protocol ports did not spread receive work", protocol, protocol_deltas)
+                        assert sum(protocol_deltas.values()) == 128, (protocol, protocol_deltas)
+                    # One host pair and one protocol must spread even when no
+                    # transport identity is available. Assert exact kernel and
+                    # processing balance, not probabilistic/hash diversity.
+                    for protocol in (1, 49, 50, 132):
+                        protocol_before = queue_statistics()
+                        delivery_before = collector.delivered.copy()
+                        for number in range(64):
+                            ident = 10000 + protocol * 64 + number
+                            body = struct.pack("!HHI", 12000, 443, ident) + b"opaque-round-robin"
+                            expected[ident] = send_ipv4(sender, "127.0.0.2", "127.0.0.1", protocol, body, ident)[0]
+                            if (number + 1) % 16 == 0:
+                                collector.wait(process, lambda: len(collector.packets) == len(expected), time.monotonic() + 5)
+                        protocol_after = queue_statistics()
+                        queue_deltas = {queue: protocol_after[queue]["sequence"] - protocol_before[queue]["sequence"]
+                                        for queue in queue_numbers}
+                        assert all(delta == 64 // len(queue_numbers) for delta in queue_deltas.values()), \
+                            ("opaque receive was not round robin", protocol, queue_deltas)
+                        processing_deltas = [count - delivery_before[stream] for stream, count in collector.delivered.items()]
+                        assert processing_deltas == [64 // workers] * workers, \
+                            ("opaque processing collapsed onto a coarse flow owner", protocol, processing_deltas)
+                    assert collector.packets == expected, "captured payload changed or was lost"
+                    assert len(collector.delivered) == workers and all(collector.delivered.values()), \
+                        ("packet processing did not use every configured worker", collector.delivered)
+                    after = queue_statistics()
+                    deltas = {queue: after[queue]["sequence"] - before[queue]["sequence"]
+                              for queue in queue_numbers}
+                    assert all(delta > 0 for delta in deltas.values()), ("ports did not spread receive work", deltas)
+                    assert sum(deltas.values()) == len(expected), ("unexpected capture count", deltas, len(expected))
+                    assert all(after[queue]["pending"] == 0 and after[queue]["dropped"] == 0
+                               and after[queue]["user_dropped"] == 0 for queue in queue_numbers), after
+                    print(f"receive queues={len(queue_numbers)} packets={deltas} processing workers={workers} "
+                          f"threads={task_count} (write-only={baseline_tasks})")
+                process.terminate()
+                assert process.wait(timeout=15) in (0, 143)
+                assert "WWCAP" not in iptables("-S", "INPUT")
+                assert "WWCAP_NOTRACK" not in iptables("-t", "raw", "-S", "PREROUTING")
+                assert "WWRAW_NOTRACK" not in iptables("-t", "raw", "-S", "OUTPUT")
+                if capture:
+                    assert not queue_statistics(), "capture left a bound NFQUEUE after shutdown"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary")
     parser.add_argument("--tracked", action="store_true", help="disable bypass-conntrack on both paths")
     parser.add_argument("--exclude-protocols", action="store_true", help="exclude ICMP, TCP, and protocol-byte boundaries")
+    parser.add_argument("--queue-mode", choices=("multi", "single"), help="exercise four worker capture and queue steering")
     args = parser.parse_args()
     binary = str(Path(args.binary).resolve())
     with RunDirectory(prefix="waterwall-capture-notrack-") as temporary:
         directory = Path(temporary)
         try:
-            run(binary, directory, not args.tracked, args.exclude_protocols)
+            if args.queue_mode:
+                run_queue_receive(binary, directory, args.queue_mode == "single")
+            else:
+                run(binary, directory, not args.tracked, args.exclude_protocols)
         except Exception:
-            log = directory / "stdout.log"
-            if log.exists():
-                print(log.read_text()[-20000:], file=sys.stderr)
+            for log in directory.rglob("stdout.log"):
+                print(f"{log}:\n{log.read_text()[-20000:]}", file=sys.stderr)
             raise
-    print(f"Capture with bypass-conntrack={not args.tracked}, exclusions={args.exclude_protocols}, fragments, scope, and cleanup passed")
+    if args.queue_mode:
+        print(f"Capture {args.queue_mode} queues, port steering, exact delivery, processing workers and cleanup passed")
+    else:
+        print(f"Capture with bypass-conntrack={not args.tracked}, exclusions={args.exclude_protocols}, fragments, scope, and cleanup passed")
 
 
 if __name__ == "__main__":

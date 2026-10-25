@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/IpManipulator.mdx, and all files must keep the same documentation version.
 -->
 
@@ -124,6 +124,15 @@ families are enabled, their configured replacement values must also be distinct.
 at startup instead of silently changing behavior. Migrate to the single,
 reversible `protoswap-tcp` mapping; all fragments of an IPv4 datagram then use
 the same replacement number.
+
+With multiple workers, decoding through the normal packet path selects a worker
+from the restored TCP/UDP flow tuple after the applicable port transform. A
+different owner receives the packet through a queued handoff on its own packet
+line. Downstream stateful tricks run after this handoff; upstream decoding
+resumes at final forwarding so transforms are not repeated. Encoding keeps its
+current worker. Preserved fragments follow the restored first fragment's
+transport tuple; tails arriving first wait in bounded shared fragment storage.
+One-worker and same-worker delivery continue directly.
 
 ### SNI blender settings
 
@@ -792,7 +801,8 @@ UDP checksum zero stays zero; enabled UDP arithmetic zero is transmitted as
 Every fragment receives the protocol mapping. Only the fragment containing both
 transport checksum bytes receives the address adjustment, including a later TCP
 fragment after an 8- or 16-byte first fragment. Fragmentation may occur before
-encoding or between endpoints; no reassembly or ordering state is needed.
+encoding or between endpoints; checksum conversion itself needs no reassembly
+or ordering state. Decoded worker selection uses the fragment association described above.
 Fragments of one datagram must receive consistent final addresses. Malformed
 IPv4/transport lengths, partial checksum fields and invalid local fragment
 geometry pass through unchanged, with their pending request preserved. Trailing

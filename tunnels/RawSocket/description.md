@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RawSocket.mdx, and all files must keep the same documentation version.
 -->
 
@@ -127,6 +127,16 @@ For write-only packet injection, omit all capture-range keys:
 
   Default: `false`
 
+- `multi-queue` `(boolean)`
+  On Linux, attempt one receive queue per event worker. If additional queues or
+  steering are unavailable, use one receive queue owned by worker 0. Setting
+  this to `false` selects that single-queue path directly. Packet processing
+  still uses all configured workers. Linux receive uses event workers in both
+  modes, with no dedicated capture reader thread. Windows accepts the setting
+  and keeps its existing receive arrangement. Write-only mode has no receive queues.
+
+  Default: `true`
+
 - `capture-device-name` `(string)`
   User-visible or internal name for the capture device.
 
@@ -174,6 +184,23 @@ During `onStart`, `RawSocket`:
 - brings the raw output device up before activating capture rules
 
 With no configured capture range, no capture device, NFQUEUE socket, capture reader, or capture rule is created. Only the raw output device is started.
+
+Linux assigns each receive queue to exactly one worker and performs bounded,
+nonblocking reads on that worker's event loop. Queue count and steering stay fixed
+while capture is active. Complete TCP/UDP packets use symmetric IPv4 address,
+protocol, and port steering, followed by the existing processing-flow affinity.
+Other complete IPv4 protocols use a deterministic kernel round-robin queue
+cascade (`statistic --mode nth`) and continue on the receiving worker. With one
+receive queue, opaque packets are distributed across processing workers in turn.
+No transport payload fields are guessed for opaque protocols.
+
+Every IPv4 fragment, including fragment zero, retains address/protocol receive
+steering and the shared fragment table's existing staging and ownership rules.
+Completed reassembly of an opaque protocol uses the opaque processing policy.
+Protocol exclusions apply equally to both rule sets. Queue predicates use the
+iptables `bpf` match; opaque multiqueue routing also requires `statistic`. If
+multiqueue setup fails, capture falls back to one receive queue. The number of
+predicates examined grows with queue count.
 
 When a packet is captured:
 
@@ -270,7 +297,7 @@ The capture device is configured from the ranges supplied through either `captur
 Current implementation behavior:
 
 - on Windows, the capture filter combines `ip.SrcAddr` equality or inclusive range checks with exclusions on `ip.Protocol`
-- on Linux, one netfilter queue rule is created for each configured IPv4 address or CIDR range
+- on Linux, multiqueue capture creates a flow rule and an opaque-protocol rule per receive queue for each configured IPv4 address or CIDR range; single-queue capture creates one queue rule per range
 - `capture-filter-mode` is parsed, but only the `source-ip` path is currently implemented
 
 On Linux, a nonempty `dont-capture-protocols` list requires the iptables `bpf`
@@ -303,9 +330,12 @@ The rules use normal raw-table priority, leaving fragment reassembly and the
 PMTU discovery; necessary ICMP errors still need to reach the responsible stack.
 `skip-sysctl` does not disable NOTRACK setup.
 
-All INPUT queue rules are installed before any enabled NOTRACK rules, with the
-reader already ready. Capture activates once its selected rules are installed.
-Startup fails and rolls back installed rules if either installation fails.
+All INPUT queue rules are installed before any enabled NOTRACK rules. The
+coordinator services the inactive queues with `NF_ACCEPT` during these supervised
+rule commands. Capture activates once its selected rules are installed.
+If multiqueue rule installation fails, WaterWall removes the partial rules and
+retries one receive queue. Failed single-queue installation, NOTRACK installation,
+or incomplete rollback fails startup.
 Cleanup attempts NOTRACK removal before NFQUEUE removal and tracks failed or
 outcome-unknown commands independently in their respective tables. A NOTRACK
 cleanup failure does not prevent an attempt to remove the queue rules. Reader
@@ -321,18 +351,22 @@ being dropped by an absent queue. This is a fail-open availability policy:
 packets are not captured or transformed while no listener exists. It does not
 make queue overflow fail-open while WaterWall remains bound to the queue.
 WaterWall avoids queue numbers already referenced by existing INPUT rules. A
-terminal capture startup or rule-cleanup failure closes the queue promptly and
-makes that capture-device object non-restartable, activating `--queue-bypass`
-for any NFQUEUE rule that could not be removed. The queue reader must report ready
-before the first rule is installed and remains running throughout rule
-insertion, rollback, and bring-down cleanup. Until every rule is installed and
-the raw output device is ready, packets receive `NF_ACCEPT` and are not
-dispatched into the chain. Capture then switches to drop-and-dispatch. Shutdown
-deactivates capture before removing rules. An unexpected reader exit
-deactivates capture and closes the queue immediately so remaining rules fail
-open. While a reader thread is joinable, it owns the queue descriptor;
-terminal cleanup requests closure, and the reader wrapper closes the queue only
-after the routine has stopped using that descriptor.
+failed startup closes its queues; complete rollback permits a later restart.
+Unresolved rule cleanup or an inactive queue I/O failure makes that capture-device
+object non-restartable. Closing the queues activates `--queue-bypass` for any
+NFQUEUE rule that could not be removed. Before capture activation and
+after worker detachment, the coordinator performs bounded nonblocking
+`NF_ACCEPT` drains during rule insertion, rollback, and bring-down cleanup.
+The raw output device is ready before capture activates. Receive activation is
+queued behind packet Init on each owner worker. During later startup commands,
+capture uses `NF_DROP` and queues packets for worker delivery within the same
+shared budget; a full session FIFO stops native reads. Packets may remain in the
+bounded kernel queues and session FIFO until worker loops dispatch. Active workers
+use drop-and-dispatch. Shutdown deactivates capture, closes receive admission,
+and detaches each watcher on its owner before rule cleanup and descriptor release.
+A terminal receive failure closes receive admission and requests orderly cleanup;
+closed queue sockets make any residual rules fail open. No dedicated Linux
+capture reader or cleanup thread is created.
 
 ### Checksum behavior
 

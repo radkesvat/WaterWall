@@ -178,6 +178,7 @@
       target_link_options(
         ping_flow_test
         PRIVATE
+          "-Wl,--wrap=sbufDuplicateByPool"
           "-Wl,--wrap=abortProgramNow"
           "-Wl,--wrap=requestProgramShutdown"
           "-Wl,--wrap=bufferpoolGetLargeBuffer"

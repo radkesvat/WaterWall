@@ -31,6 +31,8 @@ typedef struct device_frag_affinity_result_s
     sbuf_t  *completed;
 } device_frag_affinity_result_t;
 device_frag_affinity_table_t *deviceFragAffinityCreate(buffer_pool_t *pool, device_fragment_policy_t policy);
+/* Shared detached storage, with no borrowed worker pool. */
+device_frag_affinity_table_t *deviceFragAffinityCreateShared(device_fragment_policy_t policy, uint16_t padding);
 /* Exclusive startup: use detached allocations under the table mutex so several
  * worker readers can share the existing device-wide fragment limits. */
 void deviceFragAffinityEnableShared(device_frag_affinity_table_t *table, uint16_t padding);

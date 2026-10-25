@@ -11,7 +11,8 @@
           "source-ip": "10.84.0.1",
           "dest-ip": "10.84.0.2",
           "transport": "udp",
-          "ttl": 64
+          "ttl": 64,
+          "worker-affine-flow": true
         }
       },
       "next": "udp-to-custom"
@@ -42,7 +43,8 @@
           "source-ip": "10.84.0.1",
           "dest-ip": "10.84.0.2",
           "transport": "udp",
-          "ttl": 64
+          "ttl": 64,
+          "worker-affine-flow": true
         }
       }
     }

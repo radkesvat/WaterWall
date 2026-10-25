@@ -70,6 +70,19 @@
   add_dependencies(waterwall_unit_tests packet_tunnel_test)
 
   add_waterwall_unit_test(waterwall.packet_tunnel_unit packet_tunnel_test "unit;net;packet-tunnel")
+
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+    waterwall_add_native_executable(packet_affinity_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/packet_affinity_test.c)
+    target_link_options(packet_affinity_test PRIVATE
+      "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
+      "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolGetSmallBuffer"
+      "-Wl,--wrap=bufferpoolGetMediumBuffer" "-Wl,--wrap=bufferpoolGetBestFit"
+      "-Wl,--wrap=bufferpoolTryGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+      "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy")
+    target_link_libraries(packet_affinity_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests packet_affinity_test)
+    add_waterwall_unit_test(waterwall.packet_affinity_unit packet_affinity_test "unit;net;packet;affinity;lifetime")
+  endif()
   add_library(missing_abi_node_library SHARED ${WATERWALL_UNIT_SOURCE_ROOT}/core/legacy_node_library.c)
   target_compile_definitions(missing_abi_node_library PRIVATE FIXTURE_NODE_TYPE="MissingAbiFixture")
   set_target_properties(missing_abi_node_library PROPERTIES PREFIX "")
@@ -237,6 +250,8 @@
     waterwall_add_native_executable(capture_linux_nfqueue_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/devices/capture_linux_nfqueue_test.c)
   target_link_libraries(capture_linux_nfqueue_test PRIVATE ww_test_support)
     target_link_libraries(capture_linux_nfqueue_test PRIVATE ww)
+    target_link_options(capture_linux_nfqueue_test PRIVATE
+      "-Wl,--wrap=recvmsg" "-Wl,--wrap=sendto" "-Wl,--wrap=poll")
     add_dependencies(waterwall_unit_tests capture_linux_nfqueue_test)
 
     add_waterwall_unit_test(
@@ -269,6 +284,7 @@
     target_link_options(capture_linux_command_test PRIVATE
       "-Wl,--wrap=procRunArgvWithDeadline"
       "-Wl,--wrap=procCommandResultDrop"
+      "-Wl,--wrap=capturedeviceReaderOperational"
     )
     target_link_libraries(capture_linux_command_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests capture_linux_command_test)
@@ -328,32 +344,35 @@
     add_waterwall_unit_test(waterwall.tundevice_policy_cleanup_unit tundevice_policy_cleanup_test
       "unit;tunnels;tun;shutdown")
 
-    # Capture stop-pipe lifecycle. capture_linux.c is compiled directly and the
-    # generic runner is wrapped, so BringUp/BringDown run for real while no
-    # iptables rule, sysctl, NFQUEUE socket or root privilege is involved.
-    waterwall_add_native_executable(capture_linux_pipe_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/devices/capture_linux_pipe_test.c
+    # Worker-owned Capture reads use real loops and socketpair transport, with
+    # explicit message settlement and no privileged firewall/NFQUEUE setup.
+    waterwall_add_native_executable(capture_linux_reader_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/devices/capture_linux_reader_test.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_session.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_budget.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_dispatch.c
       ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux.c
       ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux_io.c
       ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux_nfqueue.c
       ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux_rules.c)
-  target_link_libraries(capture_linux_pipe_test PRIVATE ww_test_support)
-    target_link_options(capture_linux_pipe_test PRIVATE
-      "-Wl,--wrap=procRunArgvWithDeadline"
-      "-Wl,--wrap=procCommandResultDrop"
+  target_link_libraries(capture_linux_reader_test PRIVATE ww_test_support)
+    target_link_options(capture_linux_reader_test PRIVATE
       "-Wl,--wrap=pthread_create"
-      "-Wl,--wrap=pthread_join"
       "-Wl,--wrap=recvmsg"
       "-Wl,--wrap=sendto"
+      "-Wl,--wrap=wioGet"
+      "-Wl,--wrap=wioAdd"
+      "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
+      "-Wl,--wrap=memoryFree"
       "-Wl,--wrap=requestProgramShutdown"
       "-Wl,--wrap=abortProgramNow"
     )
-    target_link_libraries(capture_linux_pipe_test PRIVATE ww)
-    add_dependencies(waterwall_unit_tests capture_linux_pipe_test)
+    target_link_libraries(capture_linux_reader_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests capture_linux_reader_test)
 
     add_waterwall_unit_test(
-      waterwall.capture_linux_pipe_unit
-      capture_linux_pipe_test
-      "unit;net;capture;lifecycle;pipe"
+      waterwall.capture_linux_reader_unit
+      capture_linux_reader_test
+      "unit;net;capture;lifecycle;worker;reader"
     )
 
     # Linux TUN queued-message lifetime. tun_linux.c is compiled directly and
@@ -480,10 +499,12 @@
   target_link_libraries(capture_linux_message_lifetime_test PRIVATE ww_test_support)
     target_link_options(capture_linux_message_lifetime_test PRIVATE
       "-Wl,--wrap=procRunArgvWithDeadline"
-      "-Wl,--wrap=procCommandResultDrop"
       "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
       "-Wl,--wrap=memoryFree"
       "-Wl,--wrap=masterpoolDestroy"
+      "-Wl,--wrap=sbufDestroy"
+      "-Wl,--wrap=socket" "-Wl,--wrap=bind" "-Wl,--wrap=setsockopt" "-Wl,--wrap=close"
+      "-Wl,--wrap=sendto" "-Wl,--wrap=recvmsg" "-Wl,--wrap=poll" "-Wl,--wrap=fastRand64"
     )
     target_link_libraries(capture_linux_message_lifetime_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests capture_linux_message_lifetime_test)

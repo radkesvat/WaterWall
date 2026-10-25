@@ -1,10 +1,18 @@
 #pragma once
 #include "capture_linux_internal.h"
+#include "capture_linux_reader.h"
+#include "capture_linux_steering.h"
 #include "capture_private.h"
 
-/* The coordinator owns descriptors, rule records and joinable threads. The
- * reader borrows its stable socket until join; rule cleanup runs while inactive
- * capture can still return packets to the host. Queued sessions outlive devices. */
+/* Native queue descriptors move from exclusive startup to their worker and
+ * back to the coordinator after reader quiescence. */
+typedef struct capture_linux_queue_s
+{
+    int      fd;
+    uint16_t number;
+    char     steering_filter[kCaptureLinuxSteeringFilterSize];
+} capture_linux_queue_t;
+
 enum
 {
     kNetfilterReadBufferSize    = kCaptureLinuxNetfilterReadBufferSize,
@@ -25,15 +33,9 @@ enum
     kCaptureMutationMaxOutputBytes   = 64 * 1024,
     kCaptureInspectionMaxOutputBytes = 1024 * 1024,
 
-    // The stop pipe is the fast way out of poll(), but it is not a guaranteed
-    // one: BringDown's wake write can fail hard, and then no token ever arrives.
-    // A bounded poll makes `running == false` an independent exit condition, so
-    // BringDown's join always completes and its failure becomes observable
-    // instead of hanging. An idle capture device therefore wakes twice a second,
-    // and a lost wake token costs at most one timeout of shutdown latency.
-    kCaptureReaderPollTimeoutMs     = 500,
-    kCaptureReaderReadyTimeoutMs    = 5000,
     kCaptureDiscardReportIntervalMs = 1000,
+    kCaptureReaderPacketLimit       = 512,
+    kCaptureReaderChargeLimit       = 8 * 1024 * 1024,
 
     // Configuration and verdict traffic shares the queue socket with the
     // reader. Keep every individual netlink transaction short so a full kernel
@@ -51,4 +53,3 @@ enum
 };
 
 bool capturedeviceReaderOperational(capture_device_t *cdev);
-bool capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_fd, uint64_t deadline_us);

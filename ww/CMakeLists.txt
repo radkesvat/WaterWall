@@ -151,6 +151,7 @@ add_library(ww STATIC
     # Networking
     net/bound_udp_socket.c
     net/packet_tunnel.c
+    net/packet_affinity.c
     net/traffic_shaper.c
     net/pipe_tunnel.c
     net/sync_dns.c
@@ -628,6 +629,7 @@ elseif(UNIX AND NOT ANDROID)
             devices/capture/capture_linux_io.c
             devices/capture/capture_linux_nfqueue.c
             devices/capture/capture_linux_rules.c
+            devices/capture/capture_linux_steering.c
             devices/raw/raw_linux.c
             devices/raw/raw_linux_notrack.c
         )
@@ -1724,6 +1726,7 @@ set_source_files_properties(
     devices/capture/capture_linux_io.c
     devices/capture/capture_linux_nfqueue.c
     devices/capture/capture_linux_rules.c
+    devices/capture/capture_linux_steering.c
     devices/raw/raw_linux.c
     devices/raw/raw_linux_notrack.c
     devices/raw/raw_windows.c
@@ -1780,6 +1783,7 @@ if(BUILD_TESTING)
         devices/capture/capture_linux_io.c
         devices/capture/capture_linux_nfqueue.c
         devices/capture/capture_linux_rules.c
+        devices/capture/capture_linux_steering.c
         devices/raw/raw_linux.c
         objects/user.c
         objects/users.c

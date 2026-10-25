@@ -58,6 +58,7 @@ void rawsocketOnStart(tunnel_t *t)
             startupFailureRecord(1);
             return;
         }
+        capturedeviceSetMultiQueue(state->capture_device, state->multi_queue_requested);
     }
 
     state->raw_device = rawdeviceCreate(state->raw_device_name, state->firewall_mark, state->bypass_conntrack, t);
