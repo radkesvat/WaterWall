@@ -336,3 +336,48 @@ if(COMMAND add_waterwall_vmess_client_interop)
     endif()
   endif()
 endif()
+
+# Explicit 8 KiB datagram checks. The limited cases characterize a pinned peer
+# after a successful small control exchange; they do not claim interoperability.
+foreach(peer IN ITEMS v2ray xray sing-box)
+  if(peer STREQUAL "v2ray")
+    set(size_reference_args)
+  else()
+    set(size_reference_args REFERENCE_KIND "${peer}")
+  endif()
+  if(peer STREQUAL "sing-box")
+    set(size_expectation supported)
+    set(size_label 8k)
+  else()
+    set(size_expectation limited)
+    set(size_label limit)
+  endif()
+  foreach(encoding IN ITEMS none packetaddr)
+    if(peer STREQUAL "xray" AND encoding STREQUAL "packetaddr")
+      continue()
+    endif()
+    set(size_suffix "${peer}_${encoding}_udp_size_${size_label}")
+    if(COMMAND add_waterwall_vmess_interop AND TARGET UdpConnector)
+      add_waterwall_vmess_interop("${size_suffix}" ${size_reference_args}
+        --protocol udp --packet-encoding "${encoding}" --udp-size-probe "${size_expectation}")
+      add_waterwall_test_labels("waterwall.vmess_${size_suffix}" "udp-size")
+    endif()
+    if(COMMAND add_waterwall_vmess_client_interop AND TARGET UdpListener)
+      add_waterwall_vmess_client_interop("${size_suffix}" ${size_reference_args}
+        --protocol udp --packet-encoding "${encoding}" --udp-size-probe "${size_expectation}")
+      add_waterwall_test_labels("waterwall.vmess_client_${size_suffix}" "udp-size")
+    endif()
+  endforeach()
+endforeach()
+
+if(COMMAND add_waterwall_vmess_client_interop AND TARGET VmessServer AND
+   TARGET UdpListener AND TARGET UdpConnector)
+  foreach(cipher IN ITEMS aes-128-gcm chacha20-poly1305 none)
+    string(REPLACE "-" "_" size_cipher_label "${cipher}")
+    foreach(encoding IN ITEMS none packetaddr)
+      add_waterwall_vmess_client_interop("local_${size_cipher_label}_${encoding}_udp_size_8k"
+        --peer waterwall --cipher "${cipher}" --protocol udp --packet-encoding "${encoding}"
+        --udp-size-probe supported)
+    endforeach()
+  endforeach()
+endif()

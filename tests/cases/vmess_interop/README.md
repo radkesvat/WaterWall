@@ -41,12 +41,35 @@ bounded destination admission and empty datagrams. Native UDP empty records
 remain termination signals. V2Ray's SOCKS inbound drops empty UDP before wrapping,
 so only that peer-client cell is explicitly unsupported; its server accepts empty
 packetaddr datagrams. V2Ray near-limit payloads are 1940 bytes because its complete
-packet writer frame is limited to 2048 bytes. sing-box peer-limit cases use
+packet writer frame is limited to 2048 bytes; this affects native UDP as well as
+packetaddr. sing-box peer-limit cases use
 14993/14981-byte IPv4/IPv6 payloads, derived from its pinned encrypted writer's
 15000-byte plaintext chunk limit including the envelope. Its 65400-byte
 protocol-limit cells are explicitly skipped: its writer splits the datagram and
 its 16384-byte reader refuses the opposite direction. WaterWall pairs retain the
 65400-byte workload, and native vectors/runtime fixtures cover exact codec maxima.
+
+Exact 8 KiB means **8192 application payload bytes**, before any envelope, length,
+authentication tag or padding. The size regressions keep WaterWall's full framing
+capacity and record these separate pinned-peer constraints:
+
+| Endpoint pair | Exact 8192-byte UDP workload |
+| --- | --- |
+| WaterWall ↔ WaterWall | Preserves the complete datagram and reply, using native UDP or packetaddr. |
+| WaterWall ↔ sing-box 1.12.0 | Supported in both endpoint roles, using native UDP or packetaddr with AES. |
+| WaterWall ↔ Xray 25.6.8 | Native UDP cannot carry this application size: its [authenticated writer](https://github.com/XTLS/Xray-core/blob/v25.6.8/common/crypto/auth.go#L249) bounds the entire frame to its [8192-byte buffer](https://github.com/XTLS/Xray-core/blob/v25.6.8/common/buf/buffer.go#L12), including length, tag and padding. |
+| WaterWall ↔ V2Ray 5.53.0 | Neither native UDP nor packetaddr can carry this application size: its [authenticated writer](https://github.com/v2fly/v2ray-core/blob/v5.53.0/common/crypto/auth.go#L251) uses a [2048-byte buffer](https://github.com/v2fly/v2ray-core/blob/v5.53.0/common/buf/buffer.go#L10) for the complete frame. |
+
+The peer-limit regressions first require a successful small control exchange, then
+verify that the oversized workload cannot complete as an intact echo. Passing
+such a negative case records the peer's known limitation; it is not a successful
+large-datagram interoperability result. Do not lower WaterWall's own limits or
+truncate/split a UDP application datagram to make those peers appear compatible.
+The maximum usable payload depends on direction, framing profile and endpoint
+implementation, and is separate from TCP stream transfer size.
+
+Run these positive and negative size checks with
+`ctest --preset linux --output-on-failure -R 'udp_size_(8k|limit)$'`.
 
 See [Developer Guide Part 6](../../../WaterWall-Docs/docs/05-devguides/part6-build-test-review.mdx#vmess-independent-client-coverage)
 for the peer matrix, focused Debug/Release and sanitizer commands, and dependency

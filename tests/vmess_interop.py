@@ -28,6 +28,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
                                 str(Path(__file__).resolve().parent / "support" / "python")))
 from vmess_reference import command as reference_command, environment as reference_environment, validate_reference, write_reference, packetaddr_payload_size, unsupported_packetaddr_profile
+from vmess_reference import check_udp_size_probe, receive_udp_size_probe
 from wwtest.config import core_config
 from wwtest.process import Process, close_on_error, install_termination_handler
 from wwtest.run_directory import RunDirectory
@@ -364,6 +365,18 @@ def udp_case(args, reference, waterwall, backend):
             # UDP ASSOCIATE alone is not proof that the returned relay is bound.
             wait_log(reference, reference.log_path,
                      f"transport/internet/udp: listening UDP on {relay[0]}:{relay[1]}")
+        if args.udp_size_probe:
+            prefix = b"\x00\x00\x00" + address_type + address + TARGET_PORT.to_bytes(2, "big")
+
+            def exchange(payload):
+                client.sendto(prefix + payload, relay)
+                origin = receive_udp_size_probe(backend, payload, "backend receive")
+                backend.sendto(payload[::-1], origin)
+                receive_udp_size_probe(client, prefix + payload[::-1], "reply receive")
+
+            check_udp_size_probe(args, exchange, waterwall, reference)
+            stop_waterwall(waterwall)
+            return
         payloads = [b"a", bytes(range(31)), bytes(range(256)) * 2, bytes(range(240)) * 5, b"last"]
         if args.packet_encoding == "packetaddr":
             # The envelope makes an empty datagram a nonempty VMess record.
@@ -442,6 +455,8 @@ def fallback_case(waterwall, backend):
 
 
 def run(args):
+    if args.udp_size_probe and args.protocol != "udp":
+        raise ValueError("UDP size probes require --protocol udp")
     if args.scenario != "fallback":
         validate_reference(args.reference, args.reference_kind)
     if unsupported_packetaddr_profile(args):
@@ -484,6 +499,7 @@ if __name__ == "__main__":
     parser.add_argument("reference", type=lambda value: Path(value).resolve())
     parser.add_argument("--cipher", choices=("aes-128-gcm", "chacha20-poly1305", "none", "zero"), default="aes-128-gcm")
     parser.add_argument("--protocol", choices=("tcp", "udp"), default="tcp")
+    parser.add_argument("--udp-size-probe", choices=("supported", "limited"))
     parser.add_argument("--target", choices=("ipv4", "ipv6"), default="ipv4")
     parser.add_argument("--auth", choices=("local", "database"), default="local")
     parser.add_argument("--transport", choices=("tcp", "tls", "ws", "wss"), default="tcp")

@@ -7,9 +7,51 @@ no peer selection, downloads, retries, or feature downgrade happens at runtime.
 
 import json
 import os
+import socket
 import subprocess
 
 VERSIONS = {"v2ray": "5.53.0", "xray": "25.6.8", "sing-box": "1.12.0"}
+
+
+class UdpSizeLimit(Exception):
+    """A size probe observed a dropped or prefix-truncated datagram."""
+
+
+def receive_udp_size_probe(sock, expected, phase):
+    try:
+        received, origin = sock.recvfrom(65535)
+    except socket.timeout as error:
+        raise UdpSizeLimit(f"{phase}: no complete {len(expected)}-byte datagram") from error
+    if len(received) < len(expected) and expected.startswith(received):
+        raise UdpSizeLimit(f"{phase}: {len(expected)} bytes truncated to {len(received)}")
+    assert received == expected, f"{phase}: datagram contents changed"
+    return origin
+
+
+def check_udp_size_probe(args, exchange, waterwall, reference=None):
+    assert args.protocol == "udp" and args.udp_size_probe in ("supported", "limited")
+    if args.udp_size_probe == "limited":
+        assert getattr(args, "peer", "reference") == "reference"
+        assert args.reference_kind in ("v2ray", "xray") and args.cipher == "aes-128-gcm"
+    # Verify readiness and complete small-packet delivery before characterizing
+    # the pinned peer's limit. Startup failures are never accepted as a limit.
+    exchange(bytes(range(256)) * 4)
+    observed = None
+    try:
+        exchange(bytes(range(256)) * 32)
+    except UdpSizeLimit as error:
+        if args.udp_size_probe != "limited":
+            raise
+        observed = error
+    waterwall.check_running("UDP size probe")
+    if reference is not None:
+        reference.check_running("UDP size probe")
+    if args.udp_size_probe == "limited":
+        assert observed is not None, "pinned peer now preserves 8192-byte UDP; update its documented limit"
+        print(f"Confirmed pinned {args.reference_kind} UDP size limitation: {observed}; "
+              "this is not successful 8 KiB interoperability", flush=True)
+    else:
+        print("Verified intact 8192-byte UDP request and reply", flush=True)
 
 
 def validate_reference(executable, kind):

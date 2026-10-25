@@ -28,6 +28,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
                                 str(Path(__file__).resolve().parent / "support" / "python")))
 from vmess_reference import command as reference_command, environment as reference_environment, validate_reference, write_reference, packetaddr_payload_size, unsupported_packetaddr_profile
+from vmess_reference import check_udp_size_probe, receive_udp_size_probe
 from wwtest.config import core_config
 from wwtest.process import Process, close_on_error, install_termination_handler
 from wwtest.run_directory import RunDirectory
@@ -514,7 +515,7 @@ def long_case(args, client, waterwall, backend):
     print(f"Verified {count} stop-and-wait nonempty records each way on one transport", flush=True)
 
 
-def udp_case(args, waterwall, backend):
+def udp_case(args, waterwall, backend, reference=None):
     control = contextlib.nullcontext()
     prefix = b""
     port = APP_PORT
@@ -522,6 +523,17 @@ def udp_case(args, waterwall, backend):
         control, (port, prefix) = application(waterwall, args)
     with control, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
         client.settimeout(10)
+        if args.udp_size_probe:
+            def exchange(payload):
+                client.sendto(prefix + payload, (HOST, port))
+                target = backend.ready()
+                origin = receive_udp_size_probe(target, payload, "backend receive")
+                target.sendto(payload[::-1], origin)
+                receive_udp_size_probe(client, prefix + payload[::-1], "reply receive")
+
+            check_udp_size_probe(args, exchange, waterwall, reference)
+            stop_waterwall(waterwall)
+            return
         payloads = [b"a", bytes(range(31)), bytes(range(256)) * 2, bytes(range(240)) * 5, b"last"]
         if args.packet_encoding == "packetaddr":
             large = packetaddr_payload_size(args)
@@ -538,6 +550,8 @@ def udp_case(args, waterwall, backend):
 
 
 def run(args):
+    if args.udp_size_probe and args.protocol != "udp":
+        raise ValueError("UDP size probes require --protocol udp")
     if args.peer == "reference":
         validate_reference(args.reference, args.reference_kind)
     if unsupported_packetaddr_profile(args):
@@ -560,7 +574,7 @@ def run(args):
                         tcp_case(root, args, waterwall, backend)
                     else:
                         wait_log(waterwall, root / "waterwall.log", f"127.0.0.1:[{APP_PORT}] (UDP)")
-                        udp_case(args, waterwall, backend)
+                        udp_case(args, waterwall, backend, reference)
                     if args.scenario in ("long", "strict"):
                         assert relay.accepted == 1, "long session reconnected its transport"
     print(f"VmessClient {args.peer}/{args.auth}/{args.cipher}/{args.protocol}/{args.transport}/"
@@ -576,6 +590,7 @@ if __name__ == "__main__":
     parser.add_argument("--auth", choices=("local", "database"), default="local")
     parser.add_argument("--cipher", choices=("aes-128-gcm", "chacha20-poly1305", "none", "zero", "auto"), default="aes-128-gcm")
     parser.add_argument("--protocol", choices=("tcp", "udp"), default="tcp")
+    parser.add_argument("--udp-size-probe", choices=("supported", "limited"))
     parser.add_argument("--options", type=int, choices=(0, 1, 5, 13, 17, 21, 29))
     parser.add_argument("--transport", choices=("tcp", "tls", "ws", "wss"), default="tcp")
     parser.add_argument("--target", choices=("ipv4", "ipv6", "domain"), default="ipv4")
