@@ -920,8 +920,10 @@ static void testReentrancy(void)
 static void testUdpFrames(void)
 {
     twfSetCase("UDP destination headers, fragments, empty frames and exact body extraction");
-    uint8_t wire[9000], payload[8192];
-    memset(payload, 'P', sizeof(payload));
+    uint8_t        wire[UINT16_MAX + 263], payload[UINT16_MAX];
+    const uint32_t sizes[] = {0, 1, 8192, 8193, UINT16_MAX};
+    for (uint32_t i = 0; i < sizeof(payload); ++i)
+        payload[i] = (uint8_t) (i * 29U + i / 251U);
     for (unsigned form = 0; form < 4; ++form)
     {
         uint32_t n = frame(wire, form, 443, "AB", 2);
@@ -939,9 +941,9 @@ static void testUdpFrames(void)
             twfRequire(f.ests == 1, "backend Est did not map once to association");
             end();
         }
-        for (unsigned size_case = 0; size_case < 3; ++size_case)
+        for (unsigned size_case = 0; size_case < sizeof(sizes) / sizeof(sizes[0]); ++size_case)
         {
-            uint32_t size = size_case == 0 ? 0 : size_case == 1 ? 1 : 8192;
+            uint32_t size = sizes[size_case];
             begin(false, false, 128);
             startUdp();
             n = frame(wire, form, 443, payload, size);
@@ -949,6 +951,7 @@ static void testUdpFrames(void)
             {
                 unsigned count = min(2048U, n - off);
                 tunnelUpStreamPayload(f.t, f.line, bytes(wire + off, count, true, 320));
+                twfRequire(lineIsAlive(f.line), "representable UDP frame closed the association");
                 off += count;
             }
             twfRequire(f.calls_up == 1 && f.up_len == size && memcmp(f.up, payload, size) == 0,
@@ -963,7 +966,7 @@ static void testUdpFrames(void)
         tunnelUpStreamPayload(f.t, f.line, bytes(wire + i, 1, false, 320));
     twfRequire(f.calls_up == 1 && f.up_len == 1500, "input fragment count incorrectly limited");
     end();
-    for (unsigned fault = 0; fault < 5; ++fault)
+    for (unsigned fault = 0; fault < 4; ++fault)
     {
         begin(true, false, 128);
         startUdp();
@@ -981,16 +984,45 @@ static void testUdpFrames(void)
         }
         if (fault == 3)
             wire[10] = 'x';
-        if (fault == 4)
-        {
-            wire[7] = 32;
-            wire[8] = 1;
-        }
         tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, true, 320));
         twfRequire(! lineIsAlive(f.line) && f.fallback_inits == 0, "malformed UDP survived or fell back");
         end();
     }
 }
+
+static void testLargeUdpFramesAndReplies(void)
+{
+    twfSetCase("coalesced maximum UDP frames preserve datagrams and complete reply payloads");
+    uint8_t *body = memoryAllocate(UINT16_MAX + 1U);
+    uint8_t *wire = memoryAllocate(2U * (UINT16_MAX + 263U));
+    for (uint32_t i = 0; i <= UINT16_MAX; ++i)
+        body[i] = (uint8_t) (i * 31U + i / 257U);
+    for (unsigned form = 0; form < 4; ++form)
+    {
+        begin(false, false, 128);
+        startUdp();
+        uint32_t first = frame(wire, form, 1001, body, UINT16_MAX);
+        uint32_t total = first + frame(wire + first, form, 1001, body, UINT16_MAX);
+        tunnelUpStreamPayload(f.t, f.line, bytes(wire, total, false, 320));
+        twfRequire(lineIsAlive(f.line) && f.calls_up == 2 && f.up_len == 2U * UINT16_MAX &&
+                       memcmp(f.up, body, UINT16_MAX) == 0 && memcmp(f.up + UINT16_MAX, body, UINT16_MAX) == 0,
+                   "coalesced maximum UDP frames were rejected, split or merged");
+
+        for (unsigned padded = 0; padded < 2; ++padded)
+            tunnelDownStreamPayload(f.t, f.remotes[0], bytes(body, UINT16_MAX, false, padded ? 320 : 0));
+        twfRequire(lineIsAlive(f.line) && f.calls_down == 2 && f.down_len == total && memcmp(f.down, wire, total) == 0,
+                   "maximum UDP reply changed its length, header or payload");
+
+        tunnelDownStreamPayload(f.t, f.remotes[0], bytes(body, UINT16_MAX + 1U, false, 320));
+        twfRequire(lineIsAlive(f.line) && ! lineIsAlive(f.remotes[0]) && f.calls_down == 2 && f.down_len == total &&
+                       f.branch_finishes == 1,
+                   "unrepresentable UDP reply was truncated, emitted or closed the whole association");
+        end();
+    }
+    memoryFree(wire);
+    memoryFree(body);
+}
+
 static void testUdpPressure(void)
 {
     twfSetCase("association-wide backend Pause and ordered pre-Est replies");
@@ -1404,7 +1436,7 @@ static void testRetentionAndIndependentDelay(void)
     twfSetCase("active UDP head and cached metadata remain charged during backend Init");
     begin(false, false, 128);
     startUdp();
-    uint32_t n           = frame(wire, 0, 1001, "A", 1);
+    uint32_t n           = frame(wire, 3, 1001, NULL, UINT16_MAX);
     f.boundary           = 1;
     f.action             = 12;
     f.admission_entries  = 1;
@@ -1615,6 +1647,7 @@ int main(void)
     testAuthentication();
     testReentrancy();
     testUdpFrames();
+    testLargeUdpFramesAndReplies();
     testUdpPressure();
     testFallback();
     testFallbackLocalReplies();

@@ -248,11 +248,6 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
         }
         uint16_t n      = ls->header_needed;
         ls->body_length = ((uint16_t) ls->header[n - 4] << 8U) | ls->header[n - 3];
-        if (ls->body_length > kTrojanServerUdpMaxPacket)
-        {
-            trojanserverCloseLineBidirectional(t, l);
-            return false;
-        }
         ls->frame_ready = true;
     }
     if (ls->input_bytes - ls->header_filled < ls->body_length)

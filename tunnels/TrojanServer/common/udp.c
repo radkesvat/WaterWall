@@ -70,11 +70,11 @@ void trojanserverCloseUdpRemoteLines(tunnel_t *t, trojanserver_lstate_t *client)
 
 bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
 {
-    address_context_t *addr_ctx = lineGetDestinationAddressContext(l);
-    sbuf_t            *buf      = *buf_io;
-    uint32_t           payload  = sbufGetLength(buf);
+    address_context_t     *addr_ctx = lineGetDestinationAddressContext(l);
+    sbuf_t                *buf      = *buf_io;
+    uint32_t               payload  = sbufGetLength(buf);
     trojanserver_address_t address;
-    if (UNLIKELY(payload > UINT16_MAX || ! trojanserverAddressFromContext(addr_ctx, &address)))
+    if (UNLIKELY(payload > kTrojanServerUdpMaxPacket || ! trojanserverAddressFromContext(addr_ctx, &address)))
         return false;
     size_t addr_len = trojanserverAddressEncodedLength(&address);
 

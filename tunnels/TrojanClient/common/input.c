@@ -61,9 +61,8 @@ int trojanclientReadUdpHeader(trojanclient_lstate_t *ls)
              * Only its port is needed here; the reply never retargets the application. */
             uint16_t n        = ls->header_needed;
             bool     has_port = ls->header[n - 6] != 0 || ls->header[n - 5] != 0;
-            ls->body_length = ((uint16_t) ls->header[n - 4] << 8U) | ls->header[n - 3];
-            if (! has_port || ls->header[n - 2] != '\r' || ls->header[n - 1] != '\n' ||
-                ls->body_length > kTrojanClientUdpMaxPacket)
+            ls->body_length   = ((uint16_t) ls->header[n - 4] << 8U) | ls->header[n - 3];
+            if (! has_port || ls->header[n - 2] != '\r' || ls->header[n - 1] != '\n')
                 return -1;
             ls->header_ready = true;
         }

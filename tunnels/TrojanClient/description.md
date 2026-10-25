@@ -250,14 +250,22 @@ capacity requires it. Receive extraction preserves full onward padding.
 
 | Retained parser input | Inclusive logical limit |
 | --- | --- |
-| UDP wire input, including active head and cached header | 2,105,607 bytes (2 MiB plus one maximum frame) |
-| UDP body | 8,192 bytes; empty bodies are valid |
+| UDP wire input, including active head and cached header | 2,162,950 bytes (2 MiB plus one 65,798-byte maximum frame) |
+| UDP body | 65,535 bytes; empty bodies are valid |
 
 Equality passes; overflow or parser queue refusal closes the association. There is no
 retained decoded-output queue or 1,024-record limit on a synchronous batch. Fragment
 counts do not consume output slots. These are logical protocol limits, independent
 of buffer-pool size, RAM profile, and pipe capacity. Oversized local datagrams are
 dropped; malformed received frames close the association. Received source addresses are validated without changing the application destination.
+
+The two-byte body length supports 0 through 65,535 payload bytes in either direction;
+the address, length and CRLF add up to 263 bytes outside that body. This is a Trojan
+framing limit, not a guarantee that a UDP socket or remote peer accepts every size.
+For example, ordinary IPv4 UDP permits at most 65,507 payload bytes without IP
+options, and a path or peer may impose a lower limit. Each accepted payload remains
+one datagram: TCP may split the encoded frame into reads, but Trojan never truncates
+the payload or turns it into several application datagrams.
 
 Splice requires `misc.splice`, a supported build and support from every node in the
 final chain, including internal helpers. `DomainResolver` supports splice. `TlsClient`
@@ -268,9 +276,8 @@ splice capability does not guarantee zero-copy or a measured speed increase.
 
 - `TlsClient` is required for ordinary Trojan compatibility and probe resistance, but it is not inserted automatically.
 - `TrojanClient` does not implement server fallback behavior; fallback is a server-side feature.
-- outbound UDP payloads larger than 8192 bytes are dropped to match the current `TrojanServer` packet limit without
-  killing the whole local association.
-- inbound Trojan UDP frames larger than 8192 bytes are treated as invalid protocol input.
+- outbound UDP payloads larger than 65,535 bytes cannot fit the length field and are dropped without killing the
+  whole local association. Incoming frames accept the full two-byte body-length range.
 - `required_padding_left` is 331 bytes, covering the initial UDP association request plus its first datagram header.
   Later datagrams prepend only their frame header, at most 263 bytes.
 

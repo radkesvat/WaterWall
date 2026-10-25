@@ -512,11 +512,11 @@ static void testUdp(unsigned form, bool pipe)
     memset(domain, 'a', 255);
     domain[255]        = 0;
     const char *target = form == 0 ? "127.0.0.1" : form == 1 ? "::1" : form == 2 ? "a" : domain;
-    uint8_t     payload[8193], wire[9000];
+    uint8_t     payload[UINT16_MAX + 1U], wire[UINT16_MAX + kTrojanClientUdpHeaderMaxLen];
     for (unsigned i = 0; i < sizeof(payload); ++i)
         payload[i] = (uint8_t) (i * 17 + 3);
-    const uint32_t sizes[] = {0, 1, 8192, 8193};
-    for (unsigned i = 0; i < 4; ++i)
+    const uint32_t sizes[] = {0, 1, 8192, 8193, UINT16_MAX, UINT16_MAX + 1U};
+    for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i)
     {
         for (unsigned pad = 0; pad < 2; ++pad)
         {
@@ -528,9 +528,15 @@ static void testUdp(unsigned form, bool pipe)
             /* Larger bodies are ordinary: receive tests assemble large bodies
              * from small pipes, without depending on privileged pipe growth. */
             tunnelUpStreamPayload(f.t, f.application, bytes(payload, n, pipe && n <= 4096, pad ? 320 : 0));
-            if (n > 8192)
+            if (n > UINT16_MAX)
+            {
                 twfRequire(f.deliveries_up == 0 && lineIsAlive(f.application),
                            "oversized local datagram killed association");
+                tunnelUpStreamPayload(f.t, f.application, bytes(payload, 1, false, 320));
+                uint32_t len = frame(wire, form, payload, 1);
+                twfRequire(f.deliveries_up == 1 && f.up_len == 68 + len && memcmp(f.up + 68, wire, len) == 0,
+                           "oversized local datagram corrupted the following datagram");
+            }
             else
             {
                 uint32_t len = frame(wire, form, payload, n);
@@ -546,6 +552,34 @@ static void testUdp(unsigned form, bool pipe)
             end();
         }
     }
+}
+
+static void testUdpFirstPayloadBoundary(void)
+{
+    twfSetCase("oversized first UDP is dropped before request, then a maximum datagram is combined intact");
+    uint8_t payload[UINT16_MAX + 1U], wire[UINT16_MAX + kTrojanClientUdpHeaderMaxLen];
+    for (unsigned i = 0; i < sizeof(payload); ++i)
+        payload[i] = (uint8_t) (i * 13 + 7);
+    char domain[256];
+    memset(domain, 'a', 255);
+    domain[255]           = 0;
+    const char *targets[] = {"127.0.0.1", "::1", "a", domain};
+    for (unsigned form = 0; form < 4; ++form)
+        for (unsigned padded = 0; padded < 2; ++padded)
+        {
+            begin(true, targets[form], 512, 0, true);
+            tunnelUpStreamPayload(f.t, f.application, bytes(payload, sizeof(payload), false, 320));
+            twfRequire(lineIsAlive(f.application) && f.requests == 0 && f.up_len == 0,
+                       "oversized first datagram emitted a request or closed the association");
+            tunnelUpStreamPayload(f.t, f.application, bytes(payload, UINT16_MAX, false, padded ? 352 : 0));
+            uint32_t len = frame(wire, form, payload, UINT16_MAX);
+            twfRequire(f.requests == 1 && f.deliveries_up == 0 && ! f.last_splice && f.up_len == 68 + len &&
+                           memcmp(f.up + 68, wire, len) == 0,
+                       "maximum first UDP datagram split, wrapped its length, or lost bytes");
+            establish();
+            twfRequire(f.requests == 1, "Est repeated the maximum first request");
+            end();
+        }
 }
 static void testSplits(unsigned form)
 {
@@ -615,7 +649,7 @@ static void testMalformed(void)
 {
     twfSetCase("malformed UDP is association-local");
     uint8_t wire[9000];
-    for (unsigned fault = 0; fault < 4; ++fault)
+    for (unsigned fault = 0; fault < 3; ++fault)
     {
         begin(true, "127.0.0.1", 65536, 0, false);
         establish();
@@ -629,11 +663,6 @@ static void testMalformed(void)
         }
         if (fault == 2)
             wire[10] = 'x';
-        if (fault == 3)
-        {
-            wire[7] = 32;
-            wire[8] = 1;
-        }
         tunnelDownStreamPayload(f.t, f.carrier, bytes(wire, n, true, 320));
         twfRequire(! lineIsAlive(f.application) && ! lineIsAlive(f.carrier) && f.deliveries_down == 0,
                    "malformed frame survived");
@@ -724,7 +753,7 @@ static void testFailuresAndClose(void)
 static void testFallback(void)
 {
     twfSetCase("split pipe bodies and complete pressure fallback");
-    uint8_t payload[8192], wire[9000];
+    uint8_t payload[UINT16_MAX], wire[UINT16_MAX + kTrojanClientUdpHeaderMaxLen];
     memset(payload, 'p', sizeof(payload));
     uint32_t n = frame(wire, 0, payload, sizeof(payload));
     for (unsigned fault = 0; fault < 4; ++fault)
@@ -745,7 +774,8 @@ static void testFallback(void)
             tunnelDownStreamPayload(f.t, f.carrier, part);
             offset += size;
         }
-        twfRequire(f.deliveries_down == 1 && f.down_len == 8192 && memcmp(f.down, payload, 8192) == 0,
+        twfRequire(f.deliveries_down == 1 && f.down_len == sizeof(payload) &&
+                       memcmp(f.down, payload, sizeof(payload)) == 0,
                    "fallback lost partial pipe progress");
         twfRequire(f.headroom >= 320, "fallback lost onward padding");
 #if WW_HAVE_SPLICE
@@ -1173,6 +1203,7 @@ int main(void)
     testDomainAddressOwnership();
     testFirstPayload();
     testFirstPayloadReuse();
+    testUdpFirstPayloadBoundary();
     testInitialAllocationRefusal();
     testTimeoutConfiguration();
     testTimers();

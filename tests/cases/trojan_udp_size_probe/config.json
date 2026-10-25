@@ -1,0 +1,81 @@
+{
+  "name": "trojan-udp-size-probe",
+  "nodes": [
+    {
+      "name": "application",
+      "type": "UdpListener",
+      "next": "trojan-client",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 28430
+      }
+    },
+    {
+      "name": "trojan-client",
+      "type": "TrojanClient",
+      "next": "tls-client",
+      "settings": {
+        "password": "udp-size-test",
+        "address": "127.0.0.1",
+        "port": 28432,
+        "protocol": "udp"
+      }
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "next": "carrier",
+      "settings": {
+        "sni": "tls.integration.test",
+        "verify": false
+      }
+    },
+    {
+      "name": "carrier",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 28431,
+        "nodelay": true
+      }
+    },
+    {
+      "name": "listener",
+      "type": "TcpListener",
+      "next": "tls-server",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 28431,
+        "nodelay": true
+      }
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "next": "trojan-server",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "sni": "tls.integration.test"
+      }
+    },
+    {
+      "name": "trojan-server",
+      "type": "TrojanServer",
+      "next": "target",
+      "settings": {
+        "password": "udp-size-test",
+        "connect": false,
+        "udp": true
+      }
+    },
+    {
+      "name": "target",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port"
+      }
+    }
+  ]
+}

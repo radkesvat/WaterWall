@@ -46,7 +46,7 @@ enum
 {
     kTrojanClientPasswordHexLen      = SHA224_DIGEST_SIZE * 2,
     kTrojanClientCrlfLen             = 2,
-    kTrojanClientUdpMaxPacket        = 8192,
+    kTrojanClientUdpMaxPacket        = UINT16_MAX,
     kTrojanClientUdpHeaderMaxLen     = 1 + 1 + UINT8_MAX + 2 + 2 + 2,
     /* IPv4 UDP association request plus the largest first datagram header. */
     kTrojanClientInitialPadding      = 68 + kTrojanClientUdpHeaderMaxLen,

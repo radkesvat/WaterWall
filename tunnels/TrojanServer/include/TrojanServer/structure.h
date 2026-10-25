@@ -179,10 +179,10 @@ enum
 
     kTrojanServerPasswordHexLen   = 56,
     kTrojanServerCrlfLen          = 2,
-    kTrojanServerUdpMaxPacket     = 8192,
+    kTrojanServerUdpMaxPacket     = UINT16_MAX,
     kTrojanServerBufferQueueCap   = 8,
     kTrojanServerMaxPendingBytes  = 2 * 1024 * 1024,
     kTrojanServerUdpHeaderMaxLen  = 1 + 1 + UINT8_MAX + 2 + 2 + 2,
     kTrojanServerMaxQueuedBuffers = 1024,
-    kTrojanServerMaxWireBytes     = 2 * 1024 * 1024 + 8455
+    kTrojanServerMaxWireBytes = kTrojanServerMaxPendingBytes + kTrojanServerUdpHeaderMaxLen + kTrojanServerUdpMaxPacket
 };

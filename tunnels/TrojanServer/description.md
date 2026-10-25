@@ -493,11 +493,11 @@ Backend-local errors outside decoding retain their local scope.
 
 | Retained work | Fixed limit |
 | --- | --- |
-| Initial/UDP wire input, including active head and cached headers | 2,105,607 bytes (2 MiB plus an 8,455-byte maximum frame) |
+| Initial/UDP wire input, including active head and cached headers | 2,162,950 bytes (2 MiB plus a 65,798-byte maximum frame) |
 | Temporary TCP Init/reentry ordering | 2 MiB and 1,024 buffers |
 | Delayed fallback backlog and temporary replay ordering | 2 MiB and 1,024 buffers |
 | Initial header cache | 320 actual bytes |
-| Incoming UDP body | 8,192 bytes |
+| Incoming UDP body | 65,535 bytes |
 | Backend reply body | 65,535 bytes |
 
 Initial assembly permits a partial request followed by a full 2 MiB delivery.
@@ -506,6 +506,14 @@ Input fragmentation and synchronously consumed output have no 1,024-record cap.
 Equality passes; retained-state overflow closes the affected association. Direct
 opaque paths have no queue merely to impose a byte limit. These logical limits
 are independent of RAM profile, buffer geometry and pipe capacity.
+
+Both incoming datagrams and backend replies accept 0 through 65,535 payload bytes,
+matching the two-byte length field. Empty datagrams remain valid. The frame adds
+at most 263 header bytes outside the body. This framing range does not override
+the downstream UDP socket, network path or remote peer limits; ordinary IPv4 UDP,
+for example, permits at most 65,507 payload bytes without IP options. Each accepted
+body stays one datagram, even when the TCP carrier delivers its frame in several
+reads. Trojan does not truncate or split a body into separate UDP datagrams.
 
 UDP prepend stays within the advertised 263-byte headroom and preserves resident
 prefix bytes as payload. Insufficient padding and private-pipe resource refusal
