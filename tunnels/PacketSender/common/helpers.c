@@ -511,7 +511,6 @@ static void packetsenderSendReadyPackets(packetsender_worker_state_t *slot)
         memoryCopy(sbufGetMutablePtr(buf), packet_ptr, packet_len);
 
         packetsenderApplyRoutingContext(state, slot->line, src_addr_network, src_addr_host, protocol);
-        lineSetRecalculateChecksum(slot->line, false);
 
         if (! lineCallWithRefWithBuf(slot->line, tunnelNextUpStreamPayload, slot->tunnel, buf))
         {

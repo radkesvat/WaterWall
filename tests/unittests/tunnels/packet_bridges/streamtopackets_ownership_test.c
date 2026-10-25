@@ -75,6 +75,8 @@ static line_t  *g_last_prev_line;
 static wid_t    g_last_prev_wid;
 static uint32_t g_prev_payload_count;
 static uint16_t g_last_prev_checksum;
+static bool     g_last_prev_checksum_requested;
+static uint16_t g_last_prev_header_residual;
 static uint32_t g_prev_finish_count;
 static line_t  *g_last_prev_finish_line;
 
@@ -94,6 +96,8 @@ static void recordPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     discard t;
     g_last_prev_line     = l;
     g_last_prev_wid      = getWID();
+    g_last_prev_checksum_requested = sbufGetRecalculateChecksum(buf);
+    g_last_prev_header_residual    = sbufGetLength(buf) >= IP_HLEN ? inet_chksum(sbufGetRawPtr(buf), IP_HLEN) : 0;
     g_last_prev_checksum = sbufGetLength(buf) >= IP_HLEN ? GET_BE16((const uint8_t *) sbufGetRawPtr(buf) + 10) : 0;
     ++g_prev_payload_count;
     lineReuseBuffer(l, buf);
@@ -122,6 +126,7 @@ static void resetObservations(void)
     g_last_prev_wid         = kInvalidWID;
     g_prev_payload_count    = 0;
     g_last_prev_checksum    = 0;
+    g_last_prev_checksum_requested = false;
     g_prev_finish_count     = 0;
     g_last_prev_finish_line = NULL;
 }
@@ -536,9 +541,8 @@ static void caseOversizedPacketConsumesChecksumRequest(void)
     sbuf_t *oversized = bufferpoolGetLargeBuffer(lineGetBufferPool(packet_line));
     sbufSetLength(oversized, kMaxAllowedPacketLength + 1);
     memoryZero(sbufGetMutablePtr(oversized), sbufGetLength(oversized));
-    lineSetRecalculateChecksum(packet_line, true);
+    sbufSetRecalculateChecksum(oversized, true);
     streamtopacketsTunnelDownStreamPayload(g_fixture.s2p, packet_line, oversized);
-    const bool pending_after_drop = lineGetRecalculateChecksum(packet_line);
     twfRequireEqualU32(g_prev_payload_count, 0, "the oversized packet was forwarded");
 
     sbuf_t *next = bufferpoolGetSmallBuffer(lineGetBufferPool(packet_line));
@@ -550,10 +554,23 @@ static void caseOversizedPacketConsumesChecksumRequest(void)
     streamtopacketsTunnelDownStreamPayload(g_fixture.s2p, packet_line, next);
     pumpAllWorkers();
     twfRequireEqualU32(g_prev_payload_count, 1, "the next packet was not forwarded");
+    twfRequire(! g_last_prev_checksum_requested, "packet request entered the serialized stream");
     twfRequire(g_last_prev_checksum == 0x1234,
                "a dropped packet's checksum request modified the next unflagged packet");
-    twfRequire(! pending_after_drop && ! lineGetRecalculateChecksum(packet_line),
-               "an oversized packet retained its checksum request");
+
+    sbuf_t *marked = bufferpoolGetSmallBuffer(lineGetBufferPool(packet_line));
+    sbufSetLength(marked, kTestPacketLength);
+    raw = sbufGetMutablePtr(marked);
+    buildIpv4(raw, 0xC0000201U, 443, 0x0A000001U, port);
+    raw[32] = 0x50;
+    PUT_BE16(raw + 10, 0x1234);
+    sbufSetRecalculateChecksum(marked, true);
+    streamtopacketsTunnelDownStreamPayload(g_fixture.s2p, packet_line, marked);
+    pumpAllWorkers();
+    twfRequireEqualU32(g_prev_payload_count, 2, "the marked packet was not forwarded");
+    twfRequire(! g_last_prev_checksum_requested && g_last_prev_header_residual == 0,
+               "checksum repair was not complete before stream serialization");
+
     closeStreamLine(stream_line);
     fixtureTeardown();
     twfRequireNoLeakedBuffers();

@@ -24,6 +24,8 @@
 #include "wevent.h"
 
 static test_worker_registry_t g_test_worker_registry;
+static bool                   generate_test_hello;
+static bool                   verify_unrequested_outputs;
 
 enum
 {
@@ -54,6 +56,7 @@ typedef struct captured_packet_s
 {
     uint16_t len;
     wid_t    wid;
+    bool     checksum_requested;
     uint8_t  bytes[kMaxPacketLength];
 } captured_packet_t;
 
@@ -146,7 +149,16 @@ sbuf_t *tlsclientTunnelGenerateClientHello(tunnel_t *instance, line_t *caller_li
     discard caller_line;
     discard hostname;
     discard hostname_length;
-    return NULL;
+    if (! generate_test_hello)
+    {
+        return NULL;
+    }
+    /* The generator boundary supplies opaque ClientHello bytes to this trick. */
+    static const uint8_t generated[] = {0x16, 0x03, 0x03, 0x00, 0x00};
+    sbuf_t              *buf         = sbufCreate(sizeof(generated));
+    sbufSetLength(buf, sizeof(generated));
+    memoryCopy(sbufGetMutablePtr(buf), generated, sizeof(generated));
+    return buf;
 }
 
 static void captureUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -157,10 +169,17 @@ static void captureUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
     captured_packet_t *capture = &captured_packets[captured_packet_count++];
     capture->len               = (uint16_t) sbufGetLength(buf);
     capture->wid               = lineGetWID(l);
+    capture->checksum_requested = sbufGetRecalculateChecksum(buf);
     require(capture->len <= kMaxPacketLength, "captured packet is too large");
     require(lineIsOnCurrentWorker(l), "upstream packet was emitted on a non-owner worker");
     memoryCopy(capture->bytes, sbufGetRawPtr(buf), capture->len);
-    lineSetRecalculateChecksum(l, false);
+    if (verify_unrequested_outputs)
+    {
+        require(! capture->checksum_requested, "generated checksum corruption acquired a repair request");
+        require(packettunnelConsumeChecksumRequest(buf), "writer rejected generated packet structure");
+        require(memoryEqual(capture->bytes, sbufGetRawPtr(buf), capture->len),
+                "writer changed intentionally unrequested generated checksums");
+    }
     lineReuseBuffer(l, buf);
 }
 
@@ -420,6 +439,50 @@ static void destroyEnv(test_env_t *env)
     masterpoolDestroy(env->wios_master);
 }
 
+static void testGeneratedRandomChecksumsRemainUnrequested(void)
+{
+    test_env_t env;
+    setupEnv(&env);
+    warmFlow(&env);
+    ipmanipulator_tstate_t *state               = tunnelGetState(env.t);
+    state->trick_synfin_sni_random_syn_checksum = true;
+    state->trick_synfin_sni_random_fin_checksum = true;
+    state->trick_synfin_sni_syn_ttl             = -1;
+    state->trick_synfin_sni_fin_ttl             = -1;
+    state->trick_synfin_sni_fake_ttl            = -1;
+
+    uint8_t hello[72] = {0x16, 0x03, 0x03, 0x00, 67, 0x01, 0x00, 0x00, 63, 0x03, 0x03};
+    hello[44]         = 0;
+    hello[45]         = 2;
+    hello[46]         = 0;
+    hello[47]         = 0x2f;
+    hello[48]         = 1;
+    hello[49]         = 0;
+    hello[50]         = 0;
+    hello[51]         = 20;
+    hello[52]         = 0;
+    hello[53]         = 0;
+    hello[54]         = 0;
+    hello[55]         = 16;
+    hello[56]         = 0;
+    hello[57]         = 14;
+    hello[58]         = 0;
+    hello[59]         = 0;
+    hello[60]         = 11;
+    memoryCopy(hello + 61, "example.com", 11);
+    generate_test_hello        = true;
+    verify_unrequested_outputs = true;
+    sendUpstream(&env, kInitialSequence + 1U, TCP_ACK, hello, 20);
+    require(captured_packet_count == 2, "generated-checksum fixture did not retain the first TLS segment");
+    sendUpstream(&env, kInitialSequence + 21U, TCP_ACK | TCP_PSH, hello + 20, sizeof(hello) - 20U);
+    require(captured_packet_count >= 6, "generated-checksum fixture did not emit its crafted sequence");
+    for (unsigned i = 2; i < captured_packet_count; ++i)
+        require(! captured_packets[i].checksum_requested, "generated output did not preserve explicit false intent");
+    verify_unrequested_outputs = false;
+    generate_test_hello        = false;
+    destroyEnv(&env);
+}
+
 static void testCompleteAndNonTlsPayloadsPassImmediately(void)
 {
     test_env_t env;
@@ -619,6 +682,7 @@ int main(void)
     frandInit();
 
     testCompleteAndNonTlsPayloadsPassImmediately();
+    testGeneratedRandomChecksumsRemainUnrequested();
     testFragmentedHoldCancelsOnSecondSegment();
     testCrossWorkerCompletionFailsOpenOnOwnerWorkers();
     testTimeoutFailsOpenAndPreservesPayload();

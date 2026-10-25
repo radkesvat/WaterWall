@@ -207,7 +207,7 @@ static void ipmanipulatorReplayCapturedPacketOnWorker(worker_t *worker, void *ar
 
     if (lineIsAlive(l))
     {
-        lineSetRecalculateChecksum(l, true);
+        sbufSetRecalculateChecksum(buf, true);
         ipmanipulatorSendUpstreamFinal(t, l, buf);
     }
     else
@@ -284,7 +284,7 @@ void ipmanipulatorForwardCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *bu
             return;
         }
 
-        lineSetRecalculateChecksum(l, true);
+        sbufSetRecalculateChecksum(buf, true);
         ipmanipulatorSendUpstreamFinal(t, l, buf);
         return;
     }
@@ -1232,7 +1232,6 @@ static bool ipmanipulatorPrepareSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_
                                                    bool apply_portghost, bool *decoded)
 {
     ipmanipulator_tstate_t *state                = tunnelGetState(t);
-    bool                    recalculate_checksum = lineGetRecalculateChecksum(l);
     bool                    ghost_applied        = false;
     sbuf_t                 *buf                  = *buf_ptr;
     *decoded                                     = false;
@@ -1248,17 +1247,19 @@ static bool ipmanipulatorPrepareSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_
         return false;
     }
 
-    recalculate_checksum |= ghost_applied;
-    lineSetRecalculateChecksum(l, recalculate_checksum);
+    if (ghost_applied)
+    {
+        sbufSetRecalculateChecksum(buf, true);
+    }
 
     if (upstream && state->trick_proto_swap)
     {
         const bool decoding = ipmanipulatorPacketUsesMappedProtocol(state, buf);
         *decoded            = protoswapApply(t, l, buf) && decoding;
-        if (*decoded && lineGetRecalculateChecksum(l) &&
+        if (*decoded && sbufGetRecalculateChecksum(buf) &&
             calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
         {
-            lineSetRecalculateChecksum(l, false);
+            sbufSetRecalculateChecksum(buf, false);
         }
     }
 
@@ -1482,7 +1483,7 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
             lwip_htonl(base_seq + payload_offset + (! first_segment && syn_consumes_seq ? 1U : 0U));
         ipmanipulatorSetAllTcpFlags(segment_tcpheader, segment_live_flags);
 
-        lineSetRecalculateChecksum(l, true);
+        sbufSetRecalculateChecksum(segment_buf, true);
         line_alive = ipmanipulatorForwardSingleEgressPacket(t, l, segment_buf, forward, upstream, apply_portghost);
         if (! line_alive)
         {
@@ -1510,7 +1511,7 @@ void ipmanipulatorEmitUpstreamPreservingTuple(tunnel_t *t, line_t *l, sbuf_t *bu
 
 bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
 {
-    lineSetRecalculateChecksum(l, true);
+    sbufSetRecalculateChecksum(buf, true);
     return ipmanipulatorSendEgressMaybeSegmented(t, l, buf, forward, true, true);
 }
 
@@ -2869,12 +2870,10 @@ bool parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_matc
 
 static void ipmanipulatorSendWithDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
 {
-    ipmanipulator_tstate_t *state                = tunnelGetState(t);
-    bool                    recalculate_checksum = lineGetRecalculateChecksum(l);
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
 
     if (! state->trick_packet_duplicate || state->trick_packet_duplicate_count <= 0)
     {
-        lineSetRecalculateChecksum(l, recalculate_checksum);
         forward(t, l, buf);
         return;
     }
@@ -2887,7 +2886,6 @@ static void ipmanipulatorSendWithDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf,
     {
         sbuf_t *dup = sbufDuplicateByPool(pool, buf);
 
-        lineSetRecalculateChecksum(l, recalculate_checksum);
         forward(t, l, dup);
 
         if (! lineIsAlive(l))
@@ -2898,7 +2896,6 @@ static void ipmanipulatorSendWithDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf,
         }
     }
 
-    lineSetRecalculateChecksum(l, recalculate_checksum);
     forward(t, l, buf);
     lineUnref(l);
 }

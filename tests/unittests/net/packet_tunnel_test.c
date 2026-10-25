@@ -202,10 +202,95 @@ static void testFragmentPolicySettings(void)
     }
 }
 
+static bool checksumValid(const uint8_t *bytes, uint32_t length)
+{
+    uint32_t sum = 0;
+    for (uint32_t i = 0; i < length; i += 2)
+        sum += ((uint32_t) bytes[i] << 8) | (i + 1 < length ? bytes[i + 1] : 0);
+    while (sum >> 16)
+        sum = (sum & UINT32_C(0xffff)) + (sum >> 16);
+    return sum == UINT32_C(0xffff);
+}
+
+static sbuf_t *makeChecksumPacket(void)
+{
+    sbuf_t *buf = sbufCreate(28);
+    sbufSetLength(buf, 28);
+    uint8_t *bytes = sbufGetMutablePtr(buf);
+    memoryZero(bytes, 28);
+    bytes[0]  = 0x45;
+    bytes[8]  = 64;
+    bytes[9]  = 1;
+    bytes[20] = 8;
+    bytes[27] = 1;
+    PUT_BE16(bytes + 2, 28);
+    PUT_BE32(bytes + 12, UINT32_C(0xc0000201));
+    PUT_BE32(bytes + 16, UINT32_C(0xc6336401));
+    return buf;
+}
+
+static void testBufferChecksumRequests(void)
+{
+    sbuf_t *marked   = makeChecksumPacket();
+    sbuf_t *unmarked = sbufDuplicate(marked);
+    uint8_t original[28];
+    memoryCopy(original, sbufGetRawPtr(unmarked), sizeof(original));
+    sbufSetRecalculateChecksum(marked, true);
+    require(packettunnelConsumeChecksumRequest(marked), "marked ICMP packet was refused");
+    require(! sbufGetRecalculateChecksum(marked), "successful repair left a request");
+    const uint8_t *repaired = sbufGetRawPtr(marked);
+    require(checksumValid(repaired, 20) && checksumValid(repaired + 20, 8),
+            "repair did not produce valid IPv4 and ICMP checksums");
+    require(packettunnelConsumeChecksumRequest(unmarked), "structurally valid unmarked packet was refused");
+    require(memcmp(original, sbufGetRawPtr(unmarked), sizeof(original)) == 0,
+            "unrequested checksum corruption was changed");
+
+    for (unsigned invalid = 0; invalid < 6; ++invalid)
+    {
+        for (unsigned requested = 0; requested < 2; ++requested)
+        {
+            sbuf_t  *bad   = makeChecksumPacket();
+            uint8_t *bytes = sbufGetMutablePtr(bad);
+            switch (invalid)
+            {
+            case 0:
+                sbufSetLength(bad, 19);
+                break;
+            case 1:
+                bytes[0] = 0x65;
+                break;
+            case 2:
+                bytes[0] = 0x44;
+                break;
+            case 3:
+                PUT_BE16(bytes + 2, 27);
+                break;
+            case 4:
+                PUT_BE16(bytes + 2, 29);
+                break;
+            case 5:
+                bytes[0] = 0x4f;
+                break;
+            }
+            sbufSetRecalculateChecksum(bad, requested != 0);
+            require(! packettunnelConsumeChecksumRequest(bad), "malformed packet passed checksum boundary");
+            require(! sbufGetRecalculateChecksum(bad), "terminal refusal retained a request");
+            sbufDestroy(bad);
+            require(! sbufGetRecalculateChecksum(unmarked), "dropped packet changed another packet's request");
+        }
+    }
+    sbufSetRecalculateChecksum(marked, true);
+    require(packettunnelTakeChecksumRequest(marked) && ! packettunnelTakeChecksumRequest(marked),
+            "taking a request did not clear exactly that buffer");
+    sbufDestroy(unmarked);
+    sbufDestroy(marked);
+}
+
 int main(void)
 {
     testCaseSet("packet_tunnel_test");
     testPacketTunnelLifecycleCallbacksPassThrough();
     testFragmentPolicySettings();
+    testBufferChecksumRequests();
     return 0;
 }

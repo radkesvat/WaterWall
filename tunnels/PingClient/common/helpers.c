@@ -38,9 +38,9 @@ static void pingclientDrop(tunnel_t *t, line_t *l, sbuf_t *buf, const char *dire
     lineReuseBuffer(l, buf);
 }
 
-static const char *pingclientConsumeInputChecksum(line_t *l, sbuf_t *buf)
+static const char *pingclientConsumeInputChecksum(sbuf_t *buf)
 {
-    const bool  requested = packettunnelTakeChecksumRequest(l);
+    const bool  requested = packettunnelTakeChecksumRequest(buf);
     const char *error     = pingwireIpv4PacketError(sbufGetRawPtr(buf), sbufGetLength(buf));
     if (error != NULL)
     {
@@ -58,7 +58,7 @@ void pingclientEncapsulatePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     pingclient_tstate_t *state = tunnelGetState(t);
     pingclientValidatePacketLine(t, l);
 
-    const char *input_error = pingclientConsumeInputChecksum(l, buf);
+    const char *input_error = pingclientConsumeInputChecksum(buf);
     if (input_error != NULL)
     {
         pingclientDrop(t, l, buf, "outgoing", input_error);
@@ -106,7 +106,7 @@ void pingclientDecapsulatePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     pingclient_tstate_t *state = tunnelGetState(t);
     pingclientValidatePacketLine(t, l);
 
-    const char *input_error = pingclientConsumeInputChecksum(l, buf);
+    const char *input_error = pingclientConsumeInputChecksum(buf);
     if (input_error != NULL)
     {
         pingclientDrop(t, l, buf, "incoming", input_error);
@@ -184,6 +184,6 @@ void pingclientDecapsulatePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     assert(stripped);
     discard stripped;
 
-    lineSetRecalculateChecksum(l, false);
+    sbufSetRecalculateChecksum(buf, false);
     packetAffinityForward(state->decoded_affinity, l, buf);
 }

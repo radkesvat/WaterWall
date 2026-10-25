@@ -148,7 +148,7 @@ static void testProtocolSwapTcpToCustomAndBack(void)
 
     struct ip_hdr *buf_ip = (struct ip_hdr *) sbufGetMutablePtr(buf);
     require(IPH_PROTO(buf_ip) == 143, "protocol was not swapped to 143");
-    require(! lineGetRecalculateChecksum(&line), "protocol swap modified recalculate_checksum flag");
+    require(! sbufGetRecalculateChecksum(buf), "protocol swap modified recalculate_checksum flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), len), "swap result mismatch with oracle");
 
     /* All bytes match the independently normalized oracle. */
@@ -161,7 +161,7 @@ static void testProtocolSwapTcpToCustomAndBack(void)
     protoswaptrickUpStreamPayload(t, &line, buf);
 
     require(IPH_PROTO(buf_ip) == IPPROTO_TCP, "protocol was not swapped back to TCP");
-    require(! lineGetRecalculateChecksum(&line), "protocol swap back modified recalculate_checksum flag");
+    require(! sbufGetRecalculateChecksum(buf), "protocol swap back modified recalculate_checksum flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle_back), len),
             "swap-back result mismatch with original oracle");
 
@@ -192,7 +192,7 @@ static void testProtocolSwapUdpToCustomAndBack(void)
 
     struct ip_hdr *buf_ip = (struct ip_hdr *) sbufGetMutablePtr(buf);
     require(IPH_PROTO(buf_ip) == 144, "UDP protocol was not swapped to 144");
-    require(! lineGetRecalculateChecksum(&line), "UDP protocol swap modified recalculate_checksum flag");
+    require(! sbufGetRecalculateChecksum(buf), "UDP protocol swap modified recalculate_checksum flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), len), "UDP swap result mismatch with oracle");
 
     /* All bytes match the independently normalized oracle. */
@@ -205,7 +205,7 @@ static void testProtocolSwapUdpToCustomAndBack(void)
     protoswaptrickDownStreamPayload(t, &line, buf);
 
     require(IPH_PROTO(buf_ip) == IPPROTO_UDP, "protocol was not swapped back to UDP");
-    require(! lineGetRecalculateChecksum(&line), "UDP swap back modified recalculate_checksum flag");
+    require(! sbufGetRecalculateChecksum(buf), "UDP swap back modified recalculate_checksum flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle_back), len),
             "UDP swap-back result mismatch with oracle");
 
@@ -237,7 +237,7 @@ static void testProtocolSwapWithIpOptions(void)
 
     struct ip_hdr *buf_ip = (struct ip_hdr *) sbufGetMutablePtr(buf);
     require(IPH_PROTO(buf_ip) == 143, "protocol with IP options was not swapped");
-    require(! lineGetRecalculateChecksum(&line), "protocol swap with IP options modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "protocol swap with IP options modified flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), len),
             "swap result with IP options mismatch with oracle");
     require(
@@ -272,7 +272,7 @@ static void testProtocolSwapFragmentedPacket(void)
     protoswaptrickUpStreamPayload(t, &line, buf);
 
     require(IPH_PROTO(buf_ip) == 143, "fragmented packet protocol was not swapped");
-    require(! lineGetRecalculateChecksum(&line), "fragmented packet swap modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "fragmented packet swap modified flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), 60), "fragmented packet swap mismatch with oracle");
 
     sbuf_t        *later    = createIpv4TcpPacket(60, 5);
@@ -313,7 +313,7 @@ static void testProtocolSwapMalformedHeader(void)
 
     protoswaptrickUpStreamPayload(t, &line, buf);
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), 60), "malformed IHL=4 packet was modified");
-    require(! lineGetRecalculateChecksum(&line), "malformed IHL=4 packet modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "malformed IHL=4 packet modified flag");
     sbufDestroy(buf);
 
     /* 2. IHL > 15 (IHL = 16) */
@@ -379,7 +379,7 @@ static void testProtocolSwapTcpToUdpDirect(void)
 
     struct ip_hdr *buf_ip = (struct ip_hdr *) sbufGetMutablePtr(buf);
     require(IPH_PROTO(buf_ip) == IPPROTO_UDP, "protocol was not swapped to UDP");
-    require(! lineGetRecalculateChecksum(&line), "protocol swap modified recalculate_checksum flag");
+    require(! sbufGetRecalculateChecksum(buf), "protocol swap modified recalculate_checksum flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), len), "TCP->UDP swap result mismatch with oracle");
 
     /* Non-checksum transport fields remain unchanged. */
@@ -397,13 +397,13 @@ static void testProtocolSwapPreExistingFlagPreserved(void)
     ipmanipulator_tstate_t *state = testTunnelState(t);
     line_t                  line  = {0};
 
-    lineSetRecalculateChecksum(&line, true);
     state->trick_proto_swap_tcp_number = 143;
 
     sbuf_t *buf = createIpv4TcpPacket(60, 5);
+    sbufSetRecalculateChecksum(buf, true);
     protoswaptrickUpStreamPayload(t, &line, buf);
 
-    require(! lineGetRecalculateChecksum(&line), "pre-encode checksum request was not consumed");
+    require(! sbufGetRecalculateChecksum(buf), "pre-encode checksum request was not consumed");
     struct ip_hdr *buf_ip = (struct ip_hdr *) sbufGetMutablePtr(buf);
     require(IPH_PROTO(buf_ip) == 143, "protocol was not swapped");
 
@@ -430,7 +430,7 @@ static void testRejectionAndNoMatch(void)
 
     protoswaptrickUpStreamPayload(t, &line, buf);
     require(memoryEqual(sbufGetRawPtr(buf), before, 40), "IPv6 packet was modified");
-    require(! lineGetRecalculateChecksum(&line), "IPv6 packet modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "IPv6 packet modified flag");
     sbufDestroy(buf);
 
     /* 2. Unmatched protocol (UDP when only TCP swap configured) */
@@ -441,7 +441,11 @@ static void testRejectionAndNoMatch(void)
 
     protoswaptrickUpStreamPayload(t, &line, buf);
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before_udp), 60), "unmatched UDP packet was modified");
-    require(! lineGetRecalculateChecksum(&line), "unmatched UDP packet modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "unmatched UDP packet modified flag");
+    sbufSetRecalculateChecksum(buf, true);
+    require(! protoswapApply(t, &line, buf), "unmatched UDP packet unexpectedly transitioned");
+    require(sbufGetRecalculateChecksum(buf) && memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before_udp), 60),
+            "unmatched UDP transition changed bytes or consumed its request");
 
     sbufDestroy(buf);
     sbufDestroy(before_udp);
@@ -554,7 +558,7 @@ static void testAddressResidualMatrix(void)
                             requireOnlyTransitionBytesChanged(before, buf, protocol);
                             sbufDestroy(before);
                             require(IPH_PROTO(ip) == (udp ? 51 : 50), "matrix encoding failed");
-                            require(! lineGetRecalculateChecksum(&line), "delta invented a checksum request");
+                            require(! sbufGetRecalculateChecksum(buf), "delta invented a checksum request");
                             if (! disabled)
                                 require(transportResidual(buf, protocol, true) == residual, "mapped residual changed");
                             else
@@ -600,20 +604,20 @@ static void testCorruptionAndPendingRequests(void)
         sbuf_t       *buf      = udp ? createIpv4UdpPacket(61) : createIpv4TcpPacket(61, 5);
         uint8_t      *raw      = sbufGetMutablePtr(buf);
         raw[60] ^= 1;
-        lineSetRecalculateChecksum(&line, true);
+        sbufSetRecalculateChecksum(buf, true);
         protoswaptrickDownStreamPayload(t, &line, buf);
-        require(! lineGetRecalculateChecksum(&line), "downstream encode left request pending");
+        require(! sbufGetRecalculateChecksum(buf), "downstream encode left request pending");
         require(transportResidual(buf, protocol, true) == 0, "pending work ran in mapped representation");
         raw[60] ^= 2;
         require(protoswapApply(t, &line, buf), "corrupt packet failed structural preflight");
         require(transportResidual(buf, protocol, false) != 0, "wire corruption was repaired");
         require(protoswapApply(t, &line, buf), "corrupt native packet could not encode");
-        lineSetRecalculateChecksum(&line, true);
+        sbufSetRecalculateChecksum(buf, true);
         protoswaptrickDownStreamPayload(t, &line, buf);
-        require(lineGetRecalculateChecksum(&line), "decode consumed downstream handoff request");
-        require(packettunnelConsumeChecksumRequest(&line, buf), "native writer checksum repair failed");
+        require(sbufGetRecalculateChecksum(buf), "decode consumed downstream handoff request");
+        require(packettunnelConsumeChecksumRequest(buf), "native writer checksum repair failed");
         require(transportResidual(buf, protocol, false) == 0, "requested decode repair failed");
-        require(! lineGetRecalculateChecksum(&line), "writer leaked request");
+        require(! sbufGetRecalculateChecksum(buf), "writer leaked request");
         sbufDestroy(buf);
     }
     destroyTestTunnel(t);
@@ -660,9 +664,9 @@ static void testFragmentAddressNormalization(void)
                         sbuf_t *fragment = fragments[i];
                         if (! encoded_first)
                         {
-                            lineSetRecalculateChecksum(&sender, requested != 0);
+                            sbufSetRecalculateChecksum(fragment, requested != 0);
                             require(protoswapApply(t, &sender, fragment), "fragment encode failed");
-                            require(! lineGetRecalculateChecksum(&sender), "fragment encode request not consumed");
+                            require(! sbufGetRecalculateChecksum(fragment), "fragment encode request not consumed");
                         }
                         struct ip_hdr *ip = (struct ip_hdr *) sbufGetMutablePtr(fragment);
                         require(IPH_PROTO(ip) == (udp ? 51 : 50), "fragment has wrong mapped protocol");
@@ -744,11 +748,11 @@ static void testAtomicPreflightAndTrailingBytes(void)
                 }
                 sbuf_t *before = sbufDuplicate(buf);
                 line_t  line   = {0};
-                lineSetRecalculateChecksum(&line, pending != 0);
+                sbufSetRecalculateChecksum(buf, pending != 0);
                 require(! protoswapApply(t, &line, buf), "malformed transition succeeded");
                 require(memoryEqual(sbufGetRawPtr(before), sbufGetRawPtr(buf), sbufGetLength(buf)),
                         "preflight mutated bytes");
-                require(lineGetRecalculateChecksum(&line) == (pending != 0), "preflight changed request");
+                require(sbufGetRecalculateChecksum(buf) == (pending != 0), "preflight changed request");
                 sbufDestroy(before);
                 sbufDestroy(buf);
             }
@@ -761,7 +765,7 @@ static void testAtomicPreflightAndTrailingBytes(void)
     require(protoswapApply(t, &line, buf), "bounded trailing-byte transition failed");
     requireOnlyTransitionBytesChanged(before, buf, IPPROTO_TCP);
     require(transportResidual(buf, IPPROTO_TCP, true) == 0, "trailing bytes entered checksum");
-    require(! packettunnelConsumeChecksumRequest(&line, buf), "writer accepted trailing bytes");
+    require(! packettunnelConsumeChecksumRequest(buf), "writer accepted trailing bytes");
     sbufDestroy(before);
     sbufDestroy(buf);
     destroyTestTunnel(t);

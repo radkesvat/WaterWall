@@ -162,7 +162,7 @@ static void sinkPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     captured_packet_t *packet  = &sink->packets[sink->count++];
     packet->length             = sbufGetLength(buf);
     packet->wid                = lineGetWID(l);
-    packet->checksum_requested = lineGetRecalculateChecksum(l);
+    packet->checksum_requested = sbufGetRecalculateChecksum(buf);
     twfRequire(lineIsOnCurrentWorker(l), "Ping published on another worker's packet line");
     memoryCopy(packet->bytes, sbufGetRawPtr(buf), packet->length);
 
@@ -472,13 +472,12 @@ static void caseCrossWorkerCorrelationAndSequence(flow_fixture_t *fixture)
     IPH_TTL_SET(short_ip, 64);
     IPH_PROTO_SET(short_ip, kFlowInnerProtocol);
     twfRequire(calcFullPacketChecksum(sbufGetMutablePtr(short_padding), 72), "short-padding checksum build failed");
-    lineSetRecalculateChecksum(line_a, true);
+    sbufSetRecalculateChecksum(short_padding, true);
     sendLocal(fixture, 0, short_padding);
-    twfRequire(! lineGetRecalculateChecksum(line_a), "short-padding rejection leaked its checksum request");
 
-    lineSetRecalculateChecksum(line_a, true);
-    sendLocal(fixture, 0, makeInnerPacket(line_a, kPingWireMaxInnerPacketLength + 1U));
-    twfRequire(! lineGetRecalculateChecksum(line_a), "oversize rejection leaked its checksum request");
+    sbuf_t *oversized = makeInnerPacket(line_a, kPingWireMaxInnerPacketLength + 1U);
+    sbufSetRecalculateChecksum(oversized, true);
+    sendLocal(fixture, 0, oversized);
     twfRequireEqualU32(atomicLoadRelaxed(nextSequence(fixture)),
                        sequence_before,
                        "rejected local packets consumed Ping request sequences");
@@ -488,6 +487,7 @@ static void caseCrossWorkerCorrelationAndSequence(flow_fixture_t *fixture)
     flow_sink_t *wire = localRequestSink(fixture);
     twfRequireEqualU32(wire->count, 1, "first valid local request was not emitted");
     requireCapturedRequest(&wire->packets[0], endpointConfig(fixture).identifier, UINT16_MAX);
+    twfRequire(! wire->packets[0].checksum_requested, "dropped request leaked into the next packet");
 
     sbuf_t        *reply       = replyFromRequest(fixture, line_b, &wire->packets[0]);
     const uint32_t prev_before = fixture->prev_sink->count;
@@ -728,6 +728,48 @@ static void caseUnrelatedIpv4Options(flow_fixture_t *fixture)
                "unrelated IPv4 options packet did not pass through unchanged");
 }
 
+static void caseChecksumRequestBoundaries(flow_fixture_t *fixture)
+{
+    twfSetCase(fixture->server ? "PingServer packet-local checksum boundaries"
+                               : "PingClient packet-local checksum boundaries");
+    resetSinks(fixture);
+    line_t *line = fixture->packet_lines[0];
+
+    sbuf_t *inner = makeInnerPacket(line, 84);
+    sbufGetMutablePtr(inner)[8] ^= 1U;
+    sbufSetRecalculateChecksum(inner, true);
+    sendLocal(fixture, 0, inner);
+    const captured_packet_t *outer = &localRequestSink(fixture)->packets[0];
+    twfRequireEqualU32(localRequestSink(fixture)->count, 1, "marked inner packet was not encapsulated");
+    twfRequire(! outer->checksum_requested, "inner request survived encapsulation");
+    twfRequire(inet_chksum(outer->bytes + kPingWireEncapsulationOverhead, IP_HLEN) == 0,
+               "inner checksum was not repaired before encapsulation");
+    ping_wire_envelope_t     envelope = {0};
+    const ping_wire_config_t peer     = peerConfig(fixture);
+    twfRequire(pingwireParseInbound(outer->bytes, outer->length, &peer, &envelope) == kPingWireInboundEchoRequest,
+               "inner repair changed the generated outer checksums");
+
+    resetSinks(fixture);
+    sbuf_t           *request  = peerRequest(fixture, line, 32000);
+    captured_packet_t expected = captureBuffer(request);
+    sbufGetMutablePtr(request)[8] ^= 1U;
+    sbufSetRecalculateChecksum(request, true);
+    sendInbound(fixture, 0, request);
+    twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "marked outer packet was not repaired before validation");
+    const captured_packet_t *decoded = &decodedInnerSink(fixture)->packets[0];
+    twfRequire(! decoded->checksum_requested && decoded->length == expected.length - kPingWireEncapsulationOverhead &&
+                   memoryEqual(decoded->bytes, expected.bytes + kPingWireEncapsulationOverhead, decoded->length),
+               "outer repair request leaked into or changed the decoded inner packet");
+    if (endpointSendsReplies(fixture))
+    {
+        twfRequireEqualU32(generatedReplySink(fixture)->count, 1, "marked request lost its generated reply");
+        const captured_packet_t *reply = &generatedReplySink(fixture)->packets[0];
+        twfRequire(! reply->checksum_requested &&
+                       pingwireParseInbound(reply->bytes, reply->length, &peer, &envelope) == kPingWireInboundEchoReply,
+                   "generated reply inherited intent or has invalid checksums");
+    }
+}
+
 static void casePacketDiagnostics(flow_fixture_t *fixture)
 {
     twfSetCase(fixture->server ? "PingServer packet diagnostics" : "PingClient packet diagnostics");
@@ -736,14 +778,14 @@ static void casePacketDiagnostics(flow_fixture_t *fixture)
     const unsigned int sequence_before = atomicLoadRelaxed(nextSequence(fixture));
 
     resetDropLog(fixture);
-    lineSetRecalculateChecksum(line, true);
-    sendLocal(fixture, 0, makeInnerPacket(line, kPingWireMaxInnerPacketLength + 1U));
+    sbuf_t *oversized = makeInnerPacket(line, kPingWireMaxInnerPacketLength + 1U);
+    sbufSetRecalculateChecksum(oversized, true);
+    sendLocal(fixture, 0, oversized);
     requireErrorLog("IPv4 packet exceeds maximum inner size");
     twfRequire(
         strstr(captured_log, "packet-bytes=1473") != NULL && strstr(captured_log, "max-inner-bytes=1472") != NULL &&
             strstr(captured_log, "overhead-bytes=28") != NULL && strstr(captured_log, "max-carrier-bytes=1500") != NULL,
         "oversize diagnostic omitted sizing parameters");
-    twfRequire(! lineGetRecalculateChecksum(line), "oversize diagnostic leaked checksum scratch state");
     /* The existing shared five-second gate suppresses immediate repeat errors. */
     sendLocal(fixture, 0, makeInnerPacket(line, kPingWireMaxInnerPacketLength + 1U));
     twfRequireEqualU32(captured_log_count, 1, "Ping packet diagnostics lost their rate limit");
@@ -763,10 +805,9 @@ static void casePacketDiagnostics(flow_fixture_t *fixture)
     resetDropLog(fixture);
     sbuf_t *malformed = makeInnerPacket(line, 72);
     IPH_LEN_SET((struct ip_hdr *) sbufGetMutablePtr(malformed), lwip_htons(71));
-    lineSetRecalculateChecksum(line, true);
+    sbufSetRecalculateChecksum(malformed, true);
     sendLocal(fixture, 0, malformed);
     requireErrorLog("IPv4 declared total length does not match received bytes");
-    twfRequire(! lineGetRecalculateChecksum(line), "malformed diagnostic leaked checksum scratch state");
 
     resetDropLog(fixture);
     sbuf_t *bad_ipv4 = peerRequest(fixture, line, 110);
@@ -875,6 +916,7 @@ static void runEndpointCases(bool server, const char *send_replies_json)
     casePacketDiagnostics(&fixture);
     caseCrossWorkerCorrelationAndSequence(&fixture);
     caseUnrelatedIpv4Options(&fixture);
+    caseChecksumRequestBoundaries(&fixture);
     casePeerRequestReplay(&fixture);
     caseDecodedTransportAffinity(&fixture);
     caseDecodedFragmentAffinity(&fixture);

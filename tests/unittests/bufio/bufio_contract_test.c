@@ -6,7 +6,8 @@
  * testDuplicateToRejectsCursorPastCapacity, testDuplicateToRejectsIncompletePayload,
  * testDuplicateToAcceptsEmptyExactEndCursor, testDuplicatePreservesCompleteSource,
  * testSliceHandlesPrependedPayload, testOrdinaryTailCapacity,
- * testPooledDuplicateHandlesConsumedPadding, testViewByteAcrossQueuedBuffers; the driver lists the
+ * testPooledDuplicateHandlesConsumedPadding, checksum request copy/growth/range semantics,
+ * testViewByteAcrossQueuedBuffers; the driver lists the
  * remaining cases
  * Checks: Assertion labels include: test cursor offset exceeds pooled buffer capacity; test payload exceeds
  * cursor-relative buffer capacity; large-buffer cursor offset is out of range; grown large buffer cannot
@@ -208,22 +209,177 @@ static void testFlagsInitializationAndReuse(buffer_pool_t *pool)
 {
     sbuf_t *buffer = sbufCreate(64);
     require(buffer->flags == 0, "new buffer has stale flags");
+    sbufSetRecalculateChecksum(buffer, true);
+    sbufReset(buffer);
+    require(buffer->flags == 0, "reset buffer has stale flags");
     sbufDestroy(buffer);
 
-    buffer = bufferpoolGetSmallBuffer(pool);
-    require(buffer->flags == 0, "pooled buffer has stale flags");
-    bufferpoolReuseBuffer(pool, buffer);
+    sbuf_t *(*const checkouts[])(buffer_pool_t *) = {
+        bufferpoolGetSmallBuffer, bufferpoolGetMediumBuffer, bufferpoolGetLargeBuffer};
+    for (size_t i = 0; i < ARRAY_SIZE(checkouts); ++i)
+    {
+        buffer = checkouts[i](pool);
+        require(buffer->flags == 0, "pooled buffer has stale flags");
+        sbufSetRecalculateChecksum(buffer, true);
+        bufferpoolReuseBuffer(pool, buffer);
+        buffer = checkouts[i](pool);
+        require(buffer->flags == 0, "recycled buffer retained a checksum request");
+        bufferpoolReuseBuffer(pool, buffer);
+    }
 
     buffer = bufferpoolGetSpliceBuffer(pool);
 #if WW_HAVE_SPLICE
     require(buffer != NULL, "splice buffer checkout failed");
     bufferpoolReuseBuffer(pool, buffer);
     buffer = bufferpoolGetSpliceBuffer(pool);
-    require(buffer != NULL && sbufIsSplice(buffer), "pool checkout did not restore the splice flag");
+    require(buffer != NULL && sbufIsSplice(buffer) && ! sbufGetRecalculateChecksum(buffer),
+            "pool checkout did not preserve splice representation without packet intent");
     bufferpoolReuseBuffer(pool, buffer);
 #else
     require(buffer == NULL && errno == ENOSYS, "unsupported splice checkout did not return ENOSYS");
 #endif
+}
+
+static void testChecksumRequestAccessors(void)
+{
+    const uint16_t unrelated_flag = 1U << 15;
+    sbuf_t        *buffer         = sbufCreate(64);
+    buffer->flags                 = unrelated_flag;
+    sbufSetRecalculateChecksum(buffer, true);
+    require(sbufGetRecalculateChecksum(buffer) && buffer->flags == (unrelated_flag | kSbufFlagRecalculateChecksum),
+            "request setter changed unrelated flags");
+    sbufSetRecalculateChecksum(buffer, false);
+    require(! sbufGetRecalculateChecksum(buffer) && buffer->flags == unrelated_flag,
+            "request clearing changed unrelated flags");
+    sbufDestroy(buffer);
+
+    buffer               = sbufCreateSplice(64);
+    const uint16_t flags = buffer->flags;
+    sbufSetRecalculateChecksum(buffer, false);
+    require(buffer->flags == flags && ! sbufGetRecalculateChecksum(buffer),
+            "request clearing changed splice representation flags");
+    sbufDestroy(buffer);
+}
+
+static void testChecksumRequestCompleteCopies(buffer_pool_t *pool)
+{
+    const uint16_t unrelated_flag = 1U << 15;
+    for (unsigned int state = 0; state < 4; ++state)
+    {
+        const bool source_request = (state & 1U) != 0;
+        sbuf_t    *source         = makePooledBuffer(pool, false, 32, 0, 0x24);
+        sbuf_t    *dest           = sbufCreateWithPadding(64, 64);
+        source->flags             = unrelated_flag;
+        sbufSetRecalculateChecksum(source, source_request);
+        dest->flags = unrelated_flag;
+        sbufSetRecalculateChecksum(dest, (state & 2U) != 0);
+        require(sbufDuplicateTo(source, dest), "checksum copy rejected representable payload");
+        requireSamePayload(dest, source, "checksum copy changed payload bytes");
+        require(sbufGetRecalculateChecksum(dest) == source_request &&
+                    dest->flags == (unrelated_flag | (source_request ? kSbufFlagRecalculateChecksum : 0)),
+                "complete copy failed to replace only the request bit");
+        sbufSetRecalculateChecksum(dest, ! source_request);
+        require(sbufGetRecalculateChecksum(source) == source_request, "complete copies share checksum request state");
+        sbufDestroy(dest);
+
+        sbuf_t *copies[] = {sbufDuplicate(source), sbufDuplicateByPool(pool, source)};
+        for (size_t i = 0; i < ARRAY_SIZE(copies); ++i)
+        {
+            require(copies[i]->flags == (source_request ? kSbufFlagRecalculateChecksum : 0),
+                    "ordinary duplicate lost the request or acquired representation flags");
+            requireSamePayload(copies[i], source, "ordinary duplicate changed packet bytes");
+            sbufSetRecalculateChecksum(copies[i], ! source_request);
+            require(sbufGetRecalculateChecksum(source) == source_request, "duplicate changed its source request");
+            bufferpoolReuseBuffer(pool, copies[i]);
+        }
+        bufferpoolReuseBuffer(pool, source);
+    }
+}
+
+static void testChecksumRequestRejectedCopies(void)
+{
+    for (unsigned int state = 0; state < 4; ++state)
+    {
+        sbuf_t *source = state < 2 ? makeSourceWithCursorPast(96) : sbufCreateWithPadding(64, 32);
+        if (state >= 2)
+        {
+            sbufSetLength(source, 48);
+            fillPattern(source, 0x40);
+        }
+        sbuf_t *dest = makeSentinelDestination();
+        sbufSetRecalculateChecksum(source, (state & 1U) == 0);
+        dest->flags = 1U << 15;
+        sbufSetRecalculateChecksum(dest, (state & 1U) != 0);
+        const uint16_t flags    = dest->flags;
+        const uint32_t capacity = dest->capacity;
+        const uint16_t padding  = dest->l_pad;
+        require(! sbufDuplicateTo(source, dest), "checksum copy accepted an undersized destination");
+        requireSentinelDestinationUnchanged(dest, "rejected checksum copy changed destination bytes or cursor");
+        require(dest->flags == flags && dest->capacity == capacity && dest->l_pad == padding,
+                "rejected checksum copy changed destination flags or allocation geometry");
+        sbufDestroy(dest);
+        sbufDestroy(source);
+    }
+}
+
+static void testChecksumRequestReserveSpace(void)
+{
+    for (unsigned int requested = 0; requested < 2; ++requested)
+    {
+        sbuf_t *buffer = sbufCreateWithPadding(64, 64);
+        sbufSetLength(buffer, 32);
+        sbufShiftLeft(buffer, 7);
+        fillPattern(buffer, 0x60);
+        sbufSetRecalculateChecksum(buffer, requested != 0);
+        sbuf_t        *original = buffer;
+        const uint32_t cursor   = buffer->curpos;
+        buffer                  = sbufReserveSpace(buffer, 48);
+        require(buffer == original && buffer->curpos == cursor &&
+                    sbufGetRecalculateChecksum(buffer) == (requested != 0),
+                "no-growth reserve changed allocation, cursor or request");
+        buffer = sbufReserveSpace(buffer, 256);
+        require(sbufGetLength(buffer) == 39 && sbufGetMaximumWriteableSize(buffer) >= 256 &&
+                    sbufGetLeftPadding(buffer) == 64 && sbufGetLeftCapacity(buffer) == 64 &&
+                    ((uintptr_t) sbufGetRawPtr(buffer) % kSbufAllocationAlignment) == 0,
+                "growth changed payload geometry, padding or alignment");
+        require(sbufGetRecalculateChecksum(buffer) == (requested != 0), "growth lost checksum request state");
+        requirePatternRange(buffer, 0, 39, 0x60, "growth changed existing packet bytes");
+        sbufDestroy(buffer);
+    }
+}
+
+static void testChecksumRequestByteOperations(void)
+{
+    for (unsigned int state = 0; state < 4; ++state)
+    {
+        const bool source_request = (state & 1U) != 0;
+        const bool dest_request   = (state & 2U) != 0;
+        sbuf_t    *source         = sbufCreateWithPadding(64, 64);
+        sbuf_t    *dest           = sbufCreateWithPadding(64, 64);
+        sbufSetLength(source, 16);
+        fillPattern(source, 0x80);
+        sbufSetRecalculateChecksum(source, source_request);
+        sbufSetRecalculateChecksum(dest, dest_request);
+        sbufWriteBuf(dest, source, 16);
+        require(sbufGetRecalculateChecksum(dest) == dest_request, "byte copy inferred a packet request");
+        sbufMoveTo(dest, source, 4);
+        require(sbufGetRecalculateChecksum(dest) == dest_request &&
+                    sbufGetRecalculateChecksum(source) == source_request,
+                "partial move changed checksum requests");
+        sbuf_t *slice = sbufSlice(source, 4);
+        require(! sbufGetRecalculateChecksum(slice) && sbufGetRecalculateChecksum(source) == source_request,
+                "slice inferred or consumed checksum intent");
+        sbufDestroy(slice);
+        sbufConcatNoCheck(dest, source);
+        require(sbufGetRecalculateChecksum(dest) == dest_request, "concat inferred checksum intent from its source");
+        sbufSetLength(dest, sbufGetMaximumWriteableSize(dest));
+        dest = sbufConcat(dest, source);
+        require(sbufGetRecalculateChecksum(dest) == dest_request &&
+                    sbufGetRecalculateChecksum(source) == source_request,
+                "growing concat lost destination intent or inferred source intent");
+        sbufDestroy(dest);
+        sbufDestroy(source);
+    }
 }
 
 static void testDuplicateToCopiesCompleteSource(void)
@@ -362,12 +518,14 @@ static void testPooledDuplicateHandlesConsumedPadding(buffer_pool_t *pool)
     sbufSetLength(source, bufferpoolGetSmallBufferSize(pool));
     sbufShiftLeft(source, 32);
     fillPattern(source, 0x80);
+    sbufSetRecalculateChecksum(source, true);
 
     require(sbufGetLength(source) > bufferpoolGetSmallBufferSize(pool),
             "the pooled duplicate regression did not consume left padding");
 
     sbuf_t *duplicate = sbufDuplicateByPool(pool, source);
     requireSamePayload(duplicate, source, "sbufDuplicateByPool truncated a source that consumed left padding");
+    require(sbufGetRecalculateChecksum(duplicate), "pooled fallback duplicate lost its checksum request");
 
     bufferpoolReuseBuffer(pool, duplicate);
     bufferpoolReuseBuffer(pool, source);
@@ -1144,6 +1302,33 @@ static void requireResidentPayload(const sbuf_t *buf, const void *expected, uint
     require(memoryEqual(sbufGetRawPtr(buf), expected, length), message);
 }
 
+static void testSpliceMaterializationClearsPacketIntent(void)
+{
+    pool_fixture_t fixture = poolFixtureCreate(1024, 128, 64, 64);
+    uint8_t        wire[103];
+    for (size_t i = 0; i < sizeof(wire); ++i)
+        wire[i] = (uint8_t) (0x21U + i);
+    sbuf_t                        *source   = makeSpliceTestBuffer(fixture.pool, wire, 7, wire + 7, sizeof(wire) - 7);
+    const splice_buffer_metadata_t metadata = sbufSpliceMetadata(source);
+    const uint32_t                 cursor   = source->curpos;
+    sbuf_t                        *dest     = sbufCreateWithPadding(128, 64);
+    sbufSetRecalculateChecksum(dest, true);
+    require(sbufSpliceMaterializeToBuffer(source, dest, fixture.pool) == dest,
+            "splice materialization replaced its destination");
+    requireResidentPayload(dest, wire, sizeof(wire), "splice materialization changed payload bytes");
+    require(dest->flags == 0 && dest->curpos == cursor,
+            "splice materialization inherited packet intent or splice ownership");
+    sbuf_t *recycled = bufferpoolGetSpliceBuffer(fixture.pool);
+    require(recycled == source && sbufIsPooledSplice(recycled) && ! sbufGetRecalculateChecksum(recycled),
+            "splice materialization changed representation ownership or acquired packet intent");
+    const splice_buffer_metadata_t recycled_metadata = sbufSpliceMetadata(recycled);
+    require(metadata.pipefd[0] == recycled_metadata.pipefd[0] && metadata.pipefd[1] == recycled_metadata.pipefd[1],
+            "splice materialization changed private pipe ownership");
+    bufferpoolReuseBuffer(fixture.pool, recycled);
+    bufferpoolReuseBuffer(fixture.pool, dest);
+    poolFixtureDestroy(&fixture);
+}
+
 static sbuf_t *makeOrdinaryBytes(buffer_pool_t *pool, const uint8_t *bytes, uint32_t length)
 {
     sbuf_t *buf = bufferpoolGetBestFit(pool, length, bufferpoolGetLargeBufferPadding(pool));
@@ -1168,6 +1353,7 @@ static void testEnsureOrdinaryPreservesResidentBuffers(ensure_ordinary_fn_t ensu
         }
         else if (mode == 2)
             sbufShiftRight(source, 9);
+        sbufSetRecalculateChecksum(source, (mode & 1U) != 0);
 
         const uint32_t cursor   = source->curpos;
         const uint32_t capacity = source->capacity;
@@ -1359,6 +1545,7 @@ int main(void)
     }
 #if WW_HAVE_SPLICE
     testTryEnsureOrdinaryRefusalPreservesSource();
+    testSpliceMaterializationClearsPacketIntent();
 #endif
     testSpliceStreamContracts();
     testMoveExactBytesTo();
@@ -1374,6 +1561,11 @@ int main(void)
     bufferpoolUpdateAllocationPaddings(pool, 64, 64, 64, 64);
 
     testFlagsInitializationAndReuse(pool);
+    testChecksumRequestAccessors();
+    testChecksumRequestCompleteCopies(pool);
+    testChecksumRequestRejectedCopies();
+    testChecksumRequestReserveSpace();
+    testChecksumRequestByteOperations();
     testDuplicateToCopiesCompleteSource();
     testDuplicateToRejectsCursorPastCapacity();
     testDuplicateToRejectsIncompletePayload();

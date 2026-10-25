@@ -162,7 +162,6 @@ static void captureUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
     require(capture->len <= kMaxPacketLength, "captured packet is too large");
     require(lineIsOnCurrentWorker(l), "upstream packet was emitted on a non-owner worker");
     memoryCopy(capture->bytes, sbufGetRawPtr(buf), capture->len);
-    lineSetRecalculateChecksum(l, false);
     lineReuseBuffer(l, buf);
 }
 

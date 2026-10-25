@@ -184,7 +184,6 @@ static void recordForwardedPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
         memoryCopy(record->payload, packet + headers_len, min(payload_len, (uint16_t) kMaxPayloadRecord));
     }
 
-    lineSetRecalculateChecksum(l, false);
     lineReuseBuffer(l, buf);
 }
 

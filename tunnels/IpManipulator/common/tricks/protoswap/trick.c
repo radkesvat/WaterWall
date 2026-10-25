@@ -2,6 +2,7 @@
 
 bool protoswapApply(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    discard                 l;
     ipmanipulator_tstate_t *state = tunnelGetState(t);
     ipv4_packet_view_t      packet = {0};
     uint8_t                *bytes  = sbufGetMutablePtr(buf);
@@ -54,13 +55,13 @@ bool protoswapApply(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         return false;
     }
-    if (encoding && lineGetRecalculateChecksum(l))
+    if (encoding && sbufGetRecalculateChecksum(buf))
     {
         if (! calcFullPacketChecksum(bytes, length))
         {
             return false;
         }
-        lineSetRecalculateChecksum(l, false);
+        sbufSetRecalculateChecksum(buf, false);
     }
 
     /* Preflight proved these operations cannot fail; none changes packet geometry. */

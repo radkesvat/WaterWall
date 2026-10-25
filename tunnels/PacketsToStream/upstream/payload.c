@@ -4,8 +4,8 @@
 
 void packetstostreamTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    /* A drop or reentrant stream Init must not pass this packet's request onward. */
-    const bool                recalculate_checksum = packettunnelTakeChecksumRequest(l);
+    /* Capture this packet's request before stream creation can reenter the chain. */
+    const bool                recalculate_checksum = packettunnelTakeChecksumRequest(buf);
     packetstostream_lstate_t *ls = lineGetState(l, t);
     line_t                   *stream_line;
     bool                      created;

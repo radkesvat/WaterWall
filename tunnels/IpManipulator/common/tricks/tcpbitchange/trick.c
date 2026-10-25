@@ -247,7 +247,7 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
         {
             if (restoreOriginalTcpFlagsFromPayload(buf, ipheader, tcp_header, ip_total_len, iphdr_len, tcphdr_len))
             {
-                l->recalculate_checksum = true;
+                sbufSetRecalculateChecksum(buf, true);
             }
             return;
         }
@@ -271,7 +271,7 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
             {
                 tcpbitchangeSetAllTcpFlags(tcp_header, new_flags);
             }
-            l->recalculate_checksum = true;
+            sbufSetRecalculateChecksum(buf, true);
             return;
         }
 

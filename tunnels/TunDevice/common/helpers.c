@@ -97,7 +97,7 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     tundevice_tstate_t *state = tunnelGetState(t);
     tun_device_t       *tdev  = state->tdev;
 
-    if (UNLIKELY(! packettunnelConsumeChecksumRequest(l, buf)))
+    if (UNLIKELY(! packettunnelConsumeChecksumRequest(buf)))
     {
         if (atomicLogRateLimiterShouldLog(&tundevice_checksum_failure_log, kTunDeviceChecksumLogIntervalMs))
         {

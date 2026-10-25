@@ -102,10 +102,13 @@ bool sniblendertrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     uint16_t identification = lwip_ntohs(IPH_ID(ipheader));
 
     // Before crafting, satisfy any pending checksum request on the source packet.
-    if (UNLIKELY(l->recalculate_checksum && IPH_V(ipheader) == 4))
+    if (UNLIKELY(sbufGetRecalculateChecksum(buf) && IPH_V(ipheader) == 4))
     {
-        calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
-        l->recalculate_checksum = false;
+        if (! calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
+        {
+            return false;
+        }
+        sbufSetRecalculateChecksum(buf, false);
     }
 
     sbuf_t *crafted_packets[kSniBlenderTrickMaxPacketsCount] = {0};
@@ -204,7 +207,7 @@ bool sniblendertrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     for (int idx = 0; idx < crafted_count; idx++)
     {
         int packet_i                = shuffled_indices[idx];
-        l->recalculate_checksum     = true;
+        sbufSetRecalculateChecksum(crafted_packets[packet_i], true);
         ipmanipulatorSendUpstreamFinal(t, l, crafted_packets[packet_i]);
         crafted_packets[packet_i] = NULL;
     }

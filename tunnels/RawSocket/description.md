@@ -16,7 +16,7 @@ This node is a layer-3 adapter rather than a connection-oriented tunnel.
 - When capture is enabled, captures packets that match the configured IP and protocol filters and drops them from the host kernel network stack so only WaterWall receives and accesses them.
 - Forwards captured packets to the adjacent chain side.
 - Writes raw IP packets from the chain out through the raw device.
-- Applies checksum recalculation before writing when the line requests it.
+- Applies checksum recalculation before writing when the packet buffer requests it.
 - Bypasses Linux conntrack by default for capture ranges and raw output; output uses an automatically selected socket mark.
 
 ## Typical Placement
@@ -239,7 +239,7 @@ When payload reaches `RawSocket` from upstream or downstream:
 - the complete packet is structurally validated as exact IPv4, even when no
   checksum recalculation was requested; trailing bytes and malformed or
   truncated packets are dropped
-- checksum recalculation is performed if requested by the line
+- checksum recalculation is performed if requested by the packet buffer
 - the packet is written through the raw device
 
 Both upstream and downstream payload handlers write to the same raw output device.
@@ -374,9 +374,9 @@ capture reader or cleanup thread is created.
 
 ### Checksum behavior
 
-Before writing a packet, `RawSocket` checks line flags:
+Before writing a packet, `RawSocket` checks the packet buffer request:
 
-- if `recalculate_checksum` is set, checksums are recomputed
+- if `sbufGetRecalculateChecksum(buf)` is true, checksums are recomputed
 - full packet checksum recalculation is attempted
 - for fragmented IPv4 packets, transport checksum recalculation is skipped automatically and only the IPv4 header checksum is recomputed
 

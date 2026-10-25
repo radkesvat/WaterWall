@@ -53,10 +53,13 @@ static void captureWire(tunnel_t *t, line_t *l, sbuf_t *buf)
     discard t;
     discard l;
     twfRequire(wire == NULL, "encoder emitted more than one callback");
+    if (! tunnelchainIsWorkerPacketLine(tunnelGetChain(t->prev), l))
+        twfRequire(! sbufGetRecalculateChecksum(buf), "stream transform acquired a packet checksum request");
     wire = buf;
 }
 static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    twfRequire(! sbufGetRecalculateChecksum(buf), "stream decoder acquired a packet checksum request");
     const uint8_t *p = sbufGetRawPtr(buf);
     for (uint32_t i = 0; i < sbufGetLength(buf); ++i)
         twfRequire(p[i] == pattern(received + i), "roundtrip changed stream bytes");
@@ -374,9 +377,10 @@ static void testPacketClonePadding(bool server)
                "packet record header changed");
     for (uint32_t i = 0; i < length; ++i)
         twfRequire(bytes[i + 5] == (uint8_t) (pattern(i) ^ 90), "packet clone changed transformed bytes");
+    twfRequire(lineIsAlive(line) && sbufGetRecalculateChecksum(wire),
+               "packet transform changed lifecycle/checksum request");
     lineReuseBuffer(line, wire);
     wire = NULL;
-    twfRequire(lineIsAlive(line) && line->recalculate_checksum, "packet transform changed lifecycle/checksum request");
     tunnelUpStreamFin(t, line);
     twfRequire(lineIsAlive(line) && trace.next_init == 1 && trace.next_finish == 1,
                "packet lifecycle was not forwarded without destroying its line");

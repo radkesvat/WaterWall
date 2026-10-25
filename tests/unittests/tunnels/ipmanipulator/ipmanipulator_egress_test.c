@@ -306,7 +306,7 @@ static void requireTcpChecksumMatchesRealProtocol(const sbuf_t *buf)
 
 static void finalizeAndCapture(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    require(packettunnelConsumeChecksumRequest(l, buf), "packet writer rejected fixture");
+    require(packettunnelConsumeChecksumRequest(buf), "packet writer rejected fixture");
     capturePacket(t, l, buf);
 }
 
@@ -340,7 +340,6 @@ static void testAddressTranslationAcrossEndpoints(test_env_t *env)
     rewrite2->next = decoder;
 
     line_t receiver = {.alive = true, .wid = 0, .refc = 1, .active_tunnels_mask = UINT64_MAX};
-    lineSetRecalculateChecksum(env->line, false);
     ipmanipulatorUpStreamPayload(encoder, env->line, makeTcpPacket(env, 97));
     require(captured_count == 1, "encoder did not emit one packet");
     const struct ip_hdr *wire_ip = sbufGetRawPtr(captured[0]);
@@ -357,7 +356,7 @@ static void testAddressTranslationAcrossEndpoints(test_env_t *env)
                 native->dest.addr == PP_HTONL(0xc000020a),
             "second endpoint native fields differ");
     requireTcpChecksumMatchesRealProtocol(captured[0]);
-    require(! lineGetRecalculateChecksum(&receiver), "receiver leaked checksum metadata");
+    require(! sbufGetRecalculateChecksum(captured[0]), "receiver leaked checksum metadata");
     recycleCaptured(env);
     rewrite1->onDestroy(rewrite1, wwLifecycleStartupRollback());
     rewrite2->onDestroy(rewrite2, wwLifecycleStartupRollback());
@@ -370,6 +369,70 @@ static void testAddressTranslationAcrossEndpoints(test_env_t *env)
 }
 
 #endif
+
+static test_env_t *duplicate_reentry_env;
+static tunnel_t   *duplicate_reentry_tunnel;
+static sbuf_t     *duplicate_source_probe;
+static bool        duplicate_reentry_done;
+static bool        duplicate_request_snapshots[4];
+
+static void captureWithDuplicateReentry(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    require(captured_count < ARRAY_SIZE(duplicate_request_snapshots), "duplicate reentry capture overflow");
+    duplicate_request_snapshots[captured_count] = sbufGetRecalculateChecksum(buf);
+    require(packettunnelConsumeChecksumRequest(buf), "duplicate checksum repair failed");
+    capturePacket(t, l, buf);
+    if (! duplicate_reentry_done)
+    {
+        duplicate_reentry_done = true;
+        require(sbufGetRecalculateChecksum(duplicate_source_probe), "consuming a clone changed its original request");
+        sbuf_t *nested = makeTcpPacket(duplicate_reentry_env, 61);
+        if (t == duplicate_reentry_tunnel->next)
+            ipmanipulatorUpStreamPayload(duplicate_reentry_tunnel, l, nested);
+        else
+            ipmanipulatorDownStreamPayload(duplicate_reentry_tunnel, l, nested);
+        require(sbufGetRecalculateChecksum(duplicate_source_probe),
+                "nested delivery changed the retained original request");
+    }
+}
+
+static void testDuplicateRequestsSurviveReentry(test_env_t *env)
+{
+    tunnel_t  next                      = {.fnPayloadU = captureWithDuplicateReentry};
+    tunnel_t  prev                      = {.fnPayloadD = captureWithDuplicateReentry};
+    tunnel_t *t                         = createTestTunnel();
+    t->next                             = &next;
+    t->prev                             = &prev;
+    ipmanipulator_tstate_t *state       = tunnelGetState(t);
+    state->trick_packet_duplicate       = true;
+    state->trick_packet_duplicate_count = 1;
+    duplicate_reentry_env               = env;
+    duplicate_reentry_tunnel            = t;
+    for (unsigned down = 0; down < 2; ++down)
+    {
+        duplicate_source_probe = makeTcpPacket(env, 97);
+        sbufGetMutablePtr(duplicate_source_probe)[96] ^= 1;
+        sbufSetRecalculateChecksum(duplicate_source_probe, true);
+        duplicate_reentry_done = false;
+        if (down)
+            ipmanipulatorDownStreamPayload(t, env->line, duplicate_source_probe);
+        else
+            ipmanipulatorUpStreamPayload(t, env->line, duplicate_source_probe);
+        duplicate_source_probe = NULL;
+        require(captured_count == 4 && duplicate_request_snapshots[0] && ! duplicate_request_snapshots[1] &&
+                    ! duplicate_request_snapshots[2] && duplicate_request_snapshots[3],
+                "nested duplicate requests were shared or lost");
+        for (unsigned i = 0; i < captured_count; ++i)
+        {
+            require(! sbufGetRecalculateChecksum(captured[i]), "duplicate writer left a request pending");
+            requireTcpChecksumMatchesRealProtocol(captured[i]);
+        }
+        recycleCaptured(env);
+    }
+    duplicate_reentry_tunnel = NULL;
+    duplicate_reentry_env    = NULL;
+    destroyTestTunnel(t);
+}
 
 static void testPendingRequestsAndDuplicateDirections(test_env_t *env)
 {
@@ -388,18 +451,17 @@ static void testPendingRequestsAndDuplicateDirections(test_env_t *env)
                     state->trick_proto_swap_tcp_number = udp ? -1 : 1;
                     state->trick_proto_swap_udp_number = udp ? 1 : -1;
                     sbuf_t *buf                        = udp ? makeUdpPacket(env, 97) : makeTcpPacket(env, 97);
-                    lineSetRecalculateChecksum(env->line, false);
                     if (mapped)
                         require(protoswapApply(t, env->line, buf), "mapped egress fixture failed");
                     if (pending)
                         sbufGetMutablePtr(buf)[96] ^= 1;
-                    lineSetRecalculateChecksum(env->line, pending != 0);
+                    sbufSetRecalculateChecksum(buf, pending != 0);
                     if (down)
                         ipmanipulatorDownStreamPayload(t, env->line, buf);
                     else
                         ipmanipulatorUpStreamPayload(t, env->line, buf);
                     require(captured_count == 2, "egress duplication lost a packet");
-                    require(! lineGetRecalculateChecksum(env->line), "egress leaked consumed request");
+                    require(! sbufGetRecalculateChecksum(captured[0]), "egress leaked consumed request");
                     require(memoryEqual(sbufGetRawPtr(captured[0]), sbufGetRawPtr(captured[1]), 97),
                             "duplicate restored stale request under mapped ICMP protocol");
                     for (unsigned i = 0; i < captured_count; ++i)
@@ -427,7 +489,7 @@ static void testPendingRequestsAndDuplicateDirections(test_env_t *env)
                     require(calcIpv4HeaderChecksum(sbufGetMutablePtr(unrelated), sbufGetLength(unrelated)),
                             "unrelated header failed");
                     ipmanipulatorUpStreamPayload(t, env->line, unrelated);
-                    require(captured_count == 2 && ! lineGetRecalculateChecksum(env->line),
+                    require(captured_count == 2 && ! sbufGetRecalculateChecksum(captured[0]),
                             "request leaked into unrelated packet");
                     recycleCaptured(env);
                 }
@@ -469,7 +531,7 @@ static void testEgressOrderAndDownstreamRoundTrip(test_env_t *env)
                (const uint8_t *) sbufGetRawPtr(buf) + sizeof(struct ip_hdr) + sizeof(struct tcp_hdr),
                sizeof(original_payload));
 
-    lineSetRecalculateChecksum(env->line, true);
+    sbufSetRecalculateChecksum(buf, true);
     ipmanipulatorEmitUpstream(t, env->line, buf, tunnelNextUpStreamPayload);
 
     require(captured_count == 1, "egress did not forward exactly one packet");
@@ -477,7 +539,7 @@ static void testEgressOrderAndDownstreamRoundTrip(test_env_t *env)
     const struct ip_hdr *wire_ip = (const struct ip_hdr *) sbufGetRawPtr(wire);
     require(IPH_PROTO(wire_ip) == 143, "egress did not apply protocol swap last");
     require(sbufGetLength(wire) == original_len + 4U, "portghost trailer was not applied exactly once");
-    require(! lineGetRecalculateChecksum(env->line), "swapped packet left a device checksum request pending");
+    require(! sbufGetRecalculateChecksum(captured[0]), "swapped packet left a device checksum request pending");
     requireValidIpv4HeaderChecksum(wire);
     requireTcpChecksumMatchesRealProtocol(wire);
 
@@ -499,10 +561,8 @@ static void testEgressOrderAndDownstreamRoundTrip(test_env_t *env)
                         original_payload,
                         sizeof(original_payload)),
             "egress/downstream round trip changed the TCP payload");
-    require(lineGetRecalculateChecksum(env->line), "portghost restore did not request checksum recalculation");
-    require(calcFullPacketChecksum(sbufGetMutablePtr(restored), sbufGetLength(restored)),
-            "restored packet could not be checksummed as TCP");
-    lineSetRecalculateChecksum(env->line, false);
+    require(sbufGetRecalculateChecksum(captured[0]), "portghost restore did not request checksum recalculation");
+    require(packettunnelConsumeChecksumRequest(restored), "restored packet could not be checksummed as TCP");
 
     recycleCaptured(env);
     destroyTestTunnel(t);
@@ -529,7 +589,7 @@ static void testDownstreamResumeAfterSmuggleFinDoesNotRepeatRestoration(test_env
                (const uint8_t *) sbufGetRawPtr(buf) + sizeof(struct ip_hdr) + sizeof(struct tcp_hdr),
                sizeof(original_payload));
 
-    lineSetRecalculateChecksum(env->line, true);
+    sbufSetRecalculateChecksum(buf, true);
     ipmanipulatorEmitUpstream(t, env->line, buf, tunnelNextUpStreamPayload);
     require(captured_count == 1, "resume-stage fixture did not create one wire packet");
 
@@ -559,10 +619,8 @@ static void testDownstreamResumeAfterSmuggleFinDoesNotRepeatRestoration(test_env
                         original_payload,
                         sizeof(original_payload)),
             "post-smuggle-fin resume changed the restored payload");
-    require(lineGetRecalculateChecksum(env->line), "post-smuggle-fin resume lost the portghost checksum request");
-    require(calcFullPacketChecksum(sbufGetMutablePtr(restored), sbufGetLength(restored)),
-            "post-smuggle-fin resumed packet could not be checksummed");
-    lineSetRecalculateChecksum(env->line, false);
+    require(sbufGetRecalculateChecksum(captured[0]), "post-smuggle-fin resume lost the portghost checksum request");
+    require(packettunnelConsumeChecksumRequest(restored), "post-smuggle-fin resumed packet could not be checksummed");
 
     recycleCaptured(env);
     destroyTestTunnel(t);
@@ -582,13 +640,13 @@ static void testAlreadyMappedEgressUnwraps(test_env_t *env)
     require(calcIpv4HeaderChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
             "failed to checksum mapped-layer fixture");
 
-    lineSetRecalculateChecksum(env->line, true);
+    sbufSetRecalculateChecksum(buf, true);
     ipmanipulatorEmitUpstream(t, env->line, buf, capturePacket);
 
     require(captured_count == 1, "layered egress did not forward exactly one packet");
     const struct ip_hdr *wire_ip = (const struct ip_hdr *) sbufGetRawPtr(captured[0]);
     require(IPH_PROTO(wire_ip) == IPPROTO_TCP, "the upstream unwrapping layer re-mapped the packet");
-    require(! lineGetRecalculateChecksum(env->line), "layered mapped packet left a checksum request pending");
+    require(! sbufGetRecalculateChecksum(captured[0]), "layered mapped packet left a checksum request pending");
     requireValidIpv4HeaderChecksum(captured[0]);
     requireTcpChecksumMatchesRealProtocol(captured[0]);
 
@@ -609,7 +667,7 @@ static void testTuplePreservingHelperEgress(test_env_t *env)
     sbuf_t  *buf          = makeTcpPacket(env, 96);
     uint32_t original_len = sbufGetLength(buf);
 
-    lineSetRecalculateChecksum(env->line, true);
+    sbufSetRecalculateChecksum(buf, true);
     ipmanipulatorEmitUpstreamPreservingTuple(t, env->line, buf, capturePacket);
 
     require(captured_count == 1, "tuple-preserving egress did not forward exactly one packet");
@@ -620,7 +678,7 @@ static void testTuplePreservingHelperEgress(test_env_t *env)
     require(sbufGetLength(captured[0]) == original_len, "tuple-preserving egress appended a portghost trailer");
     require(lwip_ntohs(wire_tcp->src) == 12345 && lwip_ntohs(wire_tcp->dest) == 443,
             "tuple-preserving egress changed the helper branch ports");
-    require(! lineGetRecalculateChecksum(env->line), "tuple-preserving packet left a checksum request pending");
+    require(! sbufGetRecalculateChecksum(captured[0]), "tuple-preserving packet left a checksum request pending");
     requireValidIpv4HeaderChecksum(captured[0]);
     requireTcpChecksumMatchesRealProtocol(captured[0]);
 
@@ -647,7 +705,6 @@ static void runPortghostSegmentationCase(test_env_t *env, bool ghost_dest)
             "failed to checksum the DF segmentation fixture");
     memoryCopy(source_payload, (const uint8_t *) sbufGetRawPtr(buf) + headers_len, source_payload_len);
 
-    lineSetRecalculateChecksum(env->line, false);
     require(ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, buf, capturePacket),
             "segmentation unexpectedly killed the packet line");
     require(captured_count > 1, "oversized packet was not segmented");
@@ -657,6 +714,7 @@ static void runPortghostSegmentationCase(test_env_t *env, bool ghost_dest)
     for (uint32_t i = 0; i < captured_count; ++i)
     {
         sbuf_t              *segment = captured[i];
+        require(sbufGetRecalculateChecksum(segment), "generated segment did not carry its own checksum request");
         const struct ip_hdr *ip      = (const struct ip_hdr *) sbufGetRawPtr(segment);
 
         require(sbufGetLength(segment) <= state->mtu, "portghost segment exceeded state->mtu");
@@ -689,7 +747,7 @@ static void runPortghostSegmentationCase(test_env_t *env, bool ghost_dest)
             "restored segment payloads do not reconstruct the source payload");
 
     recycleCaptured(env);
-    lineSetRecalculateChecksum(env->line, false);
+
     destroyTestTunnel(t);
 }
 
@@ -742,7 +800,9 @@ static void testTrailerBoundaryAndExactFitGrowth(test_env_t *env)
 
     uint32_t old_capacity = sbufGetMaximumWriteableSize(exact_fit);
     require(sbufGetLength(exact_fit) == old_capacity, "exact-fit fixture retained spare writable capacity");
+    sbufSetRecalculateChecksum(exact_fit, true);
     require(portghosttrickApply(t, env->line, &exact_fit), "exact-fit portghost append was rejected");
+    require(sbufGetRecalculateChecksum(exact_fit), "portghost growth lost an earlier checksum request");
     require(exact_fit != NULL && sbufGetLength(exact_fit) == exact_len + 4U,
             "exact-fit portghost append did not grow by its trailer length");
     require(sbufGetMaximumWriteableSize(exact_fit) > old_capacity,
@@ -750,6 +810,7 @@ static void testTrailerBoundaryAndExactFitGrowth(test_env_t *env)
     require(portghosttrickRestore(t, env->line, &exact_fit), "exact-fit portghost packet was not restorable");
     require(exact_fit != NULL && sbufGetLength(exact_fit) == exact_len,
             "exact-fit portghost round trip changed the packet length");
+    require(sbufGetRecalculateChecksum(exact_fit), "portghost restore did not mark the surviving buffer");
     sbufDestroy(exact_fit);
 
     state->mtu = saved_mtu;
@@ -834,7 +895,7 @@ static void testPreservedFlagsAndPortghostSegmentTogether(test_env_t *env)
             "combined trailer restoration lost or treated payload as metadata");
 
     recycleCaptured(env);
-    lineSetRecalculateChecksum(env->line, false);
+
     state->mtu = saved_mtu;
     destroyTestTunnel(t);
 }
@@ -1002,6 +1063,34 @@ static void testSegmentSendStopsWhenLineDies(test_env_t *env)
     destroyTestTunnel(t);
 }
 
+static void testDuplicateSendStopsWhenLineDies(test_env_t *env)
+{
+    tunnel_t  next                      = {.fnPayloadU = captureFirstThenKillLine};
+    tunnel_t  prev                      = {.fnPayloadD = captureFirstThenKillLine};
+    tunnel_t *t                         = createTestTunnel();
+    t->next                             = &next;
+    t->prev                             = &prev;
+    ipmanipulator_tstate_t *state       = tunnelGetState(t);
+    state->trick_packet_duplicate       = true;
+    state->trick_packet_duplicate_count = 2;
+    for (unsigned down = 0; down < 2; ++down)
+    {
+        sbuf_t *buf = makeTcpPacket(env, 97);
+        sbufSetRecalculateChecksum(buf, true);
+        if (down)
+            ipmanipulatorDownStreamPayload(t, env->line, buf);
+        else
+            ipmanipulatorUpStreamPayload(t, env->line, buf);
+        require(! lineIsAlive(env->line) && captured_count == 1,
+                "duplicate delivery continued after its callback closed the line");
+        require(sbufGetRecalculateChecksum(captured[0]), "first duplicate lost the original packet request");
+        require(atomicLoadU32Relaxed(&env->line->refc) == 1, "duplicate closure leaked its temporary line reference");
+        env->line->alive = true;
+        recycleCaptured(env);
+    }
+    destroyTestTunnel(t);
+}
+
 static void testSniBlenderBoundsAndProtocolSwap(test_env_t *env)
 {
     tunnel_t  next = {.fnPayloadU = capturePacket};
@@ -1028,6 +1117,8 @@ static void testSniBlenderBoundsAndProtocolSwap(test_env_t *env)
     require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
             "failed to checksum oversized SNI Blender packet");
 
+    tls[7] ^= 1;
+    sbufSetRecalculateChecksum(buf, true);
     require(sniblendertrickUpStreamPayload(t, env->line, buf), "oversized SNI Blender packet was not handled");
     require(captured_count == 2, "SNI Blender emitted the wrong fragment count");
 
@@ -1183,6 +1274,7 @@ int main(void)
     testAddressTranslationAcrossEndpoints(&env);
 #endif
     testPendingRequestsAndDuplicateDirections(&env);
+    testDuplicateRequestsSurviveReentry(&env);
     testEgressOrderAndDownstreamRoundTrip(&env);
     testDownstreamResumeAfterSmuggleFinDoesNotRepeatRestoration(&env);
     testAlreadyMappedEgressUnwraps(&env);
@@ -1193,6 +1285,7 @@ int main(void)
     testUnsupportedOversizedPacketsDrop(&env);
     testDownstreamEncoderAndPostSegmentationDuplication(&env);
     testSegmentSendStopsWhenLineDies(&env);
+    testDuplicateSendStopsWhenLineDies(&env);
     testSniBlenderBoundsAndProtocolSwap(&env);
     testHelperInitDeduplication(&env);
     envTeardown(&env);

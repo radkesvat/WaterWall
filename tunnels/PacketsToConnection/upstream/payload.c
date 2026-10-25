@@ -280,7 +280,7 @@ void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     assert(currentThreadOwnsWorker(lineGetWID(l)));
     assert(tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l));
     ptc_tstate_t *state                = tunnelGetState(t);
-    const bool    recalculate_checksum = packettunnelTakeChecksumRequest(l);
+    const bool    recalculate_checksum = packettunnelTakeChecksumRequest(buf);
 
     if (UNLIKELY(atomicLoadRelaxed(&state->stopping)))
     {

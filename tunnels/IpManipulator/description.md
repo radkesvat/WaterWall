@@ -2359,7 +2359,7 @@ When `source-port-ghost` and/or `dest-port-ghost` are enabled:
 - downstream packets that still carry those transported port bytes restore the original live port fields and shrink the packet back to its original length
 - IPv4 total length is increased to cover the appended ghost bytes
 - UDP length is also increased when the packet is UDP
-- `line->recalculate_checksum` is set so a later packet writer rebuilds checksums
+- The transformed buffer is marked with `sbufSetRecalculateChecksum(buf, true)` so a later packet writer rebuilds checksums
 - fragmented IPv4 packets are skipped
 - ordinary and crafted whole TCP data packets are segmented before final
   trailer-bearing egress whenever necessary; every segment carries exactly one
@@ -2402,7 +2402,7 @@ When `source-port-ghost` and/or `dest-port-ghost` are enabled:
   also rejected with stateful SNI, and preserved upstream TCP-bit metadata is
   rejected with `sni-blender`.
 - Every stateful trick is bounded by `stateful-flow-limit`; a full table fails open with a rate-limited warning instead of evicting a live flow.
-- The tunnel relies on later packet-writing code to honor `line->recalculate_checksum` and rebuild packet checksums.
+- The tunnel relies on later packet-writing code to honor `sbufGetRecalculateChecksum(buf)` and rebuild packet checksums.
 - `sni-blender-packets` is required when `sni-blender` is enabled and must be
   between `2` and `16`.
 - `first-sni-random-tcp-sequence` affects only the crafted `first-sni` copy, not the original packet.

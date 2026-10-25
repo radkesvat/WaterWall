@@ -54,11 +54,10 @@ void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
      * A refused recalculation means the packet is not a shape this can checksum
      * at all - a truncated header, a length that disagrees with the buffer -
      * so it is dropped rather than sent with whatever checksum bytes it happened
-     * to hold. The request is consumed either way: the worker packet line is
-     * persistent, and leaving it set made the next, unrelated packet on that
-     * line ask for a recalculation nobody requested.
+     * to hold. The request belongs to this packet and is consumed before the
+     * terminal repair attempt; a failed packet is discarded.
      */
-    if (UNLIKELY(! packettunnelConsumeChecksumRequest(l, buf)))
+    if (UNLIKELY(! packettunnelConsumeChecksumRequest(buf)))
     {
         if (atomicLogRateLimiterShouldLog(&rawsocket_checksum_failure_log, kRawSocketChecksumLogIntervalMs))
         {

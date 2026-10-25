@@ -179,8 +179,8 @@ void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     require(normal_upstream_packets < kExpectedSmuggleFinQueueCapacity, "upstream replay capture overflow");
     replayed_upstream_sequences[normal_upstream_packets]        = lwip_ntohl(tcp_header->seqno);
-    replayed_upstream_checksum_intents[normal_upstream_packets] = lineGetRecalculateChecksum(l);
-    if (lineGetRecalculateChecksum(l))
+    replayed_upstream_checksum_intents[normal_upstream_packets] = sbufGetRecalculateChecksum(buf);
+    if (sbufGetRecalculateChecksum(buf))
     {
         require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
                 "upstream sink failed to apply the queued checksum request");
@@ -191,7 +191,7 @@ void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     replay_directions[replay_count] = 0;
     replay_sequences[replay_count]  = lwip_ntohl(tcp_header->seqno);
     replay_count++;
-    lineSetRecalculateChecksum(l, false);
+    sbufSetRecalculateChecksum(buf, false);
     lineReuseBuffer(l, buf);
 }
 
@@ -200,7 +200,7 @@ void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     discard t;
     downstream_entry_packets++;
     normal_downstream_packets++;
-    lineSetRecalculateChecksum(l, false);
+    sbufSetRecalculateChecksum(buf, false);
     lineReuseBuffer(l, buf);
 }
 
@@ -215,12 +215,12 @@ void ipmanipulatorDownStreamPayloadAfterSmuggleFin(tunnel_t *t, line_t *l, sbuf_
     require(downstream_after_smuggle_fin_packets < kExpectedSmuggleFinQueueCapacity,
             "downstream replay capture overflow");
     replayed_downstream_sequences[downstream_after_smuggle_fin_packets]        = lwip_ntohl(tcp_header->seqno);
-    replayed_downstream_checksum_intents[downstream_after_smuggle_fin_packets] = lineGetRecalculateChecksum(l);
+    replayed_downstream_checksum_intents[downstream_after_smuggle_fin_packets] = sbufGetRecalculateChecksum(buf);
     replayed_downstream_protocols[downstream_after_smuggle_fin_packets]        = IPH_PROTO(ipheader);
     replayed_downstream_src_ports[downstream_after_smuggle_fin_packets]        = lwip_ntohs(tcp_header->src);
     replayed_downstream_dst_ports[downstream_after_smuggle_fin_packets]        = lwip_ntohs(tcp_header->dest);
     replayed_downstream_packet_lengths[downstream_after_smuggle_fin_packets]   = sbufGetLength(buf);
-    if (lineGetRecalculateChecksum(l))
+    if (sbufGetRecalculateChecksum(buf))
     {
         require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
                 "downstream sink failed to apply the queued checksum request");
@@ -233,7 +233,7 @@ void ipmanipulatorDownStreamPayloadAfterSmuggleFin(tunnel_t *t, line_t *l, sbuf_
     replay_directions[replay_count] = 1;
     replay_sequences[replay_count]  = lwip_ntohl(tcp_header->seqno);
     replay_count++;
-    lineSetRecalculateChecksum(l, false);
+    sbufSetRecalculateChecksum(buf, false);
     lineReuseBuffer(l, buf);
 }
 
@@ -571,28 +571,27 @@ static void cancelImmediateMessage(uint32_t index)
 }
 
 static void startPausedFlowForTuple(tunnel_t *t, line_t *line, uint32_t src_addr, uint16_t src_port, uint32_t dst_addr,
-                                    uint16_t dst_port)
+                                    uint16_t dst_port, bool requested)
 {
-    bool     expected_recalculate_checksum = lineGetRecalculateChecksum(line);
     uint32_t previous_mirrored_fin_packets = mirrored_fin_packets;
     uint32_t previous_timed_message_count  = timed_message_count;
     sbuf_t  *packet = makeTcpPacket(line->wid, src_addr, src_port, dst_addr, dst_port, 100, 200, TCP_ACK | TCP_PSH, 10);
+    sbufSetRecalculateChecksum(packet, requested);
     require(smugglefintrickUpStreamPayload(t, line, packet), "first payload did not pause its flow");
 
     ipmanipulator_tstate_t           *state = tunnelGetState(t);
     ipmanipulator_smuggle_fin_flow_t *flow  = findFinFlow(state, src_addr, src_port, dst_addr, dst_port);
     require(flow != NULL, "the paused flow is missing from the bounded table");
     require(flow->queued_packets_count == 1, "first payload was not queued");
-    require(flow->queued_packets[0].recalculate_checksum == expected_recalculate_checksum,
+    require(sbufGetRecalculateChecksum(flow->queued_packets[0].buf) == requested,
             "first payload did not retain its checksum intent");
-    require(! lineGetRecalculateChecksum(line), "queued first payload left checksum intent on the packet line");
     require(mirrored_fin_packets == previous_mirrored_fin_packets + 1, "mirrored FIN was not sent");
     require(timed_message_count == previous_timed_message_count + 1, "pause timeout was not scheduled");
 }
 
 static void startPausedFlow(tunnel_t *t, line_t *line)
 {
-    startPausedFlowForTuple(t, line, 0x0A000001, 12345, 0xC0000201, 443);
+    startPausedFlowForTuple(t, line, 0x0A000001, 12345, 0xC0000201, 443, false);
 }
 
 static void testUnrelatedFlowPasses(void)
@@ -661,24 +660,23 @@ static void testQueuedPacketsRetainIndependentChecksumIntent(void)
     initializeLine(&line, 0);
 
     resetCounters();
-    lineSetRecalculateChecksum(&line, true);
-    startPausedFlow(t, &line);
+    startPausedFlowForTuple(t, &line, 0x0A000001, 12345, 0xC0000201, 443, true);
 
     sbuf_t *unrelated = makeTcpPacket(0, 0x0A000002, 23456, 0xC0000202, 443, 300, 400, TCP_ACK | TCP_PSH, 12);
-    lineSetRecalculateChecksum(&line, true);
+    sbufSetRecalculateChecksum(unrelated, true);
     require(! smugglefintrickUpStreamPayload(t, &line, unrelated),
             "unrelated packet was consumed while testing checksum isolation");
     ipmanipulatorUpStreamPayload(t, &line, unrelated);
-    require(! lineGetRecalculateChecksum(&line), "unrelated writer did not clear packet-line checksum scratch");
+    require(replayed_upstream_checksum_intents[0], "unrelated writer lost its own checksum request");
 
     sbuf_t *second = makeTcpPacket(0, 0x0A000001, 12345, 0xC0000201, 443, 110, 200, TCP_ACK | TCP_PSH, 7);
     require(smugglefintrickUpStreamPayload(t, &line, second), "second checksum fixture packet was not held");
 
     ipmanipulator_tstate_t *state = tunnelGetState(t);
     require(findPausedFixtureFlow(state)->queued_packets_count == 2, "checksum fixture queue count is wrong");
-    require(findPausedFixtureFlow(state)->queued_packets[0].recalculate_checksum,
+    require(sbufGetRecalculateChecksum(findPausedFixtureFlow(state)->queued_packets[0].buf),
             "queued true checksum intent was lost");
-    require(! findPausedFixtureFlow(state)->queued_packets[1].recalculate_checksum,
+    require(! sbufGetRecalculateChecksum(findPausedFixtureFlow(state)->queued_packets[1].buf),
             "queued false checksum intent inherited stale state");
 
     runTimedMessage(0);
@@ -712,11 +710,10 @@ static void testQueueCapForcesRelease(void)
             "paused-flow queue exceeded its configured cap");
 
     sbuf_t *overflow = makeTcpPacket(0, 0x0A000001, 12345, 0xC0000201, 443, 500, 200, TCP_ACK | TCP_PSH, 1);
-    lineSetRecalculateChecksum(&line, true);
+    sbufSetRecalculateChecksum(overflow, true);
     require(! smugglefintrickUpStreamPayload(t, &line, overflow), "queue overflow packet was not released");
-    require(lineGetRecalculateChecksum(&line), "queue-cap replay erased the current packet's checksum intent");
+    require(sbufGetRecalculateChecksum(overflow), "queue-cap replay erased the current packet's checksum intent");
     lineReuseBuffer(&line, overflow);
-    lineSetRecalculateChecksum(&line, false);
 
     require(! findPausedFixtureFlow(state)->paused, "queue cap left the flow paused");
     require(findPausedFixtureFlow(state)->queued_packets_count == 0, "queue cap left packets allocated");
@@ -774,13 +771,11 @@ static void testCrossWorkerReversePacketQueuesOnOwner(void)
 
     testWorkerBindWID(1);
     sbuf_t *reverse = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_ACK | TCP_PSH, 8);
-    lineSetRecalculateChecksum(&foreign_line, true);
+    sbufSetRecalculateChecksum(reverse, true);
     require(smugglefintrickDownStreamPayload(t, &foreign_line, reverse),
             "cross-worker reverse packet was not consumed for handoff");
     require(immediate_message_count == 1, "cross-worker reverse packet did not schedule one handoff");
     require(immediate_messages[0].wid == 0, "cross-worker reverse handoff targeted the wrong worker");
-    require(! lineGetRecalculateChecksum(&foreign_line),
-            "successful cross-worker handoff left checksum intent on the source line");
 
     ipmanipulator_tstate_t *state = tunnelGetState(t);
     require(findPausedFixtureFlow(state)->queued_packets_count == 1,
@@ -792,7 +787,7 @@ static void testCrossWorkerReversePacketQueuesOnOwner(void)
     require(findPausedFixtureFlow(state)->queued_packets[1].direction ==
                 kIpManipulatorSmuggleFinQueueDirectionDownstream,
             "cross-worker reverse packet kept the wrong queue direction");
-    require(findPausedFixtureFlow(state)->queued_packets[1].recalculate_checksum,
+    require(sbufGetRecalculateChecksum(findPausedFixtureFlow(state)->queued_packets[1].buf),
             "cross-worker reverse packet lost its checksum intent");
 
     runTimedMessage(0);
@@ -872,10 +867,10 @@ static void testCrossWorkerCompositionRestoresProtocolAndPortghostOnce(void)
     require(wire_packet != NULL, "composition fixture could not find a cross-worker transformed tuple");
     initializeLine(&owner_line, owner_wid);
     initializeLine(&source_line, source_wid);
-    lineSetRecalculateChecksum(&source_line, true);
+    sbufSetRecalculateChecksum(wire_packet, true);
 
     testWorkerBindWID(owner_wid);
-    startPausedFlowForTuple(t, &owner_line, 0x0A000001, client_port, 0xC0000201, 443);
+    startPausedFlowForTuple(t, &owner_line, 0x0A000001, client_port, 0xC0000201, 443, false);
 
     testWorkerBindWID(source_wid);
     require(IPH_PROTO((const struct ip_hdr *) sbufGetRawPtr(wire_packet)) != IPPROTO_TCP,
@@ -975,11 +970,10 @@ static void testRejectedCrossWorkerHandoffLeavesPacketWithCaller(void)
     testWorkerBindWID(1);
     reject_immediate_messages = true;
     sbuf_t *reverse           = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_ACK | TCP_PSH, 8);
-    lineSetRecalculateChecksum(&foreign_line, true);
+    sbufSetRecalculateChecksum(reverse, true);
     require(! smugglefintrickDownStreamPayload(t, &foreign_line, reverse),
             "rejected cross-worker handoff consumed the source packet");
-    require(lineGetRecalculateChecksum(&foreign_line),
-            "rejected cross-worker handoff cleared the source checksum intent");
+    require(sbufGetRecalculateChecksum(reverse), "rejected cross-worker handoff cleared the source checksum intent");
     require(atomicLoadU32Relaxed(&owner_line.refc) == 2,
             "rejected cross-worker handoff leaked the owner-line reference");
 

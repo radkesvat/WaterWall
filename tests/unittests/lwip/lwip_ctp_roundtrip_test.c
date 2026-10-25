@@ -4,6 +4,8 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: chooseRemotePort
+ * Checksum cases: mixed requested/unrequested return packets traverse CTP's forced byte-message queue;
+ * corrupted requested IPv4/transport checksums must be repaired for the existing TCP/UDP echo assertions.
  * Checks: Exact return/byte/order and resource-count oracles in the explicit case bodies.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
@@ -44,6 +46,7 @@ static unsigned          reserved_count[2];
 static unsigned          udp_length_received[2];
 static bool              udp_length_started[2];
 static uint64_t          udp_length_generation[2];
+static unsigned          return_packets[2][2], requested_returns[2][2];
 
 void __real_nodemanagerQuiesceWorker(wid_t, const ww_lifecycle_context_t *);
 void __wrap_nodemanagerQuiesceWorker(wid_t, const ww_lifecycle_context_t *);
@@ -262,6 +265,19 @@ static void wireUp(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void wireDown(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     CHECK(wwLwipEngineCurrent() == NULL);
+    const wid_t    wid    = lineGetWID(l);
+    uint8_t       *packet = sbufGetMutablePtr(buf);
+    const unsigned proto  = packet[9] == IP_PROTO_TCP ? 0 : 1;
+    CHECK(! sbufGetRecalculateChecksum(buf));
+    ++return_packets[wid][proto];
+    if (GET_BE16(packet + 22) == local_ports[0][proto])
+    {
+        packet[10] ^= 1;
+        packet[proto == 0 ? 36 : 26] ^= 1;
+        CHECK(inet_chksum(packet, 20) != 0);
+        sbufSetRecalculateChecksum(buf, true);
+        ++requested_returns[wid][proto];
+    }
     tunnelPrevDownStreamPayload(t, l, buf);
 }
 static uint16_t chooseRemotePort(unsigned proto, uint16_t local)
@@ -436,6 +452,12 @@ int main(void)
     workerPerformQuiesce(getWorker(0), wwLifecycleProcessShutdown());
     CHECK(workerWaitForPhase(getWorker(1), kWorkerLifecycleQuiesced, 5000));
     CHECK(routed_other[0] > 0 && routed_other[1] > 0);
+    for (unsigned proto = 0; proto < 2; ++proto)
+    {
+        const unsigned requested = requested_returns[0][proto] + requested_returns[1][proto];
+        const unsigned returned  = return_packets[0][proto] + return_packets[1][proto];
+        CHECK(requested > 0 && returned > requested);
+    }
     CHECK(local_ports[0][0] != local_ports[1][0] && local_ports[0][1] != local_ports[1][1]);
     ctp->onQuiesceWait(ctp, wwLifecycleProcessShutdown());
     ptc->onQuiesceWait(ptc, wwLifecycleProcessShutdown());

@@ -89,7 +89,7 @@
   add_library(mismatched_abi_node_library SHARED ${WATERWALL_UNIT_SOURCE_ROOT}/core/legacy_node_library.c)
   target_compile_definitions(
     mismatched_abi_node_library
-    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=5
+    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=6
   )
   set_target_properties(mismatched_abi_node_library PROPERTIES PREFIX "")
   add_library(external_node_abi_v3_library SHARED ${WATERWALL_UNIT_SOURCE_ROOT}/core/lifecycle_v2_node_library.c)

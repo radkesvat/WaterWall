@@ -18,14 +18,19 @@
 
 static uint32_t g_raw_write_count;
 static uint32_t g_capture_forward_count;
+static bool     g_written_checksum_requested;
+static uint16_t g_written_header_checksum;
+static uint16_t g_written_header_residual;
 
 bool __wrap_rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf);
 
 bool __wrap_rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
 {
     discard rdev;
-    discard buf;
     ++g_raw_write_count;
+    g_written_checksum_requested = sbufGetRecalculateChecksum(buf);
+    g_written_header_checksum    = GET_BE16((const uint8_t *) sbufGetRawPtr(buf) + 10);
+    g_written_header_residual    = inet_chksum(sbufGetRawPtr(buf), IP_HLEN);
 
     /* Refuse ownership so the production boundary recycles through the ledger. */
     return false;
@@ -69,8 +74,7 @@ static sbuf_t *makeIpv4(buffer_pool_t *pool, uint32_t length)
 static void requireOutputDropped(tunnel_t *t, line_t *line, sbuf_t *buf, const char *message)
 {
     twfBufferLedgerReset();
-    g_raw_write_count          = 0;
-    line->recalculate_checksum = false;
+    g_raw_write_count = 0;
     rawsocketWriteStreamPayload(t, line, buf);
     twfRequireEqualU32(g_raw_write_count, 0, message);
     twfRequireEqualU32(g_twf_buffers.total_recycled, 1, "RawSocket did not recycle invalid output exactly once");
@@ -79,8 +83,7 @@ static void requireOutputDropped(tunnel_t *t, line_t *line, sbuf_t *buf, const c
 static void requireOutputOffered(tunnel_t *t, line_t *line, sbuf_t *buf, const char *message)
 {
     twfBufferLedgerReset();
-    g_raw_write_count          = 0;
-    line->recalculate_checksum = false;
+    g_raw_write_count = 0;
     rawsocketWriteStreamPayload(t, line, buf);
     twfRequireEqualU32(g_raw_write_count, 1, message);
     twfRequireEqualU32(g_twf_buffers.total_recycled, 1, "RawSocket did not recycle a refused valid output once");
@@ -155,6 +158,24 @@ int main(void)
     IPH_VHL_SET((struct ip_hdr *) (void *) sbufGetMutablePtr(packet), 4, IP_HLEN / 4);
     IPH_LEN_SET((struct ip_hdr *) (void *) sbufGetMutablePtr(packet), lwip_htons(IP_HLEN));
     requireOutputOffered(t, line, packet, "misaligned valid IPv4 output was rejected");
+
+    twfSetCase("RawSocket repairs only the marked packet's checksums");
+    packet = makeIpv4(pool, IP_HLEN);
+    PUT_BE16(sbufGetMutablePtr(packet) + 10, 0x1234);
+    sbufSetRecalculateChecksum(packet, true);
+    requireOutputOffered(t, line, packet, "marked IPv4 output was rejected");
+    twfRequire(! g_written_checksum_requested && g_written_header_residual == 0,
+               "RawSocket did not finish the marked packet's checksum request");
+
+    packet = makeIpv4(pool, IP_HLEN + 1U);
+    IPH_LEN_SET((struct ip_hdr *) (void *) sbufGetMutablePtr(packet), lwip_htons(IP_HLEN));
+    sbufSetRecalculateChecksum(packet, true);
+    requireOutputDropped(t, line, packet, "marked output with trailing bytes reached the writer");
+    packet = makeIpv4(pool, IP_HLEN);
+    PUT_BE16(sbufGetMutablePtr(packet) + 10, 0x1234);
+    requireOutputOffered(t, line, packet, "unmarked packet after a marked drop was rejected");
+    twfRequire(! g_written_checksum_requested && g_written_header_checksum == 0x1234 && g_written_header_residual != 0,
+               "a marked drop changed the next intentionally invalid unmarked checksum");
 
     twfSetCase("RawSocket ingress validates before dispatch");
     requireIngressDropped(&capture, t, pool, makeRawLength(pool, 1), "short ingress was dispatched");

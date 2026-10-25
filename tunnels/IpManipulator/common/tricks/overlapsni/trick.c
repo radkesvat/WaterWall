@@ -723,7 +723,7 @@ static bool overlapsnitrickSendUpstreamDirect(tunnel_t *t, line_t *l, sbuf_t *bu
         return false;
     }
 
-    lineSetRecalculateChecksum(l, true);
+    sbufSetRecalculateChecksum(buf, true);
     ipmanipulatorEmitUpstream(t, l, buf, tunnelNextUpStreamPayload);
     return lineIsAlive(l);
 }

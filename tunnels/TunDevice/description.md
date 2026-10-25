@@ -20,7 +20,7 @@ its own MTU; other node overrides do not change it. An invalid inherited core
 - Brings the device up.
 - Reads packets from the device and forwards them to the adjacent chain side.
 - Writes packets received from the chain back into the device.
-- Recalculates checksums before writing when the line requests it.
+- Recalculates checksums before writing when the packet buffer requests it.
 
 Because it is a packet adapter, this node does not create per-connection lines. It uses worker packet lines provided by the chain.
 
@@ -346,7 +346,7 @@ When payload reaches `TunDevice` from upstream or downstream:
 - the complete packet is structurally validated as exact IPv4, even when no
   checksum recalculation was requested; trailing bytes and malformed or
   truncated packets are dropped
-- checksum recalculation is performed if the line requests it
+- checksum recalculation is performed if the packet buffer requests it
 - the packet is written to the TUN device only if requested checksum recalculation succeeds; malformed or truncated
   packets that cannot be recalculated are dropped with a rate-limited warning
 
@@ -405,9 +405,9 @@ remain fixed until destroy.
 
 ### Checksum behavior
 
-Before writing a packet, `TunDevice` checks line flags:
+Before writing a packet, `TunDevice` checks the packet buffer request:
 
-- if `recalculate_checksum` is set, the packet checksum is recomputed
+- if `sbufGetRecalculateChecksum(buf)` is true, the packet checksum is recomputed
 - full packet checksum recalculation is attempted
 - for fragmented IPv4 packets, transport checksum recalculation is skipped automatically and only the IP header checksum is recomputed
 - if the requested calculation cannot validate the available packet structure, the request flag is cleared and the

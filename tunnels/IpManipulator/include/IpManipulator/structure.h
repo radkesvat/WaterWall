@@ -381,7 +381,6 @@ typedef struct ipmanipulator_smuggle_fin_queued_packet_s
 {
     sbuf_t                                     *buf;
     ipmanipulator_smuggle_fin_queue_direction_e direction;
-    bool                                        recalculate_checksum;
 } ipmanipulator_smuggle_fin_queued_packet_t;
 
 typedef struct ipmanipulator_smuggle_fin_flow_s

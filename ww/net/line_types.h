@@ -65,7 +65,6 @@ typedef struct line_s
     line_user_auth_t  user_auths[kLineMaxUsers];
     uint8_t           user_count;
     uint8_t           established : 1;
-    uint8_t           recalculate_checksum : 1; // used for packet tunnels
     uint8_t           prefer_ordinary_read_u : 1;
     uint8_t           prefer_ordinary_read_d : 1;
     uint8_t           fallback_mode : 1;

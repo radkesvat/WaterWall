@@ -60,14 +60,13 @@ bool packettunnelLifecycleAnchorBind(tunnel_t *t);
 void packettunnelLifecycleAnchorPublish(tunnel_t *t, line_t *packet_line, sbuf_t *buf);
 
 /**
- * @brief Consume a packet line's checksum-recalculation request and perform it.
+ * @brief Consume an ordinary packet buffer's checksum-recalculation request and perform it.
  *
  * The request is cleared before the attempt rather than after a successful one.
- * A worker's packet line is persistent, so a refusal that left the flag set
- * would make the next, unrelated packet on that line be recalculated too.
+ * This terminal boundary discards packets when repair is refused. Transforms
+ * that can decline and forward unchanged must preserve intent on refusal.
  *
- * @param line Packet line carrying the request.
- * @param buf Packet the request applies to; the caller keeps ownership either way.
+ * @param buf Ordinary packet carrying the request; the caller keeps ownership either way.
  * Structural IPv4 validation is unconditional, including when no checksum work
  * was requested. The IPv4 total length must exactly match the sbuf length.
  *
@@ -75,16 +74,15 @@ void packettunnelLifecycleAnchorPublish(tunnel_t *t, line_t *packet_line, sbuf_t
  *         requested or recalculation succeeded. false for malformed input,
  *         IPv6, trailing bytes, or a recalculation failure.
  */
-bool packettunnelConsumeChecksumRequest(line_t *line, sbuf_t *buf);
+bool packettunnelConsumeChecksumRequest(sbuf_t *buf);
 
 /**
- * Take and clear the one-packet checksum request carried by a packet line.
+ * Take and clear the checksum request carried by an ordinary packet buffer.
  *
- * This operation must happen at callback entry, before any path can reject the
- * packet. Packet lines are persistent worker-local objects, so leaving the bit
- * set would apply one packet's request to unrelated traffic.
+ * The returned intent may accompany a byte copy owned by the caller. It is a
+ * repair request, not checksum assurance or hardware offload metadata.
  */
-bool packettunnelTakeChecksumRequest(line_t *line);
+bool packettunnelTakeChecksumRequest(sbuf_t *buf);
 
 /**
  * Validate normalized mutable IPv4 bytes and apply a previously taken request.

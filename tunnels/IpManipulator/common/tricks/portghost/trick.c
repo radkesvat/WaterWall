@@ -294,6 +294,7 @@ bool portghosttrickApply(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
 
 bool portghosttrickRestore(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
 {
+    discard                 l;
     ipmanipulator_tstate_t *state    = tunnelGetState(t);
     sbuf_t                 *buf      = *buf_ptr;
     uint32_t                tail_len = portghosttrickGetTailLength(state);
@@ -458,6 +459,6 @@ bool portghosttrickRestore(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
 
     IPH_LEN_SET(ipheader, lwip_htons((uint16_t) (ip_total_len - tail_len)));
     sbufSetLength(buf, (uint16_t) (ip_total_len - tail_len));
-    lineSetRecalculateChecksum(l, true);
+    sbufSetRecalculateChecksum(buf, true);
     return true;
 }

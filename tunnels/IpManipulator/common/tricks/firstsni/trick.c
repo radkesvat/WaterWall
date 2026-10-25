@@ -565,10 +565,8 @@ static void firstsnitrickSendOriginalPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     /*
-        Packet lines are shared worker state, so delayed sends cannot rely on the
-        current recalculate_checksum scratch flag still belonging to this packet.
-        Recomputing here is safe for the original packet and preserves correctness
-        if earlier tricks in the same pass already changed it.
+        Replay explicitly requests fresh repair of the original packet, including
+        any edits made by earlier tricks before it was retained.
     */
     ipmanipulatorSendUpstreamMaybeSegmented(t, l, buf);
 }

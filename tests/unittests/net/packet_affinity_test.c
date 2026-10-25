@@ -21,7 +21,11 @@ typedef struct affinity_fixture_s
     unsigned           delivered;
     wid_t              last_wid;
     bool               requested;
+    bool               requests[8];
     uint16_t           fragments[8];
+    sbuf_t            *retained;
+    sbuf_t            *nested;
+    bool               check_fragment_checksum;
 } affinity_fixture_t;
 
 static void receivePacket(tunnel_t *t, line_t *line, sbuf_t *buf)
@@ -29,9 +33,30 @@ static void receivePacket(tunnel_t *t, line_t *line, sbuf_t *buf)
     affinity_fixture_t *fixture = *(affinity_fixture_t **) tunnelGetState(t);
     twfRequire(lineIsOnCurrentWorker(line), "decoded packet ran on another line's worker");
     twfRequire(fixture->delivered < 8, "too many decoded packets");
-    fixture->fragments[fixture->delivered++] = GET_BE16((const uint8_t *) sbufGetRawPtr(buf) + 6);
+    const unsigned index                     = fixture->delivered++;
+    fixture->fragments[index]                = GET_BE16((const uint8_t *) sbufGetRawPtr(buf) + 6);
     fixture->last_wid                        = lineGetWID(line);
-    fixture->requested                       = packettunnelTakeChecksumRequest(line);
+    fixture->requested                       = packettunnelTakeChecksumRequest(buf);
+    fixture->requests[index]                 = fixture->requested;
+    if (fixture->check_fragment_checksum)
+    {
+        const uint8_t *bytes = sbufGetRawPtr(buf);
+        uint32_t       sum   = 0;
+        for (unsigned i = 0; i < 20; i += 2)
+            sum += GET_BE16(bytes + i);
+        while (sum >> 16)
+            sum = (sum & UINT32_C(0xffff)) + (sum >> 16);
+        twfRequire(sum == UINT32_C(0xffff), "staged fragment reached delivery without header repair");
+    }
+    if (fixture->retained != NULL)
+        twfRequire(sbufGetRecalculateChecksum(fixture->retained), "another packet consumed retained intent");
+    if (fixture->nested != NULL)
+    {
+        sbuf_t *nested  = fixture->nested;
+        fixture->nested = NULL;
+        packetAffinityForward(fixture->affinity, line, nested);
+        twfRequire(! sbufGetRecalculateChecksum(buf), "nested delivery resurrected consumed intent");
+    }
     lineReuseBuffer(line, buf);
 }
 
@@ -103,9 +128,9 @@ static void caseWorkerSelection(void)
     setup(&fixture, 4);
     for (uint8_t protocol = 6; protocol <= 17; protocol += 11)
     {
-        lineSetRecalculateChecksum(fixture.lines[0], true);
-        packetAffinityForward(fixture.affinity, fixture.lines[0], makePacket(protocol, 2, false, false));
-        twfRequire(! lineGetRecalculateChecksum(fixture.lines[0]), "handoff left checksum request on source");
+        sbuf_t *packet = makePacket(protocol, 2, false, false);
+        sbufSetRecalculateChecksum(packet, true);
+        packetAffinityForward(fixture.affinity, fixture.lines[0], packet);
         const unsigned before = fixture.delivered;
         tosPumpWorker(&fixture.env, 2);
         twfRequire(fixture.delivered == before + 1 && fixture.last_wid == 2 && fixture.requested,
@@ -127,15 +152,23 @@ static void caseFragmentFlow(void)
 {
     affinity_fixture_t fixture;
     setup(&fixture, 4);
-    packetAffinityForward(fixture.affinity, fixture.lines[0], makePacket(17, 2, true, true));
+    fixture.check_fragment_checksum = true;
+    sbuf_t *tail                    = makePacket(17, 2, true, true);
+    ((uint8_t *) sbufGetMutablePtr(tail))[10] ^= 0xff;
+    sbufSetRecalculateChecksum(tail, true);
+    packetAffinityForward(fixture.affinity, fixture.lines[0], tail);
     twfRequire(fixture.delivered == 0 && g_twf_buffers.live_count == 1, "tail was not staged pending ports");
     testWorkerBindWID(1);
-    packetAffinityForward(fixture.affinity, fixture.lines[1], makePacket(17, 2, true, false));
+    sbuf_t *head = makePacket(17, 2, true, false);
+    ((uint8_t *) sbufGetMutablePtr(head))[10] ^= 0xff;
+    sbufSetRecalculateChecksum(head, true);
+    packetAffinityForward(fixture.affinity, fixture.lines[1], head);
     twfRequire(fixture.delivered == 0, "fragments ran on a reader instead of the flow owner");
     tosPumpWorker(&fixture.env, 2);
     twfRequire(fixture.delivered == 2 && fixture.last_wid == 2 && fixture.fragments[0] == 2 &&
                    fixture.fragments[1] == 0x2000,
                "fragment handoff changed affinity, boundaries or release order");
+    twfRequire(! fixture.requests[0] && ! fixture.requests[1], "fragment staging did not settle repair requests");
     packetAffinityForward(fixture.affinity, fixture.lines[1], makePacket(17, 2, false, false));
     tosPumpWorker(&fixture.env, 2);
     twfRequire(fixture.delivered == 3 && fixture.last_wid == 2, "complete flow and fragments split workers");
@@ -149,7 +182,9 @@ static void caseSettlement(unsigned mode)
     setup(&fixture, 4);
     if (mode == 0)
         workerMessagesCloseAdmission(&fixture.env.workers[2]);
-    packetAffinityForward(fixture.affinity, fixture.lines[0], makePacket(6, 2, false, false));
+    sbuf_t *packet = makePacket(6, 2, false, false);
+    sbufSetRecalculateChecksum(packet, true);
+    packetAffinityForward(fixture.affinity, fixture.lines[0], packet);
     if (mode == 1)
     {
         /* Admission closes before execution; cleanup runs on a foreign thread
@@ -172,9 +207,33 @@ static void caseSingleWorker(void)
 {
     affinity_fixture_t fixture;
     setup(&fixture, 1);
-    lineSetRecalculateChecksum(fixture.lines[0], true);
-    packetAffinityForward(fixture.affinity, fixture.lines[0], makePacket(6, 0, false, false));
+    sbuf_t *packet = makePacket(6, 0, false, false);
+    sbufSetRecalculateChecksum(packet, true);
+    packetAffinityForward(fixture.affinity, fixture.lines[0], packet);
     twfRequire(fixture.delivered == 1 && fixture.requested, "single-worker fast path changed checksum metadata");
+    packetAffinityForward(fixture.affinity, fixture.lines[0], makePacket(6, 0, false, false));
+    twfRequire(fixture.delivered == 2 && ! fixture.requested, "single-worker packet inherited a request");
+    teardown(&fixture);
+}
+
+static void caseIndependentPackets(bool queued)
+{
+    affinity_fixture_t fixture;
+    setup(&fixture, 4);
+    fixture.retained = makePacket(17, 0, false, false);
+    sbufSetRecalculateChecksum(fixture.retained, true);
+    fixture.nested = makePacket(17, queued ? 2 : 0, false, false);
+    sbuf_t *marked = makePacket(17, queued ? 2 : 0, false, false);
+    sbufSetRecalculateChecksum(marked, true);
+    packetAffinityForward(fixture.affinity, fixture.lines[0], marked);
+    packetAffinityForward(fixture.affinity, fixture.lines[0], makePacket(17, queued ? 2 : 0, false, false));
+    if (queued)
+        tosPumpWorker(&fixture.env, 2);
+    twfRequire(fixture.delivered == 3 && fixture.requests[0] && ! fixture.requests[1] && ! fixture.requests[2],
+               "mixed or nested packets changed independent checksum requests");
+    twfRequire(sbufGetRecalculateChecksum(fixture.retained), "delivery changed a retained packet");
+    sbufDestroy(fixture.retained);
+    fixture.retained = NULL;
     teardown(&fixture);
 }
 
@@ -191,5 +250,8 @@ int main(void)
     }
     testCaseSet("packet affinity one worker");
     caseSingleWorker();
+    testCaseSet("packet affinity independent intent and nested delivery");
+    caseIndependentPackets(false);
+    caseIndependentPackets(true);
     return 0;
 }

@@ -359,7 +359,7 @@ static bool echsnitrickSendUpstreamDirect(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    lineSetRecalculateChecksum(l, true);
+    sbufSetRecalculateChecksum(buf, true);
     ipmanipulatorEmitUpstream(t, l, buf, tunnelNextUpStreamPayload);
     return lineIsAlive(l);
 }

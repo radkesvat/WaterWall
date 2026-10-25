@@ -116,7 +116,7 @@ static void capturePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     capture_t *capture = &fixture.captures[fixture.capture_count++];
     *capture           = (capture_t) {.wid                = lineGetWID(l),
                                       .upstream           = t == fixture.next,
-                                      .checksum_requested = packettunnelTakeChecksumRequest(l),
+                                      .checksum_requested = packettunnelTakeChecksumRequest(buf),
                                       .length             = sbufGetLength(buf)};
     memoryCopy(capture->bytes, sbufGetRawPtr(buf), capture->length);
     lineReuseBuffer(l, buf);
@@ -279,7 +279,7 @@ static void encodePacket(sbuf_t **buf, wid_t source, bool ghost)
     if (ghost)
     {
         require(portghosttrickApply(fixture.tunnel, line, buf), "portghost fixture encoding failed");
-        lineSetRecalculateChecksum(line, true);
+        sbufSetRecalculateChecksum(*buf, true);
     }
     require(protoswapApply(fixture.tunnel, line, *buf), "protocol fixture encoding failed");
 }
@@ -350,6 +350,32 @@ static void testSameAndSingleWorker(void)
     }
 }
 
+static void testMixedChecksumRequests(void)
+{
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        fixtureSetup(mode == 0 ? 1 : kWorkers);
+        for (unsigned requested = 0; requested < 2; ++requested)
+        {
+            sbuf_t *buf    = makePacket(IPPROTO_TCP, 12345, false);
+            wid_t   target = flowWorker(buf);
+            wid_t   source = mode == 2 ? (wid_t) ((target + 1) % kWorkers) : target;
+            encodePacket(&buf, source, false);
+            sbufSetRecalculateChecksum(buf, requested != 0);
+            submit(buf, source, false);
+        }
+        if (mode == 2)
+        {
+            require(fixture.capture_count == 0, "foreign checksum fixture ran before handoff");
+            runMessages();
+        }
+        require(fixture.capture_count == 2 && ! fixture.captures[0].checksum_requested &&
+                    fixture.captures[1].checksum_requested,
+                "decoded mixed packets lost their independent requests");
+        fixtureTeardown();
+    }
+}
+
 static void testRestorationBeforeStatefulWork(void)
 {
     fixtureSetup(kWorkers);
@@ -363,7 +389,6 @@ static void testRestorationBeforeStatefulWork(void)
     encodePacket(&buf, source, true);
     submit(buf, source, false);
     require(fixture.stateful_calls == 0, "stateful processing preceded worker handoff");
-    require(! lineGetRecalculateChecksum(packetLine(source)), "handoff left its checksum request on source line");
     runMessages();
     require(fixture.stateful_calls == 1 && fixture.stateful_wid == target, "stateful processing used opaque owner");
     require(fixture.capture_count == 1 && fixture.captures[0].length == kPacketSize &&
@@ -479,6 +504,7 @@ int main(void)
     checkSumInit();
     testDecodedTuples();
     testSameAndSingleWorker();
+    testMixedChecksumRequests();
     testRestorationBeforeStatefulWork();
     testEncodingStaysLocal();
     testFragmentsUseRestoredFlow();

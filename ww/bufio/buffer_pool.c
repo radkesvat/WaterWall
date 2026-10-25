@@ -723,6 +723,7 @@ sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
 
     sbufSetLength(bnew, source_length);
     sbufWriteBuf(bnew, b, source_length);
+    sbufSetRecalculateChecksum(bnew, sbufGetRecalculateChecksum(b));
     return bnew;
 }
 

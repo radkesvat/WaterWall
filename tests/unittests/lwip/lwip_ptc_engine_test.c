@@ -3,6 +3,9 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Checks: Exact return/byte/order and resource-count oracles in the explicit case bodies.
+ * Checksum cases: complete shifted TCP/UDP requests cross PTC's alignment replacement;
+ * the ordinary variant requires repaired bytes for stack acceptance, while trusted receive
+ * exercises the same explicit requests alongside existing unrequested partial input.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.lwip_ptc_engine_unit; waterwall.lwip_ptc_trusted_engine_unit
@@ -46,6 +49,7 @@ typedef struct probe_s
     unsigned udp_length_init[2][kUdpLengthInputs];
     unsigned udp_length_payload[2][kUdpLengthInputs];
     unsigned udp_length_next[2];
+    unsigned requested_alignment_copies[2];
 } probe_t;
 static fixture_t         fixtures[2];
 static probe_t           probes[2];
@@ -174,6 +178,29 @@ static void inject(fixture_t *f, line_t *line, sbuf_t *buf)
     CHECK(calcFullPacketChecksum(raw, sbufGetLength(buf)));
     f->prev->fnPayloadU(f->prev, line, buf);
 }
+
+static void shiftedRequestedInput(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    const uint32_t length = sbufGetLength(buf);
+    const uint8_t *bytes  = sbufGetRawPtr(buf);
+    const unsigned proto  = bytes[9] == IP_PROTO_TCP ? 0 : 1;
+    probe_t       *probe  = &probes[lineGetWID(line)];
+    sbuf_t        *copy   = sbufCreate(length + 1);
+    sbufSetLength(copy, length + 1);
+    sbufShiftRight(copy, 1);
+    uint8_t *shifted = sbufGetMutablePtr(copy);
+    memcpy(shifted, bytes, length);
+    shifted[10] ^= 1;
+    shifted[proto == 0 ? 36 : 26] ^= 1;
+    CHECK(inet_chksum(shifted, 20) != 0);
+    CHECK(((uintptr_t) shifted % MEM_ALIGNMENT) != 0);
+    sbufSetRecalculateChecksum(copy, true);
+    ++probe->requested_alignment_copies[proto];
+    if (probe->tcp_input[1] == buf)
+        probe->tcp_input[1] = NULL;
+    lineReuseBuffer(line, buf);
+    ptcTunnelUpStreamPayload(t, line, copy);
+}
 static void emit(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     CHECK(wwLwipEngineCurrent() == NULL);
@@ -227,6 +254,7 @@ static void opened(tunnel_t *t, line_t *line)
 static void payload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     CHECK(wwLwipEngineCurrent() == NULL);
+    CHECK(! sbufGetRecalculateChecksum(buf));
     const unsigned port = lineGetDestinationAddressContext(line)->port;
     if (port >= kUdpLengthFirstPort && port < kUdpLengthFirstPort + kUdpLengthInputs)
     {
@@ -318,6 +346,7 @@ static void finishTimer(wtimer_t *timer)
     wid_t    wid = getLoopWorkerWID(weventGetLoop(timer));
     probe_t *p   = &probes[wid];
     CHECK(p->tcp == 2 && p->udp == 2 && p->init == 4);
+    CHECK(p->requested_alignment_copies[0] > 0 && p->requested_alignment_copies[1] > 0);
     for (unsigned fixture = 0; fixture < 2; ++fixture)
     {
         for (unsigned input = 0; input < kUdpLengthInputs; ++input)
@@ -528,6 +557,8 @@ int main(void)
         nodes[i].node_settings_json = cJSON_Parse("{\"fake-dns\":{\"cache-size\":2,\"ttl\":0}}");
         f->ptc                      = ptcTunnelCreate(&nodes[i]);
         CHECK(f->ptc);
+        if (i == 1)
+            f->ptc->fnPayloadU = shiftedRequestedInput;
         cJSON_Delete(nodes[i].node_settings_json);
         nodes[i].node_settings_json = NULL;
         node_t rewrite_node         = {.node_settings_json =

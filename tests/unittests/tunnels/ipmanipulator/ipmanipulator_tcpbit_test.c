@@ -124,7 +124,7 @@ static void testDownstreamCanClearCwr(void)
 
     require(buf != NULL, "packet was unexpectedly dropped");
     require(getAllTcpFlags(buf) == expected_flags, "downstream CWR action did not clear CWR");
-    require(! lineGetRecalculateChecksum(&line), "downstream simple CWR change modified recalculate_checksum flag");
+    require(! sbufGetRecalculateChecksum(buf), "downstream simple CWR change modified recalculate_checksum flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), sbufGetLength(buf)),
             "downstream CWR cleared packet mismatch with oracle");
 
@@ -149,7 +149,7 @@ static void testDownstreamCanCopyPacketCwr(void)
 
     require(buf != NULL, "packet was unexpectedly dropped");
     require(getAllTcpFlags(buf) == expected_flags, "downstream packet->cwr action did not see CWR");
-    require(! lineGetRecalculateChecksum(&line), "downstream packet->cwr change modified recalculate_checksum flag");
+    require(! sbufGetRecalculateChecksum(buf), "downstream packet->cwr change modified recalculate_checksum flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), sbufGetLength(buf)),
             "downstream copy CWR packet mismatch with oracle");
 
@@ -174,7 +174,7 @@ static void testPreservedBitflagsCanClearCwrEceOnRestore(void)
     require(buf != NULL, "packet was unexpectedly dropped");
     require(getAllTcpFlags(buf) == TCP_ACK, "preserved bitflags restore did not clear CWR/ECE");
     require(sbufGetLength(buf) == original_len - 1U, "preserved bitflags byte was not removed");
-    require(lineGetRecalculateChecksum(&line), "preserved bitflags restore did not request checksum recalculation");
+    require(sbufGetRecalculateChecksum(buf), "preserved bitflags restore did not request checksum recalculation");
 
     require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
             "full recalculation failed after restore");
@@ -201,7 +201,7 @@ static void testPreservedBitflagsAppend(void)
 
     require(buf != NULL, "packet was unexpectedly dropped");
     require(getAllTcpFlags(buf) == 0, "preserve append did not clear SYN bit");
-    require(lineGetRecalculateChecksum(&line), "preserve append did not request checksum recalculation");
+    require(sbufGetRecalculateChecksum(buf), "preserve append did not request checksum recalculation");
 
     uint8_t *raw = sbufGetMutablePtr(buf);
     uint16_t len = (uint16_t) sbufGetLength(buf);
@@ -219,14 +219,14 @@ static void testSimpleTcpFlagPreExistingFlagPreserved(void)
     line_t                  line  = {0};
     sbuf_t                 *buf   = createTcpPacket(TCP_ACK, 0, false);
 
-    lineSetRecalculateChecksum(&line, true);
+    sbufSetRecalculateChecksum(buf, true);
     state->up_tcp_bit_psh_action = kDvsOn;
 
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
 
     require(buf != NULL, "packet was unexpectedly dropped");
     require(getAllTcpFlags(buf) == (TCP_ACK | TCP_PSH), "simple flag change failed");
-    require(lineGetRecalculateChecksum(&line), "pre-existing recalculate_checksum flag was cleared");
+    require(sbufGetRecalculateChecksum(buf), "pre-existing recalculate_checksum flag was cleared");
 
     require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)), "full recalculation failed");
     sbuf_t *oracle = createTcpPacket(TCP_ACK | TCP_PSH, 0, false);
@@ -259,7 +259,7 @@ static void testPreserveRejectsForgedIpv4TotalLength(void)
     require(append_buf != NULL, "forged append packet was unexpectedly consumed");
     require(sbufGetLength(append_buf) == append_len, "forged append packet length changed");
     require(memoryEqual(sbufGetRawPtr(append_buf), append_before, append_len), "forged append packet bytes changed");
-    require(! lineGetRecalculateChecksum(&line), "forged append packet requested checksum recalculation");
+    require(! sbufGetRecalculateChecksum(append_buf), "forged append packet requested checksum recalculation");
     sbufDestroy(append_buf);
 
     sbuf_t *restore_buf = createTcpPacket(0, TCP_SYN, true);
@@ -275,7 +275,7 @@ static void testPreserveRejectsForgedIpv4TotalLength(void)
     require(sbufGetLength(restore_buf) == restore_len, "forged restore packet length changed");
     require(memoryEqual(sbufGetRawPtr(restore_buf), restore_before, restore_len),
             "forged restore packet bytes changed");
-    require(! lineGetRecalculateChecksum(&line), "forged restore packet requested checksum recalculation");
+    require(! sbufGetRecalculateChecksum(restore_buf), "forged restore packet requested checksum recalculation");
     sbufDestroy(restore_buf);
 
     destroyTestTunnel(t);
@@ -326,7 +326,7 @@ static void testNoOpAndRejection(void)
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
 
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), sbufGetLength(buf)), "no-op modified packet");
-    require(! lineGetRecalculateChecksum(&line), "no-op modified recalculate_checksum flag");
+    require(! sbufGetRecalculateChecksum(buf), "no-op modified recalculate_checksum flag");
     sbufDestroy(buf);
 
     /* 2. Short buffer (< sizeof(struct ip_hdr)) */
@@ -336,7 +336,7 @@ static void testNoOpAndRejection(void)
 
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
     require(sbufGetLength(buf) == 10, "short buffer modified");
-    require(! lineGetRecalculateChecksum(&line), "short buffer modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "short buffer modified flag");
     sbufDestroy(buf);
 
     /* 3. Fragmented IPv4 packet */
@@ -349,7 +349,7 @@ static void testNoOpAndRejection(void)
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
 
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), sbufGetLength(buf)), "fragmented packet modified");
-    require(! lineGetRecalculateChecksum(&line), "fragmented packet modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "fragmented packet modified flag");
     sbufDestroy(buf);
 
     /* 4. IPv6-looking input (IPH_V = 6) */
@@ -363,7 +363,7 @@ static void testNoOpAndRejection(void)
 
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
     require(memoryEqual(sbufGetRawPtr(buf), before6, 40), "IPv6 packet modified");
-    require(! lineGetRecalculateChecksum(&line), "IPv6 packet modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "IPv6 packet modified flag");
     sbufDestroy(buf);
 
     /* 5. Truncated TCP header (sbuf len < iphdr_len + sizeof(struct tcp_hdr)) */
@@ -373,7 +373,7 @@ static void testNoOpAndRejection(void)
 
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), 30), "truncated TCP header packet modified");
-    require(! lineGetRecalculateChecksum(&line), "truncated TCP header modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "truncated TCP header modified flag");
     sbufDestroy(buf);
 
     /* 6. Invalid TCP data offset (data_offset = 4 < 5) */
@@ -385,7 +385,7 @@ static void testNoOpAndRejection(void)
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), sbufGetLength(buf)),
             "invalid TCP data offset packet modified");
-    require(! lineGetRecalculateChecksum(&line), "invalid TCP data offset modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "invalid TCP data offset modified flag");
     sbufDestroy(buf);
 
     /* 7. Invalid IP header length (IHL = 4 < 5) */
@@ -397,7 +397,7 @@ static void testNoOpAndRejection(void)
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), sbufGetLength(buf)),
             "invalid IP IHL packet modified");
-    require(! lineGetRecalculateChecksum(&line), "invalid IP IHL modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "invalid IP IHL modified flag");
     sbufDestroy(buf);
 
     /* 8. Invalid IP total length below IHL (total_len = 10 < IHL 20) */
@@ -409,7 +409,7 @@ static void testNoOpAndRejection(void)
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), sbufGetLength(buf)),
             "IP total_len < IHL packet modified");
-    require(! lineGetRecalculateChecksum(&line), "IP total_len < IHL modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "IP total_len < IHL modified flag");
     sbufDestroy(buf);
 
     /* 9. Invalid IP total length beyond buffer (total_len = 200 > sbuf len 60) */
@@ -421,7 +421,7 @@ static void testNoOpAndRejection(void)
 
     tcpbitchangetrickUpStreamPayload(t, &line, &buf);
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), 60), "IP total_len > buffer len packet modified");
-    require(! lineGetRecalculateChecksum(&line), "IP total_len > buffer len modified flag");
+    require(! sbufGetRecalculateChecksum(buf), "IP total_len > buffer len modified flag");
     sbufDestroy(buf);
 
     sbufDestroy(before);

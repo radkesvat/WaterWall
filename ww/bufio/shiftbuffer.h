@@ -54,7 +54,9 @@ enum
      */
     kSbufFlagSplice = 1U << 0,
     /* A complete shared inventory entry, retained while healthy. */
-    kSbufFlagSplicePooled = 1U << 1
+    kSbufFlagSplicePooled = 1U << 1,
+    /* An ordinary packet has an outstanding request for full checksum repair. */
+    kSbufFlagRecalculateChecksum = 1U << 2
 };
 
 struct sbuf_s
@@ -82,6 +84,22 @@ static_assert(offsetof(sbuf_t, buf) == 32, "sbuf_s buf array should start at off
 static inline bool sbufIsSplice(const sbuf_t *buf)
 {
     return (buf->flags & kSbufFlagSplice) != 0;
+}
+
+/** Set this ordinary packet's outstanding checksum-repair request. */
+static inline void sbufSetRecalculateChecksum(sbuf_t *buf, bool requested)
+{
+    assert(! requested || ! sbufIsSplice(buf));
+    if (requested)
+        buf->flags |= kSbufFlagRecalculateChecksum;
+    else
+        buf->flags &= (uint16_t) ~kSbufFlagRecalculateChecksum;
+}
+
+/** A clear request does not imply that the packet's checksums are valid. */
+static inline bool sbufGetRecalculateChecksum(const sbuf_t *buf)
+{
+    return (buf->flags & kSbufFlagRecalculateChecksum) != 0;
 }
 
 enum
@@ -346,7 +364,8 @@ void sbufDestroySplice(sbuf_t *buf);
  *
  * The source remains unchanged and caller-owned. The destination may be
  * replaced and freed; the caller owns only the returned destination afterward.
- * The buffers must be distinct.
+ * The buffers must be distinct. Preserves the destination's checksum request;
+ * appending bytes does not infer a request from the source.
  *
  * @param root Destination buffer that receives data.
  * @param buf Source buffer to append.
@@ -359,7 +378,8 @@ sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict buf);
  *
  * Requires distinct buffers, at least bytes in source and bytes of destination
  * tail capacity. Advances source's cursor and reduces its length. Neither
- * allocation is replaced or freed; both remain caller-owned.
+ * allocation is replaced or freed; both remain caller-owned. Preserves each
+ * buffer's checksum request without transferring packet metadata for the range.
  *
  * @param dest Destination buffer.
  * @param source Source buffer.
@@ -374,7 +394,8 @@ sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, uint32_t byte
  * Requires bytes <= source length. The result starts with the source's full
  * original padding available. Advances the source cursor and reduces its length;
  * the source remains caller-owned, including when empty. The caller owns both
- * allocations after return.
+ * allocations after return. The slice starts without a checksum request;
+ * the source retains its existing request.
  *
  * @param b Source buffer.
  * @param bytes Number of bytes to slice.
@@ -385,7 +406,8 @@ sbuf_t *sbufSlice(sbuf_t *b, uint32_t bytes);
 /**
  * @brief Duplicate an ordinary buffer's complete payload, cursor and padding layout.
  *
- * The source remains unchanged and caller-owned. The caller owns the new result.
+ * The checksum-repair request is copied independently. The source remains
+ * unchanged and caller-owned. The caller owns the new result.
  *
  * @param b Source buffer.
  * @return sbuf_t* New duplicated buffer.
@@ -398,7 +420,8 @@ sbuf_t *sbufDuplicate(sbuf_t *b);
  * The destination is left unchanged when it cannot represent the source's
  * cursor and complete payload. On success the destination payload is replaced;
  * its allocation capacity and original padding remain unchanged. The source is
- * never consumed, and both allocations remain caller-owned.
+ * never consumed, and both allocations remain caller-owned. Copies the source's
+ * checksum-repair request, preserving all other destination flags.
  *
  * @param b Source buffer.
  * @param dest Destination buffer.
@@ -565,7 +588,8 @@ static inline void sbufWriteZeros(sbuf_t *restrict const b, const uint32_t len)
  * Copies length bytes from one ordinary buffer's payload into a distinct ordinary
  * destination at its current cursor. Requires sufficient source length and
  * destination writable capacity. Does not change either cursor or length;
- * both allocations remain caller-owned.
+ * both allocations remain caller-owned. Copies bytes only, preserving each
+ * buffer's checksum request.
  */
 static inline void sbufWriteBuf(sbuf_t *restrict const to, sbuf_t *restrict const from, uint32_t length)
 {
@@ -577,8 +601,9 @@ static inline void sbufWriteBuf(sbuf_t *restrict const to, sbuf_t *restrict cons
  * Ensures an ordinary buffer has writable capacity for the requested total payload.
  * The bytes argument is a required total size from the cursor, not an increment
  * or spare-tail count.
- * Preserves existing payload and length. If growth is needed, frees the old
- * allocation and returns a replacement with the full original padding available.
+ * Preserves existing payload, length and checksum-repair request. If growth is
+ * needed, frees the old allocation and returns a replacement with the full
+ * original padding available.
  * The caller owns only the returned buffer and must use that pointer afterward.
  */
 static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
@@ -591,6 +616,7 @@ static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
         sbuf_t  *bigger_buf      = sbufCreateWithPadding(needed_writable, b->l_pad);
         sbufSetLength(bigger_buf, current_length);
         sbufWriteBuf(bigger_buf, b, current_length);
+        sbufSetRecalculateChecksum(bigger_buf, sbufGetRecalculateChecksum(b));
         sbufDestroy(b);
         return bigger_buf;
     }

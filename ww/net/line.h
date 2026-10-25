@@ -41,7 +41,6 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
                    .active_tunnels_mask        = UINT64_MAX,
                    .pools                      = pools,
                    .established                = false,
-                   .recalculate_checksum       = false,
                    .prefer_ordinary_read_u     = false,
                    .prefer_ordinary_read_d     = false,
                    .fallback_mode              = false,
@@ -428,29 +427,6 @@ static inline bool linePrefersOrdinaryReadUpstream(const line_t *line)
 static inline bool linePrefersOrdinaryReadDownstream(const line_t *line)
 {
     return line->prefer_ordinary_read_d;
-}
-
-/**
- * @brief Set the packet checksum recalculation flag on a line.
- *
- * @param line Line instance.
- * @param recalculate New flag value.
- */
-static inline void lineSetRecalculateChecksum(line_t *const line, bool recalculate)
-{
-    line->recalculate_checksum = recalculate;
-}
-
-/**
- * @brief Get the packet checksum recalculation flag from a line.
- *
- * @param line Line instance.
- * @return true Recalculation is requested.
- * @return false Recalculation is disabled.
- */
-static inline bool lineGetRecalculateChecksum(const line_t *const line)
-{
-    return line->recalculate_checksum;
 }
 
 /**

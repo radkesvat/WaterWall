@@ -210,16 +210,12 @@ void packettunnelLifecycleAnchorPublish(tunnel_t *t, line_t *packet_line, sbuf_t
     lineUnref(packet_line);
 }
 
-bool packettunnelTakeChecksumRequest(line_t *line)
+bool packettunnelTakeChecksumRequest(sbuf_t *buf)
 {
-    const bool recalculate_checksum = line->recalculate_checksum;
-
-    /*
-     * Consume first even when the packet is malformed. A packet line is reused
-     * across unrelated traffic, so a failed request must not leak into the next
-     * packet handled by this worker.
-     */
-    line->recalculate_checksum = false;
+    assert(! sbufIsSplice(buf));
+    const bool recalculate_checksum = sbufGetRecalculateChecksum(buf);
+    /* Terminal boundaries discard the packet if the repair attempt fails. */
+    sbufSetRecalculateChecksum(buf, false);
 
     return recalculate_checksum;
 }
@@ -240,9 +236,9 @@ bool packettunnelFinalizeChecksumRequest(bool requested, uint8_t *packet_bytes, 
     return ! requested || calcFullPacketChecksum(packet_bytes, length);
 }
 
-bool packettunnelConsumeChecksumRequest(line_t *line, sbuf_t *buf)
+bool packettunnelConsumeChecksumRequest(sbuf_t *buf)
 {
-    const bool requested = packettunnelTakeChecksumRequest(line);
+    const bool requested = packettunnelTakeChecksumRequest(buf);
     return packettunnelFinalizeChecksumRequest(requested, sbufGetMutablePtr(buf), sbufGetLength(buf));
 }
 

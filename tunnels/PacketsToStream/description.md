@@ -156,7 +156,8 @@ Maximum packet size accepted by this node is limited by `kMaxAllowedPacketLength
 
 ### Checksum recalc behavior
 
-The packet callback takes and clears `line->recalculate_checksum` before any
+The packet callback takes and clears the buffer request with
+`packettunnelTakeChecksumRequest(buf)` before any
 drop or stream creation callback. The saved request belongs only to that packet,
 so a dropped packet or a reentrant `Init` cannot pass it to unrelated traffic.
 

@@ -4,6 +4,8 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: envSetup, fillValidIpv4, countLogSubstring, envTeardown
+ * Checksum cases: explicit buffer requests are repaired in both trusted modes, while the next
+ * unrequested packet retains deliberately invalid checksum bytes.
  * Checks: Assertion labels include: TunDevice: lower write refusal; TunDevice: Write failed! worker;
  * TunDevice wrapper did not recycle the refused buffer exactly once
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -42,10 +44,12 @@ static size_t         log_capture_len;
 static buffer_pool_t *tracked_pool;
 static sbuf_t        *tracked_buffer;
 static unsigned int   tracked_reuse_count;
+static unsigned int   write_calls;
+static uint8_t        written_packet[28];
 
 void __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
 void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
-
+static void fillValidIpv4(sbuf_t *buf);
 
 static void captureLog(int log_level, const char *buf, int len)
 {
@@ -94,9 +98,56 @@ bool tundeviceIsUp(const tun_device_t *tdev)
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     discard tdev;
-    discard buf;
+    require(sbufGetLength(buf) == sizeof(written_packet), "writer fixture packet length changed");
+    require(! sbufGetRecalculateChecksum(buf), "writer received an unconsumed checksum request");
+    memoryCopy(written_packet, sbufGetRawPtr(buf), sizeof(written_packet));
+    ++write_calls;
     LOGW("TunDevice: lower write refusal");
     return false;
+}
+
+static uint32_t checksumWords(const uint8_t *bytes, size_t length, uint32_t sum)
+{
+    for (size_t offset = 0; offset < length; offset += 2)
+        sum += GET_BE16(bytes + offset);
+    while (sum >> 16)
+        sum = (sum & UINT32_C(0xffff)) + (sum >> 16);
+    return sum;
+}
+
+static void testTrustedRepair(tunnel_t *tunnel, line_t *line, buffer_pool_t *pool)
+{
+    node_t node  = {0};
+    tunnel->node = &node;
+    for (unsigned mode = 0; mode < 2; ++mode)
+    {
+        node.flags = mode == 0 ? kNodeFlagTrustedPacketReceiveChecksumsActive : kNodeFlagTrustedPacketChecksumsActive;
+        require(packettunnelTrustedReceiveChecksumsActive(tunnel), "trusted repair fixture did not activate trust");
+        for (unsigned requested = 0; requested < 2; ++requested)
+        {
+            sbuf_t *buf = bufferpoolGetSmallBuffer(pool);
+            fillValidIpv4(buf);
+            uint8_t original[sizeof(written_packet)];
+            memoryCopy(original, sbufGetRawPtr(buf), sizeof(original));
+            sbufSetRecalculateChecksum(buf, requested == 0);
+            const unsigned calls = write_calls;
+            tundeviceTunnelWritePayload(tunnel, line, buf);
+            require(write_calls == calls + 1, "trusted repair packet did not reach the writer");
+            if (requested == 0)
+            {
+                require(checksumWords(written_packet, 20, 0) == UINT32_C(0xffff),
+                        "trusted mode suppressed explicit IPv4 checksum repair");
+                const uint32_t pseudo = checksumWords(written_packet + 12, 8, IP_PROTO_UDP + 8);
+                require(GET_BE16(written_packet + 26) != 0 &&
+                            checksumWords(written_packet + 20, 8, pseudo) == UINT32_C(0xffff),
+                        "trusted mode suppressed explicit UDP checksum repair");
+            }
+            else
+                require(memoryEqual(written_packet, original, sizeof(original)),
+                        "a previous marked packet changed the next unrequested packet's checksum bytes");
+        }
+    }
+    tunnel->node = NULL;
 }
 
 static void fillValidIpv4(sbuf_t *buf)
@@ -211,6 +262,7 @@ int main(void)
 
     tracked_pool   = NULL;
     tracked_buffer = NULL;
+    testTrustedRepair(tunnel, line, env.worker_pool);
     memoryFree(line);
     tunnelDestroy(tunnel);
     networkloggerDestroy();

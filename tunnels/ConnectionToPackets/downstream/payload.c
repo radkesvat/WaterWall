@@ -314,7 +314,7 @@ static ctp_inject_msg_t *ctpAllocatePacketMessage(ctp_handoff_budget_t *budget, 
  */
 void ctpTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    const bool recalculate_checksum = packettunnelTakeChecksumRequest(l);
+    const bool recalculate_checksum = packettunnelTakeChecksumRequest(buf);
 
     if (UNLIKELY(! ctpLineIsPacketLine(t, l)))
     {

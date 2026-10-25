@@ -22,11 +22,13 @@ typedef ctp_tstate_t test_state_t;
 static const bool ptc = TEST_PACKETS_TO_CONNECTION != 0;
 
 static unsigned recycled;
+static unsigned recycled_with_request;
 void            __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
 void            __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
 void            __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
 {
     ++recycled;
+    recycled_with_request += sbufGetRecalculateChecksum(buf);
     __real_bufferpoolReuseBuffer(pool, buf);
 }
 
@@ -71,7 +73,7 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
     testWorkerRegistryInstall(&registry);
     testWorkerBindWID(0);
 
-    line_t         line           = {.wid = 0, .alive = true, .recalculate_checksum = true};
+    line_t         line           = {.wid = 0, .alive = true};
     line_t        *packet_lines[] = {&line};
     tunnel_chain_t chain          = {.workers_count = 1, .contains_packet_node = true, .packet_lines = packet_lines};
     tunnel_t      *t              = tunnelCreate(NULL, sizeof(test_state_t), 0);
@@ -89,10 +91,11 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
 #endif
 
     recycled = 0;
+    recycled_with_request = 0;
     for (unsigned repeat = 0; repeat < 2; ++repeat)
     {
-        line.recalculate_checksum = true;
-        sbuf_t *buf               = bufferpoolGetSmallBuffer(pool);
+        sbuf_t *buf = bufferpoolGetSmallBuffer(pool);
+        sbufSetRecalculateChecksum(buf, repeat == 0);
         sbufSetLength(buf, 28U + (shifted ? 1U : 0U));
         if (shifted)
             sbufShiftRight(buf, 1);
@@ -113,9 +116,10 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
     ctpTunnelDownStreamPayload(t, &line, buf);
 #endif
 
-    require(! line.recalculate_checksum && lineIsAlive(&line), "packet-line state was not preserved");
+    require(lineIsAlive(&line), "packet-line state was not preserved");
     }
     require(recycled >= 2, "rejected packets retained their input buffers");
+    require(recycled_with_request == 0, "rejected packets retained checksum requests at recycling");
 #if ! TEST_PACKETS_TO_CONNECTION
     require(state->handoff_budget->bytes == 0 && state->handoff_budget->entries == 0,
             "rejected input retained its copy");

@@ -20,7 +20,6 @@ typedef struct packet_affinity_message_s
     line_t           *line;
     LineTaskFnWithBuf continuation;
     sbuf_t           *buf;
-    bool              recalculate_checksum;
 } packet_affinity_message_t;
 
 static void packetAffinityRun(worker_t *worker, void *arg1, void *arg2, void *arg3)
@@ -31,7 +30,6 @@ static void packetAffinityRun(worker_t *worker, void *arg1, void *arg2, void *ar
     assert(worker->wid == lineGetWID(message->line));
     if (lineIsAlive(message->line))
     {
-        lineSetRecalculateChecksum(message->line, message->recalculate_checksum);
         message->continuation(message->tunnel, message->line, message->buf);
         if (! lineIsAlive(message->line))
         {
@@ -83,15 +81,13 @@ void packetAffinityDestroy(packet_affinity_t *affinity)
     memoryFree(affinity);
 }
 
-static void packetAffinityPublish(packet_affinity_t *affinity, line_t *source_line, sbuf_t *buf, wid_t wid,
-                                  bool recalculate_checksum)
+static void packetAffinityPublish(packet_affinity_t *affinity, line_t *source_line, sbuf_t *buf, wid_t wid)
 {
     line_t *target = tunnelchainGetWorkerPacketLine(tunnelGetChain(affinity->tunnel), wid);
     assert(target != NULL);
     if (wid == lineGetWID(source_line))
     {
         lineRef(target);
-        lineSetRecalculateChecksum(target, recalculate_checksum);
         affinity->continuation(affinity->tunnel, target, buf);
         if (! lineIsAlive(target))
         {
@@ -102,11 +98,8 @@ static void packetAffinityPublish(packet_affinity_t *affinity, line_t *source_li
         return;
     }
     packet_affinity_message_t *message = memoryAllocate(sizeof(*message));
-    *message                           = (packet_affinity_message_t) {.tunnel               = affinity->tunnel,
-                                                                      .line                 = target,
-                                                                      .continuation         = affinity->continuation,
-                                                                      .buf                  = buf,
-                                                                      .recalculate_checksum = recalculate_checksum};
+    *message                           = (packet_affinity_message_t) {
+                                  .tunnel = affinity->tunnel, .line = target, .continuation = affinity->continuation, .buf = buf};
     lineRef(target);
     sendWorkerMessageForceQueueBestEffortWithCleanup(
         wid, (WorkerMessageCallback) packetAffinityRun, packetAffinityCancel, message, NULL, NULL);
@@ -124,12 +117,10 @@ void packetAffinityForward(packet_affinity_t *affinity, line_t *source_line, sbu
         return;
     }
 
-    bool requested = packettunnelTakeChecksumRequest(source_line);
     if (packet.fragmented)
     {
-        /* A staged buffer must not inherit another packet's line metadata when
-         * it is eventually released. Fragment checksum repair changes only IP. */
-        if (requested && ! packettunnelFinalizeChecksumRequest(true, sbufGetMutablePtr(buf), sbufGetLength(buf)))
+        /* Settle repair before staging; fragment repair changes only IP. */
+        if (! packettunnelConsumeChecksumRequest(buf))
         {
             lineReuseBuffer(source_line, buf);
             return;
@@ -141,13 +132,13 @@ void packetAffinityForward(packet_affinity_t *affinity, line_t *source_line, sbu
             return;
         assert(action == kDeviceFragAffinityDispatch);
         for (unsigned i = 0; i < fragment.released_count; ++i)
-            packetAffinityPublish(affinity, source_line, fragment.released[i], fragment.wid, false);
-        packetAffinityPublish(affinity, source_line, buf, fragment.wid, false);
+            packetAffinityPublish(affinity, source_line, fragment.released[i], fragment.wid);
+        packetAffinityPublish(affinity, source_line, buf, fragment.wid);
         return;
     }
     wid_t      wid;
     const bool identified = deviceFlowAffineWID(sbufGetRawPtr(buf), sbufGetLength(buf), &wid);
     assert(identified);
     discard identified;
-    packetAffinityPublish(affinity, source_line, buf, wid, requested);
+    packetAffinityPublish(affinity, source_line, buf, wid);
 }

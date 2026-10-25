@@ -379,6 +379,7 @@ bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest)
     {
         memoryCopyLarge(sbufGetMutablePtr(dest), sbufGetRawPtr(b), source_length);
     }
+    sbufSetRecalculateChecksum(dest, sbufGetRecalculateChecksum(b));
     return true;
 }
 

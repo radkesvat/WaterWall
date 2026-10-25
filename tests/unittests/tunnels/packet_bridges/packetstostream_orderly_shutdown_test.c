@@ -251,6 +251,7 @@ static void flowNextInit(tunnel_t *t, line_t *l)
 
 static void flowNextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    twfRequire(! sbufGetRecalculateChecksum(buf), "packet repair request entered the serialized stream");
     twfNextPayload(t, l, buf);
     if (g_finish_during_payload)
     {
@@ -332,9 +333,8 @@ static void caseDroppedPacketConsumesChecksumRequest(void)
                 g_finish_during_init = true;
             }
         }
-        lineSetRecalculateChecksum(fixture.packet_line, true);
+        sbufSetRecalculateChecksum(dropped, true);
         packetstostreamTunnelUpStreamPayload(fixture.p2s, fixture.packet_line, dropped);
-        const bool pending_after_drop = lineGetRecalculateChecksum(fixture.packet_line);
         twfRequireEqualU32(fixture.trace.capture_len, 0, "the refused packet was forwarded");
         if (mode == 1)
             packetstostreamTunnelDownStreamResume(fixture.p2s, fixture.stream_line);
@@ -345,8 +345,7 @@ static void caseDroppedPacketConsumesChecksumRequest(void)
         twfRequireEqualU32(fixture.trace.capture_len, sizeof(captured), "the next packet was not forwarded");
         twfRequire(GET_BE16(captured + 10) == 0x1234,
                    "a dropped packet's checksum request modified the next unflagged packet");
-        twfRequire(! pending_after_drop && ! lineGetRecalculateChecksum(fixture.packet_line),
-                   "a refused packet retained its checksum request");
+
         fixtureTeardown(&fixture);
         twfRequireNoLeakedBuffers();
         tosRequireNoProcessApiCall();
@@ -367,14 +366,14 @@ static void caseInitReentryKeepsChecksumRequestOnItsPacket(void)
 
     sbuf_t *packet = flowPacket('A');
     PUT_BE16((uint8_t *) sbufGetMutablePtr(packet) + 10, 0x1234);
-    lineSetRecalculateChecksum(fixture.packet_line, true);
+    sbufSetRecalculateChecksum(packet, true);
     packetstostreamTunnelUpStreamPayload(fixture.p2s, fixture.packet_line, packet);
     twfRequireEqualU32(fixture.trace.capture_len, sizeof(captured), "Init reentry did not deliver both packets");
     twfRequire(captured[IP_HLEN] == 'B' && captured[2 * IP_HLEN + 1] == 'A', "unexpected reentrant packet order");
     twfRequire(GET_BE16(captured + 10) == 0x1234, "Init reentry consumed another packet's checksum request");
     twfRequire(inet_chksum(captured + IP_HLEN + 1, IP_HLEN) == 0,
                "the original flagged packet was forwarded without checksum repair");
-    twfRequire(! lineGetRecalculateChecksum(fixture.packet_line), "the checksum request survived delivery");
+
     fixtureTeardown(&fixture);
     twfRequireNoLeakedBuffers();
     tosRequireNoProcessApiCall();

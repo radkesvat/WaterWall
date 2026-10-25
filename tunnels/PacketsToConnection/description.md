@@ -53,7 +53,7 @@ Unsupported packets are dropped conservatively.
 
 ## Checksum Finalization Boundary
 
-`PacketsToConnection` is the final consumer of the packet line's one-packet checksum recalculation request. It takes
+`PacketsToConnection` is the final consumer of the packet buffer's checksum recalculation request. It takes
 and clears that request before any validation or drop path, normalizes shifted input into mutable aligned storage, and
 then repairs the supported checksums before typed parsing or lwIP ingress. A malformed, IPv6, stopping, or refused
 packet therefore cannot leak its request into the next unrelated packet on the worker line.

@@ -20,7 +20,7 @@ void obfuscatorserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
     if (l == tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l)))
     {
-        l->recalculate_checksum = true;
+        sbufSetRecalculateChecksum(buf, true);
     }
 
     tunnelPrevDownStreamPayload(t, l, buf);

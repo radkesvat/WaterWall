@@ -12,7 +12,7 @@
  */
 void streamtopacketsTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    const bool recalculate_checksum = packettunnelTakeChecksumRequest(l);
+    const bool recalculate_checksum = packettunnelTakeChecksumRequest(buf);
     uint64_t   flow_hash            = 0;
 
     if (sbufGetLength(buf) > kMaxAllowedPacketLength)

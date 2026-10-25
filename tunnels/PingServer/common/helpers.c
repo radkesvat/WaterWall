@@ -38,9 +38,9 @@ static void pingserverDrop(tunnel_t *t, line_t *l, sbuf_t *buf, const char *dire
     lineReuseBuffer(l, buf);
 }
 
-static const char *pingserverConsumeInputChecksum(line_t *l, sbuf_t *buf)
+static const char *pingserverConsumeInputChecksum(sbuf_t *buf)
 {
-    const bool  requested = packettunnelTakeChecksumRequest(l);
+    const bool  requested = packettunnelTakeChecksumRequest(buf);
     const char *error     = pingwireIpv4PacketError(sbufGetRawPtr(buf), sbufGetLength(buf));
     if (error != NULL)
     {
@@ -58,7 +58,7 @@ void pingserverHandleDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     pingserver_tstate_t *state = tunnelGetState(t);
     pingserverValidatePacketLine(t, l);
 
-    const char *input_error = pingserverConsumeInputChecksum(l, buf);
+    const char *input_error = pingserverConsumeInputChecksum(buf);
     if (input_error != NULL)
     {
         pingserverDrop(t, l, buf, "outgoing", input_error);
@@ -106,7 +106,7 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     pingserver_tstate_t *state = tunnelGetState(t);
     pingserverValidatePacketLine(t, l);
 
-    const char *input_error = pingserverConsumeInputChecksum(l, buf);
+    const char *input_error = pingserverConsumeInputChecksum(buf);
     if (input_error != NULL)
     {
         pingserverDrop(t, l, buf, "incoming", input_error);
@@ -183,6 +183,6 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     assert(stripped);
     discard stripped;
 
-    lineSetRecalculateChecksum(l, false);
+    sbufSetRecalculateChecksum(buf, false);
     packetAffinityForward(state->decoded_affinity, l, buf);
 }

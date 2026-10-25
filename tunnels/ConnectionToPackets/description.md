@@ -110,9 +110,9 @@ Enabled lwIP IPv6 support is unchanged. Nodes on one worker share its engine; th
 
 ## Checksum Finalization Boundary
 
-On return-side packet ingress, `ConnectionToPackets` is the final consumer of the packet line's one-packet checksum
+On return-side packet ingress, `ConnectionToPackets` is the final consumer of the packet buffer's checksum
 recalculation request. It takes and clears that request before any validation or drop path, normalizes the packet into
-mutable aligned storage, and then repairs the supported checksums before handing bytes to lwIP. A malformed, IPv6,
+mutable aligned message storage, and then repairs the supported checksums before queueing bytes for lwIP. A malformed, IPv6,
 stopping, or refused packet therefore cannot leak its request into the next unrelated packet on the worker line.
 
 For a complete IPv4 TCP or UDP packet, finalization repairs the IPv4 header and transport checksum.

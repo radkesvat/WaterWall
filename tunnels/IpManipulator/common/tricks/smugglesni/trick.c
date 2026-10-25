@@ -196,7 +196,7 @@ static void smugglesnitrickMarkPassthrough(ipmanipulator_tstate_t *state, const 
 
 static void smugglesnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    lineSetRecalculateChecksum(l, true);
+    sbufSetRecalculateChecksum(buf, true);
     ipmanipulatorEmitUpstream(t, l, buf, tunnelNextUpStreamPayload);
 }
 
@@ -336,7 +336,7 @@ static void smugglesnitrickForwardReal(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void smugglesnitrickSendRealNow(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    lineSetRecalculateChecksum(l, true);
+    sbufSetRecalculateChecksum(buf, true);
     ipmanipulatorEmitUpstreamPreservingTuple(t, l, buf, smugglesnitrickForwardReal);
 }
 
