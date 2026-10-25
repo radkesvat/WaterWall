@@ -130,6 +130,8 @@ static WorkerMessageCallback reader_message_callback;
 static bool                  opening_reader, closing_reader, inside_reader_callback;
 static bool                  fail_watcher_registration;
 static wio_t                 reader_io;
+static wio_t                 second_reader_io;
+static int                   second_reader_fd = -1;
 static wio_cb                reader_ready_callback;
 static unsigned              watcher_detach_calls;
 
@@ -668,12 +670,13 @@ int __wrap_socket(int domain, int type, int protocol)
 
 ssize_t __wrap_read(int fd, void *buf, size_t count)
 {
-    if (fd == tun_handle_fd && (opening_reader || injected_read_count == 0))
+    if ((fd == tun_handle_fd || (second_reader_fd >= 0 && fd == second_reader_fd)) &&
+        (opening_reader || injected_read_count == 0))
     {
         errno = EAGAIN;
         return -1;
     }
-    if (fd == tun_handle_fd && injected_read_count > 0)
+    if ((fd == tun_handle_fd || (second_reader_fd >= 0 && fd == second_reader_fd)) && injected_read_count > 0)
     {
         if (active_ack_probe != NULL)
         {
@@ -887,17 +890,20 @@ void   __wrap_wioReleaseNoClose(wio_t *io);
 
 wio_t *__wrap_wioGet(wloop_t *loop, int fd)
 {
-    require(currentThreadOwnsWorker(0), "watcher installed on its owner worker");
-    require(fd == tun_handle_fd, "watcher owns the receive descriptor");
-    memoryZero(&reader_io, sizeof(reader_io));
-    reader_io.loop = loop;
-    reader_io.fd   = fd;
-    return &reader_io;
+    const bool second = second_reader_fd >= 0 && fd == second_reader_fd;
+    require(currentThreadOwnsWorker(second ? 1 : 0), "watcher installed on its owner worker");
+    require(second || fd == tun_handle_fd, "watcher owns the receive descriptor");
+    wio_t *io = second ? &second_reader_io : &reader_io;
+    memoryZero(io, sizeof(*io));
+    io->loop = loop;
+    io->fd   = fd;
+    return io;
 }
 
 int __wrap_wioAdd(wio_t *io, wio_cb callback, int events)
 {
-    require(io == &reader_io && currentThreadOwnsWorker(0), "read watcher changed only by its owner");
+    require((io == &reader_io && currentThreadOwnsWorker(0)) || (io == &second_reader_io && currentThreadOwnsWorker(1)),
+            "read watcher changed only by its owner");
     if (fail_watcher_registration)
     {
         errno = ENOMEM;
@@ -910,15 +916,18 @@ int __wrap_wioAdd(wio_t *io, wio_cb callback, int events)
 
 int __wrap_wioDel(wio_t *io, int events)
 {
-    require(io == &reader_io && currentThreadOwnsWorker(0), "read interest removed by its owner");
+    require((io == &reader_io && currentThreadOwnsWorker(0)) || (io == &second_reader_io && currentThreadOwnsWorker(1)),
+            "read interest removed by its owner");
     io->events &= ~events;
     return 0;
 }
 
 void __wrap_wioReleaseNoClose(wio_t *io)
 {
-    require(io == &reader_io && currentThreadOwnsWorker(0), "watcher detached on its owner worker");
-    require(io->fd == tun_handle_fd, "watcher retains the caller-owned TUN descriptor");
+    require((io == &reader_io && currentThreadOwnsWorker(0)) || (io == &second_reader_io && currentThreadOwnsWorker(1)),
+            "watcher detached on its owner worker");
+    require(io->fd == (io == &reader_io ? tun_handle_fd : second_reader_fd),
+            "watcher retains the caller-owned TUN descriptor");
     io->events = 0;
     io->fd     = -1;
     ++watcher_detach_calls;
@@ -1276,14 +1285,17 @@ static void cancelWriterMessages(void)
 
 static void runReaderMessages(void)
 {
+    const wid_t caller = getCurrentWorkerWID();
     for (; reader_messages_done < reader_message_count;)
     {
         captured_message_t message  = reader_messages[reader_messages_done++];
         const bool         previous = inside_reader_callback;
+        testWorkerBindWID(message.wid);
         inside_reader_callback      = true;
         message.callback(getCurrentWorker(), message.arg1, message.arg2, message.arg3);
         inside_reader_callback = previous;
     }
+    testWorkerBindWID(caller);
     reader_message_count = reader_messages_done = 0;
 }
 
@@ -3684,6 +3696,242 @@ static void observeSingleQueueWorkerOne(tun_device_t *tdev, void *userdata, sbuf
     bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
 }
 
+typedef struct opaque_reader_case_s
+{
+    uint8_t  packets[8][64];
+    uint32_t lengths[8];
+    wid_t    workers[8];
+    unsigned seen[8], count;
+} opaque_reader_case_t;
+
+static void observeOpaqueReader(tun_device_t *device, void *userdata, sbuf_t *buffer, wid_t wid)
+{
+    discard               device;
+    opaque_reader_case_t *test = userdata;
+    require(currentThreadOwnsWorker(wid), "opaque processing borrowed another worker's pool");
+    unsigned match = test->count;
+    for (unsigned i = 0; i < test->count; ++i)
+        if (sbufGetLength(buffer) == test->lengths[i] &&
+            memoryEqual(sbufGetRawPtr(buffer), test->packets[i], test->lengths[i]))
+        {
+            match = i;
+            break;
+        }
+    require(match < test->count, "opaque reader changed or invented packet bytes");
+    require(test->workers[match] == wid && ++test->seen[match] == 1,
+            "opaque/native packet changed its processing policy or was duplicated");
+    bufferpoolReuseBuffer(getWorkerBufferPool(wid), buffer);
+}
+
+static void expectOpaqueReader(opaque_reader_case_t *test, const uint8_t *packet, uint32_t length, wid_t wid)
+{
+    require(test->count < ARRAY_SIZE(test->packets) && length <= sizeof(test->packets[0]), "opaque fixture capacity");
+    const unsigned index = test->count++;
+    memoryCopy(test->packets[index], packet, length);
+    test->lengths[index] = length;
+    test->workers[index] = wid;
+}
+
+static void makeOpaqueReaderPacket(uint8_t packet[40], uint8_t protocol, uint16_t id)
+{
+    memoryZero(packet, 40);
+    packet[0] = 0x45;
+    packet[8] = 64;
+    packet[9] = protocol;
+    PUT_BE16(packet + 2, 40);
+    PUT_BE16(packet + 4, id);
+    PUT_BE32(packet + 12, 0x0a000001);
+    PUT_BE32(packet + 16, 0xc0000201);
+    PUT_BE16(packet + 20, 12345);
+    PUT_BE16(packet + 22, 443);
+    if (protocol == 6)
+        packet[32] = 0x50;
+    if (protocol == 17)
+        PUT_BE16(packet + 24, 20);
+    PUT_BE16(packet + 10, (uint16_t) ~gsoChecksumWords(packet, 20, 0));
+}
+
+static void runOpaqueReaderBurst(opaque_reader_case_t *test, const injected_io_result_t *reads, unsigned count,
+                                 wid_t reader_wid)
+{
+    armDeviceReads(reads, count);
+    testWorkerBindWID(reader_wid);
+    inside_reader_callback = true;
+    reader_ready_callback(reader_wid == 0 ? &reader_io : &second_reader_io);
+    inside_reader_callback = false;
+    require(observed_read_calls == count, "opaque receive burst did not reach EAGAIN");
+    for (unsigned i = 0; i < captured_message_count; ++i)
+    {
+        testWorkerBindWID(captured_messages[i].wid);
+        deliverMessage(i, getCurrentWorker());
+    }
+    testWorkerBindWID(0);
+    for (unsigned i = 0; i < test->count; ++i)
+        require(test->seen[i] == 1, "opaque/native receive lost a packet");
+    resetCapturedMessages();
+    resetIoInjection();
+}
+
+static void stopOpaqueReader(tun_device_t *device)
+{
+    require(tundeviceRequestStop(device), "opaque reader stop request failed");
+    runReaderMessages();
+    require(bringDownDevice(device), "opaque reader shutdown failed");
+}
+
+static void testOpaqueReaderDistribution(void)
+{
+    const uint8_t opaque_protocols[] = {1, 49, 50, 132};
+    /* Raw, checksum-only, generic partial checksum with GSO enabled, and
+     * trusted DATA_VALID all reach the same opaque software dispatch policy. */
+    for (unsigned framing = 0; framing < 4; ++framing)
+    {
+        resetReaderFixture(0);
+        resetGsoSetup();
+        resetIoInjection();
+        resetCapturedMessages();
+        opaque_reader_case_t test = {0};
+        gso_feature_available     = framing != 0;
+        tun_device_t *device      = tundeviceCreate(
+            "ww-opaque-test", framing == 2, false, 1500, &test, observeOpaqueReader, kDeviceFragmentPreserve);
+        require(device != NULL && device->queue_count == 1, "opaque single-reader setup failed");
+        if (framing == 3)
+            require(tundeviceEnableTrustedChecksums(device), "opaque trusted framing setup failed");
+        require(bringUpDevice(device), "opaque reader activation failed");
+        for (unsigned protocol = 0; protocol < ARRAY_SIZE(opaque_protocols); ++protocol)
+        {
+            memoryZero(&test, sizeof(test));
+            uint8_t              records[6][50] = {{0}};
+            injected_io_result_t reads[7]       = {{0}};
+            unsigned             opaque_index   = 0;
+            for (unsigned i = 0; i < 6; ++i)
+            {
+                const uint8_t  kind   = i == 1 ? 6 : i == 3 ? 17 : opaque_protocols[protocol];
+                const unsigned header = framing == 0 ? 0 : kTunVirtioHeaderSize;
+                uint8_t       *packet = records[i] + header;
+                makeOpaqueReaderPacket(packet, kind, (uint16_t) (100 + i));
+                wid_t target = 0;
+                if (kind == 6 || kind == 17)
+                    require(deviceFlowAffineWID(packet, 40, &target), "native fixture has no flow worker");
+                else
+                    target = (wid_t) (opaque_index++ % getWorkersCount());
+                uint8_t expected[40];
+                memoryCopy(expected, packet, sizeof(expected));
+                if (framing == 2 && kind != 6 && kind != 17)
+                {
+                    records[i][0]      = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+                    records[i][6]      = 20;
+                    records[i][8]      = 8;
+                    const uint16_t sum = (uint16_t) ~gsoChecksumWords(packet + 20, 20, 0);
+                    PUT_BE16(expected + 28, sum == 0 ? UINT16_MAX : sum);
+                }
+                if (framing == 3)
+                    records[i][0] = VIRTIO_NET_HDR_F_DATA_VALID;
+                expectOpaqueReader(&test, expected, 40, target);
+                reads[i] = (injected_io_result_t) {.result = 40 + header, .bytes = records[i]};
+            }
+            reads[6] = (injected_io_result_t) {.result = -1, .error = EAGAIN};
+            runOpaqueReaderBurst(&test, reads, ARRAY_SIZE(reads), 0);
+        }
+        /* Consume an odd opaque count, then restart the same device: a new
+         * generation starts at worker zero instead of retaining its predecessor. */
+        for (unsigned generation = 0; generation < 2; ++generation)
+        {
+            memoryZero(&test, sizeof(test));
+            uint8_t        record[50] = {0};
+            const unsigned header     = framing == 0 ? 0 : kTunVirtioHeaderSize;
+            makeOpaqueReaderPacket(record + header, 50, 200);
+            expectOpaqueReader(&test, record + header, 40, 0);
+            const injected_io_result_t reads[] = {{.result = 40 + header, .bytes = record},
+                                                  {.result = -1, .error = EAGAIN}};
+            runOpaqueReaderBurst(&test, reads, ARRAY_SIZE(reads), 0);
+            stopOpaqueReader(device);
+            if (generation == 0)
+                require(bringUpDevice(device), "opaque reader restart failed");
+        }
+        destroyDevice(device);
+    }
+}
+
+static void testOpaqueReaderFragments(void)
+{
+    for (unsigned preserve = 0; preserve < 2; ++preserve)
+    {
+        resetReaderFixture(0);
+        resetGsoSetup();
+        resetIoInjection();
+        resetCapturedMessages();
+        opaque_reader_case_t test   = {0};
+        tun_device_t        *device = createRawDevice("ww-opaque-fragments",
+                                               false,
+                                               1500,
+                                               &test,
+                                               observeOpaqueReader,
+                                               preserve ? kDeviceFragmentPreserve : kDeviceFragmentReassemble);
+        require(device != NULL && bringUpDevice(device), "opaque fragment reader setup failed");
+        uint8_t              fragments[4][40] = {{0}};
+        injected_io_result_t reads[5]         = {{0}};
+        for (unsigned datagram = 0; datagram < 2; ++datagram)
+        {
+            uint8_t whole[40];
+            makeOpaqueReaderPacket(whole, 50, (uint16_t) (300 + datagram));
+            wid_t target = (wid_t) (datagram % getWorkersCount());
+            if (preserve)
+                require(deviceFlowAffineWID(whole, sizeof(whole), &target), "opaque fragment has no stable worker");
+            else
+                expectOpaqueReader(&test, whole, sizeof(whole), target);
+            for (unsigned part = 0; part < 2; ++part)
+            {
+                uint8_t       *packet = fragments[datagram * 2 + part];
+                const unsigned length = part == 0 ? 36 : 24;
+                memoryCopy(packet, whole, 20);
+                memoryCopy(packet + 20, whole + 20 + part * 16, length - 20);
+                PUT_BE16(packet + 2, length);
+                PUT_BE16(packet + 6, part == 0 ? 0x2000 : 2);
+                PUT_BE16(packet + 10, 0);
+                PUT_BE16(packet + 10, (uint16_t) ~gsoChecksumWords(packet, 20, 0));
+                if (preserve)
+                    expectOpaqueReader(&test, packet, length, target);
+                reads[datagram * 2 + 1 - part] = (injected_io_result_t) {.result = length, .bytes = packet};
+            }
+        }
+        reads[4] = (injected_io_result_t) {.result = -1, .error = EAGAIN};
+        runOpaqueReaderBurst(&test, reads, ARRAY_SIZE(reads), 0);
+        stopOpaqueReader(device);
+        destroyDevice(device);
+    }
+}
+
+static void testOpaqueReaderLaneRetention(void)
+{
+    resetReaderFixture(0);
+    resetGsoSetup();
+    resetIoInjection();
+    resetCapturedMessages();
+    opaque_reader_case_t test = {0};
+    tun_device_t        *device =
+        createRawDevice("ww-opaque-lanes", false, 1500, &test, observeOpaqueReader, kDeviceFragmentPreserve);
+    require(device != NULL && getWorkersCount() == 2 && device->queue_count == 1, "opaque two-lane fixture setup");
+    second_reader_fd = dup(device->handle);
+    require(second_reader_fd >= 0, "second reader descriptor allocation failed");
+    device->queue_fds[1] = second_reader_fd;
+    device->queue_count  = 2;
+    require(bringUpDevice(device), "opaque two-lane activation failed");
+    for (wid_t lane = 0; lane < 2; ++lane)
+    {
+        memoryZero(&test, sizeof(test));
+        uint8_t packet[40];
+        makeOpaqueReaderPacket(packet, 50, 400);
+        expectOpaqueReader(&test, packet, sizeof(packet), lane);
+        const injected_io_result_t reads[] = {{.result = sizeof(packet), .bytes = packet},
+                                              {.result = -1, .error = EAGAIN}};
+        runOpaqueReaderBurst(&test, reads, ARRAY_SIZE(reads), lane);
+    }
+    stopOpaqueReader(device);
+    destroyDevice(device);
+    second_reader_fd = -1;
+}
+
 static void testMultiQueuePreferencePreservesProcessingWorkers(test_env_t *env)
 {
     buffer_pool_t *second_pool   = bufferpoolCreate(env->large_master,
@@ -3802,6 +4050,10 @@ static void testMultiQueuePreferencePreservesProcessingWorkers(test_env_t *env)
     require(bringDownDevice(tdev), "single-queue multiworker reader teardown");
     destroyDevice(tdev);
     resetCapturedMessages();
+
+    testOpaqueReaderDistribution();
+    testOpaqueReaderFragments();
+    testOpaqueReaderLaneRetention();
 
     record_queue_preference      = false;
     GSTATE.workers_count         = 1;
@@ -4052,6 +4304,7 @@ int main(void)
     testHandoffFailureFallsBackToHardAbort(true);
     testInterfaceDownFailureRemainsRetryable();
     testPendingWriterMessagesAfterStop();
+    testOpaqueReaderDistribution();
     testMultiQueuePreferencePreservesProcessingWorkers(&env);
     internaloggerDestroy();
     envTeardown(&env);

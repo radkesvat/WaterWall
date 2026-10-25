@@ -1,5 +1,5 @@
 <!--
-Documentation version: 162
+Documentation version: 163
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TunDevice.mdx, and all files must keep the same documentation version.
 -->
 
@@ -26,23 +26,33 @@ Because it is a packet adapter, this node does not create per-connection lines. 
 
 Linux uses worker-owned receive queues. With the default `multi-queue: true`, a
 newly created interface attempts one queue per event worker with fixed kernel
-steering; unavailable multiqueue or
-steering falls back to one queue owned by worker 0. Existing single-queue
-interfaces remain supported. Unfragmented IPv4 TCP/UDP uses the same symmetric
-address/port/protocol hash as processing-worker affinity, allowing connections
-between the same hosts to use different receive queues. All fragments use an
-address-pair/protocol fallback so one datagram keeps one reader. Fragmented and
-ordinary packets of one connection can have different readers and can reorder;
-the shared fragment table retains reassembly and processing-worker affinity.
-Other protocols and portless short packets use the fallback; malformed packets
-and unsupported IP versions select queue zero for downstream validation.
-Startup logs the active queue count. Queue
-selection is independent of `gso`. Set `multi-queue: false` to use one receive
-queue owned by worker 0 while retaining all configured processing workers.
+steering. Unavailable multiqueue or steering falls back to one queue owned by
+worker 0. Existing single-queue interfaces remain supported. Unfragmented IPv4
+TCP/UDP retains the same symmetric address/port/protocol hash as processing-worker
+affinity, allowing connections between the same hosts to use different queues.
+Complete, structurally valid IPv4 packets of other protocols use round-robin
+receive queues and continue processing on their receiving worker. One shared
+atomic eBPF map counter per interface selects these queues across all kernel CPUs;
+unsupported map, atomic-operation or steering setup falls back to one reader.
+With one receive queue, opaque processing uses a device-local round-robin sequence
+across the configured workers. No new setting or downstream-chain inspection is
+needed. A decoder that restores inner TCP/UDP selects that inner flow's worker.
+
+All IPv4 fragments and TCP/UDP packets too short to contain both ports retain the
+address-pair/protocol fallback. Every fragment of one datagram keeps one reader;
+fragmented and ordinary packets of one connection can still have different
+readers and reorder. The shared fragment table retains its staging and preserved
+fragment affinity; a reassembled opaque packet follows the ordinary opaque
+processing policy. Opaque round robin can also reorder packets across readers.
+Malformed packets and unsupported IP versions retain queue-zero selection for
+downstream validation. Startup logs the active queue count. Queue selection is
+independent of `gso`. Set `multi-queue: false` to use one receive queue owned by
+worker 0 while retaining all configured processing workers. Other platforms keep
+their existing receive and processing policies.
 
 Windows receives on worker 0 using Wintun event notifications. Linux and Windows
-have no dedicated application TUN reader thread. Reads use bounded batches and
-preserve flow ownership; the other workers continue processing their flows.
+have no dedicated application TUN reader thread. Reads use bounded batches;
+TCP/UDP retains its flow ownership across the configured processing workers.
 Darwin/BSD use external reader threads with their own buffer pools.
 
 Windows, macOS and BSD limit queued receive packets to 8 MiB of retained buffer

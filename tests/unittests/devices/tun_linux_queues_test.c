@@ -1,4 +1,4 @@
-/* Startup rollback and real-kernel port-aware steering invariants.
+/* Startup rollback and real-kernel transport/round-robin steering invariants.
  * CTest: waterwall.tun_linux_queues_unit, waterwall.tun_linux_steering_kernel */
 #include "devices/device_flow_hash.h"
 #include "devices/tun/tun_linux_queues.h"
@@ -9,6 +9,7 @@
 #include <linux/bpf.h>
 #include <linux/if_tun.h>
 #include <net/if.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -24,6 +25,7 @@ enum
 {
     kFirstFd         = 700,
     kProgramFd       = 900,
+    kMapFd           = 901,
     kQueueFdBase     = 1000,
     kRequestedQueues = 7
 };
@@ -33,12 +35,14 @@ static bool     checksum;
 static bool     run_kernel;
 static int      kernel_fd = -1;
 static int      get_error;
+static int      map_error;
 static int      load_error;
 static int      steering_error;
 static unsigned open_fail_at;
 static unsigned attach_fail_at;
 static unsigned open_calls;
 static unsigned attach_calls;
+static unsigned map_calls;
 static unsigned load_calls;
 static unsigned steering_calls;
 static unsigned close_calls;
@@ -56,12 +60,14 @@ static void reset(void)
     multiqueue     = true;
     checksum       = false;
     get_error      = 0;
+    map_error      = 0;
     load_error     = 0;
     steering_error = 0;
     open_fail_at   = 0;
     attach_fail_at = 0;
     open_calls     = 0;
     attach_calls   = 0;
+    map_calls      = 0;
     load_calls     = 0;
     steering_calls = 0;
     close_calls    = 0;
@@ -157,7 +163,20 @@ long __wrap_syscall(long number, ...)
     union bpf_attr *attr    = va_arg(args, union bpf_attr *);
     const size_t    size    = va_arg(args, size_t);
     va_end(args);
-    require(command == BPF_PROG_LOAD, "only loads one steering program");
+    if (command == BPF_MAP_CREATE)
+    {
+        require(attr->map_type == BPF_MAP_TYPE_ARRAY && attr->key_size == sizeof(uint32_t) &&
+                    attr->value_size == sizeof(uint64_t) && attr->max_entries == 1,
+                "each interface has one zero-initialized shared 64-bit round-robin counter");
+        ++map_calls;
+        if (map_error != 0)
+        {
+            errno = map_error;
+            return -1;
+        }
+        return run_kernel ? __real_syscall(number, command, attr, size) : kMapFd;
+    }
+    require(command == BPF_PROG_LOAD && map_calls == 1, "loads one steering program after creating its counter");
     require(attr->prog_type == BPF_PROG_TYPE_SOCKET_FILTER, "TUN steering accepts socket-filter programs");
     require(attr->insn_cnt > 0 && attr->insn_cnt <= 192, "steering is a bounded fixed program");
     ++load_calls;
@@ -195,13 +214,13 @@ static void testSetup(void)
     reset();
     require(openQueues(1, fds, &reason) == 1 && fds[0] == kFirstFd && reason == NULL,
             "one-worker mode needs no optional kernel facility");
-    require(load_calls == 0 && open_calls == 0, "one-worker setup performs no optional work");
+    require(map_calls == 0 && load_calls == 0 && open_calls == 0, "one-worker setup performs no optional work");
 
     reset();
     multiqueue = false;
     require(openQueues(kRequestedQueues, fds, &reason) == 1 && reason != NULL && errno == EOPNOTSUPP,
             "legacy single-queue interfaces retain one reader");
-    require(load_calls == 0 && open_calls == 0, "legacy mode never changes steering");
+    require(map_calls == 0 && load_calls == 0 && open_calls == 0, "legacy mode never changes steering");
 
     reset();
     get_error = ENOTTY;
@@ -209,22 +228,39 @@ static void testSetup(void)
             "flag query failure retains the original descriptor");
 
     reset();
+    map_error = EPERM;
+    require(openQueues(kRequestedQueues, fds, &reason) == 1 && reason != NULL && errno == EPERM,
+            "denied counter-map creation selects single-worker fallback");
+    require(map_calls == 1 && load_calls == 0 && steering_calls == 0 && open_calls == 0 && close_calls == 0,
+            "failed map creation leaves no program or extra descriptors");
+
+    reset();
     load_error = EPERM;
     require(openQueues(kRequestedQueues, fds, &reason) == 1 && reason != NULL && errno == EPERM,
             "denied BPF permission selects single-worker fallback");
-    require(steering_calls == 0 && open_calls == 0 && close_calls == 0, "no optional descriptors survive failed load");
+    require(steering_calls == 0 && open_calls == 0 && close_calls == 1 && closed[0] == kMapFd,
+            "failed program load releases its counter map and preserves the load error");
+
+    reset();
+    load_error = EINVAL;
+    require(openQueues(kRequestedQueues, fds, &reason) == 1 && reason != NULL && errno == EINVAL,
+            "unsupported atomic counter operation selects single-worker fallback");
+    require(close_calls == 1 && closed[0] == kMapFd && steering_calls == 0 && open_calls == 0,
+            "verifier refusal releases the counter without publishing any extra queues");
 
     reset();
     steering_error = EINVAL;
     require(openQueues(kRequestedQueues, fds, &reason) == 1 && reason != NULL && errno == EINVAL,
             "unsupported steering hook selects fallback");
-    require(close_calls == 1 && closed[0] == kProgramFd && open_calls == 0, "failed attach releases BPF descriptor");
+    require(close_calls == 2 && closed[0] == kMapFd && closed[1] == kProgramFd && open_calls == 0,
+            "failed attach releases both BPF descriptors");
 
     reset();
     open_fail_at = 3;
     require(openQueues(kRequestedQueues, fds, &reason) == 1 && reason != NULL && errno == EMFILE,
             "partial queue opening rolls back to one");
-    require(close_calls == 3 && closed[1] == kQueueFdBase + 2 && closed[2] == kQueueFdBase + 1,
+    require(close_calls == 4 && closed[0] == kMapFd && closed[1] == kProgramFd && closed[2] == kQueueFdBase + 2 &&
+                closed[3] == kQueueFdBase + 1,
             "rollback releases extra queues in reverse order");
     for (unsigned i = 1; i < kRequestedQueues; ++i)
     {
@@ -235,7 +271,8 @@ static void testSetup(void)
     attach_fail_at = 2;
     require(openQueues(kRequestedQueues, fds, &reason) == 1 && reason != NULL && errno == EBUSY,
             "partial attachment failure preserves the real error");
-    require(close_calls == 3 && closed[1] == kQueueFdBase + 2 && closed[2] == kQueueFdBase + 1,
+    require(close_calls == 4 && closed[0] == kMapFd && closed[1] == kProgramFd && closed[2] == kQueueFdBase + 2 &&
+                closed[3] == kQueueFdBase + 1,
             "attachment failure closes both current and prior extras");
 
     for (unsigned offload = 0; offload < 2; ++offload)
@@ -244,8 +281,9 @@ static void testSetup(void)
         checksum = offload != 0;
         require(openQueues(kRequestedQueues, fds, &reason) == kRequestedQueues && reason == NULL,
                 "all queues publish only after complete setup");
-        require(open_calls == kRequestedQueues - 1 && attach_calls == open_calls && close_calls == 1,
-                "successful setup transfers every queue and releases the BPF descriptor");
+        require(open_calls == kRequestedQueues - 1 && attach_calls == open_calls && map_calls == 1 && load_calls == 1 &&
+                    close_calls == 2 && closed[0] == kMapFd && closed[1] == kProgramFd,
+                "successful setup transfers every queue and releases the map and program descriptors");
         for (unsigned i = 1; i < kRequestedQueues; ++i)
         {
             require(fds[i] == kQueueFdBase + (int) i, "queue-index order matches descriptor order");
@@ -392,7 +430,7 @@ static void testTransportSteering(void)
     }
 }
 
-static void testFragmentAndProtocolFallback(void)
+static void testFragmentFallback(void)
 {
     const uint8_t protocols[]                = {6, 17, 1, 132};
     bool          observed[kRequestedQueues] = {0};
@@ -418,15 +456,6 @@ static void testFragmentAndProtocolFallback(void)
                 require(runPacket(packet, sizeof(packet)) == queue,
                         "fragment fallback is symmetric in the address pair");
                 reverseEndpoints(packet, 20);
-            }
-            if (protocols[p] == 1 || protocols[p] == 132)
-            {
-                put16(packet + 6, 0x4000);
-                require(runPacket(packet, sizeof(packet)) == queue,
-                        "nontransport protocols retain address/protocol fallback");
-                packet[20]++;
-                packet[22] += 3;
-                require(runPacket(packet, sizeof(packet)) == queue, "nontransport payload bytes never act as ports");
             }
         }
     }
@@ -498,6 +527,130 @@ static void testHeaderBounds(void)
     require(runPacket(packet, sizeof(packet)) == 0, "unknown IP versions retain the single designated reader");
 }
 
+static void testOpaqueRoundRobin(void)
+{
+    uint8_t  packet[80];
+    uint64_t sequence = 0;
+    for (unsigned protocol = 0; protocol <= UINT8_MAX; ++protocol)
+    {
+        if (protocol == 6 || protocol == 17)
+        {
+            continue;
+        }
+        makePacket(packet, sizeof(packet), (uint8_t) protocol);
+        for (unsigned repeat = 0; repeat < 2 * kRequestedQueues; ++repeat)
+        {
+            require(runPacket(packet, sizeof(packet)) == sequence++ % kRequestedQueues,
+                    "identical opaque IPv4 packets cycle exactly across every queue");
+        }
+        /* The minimum complete IPv4 datagram has no transport payload. */
+        put16(packet + 2, 20);
+        require(runPacket(packet, 20) == sequence++ % kRequestedQueues,
+                "header-only opaque IPv4 packets share the interface counter across protocols");
+    }
+
+    makePacket(packet, sizeof(packet), 253);
+    for (unsigned header_words = 5; header_words <= 15; ++header_words)
+    {
+        packet[0] = (uint8_t) (0x40 | header_words);
+        put16(packet + 2, (uint16_t) (header_words * 4));
+        packet[6] ^= 0x40;
+        reverseEndpoints(packet, 60);
+        require(runPacket(packet, header_words * 4) == sequence++ % kRequestedQueues,
+                "IPv4 options, DF and endpoint direction do not change opaque round robin");
+    }
+
+    makePacket(packet, sizeof(packet), 253);
+    for (unsigned length = 0; length < 20; ++length)
+    {
+        require(runPacket(packet, length) == 0, "truncated opaque IPv4 cannot advance round robin");
+    }
+    put16(packet + 2, sizeof(packet) + 1);
+    require(runPacket(packet, sizeof(packet)) == 0, "truncated opaque datagrams select queue zero");
+    packet[0] = 0x44;
+    put16(packet + 2, sizeof(packet));
+    require(runPacket(packet, sizeof(packet)) == 0, "invalid opaque IHL selects queue zero");
+    packet[0] = 0x4F;
+    put16(packet + 2, 59);
+    require(runPacket(packet, sizeof(packet)) == 0, "opaque total length cannot end inside its options");
+
+    /* Hash-only paths must neither consume nor reset the opaque counter. */
+    testTransportSteering();
+    testFragmentFallback();
+    testHeaderBounds();
+    makePacket(packet, sizeof(packet), 253);
+    require(runPacket(packet, sizeof(packet)) == sequence % kRequestedQueues,
+            "transport, fragment and invalid packets leave the opaque counter untouched");
+}
+
+enum
+{
+    kCounterThreads    = 4,
+    kCounterIterations = 64 * kRequestedQueues
+};
+
+typedef struct counter_probe_s
+{
+    unsigned counts[kRequestedQueues];
+} counter_probe_t;
+
+static void *runConcurrentPackets(void *argument)
+{
+    counter_probe_t *probe = argument;
+    uint8_t          packet[80];
+    makePacket(packet, sizeof(packet), 253);
+    for (unsigned i = 0; i < kCounterIterations; ++i)
+    {
+        ++probe->counts[runPacket(packet, sizeof(packet))];
+    }
+    return NULL;
+}
+
+static void testConcurrentCounter(void)
+{
+    pthread_t       threads[kCounterThreads];
+    counter_probe_t probes[kCounterThreads] = {0};
+    for (unsigned i = 0; i < kCounterThreads; ++i)
+    {
+        require(pthread_create(&threads[i], NULL, runConcurrentPackets, &probes[i]) == 0,
+                "starts independent kernel steering callers");
+    }
+    for (unsigned i = 0; i < kCounterThreads; ++i)
+    {
+        require(pthread_join(threads[i], NULL) == 0, "all kernel steering callers finish");
+    }
+    for (unsigned queue = 0; queue < kRequestedQueues; ++queue)
+    {
+        unsigned count = 0;
+        for (unsigned i = 0; i < kCounterThreads; ++i)
+        {
+            count += probes[i].counts[queue];
+        }
+        require(count == kCounterThreads * kCounterIterations / kRequestedQueues,
+                "concurrent opaque packets share one atomic counter with exact aggregate balance");
+    }
+}
+
+static void testIndependentCounters(void)
+{
+    uint8_t packet[80];
+    makePacket(packet, sizeof(packet), 253);
+    const int      first_program = kernel_fd;
+    const uint32_t first_queue   = runPacket(packet, sizeof(packet));
+
+    reset();
+    int         fds[kRequestedQueues];
+    const char *reason;
+    require(openQueues(kRequestedQueues, fds, &reason) == kRequestedQueues,
+            "a second interface gets its own loaded steering program");
+    require(runPacket(packet, sizeof(packet)) == 0 && runPacket(packet, sizeof(packet)) == 1,
+            "each interface starts a separate zero-initialized round-robin counter");
+    __real_close(kernel_fd);
+    kernel_fd = first_program;
+    require(runPacket(packet, sizeof(packet)) == (first_queue + 1) % kRequestedQueues,
+            "creating and destroying another interface does not reset or advance the first counter");
+}
+
 static int testKernel(void)
 {
     reset();
@@ -513,9 +666,9 @@ static int testKernel(void)
         }
         require(false, "production steering passes the actual kernel verifier");
     }
-    testTransportSteering();
-    testFragmentAndProtocolFallback();
-    testHeaderBounds();
+    testOpaqueRoundRobin();
+    testConcurrentCounter();
+    testIndependentCounters();
     __real_close(kernel_fd);
     return 0;
 }

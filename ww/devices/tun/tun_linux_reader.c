@@ -242,7 +242,9 @@ struct tun_reader_generation_s
     tun_device_t            *device;
     device_reader_session_t *session;
     uint16_t                 count;
-    tun_worker_reader_t      lanes[];
+    /* Only the single receive lane accesses this processing-worker cursor. */
+    wid_t               opaque_next;
+    tun_worker_reader_t lanes[];
 };
 
 static void tunReaderUnref(tun_reader_generation_t *generation)
@@ -392,8 +394,22 @@ static void tunReaderPreparePacket(tun_worker_reader_t *lane, sbuf_t *buf)
             lane->pending_wids[lane->pending_count++] = fragment.wid;
         }
     }
-    wid_t wid = fragment.wid;
-    if (action != kDeviceFragAffinityDispatch && ! deviceFlowAffineWID(sbufGetRawPtr(buf), sbufGetLength(buf), &wid))
+    wid_t              wid    = fragment.wid;
+    const uint8_t     *packet = sbufGetRawPtr(buf);
+    const uint32_t     length = sbufGetLength(buf);
+    ipv4_packet_view_t view   = {0};
+    if (action != kDeviceFragAffinityDispatch && length >= 20 && packet[9] != IPPROTO_TCP && packet[9] != IPPROTO_UDP &&
+        ipv4packetviewParse(packet, length, &view) && view.ip_total_length == length && ! view.fragmented)
+    {
+        /* Native multiqueue steering already spreads complete opaque IPv4.
+         * Keep that reader's worker; a single reader spreads processing itself.
+         * A later decoder owns any transport affinity it exposes. */
+        tun_reader_generation_t *generation = lane->generation;
+        wid                                 = generation->count > 1 ? lane->wid : generation->opaque_next;
+        if (generation->count == 1)
+            generation->opaque_next = (wid_t) ((generation->opaque_next + 1U) % getWorkersCount());
+    }
+    else if (action != kDeviceFragAffinityDispatch && ! deviceFlowAffineWID(packet, length, &wid))
         wid = getNextDistributionWID();
     lane->pending_bufs[lane->pending_count]   = buf;
     lane->pending_wids[lane->pending_count++] = wid;
