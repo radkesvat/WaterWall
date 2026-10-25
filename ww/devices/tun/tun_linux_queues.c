@@ -19,8 +19,8 @@
  * with processing workers. All fragments use the address/protocol fallback:
  * later fragments have no ports. Fragmented and ordinary packets of one flow
  * can therefore have different readers; the shared fragment table still resolves
- * the processing owner. Complete opaque IPv4 packets use one atomic round-robin
- * counter shared by the interface. Unsupported IP versions use queue zero.
+ * the processing owner. Complete opaque IPv4 packets use approximate round robin
+ * with an interface-local cursor per CPU. Unsupported IP versions use queue zero.
  * Explicit steering bypasses kernel write-learned queue migration. */
 #define TUN_BPF_INSN(op, dst, src, offset, value)                                                                      \
     {.code = (op), .dst_reg = (dst), .src_reg = (src), .off = (offset), .imm = (value)}
@@ -47,11 +47,11 @@
 
 static int tunLinuxSteeringLoad(uint16_t count)
 {
-#if defined(SYS_bpf) && defined(TUNSETSTEERINGEBPF) && defined(BPF_ATOMIC) && defined(BPF_FETCH)
+#if defined(SYS_bpf) && defined(TUNSETSTEERINGEBPF)
     union bpf_attr map_attr = {0};
-    map_attr.map_type       = BPF_MAP_TYPE_ARRAY;
+    map_attr.map_type       = BPF_MAP_TYPE_PERCPU_ARRAY;
     map_attr.key_size       = sizeof(uint32_t);
-    map_attr.value_size     = sizeof(uint64_t);
+    map_attr.value_size     = sizeof(uint32_t);
     map_attr.max_entries    = 1;
     const int counter_fd    = (int) syscall(SYS_bpf, BPF_MAP_CREATE, &map_attr, sizeof(map_attr));
     if (counter_fd < 0)
@@ -70,7 +70,7 @@ static int tunLinuxSteeringLoad(uint16_t count)
         struct bpf_insn protocol[2];
         struct bpf_insn flow_hash[82];
         struct bpf_insn fallback[20];
-        struct bpf_insn opaque[12];
+        struct bpf_insn opaque[16];
         struct bpf_insn invalid[2];
     } tun_linux_steering_program_t;
 #define TUN_BPF_SKIP(from, target)                                                                                     \
@@ -192,11 +192,17 @@ static int tunLinuxSteeringLoad(uint16_t count)
                 TUN_BPF_INSN(BPF_ALU64 | BPF_ADD | BPF_K, BPF_REG_2, 0, 0, -4),
                 TUN_BPF_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, BPF_FUNC_map_lookup_elem),
                 TUN_BPF_INSN(BPF_JMP | BPF_JEQ | BPF_K, BPF_REG_0, 0, TUN_BPF_SKIP(opaque[6], invalid), 0),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_K, BPF_REG_1, 0, 0, 1),
-                /* A single shared counter serializes selection across CPUs.
-                 * Fetch-add returns the old value in R1, starting at queue zero. */
-                TUN_BPF_INSN(BPF_STX | BPF_ATOMIC | BPF_DW, BPF_REG_0, BPF_REG_1, 0, BPF_ADD | BPF_FETCH),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_X, BPF_REG_0, BPF_REG_1, 0, 0),
+                /* Ordinary loads/stores avoid shared atomic contention. The
+                 * cursor stays bounded; nested updates may lose a step, which
+                 * is acceptable for this approximate packet distribution. */
+                TUN_BPF_INSN(BPF_LDX | BPF_W | BPF_MEM, BPF_REG_7, BPF_REG_0, 0, 0),
+                TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_1, BPF_REG_7, 0, 0),
+                TUN_BPF_INSN(BPF_ALU | BPF_ADD | BPF_K, BPF_REG_1, 0, 0, 1),
+                TUN_BPF_INSN(BPF_ALU | BPF_MOD | BPF_K, BPF_REG_1, 0, 0, count),
+                TUN_BPF_INSN(BPF_STX | BPF_W | BPF_MEM, BPF_REG_0, BPF_REG_1, 0, 0),
+                /* CPU offsets avoid making every CPU begin at queue zero. */
+                TUN_BPF_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, BPF_FUNC_get_smp_processor_id),
+                TUN_BPF_INSN(BPF_ALU64 | BPF_ADD | BPF_X, BPF_REG_0, BPF_REG_7, 0, 0),
                 TUN_BPF_INSN(BPF_ALU64 | BPF_MOD | BPF_K, BPF_REG_0, 0, 0, count),
                 TUN_BPF_INSN(BPF_JMP | BPF_EXIT, 0, 0, 0, 0),
             },
@@ -215,7 +221,7 @@ static int tunLinuxSteeringLoad(uint16_t count)
     attr.license                = (uint64_t) (uintptr_t) license;
     const int program_fd        = (int) syscall(SYS_bpf, BPF_PROG_LOAD, &attr, sizeof(attr));
     const int load_errno        = errno;
-    /* A loaded program owns its map reference until interface teardown. */
+    /* A loaded program owns its per-CPU map until interface teardown. */
     close(counter_fd);
     errno = load_errno;
     return program_fd;

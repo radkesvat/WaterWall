@@ -518,15 +518,17 @@ static void testMultiqueueRulesRetainExactLifecycle(void)
         requireEqStr(opaque->argv[14], queue_number, "opaque queue targeted the wrong lane");
         requireEqStr(opaque->argv[19], fixture.device.protocol_filter, "opaque queue lost protocol exclusions");
         requireEqStr(opaque->argv[23], opaque_filter, "opaque queue lost its disjoint classification");
-        require(opaque->argc == (lane == 0 ? 24 : 32), "opaque queue has incorrect nth arguments");
+        require(opaque->argc == (lane == 0 ? 24 : 30), "opaque queue has incorrect random arguments or no tail");
         if (lane != 0)
         {
-            char every[16];
-            stringNPrintf(every, sizeof(every), "%zu", lane + 1);
+            const char *probability = lane == 1 ? "0.500000000000" : "0.333333333333";
+            requireEqStr(opaque->argv[24], "-m", "opaque queue omitted statistic module option");
             requireEqStr(opaque->argv[25], "statistic", "opaque queue omitted kernel statistic matcher");
-            requireEqStr(opaque->argv[27], "nth", "opaque receive is not deterministic round robin");
-            requireEqStr(opaque->argv[29], every, "nth cascade count does not match reverse INSERT order");
-            requireEqStr(opaque->argv[31], "0", "nth cascade does not start with its first eligible packet");
+            requireEqStr(opaque->argv[26], "--mode", "opaque queue omitted statistic mode option");
+            requireEqStr(opaque->argv[27], "random", "opaque receive retained a shared nth counter");
+            requireEqStr(opaque->argv[28], "--probability", "opaque queue omitted its conditional probability");
+            requireEqStr(
+                opaque->argv[29], probability, "random cascade probability does not match reverse INSERT order");
         }
         require(fixture.states[index].opaque == kCaptureRuleInstalled, "opaque rule state was not published");
         require(fixture.states[index].notrack == (lane == 0 ? kCaptureRuleInstalled : kCaptureRuleAbsent),
@@ -627,6 +629,10 @@ static void testOpaqueUnknownInstallCleanup(void)
     require(recorded_call_count == 9 && strstr(recorded_calls[1].argv[10], "WWCAP_OPAQUE_") != NULL &&
                 strstr(recorded_calls[3].argv[10], "WWCAP_OPAQUE_") == NULL,
             "opaque cleanup inspected or removed the wrong rule family");
+    require(recorded_calls[1].argc == 30 && recorded_calls[2].argc == 24,
+            "unknown insertion cleanup lost the random rule or unconditional tail");
+    requireEqStr(recorded_calls[1].argv[27], "random", "unknown insertion cleanup changed the statistic mode");
+    requireEqStr(recorded_calls[1].argv[29], "0.500000000000", "unknown insertion cleanup changed probability");
 }
 
 static void testMultiqueueUnknownDeleteReconciliation(void)

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 163
+Documentation version: 164
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TunDevice.mdx, and all files must keep the same documentation version.
 -->
 
@@ -30,10 +30,13 @@ steering. Unavailable multiqueue or steering falls back to one queue owned by
 worker 0. Existing single-queue interfaces remain supported. Unfragmented IPv4
 TCP/UDP retains the same symmetric address/port/protocol hash as processing-worker
 affinity, allowing connections between the same hosts to use different queues.
-Complete, structurally valid IPv4 packets of other protocols use round-robin
-receive queues and continue processing on their receiving worker. One shared
-atomic eBPF map counter per interface selects these queues across all kernel CPUs;
-unsupported map, atomic-operation or steering setup falls back to one reader.
+Complete, structurally valid IPv4 packets of other protocols use approximate
+round-robin receive queues and continue processing on their receiving worker.
+Each interface's eBPF map keeps a separate bounded 32-bit cursor for each kernel
+CPU. Ordinary increments advance the cursor without atomic operations, and a
+CPU-ID offset avoids starting every CPU at queue zero. Overlapping updates can
+lose a step; this policy does not promise exact global order or equal queue counts.
+Unsupported per-CPU map or steering setup falls back to one reader.
 With one receive queue, opaque processing uses a device-local round-robin sequence
 across the configured workers. No new setting or downstream-chain inspection is
 needed. A decoder that restores inner TCP/UDP selects that inner flow's worker.

@@ -300,7 +300,7 @@ static void capturedeviceAppendProtocolFilter(const char **argv, const char *pro
 
 static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithContext(
     capture_device_t *cdev, const char *operation, const char *cidr, uint32_t queue_number, const char *rule_comment,
-    const char *protocol_filter, const char *steering_filter, unsigned every)
+    const char *protocol_filter, const char *steering_filter, unsigned remaining_queues)
 {
     char queue_number_arg[16];
     stringNPrintf(queue_number_arg, sizeof(queue_number_arg), "%u", queue_number);
@@ -308,7 +308,9 @@ static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithConte
     char lock_wait_arg[16];
     stringNPrintf(lock_wait_arg, sizeof(lock_wait_arg), "%d", kCaptureIptablesLockWaitSeconds);
 
-    const char *argv[33] = {"iptables",
+    /* Sixteen base arguments, two four-argument BPF matches, six statistic
+     * arguments and the terminating NULL. */
+    const char *argv[31] = {"iptables",
                             "-w",
                             lock_wait_arg,
                             operation,
@@ -327,21 +329,22 @@ static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithConte
                             NULL};
     capturedeviceAppendProtocolFilter(argv, protocol_filter);
     capturedeviceAppendProtocolFilter(argv, steering_filter);
-    char every_arg[16];
-    if (every > 1)
+    char probability_arg[16];
+    if (remaining_queues > 1)
     {
-        stringNPrintf(every_arg, sizeof(every_arg), "%u", every);
+        /* Integer fixed point keeps the decimal separator independent of the
+         * process locale. Twelve places exceed xt_statistic's precision. */
+        const uint64_t probability = UINT64_C(1000000000000) / remaining_queues;
+        stringNPrintf(probability_arg, sizeof(probability_arg), "0.%012llu", (unsigned long long) probability);
         size_t count = 0;
         while (argv[count] != NULL)
             ++count;
         argv[count++] = "-m";
         argv[count++] = "statistic";
         argv[count++] = "--mode";
-        argv[count++] = "nth";
-        argv[count++] = "--every";
-        argv[count++] = every_arg;
-        argv[count++] = "--packet";
-        argv[count++] = "0";
+        argv[count++] = "random";
+        argv[count++] = "--probability";
+        argv[count++] = probability_arg;
         argv[count]   = NULL;
     }
     return capturedeviceRunCommand(cdev, "iptables", argv);
@@ -648,9 +651,9 @@ static capturedevice_command_status_t capturedeviceRunOwnedRule(capture_device_t
     char                                opaque_filter[kCaptureLinuxSteeringFilterSize];
     if (kind == kCaptureOwnedOpaque)
         captureLinuxBuildOpaqueFilter(opaque_filter);
-    /* INSERT reverses ascending lane order: the head matches every Nth
-     * opaque packet, then every (N-1)th remainder, down to lane zero's
-     * unconditional tail. Each N-packet cycle visits every receive queue. */
+    /* INSERT reverses ascending lane order. Conditional probabilities 1/N,
+     * 1/(N-1), ... give each opaque queue the same expected share, with lane
+     * zero's unconditional tail ensuring every eligible packet is selected. */
     return capturedeviceRunIptablesQueueRuleWithContext(
         cdev,
         operation,

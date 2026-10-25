@@ -10,9 +10,10 @@
  *
  * Returns requested_count after installing fixed steering and attaching every
  * queue. TCP/UDP uses flow affinity; complete opaque IPv4 uses an interface-local
- * atomic round-robin counter; fragments retain address/protocol affinity.
+ * per-CPU cursor for approximate round robin, without atomic updates; fragments
+ * retain address/protocol affinity.
  * Returns 1 after closing all extra descriptors on fallback, including when the
- * kernel refuses the counter map or its atomic operation. A fallback sets out_reason
+ * kernel refuses the per-CPU map or steering program. A fallback sets out_reason
  * and errno; requesting one queue sets out_reason to NULL. No live reconfiguration
  * is supported. The fixed queue set must survive until all readers and writers
  * have quiesced. */

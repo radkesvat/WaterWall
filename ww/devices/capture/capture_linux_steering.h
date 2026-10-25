@@ -21,5 +21,5 @@ enum
 void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index,
                                      char output[kCaptureLinuxSteeringFilterSize]);
 
-/* Match complete non-TCP/UDP IPv4 for the independent statistic nth cascade. */
+/* Match complete non-TCP/UDP IPv4 for the independent statistic random cascade. */
 void captureLinuxBuildOpaqueFilter(char output[kCaptureLinuxSteeringFilterSize]);

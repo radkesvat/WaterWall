@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RawSocket.mdx, and all files must keep the same documentation version.
 -->
 
@@ -189,10 +189,14 @@ Linux assigns each receive queue to exactly one worker and performs bounded,
 nonblocking reads on that worker's event loop. Queue count and steering stay fixed
 while capture is active. Complete TCP/UDP packets use symmetric IPv4 address,
 protocol, and port steering, followed by the existing processing-flow affinity.
-Other complete IPv4 protocols use a deterministic kernel round-robin queue
-cascade (`statistic --mode nth`) and continue on the receiving worker. With one
-receive queue, opaque packets are distributed across processing workers in turn.
-No transport payload fields are guessed for opaque protocols.
+Other complete IPv4 protocols use random kernel queue selection
+(`statistic --mode random`) and continue on the receiving worker. Cascading
+conditional probabilities give each queue approximately the same share; exact
+counts and packet order are not guaranteed. This removes the shared nth-selection
+counter without claiming that every kernel RNG implementation is lock-free.
+With one receive queue, opaque packets still use device-local round-robin
+processing across the workers. No transport payload fields are guessed for
+opaque protocols.
 
 Every IPv4 fragment, including fragment zero, retains address/protocol receive
 steering and the shared fragment table's existing staging and ownership rules.

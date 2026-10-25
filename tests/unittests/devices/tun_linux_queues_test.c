@@ -1,5 +1,9 @@
 /* Startup rollback and real-kernel transport/round-robin steering invariants.
  * CTest: waterwall.tun_linux_queues_unit, waterwall.tun_linux_steering_kernel */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "devices/device_flow_hash.h"
 #include "devices/tun/tun_linux_queues.h"
 #include "test_assert.h"
@@ -9,7 +13,7 @@
 #include <linux/bpf.h>
 #include <linux/if_tun.h>
 #include <net/if.h>
-#include <pthread.h>
+#include <sched.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -165,9 +169,9 @@ long __wrap_syscall(long number, ...)
     va_end(args);
     if (command == BPF_MAP_CREATE)
     {
-        require(attr->map_type == BPF_MAP_TYPE_ARRAY && attr->key_size == sizeof(uint32_t) &&
-                    attr->value_size == sizeof(uint64_t) && attr->max_entries == 1,
-                "each interface has one zero-initialized shared 64-bit round-robin counter");
+        require(attr->map_type == BPF_MAP_TYPE_PERCPU_ARRAY && attr->key_size == sizeof(uint32_t) &&
+                    attr->value_size == sizeof(uint32_t) && attr->max_entries == 1,
+                "each interface has one zero-initialized bounded cursor per CPU");
         ++map_calls;
         if (map_error != 0)
         {
@@ -244,7 +248,7 @@ static void testSetup(void)
     reset();
     load_error = EINVAL;
     require(openQueues(kRequestedQueues, fds, &reason) == 1 && reason != NULL && errno == EINVAL,
-            "unsupported atomic counter operation selects single-worker fallback");
+            "refused per-CPU steering program selects single-worker fallback");
     require(close_calls == 1 && closed[0] == kMapFd && steering_calls == 0 && open_calls == 0,
             "verifier refusal releases the counter without publishing any extra queues");
 
@@ -527,10 +531,19 @@ static void testHeaderBounds(void)
     require(runPacket(packet, sizeof(packet)) == 0, "unknown IP versions retain the single designated reader");
 }
 
-static void testOpaqueRoundRobin(void)
+static void pinCpu(unsigned cpu)
+{
+    cpu_set_t affinity;
+    CPU_ZERO(&affinity);
+    CPU_SET(cpu, &affinity);
+    require(sched_setaffinity(0, sizeof(affinity), &affinity) == 0, "pins kernel steering calls to an available CPU");
+    require(sched_getcpu() == (int) cpu, "steering tests execute on the selected CPU");
+}
+
+static void testOpaqueRoundRobin(unsigned cpu)
 {
     uint8_t  packet[80];
-    uint64_t sequence = 0;
+    uint64_t sequence = cpu;
     for (unsigned protocol = 0; protocol <= UINT8_MAX; ++protocol)
     {
         if (protocol == 6 || protocol == 17)
@@ -541,12 +554,12 @@ static void testOpaqueRoundRobin(void)
         for (unsigned repeat = 0; repeat < 2 * kRequestedQueues; ++repeat)
         {
             require(runPacket(packet, sizeof(packet)) == sequence++ % kRequestedQueues,
-                    "identical opaque IPv4 packets cycle exactly across every queue");
+                    "identical opaque IPv4 packets on one CPU cycle across every queue from its CPU offset");
         }
         /* The minimum complete IPv4 datagram has no transport payload. */
         put16(packet + 2, 20);
         require(runPacket(packet, 20) == sequence++ % kRequestedQueues,
-                "header-only opaque IPv4 packets share the interface counter across protocols");
+                "header-only opaque IPv4 packets share the CPU cursor across protocols");
     }
 
     makePacket(packet, sizeof(packet), 253);
@@ -583,55 +596,29 @@ static void testOpaqueRoundRobin(void)
             "transport, fragment and invalid packets leave the opaque counter untouched");
 }
 
-enum
+static void testPerCpuCounters(unsigned first_cpu, unsigned second_cpu)
 {
-    kCounterThreads    = 4,
-    kCounterIterations = 64 * kRequestedQueues
-};
-
-typedef struct counter_probe_s
-{
-    unsigned counts[kRequestedQueues];
-} counter_probe_t;
-
-static void *runConcurrentPackets(void *argument)
-{
-    counter_probe_t *probe = argument;
-    uint8_t          packet[80];
+    uint8_t packet[80];
     makePacket(packet, sizeof(packet), 253);
-    for (unsigned i = 0; i < kCounterIterations; ++i)
+    const uint32_t first_queue = runPacket(packet, sizeof(packet));
+
+    pinCpu(second_cpu);
+    const unsigned second_packets = 2 * kRequestedQueues + 3;
+    for (unsigned i = 0; i < second_packets; ++i)
     {
-        ++probe->counts[runPacket(packet, sizeof(packet))];
+        require(runPacket(packet, sizeof(packet)) == (second_cpu + i) % kRequestedQueues,
+                "a previously unused CPU starts its own cursor and cycles from its CPU offset");
     }
-    return NULL;
+    pinCpu(first_cpu);
+    require(runPacket(packet, sizeof(packet)) == (first_queue + 1) % kRequestedQueues,
+            "another CPU's traffic does not advance or reset the first CPU's cursor");
+    pinCpu(second_cpu);
+    require(runPacket(packet, sizeof(packet)) == (second_cpu + second_packets) % kRequestedQueues,
+            "returning to the second CPU resumes its independent cursor");
+    pinCpu(first_cpu);
 }
 
-static void testConcurrentCounter(void)
-{
-    pthread_t       threads[kCounterThreads];
-    counter_probe_t probes[kCounterThreads] = {0};
-    for (unsigned i = 0; i < kCounterThreads; ++i)
-    {
-        require(pthread_create(&threads[i], NULL, runConcurrentPackets, &probes[i]) == 0,
-                "starts independent kernel steering callers");
-    }
-    for (unsigned i = 0; i < kCounterThreads; ++i)
-    {
-        require(pthread_join(threads[i], NULL) == 0, "all kernel steering callers finish");
-    }
-    for (unsigned queue = 0; queue < kRequestedQueues; ++queue)
-    {
-        unsigned count = 0;
-        for (unsigned i = 0; i < kCounterThreads; ++i)
-        {
-            count += probes[i].counts[queue];
-        }
-        require(count == kCounterThreads * kCounterIterations / kRequestedQueues,
-                "concurrent opaque packets share one atomic counter with exact aggregate balance");
-    }
-}
-
-static void testIndependentCounters(void)
+static void testIndependentCounters(unsigned cpu)
 {
     uint8_t packet[80];
     makePacket(packet, sizeof(packet), 253);
@@ -643,8 +630,9 @@ static void testIndependentCounters(void)
     const char *reason;
     require(openQueues(kRequestedQueues, fds, &reason) == kRequestedQueues,
             "a second interface gets its own loaded steering program");
-    require(runPacket(packet, sizeof(packet)) == 0 && runPacket(packet, sizeof(packet)) == 1,
-            "each interface starts a separate zero-initialized round-robin counter");
+    require(runPacket(packet, sizeof(packet)) == cpu % kRequestedQueues &&
+                runPacket(packet, sizeof(packet)) == (cpu + 1) % kRequestedQueues,
+            "each interface starts separate zero-initialized CPU cursors with the same CPU offset");
     __real_close(kernel_fd);
     kernel_fd = first_program;
     require(runPacket(packet, sizeof(packet)) == (first_queue + 1) % kRequestedQueues,
@@ -666,10 +654,42 @@ static int testKernel(void)
         }
         require(false, "production steering passes the actual kernel verifier");
     }
-    testOpaqueRoundRobin();
-    testConcurrentCounter();
-    testIndependentCounters();
+    cpu_set_t original_affinity;
+    require(sched_getaffinity(0, sizeof(original_affinity), &original_affinity) == 0,
+            "discovers the CPUs available to this test");
+    int first_cpu  = -1;
+    int second_cpu = -1;
+    for (unsigned cpu = 0; cpu < CPU_SETSIZE; ++cpu)
+    {
+        if (CPU_ISSET(cpu, &original_affinity))
+        {
+            if (first_cpu < 0)
+            {
+                first_cpu = (int) cpu;
+            }
+            else
+            {
+                second_cpu = (int) cpu;
+                break;
+            }
+        }
+    }
+    require(first_cpu >= 0, "the test has an available CPU");
+    pinCpu((unsigned) first_cpu);
+    testOpaqueRoundRobin((unsigned) first_cpu);
+    if (second_cpu >= 0)
+    {
+        testPerCpuCounters((unsigned) first_cpu, (unsigned) second_cpu);
+    }
+    testIndependentCounters((unsigned) first_cpu);
+    require(sched_setaffinity(0, sizeof(original_affinity), &original_affinity) == 0,
+            "restores the original CPU affinity after steering tests");
     __real_close(kernel_fd);
+    if (second_cpu < 0)
+    {
+        fprintf(stderr, "SKIP: local cycling passed, but per-CPU independence requires two available CPUs\n");
+        return 77;
+    }
     return 0;
 }
 

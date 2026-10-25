@@ -347,7 +347,8 @@ def run_queue_receive(binary, directory, single_queue):
                     assert len(rules) == (1 if single_queue else workers * 2), rules
                     if not single_queue:
                         opaque_rules = [line for line in rules if "WWCAP_OPAQUE_" in line]
-                        assert len(opaque_rules) == workers and sum("--mode nth" in line for line in opaque_rules) == workers - 1, rules
+                        assert len(opaque_rules) == workers and sum("--mode random" in line for line in opaque_rules) == workers - 1, rules
+                        assert all("--mode nth" not in line for line in opaque_rules), rules
                     before = queue_statistics()
                     assert queue_numbers == set(before), before
 
@@ -378,25 +379,28 @@ def run_queue_receive(binary, directory, single_queue):
                         assert all(delta > 0 for delta in protocol_deltas.values()), \
                             ("protocol ports did not spread receive work", protocol, protocol_deltas)
                         assert sum(protocol_deltas.values()) == 128, (protocol, protocol_deltas)
-                    # One host pair and one protocol must spread even when no
-                    # transport identity is available. Assert exact kernel and
-                    # processing balance, not probabilistic/hash diversity.
+                    # Opaque traffic uses random receive queues and retains its
+                    # receiving worker. Check spread and exact delivery/count
+                    # correspondence, without requiring exact random balance.
+                    opaque_packets = 128
                     for protocol in (1, 49, 50, 132):
                         protocol_before = queue_statistics()
                         delivery_before = collector.delivered.copy()
-                        for number in range(64):
-                            ident = 10000 + protocol * 64 + number
-                            body = struct.pack("!HHI", 12000, 443, ident) + b"opaque-round-robin"
+                        for number in range(opaque_packets):
+                            ident = 10000 + protocol * opaque_packets + number
+                            body = struct.pack("!HHI", 12000, 443, ident) + b"opaque-distribution"
                             expected[ident] = send_ipv4(sender, "127.0.0.2", "127.0.0.1", protocol, body, ident)[0]
                             if (number + 1) % 16 == 0:
                                 collector.wait(process, lambda: len(collector.packets) == len(expected), time.monotonic() + 5)
                         protocol_after = queue_statistics()
                         queue_deltas = {queue: protocol_after[queue]["sequence"] - protocol_before[queue]["sequence"]
                                         for queue in queue_numbers}
-                        assert all(delta == 64 // len(queue_numbers) for delta in queue_deltas.values()), \
-                            ("opaque receive was not round robin", protocol, queue_deltas)
+                        assert sum(queue_deltas.values()) == opaque_packets and all(queue_deltas.values()), \
+                            ("opaque receive lost packets or did not spread across queues", protocol, queue_deltas)
                         processing_deltas = [count - delivery_before[stream] for stream, count in collector.delivered.items()]
-                        assert processing_deltas == [64 // workers] * workers, \
+                        expected_processing = ([opaque_packets // workers] * workers if single_queue
+                                               else sorted(queue_deltas.values()))
+                        assert sorted(processing_deltas) == expected_processing, \
                             ("opaque processing collapsed onto a coarse flow owner", protocol, processing_deltas)
                     assert collector.packets == expected, "captured payload changed or was lost"
                     assert len(collector.delivered) == workers and all(collector.delivered.values()), \

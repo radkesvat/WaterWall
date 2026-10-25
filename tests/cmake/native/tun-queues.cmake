@@ -3,7 +3,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
     ${WATERWALL_UNIT_SOURCE_ROOT}/devices/tun_linux_queues_test.c
     ${CMAKE_SOURCE_DIR}/ww/devices/device_flow_hash.c
     ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux_queues.c)
-  target_link_libraries(tun_linux_queues_test PRIVATE waterwall_runtime_options pthread)
+  target_link_libraries(tun_linux_queues_test PRIVATE waterwall_runtime_options)
   target_link_options(tun_linux_queues_test PRIVATE
     "-Wl,--wrap=open" "-Wl,--wrap=close" "-Wl,--wrap=ioctl" "-Wl,--wrap=syscall")
   add_dependencies(waterwall_unit_tests tun_linux_queues_test)

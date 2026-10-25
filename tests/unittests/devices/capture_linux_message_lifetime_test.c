@@ -455,7 +455,7 @@ static void testQueueSetupAndFallback(void)
     resetCase();
     device                 = createDevice();
     failed_steering_insert = kTestWorkers + 2;
-    require(caputredeviceBringUp(device), "opaque nth rule refusal did not fall back");
+    require(caputredeviceBringUp(device), "opaque random rule refusal did not fall back");
     requireStartedQueues(device, 1);
     require(steering_inserts == kTestWorkers + 2 && steering_deletes == kTestWorkers + 1 && single_inserts == 1,
             "opaque rule fallback did not retire both partial rule sets");

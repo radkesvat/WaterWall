@@ -121,7 +121,7 @@ static uint16_t selectLane(const steering_test_t *test, const uint8_t *packet, s
         else
             require(errno == EAGAIN || errno == EWOULDBLOCK, "unmatched lane has no packet");
     }
-    require(matched == 1, "every packet selects exactly one flow lane or the opaque round-robin class");
+    require(matched == 1, "every packet selects exactly one flow lane or the opaque random-distribution class");
     return selected;
 }
 
@@ -311,13 +311,13 @@ static void testHeaderBoundsAndCompatibility(steering_test_t *test)
     {
         makePacket(packet, 50, header);
         require(selectLane(test, packet, sizeof(packet)) == test->count,
-                "opaque IPv4 options retain round-robin classification");
+                "opaque IPv4 options retain random-distribution classification");
         put16(packet + 2, (uint16_t) (header - 1));
         require(selectLane(test, packet, sizeof(packet)) == 0,
                 "opaque malformed declared length must reach reader validation exactly once");
         put16(packet + 2, (uint16_t) (header + 8));
         require(selectLane(test, packet, header + 7) == 0,
-                "opaque truncated packet must not match the round-robin class");
+                "opaque truncated packet must not match the random-distribution class");
     }
     makePacket(packet, 50, 20);
     for (unsigned length = 0; length < 20; ++length)
