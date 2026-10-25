@@ -55,6 +55,16 @@ struct vmess_replay_s
     size_t         capacity;
 };
 
+bool vmessReplaySnapshot(vmess_replay_t *replay, uint64_t *auth, uint64_t *session)
+{
+    if (! mutexTryLock(&replay->mutex))
+        return false;
+    *auth    = replay->auth.count;
+    *session = replay->session.count;
+    mutexUnlock(&replay->mutex);
+    return true;
+}
+
 static void heapSet(replay_table_t *table, size_t index, replay_entry_t *entry)
 {
     table->heap[index] = entry;

@@ -72,6 +72,17 @@ static void authWorkerTimer(wtimer_t *timer);
 static void authRunWorker(vmessserver_auth_worker_t *worker);
 static void authRequestBuild(vmessserver_auth_runtime_t *runtime);
 
+bool vmessserverAuthSnapshot(vmessserver_auth_runtime_t *runtime, uint64_t *pending, uint64_t *bytes, uint64_t *cache)
+{
+    if (! mutexTryLock(&runtime->mutex))
+        return false;
+    *pending = runtime->pending_count;
+    *bytes   = runtime->pending_bytes;
+    *cache   = runtime->cache_bytes;
+    mutexUnlock(&runtime->mutex);
+    return true;
+}
+
 static bool authStopping(vmessserver_auth_runtime_t *runtime)
 {
     mutexLock(&runtime->mutex);
@@ -530,6 +541,8 @@ static void authRunWorker(vmessserver_auth_worker_t *worker)
             tunnel_t *t    = job->state->tunnel;
             line_t   *line = job->state->line;
             lineRef(line);
+            vmessserverReason(job->state,
+                              job->waiting_cache ? kVmessServerReasonAuthUnavailable : kVmessServerReasonTimeout);
             vmessserverCloseLineBidirectional(t, line);
             lineUnref(line);
             continue;
@@ -540,7 +553,10 @@ static void authRunWorker(vmessserver_auth_worker_t *worker)
         {
             const int pinned = authPinSnapshot(job);
             if (pinned < 0)
+            {
+                vmessserverReason(job->state, kVmessServerReasonAuthUnavailable);
                 authLookupFinished(job, 2);
+            }
             if (pinned <= 0)
                 continue;
         }
@@ -564,6 +580,8 @@ static void authRunWorker(vmessserver_auth_worker_t *worker)
             vmessserver_lstate_t *ls = job->state;
             if (checked == kWCryptoOk || checked == kWCryptoRejectedKey)
                 ls->auth_recognized = true;
+            if (checked == kWCryptoRejectedKey)
+                vmessserverReason(ls, kVmessServerReasonExpiredAuthId);
             if (checked == kWCryptoOk)
             {
                 ls->candidate            = entry->candidate;
@@ -787,6 +805,8 @@ void vmessserverAuthOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_cont
     assert(currentThreadOwnsWorker(wid));
     vmessserver_tstate_t      *ts     = tunnelGetState(t);
     vmessserver_auth_worker_t *worker = &ts->auth->workers[wid];
+    while (ts->owned_backends != NULL && ts->owned_backends[wid] != NULL)
+        vmessserverCloseUdpRemoteLineInternal(t, ts->owned_backends[wid]->line, true);
     while (worker->head != NULL)
     {
         line_t *line = worker->head->state->line;

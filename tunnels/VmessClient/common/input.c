@@ -75,6 +75,7 @@ static int readResponse(vmessclient_lstate_t *ls)
 
 static bool drainRecords(tunnel_t *t, line_t *l, line_t *application, vmessclient_lstate_t *ls)
 {
+    vmessclient_tstate_t *ts = tunnelGetState(t);
     while (vmessclientAssociationAlive(t, l, application))
     {
         if (ls->input_crypto.raw)
@@ -84,6 +85,7 @@ static bool drainRecords(tunnel_t *t, line_t *l, line_t *application, vmessclien
                 return true;
             ls->receive_head = NULL;
             bufferbudgetReservationRelease(&ls->input_reservation);
+            atomicAddU64Explicit(&ts->stats.rx_application_bytes, sbufGetLength(out), memory_order_relaxed);
             tunnelPrevDownStreamPayload(t, application, out);
             continue;
         }
@@ -93,14 +95,20 @@ static bool drainRecords(tunnel_t *t, line_t *l, line_t *application, vmessclien
             if (! gatherHeader(ls, prefix))
                 return true;
             if (vmessBodyLengthOpen(&ls->input_crypto, ls->header, prefix, &ls->body_length) != kWCryptoOk)
+            {
+                vmessclientSetReason(ls, kVmessClientReasonLengthFailure);
                 goto malformed;
+            }
             consumeHeader(ls);
             buffer_pool_t *pool = lineGetBufferPool(l);
             ls->body_buffer     = bufferpoolGetBestFit(pool, ls->body_length, bufferpoolGetLargeBufferPadding(pool));
             /* Reserve storage now; only bytes actually gathered count as retained input. */
             sbufSetLength(ls->body_buffer, 0);
             if (! bufferbudgetTryReserve(&ls->downstream_budget, ls->body_buffer, &ls->body_reservation))
+            {
+                vmessclientSetReason(ls, kVmessClientReasonRetainedInput);
                 goto malformed;
+            }
         }
         while (ls->body_filled < ls->body_length)
         {
@@ -113,12 +121,13 @@ static bool drainRecords(tunnel_t *t, line_t *l, line_t *application, vmessclien
             ls->body_filled += count;
             recycleEmptyHead(ls);
         }
-        sbuf_t *out             = ls->body_buffer;
-        ls->body_buffer         = NULL;
-        ls->body_filled         = 0;
-        size_t           length = 0;
-        bool             eof    = false;
-        wcrypto_status_t status = vmessBodyOpen(&ls->input_crypto,
+        sbuf_t *out              = ls->body_buffer;
+        ls->body_buffer          = NULL;
+        ls->body_filled          = 0;
+        size_t           length  = 0;
+        bool             eof     = false;
+        const uint32_t   ordinal = ls->input_crypto.counter;
+        wcrypto_status_t status  = vmessBodyOpen(&ls->input_crypto,
                                                 sbufGetRawPtr(out),
                                                 ls->body_length,
                                                 sbufGetMutablePtr(out),
@@ -126,17 +135,56 @@ static bool drainRecords(tunnel_t *t, line_t *l, line_t *application, vmessclien
                                                 &length,
                                                 &eof);
         bufferbudgetReservationRelease(&ls->body_reservation);
-        if (status != kWCryptoOk || eof)
+        if (status != kWCryptoOk)
+        {
+            lineReuseBuffer(l, out);
+            vmessclientSetReason(ls, kVmessClientReasonBodyFailure);
+            goto malformed;
+        }
+        atomicIncU64Relaxed(&ts->stats.rx_records);
+        if (ls->input_crypto.security != VMESS_SECURITY_NONE && ordinal == UINT16_MAX &&
+            ts->counter_policy == kVmessCounterWrap)
+            atomicIncU64Relaxed(&ts->stats.rx_wraps);
+        if (eof)
         {
             lineReuseBuffer(l, out);
             goto malformed;
         }
         sbufSetLength(out, (uint32_t) length);
-        tunnelPrevDownStreamPayload(t, application, out);
-        if (! vmessclientAssociationAlive(t, l, application))
-            return false;
-        if (ls->input_crypto.security != VMESS_SECURITY_NONE && ls->input_crypto.counter > UINT16_MAX)
+        bool deliver = true;
+        if (ts->packetaddr && ls->kind == kVmessClientLineKindUdpCarrier)
+        {
+            vmess_packet_addr_t source;
+            size_t              envelope = 0;
+            if (vmessPacketAddrDecode(sbufGetRawPtr(out), length, &source, &envelope) != kWCryptoOk)
+            {
+                lineReuseBuffer(l, out);
+                vmessclientSetReason(ls, kVmessClientReasonMalformedPacketAddr);
+                goto malformed;
+            }
+            if (source.address_type != ls->packet_target.address_type || source.port != ls->packet_target.port ||
+                memoryCompare(source.address, ls->packet_target.address, source.address_type == 1 ? 4 : 16) != 0)
+            {
+                vmessclientRecordReason(t, kVmessClientReasonUnexpectedSource, true);
+                lineReuseBuffer(l, out);
+                deliver = false;
+            }
+            else
+                sbufShiftRight(out, (uint32_t) envelope);
+        }
+        if (deliver)
+        {
+            atomicAddU64Explicit(&ts->stats.rx_application_bytes, sbufGetLength(out), memory_order_relaxed);
+            tunnelPrevDownStreamPayload(t, application, out);
+            if (! vmessclientAssociationAlive(t, l, application))
+                return false;
+        }
+        if (ls->input_crypto.security != VMESS_SECURITY_NONE && ts->counter_policy == kVmessCounterStrict &&
+            ls->input_crypto.counter > UINT16_MAX)
+        {
+            vmessclientSetReason(ls, kVmessClientReasonStrictExhaustion);
             goto malformed;
+        }
     }
     return false;
 malformed:
@@ -160,7 +208,10 @@ void vmessclientReceive(tunnel_t *t, line_t *l)
         int result = readResponse(ls);
         ready      = result == 1;
         if (result < 0)
+        {
+            vmessclientSetReason(ls, kVmessClientReasonMalformedHeader);
             vmessclientCloseLine(t, l, kVmessClientCloseInternal);
+        }
     }
     if (ready && vmessclientAssociationAlive(t, l, application))
         discard drainRecords(t, l, application, ls);

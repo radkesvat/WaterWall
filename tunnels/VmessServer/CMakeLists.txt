@@ -14,6 +14,7 @@ add_library(VmessServer STATIC
     common/protocol.c
     common/udp.c
     common/line_state.c
+    common/stats.c
     upstream/init.c
     upstream/fin.c
     upstream/payload.c

@@ -68,14 +68,20 @@ static bool drainRecords(tunnel_t *t, line_t *l, vmessserver_lstate_t *ls)
             if (! vmessserverGatherHeader(ls, (uint16_t) prefix_length))
                 return true;
             if (vmessBodyLengthOpen(&ls->input_crypto, ls->header, prefix_length, &ls->body_length) != kWCryptoOk)
+            {
+                vmessserverReason(ls, kVmessServerReasonLengthAuth);
                 goto malformed;
+            }
             ls->input_bytes -= prefix_length;
             ls->header_filled   = 0;
             buffer_pool_t *pool = lineGetBufferPool(l);
             ls->body_buffer     = bufferpoolGetBestFit(pool, ls->body_length, bufferpoolGetLargeBufferPadding(pool));
             sbufSetLength(ls->body_buffer, ls->body_length);
             if (! bufferbudgetTryReserve(&ls->upstream_budget, ls->body_buffer, &ls->body_reservation))
+            {
+                vmessserverReason(ls, kVmessServerReasonAdmission);
                 goto malformed;
+            }
         }
         while (ls->body_filled < ls->body_length)
         {
@@ -102,16 +108,29 @@ static bool drainRecords(tunnel_t *t, line_t *l, vmessserver_lstate_t *ls)
                                                 &plaintext,
                                                 &eof);
         bufferbudgetReservationRelease(&ls->body_reservation);
+        vmessserver_tstate_t *ts = tunnelGetState(t);
+        if (status == kWCryptoOk)
+        {
+            atomicAddU64(&ts->stats.rx_records, 1);
+            if (ls->input_crypto.security != VMESS_SECURITY_NONE && ls->input_crypto.counter == 0)
+                atomicAddU64(&ts->stats.wrap_events, 1);
+        }
         if (status != kWCryptoOk || eof)
         {
+            vmessserverReason(ls, status == kWCryptoOk ? kVmessServerReasonNormal : kVmessServerReasonBodyAuth);
             lineReuseBuffer(l, out);
             goto malformed;
         }
         sbufSetLength(out, (uint32_t) plaintext);
         if (! vmessserverDeliverDecoded(t, l, out))
             return false;
-        if (ls->input_crypto.security != VMESS_SECURITY_NONE && ls->input_crypto.counter > UINT16_MAX)
+        if (ls->input_crypto.counter_policy == kVmessCounterStrict &&
+            ls->input_crypto.security != VMESS_SECURITY_NONE && ls->input_crypto.counter > UINT16_MAX)
+        {
+            vmessserverReason(ls, kVmessServerReasonStrictExhaustion);
+            atomicAddU64(&ts->stats.strict_exhaustion, 1);
             goto malformed;
+        }
     }
     return true;
 malformed:

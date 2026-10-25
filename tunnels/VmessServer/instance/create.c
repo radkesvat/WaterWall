@@ -142,16 +142,17 @@ static bool vmessserverAppendUuid(vmessserver_tstate_t *ts, const uint8_t uuid[k
 static bool vmessserverParseUuidValue(vmessserver_tstate_t *ts, const cJSON *item, const char *path,
                                       const char *username)
 {
-    if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0')
+    if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0' ||
+        (item->type & cJSON_StringHasEmbeddedNul) != 0)
     {
         LOGF("JSON Error: VmessServer->settings->%s must be a non-empty UUID string", path);
         return false;
     }
 
     uint8_t uuid[kVmessServerUuidLen] = {0};
-    if (! wwUuidParseString(item->valuestring, uuid))
+    if (vmessNormalizeId(item->valuestring, strlen(item->valuestring), uuid) != kWCryptoOk)
     {
-        LOGF("JSON Error: VmessServer->settings->%s must be an RFC4122 UUID string", path);
+        LOGF("JSON Error: VmessServer->settings->%s must be a UUID or a UTF-8 ID of 1..30 bytes", path);
         return false;
     }
 
@@ -161,6 +162,18 @@ static bool vmessserverParseUuidValue(vmessserver_tstate_t *ts, const cJSON *ite
 static const cJSON *vmessserverGetObjectUuidField(const cJSON *item, const char *path, bool *invalid)
 {
     *invalid                 = false;
+    const char *const keys[] = {"uuid", "id", "user-id"};
+    for (size_t i = 0; i < 3; ++i)
+    {
+        unsigned count = 0;
+        if (! jsonObjectFieldStringsAreExact(item, keys[i]))
+            *invalid = true;
+        for (const cJSON *field = item->child; field != NULL; field = field->next)
+            if (field->string != NULL && strcmp(field->string, keys[i]) == 0 && ++count > 1)
+                *invalid = true;
+    }
+    if (*invalid)
+        return NULL;
     const cJSON *uuid        = cJSON_GetObjectItemCaseSensitive(item, "uuid");
     const cJSON *id          = cJSON_GetObjectItemCaseSensitive(item, "id");
     const cJSON *user_id     = cJSON_GetObjectItemCaseSensitive(item, "user-id");
@@ -251,17 +264,10 @@ static bool vmessserverParseUuidArray(vmessserver_tstate_t *ts, const cJSON *arr
 
 static bool vmessserverParseUsers(vmessserver_tstate_t *ts, const cJSON *settings)
 {
-    const cJSON *uuid = cJSON_GetObjectItemCaseSensitive(settings, "uuid");
-    const cJSON *id   = cJSON_GetObjectItemCaseSensitive(settings, "id");
-    if (uuid != NULL && id != NULL)
-    {
-        LOGF("JSON Error: VmessServer->settings must use either uuid or id, not both");
+    bool         invalid = false;
+    const cJSON *uuid    = vmessserverGetObjectUuidField(settings, "credentials", &invalid);
+    if (invalid)
         return false;
-    }
-    if (uuid == NULL)
-    {
-        uuid = id;
-    }
 
     if (uuid != NULL && ! vmessserverParseUuidValue(ts, uuid, uuid->string != NULL ? uuid->string : "uuid", NULL))
     {
@@ -305,6 +311,7 @@ static bool vmessserverHasLocalUserSettings(const cJSON *settings)
 {
     return cJSON_GetObjectItemCaseSensitive(settings, "uuid") != NULL ||
            cJSON_GetObjectItemCaseSensitive(settings, "id") != NULL ||
+           cJSON_GetObjectItemCaseSensitive(settings, "user-id") != NULL ||
            cJSON_GetObjectItemCaseSensitive(settings, "uuids") != NULL ||
            cJSON_GetObjectItemCaseSensitive(settings, "users") != NULL ||
            cJSON_GetObjectItemCaseSensitive(settings, "clients") != NULL;
@@ -341,6 +348,82 @@ static bool vmessserverParseAuthMode(vmessserver_tstate_t *ts, tunnel_t *t, node
     return vmessserverCreateUserControllerTunnel(t, node);
 }
 
+static bool vmessserverParseMaturity(vmessserver_tstate_t *ts, const cJSON *settings)
+{
+    static const char *const fields[] = {"encrypted-counter-policy",
+                                         "allowed-security",
+                                         "send-termination",
+                                         "packetaddr",
+                                         "packetaddr-max-destinations",
+                                         "verbose"};
+    for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i)
+    {
+        unsigned count = 0;
+        if (! jsonObjectFieldStringsAreExact(settings, fields[i]))
+            return false;
+        for (const cJSON *field = settings->child; field != NULL; field = field->next)
+            if (field->string != NULL && strcmp(field->string, fields[i]) == 0 && ++count > 1)
+                return false;
+    }
+    ts->counter_policy              = kVmessCounterWrap;
+    ts->send_termination            = true;
+    ts->packetaddr                  = true;
+    ts->packetaddr_max_destinations = 64;
+    ts->allowed_security            = 15;
+    const cJSON *policy             = cJSON_GetObjectItemCaseSensitive(settings, "encrypted-counter-policy");
+    if (policy != NULL)
+    {
+        if (! cJSON_IsString(policy))
+            return false;
+        if (strcmp(policy->valuestring, "strict") == 0)
+            ts->counter_policy = kVmessCounterStrict;
+        else if (strcmp(policy->valuestring, "wrap") != 0)
+            return false;
+    }
+    const char *const booleans[] = {"send-termination", "packetaddr", "verbose"};
+    bool             *outputs[]  = {&ts->send_termination, &ts->packetaddr, &ts->verbose};
+    for (unsigned i = 0; i < 3; ++i)
+    {
+        const cJSON *value = cJSON_GetObjectItemCaseSensitive(settings, booleans[i]);
+        if (value != NULL)
+        {
+            if (! cJSON_IsBool(value))
+                return false;
+            *outputs[i] = cJSON_IsTrue(value);
+        }
+    }
+    int64_t limit = 64;
+    if (jsonGetObjectIntegerInRange(settings, "packetaddr-max-destinations", 1, 1024, &limit) == kJsonValueInvalid)
+        return false;
+    ts->packetaddr_max_destinations = (uint16_t) limit;
+    const cJSON *allowed            = cJSON_GetObjectItemCaseSensitive(settings, "allowed-security");
+    if (allowed != NULL)
+    {
+        if (! cJSON_IsArray(allowed) || allowed->child == NULL)
+            return false;
+        ts->allowed_security = 0;
+        for (const cJSON *value = allowed->child; value != NULL; value = value->next)
+        {
+            if (! cJSON_IsString(value) || value->valuestring == NULL ||
+                (value->type & cJSON_StringHasEmbeddedNul) != 0 ||
+                ! configLexicalCheckEncodingQuiet(value->valuestring, strlen(value->valuestring)))
+                return false;
+            const char *const modes[] = {"aes-128-gcm", "chacha20-poly1305", "none", "zero"};
+            unsigned          mode    = 0;
+            while (mode < 4 && strcmp(value->valuestring, modes[mode]) != 0)
+                ++mode;
+            if (mode == 4 || (ts->allowed_security & (1U << mode)) != 0)
+                return false;
+            if (mode < 2 &&
+                ! vmessCipherAvailable(mode == 0 ? VMESS_SECURITY_AES128_GCM : VMESS_SECURITY_CHACHA20_POLY1305))
+                return false;
+            ts->allowed_security |= (uint8_t) (1U << mode);
+        }
+    }
+    /* Raw zero cannot represent UDP datagram boundaries. */
+    return ts->allow_connect || (ts->allowed_security & 7U) != 0;
+}
+
 tunnel_t *vmessserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(vmessserver_tstate_t), sizeof(vmessserver_lstate_t));
@@ -351,6 +434,22 @@ tunnel_t *vmessserverTunnelCreate(node_t *node)
 
     vmessserver_tstate_t *ts       = tunnelGetState(t);
     const cJSON          *settings = node->node_settings_json;
+#define VMESS_INIT_STATS(field) atomic_init(&ts->stats.field, 0)
+    VMESS_INIT_STATS(applications);
+    VMESS_INIT_STATS(carriers);
+    VMESS_INIT_STATS(backends);
+    VMESS_INIT_STATS(tx_records);
+    VMESS_INIT_STATS(rx_records);
+    VMESS_INIT_STATS(tx_application_bytes);
+    VMESS_INIT_STATS(rx_application_bytes);
+    VMESS_INIT_STATS(tx_wire_bytes);
+    VMESS_INIT_STATS(rx_wire_bytes);
+    VMESS_INIT_STATS(wrap_events);
+    VMESS_INIT_STATS(strict_exhaustion);
+    VMESS_INIT_STATS(next_log_ms);
+#undef VMESS_INIT_STATS
+    for (unsigned i = 0; i < kVmessServerReasonCount; ++i)
+        atomic_init(&ts->stats.reasons[i], 0);
 
     t->fnInitU    = &vmessserverTunnelUpStreamInit;
     t->fnFinU     = &vmessserverTunnelUpStreamFinish;
@@ -402,6 +501,13 @@ tunnel_t *vmessserverTunnelCreate(node_t *node)
     if (! ts->allow_connect && ! ts->allow_udp)
     {
         LOGF("JSON Error: VmessServer must enable at least one of connect/udp");
+        vmessserverTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+
+    if (! vmessserverParseMaturity(ts, settings))
+    {
+        LOGF("VmessServer: invalid body policy, packetaddr, termination or diagnostic setting");
         vmessserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
@@ -472,11 +578,17 @@ tunnel_t *vmessserverTunnelCreate(node_t *node)
         t->onChain = &vmessserverTunnelOnChain;
     }
 
-    ts->replay = vmessReplayCreate(ts->replay_max_entries);
-    ts->auth   = vmessserverAuthCreate(t);
+    ts->replay         = vmessReplayCreate(ts->replay_max_entries);
+    ts->owned_backends = memoryAllocateZero((size_t) getWorkersCount() * sizeof(*ts->owned_backends));
+    ts->auth           = vmessserverAuthCreate(t);
     if (ts->auth == NULL)
     {
         LOGF("VmessServer: failed to initialize authentication runtime");
+        vmessserverTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+    if (! vmessserverRegisterApi(t))
+    {
         vmessserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }

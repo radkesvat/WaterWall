@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Pinned V2Ray client interoperability against the real WaterWall VMess server.
+"""Pinned V2Ray/Xray/sing-box clients against the real WaterWall VMess server.
 
 The CTest vmess family runs this inside the existing loopback-only namespace.
-Each invocation owns its WaterWall/V2Ray children, generated inputs, TCP or UDP
+Each invocation owns its WaterWall/reference children, generated inputs, TCP or UDP
 peer and optional splitting relay. It verifies exact bidirectional application
 data, authentication mode, transport composition and orderly server shutdown.
-Provision V2Ray explicitly with provision_vmess_reference.py before running.
+Provision peers explicitly with provision_vmess_reference.py before running.
 """
 
 import argparse
 import concurrent.futures
 import contextlib
+import errno
 import json
 import os
 from pathlib import Path
@@ -20,11 +21,13 @@ import socket
 import subprocess
 import sys
 import threading
+import uuid
 import time
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
                                 str(Path(__file__).resolve().parent / "support" / "python")))
+from vmess_reference import command as reference_command, environment as reference_environment, validate_reference, write_reference, packetaddr_payload_size, unsupported_packetaddr_profile
 from wwtest.config import core_config
 from wwtest.process import Process, close_on_error, install_termination_handler
 from wwtest.run_directory import RunDirectory
@@ -35,6 +38,9 @@ TESTS = Path(__file__).resolve().parent
 HOST = "127.0.0.1"
 SOCKS_PORT, WIRE_PORT, TARGET_PORT, RELAY_PORT = 29931, 29932, 29933, 29934
 UUID = "5783a3e7-e373-51cd-8642-c83782b807c5"
+SHORT_ID = "waterwall-maturity"
+SHORT_UUID = str(uuid.uuid5(uuid.UUID(int=0), SHORT_ID))
+LONG_RECORDS = 65540
 WRONG_UUID = "6783a3e7-e373-51cd-8642-c83782b807c5"
 
 
@@ -48,14 +54,21 @@ def wait_log(process, path, marker, timeout=10):
 
 
 def inputs(root, args):
-    settings = {"uuid": UUID, "connect": True, "udp": True, "handshake-timeout-ms": 3000}
+    credential = SHORT_UUID if args.short_id else UUID
+    settings = {"uuid": SHORT_ID if args.short_id else UUID, "connect": True, "udp": True,
+                "handshake-timeout-ms": 3000, "encrypted-counter-policy": args.counter_policy,
+                "send-termination": args.send_termination == "true"}
+    if args.scenario == "packetaddr_capacity":
+        settings["packetaddr-max-destinations"] = 1
+    if args.scenario == "denied_security":
+        settings["allowed-security"] = ["chacha20-poly1305"]
     nodes = []
     if args.auth == "database":
         settings.pop("uuid")
         settings["auth-client-node-name"] = "auth-client"
         auth = json.loads((TESTS / "cases/vless_auth_tcp_loopback/config.json").read_text())["nodes"][:2]
         nodes.extend(auth)
-        user = {"id": 2001, "name": "vmess-user", "password": UUID, "enabled": True}
+        user = {"id": 2001, "name": "vmess-user", "password": credential, "enabled": True}
         if args.scenario == "connection_limit":
             user["limit"] = {"connections-out": 1}
         (root / "users.json").write_text(json.dumps({"users": [user]}))
@@ -74,7 +87,7 @@ def inputs(root, args):
         entry = "tls"
     nodes.append({"name": "listener", "type": "TcpListener", "next": entry,
                   "settings": {"address": HOST, "port": WIRE_PORT, "nodelay": True}})
-    if args.scenario in ("fallback", "tamper"):
+    if args.scenario in ("fallback", "tamper", "denied_security"):
         settings.update({"fallback-node-name": "fallback", "fallback-intentional-delay-ms": 7,
                          "fallback-intentional-delay-jitter-ms": 1})
         nodes.append({"name": "fallback", "type": "TcpConnector",
@@ -93,18 +106,22 @@ def inputs(root, args):
         # This fixture tests VMess transport composition; certificate validation
         # has separate TLS tests. The peer still connects only to loopback.
         stream.update({"security": "tls", "tlsSettings": {
-            "serverName": "tls.integration.test", "allowInsecure": True}})
+            "serverName": "tls.integration.test", "allowInsecure": not args.verify_tls}})
+        if args.verify_tls:
+            stream["tlsSettings"]["certificates"] = [{"certificateFile": str(root / "server.crt"),
+                                                       "usage": "verify"}]
     reference = {
         "log": {"loglevel": "debug"},
         "inbounds": [{"listen": HOST, "port": SOCKS_PORT, "protocol": "socks",
                       "settings": {"auth": "noauth", "udp": True, "ip": HOST}}],
         "outbounds": [{"protocol": "vmess", "streamSettings": stream,
                        "settings": {"vnext": [{"address": HOST,
-                           "port": RELAY_PORT if args.scenario in ("split", "tamper") else WIRE_PORT,
-                           "users": [{"id": WRONG_UUID if args.scenario == "wrong_uuid" else UUID,
+                           "port": RELAY_PORT if args.scenario in ("split", "tamper", "long", "strict") else WIRE_PORT,
+                           "users": [{"id": WRONG_UUID if args.scenario == "wrong_uuid" else credential,
                                       "alterId": 0, "security": args.cipher}]}]}}],
     }
-    (root / "v2ray.json").write_text(json.dumps(reference))
+    write_reference(root, args.reference_kind, reference, server=False, packet_encoding=args.packet_encoding,
+                    no_termination=args.send_termination == "false")
 
 
 def socks_request(process, udp=False):
@@ -136,10 +153,12 @@ def socks_request(process, udp=False):
 class SplittingRelay:
     """Split the first wire bytes in both directions without interpreting VMess."""
 
-    def __init__(self, waterwall, *, tamper=False):
+    def __init__(self, waterwall, *, tamper=False, split=True):
         self.waterwall = waterwall
         self.tamper = tamper
         self.tampered = False
+        self.split_enabled = split
+        self.accepted = 0
 
     def __enter__(self):
         self.listener = socket.socket()
@@ -158,9 +177,14 @@ class SplittingRelay:
             while not self.stop.is_set():
                 data = source.recv(65536)
                 if not data:
-                    target.shutdown(socket.SHUT_WR)
+                    try:
+                        target.shutdown(socket.SHUT_WR)
+                    except OSError as error:
+                        # The peer may already have disconnected during shutdown.
+                        if error.errno != errno.ENOTCONN:
+                            raise
                     return
-                if first:
+                if first and self.split_enabled:
                     first = False
                     if direction == 0 and self.tamper:
                         # Preserve the valid 16-byte AuthID and corrupt the
@@ -188,12 +212,13 @@ class SplittingRelay:
                     self.waterwall, (HOST, WIRE_PORT), deadline=time.monotonic() + 10,
                     failure=lambda: AssertionError("WaterWall exited before relay target readiness"),
                     timeout=10) as server:
+                self.accepted += 1
                 self.connections = [client, server]
                 with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
                     jobs = [executor.submit(self.forward, client, server, 0),
                             executor.submit(self.forward, server, client, 1)]
                     for job in jobs:
-                        job.result(timeout=30)
+                        job.result(timeout=75)
         except BaseException as error:
             if not self.stop.is_set():
                 self.errors.append(error)
@@ -210,7 +235,7 @@ class SplittingRelay:
             assert not self.errors, self.errors
             if self.tamper:
                 assert self.tampered, "authenticated header corruption was not applied"
-            else:
+            elif self.split_enabled:
                 assert min(self.split) >= 16, f"both VMess headers were not split: {self.split}"
 
 
@@ -222,7 +247,7 @@ def stop_waterwall(process):
 def tcp_case(root, args, reference, waterwall, backend):
     client, _ = socks_request(reference)
     with client:
-        if args.scenario in ("wrong_uuid", "tamper"):
+        if args.scenario in ("wrong_uuid", "tamper", "denied_security"):
             client.sendall(b"must-not-reach-the-target")
             try:
                 assert client.recv(1) == b"", "rejected VMess request received application data"
@@ -237,6 +262,9 @@ def tcp_case(root, args, reference, waterwall, backend):
                 unexpected.close()
                 raise AssertionError("rejected VMess request opened a protected or fallback target")
             stop_waterwall(waterwall)
+            return
+        if args.scenario in ("long", "strict"):
+            long_case(args, client, waterwall, backend)
             return
         payload = bytes(range(256)) * 1024 + b"vmess-final-chunk"
         greeting = b"vmess-server-first"
@@ -270,19 +298,96 @@ def tcp_case(root, args, reference, waterwall, backend):
             target_result.result(timeout=10)
 
 
-def udp_case(reference, waterwall, backend):
+def long_case(args, client, waterwall, backend):
+    # Stop-and-wait forces one new nonempty record in each direction for every
+    # exchange: the next request does not exist until the previous reply arrived.
+    # The relay accepts exactly one transport; reconnects cannot complete here.
+    count = 65535 if args.scenario == "strict" else LONG_RECORDS
+    deadline = time.monotonic() + 65
+    client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+    def target():
+        with backend.accept()[0] as peer:
+            peer.settimeout(10)
+            peer.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            for ordinal in range(count):
+                payload = ordinal.to_bytes(4, "big")
+                assert exact(peer, 4) == payload, f"long input changed at record {ordinal}"
+                peer.sendall(payload)
+            # A strict receiver may admit its last nonce while its transmitter
+            # reserves that nonce for EOF. No reply for that probe is permitted.
+            while peer.recv(65536):
+                assert args.scenario == "strict", "unexpected post-workload application bytes"
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client):
+        result = executor.submit(target)
+        for ordinal in range(count):
+            payload = ordinal.to_bytes(4, "big")
+            client.sendall(payload)
+            assert exact(client, 4) == payload, f"long reply changed at record {ordinal}"
+            assert time.monotonic() < deadline, "long session exceeded its fixed 65-second workload deadline"
+        if args.scenario == "strict":
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                client.sendall(b"last")
+            try:
+                assert client.recv(1) == b"", "strict endpoint reused its encrypted counter"
+            except ConnectionResetError:
+                pass
+        stop_waterwall(waterwall)
+        result.result(timeout=10)
+    unit = "exchanges" if args.cipher == "zero" else "nonempty records"
+    print(f"Verified {count} stop-and-wait {unit} each way on one transport", flush=True)
+
+
+def udp_case(args, reference, waterwall, backend):
     control, relay = socks_request(reference, udp=True)
-    with control, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+    family = socket.AF_INET6 if args.target == "ipv6" else socket.AF_INET
+    host = "::1" if args.target == "ipv6" else HOST
+    address = socket.inet_pton(family, host)
+    address_type = b"\x04" if family == socket.AF_INET6 else b"\x01"
+    secondary = socket.socket(family, socket.SOCK_DGRAM) if args.packet_encoding == "packetaddr" else None
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(control)
+        client = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
         client.settimeout(10)
-        prefix = b"\x00\x00\x00\x01" + socket.inet_aton(HOST) + TARGET_PORT.to_bytes(2, "big")
-        # Empty VMess records terminate the carrier; they are not UDP datagrams.
-        for payload in (b"a", bytes(range(31)), bytes(range(256)) * 2, bytes(range(240)) * 5, b"last"):
-            client.sendto(prefix + payload, relay)
-            data, origin = backend.recvfrom(65535)
-            assert data == payload, "VMess changed UDP input boundary/content"
-            backend.sendto(data[::-1], origin)
-            received, _ = client.recvfrom(65535)
-            assert received == prefix + payload[::-1], "VMess changed UDP reply boundary/content"
+        targets = [(backend, TARGET_PORT)]
+        if secondary is not None:
+            stack.enter_context(secondary)
+            secondary.bind((host, TARGET_PORT + 1))
+            secondary.settimeout(10)
+            targets.append((secondary, TARGET_PORT + 1))
+        payloads = [b"a", bytes(range(31)), bytes(range(256)) * 2, bytes(range(240)) * 5, b"last"]
+        if args.packet_encoding == "packetaddr":
+            # The envelope makes an empty datagram a nonempty VMess record.
+            # V2Ray's packet writer limits the complete record to 2048 bytes;
+            # sing-box's encrypted writer chunks at 15000 plaintext bytes,
+            # including the packetaddr envelope; use its distinct peer limit.
+            large = packetaddr_payload_size(args)
+            payloads += [bytes(range(256)) * (large // 256) + bytes(range(large % 256))]
+            if args.reference_kind == "sing-box":
+                payloads.insert(-1, b"")
+            else:
+                print("Unsupported peer-client cell: V2Ray SOCKS inbound drops empty datagrams before packetaddr", flush=True)
+        for payload in payloads:
+            pending = []
+            for target, port in targets:
+                prefix = b"\x00\x00\x00" + address_type + address + port.to_bytes(2, "big")
+                client.sendto(prefix + payload, relay)
+                if args.scenario == "packetaddr_capacity" and target is secondary:
+                    target.settimeout(0.3)
+                    try:
+                        target.recvfrom(65535)
+                    except socket.timeout:
+                        continue
+                    raise AssertionError("packetaddr destination cap admitted a second protected backend")
+                data, origin = target.recvfrom(65535)
+                assert data == payload, f"VMess changed UDP input: expected {len(payload)} bytes, received {len(data)} bytes"
+                pending.append((target, origin, prefix))
+            # Reverse replies so each envelope must preserve its own target.
+            for target, origin, prefix in reversed(pending):
+                target.sendto(payload[::-1], origin)
+                received, _ = client.recvfrom(65535)
+                assert received == prefix + payload[::-1], "VMess changed UDP reply boundary/address/content"
         stop_waterwall(waterwall)
 
 
@@ -314,17 +419,16 @@ def fallback_case(waterwall, backend):
 
 def run(args):
     if args.scenario != "fallback":
-        if not args.reference.is_file():
-            raise RuntimeError("pinned V2Ray reference missing; build target waterwall_vmess_reference first")
-        version = subprocess.run([str(args.reference), "version"], check=True, capture_output=True,
-                                 text=True, timeout=5).stdout
-        assert version.startswith("V2Ray 5.53.0 "), f"unexpected interoperability reference: {version.splitlines()[0]}"
+        validate_reference(args.reference, args.reference_kind)
+    if unsupported_packetaddr_profile(args):
+        return 77
     with RunDirectory("waterwall-vmess-interop-") as directory:
         root = Path(directory)
         inputs(root, args)
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM if args.protocol == "udp" else socket.SOCK_STREAM) as backend:
+        with socket.socket(socket.AF_INET6 if args.target == "ipv6" else socket.AF_INET,
+                           socket.SOCK_DGRAM if args.protocol == "udp" else socket.SOCK_STREAM) as backend:
             if args.protocol == "udp":
-                backend.bind((HOST, TARGET_PORT))
+                backend.bind(("::1" if args.target == "ipv6" else HOST, TARGET_PORT))
                 backend.settimeout(15)
             else:
                 configure_listener(backend, (HOST, TARGET_PORT), timeout=15)
@@ -335,14 +439,17 @@ def run(args):
                 if args.scenario == "fallback":
                     fallback_case(waterwall, backend)
                 else:
-                    relay = (SplittingRelay(waterwall, tamper=args.scenario == "tamper")
-                             if args.scenario in ("split", "tamper") else contextlib.nullcontext())
-                    with relay, Process([str(args.reference), "run", "-c", str(root / "v2ray.json")],
-                                        cwd=root, log_path=root / "v2ray.log") as reference:
+                    relay = (SplittingRelay(waterwall, tamper=args.scenario == "tamper",
+                                             split=args.scenario in ("split", "tamper"))
+                             if args.scenario in ("split", "tamper", "long", "strict") else contextlib.nullcontext())
+                    with relay, Process(reference_command(args.reference, root),
+                                        cwd=root, log_path=root / "v2ray.log", env=reference_environment(args.reference_kind)) as reference:
                         if args.protocol == "udp":
-                            udp_case(reference, waterwall, backend)
+                            udp_case(args, reference, waterwall, backend)
                         else:
                             tcp_case(root, args, reference, waterwall, backend)
+                        if args.scenario in ("long", "strict"):
+                            assert relay.accepted == 1, "long session reconnected its transport"
     print(f"VMess {args.cipher}/{args.protocol}/{args.auth}/{args.transport}/{args.scenario} passed")
 
 
@@ -353,8 +460,16 @@ if __name__ == "__main__":
     parser.add_argument("reference", type=lambda value: Path(value).resolve())
     parser.add_argument("--cipher", choices=("aes-128-gcm", "chacha20-poly1305", "none", "zero"), default="aes-128-gcm")
     parser.add_argument("--protocol", choices=("tcp", "udp"), default="tcp")
+    parser.add_argument("--target", choices=("ipv4", "ipv6"), default="ipv4")
     parser.add_argument("--auth", choices=("local", "database"), default="local")
     parser.add_argument("--transport", choices=("tcp", "tls", "ws", "wss"), default="tcp")
-    parser.add_argument("--scenario", choices=("roundtrip", "wrong_uuid", "connection_limit", "split", "fallback", "tamper"), default="roundtrip")
+    parser.add_argument("--scenario", choices=("roundtrip", "wrong_uuid", "connection_limit", "split", "fallback", "tamper", "long", "strict", "denied_security", "packetaddr_capacity"), default="roundtrip")
+    parser.add_argument("--reference-kind", choices=("v2ray", "xray", "sing-box"), default="v2ray")
+    parser.add_argument("--counter-policy", choices=("wrap", "strict"), default="wrap")
+    parser.add_argument("--send-termination", choices=("true", "false"), default="true")
+    parser.add_argument("--verify-tls", action="store_true")
+    parser.add_argument("--short-id", action="store_true")
+    parser.add_argument("--packetaddr-payload-profile", choices=("peer-limit", "protocol-limit"), default="peer-limit")
+    parser.add_argument("--packet-encoding", choices=("none", "packetaddr"), default="none")
     parser.add_argument("--workers", type=int, choices=(1, 2), default=1)
-    run(parser.parse_args())
+    sys.exit(run(parser.parse_args()))

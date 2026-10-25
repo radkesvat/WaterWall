@@ -12,6 +12,7 @@ void vmessclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     ls->tunnel = t;
     if (! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l))))
     {
+        vmessclientSetReason(ls, kVmessClientReasonAdmissionRefused);
         vmessclientLinestateDestroy(ls);
         tunnelPrevDownStreamFinish(t, l);
         return;
@@ -19,6 +20,7 @@ void vmessclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     /* With local DNS, the prepare hook already applied the target before resolution. */
     if (! ts->resolve_domains && UNLIKELY(! vmessclientApplyTargetContext(t, l)))
     {
+        vmessclientSetReason(ls, kVmessClientReasonInvalidTarget);
         vmessclientLinestateDestroy(ls);
         tunnelPrevDownStreamFinish(t, l);
         return;
@@ -29,12 +31,14 @@ void vmessclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     ls->kind   = target->proto_udp ? kVmessClientLineKindUdpApplication : kVmessClientLineKindDirect;
     addresscontextCopy(&ls->target_addr, target);
 
-    if (ts->verbose)
+    if (ts->packetaddr && target->proto_udp && ! vmessclientPacketTarget(target, &ls->packet_target))
     {
-        LOGD("VmessClient: line init protocol=%s port=%u",
-             ls->kind == kVmessClientLineKindDirect ? "tcp" : "udp",
-             (unsigned int) target->port);
+        vmessclientSetReason(ls, kVmessClientReasonPacketAddrNeedsIp);
+        vmessclientLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
     }
+    vmessclientCountLine(ls);
 
     if (ls->kind == kVmessClientLineKindUdpApplication)
     {

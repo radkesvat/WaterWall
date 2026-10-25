@@ -18,11 +18,19 @@ void vmessserverLinestateInitialize(vmessserver_lstate_t *ls, tunnel_t *t, line_
     bool attached = bufferqueueTryAttachBudget(&ls->pending_up, &ls->upstream_budget) &&
                     bufferqueueTryAttachBudget(&ls->pending_down, &ls->response_budget);
     assert(attached);
-    discard attached;
+    discard               attached;
+    vmessserver_tstate_t *ts = tunnelGetState(t);
+    atomicAddU64(kind == kVmessServerLineKindClient ? &ts->stats.carriers : &ts->stats.backends, 1);
 }
 
 void vmessserverLinestateDestroy(vmessserver_lstate_t *ls)
 {
+    vmessserver_tstate_t *ts = tunnelGetState(ls->tunnel);
+    atomicSubU64(ls->line_kind == kVmessServerLineKindClient ? &ts->stats.carriers : &ts->stats.backends, 1);
+    if (ls->crypto_ready)
+        atomicSubU64(&ts->stats.applications, 1);
+    assert(ls->udp_destination_count == 0);
+    memoryFree(ls->udp_destinations);
     vmessserverAuthLineDetach(ls);
     vmessBodyDestroy(&ls->input_crypto);
     vmessBodyDestroy(&ls->output_crypto);

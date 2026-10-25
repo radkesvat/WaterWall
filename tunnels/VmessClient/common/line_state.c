@@ -16,6 +16,12 @@ void vmessclientLinestateInitialize(vmessclient_lstate_t *ls, line_t *l)
 
 void vmessclientLinestateDestroy(vmessclient_lstate_t *ls)
 {
+    if (ls->stats_counted)
+    {
+        vmessclient_tstate_t *ts = tunnelGetState(ls->tunnel);
+        atomicDecU64Relaxed(ls->kind == kVmessClientLineKindUdpCarrier ? &ts->stats.active_carriers
+                                                                       : &ts->stats.active_applications);
+    }
     vmessclientCancelFirstPayloadTimer(ls);
     addresscontextReset(&ls->target_addr);
     vmessBodyDestroy(&ls->output_crypto);
@@ -56,4 +62,13 @@ sbuf_t *vmessclientCompactInput(line_t *l, sbuf_t *buf)
         return compact;
     }
     return buf;
+}
+
+void vmessclientCountLine(vmessclient_lstate_t *ls)
+{
+    assert(! ls->stats_counted && ls->tunnel != NULL);
+    vmessclient_tstate_t *ts = tunnelGetState(ls->tunnel);
+    atomicIncU64Relaxed(ls->kind == kVmessClientLineKindUdpCarrier ? &ts->stats.active_carriers
+                                                                   : &ts->stats.active_applications);
+    ls->stats_counted = true;
 }

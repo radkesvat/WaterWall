@@ -50,9 +50,9 @@ static bool parseUuid(vmessclient_tstate_t *ts, const cJSON *settings)
         return false;
     }
 
-    if (! wwUuidParseString(uuid_json->valuestring, ts->uuid))
+    if (vmessNormalizeId(uuid_json->valuestring, strlen(uuid_json->valuestring), ts->uuid) != kWCryptoOk)
     {
-        LOGF("JSON Error: VmessClient->settings->uuid must be an RFC4122 UUID string");
+        LOGF("JSON Error: VmessClient->settings->uuid must be a UUID or a nonempty UTF-8 ID of at most 30 bytes");
         return false;
     }
 
@@ -246,6 +246,9 @@ static bool validateSettings(const cJSON *settings)
                                       "domain-strategy",
                                       "first-payload-timeout-ms",
                                       "security",
+                                      "encrypted-counter-policy",
+                                      "send-termination",
+                                      "packet-encoding",
                                       "chunk-masking",
                                       "global-padding",
                                       "authenticated-length",
@@ -291,6 +294,12 @@ static bool parseSecurity(vmessclient_tstate_t *ts, const cJSON *settings)
         const char *name = value->valuestring;
         if (stricmp(name, "aes-128-gcm") == 0)
             ts->security = VMESS_SECURITY_AES128_GCM;
+        else if (stricmp(name, "auto") == 0)
+        {
+            ts->security_auto = true;
+            if (vmessAutoSecurity(&ts->security) != kWCryptoOk)
+                return false;
+        }
         else if (stricmp(name, "chacha20-poly1305") == 0)
             ts->security = VMESS_SECURITY_CHACHA20_POLY1305;
         else if (stricmp(name, "none") == 0 || stricmp(name, "zero") == 0)
@@ -306,7 +315,8 @@ static bool parseSecurity(vmessclient_tstate_t *ts, const cJSON *settings)
     if (! parseBoolean(settings, "chunk-masking", ! zero, &mask) ||
         ! parseBoolean(settings, "global-padding", encrypted, &padding) ||
         ! parseBoolean(settings, "authenticated-length", false, &auth_length) ||
-        ! parseBoolean(settings, "verbose", false, &ts->verbose))
+        ! parseBoolean(settings, "verbose", false, &ts->verbose) ||
+        ! parseBoolean(settings, "send-termination", true, &ts->send_termination))
         return false;
     ts->options = (zero ? 0 : VMESS_OPTION_CHUNK) | (mask ? VMESS_OPTION_MASK : 0) |
                   (padding ? VMESS_OPTION_PADDING : 0) | (auth_length ? VMESS_OPTION_AUTH_LENGTH : 0);
@@ -316,7 +326,38 @@ static bool parseSecurity(vmessclient_tstate_t *ts, const cJSON *settings)
         (ts->protocol == kVmessClientProtocolDestContext && ! vmessModeValid(ts->security, ts->options, 1) &&
          ! vmessModeValid(ts->security, ts->options, 2)))
         return false;
+    if (! vmessCipherAvailable(ts->security))
+    {
+        LOGF("VmessClient: configured body cipher is unavailable from the VMess crypto provider");
+        return false;
+    }
     return vmessPrepareKey(ts->uuid, &ts->key) == kWCryptoOk;
+}
+
+static bool parseMaturityOptions(vmessclient_tstate_t *ts, const cJSON *settings)
+{
+    ts->counter_policy  = kVmessCounterWrap;
+    const cJSON *policy = cJSON_GetObjectItemCaseSensitive(settings, "encrypted-counter-policy");
+    if (policy != NULL)
+    {
+        if (! cJSON_IsString(policy) || policy->valuestring == NULL)
+            return false;
+        if (strcmp(policy->valuestring, "strict") == 0)
+            ts->counter_policy = kVmessCounterStrict;
+        else if (strcmp(policy->valuestring, "wrap") != 0)
+            return false;
+    }
+    const cJSON *encoding = cJSON_GetObjectItemCaseSensitive(settings, "packet-encoding");
+    if (encoding != NULL)
+    {
+        if (! cJSON_IsString(encoding) || encoding->valuestring == NULL)
+            return false;
+        if (strcmp(encoding->valuestring, "packetaddr") == 0)
+            ts->packetaddr = true;
+        else if (strcmp(encoding->valuestring, "none") != 0)
+            return false;
+    }
+    return ! ts->packetaddr || ts->protocol != kVmessClientProtocolTcp;
 }
 
 tunnel_t *vmessclientTunnelCreate(node_t *node)
@@ -329,6 +370,22 @@ tunnel_t *vmessclientTunnelCreate(node_t *node)
 
     vmessclient_tstate_t *ts       = tunnelGetState(t);
     const cJSON          *settings = node->node_settings_json;
+#define INIT_STAT(field) atomic_init(&ts->stats.field, 0)
+    INIT_STAT(active_applications);
+    INIT_STAT(active_carriers);
+    INIT_STAT(tx_records);
+    INIT_STAT(rx_records);
+    INIT_STAT(tx_application_bytes);
+    INIT_STAT(rx_application_bytes);
+    INIT_STAT(tx_wire_bytes);
+    INIT_STAT(rx_wire_bytes);
+    INIT_STAT(tx_wraps);
+    INIT_STAT(rx_wraps);
+    INIT_STAT(verbose_after_ms);
+    INIT_STAT(verbose_suppressed);
+#undef INIT_STAT
+    for (unsigned i = 0; i < kVmessClientReasonCount; ++i)
+        atomic_init(&ts->stats.reasons[i], 0);
 
     t->fnInitU    = &vmessclientTunnelUpStreamInit;
     t->fnFinU     = &vmessclientTunnelUpStreamFinish;
@@ -353,7 +410,8 @@ tunnel_t *vmessclientTunnelCreate(node_t *node)
 
     if (! validateSettings(settings) || ! parseUuid(ts, settings) || ! parseTargetAddress(ts, settings) ||
         ! parseTargetPort(ts, settings) || ! parseProtocol(ts, settings) || ! parseDomainStrategy(ts, settings) ||
-        ! parseFirstPayloadTimeout(ts, settings) || ! parseSecurity(ts, settings))
+        ! parseFirstPayloadTimeout(ts, settings) || ! parseSecurity(ts, settings) ||
+        ! parseMaturityOptions(ts, settings))
     {
         LOGF("VmessClient: invalid or unsupported client settings");
         vmessclientTunnelstateDestroy(ts);
@@ -361,7 +419,7 @@ tunnel_t *vmessclientTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! vmessclientCreateInternalDomainResolver(t, node))
+    if (! vmessclientCreateInternalDomainResolver(t, node) || ! vmessclientRegisterApi(t))
     {
         vmessclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;

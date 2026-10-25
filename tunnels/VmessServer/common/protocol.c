@@ -31,6 +31,7 @@ static void decodeDestination(const vmess_request_header_t *request, address_con
 
 static bool initializeCrypto(vmessserver_lstate_t *ls)
 {
+    vmessserver_tstate_t   *ts               = tunnelGetState(ls->tunnel);
     uint8_t                 response_key[16] = {0}, response_iv[16] = {0};
     vmess_request_header_t *request = &ls->request;
     bool                    ok =
@@ -42,14 +43,16 @@ static bool initializeCrypto(vmessserver_lstate_t *ls)
                       request->security,
                       request->options,
                       request->command,
-                      false) == kWCryptoOk &&
+                      false,
+                      ts->counter_policy) == kWCryptoOk &&
         vmessBodyInit(&ls->output_crypto,
                       response_key,
                       response_iv,
                       request->security,
                       request->options,
                       request->command,
-                      true) == kWCryptoOk;
+                      true,
+                      ts->counter_policy) == kWCryptoOk;
     if (ok && (request->options & VMESS_OPTION_AUTH_LENGTH) != 0)
     {
         ok = vmessBodySetLengthMaterial(&ls->output_crypto, request->key, request->iv) == kWCryptoOk;
@@ -72,7 +75,10 @@ bool vmessserverHandleInitialRequest(tunnel_t *t, line_t *line, vmessserver_lsta
         return true;
     }
     if (ls->auth_result == 2)
+    {
+        vmessserverReason(ls, kVmessServerReasonAuthMismatch);
         return vmessserverStartFallback(t, line);
+    }
     if (ls->auth_result != 1)
         goto failed;
     if (! vmessserverGatherHeader(ls, VMESS_REQUEST_PREFIX_SIZE))
@@ -91,14 +97,36 @@ bool vmessserverHandleInitialRequest(tunnel_t *t, line_t *line, vmessserver_lsta
                                ls->header + 34,
                                ls->header + VMESS_REQUEST_PREFIX_SIZE,
                                ls->request_length + 16,
-                               &ls->request) != kWCryptoOk ||
-        ! initializeCrypto(ls))
+                               &ls->request) != kWCryptoOk)
         goto failed;
     if ((ls->request.command == kVmessCmdTcp && ! ts->allow_connect) ||
         (ls->request.command == kVmessCmdUdp && ! ts->allow_udp))
+    {
+        vmessserverReason(ls, kVmessServerReasonCommandDenied);
+        goto failed;
+    }
+    uint8_t mode = ls->request.security == VMESS_SECURITY_AES128_GCM          ? 0
+                   : ls->request.security == VMESS_SECURITY_CHACHA20_POLY1305 ? 1
+                   : (ls->request.options & VMESS_OPTION_CHUNK) != 0          ? 2
+                                                                              : 3;
+    if ((ts->allowed_security & (1U << mode)) == 0)
+    {
+        vmessserverReason(ls, kVmessServerReasonSecurityDenied);
+        goto failed;
+    }
+    ls->packetaddr = vmessRequestIsPacketAddr(&ls->request);
+    if (ls->packetaddr && ! ts->packetaddr)
+    {
+        vmessserverReason(ls, kVmessServerReasonCommandDenied);
+        goto failed;
+    }
+    if (! initializeCrypto(ls))
         goto failed;
     if (! vmessserverAuthResolve(ls))
+    {
+        vmessserverReason(ls, kVmessServerReasonAuthUnavailable);
         goto failed;
+    }
     if (! vmessReplayAdmit(ts->replay,
                            ls->header,
                            ls->candidate.uuid,
@@ -107,14 +135,29 @@ bool vmessserverHandleInitialRequest(tunnel_t *t, line_t *line, vmessserver_lsta
                            ls->auth_timestamp,
                            getTimeOfDayMS() / 1000,
                            getHRTimeUs() / 1000))
+    {
+        vmessserverReason(ls, kVmessServerReasonReplayOrCapacity);
         goto failed;
+    }
     ls->input_bytes -= total;
     ls->header_filled = 0;
     ls->crypto_ready  = true;
+    atomicAddU64(&ts->stats.applications, 1);
     vmessserverAuthLineDetach(ls);
     memorySecureZero(ls->auth_key.cmd_key, sizeof(ls->auth_key.cmd_key));
     memorySecureZero(ls->auth_key.auth_key, sizeof(ls->auth_key.auth_key));
     vmessserverRecordLineUser(line, ls);
+    if (ls->packetaddr)
+    {
+        ls->udp_destinations = memoryAllocateZero((size_t) ts->packetaddr_max_destinations * sizeof(line_t *));
+        ls->phase            = kVmessServerPhaseUdpConnecting;
+        /* The authenticated carrier itself is the local UDP association endpoint.
+         * No magic address is ever published to a resolver or connector. */
+        ls->transport_est_sent = true;
+        if (! lineCallWithRef(line, tunnelPrevDownStreamEst, t))
+            return false;
+        return ((vmessserver_lstate_t *) lineGetState(line, t))->tunnel == t;
+    }
     address_context_t target = {0};
     decodeDestination(&ls->request, &target);
     if (ls->request.command == kVmessCmdUdp)
@@ -137,6 +180,7 @@ bool vmessserverHandleInitialRequest(tunnel_t *t, line_t *line, vmessserver_lsta
         return false;
     return ls->tunnel == t;
 failed:
+    vmessserverReason(ls, kVmessServerReasonHeader);
     vmessserverCloseLineBidirectional(t, line);
     return false;
 }

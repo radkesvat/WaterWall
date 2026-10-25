@@ -16,6 +16,7 @@ void vmessserverTunnelUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
         return;
     }
     size_t size = sbufGetLength(buf);
+    atomicAddU64(&((vmessserver_tstate_t *) tunnelGetState(t))->stats.rx_wire_bytes, size);
     if (size == 0)
     {
         lineReuseBuffer(line, buf);
@@ -31,6 +32,7 @@ void vmessserverTunnelUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
     vmessserverProcessInput(t, line);
     return;
 refused:
+    vmessserverReason(ls, kVmessServerReasonAdmission);
     lineReuseBuffer(line, buf);
     vmessserverCloseLineBidirectional(t, line);
 }

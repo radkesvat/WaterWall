@@ -9,8 +9,10 @@ No WaterWall implementation or executable is used by this generator.
 """
 
 import hashlib
+import ipaddress
 from pathlib import Path
 import struct
+import uuid as uuid_module
 import zlib
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -81,10 +83,10 @@ def response_envelope(payload):
         kdf(response_iv, b"AEAD Resp Header IV")[:12], payload, None)
 
 
-def request_envelope(address_type, address, padding):
+def request_envelope(address_type, address, padding, command=1, port=443):
     address_field = bytes([address_type]) + (bytes([len(address)]) if address_type == 2 else b"") + address
-    payload = b"\x01" + iv + key + bytes([61, 13, (len(padding) << 4) | 3, 0, 1])
-    payload += struct.pack(">H", 443) + address_field + padding
+    payload = b"\x01" + iv + key + bytes([61, 13, (len(padding) << 4) | 3, 0, command])
+    payload += struct.pack(">H", port) + address_field + padding
     payload += fnv(payload)
     return (auth + request_part(b"VMess Header AEAD Key_Length", b"VMess Header AEAD Nonce_Length",
                                 struct.pack(">H", len(payload))) + nonce8 +
@@ -92,23 +94,24 @@ def request_envelope(address_type, address, padding):
 
 
 def frames(security, options, payloads, start=0, body_key=key, body_iv=iv,
-           length_key=None, length_iv=None):
+           length_key=None, length_iv=None, shake_records=0):
     length_key = body_key if length_key is None else length_key
     length_iv = body_iv if length_iv is None else length_iv
-    stream = hashlib.shake_128(body_iv).digest(2 * len(payloads) * 2)
-    cursor = 0
+    bytes_per_record = (2 if options & 8 else 0) + (2 if options & 4 and not options & 16 else 0)
+    stream = hashlib.shake_128(body_iv).digest(bytes_per_record * (shake_records + len(payloads)))
+    cursor = bytes_per_record * shake_records
     for counter, payload in enumerate(payloads, start):
         padding = 0
         if options & 8:
             padding = int.from_bytes(stream[cursor:cursor + 2], "big") % 64
             cursor += 2
-        nonce = struct.pack(">H", counter) + body_iv[2:12]
+        nonce = struct.pack(">H", counter & 65535) + body_iv[2:12]
         algorithm = AESGCM if security == 3 else ChaCha20Poly1305
         converted = lambda value: value if security == 3 else chacha_key(value)
         encrypted = payload if security == 5 else algorithm(converted(body_key)).encrypt(nonce, payload, None)
         size = len(encrypted) + padding
         if options & 16:
-            length_nonce = struct.pack(">H", counter) + length_iv[2:12]
+            length_nonce = struct.pack(">H", counter & 65535) + length_iv[2:12]
             prefix = algorithm(converted(kdf(length_key, b"auth_len")[:16])).encrypt(
                 length_nonce, struct.pack(">H", size - 16), None)
         else:
@@ -138,6 +141,12 @@ for name, value in [("vector_uuid", uuid), ("vector_cmd", cmd), ("vector_auth_ke
 
 array("vector_request_ipv6", request_envelope(3, bytes(range(16)), b""))
 array("vector_request_domain_max", request_envelope(2, b"a" * 255, bytes(range(15))))
+array("vector_request_packetaddr", request_envelope(2, b"sp.packet-addr.v2fly.arpa", b"", command=2, port=0))
+array("vector_request_zero_port", request_envelope(1, b"\xc0\x00\x02\x7b", b"", command=2, port=0))
+# Authenticated malformed uses of the reserved domain must never route normally.
+array("vector_request_packetaddr_udp_wrong_port", request_envelope(2, b"sp.packet-addr.v2fly.arpa", b"", command=2, port=53))
+array("vector_request_packetaddr_tcp_wrong_port", request_envelope(2, b"sp.packet-addr.v2fly.arpa", b"", command=1, port=443))
+array("vector_request_packetaddr_tcp_zero_port", request_envelope(2, b"sp.packet-addr.v2fly.arpa", b"", command=1, port=0))
 array("vector_response_command", response_envelope(bytes([61, 0xFF, 1, 3]) + b"abc"))
 array("vector_response_command_max", response_envelope(bytes([61, 0xFF, 255, 255]) + bytes(range(255))))
 array("vector_response_wrong_marker", response_envelope(bytes([62, 0, 0, 0])))
@@ -171,4 +180,33 @@ array("vector_last_counter_auth_chacha", next(frames(4, 29, [b"last"], 65535))[0
 large = next(frames(3, 17, [b"Z" * 65535]))[0]
 array("vector_large_prefix", large[:18])
 array("vector_large_hash", hashlib.sha256(large).digest())
+
+# Compact independent checkpoints after all preceding SHAKE consumption. Keep
+# frames(start=65535) above as seeded-state cases, whose SHAKE offset is zero.
+boundaries = (65534, 65535, 65536, 65537, 131070, 131071, 131072, 131073)
+records = []
+for direction in (0, 1):
+    for security in (3, 4):
+        for options in (1, 5, 13, 17, 21, 29):
+            kwargs = {} if direction == 0 else dict(body_key=response_key, body_iv=response_iv,
+                                                    length_key=key, length_iv=iv)
+            for ordinal in boundaries:
+                wire, padding = next(frames(security, options, [b"x"], start=ordinal, shake_records=ordinal, **kwargs))
+                name = f"vector_wrap_{direction}_{security}_{options}_{ordinal}"
+                # Random padding does not belong in a deterministic checkpoint.
+                array(name, wire[:len(wire) - padding] if padding else wire)
+                records.append(f"    {{{direction}, {security}, {options}, {ordinal}, {padding}, {name}, sizeof({name})}},")
+lines.extend(["typedef struct { uint8_t direction, security, options; uint32_t ordinal; uint8_t padding; const uint8_t *wire; size_t length; } vmess_wrap_vector_t;",
+              "static const vmess_wrap_vector_t vector_wrap_checkpoints[] = {", *records, "};", ""])
+
+# UUIDv5 known answers use Python's independent standard implementation.
+for name, text in (("test", "test"), ("waterwall", "waterwall"), ("one", "a"),
+                   ("persian", "۱۲۳"), ("composed", "é"), ("decomposed", "e\u0301"),
+                   ("max", "a" * 30)):
+    array("vector_short_id_" + name, uuid_module.uuid5(uuid_module.UUID(int=0), text).bytes)
+
+# sing-vmess a0c58542bd9d99b00ea0c3cfacce6f03cf8a4017 packetaddr +
+# sing ab3827767cea serializer.go: family, address, then big-endian port.
+array("vector_packetaddr_v4", b"\x01" + ipaddress.ip_address("192.0.2.123").packed + struct.pack(">H", 5353))
+array("vector_packetaddr_v6", b"\x02" + ipaddress.ip_address("2001:db8::1234").packed + struct.pack(">H", 443))
 Path(__file__).with_name("vectors.h").write_text("\n".join(lines), encoding="utf-8")

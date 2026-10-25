@@ -1,11 +1,11 @@
 <!--
-Documentation version: 1
+Documentation version: 2
 Sync note: Keep this file, WaterWall-Docs/docs/02-noderefs/VmessClient.mdx and WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VmessClient.mdx synchronized.
 -->
 
 # VmessClient Node
 
-`VmessClient` sends modern VMess AEAD requests using one configured UUID. It carries
+`VmessClient` sends modern VMess AEAD requests using one configured UUID or short string ID. It carries
 TCP streams or fixed-destination UDP datagrams over a byte-stream transport. The
 default body security is `aes-128-gcm`. IPv4, IPv6 and domain destinations are supported.
 
@@ -68,17 +68,20 @@ To preserve an incoming proxy/router destination:
 
 | Setting | Default | Accepted values |
 | --- | --- | --- |
-| `uuid` / `id` / `user-id` | Required | One dashed 36-character or compact 32-character hexadecimal UUID; hexadecimal case is ignored. |
+| `uuid` / `id` / `user-id` | Required | Dashed/compact hexadecimal UUID, or an exact UTF-8 string of 1..30 bytes mapped to UUIDv5 with the nil namespace. |
 | `target-address` / `address` / `target` | Required | Literal host/IP, `dest_context->address`, or `line->dest_ctx->address`. Domains contain 1..255 non-NUL bytes. |
 | `port` | Required | Integer 1..65535, `dest_context->port`, or `line->dest_ctx->port`. |
 | `protocol` / `proto` | `tcp` | `tcp`/`connect`, `udp`/`udp-associate`, `dest_context->protocol`, or `line->dest_ctx->protocol`. |
 | `domain-strategy` | `do-not-resolve-domains` | One of the strategies below. |
 | `first-payload-timeout-ms` | `400` | Integer 0..4294967295; zero sends an idle request without deliberate waiting after transport Est. |
-| `security` | `aes-128-gcm` | `aes-128-gcm`, `chacha20-poly1305`, `none`, or `zero`. |
+| `security` | `aes-128-gcm` | `aes-128-gcm`, `chacha20-poly1305`, `auto`, `none`, or `zero`. |
 | `chunk-masking` | Mode-dependent | Boolean; true except for `zero`. |
 | `global-padding` | Mode-dependent | Boolean; true for encrypted modes, false for `none` and `zero`. |
 | `authenticated-length` | `false` | Boolean; encrypted modes only. |
-| `verbose` | `false` | Boolean diagnostics without credentials, keys or plaintext. |
+| `encrypted-counter-policy` | `wrap` | `wrap` or `strict`; local policy for each encrypted direction. |
+| `send-termination` | `true` | Boolean; send the optional final empty framed record on local close. |
+| `packet-encoding` | `none` | `none` or `packetaddr`; packetaddr applies only to UDP. |
+| `verbose` | `false` | Reason-coded diagnostics, sampled at most once per second per node, without credentials, keys or plaintext. |
 
 Use exactly one name from each credential/address alias group and at most one
 protocol selector. Duplicate JSON keys, conflicting aliases, unsupported settings,
@@ -90,6 +93,13 @@ Dynamic protocol selection uses exact TCP or UDP. A missing, ambiguous or unsupp
 protocol logs a warning and falls back to TCP. A missing dynamic address, invalid or
 zero port, or a dynamically selected UDP/`zero` combination closes that association
 before transport Init. A fixed UDP/`zero` configuration fails construction.
+
+Short IDs use exact UTF-8 bytes, without trimming, case folding or Unicode normalization.
+For example, `waterwall` maps to `106b9dde-356b-5769-b2f6-7ea4193ec5f7`.
+Malformed UUID-sized strings and non-UUID IDs longer than 30 bytes are rejected.
+A managed VmessServer requires the canonical mapped UUID in AuthenticationClient's
+password database; short-name normalization applies to this client and local server
+credentials only.
 
 The UUID can be issued by the same management system used by a managed VmessServer.
 VmessClient does not depend on AuthenticationClient or UserController, publish that
@@ -118,7 +128,14 @@ downstream transport nodes can replace the line destination with the server endp
 
 All modes use authenticated AEAD request and response headers. `none` and `zero`
 leave application bodies unencrypted and unauthenticated. TLS remains separately
-configured.
+configured. Select `zero` manually for TCP over TLS, or framed `none` for UDP,
+when TLS should provide body protection. The client never infers TLS or downgrades
+body security from its neighbors.
+
+`auto` resolves once during node construction. It selects AES-GCM when runtime
+CPU/OS capabilities prove AES and carryless multiplication acceleration and the
+VMess OpenSSL provider supports AES; otherwise it prefers available ChaCha20-Poly1305.
+An unavailable explicit cipher fails construction. Auto never selects `none`/`zero`.
 
 | Security and command | Masking | Global padding | Authenticated lengths |
 | --- | --- | --- | --- |
@@ -167,9 +184,9 @@ the affected connection.
 The application UDP line is borrowed. VmessClient creates and owns one same-worker
 TCP carrier per association and preserves one fixed final target. Each accepted
 datagram becomes one record; every complete nonempty received record becomes one
-datagram. Empty local datagrams and datagrams above the mode-specific maximum are
-dropped without starting a request or splitting; the idle timer can still emit a
-header. An empty framed record means termination, after tag verification where
+datagram. Native UDP drops empty local datagrams; every mode drops datagrams above
+its maximum without splitting or starting a request. The idle timer can still emit
+a header. An empty framed record means termination, after tag verification where
 applicable.
 
 | Body profile | Maximum local UDP payload |
@@ -180,6 +197,20 @@ applicable.
 | AES/ChaCha, authenticated length and padding | 65,472 bytes |
 | NONE, ordinary/masked length | 65,535 bytes |
 | NONE, masked length and padding | 65,472 bytes |
+
+With `packet-encoding=packetaddr`, command 2 targets the exact magic destination
+`sp.packet-addr.v2fly.arpa:0`; that marker is never passed to DNS or a connector.
+Each record contains a family/IP/port envelope followed by one application datagram.
+The client retains one fixed target and carrier. Reply source IP/port must match
+that target; unexpected sources are dropped and counted. Malformed envelopes close
+the association. Header-only envelopes preserve empty application datagrams, while
+an empty outer VMess record remains EOF. Subtract 7 bytes for IPv4 or 19 for IPv6
+from the table above for the maximum packetaddr application payload.
+
+Packetaddr requires an IP target. Explicit local DNS can resolve a domain first;
+with `do-not-resolve-domains`, the association is refused before transport Init.
+Fixed TCP with packetaddr fails construction; dynamic TCP keeps ordinary encoding.
+This envelope is independent of Mux.Cool and XUDP and adds no carrier pooling.
 
 Each direction has inclusive retained-input bounds of 2 MiB logical bytes,
 1,024 entries and 8 MiB charged allocation, including active popped buffers and
@@ -193,19 +224,49 @@ early plaintext burst can exceed that wire limit after framing while identificat
 is pending. The client does not treat the response as an authentication acknowledgement,
 pace implicitly, enlarge the server allowance or reconnect/replay a refused burst.
 
-Encrypted outgoing data uses ordinals 0..65,534, reserving 65,535 for termination.
-Incoming data at ordinal 65,535 is delivered, then the association closes before
-another record can reuse the nonce. Authenticated lengths follow the same counter
-boundary. NONE/zero bodies do not have this encrypted-record counter limit.
+The default `encrypted-counter-policy=wrap` uses every data ordinal 0..65,535
+and continues from 65,535 to 0 under the same session keys. This intentionally
+repeats the 16-bit AEAD nonce sequence for mainstream interoperability: it is not
+rekeying and does not preserve AEAD nonce uniqueness. Authenticated lengths use the
+same ordinal; SHAKE masking/padding continues without reset.
+
+`strict` keeps outgoing data at 0..65,534 and reserves 65,535 for EOF. Valid incoming
+data at 65,535 is delivered, then the association closes before nonce reuse.
+NONE/zero accept this setting without an encrypted-counter effect. Counter policy
+is local and adds no negotiation; a strict endpoint can close a wrap peer at its limit.
 
 Finish follows WaterWall's full-close semantics: close the sender's side immediately,
 cancel the first-payload timer, detach associations, settle retained buffers and wipe
 session keys. A bounded termination may be sent only toward an open wire side after
-a request has started; Finish never creates a fresh request. Owned carrier Finish
+a request has started when `send-termination=true`; false omits that record and
+retains the same full-close lifecycle, including on strict exhaustion. Incoming
+valid EOF is always accepted. Raw zero has no explicit framed EOF. These are local
+choices with no handshake negotiation. Finish never creates a fresh request. Owned carrier Finish
 returns with that carrier logically dead. Source-owner drain closes borrowed lines
 and their dependent carriers before chain/pool teardown; quiescence prevents new
 timer output or associations. The node remains active for the whole connection,
 including `none`/`zero`.
+
+## Read-only stats
+
+The registered node API operation `stats` accepts an empty JSON object `{}` of at
+most 64 bytes including whitespace. It has no reset or mutation operation. Access
+requires the ordinary APIServer node/operation permission; see the shared
+[node-operation contracts](../../WaterWall-Docs/docs/05-devguides/api/node-operations.mdx) in the node reference.
+
+The fixed JSON response includes effective security/options/protocol, counter,
+termination and packet encoding settings, approximate active application/carrier
+counts, successful TX/RX body records, application bytes, wire bytes, wrap counts,
+fixed close/drop reasons and suppressed verbose messages. Every uint64 counter is
+a decimal JSON string, preserving full precision. Application bytes exclude
+packetaddr envelopes and count successfully encoded TX data and delivered RX data;
+wire bytes count submitted TX/received RX bytes including handshake and framing.
+Framed EOF contributes a record but no application bytes. Snapshots load atomic
+counters independently and are approximate while traffic continues; they never
+traverse live lines. The client owns no destination backend, auth cache or replay
+table. Invalid/nonempty bodies, expired deadlines and insufficient result/working
+budgets return an API error. Working memory includes 4,608 bytes of fixed render/
+metadata scratch plus the actual result-pool allocation charge.
 
 ## Build and metadata
 
@@ -218,6 +279,8 @@ The node is an L4 middle node with previous and next support,
 `required_padding_left=0` and `kNodeFlagBlocksSplice`. The complete expanded chain
 uses ordinary buffers; new output retains full onward pool padding.
 
-Unsupported features include legacy headers, AlterID, AES-CFB, Mux.Cool, XUDP,
+Unsupported features include legacy headers, AlterID, AES-CFB, AES-CTR, Mux.Cool, XUDP,
 reverse commands, automatic account/security switching, reconnect/replay and new
 transport implementations.
+
+WaterWall Mux framing is custom and does not provide external VMess Mux.Cool interoperability.

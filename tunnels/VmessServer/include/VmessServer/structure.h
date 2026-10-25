@@ -7,6 +7,38 @@
 
 typedef struct vmessserver_auth_runtime_s vmessserver_auth_runtime_t;
 typedef struct vmessserver_auth_job_s     vmessserver_auth_job_t;
+typedef struct vmessserver_lstate_s       vmessserver_lstate_t;
+
+typedef enum vmessserver_reason_e
+{
+    kVmessServerReasonUnset = 0,
+    kVmessServerReasonNormal,
+    kVmessServerReasonAuthMismatch,
+    kVmessServerReasonAuthUnavailable,
+    kVmessServerReasonExpiredAuthId,
+    kVmessServerReasonReplayOrCapacity,
+    kVmessServerReasonHeader,
+    kVmessServerReasonBodyAuth,
+    kVmessServerReasonLengthAuth,
+    kVmessServerReasonCommandDenied,
+    kVmessServerReasonSecurityDenied,
+    kVmessServerReasonTimeout,
+    kVmessServerReasonAdmission,
+    kVmessServerReasonUdpOversize,
+    kVmessServerReasonPacketAddr,
+    kVmessServerReasonDestinationCapacity,
+    kVmessServerReasonStrictExhaustion,
+    kVmessServerReasonCount
+} vmessserver_reason_t;
+
+typedef struct vmessserver_stats_s
+{
+    atomic_ullong applications, carriers, backends;
+    atomic_ullong tx_records, rx_records, tx_application_bytes, rx_application_bytes;
+    atomic_ullong tx_wire_bytes, rx_wire_bytes, wrap_events, strict_exhaustion;
+    atomic_ullong reasons[kVmessServerReasonCount];
+    atomic_ullong next_log_ms;
+} vmessserver_stats_t;
 
 enum
 {
@@ -72,16 +104,24 @@ typedef struct vmessserver_tstate_s
     node_t   *fallback_node;
     tunnel_t *fallback_tunnel;
 
-    vmessserver_user_t *users;
-    uint32_t            user_count;
-    uint32_t            fallback_intentional_delay_ms;
-    uint32_t            fallback_intentional_delay_jitter_ms;
-    bool                allow_connect;
-    bool                allow_udp;
-    bool                verbose;
+    vmessserver_user_t    *users;
+    uint32_t               user_count;
+    uint32_t               fallback_intentional_delay_ms;
+    uint32_t               fallback_intentional_delay_jitter_ms;
+    bool                   allow_connect;
+    bool                   allow_udp;
+    bool                   verbose;
+    bool                   send_termination, packetaddr;
+    uint8_t                allowed_security;
+    uint16_t               packetaddr_max_destinations;
+    vmess_counter_policy_t counter_policy;
+    vmessserver_stats_t    stats;
+    /* Owner-worker inventories drain internally created backends independently
+     * of borrowed carrier/source shutdown order. */
+    vmessserver_lstate_t **owned_backends;
 } vmessserver_tstate_t;
 
-typedef struct vmessserver_lstate_s
+struct vmessserver_lstate_s
 {
     vmessserver_auth_job_t               *auth_job;
     authenticationclient_uuid_candidate_t candidate;
@@ -109,13 +149,21 @@ typedef struct vmessserver_lstate_s
     line_t                               *client_line;
     line_t                               *udp_remote_line;
     address_context_t                     udp_target;
-    buffer_queue_t                        pending_up;
-    sbuf_t                               *input_head;
-    size_t                                input_bytes;
-    uint8_t                               header[kVmessServerInitialMaxReqLen];
-    uint16_t                              header_filled;
-    buffer_budget_t                       upstream_budget;
-    buffer_budget_t                       response_budget;
+    /* Packetaddr uses a bounded associative table. Keys are the immutable
+     * udp_target stored in each backend, never its connector-mutated context. */
+    line_t              **udp_destinations;
+    uint16_t              udp_destination_count, udp_slot, paused_backends;
+    vmessserver_lstate_t *owned_prev, *owned_next;
+    vmessserver_reason_t  terminal_reason;
+    bool                  packetaddr, backend_paused, backend_pause_sent;
+    bool                  permission_dispatching, permission_pending;
+    buffer_queue_t        pending_up;
+    sbuf_t               *input_head;
+    size_t                input_bytes;
+    uint8_t               header[kVmessServerInitialMaxReqLen];
+    uint16_t              header_filled;
+    buffer_budget_t       upstream_budget;
+    buffer_budget_t       response_budget;
     /* Response-header/reentry ordering only; direct ready replies are forwarded. */
     buffer_queue_t          pending_down;
     buffer_queue_t         *fallback_pending_up;
@@ -140,7 +188,7 @@ typedef struct vmessserver_lstate_s
     bool fallback_close_draining : 1;
     bool fallback_branch_finished_during_drain : 1;
     bool fallback_delay_scheduled : 1;
-} vmessserver_lstate_t;
+};
 
 enum
 {

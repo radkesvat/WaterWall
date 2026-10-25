@@ -27,6 +27,8 @@ void vmessclientStartUdpCarrier(tunnel_t *t, line_t *l, vmessclient_lstate_t *ls
     carrier_ls->tunnel           = t;
     carrier_ls->kind             = kVmessClientLineKindUdpCarrier;
     carrier_ls->application_line = l;
+    carrier_ls->packet_target    = ls->packet_target;
+    vmessclientCountLine(carrier_ls);
     addresscontextCopy(&carrier_ls->target_addr, &ls->target_addr);
     setLineProtocol(carrier, IP_PROTO_TCP);
     ls->carrier_line = carrier;
@@ -35,12 +37,14 @@ void vmessclientStartUdpCarrier(tunnel_t *t, line_t *l, vmessclient_lstate_t *ls
 
 static sbuf_t *termination(line_t *l, vmessclient_lstate_t *ls)
 {
-    if (! ls->request_sent || ls->output_crypto.ended || ls->next_finished)
+    vmessclient_tstate_t *ts = tunnelGetState(ls->tunnel);
+    if (! ts->send_termination || ! ls->request_sent || ls->output_crypto.ended || ls->next_finished)
         return NULL;
-    buffer_pool_t   *pool   = lineGetBufferPool(l);
-    sbuf_t          *frame  = bufferpoolGetBestFit(pool, 18 + 16 + 63, bufferpoolGetLargeBufferPadding(pool));
-    size_t           length = 0;
-    wcrypto_status_t status = vmessBodySeal(
+    buffer_pool_t   *pool    = lineGetBufferPool(l);
+    sbuf_t          *frame   = bufferpoolGetBestFit(pool, 18 + 16 + 63, bufferpoolGetLargeBufferPadding(pool));
+    uint32_t         ordinal = ls->output_crypto.counter;
+    size_t           length  = 0;
+    wcrypto_status_t status  = vmessBodySeal(
         &ls->output_crypto, NULL, 0, true, sbufGetMutablePtr(frame), sbufGetMaximumWriteableSize(frame), &length);
     if (status != kWCryptoOk || length == 0)
     {
@@ -48,6 +52,12 @@ static sbuf_t *termination(line_t *l, vmessclient_lstate_t *ls)
         return NULL;
     }
     sbufSetLength(frame, (uint32_t) length);
+    atomicAddU64Explicit(&ts->stats.tx_wire_bytes, length, memory_order_relaxed);
+    if (! ls->output_crypto.raw)
+        atomicIncU64Relaxed(&ts->stats.tx_records);
+    if (ls->output_crypto.security != VMESS_SECURITY_NONE && ts->counter_policy == kVmessCounterWrap &&
+        ordinal == UINT16_MAX)
+        atomicIncU64Relaxed(&ts->stats.tx_wraps);
     return frame;
 }
 
@@ -83,10 +93,11 @@ void vmessclientCloseLine(tunnel_t *t, line_t *l, vmessclient_close_origin_t ori
     carrier_ls->closing                  = true;
     application_ls->prev_finished        = origin == kVmessClientCloseFromPrev && (direct || from_application);
     carrier_ls->next_finished            = origin == kVmessClientCloseFromNext && ! from_application;
-    sbuf_t                     *final    = termination(carrier, carrier_ls);
-    vmessclient_close_context_t context  = {
-         .next_finished = carrier_ls->next_finished,
-         .prev_finished = application_ls->prev_finished,
+    vmessclientSetReason(carrier_ls, kVmessClientReasonNormalClose);
+    sbuf_t                     *final   = termination(carrier, carrier_ls);
+    vmessclient_close_context_t context = {
+        .next_finished = carrier_ls->next_finished,
+        .prev_finished = application_ls->prev_finished,
     };
     application_ls->carrier_line = NULL;
     carrier_ls->application_line = NULL;

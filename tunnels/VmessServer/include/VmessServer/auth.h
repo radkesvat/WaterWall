@@ -9,6 +9,7 @@ void                        vmessserverAuthSchedule(vmessserver_lstate_t *ls);
 void                        vmessserverAuthLineDetach(vmessserver_lstate_t *ls);
 bool                        vmessserverAuthAdmitInput(vmessserver_lstate_t *ls, size_t bytes);
 bool                        vmessserverAuthResolve(vmessserver_lstate_t *ls);
-void                        vmessserverAuthOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+bool vmessserverAuthSnapshot(vmessserver_auth_runtime_t *runtime, uint64_t *pending, uint64_t *bytes, uint64_t *cache);
+void vmessserverAuthOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
 void vmessserverAuthOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void vmessserverAuthOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);

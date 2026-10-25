@@ -102,7 +102,8 @@ bool vmessclientApplyTargetContext(tunnel_t *t, line_t *l)
     if (! vmessModeValid(ts->security, ts->options, resolved_protocol == kVmessClientProtocolUdp ? 2 : 1) ||
         ! addresscontextIsValid(dest_ctx) || dest_ctx->port == 0 ||
         (addresscontextIsDomain(dest_ctx) &&
-         (dest_ctx->domain_len == 0 || memchr(dest_ctx->domain, 0, dest_ctx->domain_len) != NULL)))
+         (dest_ctx->domain_len == 0 || memchr(dest_ctx->domain, 0, dest_ctx->domain_len) != NULL ||
+          vmessIsPacketAddrDomain((const uint8_t *) dest_ctx->domain, dest_ctx->domain_len))))
     {
         LOGW("VmessClient: unsupported target or protocol/framing combination");
         return false;
@@ -121,4 +122,22 @@ bool vmessclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line
 
     discard user_lstate;
     return vmessclientApplyTargetContext(client, l);
+}
+
+bool vmessclientPacketTarget(const address_context_t *target, vmess_packet_addr_t *out)
+{
+    *out = (vmess_packet_addr_t) {.port = target->port};
+    if (addresscontextIsIpv4(target))
+    {
+        out->address_type = 1;
+        memoryCopy(out->address, &target->ip_address.u_addr.ip4.addr, 4);
+    }
+    else if (addresscontextIsIpv6(target))
+    {
+        out->address_type = 3;
+        memoryCopy(out->address, &target->ip_address.u_addr.ip6, 16);
+    }
+    else
+        return false;
+    return out->port != 0;
 }

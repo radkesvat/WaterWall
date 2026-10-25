@@ -42,10 +42,6 @@ void vmessserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
 
     if (ls->phase == kVmessServerPhaseUdpConnecting || ls->phase == kVmessServerPhaseUdpEstablished)
     {
-        line_t *remote_l = ls->udp_remote_line;
-        if (LIKELY(remote_l != NULL && lineIsAlive(remote_l)))
-        {
-            discard lineCallWithRef(remote_l, tunnelNextUpStreamResume, t);
-        }
+        vmessserverNotifyUdpPermission(t, l);
     }
 }

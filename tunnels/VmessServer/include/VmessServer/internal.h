@@ -31,6 +31,13 @@ bool vmessserverStartUdpBranch(tunnel_t *t, line_t *l, vmessserver_lstate_t *ls,
 bool vmessserverHandleInitialRequest(tunnel_t *t, line_t *l, vmessserver_lstate_t *ls);
 
 /* The carrier is borrowed normal; UDP backend lines are owned normal. */
-void vmessserverProcessInput(tunnel_t *t, line_t *line);
-bool vmessserverDeliverDecoded(tunnel_t *t, line_t *line, sbuf_t *payload);
-bool vmessserverSendTermination(tunnel_t *t, line_t *line);
+void        vmessserverProcessInput(tunnel_t *t, line_t *line);
+bool        vmessserverDeliverDecoded(tunnel_t *t, line_t *line, sbuf_t *payload);
+bool        vmessserverSendTermination(tunnel_t *t, line_t *line);
+bool        vmessserverRegisterApi(tunnel_t *t);
+void        vmessserverReason(vmessserver_lstate_t *ls, vmessserver_reason_t reason);
+void        vmessserverDrop(vmessserver_lstate_t *ls, vmessserver_reason_t reason);
+const char *vmessserverReasonName(vmessserver_reason_t reason);
+void        vmessserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l, bool close_next);
+void        vmessserverNotifyUdpPermission(tunnel_t *t, line_t *client_l);
+bool        vmessserverUdpMember(tunnel_t *t, const vmessserver_lstate_t *client, line_t *remote);

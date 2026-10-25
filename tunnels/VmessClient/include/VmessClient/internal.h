@@ -1,4 +1,5 @@
 #pragma once
+#include "api/node_api.h"
 #include "interface.h"
 #include "structure.h"
 void vmessclientLinestateInitialize(vmessclient_lstate_t *ls, line_t *l);
@@ -17,3 +18,10 @@ void vmessclientTransmit(tunnel_t *t, line_t *l);
 void vmessclientReceive(tunnel_t *t, line_t *l);
 
 sbuf_t *vmessclientCompactInput(line_t *l, sbuf_t *buf);
+
+bool        vmessclientRegisterApi(tunnel_t *t);
+const char *vmessclientReasonName(vmessclient_reason_t reason);
+void        vmessclientRecordReason(tunnel_t *t, vmessclient_reason_t reason, bool udp);
+void        vmessclientSetReason(vmessclient_lstate_t *ls, vmessclient_reason_t reason);
+void        vmessclientCountLine(vmessclient_lstate_t *ls);
+bool        vmessclientPacketTarget(const address_context_t *target, vmess_packet_addr_t *out);

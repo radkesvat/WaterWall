@@ -213,6 +213,78 @@ static void exactStrings(void)
     construct(json, true);
 }
 
+static void maturityOptions(void)
+{
+    cJSON *json             = settings();
+    node_t node             = nodeVmessClientGet();
+    node.node_settings_json = json;
+    tunnel_t *t             = vmessclientTunnelCreate(&node);
+    twfRequire(t != NULL, "default config rejected");
+    vmessclient_tstate_t *ts = tunnelGetState(t);
+    twfRequire(ts->counter_policy == kVmessCounterWrap && ts->send_termination && ! ts->packetaddr &&
+                   ! ts->security_auto && ts->security == VMESS_SECURITY_AES128_GCM,
+               "maturity feature defaults changed");
+    twfRequire(nodeApiFind(t, "stats") != NULL, "stats operation is not registered");
+    t->onDestroy(t, wwLifecycleStartupRollback());
+    twfRequire(! nodeApiHasRegistration(t), "destroy leaked stats registration");
+    cJSON_Delete(json);
+    memoryFree(node.type);
+    const char *policies[] = {"wrap", "strict"};
+    for (size_t i = 0; i < ARRAY_SIZE(policies); ++i)
+    {
+        json = settings();
+        cJSON_AddStringToObject(json, "encrypted-counter-policy", policies[i]);
+        cJSON_AddBoolToObject(json, "send-termination", false);
+        cJSON_AddStringToObject(json, "security", "auto");
+        construct(json, true);
+    }
+    const char *fields[] = {"encrypted-counter-policy", "packet-encoding", "send-termination"};
+    const char *bad[]    = {"null", "true", "1", "[]", "{}", "\"unknown\""};
+    for (size_t i = 0; i < ARRAY_SIZE(fields); ++i)
+        for (size_t j = 0; j < ARRAY_SIZE(bad); ++j)
+        {
+            if (i == 2 && j == 1)
+                continue;
+            json = settings();
+            cJSON_AddItemToObject(json, fields[i], cJSON_Parse(bad[j]));
+            construct(json, false);
+        }
+    for (size_t i = 0; i < ARRAY_SIZE(fields); ++i)
+    {
+        json = settings();
+        cJSON_AddStringToObject(json, fields[i], "none");
+        cJSON_AddStringToObject(json, fields[i], "none");
+        construct(json, false);
+    }
+    for (unsigned dynamic = 0; dynamic < 2; ++dynamic)
+    {
+        json = settings();
+        cJSON_AddStringToObject(json, "protocol", dynamic ? "dest_context->protocol" : "udp");
+        cJSON_AddStringToObject(json, "packet-encoding", "packetaddr");
+        construct(json, true);
+    }
+    json = settings();
+    cJSON_AddStringToObject(json, "packet-encoding", "packetaddr");
+    construct(json, false);
+    json = settings();
+    cJSON_ReplaceItemInObjectCaseSensitive(json, "uuid", cJSON_CreateString("waterwall"));
+    construct(json, true);
+    json = settings();
+    cJSON_ReplaceItemInObjectCaseSensitive(json, "uuid", cJSON_CreateString("1234567890123456789012345678901"));
+    construct(json, false);
+    const char *nul[] = {"{\"encrypted-counter-policy\":\"wrap\\u0000strict\"}",
+                         "{\"packet-encoding\":\"none\\u0000packetaddr\"}",
+                         "{\"send-termination\\u0000other\":true}"};
+    for (size_t i = 0; i < ARRAY_SIZE(nul); ++i)
+    {
+        json = cJSON_Parse(nul[i]);
+        cJSON_AddStringToObject(json, "uuid", uuid);
+        cJSON_AddStringToObject(json, "address", "127.0.0.1");
+        cJSON_AddNumberToObject(json, "port", 443);
+        construct(json, false);
+    }
+}
+
 int main(void)
 {
     initWLibc();
@@ -227,6 +299,7 @@ int main(void)
     TEST_RUN_CASE(strategies);
     TEST_RUN_CASE(invalidTypes);
     TEST_RUN_CASE(exactStrings);
+    TEST_RUN_CASE(maturityOptions);
     wCryptoGlobalCleanup();
     frandThreadCleanup();
     frandGlobalCleanup();

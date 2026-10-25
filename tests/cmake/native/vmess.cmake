@@ -3,6 +3,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET VmessCommon)
   waterwall_add_native_executable(vmess_crypto_test SUPPORT SOURCES
     "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/vmess/vmess_crypto_test.c"
     LIBRARIES ww VmessCommon)
+  waterwall_add_native_executable(vmess_parser_fuzz_test SUPPORT SOURCES
+    "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/vmess/vmess_parser_fuzz_test.c"
+    LIBRARIES ww VmessCommon)
+  add_dependencies(waterwall_unit_tests vmess_parser_fuzz_test)
+  add_waterwall_unit_test(waterwall.vmess_parser_fuzz_unit vmess_parser_fuzz_test
+    "unit;tunnels;vmess;parser;fuzz;security")
   add_dependencies(waterwall_unit_tests vmess_crypto_test)
   add_waterwall_unit_test(waterwall.vmess_crypto_unit vmess_crypto_test
     "unit;tunnels;vmess;crypto;framing;security")

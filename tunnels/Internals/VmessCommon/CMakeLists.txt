@@ -1,4 +1,4 @@
-add_library(VmessCommon STATIC src/crypto.c)
+add_library(VmessCommon STATIC src/crypto.c src/options.c src/packetaddr.c)
 
 target_include_directories(VmessCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(VmessCommon PRIVATE ww OpenSSL::Crypto)

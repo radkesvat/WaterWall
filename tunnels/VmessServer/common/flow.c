@@ -18,14 +18,22 @@ static sbuf_t *encodeFrame(line_t *line, vmessserver_lstate_t *ls, const uint8_t
     if (prefix)
         memoryCopy(sbufGetMutablePtr(frame), ls->response_header, prefix);
     sbufSetLength(frame, (uint32_t) (prefix + written));
-    ls->response_sent = true;
+    ls->response_sent        = true;
+    vmessserver_tstate_t *ts = tunnelGetState(ls->tunnel);
+    if (! ls->output_crypto.raw)
+        atomicAddU64(&ts->stats.tx_records, 1);
+    atomicAddU64(&ts->stats.tx_wire_bytes, prefix + written);
+    if (ls->output_crypto.security != VMESS_SECURITY_NONE && ls->output_crypto.counter == 0)
+        atomicAddU64(&ts->stats.wrap_events, 1);
     return frame;
 }
 
 bool vmessserverSendTermination(tunnel_t *t, line_t *line)
 {
     vmessserver_lstate_t *ls = lineGetState(line, t);
-    if (! ls->crypto_ready || ls->closing_output || ls->output_crypto.ended || ls->prev_finished)
+    vmessserver_tstate_t *ts = tunnelGetState(t);
+    if (! ts->send_termination || ! ls->crypto_ready || ls->closing_output || ls->output_crypto.ended ||
+        ls->prev_finished)
         return true;
     ls->closing_output = true;
     wcrypto_status_t status;
@@ -62,6 +70,8 @@ bool vmessserverDrainResponse(tunnel_t *t, line_t *line, bool admitted)
         size_t available = sbufGetLength(out);
         if (! available || (! tcp && available > vmessBodyMaxPlaintext(&ls->output_crypto)))
         {
+            if (available)
+                vmessserverDrop(ls, kVmessServerReasonUdpOversize);
             bufferbudgetReservationRelease(&ls->response_reservation);
             lineReuseBuffer(line, out);
             continue;
@@ -75,10 +85,15 @@ bool vmessserverDrainResponse(tunnel_t *t, line_t *line, bool admitted)
             {
                 bufferbudgetReservationRelease(&ls->response_reservation);
                 lineReuseBuffer(line, out);
-                if (status == kVmessCounterExhausted && ! vmessserverSendTermination(t, line))
+                if (status == kVmessCounterExhausted)
                 {
-                    lineUnref(line);
-                    return false;
+                    vmessserverReason(ls, kVmessServerReasonStrictExhaustion);
+                    atomicAddU64(&((vmessserver_tstate_t *) tunnelGetState(t))->stats.strict_exhaustion, 1);
+                    if (! vmessserverSendTermination(t, line))
+                    {
+                        lineUnref(line);
+                        return false;
+                    }
                 }
                 vmessserverCloseLineBidirectional(t, line);
                 lineUnref(line);
@@ -127,13 +142,33 @@ bool vmessserverForwardResponse(tunnel_t *t, line_t *line, sbuf_t *buf)
         lineReuseBuffer(line, buf);
         return true;
     }
-    bool older = bufferqueueGetBufCount(&ls->pending_down) != 0;
+    if (ls->request.command == kVmessCmdUdp &&
+        (sbufGetLength(buf) == 0 || sbufGetLength(buf) > vmessBodyMaxPlaintext(&ls->output_crypto)))
+    {
+        if (sbufGetLength(buf) != 0)
+            vmessserverDrop(ls, kVmessServerReasonUdpOversize);
+        lineReuseBuffer(line, buf);
+        return true;
+    }
+    bool   older             = bufferqueueGetBufCount(&ls->pending_down) != 0;
+    size_t application_bytes = sbufGetLength(buf);
+    if (ls->packetaddr)
+    {
+        vmess_packet_addr_t address;
+        size_t              prefix;
+        wcrypto_status_t    decoded = vmessPacketAddrDecode(sbufGetRawPtr(buf), application_bytes, &address, &prefix);
+        assert(decoded == kWCryptoOk);
+        discard decoded;
+        application_bytes -= prefix;
+    }
     if (! bufferqueueTryPushBack(&ls->pending_down, &buf))
     {
         lineReuseBuffer(line, buf);
+        vmessserverReason(ls, kVmessServerReasonAdmission);
         vmessserverCloseLineBidirectional(t, line);
         return false;
     }
+    atomicAddU64(&((vmessserver_tstate_t *) tunnelGetState(t))->stats.tx_application_bytes, application_bytes);
     return vmessserverDrainResponse(t, line, ! older);
 }
 

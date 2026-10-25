@@ -3,18 +3,41 @@
 
 static void vmessserverDetachRemoteFromClient(vmessserver_lstate_t *remote_ls)
 {
-    line_t *client_line = remote_ls->client_line;
+    line_t               *client_line = remote_ls->client_line;
+    vmessserver_tstate_t *ts          = tunnelGetState(remote_ls->tunnel);
+    if (remote_ls->owned_prev != NULL)
+        remote_ls->owned_prev->owned_next = remote_ls->owned_next;
+    else
+        ts->owned_backends[lineGetWID(remote_ls->line)] = remote_ls->owned_next;
+    if (remote_ls->owned_next != NULL)
+        remote_ls->owned_next->owned_prev = remote_ls->owned_prev;
+    remote_ls->owned_prev = remote_ls->owned_next = NULL;
 
     if (client_line != NULL && remote_ls->client_line_ref_held)
     {
-        if (lineIsAlive(client_line))
+        /* The persistent association reference preserves allocation. If the
+         * creator marks the parent dead during a backend Finish, its matching
+         * Closing state still belongs to the outer synchronous owner drain.
+         * Unlink that retained storage without sending callbacks to the parent. */
+        vmessserver_lstate_t *client_ls = lineGetState(client_line, remote_ls->tunnel);
+        if (client_ls->tunnel == remote_ls->tunnel &&
+            (lineIsAlive(client_line) || client_ls->phase == kVmessServerPhaseClosing) &&
+            vmessserverUdpMember(remote_ls->tunnel, client_ls, remote_ls->line))
         {
-            vmessserver_lstate_t *client_ls = lineGetState(client_line, remote_ls->tunnel);
-            if (client_ls->udp_remote_line == remote_ls->line)
+            if (client_ls->packetaddr)
             {
-                client_ls->udp_remote_line    = NULL;
-                client_ls->udp_backend_paused = false;
+                client_ls->udp_destinations[remote_ls->udp_slot] = NULL;
+                assert(client_ls->udp_destination_count != 0);
+                --client_ls->udp_destination_count;
             }
+            else
+                client_ls->udp_remote_line = NULL;
+            if (remote_ls->backend_paused)
+            {
+                assert(client_ls->paused_backends != 0);
+                --client_ls->paused_backends;
+            }
+            client_ls->udp_backend_paused = client_ls->paused_backends != 0;
         }
 
         lineUnref(client_line);
@@ -31,7 +54,7 @@ static bool vmessserverHasTcpUpstreamPeer(const vmessserver_lstate_t *ls)
             ls->phase == kVmessServerPhaseTcpEstablished);
 }
 
-static void vmessserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l, bool close_next)
+void vmessserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l, bool close_next)
 {
     vmessserver_lstate_t *remote_ls = lineGetState(remote_l, t);
 
@@ -74,6 +97,32 @@ static void vmessserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l,
 
 static void vmessserverCloseOwnedUdpRemoteLine(tunnel_t *t, vmessserver_lstate_t *client_ls, bool close_next)
 {
+    if (client_ls->packetaddr)
+    {
+        /* Authenticated policy/replay/admission refusal can close before the
+         * destination table is committed. No backend ownership exists yet. */
+        if (client_ls->udp_destinations == NULL)
+        {
+            assert(client_ls->udp_destination_count == 0);
+            return;
+        }
+        const vmessserver_tstate_t *ts = tunnelGetState(t);
+        /* No iterator/raw sibling pointer survives a callback. Admission was
+         * closed by the carrier's Closing phase before this drain begins. */
+        for (;;)
+        {
+            line_t *remote = NULL;
+            for (size_t i = 0; i < ts->packetaddr_max_destinations; ++i)
+                if (client_ls->udp_destinations[i] != NULL)
+                {
+                    remote = client_ls->udp_destinations[i];
+                    break;
+                }
+            if (remote == NULL)
+                return;
+            vmessserverCloseUdpRemoteLineInternal(t, remote, true);
+        }
+    }
     line_t *remote_l = client_ls->udp_remote_line;
 
     if (remote_l == NULL || ! lineIsAlive(remote_l))
@@ -131,6 +180,7 @@ static void vmessserverCloseLine(tunnel_t *t, line_t *l, vmessserver_close_origi
     }
 
     ls->phase = kVmessServerPhaseClosing;
+    vmessserverReason(ls, kVmessServerReasonNormal);
     lineRef(l);
 
     vmessserverCloseOwnedUdpRemoteLine(t, ls, origin != kVmessServerCloseFromNext);
@@ -192,5 +242,9 @@ void vmessserverTunnelstateDestroy(vmessserver_tstate_t *ts)
         memoryFree(ts->users[i].username);
     }
     memoryFree(ts->users);
+    if (ts->owned_backends != NULL)
+        for (size_t i = 0; i < getWorkersCount(); ++i)
+            assert(ts->owned_backends[i] == NULL);
+    memoryFree(ts->owned_backends);
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }

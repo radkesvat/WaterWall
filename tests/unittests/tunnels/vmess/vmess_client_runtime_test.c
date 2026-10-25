@@ -95,7 +95,8 @@ static size_t response(uint8_t *wire, size_t capacity, const void *body, size_t 
                                  f.request.security,
                                  f.request.options,
                                  f.request.command,
-                                 true) == kWCryptoOk,
+                                 true,
+                                 kVmessCounterWrap) == kWCryptoOk,
                    "response body initialization failed");
         if ((f.request.options & VMESS_OPTION_AUTH_LENGTH) != 0)
             twfRequire(vmessBodySetLengthMaterial(&f.response_encoder, f.request.key, f.request.iv) == kWCryptoOk,
@@ -399,11 +400,15 @@ static void expectTx(const void *expected, size_t length)
                    f.request.address[0] == 127 && f.request.address[3] == 1,
                "transport destination replacement corrupted final target");
     vmess_body_ctx_t decoder = {0};
-    twfRequire(
-        vmessBodyInit(
-            &decoder, f.request.key, f.request.iv, f.request.security, f.request.options, f.request.command, false) ==
-            kWCryptoOk,
-        "outgoing decoder initialization");
+    twfRequire(vmessBodyInit(&decoder,
+                             f.request.key,
+                             f.request.iv,
+                             f.request.security,
+                             f.request.options,
+                             f.request.command,
+                             false,
+                             kVmessCounterWrap) == kWCryptoOk,
+               "outgoing decoder initialization");
     size_t  cursor = f.request_size, used = 0;
     uint8_t output[65536];
     while (cursor < f.up_size)
@@ -704,6 +709,38 @@ static void destinations(void)
     end();
 }
 
+static void reservedPacketAddressTarget(void)
+{
+    for (unsigned udp = 0; udp < 2; ++udp)
+        for (unsigned dynamic = 0; dynamic < 2; ++dynamic)
+        {
+            cJSON *settings = configuration("aes-128-gcm", udp);
+            cJSON_ReplaceItemInObjectCaseSensitive(
+                settings, "address", cJSON_CreateString(dynamic ? "dest_context->address" : VMESS_PACKETADDR_DOMAIN));
+            initial_address = dynamic ? VMESS_PACKETADDR_DOMAIN : NULL;
+            begin(settings, udp);
+            twfRequire(! lineIsAlive(f.application) && f.init_count == 0 && f.up_size == 0,
+                       "reserved packetaddr domain opened an ordinary transport");
+            end();
+        }
+    initial_address = NULL;
+
+    /* The resolver calls its prepare hook before scheduling DNS. Exercise that
+     * boundary directly without a resolver or any network dependency. */
+    cJSON *settings = configuration("aes-128-gcm", false);
+    cJSON_ReplaceItemInObjectCaseSensitive(settings, "address", cJSON_CreateString("dest_context->address"));
+    initial_address = "127.0.0.1";
+    begin(settings, false);
+    initial_address          = NULL;
+    vmessclient_tstate_t *ts = tunnelGetState(f.client);
+    ts->resolve_domains      = true;
+    addresscontextDomainSet(
+        lineGetDestinationAddressContext(f.application), VMESS_PACKETADDR_DOMAIN, sizeof(VMESS_PACKETADDR_DOMAIN) - 1);
+    twfRequire(! vmessclientDomainResolverPrepare(NULL, f.client, f.application, NULL),
+               "reserved packetaddr domain passed the DNS prepare boundary");
+    end();
+}
+
 static void frameBoundaries(void)
 {
     const char   *names[]   = {"aes-128-gcm", "chacha20-poly1305", "none"};
@@ -740,7 +777,9 @@ static void frameBoundaries(void)
             memoryFree(data);
             end();
         }
-    begin(configuration("aes-128-gcm", false), false);
+    cJSON *strict_settings = configuration("aes-128-gcm", false);
+    cJSON_AddStringToObject(strict_settings, "encrypted-counter-policy", "strict");
+    begin(strict_settings, false);
     sendApplication("A", 1);
     vmessclient_lstate_t *ls  = lineGetState(f.carrier, f.client);
     ls->output_crypto.counter = UINT16_MAX - 1;
@@ -799,7 +838,9 @@ static void finalIncomingNonce(void)
         sizeof(vector_last_counter), sizeof(vector_last_counter_auth_aes), sizeof(vector_last_counter_auth_chacha)};
     for (unsigned mode = 0; mode < ARRAY_SIZE(frames); ++mode)
     {
-        begin(configuration(mode == 2 ? "chacha20-poly1305" : "aes-128-gcm", false), false);
+        cJSON *settings = configuration(mode == 2 ? "chacha20-poly1305" : "aes-128-gcm", false);
+        cJSON_AddStringToObject(settings, "encrypted-counter-policy", "strict");
+        begin(settings, false);
         sendApplication("A", 1);
         uint8_t header[VMESS_RESPONSE_HEADER_SIZE];
         size_t  length = response(header, sizeof(header), NULL, 0, false);
@@ -814,7 +855,8 @@ static void finalIncomingNonce(void)
                                  mode == 2 ? VMESS_SECURITY_CHACHA20_POLY1305 : VMESS_SECURITY_AES128_GCM,
                                  mode == 0 ? 1 : 29,
                                  1,
-                                 false) == kWCryptoOk,
+                                 false,
+                                 kVmessCounterStrict) == kWCryptoOk,
                    "final inbound session setup failed");
         ls->input_crypto.counter = UINT16_MAX;
         sendWire(frames[mode], sizes[mode]);
@@ -822,6 +864,340 @@ static void finalIncomingNonce(void)
                    "final inbound data was lost or allowed nonce reuse");
         end();
     }
+}
+
+/* Inspect each submitted record, including the actual ordinal-zero prelude.
+ * Captures are reset after each synchronous exchange; no giant golden corpus. */
+static size_t openTx(vmess_body_ctx_t *decoder, size_t cursor, uint8_t *out, size_t capacity)
+{
+    const size_t prefix = vmessBodyLengthSize(decoder);
+    uint32_t     body   = 0;
+    twfRequire(cursor <= f.up_size && f.up_size - cursor >= prefix &&
+                   vmessBodyLengthOpen(decoder, f.up + cursor, prefix, &body) == kWCryptoOk,
+               "submitted record length did not authenticate");
+    cursor += prefix;
+    size_t written = 0;
+    bool   eof     = false;
+    twfRequire(f.up_size - cursor == body &&
+                   vmessBodyOpen(decoder, f.up + cursor, body, out, capacity, &written, &eof) == kWCryptoOk && ! eof,
+               "submitted record body did not authenticate or was split");
+    return written;
+}
+
+static void runtimeCounterWrap(void)
+{
+    const char *names[] = {"aes-128-gcm", "chacha20-poly1305"};
+    for (unsigned mode = 0; mode < ARRAY_SIZE(names); ++mode)
+        for (unsigned udp = 0; udp < 2; ++udp)
+        {
+            cJSON *settings = configuration(names[mode], udp);
+            cJSON_AddBoolToObject(settings, "authenticated-length", true);
+            begin(settings, udp);
+            vmess_body_ctx_t decoder = {0};
+            enum
+            {
+                kRecords = 2 * 65536 + 2
+            };
+            for (unsigned ordinal = 0; ordinal < kRecords; ++ordinal)
+            {
+                sendApplication("W", 1);
+                if (ordinal == 0)
+                {
+                    readRequest();
+                    twfRequire(vmessBodyInit(&decoder,
+                                             f.request.key,
+                                             f.request.iv,
+                                             f.request.security,
+                                             f.request.options,
+                                             f.request.command,
+                                             false,
+                                             kVmessCounterWrap) == kWCryptoOk,
+                               "runtime peer body initialization failed");
+                }
+                uint8_t decoded[16], wire[256];
+                twfRequire(openTx(&decoder, ordinal == 0 ? f.request_size : 0, decoded, sizeof(decoded)) == 1 &&
+                               decoded[0] == 'W',
+                           "runtime rollover TX lost plaintext");
+                f.up_size     = 0;
+                size_t length = response(wire, sizeof(wire), "R", 1, false);
+                /* Split the length prefix at the boundary to retain pending-mask semantics. */
+                if ((ordinal & 65535) >= 65534)
+                {
+                    sendWire(wire, 1);
+                    sendWire(wire + 1, length - 1);
+                }
+                else
+                    sendWire(wire, length);
+                twfRequire(lineIsAlive(f.application) && f.down_size == 1 && f.down[0] == 'R',
+                           "runtime rollover closed or changed response plaintext");
+                f.down_size = 0;
+            }
+            vmessclient_tstate_t *ts = tunnelGetState(f.client);
+            twfRequire(f.init_count == 1 && atomicLoadU64Relaxed(&ts->stats.tx_records) == kRecords &&
+                           atomicLoadU64Relaxed(&ts->stats.rx_records) == kRecords &&
+                           atomicLoadU64Relaxed(&ts->stats.tx_wraps) == 2 &&
+                           atomicLoadU64Relaxed(&ts->stats.rx_wraps) == 2,
+                       "runtime test did not prove two wraps on one association");
+            vmessBodyDestroy(&decoder);
+            end();
+        }
+}
+
+static void terminationPolicy(void)
+{
+    for (unsigned udp = 0; udp < 2; ++udp)
+        for (unsigned enabled = 0; enabled < 2; ++enabled)
+        {
+            cJSON *settings = configuration("aes-128-gcm", udp);
+            cJSON_AddBoolToObject(settings, "send-termination", enabled != 0);
+            begin(settings, udp);
+            tunnelUpStreamFin(f.client, f.application);
+            twfRequire(f.up_size == 0, "idle termination emitted a request");
+            end();
+            settings = configuration("aes-128-gcm", udp);
+            cJSON_AddBoolToObject(settings, "send-termination", enabled != 0);
+            begin(settings, udp);
+            sendApplication("A", 1);
+            size_t before = f.up_size;
+            tunnelUpStreamFin(f.client, f.application);
+            twfRequire((f.up_size > before) == (enabled != 0) && f.transport_finishes == 1,
+                       "termination setting did not control final record");
+            twfRequire(atomicLoadU64Relaxed(&((vmessclient_tstate_t *) tunnelGetState(f.client))
+                                                 ->stats.reasons[kVmessClientReasonNormalClose]) == 1,
+                       "paired close was counted more than once");
+            end();
+            settings = configuration("aes-128-gcm", udp);
+            cJSON_AddBoolToObject(settings, "send-termination", enabled != 0);
+            cJSON_AddStringToObject(settings, "encrypted-counter-policy", "strict");
+            begin(settings, udp);
+            sendApplication("A", 1);
+            vmessclient_lstate_t *ls  = lineGetState(f.carrier, f.client);
+            ls->output_crypto.counter = UINT16_MAX;
+            before                    = f.up_size;
+            sendApplication("B", 1);
+            twfRequire(! lineIsAlive(f.application) && (f.up_size > before) == (enabled != 0),
+                       "strict exhaustion ignored termination policy");
+            end();
+            settings = configuration("aes-128-gcm", udp);
+            cJSON_AddBoolToObject(settings, "send-termination", enabled != 0);
+            begin(settings, udp);
+            sendApplication("A", 1);
+            uint8_t wire[256];
+            size_t  length = response(wire, sizeof(wire), NULL, 0, true);
+            sendWire(wire, length);
+            twfRequire(! lineIsAlive(f.application), "termination option refused incoming authenticated EOF");
+            end();
+        }
+}
+
+static void packetAddress(void)
+{
+    const char   *names[] = {"aes-128-gcm", "chacha20-poly1305", "none"};
+    const uint8_t v4[]    = {1, 127, 0, 0, 1, 1, 187};
+    const uint8_t v6[]    = {2, 0x20, 1, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 187};
+    for (unsigned mode = 0; mode < ARRAY_SIZE(names); ++mode)
+        for (unsigned ipv6 = 0; ipv6 < 2; ++ipv6)
+        {
+            cJSON *settings = configuration(names[mode], true);
+            cJSON_AddStringToObject(settings, "packet-encoding", "packetaddr");
+            if (ipv6)
+                cJSON_ReplaceItemInObjectCaseSensitive(settings, "address", cJSON_CreateString("2001:db8::1"));
+            begin(settings, true);
+            sendApplication(NULL, 0);
+            readRequest();
+            twfRequire(vmessRequestIsPacketAddr(&f.request), "packetaddr did not use exact magic request destination");
+            vmess_body_ctx_t decoder = {0};
+            twfRequire(vmessBodyInit(&decoder,
+                                     f.request.key,
+                                     f.request.iv,
+                                     f.request.security,
+                                     f.request.options,
+                                     2,
+                                     false,
+                                     kVmessCounterWrap) == kWCryptoOk,
+                       "packetaddr decoder setup");
+            uint8_t        plain[65536];
+            const uint8_t *envelope      = ipv6 ? v6 : v4;
+            size_t         envelope_size = ipv6 ? sizeof(v6) : sizeof(v4);
+            size_t         got           = openTx(&decoder, f.request_size, plain, sizeof(plain));
+            twfRequire(got == envelope_size && memoryCompare(plain, envelope, got) == 0,
+                       "packetaddr empty datagram envelope differs from independent vector");
+            f.up_size = 0;
+            uint8_t wire[66048];
+            size_t  length = response(wire, sizeof(wire), envelope, envelope_size, false);
+            sendWire(wire, length);
+            twfRequire(f.down_calls == 1 && f.datagram_sizes[0] == 0 && lineIsAlive(f.application),
+                       "packetaddr header-only record did not deliver empty datagram");
+            vmessclient_lstate_t *ls      = lineGetState(f.carrier, f.client);
+            size_t                maximum = vmessBodyMaxPlaintext(&ls->output_crypto) - envelope_size;
+            uint8_t              *data    = memoryAllocate(maximum + 1);
+            memorySet(data, 'D', maximum + 1);
+            sendApplication(data, maximum + 1);
+            twfRequire(f.up_size == 0, "oversized packetaddr input emitted wire bytes");
+            sendApplication(data, maximum);
+            got = openTx(&decoder, 0, plain, sizeof(plain));
+            twfRequire(got == maximum + envelope_size && memoryCompare(plain, envelope, envelope_size) == 0 &&
+                           memoryCompare(plain + envelope_size, data, maximum) == 0,
+                       "packetaddr maximum was split");
+            f.up_size = 0;
+            length    = response(wire, sizeof(wire), plain, got, false);
+            sendWire(wire, length);
+            twfRequire(f.down_calls == 2 && f.datagram_sizes[1] == maximum && memoryCompare(f.down, data, maximum) == 0,
+                       "near-limit packetaddr reply changed payload");
+            plain[1] ^= 1;
+            length = response(wire, sizeof(wire), plain, envelope_size, false);
+            sendWire(wire, length);
+            vmessclient_tstate_t *ts = tunnelGetState(f.client);
+            twfRequire(f.down_calls == 2 && lineIsAlive(f.application) &&
+                           atomicLoadU64Relaxed(&ts->stats.reasons[kVmessClientReasonUnexpectedSource]) == 1,
+                       "unexpected packetaddr source was delivered or closed association");
+            length = response(wire, sizeof(wire), "bad", 3, false);
+            sendWire(wire, length);
+            twfRequire(! lineIsAlive(f.application) && ! lineIsAlive(f.carrier),
+                       "malformed packetaddr envelope survived");
+            memoryFree(data);
+            vmessBodyDestroy(&decoder);
+            end();
+        }
+    cJSON *settings = configuration("aes-128-gcm", true);
+    cJSON_AddStringToObject(settings, "packet-encoding", "packetaddr");
+    cJSON_ReplaceItemInObjectCaseSensitive(settings, "address", cJSON_CreateString("unresolved.example.test"));
+    begin(settings, true);
+    twfRequire(! lineIsAlive(f.application) && f.init_count == 0, "packetaddr unresolved domain opened a transport");
+    end();
+    /* Dynamic TCP retains its ordinary destination, even when packetaddr is selected. */
+    settings = configuration("aes-128-gcm", false);
+    cJSON_ReplaceItemInObjectCaseSensitive(settings, "protocol", cJSON_CreateString("dest_context->protocol"));
+    cJSON_AddStringToObject(settings, "packet-encoding", "packetaddr");
+    begin(settings, false);
+    sendApplication("A", 1);
+    expectTx("A", 1);
+    end();
+}
+
+static void packetAddressReentry(void)
+{
+    const uint8_t envelope[] = {1, 127, 0, 0, 1, 1, 187, 'R'};
+    for (unsigned boundary = 1; boundary <= 4; ++boundary)
+        for (unsigned action = 3; action <= 4; ++action)
+        {
+            cJSON *settings = configuration("aes-128-gcm", true);
+            cJSON_AddStringToObject(settings, "packet-encoding", "packetaddr");
+            initial_action = boundary == 1 ? action : 0;
+            begin(settings, true);
+            initial_action = 0;
+            if (boundary != 1)
+            {
+                f.boundary = boundary;
+                f.action   = action;
+                if (boundary == 2)
+                    tunnelDownStreamEst(f.client, f.carrier);
+                else
+                {
+                    sendApplication("A", 1);
+                    if (boundary == 4)
+                    {
+                        uint8_t wire[256];
+                        size_t  length = response(wire, sizeof(wire), envelope, sizeof(envelope), false);
+                        sendWire(wire, length);
+                    }
+                }
+            }
+            twfRequire(! lineIsAlive(f.application) && ! lineIsAlive(f.carrier),
+                       "packetaddr reentry retained an owned carrier");
+            end();
+        }
+}
+
+static api_result_t queryStats(const char *request, size_t response_limit, size_t working_limit, uint64_t deadline)
+{
+    const node_api_operation_t *operation = nodeApiFind(f.client, "stats");
+    twfRequire(operation != NULL && operation->read_only && operation->execution == kNodeApiCallingWorker,
+               "stats operation has wrong registry metadata");
+    node_api_call_context_t context = {.operation                = "stats",
+                                       .principal                = "fixture",
+                                       .deadline_ms              = deadline,
+                                       .max_response_body_size   = response_limit,
+                                       .working_memory_allowance = working_limit};
+    return operation->handler(f.client, bytes(f.application, request, strlen(request)), &context);
+}
+
+typedef struct stats_publication_s
+{
+    vmessclient_tstate_t *state;
+    atomic_bool           stop;
+} stats_publication_t;
+
+static void *publishStats(void *argument)
+{
+    stats_publication_t *publication = argument;
+    while (! atomicLoadExplicit(&publication->stop, memory_order_acquire))
+        atomicIncU64Relaxed(&publication->state->stats.tx_records);
+    return NULL;
+}
+
+static void statsApi(void)
+{
+    cJSON *settings = configuration("auto", true);
+    cJSON_AddBoolToObject(settings, "send-termination", false);
+    cJSON_AddStringToObject(settings, "packet-encoding", "packetaddr");
+    begin(settings, true);
+    sendApplication("A", 1);
+    vmessclient_tstate_t *ts = tunnelGetState(f.client);
+    atomicStoreU64Relaxed(&ts->stats.tx_application_bytes, UINT64_MAX);
+    api_result_t result = queryStats(" {} \n", 4096, 128 * 1024, nodeApiNowMs() + 1000);
+    twfRequire(result.result_code == kApiResultOk && result.buffer != NULL, "registered stats dispatch refused");
+    char   text[4097];
+    size_t length = sbufGetLength(result.buffer);
+    twfRequire(length < sizeof(text), "stats output bound");
+    memoryCopy(text, sbufGetRawPtr(result.buffer), length);
+    text[length] = 0;
+    cJSON *body  = cJSON_Parse(text);
+    twfRequire(
+        body != NULL && strstr(text, "18446744073709551615") != NULL &&
+            strstr(text, "\"send_termination\":false") != NULL && strstr(text, "\"security_auto\":true") != NULL &&
+            strstr(text, "\"active_applications\":\"1\"") != NULL && strstr(text, "\"active_carriers\":\"1\"") != NULL,
+        "stats lost uint64 precision or effective settings/counts");
+    cJSON_Delete(body);
+    lineReuseBuffer(f.application, result.buffer);
+    const char *invalid[] = {"[]", "{\"reset\":true}", "{}x", "{\"a\":{}}", "{\"a\":1,\"a\":1}", "{\"a\\u0000x\":1}"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        result = queryStats(invalid[i], 4096, 128 * 1024, nodeApiNowMs() + 1000);
+        twfRequire(result.result_code == kApiResultError && result.buffer == NULL,
+                   "stats accepted nonempty/invalid body");
+    }
+    result = queryStats("{}", 1, 128 * 1024, nodeApiNowMs() + 1000);
+    twfRequire(result.result_code == kApiResultError && result.buffer == NULL, "stats ignored response allowance");
+    result = queryStats("{}", 4096, 4096, nodeApiNowMs() + 1000);
+    twfRequire(result.result_code == kApiResultError && result.buffer == NULL, "stats ignored allocation allowance");
+    result = queryStats("{}", 4096, 128 * 1024, nodeApiNowMs());
+    twfRequire(result.result_code == kApiResultError && result.buffer == NULL, "stats ignored deadline");
+    buffer_pool_fit_t result_fit;
+    twfRequire(bufferpoolQueryBestFit(lineGetBufferPool(f.application), length, 0, &result_fit),
+               "stats result geometry unavailable");
+    size_t exact_working = 4608 + result_fit.allocation_charge;
+    result               = queryStats("{}", 4096, exact_working - 1, nodeApiNowMs() + 1000);
+    twfRequire(result.result_code == kApiResultError && result.buffer == NULL,
+               "stats omitted fixed metadata from working-memory charge");
+    result = queryStats("{}", 4096, exact_working, nodeApiNowMs() + 1000);
+    twfRequire(result.result_code == kApiResultOk && result.buffer != NULL,
+               "stats rejected inclusive fixed-plus-result working budget");
+    lineReuseBuffer(f.application, result.buffer);
+    stats_publication_t publication = {.state = ts};
+    atomic_init(&publication.stop, false);
+    pthread_t publisher;
+    twfRequire(pthread_create(&publisher, NULL, publishStats, &publication) == 0, "stats publisher creation failed");
+    for (unsigned i = 0; i < 32; ++i)
+    {
+        result = queryStats("{}", 4096, 128 * 1024, nodeApiNowMs() + 1000);
+        twfRequire(result.result_code == kApiResultOk && result.buffer != NULL,
+                   "stats refused concurrent synchronized publication");
+        lineReuseBuffer(f.application, result.buffer);
+    }
+    atomicStoreExplicit(&publication.stop, true, memory_order_release);
+    twfRequire(pthread_join(publisher, NULL) == 0, "stats publisher join failed");
+    end();
 }
 
 int main(void)
@@ -839,10 +1215,16 @@ int main(void)
     TEST_RUN_CASE(reentryAndPressure);
     TEST_RUN_CASE(closeAndMalformed);
     TEST_RUN_CASE(destinations);
+    TEST_RUN_CASE(reservedPacketAddressTarget);
     TEST_RUN_CASE(frameBoundaries);
     TEST_RUN_CASE(terminalReentry);
     TEST_RUN_CASE(retainedBytesAndAllocation);
     TEST_RUN_CASE(finalIncomingNonce);
+    TEST_RUN_CASE(runtimeCounterWrap);
+    TEST_RUN_CASE(terminationPolicy);
+    TEST_RUN_CASE(packetAddress);
+    TEST_RUN_CASE(packetAddressReentry);
+    TEST_RUN_CASE(statsApi);
     wCryptoGlobalCleanup();
     frandThreadCleanup();
     frandGlobalCleanup();

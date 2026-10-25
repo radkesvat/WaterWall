@@ -163,10 +163,13 @@ void vmessclientTransmit(tunnel_t *t, line_t *l)
         if (! ls->request_sent && ! vmessclientCommitRequest(ls, sbufGetMutablePtr(frame), capacity, &prefix))
         {
             lineReuseBuffer(l, frame);
+            vmessclientSetReason(ls, kVmessClientReasonProviderFailure);
             vmessclientCloseLine(t, l, kVmessClientCloseInternal);
             break;
         }
-        wcrypto_status_t status = kWCryptoOk;
+        vmessclient_tstate_t *ts      = tunnelGetState(t);
+        const uint32_t        ordinal = ls->output_crypto.counter;
+        wcrypto_status_t      status  = kWCryptoOk;
         if (! header_only)
             status = vmessBodySeal(&ls->output_crypto,
                                    sbufGetRawPtr(ls->transmit_head),
@@ -178,8 +181,25 @@ void vmessclientTransmit(tunnel_t *t, line_t *l)
         if (status != kWCryptoOk)
         {
             lineReuseBuffer(l, frame);
+            vmessclientSetReason(ls,
+                                 ls->output_crypto.security != VMESS_SECURITY_NONE &&
+                                         ts->counter_policy == kVmessCounterStrict && ordinal >= UINT16_MAX
+                                     ? kVmessClientReasonStrictExhaustion
+                                     : kVmessClientReasonProviderFailure);
             vmessclientCloseLine(t, l, kVmessClientCloseInternal);
             break;
+        }
+        if (! header_only)
+        {
+            size_t envelope = ts->packetaddr && ls->kind == kVmessClientLineKindUdpCarrier
+                                  ? vmessPacketAddrHeaderSize(&ls->packet_target)
+                                  : 0;
+            atomicAddU64Explicit(&ts->stats.tx_application_bytes, take - envelope, memory_order_relaxed);
+            if (! ls->output_crypto.raw)
+                atomicIncU64Relaxed(&ts->stats.tx_records);
+            if (ls->output_crypto.security != VMESS_SECURITY_NONE && ordinal == UINT16_MAX &&
+                ts->counter_policy == kVmessCounterWrap)
+                atomicIncU64Relaxed(&ts->stats.tx_wraps);
         }
         if (! header_only)
         {
@@ -193,6 +213,7 @@ void vmessclientTransmit(tunnel_t *t, line_t *l)
             }
         }
         sbufSetLength(frame, (uint32_t) (prefix + written));
+        atomicAddU64Explicit(&ts->stats.tx_wire_bytes, prefix + written, memory_order_relaxed);
         /* Request marker and both cipher contexts are published before this callback. */
         tunnelNextUpStreamPayload(t, l, frame);
     }

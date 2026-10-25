@@ -399,7 +399,7 @@ wcrypto_status_t vmessRequestHeaderParse(const uint8_t *plaintext, size_t length
         address_length = plaintext[pos++];
     }
     size_t padding = plaintext[35] >> 4;
-    if (address_length == 0 || pos + address_length + padding + 4 != length || read16(plaintext + 38) == 0)
+    if (address_length == 0 || pos + address_length + padding + 4 != length)
     {
         return kWCryptoInvalidArgument;
     }
@@ -418,6 +418,12 @@ wcrypto_status_t vmessRequestHeaderParse(const uint8_t *plaintext, size_t length
     out->address_type   = plaintext[40];
     out->address_length = (uint8_t) address_length;
     memcpy(out->address, plaintext + pos, address_length);
+    if ((out->port == 0 || (out->address_type == 2 && vmessIsPacketAddrDomain(out->address, out->address_length))) &&
+        ! vmessRequestIsPacketAddr(out))
+    {
+        memset(out, 0, sizeof(*out));
+        return kWCryptoInvalidArgument;
+    }
     return kWCryptoOk;
 }
 
@@ -449,8 +455,11 @@ wcrypto_status_t vmessRequestHeaderSeal(const uint8_t cmd_key[16], const uint8_t
     assert(cmd_key && auth_id && nonce && header && wire_length);
     assert((padding != NULL || padding_length == 0) && (out != NULL || capacity == 0));
     *wire_length = 0;
-    if (header->version != 1 || header->port == 0 || padding_length > 15 ||
-        ! vmessModeValid(header->security, header->options, header->command) ||
+    if (header->version != 1 ||
+        ((header->port == 0 ||
+          (header->address_type == 2 && vmessIsPacketAddrDomain(header->address, header->address_length))) &&
+         ! vmessRequestIsPacketAddr(header)) ||
+        padding_length > 15 || ! vmessModeValid(header->security, header->options, header->command) ||
         (header->address_type == 1   ? header->address_length != 4
          : header->address_type == 3 ? header->address_length != 16
          : header->address_type == 2
@@ -661,17 +670,19 @@ void vmessBodyDestroy(vmess_body_ctx_t *ctx)
 }
 
 wcrypto_status_t vmessBodyInit(vmess_body_ctx_t *ctx, const uint8_t key[16], const uint8_t iv[16], uint8_t security,
-                               uint8_t options, uint8_t command, bool encrypt)
+                               uint8_t options, uint8_t command, bool encrypt, vmess_counter_policy_t counter_policy)
 {
     assert(ctx && key && iv && ctx->cipher == NULL && ctx->length_cipher == NULL && ctx->shake == NULL);
+    assert(counter_policy == kVmessCounterWrap || counter_policy == kVmessCounterStrict);
     if (! vmessModeValid(security, options, command))
     {
         return kWCryptoInvalidArgument;
     }
-    ctx->security = security;
-    ctx->options  = options;
-    ctx->encrypt  = encrypt;
-    ctx->raw      = security == VMESS_SECURITY_NONE && (options & VMESS_OPTION_CHUNK) == 0;
+    ctx->security       = security;
+    ctx->options        = options;
+    ctx->counter_policy = counter_policy;
+    ctx->encrypt        = encrypt;
+    ctx->raw            = security == VMESS_SECURITY_NONE && (options & VMESS_OPTION_CHUNK) == 0;
     memcpy(ctx->iv, iv, 16);
     memcpy(ctx->length_iv, iv, 16);
     memcpy(ctx->key, key, 16);
@@ -803,6 +814,19 @@ static wcrypto_status_t bodyFail(vmess_body_ctx_t *ctx, wcrypto_status_t status)
     return status;
 }
 
+static void bodyAdvance(vmess_body_ctx_t *ctx)
+{
+    assert(ctx->counter <= UINT16_MAX);
+    if (ctx->counter_policy == kVmessCounterWrap)
+    {
+        ctx->counter = (ctx->counter + 1U) & UINT16_MAX;
+    }
+    else
+    {
+        ++ctx->counter;
+    }
+}
+
 wcrypto_status_t vmessBodyLengthOpen(vmess_body_ctx_t *ctx, const uint8_t *prefix, size_t prefix_length,
                                      uint32_t *body_wire_length)
 {
@@ -812,7 +836,7 @@ wcrypto_status_t vmessBodyLengthOpen(vmess_body_ctx_t *ctx, const uint8_t *prefi
     {
         return kWCryptoInvalidState;
     }
-    if (ctx->security != VMESS_SECURITY_NONE && ctx->counter > UINT16_MAX)
+    if (ctx->security != VMESS_SECURITY_NONE && ctx->counter_policy == kVmessCounterStrict && ctx->counter > UINT16_MAX)
     {
         return bodyFail(ctx, kVmessCounterExhausted);
     }
@@ -904,7 +928,7 @@ wcrypto_status_t vmessBodyOpen(vmess_body_ctx_t *ctx, const uint8_t *body, size_
         {
             return bodyFail(ctx, status);
         }
-        ++ctx->counter;
+        bodyAdvance(ctx);
     }
     else if (plain_length != 0)
     {
@@ -946,7 +970,8 @@ wcrypto_status_t vmessBodySeal(vmess_body_ctx_t *ctx, const uint8_t *plaintext, 
         return kWCryptoOk;
     }
     size_t tag = ctx->security == VMESS_SECURITY_NONE ? 0 : 16;
-    if (tag != 0 && (ctx->counter > UINT16_MAX || (! eof && ctx->counter == UINT16_MAX)))
+    if (tag != 0 && ctx->counter_policy == kVmessCounterStrict &&
+        (ctx->counter > UINT16_MAX || (! eof && ctx->counter == UINT16_MAX)))
     {
         return kVmessCounterExhausted;
     }
@@ -1030,7 +1055,7 @@ wcrypto_status_t vmessBodySeal(vmess_body_ctx_t *ctx, const uint8_t *plaintext, 
     }
     if (tag != 0)
     {
-        ++ctx->counter;
+        bodyAdvance(ctx);
     }
     ctx->ended   = eof;
     *wire_length = prefix_length + body_length;

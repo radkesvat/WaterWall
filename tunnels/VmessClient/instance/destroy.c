@@ -34,6 +34,13 @@ void vmessclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context
 
     vmessclient_tstate_t *ts = tunnelGetState(t);
 
+    if (atomicLoadU64Relaxed(&ts->stats.active_applications) != 0 ||
+        atomicLoadU64Relaxed(&ts->stats.active_carriers) != 0)
+    {
+        LOGF("VmessClient: lines remain active during instance destruction");
+        abortProgramNow(1);
+    }
+    nodeApiUnregister(t);
     vmessclientDestroyInternalDomainResolverChain(ts);
     vmessclientTunnelstateDestroy(ts);
     tunnelDestroy(t);

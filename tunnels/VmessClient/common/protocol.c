@@ -12,7 +12,14 @@ bool vmessclientCommitRequest(vmessclient_lstate_t *ls, uint8_t *out, size_t cap
         .port     = ls->target_addr.port,
     };
     const address_context_t *target = &ls->target_addr;
-    if (addresscontextIsIpv4(target))
+    if (ts->packetaddr && request.command == 2)
+    {
+        request.port           = 0;
+        request.address_type   = 2;
+        request.address_length = sizeof(VMESS_PACKETADDR_DOMAIN) - 1;
+        memoryCopy(request.address, VMESS_PACKETADDR_DOMAIN, sizeof(VMESS_PACKETADDR_DOMAIN) - 1);
+    }
+    else if (addresscontextIsIpv4(target))
     {
         request.address_type   = 1;
         request.address_length = 4;
@@ -43,16 +50,22 @@ bool vmessclientCommitRequest(vmessclient_lstate_t *ls, uint8_t *out, size_t cap
         vmessRequestHeaderSeal(
             ts->key.cmd_key, auth_id, nonce, &request, padding, padding_length, out, capacity, written) == kWCryptoOk &&
         vmessResponseKeys(request.key, request.iv, ls->response_key, ls->response_iv) == kWCryptoOk &&
-        vmessBodyInit(
-            &ls->output_crypto, request.key, request.iv, request.security, request.options, request.command, true) ==
-            kWCryptoOk &&
+        vmessBodyInit(&ls->output_crypto,
+                      request.key,
+                      request.iv,
+                      request.security,
+                      request.options,
+                      request.command,
+                      true,
+                      ts->counter_policy) == kWCryptoOk &&
         vmessBodyInit(&ls->input_crypto,
                       ls->response_key,
                       ls->response_iv,
                       request.security,
                       request.options,
                       request.command,
-                      false) == kWCryptoOk;
+                      false,
+                      ts->counter_policy) == kWCryptoOk;
     if (ok && (request.options & VMESS_OPTION_AUTH_LENGTH))
         ok = vmessBodySetLengthMaterial(&ls->input_crypto, request.key, request.iv) == kWCryptoOk;
     ls->response_marker = request.response;

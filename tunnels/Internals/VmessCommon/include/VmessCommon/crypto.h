@@ -20,8 +20,27 @@ enum
     VMESS_OPTION_AUTH_LENGTH         = 16,
 };
 
-/* A wire nonce would repeat. The caller must close the connection. */
+/* Strict policy would reuse a wire nonce. The caller must close the connection. */
 #define kVmessCounterExhausted ((wcrypto_status_t) - 100)
+
+#define VMESS_PACKETADDR_DOMAIN "sp.packet-addr.v2fly.arpa"
+
+typedef enum vmess_counter_policy_e
+{
+    kVmessCounterWrap,
+    kVmessCounterStrict,
+} vmess_counter_policy_t;
+
+/* Exact UTF-8 bytes: strict UUIDs are preserved, short IDs use UUIDv5(nil, id).
+ * On failure uuid is cleared. Invalid UUID-sized values never become short IDs. */
+WCRYPTO_MUST_USE wcrypto_status_t vmessNormalizeId(const char *id, size_t length, uint8_t uuid[16]);
+
+/* Provider availability is checked independently of the generic crypto backend.
+ * Pure selection accepts capability facts to permit host-independent tests. */
+bool                              vmessCipherAvailable(uint8_t security);
+WCRYPTO_MUST_USE wcrypto_status_t vmessAutoSecuritySelect(bool accelerated_aes, bool aes_available,
+                                                          bool chacha_available, uint8_t *security);
+WCRYPTO_MUST_USE wcrypto_status_t vmessAutoSecurity(uint8_t *security);
 
 typedef struct vmess_prepared_key_s
 {
@@ -49,6 +68,26 @@ typedef struct vmess_request_header_s
     uint8_t  address[255];
     uint16_t port;
 } vmess_request_header_t;
+
+/* Internal family uses the outer VMess types (1=IPv4, 3=IPv6); the envelope
+ * translates these to its independent 1=IPv4, 2=IPv6 address-family bytes. */
+typedef struct vmess_packet_addr_s
+{
+    uint8_t  address_type;
+    uint8_t  address[16];
+    uint16_t port;
+} vmess_packet_addr_t;
+
+/* The reserved packetaddr domain must never become an ordinary final target. */
+bool vmessIsPacketAddrDomain(const uint8_t *domain, size_t length);
+bool vmessRequestIsPacketAddr(const vmess_request_header_t *header);
+/* Zero means an unsupported family. Encoding rejects port zero; decoding accepts
+ * a header-only record as an empty datagram. Header length is zero on failure. */
+size_t                            vmessPacketAddrHeaderSize(const vmess_packet_addr_t *address);
+WCRYPTO_MUST_USE wcrypto_status_t vmessPacketAddrEncode(const vmess_packet_addr_t *address, uint8_t *out,
+                                                        size_t capacity, size_t *header_length);
+WCRYPTO_MUST_USE wcrypto_status_t vmessPacketAddrDecode(const uint8_t *record, size_t length, vmess_packet_addr_t *out,
+                                                        size_t *header_length);
 
 typedef struct vmess_kdf_segment_s
 {
@@ -103,28 +142,30 @@ WCRYPTO_MUST_USE wcrypto_status_t vmessResponseHeaderOpen(const uint8_t response
 
 typedef struct vmess_body_ctx_s
 {
-    void    *cipher;
-    void    *length_cipher;
-    void    *shake;
-    uint8_t  key[32];
-    uint8_t  length_key[32];
-    uint8_t  length_iv[16];
-    uint8_t  iv[16];
-    uint32_t counter;
-    uint32_t pending_wire_length;
-    uint16_t pending_padding;
-    uint8_t  security;
-    uint8_t  options;
-    bool     raw;
-    bool     encrypt;
-    bool     pending;
-    bool     ended;
-    bool     failed;
+    void                  *cipher;
+    void                  *length_cipher;
+    void                  *shake;
+    uint8_t                key[32];
+    uint8_t                length_key[32];
+    uint8_t                length_iv[16];
+    uint8_t                iv[16];
+    uint32_t               counter;
+    uint32_t               pending_wire_length;
+    uint16_t               pending_padding;
+    uint8_t                security;
+    uint8_t                options;
+    vmess_counter_policy_t counter_policy;
+    bool                   raw;
+    bool                   encrypt;
+    bool                   pending;
+    bool                   ended;
+    bool                   failed;
 } vmess_body_ctx_t;
 
 /* All contexts must start zeroed. Failure leaves a destroyable context. */
 WCRYPTO_MUST_USE wcrypto_status_t vmessBodyInit(vmess_body_ctx_t *ctx, const uint8_t key[16], const uint8_t iv[16],
-                                                uint8_t security, uint8_t options, uint8_t command, bool encrypt);
+                                                uint8_t security, uint8_t options, uint8_t command, bool encrypt,
+                                                vmess_counter_policy_t counter_policy);
 /* Before processing the first record, response-direction authenticated lengths
  * use the request key/IV, independently of response body encryption/masking. */
 WCRYPTO_MUST_USE wcrypto_status_t vmessBodySetLengthMaterial(vmess_body_ctx_t *ctx, const uint8_t request_key[16],
@@ -140,8 +181,9 @@ WCRYPTO_MUST_USE wcrypto_status_t vmessBodyLengthOpen(vmess_body_ctx_t *ctx, con
  * failure. An empty authenticated body is EOF only after its tag is verified. */
 WCRYPTO_MUST_USE wcrypto_status_t vmessBodyOpen(vmess_body_ctx_t *ctx, const uint8_t *body, size_t body_length,
                                                 uint8_t *out, size_t capacity, size_t *plaintext_length, bool *eof);
-/* Seal emits one complete frame. Nonempty data uses counters 0..65534, reserving
- * 65535 for EOF. Raw NONE has no framing and no explicit EOF bytes. */
+/* Seal emits one complete frame. Wrap uses every 16-bit ordinal, then repeats
+ * the nonce sequence without rekeying. Strict reserves 65535 for EOF. Raw NONE
+ * has no framing and no explicit EOF bytes. */
 WCRYPTO_MUST_USE wcrypto_status_t vmessBodySeal(vmess_body_ctx_t *ctx, const uint8_t *plaintext,
                                                 size_t plaintext_length, bool eof, uint8_t *out, size_t capacity,
                                                 size_t *wire_length);

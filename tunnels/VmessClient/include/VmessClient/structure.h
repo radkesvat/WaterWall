@@ -35,6 +35,30 @@ enum
     kVmessClientUuidLen         = 16,
     kVmessClientTcpRecordSize   = 16384
 };
+typedef enum vmessclient_reason_e
+{
+    kVmessClientReasonNormalClose,
+    kVmessClientReasonInvalidTarget,
+    kVmessClientReasonMalformedHeader,
+    kVmessClientReasonLengthFailure,
+    kVmessClientReasonBodyFailure,
+    kVmessClientReasonRetainedInput,
+    kVmessClientReasonAdmissionRefused,
+    kVmessClientReasonUdpOversize,
+    kVmessClientReasonUnexpectedSource,
+    kVmessClientReasonMalformedPacketAddr,
+    kVmessClientReasonPacketAddrNeedsIp,
+    kVmessClientReasonStrictExhaustion,
+    kVmessClientReasonProviderFailure,
+    kVmessClientReasonCount
+} vmessclient_reason_t;
+typedef struct vmessclient_stats_s
+{
+    atomic_ullong active_applications, active_carriers;
+    atomic_ullong tx_records, rx_records, tx_application_bytes, rx_application_bytes;
+    atomic_ullong tx_wire_bytes, rx_wire_bytes, tx_wraps, rx_wraps;
+    atomic_ullong reasons[kVmessClientReasonCount], verbose_after_ms, verbose_suppressed;
+} vmessclient_stats_t;
 typedef struct vmessclient_tstate_s
 {
     node_t                 domain_resolver_node;
@@ -48,7 +72,9 @@ typedef struct vmessclient_tstate_s
     vmessclient_protocol_t protocol;
     uint32_t               first_payload_timeout_ms;
     uint8_t                security, options;
-    bool                   verbose, resolve_domains;
+    bool                   verbose, resolve_domains, send_termination, packetaddr, security_auto;
+    vmess_counter_policy_t counter_policy;
+    vmessclient_stats_t    stats;
 } vmessclient_tstate_t;
 typedef struct vmessclient_lstate_s
 {
@@ -64,7 +90,8 @@ typedef struct vmessclient_lstate_s
     bool                    response_complete, transmitting, receiving, closing;
     /* Storage belongs to the outer synchronous close frame. */
     struct vmessclient_close_context_s *close_context;
-    bool                                prev_finished, next_finished;
+    bool                                prev_finished, next_finished, stats_counted, reason_recorded;
+    vmess_packet_addr_t                 packet_target;
     vmess_body_ctx_t                    output_crypto, input_crypto;
     uint8_t                             response_key[16], response_iv[16], response_marker;
     buffer_queue_t                      pending_up, pending_down;
