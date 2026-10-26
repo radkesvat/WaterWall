@@ -21,6 +21,10 @@ In Waterwall, the usual split is:
 - `WireGuardDevice` owns WireGuard crypto, peer state, routing, handshake, keepalive, and rekey logic
 - `TunDevice`, `RawSocket`, `PacketsToConnection`, or another packet-oriented node owns the inner packet side
 
+Decoded inner packets are forwarded on the receiving worker's packet line.
+Decryption, replay validation and peer synchronization do not add a transport-flow
+handoff; a later stateful packet consumer establishes its own worker ownership.
+
 ## What It Does
 
 - encrypts inner IPv4 or IPv6 packets into WireGuard transport packets

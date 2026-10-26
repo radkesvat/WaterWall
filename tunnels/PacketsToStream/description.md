@@ -176,20 +176,12 @@ The tunnel then:
 - waits for at least a full minimum IPv4 header
 - reads the IPv4 total-length field
 - waits until the whole packet (`total length`) is available
-- computes the shared symmetric inner-flow hash of the decoded packet
-- emits the packet back to the previous side on `packet_line[hash % workers]`,
-  directly when that is the current worker and queued to the target worker otherwise
+- emits the packet back to the previous side on the stream worker's packet line
 
-Packet boundary recovery is based on the IPv4 total-length field.
-
-The outer stream line's worker is not used to pick the packet line. A peer such as
-`StreamToPackets` chooses a return carrier per inner flow out of its active line
-pool, so any flow can arrive on any of these lines; re-deriving affinity from the
-inner tuple is what makes that safe. A decoded packet whose flow cannot be hashed
-is logged and dropped rather than round-robined.
-
-The parser, the heartbeat state, and output-line recreation all stay owned by the
-stream line's own worker. Only the decoded packets are re-affinitized.
+Packet boundary recovery is based on the IPv4 total-length field. A peer may
+return any inner flow on any stream line. The decoder forwards locally; a later
+stateful consumer selects its own flow worker. The parser, heartbeat state and
+output-line recreation also stay owned by the stream line's worker.
 
 ### Garbage Resilience
 
@@ -205,7 +197,7 @@ point correct packets are read again. No input pattern can crash the node, read 
 ### Pause and resume behavior
 
 This node owns the stream-facing line and maps it to a separate worker packet line. It keeps endpoint flow control
-and cannot permanently bypass itself: IPv4 parsing, worker affinity and line recreation remain necessary.
+and cannot permanently bypass itself: IPv4 parsing, line-identity mapping and line recreation remain necessary.
 Repeated Pause or Resume is idempotent; Pause notifications are not counted holds.
 
 When the downstream side pauses the stream-facing line, `PacketsToStream` marks the packet-facing side paused and
@@ -266,7 +258,7 @@ If buffered return data grows beyond that limit, the read stream is emptied.
 - This node is IPv4-length based (no framing header), not `2-byte length + payload` based.
 - It is IPv4-only; IPv6 and non-IPv4 payloads are dropped in both directions.
 - Pair it with `StreamToPackets` on the other side to restore packet boundaries.
-- It still owns one stream output line per packet worker on the send side; only the receive side is re-affinitized.
+- It owns one stream output line per packet worker on the send side and decodes return packets on that stream line's worker.
 - Upstream `est`, `pause`, `resume`, and `finish`, plus downstream `init`, are not part of the intended normal callback path for this tunnel.
 
 ## Node Metadata

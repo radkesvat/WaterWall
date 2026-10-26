@@ -69,8 +69,8 @@ void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             continue;
         }
 
-        // The outer connection's worker is unrelated to the inner flow's worker,
-        // so affinity is restored from the decoded packet itself.
+        // Keep the stream worker and recheck source authorization before packet
+        // publication. Stateful packet consumers establish their own affinity.
         streamtopacketsForwardDecodedPacket(t, l, packet_buffer, generation);
 
         if (! lineIsAlive(l))

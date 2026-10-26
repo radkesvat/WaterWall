@@ -399,133 +399,21 @@ bool streamtopacketsTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_o
     }
 }
 
-/*
- * Cross-worker handoff of one decoded inner packet, carrying the source
- * generation it was authorized under.
- *
- * The outer stream line's worker was chosen by the socket manager and says
- * nothing about which worker owns the inner flow, so affinity has to be restored
- * from the packet itself. The packet line is persistent, but a queued message
- * still holds a temporary reference so the target cannot disappear underneath the
- * callback.
- */
-typedef struct streamtopackets_packet_msg_s
-{
-    tunnel_t *tunnel;
-    line_t   *packet_line;
-    sbuf_t   *buf;
-    uint64_t  generation;
-} streamtopackets_packet_msg_t;
-
-static void streamtopacketsReplayDecodedPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
-{
-    streamtopackets_packet_msg_t *msg = arg1;
-    discard                       arg2;
-    discard                       arg3;
-
-    assert(worker != NULL);
-    assert(worker->wid == lineGetWID(msg->packet_line));
-
-    streamtopackets_tstate_t *ts = tunnelGetState(msg->tunnel);
-
-    if (! lineIsAlive(msg->packet_line))
-    {
-        /* The queued reference retains packet-line memory, not its logical
-         * lifetime. This callback owns the delivered worker's pool. */
-        bufferpoolReuseBuffer(worker->buffer_pool, msg->buf);
-    }
-    else if (streamtopacketsPublishedGeneration(ts) != msg->generation)
-    {
-        // A takeover linearized after this packet was queued: the epoch that
-        // authorized it no longer owns the tunnel, so it must not be injected.
-        LOGD("StreamToPackets: dropping a queued packet from a superseded source generation");
-        bufferpoolReuseBuffer(worker->buffer_pool, msg->buf);
-    }
-    else
-    {
-        tunnelNextUpStreamPayload(msg->tunnel, msg->packet_line, msg->buf);
-    }
-
-    lineUnref(msg->packet_line);
-    memoryFree(msg);
-}
-
-static void streamtopacketsCleanupDecodedPacket(void *arg1, void *arg2, void *arg3,
-                                                worker_message_cancel_reason_e reason)
-{
-    discard                       reason;
-    streamtopackets_packet_msg_t *msg = arg1;
-    discard                       arg2;
-    discard                       arg3;
-
-    // A pooled buffer may only go back to a pool this thread owns.
-    if (lineIsOnCurrentWorker(msg->packet_line))
-    {
-        /* Cleanup can observe a logically dead line; current-worker ownership
-         * is enough to recycle without reading that line. */
-        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), msg->buf);
-    }
-    else
-    {
-        sbufDestroy(msg->buf);
-    }
-
-    lineUnref(msg->packet_line);
-    memoryFree(msg);
-}
-
-/*
- * Restores inner-flow worker affinity for one decoded upstream packet and hands
- * it to the packet chain. Takes ownership of @p packet on every path.
- *
- * @p generation is the token streamtopacketsAuthorizeLine() returned for this
- * packet; both the direct and the queued path re-check it, so an epoch that was
- * superseded between authorization and delivery fails closed.
- */
+/* Publish decoded bytes on the stream owner's packet line. A concurrent source
+ * takeover can invalidate authorization before this boundary; recheck its token
+ * immediately before the callback, without moving the borrowed normal line. */
 void streamtopacketsForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_t *packet, uint64_t generation)
 {
-    streamtopackets_tstate_t *ts        = tunnelGetState(t);
-    uint64_t                  flow_hash = 0;
-
-    if (UNLIKELY(! deviceFlowAffinityHash(sbufGetRawPtr(packet), sbufGetLength(packet), &flow_hash)))
-    {
-        // Framing and validation already accepted this as an IPv4 packet, so a
-        // hash failure means its stateful worker ownership cannot be established.
-        // Round-robin would scatter one flow across workers, so drop it instead.
-        LOGW("StreamToPackets: dropping a decoded packet whose inner flow could not be hashed");
-        lineReuseBuffer(stream_line, packet);
-        return;
-    }
-
-    const wid_t target_wid  = (wid_t) (flow_hash % getWorkersCount());
-    line_t     *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), target_wid);
-
+    assert(lineIsOnCurrentWorker(stream_line));
+    streamtopackets_tstate_t *ts          = tunnelGetState(t);
+    line_t                   *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(stream_line));
     assert(packet_line != NULL);
-
-    if (lineIsOnCurrentWorker(packet_line))
+    if (UNLIKELY(streamtopacketsPublishedGeneration(ts) != generation))
     {
-        if (UNLIKELY(streamtopacketsPublishedGeneration(ts) != generation))
-        {
-            lineReuseBuffer(packet_line, packet);
-            return;
-        }
-
-        tunnelNextUpStreamPayload(t, packet_line, packet);
+        lineReuseBuffer(packet_line, packet);
         return;
     }
-
-    streamtopackets_packet_msg_t *msg = memoryAllocate(sizeof(*msg));
-
-    *msg = (streamtopackets_packet_msg_t) {
-        .tunnel = t, .packet_line = packet_line, .buf = packet, .generation = generation};
-
-    lineRef(packet_line);
-    sendWorkerMessageForceQueueBestEffortWithCleanup(target_wid,
-                                                     (WorkerMessageCallback) streamtopacketsReplayDecodedPacketOnWorker,
-                                                     streamtopacketsCleanupDecodedPacket,
-                                                     msg,
-                                                     NULL,
-                                                     NULL);
+    tunnelNextUpStreamPayload(t, packet_line, packet);
 }
 
 // Builds and sends a heartbeat pong. The on-wire format is a raw concatenation of IPv4 packets, so

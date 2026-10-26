@@ -368,28 +368,46 @@ static void requireWidIsHashModWorkers(const sbuf_t *buf, const char *message)
 }
 
 #ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-static void requireWireGuardAffinityMatches(const sbuf_t *buf)
-{
-    wid_t expected = affinityOf(buf);
+static wid_t    wireguard_delivered_wid;
+static unsigned wireguard_delivered_count;
 
+static void receiveWireGuardInner(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    discard t;
+    require(lineIsOnCurrentWorker(line), "decoded WireGuard packet changed line ownership");
+    wireguard_delivered_wid = lineGetWID(line);
+    ++wireguard_delivered_count;
+    sbufDestroy(buf);
+}
+
+static void requireWireGuardKeepsWorker(sbuf_t *buf)
+{
+    tunnel_t     sink   = {.fnPayloadU = receiveWireGuardInner, .fnPayloadD = receiveWireGuardInner};
+    tunnel_t     tunnel = {.next = &sink, .prev = &sink};
+    wgd_tstate_t state  = {.tunnel = &tunnel};
     for (wid_t current_wid = 0; current_wid < getWorkersCount(); ++current_wid)
     {
-        wid_t target_wid = kInvalidWID;
-        bool  should_hop =
-            wireguarddeviceInnerPacketTargetWID(sbufGetRawPtr(buf), sbufGetLength(buf), current_wid, &target_wid);
-
-        require(target_wid == expected, "WireGuard selected a different flow-affine worker");
-        require(should_hop == (target_wid != current_wid), "WireGuard made the wrong same-worker decision");
+        testWorkerBindWID(current_wid);
+        line_t line = {.wid = current_wid, .alive = true, .active_tunnels_mask = UINT64_MAX};
+        for (unsigned direction = 0; direction < 2; ++direction)
+        {
+            state.transport_side_is_next = direction != 0;
+            wireguard_delivered_count    = 0;
+            wireguarddeviceForwardInnerPacket(&state, &line, sbufDuplicate(buf));
+            require(wireguard_delivered_count == 1 && wireguard_delivered_wid == current_wid,
+                    "pure WireGuard decode redistributed the inner packet");
+        }
     }
+    testWorkerBindWID(0);
 }
 
 static void requireWireGuardKeepsMalformedHere(const uint8_t *packet, uint32_t length)
 {
-    wid_t target_wid = kInvalidWID;
-
-    require(! wireguarddeviceInnerPacketTargetWID(packet, length, 2, &target_wid),
-            "WireGuard tried to hop an unparseable inner packet");
-    require(target_wid == 2, "WireGuard changed the worker for an unparseable inner packet");
+    sbuf_t *buf = sbufCreate(length);
+    sbufSetLength(buf, length);
+    memoryCopy(sbufGetMutablePtr(buf), packet, length);
+    requireWireGuardKeepsWorker(buf);
+    sbufDestroy(buf);
 }
 #endif
 
@@ -401,8 +419,8 @@ static void testIpv4SymmetryAndFragments(void)
     require(fullHashOf(forward) == fullHashOf(reverse), "IPv4 TCP full flow hash was not symmetric");
 
 #ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardAffinityMatches(forward);
-    requireWireGuardAffinityMatches(reverse);
+    requireWireGuardKeepsWorker(forward);
+    requireWireGuardKeepsWorker(reverse);
 #endif
 
     sbuf_t *udp_forward = makeIpv4Packet(0x0A000002, 5353, 0xC6336401, 53, 17, 0);
@@ -411,8 +429,8 @@ static void testIpv4SymmetryAndFragments(void)
     require(fullHashOf(udp_forward) == fullHashOf(udp_reverse), "IPv4 UDP full flow hash was not symmetric");
 
 #ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardAffinityMatches(udp_forward);
-    requireWireGuardAffinityMatches(udp_reverse);
+    requireWireGuardKeepsWorker(udp_forward);
+    requireWireGuardKeepsWorker(udp_reverse);
 #endif
 
     sbuf_t *first_fragment = makeIpv4Packet(0x0A000003, 1000, 0xCB007101, 2000, 6, 0x2000);
@@ -425,8 +443,8 @@ static void testIpv4SymmetryAndFragments(void)
             "first and later IPv4 fragments of one datagram produced different full hashes");
 
 #ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardAffinityMatches(first_fragment);
-    requireWireGuardAffinityMatches(later_fragment);
+    requireWireGuardKeepsWorker(first_fragment);
+    requireWireGuardKeepsWorker(later_fragment);
 #endif
 
     sbuf_t *fragment_forward = makeIpv4Packet(0x0A000003, 1000, 0xCB007101, 2000, 6, 1);
@@ -437,8 +455,8 @@ static void testIpv4SymmetryAndFragments(void)
             "non-initial IPv4 fragment full hashes incorrectly depended on payload bytes");
 
 #ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardAffinityMatches(fragment_forward);
-    requireWireGuardAffinityMatches(fragment_reverse);
+    requireWireGuardKeepsWorker(fragment_forward);
+    requireWireGuardKeepsWorker(fragment_reverse);
 #endif
 
     sbufDestroy(fragment_reverse);
@@ -462,8 +480,8 @@ static void testIpv6Symmetry(void)
     require(fullHashOf(tcp_forward) == fullHashOf(tcp_reverse), "IPv6 TCP full flow hash was not symmetric");
 
 #ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardAffinityMatches(tcp_forward);
-    requireWireGuardAffinityMatches(tcp_reverse);
+    requireWireGuardKeepsWorker(tcp_forward);
+    requireWireGuardKeepsWorker(tcp_reverse);
 #endif
 
     sbuf_t *udp_forward = makeIpv6Packet(src, 5353, dst, 53, 17);
@@ -472,8 +490,8 @@ static void testIpv6Symmetry(void)
     require(fullHashOf(udp_forward) == fullHashOf(udp_reverse), "IPv6 UDP full flow hash was not symmetric");
 
 #ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardAffinityMatches(udp_forward);
-    requireWireGuardAffinityMatches(udp_reverse);
+    requireWireGuardKeepsWorker(udp_forward);
+    requireWireGuardKeepsWorker(udp_reverse);
 #endif
 
     sbufDestroy(udp_reverse);

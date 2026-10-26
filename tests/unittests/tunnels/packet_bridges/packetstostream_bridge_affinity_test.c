@@ -3,8 +3,8 @@
  * define this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: caseCrossWorkerDecodeReachesTheFlowWorker, caseSameWorkerDecodeIsDirect,
- * caseEveryFlowWorkerIsReachable, caseDroppedCrossWorkerMessageReleasesItsBuffer,
+ * Cases: caseDecodedPacketUsesStreamWorker, caseSameWorkerDecodeIsDirect,
+ * caseEveryFlowRemainsOnStreamWorker, caseUnrelatedWorkerAdmissionCannotBlockDecode,
  * caseReentrantStreamLineDeathStopsExtraction
  * Checks: Assertion labels include: the test packet was not hashable; no test flow maps to the requested
  * worker; the test buffer is too small; the outer line must not already be on the flow worker
@@ -13,17 +13,9 @@
  * CTest: waterwall.packetstostream_bridge_affinity_unit
  */
 /*
- * PacketsToStream receive-side inner-flow affinity.
- *
- * A peer that spreads one source's flows across several stream lines may return
- * any inner flow on any of them, so the outer stream line's worker says nothing
- * about which worker owns the decoded packet. The decoder must hash the inner
- * tuple and deliver the packet to that flow's own worker packet line, both when
- * that worker is the current one and when the packet has to be queued across
- * workers.
- *
- * The fixture deliberately uses an outer stream line on worker 0 and flows whose
- * affinity worker is not 0: a same-WID-only fixture cannot see this defect.
+ * Decoded packets leave through the packet line on their stream owner's worker.
+ * Flow hashes deliberately point at other workers: any stateful packet consumer
+ * owns that later affinity boundary. Normal stream lines never migrate.
  */
 #include "PacketsToStream/structure.h"
 
@@ -256,9 +248,9 @@ static void pumpAllWorkers(void)
 // cases
 // ---------------------------------------------------------------------------
 
-static void caseCrossWorkerDecodeReachesTheFlowWorker(void)
+static void caseDecodedPacketUsesStreamWorker(void)
 {
-    twfSetCase("a decoded return packet reaches its own flow worker's packet line");
+    twfSetCase("a decoded return packet retains the stream owner worker");
     tosResetProcessApi(true);
     fixtureSetup();
 
@@ -269,15 +261,14 @@ static void caseCrossWorkerDecodeReachesTheFlowWorker(void)
 
     feedDownstreamPacket(port);
 
-    // Nothing may be delivered before the target worker runs the queued message.
-    twfRequireEqualU32(g_prev_payload_count, 0, "a cross-worker packet was delivered on the wrong worker");
+    twfRequireEqualU32(g_prev_payload_count, 1, "decoded delivery was deferred to the flow-hash worker");
 
     pumpAllWorkers();
 
-    twfRequireEqualU32(g_prev_payload_count, 1, "the queued packet was never delivered");
-    twfRequire(g_last_prev_line == g_fixture.packet_lines[2],
-               "the decoded packet did not reach the packet line of its flow worker");
-    twfRequireEqualU32(g_last_prev_wid, 2, "the queued packet was delivered on the wrong worker");
+    twfRequireEqualU32(g_prev_payload_count, 1, "decoded delivery was lost or duplicated");
+    twfRequire(g_last_prev_line == g_fixture.packet_lines[0],
+               "the decoded packet did not use its stream owner's packet line");
+    twfRequireEqualU32(g_last_prev_wid, 0, "decoded packet changed its stream owner worker");
     twfRequireNoLeakedBuffers();
 
     fixtureTeardown();
@@ -304,9 +295,9 @@ static void caseSameWorkerDecodeIsDirect(void)
     fixtureTeardown();
 }
 
-static void caseEveryFlowWorkerIsReachable(void)
+static void caseEveryFlowRemainsOnStreamWorker(void)
 {
-    twfSetCase("every flow worker is reachable from one outer stream line");
+    twfSetCase("different decoded flows retain one outer stream owner");
     tosResetProcessApi(true);
     fixtureSetup();
 
@@ -322,40 +313,35 @@ static void caseEveryFlowWorkerIsReachable(void)
         pumpAllWorkers();
 
         twfRequireEqualU32(g_prev_payload_count, 1, "a decoded packet was lost or duplicated");
-        twfRequire(g_last_prev_line == g_fixture.packet_lines[wanted],
-                   "a decoded packet reached the wrong flow worker");
-        twfRequireEqualU32(g_last_prev_wid, wanted, "a decoded packet was delivered on the wrong worker thread");
+        twfRequire(g_last_prev_line == g_fixture.packet_lines[0],
+                   "a decoded packet left its stream owner's packet line");
+        twfRequireEqualU32(g_last_prev_wid, 0, "a decoded packet was delivered on the wrong worker thread");
     }
 
     twfRequireNoLeakedBuffers();
     fixtureTeardown();
 }
 
-/*
- * Application shutdown drops queued worker messages through the cleanup callback
- * instead of the normal one. The buffer must still be released exactly once, and
- * the packet line's temporary reference released with it.
- */
-static void caseDroppedCrossWorkerMessageReleasesItsBuffer(void)
+/* Decoding no longer depends on admission to an unrelated flow-hash worker. */
+static void caseUnrelatedWorkerAdmissionCannotBlockDecode(void)
 {
-    twfSetCase("a dropped cross-worker message releases its buffer and line reference");
+    twfSetCase("closed admission on another worker does not block decoded forwarding");
     tosResetProcessApi(true);
     fixtureSetup();
 
     const uint16_t port = portForAffinityWid(3);
-
+    workerMessagesCloseAdmission(&g_fixture.env.workers[3]);
     feedDownstreamPacket(port);
-    twfRequireEqualU32(g_prev_payload_count, 0, "a cross-worker packet must not be delivered before its worker runs");
-
-    // Never pump worker 3: dropping its queue is what the shutdown path does.
-    workerMessagesCleanupPending(&g_fixture.env.workers[3]);
-
-    twfRequireEqualU32(g_prev_payload_count, 0, "a dropped message must not be delivered");
+    twfRequireEqualU32(g_prev_payload_count, 1, "unrelated worker admission blocked decoded delivery");
+    twfRequire(g_last_prev_line == g_fixture.packet_lines[0] && g_last_prev_wid == 0,
+               "decoded packet did not retain the stream owner worker");
+    pumpAllWorkers();
+    twfRequireEqualU32(g_prev_payload_count, 1, "decoded packet was delivered twice");
     twfRequireNoLeakedBuffers();
     twfRequireEqualU32((uint32_t) atomicLoadU32Relaxed(&g_fixture.packet_lines[3]->refc),
                        1,
-                       "a dropped message leaked its packet-line reference");
-
+                       "decoded packet retained an unrelated worker line reference");
+    twfRequire(workerMessagesOpenAdmission(&g_fixture.env.workers[3]), "could not reopen unrelated worker admission");
     fixtureTeardown();
 }
 
@@ -372,9 +358,9 @@ static void caseReentrantStreamLineDeathStopsExtraction(void)
     tosResetProcessApi(true);
     fixtureSetup();
 
-    // Both flows belong to worker 0, so the first delivery is direct and its
-    // callback runs re-entrantly inside the extraction loop.
-    const uint16_t port = portForAffinityWid(0);
+    // Even a flow hashing elsewhere is delivered synchronously, so its callback
+    // can close the normal stream while the parser retains another packet.
+    const uint16_t port = portForAffinityWid(2);
 
     // Baseline first: without a close, one read of two packets really does
     // deliver two. Otherwise the assertion below would hold for the wrong reason.
@@ -401,10 +387,10 @@ static void caseReentrantStreamLineDeathStopsExtraction(void)
 
 int main(void)
 {
-    caseCrossWorkerDecodeReachesTheFlowWorker();
+    caseDecodedPacketUsesStreamWorker();
     caseSameWorkerDecodeIsDirect();
-    caseEveryFlowWorkerIsReachable();
-    caseDroppedCrossWorkerMessageReleasesItsBuffer();
+    caseEveryFlowRemainsOnStreamWorker();
+    caseUnrelatedWorkerAdmissionCannotBlockDecode();
     caseReentrantStreamLineDeathStopsExtraction();
 
     printf("packetstostream_bridge_affinity_test: all cases passed\n");

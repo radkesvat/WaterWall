@@ -4,7 +4,7 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseCrossWorkerCorrelationAndSequence, casePeerRequestReplay, caseUnrelatedIpv4Options,
  * casePacketDiagnostics, caseGeneratedReplyLineSurvivalGuard, caseInvalidReplySettings,
- * caseDecodedTransportAffinity, caseDecodedFragmentAffinity, caseDecodedHandoffRefusal
+ * caseDecodedTransportArrivalWorker, caseDecodedFragmentArrivalWorker, caseForeignWorkerAdmissionIrrelevant
  * Checks: Assertion labels include: Ping diagnostic exceeds capture capacity; Ping rejection did not emit
  * exactly one diagnostic; Ping rejection diagnostic is not ERROR level; Ping diagnostic omitted the
  * specific failure reason
@@ -588,9 +588,10 @@ static void casePeerRequestReplay(flow_fixture_t *fixture)
     wloopUpdateTime(fixture->env.loops[2]);
 }
 
-static void caseDecodedTransportAffinity(flow_fixture_t *fixture)
+static void caseDecodedTransportArrivalWorker(flow_fixture_t *fixture)
 {
-    twfSetCase(fixture->server ? "PingServer decoded transport affinity" : "PingClient decoded transport affinity");
+    twfSetCase(fixture->server ? "PingServer decoded transport arrival worker"
+                               : "PingClient decoded transport arrival worker");
     const wid_t   target      = fixture->env.count == 1 ? 0 : 2;
     const wid_t   arrivals[]  = {0, (wid_t) (fixture->env.count - 1)};
     const uint8_t protocols[] = {IP_PROTO_TCP, IP_PROTO_UDP};
@@ -609,31 +610,32 @@ static void caseDecodedTransportAffinity(flow_fixture_t *fixture)
             sendInbound(fixture, arrivals[i], request);
             twfRequireEqualU32(generatedReplySink(fixture)->count,
                                endpointSendsReplies(fixture) ? i + 1 : 0,
-                               "decoded handoff delayed or duplicated the outer Echo Reply");
+                               "decoded forwarding delayed or duplicated the outer Echo Reply");
             if (endpointSendsReplies(fixture))
                 twfRequire(generatedReplySink(fixture)->packets[i].wid == arrivals[i],
                            "outer Echo Reply left the arrival worker");
             twfRequireEqualU32(decodedInnerSink(fixture)->count,
-                               fixture->env.count == 1 ? i + 1 : 0,
-                               "decoded packet bypassed target-worker ownership or lost the inline fast path");
+                               i + 1,
+                               "decoded packet left its arrival worker or deferred direct forwarding");
         }
-        // The replay is recognized on a different outer worker even while both
-        // original decoded packets are still queued to their transport worker.
+        // Replay detection is shared across workers even though each decoded
+        // packet was delivered directly on its own arrival worker.
         sendInbound(fixture, arrivals[1], bufferFromCapture(fixture->packet_lines[arrivals[1]], &first_request));
         tosPumpWorker(&fixture->env, target);
         flow_sink_t *decoded = decodedInnerSink(fixture);
         twfRequireEqualU32(decoded->count, 2, "cross-worker replay duplicated or lost a decoded transport packet");
         for (unsigned i = 0; i < decoded->count; ++i)
-            twfRequire(decoded->packets[i].wid == target && ! decoded->packets[i].checksum_requested &&
+            twfRequire(decoded->packets[i].wid == arrivals[i] && ! decoded->packets[i].checksum_requested &&
                            decoded->packets[i].length == expected.length &&
                            memoryEqual(decoded->packets[i].bytes, expected.bytes, expected.length),
                        "decoded transport changed worker, checksum state or packet bytes");
     }
 }
 
-static void caseDecodedFragmentAffinity(flow_fixture_t *fixture)
+static void caseDecodedFragmentArrivalWorker(flow_fixture_t *fixture)
 {
-    twfSetCase(fixture->server ? "PingServer decoded fragment affinity" : "PingClient decoded fragment affinity");
+    twfSetCase(fixture->server ? "PingServer decoded fragment arrival worker"
+                               : "PingClient decoded fragment arrival worker");
     resetSinks(fixture);
     const wid_t             target         = 2;
     sbuf_t                 *whole          = makeTransportPacket(fixture->packet_lines[0], IP_PROTO_UDP, target);
@@ -655,37 +657,34 @@ static void caseDecodedFragmentAffinity(flow_fixture_t *fixture)
     wrapPeerRequest(fixture, last, 2000);
     sendInbound(fixture, 3, last);
     twfRequireEqualU32(
-        decodedInnerSink(fixture)->count, 0, "later inner fragment escaped before its transport owner was known");
+        decodedInnerSink(fixture)->count, 1, "decoder retained a tail fragment for flow-worker selection");
     wrapPeerRequest(fixture, first, 2001);
     sendInbound(fixture, 0, first);
     tosPumpWorker(&fixture->env, target);
     flow_sink_t *decoded = decodedInnerSink(fixture);
-    twfRequireEqualU32(decoded->count, 2, "decoded leading fragment did not release the staged tail");
-    bool saw_first = false;
-    bool saw_last  = false;
+    twfRequireEqualU32(decoded->count, 2, "decoded fragment forwarding lost a packet");
+    const captured_packet_t *expected[] = {&expected_last, &expected_first};
+    const wid_t              arrivals[] = {3, 0};
     for (unsigned i = 0; i < decoded->count; ++i)
     {
         const captured_packet_t *packet = &decoded->packets[i];
-        twfRequire(packet->wid == target && ! packet->checksum_requested,
-                   "inner fragments did not use the true UDP flow worker");
-        saw_first |=
-            packet->length == expected_first.length && memoryEqual(packet->bytes, expected_first.bytes, packet->length);
-        saw_last |=
-            packet->length == expected_last.length && memoryEqual(packet->bytes, expected_last.bytes, packet->length);
+        twfRequire(packet->wid == arrivals[i] && ! packet->checksum_requested &&
+                       packet->length == expected[i]->length &&
+                       memoryEqual(packet->bytes, expected[i]->bytes, packet->length),
+                   "decoded fragment changed bytes, boundary, arrival worker or forwarding order");
     }
-    twfRequire(saw_first && saw_last, "decoded fragment bytes changed");
     wrapPeerRequest(fixture, whole, 2002);
     sendInbound(fixture, 1, whole);
     tosPumpWorker(&fixture->env, target);
     twfRequireEqualU32(decoded->count, 3, "complete packet following fragments was lost");
-    twfRequire(decoded->packets[2].wid == target && decoded->packets[2].length == expected_whole.length &&
+    twfRequire(decoded->packets[2].wid == 1 && decoded->packets[2].length == expected_whole.length &&
                    memoryEqual(decoded->packets[2].bytes, expected_whole.bytes, expected_whole.length),
-               "fragmented and complete packets of one transport flow selected different workers");
+               "complete packet following fragments did not retain its arrival worker and bytes");
 }
 
-static void caseDecodedHandoffRefusal(flow_fixture_t *fixture)
+static void caseForeignWorkerAdmissionIrrelevant(flow_fixture_t *fixture)
 {
-    twfSetCase(fixture->server ? "PingServer decoded handoff refusal" : "PingClient decoded handoff refusal");
+    twfSetCase(fixture->server ? "PingServer unrelated worker admission" : "PingClient unrelated worker admission");
     resetSinks(fixture);
     sbuf_t *request = makeTransportPacket(fixture->packet_lines[0], IP_PROTO_TCP, 2);
     wrapPeerRequest(fixture, request, 3000);
@@ -693,10 +692,11 @@ static void caseDecodedHandoffRefusal(flow_fixture_t *fixture)
     workerMessagesCloseAdmission(&fixture->env.workers[2]);
     sendInbound(fixture, 0, request);
     tosPumpWorker(&fixture->env, 2);
-    twfRequireEqualU32(decodedInnerSink(fixture)->count, 0, "refused handoff published on another worker");
+    twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "unrelated worker admission blocked decoded delivery");
+    twfRequire(decodedInnerSink(fixture)->packets[0].wid == 0, "decoder used the unrelated flow-hash worker");
     twfRequireEqualU32(atomicLoadRelaxed(&fixture->packet_lines[2]->refc),
                        references,
-                       "refused decoded handoff retained a packet-line reference");
+                       "decoded delivery borrowed an unrelated worker packet-line reference");
     twfRequire(workerMessagesOpenAdmission(&fixture->env.workers[2]), "could not reopen test worker admission");
 }
 
@@ -918,9 +918,9 @@ static void runEndpointCases(bool server, const char *send_replies_json)
     caseUnrelatedIpv4Options(&fixture);
     caseChecksumRequestBoundaries(&fixture);
     casePeerRequestReplay(&fixture);
-    caseDecodedTransportAffinity(&fixture);
-    caseDecodedFragmentAffinity(&fixture);
-    caseDecodedHandoffRefusal(&fixture);
+    caseDecodedTransportArrivalWorker(&fixture);
+    caseDecodedFragmentArrivalWorker(&fixture);
+    caseForeignWorkerAdmissionIrrelevant(&fixture);
     if (expected_replies)
     {
         caseGeneratedReplyLineSurvivalGuard(&fixture);
@@ -950,7 +950,7 @@ int main(void)
         runEndpointCases(server != 0, "true");
         flow_fixture_t single;
         fixtureSetupWorkers(&single, server != 0, "true", 1);
-        caseDecodedTransportAffinity(&single);
+        caseDecodedTransportArrivalWorker(&single);
         fixtureTeardown(&single);
     }
 

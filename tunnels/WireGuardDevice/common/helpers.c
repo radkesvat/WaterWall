@@ -241,98 +241,18 @@ bool wireguarddeviceForwardTransportPacket(wgd_tstate_t *state, line_t *line, sb
     return true;
 }
 
-static void wireguarddeviceForwardInnerPacketHere(wgd_tstate_t *state, line_t *line, sbuf_t *buf)
+void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf)
 {
+    assert(lineIsOnCurrentWorker(line));
+    /* Decoding does not establish ownership for a later consumer. Preserve
+     * this packet worker; stateful packet consumers select their own owner. */
     tunnel_t *tunnel = state->tunnel;
-
     if (wireguarddeviceTransportSideIsNext(state))
     {
         tunnelPrevDownStreamPayload(tunnel, line, buf);
         return;
     }
-
     tunnelNextUpStreamPayload(tunnel, line, buf);
-}
-
-bool wireguarddeviceInnerPacketTargetWID(const uint8_t *packet, uint32_t length, wid_t current_wid, wid_t *target_wid)
-{
-    if (target_wid == NULL)
-    {
-        return false;
-    }
-
-    *target_wid = current_wid;
-    return deviceFlowAffineWID(packet, length, target_wid) && *target_wid != current_wid;
-}
-
-static void wireguarddeviceReplayInnerPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
-{
-    wgd_tstate_t *state = arg1;
-    line_t       *line  = arg2;
-    sbuf_t       *buf   = arg3;
-
-    assert(worker != NULL);
-    assert(worker->wid == lineGetWID(line));
-
-    if (lineIsAlive(line))
-    {
-        wireguarddeviceForwardInnerPacketHere(state, line, buf);
-    }
-    else
-    {
-        /* The message keeps the packet-line allocation alive, but Finish can
-         * already have ended its logical life. Recycle through the delivered
-         * worker rather than reading the dead line or re-reading TLS state. */
-        bufferpoolReuseBuffer(worker->buffer_pool, buf);
-    }
-
-    lineUnref(line);
-}
-
-static void wireguarddeviceCleanupInnerPacket(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
-{
-    discard reason;
-    discard arg1;
-
-    line_t *line = arg2;
-    sbuf_t *buf  = arg3;
-
-    if (lineIsOnCurrentWorker(line))
-    {
-        /* A cancellation can race packet-line shutdown.  The reference keeps
-         * line memory valid, while this worker still owns the pool. */
-        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), buf);
-    }
-    else
-    {
-        sbufDestroy(buf);
-    }
-
-    lineUnref(line);
-}
-
-void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf)
-{
-    wid_t target_wid = 0;
-
-    assert(lineIsOnCurrentWorker(line));
-
-    if (! wireguarddeviceInnerPacketTargetWID(sbufGetRawPtr(buf), sbufGetLength(buf), lineGetWID(line), &target_wid))
-    {
-        wireguarddeviceForwardInnerPacketHere(state, line, buf);
-        return;
-    }
-
-    line_t *target = tunnelchainGetWorkerPacketLine(state->tunnel->chain, target_wid);
-
-    assert(target != NULL);
-    lineRef(target);
-    sendWorkerMessageForceQueueBestEffortWithCleanup(target_wid,
-                                                     (WorkerMessageCallback) wireguarddeviceReplayInnerPacketOnWorker,
-                                                     wireguarddeviceCleanupInnerPacket,
-                                                     state,
-                                                     target,
-                                                     buf);
 }
 
 wireguard_peer_t *wireguarddevicePeerLookupByAllowedIp(wireguard_device_t *device, const ip_addr_t *ipaddr)

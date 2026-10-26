@@ -26,8 +26,8 @@ void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
      * Delivering a decoded packet runs an inter-tunnel callback that can close
      * this stream line re-entrantly, so hold a reference across the extraction
      * loop and re-check the line's logical state before touching parser state
-     * again. The parser, heartbeat and output-line recreation state stay owned by
-     * this stream line's worker; only the decoded packets are re-affinitized.
+     * again. Parser, heartbeat and output-line recreation state stay owned by
+     * this stream line's worker; decoded packets use that worker's packet line.
      */
     lineRef(l);
 
@@ -73,11 +73,8 @@ void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             continue;
         }
 
-        /*
-         * The peer may return any inner flow on any of its stream lines, so this
-         * outer line's worker cannot decide packet-side ownership. Re-affinitize
-         * from the inner tuple instead of assuming packet_line[lineGetWID(l)].
-         */
+        /* Packet consumers establish any flow ownership they require. This
+         * boundary only changes from the normal line to its worker packet line. */
         packetstostreamForwardDecodedPacket(t, l, packet_buffer);
 
         if (! lineIsAlive(l) || ls->line != l || ls->read_stream.pool == NULL)

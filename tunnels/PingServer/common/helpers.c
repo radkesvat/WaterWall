@@ -184,5 +184,6 @@ void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     discard stripped;
 
     sbufSetRecalculateChecksum(buf, false);
-    packetAffinityForward(state->decoded_affinity, l, buf);
+    /* Decoding retains receive placement; stateful consumers establish affinity. */
+    tunnelNextUpStreamPayload(t, l, buf);
 }

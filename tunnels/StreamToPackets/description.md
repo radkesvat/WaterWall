@@ -21,7 +21,7 @@ Non-IPv4 payloads (including IPv6) are dropped in both directions.
 
 - Accepts a normal data line from the previous side.
 - Buffers incoming stream bytes until a full IPv4 packet is available.
-- Extracts packet payload and dispatches it to the worker that owns the inner flow.
+- Extracts packet payload and forwards it on the receiving stream line's worker packet line.
 - Tracks one active source IP globally; several validated stream lines from that IP may be used together.
 - On return path, validates the packet is a self-consistent IPv4 packet and sends it raw back to one active stream
   line chosen per inner flow (IPv6 is dropped).
@@ -164,11 +164,11 @@ worker 0 will not take the handoff. An old-source connection is never left runni
 
 ### Inner-flow worker affinity
 
-The worker that owns an outer connection is chosen by the socket manager and is unrelated to the worker that owns an
-inner IP flow. `StreamToPackets` therefore re-derives affinity from each decoded packet: it computes the shared
-symmetric flow hash and dispatches the packet to `packet_line[hash % workers]`, forwarding directly when that is the
-current worker and queueing to the target worker otherwise. Both directions of one flow reach the same packet
-worker.
+Decoded packets are forwarded on the receiving stream line's worker packet
+line. A later stateful consumer establishes its own flow ownership. Source
+admission still precedes publication, and the authorized source generation is
+rechecked immediately before forwarding; a superseded generation is dropped.
+Return traffic still uses per-flow rendezvous selection of an eligible carrier.
 
 ### Data flow direction
 

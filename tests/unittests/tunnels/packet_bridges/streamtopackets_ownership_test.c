@@ -64,9 +64,8 @@ static ownership_fixture_t g_fixture;
 static void fixtureTeardown(void);
 static void pumpAllWorkers(void);
 
-// Records which packet line each next-side payload arrived on, which is the
-// whole point of restoring inner-flow affinity, and which worker thread ran the
-// callback: the right line pointer on the wrong worker is still a defect.
+// Records the decoded packet line and executing worker: both must retain the
+// stream owner. The packet line differs from the borrowed normal stream line.
 static line_t  *g_last_next_line;
 static wid_t    g_last_next_wid;
 static uint32_t g_last_next_source;
@@ -498,8 +497,8 @@ static void validateLine(line_t *l, uint16_t src_port)
     pumpAllWorkers();
 }
 
-// The worker that owns the inner flow of a packet, which is what decides whether
-// a decoded packet is delivered directly or has to be queued.
+// A transport tuple's hash worker, used to prove decoder placement is independent
+// of the stateful consumer's later affinity decision.
 static wid_t flowWorkerOf(uint32_t src, uint16_t src_port, uint32_t dst, uint16_t dst_port)
 {
     return (wid_t) (flowHashOf(src, src_port, dst, dst_port) % kTestWorkers);
@@ -607,19 +606,18 @@ static void caseFirstValidLineEstablishesTheSource(void)
 
     line_t *a1 = openStreamLine("10.0.0.1", 0);
 
-    validateLine(a1, 40000);
+    const uint16_t port = sourcePortForFlowWorker(0x0A000001U, 0xC0000201U, 2);
+    validateLine(a1, port);
 
     twfRequire(lineIsActive(a1), "a validated candidate must become active");
     twfRequireEqualU32((uint32_t) lineGeneration(a1), 1, "the first epoch must be generation 1");
     twfRequireEqualU32(g_next_payload_count, 1, "the decoded packet must reach the packet chain exactly once");
 
-    // The outer line lives on worker 0, so a packet whose flow belongs elsewhere
-    // proves affinity is restored rather than inherited. The callback must also
-    // have run as that worker: the right line on the wrong thread is still wrong.
-    const wid_t expected_wid = flowWorkerOf(0x0A000001U, 40000, 0xC0000201U, 443);
-    twfRequire(g_last_next_line == g_fixture.packet_lines[expected_wid],
-               "the decoded packet did not reach its own flow worker's packet line");
-    twfRequireEqualU32(g_last_next_wid, expected_wid, "the decoded packet was delivered on the wrong worker");
+    // The decoded tuple hashes to worker 2, but only the eventual packet
+    // consumer may choose a flow owner. This bridge keeps stream worker 0.
+    twfRequire(g_last_next_line == g_fixture.packet_lines[0],
+               "the decoded packet did not use its stream owner's packet line");
+    twfRequireEqualU32(g_last_next_wid, 0, "the decoder changed the packet's worker");
 
     resetObservations();
     feedReturnPacket(0xC0000201U, 443, 0x0A000001U, 40000);
@@ -1047,49 +1045,41 @@ static void caseFinalLineFinishClearsSelection(void)
     fixtureTeardown();
 }
 
-/*
- * A decoded packet that is already sitting in another worker's queue when a
- * takeover linearizes belongs to an epoch that no longer owns the tunnel. The
- * target worker must reject it when it finally runs, or the new owner's device
- * sees traffic from the source it replaced.
- */
-static void caseQueuedPacketFromAnEvictedSourceIsDropped(void)
+/* A takeover after authorization invalidates a token before final publication,
+ * even though decoding itself no longer queues to a flow-hash worker. */
+static void caseAuthorizedPacketFromAnEvictedSourceIsDropped(void)
 {
-    twfSetCase("a queued packet from a superseded source is dropped by its target worker");
+    twfSetCase("a decoded packet's authorization is rechecked immediately before publication");
     tosResetProcessApi(true);
     fixtureSetup();
 
     line_t *a1 = openStreamLine("10.0.0.1", 0);
-    line_t *b1 = openStreamLine("10.0.0.9", 0);
-
+    line_t *b1 = openStreamLine("10.0.0.9", 1);
     validateLine(a1, 40000);
     resetObservations();
 
-    // A flow that does not belong to worker 0, so the packet is really queued.
-    const uint16_t queued_port = sourcePortForFlowWorker(0x0A000001U, 0xC0000201U, 2);
-    const wid_t    previous    = tosSetCurrentWorker(0);
-    feedPacket(a1, 0x0A000001U, queued_port, 0xC0000201U, 443);
-    discard tosSetCurrentWorker(previous);
+    const wid_t    previous   = tosSetCurrentWorker(0);
+    const uint64_t generation = streamtopacketsAuthorizeLine(g_fixture.s2p, a1);
+    twfRequire(generation != 0, "active stream did not authorize its decoded packet");
+    sbuf_t *stale = bufferpoolGetSmallBuffer(lineGetBufferPool(a1));
+    sbufSetLength(stale, kTestPacketLength);
+    buildIpv4(sbufGetMutablePtr(stale), 0x0A000001U, 40000, 0xC0000201U, 443);
 
-    twfRequireEqualU32(g_next_payload_count, 0, "the fixture delivered the packet instead of queueing it");
-
-    /*
-     * The takeover runs on worker 0 while worker 2 still holds the old packet.
-     * Its own flow is chosen to belong to worker 0 so the new owner's traffic is
-     * delivered directly and cannot be confused with the queued one.
-     */
-    const uint16_t direct_port = sourcePortForFlowWorker(0x0A00000AU, 0xC0000202U, 0);
-    const wid_t    on_takeover = tosSetCurrentWorker(0);
-    feedPacket(b1, 0x0A00000AU, direct_port, 0xC0000202U, 443);
-    discard tosSetCurrentWorker(on_takeover);
-
+    // Another worker publishes a replacement source. Its real eviction close
+    // remains queued to worker 0, as it would while that worker is decoding.
+    discard tosSetCurrentWorker(1);
+    feedPacket(b1, 0x0A00000AU, 41000, 0xC0000202U, 443);
     twfRequire(lineIsActive(b1), "the second source did not take over");
-    twfRequireEqualU32(g_next_payload_count, 1, "the new owner's own packet was not delivered directly");
+    twfRequireEqualU32(g_next_payload_count, 1, "the new owner's packet was not delivered directly");
     twfRequireEqualU32(g_last_next_source, 0x0A00000AU, "the delivered packet did not come from the new owner");
 
+    discard tosSetCurrentWorker(0);
+    streamtopacketsForwardDecodedPacket(g_fixture.s2p, a1, stale, generation);
+    discard tosSetCurrentWorker(previous);
+    twfRequireEqualU32(g_next_payload_count, 1, "a superseded authorization published decoded traffic");
+    twfRequire(twfLedgerContains(g_twf_buffers.recycled, g_twf_buffers.recycled_count, stale),
+               "superseded decoded packet was not recycled");
     pumpAllWorkers();
-
-    twfRequireEqualU32(g_next_payload_count, 1, "a queued packet from the evicted source reached the packet chain");
     twfRequireNoLeakedBuffers();
 
     closeStreamLine(b1);
@@ -1434,7 +1424,7 @@ int main(void)
     caseRendezvousScoreIgnoresOrderAndPointers();
     caseInvalidSecondSourceCannotTakeOver();
     caseValidatedSecondSourceTakesOver();
-    caseQueuedPacketFromAnEvictedSourceIsDropped();
+    caseAuthorizedPacketFromAnEvictedSourceIsDropped();
     caseEvictionCloseFailureIsRecoveredOnItsOwnWorker();
     caseEvictionCloseFailureOnAnotherWorkerFailsClosed();
     caseEvictionCloseFailureAbortsWhenShutdownIsRefused();
