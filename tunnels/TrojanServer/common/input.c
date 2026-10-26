@@ -1,5 +1,6 @@
 #include "internal.h"
 
+#include "buffer_queue_range.h"
 #include "loggers/network_logger.h"
 
 static bool trojanserverLineAuthenticated(const trojanserver_lstate_t *ls)
@@ -186,47 +187,8 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
 
 static sbuf_t *trojanserverExtractBody(trojanserver_lstate_t *ls)
 {
-    buffer_pool_t *pool    = lineGetBufferPool(ls->line);
-    uint16_t       padding = bufferpoolGetLargeBufferPadding(pool);
-    uint32_t       bytes   = ls->body_length;
-    sbuf_t        *head    = trojanserverInputHead(ls);
-    sbuf_t        *result  = NULL;
-    assert(bytes == 0 || head != NULL);
-    if (bytes != 0 && sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
-    {
-        result         = head;
-        ls->input_head = NULL;
-    }
-    else
-    {
-        bool   has_pipe = head != NULL && sbufIsSplice(head);
-        size_t range    = head == NULL ? 0 : sbufGetLength(head);
-        c_foreach(i, ww_sbuffer_queue_t, ls->pending_up.q)
-        {
-            if (range >= bytes)
-                break;
-            has_pipe |= sbufIsSplice(*i.ref);
-            range += sbufGetLength(*i.ref);
-        }
-        if (bytes != 0 && has_pipe)
-            result = bufferpoolGetSpliceBuffer(pool);
-        if (result != NULL && sbufGetLeftCapacity(result) < padding)
-        {
-            bufferpoolReuseBuffer(pool, result);
-            result = NULL;
-        }
-        if (result == NULL)
-            result = bufferpoolGetBestFit(pool, bytes, padding);
-        uint32_t left = bytes;
-        while (left != 0)
-        {
-            head           = trojanserverInputHead(ls);
-            uint32_t count = min(left, sbufGetLength(head));
-            result         = sbufMoveRangeTo(pool, head, result, count, bytes, padding);
-            left -= count;
-            trojanserverRecycleInputHead(ls);
-        }
-    }
+    uint32_t bytes  = ls->body_length;
+    sbuf_t  *result = bufferRangeTakeExact(lineGetBufferPool(ls->line), &ls->input_head, &ls->pending_up, bytes);
     ls->input_bytes -= ls->header_filled + bytes;
     trojanserverResetHeader(ls);
     return result;

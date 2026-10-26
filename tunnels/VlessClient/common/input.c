@@ -1,3 +1,4 @@
+#include "buffer_queue_range.h"
 #include "internal.h"
 #include "loggers/network_logger.h"
 
@@ -79,51 +80,8 @@ sbuf_t *vlessclientTakeTcpBody(vlessclient_lstate_t *ls)
 
 sbuf_t *vlessclientExtractUdpBody(vlessclient_lstate_t *ls)
 {
-    buffer_pool_t *pool    = lineGetBufferPool(ls->line);
-    uint16_t       padding = bufferpoolGetLargeBufferPadding(pool);
-    uint32_t       bytes   = ls->body_length;
-    sbuf_t        *head    = bytes == 0 ? NULL : receiveHead(ls);
-    sbuf_t        *result  = NULL;
-    assert(bytes == 0 || head != NULL);
-    if (bytes == 0)
-    {
-        result = bufferpoolGetBestFit(pool, 0, padding);
-    }
-    else if (sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
-    {
-        result           = head;
-        ls->receive_head = NULL;
-    }
-    else
-    {
-        bool   has_pipe = sbufIsSplice(head);
-        size_t range    = sbufGetLength(head);
-        c_foreach(i, ww_sbuffer_queue_t, ls->pending_down.q)
-        {
-            if (range >= bytes)
-                break;
-            has_pipe |= sbufIsSplice(*i.ref);
-            range += sbufGetLength(*i.ref);
-        }
-        if (has_pipe)
-            result = bufferpoolGetSpliceBuffer(pool);
-        if (result != NULL && sbufGetLeftCapacity(result) < padding)
-        {
-            bufferpoolReuseBuffer(pool, result);
-            result = NULL;
-        }
-        if (result == NULL)
-            result = bufferpoolGetBestFit(pool, bytes, padding);
-        uint32_t remaining = bytes;
-        while (remaining != 0)
-        {
-            head           = receiveHead(ls);
-            uint32_t count = min(remaining, sbufGetLength(head));
-            result         = sbufMoveRangeTo(pool, head, result, count, bytes, padding);
-            remaining -= count;
-            recycleEmptyHead(ls);
-        }
-    }
+    uint32_t bytes  = ls->body_length;
+    sbuf_t  *result = bufferRangeTakeExact(lineGetBufferPool(ls->line), &ls->receive_head, &ls->pending_down, bytes);
     ls->receive_bytes -= ls->header_needed + bytes;
     ls->header_needed = kVlessClientUdpHeaderLen;
     ls->header_filled = 0;

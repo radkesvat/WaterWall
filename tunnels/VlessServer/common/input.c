@@ -1,3 +1,4 @@
+#include "buffer_queue_range.h"
 #include "internal.h"
 
 static sbuf_t *receiveHead(vlessserver_lstate_t *ls)
@@ -48,46 +49,7 @@ void vlessserverRetainActiveHead(vlessserver_lstate_t *ls)
 
 sbuf_t *vlessserverExtractUdpBody(vlessserver_lstate_t *ls, uint16_t bytes)
 {
-    buffer_pool_t *pool    = lineGetBufferPool(ls->line);
-    uint16_t       padding = bufferpoolGetLargeBufferPadding(pool);
-    sbuf_t        *head    = receiveHead(ls);
-    sbuf_t        *result  = NULL;
-    assert(bytes == 0 || head != NULL);
-    if (bytes != 0 && sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
-    {
-        result         = head;
-        ls->input_head = NULL;
-    }
-    else
-    {
-        bool   has_pipe = head != NULL && sbufIsSplice(head);
-        size_t range    = head == NULL ? 0 : sbufGetLength(head);
-        c_foreach(i, ww_sbuffer_queue_t, ls->pending_up.q)
-        {
-            if (range >= bytes)
-                break;
-            has_pipe |= sbufIsSplice(*i.ref);
-            range += sbufGetLength(*i.ref);
-        }
-        if (bytes != 0 && has_pipe)
-            result = bufferpoolGetSpliceBuffer(pool);
-        if (result != NULL && sbufGetLeftCapacity(result) < padding)
-        {
-            bufferpoolReuseBuffer(pool, result);
-            result = NULL;
-        }
-        if (result == NULL)
-            result = bufferpoolGetBestFit(pool, bytes, padding);
-        uint32_t remaining = bytes;
-        while (remaining != 0)
-        {
-            head           = receiveHead(ls);
-            uint32_t count = min(remaining, sbufGetLength(head));
-            result         = sbufMoveRangeTo(pool, head, result, count, bytes, padding);
-            remaining -= count;
-            recycleEmptyHead(ls);
-        }
-    }
+    sbuf_t *result = bufferRangeTakeExact(lineGetBufferPool(ls->line), &ls->input_head, &ls->pending_up, bytes);
     ls->input_bytes -= 2U + bytes;
     ls->header_filled = 0;
     return result;

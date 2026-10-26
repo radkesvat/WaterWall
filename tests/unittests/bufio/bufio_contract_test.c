@@ -1499,6 +1499,9 @@ static void testTryEnsureOrdinaryRefusalPreservesSource(void)
 
 #include "splice_stream_cases.h"
 
+/* Uses the preceding splice source and syscall-probe fixtures. */
+#include "buffer_queue_range_cases.h"
+
 /* Context payload ownership must be cleared in both Debug and NDEBUG builds,
  * including when a stream push immediately recycles a coalesced input. These
  * stack contexts exercise payload bookkeeping only and do not bind a line. */
@@ -1548,6 +1551,7 @@ int main(void)
     testSpliceMaterializationClearsPacketIntent();
 #endif
     testSpliceStreamContracts();
+    testBufferQueueRangeContracts();
     testMoveExactBytesTo();
     testMoveExactPreflight(true);
     testMoveExactPreflight(false);

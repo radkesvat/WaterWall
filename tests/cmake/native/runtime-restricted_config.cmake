@@ -285,6 +285,7 @@
     # Compile the actual stream and splice primitives with splice disabled.
     # Linking only the normal ww objects would not exercise these code paths.
     waterwall_add_native_executable(bufio_contract_no_splice_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/bufio/bufio_contract_test.c
+      ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue_range.c
       ${CMAKE_SOURCE_DIR}/ww/bufio/splice_stream.c
       ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_stream.c
       ${CMAKE_SOURCE_DIR}/ww/bufio/splice_buffer.c
