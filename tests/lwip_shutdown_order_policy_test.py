@@ -87,10 +87,17 @@ def main():
 
     payload_body = function_body("tunnels/PacketsToConnection/upstream/payload.c", "ptcTunnelUpStreamPayload")
     require_order(payload_body,
+                  ("atomicLoadRelaxed(&state->stopping)", "packettunnelFinalizeChecksumRequest(",
+                   "atomicIncU64Relaxed(&state->fragment_drops)",
+                   "packetAffinityForward(state->input_affinity, l, buf)"),
+                  "PTC validates and rejects fragments before assigning its consumer worker")
+    owner_body = function_body("tunnels/PacketsToConnection/upstream/payload.c",
+                               "ptcTunnelUpStreamPayloadAfterAffinity")
+    require_order(owner_body,
                   ("atomicLoadRelaxed(&state->stopping)", "wwLwipRuntimeGet(lineGetWID(l))",
                    "wwLwipEngineEnter(engine, &previous)", "atomicLoadRelaxed(&state->stopping)",
                    "processV4(t, l, buf)"),
-                  "PTC admission requires its delivered packet owner's engine")
+                  "PTC dispatch continuation rechecks admission before its flow owner's engine")
     ptc_stop = function_body("tunnels/PacketsToConnection/instance/stop.c", "ptcTunnelOnWorkerStop")
     require_order(ptc_stop, ("ptcDrainOwnedLinesOnCurrentWorker(t, wid)", "ptcDestroyWorkerRoute(t, wid)"),
                   "PTC must finish owned lines before removing their route")

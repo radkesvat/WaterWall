@@ -34,6 +34,8 @@ void ptcTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
     ptcTunnelOnStop(t, context);
 
     ptc_tstate_t *state = tunnelGetState(t);
+    packetAffinityDestroy(state->input_affinity);
+    state->input_affinity = NULL;
     if (state->owned_lines != NULL)
     {
         for (uint32_t wid = 0; wid < state->owned_worker_count; ++wid)

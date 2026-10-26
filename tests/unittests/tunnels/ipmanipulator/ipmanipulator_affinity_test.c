@@ -1,9 +1,10 @@
 /*
- * Covers: decoded IpManipulator packet affinity in both directions.
- * Setup: Real transforms, shared fragment table and packet-affinity continuation;
+ * Covers: consumer-owned IpManipulator packet affinity in both directions.
+ * Setup: Real transforms, conditional stateful packet-affinity continuations;
  * deterministic worker-message delivery over four real worker packet lines.
- * Cases: TCP/UDP tuple selection, restored ghost ports, fixed continuation,
- * same/single-worker paths, encoding, fragment-first affinity, and cancellation.
+ * Cases: Stateful TCP/UDP tuple selection and restored ghost ports, native
+ * stateful input, stateless relay, same/single-worker paths, local ProtoSwap
+ * encoding/restoration, fragment preservation, and stateful cancellation.
  * Limits: Does not measure kernel capture distribution or TCP throughput.
  * CTest: waterwall.ipmanipulator_affinity_unit
  */
@@ -72,27 +73,29 @@ typedef struct fixture_s
 
 static fixture_t fixture;
 
-void __wrap_sendWorkerMessageForceQueueBestEffortWithCleanup(wid_t wid, WorkerMessageCallback callback,
-                                                             WorkerMessageCleanupCallback cleanup, void *arg1,
-                                                             void *arg2, void *arg3);
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3);
+bool                           __wrap_firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 bool __wrap_smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void __wrap_sendWorkerMessageForceQueueBestEffortWithCleanup(wid_t wid, WorkerMessageCallback callback,
-                                                             WorkerMessageCleanupCallback cleanup, void *arg1,
-                                                             void *arg2, void *arg3)
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3)
 {
     require(wid < getWorkersCount() && callback != NULL && cleanup != NULL, "handoff lacks owner or cleanup");
     if (fixture.reject)
     {
         cleanup(arg1, arg2, arg3, kWorkerMessageCancelAdmissionClosed);
-        return;
+        return kWorkerMessageSubmitRejectedCleanupRan;
     }
     require(fixture.message_count < kMessages, "message fixture overflow");
     fixture.messages[fixture.message_count++] =
         (message_t) {.wid = wid, .callback = callback, .cleanup = cleanup, .args = {arg1, arg2, arg3}};
+    return kWorkerMessageSubmitAccepted;
 }
 
-bool __wrap_smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+static bool observeStatefulPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
     require(lineIsOnCurrentWorker(l) && GET_BE16((const uint8_t *) sbufGetRawPtr(buf) + 20) == 12345,
@@ -100,6 +103,16 @@ bool __wrap_smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
     ++fixture.stateful_calls;
     fixture.stateful_wid = lineGetWID(l);
     return false;
+}
+
+bool __wrap_firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    return observeStatefulPayload(t, l, buf);
+}
+
+bool __wrap_smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    return observeStatefulPayload(t, l, buf);
 }
 
 static line_t *packetLine(wid_t wid)
@@ -157,8 +170,9 @@ static void cancelMessages(void)
     testWorkerBindWID(0);
 }
 
-static void fixtureSetup(wid_t workers)
+static void fixtureSetupConfigured(wid_t workers, const char *settings)
 {
+    static char node_name[] = "affinity-test";
     memoryZero(&fixture, sizeof(fixture));
     fixture.large                         = masterpoolCreateWithCapacity(16);
     fixture.medium                        = masterpoolCreateWithCapacity(16);
@@ -191,8 +205,8 @@ static void fixtureSetup(wid_t workers)
     fixture.chain->contains_packet_node = true;
     tunnelchainFinalize(fixture.chain);
     require(fixture.chain->finalized, "packet chain finalization failed");
-    fixture.settings = cJSON_Parse("{\"protoswap-tcp\":143,\"protoswap-udp\":144}");
-    fixture.node     = (node_t) {.node_settings_json = fixture.settings};
+    fixture.settings = cJSON_Parse(settings);
+    fixture.node     = (node_t) {.name = node_name, .node_settings_json = fixture.settings};
     fixture.tunnel   = ipmanipulatorCreate(&fixture.node);
     require(fixture.tunnel != NULL, "IpManipulator creation failed");
     fixture.next = tunnelCreate(NULL, 0, 0);
@@ -205,6 +219,11 @@ static void fixtureSetup(wid_t workers)
     fixture.tunnel->chain    = fixture.chain;
     fixture.tunnel->next     = fixture.next;
     fixture.tunnel->prev     = fixture.prev;
+}
+
+static void fixtureSetup(wid_t workers)
+{
+    fixtureSetupConfigured(workers, "{\"protoswap-tcp\":143,\"protoswap-udp\":144}");
 }
 
 static void fixtureTeardown(void)
@@ -284,18 +303,36 @@ static void encodePacket(sbuf_t **buf, wid_t source, bool ghost)
     require(protoswapApply(fixture.tunnel, line, *buf), "protocol fixture encoding failed");
 }
 
+typedef struct submission_s
+{
+    sbuf_t *buf;
+    wid_t   source;
+    bool    upstream;
+} submission_t;
+
+static void invokeSubmission(void *context)
+{
+    submission_t *submission = context;
+    if (submission->upstream)
+        ipmanipulatorUpStreamPayload(fixture.tunnel, packetLine(submission->source), submission->buf);
+    else
+        ipmanipulatorDownStreamPayload(fixture.tunnel, packetLine(submission->source), submission->buf);
+}
+
 static void submit(sbuf_t *buf, wid_t source, bool upstream)
 {
     testWorkerBindWID(source);
-    if (upstream)
-        ipmanipulatorUpStreamPayload(fixture.tunnel, packetLine(source), buf);
-    else
-        ipmanipulatorDownStreamPayload(fixture.tunnel, packetLine(source), buf);
+    submission_t submission = {.buf = buf, .source = source, .upstream = upstream};
+    require(wloopInvokeNormalCallback(fixture.loops[source], invokeSubmission, &submission),
+            "worker refused packet input callback");
 }
 
-static void testDecodedTuples(void)
+static void testPlainDecodedTuplesStayLocal(void)
 {
     fixtureSetup(kWorkers);
+    ipmanipulator_tstate_t *state = tunnelGetState(fixture.tunnel);
+    require(state->upstream_affinity == NULL && state->downstream_affinity == NULL,
+            "plain ProtoSwap acquired mandatory flow affinity");
     for (unsigned direction = 0; direction < 2; ++direction)
     {
         for (unsigned transport = 0; transport < 2; ++transport)
@@ -315,15 +352,13 @@ static void testDecodedTuples(void)
                 encodePacket(&buf, source, false);
                 fixture.capture_count = 0;
                 submit(buf, source, direction != 0);
-                require(fixture.capture_count == 0, "decoded packet ran on the opaque input worker");
-                runMessages();
-                require(fixture.capture_count == 1 && fixture.captures[0].wid == target &&
-                            fixture.captures[0].upstream == (direction != 0),
-                        "decoded continuation selected the wrong worker or direction");
+                require(fixture.capture_count == 1 && fixture.captures[0].wid == source &&
+                            fixture.captures[0].upstream == (direction != 0) && fixture.message_count == 0,
+                        "plain decoding changed the arrival worker or forwarding direction");
                 require(fixture.captures[0].length == sizeof(original) &&
                             memoryEqual(fixture.captures[0].bytes, original, sizeof(original)),
-                        "handoff repeated decoding or changed the native packet");
-                workers_seen |= 1U << target;
+                        "plain decoding repeated a transform or changed the native packet");
+                workers_seen |= 1U << source;
             }
             require(workers_seen == (1U << kWorkers) - 1U, "same-address native ports did not use all workers");
         }
@@ -364,13 +399,8 @@ static void testMixedChecksumRequests(void)
             sbufSetRecalculateChecksum(buf, requested != 0);
             submit(buf, source, false);
         }
-        if (mode == 2)
-        {
-            require(fixture.capture_count == 0, "foreign checksum fixture ran before handoff");
-            runMessages();
-        }
         require(fixture.capture_count == 2 && ! fixture.captures[0].checksum_requested &&
-                    fixture.captures[1].checksum_requested,
+                    fixture.captures[1].checksum_requested && fixture.message_count == 0,
                 "decoded mixed packets lost their independent requests");
         fixtureTeardown();
     }
@@ -378,24 +408,104 @@ static void testMixedChecksumRequests(void)
 
 static void testRestorationBeforeStatefulWork(void)
 {
-    fixtureSetup(kWorkers);
-    ipmanipulator_tstate_t *state  = tunnelGetState(fixture.tunnel);
-    state->trick_source_port_ghost = true;
-    state->trick_dest_port_ghost   = true;
-    state->trick_smuggle_fin       = true;
-    sbuf_t     *buf                = makePacket(IPPROTO_TCP, 12345, false);
-    const wid_t target             = flowWorker(buf);
-    const wid_t source             = (wid_t) ((target + 1) % kWorkers);
-    encodePacket(&buf, source, true);
-    submit(buf, source, false);
-    require(fixture.stateful_calls == 0, "stateful processing preceded worker handoff");
-    runMessages();
-    require(fixture.stateful_calls == 1 && fixture.stateful_wid == target, "stateful processing used opaque owner");
-    require(fixture.capture_count == 1 && fixture.captures[0].length == kPacketSize &&
-                GET_BE16(fixture.captures[0].bytes + 20) == 12345 && GET_BE16(fixture.captures[0].bytes + 22) == 443 &&
-                fixture.captures[0].checksum_requested,
-            "restoration repeated or checksum metadata was lost across handoff");
+    for (unsigned protoswap = 0; protoswap < 2; ++protoswap)
+    {
+        fixtureSetupConfigured(kWorkers,
+                               protoswap ? "{\"first-sni\":\"example.test\",\"protoswap-tcp\":143}"
+                                         : "{\"first-sni\":\"example.test\"}");
+        ipmanipulator_tstate_t *state  = tunnelGetState(fixture.tunnel);
+        state->trick_source_port_ghost = true;
+        state->trick_dest_port_ghost   = true;
+        state->trick_smuggle_fin       = true;
+        sbuf_t     *buf                = makePacket(IPPROTO_TCP, 12345, false);
+        const wid_t target             = flowWorker(buf);
+        const wid_t source             = (wid_t) ((target + 1) % kWorkers);
+        if (protoswap)
+            encodePacket(&buf, source, true);
+        else
+        {
+            testWorkerBindWID(source);
+            require(portghosttrickApply(fixture.tunnel, packetLine(source), &buf), "port ghost encoding failed");
+            sbufSetRecalculateChecksum(buf, true);
+        }
+        submit(buf, source, false);
+        require(fixture.stateful_calls == 0, "stateful processing preceded worker handoff");
+        runMessages();
+        require(fixture.stateful_calls == 1 && fixture.stateful_wid == target,
+                "stateful processing used encoded tuple owner");
+        require(fixture.capture_count == 1 && fixture.captures[0].length == kPacketSize &&
+                    GET_BE16(fixture.captures[0].bytes + 20) == 12345 &&
+                    GET_BE16(fixture.captures[0].bytes + 22) == 443 && fixture.captures[0].checksum_requested,
+                "restoration repeated or checksum metadata was lost across handoff");
+        state->trick_smuggle_fin = false;
+        fixtureTeardown();
+    }
+}
+
+static void testNativeStatefulAffinity(void)
+{
+    fixtureSetupConfigured(kWorkers, "{\"first-sni\":\"example.test\"}");
+    ipmanipulator_tstate_t *state = tunnelGetState(fixture.tunnel);
+    require(state->upstream_affinity != NULL && state->downstream_affinity != NULL,
+            "native stateful node did not install its own affinity boundaries");
+    for (unsigned direction = 0; direction < 2; ++direction)
+    {
+        /* The downstream wrapper observes the boundary without a FIN exchange. */
+        state->trick_smuggle_fin = direction == 0;
+        for (unsigned transport = 0; transport < 2; ++transport)
+        {
+            sbuf_t     *buf    = makePacket(transport ? IPPROTO_UDP : IPPROTO_TCP, 12345, false);
+            const wid_t target = flowWorker(buf);
+            const wid_t source = (wid_t) ((target + 1) % kWorkers);
+            uint8_t     original[kPacketSize];
+            memoryCopy(original, sbufGetRawPtr(buf), sizeof(original));
+            fixture.capture_count  = 0;
+            fixture.stateful_calls = 0;
+            submit(buf, source, direction != 0);
+            require(fixture.capture_count == 0 && fixture.stateful_calls == 0,
+                    "native stateful input ran on the arbitrary receive worker");
+            runMessages();
+            require(fixture.stateful_calls == 1 && fixture.stateful_wid == target && fixture.capture_count == 1 &&
+                        fixture.captures[0].wid == target && fixture.captures[0].upstream == (direction != 0),
+                    "native stateful processing missed its flow worker");
+            require(fixture.captures[0].length == sizeof(original) &&
+                        memoryEqual(fixture.captures[0].bytes, original, sizeof(original)),
+                    "native worker handoff transformed the packet");
+        }
+    }
     state->trick_smuggle_fin = false;
+    fixtureTeardown();
+}
+
+static void testStatelessAndOpaqueStayLocal(void)
+{
+    fixtureSetupConfigured(kWorkers, "{\"up-tcp-bit-cwr\":\"toggle\"}");
+    ipmanipulator_tstate_t *state = tunnelGetState(fixture.tunnel);
+    require(state->upstream_affinity == NULL && state->downstream_affinity == NULL,
+            "stateless transform acquired mandatory flow affinity");
+    for (unsigned direction = 0; direction < 2; ++direction)
+    {
+        sbuf_t     *buf       = makePacket(IPPROTO_TCP, 12345, false);
+        const wid_t source    = (wid_t) ((flowWorker(buf) + 1) % kWorkers);
+        fixture.capture_count = 0;
+        submit(buf, source, direction != 0);
+        require(fixture.capture_count == 1 && fixture.captures[0].wid == source && fixture.message_count == 0,
+                "stateless transform redistributed traffic");
+    }
+    fixtureTeardown();
+
+    fixtureSetupConfigured(kWorkers, "{\"first-sni\":\"example.test\"}");
+    for (wid_t source = 0; source < kWorkers; ++source)
+    {
+        sbuf_t *buf                             = makePacket(IPPROTO_TCP, 12345, false);
+        ((uint8_t *) sbufGetMutablePtr(buf))[9] = 50;
+        require(calcIpv4HeaderChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
+                "opaque packet checksum construction failed");
+        fixture.capture_count = 0;
+        submit(buf, source, true);
+        require(fixture.capture_count == 1 && fixture.captures[0].wid == source && fixture.message_count == 0,
+                "opaque traffic collapsed onto a coarse peer-pair worker");
+    }
     fixtureTeardown();
 }
 
@@ -438,7 +548,7 @@ static sbuf_t *fragmentPacket(const sbuf_t *whole, uint16_t offset, uint16_t pay
     return fragment;
 }
 
-static void testFragmentsUseRestoredFlow(void)
+static void testPlainFragmentsStayLocal(void)
 {
     fixtureSetup(kWorkers);
     for (unsigned direction = 0; direction < 2; ++direction)
@@ -449,23 +559,29 @@ static void testFragmentsUseRestoredFlow(void)
                 transport ? IPPROTO_UDP : IPPROTO_TCP, (uint16_t) (14000 + direction * 2 + transport), false);
             const wid_t target = flowWorker(whole);
             const wid_t source = (wid_t) ((target + 1) % kWorkers);
+            const wid_t zero_source   = (wid_t) ((source + 1) % kWorkers);
+            sbuf_t     *expected_zero = fragmentPacket(whole, 0, 24, true);
+            sbuf_t     *expected_tail = fragmentPacket(whole, 24, kPacketSize - 20 - 24, false);
             encodePacket(&whole, source, false);
             sbuf_t *zero = fragmentPacket(whole, 0, 24, true);
             sbuf_t *tail = fragmentPacket(whole, 24, kPacketSize - 20 - 24, false);
             sbufDestroy(whole);
             fixture.capture_count   = 0;
-            const unsigned messages = fixture.message_count;
             submit(tail, source, direction != 0);
-            require(fixture.capture_count == 0 && fixture.message_count == messages,
-                    "decoded tail escaped before its first-fragment tuple");
-            submit(zero, (wid_t) ((source + 1) % kWorkers), direction != 0);
-            runMessages();
-            require(fixture.capture_count == 2 && fixture.captures[0].wid == target &&
-                        fixture.captures[1].wid == target,
-                    "preserved fragments split from the restored transport flow");
-            require((GET_BE16(fixture.captures[0].bytes + 6) & IP_OFFMASK) == 3 &&
-                        (GET_BE16(fixture.captures[1].bytes + 6) & IP_MF) != 0,
-                    "fragment handoff reassembled or reordered staged release");
+            require(fixture.capture_count == 1 && fixture.captures[0].wid == source && fixture.message_count == 0,
+                    "plain decoding staged or moved a tail without its first fragment");
+            submit(zero, zero_source, direction != 0);
+            require(fixture.capture_count == 2 && fixture.captures[1].wid == zero_source && fixture.message_count == 0,
+                    "plain decoding reassigned a fragment's worker");
+            require(
+                fixture.captures[0].length == sbufGetLength(expected_tail) &&
+                    fixture.captures[1].length == sbufGetLength(expected_zero) &&
+                    memoryEqual(
+                        fixture.captures[0].bytes, sbufGetRawPtr(expected_tail), sbufGetLength(expected_tail)) &&
+                    memoryEqual(fixture.captures[1].bytes, sbufGetRawPtr(expected_zero), sbufGetLength(expected_zero)),
+                "plain decoding changed preserved fragment bytes or boundaries");
+            sbufDestroy(expected_zero);
+            sbufDestroy(expected_tail);
         }
     }
     fixtureTeardown();
@@ -473,13 +589,12 @@ static void testFragmentsUseRestoredFlow(void)
 
 static void testCancelledHandoff(void)
 {
-    fixtureSetup(kWorkers);
+    fixtureSetupConfigured(kWorkers, "{\"first-sni\":\"example.test\"}");
     for (unsigned rejection = 0; rejection < 2; ++rejection)
     {
         sbuf_t     *buf    = makePacket(IPPROTO_TCP, (uint16_t) (16000 + rejection), false);
         const wid_t target = flowWorker(buf);
         const wid_t source = (wid_t) ((target + 1) % kWorkers);
-        encodePacket(&buf, source, false);
         atomic_uint disposals;
         atomic_init(&disposals, 0);
         watchBufferDisposal(buf, &disposals);
@@ -487,7 +602,7 @@ static void testCancelledHandoff(void)
         submit(buf, source, rejection != 0);
         cancelMessages();
         require(atomicLoadRelaxed(&disposals) == 1 && fixture.capture_count == 0,
-                "canceled decode handoff leaked, duplicated, or delivered its packet");
+                "canceled stateful handoff leaked, duplicated, or delivered its packet");
         require(atomicLoadU32Relaxed(&packetLine(target)->refc) == 1, "handoff leaked a packet-line reference");
     }
     fixture.reject = false;
@@ -502,12 +617,14 @@ int main(void)
     require(frandGlobalInit(), "random initialization failed");
     frandInit();
     checkSumInit();
-    testDecodedTuples();
+    testPlainDecodedTuplesStayLocal();
     testSameAndSingleWorker();
     testMixedChecksumRequests();
     testRestorationBeforeStatefulWork();
+    testNativeStatefulAffinity();
+    testStatelessAndOpaqueStayLocal();
     testEncodingStaysLocal();
-    testFragmentsUseRestoredFlow();
+    testPlainFragmentsStayLocal();
     testCancelledHandoff();
     frandThreadCleanup();
     frandGlobalCleanup();

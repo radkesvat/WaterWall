@@ -74,6 +74,7 @@
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
     waterwall_add_native_executable(packet_affinity_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/packet_affinity_test.c)
     target_link_options(packet_affinity_test PRIVATE
+      "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
       "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
       "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolGetSmallBuffer"
       "-Wl,--wrap=bufferpoolGetMediumBuffer" "-Wl,--wrap=bufferpoolGetBestFit"

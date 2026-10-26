@@ -1001,13 +1001,21 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         return NULL;
     }
 
-    if (state->trick_proto_swap)
+    const bool stateful = state->trick_first_sni || state->trick_smuggle_sni || state->trick_overlap_sni ||
+                          state->trick_synfin_sni || state->trick_ech_sni || state->trick_smuggle_fin;
+    if (stateful)
     {
-        state->decoded_upstream_affinity   = packetAffinityCreate(t, ipmanipulatorSendUpstreamDuplicates);
-        state->decoded_downstream_affinity = packetAffinityCreate(t, ipmanipulatorDownStreamPayloadAfterDecode);
-        if (state->decoded_upstream_affinity == NULL || state->decoded_downstream_affinity == NULL)
+        state->upstream_affinity = packetAffinityCreate(t, ipmanipulatorUpStreamPayloadAfterAffinity);
+        if (state->upstream_affinity == NULL)
         {
-            LOGE("IpManipulator: failed to initialize decoded packet affinity");
+            LOGE("IpManipulator: failed to initialize upstream packet affinity");
+            ipmanipulatorDestroy(t, wwLifecycleStartupRollback());
+            return NULL;
+        }
+        state->downstream_affinity = packetAffinityCreate(t, ipmanipulatorDownStreamPayloadAfterDecode);
+        if (state->downstream_affinity == NULL)
+        {
+            LOGE("IpManipulator: failed to initialize downstream packet affinity");
             ipmanipulatorDestroy(t, wwLifecycleStartupRollback());
             return NULL;
         }

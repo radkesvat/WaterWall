@@ -9,6 +9,14 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 It accepts raw IPv4 packets on the packet side, injects them into lwIP, and exposes the resulting transport flows as normal Waterwall `line_t` connections toward the next tunnel.
 
+Before entering lwIP, the node establishes TCP/UDP worker affinity from the
+current packet tuple, after any preceding address or port transformations.
+Receive placement is not a flow-ownership requirement. The internal dispatcher
+uses bounded per-destination FIFOs; it does not insert another tunnel between
+TunDevice and PTC, so direct checksum and output capabilities remain available.
+Replies retain their existing connection owner. Affinity serializes admitted
+work but does not reconstruct packet order lost before admission.
+
 ## Instance MTU
 
 Optional integer `mtu` defaults to core `misc.mtu` at construction (core fallback

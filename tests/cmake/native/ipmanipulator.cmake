@@ -101,7 +101,8 @@ if(TARGET IpManipulator)
     )
     target_link_libraries(ipmanipulator_affinity_test PRIVATE IpManipulator ww)
     target_link_options(ipmanipulator_affinity_test PRIVATE
-      -Wl,--wrap=sendWorkerMessageForceQueueBestEffortWithCleanup
+      -Wl,--wrap=sendWorkerMessageForceQueueWithCleanup
+      -Wl,--wrap=firstsnitrickUpStreamPayload
       -Wl,--wrap=smugglefintrickDownStreamPayload
       -Wl,--wrap=sbufDestroy
       -Wl,--wrap=bufferpoolReuseBuffer

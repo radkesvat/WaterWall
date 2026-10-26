@@ -107,6 +107,21 @@ static fixture_t *fixtureFor(tunnel_t *t)
     CHECK(false);
     return NULL;
 }
+
+static void selectSourcePort(sbuf_t *buf, wid_t wid)
+{
+    uint8_t *bytes = sbufGetMutablePtr(buf);
+    for (unsigned port = 40001; port < UINT16_MAX; ++port)
+    {
+        PUT_BE16(bytes + 20, port);
+        wid_t selected;
+        CHECK(deviceFlowAffineWID(bytes, sbufGetLength(buf), &selected));
+        if (selected == wid)
+            return;
+    }
+    CHECK(false);
+}
+
 static sbuf_t *packet(line_t *line, uint8_t protocol, uint32_t destination, uint8_t flags, uint32_t ack,
                       const void *payload, unsigned length)
 {
@@ -137,12 +152,13 @@ static sbuf_t *packet(line_t *line, uint8_t protocol, uint32_t destination, uint
         PUT_BE16(p + 24, 8 + length);
     if (length)
         memcpy(p + header, payload, length);
+    selectSourcePort(buf, lineGetWID(line));
     CHECK(calcFullPacketChecksum(p, header + length));
     return buf;
 }
-/* Model device placement before a real tuple transform. The incoming hash
- * selects this worker; IpOverrider changes the source without moving the packet
- * line, and PTC must preserve that owner even when the new hash differs. */
+/* Model device placement before a real tuple transform. IpOverrider restores
+ * the source address without moving the packet line; PTC must then select the
+ * final tuple's owner, independently of this incoming worker. */
 static void inject(fixture_t *f, line_t *line, sbuf_t *buf)
 {
     if (packettunnelTrustedChecksumsActive(f->ptc))
@@ -177,6 +193,22 @@ static void inject(fixture_t *f, line_t *line, sbuf_t *buf)
     CHECK(candidate < 255);
     CHECK(calcFullPacketChecksum(raw, sbufGetLength(buf)));
     f->prev->fnPayloadU(f->prev, line, buf);
+}
+
+static void injectForeignCancel(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
+{
+    discard arg1;
+    discard arg3;
+    discard reason;
+    sbufDestroy(arg2);
+}
+
+static void injectForeign(void *worker_ptr, void *arg1, void *arg2, void *arg3)
+{
+    discard    arg3;
+    worker_t  *worker  = worker_ptr;
+    fixture_t *fixture = arg1;
+    inject(fixture, tunnelchainGetWorkerPacketLine(fixture->chain, worker->wid), arg2);
 }
 
 static void shiftedRequestedInput(tunnel_t *t, line_t *line, sbuf_t *buf)
@@ -216,9 +248,14 @@ static void emit(tunnel_t *t, line_t *line, sbuf_t *buf)
         uint32_t ack = GET_BE32(p + h + 4) + 1;
         lineReuseBuffer(line, buf);
         sbuf_t *input = packet(line, 6, destination, TCP_ACK | TCP_PSH, ack, "hello", 5);
-        if (! packettunnelTrustedChecksumsActive(f->ptc))
+        if (f == &fixtures[0] && ! packettunnelTrustedChecksumsActive(f->ptc))
             probe->tcp_input[f - fixtures] = input;
-        inject(f, line, input);
+        /* The SYN entered on the flow owner. Its ACK and data arrive on the
+         * other event worker, exercising the public PTC affinity boundary and
+         * ensuring the existing PCB receives them instead of a second engine. */
+        CHECK(sendWorkerMessageForceQueueWithCleanup(
+                  (wid_t) (1U - lineGetWID(line)), injectForeign, injectForeignCancel, f, input, NULL) ==
+              kWorkerMessageSubmitAccepted);
         return;
     }
     if (p[9] == 6 && sbufGetLength(buf) > h + (p[h + 12] >> 4) * 4U)
@@ -399,6 +436,7 @@ static void stageUndeliveredChild(wid_t wid)
     wwLwipEngineLeave(route->engine, previous);
     sbuf_t *undelivered = packet(line, 17, fake_address, 0, 0, "world", 5);
     PUT_BE16(sbufGetMutablePtr(undelivered) + 22, 82);
+    selectSourcePort(undelivered, wid);
     CHECK(calcFullPacketChecksum(sbufGetMutablePtr(undelivered), sbufGetLength(undelivered)));
     inject(fixture, line, undelivered);
     CHECK(probes[wid].undelivered_udp[0] == 1);
@@ -437,31 +475,28 @@ static unsigned routeChildCount(interface_route_context_t *route)
 
 static void udpLengthMatrix(fixture_t *fixture, line_t *packet_line)
 {
-    const wid_t                wid   = lineGetWID(packet_line);
-    interface_route_context_t *route = ((ptc_tstate_t *) tunnelGetState(fixture->ptc))->routes_v4[wid];
-    unsigned                  *next  = &probes[wid].udp_length_next[fixture - fixtures];
+    const wid_t wid  = lineGetWID(packet_line);
+    unsigned   *next = &probes[wid].udp_length_next[fixture - fixtures];
     while (*next < kUdpLengthInputs)
     {
-        const unsigned           input    = (*next)++;
-        const udp_length_case_t *row      = &udp_length_cases[input / 2];
-        const unsigned           added    = row->delivered >= 0 ? 1U : 0U;
-        const isize_t            flows    = ptc_udp_flow_map_t_size(&route->udp_flows);
-        const unsigned           children = routeChildCount(route);
-        const unsigned           owned    = ownedLineCount(fixture->ptc, wid);
+        const unsigned           input = (*next)++;
+        const udp_length_case_t *row   = &udp_length_cases[input / 2];
+        const unsigned           added = row->delivered >= 0 ? 1U : 0U;
         sbuf_t  *buf   = packet(packet_line, 17, fake_address, 0, 0, udp_length_payload, row->available - 8);
         uint8_t *bytes = sbufGetMutablePtr(buf);
         PUT_BE16(bytes + 22, kUdpLengthFirstPort + input);
+        selectSourcePort(buf, wid);
         udpLengthSetHeader(bytes, input);
         /* Direct ingress preserves our declared-span checksum. The ordinary
          * fixture's tuple rewriter intentionally recalculates whole packets. */
         ptcTunnelUpStreamPayload(fixture->ptc, packet_line, buf);
         CHECK(lineIsAlive(packet_line));
-        CHECK(ptc_udp_flow_map_t_size(&route->udp_flows) == flows + added);
-        CHECK(routeChildCount(route) == children + added);
-        CHECK(ownedLineCount(fixture->ptc, wid) == owned + added);
         /* The bounded engine fixture has only eight shared UDP PCBs. Retire
          * each accepted test flow in its real delivery callback before the
-         * next packet, keeping room for both workers' original roundtrips. */
+         * next packet, keeping room for both workers' original roundtrips.
+         * Affinity can queue behind earlier input, so Init/Payload counters
+         * and final owner/PCB inventories validate acceptance and settlement
+         * after delivery rather than assuming immediate stack entry. */
         if (added != 0)
             return;
     }
@@ -630,7 +665,7 @@ int main(void)
     }
     CHECK(pthread_barrier_destroy(&barrier) == 0);
     destroyGlobalState();
-    puts("PTC concurrent engines, identical tuples/netifs, DNS coherence/eviction, aggregate drains, callbacks and "
-         "shutdown passed");
+    puts("PTC concurrent engines, consumer-owned tuple affinity across workers and rewrites, DNS coherence/eviction, "
+         "aggregate drains, callbacks and shutdown passed");
     return 0;
 }

@@ -1168,8 +1168,71 @@ static void casePayloadGeneratorInvariantAborts(void)
     tosResetProcessApi(true);
 }
 
+static void casePacketConsumerAffinity(bool enabled)
+{
+    twfSetCase("testerclient establishes optional packet consumer affinity");
+    tosResetProcessApi(true);
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, 2, kTestLargeBufferSize, kTestSmallBufferSize);
+    cJSON *settings = cJSON_Parse("{\"packet-mode\":true,\"chunk-count\":3,\"packet-ipv4\":{\"transport\":\"tcp\","
+                                  "\"source-ip\":\"192.0.2.1\",\"dest-ip\":\"198.51.100.1\"}}");
+    twfRequire(settings != NULL, "could not create packet affinity settings");
+    cJSON_AddBoolToObject(cJSON_GetObjectItemCaseSensitive(settings, "packet-ipv4"), "worker-affine-flow", enabled);
+    node_t    node   = {.node_settings_json = settings};
+    tunnel_t *tester = testerclientTunnelCreate(&node);
+    twfRequire(tester != NULL, "packet tester constructor failed");
+    testerclient_tstate_t *ts = tunnelGetState(tester);
+    twfRequire((ts->downstream_affinity != NULL) == enabled, "affinity configuration was ignored");
+    tunnel_chain_t *chain = tunnelchainCreate(2);
+    line_t         *packet_lines[2];
+    chain->packet_lines         = packet_lines;
+    chain->contains_packet_node = true;
+    chain->finalized            = true;
+    tester->chain               = chain;
+    for (wid_t wid = 0; wid < 2; ++wid)
+    {
+        testWorkerBindWID(wid);
+        packet_lines[wid]         = twfLineCreate(tester->lstate_size);
+        packet_lines[wid]->wid    = wid;
+        testerclient_lstate_t *ls = lineGetState(packet_lines[wid], tester);
+        testerclientLinestateInitialize(ls, lineGetBufferPool(packet_lines[wid]));
+        ls->request_complete = true;
+    }
+    testWorkerBindWID(1);
+    sbuf_t *packet = testerclientCreatePayload(
+        tester, packet_lines[1], 0, 0, testerclientGetChunkSize(tester, 0), kTesterClientDirectionResponse);
+    wid_t owner;
+    twfRequire(deviceFlowAffineWID(sbufGetRawPtr(packet), sbufGetLength(packet), &owner),
+               "test packet has no flow tuple");
+    if (enabled)
+        twfRequire(owner == 1, "worker-affine tuple does not identify its originating tester slot");
+    const wid_t ingress = (wid_t) (1U - owner);
+    testWorkerBindWID(ingress);
+    testerclientTunnelDownStreamPayload(tester, packet_lines[ingress], packet);
+    testerclient_lstate_t *incoming = lineGetState(packet_lines[ingress], tester);
+    testerclient_lstate_t *selected = lineGetState(packet_lines[owner], tester);
+    twfRequire(incoming->response_rx_index == (enabled ? 0 : 1), "unexpected progress on the arrival worker");
+    tosPumpWorker(&env, owner);
+    twfRequire(selected->response_rx_index == (enabled ? 1 : 0), "consumer selected the wrong worker slot");
+    tosRequireNoProcessApiCall();
+    for (wid_t wid = 0; wid < 2; ++wid)
+    {
+        testWorkerBindWID(wid);
+        testerclientTunnelOnWorkerStop(tester, wid, wwLifecycleProcessShutdown());
+    }
+    testerclientTunnelDestroy(tester, wwLifecycleProcessShutdown());
+    for (wid_t wid = 0; wid < 2; ++wid)
+        twfLineDestroy(packet_lines[wid]);
+    memoryFree(chain);
+    cJSON_Delete(settings);
+    twfRequireNoLeakedBuffers();
+    tosWorkerEnvTeardown(&env);
+}
+
 int main(void)
 {
+    casePacketConsumerAffinity(true);
+    casePacketConsumerAffinity(false);
     caseSynchronousEstPreservesPacketStartDelay();
     caseCorruptChecksumVerificationPreservesInput();
     caseSynchronousStartRefusalPropagatesStartupStatus();

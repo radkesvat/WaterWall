@@ -1,5 +1,5 @@
 <!--
-Documentation version: 155
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/IpManipulator.mdx, and all files must keep the same documentation version.
 -->
 
@@ -126,13 +126,14 @@ reversible `protoswap-tcp` mapping; all fragments of an IPv4 datagram then use
 the same replacement number.
 
 With multiple workers, decoding through the normal packet path selects a worker
-from the restored TCP/UDP flow tuple after the applicable port transform. A
-different owner receives the packet through a queued handoff on its own packet
-line. Downstream stateful tricks run after this handoff; upstream decoding
-resumes at final forwarding so transforms are not repeated. Encoding keeps its
-current worker. Preserved fragments follow the restored first fragment's
+from the restored TCP/UDP flow tuple after the applicable port transform.
+Downstream stateful tricks run after this handoff; upstream decoding resumes at
+final forwarding so transforms are not repeated. Protocol encoding itself adds
+no worker hop. Preserved fragments follow the restored first fragment's
 transport tuple; tails arriving first wait in bounded shared fragment storage.
-One-worker and same-worker delivery continue directly.
+One-worker delivery is direct. Same-worker delivery can continue directly when
+its destination queue has no older accepted work; otherwise it joins that queue.
+This preserves queue admission order, not a global arrival order across readers.
 
 ### SNI blender settings
 
@@ -1794,10 +1795,9 @@ it closes, is replaced, or expires after 20 minutes of inactivity.
   unchanged. Incomplete TLS captures also use a finite shared slot pool. Under
   pressure, an older incomplete capture can be released and moved to
   passthrough.
-- Every retained packet for a flow must remain on one WaterWall worker. A
-  worker-affinity mismatch fails open; if the upstream packet source cannot
-  preserve affinity, use one event worker as described in the stateful-flow
-  guidance.
+- Every retained packet for a flow must remain on one WaterWall worker.
+  IpManipulator establishes packet-line affinity internally before stateful
+  processing; a remaining worker-affinity mismatch still fails open.
 - The early packet duplicates the template packet's IPv4 identification and can
   trigger duplicate ACKs, SACKs, retransmission heuristics, traffic-normalizer
   rules, or anomaly detection. The delays also hold memory and postpone the TLS
@@ -2299,14 +2299,23 @@ If `preserve-tcp-bitflags` is enabled:
 
 Every stateful trick keeps its records in its own bounded, sharded flow table:
 
-Retained packets are pinned to the worker that opened their capture, delay
-barrier, or held-packet group. Most stateful SNI holds fail open when a needed
-same-tuple packet arrives on another worker. Smuggle-FIN is the exception for
-reverse traffic during its pause: it copies that packet to the flow-owner worker
-and queues it there, subject to the ordering and handoff limitations in the
-dedicated section. This distinction matters only when an upstream producer does
-not preserve shared flow affinity. `StreamToPackets` does preserve it by
-re-affinitizing each decoded packet from its inner tuple before forwarding it.
+`IpManipulator` establishes its own packet-flow ownership when `first-sni`,
+`smuggle-sni`, `overlap-sni`, `synfin-sni`, `ech-sni-trick`, or `smuggle-fin` is
+enabled. Native upstream TCP/UDP packets reach their flow worker before stateful
+processing. Downstream packets are assigned after protocol and port restoration,
+before the stateful continuation. These internal dispatcher boundaries need no
+extra configured node and do not depend on RawSocket or TunDevice selecting the
+flow owner. Stateless tricks do not add this requirement. Plain ProtoSwap keeps
+both encoding and restoration on the current worker, including fragment output;
+it changes protocol/checksums without selecting a flow owner or staging fragments.
+Opaque protocols without a native TCP/UDP tuple also stay on their current worker.
+
+Retained packets remain pinned to the worker that opened their capture, delay
+barrier, or held-packet group. Worker-mismatch fail-open checks remain in place;
+normal connection lines retain their original owner and are never migrated by
+the packet dispatcher. Smuggle-FIN retains its separate reverse-traffic owner
+handoff for an existing paused flow, subject to the ordering and handoff limits
+in its dedicated section.
 
 - the canonical key normalizes the two endpoints, so a forward packet and its
   reverse select the same hash, the same shard and the same record

@@ -463,7 +463,7 @@ MANIFEST = [
     ("tunnels/TesterServer/downstream/pause.c", "testerserverTunnelDownStreamPause", 1,
      ("TesterServer: downStreamPause disabled",),
      "impossible flow-callback stub: TesterServer downstream pause in stream mode"),
-    ("tunnels/TesterServer/downstream/payload.c", "testerserverTunnelDownStreamPayload", 1,
+    ("tunnels/TesterServer/downstream/payload.c", "testerserverTunnelDownStreamPayloadAfterAffinity", 1,
      ("TesterServer: downStreamPayload disabled",),
      "impossible flow-callback stub: TesterServer downstream payload in stream mode"),
     ("tunnels/TesterServer/downstream/resume.c", "testerserverTunnelDownStreamResume", 1,

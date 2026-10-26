@@ -38,13 +38,13 @@ void ipmanipulatorDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
     discard                 context;
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    if (state->decoded_upstream_affinity != NULL)
+    if (state->upstream_affinity != NULL)
     {
-        packetAffinityDestroy(state->decoded_upstream_affinity);
+        packetAffinityDestroy(state->upstream_affinity);
     }
-    if (state->decoded_downstream_affinity != NULL)
+    if (state->downstream_affinity != NULL)
     {
-        packetAffinityDestroy(state->decoded_downstream_affinity);
+        packetAffinityDestroy(state->downstream_affinity);
     }
 
     destroyInternalTlsClient(state);

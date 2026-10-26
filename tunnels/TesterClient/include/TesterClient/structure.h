@@ -41,6 +41,8 @@ typedef struct testerclient_worker_state_s
 
 typedef struct testerclient_tstate_s
 {
+    packet_affinity_t *downstream_affinity;
+
     atomic_uint                          completed_workers;
     atomic_uint                          closed_workers;
     bool                                 allow_early_response;
@@ -106,6 +108,7 @@ void testerclientTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void testerclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void testerclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void testerclientTunnelDownStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sbuf_t *buf);
 void testerclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void testerclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 

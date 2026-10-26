@@ -441,8 +441,8 @@ typedef struct ipmanipulator_tstate_s
     int trick_proto_swap_tcp_number;
     int trick_proto_swap_udp_number;
 
-    packet_affinity_t *decoded_upstream_affinity;
-    packet_affinity_t *decoded_downstream_affinity;
+    packet_affinity_t *upstream_affinity;
+    packet_affinity_t *downstream_affinity;
 
     int trick_sni_blender_packets_count;
     int trick_sni_blender_packets_delay_max;
@@ -569,6 +569,7 @@ void ipmanipulatorOnStop(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void ipmanipulatorUpStreamInit(tunnel_t *t, line_t *l);
 void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void ipmanipulatorUpStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ipmanipulatorDownStreamPayloadAfterDecode(tunnel_t *t, line_t *l, sbuf_t *buf);

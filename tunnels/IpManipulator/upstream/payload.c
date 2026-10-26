@@ -16,6 +16,22 @@ void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     assert(lineIsOnCurrentWorker(l));
 
     ipmanipulator_tstate_t *state = tunnelGetState(t);
+    if (state->upstream_affinity != NULL)
+    {
+        /* Native tuples must reach their owner before a stateful trick retains
+         * a packet. Encoding still happens only at final egress. */
+        packetAffinityForward(state->upstream_affinity, l, buf);
+        return;
+    }
+
+    ipmanipulatorUpStreamPayloadAfterAffinity(t, l, buf);
+}
+
+void ipmanipulatorUpStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    assert(lineIsOnCurrentWorker(l));
+
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
 
     if (state->trick_smuggle_fin && smugglefintrickUpStreamPayload(t, l, buf))
     {

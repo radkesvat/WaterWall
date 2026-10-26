@@ -5,6 +5,17 @@
 void testerserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     testerserver_tstate_t *ts = tunnelGetState(t);
+    if (ts->downstream_affinity != NULL)
+    {
+        packetAffinityForward(ts->downstream_affinity, l, buf);
+        return;
+    }
+    testerserverTunnelDownStreamPayloadAfterAffinity(t, l, buf);
+}
+
+void testerserverTunnelDownStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    testerserver_tstate_t *ts = tunnelGetState(t);
     testerserver_lstate_t *ls = lineGetState(l, t);
 
     if (UNLIKELY(ls->terminal_failure))

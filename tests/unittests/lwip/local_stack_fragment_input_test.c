@@ -82,7 +82,10 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
     test_state_t *state = tunnelGetState(t);
     atomic_init(&state->stopping, false);
     atomic_init(&state->fragment_drops, 0);
-#if ! TEST_PACKETS_TO_CONNECTION
+#if TEST_PACKETS_TO_CONNECTION
+    state->input_affinity = packetAffinityCreate(t, ptcTunnelUpStreamPayloadAfterAffinity);
+    require(state->input_affinity != NULL, "PTC affinity creation failed");
+#else
     state->handoff_budget = ctpHandoffBudgetCreate(kCtpHandoffMaxBytes, kCtpHandoffMaxEntries);
     require(state->handoff_budget != NULL, "budget creation failed");
     IP4_ADDR(&state->source_ip, 10, 0, 0, 2);
@@ -120,7 +123,9 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
     }
     require(recycled >= 2, "rejected packets retained their input buffers");
     require(recycled_with_request == 0, "rejected packets retained checksum requests at recycling");
-#if ! TEST_PACKETS_TO_CONNECTION
+#if TEST_PACKETS_TO_CONNECTION
+    packetAffinityDestroy(state->input_affinity);
+#else
     require(state->handoff_budget->bytes == 0 && state->handoff_budget->entries == 0,
             "rejected input retained its copy");
     quiescenceGateClose(&state->packet_ingress_gate);

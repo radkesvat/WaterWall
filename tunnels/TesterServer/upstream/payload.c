@@ -4,6 +4,17 @@
 
 void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    testerserver_tstate_t *ts = tunnelGetState(t);
+    if (ts->upstream_affinity != NULL)
+    {
+        packetAffinityForward(ts->upstream_affinity, l, buf);
+        return;
+    }
+    testerserverTunnelUpStreamPayloadAfterAffinity(t, l, buf);
+}
+
+void testerserverTunnelUpStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
     testerserver_lstate_t *ls = lineGetState(l, t);
     testerserver_tstate_t *ts = tunnelGetState(t);
 

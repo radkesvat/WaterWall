@@ -75,5 +75,8 @@ void testerserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *contex
      * packet payload, so Destroy deliberately avoids post-worker pool access. */
     testerserverVerifyPacketStateDrained(t);
 
+    testerserver_tstate_t *ts = tunnelGetState(t);
+    packetAffinityDestroy(ts->upstream_affinity);
+    packetAffinityDestroy(ts->downstream_affinity);
     tunnelDestroy(t);
 }

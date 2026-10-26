@@ -1,5 +1,6 @@
 #pragma once
 
+#include "packet_affinity.h"
 #include "wwapi.h"
 
 #include "lwip/priv/tcp_priv.h"
@@ -193,6 +194,7 @@ typedef struct ptc_fake_dns_result_s
 typedef struct ptc_tstate_s
 {
     uint16_t                    mtu; // Immutable configured packet budget.
+    packet_affinity_t          *input_affinity;
     interface_route_context_t **routes_v4;
     uint32_t                    route_worker_count;
     uint32_t                    max_pending_bytes;
@@ -304,6 +306,7 @@ void ptcTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t 
 void ptcTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void ptcTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void ptcTunnelUpStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ptcTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void ptcTunnelUpStreamResume(tunnel_t *t, line_t *l);
 

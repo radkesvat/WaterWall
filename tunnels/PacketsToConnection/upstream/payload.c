@@ -327,29 +327,44 @@ void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        ww_lwip_engine_t *engine = wwLwipRuntimeGet(lineGetWID(l));
-        if (engine == NULL)
-        {
-            lineReuseBuffer(l, buf);
-            return;
-        }
-        discard           wwLwipEngineJoinReceiveBatch(engine);
-        ww_lwip_engine_t *previous;
-        const bool        entered = wwLwipEngineEnter(engine, &previous);
-        assert(entered);
-        discard entered;
-        if (UNLIKELY(atomicLoadRelaxed(&state->stopping)))
-        {
-            wwLwipEngineLeave(engine, previous);
-            lineReuseBuffer(l, buf);
-            return;
-        }
-
-        processV4(t, l, buf);
-        wwLwipEngineLeave(engine, previous);
-        ptcDrainTerminalLinesOnCurrentWorker(t, lineGetWID(l));
+        /* Packet sources only choose receive placement. Establish the current
+         * tuple's owner here, after any preceding transforms and before lwIP.
+         * Keeping the dispatcher inside PTC preserves direct TUN capabilities. */
+        packetAffinityForward(state->input_affinity, l, buf);
         return;
     }
 
     lineReuseBuffer(l, buf);
+}
+
+void ptcTunnelUpStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    assert(lineIsOnCurrentWorker(l) && tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l));
+    ptc_tstate_t *state = tunnelGetState(t);
+    if (UNLIKELY(atomicLoadRelaxed(&state->stopping)))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+    ww_lwip_engine_t *engine = wwLwipRuntimeGet(lineGetWID(l));
+    if (engine == NULL)
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+    discard           wwLwipEngineJoinReceiveBatch(engine);
+    ww_lwip_engine_t *previous;
+    const bool        entered = wwLwipEngineEnter(engine, &previous);
+    assert(entered);
+    discard entered;
+    if (UNLIKELY(atomicLoadRelaxed(&state->stopping)))
+    {
+        wwLwipEngineLeave(engine, previous);
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
+    processV4(t, l, buf);
+    wwLwipEngineLeave(engine, previous);
+    ptcDrainTerminalLinesOnCurrentWorker(t, lineGetWID(l));
 }

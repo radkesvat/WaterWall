@@ -51,6 +51,7 @@ static void destroy(tunnel_t *t)
         ptcDestroyWorkerRoute(t, wid);
     }
     memoryFree(ts->routes_v4);
+    packetAffinityDestroy(ts->input_affinity);
     mutexDestroy(&ts->drain_lock);
     mutexDestroy(&ts->dns_lock);
     tunnelDestroy(t);

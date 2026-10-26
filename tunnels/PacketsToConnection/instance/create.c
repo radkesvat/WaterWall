@@ -117,6 +117,16 @@ tunnel_t *ptcTunnelCreate(node_t *node)
         return NULL;
     }
 
+    ts->input_affinity = packetAffinityCreate(t, ptcTunnelUpStreamPayloadAfterAffinity);
+    if (ts->input_affinity == NULL)
+    {
+        mutexDestroy(&ts->dns_lock);
+        mutexDestroy(&ts->drain_lock);
+        ptcFakeDnsDestroy(ts);
+        tunnelDestroy(t);
+        return NULL;
+    }
+
     initTcpIpStack();
     ptcRxWrapperPoolInitializeOnce();
 

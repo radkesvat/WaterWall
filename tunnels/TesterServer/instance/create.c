@@ -329,5 +329,23 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
         return NULL;
     }
 
+    if (ts->packet_ipv4_worker_affine_flow)
+    {
+        ts->upstream_affinity = packetAffinityCreate(t, testerserverTunnelUpStreamPayloadAfterAffinity);
+        if (ts->upstream_affinity == NULL)
+        {
+            LOGE("TesterServer: failed to initialize packet worker affinity");
+            testerserverTunnelDestroy(t, wwLifecycleStartupRollback());
+            return NULL;
+        }
+        ts->downstream_affinity = packetAffinityCreate(t, testerserverTunnelDownStreamPayloadAfterAffinity);
+        if (ts->downstream_affinity == NULL)
+        {
+            LOGE("TesterServer: failed to initialize packet worker affinity");
+            testerserverTunnelDestroy(t, wwLifecycleStartupRollback());
+            return NULL;
+        }
+    }
+
     return t;
 }

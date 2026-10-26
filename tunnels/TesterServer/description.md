@@ -242,8 +242,8 @@ Packet mode with synthetic IPv4 packets:
     IPv4 TTL written into synthetic response headers.
     Default: `64`
   - `worker-affine-flow` `(boolean)`
-    Derives the per-worker request source port the same way `TesterClient` does, so a chain that restores
-    inner-flow worker affinity delivers each worker's flow to the matching worker on this side too. Both nodes must
+    Derives the per-worker request source port the same way `TesterClient` does and dispatches received packets
+    to that flow worker before verification. Carrier delivery on another worker does not select verification state. Both nodes must
     set it, and both must use the same `source-ip`, `dest-ip` and `transport`. Requires `transport` to be `tcp` or
     `udp`.
     Default: `false`

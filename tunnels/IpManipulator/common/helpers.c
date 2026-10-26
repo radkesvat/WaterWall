@@ -50,9 +50,9 @@ void ipmanipulatorLogCrossWorkerFlowFailure(tunnel_t *t, const char *trick_name,
     if (atomicLogRateLimiterShouldLog(&state->worker_mismatch_guidance_limiter,
                                       kIpManipulatorWorkerMismatchGuidanceIntervalMs))
     {
-        LOGW("IpManipulator: configuration guidance: stateful SNI tricks require every packet of one flow to stay "
-             "on the same worker. If the packet source before IpManipulator cannot preserve flow affinity, set "
-             "misc.workers to 1 in core.json and restart WaterWall");
+        LOGW("IpManipulator: flow ownership guidance: stateful tricks cannot combine retained packets from "
+             "different workers. Packet-line input is assigned internally using restored TCP/UDP tuples; "
+             "normal lines retain their original owner");
     }
 }
 
@@ -1229,12 +1229,11 @@ static bool ipmanipulatorHasTcpBitActionsForDirection(const ipmanipulator_tstate
 }
 
 static bool ipmanipulatorPrepareSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, bool upstream,
-                                                   bool apply_portghost, bool *decoded)
+                                                   bool apply_portghost)
 {
     ipmanipulator_tstate_t *state                = tunnelGetState(t);
     bool                    ghost_applied        = false;
     sbuf_t                 *buf                  = *buf_ptr;
-    *decoded                                     = false;
 
     if (apply_portghost)
     {
@@ -1255,8 +1254,8 @@ static bool ipmanipulatorPrepareSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_
     if (upstream && state->trick_proto_swap)
     {
         const bool decoding = ipmanipulatorPacketUsesMappedProtocol(state, buf);
-        *decoded            = protoswapApply(t, l, buf) && decoding;
-        if (*decoded && sbufGetRecalculateChecksum(buf) &&
+        const bool decoded  = protoswapApply(t, l, buf) && decoding;
+        if (decoded && sbufGetRecalculateChecksum(buf) &&
             calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
         {
             sbufSetRecalculateChecksum(buf, false);
@@ -1270,23 +1269,12 @@ static bool ipmanipulatorPrepareSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_
 static bool ipmanipulatorForwardSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward,
                                                    bool upstream, bool apply_portghost)
 {
-    bool decoded;
-    if (! ipmanipulatorPrepareSingleEgressPacket(t, l, &buf, upstream, apply_portghost, &decoded))
+    if (! ipmanipulatorPrepareSingleEgressPacket(t, l, &buf, upstream, apply_portghost))
     {
         return lineIsAlive(l);
     }
 
-    if (decoded && forward == ipmanipulatorSendUpstreamDuplicates && getWorkersCount() > 1)
-    {
-        /* Final egress already applied every transform. Resume only the fixed
-         * final callback so a handoff cannot encode or ghost the packet again. */
-        ipmanipulator_tstate_t *state = tunnelGetState(t);
-        packetAffinityForward(state->decoded_upstream_affinity, l, buf);
-    }
-    else
-    {
-        forward(t, l, buf);
-    }
+    forward(t, l, buf);
     return lineIsAlive(l);
 }
 

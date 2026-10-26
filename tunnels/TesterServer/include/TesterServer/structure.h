@@ -30,6 +30,9 @@ typedef enum testerserver_packet_ipv4_transport_e
 
 typedef struct testerserver_tstate_s
 {
+    packet_affinity_t *upstream_affinity;
+    packet_affinity_t *downstream_affinity;
+
     bool                                 packet_mode;
     bool                                 packet_stateless;
     bool                                 packet_init_on_start;
@@ -83,6 +86,7 @@ void testerserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_c
 void testerserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void testerserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void testerserverTunnelUpStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sbuf_t *buf);
 void testerserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void testerserverTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
@@ -90,6 +94,7 @@ void testerserverTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void testerserverTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void testerserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void testerserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void testerserverTunnelDownStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sbuf_t *buf);
 void testerserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void testerserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 

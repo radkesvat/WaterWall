@@ -16,7 +16,6 @@ void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     assert(lineIsOnCurrentWorker(l));
 
     ipmanipulator_tstate_t *state = tunnelGetState(t);
-    bool                    decoded = false;
 
     if (state->trick_proto_swap)
     {
@@ -40,7 +39,7 @@ void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 return;
             }
         }
-        decoded = protoswapApply(t, l, buf);
+        discard protoswapApply(t, l, buf);
     }
 
     if (state->trick_source_port_ghost || state->trick_dest_port_ghost)
@@ -52,11 +51,11 @@ void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
-    if (decoded && getWorkersCount() > 1)
+    if (state->downstream_affinity != NULL)
     {
         /* Restore the native tuple before selecting its stateful processing
          * worker. The continuation must not repeat decoding or port restore. */
-        packetAffinityForward(state->decoded_downstream_affinity, l, buf);
+        packetAffinityForward(state->downstream_affinity, l, buf);
         return;
     }
 

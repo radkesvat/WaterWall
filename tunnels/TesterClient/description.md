@@ -272,9 +272,9 @@ Packet mode with synthetic IPv4 packets:
     Default: `64`
   - `worker-affine-flow` `(boolean)`
     Makes each worker use a request source port whose inner flow selects that same worker under the shared
-    flow-affinity hash, instead of every worker emitting one byte-identical flow. Required when the chain restores
-    inner-flow worker affinity (`PacketsToStream` / `StreamToPackets`), because otherwise every worker's packets
-    funnel onto one worker and the per-worker request/response state machines no longer line up. Requires
+    flow-affinity hash, instead of every worker emitting one byte-identical flow. Received responses are dispatched
+    to that flow worker before verification, so carrier delivery on another worker does not change which request
+    state is checked. Requires
     `transport` to be `tcp` or `udp`, since only those carry the ports the hash reads.
     Default: `false`
 

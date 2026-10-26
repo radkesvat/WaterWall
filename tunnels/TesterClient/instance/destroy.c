@@ -77,5 +77,6 @@ void testerclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *contex
     testerclientVerifyPacketStateDrained(t);
 
     addresscontextReset(&ts->initial_dest_context);
+    packetAffinityDestroy(ts->downstream_affinity);
     tunnelDestroy(t);
 }

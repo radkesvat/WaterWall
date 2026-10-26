@@ -98,6 +98,17 @@ static void testerclientTunnelDownStreamPayloadStateless(tunnel_t *t, line_t *l,
 
 void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    testerclient_tstate_t *ts = tunnelGetState(t);
+    if (ts->downstream_affinity != NULL)
+    {
+        packetAffinityForward(ts->downstream_affinity, l, buf);
+        return;
+    }
+    testerclientTunnelDownStreamPayloadAfterAffinity(t, l, buf);
+}
+
+void testerclientTunnelDownStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
     testerclient_lstate_t *ls = lineGetState(l, t);
     testerclient_tstate_t *ts = tunnelGetState(t);
 

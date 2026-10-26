@@ -97,10 +97,10 @@ int main(void)
             "technical mismatch log omitted the state owner worker");
     require(strstr(log_capture, "releasing retained traffic through normal forwarding") != NULL,
             "technical mismatch log did not explain fail-open behavior");
-    require(countSubstring(log_capture, "configuration guidance") == 1,
-            "one-worker guidance was not independently rate-limited");
-    require(strstr(log_capture, "set misc.workers to 1 in core.json") != NULL,
-            "one-worker guidance omitted the actionable setting");
+    require(countSubstring(log_capture, "flow ownership guidance") == 1,
+            "flow ownership guidance was not independently rate-limited");
+    require(strstr(log_capture, "assigned internally using restored TCP/UDP tuples") != NULL,
+            "flow ownership guidance omitted consumer-owned packet affinity");
 
     memoryFreeAligned(t);
     networkloggerDestroy();
