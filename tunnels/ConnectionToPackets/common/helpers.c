@@ -702,11 +702,6 @@ void ctpEstablishedTask(tunnel_t *t, line_t *l)
     }
 
     /* Main quiescence may close admission during this owner's stack work. */
-    if (ctpTunnelIsStopping(t))
-    {
-        return;
-    }
-
     if (! ctpPrevGateEnter(t))
     {
         return;
