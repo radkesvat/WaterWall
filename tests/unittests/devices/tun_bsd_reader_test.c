@@ -1,5 +1,7 @@
-/* Native BSD constructor/reader wiring: real bounded session FIFO, inert TUN
- * syscalls and a stalled worker. No host interface or route is modified.
+/* Native BSD constructor/reader wiring: control-socket interface flags, real
+ * bounded session FIFO, inert TUN syscalls and a stalled worker. Covers creation
+ * without interface activation and flag preservation through BringUp/BringDown.
+ * No host interface or route is modified.
  * Requires native BSD headers/runtime; defining OS_BSD on Linux is not evidence.
  * CTest: waterwall.tun_bsd_reader_unit */
 #include "devices/device_reader_session.h"
@@ -8,14 +10,19 @@
 #include "worker_messages.h"
 #include "wwapi.h"
 #include <fcntl.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <stdarg.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
 static unsigned reads, delivered, token_count;
+static unsigned mtu_updates, flags_reads, flags_writes, packet_ioctls;
 static int      opened_handle;
+static short    interface_flags;
 static bool     fail_budget, fail_queue;
 static struct
 {
@@ -49,9 +56,45 @@ static int fixtureOpen(const char *path, int flags, ...)
 
 static int fixtureIoctl(int fd, unsigned long request, ...)
 {
-    discard fd;
-    discard request;
-    return 0;
+    if (fd == opened_handle)
+    {
+        ++packet_ioctls;
+        errno = ENOTTY;
+        return -1;
+    }
+
+    int       socket_type;
+    socklen_t type_length = sizeof(socket_type);
+    require(getsockopt(fd, SOL_SOCKET, SO_TYPE, &socket_type, &type_length) == 0 && socket_type == SOCK_DGRAM,
+            "BSD interface ioctl did not use a datagram control socket");
+    struct sockaddr_in address;
+    socklen_t          address_length = sizeof(address);
+    require(getsockname(fd, (struct sockaddr *) &address, &address_length) == 0 && address.sin_family == AF_INET,
+            "BSD interface ioctl did not use an IPv4 control socket");
+
+    va_list arguments;
+    va_start(arguments, request);
+    struct ifreq *ifr = va_arg(arguments, struct ifreq *);
+    va_end(arguments);
+    require(strcmp(ifr->ifr_name, "ww-bsd-fixture") == 0, "BSD interface ioctl used the wrong name");
+    switch (request)
+    {
+    case SIOCSIFMTU:
+        require(ifr->ifr_mtu == 1500, "BSD constructor changed its configured MTU");
+        ++mtu_updates;
+        return 0;
+    case SIOCGIFFLAGS:
+        ifr->ifr_flags = interface_flags;
+        ++flags_reads;
+        return 0;
+    case SIOCSIFFLAGS:
+        interface_flags = ifr->ifr_flags;
+        ++flags_writes;
+        return 0;
+    default:
+        errno = ENOTTY;
+        return -1;
+    }
 }
 
 static bool fixtureConfigureBudget(device_reader_session_t *session, size_t charge, uint32_t packets)
@@ -110,6 +153,33 @@ static void receive(tun_device_t *device, void *context, sbuf_t *buffer, wid_t w
     bufferpoolReuseBuffer(getWorkerBufferPool(wid), buffer);
 }
 
+static void testInterfaceLifecycle(void)
+{
+    testCaseSet("BSD interface control socket lifecycle");
+    const short original_flags = IFF_POINTOPOINT | IFF_DEBUG;
+    interface_flags            = original_flags;
+    tun_device_t *device = tundeviceCreate("ww-bsd-fixture", false, false, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    require(device != NULL, "BSD constructor failed with unsupported packet-device ioctls rejected");
+    require(mtu_updates == 1 && flags_reads == 0 && flags_writes == 0 && packet_ioctls == 0 &&
+                interface_flags == original_flags,
+            "BSD constructor activated the interface or used a packet descriptor for configuration");
+    const int descriptor_flags = fcntl(device->handle, F_GETFL, 0);
+    require(descriptor_flags >= 0 && (descriptor_flags & O_NONBLOCK) != 0,
+            "BSD constructor published a blocking packet descriptor");
+
+    require(tundeviceBringUp(device) && tundeviceIsUp(device), "BSD BringUp failed");
+    require(flags_reads == 1 && flags_writes == 1 && interface_flags == (short) (original_flags | IFF_UP),
+            "BSD BringUp did not preserve existing interface flags through the control socket");
+    require(! device->reader_joinable, "BSD lifecycle fixture started a reader without a callback");
+    require(tundeviceBringDown(device) && tunLifecycleLoad(&device->lifecycle) == kTunLifecycleDown,
+            "BSD BringDown failed");
+    require(flags_reads == 2 && flags_writes == 2 && interface_flags == original_flags,
+            "BSD BringDown changed flags other than IFF_UP");
+    tundeviceDestroy(device);
+    require(flags_reads == 2 && flags_writes == 2 && packet_ioctls == 0,
+            "BSD destruction repeated interface configuration or used the packet descriptor");
+}
+
 int main(void)
 {
     testCaseSet("native BSD bounded reader wiring");
@@ -132,6 +202,8 @@ int main(void)
     GSTATE.masterpool_buffer_pools_large  = large;
     GSTATE.masterpool_buffer_pools_medium = medium;
     GSTATE.masterpool_buffer_pools_small  = small;
+    testInterfaceLifecycle();
+    testCaseSet("native BSD bounded reader wiring");
     for (unsigned failure = 0; failure < 2; ++failure)
     {
         fail_budget = failure == 0;

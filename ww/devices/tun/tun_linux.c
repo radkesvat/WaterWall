@@ -637,17 +637,6 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_q
     strncpy(ifr.ifr_name, name, IFNAMSIZ - 1);
     ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
-    // Set the interface flags (IFF_UP to bring the interface up)
-    ifr.ifr_flags = IFF_UP;
-
-    // Configure the TUN device using ioctl
-    if (ioctl(fd, SIOCSIFFLAGS, &ifr) < 0)
-    {
-        LOGE("TunDevice: ioctl(SIOCSIFFLAGS) failed");
-        close(fd);
-        return NULL;
-    }
-
     if (! tunSetMtuByName(ifr.ifr_name, mtu))
     {
         close(fd);
