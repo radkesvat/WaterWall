@@ -77,12 +77,12 @@ static void testAdmissionDefaults(void)
 {
     require(kMuxDefaultMaxLiveChildren == 0, "default aggregate MuxServer limit must be unlimited");
     static const uint32_t reserves[] = {
-        32U * 1024U * 1024U,
-        77U * 1024U * 1024U,
-        122U * 1024U * 1024U,
-        166U * 1024U * 1024U,
-        211U * 1024U * 1024U,
-        256U * 1024U * 1024U,
+        16U * 1024U * 1024U,
+        77U * 512U * 1024U,
+        61U * 1024U * 1024U,
+        83U * 1024U * 1024U,
+        211U * 512U * 1024U,
+        128U * 1024U * 1024U,
     };
     static const uint32_t fallbacks[] = {20480, 28385, 36290, 44190, 52095, 60000};
     static const uint32_t profiles[]  = {kRamProfileS1Memory,

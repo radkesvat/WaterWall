@@ -87,8 +87,8 @@ enum
     kMuxDefaultMemoryHighWatermarkPercent = 85,
     kMuxDefaultMemoryLowWatermarkPercent  = 75,
 
-    kMuxMinimumAdmissionMemoryReserve    = 32U * 1024U * 1024U,
-    kMuxMaximumAdmissionMemoryReserve    = 256U * 1024U * 1024U,
+    kMuxMinimumAdmissionMemoryReserve    = 16U * 1024U * 1024U,
+    kMuxMaximumAdmissionMemoryReserve    = 128U * 1024U * 1024U,
     kMuxMinimumAdmissionFallbackChildren = 20480,
     kMuxMaximumAdmissionFallbackChildren = 60000,
 };
@@ -169,6 +169,7 @@ static inline mux_detached_defaults_t muxGetDefaultDetachedLimits(uint32_t ram_p
  * Select the default MuxServer admission reserve and conservative fallback
  * child ceiling for the configured RAM profile.
  *
+ * The memory reserve is rounded to the nearest 512 KiB.
  * Admission defaults are independent of detached-drain budgets. The fallback
  * ceilings are explicit so each RAM profile retains its exact configured default.
  */
@@ -178,18 +179,19 @@ static inline mux_admission_defaults_t muxGetDefaultAdmissionLimits(uint32_t ram
 
     enum
     {
-        kMinimumMiB = kMuxMinimumAdmissionMemoryReserve / (1024U * 1024U),
-        kMaximumMiB = kMuxMaximumAdmissionMemoryReserve / (1024U * 1024U),
+        kReserveStep  = 512U * 1024U,
+        kMinimumUnits = kMuxMinimumAdmissionMemoryReserve / kReserveStep,
+        kMaximumUnits = kMuxMaximumAdmissionMemoryReserve / kReserveStep,
     };
 
-    const uint32_t reserve_mib =
-        kMinimumMiB +
-        (((kMaximumMiB - kMinimumMiB) * tier) + (kMuxRamProfileTierMaximum / 2U)) / kMuxRamProfileTierMaximum;
+    const uint32_t reserve_units =
+        kMinimumUnits +
+        (((kMaximumUnits - kMinimumUnits) * tier) + (kMuxRamProfileTierMaximum / 2U)) / kMuxRamProfileTierMaximum;
     static const uint32_t fallback_children[] = {
         kMuxMinimumAdmissionFallbackChildren, 28385, 36290, 44190, 52095, kMuxMaximumAdmissionFallbackChildren};
 
     return (mux_admission_defaults_t) {
-        .memory_reserve         = reserve_mib * 1024U * 1024U,
+        .memory_reserve         = reserve_units * kReserveStep,
         .fallback_live_children = fallback_children[tier],
     };
 }

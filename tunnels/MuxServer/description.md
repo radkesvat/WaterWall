@@ -223,18 +223,18 @@ from `parent-buffer-limit`, which bounds incoming assembly plus attached child q
   Defaults are linearly interpolated over the six ordered RAM-profile tiers, with the charge limit rounded to the
   nearest whole MiB. An explicit setting overrides the profile-derived value independently for that limit.
 
-  The memory admission reserve uses the byte values above. The independent
-  `memory-fallback-max-live-children` defaults apply across all parents and workers
-  of one MuxServer instance:
+  Memory admission has separate defaults for `memory-reserve` and
+  `memory-fallback-max-live-children`, shared across all parents and workers
+  of one MuxServer instance. Explicit settings override these defaults independently:
 
-  | RAM profile | Default fallback live children |
-  | --- | ---: |
-  | S1 (`minimal` / `ultralow`) | `20480` |
-  | S2 | `28385` |
-  | M1 (`client`) | `36290` |
-  | M2 (`client-larger`) | `44190` |
-  | L1 | `52095` |
-  | L2 (`server`, the global default) | `60000` |
+  | RAM profile | Default memory reserve | Default fallback live children |
+  | --- | ---: | ---: |
+  | S1 (`minimal` / `ultralow`) | `16777216` (`16 MiB`) | `20480` |
+  | S2 | `40370176` (`38.5 MiB`) | `28385` |
+  | M1 (`client`) | `63963136` (`61 MiB`) | `36290` |
+  | M2 (`client-larger`) | `87031808` (`83 MiB`) | `44190` |
+  | L1 | `110624768` (`105.5 MiB`) | `52095` |
+  | L2 (`server`, the global default) | `134217728` (`128 MiB`) | `60000` |
 
 - `log-main-line-stats` `(boolean, optional)`
   When `true`, each active parent transport line logs best-effort mux diagnostics every `5` seconds. Parent logical
