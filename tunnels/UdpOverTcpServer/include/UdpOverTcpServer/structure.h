@@ -1,6 +1,5 @@
 #pragma once
 
-#include "splice_stream.h"
 #include "wwapi.h"
 
 typedef struct udpovertcpserver_lstate_s

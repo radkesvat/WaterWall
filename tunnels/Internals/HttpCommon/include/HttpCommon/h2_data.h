@@ -1,7 +1,7 @@
 #pragma once
 
-#include "buffer_pool.h"
 #include "nghttp2/nghttp2.h"
+#include "wwapi.h"
 
 typedef struct h2_data_item_s h2_data_item_t;
 

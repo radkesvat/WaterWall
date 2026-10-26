@@ -1,5 +1,4 @@
 #pragma once
-#include "api/node_api.h"
 #include "interface.h"
 #include "structure.h"
 void vmessclientLinestateInitialize(vmessclient_lstate_t *ls, line_t *l);

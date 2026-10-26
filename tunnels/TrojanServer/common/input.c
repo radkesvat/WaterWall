@@ -1,6 +1,5 @@
 #include "internal.h"
 
-#include "buffer_queue_range.h"
 #include "loggers/network_logger.h"
 
 static bool trojanserverLineAuthenticated(const trojanserver_lstate_t *ls)

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "PingCommon/ping_wire.h"
-#include "packet_affinity.h"
 #include "wwapi.h"
 
 typedef struct pingclient_tstate_s

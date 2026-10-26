@@ -5,6 +5,7 @@
 
 #include "base/local_widle_table.h"
 #include "base/quiescence_gate.h"
+#include "base/rate_bucket.h"
 #include "base/wchan.h"
 #include "base/widle_table.h"
 #include "base/wproc.h"
@@ -17,6 +18,7 @@
 #include "bufio/buffer_budget.h"
 #include "bufio/buffer_pool.h"
 #include "bufio/buffer_queue.h"
+#include "bufio/buffer_queue_range.h"
 #include "bufio/context_queue.h"
 #include "bufio/splice_buffer.h"
 #include "bufio/splice_stream.h"
@@ -37,10 +39,12 @@
 #include "net/generic_sniffer.h"
 #include "net/ipv4_packet_view.h"
 #include "net/node_layer_solver.h"
+#include "net/packet_affinity.h"
 #include "net/packet_tunnel.h"
 #include "net/pipe_tunnel.h"
 #include "net/sync_dns.h"
 #include "net/tls_client_hello.h"
+#include "net/traffic_shaper.h"
 #include "net/tunnel.h"
 #include "net/wchecksum.h"
 
@@ -58,6 +62,7 @@
 #include "managers/socket_manager.h"
 
 #include "node_builder/config_file.h"
+#include "node_builder/config_lexical.h"
 #include "node_builder/config_policy.h"
 #include "node_builder/node_library.h"
 

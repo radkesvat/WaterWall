@@ -1,8 +1,5 @@
 #include "VmessCommon/crypto.h"
 
-#include "node_builder/config_lexical.h"
-#include "utils/uuid.h"
-
 #include <openssl/evp.h>
 
 #if (defined(__i386__) || defined(__x86_64__)) && (defined(__GNUC__) || defined(__clang__))

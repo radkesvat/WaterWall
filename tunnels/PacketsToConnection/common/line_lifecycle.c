@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "managers/signal_manager.h"
 
 void ptcDetachTcpPcbLocked(ptc_lstate_t *ls)
 {

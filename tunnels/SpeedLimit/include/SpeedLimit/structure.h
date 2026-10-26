@@ -1,7 +1,5 @@
 #pragma once
 
-#include "rate_bucket.h"
-#include "traffic_shaper.h"
 #include "wwapi.h"
 
 typedef struct speedlimit_lstate_s speedlimit_lstate_t;

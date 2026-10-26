@@ -1,6 +1,6 @@
 #pragma once
 
-#include "wlibc.h"
+#include "wwapi.h"
 
 /* One prefix per assigned reverse transport: a big-endian total length,
  * including this header, followed by random bytes. The remaining stream is

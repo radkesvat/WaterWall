@@ -1,7 +1,5 @@
 #pragma once
 
-#include "buffer_budget.h"
-#include "buffer_queue.h"
 #include "carrier.h"
 #include "quic_common.h"
 

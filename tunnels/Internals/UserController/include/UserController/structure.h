@@ -2,7 +2,6 @@
 
 #include "AuthenticationClient/interface.h"
 #include "interface.h"
-#include "traffic_shaper.h"
 #include "wwapi.h"
 
 typedef struct usercontroller_direction_s

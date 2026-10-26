@@ -1,6 +1,6 @@
 #pragma once
 
-#include "wcrypto.h"
+#include "wwapi.h"
 
 enum
 {

@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+/* This standalone C++ engine imports only the allocator C ABI. The tunnel's C
+ * adapter uses wwapi.h, whose full runtime headers are not C++ compatible. */
 extern "C"
 {
 #include "wmem.h"

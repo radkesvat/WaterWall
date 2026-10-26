@@ -1,4 +1,3 @@
-#include "buffer_queue_range.h"
 #include "internal.h"
 
 static sbuf_t *receiveHead(vlessserver_lstate_t *ls)

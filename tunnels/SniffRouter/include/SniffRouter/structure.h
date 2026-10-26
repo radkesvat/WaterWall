@@ -1,7 +1,6 @@
 #pragma once
 
 #include "ReverseClient/reverseclient_handshake.h"
-#include "buffer_queue.h"
 #include "wwapi.h"
 
 /*

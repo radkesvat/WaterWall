@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "managers/signal_manager.h"
 
 /* Deadlines are observed by different event workers. Use one monotonic clock,
  * independent of each loop's cached time. */
