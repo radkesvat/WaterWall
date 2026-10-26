@@ -1,7 +1,8 @@
 /*
  * Covers: real bridge owner callbacks refusing required queued work during shutdown.
  * Setup: two runtime event workers, production worker-message admission and shutdown
- * arbitration, real PCB callbacks, and a bounded linker pause before the real scheduler.
+ * arbitration, real TCP callbacks and CTP UDP Init through DomainResolver preparation,
+ * and a bounded linker pause before the real scheduler.
  * Checks: accepted success stays 0, an initial terminal refusal selects 1, and owner
  * drain releases each PCB, retained buffer, registry obligation and normal line once.
  * CTest: waterwall.connectiontopackets_shutdown_refusal_unit;
@@ -39,9 +40,12 @@ static sbuf_t         *retained_buffer;
 static pthread_mutex_t pause_mutex     = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  pause_condition = PTHREAD_COND_INITIALIZER;
 static bool            paused, released;
+static bool            udp_init_scenario;
 static atomic_bool     callback_returned;
 static unsigned        submissions, buffer_releases, owner_settlements, neighbor_finishes;
 static uint32_t        pcb_baseline;
+
+static uint32_t pcbUsed(void);
 
 static struct timespec deadline(void)
 {
@@ -72,8 +76,24 @@ line_task_submit_result_e __wrap_lineScheduleTask(line_t *line, LineTaskFnNoBuf 
 #else
     require(task == ptcCloseLineTask, "PTC did not submit its peer-FIN reconciliation");
 #endif
-    require(currentThreadOwnsWorker(kOwner) && wwLwipEngineCurrent() != NULL,
-            "required control did not originate inside its real owner engine");
+    require(currentThreadOwnsWorker(kOwner), "required control did not originate on its real owner worker");
+#if TEST_CONNECTION_TO_PACKETS
+    if (udp_init_scenario)
+    {
+        ctp_lstate_t *ls    = lineGetState(line, t);
+        ctp_tstate_t *state = tunnelGetState(t);
+        require(wwLwipEngineCurrent() == NULL, "UDP Init scheduled Established inside an engine scope");
+        require(ls->kind == kCtpLineKindUdp && ls->udp_pcb != NULL && ls->connected && ls->flow_registered &&
+                    ls->generation != 0 && ctp_flow_map_t_size(&state->flows) == 1,
+                "UDP Init did not publish one connected flow before scheduling Established");
+        ww_lwip_engine_t *previous;
+        require(wwLwipEngineEnter(ls->engine, &previous), "UDP owner engine entry failed");
+        require(pcbUsed() == pcb_baseline + 1, "UDP Init did not allocate exactly one PCB");
+        wwLwipEngineLeave(ls->engine, previous);
+    }
+    else
+#endif
+        require(wwLwipEngineCurrent() != NULL, "TCP control did not originate inside its real owner engine");
     require(pthread_mutex_lock(&pause_mutex) == 0, "pause lock failed");
     paused = true;
     require(pthread_cond_broadcast(&pause_condition) == 0, "pause publication failed");
@@ -102,9 +122,9 @@ void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buffer)
 
 static uint32_t pcbUsed(void)
 {
-    require(wwLwipEngineCurrent() != NULL && lwip_stats.memp[MEMP_TCP_PCB] != NULL,
-            "PCB statistics require the owner engine");
-    return (uint32_t) lwip_stats.memp[MEMP_TCP_PCB]->used;
+    const unsigned pool = udp_init_scenario ? MEMP_UDP_PCB : MEMP_TCP_PCB;
+    require(wwLwipEngineCurrent() != NULL && lwip_stats.memp[pool] != NULL, "PCB statistics require the owner engine");
+    return (uint32_t) lwip_stats.memp[pool]->used;
 }
 
 static void finished(tunnel_t *t, line_t *line)
@@ -138,7 +158,8 @@ void __wrap_nodemanagerStopWorkerResources(wid_t wid, const ww_lifecycle_context
                 "CTP owner drain retained terminal or flow registration");
         require(lineIsAlive(normal_line) && ls->tunnel == bridge && ls->tcp_pcb == NULL,
                 "CTP owner drain did not preserve source-owned normal line state");
-        require(bufferqueueGetBufLen(&ls->pending_queue) == 19, "CTP released source-owned pending lifetime early");
+        require(bufferqueueGetBufLen(&ls->pending_queue) == (udp_init_scenario ? 0 : 19),
+                "CTP released source-owned pending lifetime early");
         tunnelNextUpStreamFinish(source, normal_line);
         require(lineIsAlive(normal_line), "CTP destroyed its borrowed normal line");
         require(neighbor_finishes == 0, "CTP reflected a Finish during source settlement");
@@ -154,7 +175,8 @@ void __wrap_nodemanagerStopWorkerResources(wid_t wid, const ww_lifecycle_context
         for (size_t i = 0; i < bridge->lstate_size; ++i)
             require(bytes[i] == 0, "owner settlement retained bridge line state");
         require(atomicLoadU32Relaxed(&normal_line->refc) == 1, "owner settlement leaked a line reference");
-        require(buffer_releases == 1, "owner settlement did not release retained buffer once");
+        require(buffer_releases == (udp_init_scenario ? 0 : 1),
+                "owner settlement did not release retained buffer once");
         lineUnref(normal_line);
         normal_line = NULL;
         ++owner_settlements;
@@ -172,7 +194,39 @@ static void ownerCallback(void *worker, void *a, void *b, void *c)
     require(currentThreadOwnsWorker(kOwner), "callback dispatched on wrong runtime worker");
     ww_lwip_engine_t *engine = wwLwipRuntimeGet(kOwner), *previous;
     require(engine != NULL && wwLwipEngineEnter(engine, &previous), "runtime owner engine unavailable");
-    pcb_baseline        = pcbUsed();
+    pcb_baseline = pcbUsed();
+#if TEST_CONNECTION_TO_PACKETS
+    if (udp_init_scenario)
+    {
+        /* Init acquires its engine scope itself, then schedules outside it. */
+        wwLwipEngineLeave(engine, previous);
+        normal_line = lineCreate(tunnelchainGetLinePools(chain), kOwner);
+        require(normal_line != NULL, "UDP normal line creation failed");
+        lineRef(normal_line); /* Fixture reference survives source-owned destruction. */
+        address_context_t *destination = lineGetDestinationAddressContext(normal_line);
+        require(addresscontextSetIpAddress(destination, "198.51.100.20"), "UDP destination setup failed");
+        addresscontextSetPort(destination, 53);
+        addresscontextSetOnlyProtocol(destination, IP_PROTO_UDP);
+        tunnelNextUpStreamInit(source, normal_line);
+        ctp_lstate_t *ls    = lineGetState(normal_line, bridge);
+        ctp_tstate_t *state = tunnelGetState(bridge);
+        require(ls->tunnel == bridge && ls->kind == kCtpLineKindUdp && ls->udp_pcb == NULL && ! ls->flow_registered &&
+                    ! ls->terminal_pending && ls->connect_timer == NULL,
+                "UDP refusal did not detach its PCB and registration while preserving borrowed state");
+        require(state->active_lines[kOwner] == ls && state->terminal_lines[kOwner] == NULL &&
+                    ctp_flow_map_t_size(&state->flows) == 0,
+                "UDP refusal retained a flow registration or lost its borrowed-line inventory");
+        require(! tunnelIsActiveForLine(state->domain_resolver_tunnel, normal_line),
+                "DomainResolver did not settle its preparation state after UDP Init");
+        require(wwLwipEngineEnter(engine, &previous), "UDP owner engine reentry failed");
+        require(pcbUsed() == pcb_baseline, "UDP refusal did not release its PCB once");
+        wwLwipEngineLeave(engine, previous);
+        require(lineIsAlive(normal_line) && lineIsAlive(tunnelchainGetWorkerPacketLine(chain, kOwner)),
+                "UDP refusal destroyed a normal or packet line before source drain");
+        atomicStoreExplicit(&callback_returned, true, memory_order_release);
+        return;
+    }
+#endif
     struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_V4);
     require(pcb != NULL && pcbUsed() == pcb_baseline + 1, "PCB allocation did not charge once");
     pcb->state = ESTABLISHED;
@@ -239,6 +293,7 @@ static void setupBridge(void)
     bridge = tunnelCreate(NULL, sizeof(ctp_tstate_t), sizeof(ctp_lstate_t));
     require(bridge != NULL, "CTP fixture construction failed");
     bridge->fnFinU      = ctpTunnelUpStreamFinish;
+    bridge->fnInitU     = ctpTunnelUpStreamInit;
     ctp_tstate_t *state = tunnelGetState(bridge);
     require(ctpFlowRegistryInitialize(state), "CTP registry initialization failed");
     state->netifs_count   = 2;
@@ -247,6 +302,22 @@ static void setupBridge(void)
     state->terminal_lines = memoryAllocateZero(2 * sizeof(*state->terminal_lines));
     atomic_init(&state->stopping, false);
     atomic_init(&state->fragment_drops, 0);
+    if (udp_init_scenario)
+    {
+        IP4_ADDR(&state->source_ip, 192, 0, 2, 1);
+        state->mtu                    = 1500;
+        state->domain_strategy        = kDsOnlyIpV4;
+        state->domain_resolver_node   = nodeDomainResolverGet();
+        state->domain_resolver_tunnel = state->domain_resolver_node.createHandle(&state->domain_resolver_node);
+        require(state->domain_resolver_tunnel != NULL, "UDP DomainResolver construction failed");
+        domainresolverTunnelUseLineStrategy(state->domain_resolver_tunnel, true);
+        domainresolverTunnelSetPrepareHook(state->domain_resolver_tunnel,
+                                           bridge,
+                                           sizeof(ctp_domain_resolver_lstate_t),
+                                           ctpDomainResolverPrepare,
+                                           NULL);
+        state->domain_resolver_node.instance = state->domain_resolver_tunnel;
+    }
     quiescenceGateInit(&state->prev_gate);
     quiescenceGateInit(&state->next_gate);
     quiescenceGateInit(&state->packet_ingress_gate);
@@ -265,18 +336,35 @@ static void setupBridge(void)
     tunnelBind(bridge, next);
     chain = tunnelchainCreate(2);
     require(chain != NULL, "chain creation failed");
-    chain->sum_line_state_size  = bridge->lstate_size;
+    chain->sum_line_state_size = bridge->lstate_size;
+#if TEST_CONNECTION_TO_PACKETS
+    if (udp_init_scenario)
+    {
+        tunnel_t *resolver = state->domain_resolver_tunnel;
+        tunnelBind(source, resolver);
+        tunnelBind(resolver, bridge);
+        resolver->chain       = chain;
+        resolver->chain_index = 1;
+        bridge->chain_index   = 2;
+        next->chain_index     = 3;
+        bridge->lstate_offset = resolver->lstate_size;
+        chain->sum_line_state_size += resolver->lstate_size;
+    }
+#endif
     chain->contains_packet_node = true;
     tunnelchainFinalize(chain);
     require(chain->finalized, "chain finalization failed");
     source->chain = bridge->chain = next->chain = chain;
 }
 
-static void runScenario(bool accepted_success)
+static void runScenario(bool accepted_success, bool udp)
 {
     alarm(30);
-    testCaseSet(accepted_success ? "accepted shutdown success then real bridge refusal"
-                                 : "initial real bridge refusal");
+    udp_init_scenario = udp;
+    testCaseSet(udp ? (accepted_success ? "accepted shutdown success then CTP UDP Init refusal"
+                                        : "initial CTP UDP Init refusal")
+                    : (accepted_success ? "accepted shutdown success then real TCP bridge refusal"
+                                        : "initial real TCP bridge refusal"));
     static char            off[]        = "OFF";
     ww_construction_data_t data         = {0};
     data.workers_count                  = 2;
@@ -304,6 +392,14 @@ static void runScenario(bool accepted_success)
     }
     else
         require(! applicationShutdownWasRequested(), "shutdown was accepted before the initial refusal");
+#if TEST_CONNECTION_TO_PACKETS
+    if (udp_init_scenario)
+    {
+        /* Close node admission while Init is in flight, before worker admission.
+         * The borrowed state must remain until its source drains with Finish. */
+        ctpTunnelOnQuiesceRequest(bridge, wwLifecycleProcessShutdown());
+    }
+#endif
     require(workerRequestQuiesceWithContext(getWorker(kOwner), wwLifecycleProcessShutdown()),
             "production owner quiesce request was unavailable");
     require(! atomicLoadExplicit(&getWorker(kOwner)->message_admission_open, memory_order_acquire),
@@ -326,7 +422,8 @@ static void runScenario(bool accepted_success)
     application_shutdown_snapshot_t final_status;
     require(applicationShutdownBeginFinalizing(&final_status) && final_status.exit_code == expected,
             "owner drain changed the final shutdown status");
-    require(submissions == 1 && owner_settlements == 1 && buffer_releases == 1 && normal_line == NULL,
+    require(submissions == 1 && owner_settlements == 1 && buffer_releases == (udp_init_scenario ? 0 : 1) &&
+                normal_line == NULL,
             "shutdown did not settle each bridge obligation exactly once");
     for (wid_t wid = 0; wid < 2; ++wid)
         require(lineIsAlive(tunnelchainGetWorkerPacketLine(chain, wid)), "shutdown destroyed a packet line");
@@ -349,13 +446,14 @@ static void runScenario(bool accepted_success)
 
 int main(void)
 {
-    for (unsigned scenario = 0; scenario < 2; ++scenario)
+    const unsigned scenarios = TEST_CONNECTION_TO_PACKETS ? 4 : 2;
+    for (unsigned scenario = 0; scenario < scenarios; ++scenario)
     {
         const pid_t child = fork();
         require(child >= 0, "scenario fork failed");
         if (child == 0)
         {
-            runScenario(scenario == 0);
+            runScenario(scenario % 2 == 0, scenario >= 2);
             _Exit(0);
         }
         int status;

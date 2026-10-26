@@ -21,7 +21,7 @@ static void ctpFailEstablishedTaskAdmission(tunnel_t *t, line_t *l)
 {
     LOGF("ConnectionToPackets: failed to admit required established task");
     ctpCloseLineTowardPrevWithoutDrain(t, l);
-    if (! requestProgramShutdown(1))
+    if (! signalmanagerRequestShutdownPreservingAcceptedStatus(1))
     {
         abortProgramNow(1);
     }
