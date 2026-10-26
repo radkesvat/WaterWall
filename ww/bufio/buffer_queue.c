@@ -123,6 +123,19 @@ bool bufferqueueTryAttachBudget(buffer_queue_t *self, buffer_budget_t *budget)
     return true;
 }
 
+bool bufferqueueTryRebindBudget(buffer_queue_t *self, buffer_budget_t *destination)
+{
+    assert(self->budget != NULL && destination != NULL);
+    if (self->budget == destination)
+        return true;
+    const buffer_budget_cost_t cost = {self->total_len, self->total_charge, bufferqueueGetBufCount(self)};
+    if (! bufferbudgetTryAcquire(destination, cost))
+        return false;
+    bufferbudgetRelease(self->budget, cost);
+    self->budget = destination;
+    return true;
+}
+
 static bool bufferqueueTryInsert(buffer_queue_t *self, sbuf_t **b, bool front, buffer_budget_reservation_t *reservation)
 {
     buffer_budget_cost_t cost;

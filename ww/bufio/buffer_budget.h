@@ -31,7 +31,8 @@ buffer_budget_cost_t bufferbudgetGetUsage(const buffer_budget_t *budget);
 buffer_budget_cost_t bufferbudgetGetLimits(const buffer_budget_t *budget);
 bool                 bufferbudgetTryGetCost(const sbuf_t *buf, buffer_budget_cost_t *cost);
 bool                 bufferbudgetTryAcquire(buffer_budget_t *budget, buffer_budget_cost_t cost);
-void                 bufferbudgetRelease(buffer_budget_t *budget, buffer_budget_cost_t cost);
+/* Accounting underflow is fatal in every build. */
+void bufferbudgetRelease(buffer_budget_t *budget, buffer_budget_cost_t cost);
 /* Assert all owners have settled before their storage is reset. */
 void bufferbudgetAssertEmpty(const buffer_budget_t *budget);
 /* Requires an empty reservation; failure changes nothing. */

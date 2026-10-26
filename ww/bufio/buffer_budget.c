@@ -1,4 +1,5 @@
 #include "buffer_budget.h"
+#include "loggers/internal_logger.h"
 
 void bufferbudgetInit(buffer_budget_t *budget, buffer_budget_cost_t limits)
 {
@@ -40,8 +41,12 @@ bool bufferbudgetTryAcquire(buffer_budget_t *budget, buffer_budget_cost_t cost)
 
 void bufferbudgetRelease(buffer_budget_t *budget, buffer_budget_cost_t cost)
 {
-    assert(cost.bytes <= budget->used.bytes && cost.charge <= budget->used.charge &&
-           cost.entries <= budget->used.entries);
+    if (UNLIKELY(cost.bytes > budget->used.bytes || cost.charge > budget->used.charge ||
+                 cost.entries > budget->used.entries))
+    {
+        LOGF("BufferBudget: retained ownership accounting underflow");
+        abortProgramNow(1);
+    }
     budget->used.bytes -= cost.bytes;
     budget->used.charge -= cost.charge;
     budget->used.entries -= cost.entries;
