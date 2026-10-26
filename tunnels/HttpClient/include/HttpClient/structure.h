@@ -1,5 +1,6 @@
 #pragma once
 
+#include "HttpCommon/h2_data.h"
 #include "wwapi.h"
 
 #include "http2_def.h"
@@ -44,15 +45,6 @@ typedef enum httpclient_split_role_e
     kHttpClientSplitRoleUpload   = 2,
     kHttpClientSplitRoleDownload = 3
 } httpclient_split_role_t;
-
-typedef struct httpclient_h2_data_item_s
-{
-    sbuf_t                           *payload;
-    uint32_t                          offset;
-    bool                              end_stream;
-    bool                              complete;
-    struct httpclient_h2_data_item_s *next;
-} httpclient_h2_data_item_t;
 
 typedef enum httpclient_split_placement_e
 {
@@ -126,9 +118,7 @@ typedef struct httpclient_lstate_s
     buffer_stream_t            in_stream;
     buffer_queue_t             pending_up;
     context_queue_t            events_down;
-    httpclient_h2_data_item_t *h2_data_head;
-    httpclient_h2_data_item_t *h2_data_tail;
-    httpclient_h2_data_item_t *h2_data_active;
+    h2_data_queue_t            h2_data;
 
     httpclient_runtime_proto_t runtime_proto;
 
@@ -213,8 +203,6 @@ void httpclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t *l);
 void httpclientLinestateDestroy(httpclient_lstate_t *ls);
-void httpclientH2DataQueueDestroy(httpclient_lstate_t *ls);
-void httpclientH2DataItemDestroy(line_t *line, httpclient_h2_data_item_t *item);
 
 sbuf_t *allocBufferForLength(line_t *l, uint32_t len);
 size_t  httpclientBuildHttp2Settings(const httpclient_tstate_t *ts,

@@ -1,0 +1,6 @@
+add_library(HttpCommon STATIC src/h2_data.c)
+target_include_directories(HttpCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(HttpCommon PUBLIC ww nghttp2_static)
+if(NOT APPLE)
+  target_precompile_headers(HttpCommon REUSE_FROM ww)
+endif()

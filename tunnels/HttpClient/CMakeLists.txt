@@ -24,7 +24,7 @@ add_library(HttpClient STATIC
 target_include_directories(HttpClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(HttpClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/HttpClient)
 
-target_link_libraries(HttpClient ww)
+target_link_libraries(HttpClient ww HttpCommon)
 
 add_library(http_client_def OBJECT
     common/http_def.c

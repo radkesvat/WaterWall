@@ -3,7 +3,8 @@
  * Setup: Production constructor and callbacks, worker-zero pools, captured next-neighbour buffers,
  *        an nghttp2 peer, and fixture-owned normal lines borrowed by HttpClient.
  * Checks: Exact framing/payload bytes, settings and windows, one request stream, WebSocket/h2c
- *         settings, nested-payload FIFO order, custom-upgrade bypass, and reentrant Finish cleanup.
+ *         settings, nested-payload FIFO order, custom-upgrade bypass, flow-control resumption,
+ *         and reentrant Finish cleanup with active and pending DATA providers.
  * Limits: No TLS record, network-packet, browser traffic timing, or multi-stream equivalence claims.
  * CTest: waterwall.httpclient_wire_profile_unit
  */
@@ -44,6 +45,7 @@ typedef struct fixture_s
     size_t           wire_length, writes, peer_offset;
     bool             nested_payload, finish_first;
     bool             h2_startup_payload;
+    bool             h2_finish_during_data, h2_fin_in_progress;
     bool             custom_startup_reply, raw_up_reentry, raw_down_reentry, raw_down_finish;
     nghttp2_session *peer;
     size_t           received_body;
@@ -112,7 +114,23 @@ static void capture(tunnel_t *next, line_t *line, sbuf_t *buf)
     memoryCopy(f->wire + f->wire_length, sbufGetRawPtr(buf), length);
     f->wire_length += length;
     lineReuseBuffer(line, buf);
-    if (f->custom_startup_reply)
+    if (f->h2_finish_during_data)
+    {
+        f->h2_finish_during_data = false;
+        httpclient_lstate_t *ls  = lineGetState(line, f->http);
+        twfRequire(f->writes == 1 && length == 9 + kH2BodyLimit && f->wire[3] == NGHTTP2_DATA,
+                   "reentrant H2 close did not interrupt the first partial DATA provider read");
+        twfRequire(ls->h2_data.active != NULL && ls->h2_data.head != NULL,
+                   "reentrant H2 close did not retain both active and pending providers");
+        twfRequireEqualU32(g_twf_buffers.live_count, 2, "H2 provider payloads were released before close");
+        httpclientTunnelDownStreamFinish(f->http, line);
+        if (f->h2_fin_in_progress)
+        {
+            twfRequire(lineIsAlive(line) && ls->tunnel == f->http && ls->next_finished,
+                       "nested H2 Finish did not defer cleanup to the active upstream Finish");
+        }
+    }
+    else if (f->custom_startup_reply)
     {
         f->custom_startup_reply = false;
         tunnelUpStreamPayload(f->http, line, textPayload(f, "Q"));
@@ -361,20 +379,29 @@ static void peerPump(fixture_t *f)
     twfRequire(false, "unbounded H2 fixture control exchange");
 }
 
-static void createPeer(fixture_t *f)
+static void createPeerWithWindow(fixture_t *f, uint32_t stream_window, bool manual_window_updates)
 {
     nghttp2_session_callbacks *callbacks = NULL;
     twfRequire(nghttp2_session_callbacks_new(&callbacks) == 0, "peer callback allocation failed");
     nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, peerFrame);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, peerData);
-    twfRequire(nghttp2_session_server_new(&f->peer, callbacks, f) == 0, "peer allocation failed");
+    nghttp2_option *options = NULL;
+    twfRequire(nghttp2_option_new(&options) == 0, "peer option allocation failed");
+    nghttp2_option_set_no_auto_window_update(options, manual_window_updates);
+    twfRequire(nghttp2_session_server_new2(&f->peer, callbacks, f, options) == 0, "peer allocation failed");
+    nghttp2_option_del(options);
     nghttp2_session_callbacks_del(callbacks);
-    const nghttp2_settings_entry settings[] = {{NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, 1U << 20},
+    const nghttp2_settings_entry settings[] = {{NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, stream_window},
                                                {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, 65536}};
     twfRequire(nghttp2_submit_settings(f->peer, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings)) == 0,
                "peer settings failed");
     twfRequire(nghttp2_submit_window_update(f->peer, NGHTTP2_FLAG_NONE, 0, 1U << 20) == 0, "peer window failed");
     peerPump(f);
+}
+
+static void createPeer(fixture_t *f)
+{
+    createPeerWithWindow(f, 1U << 20, false);
 }
 
 static void checkStartup(const fixture_t *f, bool websocket)
@@ -467,6 +494,78 @@ static void caseHttp2StartupReentry(bool finish)
         twfRequire(f.received_body == 20000 && f.request_streams == 1 && f.end_streams == 0,
                    "startup-reentrant H2 payload was lost, reordered, or opened another stream");
     }
+    teardown(&f);
+}
+
+static void caseHttp2FinishWithActiveAndPending(bool upstream_finish)
+{
+    twfSetCase(upstream_finish ? "HttpClient H2 nested Finish settles active and pending providers on a live line"
+                               : "HttpClient H2 DATA callback Finish settles active and pending providers");
+    fixture_t f;
+    setup(&f, "{\"host\":\"unit.test\",\"http-version\":2}");
+    createPeer(&f);
+    resetWire(&f);
+    const uint32_t       initial_refs     = twfLineRefCount(f.line);
+    const uint32_t       initial_recycles = twfRecycleCount();
+    httpclient_lstate_t *ls               = lineGetState(f.line, f.http);
+    h2DataAppend(&ls->h2_data, payload(&f, kLargeBody, false), false);
+    f.h2_finish_during_data = true;
+    f.h2_fin_in_progress    = upstream_finish;
+    if (upstream_finish)
+    {
+        h2DataAppend(&ls->h2_data, payload(&f, 251, false), false);
+        httpclientTunnelUpStreamFinish(f.http, f.line);
+    }
+    else
+    {
+        httpclientTunnelUpStreamPayload(f.http, f.line, payload(&f, 251, false));
+    }
+    twfRequire(lineIsAlive(f.line) == upstream_finish, "H2 reentrant Finish changed line ownership");
+    twfRequire(f.writes == 1 && f.trace.next_finish == 0 && f.trace.prev_finish == (upstream_finish ? 0U : 1U),
+               "H2 provider output continued or Finish reflected after reentrant close");
+    twfRequireLineStateZeroed(f.line, f.http, "H2 reentrant Finish retained provider/session state");
+    twfRequireEqualU32(twfLineRefCount(f.line),
+                       initial_refs - (upstream_finish ? 0U : 1U),
+                       "H2 reentrant Finish leaked a line reference");
+    twfRequireEqualU32(twfRecycleCount() - initial_recycles,
+                       3,
+                       "H2 reentrant Finish did not settle both payloads and the wire buffer exactly once");
+    twfRequireNoLeakedBuffers();
+    teardown(&f);
+}
+
+static void caseHttp2FlowControlResumes(void)
+{
+    twfSetCase("HttpClient H2 active provider and pending FIFO resume after WINDOW_UPDATE");
+    fixture_t f;
+    setup(&f, "{\"host\":\"unit.test\",\"http-version\":2}");
+    const uint32_t window = 20000, first_length = 251 * 256, pending_length = 251;
+    createPeerWithWindow(&f, window, true);
+    resetWire(&f);
+    httpclient_lstate_t *ls = lineGetState(f.line, f.http);
+    httpclientTunnelUpStreamPayload(f.http, f.line, payload(&f, first_length, false));
+    twfRequire(ls->h2_data.active != NULL && ls->h2_data.head == NULL && f.writes == 2,
+               "stream window did not stop a partially consumed H2 provider");
+    twfRequire(nghttp2_session_get_stream_remote_window_size(ls->session, 1) == 0,
+               "H2 provider did not exhaust the peer's stream window");
+    const size_t blocked_length = f.wire_length;
+    httpclientTunnelUpStreamPayload(f.http, f.line, payload(&f, pending_length, false));
+    twfRequire(f.wire_length == blocked_length && ls->h2_data.active != NULL && ls->h2_data.head != NULL,
+               "H2 pending admission emitted bytes despite the exhausted stream window");
+    peerConsume(&f);
+    twfRequire(f.received_body == window, "H2 sent more or less than the available stream window");
+    twfRequire(nghttp2_submit_window_update(
+                   f.peer, NGHTTP2_FLAG_NONE, 1, (int32_t) (first_length + pending_length - window + 1U)) == 0,
+               "peer could not replenish the blocked H2 stream");
+    peerPump(&f);
+    twfRequire(f.received_body == first_length + pending_length && f.end_streams == 0,
+               "WINDOW_UPDATE failed to resume active and pending H2 payloads in FIFO order");
+    twfRequire(ls->h2_data.active == NULL && ls->h2_data.head == NULL && ls->h2_data.tail == NULL,
+               "resumed H2 output retained a completed provider");
+    twfRequireNoLeakedBuffers();
+    httpclientTunnelUpStreamFinish(f.http, f.line);
+    peerConsume(&f);
+    twfRequire(f.end_streams == 1, "H2 terminal provider failed after flow-control recovery");
     teardown(&f);
 }
 
@@ -585,6 +684,9 @@ int main(void)
     caseHttp2WireProfile();
     caseHttp2StartupReentry(false);
     caseHttp2StartupReentry(true);
+    caseHttp2FinishWithActiveAndPending(false);
+    caseHttp2FinishWithActiveAndPending(true);
+    caseHttp2FlowControlResumes();
     caseWebSocketStartup();
     caseH2cSettings();
     caseCustomUpgrade(0);

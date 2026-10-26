@@ -13,6 +13,23 @@ if(TARGET tcp_over_udp_fec)
   add_waterwall_unit_test(waterwall.tcp_over_udp_fec_unit tcp_over_udp_fec_test "unit;tunnels;fec")
 endif()
 
+if(TARGET HttpCommon)
+  waterwall_add_native_executable(http_h2_data_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/http/http_h2_data_test.c)
+  target_link_libraries(http_h2_data_test PRIVATE HttpCommon nghttp2_static ww)
+  target_link_options(http_h2_data_test PRIVATE
+    "-Wl,--wrap=bufferpoolGetLargeBuffer"
+    "-Wl,--wrap=bufferpoolTryGetBestFit"
+    "-Wl,--wrap=bufferpoolGetBestFit"
+    "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+    "-Wl,--wrap=bufferpoolGetMediumBuffer"
+    "-Wl,--wrap=bufferpoolGetSmallBuffer"
+    "-Wl,--wrap=bufferpoolReuseBuffer"
+    "-Wl,--wrap=sbufDestroy"
+  )
+  add_dependencies(waterwall_unit_tests http_h2_data_test)
+  add_waterwall_unit_test(waterwall.http_h2_data_unit http_h2_data_test "unit;tunnels;http;http2;ownership" 30)
+endif()
+
 if(TARGET nghttp2_static)
   waterwall_add_native_executable(nghttp2_large_recv_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/http/nghttp2_large_recv_test.c)
   target_link_libraries(nghttp2_large_recv_test PRIVATE nghttp2_static ww)

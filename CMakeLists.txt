@@ -987,6 +987,10 @@ if(INCLUDE_HTTP_PROXY_SERVER)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} HttpProxyServer)
 endif()
 
+if(INCLUDE_HTTP_SERVER OR INCLUDE_HTTP_CLIENT)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/HttpCommon)
+endif()
+
 if(INCLUDE_HTTP_SERVER)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_HTTP_SERVER=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HttpServer)

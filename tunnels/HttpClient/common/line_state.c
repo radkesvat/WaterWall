@@ -10,9 +10,6 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
                                  .in_stream                      = bufferstreamCreate(lineGetBufferPool(l), 0),
                                  .pending_up                     = bufferqueueCreate(kHttpClientBufferQueueCap),
                                  .events_down                    = contextqueueCreate(),
-                                 .h2_data_head                   = NULL,
-                                 .h2_data_tail                   = NULL,
-                                 .h2_data_active                 = NULL,
                                  .runtime_proto                  = kHttpClientRuntimeUnknown,
                                  .h2_stream_id                   = 0,
                                  .h1_chunk_expected              = -1,
@@ -41,36 +38,7 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
                                  .split_download_line            = NULL,
                                  .h1_write_in_progress           = false,
                                  .h2_request_headers_sent        = false};
-}
-
-void httpclientH2DataItemDestroy(line_t *line, httpclient_h2_data_item_t *item)
-{
-    if (item == NULL)
-    {
-        return;
-    }
-    if (item->payload != NULL)
-    {
-        lineReuseBuffer(line, item->payload);
-    }
-    memoryFree(item);
-}
-
-void httpclientH2DataQueueDestroy(httpclient_lstate_t *ls)
-{
-    httpclientH2DataItemDestroy(ls->line, ls->h2_data_active);
-    ls->h2_data_active = NULL;
-
-    httpclient_h2_data_item_t *item = ls->h2_data_head;
-    while (item != NULL)
-    {
-        httpclient_h2_data_item_t *next = item->next;
-        httpclientH2DataItemDestroy(ls->line, item);
-        item = next;
-    }
-
-    ls->h2_data_head = NULL;
-    ls->h2_data_tail = NULL;
+    h2DataInit(&ls->h2_data, lineGetBufferPool(l), kHttpClientHttp2DataBytes);
 }
 
 void httpclientLinestateDestroy(httpclient_lstate_t *ls)
@@ -81,7 +49,7 @@ void httpclientLinestateDestroy(httpclient_lstate_t *ls)
         ls->session = NULL;
     }
 
-    httpclientH2DataQueueDestroy(ls);
+    h2DataDestroyAfterSession(&ls->h2_data);
     bufferstreamDestroy(&ls->in_stream);
     bufferqueueDestroy(&ls->pending_up);
     contextqueueDestroy(&ls->events_down);

@@ -53,7 +53,7 @@ static int  httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp
 static int  httpserverOnStreamClosedCallback(nghttp2_session *session, int32_t stream_id, uint32_t error_code,
                                              void *userdata);
 static int  httpserverOnFrameSendCallback(nghttp2_session *session, const nghttp2_frame *frame, void *userdata);
-static bool httpserverSubmitNextHttp2Data(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
+static h2_data_result_t httpserverSubmitNextHttp2Data(httpserver_lstate_t *ls);
 
 static bool httpserverVerboseEnabled(tunnel_t *t)
 {
@@ -1088,7 +1088,7 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
         return false;
     }
 
-    if (! httpserverSubmitNextHttp2Data(t, l, ls))
+    if (httpserverSubmitNextHttp2Data(ls).status == H2_DATA_FAILED)
     {
         return false;
     }
@@ -1106,16 +1106,14 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 
         if (len == 0)
         {
-            if (ls->h2_data_active == NULL && ls->h2_data_head != NULL)
+            h2_data_result_t result = httpserverSubmitNextHttp2Data(ls);
+            if (result.status == H2_DATA_FAILED)
             {
-                if (! httpserverSubmitNextHttp2Data(t, l, ls))
-                {
-                    return false;
-                }
-                if (ls->h2_data_active != NULL)
-                {
-                    continue;
-                }
+                return false;
+            }
+            if (result.status == H2_DATA_STARTED)
+            {
+                continue;
             }
             break;
         }
@@ -1159,131 +1157,14 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
     return true;
 }
 
-static httpserver_h2_data_item_t *httpserverH2DataItemCreate(sbuf_t *payload, bool end_stream)
+static h2_data_result_t httpserverSubmitNextHttp2Data(httpserver_lstate_t *ls)
 {
-    httpserver_h2_data_item_t *item = memoryAllocate(sizeof(*item));
-    *item                           = (httpserver_h2_data_item_t) {
-                                  .payload = payload, .offset = 0, .end_stream = end_stream, .complete = false, .next = NULL};
-    return item;
-}
-
-static void httpserverH2DataItemDestroy(line_t *line, httpserver_h2_data_item_t *item)
-{
-    if (item == NULL)
+    h2_data_result_t result = h2DataTrySubmit(&ls->h2_data, ls->session, ls->h2_stream_id);
+    if (result.status == H2_DATA_FAILED)
     {
-        return;
+        LOGE("HttpServer: nghttp2_submit_data failed stream_id=%d rc=%d", ls->h2_stream_id, result.nghttp2_error);
     }
-    if (item->payload != NULL)
-    {
-        lineReuseBuffer(line, item->payload);
-    }
-    memoryFree(item);
-}
-
-static void httpserverH2DataQueuePush(httpserver_lstate_t *ls, httpserver_h2_data_item_t *item)
-{
-    if (ls->h2_data_tail == NULL)
-    {
-        ls->h2_data_head = item;
-        ls->h2_data_tail = item;
-        return;
-    }
-    ls->h2_data_tail->next = item;
-    ls->h2_data_tail       = item;
-}
-
-static void httpserverH2DataQueuePushFront(httpserver_lstate_t *ls, httpserver_h2_data_item_t *item)
-{
-    item->next       = ls->h2_data_head;
-    ls->h2_data_head = item;
-    if (ls->h2_data_tail == NULL)
-    {
-        ls->h2_data_tail = item;
-    }
-}
-
-static httpserver_h2_data_item_t *httpserverH2DataQueuePop(httpserver_lstate_t *ls)
-{
-    httpserver_h2_data_item_t *item = ls->h2_data_head;
-    if (item == NULL)
-    {
-        return NULL;
-    }
-    ls->h2_data_head = item->next;
-    if (ls->h2_data_head == NULL)
-    {
-        ls->h2_data_tail = NULL;
-    }
-    item->next = NULL;
-    return item;
-}
-
-static ssize_t httpserverH2DataReadCallback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length,
-                                            uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
-{
-    discard session;
-    discard stream_id;
-    discard user_data;
-
-    httpserver_h2_data_item_t *item = source == NULL ? NULL : source->ptr;
-    if (item == NULL)
-    {
-        return NGHTTP2_ERR_CALLBACK_FAILURE;
-    }
-
-    uint32_t payload_len = item->payload == NULL ? 0 : sbufGetLength(item->payload);
-    uint32_t remaining   = payload_len - item->offset;
-    uint32_t to_copy     = (uint32_t) min((uint64_t) remaining, (uint64_t) length);
-
-    if (to_copy > 0)
-    {
-        memoryCopy(buf, (uint8_t *) sbufGetRawPtr(item->payload) + item->offset, to_copy);
-        item->offset += to_copy;
-    }
-
-    if (item->offset == payload_len)
-    {
-        item->complete = true;
-        *data_flags |= NGHTTP2_DATA_FLAG_EOF;
-        if (! item->end_stream)
-        {
-            *data_flags |= NGHTTP2_DATA_FLAG_NO_END_STREAM;
-        }
-    }
-
-    return (ssize_t) to_copy;
-}
-
-static bool httpserverSubmitNextHttp2Data(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
-{
-    discard t;
-
-    if (ls->h2_data_active != NULL || ls->h2_data_head == NULL)
-    {
-        return true;
-    }
-
-    httpserver_h2_data_item_t *item     = httpserverH2DataQueuePop(ls);
-    nghttp2_data_provider      provider = {
-             .source        = {.ptr = item},
-             .read_callback = httpserverH2DataReadCallback,
-    };
-    uint8_t flags = item->end_stream ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
-    int     rc    = nghttp2_submit_data(ls->session, flags, ls->h2_stream_id, &provider);
-    if (rc == NGHTTP2_ERR_DATA_EXIST)
-    {
-        httpserverH2DataQueuePushFront(ls, item);
-        return true;
-    }
-    if (rc != 0)
-    {
-        LOGE("HttpServer: nghttp2_submit_data failed stream_id=%d rc=%d", ls->h2_stream_id, rc);
-        httpserverH2DataItemDestroy(l, item);
-        return false;
-    }
-
-    ls->h2_data_active = item;
-    return true;
+    return result;
 }
 
 static bool httpserverTransportEnsureHttp2SessionInternal(tunnel_t *t, line_t *l, httpserver_lstate_t *ls,
@@ -1639,15 +1520,8 @@ static int httpserverOnFrameSendCallback(nghttp2_session *session, const nghttp2
     }
 
     httpserver_lstate_t *ls = (httpserver_lstate_t *) userdata;
-    if (frame->hd.stream_id != ls->h2_stream_id || ls->h2_data_active == NULL || ! ls->h2_data_active->complete)
-    {
-        return 0;
-    }
-
-    httpserverH2DataItemDestroy(ls->line, ls->h2_data_active);
-    ls->h2_data_active = NULL;
-
-    if (! httpserverSubmitNextHttp2Data(ls->tunnel, ls->line, ls))
+    if (h2DataOnFrameSent(&ls->h2_data, frame, ls->h2_stream_id) &&
+        httpserverSubmitNextHttp2Data(ls).status == H2_DATA_FAILED)
     {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
@@ -1831,7 +1705,7 @@ bool httpserverTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpserver_ls
              boolToTrueFalse(end_stream));
     }
 
-    httpserverH2DataQueuePush(ls, httpserverH2DataItemCreate(payload, end_stream));
+    h2DataAppend(&ls->h2_data, payload, end_stream);
     return sendNghttp2Outbound(t, l, ls);
 }
 
