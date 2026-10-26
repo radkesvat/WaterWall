@@ -108,7 +108,7 @@ static void nio_accept(wio_t *io)
     int       connfd = 0, err = 0, accept_cnt = 0;
     socklen_t addrlen;
     wio_t    *connio = NULL;
-    while (accept_cnt++ < 3)
+    while (accept_cnt++ < 16)
     {
         if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
         {
