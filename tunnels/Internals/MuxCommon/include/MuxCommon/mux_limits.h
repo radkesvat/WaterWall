@@ -85,7 +85,7 @@ enum
     kMuxDefaultInitialChildIdleTimeoutMs  = 10U * 1000U,
     kMuxDefaultActiveChildIdleTimeoutMs   = 300U * 1000U,
     kMuxDefaultMemoryHighWatermarkPercent = 85,
-    kMuxDefaultMemoryLowWatermarkPercent  = 75,
+    kMuxDefaultMemoryLowWatermarkPercent  = 80,
 
     kMuxMinimumAdmissionMemoryReserve    = 16U * 1024U * 1024U,
     kMuxMaximumAdmissionMemoryReserve    = 128U * 1024U * 1024U,

@@ -143,8 +143,8 @@ static void testMemoryHysteresis(void)
     require(ts != NULL, "failed to allocate MuxServer admission state");
     ts->max_live_children                 = 10;
     ts->memory_fallback_max_live_children = 3;
-    ts->memory_high_watermark_percent     = 85;
-    ts->memory_low_watermark_percent      = 75;
+    ts->memory_high_watermark_percent     = kMuxDefaultMemoryHighWatermarkPercent;
+    ts->memory_low_watermark_percent      = kMuxDefaultMemoryLowWatermarkPercent;
     ts->memory_reserve                    = 0;
     atomicStoreRelaxed(&ts->live_children_count, 0);
     atomicStoreU64Relaxed(&ts->memory_admission_state, 0);
@@ -161,14 +161,14 @@ static void testMemoryHysteresis(void)
     require(! decision.permits_memory && decision.gate_closed && decision.gate_transitioned,
             "high watermark did not close admission");
 
-    provider.host_available = 200000; // between high and low
+    provider.host_available = 175000; // 82.5% used, between high and low
     atomicStoreU64Relaxed(&provider.now_ms, 300);
     require(systemLoadSamplerUpdate(&sampler), "failed to publish hysteresis-band snapshot");
     decision = muxserverEvaluateMemoryAdmission(ts);
     require(! decision.permits_memory && decision.gate_closed, "hysteresis band reopened a pressure-closed gate");
 
-    provider.host_available = 300000;
-    provider.cgroup_current = 125000; // both sources exactly 75% or lower
+    provider.host_available = 200000;
+    provider.cgroup_current = 400000; // both sources exactly 80% used
     atomicStoreU64Relaxed(&provider.now_ms, 400);
     require(systemLoadSamplerUpdate(&sampler), "failed to publish recovery snapshot");
     decision = muxserverEvaluateMemoryAdmission(ts);

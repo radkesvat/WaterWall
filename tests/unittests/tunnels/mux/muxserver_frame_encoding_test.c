@@ -863,6 +863,7 @@ static void caseDetachedConfiguration(void)
         twfRequireEqualU32(
             ts->max_children, kMuxDefaultMaxChildrenPerParent, "default MuxServer per-parent child limit drifted");
         twfRequireEqualU32(ts->max_live_children, 0, "default MuxServer aggregate child limit must be unlimited");
+        twfRequireEqualU32(ts->memory_low_watermark_percent, 80, "default MuxServer memory low watermark must be 80");
         twfRequireEqualU32(
             ts->memory_reserve, profiles[i].buffer_limit / 2U, "profile-derived MuxServer admission reserve drifted");
         twfRequireEqualU32(ts->memory_fallback_max_live_children,

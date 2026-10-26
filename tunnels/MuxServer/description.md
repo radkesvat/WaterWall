@@ -186,7 +186,7 @@ from `parent-buffer-limit`, which bounds incoming assembly plus attached child q
   positive, and the active timeout must be at least the initial timeout.
 
 - `memory-high-watermark-percent` / `memory-low-watermark-percent` `(integer, optional)`
-  Memory admission hysteresis. Defaults: `85` and `75`. Both must be in
+  Memory admission hysteresis. Defaults: `85` and `80`. Both must be in
   `[1, 99]`, and low must be strictly below high.
 
 - `memory-reserve` `(integer, bytes, optional)`
