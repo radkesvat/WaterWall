@@ -1,4 +1,5 @@
 # Pinned independent peers, provisioned explicitly before loopback-only tests.
+include("${CMAKE_CURRENT_LIST_DIR}/SingBoxReference.cmake")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
    (TARGET VmessServer OR TARGET VmessClient))
   set(vmess_reference_cache "${CMAKE_SOURCE_DIR}/build/test-tools/v2ray-5.53.0")
@@ -9,24 +10,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
       --cache-dir "${vmess_reference_cache}"
     COMMENT "Provisioning the pinned V2Ray 5.53.0 interoperability reference"
     VERBATIM)
-  foreach(peer IN ITEMS xray sing-box)
-    if(peer STREQUAL "xray")
-      set(version "25.6.8")
-    else()
-      set(version "1.12.0")
-    endif()
-    set(cache "${CMAKE_SOURCE_DIR}/build/test-tools/${peer}-${version}")
-    string(REPLACE "-" "_" peer_variable "${peer}")
-    string(TOUPPER "${peer_variable}" peer_variable)
-    set(WATERWALL_VMESS_${peer_variable}_REFERENCE "${cache}/${peer}" CACHE FILEPATH
-        "Pinned ${peer} ${version} executable used by VMess interoperability tests")
-    add_custom_target(waterwall_vmess_${peer_variable}_reference
-      COMMAND "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/provision_vmess_reference.py"
-        --peer "${peer}" --cache-dir "${cache}"
-      COMMENT "Provisioning the pinned ${peer} ${version} interoperability reference"
-      VERBATIM)
-    add_dependencies(waterwall_vmess_reference waterwall_vmess_${peer_variable}_reference)
-  endforeach()
+  set(xray_reference_cache "${CMAKE_SOURCE_DIR}/build/test-tools/xray-25.6.8")
+  set(WATERWALL_VMESS_XRAY_REFERENCE "${xray_reference_cache}/xray" CACHE FILEPATH
+      "Pinned xray 25.6.8 executable used by VMess interoperability tests")
+  add_custom_target(waterwall_vmess_XRAY_reference
+    COMMAND "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/provision_vmess_reference.py"
+      --peer xray --cache-dir "${xray_reference_cache}"
+    COMMENT "Provisioning the pinned xray 25.6.8 interoperability reference"
+    VERBATIM)
+  waterwall_add_sing_box_reference()
+  add_dependencies(waterwall_vmess_reference
+    waterwall_vmess_XRAY_reference waterwall_vmess_SING_BOX_reference)
 endif()
 
 function(set_waterwall_vmess_interop_properties test_name)

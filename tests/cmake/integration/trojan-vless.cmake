@@ -51,3 +51,49 @@ add_waterwall_integration_test(waterwall.tcp_over_udp_roundtrip tcp_over_udp_rou
 add_waterwall_integration_test(waterwall.tcp_over_udp_fec_roundtrip tcp_over_udp_fec_roundtrip)
 add_waterwall_integration_test(waterwall.tcp_over_udp_disturber_roundtrip tcp_over_udp_disturber_roundtrip)
 add_waterwall_integration_test(waterwall.tcp_over_udp_fec_disturber_roundtrip tcp_over_udp_fec_disturber_roundtrip)
+
+# Short independent-peer checks use the same pinned sing-box executable as
+# VMess, including builds that omit both VMess nodes.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  include("${CMAKE_CURRENT_LIST_DIR}/SingBoxReference.cmake")
+  function(add_waterwall_sing_box_proxy_interop proxy role network)
+    waterwall_add_sing_box_reference()
+    set(test_name "waterwall.${proxy}_sing_box_${role}_${network}")
+    add_waterwall_isolated_test(${test_name}
+      "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/singbox_proxy_interop.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${WATERWALL_VMESS_SING_BOX_REFERENCE}"
+      --proxy "${proxy}" --role "${role}" --network "${network}")
+    set_tests_properties(${test_name} PROPERTIES TIMEOUT 25)
+    add_waterwall_test_labels(${test_name}
+      "integration" "tunnels" "interoperability" "sing-box" "${proxy}" "${role}" "${network}")
+    if(NOT WATERWALL_ENABLE_INTEGRATION_TEST_NETNS)
+      set_tests_properties(${test_name} PROPERTIES RESOURCE_LOCK waterwall_sing_box_proxy_ports)
+    endif()
+  endfunction()
+
+  foreach(proxy IN ITEMS trojan vless)
+    if(proxy STREQUAL "trojan")
+      set(proxy_node Trojan)
+    else()
+      set(proxy_node Vless)
+    endif()
+    if(TARGET ${proxy_node}Client AND TARGET TcpConnector AND
+       (proxy STREQUAL "vless" OR TARGET TlsClient))
+      if(TARGET TcpListener)
+        add_waterwall_sing_box_proxy_interop("${proxy}" client tcp)
+      endif()
+      if(TARGET UdpListener)
+        add_waterwall_sing_box_proxy_interop("${proxy}" client udp)
+      endif()
+    endif()
+    if(TARGET ${proxy_node}Server AND TARGET TcpListener AND
+       (proxy STREQUAL "vless" OR TARGET TlsServer))
+      if(TARGET TcpConnector)
+        add_waterwall_sing_box_proxy_interop("${proxy}" server tcp)
+      endif()
+      if(TARGET UdpConnector)
+        add_waterwall_sing_box_proxy_interop("${proxy}" server udp)
+      endif()
+    endif()
+  endforeach()
+endif()

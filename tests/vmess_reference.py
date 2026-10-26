@@ -54,9 +54,9 @@ def check_udp_size_probe(args, exchange, waterwall, reference=None):
         print("Verified intact 8192-byte UDP request and reply", flush=True)
 
 
-def validate_reference(executable, kind):
+def validate_reference(executable, kind, *, provision_target="waterwall_vmess_reference"):
     if not executable.is_file():
-        raise RuntimeError(f"pinned {kind} missing; build waterwall_vmess_reference first")
+        raise RuntimeError(f"pinned {kind} missing; build {provision_target} first")
     result = subprocess.run([str(executable), "version"], check=True, capture_output=True,
                             text=True, timeout=5).stdout
     prefix = {"v2ray": "V2Ray", "xray": "Xray", "sing-box": "sing-box version"}[kind]
