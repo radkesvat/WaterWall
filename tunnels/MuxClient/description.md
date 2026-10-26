@@ -657,9 +657,10 @@ Pool sizes, pipe targets, protocol limits and JSON defaults remain unchanged.
 Pause stops output, including Ping/Pong; Resume preserves the shared FIFO.
 Nested application output and child
 Close follow admitted Data. Child death does not release parent-owned output. Parent
-loss discards incoming/output ownership and transfers eligible blocked child
-queues to detached accounting. Pop, transfer and discard settle scalar charges
-before callbacks; final owner cleanup settles every queue. HTTP and ordinary
+loss discards incoming/output ownership and rebinds child queues, including empty
+queues, from the parent budget to the worker's detached budget before callbacks.
+Queue operations maintain aggregate usage; Mux retains its admission and drain
+policies. Final owner cleanup settles every queue. HTTP and ordinary
 BufferStream remain ordinary-only.
 
 ## Node Metadata

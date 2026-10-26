@@ -10,7 +10,9 @@ void muxserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
     {
         muxserver_worker_state_t      *worker_state = &ts->worker_states[wid];
         muxserver_detached_registry_t *registry     = &worker_state->detached_registry;
-        if (UNLIKELY(registry->head != NULL || registry->count != 0 || registry->queued_charge != 0))
+        const buffer_budget_cost_t     retained     = bufferbudgetGetUsage(&registry->queue_budget);
+        if (UNLIKELY(registry->head != NULL || registry->count != 0 || retained.bytes != 0 || retained.charge != 0 ||
+                     retained.entries != 0))
         {
             LOGF("MuxServer: destroy observed a nonempty detached registry on worker %u", wid);
             abortProgramNow(1);

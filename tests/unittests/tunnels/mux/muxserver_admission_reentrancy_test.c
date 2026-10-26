@@ -146,6 +146,8 @@ static void fixtureSetup(muxserver_admission_fixture_t *fixture, uint32_t captur
     ts->memory_high_watermark_percent     = 85;
     ts->memory_low_watermark_percent      = 75;
     ts->workers_count                     = 1;
+    bufferbudgetInit(&ts->worker_states[0].detached_registry.queue_budget,
+                     (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
 
     fixture->chain                      = tunnelchainCreate(1);
     fixture->chain->sum_line_state_size = fixture->mux->lstate_size;

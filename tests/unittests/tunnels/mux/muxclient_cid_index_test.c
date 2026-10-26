@@ -23,6 +23,8 @@ int main(void)
         kChildren = 4096,
     };
     muxclient_parent_state_t parent_state = {.child_map = muxclient_child_map_t_init()};
+    bufferbudgetInit(&parent_state.child_queue_budget,
+                     (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX, .entries = SIZE_MAX});
     muxclient_lstate_t       parent       = {.parent_state = &parent_state};
     muxclient_lstate_t      *children     = memoryAllocateZero(sizeof(*children) * kChildren);
     require(children != NULL, "failed to allocate client CID fixture");
@@ -43,10 +45,12 @@ int main(void)
     for (uint32_t i = 1; i < kChildren; i += 2)
     {
         muxclientLeaveConnection(&children[i]);
+        bufferqueueDestroy(&children[i].pending_child_data);
     }
     for (uint32_t i = 0; i < kChildren; i += 2)
     {
         muxclientLeaveConnection(&children[i]);
+        bufferqueueDestroy(&children[i].pending_child_data);
     }
     require(parent.children_count == 0 && parent.child_next == NULL &&
                 muxclient_child_map_t_size(&parent_state.child_map) == 0,

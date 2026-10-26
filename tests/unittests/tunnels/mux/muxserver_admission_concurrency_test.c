@@ -343,6 +343,11 @@ static void raceFixtureSetup(admission_race_fixture_t *fixture)
     ts->memory_high_watermark_percent = 85;
     ts->memory_low_watermark_percent  = 75;
     ts->workers_count                 = kRaceWorkers;
+    for (uint32_t wid = 0; wid < ts->workers_count; ++wid)
+    {
+        bufferbudgetInit(&ts->worker_states[wid].detached_registry.queue_budget,
+                         (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
+    }
 
     fixture->chain                      = tunnelchainCreate(kRaceWorkers);
     fixture->chain->sum_line_state_size = fixture->mux->lstate_size;

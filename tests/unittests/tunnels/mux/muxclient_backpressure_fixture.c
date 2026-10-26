@@ -64,6 +64,8 @@ void mxbMuxClientCreate(mxb_fixture_t *fixture)
     ts->detached_buffer_limit         = kMxbRetainedChargeLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
+    bufferbudgetInit(&ts->worker_states[0].detached_queue_budget,
+                     (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX, .entries = SIZE_MAX});
 }
 
 void mxbMuxClientInitializeLines(mxb_fixture_t *fixture)
@@ -119,13 +121,14 @@ size_t mxbMuxClientChildQueuedBytes(const mxb_fixture_t *fixture)
 
 size_t mxbMuxClientChildQueueCharge(const mxb_fixture_t *fixture)
 {
-    return ((muxclient_lstate_t *) lineGetState(fixture->child, fixture->mux))->pending_child_queue_charge;
+    return bufferqueueGetCharge(
+        &((muxclient_lstate_t *) lineGetState(fixture->child, fixture->mux))->pending_child_data);
 }
 
 size_t mxbMuxClientParentQueueCharge(const mxb_fixture_t *fixture)
 {
     muxclient_lstate_t *parent_ls = lineGetState(fixture->parent, fixture->mux);
-    return parent_ls->pending_child_queue_charge;
+    return bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge;
 }
 
 uint32_t mxbMuxClientDetachedChildren(const mxb_fixture_t *fixture)
@@ -135,13 +138,16 @@ uint32_t mxbMuxClientDetachedChildren(const mxb_fixture_t *fixture)
 
 size_t mxbMuxClientDetachedCharge(const mxb_fixture_t *fixture)
 {
-    return ((muxclient_tstate_t *) tunnelGetState(fixture->mux))->worker_states[0].detached_queued_charge;
+    return bufferbudgetGetUsage(
+               &((muxclient_tstate_t *) tunnelGetState(fixture->mux))->worker_states[0].detached_queue_budget)
+        .charge;
 }
 
 void mxbMuxClientDestroy(mxb_fixture_t *fixture)
 {
     muxclient_tstate_t *ts = tunnelGetState(fixture->mux);
-    mxbRequire(ts->worker_states[0].detached_child_count == 0 && ts->worker_states[0].detached_queued_charge == 0,
+    mxbRequire(ts->worker_states[0].detached_child_count == 0 &&
+                   bufferbudgetGetUsage(&ts->worker_states[0].detached_queue_budget).charge == 0,
                "MuxClient composition teardown retained detached accounting");
 
     if (fixture->parent != NULL)

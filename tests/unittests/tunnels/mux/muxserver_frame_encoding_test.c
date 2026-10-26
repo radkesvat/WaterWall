@@ -143,6 +143,8 @@ static void fixtureSetup(muxserver_fixture_t *fixture, uint32_t capture_capacity
     ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
+    bufferbudgetInit(&ts->worker_states[0].detached_registry.queue_budget,
+                     (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
 
     twfLinePoolSetup(&fixture->lines, fixture->mux->lstate_size, 8);
     fixture->parent_l = twfLinePoolCreateLine(&fixture->lines);
@@ -404,7 +406,8 @@ static void caseCoalescedDataStream(bool paused, bool empty_only)
         twfRequire(empty_only ? bufferqueueGetBufCount(&child_ls->pending_child_data) == 0
                               : bufferqueueGetBufCount(&child_ls->pending_child_data) > 0,
                    "empty DATA retained a queue entry or nonempty DATA was lost");
-        twfRequire(empty_only ? child_ls->pending_child_queue_charge == 0 : child_ls->pending_child_queue_charge > 0,
+        twfRequire(empty_only ? bufferqueueGetCharge(&child_ls->pending_child_data) == 0
+                              : bufferqueueGetCharge(&child_ls->pending_child_data) > 0,
                    "child retention charge does not match stored data");
         muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
     }
@@ -415,7 +418,8 @@ static void caseCoalescedDataStream(bool paused, bool empty_only)
         for (uint32_t i = 0; i < payload_bytes; ++i)
             twfRequire(fixture.capture[i] == (i < 3 ? 0xA1 : 0xA3), "coalescing changed stream order or bytes");
     twfRequire(bufferqueueGetBufCount(&child_ls->pending_child_data) == 0 &&
-                   child_ls->pending_child_queue_charge == 0 && parent_ls->pending_child_queue_charge == 0,
+                   bufferqueueGetCharge(&child_ls->pending_child_data) == 0 &&
+                   bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge == 0,
                "drain retained child entries or allocation charges");
     fixtureTeardown(&fixture);
 }
@@ -463,10 +467,12 @@ static void caseParsedTinyFrameUsesAllocationCharge(uint32_t payload_length, con
     const sbuf_t *retained = bufferqueueFront(&child_ls->pending_child_data);
     twfRequire(retained != NULL, "the first tiny Data frame has no retained sbuf");
     requireEqualCharge(sbufGetAllocationCharge(retained), charge, "the parser retained an unexpected buffer geometry");
-    requireEqualCharge(
-        child_ls->pending_child_queue_charge, charge, "the first tiny Data frame did not charge its child queue");
-    requireEqualCharge(
-        parent_ls->pending_child_queue_charge, charge, "the first tiny Data frame did not charge its parent aggregate");
+    requireEqualCharge(bufferqueueGetCharge(&child_ls->pending_child_data),
+                       charge,
+                       "the first tiny Data frame did not charge its child queue");
+    requireEqualCharge(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
+                       charge,
+                       "the first tiny Data frame did not charge its parent aggregate");
 
     lineRef(fixture.child_l);
     sendParsedTinyServerData(&fixture, payload_length);
@@ -477,8 +483,9 @@ static void caseParsedTinyFrameUsesAllocationCharge(uint32_t payload_length, con
     twfRequire(lineIsAlive(sibling_l), "the tiny-frame child limit closed a sibling");
     muxserver_lstate_t *sibling_ls = lineGetState(sibling_l, fixture.mux);
     twfRequire(sibling_ls->parent == parent_ls, "the tiny-frame child limit detached a sibling");
-    requireEqualCharge(
-        parent_ls->pending_child_queue_charge, 0, "the tiny-frame child close retained parent allocation charge");
+    requireEqualCharge(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
+                       0,
+                       "the tiny-frame child close retained parent allocation charge");
     twfRequireEqualU32(fixture.trace.prev_payload, 1, "the tiny-frame limit did not send exactly one Close frame");
     twfRequireEqualU32(fixture.trace.next_finish, 1, "the tiny-frame limit did not finish the owned child once");
     twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer tiny-frame limit child cleanup");
@@ -502,9 +509,10 @@ static void caseParsedTinyFrameTransfersToDetachedAccounting(void)
     child_ls->paused              = true;
 
     sendParsedTinyServerData(&fixture, 1);
-    requireEqualCharge(
-        child_ls->pending_child_queue_charge, charge, "the parsed one-byte Data frame did not charge its child queue");
-    requireEqualCharge(parent_ls->pending_child_queue_charge,
+    requireEqualCharge(bufferqueueGetCharge(&child_ls->pending_child_data),
+                       charge,
+                       "the parsed one-byte Data frame did not charge its child queue");
+    requireEqualCharge(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
                        charge,
                        "the parsed one-byte Data frame did not charge its parent queue");
 
@@ -512,16 +520,19 @@ static void caseParsedTinyFrameTransfersToDetachedAccounting(void)
     twfRequire(lineIsAlive(fixture.parent_l), "MuxServer destroyed its borrowed parent after tiny-frame loss");
     twfRequireLineStateZeroed(fixture.parent_l, fixture.mux, "tiny-frame parent loss retained parent state");
     muxserver_detached_registry_t *registry = &ts->worker_states[0].detached_registry;
-    requireEqualCharge(
-        child_ls->pending_child_queue_charge, charge, "tiny-frame parent loss changed the child allocation charge");
-    requireEqualCharge(
-        registry->queued_charge, charge, "tiny-frame parent loss did not transfer the exact detached charge");
+    requireEqualCharge(bufferqueueGetCharge(&child_ls->pending_child_data),
+                       charge,
+                       "tiny-frame parent loss changed the child allocation charge");
+    requireEqualCharge(bufferbudgetGetUsage(&registry->queue_budget).charge,
+                       charge,
+                       "tiny-frame parent loss did not transfer the exact detached charge");
     twfRequireEqualU32(registry->count, 1, "tiny-frame parent loss lost detached child accounting");
 
     lineRef(fixture.child_l);
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
     twfRequire(! lineIsAlive(fixture.child_l), "tiny-frame detached drain left the owned child alive");
-    requireEqualCharge(registry->queued_charge, 0, "tiny-frame detached drain retained aggregate charge");
+    requireEqualCharge(
+        bufferbudgetGetUsage(&registry->queue_budget).charge, 0, "tiny-frame detached drain retained aggregate charge");
     twfRequireEqualU32(registry->count, 0, "tiny-frame detached drain retained child accounting");
     twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "tiny-frame detached drain retained child state");
     twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer tiny-frame detached drain cleanup");
@@ -551,7 +562,9 @@ static void caseQueueLimitClosesOnlyServerChild(void)
     twfRequire(lineIsAlive(fixture.parent_l), "child charge limit closed the server parent");
     twfRequire(! lineIsAlive(fixture.child_l), "child charge limit left the owned child alive");
     twfRequireLineStateZeroed(fixture.child_l, fixture.mux, "child charge limit retained child state");
-    requireEqualCharge(parent_ls->pending_child_queue_charge, 0, "child charge limit mutated parent charge accounting");
+    requireEqualCharge(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
+                       0,
+                       "child charge limit mutated parent charge accounting");
     twfRequireEqualU32(fixture.trace.prev_payload, 1, "child charge limit did not send one Close frame");
     twfRequireEqualU32(fixture.trace.next_finish, 1, "child charge limit did not finish the child once");
     twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer child charge limit child cleanup");
@@ -769,11 +782,11 @@ static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
                        "late server Data changed the terminal child's retained FIFO");
     const sbuf_t *retained = bufferqueueFront(&child_ls->pending_child_data);
     twfRequire(retained != NULL, "the pre-Close server payload queue has no retained buffer");
-    requireEqualCharge(child_ls->pending_child_queue_charge,
+    requireEqualCharge(bufferqueueGetCharge(&child_ls->pending_child_data),
                        sbufGetAllocationCharge(retained),
                        "late server Data changed child retained-charge accounting");
-    requireEqualCharge(parent_ls->pending_child_queue_charge,
-                       child_ls->pending_child_queue_charge,
+    requireEqualCharge(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
+                       bufferqueueGetCharge(&child_ls->pending_child_data),
                        "late server Data changed parent retained-charge accounting");
     twfRequireEqualU32(parent_ls->children_count, 2, "late control frames changed the owned child inventory");
     twfRequireEqualU32(fixture.trace.next_init, 0, "late control frames initialized a replacement owned child");
@@ -996,11 +1009,12 @@ static void casePooledRetainedFrames(bool separate)
     }
     twfRequire(lineIsAlive(fixture.child_l) && child->l != NULL, "pooled queue closed a valid child");
     twfRequire(bufferqueueGetBufCount(&child->pending_child_data) == 48, "pooled queue lost frames");
-    twfRequire(child->pending_child_queue_charge < 48 * (MEDIUM_BUFFER_SIZE_RAM_HIGH + 512),
+    twfRequire(bufferqueueGetCharge(&child->pending_child_data) < 48 * (MEDIUM_BUFFER_SIZE_RAM_HIGH + 512),
                "paused queue did not replace large receive allocations with pooled storage");
     twfRequire(pooled_frame_count == 0, "pooled queue crossed Pause");
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
-    twfRequire(pooled_frame_count == 48 && child->pending_child_queue_charge == 0, "pooled queue did not drain");
+    twfRequire(pooled_frame_count == 48 && bufferqueueGetCharge(&child->pending_child_data) == 0,
+               "pooled queue did not drain");
     fixtureTeardown(&fixture);
     g_pool_size = kTestLargeBufferSize;
 }
@@ -1073,7 +1087,7 @@ static void caseFragmentedPausedFrameKeepsCarrierRemainder(void)
     twfRequire(splicestreamBodyBytes(parent->parent_state->read_stream) == 10000,
                "incomplete DATA for the paused child left the parser");
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
-    twfRequire(fixture.trace.next_payload_bytes == 14097 && child->pending_child_queue_charge == 0 &&
+    twfRequire(fixture.trace.next_payload_bytes == 14097 && bufferqueueGetCharge(&child->pending_child_data) == 0 &&
                    splicestreamBodyBytes(parent->parent_state->read_stream) == 0,
                "Resume did not drain retained and kept bytes before frame completion");
     for (uint32_t i = 0; i < 14097; ++i)

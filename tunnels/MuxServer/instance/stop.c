@@ -45,13 +45,15 @@ void muxserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_cont
         localidletableDrainItems(worker_state->child_idle_table);
     }
 
-    if (UNLIKELY(registry->head != NULL || registry->count != 0 || registry->queued_charge != 0))
+    const buffer_budget_cost_t retained = bufferbudgetGetUsage(&registry->queue_budget);
+    if (UNLIKELY(registry->head != NULL || registry->count != 0 || retained.bytes != 0 || retained.charge != 0 ||
+                 retained.entries != 0))
     {
         LOGF("MuxServer: worker %d detached registry accounting remained after drain "
              "(count=%u retained-charge=%zu)",
              (int) wid,
              (unsigned int) registry->count,
-             registry->queued_charge);
+             retained.charge);
         abortProgramNow(1);
     }
 

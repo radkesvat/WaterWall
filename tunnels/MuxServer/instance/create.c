@@ -276,6 +276,11 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
     ts->memory_low_watermark_percent      = memory_low_watermark;
     ts->memory_reserve                    = memory_reserve;
     ts->workers_count                     = (uint32_t) wc;
+    for (uint32_t wid = 0; wid < ts->workers_count; ++wid)
+    {
+        bufferbudgetInit(&ts->worker_states[wid].detached_registry.queue_budget,
+                         (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
+    }
     ts->log_main_line_stats               = log_main_line_stats;
 
     atomicStoreRelaxed(&ts->live_children_count, 0);

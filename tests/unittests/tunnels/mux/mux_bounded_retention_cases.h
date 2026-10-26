@@ -22,8 +22,16 @@ static void pqCheckQueueCharges(void)
     size_t          charges[3] = {0};
     for (unsigned i = 0; i < ARRAY_SIZE(queues); ++i)
         c_foreach(entry, ww_sbuffer_queue_t, queues[i]->q) charges[i] += sbufGetQueueCharge(*entry.ref);
-    twfRequire(child->pending_child_queue_charge == charges[0] && sibling->pending_child_queue_charge == charges[1] &&
-                   parent->pending_child_queue_charge == charges[0] + charges[1] && pqOutput(f)->charge == charges[2],
+    buffer_budget_t           *budget = &parent->parent_state->child_queue_budget;
+    const buffer_budget_cost_t usage  = bufferbudgetGetUsage(budget);
+    twfRequire(child->pending_child_data.budget == budget && sibling->pending_child_data.budget == budget &&
+                   usage.bytes == bufferqueueGetBufLen(queues[0]) + bufferqueueGetBufLen(queues[1]) &&
+                   usage.entries == bufferqueueGetBufCount(queues[0]) + bufferqueueGetBufCount(queues[1]),
+               "attached queues lost their shared budget binding or usage");
+    twfRequire(bufferqueueGetCharge(&child->pending_child_data) == charges[0] &&
+                   bufferqueueGetCharge(&sibling->pending_child_data) == charges[1] &&
+                   bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge == charges[0] + charges[1] &&
+                   pqOutput(f)->charge == charges[2],
                "local queue capacity charges disagree with ownership");
 }
 
@@ -279,7 +287,7 @@ static void caseSpliceLocalLimit(bool parent_output, bool refuse_entry)
         }
         else
         {
-            twfRequire(child->pending_child_queue_charge + 1 == ts->child_buffer_limit,
+            twfRequire(bufferqueueGetCharge(&child->pending_child_data) + 1 == ts->child_buffer_limit,
                        "splice child did not preserve its strict below-limit comparison");
             pqResumeDecodedChild(&f);
             twfRequire(pqSpliceChildDeliveries == 1, "splice child did not Resume exactly once");

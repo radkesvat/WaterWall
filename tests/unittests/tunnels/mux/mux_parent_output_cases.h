@@ -1310,7 +1310,8 @@ static void caseChildCloseKeepsParentParsing(void)
     twfRequire(splicestreamLength(parent->parent_state->read_stream) == 0, "complete sibling frame remained stranded");
     twfRequire(pqChildDeliveries(&f) == 2 && f.trace.capture_len == 2 && f.capture[0] == 17 && f.capture[1] == 34,
                "sibling payload was not delivered immediately and intact");
-    twfRequire(parent->pending_child_queue_charge == 0, "closed child's incoming queue charge was retained");
+    twfRequire(bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge == 0,
+               "closed child's incoming queue charge was retained");
 
     lineUnref(f.child_l);
     f.child_l          = sibling;
@@ -1474,10 +1475,12 @@ static void caseSpliceDecodedFrames(bool paused, bool header_in_pipe, uint32_t l
                        ((queued->flags & kSbufFlagSplice) != 0) == (length != 0),
                    "paused child violated retained representation or delivered through Pause");
         const size_t cost = sbufGetQueueCharge(queued);
-        requireEqualCharge(
-            child->pending_child_queue_charge, cost, "paused splice frame omitted its queue-capacity charge");
-        requireEqualCharge(
-            parent->pending_child_queue_charge, cost, "attached-parent aggregate omitted queued splice capacity");
+        requireEqualCharge(bufferqueueGetCharge(&child->pending_child_data),
+                           cost,
+                           "paused splice frame omitted its queue-capacity charge");
+        requireEqualCharge(bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge,
+                           cost,
+                           "attached-parent aggregate omitted queued splice capacity");
 
         if (length != 0)
             twfRequire(queued == input && sbufSpliceMetadata(queued).pipefd[0] == pqExpectedPipe,
@@ -1491,12 +1494,14 @@ static void caseSpliceDecodedFrames(bool paused, bool header_in_pipe, uint32_t l
         else
             twfRequire(length == 0, "nonempty queued source lacked a private pipe");
         pqResumeDecodedChild(&f);
-        twfRequire(child->pending_child_queue_charge == 0 && parent->pending_child_queue_charge == 0,
+        twfRequire(bufferqueueGetCharge(&child->pending_child_data) == 0 &&
+                       bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge == 0,
                    "Resume did not settle child and parent queue charges");
     }
     twfRequire(pqSpliceChildDeliveries == (length != 0) && pqDeliveredChildBytes == length,
                "nonempty DATA was lost or empty DATA produced a callback");
-    twfRequire(child->pending_child_queue_charge == 0 && parent->pending_child_queue_charge == 0,
+    twfRequire(bufferqueueGetCharge(&child->pending_child_data) == 0 &&
+                   bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge == 0,
                "empty or drained DATA retained a charge");
     fixtureTeardown(&f);
 }
@@ -1553,13 +1558,14 @@ static void caseSpliceManyIncompleteFragments(bool splice_input, bool complete, 
                            available == (int) payload_length,
                        "paused splice frame was materialized or split across pipes");
         }
-        twfRequire(parent->pending_child_queue_charge == child->pending_child_queue_charge,
+        twfRequire(bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge ==
+                       bufferqueueGetCharge(&child->pending_child_data),
                    "streaming fragments lost aggregate queue accounting");
     }
     if (paused_child)
         pqResumeDecodedChild(&f);
-    twfRequire(pqDeliveredChildBytes == received && child->pending_child_queue_charge == 0 &&
-                   parent->pending_child_queue_charge == 0 &&
+    twfRequire(pqDeliveredChildBytes == received && bufferqueueGetCharge(&child->pending_child_data) == 0 &&
+                   bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge == 0 &&
                    splicestreamBodyBytes(parent->parent_state->read_stream) == 0,
                "available fragments did not drain before frame completion or retained charge");
     fixtureTeardown(&f);
@@ -1652,15 +1658,16 @@ static void casePausedSplitFramesRetainWholeEntries(bool splice_input)
     const size_t retained = bufferqueueGetBufLen(&child->pending_child_data);
     twfRequire(retained == payload && bufferqueueGetBufCount(&child->pending_child_data) == kSplitFrames,
                "split frames were not retained as one entry per frame");
-    twfRequire(child->pending_child_queue_charge * 100U <= retained * 101U &&
-                   parent->pending_child_queue_charge == child->pending_child_queue_charge,
+    twfRequire(bufferqueueGetCharge(&child->pending_child_data) * 100U <= retained * 101U &&
+                   bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge ==
+                       bufferqueueGetCharge(&child->pending_child_data),
                "split-frame retention was charged above its bytes");
     twfRequire(pqDeliveredChildBytes == 0 && splicestreamBodyBytes(parent->parent_state->read_stream) == kSplitKept,
                "the incomplete frame left the parser for the paused child");
 
     // Resume drains the retained frames, then the kept body, in stream order.
     pqResumeDecodedChild(&f);
-    twfRequire(pqDeliveredChildBytes == payload + kSplitKept && child->pending_child_queue_charge == 0 &&
+    twfRequire(pqDeliveredChildBytes == payload + kSplitKept && bufferqueueGetCharge(&child->pending_child_data) == 0 &&
                    splicestreamBodyBytes(parent->parent_state->read_stream) == 0,
                "Resume did not deliver the retained frames and the kept body");
     while (pos < wire_length)
@@ -1819,7 +1826,12 @@ static void caseSpliceParentRefusal(void)
 static void pqAccountingChildSink(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pq_state_t *child = lineGetState(l, pqFixture->mux);
-    twfRequire(child->pending_child_queue_charge == 0, "popped child charge was not released before callback");
+    twfRequire(bufferqueueGetCharge(&child->pending_child_data) == 0,
+               "popped child charge was not released before callback");
+    twfRequire(child->pending_child_data.budget != NULL, "draining child lost its accounting owner");
+    const buffer_budget_cost_t usage = bufferbudgetGetUsage(child->pending_child_data.budget);
+    twfRequire(usage.bytes == 0 && usage.charge == 0 && usage.entries == 0,
+               "popped child budget usage was not released before callback");
     pqSpliceChildSink(t, l, buf);
 }
 
@@ -1847,8 +1859,10 @@ static void caseAccountedSpliceLifecycle(unsigned detach, bool discard_queue)
     pq_tstate_t *ts_admission = tunnelGetState(f.mux);
     twfRequire(pqQueue(f.mux, f.parent_l, ts_admission, parent, child, buf),
                "real child admission rejected a within-budget pipe");
-    twfRequire(bufferqueueFront(&child->pending_child_data) == buf && child->pending_child_queue_charge == cost &&
-                   parent->pending_child_queue_charge == cost && pqMaterializedBodyBytes == 0,
+    twfRequire(bufferqueueFront(&child->pending_child_data) == buf &&
+                   bufferqueueGetCharge(&child->pending_child_data) == cost &&
+                   bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge == cost &&
+                   pqMaterializedBodyBytes == 0,
                "real admission replaced a pipe, read its body, or published incorrect resource counters");
 
     lineRef(f.child_l);
@@ -1871,14 +1885,14 @@ static void caseAccountedSpliceLifecycle(unsigned detach, bool discard_queue)
 #ifdef MUX_OUTPUT_CLIENT
         f.parent_l = NULL;
 #endif
-        twfRequire(child->parent == NULL && child->pending_child_queue_charge == cost,
+        twfRequire(child->parent == NULL && bufferqueueGetCharge(&child->pending_child_data) == cost,
                    "detaching a child released or duplicated its retained queue charge");
 #ifdef MUX_OUTPUT_CLIENT
         pq_tstate_t *ts = tunnelGetState(f.mux);
-        twfRequire(ts->worker_states[lineGetWID(f.child_l)].detached_queued_charge == cost,
+        twfRequire(bufferbudgetGetUsage(&ts->worker_states[lineGetWID(f.child_l)].detached_queue_budget).charge == cost,
                    "client detached queue charge omitted logical splice capacity");
 #else
-        twfRequire(muxserverGetDetachedRegistry(f.mux, f.child_l)->queued_charge == cost,
+        twfRequire(bufferbudgetGetUsage(&muxserverGetDetachedRegistry(f.mux, f.child_l)->queue_budget).charge == cost,
                    "server detached queue charge omitted logical splice capacity");
 #endif
     }
@@ -1895,7 +1909,7 @@ static void caseAccountedSpliceLifecycle(unsigned detach, bool discard_queue)
 #ifndef MUX_OUTPUT_CLIENT
     const bool child_dead = ! lineIsAlive(f.child_l);
 #endif
-    twfRequire(child->pending_child_queue_charge == 0, "child cleanup retained queue capacity charge");
+    twfRequire(bufferqueueGetCharge(&child->pending_child_data) == 0, "child cleanup retained queue capacity charge");
     lineUnref(f.child_l);
 #ifndef MUX_OUTPUT_CLIENT
     if (child_dead)

@@ -104,6 +104,8 @@ static void idleFixtureSetup(muxserver_idle_fixture_t *fixture)
     ts->memory_high_watermark_percent     = 85;
     ts->memory_low_watermark_percent      = 75;
     ts->workers_count                     = 1;
+    bufferbudgetInit(&ts->worker_states[0].detached_registry.queue_budget,
+                     (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
 
     fixture->chain                      = tunnelchainCreate(1);
     fixture->chain->sum_line_state_size = fixture->mux->lstate_size;
@@ -413,7 +415,8 @@ static void caseQuiescenceDropsPayload(bool parent_input, bool paused)
     twfRequireEqualU32(fixture.trace.len, 0, "quiesced payload emitted MUX callbacks");
     twfRequire(! child->child_has_payload_activity && ! child->peer_flow_paused && child->paused == paused,
                "quiesced payload refreshed idle or flow-control state");
-    twfRequire(child->pending_child_queue_charge == 0 && child->parent->pending_child_queue_charge == 0 &&
+    twfRequire(bufferqueueGetCharge(&child->pending_child_data) == 0 &&
+                   bufferbudgetGetUsage(&child->parent->parent_state->child_queue_budget).charge == 0 &&
                    bufferqueueGetBufCount(&child->pending_child_data) == 0,
                "quiesced payload retained child buffers or charge");
     twfRequire(child->parent->children_count == 1 && splicestreamLength(child->parent->parent_state->read_stream) == 0,
@@ -512,14 +515,15 @@ static void caseShutdownFullInventory(unsigned order, unsigned reentrant)
     twfRequireEqualU32((uint32_t) atomicLoadRelaxed(&ts->live_children_count), 0, "worker drain retained slots");
     twfRequire(ts->worker_states[0].child_idle_table == NULL, "worker drain retained idle table");
     twfRequire(ts->worker_states[0].detached_registry.head == NULL &&
-                   ts->worker_states[0].detached_registry.queued_charge == 0,
+                   bufferbudgetGetUsage(&ts->worker_states[0].detached_registry.queue_budget).charge == 0,
                "worker drain retained detached accounting");
     if (fixture.parent_l != NULL)
     {
         muxserver_lstate_t *parent = lineGetState(fixture.parent_l, fixture.mux);
         twfRequire(lineIsAlive(fixture.parent_l) && parent->l == fixture.parent_l,
                    "MUX destroyed borrowed parent or its state before owner Finish");
-        twfRequire(parent->children_count == 0 && parent->pending_child_queue_charge == 0 &&
+        twfRequire(parent->children_count == 0 &&
+                       bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge == 0 &&
                        muxserver_child_map_t_size(&parent->parent_state->child_map) == 0,
                    "worker drain retained parent membership or charge");
     }
@@ -570,6 +574,11 @@ static void caseWorkerDrainIsLocal(void)
     tunnelBind(mux, next);
     muxserver_tstate_t *ts            = tunnelGetState(mux);
     ts->workers_count                 = 2;
+    for (uint32_t wid = 0; wid < ts->workers_count; ++wid)
+    {
+        bufferbudgetInit(&ts->worker_states[wid].detached_registry.queue_budget,
+                         (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
+    }
     ts->max_live_children             = 2;
     ts->initial_child_idle_timeout_ms = 60000;
     twf_line_pool_t lines[2];

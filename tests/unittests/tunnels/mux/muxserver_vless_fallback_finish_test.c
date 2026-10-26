@@ -61,6 +61,8 @@ static void configureMux(muxserver_vless_fixture_t *fixture)
     ts->initial_child_idle_timeout_ms     = 60000;
     ts->active_child_idle_timeout_ms      = 60000;
     ts->workers_count                     = 1;
+    bufferbudgetInit(&ts->worker_states[0].detached_registry.queue_budget,
+                     (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
 }
 
 static void fixtureSetup(muxserver_vless_fixture_t *fixture)

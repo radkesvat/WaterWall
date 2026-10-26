@@ -77,6 +77,8 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
+    bufferbudgetInit(&ts->worker_states[0].detached_queue_budget,
+                     (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX, .entries = SIZE_MAX});
 
     line_t *parent = twfLinePoolCreateLine(&lines);
     lineRef(parent);

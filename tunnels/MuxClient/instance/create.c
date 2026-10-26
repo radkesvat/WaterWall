@@ -210,6 +210,9 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     ts->detached_buffer_limit = (uint32_t) detached_buffer_limit;
     ts->detached_child_limit  = (uint32_t) detached_child_limit;
     ts->workers_count         = (uint32_t) wc;
+    for (uint32_t wid = 0; wid < ts->workers_count; ++wid)
+        bufferbudgetInit(&ts->worker_states[wid].detached_queue_budget,
+                         (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX, .entries = SIZE_MAX});
     ts->log_main_line_stats   = log_main_line_stats;
 
     ts->concurrency_mode =

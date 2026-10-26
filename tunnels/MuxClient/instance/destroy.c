@@ -16,8 +16,9 @@ void muxclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
             LOGF("MuxClient: destroy observed a published parent on worker %u", wid);
             abortProgramNow(1);
         }
-        if (UNLIKELY(ts->worker_states[wid].detached_child_count != 0 ||
-                     ts->worker_states[wid].detached_queued_charge != 0))
+        const buffer_budget_cost_t usage = bufferbudgetGetUsage(&ts->worker_states[wid].detached_queue_budget);
+        if (UNLIKELY(ts->worker_states[wid].detached_child_count != 0 || usage.bytes != 0 || usage.charge != 0 ||
+                     usage.entries != 0))
         {
             LOGF("MuxClient: destroy observed detached borrowed children on worker %u", wid);
             abortProgramNow(1);

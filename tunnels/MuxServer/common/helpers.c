@@ -357,6 +357,11 @@ void muxserverJoinConnection(muxserver_lstate_t *parent, muxserver_lstate_t *chi
         LOGF("MuxServer: failed to publish child CID index entry");
         abortProgramNow(1);
     }
+    assert(bufferqueueGetBufCount(&child->pending_child_data) == 0);
+    const bool attached =
+        bufferqueueTryAttachBudget(&child->pending_child_data, &parent->parent_state->child_queue_budget);
+    assert(attached);
+    discard attached;
     child->parent = parent;
 
     child->child_next = parent->child_next;
@@ -494,7 +499,7 @@ static void muxserverParentStatsLogTask(tunnel_t *t, line_t *parent_l)
          stats.children_close_pending,
          stats.child_read_paused,
          stats.child_write_paused,
-         parent_ls->pending_child_queue_charge,
+         bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
          splicestreamCharge(parent_ls->parent_state->read_stream),
          (size_t) bufferqueueGetBufLen(&output->pending),
          output->charge,
@@ -603,78 +608,6 @@ void muxserverCloseChildKeepParent(tunnel_t *t, line_t *parent_l, muxserver_lsta
     lineUnref(parent_l);
 }
 
-static void muxserverAddChildQueueCharge(muxserver_lstate_t *child_ls, size_t charge)
-{
-    assert(child_ls != NULL && child_ls->is_child);
-    if (UNLIKELY(child_ls->pending_child_queue_charge > SIZE_MAX - charge))
-    {
-        LOGF("MuxServer: child retained queue-charge accounting overflow");
-        abortProgramNow(1);
-    }
-
-    child_ls->pending_child_queue_charge += charge;
-}
-
-static void muxserverSubtractChildQueueCharge(muxserver_lstate_t *child_ls, size_t charge)
-{
-    assert(child_ls != NULL && child_ls->is_child);
-    if (UNLIKELY(child_ls->pending_child_queue_charge < charge))
-    {
-        LOGF("MuxServer: child retained queue-charge accounting underflow");
-        abortProgramNow(1);
-    }
-
-    child_ls->pending_child_queue_charge -= charge;
-}
-
-static void muxserverAddParentPendingChildCharge(muxserver_lstate_t *parent_ls, size_t charge)
-{
-    assert(parent_ls != NULL && ! parent_ls->is_child);
-    if (UNLIKELY(parent_ls->pending_child_queue_charge > SIZE_MAX - charge))
-    {
-        LOGF("MuxServer: parent retained child-queue charge accounting overflow");
-        abortProgramNow(1);
-    }
-
-    parent_ls->pending_child_queue_charge += charge;
-}
-
-static void muxserverSubtractParentPendingChildCharge(muxserver_lstate_t *parent_ls, size_t charge)
-{
-    assert(parent_ls != NULL && ! parent_ls->is_child);
-    if (UNLIKELY(parent_ls->pending_child_queue_charge < charge))
-    {
-        LOGF("MuxServer: parent retained child-queue charge accounting underflow");
-        abortProgramNow(1);
-    }
-
-    parent_ls->pending_child_queue_charge -= charge;
-}
-
-static void muxserverReleaseChildPendingCharge(muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls)
-{
-    const size_t pending_charge = child_ls->pending_child_queue_charge;
-    const size_t pending_count  = bufferqueueGetBufCount(&child_ls->pending_child_data);
-    if (UNLIKELY((pending_charge == 0) != (pending_count == 0)))
-    {
-        LOGF("MuxServer: attached child queue count/charge invariant failed during release");
-        abortProgramNow(1);
-    }
-    if (pending_charge == 0)
-    {
-        return;
-    }
-
-    muxserverSubtractParentPendingChildCharge(parent_ls, pending_charge);
-    child_ls->pending_child_queue_charge = 0;
-    const size_t discarded = muxDiscardRetainedQueue(&child_ls->pending_child_data, lineGetBufferPool(child_ls->l));
-    if (UNLIKELY(discarded != pending_charge))
-    {
-        LOGF("Mux: attached child resource charge disagrees with queued ownership");
-        abortProgramNow(1);
-    }
-}
-
 bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l,
                                mux_cid_t cid, uint8_t flag)
 {
@@ -711,7 +644,9 @@ bool muxserverSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxserver_lstate
  */
 void muxserverReleaseParentInputForChildClose(muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls)
 {
-    muxserverReleaseChildPendingCharge(parent_ls, child_ls);
+    assert(child_ls->pending_child_data.budget == &parent_ls->parent_state->child_queue_budget);
+    discard parent_ls;
+    bufferqueueDestroy(&child_ls->pending_child_data);
 }
 
 static bool muxserverChildSourcePaused(muxserver_lstate_t *child_ls)
@@ -816,8 +751,8 @@ static bool muxserverCloseChildForQueueLimit(tunnel_t *t, line_t *parent_l, muxs
                                              size_t rejected_candidate_charge)
 {
     const mux_cid_t cid           = child_ls->connection_id;
-    const size_t    child_charge  = child_ls->pending_child_queue_charge;
-    const size_t    parent_charge = parent_ls->pending_child_queue_charge;
+    const size_t    child_charge  = bufferqueueGetCharge(&child_ls->pending_child_data);
+    const size_t    parent_charge = bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge;
 
     if (rejected_candidate_charge != 0)
     {
@@ -860,7 +795,7 @@ static muxserver_lstate_t *muxserverFindLargestQueuedChild(muxserver_lstate_t *p
 
     for (muxserver_lstate_t *child_ls = parent_ls->child_next; child_ls != NULL; child_ls = child_ls->child_next)
     {
-        const size_t queued_charge = child_ls->pending_child_queue_charge;
+        const size_t queued_charge = bufferqueueGetCharge(&child_ls->pending_child_data);
         if (queued_charge > 0 && queued_charge >= largest_size)
         {
             largest      = child_ls;
@@ -879,26 +814,31 @@ bool muxserverEnforceParentReceiveLimit(tunnel_t *t, line_t *parent_l)
     muxserver_lstate_t       *parent_ls = lineGetState(parent_l, t);
     muxserver_parent_state_t *state     = parent_ls->parent_state;
     if (state->receive_depth != 0 || state->receive_enforcing ||
-        ! muxParentReceiveOverLimit(parent_ls->pending_child_queue_charge, state->read_stream, ts->parent_buffer_limit))
+        ! muxParentReceiveOverLimit(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
+                                    state->read_stream,
+                                    ts->parent_buffer_limit))
         return true;
 
     lineRef(parent_l);
     state->receive_enforcing = true;
-    while (
-        muxParentReceiveOverLimit(parent_ls->pending_child_queue_charge, state->read_stream, ts->parent_buffer_limit))
+    while (muxParentReceiveOverLimit(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
+                                     state->read_stream,
+                                     ts->parent_buffer_limit))
     {
         discard splicestreamCompact(state->read_stream);
-        if (! muxParentReceiveOverLimit(
-                parent_ls->pending_child_queue_charge, state->read_stream, ts->parent_buffer_limit))
+        if (! muxParentReceiveOverLimit(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
+                                        state->read_stream,
+                                        ts->parent_buffer_limit))
             break;
         size_t  before = SIZE_MAX;
-        discard muxTryParentReceiveCharge(parent_ls->pending_child_queue_charge, state->read_stream, &before);
+        discard muxTryParentReceiveCharge(
+            bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge, state->read_stream, &before);
         muxserver_lstate_t *victim = muxserverFindLargestQueuedChild(parent_ls);
         if (victim == NULL)
         {
             LOGW("MuxServer: incoming assembly cannot fit parent receive limit (incoming=%zu children=%zu limit=%u)",
                  splicestreamCharge(state->read_stream),
-                 parent_ls->pending_child_queue_charge,
+                 bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
                  ts->parent_buffer_limit);
             muxserverHandleParentLoss(t, parent_l, true);
             lineUnref(parent_l);
@@ -918,7 +858,9 @@ bool muxserverEnforceParentReceiveLimit(tunnel_t *t, line_t *parent_l)
             return false;
         }
         size_t after;
-        if (! muxTryParentReceiveCharge(parent_ls->pending_child_queue_charge, state->read_stream, &after) ||
+        if (! muxTryParentReceiveCharge(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
+                                        state->read_stream,
+                                        &after) ||
             after >= before)
         {
             LOGW("MuxServer: parent receive pressure cleanup made no progress (limit=%u)", ts->parent_buffer_limit);
@@ -941,11 +883,12 @@ bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_
     buf = muxPrepareRetainedCandidate(lineGetBufferPool(parent_l), buf, true);
 
     const size_t candidate_charge     = sbufGetQueueCharge(buf);
-    const bool   child_add_overflows  = child_ls->pending_child_queue_charge > SIZE_MAX - candidate_charge;
-    const bool   parent_add_overflows = parent_ls->pending_child_queue_charge > SIZE_MAX - candidate_charge;
+    const bool child_add_overflows = bufferqueueGetCharge(&child_ls->pending_child_data) > SIZE_MAX - candidate_charge;
+    const bool parent_add_overflows =
+        bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge > SIZE_MAX - candidate_charge;
     if (UNLIKELY(child_add_overflows || parent_add_overflows ||
                  muxQueueChargeWouldReachLimit(
-                     child_ls->pending_child_queue_charge, candidate_charge, ts->child_buffer_limit)))
+                     bufferqueueGetCharge(&child_ls->pending_child_data), candidate_charge, ts->child_buffer_limit)))
     {
         lineReuseBuffer(parent_l, buf);
         return muxserverCloseChildForQueueLimit(t,
@@ -958,13 +901,10 @@ bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_
                                                 candidate_charge);
     }
 
-    /* This queue stays unbound. Admitted charge also bounds payload bytes and
-     * entry storage, so insertion has no remaining recoverable refusal. */
+    /* Admitted charge bounds payload bytes and entry storage for both the
+     * queue and its unrestricted parent budget, so insertion cannot refuse. */
     buf = bufferqueuePushBack(&child_ls->pending_child_data, buf);
     assert(sbufGetQueueCharge(buf) == candidate_charge);
-
-    muxserverAddChildQueueCharge(child_ls, candidate_charge);
-    muxserverAddParentPendingChildCharge(parent_ls, candidate_charge);
 
     return muxserverEnforceParentReceiveLimit(t, parent_l);
 }
@@ -998,10 +938,7 @@ muxserver_child_drain_result_t muxserverDrainAttachedChild(tunnel_t *t, line_t *
     lineRef(parent_l);
     while (! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) > 0)
     {
-        sbuf_t      *buf    = bufferqueuePopFront(&child_ls->pending_child_data);
-        const size_t charge = sbufGetQueueCharge(buf);
-        muxserverSubtractChildQueueCharge(child_ls, charge);
-        muxserverSubtractParentPendingChildCharge(parent_ls, charge);
+        sbuf_t *buf = bufferqueuePopFront(&child_ls->pending_child_data);
 
         if (! lineCallWithRefWithBuf(child_l, tunnelNextUpStreamPayload, t, buf))
         {
@@ -1062,17 +999,17 @@ muxserver_detached_registry_t *muxserverGetDetachedRegistry(tunnel_t *t, line_t 
     return &ts->worker_states[wid].detached_registry;
 }
 
-static void muxserverRegisterDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lstate_t *child_ls,
-                                           size_t queued_charge)
+static void muxserverRegisterDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lstate_t *child_ls)
 {
     muxserver_detached_registry_t *registry = muxserverGetDetachedRegistry(t, child_l);
 
     assert(child_ls->parent == NULL);
     assert(child_ls->close_state == kMuxServerChildCloseParentGoneDraining);
+    assert(child_ls->pending_child_data.budget == &registry->queue_budget);
     if (UNLIKELY(child_ls->detached_registered || child_ls->detached_prev != NULL || child_ls->detached_next != NULL ||
-                 registry->count == UINT32_MAX || registry->queued_charge > SIZE_MAX - queued_charge))
+                 registry->count == UINT32_MAX))
     {
-        LOGF("MuxServer: duplicate detached registration or retained queue-charge accounting overflow");
+        LOGF("MuxServer: duplicate detached registration or child-count overflow");
         abortProgramNow(1);
     }
 
@@ -1085,29 +1022,14 @@ static void muxserverRegisterDetachedChild(tunnel_t *t, line_t *child_l, muxserv
     registry->head                = child_ls;
     child_ls->detached_registered = true;
     registry->count++;
-    registry->queued_charge += queued_charge;
-}
-
-static void muxserverSubtractDetachedCharge(tunnel_t *t, line_t *child_l, size_t charge)
-{
-    muxserver_detached_registry_t *registry = muxserverGetDetachedRegistry(t, child_l);
-    if (UNLIKELY(registry->queued_charge < charge))
-    {
-        LOGF("MuxServer: detached retained queue-charge accounting underflow");
-        abortProgramNow(1);
-    }
-    registry->queued_charge -= charge;
 }
 
 static void muxserverRemoveDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lstate_t *child_ls)
 {
     muxserver_detached_registry_t *registry        = muxserverGetDetachedRegistry(t, child_l);
-    const size_t                   residual_charge = child_ls->pending_child_queue_charge;
-    const size_t                   residual_count  = bufferqueueGetBufCount(&child_ls->pending_child_data);
-
-    if (UNLIKELY((residual_charge == 0) != (residual_count == 0) || ! child_ls->detached_registered ||
-                 child_ls->close_state != kMuxServerChildCloseParentGoneDraining || child_ls->parent != NULL ||
-                 registry->count == 0 || registry->queued_charge < residual_charge))
+    if (UNLIKELY(! child_ls->detached_registered || child_ls->close_state != kMuxServerChildCloseParentGoneDraining ||
+                 child_ls->parent != NULL || registry->count == 0 ||
+                 child_ls->pending_child_data.budget != &registry->queue_budget))
     {
         LOGF("MuxServer: attempted to remove an absent or inconsistent detached child");
         abortProgramNow(1);
@@ -1131,26 +1053,17 @@ static void muxserverRemoveDetachedChild(tunnel_t *t, line_t *child_l, muxserver
         child_ls->detached_next->detached_prev = child_ls->detached_prev;
     }
 
-    registry->queued_charge -= residual_charge;
     registry->count--;
-    child_ls->pending_child_queue_charge = 0;
     child_ls->detached_prev              = NULL;
     child_ls->detached_next              = NULL;
     child_ls->detached_registered        = false;
 
-    if (residual_count != 0)
-    {
-        const size_t discarded = muxDiscardRetainedQueue(&child_ls->pending_child_data, lineGetBufferPool(child_l));
-        if (UNLIKELY(discarded != residual_charge))
-        {
-            LOGF("Mux: detached child resource charge disagrees with queued ownership");
-            abortProgramNow(1);
-        }
-    }
+    bufferqueueDestroy(&child_ls->pending_child_data);
 
     /* A paused detached child may validly have an empty queue. */
+    const buffer_budget_cost_t retained = bufferbudgetGetUsage(&registry->queue_budget);
     if (UNLIKELY((registry->count == 0) != (registry->head == NULL) ||
-                 (registry->count == 0 && registry->queued_charge != 0)))
+                 (registry->count == 0 && (retained.bytes != 0 || retained.charge != 0 || retained.entries != 0))))
     {
         LOGF("MuxServer: detached registry count/head/charge invariant failed");
         abortProgramNow(1);
@@ -1165,10 +1078,7 @@ muxserver_child_drain_result_t muxserverDrainDetachedChild(tunnel_t *t, line_t *
 
     while (! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) > 0)
     {
-        sbuf_t      *buf    = bufferqueuePopFront(&child_ls->pending_child_data);
-        const size_t charge = sbufGetQueueCharge(buf);
-        muxserverSubtractChildQueueCharge(child_ls, charge);
-        muxserverSubtractDetachedCharge(t, child_l, charge);
+        sbuf_t *buf = bufferqueuePopFront(&child_ls->pending_child_data);
 
         if (! lineCallWithRefWithBuf(child_l, tunnelNextUpStreamPayload, t, buf))
         {
@@ -1275,7 +1185,7 @@ bool muxserverBeginPeerCloseDrain(tunnel_t *t, line_t *parent_l, muxserver_tstat
 static bool muxserverDetachedLimitReached(muxserver_tstate_t *ts, muxserver_detached_registry_t *registry)
 {
     return (ts->detached_buffer_limit != kMuxDetachedLimitUnlimited &&
-            registry->queued_charge >= (size_t) ts->detached_buffer_limit) ||
+            bufferbudgetGetUsage(&registry->queue_budget).charge >= (size_t) ts->detached_buffer_limit) ||
            (ts->detached_child_limit != kMuxDetachedLimitUnlimited && registry->count >= ts->detached_child_limit);
 }
 
@@ -1319,14 +1229,19 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
     {
         muxserver_lstate_t *child_ls          = parent_ls->child_next;
         line_t             *child_l           = child_ls->l;
-        const size_t        queued_charge     = child_ls->pending_child_queue_charge;
+        const size_t        queued_charge     = bufferqueueGetCharge(&child_ls->pending_child_data);
 
         assert(child_ls->close_state == kMuxServerChildCloseOpen ||
                child_ls->close_state == kMuxServerChildClosePeerDraining);
         child_ls->close_state = kMuxServerChildCloseParentGoneDraining;
-        muxserverSubtractParentPendingChildCharge(parent_ls, queued_charge);
+        muxserver_detached_registry_t *registry = muxserverGetDetachedRegistry(t, child_l);
+        if (UNLIKELY(! bufferqueueTryRebindBudget(&child_ls->pending_child_data, &registry->queue_budget)))
+        {
+            LOGF("MuxServer: detached retained queue accounting overflow");
+            abortProgramNow(1);
+        }
         muxserverLeaveConnection(child_ls);
-        muxserverRegisterDetachedChild(t, child_l, child_ls, queued_charge);
+        muxserverRegisterDetachedChild(t, child_l, child_ls);
         detached_children++;
         if (UNLIKELY(detached_charge > SIZE_MAX - queued_charge))
         {
@@ -1351,17 +1266,16 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
             abortProgramNow(1);
         }
 
-        child_ls                                = lineGetState(child_l, t);
-        muxserver_detached_registry_t *registry = muxserverGetDetachedRegistry(t, child_l);
+        child_ls = lineGetState(child_l, t);
         if (muxserverDetachedLimitReached(ts, registry))
         {
             LOGW("MuxServer: aborting detached child cid %u at worker backlog limit "
                  "(child-retained-charge=%zu worker-children=%u worker-retained-charge=%zu "
                  "child-limit=%u charge-limit=%u)",
                  (unsigned int) child_ls->connection_id,
-                 child_ls->pending_child_queue_charge,
+                 bufferqueueGetCharge(&child_ls->pending_child_data),
                  registry->count,
-                 registry->queued_charge,
+                 bufferbudgetGetUsage(&registry->queue_budget).charge,
                  ts->detached_child_limit,
                  ts->detached_buffer_limit);
             muxserverAbortDetachedChild(t, child_l, child_ls, true);
@@ -1377,8 +1291,9 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
         return;
     }
 
-    if (UNLIKELY(parent_ls->children_count != 0 || parent_ls->child_next != NULL ||
-                 parent_ls->pending_child_queue_charge != 0))
+    const buffer_budget_cost_t retained = bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget);
+    if (UNLIKELY(parent_ls->children_count != 0 || parent_ls->child_next != NULL || retained.bytes != 0 ||
+                 retained.charge != 0 || retained.entries != 0))
     {
         LOGF("MuxServer: parent-loss transfer left attached child state behind");
         abortProgramNow(1);

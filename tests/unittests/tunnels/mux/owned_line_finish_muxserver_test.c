@@ -94,6 +94,8 @@ static void fixtureSetup(muxserver_fixture_t *fixture)
     ts->initial_child_idle_timeout_ms     = 60000;
     ts->active_child_idle_timeout_ms      = 60000;
     ts->workers_count                     = 1;
+    bufferbudgetInit(&ts->worker_states[0].detached_registry.queue_budget,
+                     (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
 
     // Real pooled lines: lineDestroy() returns a line to line->pools[wid], so the
     // postcondition cannot be driven with a bare allocation.
@@ -120,7 +122,7 @@ static void fixtureSetup(muxserver_fixture_t *fixture)
  */
 static void fixtureTeardown(muxserver_fixture_t *fixture)
 {
-    if (lineIsAlive(fixture->parent_l))
+    if (fixture->parent_l != NULL && lineIsAlive(fixture->parent_l))
     {
         muxserver_lstate_t *parent_ls = lineGetState(fixture->parent_l, fixture->mux);
         if (parent_ls->l != NULL)
@@ -375,6 +377,8 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
     }
 
     muxserverLeaveConnection(trigger_ls);
+    /* This fixture reorders an empty child; settle its former binding before joining again. */
+    muxserverReleaseParentInputForChildClose(parent_ls, trigger_ls);
     muxserverJoinConnection(parent_ls, trigger_ls);
 
     muxserver_lstate_t *large_ls = lineGetState(large_l, fixture.mux);
@@ -388,10 +392,10 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
         muxserverQueueChildPayload(
             fixture.mux, fixture.parent_l, ts, parent_ls, large_ls, makeMuxserverQueuedPayload(&fixture, kLargeEntry)),
         "queueing the second large-child entry tore down the parent");
-    requireEqualCharge(parent_ls->pending_child_queue_charge,
+    requireEqualCharge(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
                        2U * entry_charge,
                        "the first child did not add two exact allocation charges");
-    requireEqualCharge(large_ls->pending_child_queue_charge,
+    requireEqualCharge(bufferqueueGetCharge(&large_ls->pending_child_data),
                        2U * entry_charge,
                        "the largest child did not retain its two allocation charges");
     twfRequire(bufferqueueGetBufLen(&large_ls->pending_child_data) < kTriggerQueue,
@@ -410,10 +414,10 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
     twfRequire(lineIsAlive(fixture.child_l), "the smaller trigger child was destroyed instead of the largest queue");
     twfRequire(trigger_ls->parent == parent_ls, "the smaller trigger child was unlinked");
     twfRequireEqualU32(parent_ls->children_count, 1U + kIdleChildren, "the shed child was not unlinked exactly once");
-    requireEqualCharge(parent_ls->pending_child_queue_charge,
+    requireEqualCharge(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
                        entry_charge,
                        "closing the largest owned child did not release its retained charge");
-    requireEqualCharge(trigger_ls->pending_child_queue_charge,
+    requireEqualCharge(bufferqueueGetCharge(&trigger_ls->pending_child_data),
                        entry_charge,
                        "the surviving trigger child has the wrong retained charge");
     twfRequireEqualU32((uint32_t) bufferqueueGetBufLen(&trigger_ls->pending_child_data),
@@ -455,7 +459,7 @@ static void caseParentBufferLimitCanBeDisabled(void)
         "an unlimited server parent budget tore down the parent");
     twfRequire(lineIsAlive(fixture.child_l), "an unlimited server parent budget destroyed its child");
     twfRequire(child_ls->parent == parent_ls, "an unlimited server parent budget unlinked its child");
-    requireEqualCharge(parent_ls->pending_child_queue_charge,
+    requireEqualCharge(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
                        pooledBufferCharge(&fixture, false),
                        "the unlimited server budget lost retained-charge accounting");
     twfRequireEqualText(fixture.trace.seq, "", "an unlimited server budget emitted flow or close callbacks");
@@ -482,10 +486,10 @@ static void casePeerCloseWaitsForOwnedChildResume(void)
     muxserver_lstate_t *child_ls     = lineGetState(fixture.child_l, fixture.mux);
     const size_t        entry_charge = pooledBufferCharge(&fixture, true);
 
-    requireEqualCharge(child_ls->pending_child_queue_charge,
+    requireEqualCharge(bufferqueueGetCharge(&child_ls->pending_child_data),
                        2U * entry_charge,
                        "peer-close setup did not retain two child allocation charges");
-    requireEqualCharge(parent_ls->pending_child_queue_charge,
+    requireEqualCharge(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
                        2U * entry_charge,
                        "peer-close setup did not retain two parent allocation charges");
 
@@ -504,8 +508,9 @@ static void casePeerCloseWaitsForOwnedChildResume(void)
     twfRequireEqualText(fixture.trace.seq, "UPPF", "server peer-close callback order is wrong");
     twfRequireEqualU32(fixture.trace.next_payload_bytes, kFirst + kSecond, "server peer-close drain lost bytes");
     twfRequireEqualU32(parent_ls->children_count, 0, "server peer-close completion left a child attached");
-    requireEqualCharge(
-        parent_ls->pending_child_queue_charge, 0, "server peer-close completion retained parent charge accounting");
+    requireEqualCharge(bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
+                       0,
+                       "server peer-close completion retained parent charge accounting");
     requireLiveChildResources(&fixture, 0, "peer-close final destruction did not release slot and timer once");
     twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer peer-close completion");
 
@@ -530,6 +535,11 @@ static void caseParentLossRegistersAndDrainsOwnedChild(void)
 
     muxserver_tstate_t *ts       = tunnelGetState(fixture.mux);
     muxserver_lstate_t *child_ls = lineGetState(fixture.child_l, fixture.mux);
+    twfRequire(child_ls->pending_child_data.budget == &child_ls->parent->parent_state->child_queue_budget,
+               "attached owned child queue was not bound to its parent");
+    const buffer_budget_cost_t attached = bufferbudgetGetUsage(child_ls->pending_child_data.budget);
+    requireEqualCharge(attached.bytes, kFirst + kSecond, "attached parent budget lost logical bytes");
+    requireEqualCharge(attached.entries, 2, "attached parent budget lost queue entries");
     muxserverTunnelUpStreamFinish(fixture.mux, fixture.parent_l);
 
     muxserver_detached_registry_t *registry = &ts->worker_states[0].detached_registry;
@@ -542,21 +552,32 @@ static void caseParentLossRegistersAndDrainsOwnedChild(void)
     twfRequire(registry->head == child_ls, "detached registry head does not own the child");
     twfRequireEqualU32(registry->count, 1, "detached owned child count is wrong");
     const size_t entry_charge = pooledBufferCharge(&fixture, true);
-    requireEqualCharge(child_ls->pending_child_queue_charge,
+    requireEqualCharge(bufferqueueGetCharge(&child_ls->pending_child_data),
                        2U * entry_charge,
                        "detached owned child retained the wrong allocation charge");
-    requireEqualCharge(registry->queued_charge, 2U * entry_charge, "detached owned registry charge is wrong");
+    const buffer_budget_cost_t detached = bufferbudgetGetUsage(&registry->queue_budget);
+    twfRequire(child_ls->pending_child_data.budget == &registry->queue_budget,
+               "detached owned queue still borrows its former parent budget");
+    requireEqualCharge(detached.charge, 2U * entry_charge, "detached owned registry charge is wrong");
+    requireEqualCharge(detached.bytes, attached.bytes, "detachment changed retained logical bytes");
+    requireEqualCharge(detached.entries, attached.entries, "detachment changed retained entry count");
     requireLiveChildResources(&fixture, 1, "attached-to-detached transfer released the live slot or timer");
     twfRequireEqualU32(fixture.trace.next_payload, 0, "parent loss forced Payload through child Pause");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "parent loss finished a blocked owned child early");
 
+    /* The source owner releases the borrowed parent before the detached drain. */
+    lineDestroy(fixture.parent_l);
+    fixture.parent_l = NULL;
     lineRef(fixture.child_l);
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
 
     twfRequire(! lineIsAlive(fixture.child_l), "detached Resume left the owned child alive");
     twfRequireEqualText(fixture.trace.seq, "UPPF", "detached owned drain callback order is wrong");
     twfRequireEqualU32(registry->count, 0, "detached registry count survived completion");
-    requireEqualCharge(registry->queued_charge, 0, "detached registry charge survived completion");
+    const buffer_budget_cost_t settled = bufferbudgetGetUsage(&registry->queue_budget);
+    requireEqualCharge(settled.charge, 0, "detached registry charge survived completion");
+    requireEqualCharge(settled.bytes, 0, "detached registry bytes survived completion");
+    requireEqualCharge(settled.entries, 0, "detached registry entries survived completion");
     twfRequire(registry->head == NULL, "detached registry head survived completion");
     requireLiveChildResources(&fixture, 0, "detached Resume finalization did not release slot and timer once");
     for (uint32_t i = 0; i < kFirst; ++i)
@@ -590,15 +611,22 @@ static void caseParentLossRetainsPausedEmptyOwnedChild(void)
     twfRequire(child_ls->detached_registered && child_ls->parent == NULL,
                "empty-queue owned child did not enter the detached registry");
     twfRequireEqualU32(registry->count, 1, "empty-queue detached owned child was not counted");
-    requireEqualCharge(child_ls->pending_child_queue_charge, 0, "empty detached owned child acquired charge");
-    requireEqualCharge(registry->queued_charge, 0, "empty detached registry acquired queue charge");
+    requireEqualCharge(
+        bufferqueueGetCharge(&child_ls->pending_child_data), 0, "empty detached owned child acquired charge");
+    requireEqualCharge(
+        bufferbudgetGetUsage(&registry->queue_budget).charge, 0, "empty detached registry acquired queue charge");
+    twfRequire(child_ls->pending_child_data.budget == &registry->queue_budget,
+               "empty detached queue still borrows its freed parent budget");
 
+    lineDestroy(fixture.parent_l);
+    fixture.parent_l = NULL;
     lineRef(fixture.child_l);
     muxserverTunnelDownStreamResume(fixture.mux, fixture.child_l);
 
     twfRequire(! lineIsAlive(fixture.child_l), "empty detached owned child survived Resume");
     twfRequireEqualU32(registry->count, 0, "empty detached owned child count survived Resume");
-    requireEqualCharge(registry->queued_charge, 0, "empty detached registry charge survived Resume");
+    requireEqualCharge(
+        bufferbudgetGetUsage(&registry->queue_budget).charge, 0, "empty detached registry charge survived Resume");
     requireLiveChildResources(&fixture, 0, "empty detached owned child retained its slot or idle item");
     twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer empty detached Resume");
 
@@ -622,7 +650,7 @@ static void caseDetachedLocalFinishAbortsResidualQueue(void)
     twfRequireEqualU32(fixture.trace.next_finish, 0, "detached local Finish reflected Finish toward its sender");
     twfRequireEqualU32(
         ts->worker_states[0].detached_registry.count, 0, "detached local Finish retained registry membership");
-    requireEqualCharge(ts->worker_states[0].detached_registry.queued_charge,
+    requireEqualCharge(bufferbudgetGetUsage(&ts->worker_states[0].detached_registry.queue_budget).charge,
                        0,
                        "detached local Finish retained queue-charge accounting");
     requireLiveChildResources(&fixture, 0, "detached local abort did not release slot and timer once");
@@ -657,7 +685,9 @@ static void caseWorkerStopDiscardsDetachedQueue(void)
     twfRequireEqualU32(fixture.trace.next_finish, 1, "worker stop did not finish the child exactly once");
     twfRequire(ts->worker_states[0].detached_registry.head == NULL, "worker stop retained the detached registry head");
     twfRequireEqualU32(ts->worker_states[0].detached_registry.count, 0, "worker stop retained detached children");
-    requireEqualCharge(ts->worker_states[0].detached_registry.queued_charge, 0, "worker stop retained detached charge");
+    requireEqualCharge(bufferbudgetGetUsage(&ts->worker_states[0].detached_registry.queue_budget).charge,
+                       0,
+                       "worker stop retained detached charge");
     requireLiveChildResources(&fixture, 0, "worker stop did not release slot and timer once");
     twfRequire(ts->worker_states[0].child_idle_table == NULL, "worker stop retained the child idle table");
     twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer worker stop");
@@ -685,7 +715,9 @@ static void caseDetachedChildLimitAbortsOnlyNewBlockedChild(void)
     twfRequire(ts->worker_states[0].detached_registry.head == NULL, "detached child limit corrupted the registry head");
     twfRequireEqualU32(
         ts->worker_states[0].detached_registry.count, 0, "detached child limit retained registry membership");
-    requireEqualCharge(ts->worker_states[0].detached_registry.queued_charge, 0, "detached child limit retained charge");
+    requireEqualCharge(bufferbudgetGetUsage(&ts->worker_states[0].detached_registry.queue_budget).charge,
+                       0,
+                       "detached child limit retained charge");
     twfRequireOwnedLineReclaimed(fixture.child_l, "MuxServer detached child limit");
 
     fixtureTeardown(&fixture);
@@ -702,15 +734,15 @@ static void requireDetachedRegistryLinks(muxserver_detached_registry_t *registry
         twfRequire(ls->detached_registered, message);
         twfRequire(ls->detached_prev == prev, message);
         twfRequire(ls->parent == NULL && ls->close_state == kMuxServerChildCloseParentGoneDraining, message);
-        twfRequire(ls->pending_child_queue_charge <= SIZE_MAX - charge, message);
-        charge += ls->pending_child_queue_charge;
+        twfRequire(bufferqueueGetCharge(&ls->pending_child_data) <= SIZE_MAX - charge, message);
+        charge += bufferqueueGetCharge(&ls->pending_child_data);
         prev = ls;
         ++count;
     }
     twfRequireEqualU32(count, expected_count, message);
     twfRequireEqualU32(registry->count, expected_count, message);
     requireEqualCharge(charge, expected_charge, message);
-    requireEqualCharge(registry->queued_charge, expected_charge, message);
+    requireEqualCharge(bufferbudgetGetUsage(&registry->queue_budget).charge, expected_charge, message);
 }
 
 static void casePopulatedDetachedRegistrySupportsEveryRemovalPosition(void)
@@ -744,7 +776,7 @@ static void casePopulatedDetachedRegistrySupportsEveryRemovalPosition(void)
 
     muxserver_lstate_t *head_ls     = registry->head;
     line_t             *head_l      = head_ls->l;
-    size_t              head_charge = head_ls->pending_child_queue_charge;
+    size_t              head_charge = bufferqueueGetCharge(&head_ls->pending_child_data);
     muxserver_lstate_t *head_next   = head_ls->detached_next;
     lineRef(head_l);
     muxserverTunnelDownStreamResume(fixture.mux, head_l);
@@ -762,7 +794,7 @@ static void casePopulatedDetachedRegistrySupportsEveryRemovalPosition(void)
     twfRequire(middle_ls != NULL && middle_ls->detached_prev != NULL && middle_ls->detached_next != NULL,
                "the populated registry has no true middle entry after head removal");
     line_t             *middle_l      = middle_ls->l;
-    size_t              middle_charge = middle_ls->pending_child_queue_charge;
+    size_t              middle_charge = bufferqueueGetCharge(&middle_ls->pending_child_data);
     muxserver_lstate_t *middle_prev   = middle_ls->detached_prev;
     muxserver_lstate_t *middle_next   = middle_ls->detached_next;
     lineRef(middle_l);
@@ -783,7 +815,8 @@ static void casePopulatedDetachedRegistrySupportsEveryRemovalPosition(void)
     muxserverTunnelOnWorkerStop(fixture.mux, 0, wwLifecycleProcessShutdown());
     twfRequire(registry->head == NULL, "worker stop retained the final detached registry head");
     twfRequireEqualU32(registry->count, 0, "worker stop retained populated-registry children");
-    requireEqualCharge(registry->queued_charge, 0, "worker stop retained populated-registry charge");
+    requireEqualCharge(
+        bufferbudgetGetUsage(&registry->queue_budget).charge, 0, "worker stop retained populated-registry charge");
     twfRequireEqualU32(fixture.trace.next_payload, 1, "worker stop forwarded queued detached Payload");
     twfRequireEqualU32(fixture.trace.next_finish, 3, "worker stop did not finish both remaining children once");
     for (uint32_t i = 0; i < ARRAY_SIZE(remaining); ++i)
@@ -858,7 +891,9 @@ static void runMuxserverDetachedByteLimitCase(bool unlimited)
     fixture.child_l = NULL;
     twfRequire(registry->head == NULL, "server detached byte-limit drain retained registry head");
     twfRequireEqualU32(registry->count, 0, "server detached byte-limit drain retained registry count");
-    requireEqualCharge(registry->queued_charge, 0, "server detached byte-limit drain retained registry charge");
+    requireEqualCharge(bufferbudgetGetUsage(&registry->queue_budget).charge,
+                       0,
+                       "server detached byte-limit drain retained registry charge");
 
     fixtureTeardown(&fixture);
 }
@@ -867,6 +902,18 @@ static tunnel_t *g_reentrant_pause_mux = NULL;
 
 static void pauseServerChildAfterFirstPayload(tunnel_t *next, line_t *child_l, sbuf_t *buf)
 {
+    muxserver_lstate_t            *child    = lineGetState(child_l, g_reentrant_pause_mux);
+    muxserver_detached_registry_t *registry = muxserverGetDetachedRegistry(g_reentrant_pause_mux, child_l);
+    const buffer_budget_cost_t     retained = bufferbudgetGetUsage(&registry->queue_budget);
+    twfRequire(child->pending_child_data.budget == &registry->queue_budget && child->detached_registered,
+               "detached ownership was not published before Payload");
+    requireEqualCharge(retained.bytes,
+                       bufferqueueGetBufLen(&child->pending_child_data),
+                       "detached budget retained popped bytes during Payload");
+    requireEqualCharge(retained.charge,
+                       bufferqueueGetCharge(&child->pending_child_data),
+                       "detached budget retained popped charge during Payload");
+    requireEqualCharge(retained.entries, 1, "detached budget retained popped entry during Payload");
     twfNextPayload(next, child_l, buf);
     if (g_reentrant_pause_mux != NULL)
     {
@@ -900,11 +947,12 @@ static void caseDetachedDrainStopsOnReentrantPause(void)
     const size_t        entry_charge = pooledBufferCharge(&fixture, true);
     twfRequireEqualU32(fixture.trace.next_payload, 1, "re-entrant Pause did not stop after the first Payload");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "re-entrant Pause allowed early Finish");
-    requireEqualCharge(ts->worker_states[0].detached_registry.queued_charge,
+    requireEqualCharge(bufferbudgetGetUsage(&ts->worker_states[0].detached_registry.queue_budget).charge,
                        entry_charge,
                        "re-entrant Pause corrupted residual detached charge");
-    requireEqualCharge(
-        child_ls->pending_child_queue_charge, entry_charge, "re-entrant Pause corrupted residual child charge");
+    requireEqualCharge(bufferqueueGetCharge(&child_ls->pending_child_data),
+                       entry_charge,
+                       "re-entrant Pause corrupted residual child charge");
     twfRequire(child_ls->paused, "re-entrant Pause was not retained on the detached child");
 
     fixture.next->fnPayloadU = twfNextPayload;

@@ -56,7 +56,8 @@ static void caseIncomingReceiveLimit(bool unlimited, bool partial_header)
     discard pqEnforce(f.mux, f.parent_l);
     if (unlimited || partial_header)
     {
-        twfRequire(parent->parent_state != NULL && parent->pending_child_queue_charge == 0,
+        twfRequire(parent->parent_state != NULL &&
+                       bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge == 0,
                    "incoming accounting leaked into child aggregate or imposed an implicit cap");
         twfRequire(splicestreamCharge(parent->parent_state->read_stream) == (partial_header ? 0 : charge),
                    "cached header charged an exhausted sbuf or incomplete body was uncharged");
@@ -146,7 +147,7 @@ static void caseReceiveMultipleVictims(bool kill_parent)
         child->open_frame_submitted = true;
 #endif
         twfRequire(pqQueue(f.mux, f.parent_l, ts, parent, child, makePatternPayload(&f, 1)), "cannot seed child queue");
-        charge = child->pending_child_queue_charge;
+        charge = bufferqueueGetCharge(&child->pending_child_data);
     }
     uint8_t header[9];
     writeFrameHeader(header, 100, kMuxFlagData, kTestChildCid);
@@ -176,7 +177,7 @@ static void caseReceiveMultipleVictims(bool kill_parent)
                    "pressure failed to remove two oldest equal-charge victims");
         twfRequireLineStateZeroed(children[0], f.mux, "oldest victim retained state");
         twfRequireLineStateZeroed(children[1], f.mux, "second victim retained state");
-        twfRequire(parent->pending_child_queue_charge == charge &&
+        twfRequire(bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge == charge &&
                        splicestreamCharge(parent->parent_state->read_stream) == incoming,
                    "shedding mixed child and incoming ownership counters");
     }
@@ -280,7 +281,8 @@ static void caseThousandsOfChildren(void)
             state->open_frame_submitted = true;
 #endif
         }
-        twfRequire(parent->children_count == 2500 && parent->pending_child_queue_charge == 0 &&
+        twfRequire(parent->children_count == 2500 &&
+                       bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge == 0 &&
                        parent->parent_state->output.charge == 0 &&
                        splicestreamCharge(parent->parent_state->read_stream) == 0,
                    "idle children acquired queue charges");

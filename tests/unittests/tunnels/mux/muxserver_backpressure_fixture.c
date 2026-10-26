@@ -62,6 +62,8 @@ void mxbMuxServerCreate(mxb_fixture_t *fixture)
     ts->detached_buffer_limit         = kMxbRetainedChargeLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
+    bufferbudgetInit(&ts->worker_states[0].detached_registry.queue_budget,
+                     (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
 }
 
 void mxbMuxServerInitializeLines(mxb_fixture_t *fixture)
@@ -114,13 +116,14 @@ size_t mxbMuxServerChildQueuedBytes(const mxb_fixture_t *fixture)
 
 size_t mxbMuxServerChildQueueCharge(const mxb_fixture_t *fixture)
 {
-    return ((muxserver_lstate_t *) lineGetState(fixture->child, fixture->mux))->pending_child_queue_charge;
+    muxserver_lstate_t *child_ls = lineGetState(fixture->child, fixture->mux);
+    return bufferqueueGetCharge(&child_ls->pending_child_data);
 }
 
 size_t mxbMuxServerParentQueueCharge(const mxb_fixture_t *fixture)
 {
     muxserver_lstate_t *parent_ls = lineGetState(fixture->parent, fixture->mux);
-    return parent_ls->pending_child_queue_charge;
+    return bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge;
 }
 
 uint32_t mxbMuxServerDetachedChildren(const mxb_fixture_t *fixture)
@@ -130,7 +133,8 @@ uint32_t mxbMuxServerDetachedChildren(const mxb_fixture_t *fixture)
 
 size_t mxbMuxServerDetachedCharge(const mxb_fixture_t *fixture)
 {
-    return ((muxserver_tstate_t *) tunnelGetState(fixture->mux))->worker_states[0].detached_registry.queued_charge;
+    muxserver_tstate_t *ts = tunnelGetState(fixture->mux);
+    return bufferbudgetGetUsage(&ts->worker_states[0].detached_registry.queue_budget).charge;
 }
 
 bool mxbMuxServerDetachedHeadIsChild(const mxb_fixture_t *fixture)
@@ -145,7 +149,7 @@ void mxbMuxServerDestroy(mxb_fixture_t *fixture)
     muxserver_tstate_t *ts = tunnelGetState(fixture->mux);
     mxbRequire(ts->worker_states[0].detached_registry.head == NULL &&
                    ts->worker_states[0].detached_registry.count == 0 &&
-                   ts->worker_states[0].detached_registry.queued_charge == 0,
+                   bufferbudgetGetUsage(&ts->worker_states[0].detached_registry.queue_budget).charge == 0,
                "MuxServer composition teardown retained detached registry state");
 
     if (fixture->parent != NULL)

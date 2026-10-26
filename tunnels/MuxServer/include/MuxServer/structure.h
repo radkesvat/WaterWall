@@ -35,7 +35,7 @@ typedef struct muxserver_detached_registry_s
 {
     muxserver_lstate_t *head;
     uint32_t            count;
-    size_t              queued_charge;
+    buffer_budget_t     queue_budget;
 } muxserver_detached_registry_t;
 
 typedef struct muxserver_rejection_bucket_s
@@ -46,6 +46,7 @@ typedef struct muxserver_rejection_bucket_s
 
 typedef struct muxserver_parent_state_s
 {
+    buffer_budget_t              child_queue_budget;
     muxserver_lstate_t          *local_hold_head;
     muxserver_lstate_t          *local_hold_tail;
     uint32_t                     local_hold_count;
@@ -112,8 +113,7 @@ struct muxserver_lstate_s
     struct muxserver_lstate_s *detached_next;      // child-only detached owner registry link
     muxserver_lstate_t        *local_hold_prev;
     muxserver_lstate_t        *local_hold_next;
-    buffer_queue_t             pending_child_data; // ordered decoded byte chunks retained while paused
-    size_t    pending_child_queue_charge; // child: own retained resource charge; parent: attached-child aggregate
+    buffer_queue_t                pending_child_data;         // ordered decoded byte chunks retained while paused
     mux_cid_t connection_id;              // unique connection id, used for multiplexing
     muxserver_child_close_state_t close_state; // child: monotonic ordered-close/drain state
     uint32_t children_count; // number of children in the parent connection, used for concurrency mode counter

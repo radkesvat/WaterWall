@@ -26,6 +26,7 @@ typedef struct muxclient_parent_state_s
     muxclient_lstate_t   *local_hold_tail;
     uint32_t              local_hold_count;
     mux_parent_output_t   output;
+    buffer_budget_t       child_queue_budget;
     unsigned              receive_depth;     // Nonzero defers enforcement and Resume's kept-byte reparse.
     bool                  receive_enforcing; // Close callbacks may re-enter parser/admission.
     mux_frame_t           read_frame;        // Header remains cached while its body is consumed incrementally.
@@ -52,7 +53,7 @@ typedef struct muxclient_worker_state_s
     muxclient_lstate_t *owned_parents;
     line_t             *unsatisfied_line;
     local_idle_table_t *keepalive_table;
-    size_t              detached_queued_charge;
+    buffer_budget_t     detached_queue_budget;
     uint32_t            detached_child_count;
     uint64_t            next_parent_id;
     uint64_t            next_child_key;
@@ -110,8 +111,7 @@ struct muxclient_lstate_s
     struct muxclient_lstate_s *child_next;         // next child in the parent connection
     muxclient_lstate_t        *local_hold_prev;
     muxclient_lstate_t        *local_hold_next;
-    buffer_queue_t             pending_child_data; // ordered decoded byte chunks retained while paused
-    size_t    pending_child_queue_charge; // child: own retained resource charge; parent: attached-child aggregate
+    buffer_queue_t                pending_child_data;         // ordered decoded byte chunks retained while paused
     uint64_t  creation_epoch;             // monotonic creation time in milliseconds, used for timer mode
     mux_cid_t connection_id;              // unique connection id, used for multiplexing
     muxclient_child_close_state_t close_state; // child: monotonic ordered-close/drain state

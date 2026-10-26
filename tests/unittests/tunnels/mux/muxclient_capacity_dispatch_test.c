@@ -106,6 +106,8 @@ static void fixtureSetup(muxclient_capacity_fixture_t *fixture, uint8_t mode, ui
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->max_children                  = 16;
     ts->workers_count                 = 1;
+    bufferbudgetInit(&ts->worker_states[0].detached_queue_budget,
+                     (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX, .entries = SIZE_MAX});
 
     if (mode == kConcurrencyModeFixedConnectionsCount)
     {
@@ -154,7 +156,8 @@ static void fixtureTeardown(muxclient_capacity_fixture_t *fixture)
 
     muxclient_tstate_t *ts = tunnelGetState(fixture->mux);
     twfRequireEqualU32(ts->worker_states[0].detached_child_count, 0, "MuxClient fixture retained detached children");
-    twfRequire(ts->worker_states[0].detached_queued_charge == 0, "MuxClient fixture retained detached bytes");
+    twfRequire(bufferbudgetGetUsage(&ts->worker_states[0].detached_queue_budget).charge == 0,
+               "MuxClient fixture retained detached bytes");
     muxclientTunnelOnWorkerStop(fixture->mux, 0, wwLifecycleProcessShutdown());
     twfRequire(ts->worker_states[0].stall_retired_parents == 0, "shutdown retained stalled-parent accounting");
 
@@ -279,7 +282,7 @@ static void caseTimerRotationIgnoresWallClock(void)
 
 static void caseEmbeddedWorkerStates(void)
 {
-    twfSetCase("MuxClient constructor embeds zeroed state through the highest worker slot");
+    twfSetCase("MuxClient constructor initializes state through the highest worker slot");
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, kClientTestBufferSize, kMuxFrameLength * 2U);
     GSTATE.workers_count                = 4;
@@ -299,9 +302,11 @@ static void caseEmbeddedWorkerStates(void)
                "inline worker array does not fit the tunnel allocation");
     muxclient_worker_state_t zero;
     memoryZero(&zero, sizeof(zero));
+    bufferbudgetInit(&zero.detached_queue_budget,
+                     (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX, .entries = SIZE_MAX});
     for (wid_t wid = 0; wid < 4; ++wid)
         twfRequire(memcmp(&ts->worker_states[wid], &zero, sizeof(zero)) == 0,
-                   "constructor did not zero an embedded worker state");
+                   "constructor did not initialize an embedded worker state");
     ts->worker_states[3].next_parent_id = 7;
     twfRequire(ts->worker_states[2].next_parent_id == 0 && ts->worker_states[3].next_parent_id == 7,
                "highest worker slot overlaps its neighbor");
@@ -725,6 +730,9 @@ static void caseWorkerDrainIsLocal(void)
         tunnelBind(muxes[instance], nexts[instance]);
         states[instance]                                = tunnelGetState(muxes[instance]);
         states[instance]->workers_count                 = 2;
+        for (wid_t wid = 0; wid < 2; ++wid)
+            bufferbudgetInit(&states[instance]->worker_states[wid].detached_queue_budget,
+                             (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX, .entries = SIZE_MAX});
         states[instance]->concurrency_mode              = kConcurrencyModeCounter;
         states[instance]->concurrency_capacity          = UINT32_MAX;
         states[instance]->keepalive                     = true;
