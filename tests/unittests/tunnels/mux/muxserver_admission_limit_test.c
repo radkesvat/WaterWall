@@ -75,6 +75,7 @@ static WTHREAD_ROUTINE(reservationThreadMain)
 
 static void testAdmissionDefaults(void)
 {
+    require(kMuxDefaultMaxLiveChildren == 0, "default aggregate MuxServer limit must be unlimited");
     static const uint32_t reserves[] = {
         32U * 1024U * 1024U,
         77U * 1024U * 1024U,
@@ -197,6 +198,74 @@ static void testMemoryHysteresis(void)
     memoryFree(ts);
 }
 
+static void testUnlimitedMemoryAdmission(void)
+{
+    system_load_state_t sampler = {0};
+    require(systemLoadSamplerTryInit(&sampler), "failed to initialize unlimited admission sampler");
+    admission_memory_provider_t provider = {
+        .host_total = 1000000, .host_available = 500000, .result = kSystemMemoryProviderOk};
+    atomicStoreU64Relaxed(&provider.now_ms, 100);
+    systemLoadSamplerSetMemoryTestHooks(&sampler, admissionProvider, admissionNow, &provider);
+    require(systemLoadSamplerUpdate(&sampler), "failed to publish fresh unlimited admission snapshot");
+    system_load_state_t *saved_sampler = GSTATE.system_load;
+    GSTATE.system_load                 = &sampler;
+
+    muxserver_tstate_t *ts                = memoryAllocateZero(sizeof(*ts));
+    ts->max_live_children                 = 0;
+    ts->memory_fallback_max_live_children = 3;
+    ts->memory_high_watermark_percent     = 85;
+    ts->memory_low_watermark_percent      = 75;
+    atomicStoreRelaxed(&ts->live_children_count, 262144U);
+
+    muxserver_memory_admission_t decision = muxserverEvaluateMemoryAdmission(ts);
+    require(decision.permits_memory && decision.effective_ceiling == 0,
+            "fresh memory did not preserve unlimited aggregate admission");
+    require(muxserverTryReserveLiveChildSlot(ts, decision.effective_ceiling) &&
+                atomicLoadRelaxed(&ts->live_children_count) == 262145U,
+            "unlimited aggregate admission retained the former 262144-child ceiling");
+    muxserverReleaseLiveChildSlot(ts);
+    require(atomicLoadRelaxed(&ts->live_children_count) == 262144U,
+            "unlimited aggregate reservation release did not restore the prior count");
+
+    provider.host_available = 150000;
+    atomicStoreU64Relaxed(&provider.now_ms, 200);
+    require(systemLoadSamplerUpdate(&sampler), "failed to publish unlimited admission pressure");
+    decision = muxserverEvaluateMemoryAdmission(ts);
+    require(! decision.permits_memory && decision.gate_closed,
+            "unlimited aggregate admission bypassed the memory pressure gate");
+
+    atomicStoreU64Relaxed(&provider.now_ms, 1201);
+    decision = muxserverEvaluateMemoryAdmission(ts);
+    require(! decision.permits_memory && decision.gate_closed && decision.effective_ceiling == 3,
+            "stale unlimited admission reopened a pressure-closed gate");
+    atomicStoreU64Relaxed(&ts->memory_admission_state, 0);
+    decision = muxserverEvaluateMemoryAdmission(ts);
+    require(decision.permits_memory && decision.effective_ceiling == 3,
+            "unlimited aggregate admission disabled the stale-memory fallback ceiling");
+    require(! muxserverTryReserveLiveChildSlot(ts, decision.effective_ceiling),
+            "fallback admission accepted an unlimited count above its ceiling");
+    atomicStoreRelaxed(&ts->live_children_count, 2);
+    require(muxserverTryReserveLiveChildSlot(ts, decision.effective_ceiling) &&
+                ! muxserverTryReserveLiveChildSlot(ts, decision.effective_ceiling) &&
+                atomicLoadRelaxed(&ts->live_children_count) == 3,
+            "fallback admission did not retain an exact positive ceiling with an unlimited hard limit");
+
+    atomicStoreRelaxed(&ts->live_children_count, (w_atomic_uint_value_t) W_ATOMIC_UINT_VALUE_MAX - 1);
+    require(muxserverTryReserveLiveChildSlot(ts, 0) &&
+                atomicLoadRelaxed(&ts->live_children_count) == W_ATOMIC_UINT_VALUE_MAX,
+            "unlimited reservation refused the final representable accounting slot");
+    require(! muxserverTryReserveLiveChildSlot(ts, 0) &&
+                atomicLoadRelaxed(&ts->live_children_count) == W_ATOMIC_UINT_VALUE_MAX,
+            "unlimited reservation wrapped its accounting counter");
+    muxserverReleaseLiveChildSlot(ts);
+    require(atomicLoadRelaxed(&ts->live_children_count) == (w_atomic_uint_value_t) W_ATOMIC_UINT_VALUE_MAX - 1,
+            "unlimited reservation could not release the final accounting slot");
+
+    GSTATE.system_load = saved_sampler;
+    systemLoadSamplerDestroy(&sampler);
+    memoryFree(ts);
+}
+
 static void testConcurrentReservations(void)
 {
     enum
@@ -294,6 +363,7 @@ int main(void)
     testAdmissionDefaults();
     testPlatformProductionFallback();
     testMemoryHysteresis();
+    testUnlimitedMemoryAdmission();
     testConcurrentReservations();
     testCidIndexesAndRejectionBucket();
     printf("muxserver_admission_limit_test: all cases passed\n");

@@ -141,7 +141,7 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
     if (! muxserverReadUintSetting(
             settings, "max-children", kMuxDefaultMaxChildrenPerParent, 1, INT_MAX, &max_children) ||
         ! muxserverReadUintSetting(
-            settings, "max-live-children", kMuxDefaultMaxLiveChildren, 1, INT_MAX, &max_live_children) ||
+            settings, "max-live-children", kMuxDefaultMaxLiveChildren, 0, INT_MAX, &max_live_children) ||
         ! muxserverReadUintSetting(settings,
                                    "memory-fallback-max-live-children",
                                    admission_defaults.fallback_live_children,
@@ -179,7 +179,7 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (max_children > max_live_children)
+    if (max_live_children != 0 && max_children > max_live_children)
     {
         LOGF("MuxServer: \"max-children\" (%u) must not exceed \"max-live-children\" (%u)",
              max_children,
@@ -187,7 +187,7 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
         tunnelDestroy(t);
         return NULL;
     }
-    if (memory_fallback_children > max_live_children)
+    if (max_live_children != 0 && memory_fallback_children > max_live_children)
     {
         LOGF("MuxServer: \"memory-fallback-max-live-children\" (%u) must not exceed "
              "\"max-live-children\" (%u)",

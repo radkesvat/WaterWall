@@ -80,7 +80,7 @@ typedef struct muxserver_tstate_s
     uint32_t detached_buffer_limit;
     uint32_t detached_child_limit;
     uint32_t max_children;
-    uint32_t max_live_children;
+    uint32_t max_live_children; // Zero disables the configured aggregate ceiling.
     uint32_t memory_fallback_max_live_children;
     uint32_t initial_child_idle_timeout_ms;
     uint32_t active_child_idle_timeout_ms;
@@ -143,7 +143,7 @@ typedef enum muxserver_admission_reason_e
 
 typedef struct muxserver_memory_admission_s
 {
-    uint32_t                        effective_ceiling;
+    uint32_t                        effective_ceiling; // Zero means unlimited; fallback always supplies a ceiling.
     uint64_t                        snapshot_generation;
     system_memory_snapshot_status_t snapshot_status;
     muxserver_admission_reason_t    reason;

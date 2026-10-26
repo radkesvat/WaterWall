@@ -862,8 +862,7 @@ static void caseDetachedConfiguration(void)
             ts->child_buffer_resume_threshold, 524288U, "default MuxServer child resume threshold must be 512 KiB");
         twfRequireEqualU32(
             ts->max_children, kMuxDefaultMaxChildrenPerParent, "default MuxServer per-parent child limit drifted");
-        twfRequireEqualU32(
-            ts->max_live_children, kMuxDefaultMaxLiveChildren, "default MuxServer aggregate child limit drifted");
+        twfRequireEqualU32(ts->max_live_children, 0, "default MuxServer aggregate child limit must be unlimited");
         twfRequireEqualU32(
             ts->memory_reserve, profiles[i].buffer_limit, "profile-derived MuxServer admission reserve drifted");
         twfRequireEqualU32(ts->memory_fallback_max_live_children,
@@ -923,10 +922,53 @@ static void caseDetachedConfiguration(void)
     muxserverTunnelDestroy(mux, wwLifecycleProcessShutdown());
     cJSON_Delete(settings);
 
+    static const struct
+    {
+        const char *json;
+        uint32_t    hard_limit;
+        uint32_t    parent_limit;
+        uint32_t    fallback_limit;
+    } valid_admission_settings[] = {
+        {"{\"max-live-children\":0}", 0, 10000, 60000},
+        {"{\"max-children\":262145,\"memory-fallback-max-live-children\":262146}", 0, 262145, 262146},
+        {"{\"max-live-children\":0,\"max-children\":262145,\"memory-fallback-max-live-children\":262146}",
+         0,
+         262145,
+         262146},
+        {"{\"max-live-children\":11,\"max-children\":11,\"memory-fallback-max-live-children\":11}", 11, 11, 11},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(valid_admission_settings); ++i)
+    {
+        settings = cJSON_Parse(valid_admission_settings[i].json);
+        twfRequire(settings != NULL, "failed to create valid MuxServer aggregate limit settings");
+        node.node_settings_json = settings;
+        mux                     = muxserverTunnelCreate(&node);
+        twfRequire(mux != NULL, "valid unlimited or finite MuxServer admission settings were rejected");
+        ts = tunnelGetState(mux);
+        twfRequireEqualU32(ts->max_live_children,
+                           valid_admission_settings[i].hard_limit,
+                           "MuxServer aggregate limit setting was not preserved");
+        twfRequireEqualU32(ts->max_children,
+                           valid_admission_settings[i].parent_limit,
+                           "MuxServer per-parent limit changed with the aggregate limit");
+        twfRequireEqualU32(ts->memory_fallback_max_live_children,
+                           valid_admission_settings[i].fallback_limit,
+                           "MuxServer fallback limit changed with the aggregate limit");
+        muxserverTunnelDestroy(mux, wwLifecycleProcessShutdown());
+        cJSON_Delete(settings);
+    }
+
     static const char *const invalid_admission_settings[] = {
         "{\"max-children\":0}",
         "{\"max-children\":11,\"max-live-children\":10}",
-        "{\"max-live-children\":10,\"memory-fallback-max-live-children\":11}",
+        "{\"max-children\":10,\"max-live-children\":10,\"memory-fallback-max-live-children\":11}",
+        "{\"max-live-children\":-1}",
+        "{\"max-live-children\":1.5}",
+        "{\"max-live-children\":true}",
+        "{\"max-live-children\":null}",
+        "{\"max-live-children\":\"0\"}",
+        "{\"max-live-children\":2147483648}",
+        "{\"max-live-children\":0,\"memory-fallback-max-live-children\":0}",
         "{\"memory-high-watermark-percent\":75,\"memory-low-watermark-percent\":75}",
         "{\"memory-high-watermark-percent\":99,\"memory-low-watermark-percent\":100}",
         "{\"initial-child-idle-timeout-ms\":20,\"active-child-idle-timeout-ms\":19}",

@@ -81,7 +81,7 @@ enum
     kMuxRamProfileTierMaximum      = 5,
 
     kMuxDefaultMaxChildrenPerParent       = 10000,
-    kMuxDefaultMaxLiveChildren            = 256U * 1024U,
+    kMuxDefaultMaxLiveChildren            = 0,
     kMuxDefaultInitialChildIdleTimeoutMs  = 10U * 1000U,
     kMuxDefaultActiveChildIdleTimeoutMs   = 300U * 1000U,
     kMuxDefaultMemoryHighWatermarkPercent = 85,

@@ -502,11 +502,14 @@ static void runAggregateCase(system_memory_provider_result_t memory_result, uint
             "one production child destruction did not release exactly one timer");
     const uint32_t admitted_before = raceTotal(fixture.admitted);
     const uint32_t rejected_before = raceTotal(fixture.rejected);
+    const uint32_t replacement_admissions =
+        hard_ceiling == 0 && memory_result == kSystemMemoryProviderOk ? kRaceWorkers : 1U;
     runRace(&fixture, 1, 2);
-    require(raceTotal(fixture.admitted) == admitted_before + 1U &&
-                raceTotal(fixture.rejected) == rejected_before + 1U &&
-                (uint32_t) atomicLoadRelaxed(&ts->live_children_count) == expected_ceiling,
-            "racing replacement Opens did not reuse exactly one released aggregate slot");
+    require(raceTotal(fixture.admitted) == admitted_before + replacement_admissions &&
+                raceTotal(fixture.rejected) == rejected_before + kRaceWorkers - replacement_admissions &&
+                (uint32_t) atomicLoadRelaxed(&ts->live_children_count) ==
+                    expected_ceiling - 1U + replacement_admissions,
+            "racing replacement Opens did not honor the finite or unlimited aggregate ceiling");
 
     GSTATE.system_load = saved_sampler;
     systemLoadSamplerDestroy(&sampler);
@@ -523,6 +526,16 @@ int main(void)
                      3,
                      3,
                      "MuxServer production parser races registered workers at the fallback ceiling");
+    runAggregateCase(kSystemMemoryProviderOk,
+                     0,
+                     2,
+                     kRaceWorkers * kRaceOpensPerRound,
+                     "MuxServer production parser accounts for all concurrent Opens with no hard ceiling");
+    runAggregateCase(kSystemMemoryProviderUnsupported,
+                     0,
+                     3,
+                     3,
+                     "MuxServer unlimited hard ceiling retains the fallback ceiling across registered workers");
     puts("muxserver_admission_concurrency_test: all cases passed");
     return 0;
 }

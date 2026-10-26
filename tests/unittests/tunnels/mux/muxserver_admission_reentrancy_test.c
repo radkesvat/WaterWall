@@ -633,6 +633,80 @@ static void caseFreshAbundantUsesButNeverBypassesHardCeiling(void)
     fixtureTeardown(&fixture);
 }
 
+static void caseUnlimitedHardCeilingRetainsOtherAdmissionGates(void)
+{
+    twfSetCase("MuxServer unlimited aggregate admission retains per-parent, fallback and pressure gates");
+    muxserver_admission_fixture_t fixture;
+    fixtureSetup(&fixture, kMuxFrameLength);
+    muxserver_tstate_t *ts                = tunnelGetState(fixture.mux);
+    ts->max_live_children                 = 0;
+    ts->max_children                      = 1;
+    ts->memory_fallback_max_live_children = 2;
+    line_t *parent_l                      = fixtureCreateParent(&fixture);
+
+    server_memory_provider_t provider = {.host_total = 1000, .host_available = 500, .result = kSystemMemoryProviderOk};
+    atomicStoreU64Relaxed(&provider.now_ms, 100);
+    system_load_state_t sampler = {0};
+    twfRequire(systemLoadSamplerTryInit(&sampler), "failed to initialize unlimited parser sampler");
+    systemLoadSamplerSetMemoryTestHooks(&sampler, serverMemoryProvider, serverMemoryNow, &provider);
+    twfRequire(systemLoadSamplerUpdate(&sampler), "failed to publish fresh unlimited parser memory");
+    system_load_state_t *saved_sampler = GSTATE.system_load;
+    GSTATE.system_load                 = &sampler;
+    muxserver_lstate_t *parent_ls      = lineGetState(parent_l, fixture.mux);
+
+    // Seed only aggregate accounting so the production Open crosses the former limit without huge line allocation.
+    atomicStoreRelaxed(&ts->live_children_count, 262144U);
+    sendFrame(&fixture, parent_l, 801, kMuxFlagOpen, 0);
+    twfRequireEqualU32(parent_ls->children_count, 1, "unlimited aggregate admission rejected a fresh Open");
+    twfRequireEqualU32((uint32_t) atomicLoadRelaxed(&ts->live_children_count),
+                       262145U,
+                       "production Open retained the former aggregate child ceiling");
+    sendFrame(&fixture, parent_l, 802, kMuxFlagOpen, 0);
+    requireCloseFrame(&fixture, 802);
+    twfRequireEqualU32(parent_ls->children_count, 1, "unlimited aggregate admission bypassed the per-parent cap");
+
+    ts->max_children = 4;
+    provider.result  = kSystemMemoryProviderUnavailable;
+    atomicStoreU64Relaxed(&provider.now_ms, 1101);
+    discard systemLoadSamplerUpdate(&sampler);
+    fixture.trace.capture_len = 0;
+    sendFrame(&fixture, parent_l, 803, kMuxFlagOpen, 0);
+    requireCloseFrame(&fixture, 803);
+    twfRequireEqualU32(parent_ls->children_count, 1, "unlimited hard cap bypassed fallback with a larger live count");
+
+    // Remove the synthetic accounting before testing real child reclamation and teardown.
+    discard atomicSubExplicit(&ts->live_children_count, 262144U, memory_order_relaxed);
+    fixture.trace.capture_len = 0;
+    sendFrame(&fixture, parent_l, 804, kMuxFlagOpen, 0);
+    twfRequireEqualU32(parent_ls->children_count, 2, "unlimited hard cap did not admit below the fallback ceiling");
+    sendFrame(&fixture, parent_l, 805, kMuxFlagOpen, 0);
+    requireCloseFrame(&fixture, 805);
+    twfRequireEqualU32(parent_ls->children_count, 2, "unlimited hard cap exceeded the fallback ceiling");
+
+    provider.result         = kSystemMemoryProviderOk;
+    provider.host_available = 150;
+    atomicStoreU64Relaxed(&provider.now_ms, 1200);
+    twfRequire(systemLoadSamplerUpdate(&sampler), "failed to publish unlimited parser memory pressure");
+    fixture.trace.capture_len = 0;
+    sendFrame(&fixture, parent_l, 806, kMuxFlagOpen, 0);
+    requireCloseFrame(&fixture, 806);
+    twfRequireEqualU32(parent_ls->children_count, 2, "unlimited hard cap bypassed memory pressure");
+
+    provider.host_available = 500;
+    atomicStoreU64Relaxed(&provider.now_ms, 1300);
+    twfRequire(systemLoadSamplerUpdate(&sampler), "failed to publish unlimited parser memory recovery");
+    fixture.trace.capture_len = 0;
+    sendFrame(&fixture, parent_l, 807, kMuxFlagOpen, 0);
+    twfRequireEqualU32(
+        parent_ls->children_count, 3, "fresh recovery retained the unlimited hard cap's fallback ceiling");
+    twfRequireEqualU32(fixture.trace.next_init, 3, "unlimited admission initialized a rejected child");
+    twfRequire(lineIsAlive(parent_l), "ordinary unlimited admission rejections destroyed the parent");
+
+    GSTATE.system_load = saved_sampler;
+    systemLoadSamplerDestroy(&sampler);
+    fixtureTeardown(&fixture);
+}
+
 static void caseRejectionCanDestroyParentReentrantly(void)
 {
     twfSetCase("MuxServer rejection callback may destroy the borrowed parent re-entrantly");
@@ -852,6 +926,7 @@ int main(void)
         kSystemMemoryProviderUnsupported, 1, "MuxServer initially unsupported sampler uses immediate fallback");
     caseLastValidFreshnessThenFallback();
     caseFreshAbundantUsesButNeverBypassesHardCeiling();
+    caseUnlimitedHardCeilingRetainsOtherAdmissionGates();
     caseRejectionCanDestroyParentReentrantly();
     caseChildInitCanDestroyOnlyChild();
     caseChildInitCanDestroyParent();

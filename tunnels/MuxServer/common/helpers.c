@@ -17,7 +17,9 @@ muxserver_memory_admission_t muxserverEvaluateMemoryAdmission(muxserver_tstate_t
     system_memory_snapshot_t              snapshot = {0};
     const system_memory_snapshot_status_t status   = systemMemorySnapshotGet(&snapshot);
     muxserver_memory_admission_t          decision = {
-                 .effective_ceiling   = min(ts->max_live_children, ts->memory_fallback_max_live_children),
+                 .effective_ceiling   = ts->max_live_children == 0
+                                            ? ts->memory_fallback_max_live_children
+                                            : min(ts->max_live_children, ts->memory_fallback_max_live_children),
                  .snapshot_generation = snapshot.generation,
                  .snapshot_status     = status,
                  .reason              = kMuxServerAdmissionAllowedFallback,
@@ -76,12 +78,13 @@ muxserver_memory_admission_t muxserverEvaluateMemoryAdmission(muxserver_tstate_t
 
 bool muxserverTryReserveLiveChildSlot(muxserver_tstate_t *ts, uint32_t effective_ceiling)
 {
-    assert(effective_ceiling > 0 && effective_ceiling <= ts->max_live_children);
+    assert(ts->max_live_children == 0 || (effective_ceiling > 0 && effective_ceiling <= ts->max_live_children));
 
     w_atomic_uint_value_t count = atomicLoadRelaxed(&ts->live_children_count);
     for (;;)
     {
-        if (count >= effective_ceiling)
+        // Unlimited admission still keeps reservation accounting representable.
+        if ((effective_ceiling != 0 && count >= effective_ceiling) || count == W_ATOMIC_UINT_VALUE_MAX)
         {
             return false;
         }
