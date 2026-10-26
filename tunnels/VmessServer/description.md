@@ -1,5 +1,5 @@
 <!--
-Documentation version: 2
+Documentation version: 3
 Sync note: Keep this file, WaterWall-Docs/docs/02-noderefs/VmessServer.mdx and WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VmessServer.mdx synchronized.
 -->
 
@@ -258,3 +258,17 @@ cases force more than 65,536 records over one counted transport connection.
 Native Debug/Release tests drive two real wraps, independent boundary checkpoints,
 packetaddr ownership/bounds, strict policy, parser mutations, stats and replay.
 See `tests/cases/vmess_interop/README.md` and the Developer Guide Part 6 for commands.
+
+## Node Metadata
+
+Source-backed metadata from `tunnels/VmessServer/instance/node.c`:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagBlocksSplice` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

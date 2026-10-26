@@ -83,6 +83,20 @@ deadlines so timer rounding cannot shorten the configured delay.
 
 ### Initial TLS ClientHello records
 
+For TLS record fragmentation, use a `settings` object such as:
+
+```json
+{
+  "mode": "counter",
+  "count": 1,
+  "tls-hello-fragment": true,
+  "cuts": [[128, 2, 100]]
+}
+```
+
+This selects the cut at handshake offset 128 if it falls inside the initial
+ClientHello. The default `wait-for-est: true` still applies.
+
 Set `tls-hello-fragment: true` to apply `cuts` only to the initial ClientHello.
 Offsets count handshake message bytes, including its four-byte type/length header
 and excluding every five-byte TLS record header. An eligible first non-empty
@@ -206,3 +220,17 @@ WaterWall's fragmentation features draw inspiration from:
   feature.
 
 We thank both developers for sharing their work with the community.
+
+## Node Metadata
+
+Source-backed metadata from `instance/node.c`:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagSupportsSplice` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

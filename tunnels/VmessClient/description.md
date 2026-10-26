@@ -1,5 +1,5 @@
 <!--
-Documentation version: 2
+Documentation version: 3
 Sync note: Keep this file, WaterWall-Docs/docs/02-noderefs/VmessClient.mdx and WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VmessClient.mdx synchronized.
 -->
 
@@ -268,19 +268,32 @@ table. Invalid/nonempty bodies, expired deadlines and insufficient result/workin
 budgets return an API error. Working memory includes 4,608 bytes of fixed render/
 metadata scratch plus the actual result-pool allocation charge.
 
-## Build and metadata
+## Build and limitations
 
 `INCLUDE_VMESS_CLIENT` enables the node in standard builds. VmessClient and VmessServer
 share the internal VmessCommon codec and its direct OpenSSL provider requirement
 (3.3 or newer for streaming SHAKE), independently of the generic crypto backend.
 Client-only builds need neither VmessServer nor AuthenticationClient/UserController.
 
-The node is an L4 middle node with previous and next support,
-`required_padding_left=0` and `kNodeFlagBlocksSplice`. The complete expanded chain
-uses ordinary buffers; new output retains full onward pool padding.
+The complete expanded chain uses ordinary buffers; new output retains full onward
+pool padding.
 
 Unsupported features include legacy headers, AlterID, AES-CFB, AES-CTR, Mux.Cool, XUDP,
 reverse commands, automatic account/security switching, reconnect/replay and new
 transport implementations.
 
 WaterWall Mux framing is custom and does not provide external VMess Mux.Cool interoperability.
+
+## Node Metadata
+
+Source-backed metadata from `instance/node.c`:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagBlocksSplice` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

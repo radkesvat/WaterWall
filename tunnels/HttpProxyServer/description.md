@@ -176,3 +176,17 @@ From `tunnels/HttpProxyServer/examples/local-users/`, run the built executable w
 ```sh
 curl --noproxy "" --proxy http://127.0.0.1:8080 --proxy-basic --proxy-user alice:replace-alice-password http://127.0.0.1:8000/
 ```
+
+## Node Metadata
+
+Source-backed metadata from `tunnels/HttpProxyServer/instance/node.c`:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagSupportsSplice` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

@@ -122,3 +122,17 @@ If you use this folder as the base for a new tunnel, remember the core Waterwall
 
 - `Template` is scaffolding, not a feature tunnel.
 - As currently implemented it adds no buffering, framing, protocol handling, or stateful behavior.
+
+## Node Metadata
+
+Source-backed metadata from `instance/node.c`:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |

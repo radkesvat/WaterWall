@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Keep this file aligned with WaterWall-Docs/docs/02-noderefs/PingServer.mdx.
 -->
 
@@ -70,8 +70,8 @@ downstream requests use `tunnelPrevDownStreamPayload()`.
 | `send-replies` | no | `false` | Boolean. Send exact Echo Replies for received peer requests when true; false or omission skips reply generation. |
 | `identifier` | no | `"random"` | Local request-session identifier. Integer `0..65535` gives a deterministic override. |
 | `sequence-start` | no | `1` | First locally emitted request sequence. Range: `0..65535`. |
-| `ttl` | no | `64` | TTL for locally generated packets. |
-| `tos` | no | `0` | TOS for local requests. Replies copy the incoming request TOS. |
+| `ttl` | no | `64` | TTL for locally generated packets. Integer `0..255`. |
+| `tos` | no | `0` | TOS for local requests. Integer `0..255`; replies copy the incoming request TOS. |
 
 The paired client must reverse `local-ipv4` and `peer-ipv4`. Identifiers are
 local-session values, not a shared peer setting.
@@ -125,9 +125,16 @@ wire-compatible with the removed formats.
 
 ## Node Metadata
 
+Source-backed metadata:
+
 | Property | Value |
 | --- | --- |
-| version | `2` |
-| layer | `kNodeLayer3` on both sides |
-| required left padding | `28` bytes |
+| `version` | `2` |
+| node flags | `kNodeFlagNone` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` |
+| `layer_group_prev_node` | `kNodeLayer3` |
+| `layer_group_next_node` | `kNodeLayer3` |
+| `required_padding_left` | `28` bytes |
 | line state | none |
