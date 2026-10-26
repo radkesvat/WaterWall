@@ -212,6 +212,52 @@ static void testConntrackSetting(void)
     }
 }
 
+static void testKernelQueueSettings(void)
+{
+    cJSON    *settings;
+    tunnel_t *t = createRawSocket("{}", &settings);
+    require(t != NULL, "RawSocket rejected default queue tuning");
+    rawsocket_tstate_t *state = tunnelGetState(t);
+#ifdef OS_LINUX
+    require(state->kernel_queue_tune, "Linux queue tuning did not default on");
+#else
+    require(! state->kernel_queue_tune, "non-Linux queue tuning did not default off");
+#endif
+    require(state->kernel_queue_packets == 0 && state->kernel_receive_buffer == 0,
+            "omitted queue limits did not select automatic sizing");
+    destroyRawSocket(t, settings);
+
+    t = createRawSocket("{\"kernel-queue-tune\":false,\"kernel-queue-packets\":2147483647,"
+                        "\"kernel-receive-buffer\":1}",
+                        &settings);
+    require(t != NULL, "RawSocket rejected valid disabled queue overrides");
+    state = tunnelGetState(t);
+    require(! state->kernel_queue_tune && state->kernel_queue_packets == INT_MAX && state->kernel_receive_buffer == 1,
+            "RawSocket lost explicit queue overrides");
+    destroyRawSocket(t, settings);
+
+    const char *const invalid_bool[] = {"null", "0", "1", "\"true\"", "[]", "{}"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_bool); ++i)
+    {
+        char json[128];
+        snprintf(json, sizeof(json), "{\"kernel-queue-tune\":%s}", invalid_bool[i]);
+        t = createRawSocket(json, &settings);
+        require(t == NULL, "RawSocket accepted non-boolean queue tuning");
+        destroyRawSocket(t, settings);
+    }
+    const char *const names[]   = {"kernel-queue-packets", "kernel-receive-buffer"};
+    const char *const invalid[] = {"null", "0", "-1", "1.5", "2147483648", "1e100", "true", "\"1\"", "[]", "{}"};
+    for (size_t field = 0; field < ARRAY_SIZE(names); ++field)
+        for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+        {
+            char json[160];
+            snprintf(json, sizeof(json), "{\"kernel-queue-tune\":false,\"%s\":%s}", names[field], invalid[i]);
+            t = createRawSocket(json, &settings);
+            require(t == NULL, "RawSocket accepted invalid queue override while tuning was disabled");
+            destroyRawSocket(t, settings);
+        }
+}
+
 static void testProtocolExclusions(void)
 {
     cJSON    *settings;
@@ -256,6 +302,7 @@ int main(void)
     testMissingOrEmptyCaptureListEnablesWriteOnlyMode();
     testSkipSysctlSetting();
     testMultiQueueSetting();
+    testKernelQueueSettings();
     testInvalidCaptureElementIsRejected();
     testConntrackSetting();
     testProtocolExclusions();

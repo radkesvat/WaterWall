@@ -3,6 +3,7 @@
 #include "devices/tun/tun_io_error.h"
 #include "devices/tun/tun_lifecycle.h"
 #ifdef OS_LINUX
+#include "devices/device_kernel_queue_tuning.h"
 #include "devices/tun/tun_linux_gso_limits.h"
 #include "devices/tun/tun_linux_offload.h"
 #endif
@@ -21,6 +22,7 @@
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <net/if.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -44,6 +46,73 @@
 
 #include "cJSON.h"
 #include "tun_linux_private.h"
+
+#ifdef OS_LINUX
+void tundeviceConfigureKernelQueue(tun_device_t *tdev, bool enabled, uint32_t override_length)
+{
+    assert(tdev != NULL && tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleDown);
+    assert(tdev->reader == NULL && tdev->queue_count > 0 && override_length <= INT_MAX);
+    const uint32_t target       = deviceKernelQueueTunTarget(RAM_PROFILE, tdev->queue_count, override_length);
+    char           previous[24] = "unavailable", effective[24] = "unavailable";
+    const int      fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0)
+    {
+        LOGW("TunDevice: %s could not open kernel queue configuration socket: %s", tdev->name, strerror(errno));
+    }
+    else
+    {
+        struct ifreq request = {0};
+        stringCopyN(request.ifr_name, tdev->name, sizeof(request.ifr_name));
+        if (ioctl(fd, SIOCGIFTXQLEN, &request) < 0)
+        {
+            LOGW("TunDevice: %s could not read kernel queue length; leaving it unchanged: %s",
+                 tdev->name,
+                 strerror(errno));
+        }
+        else if (request.ifr_qlen < 0)
+        {
+            LOGW("TunDevice: %s reported an invalid kernel queue length; leaving it unchanged", tdev->name);
+        }
+        else
+        {
+            snprintf(previous, sizeof(previous), "%d", request.ifr_qlen);
+            if (enabled && target > (uint32_t) request.ifr_qlen)
+            {
+                request.ifr_qlen = (int) target;
+                if (ioctl(fd, SIOCSIFTXQLEN, &request) < 0)
+                    LOGW("TunDevice: %s could not raise kernel queue length to %u: %s",
+                         tdev->name,
+                         target,
+                         strerror(errno));
+            }
+        }
+        if (ioctl(fd, SIOCGIFTXQLEN, &request) == 0 && request.ifr_qlen >= 0)
+        {
+            snprintf(effective, sizeof(effective), "%d", request.ifr_qlen);
+            if (enabled && (uint32_t) request.ifr_qlen < target)
+                LOGW("TunDevice: %s kernel queue length effective=%d is below requested=%u",
+                     tdev->name,
+                     request.ifr_qlen,
+                     target);
+        }
+        else
+            LOGW("TunDevice: %s kernel queue length readback unavailable", tdev->name);
+        close(fd);
+    }
+    LOGI("TunDevice: %s kernel queue length: previous=%s requested=%u effective=%s queues=%u tuning=%s profile=%u "
+         "source=%s",
+         tdev->name,
+         previous,
+         target,
+         effective,
+         (unsigned) tdev->queue_count,
+         enabled ? "enabled" : "disabled",
+         (unsigned) RAM_PROFILE,
+         ! enabled              ? "disabled"
+         : override_length != 0 ? "override"
+                                : "auto");
+}
+#endif
 
 static uint32_t ipv4PrefixToMask(unsigned int prefix)
 {

@@ -1,6 +1,7 @@
 #include "capture_linux_nfqueue.h"
 #include "capture_linux_private.h"
 #include "capture_linux_rules.h"
+#include "devices/device_kernel_queue_tuning.h"
 #include "devices/device_pool.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
@@ -36,16 +37,125 @@ static void captureReleaseQueues(capture_device_t *cdev)
     cdev->queue_count = 0;
 }
 
-static bool captureConfigureQueueLimits(capture_linux_queue_t *queue, uint16_t count)
+static bool captureProbeReceiveBuffer(int requested, int *actual)
 {
-    /* These are device-wide ceilings, divided over its fixed queue set. Linux
-     * may cap SO_RCVBUF further according to host policy. */
-    int receive_bytes = kNetfilterSocketRecvBuffer / count;
-    return netfilterSetQueueLength(queue->fd, queue->number, kNetfilterQueueLen / count) &&
-           setsockopt(queue->fd, SOL_SOCKET, SO_RCVBUF, &receive_bytes, sizeof(receive_bytes)) == 0;
+    /* An unbound Netlink socket observes the same namespace's socket limits
+     * without altering a live queue. SOCK_DGRAM and SOCK_RAW use the same
+     * Netlink socket-buffer implementation. */
+    const int fd = socket(AF_NETLINK, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, NETLINK_NETFILTER);
+    if (fd < 0)
+        return false;
+    socklen_t  length = sizeof(*actual);
+    const bool result = setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &requested, sizeof(requested)) == 0 &&
+                        getsockopt(fd, SOL_SOCKET, SO_RCVBUF, actual, &length) == 0;
+    const int saved_errno = errno;
+    close(fd);
+    errno = saved_errno;
+    return result;
 }
 
-static bool captureOpenQueue(capture_linux_queue_t *queue, uint16_t count)
+static bool captureConfigureQueueLimits(capture_device_t *cdev, capture_linux_queue_t *queue, uint16_t count)
+{
+    const uint32_t packet_limit = deviceKernelQueueCapturePackets(
+        cdev->kernel_queue_profile, count, cdev->kernel_queue_packets, cdev->kernel_queue_tune);
+    /* A fallback may reconfigure this descriptor. Never reduce an earlier
+     * request, including one whose ACK was lost and whose result is unknown. */
+    if (! queue->queue_limit_known || packet_limit > queue->requested_queue_limit)
+    {
+        queue->requested_queue_limit = max(packet_limit, queue->requested_queue_limit);
+        queue->queue_limit_known     = netfilterSetQueueLength(queue->fd, queue->number, queue->requested_queue_limit);
+        if (! queue->queue_limit_known)
+            LOGW("CaptureDevice: queue %u maximum-length request %u was not confirmed: %s; effective limit unknown",
+                 queue->number,
+                 queue->requested_queue_limit,
+                 strerror(errno));
+    }
+
+    /* Required copy setup also synchronizes the configuration channel after a
+     * refused or timed-out optional request. Its matching ACK consumes earlier
+     * responses before the packet reader can encounter them. No capture rules
+     * are live here, including during single-queue fallback. */
+    if (! netfilterSetParams(queue->fd, queue->number, NFQNL_COPY_PACKET, kMaxAllowedPacketLength))
+    {
+        LOGE("CaptureDevice: queue %u copy setup/configuration synchronization failed: %s",
+             queue->number,
+             strerror(errno));
+        return false;
+    }
+
+    const int receive_bytes = (int) deviceKernelQueueCaptureReceiveBytes(
+        cdev->kernel_queue_profile, count, cdev->kernel_receive_buffer, cdev->kernel_queue_tune);
+    int       actual;
+    socklen_t length = sizeof(actual);
+    if (getsockopt(queue->fd, SOL_SOCKET, SO_RCVBUF, &actual, &length) != 0)
+        LOGW("CaptureDevice: queue %u cannot read SO_RCVBUF; preserving its existing setting: %s",
+             queue->number,
+             strerror(errno));
+    else if ((uint64_t) actual < (uint64_t) receive_bytes * 2U)
+    {
+        int granted;
+        if (! captureProbeReceiveBuffer(receive_bytes, &granted))
+            LOGW("CaptureDevice: queue %u cannot probe SO_RCVBUF allowance; preserving existing setting: %s",
+                 queue->number,
+                 strerror(errno));
+        else if (granted > actual)
+        {
+            /* A socket can already exceed today's rmem_max. Reapplying even a
+             * larger request would reduce it to that cap. This startup snapshot
+             * cannot serialize a concurrent host-policy change with setsockopt. */
+            queue->requested_receive_bytes = (uint32_t) receive_bytes;
+            if (setsockopt(queue->fd, SOL_SOCKET, SO_RCVBUF, &receive_bytes, sizeof(receive_bytes)) != 0)
+                LOGW("CaptureDevice: queue %u SO_RCVBUF request %d failed; retaining existing setting: %s",
+                     queue->number,
+                     receive_bytes,
+                     strerror(errno));
+        }
+    }
+    return true;
+}
+
+static void captureLogQueueLimits(capture_device_t *cdev)
+{
+    for (uint16_t i = 0; i < cdev->queue_count; ++i)
+    {
+        capture_linux_queue_t *queue           = &cdev->queues[i];
+        int                    actual          = 0;
+        socklen_t              length          = sizeof(actual);
+        const bool             known           = getsockopt(queue->fd, SOL_SOCKET, SO_RCVBUF, &actual, &length) == 0;
+        char                   actual_text[24] = "unavailable";
+        if (known)
+            stringNPrintf(actual_text, sizeof(actual_text), "%d", actual);
+        const uint32_t desired = deviceKernelQueueCaptureReceiveBytes(
+            cdev->kernel_queue_profile, cdev->queue_count, cdev->kernel_receive_buffer, cdev->kernel_queue_tune);
+        if (! known)
+            LOGW("CaptureDevice: queue %u cannot read effective SO_RCVBUF: %s", queue->number, strerror(errno));
+        else if ((uint64_t) actual < (uint64_t) desired * 2U)
+            LOGW("CaptureDevice: queue %u receive buffer is below requested target %u bytes (SO_RCVBUF=%d, Linux "
+                 "doubled accounting); check net.core.rmem_max",
+                 queue->number,
+                 desired,
+                 actual);
+        LOGI("CaptureDevice: %s queue %u of %u, profile=%u, packet source=%s, NFQUEUE request=%u, "
+             "effective=%s; receive source=%s, target=%u, SO_RCVBUF request=%u, actual=%s (Linux doubled accounting)",
+             cdev->name,
+             queue->number,
+             cdev->queue_count,
+             cdev->kernel_queue_profile,
+             ! cdev->kernel_queue_tune         ? "disabled"
+             : cdev->kernel_queue_packets != 0 ? "override"
+                                               : "auto",
+             queue->requested_queue_limit,
+             queue->queue_limit_known ? "ACK-confirmed" : "unknown",
+             ! cdev->kernel_queue_tune          ? "disabled"
+             : cdev->kernel_receive_buffer != 0 ? "override"
+                                                : "auto",
+             desired,
+             queue->requested_receive_bytes,
+             actual_text);
+    }
+}
+
+static bool captureOpenQueue(capture_device_t *cdev, capture_linux_queue_t *queue, uint16_t count)
 {
     const int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, NETLINK_NETFILTER);
     if (fd < 0)
@@ -58,8 +168,7 @@ static bool captureOpenQueue(capture_linux_queue_t *queue, uint16_t count)
         LOGW("CaptureDevice: unable to suppress Netlink overflow notifications: %s", strerror(errno));
     queue->fd = fd;
     if (! netfilterSetConfig(fd, NFQNL_CFG_CMD_BIND, queue->number, 0) ||
-        ! netfilterSetParams(fd, queue->number, NFQNL_COPY_PACKET, kMaxAllowedPacketLength) ||
-        ! captureConfigureQueueLimits(queue, count))
+        ! captureConfigureQueueLimits(cdev, queue, count))
         goto failed;
     return true;
 failed:
@@ -79,7 +188,7 @@ static bool captureUseSingleQueue(capture_device_t *cdev)
     }
     cdev->queue_count                  = 1;
     cdev->queues[0].steering_filter[0] = '\0';
-    return captureConfigureQueueLimits(&cdev->queues[0], 1);
+    return captureConfigureQueueLimits(cdev, &cdev->queues[0], 1);
 }
 
 static bool captureOpenQueues(capture_device_t *cdev)
@@ -108,7 +217,7 @@ static bool captureOpenQueues(capture_device_t *cdev)
     }
     for (uint16_t i = 0; i < count; ++i)
     {
-        if (! captureOpenQueue(&cdev->queues[i], count))
+        if (! captureOpenQueue(cdev, &cdev->queues[i], count))
         {
             LOGW("CaptureDevice: queue %u setup failed: %s", cdev->queues[i].number, strerror(errno));
             if (i == 0 || ! captureUseSingleQueue(cdev))
@@ -149,6 +258,16 @@ void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled)
     cdev->multi_queue = enabled;
 }
 
+void capturedeviceConfigureKernelQueue(capture_device_t *cdev, bool enabled, uint32_t packet_total,
+                                       uint32_t receive_bytes_total)
+{
+    assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown && cdev->reader == NULL);
+    assert(packet_total <= INT_MAX && receive_bytes_total <= INT_MAX);
+    cdev->kernel_queue_tune     = enabled;
+    cdev->kernel_queue_packets  = packet_total;
+    cdev->kernel_receive_buffer = receive_bytes_total;
+}
+
 bool caputredeviceBringUp(capture_device_t *cdev)
 {
     if (! cdev->queue_restartable || ! captureLifecycleTransitionDownToStarting(&cdev->lifecycle))
@@ -182,6 +301,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     if ((cdev->bypass_conntrack && ! capturedeviceInstallRuleKind(cdev, true)) ||
         ! capturedeviceReaderOperational(cdev) || ! captureLifecycleTransitionStartingToUp(&cdev->lifecycle))
         goto failed;
+    captureLogQueueLimits(cdev);
     atomicStoreRelaxed(&cdev->capture_active, true);
     atomicStoreRelaxed(&cdev->up, true);
     if (! captureReaderStart(cdev))
@@ -263,6 +383,8 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     for (uint32_t i = 0; i < capture_range_count; ++i)
         cdev->capture_cidrs[i] = capturedeviceFormatCidrString(&capture_ranges[i]);
     cdev->multi_queue         = true;
+    cdev->kernel_queue_tune    = true;
+    cdev->kernel_queue_profile = RAM_PROFILE;
     cdev->bypass_conntrack    = bypass_conntrack;
     cdev->skip_sysctl         = skip_sysctl;
     cdev->rule_token          = fastRand64();

@@ -183,6 +183,36 @@ static char *rawsocketDuplicateSettingOrDefault(const cJSON *settings, const cha
     return stringDuplicate(source);
 }
 
+static bool rawsocketLoadKernelQueueSettings(rawsocket_tstate_t *state, const cJSON *settings)
+{
+    const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(settings, "kernel-queue-tune");
+    if (enabled != NULL && ! cJSON_IsBool(enabled))
+    {
+        LOGF("JSON Error: RawSocket->settings->kernel-queue-tune : expected true or false");
+        return false;
+    }
+#ifdef OS_LINUX
+    state->kernel_queue_tune = enabled == NULL || cJSON_IsTrue(enabled);
+#else
+    state->kernel_queue_tune = cJSON_IsTrue(enabled);
+#endif
+    const char *const names[]  = {"kernel-queue-packets", "kernel-receive-buffer"};
+    uint32_t *const   values[] = {&state->kernel_queue_packets, &state->kernel_receive_buffer};
+    for (size_t i = 0; i < ARRAY_SIZE(names); ++i)
+    {
+        int64_t                   value;
+        const json_value_status_t status = jsonGetObjectIntegerInRange(settings, names[i], 1, INT_MAX, &value);
+        if (status == kJsonValuePresent)
+            *values[i] = (uint32_t) value;
+        else if (cJSON_GetObjectItemCaseSensitive(settings, names[i]) != NULL)
+        {
+            LOGF("JSON Error: RawSocket->settings->%s : expected an integer from 1 to %d", names[i], INT_MAX);
+            return false;
+        }
+    }
+    return true;
+}
+
 tunnel_t *rawsocketCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(rawsocket_tstate_t), 0);
@@ -208,7 +238,8 @@ tunnel_t *rawsocketCreate(node_t *node)
     rawsocket_tstate_t *state    = tunnelGetState(t);
     const cJSON        *settings = node->node_settings_json;
 
-    if (! packettunnelReadFragmentPolicy(settings, &state->fragment_policy))
+    if (! packettunnelReadFragmentPolicy(settings, &state->fragment_policy) ||
+        ! rawsocketLoadKernelQueueSettings(state, settings))
     {
         rawsocketDestroy(t, wwLifecycleStartupRollback());
         return NULL;

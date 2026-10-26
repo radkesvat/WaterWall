@@ -1,5 +1,5 @@
 <!--
-Documentation version: 158
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RawSocket.mdx, and all files must keep the same documentation version.
 -->
 
@@ -137,6 +137,29 @@ For write-only packet injection, omit all capture-range keys:
 
   Default: `true`
 
+- `kernel-queue-tune` `(boolean)`
+  Tune Linux capture kernel queues at startup. Default: `true` on Linux,
+  `false` elsewhere. `false` retains the baseline NFQUEUE and receive-buffer
+  setup and still logs the kernel settings. Valid values have no effect on
+  other platforms or in write-only mode. This setting is independent of
+  `skip-sysctl` and core `misc.tcp-tune`.
+
+- `kernel-queue-packets` `(integer)`
+  Requested NFQUEUE packet allowance **across this capture device**, divided
+  over its final active receive queues. Omit it for automatic sizing.
+
+- `kernel-receive-buffer` `(integer)`
+  Requested Netlink receive buffering in bytes **across this capture device**,
+  divided over its final active receive sockets. Omit it for automatic sizing.
+  This is the `SO_RCVBUF` request scale, before Linux's doubled accounting.
+
+  Both numeric settings require whole numbers in `1..2147483647` (`INT_MAX`).
+  Zero, negative or fractional numbers, strings, booleans and `null` are rejected;
+  automatic sizing is selected only by omission. Overrides replace automatic
+  targets but never reduce the baseline or a larger current allowance. They are
+  applied only with `kernel-queue-tune` enabled. All three settings are validated
+  even when tuning is disabled, capture is disabled or the platform is not Linux.
+
 - `capture-device-name` `(string)`
   User-visible or internal name for the capture device.
 
@@ -174,6 +197,45 @@ For write-only packet injection, omit all capture-range keys:
   ```
 
 ## Detailed Behavior
+
+### Linux kernel receive queue sizing
+
+Kernel queue sizing uses the final active receive queue count after any fallback.
+The baseline device-wide allowances are 65,536 NFQUEUE packets and 64 MiB of
+requested Netlink receive buffering. Automatic tuning starts from those totals
+and uses these preferred per-queue targets:
+
+| Configured RAM profile | Preferred packets per queue | Preferred receive-buffer request per socket |
+| --- | ---: | ---: |
+| S1 / S2 | 1,024 | 1 MiB |
+| M1 / M2 (`client` / `client-larger`) | 2,048 | 2 MiB |
+| L1 / L2 (`server`) | 4,096 | 4 MiB |
+
+For each resource, the automatic per-queue target is the larger of its baseline
+share and its preferred target, with the preferred target capped by the share of
+131,072 packets or 128 MiB, respectively. Division uses the actual queue count.
+These caps constrain automatic targets, not larger existing values or explicit
+overrides. An explicit total replaces the corresponding automatic target and is
+divided over the active queue set, while preserving at least the baseline share.
+With tuning disabled, baseline setup still runs; the overrides do not apply.
+
+The profiles are configured memory policy, not detected host RAM. Allowances
+apply separately to each capture device, so multiple devices add their budgets.
+These numbers are not actual RSS or packet-payload byte limits. Linux reports
+`SO_RCVBUF` using doubled bookkeeping values, and host socket limits can cap the
+accepted request. If an effective increase cannot be confirmed, tuning preserves
+the existing buffer. Increasing a queue can absorb bursts at
+the cost of extra memory and latency; it is not a throughput guarantee.
+
+Startup logs the active queue count and target source (`auto`, `override` or
+`disabled`), each NFQUEUE limit confirmed by a kernel ACK, and requested/read-back
+`SO_RCVBUF`. An unconfirmed limit is reported as unknown. These logs remain
+enabled when tuning is disabled. Refused tuning or unavailable readback produces
+a warning and keeps usable capture queues running.
+
+This tuning does not change the shared userspace receive FIFO, callback batch
+sizes or raw output backlog. It introduces no global sysctl writes and is
+independent of `skip-sysctl` and core `misc.tcp-tune`.
 
 ### Capture path
 
@@ -315,8 +377,8 @@ By default the Linux capture backend applies best-effort `sysctl` tuning for
 backlogs and other TCP parameters before creating NFQUEUE resources. The core
 `misc.tcp-tune` setting owns writes to `net.core.rmem_max`, `net.core.wmem_max`,
 `net.ipv4.tcp_rmem`, and `net.ipv4.tcp_wmem`. `"skip-sysctl": true` suppresses
-only Capture's tuning batch. The netlink operations and iptables commands
-needed to configure NFQUEUE remain enabled.
+only Capture's sysctl tuning batch. Per-device `kernel-queue-tune`, the netlink
+operations and iptables commands needed to configure NFQUEUE remain independent.
 
 When `bypass-conntrack` is enabled (the default), Linux capture installs a
 matching `CT --notrack` rule in `raw PREROUTING` for each capture source range, with the same protocol exclusions as capture.

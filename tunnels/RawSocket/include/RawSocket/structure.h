@@ -28,6 +28,9 @@ typedef struct rawsocket_tstate_s
     char                     *capture_device_name;
     bool                      skip_sysctl;
     bool                      multi_queue_requested;
+    bool                      kernel_queue_tune;
+    uint32_t                  kernel_queue_packets;
+    uint32_t                  kernel_receive_buffer;
     uint32_t                  except_fwmark;
 
     char         *raw_device_name;

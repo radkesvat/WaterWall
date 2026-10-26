@@ -11,6 +11,7 @@
 #include "devices/capture/capture_linux_private.h"
 #include "devices/capture/capture_linux_rules.h"
 #include "fixtures/worker_registry_fixture.h"
+#include "loggers/internal_logger.h"
 #include "test_assert.h"
 #include "worker_messages.h"
 #include "wwapi.h"
@@ -48,8 +49,11 @@ typedef struct fake_queue_s
     bool     open, ack_pending;
     uint32_t ack_sequence;
     int      ack_error;
+    uint32_t stale_ack_sequence;
+    int      stale_ack_error;
     uint32_t queue_limit;
     int      receive_buffer;
+    int      receive_actual;
 } fake_queue_t;
 
 typedef struct fake_rule_s
@@ -69,6 +73,8 @@ typedef struct test_env_s
 static captured_message_t messages[kMaxMessages];
 static unsigned           message_count;
 static fake_queue_t       sockets[kMaxSockets];
+static fake_queue_t       probe_socket;
+static unsigned           probe_count, probe_close_count;
 static unsigned           socket_count, close_count, bind_count, failed_bind, receive_count;
 static fake_rule_t        rules[kMaxRules];
 static unsigned rule_count, installed_rules, steering_inserts, steering_deletes, single_inserts, failed_steering_insert;
@@ -77,11 +83,20 @@ static device_reader_session_t *tracked_session;
 static master_pool_t           *tracked_pool;
 static sbuf_t                  *tracked_packet;
 static unsigned                 session_frees, pool_destroys, packet_destroys;
+static int                      initial_receive_actual, receive_cap, queue_length_error;
+static bool                     refuse_receive_buffer, fail_receive_query, delay_length_ack, timeout_next_poll;
+static bool                     refuse_copy_params;
+static unsigned                 stale_acks_received;
+static bool                     fail_probe_open, refuse_probe_buffer, fail_probe_query;
+static char                     log_capture[64 * 1024];
+static size_t                   log_capture_length;
 
 int      __wrap_socket(int domain, int type, int protocol);
 int      __wrap_bind(int fd, const struct sockaddr *address, socklen_t length);
 int      __wrap_setsockopt(int fd, int level, int option, const void *value, socklen_t length);
 int      __real_setsockopt(int fd, int level, int option, const void *value, socklen_t length);
+int      __wrap_getsockopt(int fd, int level, int option, void *value, socklen_t *length);
+int      __real_getsockopt(int fd, int level, int option, void *value, socklen_t *length);
 int      __wrap_close(int fd);
 int      __real_close(int fd);
 ssize_t  __wrap_sendto(int fd, const void *data, size_t length, int flags, const struct sockaddr *address,
@@ -103,10 +118,23 @@ void                           __wrap_sbufDestroy(sbuf_t *buffer);
 
 static fake_queue_t *findSocket(int fd)
 {
+    if (probe_socket.open && probe_socket.fd == fd)
+        return &probe_socket;
     for (unsigned i = 0; i < socket_count; ++i)
         if (sockets[i].open && sockets[i].fd == fd)
             return &sockets[i];
     return NULL;
+}
+
+static void captureLog(int level, const char *text, int length)
+{
+    discard level;
+    if (text == NULL || length <= 0)
+        return;
+    const size_t count = min((size_t) length, sizeof(log_capture) - log_capture_length - 1);
+    memoryCopy(log_capture + log_capture_length, text, count);
+    log_capture_length += count;
+    log_capture[log_capture_length] = '\0';
 }
 
 int __wrap_socket(int domain, int type, int protocol)
@@ -114,16 +142,30 @@ int __wrap_socket(int domain, int type, int protocol)
     require(domain == AF_NETLINK && protocol == NETLINK_NETFILTER, "unexpected socket family in Capture setup");
     require((type & (SOCK_NONBLOCK | SOCK_CLOEXEC)) == (SOCK_NONBLOCK | SOCK_CLOEXEC),
             "Capture queue setup lost nonblocking or close-on-exec flags");
+    const bool probe = (type & ~(SOCK_NONBLOCK | SOCK_CLOEXEC)) == SOCK_DGRAM;
+    if (probe && fail_probe_open)
+    {
+        errno = EMFILE;
+        return -1;
+    }
     require(socket_count < kMaxSockets, "too many queue sockets");
     const int fd = dup(STDERR_FILENO);
     require(fd >= 0, "unable to allocate inert queue descriptor");
-    sockets[socket_count++] = (fake_queue_t) {.fd = fd, .open = true};
+    if (probe)
+    {
+        require(! probe_socket.open, "receive allowance probes overlapped");
+        probe_socket = (fake_queue_t) {.fd = fd, .open = true, .receive_actual = initial_receive_actual};
+        ++probe_count;
+    }
+    else
+        sockets[socket_count++] = (fake_queue_t) {.fd = fd, .open = true, .receive_actual = initial_receive_actual};
     return fd;
 }
 
 int __wrap_bind(int fd, const struct sockaddr *address, socklen_t length)
 {
-    require(findSocket(fd) != NULL && length == sizeof(struct sockaddr_nl) && address->sa_family == AF_NETLINK,
+    require(findSocket(fd) != NULL && findSocket(fd) != &probe_socket && length == sizeof(struct sockaddr_nl) &&
+                address->sa_family == AF_NETLINK,
             "Capture bound an unexpected queue descriptor");
     return 0;
 }
@@ -135,9 +177,32 @@ int __wrap_setsockopt(int fd, int level, int option, const void *value, socklen_
         return __real_setsockopt(fd, level, option, value, length);
     require(length == sizeof(int), "queue option has the wrong geometry");
     if (level == SOL_SOCKET && option == SO_RCVBUF)
+    {
         memoryCopy(&queue->receive_buffer, value, sizeof(queue->receive_buffer));
+        if (queue == &probe_socket ? refuse_probe_buffer : refuse_receive_buffer)
+        {
+            errno = EPERM;
+            return -1;
+        }
+        queue->receive_actual = (int) min((uint64_t) queue->receive_buffer * 2U, (uint64_t) receive_cap);
+    }
     else
         require(level == SOL_NETLINK && option == NETLINK_NO_ENOBUFS, "unexpected queue socket option");
+    return 0;
+}
+
+int __wrap_getsockopt(int fd, int level, int option, void *value, socklen_t *length)
+{
+    fake_queue_t *queue = findSocket(fd);
+    if (queue == NULL)
+        return __real_getsockopt(fd, level, option, value, length);
+    require(level == SOL_SOCKET && option == SO_RCVBUF && *length == sizeof(int), "unexpected receive-buffer readback");
+    if (fail_receive_query || (queue == &probe_socket && fail_probe_query))
+    {
+        errno = EIO;
+        return -1;
+    }
+    memoryCopy(value, &queue->receive_actual, sizeof(int));
     return 0;
 }
 
@@ -147,7 +212,10 @@ int __wrap_close(int fd)
     if (queue != NULL)
     {
         queue->open = false;
-        ++close_count;
+        if (queue == &probe_socket)
+            ++probe_close_count;
+        else
+            ++close_count;
     }
     return __real_close(fd);
 }
@@ -165,6 +233,13 @@ ssize_t __wrap_sendto(int fd, const void *data, size_t length, int flags, const 
             "fixture expected an acknowledged queue configuration message");
     const struct nfgenmsg *generic   = NLMSG_DATA(header);
     const struct nfattr   *attribute = NFM_NFA(generic);
+    require(installed_rules == 0, "queue configuration overlapped active capture rules");
+    if (queue->ack_pending)
+    {
+        require(queue->stale_ack_sequence == 0, "fixture overflowed its delayed ACK slot");
+        queue->stale_ack_sequence = queue->ack_sequence;
+        queue->stale_ack_error    = queue->ack_error;
+    }
     queue->ack_pending               = true;
     queue->ack_sequence              = header->nlmsg_seq;
     queue->ack_error                 = 0;
@@ -180,10 +255,18 @@ ssize_t __wrap_sendto(int fd, const void *data, size_t length, int flags, const 
     {
         uint32_t value;
         memoryCopy(&value, NFA_DATA(attribute), sizeof(value));
-        queue->queue_limit = ntohl(value);
+        queue->ack_error = queue_length_error;
+        if (queue_length_error == 0)
+            queue->queue_limit = ntohl(value);
+        if (delay_length_ack)
+            timeout_next_poll = true;
     }
     else
+    {
         require(attribute->nfa_type == NFQA_CFG_PARAMS, "unexpected queue configuration attribute");
+        if (refuse_copy_params)
+            queue->ack_error = -EPERM;
+    }
     return (ssize_t) length;
 }
 
@@ -203,13 +286,20 @@ ssize_t __wrap_recvmsg(int fd, struct msghdr *message, int flags)
     memoryZero(header, NLMSG_LENGTH(sizeof(struct nlmsgerr)));
     header->nlmsg_len                         = NLMSG_LENGTH(sizeof(struct nlmsgerr));
     header->nlmsg_type                        = NLMSG_ERROR;
-    header->nlmsg_seq                         = queue->ack_sequence;
+    const bool stale                          = queue->stale_ack_sequence != 0;
+    header->nlmsg_seq                         = stale ? queue->stale_ack_sequence : queue->ack_sequence;
     struct nlmsgerr *ack                      = NLMSG_DATA(header);
-    ack->error                                = queue->ack_error;
+    ack->error                                = stale ? queue->stale_ack_error : queue->ack_error;
     *(struct sockaddr_nl *) message->msg_name = (struct sockaddr_nl) {.nl_family = AF_NETLINK};
     message->msg_namelen                      = sizeof(struct sockaddr_nl);
     message->msg_flags                        = 0;
-    queue->ack_pending                        = false;
+    if (stale)
+    {
+        queue->stale_ack_sequence = 0;
+        ++stale_acks_received;
+    }
+    else
+        queue->ack_pending = false;
     return header->nlmsg_len;
 }
 
@@ -219,6 +309,11 @@ int __wrap_poll(struct pollfd *fds, nfds_t count, int timeout)
     require(count == 1 && findSocket(fds[0].fd) != NULL && findSocket(fds[0].fd)->ack_pending &&
                 (fds[0].events & POLLIN) != 0,
             "Capture waited outside exclusive acknowledged configuration");
+    if (timeout_next_poll)
+    {
+        timeout_next_poll = false;
+        return 0;
+    }
     fds[0].revents = POLLIN;
     return 1;
 }
@@ -324,15 +419,26 @@ static void resetCase(void)
     for (unsigned i = 0; i < message_count; ++i)
         require(messages[i].settled, "previous case retained a queued message");
     require(close_count == socket_count && installed_rules == 0, "previous case retained native ownership");
+    require(probe_count == probe_close_count && ! probe_socket.open, "previous case retained a socket probe");
     memoryZero(messages, sizeof(messages));
     memoryZero(sockets, sizeof(sockets));
     memoryZero(rules, sizeof(rules));
+    probe_count = probe_close_count = 0;
+    probe_socket                    = (fake_queue_t) {0};
     message_count = socket_count = close_count = bind_count = failed_bind = receive_count = 0;
     rule_count = installed_rules = steering_inserts = steering_deletes = single_inserts = failed_steering_insert = 0;
     delivered_packets = session_frees = pool_destroys = packet_destroys = 0;
     tracked_session                                                     = NULL;
     tracked_pool                                                        = NULL;
     tracked_packet                                                      = NULL;
+    initial_receive_actual                                              = 256 * 1024;
+    receive_cap                                                         = INT_MAX;
+    queue_length_error                                                  = 0;
+    refuse_receive_buffer = fail_receive_query = delay_length_ack = timeout_next_poll = refuse_copy_params = false;
+    stale_acks_received                                                                                    = 0;
+    fail_probe_open = refuse_probe_buffer = fail_probe_query            = false;
+    log_capture_length                                                  = 0;
+    log_capture[0]                                                      = '\0';
     GSTATE.capturedevice_queue_start_number                             = 77;
 }
 
@@ -410,6 +516,7 @@ static void finishDevice(capture_device_t *device)
 {
     capturedeviceDestroy(device);
     require(installed_rules == 0 && close_count == socket_count, "device destruction retained rules or queue sockets");
+    require(probe_count == probe_close_count && ! probe_socket.open, "sizing retained an unbound probe socket");
     cancelMessages();
     require(delivered_packets == 0, "inactive setup or late cleanup published a packet");
 }
@@ -469,6 +576,153 @@ static void testQueueSetupAndFallback(void)
                 captureLifecycleLoad(&device->lifecycle) == kCaptureLifecycleDown && installed_rules == 0 &&
                 socket_count == 1 && close_count == 1 && message_count == 0,
             "first queue failure did not return to a fully settled Down state");
+    finishDevice(device);
+}
+
+static void testKernelQueueTuning(void)
+{
+    resetCase();
+    capture_device_t *device = createDevice();
+    capturedeviceConfigureKernelQueue(device, true, 128U * 1024U, 128U * 1024U * 1024U);
+    require(caputredeviceBringUp(device), "explicit kernel queue sizing prevented startup");
+    for (unsigned i = 0; i < device->queue_count; ++i)
+    {
+        const fake_queue_t *queue = findSocket(device->queues[i].fd);
+        require(queue->queue_limit == 128U * 1024U / kTestWorkers &&
+                    queue->receive_buffer == (int) (128U * 1024U * 1024U / kTestWorkers) &&
+                    device->queues[i].queue_limit_known,
+                "explicit device-wide budgets were not divided across the final native queues");
+    }
+    require(strstr(log_capture, "packet source=override") != NULL &&
+                strstr(log_capture, "receive source=override") != NULL &&
+                strstr(log_capture, "effective=ACK-confirmed") != NULL &&
+                strstr(log_capture, "actual=89478484 (Linux doubled accounting)") != NULL,
+            "startup log lost override provenance, acknowledged limit or actual doubled socket allowance");
+    finishDevice(device);
+
+    resetCase();
+    device = createDevice();
+    capturedeviceConfigureKernelQueue(device, false, INT_MAX, INT_MAX);
+    require(caputredeviceBringUp(device), "disabled tuner prevented startup");
+    requireStartedQueues(device, kTestWorkers);
+    require(strstr(log_capture, "packet source=disabled") != NULL &&
+                strstr(log_capture, "receive source=disabled") != NULL,
+            "disabled tuning was logged as automatic or overridden");
+    finishDevice(device);
+
+    resetCase();
+    device = createDevice();
+    capturedeviceConfigureKernelQueue(device, true, 1, 1);
+    require(caputredeviceBringUp(device), "small override prevented startup");
+    requireStartedQueues(device, kTestWorkers);
+    finishDevice(device);
+
+    resetCase();
+    initial_receive_actual = 256 * 1024 * 1024;
+    device                 = createDevice();
+    require(caputredeviceBringUp(device), "larger existing socket buffer prevented startup");
+    for (unsigned i = 0; i < device->queue_count; ++i)
+    {
+        const fake_queue_t *queue = findSocket(device->queues[i].fd);
+        require(queue->receive_buffer == 0 && queue->receive_actual == initial_receive_actual,
+                "tuning reduced an existing larger socket buffer");
+    }
+    finishDevice(device);
+
+    resetCase();
+    initial_receive_actual = 8 * 1024 * 1024;
+    receive_cap            = 2 * 1024 * 1024;
+    device                 = createDevice();
+    require(caputredeviceBringUp(device), "socket exceeding host ceiling prevented startup");
+    for (unsigned i = 0; i < device->queue_count; ++i)
+    {
+        const fake_queue_t *queue = findSocket(device->queues[i].fd);
+        require(queue->receive_buffer == 0 && queue->receive_actual == initial_receive_actual,
+                "larger target reduced an existing socket to the host ceiling");
+    }
+    require(probe_count == kTestWorkers && strstr(log_capture, "receive source=auto") != NULL &&
+                strstr(log_capture, "SO_RCVBUF request=0, actual=8388608") != NULL,
+            "preserved socket allowance was not probed or logged with automatic provenance");
+    finishDevice(device);
+
+    resetCase();
+    device = createDevice();
+    capturedeviceConfigureKernelQueue(device, true, 128U * 1024U, 128U * 1024U * 1024U);
+    failed_steering_insert = 2;
+    require(caputredeviceBringUp(device) && device->queue_count == 1, "explicit budget steering fallback failed");
+    const fake_queue_t *queue = findSocket(device->queues[0].fd);
+    require(queue->queue_limit == 128U * 1024U && queue->receive_buffer == 128 * 1024 * 1024 &&
+                device->queues[0].queue_limit_known,
+            "fallback did not recompute budgets for its surviving queue");
+    finishDevice(device);
+}
+
+static void testKernelQueueTuningFailures(void)
+{
+    resetCase();
+    queue_length_error       = -EPERM;
+    refuse_receive_buffer    = true;
+    capture_device_t *device = createDevice();
+    require(caputredeviceBringUp(device) && device->queue_count == kTestWorkers,
+            "optional queue sizing refusal disabled working multiqueue capture");
+    require(strstr(log_capture, "effective=unknown") != NULL,
+            "failed queue sizing was logged as an effective accepted limit");
+    for (unsigned i = 0; i < device->queue_count; ++i)
+        require(! device->queues[i].queue_limit_known &&
+                    findSocket(device->queues[i].fd)->receive_actual == initial_receive_actual,
+                "refused sizing was reported as accepted or changed the existing socket buffer");
+    finishDevice(device);
+
+    resetCase();
+    delay_length_ack = true;
+    device           = createDevice();
+    require(caputredeviceBringUp(device) && stale_acks_received == kTestWorkers,
+            "required copy setup did not consume delayed optional-sizing ACKs");
+    for (unsigned i = 0; i < device->queue_count; ++i)
+        require(! device->queues[i].queue_limit_known && ! findSocket(device->queues[i].fd)->ack_pending,
+                "timed-out sizing was called confirmed or left an ACK for the packet reader");
+    finishDevice(device);
+
+    resetCase();
+    delay_length_ack = refuse_copy_params = true;
+    device                                = createDevice();
+    require(! caputredeviceBringUp(device) && installed_rules == 0 && close_count == socket_count,
+            "unusable configuration channel activated capture rules");
+    finishDevice(device);
+
+    resetCase();
+    fail_receive_query = true;
+    device             = createDevice();
+    require(caputredeviceBringUp(device), "receive-buffer query failure disabled a working queue");
+    for (unsigned i = 0; i < device->queue_count; ++i)
+        require(findSocket(device->queues[i].fd)->receive_buffer == 0,
+                "unknown existing socket buffer was overwritten");
+    require(strstr(log_capture, "actual=unavailable") != NULL,
+            "failed socket readback was logged as a numeric effective allowance");
+    finishDevice(device);
+
+    for (unsigned failure = 0; failure < 3; ++failure)
+    {
+        resetCase();
+        fail_probe_open     = failure == 0;
+        refuse_probe_buffer = failure == 1;
+        fail_probe_query    = failure == 2;
+        device              = createDevice();
+        require(caputredeviceBringUp(device), "receive allowance probe failure disabled working capture");
+        for (unsigned i = 0; i < device->queue_count; ++i)
+            require(findSocket(device->queues[i].fd)->receive_buffer == 0 &&
+                        findSocket(device->queues[i].fd)->receive_actual == initial_receive_actual,
+                    "failed probe permitted a potentially shrinking socket write");
+        finishDevice(device);
+    }
+
+    resetCase();
+    receive_cap = 512 * 1024;
+    device      = createDevice();
+    require(caputredeviceBringUp(device), "host receive-buffer cap disabled a working queue");
+    for (unsigned i = 0; i < device->queue_count; ++i)
+        require(findSocket(device->queues[i].fd)->receive_actual == receive_cap,
+                "fixture failed to exercise clamped socket-buffer readback");
     finishDevice(device);
 }
 
@@ -612,12 +866,18 @@ static void envTeardown(test_env_t *env)
 int main(void)
 {
     testCaseSet("capture_linux_message_lifetime_test");
+    logger_t *logger = loggerCreate();
+    loggerSetHandler(logger, captureLog);
+    setInternalLogger(logger);
     test_env_t env;
     envSetup(&env);
     testQueuedCancellationAfterDeviceDestruction();
     testQueueSetupAndFallback();
+    testKernelQueueTuning();
+    testKernelQueueTuningFailures();
     testFullRestartRejectsStaleActivation(&env);
     testFinalizedPaddingAndReassembly();
     envTeardown(&env);
+    internaloggerDestroy();
     return 0;
 }

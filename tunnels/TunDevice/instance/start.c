@@ -57,6 +57,8 @@ void tundeviceTunnelOnStart(tunnel_t *t)
         goto rollback;
     }
 
+    tundeviceConfigureKernelQueue(state->tdev, state->kernel_queue_tune, state->kernel_queue_length);
+
     /* Final topology and actual device framing are now known. Publish before
      * BringUp starts either producer; PTC routes read this lazily on workers. */
     if (packettunnelTrustedChecksumPairEligible(t, t->next) && tundeviceEnableTrustedReceiveChecksums(state->tdev))

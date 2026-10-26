@@ -2,6 +2,8 @@
 
 #include "loggers/network_logger.h"
 
+#include <limits.h>
+
 static tunnel_t *tundeviceTunnelCreateFail(tunnel_t *t)
 {
     tundeviceTunnelDestroy(t, wwLifecycleStartupRollback());
@@ -125,6 +127,25 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
         LOGF("JSON Error: TunDevice->settings->multi-queue must be a boolean");
         return tundeviceTunnelCreateFail(t);
     }
+
+#ifdef OS_LINUX
+    state->kernel_queue_tune = true;
+#else
+    state->kernel_queue_tune = false;
+#endif
+    if (jsonGetObjectBoolean(settings, "kernel-queue-tune", &state->kernel_queue_tune) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: TunDevice->settings->kernel-queue-tune must be a boolean");
+        return tundeviceTunnelCreateFail(t);
+    }
+    int64_t kernel_queue_length = 0;
+    if (jsonGetObjectIntegerInRange(settings, "kernel-queue-length", 1, INT_MAX, &kernel_queue_length) ==
+        kJsonValueInvalid)
+    {
+        LOGF("JSON Error: TunDevice->settings->kernel-queue-length must be an integer between 1 and %d", INT_MAX);
+        return tundeviceTunnelCreateFail(t);
+    }
+    state->kernel_queue_length = (uint32_t) kernel_queue_length;
 
     if (! tundeviceLoadRouteSettings(state, settings))
     {

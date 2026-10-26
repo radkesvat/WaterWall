@@ -26,6 +26,11 @@ bool caputredeviceBringDown(capture_device_t *cdev);
 /* Exclusive inactive configuration. Linux defaults to one receive queue per
  * event worker, falling back to worker 0. Other platforms retain their reader. */
 void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled);
+/* Exclusive inactive configuration; zero totals select profile defaults.
+ * Linux applies best-effort receive sizing before activation. Other platforms
+ * retain their existing native queue configuration. */
+void capturedeviceConfigureKernelQueue(capture_device_t *cdev, bool enabled, uint32_t packet_total,
+                                       uint32_t receive_bytes_total);
 /* Called on each event worker during quiescence, before BringDown. */
 void capturedeviceWorkerQuiesce(capture_device_t *cdev, wid_t wid);
 

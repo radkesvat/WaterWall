@@ -45,6 +45,20 @@ bool          tundeviceBringUp(tun_device_t *tdev);
 bool          tundeviceRequestStop(tun_device_t *tdev);
 bool          tundeviceBringDown(tun_device_t *tdev);
 bool          tundeviceIsUp(const tun_device_t *tdev);
+/* Startup-only, after queue attachment and before BringUp. Linux optionally
+ * raises the interface queue length and always reports its readback. Zero
+ * selects the profile target; a positive override must fit INT_MAX. Optional
+ * tuning/refused observation never prevents device startup. */
+#ifdef OS_LINUX
+void tundeviceConfigureKernelQueue(tun_device_t *tdev, bool enabled, uint32_t override_length);
+#else
+static inline void tundeviceConfigureKernelQueue(tun_device_t *tdev, bool enabled, uint32_t override_length)
+{
+    (void) tdev;
+    (void) enabled;
+    (void) override_length;
+}
+#endif
 /* Select once while down, after creation fallbacks. False leaves ordinary TX.
  * No caller may change the selected mode after producer startup, even on stop. */
 #ifdef OS_LINUX

@@ -100,6 +100,8 @@ bool __wrap_caputredeviceBringUp(capture_device_t *cdev)
 {
     require(cdev == &fake_capture_device, "RawSocket brought up an unexpected capture device");
     require(cdev->multi_queue, "RawSocket did not apply its multi-queue setting before capture activation");
+    require(cdev->kernel_queue_tune && cdev->kernel_queue_packets == 131072 && cdev->kernel_receive_buffer == 134217728,
+            "RawSocket did not apply queue tuning before capture activation");
     require(fake_raw_device_up, "RawSocket activated capture before the raw writer was ready");
     notifyCleanup('c');
     return false;
@@ -174,6 +176,9 @@ static void runRawSocketStartWithCaptureBringupFailure(int write_fd)
     state->fragment_policy       = kDeviceFragmentPreserve;
     state->skip_sysctl           = true;
     state->multi_queue_requested = true;
+    state->kernel_queue_tune     = true;
+    state->kernel_queue_packets  = 131072;
+    state->kernel_receive_buffer = 134217728;
     state->firewall_mark         = 7;
     captureProtocolFilterExclude(&state->capture_protocol_filter, 1);
     captureProtocolFilterExclude(&state->capture_protocol_filter, 6);

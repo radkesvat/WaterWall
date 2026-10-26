@@ -43,6 +43,9 @@ static bool         partial_dns;
 static bool         dns_helper_started;
 static bool         last_offload_requested;
 static bool         last_multi_queue_requested;
+static bool         last_kernel_queue_tune;
+static uint32_t     last_kernel_queue_length;
+static unsigned     kernel_queue_configures;
 static char         route_values[][16] = {"1.0.0.0/8", "2.0.0.0/8", "3.0.0.0/8"};
 static char         dns_values[][8]    = {"1.1.1.1", "2.2.2.2"};
 static char         inert_script[]     = "inert fixture script";
@@ -149,7 +152,16 @@ static bool fakeAssignIp(tun_device_t *device, const char *ip, unsigned int subn
     (void) device;
     (void) ip;
     (void) subnet;
+    require(kernel_queue_configures == 1, "kernel queue configuration must precede IP assignment and activation");
     return true;
+}
+
+static void fakeConfigureKernelQueue(tun_device_t *device, bool enabled, uint32_t length)
+{
+    require(device == (tun_device_t *) (uintptr_t) 1, "kernel queue configuration lost the created device");
+    ++kernel_queue_configures;
+    last_kernel_queue_tune   = enabled;
+    last_kernel_queue_length = length;
 }
 
 static bool fakeDeviceSuccess(tun_device_t *device)
@@ -199,6 +211,7 @@ void tundeviceOnIPPacketReceived(tun_device_t *device, void *userdata, sbuf_t *b
 #define tundeviceCreateOwned(name, offload, multi_queue_requested, mtu, userdata, cb, policy, ownership)               \
     fakeCreate(name, offload, multi_queue_requested, mtu, userdata, cb, policy)
 #define tundeviceAssignIP                    fakeAssignIp
+#define tundeviceConfigureKernelQueue        fakeConfigureKernelQueue
 #define tundeviceBringUp                     fakeDeviceSuccess
 #define tundeviceRequestStop                 fakeDeviceSuccess
 #define tundeviceDisableReversePathFiltering fakeDisableReversePathFiltering
@@ -221,6 +234,8 @@ static void resetProbe(void)
     dns_set_ok = dns_clear_ok = bring_down_ok = dns_helper_started = true;
     dns_cancelled = partial_dns = false;
     last_offload_requested = last_multi_queue_requested = false;
+    last_kernel_queue_tune                              = false;
+    last_kernel_queue_length = kernel_queue_configures = 0;
 }
 
 static void testRouteInventory(void)
@@ -390,6 +405,8 @@ static void testStartupRollback(bool gso_requested, bool cancelled, bool cleanup
     tundevice_tstate_t *state    = tunnelGetState(tunnel);
     state->gso_requested         = gso_requested;
     state->multi_queue_requested = ! gso_requested;
+    state->kernel_queue_tune     = gso_requested;
+    state->kernel_queue_length   = gso_requested ? 12345 : 0;
     state->dns_servers[0]        = dns_values[0];
     state->dns_servers[1]        = dns_values[1];
     state->dns_server_count      = 2;
@@ -404,6 +421,9 @@ static void testStartupRollback(bool gso_requested, bool cancelled, bool cleanup
     ww_startup_result_t result = wwStartupContextEnd(&context);
     require(last_multi_queue_requested == state->multi_queue_requested,
             "multi-queue request was not forwarded to the TUN backend");
+    require(last_kernel_queue_tune == state->kernel_queue_tune &&
+                last_kernel_queue_length == state->kernel_queue_length && kernel_queue_configures == 1,
+            "kernel queue settings were not forwarded exactly once before activation");
 #ifdef OS_LINUX
     require(last_offload_requested == gso_requested, "Linux GSO request was not forwarded to the TUN backend");
 #else

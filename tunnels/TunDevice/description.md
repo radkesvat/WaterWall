@@ -1,5 +1,5 @@
 <!--
-Documentation version: 164
+Documentation version: 165
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TunDevice.mdx, and all files must keep the same documentation version.
 -->
 
@@ -173,6 +173,22 @@ Full-route example with local ranges excluded:
   is independent of `gso`. Invalid types, including `null`, are rejected on every
   platform. Non-Linux platforms accept the boolean and ignore it.
 
+- `kernel-queue-tune` `(boolean)`
+  Tune the Linux kernel receive queue at startup. Default: `true` on Linux,
+  `false` elsewhere. `false` leaves the existing kernel queue length unchanged;
+  startup still reports it. Valid values have no effect on other platforms.
+
+- `kernel-queue-length` `(integer)`
+  Requested Linux TUN queue length in packets **per receive queue**. Omit this
+  field to select the RAM-profile default described below. The value must be a
+  whole number in `1..2147483647` (`INT_MAX`); `0` does not mean automatic.
+  An existing larger queue is preserved. The override is applied only when
+  `kernel-queue-tune` is enabled.
+
+  Both queue settings are type-checked on every platform, including when tuning
+  is disabled. Fractional numbers, strings, booleans and `null` are invalid for
+  `kernel-queue-length`; `kernel-queue-tune` requires a boolean.
+
 - `gso` `(boolean)`
   Request Linux TCPv4 segmentation offload. The default remains `true`;
   `false` disables segmentation while every fresh Linux device still attempts
@@ -301,6 +317,36 @@ During `onStart`, `TunDevice`:
 - optionally runs `post-up-script`
 
 The actual device creation is deferred until start time because the tunnel needs chain context to know which side should receive packets.
+
+### Linux kernel receive queue sizing
+
+After queue setup and any single-queue fallback, `kernel-queue-tune` selects a
+startup `txqueuelen` target using the final receive queue count:
+
+| Configured RAM profile | Automatic packets per queue |
+| --- | ---: |
+| S1 / S2 | 1,024 |
+| M1 (`client`) | 2,048 |
+| M2 (`client-larger`) | 4,096 |
+| L1 / L2 (`server`) | 8,192 |
+
+The automatic target is capped at `131072 / active_queue_count`, using integer
+division. `kernel-queue-length` replaces that automatic target and is not subject
+to its cap. Neither choice lowers a larger existing `txqueuelen`. These profiles
+express the configured memory policy; WaterWall does not choose them by detecting
+host RAM. Each TUN device has its own allowance.
+
+Tuning is best effort: a refused change or unavailable query produces a warning
+and leaves usable queues running. Startup reports the active queue count, source
+(`auto`, `override` or `disabled`), and old, requested and read-back queue lengths,
+identifying unavailable readings. Logging also runs with tuning disabled.
+
+This setting affects packets waiting in the kernel for WaterWall to read them.
+The shared userspace receive FIFO, read and write batch sizes, and output backlog
+limits remain separate. Queue counts and packet limits are not allocated RSS or
+payload-byte limits. Larger queues can absorb bursts but can also increase
+latency and memory use; they do not guarantee throughput. This tuning introduces
+no global sysctl changes and is independent of core `misc.tcp-tune`.
 
 ### Packet input path
 

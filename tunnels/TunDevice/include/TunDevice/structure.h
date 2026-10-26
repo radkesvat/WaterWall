@@ -29,6 +29,8 @@ typedef struct tundevice_tstate_s
     uint16_t mtu;         // device mtu, default is CORE_DEFAULT_MTU
     bool     gso_requested;
     bool     multi_queue_requested;
+    bool     kernel_queue_tune;
+    uint32_t kernel_queue_length;
 
     bool   system_route_enabled;
     char  *route_table;

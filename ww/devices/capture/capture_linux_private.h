@@ -10,6 +10,9 @@ typedef struct capture_linux_queue_s
 {
     int      fd;
     uint16_t number;
+    uint32_t requested_queue_limit;
+    bool     queue_limit_known;
+    uint32_t requested_receive_bytes;
     char     steering_filter[kCaptureLinuxSteeringFilterSize];
 } capture_linux_queue_t;
 

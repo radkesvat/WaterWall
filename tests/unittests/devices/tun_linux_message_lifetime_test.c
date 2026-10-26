@@ -1,4 +1,4 @@
-/* Covers worker-owned TUN readiness, activation rollback, asynchronous packet
+/* Covers startup kernel queue tuning, worker-owned TUN readiness, activation rollback, asynchronous packet
  * lifetime, fragment ownership, and ordered GSO/checksum delivery. Native I/O,
  * WIO registration and worker queues are controlled; the real production
  * lifecycle, bounded receive callbacks and packet FIFO run unchanged.
@@ -122,6 +122,10 @@ static bool               raw_attach_exclusive;
 static short              requested_tun_flags[8];
 static unsigned int       requested_tun_flag_count, queue_flag_probes;
 static bool               refuse_multi_queue, record_queue_preference;
+static bool               kernel_queue_probe, fail_kernel_queue_socket, fail_kernel_queue_set;
+static unsigned           kernel_queue_reads, kernel_queue_sets, fail_kernel_queue_reads;
+static int                kernel_queue_value, kernel_queue_clamp;
+static uint32_t           kernel_queue_request;
 /* Readiness callbacks and their worker notifications are separate from the
  * packet delivery FIFO. All production callbacks run as the registered owner. */
 static captured_message_t    reader_messages[kMaxCapturedMessages];
@@ -557,7 +561,36 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
     void *argument = va_arg(args, void *);
     va_end(args);
 
-    if (request == TUNGETFEATURES)
+    if (request == SIOCGIFTXQLEN || request == SIOCSIFTXQLEN)
+    {
+        struct ifreq *ifr = argument;
+        require(kernel_queue_probe && strncmp(ifr->ifr_name, "ww-lifetime-test", IFNAMSIZ - 1) == 0 &&
+                    ifr->ifr_name[IFNAMSIZ - 1] == '\0',
+                "kernel queue setup targeted the wrong interface or lifecycle");
+        if (request == SIOCGIFTXQLEN)
+        {
+            ++kernel_queue_reads;
+            if ((fail_kernel_queue_reads & (1U << (kernel_queue_reads - 1))) != 0)
+            {
+                errno = EIO;
+                return -1;
+            }
+            ifr->ifr_qlen = kernel_queue_value;
+        }
+        else
+        {
+            ++kernel_queue_sets;
+            kernel_queue_request = (uint32_t) ifr->ifr_qlen;
+            require(ifr->ifr_qlen > kernel_queue_value, "kernel queue tuning must never reduce an existing length");
+            if (fail_kernel_queue_set)
+            {
+                errno = EPERM;
+                return -1;
+            }
+            kernel_queue_value = kernel_queue_clamp >= 0 ? kernel_queue_clamp : ifr->ifr_qlen;
+        }
+    }
+    else if (request == TUNGETFEATURES)
     {
         gso_feature_checks++;
         if (gso_feature_checks == fail_feature_check)
@@ -665,6 +698,12 @@ bool __wrap_tunLinuxGsoMaxSegmentsConfigure(const char *ifname, uint32_t request
 
 int __wrap_socket(int domain, int type, int protocol)
 {
+    if (kernel_queue_probe && fail_kernel_queue_socket)
+    {
+        fail_kernel_queue_socket = false;
+        errno                    = EMFILE;
+        return -1;
+    }
     return __real_socket(domain, type, protocol);
 }
 
@@ -1380,6 +1419,249 @@ static tun_device_t *createRunningDevice(void)
     require(tdev != NULL, "production tundeviceCreate failed");
     require(bringUpDevice(tdev), "production tundeviceBringUp failed");
     return tdev;
+}
+
+static void testKernelQueueTuning(void)
+{
+    const struct
+    {
+        uint32_t    profile;
+        uint16_t    queues;
+        uint32_t    override_length;
+        bool        enabled;
+        int         previous;
+        int         clamp;
+        unsigned    fail_reads;
+        bool        fail_set;
+        bool        fail_socket;
+        uint32_t    expected_set;
+        const char *expected_log;
+    } cases[] = {
+        {kRamProfileS1Memory,
+         1,
+         0,
+         true,
+         500,
+         -1,
+         0,
+         false,
+         false,
+         1024,
+         "previous=500 requested=1024 effective=1024 queues=1 tuning=enabled"},
+        {kRamProfileS2Memory,
+         1,
+         0,
+         true,
+         500,
+         -1,
+         0,
+         false,
+         false,
+         1024,
+         "previous=500 requested=1024 effective=1024 queues=1 tuning=enabled"},
+        {kRamProfileM1Memory,
+         1,
+         0,
+         true,
+         500,
+         -1,
+         0,
+         false,
+         false,
+         2048,
+         "previous=500 requested=2048 effective=2048 queues=1 tuning=enabled"},
+        {kRamProfileM2Memory,
+         1,
+         0,
+         true,
+         500,
+         -1,
+         0,
+         false,
+         false,
+         4096,
+         "previous=500 requested=4096 effective=4096 queues=1 tuning=enabled"},
+        {kRamProfileL1Memory,
+         1,
+         0,
+         true,
+         500,
+         -1,
+         0,
+         false,
+         false,
+         8192,
+         "previous=500 requested=8192 effective=8192 queues=1 tuning=enabled"},
+        {kRamProfileL2Memory,
+         64,
+         0,
+         true,
+         500,
+         -1,
+         0,
+         false,
+         false,
+         2048,
+         "previous=500 requested=2048 effective=2048 queues=64 tuning=enabled"},
+        {kRamProfileL2Memory,
+         256,
+         0,
+         true,
+         500,
+         -1,
+         0,
+         false,
+         false,
+         512,
+         "previous=500 requested=512 effective=512 queues=256 tuning=enabled"},
+        {kRamProfileS1Memory,
+         1,
+         32768,
+         true,
+         500,
+         -1,
+         0,
+         false,
+         false,
+         32768,
+         "previous=500 requested=32768 effective=32768 queues=1 tuning=enabled"},
+        {kRamProfileS1Memory,
+         1,
+         0,
+         true,
+         16384,
+         -1,
+         0,
+         false,
+         false,
+         0,
+         "previous=16384 requested=1024 effective=16384 queues=1 tuning=enabled"},
+        {kRamProfileS1Memory,
+         1,
+         2048,
+         true,
+         8192,
+         -1,
+         0,
+         false,
+         false,
+         0,
+         "previous=8192 requested=2048 effective=8192 queues=1 tuning=enabled"},
+        {kRamProfileS1Memory,
+         1,
+         32768,
+         false,
+         500,
+         -1,
+         0,
+         false,
+         false,
+         0,
+         "previous=500 requested=32768 effective=500 queues=1 tuning=disabled"},
+        {kRamProfileS1Memory,
+         1,
+         0,
+         true,
+         500,
+         768,
+         0,
+         false,
+         false,
+         1024,
+         "previous=500 requested=1024 effective=768 queues=1 tuning=enabled"},
+        {kRamProfileS1Memory,
+         1,
+         0,
+         true,
+         500,
+         -1,
+         0,
+         true,
+         false,
+         1024,
+         "previous=500 requested=1024 effective=500 queues=1 tuning=enabled"},
+        {kRamProfileS1Memory,
+         1,
+         0,
+         true,
+         500,
+         -1,
+         1,
+         false,
+         false,
+         0,
+         "previous=unavailable requested=1024 effective=500 queues=1 tuning=enabled"},
+        {kRamProfileS1Memory,
+         1,
+         0,
+         true,
+         500,
+         -1,
+         2,
+         false,
+         false,
+         1024,
+         "previous=500 requested=1024 effective=unavailable queues=1 tuning=enabled"},
+        {kRamProfileS1Memory,
+         1,
+         0,
+         true,
+         500,
+         -1,
+         0,
+         false,
+         true,
+         0,
+         "previous=unavailable requested=1024 effective=unavailable queues=1 tuning=enabled"},
+    };
+    const uint32_t saved_profile = GSTATE.ram_profile;
+    for (unsigned i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        resetGsoSetup();
+        resetReaderFixture(0);
+        resetIoInjection();
+        resetShutdownRequests();
+        tun_device_t *device = createRawDevice("ww-lifetime-test", false, 1500, NULL, NULL, kDeviceFragmentPreserve);
+        require(device != NULL && device->queue_count == 1, "kernel queue fixture construction failed");
+        const uint16_t actual_queues = device->queue_count;
+        /* Model the published native queue count without opening extra host
+         * descriptors; tuning only addresses the interface, never its FDs. */
+        device->queue_count = cases[i].queues;
+        GSTATE.ram_profile  = cases[i].profile;
+        kernel_queue_probe  = true;
+        kernel_queue_reads = kernel_queue_sets = kernel_queue_request = 0;
+        kernel_queue_value                                            = cases[i].previous;
+        kernel_queue_clamp                                            = cases[i].clamp;
+        fail_kernel_queue_reads                                       = cases[i].fail_reads;
+        fail_kernel_queue_set                                         = cases[i].fail_set;
+        fail_kernel_queue_socket                                      = cases[i].fail_socket;
+        resetTunLogCapture();
+        tundeviceConfigureKernelQueue(device, cases[i].enabled, cases[i].override_length);
+        require(kernel_queue_reads == (cases[i].fail_socket ? 0U : 2U), "kernel queue readback was skipped");
+        require(kernel_queue_sets == (cases[i].expected_set != 0) && kernel_queue_request == cases[i].expected_set,
+                "kernel queue tuning selected or applied the wrong increase");
+        require(countTunLogSubstring(cases[i].expected_log) == 1, "kernel queue log omitted actual observation");
+        char source[64];
+        snprintf(source,
+                 sizeof(source),
+                 "profile=%u source=%s",
+                 cases[i].profile,
+                 ! cases[i].enabled              ? "disabled"
+                 : cases[i].override_length != 0 ? "override"
+                                                 : "auto");
+        require(countTunLogSubstring(source) == 1, "kernel queue log omitted profile or target source");
+        if (cases[i].clamp >= 0)
+            require(countTunLogSubstring("effective=768 is below requested=1024") == 1,
+                    "kernel queue clamp was not reported as a warning");
+        if (! cases[i].enabled)
+            require(countTunLogSubstring("is below requested=") == 0, "disabled tuning warned about an ignored target");
+        kernel_queue_probe  = false;
+        device->queue_count = actual_queues;
+        GSTATE.ram_profile  = saved_profile;
+        require(bringUpDevice(device) && tundeviceIsUp(device), "optional kernel queue tuning prevented startup");
+        require(bringDownDevice(device), "kernel queue fixture shutdown failed");
+        destroyDevice(device);
+    }
 }
 
 static void observeReadCallback(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid)
@@ -4242,6 +4524,7 @@ int main(void)
     loggerSetHandler(logger, captureTunLog);
     setInternalLogger(logger);
     checkSumInit();
+    testKernelQueueTuning();
     testReaderMessageCapacity();
     testInactiveReaderRemovesReadInterest();
     testMinimumIpv4Write();

@@ -44,6 +44,10 @@ struct capture_device_s
     uint32_t                            capture_range_count;
     bool                                bypass_conntrack;
     bool                                multi_queue;
+    bool                                kernel_queue_tune;
+    uint32_t                            kernel_queue_packets;
+    uint32_t                            kernel_receive_buffer;
+    uint32_t                            kernel_queue_profile;
     bool                                skip_sysctl;
     char                                protocol_filter[kCaptureLinuxProtocolFilterSize];
     capture_range_rule_states_t        *rule_states;

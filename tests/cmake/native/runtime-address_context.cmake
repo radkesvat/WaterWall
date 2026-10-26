@@ -503,7 +503,7 @@
       "-Wl,--wrap=memoryFree"
       "-Wl,--wrap=masterpoolDestroy"
       "-Wl,--wrap=sbufDestroy"
-      "-Wl,--wrap=socket" "-Wl,--wrap=bind" "-Wl,--wrap=setsockopt" "-Wl,--wrap=close"
+      "-Wl,--wrap=socket" "-Wl,--wrap=bind" "-Wl,--wrap=setsockopt" "-Wl,--wrap=getsockopt" "-Wl,--wrap=close"
       "-Wl,--wrap=sendto" "-Wl,--wrap=recvmsg" "-Wl,--wrap=poll" "-Wl,--wrap=fastRand64"
     )
     target_link_libraries(capture_linux_message_lifetime_test PRIVATE ww)

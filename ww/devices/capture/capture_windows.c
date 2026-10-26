@@ -658,6 +658,15 @@ void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled)
     discard enabled;
 }
 
+void capturedeviceConfigureKernelQueue(capture_device_t *cdev, bool enabled, uint32_t packet_total,
+                                       uint32_t receive_bytes_total)
+{
+    discard cdev;
+    discard enabled;
+    discard packet_total;
+    discard receive_bytes_total;
+}
+
 void capturedeviceWorkerQuiesce(capture_device_t *cdev, wid_t wid)
 {
     discard cdev;
