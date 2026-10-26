@@ -20,7 +20,6 @@ typedef enum capture_rule_state_e
 typedef struct capture_range_rule_states_s
 {
     capture_rule_state_t queue;
-    capture_rule_state_t opaque;
     capture_rule_state_t notrack;
 } capture_range_rule_states_t;
 #endif

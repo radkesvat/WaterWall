@@ -300,7 +300,7 @@ static void capturedeviceAppendProtocolFilter(const char **argv, const char *pro
 
 static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithContext(
     capture_device_t *cdev, const char *operation, const char *cidr, uint32_t queue_number, const char *rule_comment,
-    const char *protocol_filter, const char *steering_filter, unsigned remaining_queues)
+    const char *protocol_filter, const char *steering_filter)
 {
     char queue_number_arg[16];
     stringNPrintf(queue_number_arg, sizeof(queue_number_arg), "%u", queue_number);
@@ -308,9 +308,9 @@ static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithConte
     char lock_wait_arg[16];
     stringNPrintf(lock_wait_arg, sizeof(lock_wait_arg), "%d", kCaptureIptablesLockWaitSeconds);
 
-    /* Sixteen base arguments, two four-argument BPF matches, six statistic
-     * arguments and the terminating NULL. */
-    const char *argv[31] = {"iptables",
+    /* Sixteen base arguments, two four-argument BPF matches and the
+     * terminating NULL. */
+    const char *argv[25] = {"iptables",
                             "-w",
                             lock_wait_arg,
                             operation,
@@ -329,24 +329,6 @@ static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithConte
                             NULL};
     capturedeviceAppendProtocolFilter(argv, protocol_filter);
     capturedeviceAppendProtocolFilter(argv, steering_filter);
-    char probability_arg[16];
-    if (remaining_queues > 1)
-    {
-        /* Integer fixed point keeps the decimal separator independent of the
-         * process locale. Twelve places exceed xt_statistic's precision. */
-        const uint64_t probability = UINT64_C(1000000000000) / remaining_queues;
-        stringNPrintf(probability_arg, sizeof(probability_arg), "0.%012llu", (unsigned long long) probability);
-        size_t count = 0;
-        while (argv[count] != NULL)
-            ++count;
-        argv[count++] = "-m";
-        argv[count++] = "statistic";
-        argv[count++] = "--mode";
-        argv[count++] = "random";
-        argv[count++] = "--probability";
-        argv[count++] = probability_arg;
-        argv[count]   = NULL;
-    }
     return capturedeviceRunCommand(cdev, "iptables", argv);
 }
 
@@ -355,7 +337,7 @@ capturedevice_command_status_t capturedeviceRunIptablesQueueRule(const char *ope
                                                                  const char *protocol_filter)
 {
     return capturedeviceRunIptablesQueueRuleWithContext(
-        NULL, operation, cidr, queue_number, rule_comment, protocol_filter, "", 0);
+        NULL, operation, cidr, queue_number, rule_comment, protocol_filter, "");
 }
 
 static capturedevice_command_status_t capturedeviceRunIptablesNotrackRuleWithContext(capture_device_t *cdev,
@@ -574,8 +556,7 @@ enum
 typedef enum capture_owned_rule_kind_e
 {
     kCaptureOwnedFlow,
-    kCaptureOwnedNotrack,
-    kCaptureOwnedOpaque
+    kCaptureOwnedNotrack
 } capture_owned_rule_kind_t;
 
 static void capturedeviceFormatRuleComment(const capture_device_t *cdev, size_t index, capture_owned_rule_kind_t kind,
@@ -584,9 +565,7 @@ static void capturedeviceFormatRuleComment(const capture_device_t *cdev, size_t 
     stringNPrintf(comment,
                   comment_size,
                   "%s_%016llX_%016zX",
-                  kind == kCaptureOwnedNotrack  ? "WWCAP_NOTRACK"
-                  : kind == kCaptureOwnedOpaque ? "WWCAP_OPAQUE"
-                                                : "WWCAP",
+                  kind == kCaptureOwnedNotrack ? "WWCAP_NOTRACK" : "WWCAP",
                   (unsigned long long) cdev->rule_token,
                   index);
 }
@@ -604,8 +583,7 @@ uint32_t capturedevicePendingRangeCount(const capture_device_t *cdev)
         bool         range_pending = cdev->rule_states[first].notrack != kCaptureRuleAbsent;
         for (uint16_t lane = 0; lane < cdev->queue_count && ! range_pending; ++lane)
         {
-            range_pending = cdev->rule_states[first + lane].queue != kCaptureRuleAbsent ||
-                            cdev->rule_states[first + lane].opaque != kCaptureRuleAbsent;
+            range_pending = cdev->rule_states[first + lane].queue != kCaptureRuleAbsent;
         }
         if (range_pending)
         {
@@ -617,7 +595,7 @@ uint32_t capturedevicePendingRangeCount(const capture_device_t *cdev)
 
 static size_t capturedeviceRuleCount(const capture_device_t *cdev, capture_owned_rule_kind_t kind)
 {
-    if (cdev->queue_count == 0 || (kind == kCaptureOwnedOpaque && cdev->queue_count == 1))
+    if (cdev->queue_count == 0)
     {
         return 0;
     }
@@ -630,7 +608,7 @@ static capture_rule_state_t *capturedeviceRuleState(capture_device_t *cdev, size
 {
     if (kind == kCaptureOwnedNotrack)
         return &cdev->rule_states[index * cdev->queue_count].notrack;
-    return kind == kCaptureOwnedOpaque ? &cdev->rule_states[index].opaque : &cdev->rule_states[index].queue;
+    return &cdev->rule_states[index].queue;
 }
 
 static const char *capturedeviceRuleCidr(const capture_device_t *cdev, size_t index, capture_owned_rule_kind_t kind)
@@ -648,21 +626,8 @@ static capturedevice_command_status_t capturedeviceRunOwnedRule(capture_device_t
         return capturedeviceRunIptablesNotrackRuleWithContext(cdev, operation, cidr, comment, cdev->protocol_filter);
     }
     const struct capture_linux_queue_s *queue = &cdev->queues[index % cdev->queue_count];
-    char                                opaque_filter[kCaptureLinuxSteeringFilterSize];
-    if (kind == kCaptureOwnedOpaque)
-        captureLinuxBuildOpaqueFilter(opaque_filter);
-    /* INSERT reverses ascending lane order. Conditional probabilities 1/N,
-     * 1/(N-1), ... give each opaque queue the same expected share, with lane
-     * zero's unconditional tail ensuring every eligible packet is selected. */
     return capturedeviceRunIptablesQueueRuleWithContext(
-        cdev,
-        operation,
-        cidr,
-        queue->number,
-        comment,
-        cdev->protocol_filter,
-        kind == kCaptureOwnedOpaque ? opaque_filter : queue->steering_filter,
-        kind == kCaptureOwnedOpaque ? (unsigned) (index % cdev->queue_count) + 1 : 0);
+        cdev, operation, cidr, queue->number, comment, cdev->protocol_filter, queue->steering_filter);
 }
 
 static bool capturedeviceReconcileUnknownRules(capture_device_t *cdev, capture_owned_rule_kind_t kind)
@@ -752,9 +717,8 @@ bool capturedeviceRemoveInstalledRules(capture_device_t *cdev)
     // Restore tracking first. Still retire the queue rules if NOTRACK cleanup
     // fails; each kind retains its own state for the next bounded cleanup pass.
     const bool notrack_ok = capturedeviceRemoveRuleKind(cdev, kCaptureOwnedNotrack);
-    const bool opaque_ok  = capturedeviceRemoveRuleKind(cdev, kCaptureOwnedOpaque);
     const bool queue_ok   = capturedeviceRemoveRuleKind(cdev, kCaptureOwnedFlow);
-    return notrack_ok && opaque_ok && queue_ok;
+    return notrack_ok && queue_ok;
 }
 
 char *capturedeviceFormatCidrString(const ipmask_t *range)
@@ -826,6 +790,5 @@ bool capturedeviceInstallRuleKind(capture_device_t *cdev, bool notrack)
 {
     if (notrack)
         return capturedeviceInstallOwnedRuleKind(cdev, kCaptureOwnedNotrack);
-    return capturedeviceInstallOwnedRuleKind(cdev, kCaptureOwnedFlow) &&
-           capturedeviceInstallOwnedRuleKind(cdev, kCaptureOwnedOpaque);
+    return capturedeviceInstallOwnedRuleKind(cdev, kCaptureOwnedFlow);
 }

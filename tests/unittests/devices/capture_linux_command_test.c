@@ -491,7 +491,7 @@ static void testMultiqueueRulesRetainExactLifecycle(void)
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
     require(capturedeviceInstallRuleKind(&fixture.device, false), "multiqueue rule installation failed");
     require(capturedeviceInstallRuleKind(&fixture.device, true), "multiqueue NOTRACK installation failed");
-    require(recorded_call_count == 14, "multiqueue rules did not install both lane sets and two NOTRACK rules");
+    require(recorded_call_count == 8, "multiqueue rules did not install the lane set and two NOTRACK rules");
     require(capturedevicePendingRangeCount(&fixture.device) == kRuleTestRanges,
             "pending accounting counted queue lanes as capture ranges");
     for (size_t index = 0; index < kRuleTestRanges * kRuleTestQueues; ++index)
@@ -510,47 +510,23 @@ static void testMultiqueueRulesRetainExactLifecycle(void)
         requireEqStr(call->argv[19], fixture.device.protocol_filter, "queue lane changed the protocol exclusion");
         requireEqStr(call->argv[23], fixture.queues[lane].steering_filter, "queue lane changed the steering predicate");
         require(fixture.states[index].queue == kCaptureRuleInstalled, "queue rule state was not published");
-        const recorded_call_t *opaque = &recorded_calls[6 + index];
-        char                   opaque_filter[kCaptureLinuxSteeringFilterSize];
-        captureLinuxBuildOpaqueFilter(opaque_filter);
-        stringNPrintf(comment, sizeof(comment), "WWCAP_OPAQUE_1234567890ABCDEF_%016zX", index);
-        requireEqStr(opaque->argv[10], comment, "opaque queue lost its independent owned identity");
-        requireEqStr(opaque->argv[14], queue_number, "opaque queue targeted the wrong lane");
-        requireEqStr(opaque->argv[19], fixture.device.protocol_filter, "opaque queue lost protocol exclusions");
-        requireEqStr(opaque->argv[23], opaque_filter, "opaque queue lost its disjoint classification");
-        require(opaque->argc == (lane == 0 ? 24 : 30), "opaque queue has incorrect random arguments or no tail");
-        if (lane != 0)
-        {
-            const char *probability = lane == 1 ? "0.500000000000" : "0.333333333333";
-            requireEqStr(opaque->argv[24], "-m", "opaque queue omitted statistic module option");
-            requireEqStr(opaque->argv[25], "statistic", "opaque queue omitted kernel statistic matcher");
-            requireEqStr(opaque->argv[26], "--mode", "opaque queue omitted statistic mode option");
-            requireEqStr(opaque->argv[27], "random", "opaque receive retained a shared nth counter");
-            requireEqStr(opaque->argv[28], "--probability", "opaque queue omitted its conditional probability");
-            requireEqStr(
-                opaque->argv[29], probability, "random cascade probability does not match reverse INSERT order");
-        }
-        require(fixture.states[index].opaque == kCaptureRuleInstalled, "opaque rule state was not published");
         require(fixture.states[index].notrack == (lane == 0 ? kCaptureRuleInstalled : kCaptureRuleAbsent),
                 "NOTRACK state was multiplied across queue lanes");
     }
     for (size_t range = 0; range < kRuleTestRanges; ++range)
     {
-        const recorded_call_t *call = &recorded_calls[12 + range];
+        const recorded_call_t *call = &recorded_calls[6 + range];
         require(call->argc == 24, "NOTRACK gained a steering predicate");
         requireEqStr(call->argv[23], fixture.device.protocol_filter, "NOTRACK lost the common protocol exclusion");
     }
 
     require(capturedeviceRemoveInstalledRules(&fixture.device), "multiqueue cleanup failed");
-    require(recorded_call_count == 28 && capturedevicePendingRangeCount(&fixture.device) == 0,
+    require(recorded_call_count == 16 && capturedevicePendingRangeCount(&fixture.device) == 0,
             "multiqueue cleanup did not retire every owned rule exactly once");
-    requireMatchingDelete(&recorded_calls[13], &recorded_calls[14], 5);
-    requireMatchingDelete(&recorded_calls[12], &recorded_calls[15], 5);
+    requireMatchingDelete(&recorded_calls[7], &recorded_calls[8], 5);
+    requireMatchingDelete(&recorded_calls[6], &recorded_calls[9], 5);
     for (size_t index = 0; index < 6; ++index)
-    {
-        requireMatchingDelete(&recorded_calls[11 - index], &recorded_calls[16 + index], 3);
-        requireMatchingDelete(&recorded_calls[5 - index], &recorded_calls[22 + index], 3);
-    }
+        requireMatchingDelete(&recorded_calls[5 - index], &recorded_calls[10 + index], 3);
     for (size_t call = 0; call < recorded_call_count; ++call)
     {
         requireRuleProgress(&recorded_calls[call], &fixture.device);
@@ -606,33 +582,6 @@ static void testMultiqueueNotrackFailureStillRemovesQueues(void)
     require(capturedeviceRemoveInstalledRules(&fixture.device) && capturedevicePendingRangeCount(&fixture.device) == 0,
             "cleanup retry did not settle the retained NOTRACK and queue ownership");
     require(recorded_call_count == 8, "cleanup retry changed the exact retained rule inventory");
-}
-
-static void testOpaqueUnknownInstallCleanup(void)
-{
-    capture_rule_fixture_t fixture;
-    prepareRuleFixture(&fixture);
-    resetRecording(kFakeOutcomeTimeout, 7);
-    require(! capturedeviceInstallRuleKind(&fixture.device, false), "unknown opaque insertion was accepted");
-    require(fixture.states[0].opaque == kCaptureRuleInstalled &&
-                fixture.states[1].opaque == kCaptureRuleOutcomeUnknown &&
-                fixture.states[2].opaque == kCaptureRuleAbsent,
-            "partial opaque insertion lost exact ownership");
-    char snapshot[kMaxArgLength + 64];
-    stringNPrintf(
-        snapshot, sizeof(snapshot), "-A INPUT -m comment --comment %s -j NFQUEUE\n", recorded_calls[7].argv[10]);
-    resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
-    fake_success_output     = snapshot;
-    fake_success_output_len = stringLength(snapshot);
-    require(capturedeviceRemoveInstalledRules(&fixture.device) && capturedevicePendingRangeCount(&fixture.device) == 0,
-            "opaque outcome reconciliation did not retire both rule sets");
-    require(recorded_call_count == 9 && strstr(recorded_calls[1].argv[10], "WWCAP_OPAQUE_") != NULL &&
-                strstr(recorded_calls[3].argv[10], "WWCAP_OPAQUE_") == NULL,
-            "opaque cleanup inspected or removed the wrong rule family");
-    require(recorded_calls[1].argc == 30 && recorded_calls[2].argc == 24,
-            "unknown insertion cleanup lost the random rule or unconditional tail");
-    requireEqStr(recorded_calls[1].argv[27], "random", "unknown insertion cleanup changed the statistic mode");
-    requireEqStr(recorded_calls[1].argv[29], "0.500000000000", "unknown insertion cleanup changed probability");
 }
 
 static void testMultiqueueUnknownDeleteReconciliation(void)
@@ -934,7 +883,6 @@ int main(void)
     testQueueRangeSelection();
     testMultiqueueRulesRetainExactLifecycle();
     testMultiqueuePartialInstallReconciliation();
-    testOpaqueUnknownInstallCleanup();
     testMultiqueueNotrackFailureStillRemovesQueues();
     testMultiqueueUnknownDeleteReconciliation();
     testMultiqueueUnknownNotrackAndInspectionFailure();

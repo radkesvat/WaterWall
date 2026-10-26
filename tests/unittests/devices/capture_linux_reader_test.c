@@ -12,6 +12,7 @@
  */
 #include "devices/capture/capture_linux_nfqueue.h"
 #include "devices/device_flow_affinity.h"
+#include "devices/device_packet_checksum_internal.h"
 #include "devices/device_pool.h"
 #include "fixtures/worker_registry_fixture.h"
 #include "test_assert.h"
@@ -82,6 +83,8 @@ typedef struct reader_fixture_s
     bool                       release_verdict_after_peer;
     uint32_t                   verdicts[kPacketIds];
     unsigned                   deliveries[kWorkers];
+    unsigned                   last_id[kWorkers];
+    unsigned                   out_of_order;
     uint16_t                   required_padding;
     void                      *tracked_generation;
     void                      *tracked_session;
@@ -314,6 +317,9 @@ static void deliverPacket(void *device, sbuf_t *buffer, wid_t wid)
     const uint32_t id = GET_BE16((const uint8_t *) sbufGetRawPtr(buffer) + 4);
     require(id > 0 && id < kPacketIds && fixture.verdicts[id] == NF_DROP, "packet published before successful DROP");
     ++fixture.deliveries[wid];
+    if (id < fixture.last_id[wid])
+        ++fixture.out_of_order;
+    fixture.last_id[wid] = id;
     bufferpoolReuseBuffer(getWorkerBufferPool(wid), buffer);
 }
 
@@ -471,7 +477,9 @@ static void destroyReader(capture_device_t *device)
     memoryFree(device);
 }
 
-static void sendPacketProtocol(unsigned queue, unsigned id, wid_t destination, uint8_t protocol)
+/* Returns the processing worker deviceFlowAffineWID() selects for the packet's peer pair and protocol. */
+static wid_t sendPacketFragment(unsigned queue, unsigned id, wid_t destination, uint8_t protocol,
+                                uint16_t fragment_field)
 {
     uint8_t packet[28] = {0x45, 0, 0, 28, 0, 0, 0, 0, 64, 17};
     PUT_BE16(packet + 4, id);
@@ -488,7 +496,12 @@ static void sendPacketProtocol(unsigned queue, unsigned id, wid_t destination, u
             break;
     }
     require(selected == destination, "could not choose the target processing worker");
-    packet[9]                                     = protocol;
+    packet[9]      = protocol;
+    wid_t expected = kWorkers;
+    require(deviceFlowAffineWID(packet, sizeof(packet), &expected), "flow hashing rejected the opaque packet");
+    PUT_BE16(packet + 6, fragment_field);
+    PUT_BE16(packet + 10, 0);
+    PUT_BE16(packet + 10, deviceIpv4HeaderChecksum(packet, 20));
     _Alignas(ww_max_align_t) uint8_t message[128] = {0};
     struct nlmsghdr                 *header       = (struct nlmsghdr *) message;
     header->nlmsg_type                            = (NFNL_SUBSYS_QUEUE << 8) | NFQNL_MSG_PACKET;
@@ -509,6 +522,12 @@ static void sendPacketProtocol(unsigned queue, unsigned id, wid_t destination, u
     header->nlmsg_len = offset + NFA_ALIGN(attribute->nfa_len);
     require(send(fixture.queues[queue].peer, message, header->nlmsg_len, MSG_DONTWAIT) == (ssize_t) header->nlmsg_len,
             "could not inject queue packet");
+    return expected;
+}
+
+static wid_t sendPacketProtocol(unsigned queue, unsigned id, wid_t destination, uint8_t protocol)
+{
+    return sendPacketFragment(queue, id, destination, protocol, 0);
 }
 
 static void sendPacket(unsigned queue, unsigned id, wid_t destination)
@@ -516,32 +535,43 @@ static void sendPacket(unsigned queue, unsigned id, wid_t destination)
     sendPacketProtocol(queue, id, destination, IPPROTO_UDP);
 }
 
+/* Opaque protocols (a swapped protocol number, an obfuscated header) carry no transport identity before a transform
+ * decodes them. The lane steering gives a peer pair one queue, so one reader posts all of its complete packets to the
+ * worker deviceFlowAffineWID() selects, in arrival order; a Preserve-mode fragment of that pair joins the same worker.
+ * Different protocols are different pairs and keep their own hashed worker, also with a single queue. */
 static void testOpaqueProcessing(unsigned queues)
 {
     fixtureSetup();
     capture_device_t *device = createReader(queues, 512);
     require(startReader(device), "opaque reader startup failed");
     runMessages();
-    const uint8_t protocols[] = {1, 49, 50, 132};
-    unsigned      id          = 0;
+    const uint8_t protocols[]           = {1, 49, 50, 132};
+    bool          worker_seen[kWorkers] = {0};
+    unsigned      id                    = 0;
     for (unsigned protocol = 0; protocol < sizeof(protocols); ++protocol)
     {
-        unsigned before[kWorkers];
+        const unsigned lane = protocol % queues;
+        unsigned       before[kWorkers];
         memoryCopy(before, fixture.deliveries, sizeof(before));
+        wid_t expected = 0;
         for (unsigned number = 0; number < 8; ++number)
-        {
-            const unsigned queue = number % queues;
-            sendPacketProtocol(queue, ++id, 0, protocols[protocol]);
-            runReady(queue);
-            runMessages();
-            if (queues > 1)
-                require(fixture.deliveries[queue] == before[queue] + number / queues + 1,
-                        "opaque packet left its receiving worker for coarse processing affinity");
-        }
-        for (unsigned worker = 0; worker < kWorkers; ++worker)
-            require(fixture.deliveries[worker] - before[worker] == 8 / kWorkers,
-                    "single-reader opaque processing did not distribute workers in turn");
+            expected = sendPacketProtocol(lane, ++id, 0, protocols[protocol]);
+        runReady(lane);
+        runMessages();
+        worker_seen[expected] = true;
+        for (wid_t worker = 0; worker < kWorkers; ++worker)
+            require(fixture.deliveries[worker] - before[worker] == (worker == expected ? 8U : 0U),
+                    "opaque peer pair was not delivered, in full, to its hashed worker");
+        const unsigned owner_before = fixture.deliveries[expected];
+        sendPacketFragment(lane, ++id, 0, protocols[protocol], 0x2000);
+        runReady(lane);
+        runMessages();
+        require(fixture.deliveries[expected] == owner_before + 1,
+                "opaque fragment left the worker of its complete packets");
     }
+    for (wid_t worker = 0; worker < kWorkers; ++worker)
+        require(worker_seen[worker], "opaque test protocols did not cover every processing worker");
+    require(fixture.out_of_order == 0, "opaque packets of one peer pair were delivered out of order");
     destroyReader(device);
     fixtureTeardown();
 }

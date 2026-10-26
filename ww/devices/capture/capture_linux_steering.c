@@ -26,7 +26,6 @@ void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index,
         struct sock_filter ports[16];
         struct sock_filter mix[16];
         struct sock_filter invalid[1];
-        struct sock_filter opaque[1];
     } capture_steering_program_t;
 #define CAPTURE_BPF_SKIP(from, target)                                                                                 \
     ((uint8_t) ((offsetof(capture_steering_program_t, target) - offsetof(capture_steering_program_t, from)) /          \
@@ -73,7 +72,7 @@ void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index,
             {
                 BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 9),
                 BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 6, CAPTURE_BPF_SKIP(transport[1], ports), 0),
-                BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 17, 0, CAPTURE_BPF_SKIP(transport[2], opaque)),
+                BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 17, 0, CAPTURE_BPF_SKIP(transport[2], mix)),
             },
         .ports =
             {
@@ -114,7 +113,6 @@ void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index,
                 BPF_STMT(BPF_RET | BPF_K, 0),
             },
         .invalid = {BPF_STMT(BPF_RET | BPF_K, lane_index == 0 ? 1 : 0)},
-        .opaque  = {BPF_STMT(BPF_RET | BPF_K, 0)},
     };
 #undef CAPTURE_BPF_SKIP
     enum
@@ -138,42 +136,4 @@ void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index,
                                   (unsigned int) instructions[i].jf,
                                   instructions[i].k);
     }
-}
-
-void captureLinuxBuildOpaqueFilter(char output[kCaptureLinuxSteeringFilterSize])
-{
-    /* Complement of flow steering for structurally valid, unfragmented IPv4.
-     * All fragments retain their existing receive/processing association. */
-    const struct sock_filter program[] = {
-        BPF_STMT(BPF_LD | BPF_W | BPF_LEN, 0),
-        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 20, 0, 17),
-        BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 0),
-        BPF_STMT(BPF_ALU | BPF_RSH | BPF_K, 4),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 4, 0, 14),
-        BPF_STMT(BPF_LDX | BPF_B | BPF_MSH, 0),
-        BPF_STMT(BPF_MISC | BPF_TXA, 0),
-        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 20, 0, 11),
-        BPF_STMT(BPF_LD | BPF_H | BPF_ABS, 2),
-        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_X, 0, 0, 9),
-        BPF_STMT(BPF_MISC | BPF_TAX, 0),
-        BPF_STMT(BPF_LD | BPF_W | BPF_LEN, 0),
-        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_X, 0, 0, 6),
-        BPF_STMT(BPF_LD | BPF_H | BPF_ABS, 6),
-        BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K, 0x3fff, 4, 0),
-        BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 9),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 6, 2, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 17, 1, 0),
-        BPF_STMT(BPF_RET | BPF_K, 1),
-        BPF_STMT(BPF_RET | BPF_K, 0),
-    };
-    const unsigned count = sizeof(program) / sizeof(program[0]);
-    size_t         used  = (size_t) snprintf(output, kCaptureLinuxSteeringFilterSize, "%u", count);
-    for (unsigned i = 0; i < count; ++i)
-        used += (size_t) snprintf(output + used,
-                                  kCaptureLinuxSteeringFilterSize - used,
-                                  ",%u %u %u %u",
-                                  program[i].code,
-                                  program[i].jt,
-                                  program[i].jf,
-                                  program[i].k);
 }

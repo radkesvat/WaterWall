@@ -498,8 +498,7 @@ static void testQueuedCancellationAfterDeviceDestruction(void)
 
 static void requireStartedQueues(capture_device_t *device, unsigned count)
 {
-    require(capturedeviceIsUp(device) && device->queue_count == count &&
-                installed_rules == (count > 1 ? count * 2 : count),
+    require(capturedeviceIsUp(device) && device->queue_count == count && installed_rules == count,
             "Capture activated the wrong queue/rule count");
     require(message_count == count, "Capture scheduled the wrong number of worker readers");
     for (unsigned i = 0; i < count; ++i)
@@ -527,7 +526,7 @@ static void testQueueSetupAndFallback(void)
     capture_device_t *device = createDevice();
     require(caputredeviceBringUp(device), "multiqueue startup failed");
     requireStartedQueues(device, kTestWorkers);
-    require(socket_count == kTestWorkers && steering_inserts == kTestWorkers * 2,
+    require(socket_count == kTestWorkers && steering_inserts == kTestWorkers,
             "multiqueue setup omitted a queue or predicate");
     finishDevice(device);
 
@@ -557,15 +556,6 @@ static void testQueueSetupAndFallback(void)
     require(socket_count == kTestWorkers && close_count == kTestWorkers - 1 && steering_inserts == 2 &&
                 steering_deletes == 1 && single_inserts == 1,
             "steering fallback did not roll back the exact partial rule/queue inventory");
-    finishDevice(device);
-
-    resetCase();
-    device                 = createDevice();
-    failed_steering_insert = kTestWorkers + 2;
-    require(caputredeviceBringUp(device), "opaque random rule refusal did not fall back");
-    requireStartedQueues(device, 1);
-    require(steering_inserts == kTestWorkers + 2 && steering_deletes == kTestWorkers + 1 && single_inserts == 1,
-            "opaque rule fallback did not retire both partial rule sets");
     finishDevice(device);
 
     resetCase();

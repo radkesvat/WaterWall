@@ -344,11 +344,8 @@ def run_queue_receive(binary, directory, single_queue):
                     rules = [line for line in iptables("-S", "INPUT").splitlines() if "WWCAP_" in line]
                     queue_numbers = {int(re.search(r"--queue-num (\d+)", line)[1]) for line in rules}
                     assert len(queue_numbers) == (1 if single_queue else workers), rules
-                    assert len(rules) == (1 if single_queue else workers * 2), rules
-                    if not single_queue:
-                        opaque_rules = [line for line in rules if "WWCAP_OPAQUE_" in line]
-                        assert len(opaque_rules) == workers and sum("--mode random" in line for line in opaque_rules) == workers - 1, rules
-                        assert all("--mode nth" not in line for line in opaque_rules), rules
+                    assert len(rules) == (1 if single_queue else workers), rules
+                    assert not any("WWCAP_OPAQUE_" in line or "statistic" in line for line in rules), rules
                     before = queue_statistics()
                     assert queue_numbers == set(before), before
 
@@ -379,9 +376,11 @@ def run_queue_receive(binary, directory, single_queue):
                         assert all(delta > 0 for delta in protocol_deltas.values()), \
                             ("protocol ports did not spread receive work", protocol, protocol_deltas)
                         assert sum(protocol_deltas.values()) == 128, (protocol, protocol_deltas)
-                    # Opaque traffic uses random receive queues and retains its
-                    # receiving worker. Check spread and exact delivery/count
-                    # correspondence, without requiring exact random balance.
+                    # Opaque traffic has no transport identity before a transform
+                    # decodes it. All packets of one peer pair must stay on one
+                    # receive queue and one worker, so decoding preserves their
+                    # arrival order; per-packet spreading let the packets of one
+                    # decoded flow race between workers.
                     opaque_packets = 128
                     for protocol in (1, 49, 50, 132):
                         protocol_before = queue_statistics()
@@ -395,13 +394,12 @@ def run_queue_receive(binary, directory, single_queue):
                         protocol_after = queue_statistics()
                         queue_deltas = {queue: protocol_after[queue]["sequence"] - protocol_before[queue]["sequence"]
                                         for queue in queue_numbers}
-                        assert sum(queue_deltas.values()) == opaque_packets and all(queue_deltas.values()), \
-                            ("opaque receive lost packets or did not spread across queues", protocol, queue_deltas)
+                        assert sum(queue_deltas.values()) == opaque_packets and \
+                            sorted(queue_deltas.values()) == [0] * (len(queue_numbers) - 1) + [opaque_packets], \
+                            ("opaque peer pair was lost or spread across receive queues", protocol, queue_deltas)
                         processing_deltas = [count - delivery_before[stream] for stream, count in collector.delivered.items()]
-                        expected_processing = ([opaque_packets // workers] * workers if single_queue
-                                               else sorted(queue_deltas.values()))
-                        assert sorted(processing_deltas) == expected_processing, \
-                            ("opaque processing collapsed onto a coarse flow owner", protocol, processing_deltas)
+                        assert sorted(processing_deltas) == [0] * (workers - 1) + [opaque_packets], \
+                            ("opaque peer pair was processed on more than one worker", protocol, processing_deltas)
                     assert collector.packets == expected, "captured payload changed or was lost"
                     assert len(collector.delivered) == workers and all(collector.delivered.values()), \
                         ("packet processing did not use every configured worker", collector.delivered)

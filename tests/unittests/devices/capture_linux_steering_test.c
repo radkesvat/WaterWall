@@ -56,7 +56,7 @@ static void openLanes(steering_test_t *test, uint16_t count)
 {
     require(count > 0 && count <= kMaximumTestLanes, "test lane count is supported");
     test->count = count;
-    for (uint16_t lane = 0; lane <= count; ++lane)
+    for (uint16_t lane = 0; lane < count; ++lane)
     {
         struct
         {
@@ -64,10 +64,7 @@ static void openLanes(steering_test_t *test, uint16_t count)
             uint8_t guard[16];
         } serialized;
         memset(&serialized, 0xa5, sizeof(serialized));
-        if (lane == count)
-            captureLinuxBuildOpaqueFilter(serialized.text);
-        else
-            captureLinuxBuildSteeringFilter(count, lane, serialized.text);
+        captureLinuxBuildSteeringFilter(count, lane, serialized.text);
         require(memchr(serialized.text, '\0', sizeof(serialized.text)) != NULL, "serialized program is terminated");
         for (unsigned int i = 0; i < sizeof(serialized.guard); ++i)
             require(serialized.guard[i] == 0xa5, "serialization respects its fixed buffer");
@@ -87,7 +84,7 @@ static void openLanes(steering_test_t *test, uint16_t count)
 
 static void closeLanes(steering_test_t *test)
 {
-    for (uint16_t lane = 0; lane <= test->count; ++lane)
+    for (uint16_t lane = 0; lane < test->count; ++lane)
     {
         require(close(test->sockets[lane][0]) == 0, "close test sender");
         require(close(test->sockets[lane][1]) == 0, "close test receiver");
@@ -98,7 +95,7 @@ static uint16_t selectLane(const steering_test_t *test, const uint8_t *packet, s
 {
     unsigned int matched  = 0;
     uint16_t     selected = 0;
-    for (uint16_t lane = 0; lane <= test->count; ++lane)
+    for (uint16_t lane = 0; lane < test->count; ++lane)
     {
         ssize_t sent;
         do
@@ -121,7 +118,7 @@ static uint16_t selectLane(const steering_test_t *test, const uint8_t *packet, s
         else
             require(errno == EAGAIN || errno == EWOULDBLOCK, "unmatched lane has no packet");
     }
-    require(matched == 1, "every packet selects exactly one flow lane or the opaque random-distribution class");
+    require(matched == 1, "every packet selects exactly one lane");
     return selected;
 }
 
@@ -236,10 +233,10 @@ static void testFragmentsAndOpaqueProtocols(steering_test_t *test)
         if (protocol != 6 && protocol != 17)
         {
             put16(packet + 6, 0);
-            require(selectLane(test, packet, sizeof(packet)) == test->count,
-                    "opaque complete packets must bypass every flow lane");
+            require(selectLane(test, packet, sizeof(packet)) == fragment_lane,
+                    "opaque complete packets use the address/protocol lane of their fragments");
             memset(packet + 20, 0xa5, sizeof(packet) - 20);
-            require(selectLane(test, packet, sizeof(packet)) == test->count,
+            require(selectLane(test, packet, sizeof(packet)) == fragment_lane,
                     "opaque protocol payload never supplies ports");
         }
     }
@@ -307,17 +304,18 @@ static void testHeaderBoundsAndCompatibility(steering_test_t *test)
     put16(packet + 2, UINT16_MAX);
     require(selectLane(test, packet, sizeof(packet)) == 0, "oversized declared IPv4 length selects lane zero");
 
+    makePacket(packet, 50, 20);
+    const uint16_t opaque_lane = selectLane(test, packet, sizeof(packet));
     for (unsigned header = 20; header <= 60; header += 4)
     {
         makePacket(packet, 50, header);
-        require(selectLane(test, packet, sizeof(packet)) == test->count,
-                "opaque IPv4 options retain random-distribution classification");
+        require(selectLane(test, packet, sizeof(packet)) == opaque_lane,
+                "opaque IPv4 options do not change the address/protocol lane");
         put16(packet + 2, (uint16_t) (header - 1));
         require(selectLane(test, packet, sizeof(packet)) == 0,
                 "opaque malformed declared length must reach reader validation exactly once");
         put16(packet + 2, (uint16_t) (header + 8));
-        require(selectLane(test, packet, header + 7) == 0,
-                "opaque truncated packet must not match the random-distribution class");
+        require(selectLane(test, packet, header + 7) == 0, "opaque truncated packet must reach lane-zero validation");
     }
     makePacket(packet, 50, 20);
     for (unsigned length = 0; length < 20; ++length)
@@ -326,6 +324,32 @@ static void testHeaderBoundsAndCompatibility(steering_test_t *test)
     require(selectLane(test, packet, sizeof(packet)) == 0, "opaque unsupported IP version must not be classified");
     packet[0] = 0x44;
     require(selectLane(test, packet, sizeof(packet)) == 0, "opaque invalid IHL must not be classified");
+}
+
+/* Transforms such as a swapped protocol number with an obfuscated header hide a flow's TCP identity until after
+ * capture. Whatever those transport bytes hold, every packet of the peer pair, in both directions, keeps one lane,
+ * so the packets of one decoded flow are never read by different workers. */
+static void testOpaqueProtocolKeepsOneLane(steering_test_t *test)
+{
+    uint8_t packet[kPacketCapacity];
+    makePacket(packet, 50, 20);
+    const uint16_t pair_lane = selectLane(test, packet, sizeof(packet));
+    for (unsigned int value = 0; value < 4096; ++value)
+    {
+        for (unsigned int i = 20; i < 40; ++i)
+            packet[i] = (uint8_t) (value * 7U + i * 13U + (value >> 3U));
+        require(selectLane(test, packet, sizeof(packet)) == pair_lane, "opaque transport bytes never change the lane");
+        reverseEndpoints(packet);
+        require(selectLane(test, packet, sizeof(packet)) == pair_lane, "opaque steering is symmetric");
+        reverseEndpoints(packet);
+    }
+    bool seen[kMaximumTestLanes] = {0};
+    for (unsigned int address = 0; address < 512; ++address)
+    {
+        put32(packet + 12, UINT32_C(0xc0000200) + address);
+        seen[selectLane(test, packet, sizeof(packet))] = true;
+    }
+    requireAllLanes(seen, test->count, "distinct opaque peer pairs still distribute across all lanes");
 }
 
 int main(void)
@@ -337,6 +361,7 @@ int main(void)
         openLanes(&test, counts[i]);
         testPortDistributionAndSymmetry(&test);
         testFragmentsAndOpaqueProtocols(&test);
+        testOpaqueProtocolKeepsOneLane(&test);
         testHeaderBoundsAndCompatibility(&test);
         closeLanes(&test);
     }

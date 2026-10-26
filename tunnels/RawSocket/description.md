@@ -251,22 +251,25 @@ Linux assigns each receive queue to exactly one worker and performs bounded,
 nonblocking reads on that worker's event loop. Queue count and steering stay fixed
 while capture is active. Complete TCP/UDP packets use symmetric IPv4 address,
 protocol, and port steering, followed by the existing processing-flow affinity.
-Other complete IPv4 protocols use random kernel queue selection
-(`statistic --mode random`) and continue on the receiving worker. Cascading
-conditional probabilities give each queue approximately the same share; exact
-counts and packet order are not guaranteed. This removes the shared nth-selection
-counter without claiming that every kernel RNG implementation is lock-free.
-With one receive queue, opaque packets still use device-local round-robin
-processing across the workers. No transport payload fields are guessed for
-opaque protocols.
+Other complete IPv4 protocols (opaque protocols) use the same symmetric address
+and protocol steering as fragments and are processed on the worker selected by
+the flow hash (address and protocol; SCTP also uses its ports). A transform such
+as a swapped protocol number or an obfuscated header can hide the transport
+identity of these packets until after capture, so the complete packets of one
+peer pair stay on one queue and one worker, in arrival order; spreading them per
+packet would let the packets of one decoded flow race between workers, and the
+flow affinity after decoding cannot restore their order. The cost is that the
+capture and decoding of one peer pair's opaque packets is bounded by one worker;
+the stateful work after decoding is still spread by flow affinity. No transport
+payload fields are guessed for opaque protocols.
 
 Every IPv4 fragment, including fragment zero, retains address/protocol receive
 steering and the shared fragment table's existing staging and ownership rules.
-Completed reassembly of an opaque protocol uses the opaque processing policy.
-Protocol exclusions apply equally to both rule sets. Queue predicates use the
-iptables `bpf` match; opaque multiqueue routing also requires `statistic`. If
-multiqueue setup fails, capture falls back to one receive queue. The number of
-predicates examined grows with queue count.
+A completed reassembly of an opaque protocol is processed on the same worker as
+its complete packets.
+Protocol exclusions apply equally to every rule. Queue predicates use the
+iptables `bpf` match. If multiqueue setup fails, capture falls back to one
+receive queue. The number of predicates examined grows with queue count.
 
 When a packet is captured:
 
@@ -363,7 +366,7 @@ The capture device is configured from the ranges supplied through either `captur
 Current implementation behavior:
 
 - on Windows, the capture filter combines `ip.SrcAddr` equality or inclusive range checks with exclusions on `ip.Protocol`
-- on Linux, multiqueue capture creates a flow rule and an opaque-protocol rule per receive queue for each configured IPv4 address or CIDR range; single-queue capture creates one queue rule per range
+- on Linux, multiqueue capture creates one steering rule per receive queue for each configured IPv4 address or CIDR range; single-queue capture creates one queue rule per range
 - `capture-filter-mode` is parsed, but only the `source-ip` path is currently implemented
 
 On Linux, a nonempty `dont-capture-protocols` list requires the iptables `bpf`

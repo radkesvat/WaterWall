@@ -42,7 +42,6 @@ struct capture_reader_generation_s
     device_reader_session_t *session;
     uint16_t                 count;
     uint16_t                 service_next;
-    wid_t                    opaque_next;
     /* Only the serialized lifecycle coordinator accesses these fields. */
     bool                    coordinator_owned;
     proc_command_progress_t command_progress;
@@ -156,20 +155,16 @@ static void captureReaderPrepare(capture_worker_reader_t *lane, sbuf_t *buffer)
             lane->pending_wids[lane->pending_count++] = fragment.wid;
         }
     }
-    wid_t          wid    = fragment.wid;
-    const uint8_t *packet = sbufGetRawPtr(buffer);
-    if (action != kDeviceFragAffinityDispatch && packet[9] != IPPROTO_TCP && packet[9] != IPPROTO_UDP)
-    {
-        /* Opaque transport identity is unavailable before transforms decode
-         * it. Multiple native queues already distribute these packets; retain
-         * their receive worker. A single reader distributes processing in turn. */
-        capture_reader_generation_t *generation = lane->generation;
-        wid                                     = generation->count > 1 ? lane->wid : generation->opaque_next;
-        if (generation->count == 1)
-            generation->opaque_next = (wid_t) ((generation->opaque_next + 1U) % getWorkersCount());
-    }
-    else if (action != kDeviceFragAffinityDispatch &&
-             ! deviceFlowAffineWID(sbufGetRawPtr(buffer), sbufGetLength(buffer), &wid))
+    wid_t wid = fragment.wid;
+    /* Opaque protocols (a swapped protocol number, an obfuscated header) are placed
+     * by deviceFlowAffineWID() on address and protocol, like fragments (SCTP also on
+     * ports): their transport identity is unavailable before transforms decode it,
+     * and the packets of one decoded flow must not be spread between workers,
+     * because the flow affinity after decoding cannot restore an order lost here.
+     * The lane steering gives a peer pair one reader, which posts its complete
+     * packets to the hashed worker in arrival order. */
+    if (action != kDeviceFragAffinityDispatch &&
+        ! deviceFlowAffineWID(sbufGetRawPtr(buffer), sbufGetLength(buffer), &wid))
         wid = getNextDistributionWID();
     lane->pending_bufs[lane->pending_count]   = buffer;
     lane->pending_wids[lane->pending_count++] = wid;

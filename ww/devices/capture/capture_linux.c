@@ -309,8 +309,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     LOGI("CaptureDevice: %s up with %u worker-owned receive queue(s), %s",
          cdev->name,
          cdev->queue_count,
-         cdev->queue_count > 1 ? "TCP/UDP flow steering; opaque random distribution"
-                               : "worker 0 reads; all workers process");
+         cdev->queue_count > 1 ? "address/protocol and TCP/UDP port steering" : "worker 0 reads; all workers process");
     return true;
 failed:
     discard caputredeviceBringDown(cdev);
