@@ -16,10 +16,11 @@
 /* Packet loads preserve R6..R9 and return network fields in host byte order.
  * R6 holds the skb until the final load. Ordinary IPv4 TCP/UDP uses the same
  * symmetric endpoint hash as deviceFlowAffinityHash(), aligning receive queues
- * with processing workers. All fragments use the address/protocol fallback:
+ * with initial processing workers. All fragments use the address/protocol fallback:
  * later fragments have no ports. Fragmented and ordinary packets of one flow
- * can therefore have different readers; the shared fragment table still resolves
- * the processing owner. Complete opaque IPv4 packets use approximate round robin
+ * can therefore have different readers. The shared table retains fragment locality
+ * or reassembles input; stateful consumers establish their own flow ownership.
+ * Complete opaque IPv4 packets use approximate round robin
  * with an interface-local cursor per CPU. Unsupported IP versions use queue zero.
  * Explicit steering bypasses kernel write-learned queue migration. */
 #define TUN_BPF_INSN(op, dst, src, offset, value)                                                                      \

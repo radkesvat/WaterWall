@@ -323,6 +323,7 @@ static bool                     verify_gso_aggregate_transfer;
 static const void              *first_gso_read_storage;
 static unsigned int             prepared_gso_segments;
 static unsigned int             prepared_gso_bytes;
+static wid_t                    expected_gso_worker;
 static unsigned int             gso_expected_segments = 3;
 static unsigned int             ordinary_after_gso_deliveries;
 static unsigned int             queued_checksum_completions;
@@ -404,7 +405,8 @@ bool __real_tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_off
 bool __wrap_tunLinuxOffloadPrepareSegment(const uint8_t *ip, const tun_linux_offload_plan_t *plan, uint32_t offset,
                                           uint8_t *destination, uint32_t capacity, uint32_t *length)
 {
-    require(currentThreadOwnsWorker(0), "GSO segmentation or payload copying ran outside the processing worker");
+    require(currentThreadOwnsWorker(expected_gso_worker),
+            "GSO segmentation or payload copying ran outside the processing worker");
     prepared_gso_segments++;
     const bool prepared = __real_tunLinuxOffloadPrepareSegment(ip, plan, offset, destination, capacity, length);
     if (prepared)
@@ -1166,6 +1168,7 @@ static void resetIoInjection(void)
     first_gso_read_storage         = NULL;
     prepared_gso_segments          = 0;
     prepared_gso_bytes             = 0;
+    expected_gso_worker            = 0;
     gso_expected_segments          = 3;
     ordinary_after_gso_deliveries  = 0;
     queued_checksum_completions    = 0;
@@ -4092,9 +4095,9 @@ static void testOpaqueReaderDistribution(void)
                 const unsigned header = framing == 0 ? 0 : kTunVirtioHeaderSize;
                 uint8_t       *packet = records[i] + header;
                 makeOpaqueReaderPacket(packet, kind, (uint16_t) (100 + i));
-                wid_t target = 0;
+                wid_t target;
                 if (kind == 6 || kind == 17)
-                    require(deviceFlowAffineWID(packet, 40, &target), "native fixture has no flow worker");
+                    require(deviceFlowAffineWID(packet, 40, &target), "visible transport has no locality worker");
                 else
                     target = (wid_t) (opaque_index++ % getWorkersCount());
                 uint8_t expected[40];
@@ -4137,8 +4140,11 @@ static void testOpaqueReaderDistribution(void)
 
 static void testOpaqueReaderFragments(void)
 {
-    for (unsigned preserve = 0; preserve < 2; ++preserve)
+    const uint8_t protocols[] = {6, 17, 50};
+    for (unsigned mode = 0; mode < 2 * ARRAY_SIZE(protocols); ++mode)
     {
+        const unsigned preserve = mode % 2;
+        const uint8_t  protocol = protocols[mode / 2];
         resetReaderFixture(0);
         resetGsoSetup();
         resetIoInjection();
@@ -4156,11 +4162,11 @@ static void testOpaqueReaderFragments(void)
         for (unsigned datagram = 0; datagram < 2; ++datagram)
         {
             uint8_t whole[40];
-            makeOpaqueReaderPacket(whole, 50, (uint16_t) (300 + datagram));
+            makeOpaqueReaderPacket(whole, protocol, (uint16_t) (300 + datagram));
             wid_t target = (wid_t) (datagram % getWorkersCount());
-            if (preserve)
-                require(deviceFlowAffineWID(whole, sizeof(whole), &target), "opaque fragment has no stable worker");
-            else
+            if (preserve || protocol == 6 || protocol == 17)
+                require(deviceFlowAffineWID(whole, sizeof(whole), &target), "fragmented flow has no locality worker");
+            if (! preserve)
                 expectOpaqueReader(&test, whole, sizeof(whole), target);
             for (unsigned part = 0; part < 2; ++part)
             {
@@ -4199,19 +4205,93 @@ static void testOpaqueReaderLaneRetention(void)
     device->queue_fds[1] = second_reader_fd;
     device->queue_count  = 2;
     require(bringUpDevice(device), "opaque two-lane activation failed");
-    for (wid_t lane = 0; lane < 2; ++lane)
+    const uint8_t protocols[] = {6, 17, 50};
+    for (unsigned protocol = 0; protocol < ARRAY_SIZE(protocols); ++protocol)
     {
-        memoryZero(&test, sizeof(test));
-        uint8_t packet[40];
-        makeOpaqueReaderPacket(packet, 50, 400);
-        expectOpaqueReader(&test, packet, sizeof(packet), lane);
-        const injected_io_result_t reads[] = {{.result = sizeof(packet), .bytes = packet},
-                                              {.result = -1, .error = EAGAIN}};
-        runOpaqueReaderBurst(&test, reads, ARRAY_SIZE(reads), lane);
+        for (wid_t lane = 0; lane < 2; ++lane)
+        {
+            memoryZero(&test, sizeof(test));
+            uint8_t packet[40];
+            makeOpaqueReaderPacket(packet, protocols[protocol], 400);
+            expectOpaqueReader(&test, packet, sizeof(packet), lane);
+            const injected_io_result_t reads[] = {{.result = sizeof(packet), .bytes = packet},
+                                                  {.result = -1, .error = EAGAIN}};
+            runOpaqueReaderBurst(&test, reads, ARRAY_SIZE(reads), lane);
+        }
     }
     stopOpaqueReader(device);
     destroyDevice(device);
     second_reader_fd = -1;
+}
+
+static void observeNativeGsoLocality(tun_device_t *device, void *userdata, sbuf_t *buf, wid_t wid)
+{
+    require(wid == 1 && currentThreadOwnsWorker(1), "native GSO/checksum record left its flow locality worker");
+    if (callback_count == 3)
+        require(GET_BE32((const uint8_t *) sbufGetRawPtr(buf) + 24) == 1003 &&
+                    gsoSegmentChecksumsValid(sbufGetRawPtr(buf), sbufGetLength(buf)),
+                "deferred checksum record lost sequence or checksum completion");
+    observeGsoThenOrdinary(device, userdata, buf, wid);
+}
+
+static void testNativeSingleReaderOffloadLocality(void)
+{
+    resetReaderFixture(0);
+    resetGsoSetup();
+    resetIoInjection();
+    resetCapturedMessages();
+    tun_device_t *device = tundeviceCreate(
+        "ww-native-offload", true, false, 1500, NULL, observeNativeGsoLocality, kDeviceFragmentReassemble);
+    require(device != NULL && device->queue_count == 1 && bringUpDevice(device),
+            "native single-reader offload setup failed");
+    device_reader_session_t *session = tunLinuxReaderSession(device);
+    session->output_packet_limit     = 2; // One aggregate plus its prepaid segment allowance.
+    uint8_t aggregate[kGsoFixtureRecordLength], ordinary[kGsoFixtureRecordLength];
+    makeSmallGsoRecord(aggregate);
+    wid_t target = 0;
+    for (uint16_t port = 1; port < 1024; ++port)
+    {
+        PUT_BE16(aggregate + 30, port);
+        require(deviceFlowAffineWID(aggregate + 10, kGsoFixtureIpLength, &target), "GSO fixture has no native tuple");
+        if (target == 1)
+            break;
+    }
+    require(target == 1, "GSO fixture did not select a foreign locality worker");
+    expected_gso_worker = target;
+    memoryCopy(ordinary, aggregate, sizeof(ordinary));
+    memoryZero(ordinary, 10);
+    PUT_BE32(ordinary + 34, 1003);
+    require(tunLinuxOffloadEncodeWrite(ordinary + 10, kGsoFixtureIpLength, ordinary),
+            "native checksum fixture setup failed");
+    const injected_io_result_t reads[] = {{.result = sizeof(aggregate), .bytes = aggregate},
+                                          {.result = sizeof(ordinary), .bytes = ordinary},
+                                          {.result = -1, .error = EAGAIN}};
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    callback_count         = 0;
+    gso_probe_session      = session;
+    inside_reader_callback = true;
+    reader_ready_callback(&reader_io);
+    inside_reader_callback = false;
+    require(observed_read_calls == 2 && captured_message_count == 1 && captured_messages[0].wid == 1 &&
+                callback_count == 0,
+            "GSO admission did not retain the following checksum record behind bounded foreign work");
+    testWorkerBindWID(1);
+    deliverMessage(0, getCurrentWorker());
+    testWorkerBindWID(0);
+    require(callback_count == 3 && ordinary_after_gso_deliveries == 0, "ordinary checksum work overtook GSO expansion");
+    runReaderMessages();
+    require(observed_read_calls == ARRAY_SIZE(reads) && captured_message_count == 2 && captured_messages[1].wid == 1,
+            "capacity retry changed the deferred checksum record's native flow worker");
+    testWorkerBindWID(1);
+    deliverMessage(1, getCurrentWorker());
+    testWorkerBindWID(0);
+    require(callback_count == 3 && ordinary_after_gso_deliveries == 1 && queued_checksum_completions == 1 &&
+                atomicLoadRelaxed(&session->output_packets) == 0 && atomicLoadRelaxed(&session->output_charge) == 0,
+            "native GSO/checksum FIFO lost delivery, completion or reservations");
+    resetIoInjection();
+    stopOpaqueReader(device);
+    destroyDevice(device);
+    resetCapturedMessages();
 }
 
 static void testMultiQueuePreferencePreservesProcessingWorkers(test_env_t *env)
@@ -4322,7 +4402,7 @@ static void testMultiQueuePreferencePreservesProcessingWorkers(test_env_t *env)
     callback_count = 0;
     runReaderUntilIdle();
     require(captured_message_count == 1 && captured_messages[0].wid == 1 && callback_count == 0,
-            "worker-zero receive did not queue the flow to worker one");
+            "single-reader visible flow did not use its locality worker");
     testWorkerBindWID(1);
     deliverMessage(0, getCurrentWorker());
     testWorkerBindWID(0);
@@ -4336,6 +4416,7 @@ static void testMultiQueuePreferencePreservesProcessingWorkers(test_env_t *env)
     testOpaqueReaderDistribution();
     testOpaqueReaderFragments();
     testOpaqueReaderLaneRetention();
+    testNativeSingleReaderOffloadLocality();
 
     record_queue_preference      = false;
     GSTATE.workers_count         = 1;

@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * Flow-affine worker selection and bucketed dispatch for packet-device readers.
+ * Consumer flow selection and independent packet-device receive distribution.
  */
 
 #include "devices/device_flow_hash.h"
@@ -16,24 +16,37 @@
 bool deviceFlowAffineWID(const uint8_t *packet, uint32_t length, wid_t *out_wid);
 
 /*
- * Takes ownership of every buffer and posts one batch per selected worker.
- * Parseable IP packets are flow-affine; other packets retain round-robin
- * distribution. A refused post drops and settles the affected work locally;
- * queue pressure is not a process-wide failure.
+ * Select a processing worker independently of transport ownership. Multiple
+ * native readers keep their own worker. A single reader keeps visible TCP/UDP
+ * tuples on a stable worker; opaque input rotates through this session's event
+ * workers. This is receive locality, not proof of consumer flow ownership.
+ * Call once per admitted native record,
+ * retaining the result across capacity retries and all segments of that record.
  */
-void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count);
+wid_t deviceReaderSelectWID(device_reader_session_t *session, wid_t reader_wid, uint16_t reader_count,
+                            const sbuf_t *buf);
+
+/*
+ * Takes ownership of every buffer and posts one batch per selected worker.
+ * Complete native TCP/UDP packets retain tuple-based receive locality; opaque
+ * packets rotate through this single-reader session's workers. Preserved
+ * fragments retain their fragment association. A refused post drops
+ * and settles the affected work locally; queue pressure is not a process-wide
+ * failure.
+ */
+void deviceReaderDistributeBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count);
 
 /* Nonblocking variant for readers without a capacity-wait mechanism. Requires
  * a configured byte/packet budget and worker FIFO. Takes every buffer; when
  * capacity is exhausted, drops the unadmitted remainder of the read batch.
  * Accepted packets retain their per-worker order. The caller owns only its
  * finite read batch and fragment staging outside the dispatch budget. */
-void deviceFlowAffinityPostBatchDroppingOverflow(device_reader_session_t *session, sbuf_t **bufs, unsigned int count);
+void deviceReaderDistributeBatchDroppingOverflow(device_reader_session_t *session, sbuf_t **bufs, unsigned int count);
 
 /* TUN GSO output is already segmented into unfragmented IP packets.
- * Post it with the ordinary flow hash and stable per-worker bucket ordering,
+ * Post it with native receive locality and stable per-worker bucket ordering,
  * transferring each buffer's pre-allocation budget reservation as well.
  * Optional prepare completes private packet work on the destination worker
  * before delivery; see DeviceReaderPrepareFn. */
-void deviceFlowAffinityPostGsoBatch(device_reader_session_t *session, sbuf_t **bufs, const size_t *charges,
+void deviceReaderDistributeGsoBatch(device_reader_session_t *session, sbuf_t **bufs, const size_t *charges,
                                     unsigned int count, DeviceReaderPrepareFn prepare);

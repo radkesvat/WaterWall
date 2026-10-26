@@ -15,6 +15,7 @@ typedef struct tun_offload_reader_s
     sbuf_t                  *scratch;
     tun_linux_offload_plan_t pending_plan;
     bool                     pending;
+    wid_t                    pending_wid;
     uint64_t                 ordinary_records;
     uint64_t                 gso_aggregates;
     uint64_t                 checksum_completions;
@@ -186,7 +187,7 @@ static bool tunOffloadWorkStep(device_reader_session_t *session, void *context, 
 
 /* Only complete TCP/UDP records with ordinary transport checksum coordinates
  * bypass reader fragment handling. Completion cannot change their flow key.
- * Other metadata retains generic reader-side completion before affinity. */
+ * Other metadata retains generic reader-side completion before distribution. */
 static bool tunOffloadCanDeferChecksum(const uint8_t *ip, const tun_linux_offload_plan_t *plan)
 {
     assert(plan->action == kTunLinuxOffloadChecksum && ! plan->transport_assured);
@@ -242,8 +243,6 @@ struct tun_reader_generation_s
     tun_device_t            *device;
     device_reader_session_t *session;
     uint16_t                 count;
-    /* Only the single receive lane accesses this processing-worker cursor. */
-    wid_t               opaque_next;
     tun_worker_reader_t lanes[];
 };
 
@@ -318,12 +317,7 @@ static bool tunReaderPostOffload(tun_worker_reader_t *lane, worker_t *worker)
 {
     tun_device_t         *tdev   = lane->generation->device;
     tun_offload_reader_t *reader = &lane->offload;
-    wid_t                 wid;
-    if (! deviceFlowAffineWID(sbufGetRawPtr(reader->scratch), sbufGetLength(reader->scratch), &wid))
-    {
-        LOGF("TunDevice: validated offload record has no flow identity");
-        abortProgramNow(1);
-    }
+    const wid_t           wid     = reader->pending_wid;
     const bool        compact = reader->pending_plan.action != kTunLinuxOffloadSegment;
     const uint16_t padding = max(bufferpoolGetLargeBufferPadding(worker->buffer_pool), (uint16_t) kTunVirtioHeaderSize);
     buffer_pool_fit_t fit  = {0};
@@ -394,23 +388,11 @@ static void tunReaderPreparePacket(tun_worker_reader_t *lane, sbuf_t *buf)
             lane->pending_wids[lane->pending_count++] = fragment.wid;
         }
     }
-    wid_t              wid    = fragment.wid;
-    const uint8_t     *packet = sbufGetRawPtr(buf);
-    const uint32_t     length = sbufGetLength(buf);
-    ipv4_packet_view_t view   = {0};
-    if (action != kDeviceFragAffinityDispatch && length >= 20 && packet[9] != IPPROTO_TCP && packet[9] != IPPROTO_UDP &&
-        ipv4packetviewParse(packet, length, &view) && view.ip_total_length == length && ! view.fragmented)
-    {
-        /* Native multiqueue steering already spreads complete opaque IPv4.
-         * Keep that reader's worker; a single reader spreads processing itself.
-         * A later decoder owns any transport affinity it exposes. */
-        tun_reader_generation_t *generation = lane->generation;
-        wid                                 = generation->count > 1 ? lane->wid : generation->opaque_next;
-        if (generation->count == 1)
-            generation->opaque_next = (wid_t) ((generation->opaque_next + 1U) % getWorkersCount());
-    }
-    else if (action != kDeviceFragAffinityDispatch && ! deviceFlowAffineWID(packet, length, &wid))
-        wid = getNextDistributionWID();
+    /* Native steering provides locality; stateful consumers establish their
+     * own flow owner after any preceding packet transformations. */
+    const wid_t wid                           = action == kDeviceFragAffinityDispatch
+                                                    ? fragment.wid
+                                                    : deviceReaderSelectWID(lane->generation->session, lane->wid, lane->generation->count, buf);
     lane->pending_bufs[lane->pending_count]   = buf;
     lane->pending_wids[lane->pending_count++] = wid;
 }
@@ -482,7 +464,9 @@ static bool tunReaderDrain(tun_worker_reader_t *lane, worker_t *worker)
                 (plan.action == kTunLinuxOffloadChecksum && tunOffloadCanDeferChecksum(ip, &plan)))
             {
                 reader->pending_plan = plan;
-                reader->pending      = true;
+                reader->pending_wid  = deviceReaderSelectWID(
+                    lane->generation->session, lane->wid, lane->generation->count, reader->scratch);
+                reader->pending = true;
                 if (plan.action == kTunLinuxOffloadSegment)
                     ++reader->gso_aggregates;
                 else

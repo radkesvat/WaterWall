@@ -76,6 +76,7 @@ device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint1
         .frag_affinity      = frag_affinity,
     };
     atomic_init(&session->producer_admission, false);
+    atomic_init(&session->distribution_next, 0);
     atomic_init(&session->output_charge, 0);
     atomic_init(&session->output_packets, 0);
     atomic_init(&session->output_waiting, false);
@@ -165,6 +166,7 @@ uint32_t deviceReaderSessionBegin(device_reader_session_t *session)
         atomicStoreRelaxed(&session->generation, (w_atomic_uint_value_t) previous);
         return 0;
     }
+    atomicStoreRelaxed(&session->distribution_next, 0);
     deviceFragAffinityBeginGeneration(session->frag_affinity);
     if (session->capacity_notify != NULL && ! quiescenceGateOpen(&session->capacity_notify_gate))
     {

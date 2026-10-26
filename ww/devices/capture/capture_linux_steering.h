@@ -14,7 +14,8 @@ enum
  * malformed/unsupported packets select lane zero for ordinary reader validation.
  *
  * Symmetric IPv4 address/protocol and TCP/UDP port steering distributes receive
- * work only. The existing software flow affinity still selects processing workers.
+ * work and initial processing. Stateful consumers independently establish flow
+ * ownership after any preceding packet transformations.
  * Every fragment uses the address/protocol fallback, including fragment zero.
  * Protocol exclusions remain a separate match shared with the NOTRACK rules.
  * Evaluation is linear in the number of queue predicates visited. */

@@ -636,7 +636,7 @@ static void tunWindowsReaderRun(worker_t *worker, void *arg1, void *arg2, void *
     if (tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
     {
         if (count != 0)
-            deviceFlowAffinityPostBatchDroppingOverflow(tdev->reader_session, bufs, count);
+            deviceReaderDistributeBatchDroppingOverflow(tdev->reader_session, bufs, count);
         /* Clear before rearming: an already-signaled event can notify at once. */
         atomicStoreExplicit(&reader->pending, false, memory_order_release);
         if (empty)

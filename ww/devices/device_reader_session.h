@@ -68,6 +68,8 @@ struct device_reader_session_s
     atomic_uint           refcount;
     atomic_uint           generation;
     atomic_bool           producer_admission;
+    /* Per-device receive distribution; independent of consumer flow ownership. */
+    atomic_uint           distribution_next;
     quiescence_gate_t     delivery_gate;
     master_pool_t        *message_pool;
     uint16_t              batch_capacity;

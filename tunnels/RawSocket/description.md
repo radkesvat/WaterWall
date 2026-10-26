@@ -250,19 +250,23 @@ With no configured capture range, no capture device, NFQUEUE socket, capture rea
 Linux assigns each receive queue to exactly one worker and performs bounded,
 nonblocking reads on that worker's event loop. Queue count and steering stay fixed
 while capture is active. Complete TCP/UDP packets use symmetric IPv4 address,
-protocol, and port steering, followed by the existing processing-flow affinity.
+protocol, and port receive steering. With multiple queues, complete packets
+continue on the receiving worker; consumers establish any required flow ownership
+after transformations rather than relying on capture to select their owner.
 Other complete IPv4 protocols use random kernel queue selection
 (`statistic --mode random`) and continue on the receiving worker. Cascading
 conditional probabilities give each queue approximately the same share; exact
 counts and packet order are not guaranteed. This removes the shared nth-selection
 counter without claiming that every kernel RNG implementation is lock-free.
-With one receive queue, opaque packets still use device-local round-robin
-processing across the workers. No transport payload fields are guessed for
-opaque protocols.
+With one receive queue, complete native TCP/UDP packets with visible ports use
+the symmetric flow hash, keeping ordered packets of one flow on one worker FIFO.
+Opaque or unclassifiable packets use a session-local round-robin sequence across
+workers. Windows capture uses the same policy. Protocol-50 traffic between one
+IP pair therefore remains parallel; no transport ports are guessed for it.
 
 Every IPv4 fragment, including fragment zero, retains address/protocol receive
 steering and the shared fragment table's existing staging and ownership rules.
-Completed reassembly of an opaque protocol uses the opaque processing policy.
+Completed reassembly follows the ordinary complete-packet distribution policy.
 Protocol exclusions apply equally to both rule sets. Queue predicates use the
 iptables `bpf` match; opaque multiqueue routing also requires `statistic`. If
 multiqueue setup fails, capture falls back to one receive queue. The number of

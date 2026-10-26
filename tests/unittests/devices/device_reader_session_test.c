@@ -1693,7 +1693,7 @@ static void testBoundedAffinityDispatch(test_env_t *env)
                     deviceReaderSessionEnableWorkerQueue(session) && deviceReaderSessionBegin(session) != 0,
                 "could not configure bounded affinity fixture");
         tracked_reuse_pool = env->worker_buffer_pool;
-        deviceFlowAffinityPostBatchDroppingOverflow(session, buffers, ARRAY_SIZE(buffers));
+        deviceReaderDistributeBatchDroppingOverflow(session, buffers, ARRAY_SIZE(buffers));
         const unsigned int accepted = mode == 2 ? 0 : 2;
         require(atomicLoadRelaxed(&session->output_packets) == accepted &&
                     atomic_load_explicit(&session->output_charge, memory_order_relaxed) == accepted * charge &&
@@ -1709,7 +1709,7 @@ static void testBoundedAffinityDispatch(test_env_t *env)
             testWorkerBindWID(0);
             sbuf_t *next = bufferpoolGetSmallBuffer(env->worker_buffer_pool);
             sbufSetLength(next, 0);
-            deviceFlowAffinityPostBatchDroppingOverflow(session, &next, 1);
+            deviceReaderDistributeBatchDroppingOverflow(session, &next, 1);
             require(captured_message_count == 2, "freed capacity did not admit another batch");
             deviceReaderSessionEnd(session);
             testWorkerUnbindWID();

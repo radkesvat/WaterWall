@@ -166,7 +166,7 @@ static void WINAPI fixtureAdapterLuid(WINTUN_ADAPTER_HANDLE adapter, NET_LUID *l
 #define requestProgramShutdown                 fixtureShutdownRequest
 #define SetThreadpoolWait                      fixtureSetWait
 #define CreateThreadpoolWait                   fixtureCreateWait
-#define deviceFlowAffinityPostBatchDroppingOverflow fixtureDistribute
+#define deviceReaderDistributeBatchDroppingOverflow fixtureDistribute
 #define GetIpInterfaceEntry                         fixtureGetIpInterface
 #define SetIpInterfaceEntry                         fixtureSetIpInterface
 #define InitializeIpInterfaceEntry                  fixtureInitializeIpInterface
@@ -177,7 +177,7 @@ static void WINAPI fixtureAdapterLuid(WINTUN_ADAPTER_HANDLE adapter, NET_LUID *l
 #undef requestProgramShutdown
 #undef CreateThreadpoolWait
 #undef SetThreadpoolWait
-#undef deviceFlowAffinityPostBatchDroppingOverflow
+#undef deviceReaderDistributeBatchDroppingOverflow
 #undef GetIpInterfaceEntry
 #undef SetIpInterfaceEntry
 #undef InitializeIpInterfaceEntry

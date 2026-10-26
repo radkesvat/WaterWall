@@ -143,14 +143,14 @@ static void fixtureDistribute(device_reader_session_t *session, sbuf_t **buffers
 #define atomicLogRateLimiterShouldLog               fixtureWarningGate
 #define bufferpoolGetSmallBuffer                    fixtureGetBuffer
 #define bufferpoolReuseBuffer                       fixtureReuseBuffer
-#define deviceFlowAffinityPostBatchDroppingOverflow fixtureDistribute
+#define deviceReaderDistributeBatchDroppingOverflow fixtureDistribute
 #include "../../../ww/devices/tun/tun_darwin.c"
 #undef readv
 #undef writev
 #undef atomicLogRateLimiterShouldLog
 #undef bufferpoolGetSmallBuffer
 #undef bufferpoolReuseBuffer
-#undef deviceFlowAffinityPostBatchDroppingOverflow
+#undef deviceReaderDistributeBatchDroppingOverflow
 
 static void runDrainCase(buffer_pool_t *pool, const char *name, const native_record_t *input, unsigned input_count,
                          const expected_packet_t *expected, unsigned output_count, tun_drain_result_t result)

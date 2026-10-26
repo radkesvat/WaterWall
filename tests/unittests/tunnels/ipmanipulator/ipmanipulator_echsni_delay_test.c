@@ -6,7 +6,8 @@
  * Cases: testInstanceMtuAdmission, testSegmentationMatrix, testBoundarySplits,
  * testExactRetransmissionDuringIncompleteCapture, testAckOnlyPacketsDoNotDisableCapture,
  * testSeventeenthSegmentFailsOpen, testSequenceGapFailsOpen,
- * testCaptureOutOfOrderAndPartialOverlapFailOpen; the driver lists the remaining cases
+ * testCaptureOutOfOrderAndPartialOverlapFailOpen, testReaderSkewPreservesClientHello;
+ * the driver lists the remaining cases
  * Checks: Assertion labels include: timed-message capture overflow; forwarded-packet capture overflow;
  * packet emitted on a non-owner worker; the operating system random source is unavailable
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -29,9 +30,12 @@
  * exercised end to end. Only the delayed-release timer is intercepted, through
  * ipmanipulatorEchSniTestScheduleTimed(), so release ordering can be asserted
  * without wall-clock waits.
+ * The reader-skew regression also uses real device distribution, worker queues
+ * and packet-affinity dispatch; worker-loop pumping controls its interleaving.
  */
 
 #include "IpManipulator/structure.h"
+#include "devices/device_flow_affinity.h"
 #include "fixtures/worker_registry_fixture.h"
 #include "iowatcher.h"
 #include "tricks/echsnitrick/trick.h"
@@ -78,6 +82,7 @@ typedef struct forwarded_packet_s
     uint16_t payload_len;
     wid_t    wid;
     uint8_t  flags;
+    uint8_t  headers[sizeof(struct ip_hdr) + sizeof(struct tcp_hdr)];
     uint8_t  payload[kMaxPayloadRecord];
 } forwarded_packet_t;
 
@@ -102,6 +107,7 @@ typedef struct test_fixture_s
     tunnel_t *t;
     tunnel_t *next;
     line_t   *line;
+    uint16_t  client_port;
 } test_fixture_t;
 
 static timed_message_t    timed_messages[kMaxTimedMessages];
@@ -178,6 +184,7 @@ static void recordForwardedPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     record->payload_len = payload_len;
     record->wid         = lineGetWID(l);
     record->flags       = TCPH_FLAGS(tcp);
+    memoryCopy(record->headers, packet, sizeof(record->headers));
 
     if (payload_len > 0)
     {
@@ -340,7 +347,7 @@ static test_fixture_t fixtureCreateWithSni(test_env_t *env, const char *configur
     require(state->tls_capture_slots != NULL && state->tls_prestart_slots != NULL,
             "failed to allocate the TLS capture slots");
 
-    return (test_fixture_t) {.t = t, .next = next, .line = env->line};
+    return (test_fixture_t) {.t = t, .next = next, .line = env->line, .client_port = kClientPort};
 }
 
 static test_fixture_t fixtureCreate(test_env_t *env)
@@ -593,12 +600,13 @@ static sbuf_t *makeClientPacket(test_fixture_t *fixture, uint32_t seq, uint8_t f
                                 uint16_t payload_len)
 {
     return makeTcpPacket(
-        fixture->line, kClientAddr, kClientPort, kServerAddr, kServerPort, seq, flags, payload, payload_len);
+        fixture->line, kClientAddr, fixture->client_port, kServerAddr, kServerPort, seq, flags, payload, payload_len);
 }
 
 static sbuf_t *makeServerPacket(test_fixture_t *fixture, uint32_t seq, uint8_t flags)
 {
-    return makeTcpPacket(fixture->line, kServerAddr, kServerPort, kClientAddr, kClientPort, seq, flags, NULL, 0);
+    return makeTcpPacket(
+        fixture->line, kServerAddr, kServerPort, kClientAddr, fixture->client_port, seq, flags, NULL, 0);
 }
 
 static bool feedUpstream(test_fixture_t *fixture, sbuf_t *buf)
@@ -644,7 +652,7 @@ static bool findClientFlow(test_fixture_t *fixture, ipmanipulator_echsni_flow_t 
 {
     ipmanipulator_tstate_t  *state = tunnelGetState(fixture->t);
     ipmanipulator_flow_key_t key =
-        ipmanipulatorFlowKeyMake(lwip_htonl(kClientAddr), kClientPort, lwip_htonl(kServerAddr), kServerPort);
+        ipmanipulatorFlowKeyMake(lwip_htonl(kClientAddr), fixture->client_port, lwip_htonl(kServerAddr), kServerPort);
     ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->echsni_table, &key);
     bool                        found = false;
 
@@ -840,6 +848,109 @@ static void drainRelease(uint16_t hello_len, uint32_t segments)
     }
 
     require(offset == hello_len, "the released originals did not cover the whole ClientHello");
+}
+
+static void consumeReaderPacket(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    if (! echsnitrickUpStreamPayload(t, line, buf))
+        ipmanipulatorSendUpstreamFinal(t, line, buf);
+}
+
+static void deliverReaderPacket(void *context, sbuf_t *buf, wid_t wid)
+{
+    test_fixture_t         *fixture = context;
+    ipmanipulator_tstate_t *state   = tunnelGetState(fixture->t);
+    line_t                 *line    = tunnelchainGetWorkerPacketLine(tunnelGetChain(fixture->t), wid);
+    require(lineIsOnCurrentWorker(line), "reader delivered outside its selected worker");
+    packetAffinityForward(state->upstream_affinity, line, buf);
+}
+
+static void testReaderSkewPreservesClientHello(test_env_t *env)
+{
+    resetCaptures();
+    test_fixture_t fixture = fixtureCreate(env);
+    tunnel_chain_t chain   = {
+          .workers_count = 2, .contains_packet_node = true, .finalized = true, .packet_lines = env->lines};
+    fixture.t->chain              = &chain;
+    ipmanipulator_tstate_t *state = tunnelGetState(fixture.t);
+    state->upstream_affinity      = packetAffinityCreate(fixture.t, consumeReaderPacket);
+    require(state->upstream_affinity != NULL, "consumer affinity creation failed");
+
+    /* Choose a real tuple owned by worker 0, independently of hash details. */
+    bool owner_found = false;
+    for (uint32_t port = 1024; port <= UINT16_MAX; ++port)
+    {
+        fixture.client_port = (uint16_t) port;
+        sbuf_t *probe       = makeClientPacket(&fixture, kClientHelloSeq - 1U, TCP_SYN, NULL, 0);
+        wid_t   owner;
+        require(deviceFlowAffineWID(sbufGetRawPtr(probe), sbufGetLength(probe), &owner),
+                "SYN fixture lacks a transport tuple");
+        lineReuseBuffer(fixture.line, probe);
+        if (owner == 0)
+        {
+            owner_found = true;
+            break;
+        }
+    }
+    require(owner_found, "no ClientHello tuple selects worker 0");
+    openFlow(&fixture, TCP_SYN);
+
+    device_reader_session_t *session =
+        deviceReaderSessionCreate(4, 3, &fixture, deliverReaderPacket, env->buffer_pools[0], kDeviceFragmentReassemble);
+    require(session != NULL && deviceReaderSessionConfigureOutputBudget(session, 8U * 1024U * 1024U, 512) &&
+                deviceReaderSessionEnableWorkerQueue(session) && deviceReaderSessionBegin(session) != 0,
+            "reader session setup failed");
+
+    uint8_t        hello[1024];
+    const uint16_t hello_len = buildMatchingClientHello(hello, sizeof(hello));
+    sbuf_t        *packets[3];
+    uint8_t        headers[ARRAY_SIZE(packets)][sizeof(struct ip_hdr) + sizeof(struct tcp_hdr)];
+    uint16_t       offset = 0;
+    for (unsigned i = 0; i < ARRAY_SIZE(packets); ++i)
+    {
+        const uint16_t length = i + 1U == ARRAY_SIZE(packets) ? (uint16_t) (hello_len - offset)
+                                                              : (uint16_t) (hello_len / ARRAY_SIZE(packets));
+        packets[i] = makeClientPacket(&fixture, kClientHelloSeq + offset, TCP_ACK | TCP_PSH, hello + offset, length);
+        require(calcFullPacketChecksum(sbufGetMutablePtr(packets[i]), sbufGetLength(packets[i])),
+                "ClientHello packet checksum construction failed");
+        memoryCopy(headers[i], sbufGetRawPtr(packets[i]), sizeof(headers[i]));
+        offset = (uint16_t) (offset + length);
+    }
+    deviceReaderDistributeBatchDroppingOverflow(session, packets, ARRAY_SIZE(packets));
+
+    /* Deliberately stall worker 1. Packet-by-packet receive distribution would
+     * make worker 0 publish segments 1 and 3 before worker 1 publishes segment 2;
+     * the real consumer FIFO cannot repair that already-changed arrival order. */
+    testWorkerBindWID(0);
+    wloopProcessEvents(env->loops[0], 0);
+    testWorkerBindWID(1);
+    wloopProcessEvents(env->loops[1], 0);
+    testWorkerBindWID(0);
+    wloopProcessEvents(env->loops[0], 0);
+
+    ipmanipulator_echsni_flow_t flow = {0};
+    require(findClientFlow(&fixture, &flow), "reader skew lost the ECH flow");
+    require(flow.phase == kIpManipulatorEchSniFlowPhaseReleasing,
+            "ordered reader input became out-of-order at ECH capture and disabled the trick");
+    requireSuccessfulCapture(&fixture, hello_len, ARRAY_SIZE(packets));
+    drainRelease(hello_len, ARRAY_SIZE(packets));
+    offset = 0;
+    for (unsigned i = 1; i <= ARRAY_SIZE(packets); ++i)
+    {
+        const forwarded_packet_t *packet = &forwarded_packets[i];
+        require(packet->wid == 0 && packet->flags == (TCP_ACK | TCP_PSH) &&
+                    memoryEqual(packet->headers, headers[i - 1], sizeof(packet->headers)) &&
+                    memoryEqual(packet->payload, hello + offset, packet->payload_len),
+                "reader dispatch or ECH release changed an original segment");
+        offset = (uint16_t) (offset + packet->payload_len);
+    }
+
+    deviceReaderSessionEnd(session);
+    deviceReaderSessionRetireProducerBuffers(session);
+    deviceReaderSessionUnref(session);
+    packetAffinityDestroy(state->upstream_affinity);
+    state->upstream_affinity = NULL;
+    fixtureDestroy(&fixture);
 }
 
 static void testInstanceMtuAdmission(test_env_t *env)
@@ -2015,6 +2126,7 @@ int main(void)
     testSeventeenthSegmentFailsOpen(&env);
     testSequenceGapFailsOpen(&env);
     testCaptureOutOfOrderAndPartialOverlapFailOpen(&env);
+    testReaderSkewPreservesClientHello(&env);
     testSynClassification(&env);
     testInnerSniMatchingMatrix(&env);
     testForeignWorkerReleaseDrainForwardsOnOwner(&env);

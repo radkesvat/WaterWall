@@ -37,25 +37,29 @@ CPU. Ordinary increments advance the cursor without atomic operations, and a
 CPU-ID offset avoids starting every CPU at queue zero. Overlapping updates can
 lose a step; this policy does not promise exact global order or equal queue counts.
 Unsupported per-CPU map or steering setup falls back to one reader.
-With one receive queue, opaque processing uses a device-local round-robin sequence
-across the configured workers. No new setting or downstream-chain inspection is
-needed. A decoder that restores inner TCP/UDP selects that inner flow's worker.
+With multiple receive queues, complete packets continue on their reader worker.
+With one queue, complete native TCP/UDP packets with visible ports use the
+symmetric flow hash, keeping ordered packets of one flow on one worker FIFO.
+Opaque or unclassifiable packets use a session-local round-robin sequence across
+configured workers. Stateful consumers still establish ownership from the tuple
+they actually consume; no downstream-chain inspection is needed.
 
 All IPv4 fragments and TCP/UDP packets too short to contain both ports retain the
 address-pair/protocol fallback. Every fragment of one datagram keeps one reader;
 fragmented and ordinary packets of one connection can still have different
 readers and reorder. The shared fragment table retains its staging and preserved
-fragment affinity; a reassembled opaque packet follows the ordinary opaque
-processing policy. Opaque round robin can also reorder packets across readers.
+fragment affinity; a reassembled datagram follows ordinary complete-packet
+distribution. Parallel receive can reorder packets across readers.
 Malformed packets and unsupported IP versions retain queue-zero selection for
 downstream validation. Startup logs the active queue count. Queue selection is
 independent of `gso`. Set `multi-queue: false` to use one receive queue owned by
-worker 0 while retaining all configured processing workers. Other platforms keep
-their existing receive and processing policies.
+worker 0 while retaining all configured processing workers.
 
 Windows receives on worker 0 using Wintun event notifications. Linux and Windows
-have no dedicated application TUN reader thread. Reads use bounded batches;
-TCP/UDP retains its flow ownership across the configured processing workers.
+have no dedicated application TUN reader thread. Reads use bounded batches.
+Windows and Darwin/BSD use the same single-reader policy: visible native TCP/UDP
+flows stay on a consistent worker, while opaque packets rotate across workers.
+Consumers establish required flow ownership after transformations.
 Darwin/BSD use external reader threads with their own buffer pools.
 
 Windows, macOS and BSD limit queued receive packets to 8 MiB of retained buffer
@@ -168,7 +172,7 @@ Full-route example with local ranges excluded:
   automatically falls back to one queue owned by worker 0.
 
   `false` disables multiqueue setup and uses one queue owned by worker 0.
-  Other workers still process their assigned flows; the configured worker count
+  Other workers still process their assigned packets; the configured worker count
   does not change. Reads and writes use the resulting TUN queue set. This option
   is independent of `gso`. Invalid types, including `null`, are rejected on every
   platform. Non-Linux platforms accept the boolean and ignore it.
@@ -360,12 +364,12 @@ When the TUN device produces a packet:
   handling retain the reader path; `GSO_NONE` records, including IPv6, retain
   their existing admission policy without an IPv4-only preflight
 - for TCPv4 GSO, the reader validates the aggregate and transfers its buffer
-  to the flow's worker; that worker allocates independent MTU-sized packets,
+  to a selected receive-processing worker; that worker allocates independent MTU-sized packets,
   copies their headers and payload, and completes IPv4 and TCP checksums before
   normal TunDevice delivery, logging, or packet publication in ordinary mode
 - ordinary batches and GSO aggregates share a bounded FIFO for each worker;
   unfinished segmentation stays ahead of later packets and continues in bounded
-  callbacks, preserving flow order without blocking the worker for queue capacity
+  callbacks, preserving admitted FIFO order without blocking the worker for queue capacity
 - with ordinary TUN framing, unfragmented kernel-produced packets remain
   trusted at this adapter boundary; downstream consumers retain their validation
   policy except for the direct receive-trust pair below. Fragmented IPv4 packets

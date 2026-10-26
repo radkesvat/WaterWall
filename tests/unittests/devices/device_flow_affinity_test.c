@@ -13,7 +13,7 @@
  * or application-throughput behavior.
  * CTest: waterwall.device_flow_affinity_unit
  * Organization: Flow hashing and bucketed dispatch use one packet builder and tracked-publication
- * oracle. Dispatch cases extend the same worker-affinity result through admission/refusal boundaries.
+ * oracle. Dispatch cases exercise receive distribution separately from consumer flow hashes.
  */
 #include "devices/device_flow_affinity.h"
 
@@ -759,6 +759,78 @@ static void testBalancedDistribution(void)
     }
 }
 
+static void requireSingleReaderTarget(device_reader_session_t *session, sbuf_t *packet, wid_t expected)
+{
+    memoryZero(captured_posts, sizeof(captured_posts));
+    captured_post_count = 0;
+    deviceReaderDistributeBatch(session, &packet, 1);
+    require(captured_post_count == 1 && captured_posts[0].wid == expected && captured_posts[0].count == 1 &&
+                captured_posts[0].bufs[0] == packet,
+            "single-reader native locality or opaque rotation selected the wrong worker");
+    sbufDestroy(packet);
+}
+
+static void testSingleReaderNativeLocalityAndOpaqueRotation(void)
+{
+    device_reader_session_t session      = {.batch_capacity = 1};
+    unsigned                opaque_index = 0;
+    const uint8_t           protocols[]  = {6, 17};
+    for (unsigned protocol = 0; protocol < ARRAY_SIZE(protocols); ++protocol)
+    {
+        unsigned workers_seen = 0;
+        for (uint16_t port = 1024; port < 1056; ++port)
+        {
+            for (unsigned segment = 0; segment < 3; ++segment)
+            {
+                sbuf_t     *packet   = makeIpv4Packet(0x0A000001U, port, 0xC0000201U, 443, protocols[protocol], 0);
+                const wid_t expected = affinityOf(packet);
+                workers_seen |= 1U << expected;
+                requireSingleReaderTarget(&session, packet, expected);
+            }
+        }
+        require(workers_seen == 15, "different native ports did not retain multiple processing workers");
+    }
+    const uint8_t src[16] = {0x20, 0x01, 0xdb, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+    const uint8_t dst[16] = {0x20, 0x01, 0xdb, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2};
+    for (unsigned protocol = 0; protocol < ARRAY_SIZE(protocols); ++protocol)
+        for (unsigned segment = 0; segment < 4; ++segment)
+        {
+            sbuf_t *packet = makeIpv6Packet(src, 12345, dst, 443, protocols[protocol]);
+            requireSingleReaderTarget(&session, packet, affinityOf(packet));
+        }
+    // One fixed opaque IP pair retains parallel processing in both IP versions.
+    for (unsigned version = 0; version < 2; ++version)
+        for (unsigned packet = 0; packet < 8; ++packet)
+            requireSingleReaderTarget(&session,
+                                      version == 0 ? makeIpv4Packet(0x0A000001U, 12345, 0xC0000201U, 443, 50, 0)
+                                                   : makeIpv6Packet(src, 12345, dst, 443, 50),
+                                      (wid_t) (opaque_index++ % getWorkersCount()));
+    // Declared lengths, fragment headers and extension headers must not expose
+    // incidental bytes as a native transport tuple or fall back to coarse hashing.
+    sbuf_t *short_v4 = makeIpv4Packet(0x0A000001U, 12345, 0xC0000201U, 443, 6, 0);
+    PUT_BE16(sbufGetMutablePtr(short_v4) + 2, 20);
+    sbufSetLength(short_v4, 20);
+    requireSingleReaderTarget(&session, short_v4, (wid_t) (opaque_index++ % getWorkersCount()));
+    sbuf_t *trailing_v4 = makeIpv4Packet(0x0A000001U, 12345, 0xC0000201U, 443, 17, 0);
+    PUT_BE16(sbufGetMutablePtr(trailing_v4) + 2, 20);
+    requireSingleReaderTarget(&session, trailing_v4, (wid_t) (opaque_index++ % getWorkersCount()));
+    sbuf_t *short_v6 = makeIpv6Packet(src, 12345, dst, 443, 6);
+    PUT_BE16(sbufGetMutablePtr(short_v6) + 4, 2);
+    sbufSetLength(short_v6, 42);
+    requireSingleReaderTarget(&session, short_v6, (wid_t) (opaque_index++ % getWorkersCount()));
+    // Production fragments use their separate association table. Exercise the
+    // selector alone to prove it cannot mistake a first fragment for a tuple.
+    sbuf_t *first_fragment = makeIpv4Packet(0x0A000001U, 12345, 0xC0000201U, 443, 6, 0x2000);
+    require(deviceReaderSelectWID(&session, 0, 1, first_fragment) == (wid_t) (opaque_index++ % getWorkersCount()),
+            "receive selector used fragment payload bytes as a native tuple");
+    sbufDestroy(first_fragment);
+    requireSingleReaderTarget(
+        &session, makeIpv6Packet(src, 12345, dst, 443, 0), (wid_t) (opaque_index++ % getWorkersCount()));
+    requireSingleReaderTarget(&session,
+                              makeIpv4Packet(0x0A000001U, 12345, 0xC0000201U, 443, 132, 0),
+                              (wid_t) (opaque_index++ % getWorkersCount()));
+}
+
 static void testBucketedDispatch(void)
 {
     enum
@@ -774,16 +846,18 @@ static void testBucketedDispatch(void)
     memoryZero(captured_posts, sizeof(captured_posts));
     captured_post_count = 0;
 
+    unsigned opaque_index = 0;
     for (uint32_t i = 0; i < kPacketCount - 1; ++i)
     {
-        packets[i]  = makeIpv4Packet(0x0A000001U + i, (uint16_t) (2000U + i), 0xC0000201, 443, 6, 0);
-        expected[i] = affinityOf(packets[i]);
+        const uint8_t protocol = i < 4 ? 6 : i < 8 ? 17 : 50;
+        packets[i]             = makeIpv4Packet(0x0A000001U, 2000, 0xC0000201, 443, protocol, 0);
+        expected[i]            = protocol == 50 ? (wid_t) (opaque_index++ % getWorkersCount()) : affinityOf(packets[i]);
     }
 
     packets[kPacketCount - 1] = sbufCreate(8);
     sbufSetLength(packets[kPacketCount - 1], 8);
     memoryZero(sbufGetMutablePtr(packets[kPacketCount - 1]), 8);
-    expected[kPacketCount - 1] = UINT8_MAX;
+    expected[kPacketCount - 1] = (wid_t) (opaque_index % getWorkersCount());
 
     // A real session object, because dispatch reads its fragment-affinity
     // table. Leaving that table NULL keeps this case about bucketing alone.
@@ -791,7 +865,7 @@ static void testBucketedDispatch(void)
     memoryZero(&session, sizeof(session));
     session.batch_capacity = kMaxCapturedBuffers;
 
-    deviceFlowAffinityPostBatch(&session, packets, kPacketCount);
+    deviceReaderDistributeBatch(&session, packets, kPacketCount);
 
     unsigned int delivered = 0;
     for (unsigned int pi = 0; pi < captured_post_count; ++pi)
@@ -833,7 +907,7 @@ static void testBucketedDispatch(void)
     }
 }
 
-static void testGsoDispatchPreservesAffinityAndReservations(void)
+static void testGsoDispatchPreservesLocalityAndReservations(void)
 {
     enum
     {
@@ -858,7 +932,7 @@ static void testGsoDispatchPreservesAffinityAndReservations(void)
     device_reader_session_t session;
     memoryZero(&session, sizeof(session));
     session.batch_capacity = kMaxCapturedBuffers;
-    deviceFlowAffinityPostGsoBatch(&session, packets, charges, kPacketCount, prepareGsoProbe);
+    deviceReaderDistributeGsoBatch(&session, packets, charges, kPacketCount, prepareGsoProbe);
 
     unsigned int delivered = 0;
     for (unsigned int pi = 0; pi < captured_post_count; ++pi)
@@ -933,7 +1007,7 @@ static void testGsoRefusalSettlesEveryUnpostedReservation(void)
     released_reserved_charge  = 0;
     released_reserved_packets = 0;
 
-    deviceFlowAffinityPostGsoBatch(&session, packets, charges, kPacketCount, prepareGsoProbe);
+    deviceReaderDistributeGsoBatch(&session, packets, charges, kPacketCount, prepareGsoProbe);
     require(captured_post_count == 1 && captured_posts[0].count == 2,
             "GSO dispatch continued posting after a refused chunk");
     require(released_reserved_packets == 3 && released_reserved_charge == 3 * charges[0],
@@ -967,12 +1041,12 @@ static void testEmptyAndSingletonDispatch(void)
 
     memoryZero(captured_posts, sizeof(captured_posts));
     captured_post_count = 0;
-    deviceFlowAffinityPostBatch(&session, no_buffers, 0);
+    deviceReaderDistributeBatch(&session, no_buffers, 0);
     require(captured_post_count == 0, "an empty dispatch submitted a worker message");
 
     sbuf_t     *packet   = makeIpv4Packet(0x0A000011, 32123, 0xC0000201, 443, 6, 0);
     const wid_t expected = affinityOf(packet);
-    deviceFlowAffinityPostBatch(&session, &packet, 1);
+    deviceReaderDistributeBatch(&session, &packet, 1);
     require(captured_post_count == 1 && captured_posts[0].wid == expected && captured_posts[0].count == 1 &&
                 captured_posts[0].bufs[0] == packet,
             "a singleton dispatch did not post the original packet directly");
@@ -997,7 +1071,7 @@ static void testDispatchBucketsAreSplitAtSessionCapacity(void)
     memoryZero(&session, sizeof(session));
     session.batch_capacity = 1;
 
-    deviceFlowAffinityPostBatch(&session, packets, kPacketCount);
+    deviceReaderDistributeBatch(&session, packets, kPacketCount);
     require(captured_post_count == kPacketCount, "capacity-one dispatch was not split into legal posts");
     for (unsigned int i = 0; i < kPacketCount; ++i)
     {
@@ -1029,7 +1103,7 @@ static void testLargeDispatchBoundaries(void)
         memoryZero(&session, sizeof(session));
         session.batch_capacity = capacity;
 
-        deviceFlowAffinityPostBatch(&session, packets, count);
+        deviceReaderDistributeBatch(&session, packets, count);
         require(captured_post_count == 2, "one-over-capacity dispatch did not produce exactly two posts");
         require(captured_posts[0].count == capacity && captured_posts[1].count == 1,
                 "one-over-capacity dispatch used illegal chunk sizes");
@@ -1079,7 +1153,7 @@ static void testSameTargetRefusalCleansLaterChunks(void)
         session.batch_capacity     = kChunkSize;
         session.reader_buffer_pool = pool;
 
-        deviceFlowAffinityPostBatch(&session, packets, ARRAY_SIZE(packets));
+        deviceReaderDistributeBatch(&session, packets, ARRAY_SIZE(packets));
 
         require(captured_post_count == refused, "same-target dispatch posted a chunk after the selected refusal");
         for (unsigned int post = 0; post < captured_post_count; ++post)
@@ -1173,7 +1247,7 @@ static void testMixedWorkerRefusalCleansTrackedPublications(void)
         require(bucket_counts[0] == 2 && bucket_counts[1] == 3 && bucket_counts[2] == 2,
                 "mixed-worker refusal fixture did not fill its intended buckets");
 
-        deviceFlowAffinityPostBatch(&session, packets, ARRAY_SIZE(packets));
+        deviceReaderDistributeBatch(&session, packets, ARRAY_SIZE(packets));
 
         if (run == 0)
         {
@@ -1237,7 +1311,8 @@ int main(void)
     testBalancedDistribution();
     testEmptyAndSingletonDispatch();
     testBucketedDispatch();
-    testGsoDispatchPreservesAffinityAndReservations();
+    testSingleReaderNativeLocalityAndOpaqueRotation();
+    testGsoDispatchPreservesLocalityAndReservations();
     testGsoRefusalSettlesEveryUnpostedReservation();
     testDispatchBucketsAreSplitAtSessionCapacity();
     testLargeDispatchBoundaries();

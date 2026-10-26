@@ -2,6 +2,7 @@
 
 #include "devices/device_frag_affinity.h"
 #include "global_state.h"
+#include "ipv4_packet_view.h"
 
 enum
 {
@@ -29,16 +30,48 @@ bool deviceFlowAffineWID(const uint8_t *packet, uint32_t length, wid_t *out_wid)
     return true;
 }
 
-static wid_t deviceFlowAffinitySelectWID(const sbuf_t *buf)
+static bool deviceReaderHasVisibleTransportTuple(const sbuf_t *buf)
 {
-    wid_t target_wid;
-
-    if (deviceFlowAffineWID(sbufGetRawPtr(buf), sbufGetLength(buf), &target_wid))
+    const uint8_t *packet = sbufGetRawPtr(buf);
+    const uint32_t length = sbufGetLength(buf);
+    if (length == 0)
+        return false;
+    if ((packet[0] >> 4U) == 4)
     {
-        return target_wid;
+        ipv4_packet_view_t view;
+        return ipv4packetviewParse(packet, length, &view) && view.ip_total_length == length && ! view.fragmented &&
+               view.transport_length >= 4 && (view.protocol == IPPROTO_TCP || view.protocol == IPPROTO_UDP);
     }
+    /* IPv6 extension headers are opaque here; only an immediately visible
+     * TCP/UDP header exposes transport ports to the existing flow hash. */
+    return (packet[0] >> 4U) == 6 && length >= 44 && GET_BE16(packet + 4) >= 4 &&
+           (uint32_t) GET_BE16(packet + 4) + 40U == length && (packet[6] == IPPROTO_TCP || packet[6] == IPPROTO_UDP);
+}
 
-    return getNextDistributionWID();
+wid_t deviceReaderSelectWID(device_reader_session_t *session, wid_t reader_wid, uint16_t reader_count,
+                            const sbuf_t *buf)
+{
+    assert(session != NULL && buf != NULL);
+    assert(reader_count > 0 && reader_count <= getWorkersCount());
+    assert(reader_wid < reader_count);
+    if (reader_count > 1)
+        return reader_wid;
+
+    /* Keep this receive locality even though consumers select their own flow owner.
+     * Round-robin can assign ordered segments 1,2,3 to workers 0,1,0; a delayed
+     * worker 1 then makes ECH-SNI see 1,3,2 and mark this flow generation passthrough.
+     * Consumer affinity orders admission only: segment 2 is still in another
+     * receive queue. Opaque traffic must retain the parallel rotation below.
+     * Regression: testReaderSkewPreservesClientHello in the ECH-SNI unit suite. */
+    if (deviceReaderHasVisibleTransportTuple(buf))
+    {
+        wid_t      wid        = 0;
+        const bool identified = deviceFlowAffineWID(sbufGetRawPtr(buf), sbufGetLength(buf), &wid);
+        assert(identified);
+        discard identified;
+        return wid;
+    }
+    return (wid_t) (atomicIncExplicit(&session->distribution_next, memory_order_relaxed) % getWorkersCount());
 }
 
 /*
@@ -61,8 +94,8 @@ static unsigned int deviceFlowAffinityAppend(device_reader_session_t *session, s
     {
         if (action == kDeviceFragAffinityComplete)
             buf = frag.completed;
-        dispatch[filled]              = buf;
-        dispatch_wids[filled]         = (uint8_t) deviceFlowAffinitySelectWID(buf);
+        dispatch[filled]      = buf;
+        dispatch_wids[filled] = (uint8_t) deviceReaderSelectWID(session, 0, 1, buf);
         return filled + 1;
     }
 
@@ -197,7 +230,7 @@ static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_
     return true;
 }
 
-static void deviceFlowAffinityPostBatchInternal(device_reader_session_t *session, sbuf_t **bufs, unsigned int count,
+static void deviceReaderDistributeBatchInternal(device_reader_session_t *session, sbuf_t **bufs, unsigned int count,
                                                 bool nonblocking)
 {
     assert(session != NULL);
@@ -235,18 +268,18 @@ static void deviceFlowAffinityPostBatchInternal(device_reader_session_t *session
     }
 }
 
-void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count)
+void deviceReaderDistributeBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count)
 {
-    deviceFlowAffinityPostBatchInternal(session, bufs, count, false);
+    deviceReaderDistributeBatchInternal(session, bufs, count, false);
 }
 
-void deviceFlowAffinityPostBatchDroppingOverflow(device_reader_session_t *session, sbuf_t **bufs, unsigned int count)
+void deviceReaderDistributeBatchDroppingOverflow(device_reader_session_t *session, sbuf_t **bufs, unsigned int count)
 {
     assert(session != NULL && session->worker_queues != NULL && session->output_charge_limit != 0);
-    deviceFlowAffinityPostBatchInternal(session, bufs, count, true);
+    deviceReaderDistributeBatchInternal(session, bufs, count, true);
 }
 
-void deviceFlowAffinityPostGsoBatch(device_reader_session_t *session, sbuf_t **bufs, const size_t *charges,
+void deviceReaderDistributeGsoBatch(device_reader_session_t *session, sbuf_t **bufs, const size_t *charges,
                                     unsigned int count, DeviceReaderPrepareFn prepare)
 {
     assert(session != NULL);
@@ -259,7 +292,7 @@ void deviceFlowAffinityPostGsoBatch(device_reader_session_t *session, sbuf_t **b
         uint8_t            wids[kDeviceFlowAffinityMaxBatch];
         for (unsigned int i = 0; i < chunk_count; ++i)
         {
-            wids[i] = (uint8_t) deviceFlowAffinitySelectWID(bufs[i]);
+            wids[i] = (uint8_t) deviceReaderSelectWID(session, 0, 1, bufs[i]);
         }
 
         if (! deviceFlowAffinityPostSorted(session, bufs, wids, charges, chunk_count, prepare, false))

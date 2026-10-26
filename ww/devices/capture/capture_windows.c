@@ -168,7 +168,7 @@ static void captureDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
 
 static void distributePacketPayload(capture_device_t *cdev, sbuf_t *buf)
 {
-    deviceFlowAffinityPostBatch(cdev->reader_session, &buf, 1);
+    deviceReaderDistributeBatch(cdev->reader_session, &buf, 1);
 }
 static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {

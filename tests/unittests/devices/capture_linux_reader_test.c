@@ -479,6 +479,7 @@ static void sendPacketProtocol(unsigned queue, unsigned id, wid_t destination, u
     PUT_BE32(packet + 16, UINT32_C(0x0a000002));
     PUT_BE16(packet + 22, 443);
     PUT_BE16(packet + 24, 8);
+    packet[9]      = protocol == IPPROTO_TCP ? IPPROTO_TCP : IPPROTO_UDP;
     wid_t selected = kWorkers;
     for (unsigned port = 1; port < 65536; ++port)
     {
@@ -516,13 +517,13 @@ static void sendPacket(unsigned queue, unsigned id, wid_t destination)
     sendPacketProtocol(queue, id, destination, IPPROTO_UDP);
 }
 
-static void testOpaqueProcessing(unsigned queues)
+static void testReceiveProcessing(unsigned queues)
 {
     fixtureSetup();
     capture_device_t *device = createReader(queues, 512);
     require(startReader(device), "opaque reader startup failed");
     runMessages();
-    const uint8_t protocols[] = {1, 49, 50, 132};
+    const uint8_t protocols[] = {1, 6, 17, 49, 50, 132};
     unsigned      id          = 0;
     for (unsigned protocol = 0; protocol < sizeof(protocols); ++protocol)
     {
@@ -538,9 +539,35 @@ static void testOpaqueProcessing(unsigned queues)
                 require(fixture.deliveries[queue] == before[queue] + number / queues + 1,
                         "opaque packet left its receiving worker for coarse processing affinity");
         }
+        const bool native = protocols[protocol] == IPPROTO_TCP || protocols[protocol] == IPPROTO_UDP;
         for (unsigned worker = 0; worker < kWorkers; ++worker)
-            require(fixture.deliveries[worker] - before[worker] == 8 / kWorkers,
-                    "single-reader opaque processing did not distribute workers in turn");
+        {
+            const unsigned expected = queues == 1 && native ? (worker == 0 ? 8 : 0) : 8 / kWorkers;
+            require(fixture.deliveries[worker] - before[worker] == expected,
+                    "reader lost native flow locality or opaque parallel distribution");
+        }
+    }
+    destroyReader(device);
+    fixtureTeardown();
+}
+
+static void testNativeSingleReaderFlowDistribution(void)
+{
+    fixtureSetup();
+    capture_device_t *device = createReader(1, 512);
+    require(startReader(device), "native single-reader startup failed");
+    runMessages();
+    unsigned expected[kWorkers] = {0};
+    for (unsigned packet = 0; packet < 8; ++packet)
+    {
+        const wid_t target = (wid_t) ((packet / 2) % kWorkers);
+        sendPacket(0, packet + 1, target);
+        runReady(0);
+        runMessages();
+        ++expected[target];
+        for (unsigned worker = 0; worker < kWorkers; ++worker)
+            require(fixture.deliveries[worker] == expected[worker],
+                    "one native flow changed worker or different ports lost parallel processing");
     }
     destroyReader(device);
     fixtureTeardown();
@@ -557,13 +584,13 @@ static void testWorkerQueues(void)
         runMessages();
         for (unsigned i = 0; i < queues; ++i)
         {
-            const wid_t destination = queues == 1 ? 1 : (wid_t) i;
+            const wid_t destination = (wid_t) ((i + 1) % kWorkers);
             sendPacket(i, i + 1, destination);
             runReady(i);
         }
         runMessages();
-        require(fixture.deliveries[1] == 1 && fixture.deliveries[0] == queues - 1,
-                "queue topology changed the flow's processing worker");
+        require(fixture.deliveries[0] == queues - 1 && fixture.deliveries[1] == 1,
+                "capture lost native single-reader locality or changed native multiqueue placement");
         require(queues > 1 || fixture.queues[1].reads == 0, "fallback read from a second worker");
         destroyReader(device);
         fixtureTeardown();
@@ -583,7 +610,8 @@ static void testBoundedReadiness(void)
     require(fixture.deliveries[0] > 0 && fixture.deliveries[0] < 140, "bounded read root did not yield delivery");
     runReady(0);
     runMessages();
-    require(fixture.deliveries[0] == 140, "level-triggered readiness lost the remaining input");
+    require(fixture.deliveries[0] == 140 && fixture.deliveries[1] == 0,
+            "level-triggered readiness lost input or split one visible flow across workers");
     destroyReader(device);
     fixtureTeardown();
 }
@@ -642,7 +670,7 @@ static void testActiveStartupCommandService(bool limited_capacity)
     runMessage(0);
     require(fixture.deliveries[1] == 0, "reader activation bypassed the already queued foreign delivery");
     runMessages();
-    require(fixture.deliveries[1] == packets && fixture.queues[0].io->events == WW_READ &&
+    require(fixture.deliveries[0] == 0 && fixture.deliveries[1] == packets && fixture.queues[0].io->events == WW_READ &&
                 atomicLoadRelaxed(&device->reader_session->output_packets) == 0 && fixture.shutdown_calls == 0,
             "worker release failed to deliver startup input and resume retained capacity work");
     for (unsigned id = 1; id <= packets; ++id)
@@ -696,7 +724,7 @@ static void testCapacityResume(void)
     require(fixture.deliveries[1] == 1 && fixture.message_count == 3 && fixture.messages[2].wid == 0,
             "foreign worker credit release did not wake the reader owner");
     runMessages();
-    require(fixture.deliveries[1] == 2 && fixture.queues[0].io->events == WW_READ &&
+    require(fixture.deliveries[0] == 0 && fixture.deliveries[1] == 2 && fixture.queues[0].io->events == WW_READ &&
                 atomicLoadRelaxed(&device->reader_session->output_packets) == 0,
             "capacity wake lost retained input, read interest or credits");
     destroyReader(device);
@@ -965,8 +993,9 @@ int main(void)
 {
     testCaseSet("capture_linux_reader_test");
     testWorkerQueues();
-    testOpaqueProcessing(1);
-    testOpaqueProcessing(kWorkers);
+    testNativeSingleReaderFlowDistribution();
+    testReceiveProcessing(1);
+    testReceiveProcessing(kWorkers);
     testBoundedReadiness();
     testCoordinatorScratchRetainsPadding();
     testActiveStartupCommandService(false);
