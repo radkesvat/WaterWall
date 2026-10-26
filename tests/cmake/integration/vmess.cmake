@@ -266,10 +266,6 @@ if(COMMAND add_waterwall_vmess_interop)
       foreach(target IN ITEMS ipv4 ipv6)
         if(peer STREQUAL "sing-box")
           set(case_label "${peer}_packetaddr_peer_limit_${target}")
-          add_waterwall_vmess_interop("${peer}_packetaddr_protocol_limit_${target}" ${reference_args}
-            --protocol udp --packet-encoding packetaddr --target "${target}" --packetaddr-payload-profile protocol-limit)
-          set_tests_properties("waterwall.vmess_${peer}_packetaddr_protocol_limit_${target}"
-            PROPERTIES SKIP_RETURN_CODE 77)
         else()
           set(case_label "${peer}_packetaddr_${target}")
         endif()
@@ -319,10 +315,6 @@ if(COMMAND add_waterwall_vmess_client_interop)
       foreach(target IN ITEMS ipv4 ipv6)
         if(peer STREQUAL "sing-box")
           set(case_label "${peer}_packetaddr_peer_limit_${target}")
-          add_waterwall_vmess_client_interop("${peer}_packetaddr_protocol_limit_${target}" ${reference_args}
-            --protocol udp --packet-encoding packetaddr --target "${target}" --packetaddr-payload-profile protocol-limit)
-          set_tests_properties("waterwall.vmess_client_${peer}_packetaddr_protocol_limit_${target}"
-            PROPERTIES SKIP_RETURN_CODE 77)
         else()
           set(case_label "${peer}_packetaddr_${target}")
         endif()

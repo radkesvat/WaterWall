@@ -27,7 +27,7 @@ import time
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
                                 str(Path(__file__).resolve().parent / "support" / "python")))
-from vmess_reference import command as reference_command, environment as reference_environment, validate_reference, write_reference, packetaddr_payload_size, unsupported_packetaddr_profile
+from vmess_reference import command as reference_command, environment as reference_environment, validate_reference, write_reference, packetaddr_payload_size
 from vmess_reference import check_udp_size_probe, receive_udp_size_probe
 from wwtest.config import core_config
 from wwtest.process import Process, close_on_error, install_termination_handler
@@ -554,8 +554,6 @@ def run(args):
         raise ValueError("UDP size probes require --protocol udp")
     if args.peer == "reference":
         validate_reference(args.reference, args.reference_kind)
-    if unsupported_packetaddr_profile(args):
-        return 77
     with RunDirectory("waterwall-vmess-client-interop-") as directory:
         root = Path(directory)
         inputs(root, args)
@@ -602,7 +600,6 @@ if __name__ == "__main__":
     parser.add_argument("--counter-policy", choices=("wrap", "strict"), default="wrap")
     parser.add_argument("--send-termination", choices=("true", "false"), default="true")
     parser.add_argument("--short-id", action="store_true")
-    parser.add_argument("--packetaddr-payload-profile", choices=("peer-limit", "protocol-limit"), default="peer-limit")
     parser.add_argument("--packet-encoding", choices=("none", "packetaddr"), default="none")
     parser.add_argument("--workers", type=int, choices=(1, 2), default=1)
     sys.exit(run(parser.parse_args()))

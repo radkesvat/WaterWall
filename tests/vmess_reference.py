@@ -123,7 +123,7 @@ def environment(kind):
 
 
 def packetaddr_payload_size(args):
-    if args.packetaddr_payload_profile == "protocol-limit" or getattr(args, "peer", "reference") == "waterwall":
+    if getattr(args, "peer", "reference") == "waterwall":
         return 65400
     if args.reference_kind == "v2ray":
         # v5.53.0 common/crypto/auth.go caps the complete packet frame at 2048.
@@ -131,15 +131,3 @@ def packetaddr_payload_size(args):
     # sing-box 1.12.0 pins sing-vmess 0.2.6: protocol.go WriteChunkSize=15000.
     # Its encrypted writer splits larger plaintext, including the envelope.
     return 15000 - (7 if args.target == "ipv4" else 19)
-
-
-def unsupported_packetaddr_profile(args):
-    if (args.protocol == "udp" and args.packet_encoding == "packetaddr" and
-            args.packetaddr_payload_profile == "protocol-limit" and args.reference_kind == "sing-box" and
-            getattr(args, "peer", "reference") == "reference"):
-        print("Unsupported frozen peer cell: sing-box 1.12.0 packetaddr payload 65400; "
-              "pinned sing-vmess 0.2.6 splits encrypted plaintext at 15000 and reads chunks into 16384 bytes. "
-              "See sing-vmess v0.2.6 protocol.go ReadChunkSize/WriteChunkSize. "
-              "This cell is skipped, not passed.", flush=True)
-        return True
-    return False

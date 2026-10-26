@@ -44,9 +44,9 @@ packetaddr datagrams. V2Ray near-limit payloads are 1940 bytes because its compl
 packet writer frame is limited to 2048 bytes; this affects native UDP as well as
 packetaddr. sing-box peer-limit cases use
 14993/14981-byte IPv4/IPv6 payloads, derived from its pinned encrypted writer's
-15000-byte plaintext chunk limit including the envelope. Its 65400-byte
-protocol-limit cells are explicitly skipped: its writer splits the datagram and
-its 16384-byte reader refuses the opposite direction. WaterWall pairs retain the
+15000-byte plaintext chunk limit including the envelope. This peer cannot preserve
+65400-byte datagrams: its writer splits the datagram and its 16384-byte reader
+refuses the opposite direction. WaterWall pairs retain the
 65400-byte workload, and native vectors/runtime fixtures cover exact codec maxima.
 
 Exact 8 KiB means **8192 application payload bytes**, before any envelope, length,
