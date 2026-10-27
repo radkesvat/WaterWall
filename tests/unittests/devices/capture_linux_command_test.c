@@ -458,7 +458,7 @@ static void prepareRuleFixture(capture_rule_fixture_t *fixture)
     {
         fixture->queues[lane].fd     = -1;
         fixture->queues[lane].number = 70 + lane;
-        captureLinuxBuildSteeringFilter(kRuleTestQueues, lane, fixture->queues[lane].steering_filter);
+        captureLinuxBuildSteeringFilter(kRuleTestQueues, lane, false, fixture->queues[lane].steering_filter);
     }
     capture_protocol_filter_t protocol_filter = {0};
     captureProtocolFilterExclude(&protocol_filter, 6);

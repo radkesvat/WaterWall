@@ -26,6 +26,12 @@ bool caputredeviceBringDown(capture_device_t *cdev);
 /* Exclusive inactive configuration. Linux defaults to one receive queue per
  * event worker, falling back to worker 0. Other platforms retain their reader. */
 void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled);
+/* Exclusive inactive configuration, off by default. When enabled, complete
+ * non-TCP/UDP packets keep one worker per address pair and protocol, in kernel
+ * queue steering and in single-reader dispatch, instead of rotating across
+ * workers. An encapsulating tunnel (Ping, GRE, ESP) is one ordered stream, and
+ * rotating it reorders the transport flows it carries. */
+void capturedeviceSetOpaqueFlowAffinity(capture_device_t *cdev, bool enabled);
 /* Exclusive inactive configuration; zero totals select profile defaults.
  * Linux applies best-effort receive sizing before activation. Other platforms
  * retain their existing native queue configuration. */

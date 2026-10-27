@@ -229,7 +229,7 @@ static bool captureOpenQueues(capture_device_t *cdev)
             break;
         }
         if (count > 1)
-            captureLinuxBuildSteeringFilter(count, i, cdev->queues[i].steering_filter);
+            captureLinuxBuildSteeringFilter(count, i, cdev->opaque_flow_affinity, cdev->queues[i].steering_filter);
     }
     GSTATE.capturedevice_queue_start_number = (uint16_t) (first + cdev->queue_count);
     return true;
@@ -256,6 +256,13 @@ void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled)
 {
     assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown && cdev->reader == NULL);
     cdev->multi_queue = enabled;
+}
+
+void capturedeviceSetOpaqueFlowAffinity(capture_device_t *cdev, bool enabled)
+{
+    assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown && cdev->reader == NULL);
+    cdev->opaque_flow_affinity                 = enabled;
+    cdev->reader_session->opaque_flow_affinity = enabled;
 }
 
 void capturedeviceConfigureKernelQueue(capture_device_t *cdev, bool enabled, uint32_t packet_total,
@@ -309,8 +316,11 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     LOGI("CaptureDevice: %s up with %u worker-owned receive queue(s), %s",
          cdev->name,
          cdev->queue_count,
-         cdev->queue_count > 1 ? "TCP/UDP flow steering; opaque random distribution"
-                               : "worker 0 reads; all workers process");
+         cdev->queue_count > 1
+             ? (cdev->opaque_flow_affinity ? "TCP/UDP flow steering; opaque address/protocol steering"
+                                           : "TCP/UDP flow steering; opaque random distribution")
+             : (cdev->opaque_flow_affinity ? "worker 0 reads; all workers process; opaque flows keep one worker"
+                                           : "worker 0 reads; all workers process"));
     return true;
 failed:
     discard caputredeviceBringDown(cdev);

@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
-void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index,
+void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index, bool opaque_lanes,
                                      char output[kCaptureLinuxSteeringFilterSize])
 {
     assert(queue_count > 0 && lane_index < queue_count);
@@ -73,7 +73,12 @@ void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index,
             {
                 BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 9),
                 BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 6, CAPTURE_BPF_SKIP(transport[1], ports), 0),
-                BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 17, 0, CAPTURE_BPF_SKIP(transport[2], opaque)),
+                /* Opaque lanes reuse the address/protocol hash, so one ordered
+                 * encapsulating stream (an ICMP or GRE tunnel) stays on one queue. */
+                BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                         17,
+                         0,
+                         opaque_lanes ? CAPTURE_BPF_SKIP(transport[2], mix) : CAPTURE_BPF_SKIP(transport[2], opaque)),
             },
         .ports =
             {

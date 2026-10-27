@@ -831,6 +831,34 @@ static void testSingleReaderNativeLocalityAndOpaqueRotation(void)
                               (wid_t) (opaque_index++ % getWorkersCount()));
 }
 
+static void testSingleReaderOpaqueFlowAffinity(void)
+{
+    device_reader_session_t session = {.batch_capacity = 1, .opaque_flow_affinity = true};
+    // One ICMP tunnel between two hosts is one flow: every packet keeps its
+    // worker in both directions, whatever the payload carries.
+    for (uint16_t packet = 0; packet < 16; ++packet)
+    {
+        sbuf_t     *forward  = makeIpv4Packet(0x0A000001U, packet, 0xC0000201U, 0x0800, 1, 0);
+        const wid_t expected = affinityOf(forward);
+        requireSingleReaderTarget(&session, forward, expected);
+        requireSingleReaderTarget(&session, makeIpv4Packet(0xC0000201U, 0x0800, 0x0A000001U, packet, 1, 0), expected);
+    }
+    // Opaque flows between different hosts still use every worker.
+    unsigned workers_seen = 0;
+    for (uint32_t host = 0; host < 64; ++host)
+    {
+        sbuf_t     *packet   = makeIpv4Packet(0x0A000100U + host, 0, 0xC0000201U, 0, 47, 0);
+        const wid_t expected = affinityOf(packet);
+        workers_seen |= 1U << expected;
+        requireSingleReaderTarget(&session, packet, expected);
+    }
+    require(workers_seen == 15, "opaque flow affinity collapsed distinct host pairs onto one worker");
+    // Native TCP keeps its port tuple.
+    sbuf_t     *tcp      = makeIpv4Packet(0x0A000001U, 1111, 0xC0000201U, 443, 6, 0);
+    const wid_t tcp_wid  = affinityOf(tcp);
+    requireSingleReaderTarget(&session, tcp, tcp_wid);
+}
+
 static void testBucketedDispatch(void)
 {
     enum
@@ -1312,6 +1340,7 @@ int main(void)
     testEmptyAndSingletonDispatch();
     testBucketedDispatch();
     testSingleReaderNativeLocalityAndOpaqueRotation();
+    testSingleReaderOpaqueFlowAffinity();
     testGsoDispatchPreservesLocalityAndReservations();
     testGsoRefusalSettlesEveryUnpostedReservation();
     testDispatchBucketsAreSplitAtSessionCapacity();

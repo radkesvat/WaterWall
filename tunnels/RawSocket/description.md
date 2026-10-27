@@ -1,5 +1,5 @@
 <!--
-Documentation version: 159
+Documentation version: 160
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RawSocket.mdx, and all files must keep the same documentation version.
 -->
 
@@ -136,6 +136,19 @@ For write-only packet injection, omit all capture-range keys:
   and keeps its existing receive arrangement. Write-only mode has no receive queues.
 
   Default: `true`
+
+- `opaque-flow-affinity` `(boolean)`
+  Keep each opaque flow (complete IPv4 that is neither TCP nor UDP, keyed by its
+  address pair and protocol) on one worker instead of spreading its packets
+  across workers. With multiple receive queues, opaque packets join the
+  address/protocol flow lanes and the random opaque rules are not installed;
+  with one reader, they take the flow-hash worker instead of the rotation.
+
+  Enable it when the captured protocol is itself a tunnel carrying TCP, such as
+  `PingClient`/`PingServer` over ICMP. That stream is one opaque flow; spread
+  over several workers, its packets leave the chain out of order and the inner
+  TCP connections slow down. Opaque traffic between different hosts still
+  spreads across workers. Default: `false`
 
 - `kernel-queue-tune` `(boolean)`
   Tune Linux capture kernel queues at startup. Default: `true` on Linux,

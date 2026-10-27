@@ -71,6 +71,12 @@ wid_t deviceReaderSelectWID(device_reader_session_t *session, wid_t reader_wid, 
         discard identified;
         return wid;
     }
+    /* An encapsulating tunnel is one opaque stream whose payload carries ordered
+     * TCP. Rotating it hands consecutive segments to different workers, and the
+     * consumer that writes them out (a TUN) then reorders the inner flow. */
+    wid_t wid = 0;
+    if (session->opaque_flow_affinity && deviceFlowAffineWID(sbufGetRawPtr(buf), sbufGetLength(buf), &wid))
+        return wid;
     return (wid_t) (atomicIncExplicit(&session->distribution_next, memory_order_relaxed) % getWorkersCount());
 }
 

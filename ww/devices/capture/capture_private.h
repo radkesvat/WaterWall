@@ -44,6 +44,7 @@ struct capture_device_s
     uint32_t                            capture_range_count;
     bool                                bypass_conntrack;
     bool                                multi_queue;
+    bool                                opaque_flow_affinity;
     bool                                kernel_queue_tune;
     uint32_t                            kernel_queue_packets;
     uint32_t                            kernel_receive_buffer;
