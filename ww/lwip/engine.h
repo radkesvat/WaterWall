@@ -7,6 +7,7 @@
 struct wloop_s;
 struct netif;
 struct pbuf;
+struct tcp_pcb;
 typedef struct ww_lwip_engine_s ww_lwip_engine_t;
 typedef void (*ww_lwip_wake_fn)(ww_lwip_engine_t *engine, void *argument);
 
@@ -40,6 +41,12 @@ void wwLwipEngineEndAckBatch(ww_lwip_engine_t *engine);
  * only on first participation; no scope or an existing join returns false.
  * The engine remains alive through the synchronous receive boundary. */
 bool wwLwipEngineJoinReceiveBatch(ww_lwip_engine_t *engine);
+
+/* Return one accepted receive delivery's credit while its owner engine is
+ * entered. Unlike tcp_recved(), this accepts the complete scaled-window amount
+ * and evaluates window-update ACK policy once, without intermediate 16-bit
+ * advertisements. It does not delay a required window update or open a batch. */
+void wwLwipTcpRecved(struct tcp_pcb *pcb, uint32_t length);
 
 /* Implemented by the worker runtime; context selection never grants ownership. */
 bool wwLwipEngineOwnerIsCurrent(uint8_t owner, const struct wloop_s *loop);

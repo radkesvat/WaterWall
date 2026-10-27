@@ -76,14 +76,11 @@ bool ptcReturnReceiveCreditLocked(ptc_lstate_t *ls, uint32_t amount)
         return ptcReceiveCreditFailureLocked(ls, "credit return underflow");
     }
 
-    uint32_t remaining = amount;
     /* A reset may detach the PCB before already accepted receive delivery or
      * Resume runs. Settle those bytes without returning credit to a dead peer. */
-    while (ls->tcp_pcb != NULL && remaining > 0)
+    if (ls->tcp_pcb != NULL && amount > 0)
     {
-        const uint16_t chunk = (uint16_t) min(remaining, (uint32_t) UINT16_MAX);
-        tcp_recved(ls->tcp_pcb, chunk);
-        remaining -= chunk;
+        wwLwipTcpRecved(ls->tcp_pcb, amount);
     }
 
     ls->rx_uncredited -= amount;

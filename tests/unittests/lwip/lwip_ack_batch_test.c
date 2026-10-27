@@ -3,6 +3,7 @@
  * Setup: the existing small raw-engine runtime fixture, real IPv4/TCP handshakes and packets,
  * and a recording netif; no host sockets or timers are needed for successful batches.
  * Checks: exact cumulative ACK/window values and packet counts, scaled and unscaled credit/zero-window updates,
+ * complete wide credit returns with batching and output-failure retry,
  * recovery/control traffic, piggybacking, queued PCB retirement, failed output retry, and two owners.
  * Limits: this proves protocol behavior and ACK suppression, not application throughput.
  * CTest: waterwall.lwip_ack_batch_unit (Debug and Release).
@@ -416,6 +417,42 @@ static void drainReceiveWindow(fixture_t *f)
     CHECK(f->pcb->ww_rcv_advertised_edge == f->peer_next);
 }
 
+static void wideReceiveCredit(void)
+{
+    fixture_t *f = startWithScale(false, true);
+    begin(f);
+    for (unsigned i = 0; i < 90; ++i)
+        data(f, payload_limit);
+    end(f);
+    unsigned before = f->outputs;
+    begin(f);
+    wwLwipTcpRecved(f->pcb, f->received);
+    CHECK(f->outputs == before && f->pcb->rcv_wnd == TCP_WND);
+    end(f);
+    expectAck(f, ++before, f->peer_next, TCP_WND >> 7);
+    expectAdvertisement(f);
+    stop(f);
+
+    f = startWithScale(false, true);
+    drainReceiveWindow(f);
+    const uint32_t closed_edge = f->pcb->ww_rcv_advertised_edge;
+    before                     = f->outputs;
+    begin(f);
+    f->fail_output = true;
+    wwLwipTcpRecved(f->pcb, TCP_WND);
+    /* Reopening a closed wire window still bypasses an active batch. The
+     * complete update retains the ordinary output-failure retry obligation. */
+    expectAck(f, ++before, f->peer_next, TCP_WND >> 7);
+    CHECK(f->pcb->ww_rcv_advertised_edge == closed_edge && (f->pcb->flags & TF_ACK_NOW) != 0);
+    f->fail_output = false;
+    tcp_fasttmr();
+    expectAck(f, ++before, f->peer_next, TCP_WND >> 7);
+    expectAdvertisement(f);
+    end(f);
+    CHECK(f->outputs == before);
+    stop(f);
+}
+
 static void leaveQuantizedZero(fixture_t *f, uint16_t remaining)
 {
     drainReceiveWindow(f);
@@ -786,6 +823,8 @@ int main(void)
     zeroWindow();
     testCaseSet("scaled window ACK batches and immediate zero-window reopening");
     scaledWindowBatches();
+    testCaseSet("wide receive credit preserves batching, zero-window reopening and output retry");
+    wideReceiveCredit();
     testCaseSet("scaled quantized-zero windows and sequence wrap");
     quantizedZeroAndWrap();
     testCaseSet("failed reopening and piggyback advertisements retry");
