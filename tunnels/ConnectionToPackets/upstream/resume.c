@@ -25,8 +25,8 @@ void ctpTunnelUpStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    // Release exactly the paused subset. The helper chunks windows larger than
-    // one tcp_recved() argument and decrements the total outstanding credit.
+    // Return the complete paused subset in one window update, then decrement
+    // the total outstanding credit without artificial 16-bit chunks.
     ww_lwip_engine_t *previous;
     const bool        entered = wwLwipEngineEnter(ls->engine, &previous);
     assert(entered);

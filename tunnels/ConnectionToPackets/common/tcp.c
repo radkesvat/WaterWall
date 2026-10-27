@@ -67,13 +67,8 @@ void ctpTcpReturnReceiveCreditLocked(ctp_lstate_t *ls, uint32_t amount)
     assert(ls->tcp_pcb != NULL);
     assert(amount <= ls->rx_uncredited);
 
-    uint32_t remaining = amount;
-    while (remaining > 0)
-    {
-        const u16_t chunk = (u16_t) min(remaining, (uint32_t) UINT16_MAX);
-        tcp_recved(ls->tcp_pcb, chunk);
-        remaining -= chunk;
-    }
+    if (amount > 0)
+        wwLwipTcpRecved(ls->tcp_pcb, amount);
     ls->rx_uncredited -= amount;
 }
 

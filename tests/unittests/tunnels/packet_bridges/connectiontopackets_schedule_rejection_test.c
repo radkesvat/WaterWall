@@ -572,6 +572,109 @@ static void caseScaledSendCapacity(unsigned mode)
     ctpFixtureTeardown(&fixture);
 }
 
+typedef struct credit_output_s
+{
+    unsigned attempts, acknowledgments;
+    uint32_t acknowledgment;
+    uint16_t window;
+    bool     fail_once;
+} credit_output_t;
+
+static err_t recordCreditOutput(struct netif *netif, struct pbuf *packet, const ip4_addr_t *destination)
+{
+    discard          destination;
+    credit_output_t *output = netif->state;
+    uint8_t          header[40];
+    twfRequire(wwLwipEngineCurrent() == g_fixture->engine, "CTP credit output escaped its owner engine");
+    twfRequire(pbuf_copy_partial(packet, header, sizeof(header), 0) == sizeof(header),
+               "CTP credit output omitted IPv4/TCP headers");
+    if (header[33] == TCP_ACK)
+    {
+        ++output->attempts;
+        if (output->fail_once)
+        {
+            output->fail_once = false;
+            return ERR_IF;
+        }
+        ++output->acknowledgments;
+        output->acknowledgment = GET_BE32(header + 28);
+        output->window         = GET_BE16(header + 34);
+    }
+    return ERR_OK;
+}
+
+static err_t initCreditNetif(struct netif *netif)
+{
+    netif->name[0] = 'c';
+    netif->name[1] = 'r';
+    netif->mtu     = 1500;
+    netif->output  = recordCreditOutput;
+    return ERR_OK;
+}
+
+static void caseReceiveCredit(uint32_t amount, bool fail_once)
+{
+    twfSetCase("CTP Resume returns full-width credit in one successful wire ACK");
+    ctp_fixture_t fixture;
+    ctpFixtureSetup(&fixture);
+    const uint32_t  baseline = ctpTcpPcbUsed();
+    struct tcp_pcb *pcb      = ctpAttachTestPcb(&fixture, baseline);
+    ctp_lstate_t   *ls       = lineGetState(fixture.line, fixture.ctp);
+    credit_output_t output   = {0};
+    struct netif    netif    = {0};
+    enterEngine();
+    ip4_addr_t local, mask, gateway;
+    IP4_ADDR(&local, 192, 0, 2, 1);
+    IP4_ADDR(&mask, 255, 255, 255, 0);
+    IP4_ADDR(&gateway, 0, 0, 0, 0);
+    twfRequire(netif_add(&netif, &local, &mask, &gateway, &output, initCreditNetif, ip_input) != NULL,
+               "CTP credit fixture netif allocation failed");
+    netif_set_up(&netif);
+    netif_set_link_up(&netif);
+    twfRequire(tcp_bind_netif(pcb, &netif) == ERR_OK, "CTP credit fixture netif binding failed");
+    IP_ADDR4(&pcb->local_ip, 192, 0, 2, 1);
+    IP_ADDR4(&pcb->remote_ip, 192, 0, 2, 2);
+    pcb->local_port         = 8000;
+    pcb->remote_port        = 40000;
+    pcb->state              = ESTABLISHED;
+    pcb->mss                = TCP_MSS;
+    pcb->rcv_nxt            = UINT32_MAX - 1000U;
+    pcb->rcv_wnd            = TCP_WND - amount;
+    pcb->rcv_ann_wnd        = pcb->rcv_wnd;
+    pcb->rcv_ann_right_edge = pcb->rcv_nxt + pcb->rcv_wnd;
+    pcb->rcv_scale          = 7;
+    tcp_set_flags(pcb, TF_WND_SCALE);
+    TCP_REG_ACTIVE(pcb);
+    tcp_ack_now(pcb);
+    twfRequire(tcp_output(pcb) == ERR_OK && output.acknowledgments == 1,
+               "CTP credit fixture failed to advertise its initial window");
+    output              = (credit_output_t) {.fail_once = fail_once};
+    ls->rx_uncredited   = amount;
+    ls->read_paused_len = amount;
+    ls->read_paused     = true;
+    leaveEngine();
+
+    ctpTunnelUpStreamResume(fixture.ctp, fixture.line);
+    twfRequire(! ls->read_paused && ls->read_paused_len == 0 && ls->rx_uncredited == 0,
+               "CTP Resume lost or duplicated returned receive credit");
+    twfRequireEqualU32(pcb->rcv_wnd, TCP_WND, "CTP Resume did not restore the full receive window");
+    twfRequireEqualU32(output.acknowledgments,
+                       amount != 0 ? 1 : 0,
+                       "CTP Resume emitted artificial window updates for one returned amount");
+    twfRequireEqualU32(output.attempts,
+                       amount != 0 ? 1U + fail_once : 0,
+                       "CTP Resume did not retry a refused window update exactly once");
+    if (amount != 0)
+        twfRequire(output.acknowledgment == pcb->rcv_nxt && output.window == (TCP_WND >> 7),
+                   "CTP Resume advertised an incomplete or incorrect final window");
+    ctpCloseFixtureLine(&fixture);
+    enterEngine();
+    netif_remove(&netif);
+    leaveEngine();
+    twfRequireEqualU32(ctpTcpPcbUsed(), baseline, "CTP credit fixture leaked its PCB");
+    ctpFixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     twfRequire(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
@@ -582,6 +685,10 @@ int main(void)
         casePendingBudgetAllowsOneReadOfHeadroom(headroom_pool_sizes[i]);
     for (unsigned mode = 0; mode < 3; ++mode)
         caseScaledSendCapacity(mode);
+    const uint32_t credit_amounts[] = {0, 16384, 131072, TCP_WND};
+    for (size_t i = 0; i < ARRAY_SIZE(credit_amounts); ++i)
+        caseReceiveCredit(credit_amounts[i], false);
+    caseReceiveCredit(TCP_WND, true);
     caseTerminalPayloadReentry();
     caseStopOrdering(true);
     caseStopOrdering(false);
