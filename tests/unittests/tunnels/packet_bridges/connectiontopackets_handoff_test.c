@@ -18,6 +18,9 @@ static unsigned     queued_count;
 static bool         refuse_queue, flow_alive;
 static struct pbuf *retained_pbuf;
 static unsigned     output_deliveries;
+static sbuf_t      *expected_output_buffer;
+static uint8_t      expected_output_bytes[9000];
+static uint32_t     expected_output_length = 64;
 static void        *observed_budget;
 static unsigned     budget_frees;
 
@@ -73,12 +76,19 @@ static int retainInput(ww_lwip_engine_t *engine, struct pbuf *p, struct netif *n
     return ERR_OK;
 }
 
+static sbuf_t *createOutputBuffer(uint32_t length, uint16_t padding)
+{
+    return twfTrackAcquired(sbufCreateWithPadding(length, padding));
+}
+
 #define sendWorkerMessageForceQueueRetainOnRefusal queueRetain
 #define sendWorkerMessageForceQueueWithCleanup     queueCleanup
 #define ctpFlowStillOwns                           flowStillOwns
 #define ctpDrainTerminalLinesOnCurrentWorker       drainTerminal
 #define wwLwipEngineInput                          retainInput
+#define sbufCreateWithPadding                      createOutputBuffer
 #include "common/netif.c"
+#undef sbufCreateWithPadding
 #include "downstream/payload.c"
 #undef wwLwipEngineInput
 #undef ctpDrainTerminalLinesOnCurrentWorker
@@ -104,7 +114,13 @@ static void settle(worker_t *worker, bool cancel)
 static void packetOutput(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     discard t;
-    twfRequire(sbufGetLength(buf) == 64, "packet output changed length");
+    twfRequire(sbufGetLength(buf) == expected_output_length, "packet output changed length");
+    twfRequire(buf == expected_output_buffer, "queued packet storage was replaced at delivery");
+    twfRequire(sbufGetLeftPadding(buf) >= 64 && sbufGetLeftCapacity(buf) >= 64,
+               "queued packet lost the onward chain's padding");
+    twfRequire(memcmp(sbufGetRawPtr(buf), expected_output_bytes, expected_output_length) == 0,
+               "queued packet did not preserve its detached bytes");
+    expected_output_buffer = NULL;
     ++output_deliveries;
     lineReuseBuffer(line, buf);
 }
@@ -164,7 +180,7 @@ int main(void)
     caseConcurrentQuota();
     wwLwipEngineSharedInit();
     twf_worker_env_t env;
-    twfWorkerEnvSetupWithSmallBuffers(&env, 4096, 1024, 0);
+    twfWorkerEnvSetupWithSmallBuffers(&env, 4096, 1024, 64);
     ww_lwip_engine_t *engine = wwLwipEngineCreate(0, env.loop);
     twfRequire(engine != NULL, "handoff engine creation failed");
     tunnel_t *t    = tunnelCreate(NULL, sizeof(ctp_tstate_t), 0);
@@ -186,25 +202,37 @@ int main(void)
     state->netifs             = netifs;
     state->netifs_count       = 1;
 
-    const size_t emit_charge = sizeof(ctp_packet_emit_msg_t) + 64U;
+    const size_t emit_charge = kCpuLineCacheSize + 64U + sizeof(sbuf_t) + kSbufAllocationAlignment;
     state->handoff_budget    = ctpHandoffBudgetCreate(emit_charge, 4);
     twfRequire(state->handoff_budget != NULL, "handoff budget creation failed");
     uint8_t bytes[64] = {0x45};
     bytes[9]          = IP_PROTO_UDP;
     PUT_BE16(bytes + 2, sizeof(bytes));
-    struct pbuf       p = {.payload = bytes, .len = sizeof(bytes), .tot_len = sizeof(bytes), .ref = 1};
+    for (unsigned i = 28; i < sizeof(bytes); ++i)
+        bytes[i] = (uint8_t) i;
+    memoryCopy(expected_output_bytes, bytes, sizeof(bytes));
+    uint8_t           queued_packet_bytes[16] = {0xA5};
+    struct pbuf       next_packet             = {.payload = queued_packet_bytes, .len = 16, .tot_len = 16, .ref = 1};
+    struct pbuf       tail  = {.next = &next_packet, .payload = bytes + 23, .len = 41, .tot_len = 41, .ref = 1};
+    struct pbuf       empty = {.next = &tail, .len = 0, .tot_len = 41, .ref = 1};
+    struct pbuf       p     = {.next = &empty, .payload = bytes, .len = 23, .tot_len = sizeof(bytes), .ref = 1};
     ww_lwip_engine_t *previous;
     twfRequire(wwLwipEngineEnter(engine, &previous), "output engine entry");
     twfRequire(ctpNetifOutput(&ctx.netif, &p, NULL) == ERR_OK && queued_count == 1 && output_deliveries == 0,
                "output did not force queue");
+    expected_output_buffer = queued[0].args[1];
+    twfRequire(sbufGetAllocationCharge(expected_output_buffer) == emit_charge,
+               "output budget did not charge the complete buffer allocation");
     twfRequire(ctpNetifOutput(&ctx.netif, &p, NULL) == ERR_MEM && queued_count == 1 &&
                    state->handoff_budget->bytes == emit_charge && state->handoff_budget->egress_refused == 1,
                "output exceeded byte budget");
     wwLwipEngineLeave(engine, previous);
+    memorySet(bytes, 0xA5, sizeof(bytes));
     settle(&env.worker, false);
+    memoryCopy(bytes, expected_output_bytes, sizeof(bytes));
     twfRequire(output_deliveries == 1, "accepted output did not deliver");
     requireEmpty(state->handoff_budget);
-    for (unsigned mode = 0; mode < 3; ++mode)
+    for (unsigned mode = 0; mode < 4; ++mode)
     {
         refuse_queue = mode == 0;
         twfRequire(wwLwipEngineEnter(engine, &previous), "output retry engine entry");
@@ -218,9 +246,42 @@ int main(void)
             settle(&env.worker, false);
             atomicStoreRelaxed(&state->stopping, false);
         }
+        if (mode == 3)
+        {
+            quiescenceGateClose(&state->next_gate);
+            settle(&env.worker, false);
+            twfRequire(quiescenceGateOpen(&state->next_gate), "next gate did not reopen");
+        }
         requireEmpty(state->handoff_budget);
     }
     refuse_queue = false;
+    ctpHandoffBudgetDetach(state->handoff_budget);
+
+    /* Detached buffers stay close to packet size, independently of pool tiers. */
+    state->handoff_budget  = ctpHandoffBudgetCreate(10000, 2);
+    const uint16_t sizes[] = {40, 1500, 9000};
+    for (unsigned i = 0; i < ARRAY_SIZE(sizes); ++i)
+    {
+        expected_output_length = sizes[i];
+        memorySet(expected_output_bytes, (int) (i + 1), expected_output_length);
+        expected_output_bytes[0] = 0x45;
+        expected_output_bytes[6] = expected_output_bytes[7] = 0;
+        expected_output_bytes[9]                            = IP_PROTO_UDP;
+        PUT_BE16(expected_output_bytes + 2, expected_output_length);
+        struct pbuf sized = {.payload = expected_output_bytes, .len = sizes[i], .tot_len = sizes[i], .ref = 1};
+        twfRequire(wwLwipEngineEnter(engine, &previous), "sized output engine entry");
+        twfRequire(ctpNetifOutput(&ctx.netif, &sized, NULL) == ERR_OK, "sized output admission failed");
+        wwLwipEngineLeave(engine, previous);
+        expected_output_buffer = queued[0].args[1];
+        const size_t rounded_payload =
+            ((size_t) sizes[i] + kCpuLineCacheSize - 1U) / kCpuLineCacheSize * kCpuLineCacheSize;
+        const size_t expected_charge = rounded_payload + 64U + sizeof(sbuf_t) + kSbufAllocationAlignment;
+        twfRequire(sbufGetAllocationCharge(expected_output_buffer) == expected_charge &&
+                       state->handoff_budget->bytes == expected_charge && state->handoff_budget->entries == 1,
+                   "queued output grew to a pool tier or charged the wrong allocation");
+        settle(&env.worker, false);
+        requireEmpty(state->handoff_budget);
+    }
     ctpHandoffBudgetDetach(state->handoff_budget);
 
     /* A tiny count quota catches small allocations independently of byte use. */
@@ -261,13 +322,19 @@ int main(void)
     settle(&env.worker, false);
     twfRequire(retained_pbuf != NULL && state->handoff_budget->bytes == charge && state->handoff_budget->entries == 1,
                "custom pbuf charge was released at dispatch instead of actual free");
+    twfRequire(wwLwipEngineEnter(engine, &previous), "detached output engine entry");
+    twfRequire(ctpNetifOutput(&ctx.netif, &p, NULL) == ERR_OK, "detached output admission failed");
+    wwLwipEngineLeave(engine, previous);
     ctp_handoff_budget_t *budget = state->handoff_budget;
     observed_budget              = budget;
     budget_frees                 = 0;
     ctpHandoffBudgetDetach(budget);
     state->handoff_budget = NULL;
     tunnelDestroy(t);
-    twfRequire(budget->detached && budget->entries == 1, "live pbuf lost its independent budget lifetime");
+    twfRequire(budget->detached && budget->entries == 2, "queued output or pbuf lost its independent budget lifetime");
+    settle(&env.worker, true);
+    twfRequire(budget->bytes == charge && budget->entries == 1 && budget_frees == 0,
+               "late output cancellation did not release exactly its own allocation");
     twfRequire(wwLwipEngineEnter(engine, &previous), "pbuf release engine entry");
     pbuf_free(retained_pbuf);
     retained_pbuf = NULL;
