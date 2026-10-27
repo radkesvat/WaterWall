@@ -913,6 +913,7 @@
       target_link_options(rawsocket_startup_failure_test PRIVATE
         "-Wl,--wrap=caputredeviceCreate"
         "-Wl,--wrap=caputredeviceBringUp"
+        "-Wl,--wrap=capturedeviceSetPortedProtocols"
         "-Wl,--wrap=caputredeviceBringDown"
         "-Wl,--wrap=capturedeviceDestroy"
         "-Wl,--wrap=rawdeviceCreate"
@@ -940,6 +941,7 @@
       target_link_options(rawsocket_write_only_startup_test PRIVATE
         "-Wl,--wrap=caputredeviceCreate"
         "-Wl,--wrap=caputredeviceBringUp"
+        "-Wl,--wrap=capturedeviceSetPortedProtocols"
         "-Wl,--wrap=capturedeviceRequestStop"
         "-Wl,--wrap=caputredeviceBringDown"
         "-Wl,--wrap=capturedeviceDestroy"

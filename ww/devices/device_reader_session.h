@@ -99,6 +99,9 @@ struct device_reader_session_s
      * transitions; only the reader (or the joined-reader lifecycle owner) may
      * access its pool and release retained storage. */
     device_frag_affinity_table_t *frag_affinity;
+
+    /* Protocols whose inner ports steer this device's flows; set once before the first generation. */
+    device_flow_ported_set_t ported;
 };
 
 device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint16_t batch_capacity, void *device,
@@ -106,6 +109,10 @@ device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint1
                                                    device_fragment_policy_t policy);
 void                     deviceReaderSessionRef(device_reader_session_t *session);
 void                     deviceReaderSessionUnref(device_reader_session_t *session);
+
+/* Exclusive startup, while no reader runs: the protocols whose inner ports steer this device's flows.
+ * The session's own flow selection and its fragment table both read them. Without a call only TCP/UDP are ported. */
+void deviceReaderSessionSetPortedProtocols(device_reader_session_t *session, const device_flow_ported_set_t *ported);
 
 /*
  * Opens a new delivery generation after the previous reader producer was

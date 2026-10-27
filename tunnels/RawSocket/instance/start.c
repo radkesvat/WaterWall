@@ -59,6 +59,9 @@ void rawsocketOnStart(tunnel_t *t)
             return;
         }
         capturedeviceSetMultiQueue(state->capture_device, state->multi_queue_requested);
+        device_flow_ported_set_t ported;
+        packettunnelGetChainPortedProtocols(t, &ported);
+        capturedeviceSetPortedProtocols(state->capture_device, &ported);
         capturedeviceConfigureKernelQueue(
             state->capture_device, state->kernel_queue_tune, state->kernel_queue_packets, state->kernel_receive_buffer);
     }

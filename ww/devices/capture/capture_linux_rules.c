@@ -650,7 +650,7 @@ static capturedevice_command_status_t capturedeviceRunOwnedRule(capture_device_t
     const struct capture_linux_queue_s *queue = &cdev->queues[index % cdev->queue_count];
     char                                opaque_filter[kCaptureLinuxSteeringFilterSize];
     if (kind == kCaptureOwnedOpaque)
-        captureLinuxBuildOpaqueFilter(opaque_filter);
+        captureLinuxBuildOpaqueFilter(cdev->ported.protocols, cdev->ported.count, opaque_filter);
     /* INSERT reverses ascending lane order. Conditional probabilities 1/N,
      * 1/(N-1), ... give each opaque queue the same expected share, with lane
      * zero's unconditional tail ensuring every eligible packet is selected. */

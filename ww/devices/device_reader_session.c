@@ -86,6 +86,13 @@ device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint1
     return session;
 }
 
+void deviceReaderSessionSetPortedProtocols(device_reader_session_t *session, const device_flow_ported_set_t *ported)
+{
+    assert(session != NULL && ported != NULL);
+    session->ported = *ported;
+    deviceFragAffinitySetPortedProtocols(session->frag_affinity, ported);
+}
+
 void deviceReaderSessionRef(device_reader_session_t *session)
 {
     w_atomic_uint_value_t previous = atomicLoadRelaxed(&session->refcount);

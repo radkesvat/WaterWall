@@ -458,7 +458,7 @@ static void prepareRuleFixture(capture_rule_fixture_t *fixture)
     {
         fixture->queues[lane].fd     = -1;
         fixture->queues[lane].number = 70 + lane;
-        captureLinuxBuildSteeringFilter(kRuleTestQueues, lane, fixture->queues[lane].steering_filter);
+        captureLinuxBuildSteeringFilter(kRuleTestQueues, lane, NULL, 0, fixture->queues[lane].steering_filter);
     }
     capture_protocol_filter_t protocol_filter = {0};
     captureProtocolFilterExclude(&protocol_filter, 6);
@@ -481,6 +481,38 @@ static void requireMatchingDelete(const recorded_call_t *insert, const recorded_
         {
             requireEqStr(insert->argv[arg], remove->argv[arg], "rule deletion changed its owned identity or predicate");
         }
+    }
+}
+
+static void testPortedProtocolsReachTheInstalledRules(void)
+{
+    capture_rule_fixture_t fixture;
+    prepareRuleFixture(&fixture);
+    require(deviceFlowPortedSetAdd(&fixture.device.ported, 253) && deviceFlowPortedSetAdd(&fixture.device.ported, 50),
+            "ported protocol set refused a protocol");
+    char plain_opaque[kCaptureLinuxSteeringFilterSize];
+    captureLinuxBuildOpaqueFilter(NULL, 0, plain_opaque);
+    for (uint16_t lane = 0; lane < kRuleTestQueues; ++lane)
+        captureLinuxBuildSteeringFilter(kRuleTestQueues,
+                                        lane,
+                                        fixture.device.ported.protocols,
+                                        fixture.device.ported.count,
+                                        fixture.queues[lane].steering_filter);
+    resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
+    require(capturedeviceInstallRuleKind(&fixture.device, false), "multiqueue rule installation failed");
+
+    char opaque_filter[kCaptureLinuxSteeringFilterSize];
+    captureLinuxBuildOpaqueFilter(fixture.device.ported.protocols, fixture.device.ported.count, opaque_filter);
+    require(strcmp(opaque_filter, plain_opaque) != 0, "the declared protocols did not change the opaque predicate");
+    for (size_t index = 0; index < kRuleTestRanges * kRuleTestQueues; ++index)
+    {
+        const size_t lane = index % kRuleTestQueues;
+        requireEqStr(recorded_calls[index].argv[23],
+                     fixture.queues[lane].steering_filter,
+                     "the flow rule did not carry the steering predicate built from the declared protocols");
+        requireEqStr(recorded_calls[6 + index].argv[23],
+                     opaque_filter,
+                     "the opaque rule was not built from the declared protocols");
     }
 }
 
@@ -512,7 +544,7 @@ static void testMultiqueueRulesRetainExactLifecycle(void)
         require(fixture.states[index].queue == kCaptureRuleInstalled, "queue rule state was not published");
         const recorded_call_t *opaque = &recorded_calls[6 + index];
         char                   opaque_filter[kCaptureLinuxSteeringFilterSize];
-        captureLinuxBuildOpaqueFilter(opaque_filter);
+        captureLinuxBuildOpaqueFilter(NULL, 0, opaque_filter);
         stringNPrintf(comment, sizeof(comment), "WWCAP_OPAQUE_1234567890ABCDEF_%016zX", index);
         requireEqStr(opaque->argv[10], comment, "opaque queue lost its independent owned identity");
         requireEqStr(opaque->argv[14], queue_number, "opaque queue targeted the wrong lane");
@@ -933,6 +965,7 @@ int main(void)
     testQueueSelectionAvoidsReferencedNumbers();
     testQueueRangeSelection();
     testMultiqueueRulesRetainExactLifecycle();
+    testPortedProtocolsReachTheInstalledRules();
     testMultiqueuePartialInstallReconciliation();
     testOpaqueUnknownInstallCleanup();
     testMultiqueueNotrackFailureStillRemovesQueues();

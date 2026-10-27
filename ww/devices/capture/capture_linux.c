@@ -229,7 +229,8 @@ static bool captureOpenQueues(capture_device_t *cdev)
             break;
         }
         if (count > 1)
-            captureLinuxBuildSteeringFilter(count, i, cdev->queues[i].steering_filter);
+            captureLinuxBuildSteeringFilter(
+                count, i, cdev->ported.protocols, cdev->ported.count, cdev->queues[i].steering_filter);
     }
     GSTATE.capturedevice_queue_start_number = (uint16_t) (first + cdev->queue_count);
     return true;
@@ -256,6 +257,20 @@ void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled)
 {
     assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown && cdev->reader == NULL);
     cdev->multi_queue = enabled;
+}
+
+void capturedeviceSetPortedProtocols(capture_device_t *cdev, const device_flow_ported_set_t *ported)
+{
+    assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown && cdev->reader == NULL);
+    cdev->ported = *ported;
+    deviceReaderSessionSetPortedProtocols(cdev->reader_session, ported);
+    if (ported->count == 1)
+        LOGI("CaptureDevice: steering protocol %u by inner ports, other opaque protocols per packet",
+             ported->protocols[0]);
+    else if (ported->count == 2)
+        LOGI("CaptureDevice: steering protocols %u and %u by inner ports, other opaque protocols per packet",
+             ported->protocols[0],
+             ported->protocols[1]);
 }
 
 void capturedeviceConfigureKernelQueue(capture_device_t *cdev, bool enabled, uint32_t packet_total,

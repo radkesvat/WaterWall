@@ -658,6 +658,12 @@ void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled)
     discard enabled;
 }
 
+void capturedeviceSetPortedProtocols(capture_device_t *cdev, const device_flow_ported_set_t *ported)
+{
+    discard cdev;
+    discard ported;
+}
+
 void capturedeviceConfigureKernelQueue(capture_device_t *cdev, bool enabled, uint32_t packet_total,
                                        uint32_t receive_bytes_total)
 {

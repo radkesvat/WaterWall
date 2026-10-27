@@ -252,6 +252,28 @@ def queue_statistics():
     return rows
 
 
+def queue_burst(queues, send, expected, timeout=10):
+    """Run send(), then wait until the kernel has assigned `expected` packet ids; return the per-queue counts."""
+    before = queue_statistics()
+    send()
+    deadline = time.monotonic() + timeout
+    while True:
+        after = queue_statistics()
+        deltas = {queue: after[queue]["sequence"] - before[queue]["sequence"] for queue in queues}
+        if sum(deltas.values()) >= expected or time.monotonic() > deadline:
+            return deltas
+        time.sleep(0.01)
+
+
+def wait_queues_drained(queues, timeout=10):
+    deadline = time.monotonic() + timeout
+    while True:
+        after = queue_statistics()
+        if all(after[queue]["pending"] == 0 for queue in queues) or time.monotonic() > deadline:
+            return after
+        time.sleep(0.01)
+
+
 class PacketCollector:
     """Read the ordinary IPv4 framing on every real worker-owned TCP carrier."""
 
@@ -423,18 +445,177 @@ def run_queue_receive(binary, directory, single_queue):
                     assert not queue_statistics(), "capture left a bound NFQUEUE after shutdown"
 
 
+def run_ported_protocol_queues(binary, directory):
+    """A real IpManipulator registers its swap number; the kernel steers that protocol by the inner port pair."""
+    command("sysctl", "-qw", "net.ipv4.conf.all.rp_filter=0", "net.ipv4.conf.lo.rp_filter=0",
+            "net.ipv4.conf.lo.accept_local=1", "net.ipv4.conf.lo.route_localnet=1")
+    workers = 4
+    swapped, plain = 143, 144
+    case = directory / "ported"
+    case.mkdir()
+    with contextlib.ExitStack() as stack:
+        collector = PacketCollector(stack)
+        settings = {"raw-device-name": "queue-writer", "capture-device-name": "queue-test",
+                    "fragment-policy": "preserve-fragments", "skip-sysctl": True, "multi-queue": True,
+                    "capture-ips": ["127.0.0.2"], "capture-filter-mode": "source-ip"}
+        nodes = [
+            {"name": "capture", "type": "RawSocket", "next": "swap", "settings": settings},
+            {"name": "swap", "type": "IpManipulator", "next": "packets", "settings": {"protoswap-tcp": swapped}},
+            {"name": "packets", "type": "PacketsToStream", "next": "output"},
+            {"name": "output", "type": "TcpConnector", "settings": {
+                "address": "127.0.0.1", "port": collector.listener.getsockname()[1]}},
+        ]
+        core = {"configs": ["config.json"],
+                "misc": {"workers": workers, "ram-profile": "client", "mtu": 1500, "try-enabling-bbr": False},
+                "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
+                                           for name in ("internal", "core", "network", "dns")}}}
+        (case / "config.json").write_text(json.dumps({"name": "capture-ported", "nodes": nodes}))
+        (case / "core.json").write_text(json.dumps(core))
+        log = stack.enter_context((case / "stdout.log").open("w"))
+        with Process([binary], cwd=case, log=log, cleanup_signal=signal.SIGTERM, terminate_timeout=15) as process:
+            collector.wait(process, lambda: len(collector.buffers) == workers, time.monotonic() + 15)
+            rules = [line for line in iptables("-S", "INPUT").splitlines() if "WWCAP_" in line]
+            queue_numbers = {int(re.search(r"--queue-num (\d+)", line)[1]) for line in rules}
+            assert len(queue_numbers) == workers and len(rules) == workers * 2, rules
+            sender = stack.enter_context(socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800)))
+            sender.bind(("lo", 0))
+            ident = [20000]
+
+            def burst(protocol, source_port, destination_port, count):
+                def send():
+                    for number in range(count):
+                        ident[0] += 1
+                        # A TCP-style header: the swapped protocol keeps it at the start of the payload.
+                        body = struct.pack("!HHIIBBHHH", source_port, destination_port, number, 0, 0x50, 2, 32768, 0, 0)
+                        send_ipv4(sender, "127.0.0.2", "127.0.0.1", protocol, body + b"ported-flow", ident[0])
+                return queue_burst(queue_numbers, send, count)
+
+            used = set()
+            for flow in range(48):
+                deltas = burst(swapped, 30000 + flow, 443, 6)
+                nonzero = [queue for queue, delta in deltas.items() if delta]
+                assert len(nonzero) == 1 and sum(deltas.values()) == 6, ("swapped flow split across queues", flow, deltas)
+                used.add(nonzero[0])
+            assert len(used) >= 3, ("different swapped flows did not spread over the queues", used)
+            forward = [queue for queue, delta in burst(swapped, 30007, 443, 4).items() if delta]
+            reverse = [queue for queue, delta in burst(swapped, 443, 30007, 4).items() if delta]
+            assert len(forward) == 1 and forward == reverse, ("both directions of a flow must share a queue", forward, reverse)
+            # An unregistered protocol with the same bytes stays opaque: random kernel queue selection.
+            deltas = burst(plain, 30000, 443, 64)
+            assert sum(deltas.values()) == 64 and sum(1 for delta in deltas.values() if delta) >= 2, \
+                ("an unregistered protocol was not spread across queues", deltas)
+            after = wait_queues_drained(queue_numbers)
+            assert all(after[queue]["pending"] == 0 and after[queue]["dropped"] == 0
+                       and after[queue]["user_dropped"] == 0 for queue in queue_numbers), after
+            print(f"swapped flows spread over {len(used)} of {workers} queues, one queue per flow and direction")
+        assert not queue_statistics(), "capture left a bound NFQUEUE after shutdown"
+
+
+def run_ported_protocol_isolation(binary, directory):
+    """Two chains in one process. Only chain A declares a swap number; chain B never does, so for chain B that
+    number is opaque and keeps the per-packet random queue selection, constant-key traffic included."""
+    command("sysctl", "-qw", "net.ipv4.conf.all.rp_filter=0", "net.ipv4.conf.lo.rp_filter=0",
+            "net.ipv4.conf.lo.accept_local=1", "net.ipv4.conf.lo.route_localnet=1")
+    workers, swapped = 4, 143
+    case = directory / "isolation"
+    case.mkdir()
+    with contextlib.ExitStack() as stack:
+        collector = PacketCollector(stack)
+        port = collector.listener.getsockname()[1]
+
+        def capture(name, address, following):
+            return {"name": name, "type": "RawSocket", "next": following, "settings": {
+                "raw-device-name": name + "-w", "capture-device-name": name + "-c",
+                "fragment-policy": "preserve-fragments", "skip-sysctl": True, "multi-queue": True,
+                "capture-ips": [address], "capture-filter-mode": "source-ip"}}
+
+        nodes = [
+            capture("capa", "127.0.0.2", "swapa"),
+            {"name": "swapa", "type": "IpManipulator", "next": "ptsa", "settings": {"protoswap-tcp": swapped}},
+            {"name": "ptsa", "type": "PacketsToStream", "next": "outa"},
+            {"name": "outa", "type": "TcpConnector", "settings": {"address": "127.0.0.1", "port": port}},
+            capture("capb", "127.0.0.3", "ptsb"),
+            {"name": "ptsb", "type": "PacketsToStream", "next": "outb"},
+            {"name": "outb", "type": "TcpConnector", "settings": {"address": "127.0.0.1", "port": port}},
+        ]
+        core = {"configs": ["config.json"],
+                "misc": {"workers": workers, "ram-profile": "client", "mtu": 1500, "try-enabling-bbr": False},
+                "log": {"path": "log/", **{name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
+                                           for name in ("internal", "core", "network", "dns")}}}
+        (case / "config.json").write_text(json.dumps({"name": "capture-isolation", "nodes": nodes}))
+        (case / "core.json").write_text(json.dumps(core))
+        log = stack.enter_context((case / "stdout.log").open("w"))
+        with Process([binary], cwd=case, log=log, cleanup_signal=signal.SIGTERM, terminate_timeout=15) as process:
+            collector.wait(process, lambda: len(collector.buffers) == 2 * workers, time.monotonic() + 20)
+            rules = [line for line in iptables("-S", "INPUT").splitlines() if "WWCAP_" in line]
+
+            def queues_of(address):
+                return {int(re.search(r"--queue-num (\d+)", line)[1]) for line in rules if address + "/32" in line}
+
+            queues_a, queues_b = queues_of("127.0.0.2"), queues_of("127.0.0.3")
+            assert len(queues_a) == workers and len(queues_b) == workers and not queues_a & queues_b, rules
+            sender = stack.enter_context(socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800)))
+            sender.bind(("lo", 0))
+            ident = [40000]
+
+            def burst(address, queues, source_port, destination_port, count, constant_spi=False):
+                def send():
+                    for number in range(count):
+                        ident[0] += 1
+                        if constant_spi:
+                            body = struct.pack("!II", 0xC0FFEE01, number + 1) + bytes(48)
+                        else:
+                            body = struct.pack("!HHIIBBHHH", source_port, destination_port, number, 0, 0x50, 2,
+                                               32768, 0, 0) + b"isolation"
+                        send_ipv4(sender, address, "127.0.0.1", swapped, body, ident[0])
+                return queue_burst(queues, send, count)
+
+            # Chain A declared the number: one queue per inner flow.
+            used_a = set()
+            for flow in range(24):
+                deltas = burst("127.0.0.2", queues_a, 30000 + flow, 443, 6)
+                nonzero = [queue for queue, delta in deltas.items() if delta]
+                assert len(nonzero) == 1 and sum(deltas.values()) == 6, ("declared flow split across queues", deltas)
+                used_a.add(nonzero[0])
+            assert len(used_a) >= 3, ("declared flows did not spread", used_a)
+            # Chain B declared nothing: the same number and bytes stay per-packet random.
+            used_b, single = set(), 0
+            for flow in range(24):
+                deltas = burst("127.0.0.3", queues_b, 30000 + flow, 443, 8)
+                assert sum(deltas.values()) == 8, deltas
+                nonzero = [queue for queue, delta in deltas.items() if delta]
+                used_b.update(nonzero)
+                single += len(nonzero) == 1
+            assert single <= 2 and len(used_b) == workers, \
+                ("an undeclared chain steered another chain's protocol by ports", single, used_b)
+            # Constant-SPI ESP-like traffic of that number must keep spreading over the undeclared chain's queues.
+            deltas = burst("127.0.0.3", queues_b, 0, 0, 192, constant_spi=True)
+            assert sum(deltas.values()) == 192 and sum(1 for delta in deltas.values() if delta) >= 3, \
+                ("constant-SPI traffic collapsed onto too few queues in an undeclared chain", deltas)
+            after = wait_queues_drained(queues_a | queues_b)
+            assert all(after[queue]["pending"] == 0 and after[queue]["dropped"] == 0
+                       and after[queue]["user_dropped"] == 0 for queue in queues_a | queues_b), after
+            print(f"declared chain: one queue per flow over {len(used_a)} queues; undeclared chain: {single}/24 flows "
+                  f"on one queue, {len(used_b)} queues used, constant-SPI spread {list(deltas.values())}")
+        assert not queue_statistics(), "capture left a bound NFQUEUE after shutdown"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary")
     parser.add_argument("--tracked", action="store_true", help="disable bypass-conntrack on both paths")
     parser.add_argument("--exclude-protocols", action="store_true", help="exclude ICMP, TCP, and protocol-byte boundaries")
-    parser.add_argument("--queue-mode", choices=("multi", "single"), help="exercise four worker capture and queue steering")
+    parser.add_argument("--queue-mode", choices=("multi", "single", "ported", "isolated"), help="exercise four worker capture and queue steering")
     args = parser.parse_args()
     binary = str(Path(args.binary).resolve())
     with RunDirectory(prefix="waterwall-capture-notrack-") as temporary:
         directory = Path(temporary)
         try:
-            if args.queue_mode:
+            if args.queue_mode == "ported":
+                run_ported_protocol_queues(binary, directory)
+            elif args.queue_mode == "isolated":
+                run_ported_protocol_isolation(binary, directory)
+            elif args.queue_mode:
                 run_queue_receive(binary, directory, args.queue_mode == "single")
             else:
                 run(binary, directory, not args.tracked, args.exclude_protocols)
@@ -442,7 +623,11 @@ def main():
             for log in directory.rglob("stdout.log"):
                 print(f"{log}:\n{log.read_text()[-20000:]}", file=sys.stderr)
             raise
-    if args.queue_mode:
+    if args.queue_mode == "ported":
+        print("Capture ported-protocol queues, inner-flow steering and cleanup passed")
+    elif args.queue_mode == "isolated":
+        print("Capture ported-protocol declaration stays inside its chain and cleanup passed")
+    elif args.queue_mode:
         print(f"Capture {args.queue_mode} queues, port steering, exact delivery, processing workers and cleanup passed")
     else:
         print(f"Capture with bypass-conntrack={not args.tracked}, exclusions={args.exclude_protocols}, fragments, scope, and cleanup passed")

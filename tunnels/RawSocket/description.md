@@ -253,16 +253,34 @@ while capture is active. Complete TCP/UDP packets use symmetric IPv4 address,
 protocol, and port receive steering. With multiple queues, complete packets
 continue on the receiving worker; consumers establish any required flow ownership
 after transformations rather than relying on capture to select their owner.
+A ported protocol is a protocol number that its chain declares as beginning with a
+TCP/UDP-style port pair: the replacement numbers of an `IpManipulator`
+`protoswap-tcp` or `protoswap-udp` in the same chain, which leave the transport
+header at the start of the payload. `RawSocket` reads the chain's declarations when
+it starts and logs the protocols it steers. These packets use the same symmetric
+port receive steering as TCP/UDP, so one inner flow keeps one queue and one worker,
+in order, while different flows spread over the queues. The hash only combines the
+two port words symmetrically, so a constant byte-wise obfuscation of the header
+(for example an XOR) does not change which packets agree. A packet shorter than the
+port pair falls back to address and protocol steering. A chain supports at most two
+ported protocols; a further declared number is refused with a warning and stays
+opaque. A protocol that no node of this chain declares stays opaque however another
+chain uses it, so a relay that only forwards someone else's swapped traffic keeps
+per-packet distribution and may still reorder it. Only IPv4 is captured and swapped.
+
 Other complete IPv4 protocols use random kernel queue selection
 (`statistic --mode random`) and continue on the receiving worker. Cascading
 conditional probabilities give each queue approximately the same share; exact
 counts and packet order are not guaranteed. This removes the shared nth-selection
 counter without claiming that every kernel RNG implementation is lock-free.
-With one receive queue, complete native TCP/UDP packets with visible ports use
-the symmetric flow hash, keeping ordered packets of one flow on one worker FIFO.
-Opaque or unclassifiable packets use a session-local round-robin sequence across
-workers. Windows capture uses the same policy. Protocol-50 traffic between one
-IP pair therefore remains parallel; no transport ports are guessed for it.
+With one receive queue, complete native TCP/UDP and ported-protocol packets with
+visible ports use the symmetric flow hash, keeping ordered packets of one flow on
+one worker FIFO. Opaque or unclassifiable packets use a session-local round-robin
+sequence across workers. Windows capture applies the same policy to native TCP/UDP
+and treats every other protocol as opaque, declared or not. Protocol-50 traffic
+between one IP pair that is not a declared protocol swap therefore remains
+parallel; no transport ports are guessed for it. Each NFQUEUE has its share of the
+kernel queue budget, so a heavy flow that fills its queue drops there first.
 
 Every IPv4 fragment, including fragment zero, retains address/protocol receive
 steering and the shared fragment table's existing staging and ownership rules.

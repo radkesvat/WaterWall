@@ -266,3 +266,111 @@ bool packettunnelReadFragmentPolicy(const cJSON *settings, device_fragment_polic
     LOGF("Device source fragment-policy must be reassemble or preserve-fragments");
     return false;
 }
+
+enum
+{
+    kPortedDeclarationsPerNode = kDeviceFlowPortedProtocolMax
+};
+
+typedef struct ported_declaration_s
+{
+    const tunnel_t *declarer;
+    uint8_t         protocol;
+} ported_declaration_t;
+
+/* Startup and shutdown only, so a spin lock is enough; nothing here runs on a packet path. */
+static atomic_flag           ported_declarations_lock = ATOMIC_FLAG_INIT;
+static ported_declaration_t *ported_declarations;
+static unsigned              ported_declaration_count;
+static unsigned              ported_declaration_capacity;
+
+static void portedDeclarationsLock(void)
+{
+    while (atomic_flag_test_and_set_explicit(&ported_declarations_lock, memory_order_acquire))
+        ;
+}
+
+static void portedDeclarationsUnlock(void)
+{
+    atomic_flag_clear_explicit(&ported_declarations_lock, memory_order_release);
+}
+
+bool packettunnelDeclarePortedProtocol(tunnel_t *declarer, uint8_t protocol)
+{
+    assert(declarer != NULL);
+    bool declared = false;
+    bool at_limit = false;
+    portedDeclarationsLock();
+    unsigned held = 0;
+    for (unsigned i = 0; i < ported_declaration_count; ++i)
+    {
+        if (ported_declarations[i].declarer == declarer)
+        {
+            if (ported_declarations[i].protocol == protocol)
+            {
+                declared = true;
+                break;
+            }
+            ++held;
+        }
+    }
+    if (! declared && held >= kPortedDeclarationsPerNode)
+        at_limit = true;
+    else if (! declared)
+    {
+        if (ported_declaration_count == ported_declaration_capacity)
+        {
+            ported_declaration_capacity = ported_declaration_capacity == 0 ? 16U : ported_declaration_capacity * 2U;
+            ported_declarations = memoryReAllocate(ported_declarations,
+                                                   (size_t) ported_declaration_capacity * sizeof(*ported_declarations));
+        }
+        ported_declarations[ported_declaration_count++] = (ported_declaration_t) {declarer, protocol};
+        declared                                        = true;
+    }
+    portedDeclarationsUnlock();
+    if (at_limit)
+        LOGW("PacketTunnel: protocol %u was not declared as ported, the node already declares %u protocols",
+             protocol,
+             (unsigned) kPortedDeclarationsPerNode);
+    return declared;
+}
+
+void packettunnelWithdrawPortedProtocols(tunnel_t *declarer)
+{
+    portedDeclarationsLock();
+    unsigned kept = 0;
+    for (unsigned i = 0; i < ported_declaration_count; ++i)
+        if (ported_declarations[i].declarer != declarer)
+            ported_declarations[kept++] = ported_declarations[i];
+    ported_declaration_count = kept;
+    portedDeclarationsUnlock();
+}
+
+void packettunnelGetChainPortedProtocols(const tunnel_t *t, device_flow_ported_set_t *out)
+{
+    assert(t != NULL && out != NULL);
+    *out = (device_flow_ported_set_t) {0};
+    if (t->chain == NULL)
+        return;
+    assert(t->chain->finalized);
+    uint8_t  refused[256];
+    unsigned refused_count = 0;
+    portedDeclarationsLock();
+    /* Ascending protocol order, so a chain over the limit refuses the same numbers on every start. */
+    for (unsigned want = 0; want < 256; ++want)
+    {
+        bool found = false;
+        for (unsigned i = 0; i < ported_declaration_count && ! found; ++i)
+        {
+            const ported_declaration_t *d = &ported_declarations[i];
+            found                         = d->protocol == want && d->declarer->chain == t->chain;
+        }
+        if (found && ! deviceFlowPortedSetAdd(out, (uint8_t) want))
+            refused[refused_count++] = (uint8_t) want;
+    }
+    portedDeclarationsUnlock();
+    for (unsigned i = 0; i < refused_count; ++i)
+        LOGW("PacketTunnel: protocol %u is not steered by its inner ports, a chain supports at most %u",
+             refused[i],
+             (unsigned) kDeviceFlowPortedProtocolMax);
+}
