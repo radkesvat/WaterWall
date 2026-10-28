@@ -81,6 +81,8 @@ void wwLwipEngineCancelAck(struct tcp_pcb *pcb);
   u32_t rcv_wnd;
 #if WW_LWIP_WORKER_ENGINES
   u8_t ww_window_was_open;
+  u32_t ww_window_remaining;
+  u32_t ww_window_update_threshold;
 #endif]=])
 
     # The standard API remains 16-bit. A bridge's one aggregated receive
@@ -126,6 +128,21 @@ wwLwipTcpRecved(struct tcp_pcb *pcb, uint32_t len)
 #if WW_LWIP_WORKER_ENGINES
   ww_window_was_open = pcb->ww_rcv_advertised_valid &&
       TCP_SEQ_GT(pcb->ww_rcv_advertised_edge, pcb->rcv_nxt);
+  ww_window_remaining = ww_window_was_open ? pcb->ww_rcv_advertised_edge - pcb->rcv_nxt : 0;
+  /* Coalesce standalone updates only while the peer still has ample space.
+     The negotiated capacity also bounds this for peers without scaling. */
+  ww_window_update_threshold = LWIP_MIN(65536U, TCP_WND_MAX(pcb) / 4U);
+  if (ww_window_remaining <= ww_window_update_threshold || pcb->state != ESTABLISHED ||
+      (pcb->flags & (TF_ACK_DELAY | TF_ACK_NOW | TF_INFR | TF_RTO | TF_RXCLOSED | TF_FIN)) != 0
+#if TCP_QUEUE_OOSEQ
+      || pcb->ooseq != NULL
+#endif
+#if LWIP_TCP_SACK_OUT
+      || LWIP_TCP_SACK_VALID(pcb, 0)
+#endif
+      ) {
+    ww_window_update_threshold = TCP_WND_UPDATE_THRESHOLD;
+  }
 #endif
 ]=])
 
@@ -210,7 +227,11 @@ ww_tcp_commit_advertisement(struct tcp_pcb *pcb, struct ww_tcp_advertisement adv
     tcp_ack_now(pcb);
     tcp_output(pcb);
   }]=]
-[=[  if (wnd_inflation >= TCP_WND_UPDATE_THRESHOLD) {
+[=[#if WW_LWIP_WORKER_ENGINES
+  if (wnd_inflation >= ww_window_update_threshold) {
+#else
+  if (wnd_inflation >= TCP_WND_UPDATE_THRESHOLD) {
+#endif
 #if WW_LWIP_WORKER_ENGINES
     if (!ww_window_was_open || !wwLwipEngineDeferAck(pcb))
 #endif

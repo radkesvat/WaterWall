@@ -3,7 +3,7 @@
  * Setup: the existing small raw-engine runtime fixture, real IPv4/TCP handshakes and packets,
  * and a recording netif; no host sockets or timers are needed for successful batches.
  * Checks: exact cumulative ACK/window values and packet counts, scaled and unscaled credit/zero-window updates,
- * complete wide credit returns with batching and output-failure retry,
+ * complete wide credit returns, guarded standalone window updates and output-failure retry,
  * recovery/control traffic, piggybacking, queued PCB retirement, failed output retry, and two owners.
  * Limits: this proves protocol behavior and ACK suppression, not application throughput.
  * CTest: waterwall.lwip_ack_batch_unit (Debug and Release).
@@ -327,13 +327,13 @@ static void batchAndCredit(void)
 
     f = start(false);
     begin(f);
-    for (unsigned i = 0; i < 8; ++i)
+    for (unsigned i = 0; i < 16; ++i)
         data(f, payload_limit);
     end(f);
-    expectAck(f, 1, f->peer_next, 65535 - 8 * payload_limit);
+    expectAck(f, 1, f->peer_next, 65535 - 16 * payload_limit);
     begin(f);
-    tcp_recved(f->pcb, 4 * payload_limit);
-    tcp_recved(f->pcb, 4 * payload_limit);
+    tcp_recved(f->pcb, 8 * payload_limit);
+    tcp_recved(f->pcb, 8 * payload_limit);
     CHECK(f->outputs == 1);
     end(f);
     expectAck(f, 2, f->peer_next, 65535);
@@ -415,6 +415,119 @@ static void drainReceiveWindow(fixture_t *f)
         expectAdvertisement(f);
     }
     CHECK(f->pcb->ww_rcv_advertised_edge == f->peer_next);
+}
+
+static void receiveBytes(fixture_t *f, uint32_t amount)
+{
+    CHECK(! f->return_credit && amount <= f->pcb->rcv_wnd);
+    while (amount != 0)
+    {
+        const unsigned before = f->outputs;
+        begin(f);
+        for (unsigned packets = 0; packets < 64 && amount != 0; ++packets)
+        {
+            const uint16_t length = (uint16_t) LWIP_MIN(amount, payload_limit);
+            data(f, length);
+            amount -= length;
+        }
+        end(f);
+        expectAck(f, before + 1, f->peer_next, (uint16_t) (f->pcb->rcv_wnd >> (f->scaled_handshake ? 7 : 0)));
+        expectAdvertisement(f);
+    }
+}
+
+static void standaloneWindowUpdates(void)
+{
+    for (unsigned scaled = 0; scaled != 2; ++scaled)
+    {
+        const uint32_t threshold = scaled ? 65536U : 16383U;
+        const uint32_t capacity  = scaled ? TCP_WND : UINT16_MAX;
+        for (unsigned failed = 0; failed != 2; ++failed)
+        {
+            fixture_t *f = startAt(false, scaled != 0, failed ? UINT32_MAX - 32768U : 100U);
+            receiveBytes(f, threshold);
+            const unsigned before = f->outputs;
+            const uint32_t edge   = f->pcb->ww_rcv_advertised_edge;
+            tcp_recved(f->pcb, TCP_WND_UPDATE_THRESHOLD);
+            CHECK(f->outputs == before);
+            tcp_fasttmr();
+            CHECK(f->outputs == before);
+            tcp_recved(f->pcb, (uint16_t) (threshold - TCP_WND_UPDATE_THRESHOLD - 1U));
+            CHECK(f->outputs == before);
+            f->fail_output = failed != 0;
+            tcp_recved(f->pcb, 1);
+            expectAck(f, before + 1, f->peer_next, (uint16_t) (capacity >> (scaled ? 7 : 0)));
+            if (failed)
+            {
+                CHECK(f->pcb->ww_rcv_advertised_edge == edge && (f->pcb->flags & TF_ACK_NOW) != 0);
+                f->fail_output = false;
+                tcp_fasttmr();
+                expectAck(f, before + 2, f->peer_next, (uint16_t) (capacity >> (scaled ? 7 : 0)));
+            }
+            expectAdvertisement(f);
+
+            /* A short, isolated credit return adds no timer. The next ordinary
+             * data ACK still carries current space without waiting for 64 KiB. */
+            receiveBytes(f, TCP_WND_UPDATE_THRESHOLD);
+            const unsigned short_before = f->outputs;
+            tcp_recved(f->pcb, TCP_WND_UPDATE_THRESHOLD);
+            tcp_fasttmr();
+            CHECK(f->outputs == short_before);
+            receiveBytes(f, 1);
+            expectAck(f, short_before + 1, f->peer_next, (uint16_t) ((capacity - 1U) >> (scaled ? 7 : 0)));
+            stop(f);
+        }
+    }
+}
+
+static void guardedWindowUpdates(void)
+{
+    for (unsigned scaled = 0; scaled != 2; ++scaled)
+    {
+        const uint32_t remaining = scaled ? 65536U : 16383U;
+        const uint32_t capacity  = scaled ? TCP_WND : UINT16_MAX;
+        fixture_t     *f         = startAt(false, scaled != 0, UINT32_MAX - 32768U);
+        receiveBytes(f, capacity - remaining);
+        const unsigned before = f->outputs;
+        CHECK(f->pcb->ww_rcv_advertised_edge - f->peer_next == remaining);
+        /* Near-closed space must be replenished at the original threshold,
+         * without waiting for another round trip or a delayed-ACK timer. */
+        tcp_recved(f->pcb, TCP_WND_UPDATE_THRESHOLD);
+        expectAck(f, before + 1, f->peer_next, (uint16_t) ((remaining + TCP_WND_UPDATE_THRESHOLD) >> (scaled ? 7 : 0)));
+        expectAdvertisement(f);
+        tcp_recved(f->pcb, TCP_WND_UPDATE_THRESHOLD);
+        CHECK(f->outputs == before + 1);
+        stop(f);
+    }
+
+    fixture_t *f = startWithScale(false, true);
+    receiveBytes(f, TCP_WND_UPDATE_THRESHOLD);
+    unsigned before                 = f->outputs;
+    f->pcb->ww_rcv_advertised_valid = 0;
+    tcp_recved(f->pcb, TCP_WND_UPDATE_THRESHOLD);
+    expectAck(f, before + 1, f->peer_next, TCP_WND >> 7);
+    expectAdvertisement(f);
+    stop(f);
+
+    f = startWithScale(false, true);
+    receiveBytes(f, TCP_WND_UPDATE_THRESHOLD);
+    before = f->outputs;
+    data(f, 1);
+    CHECK(f->outputs == before && (f->pcb->flags & TF_ACK_DELAY) != 0);
+    tcp_recved(f->pcb, TCP_WND_UPDATE_THRESHOLD);
+    expectAck(f, before + 1, f->peer_next, (TCP_WND - 1U) >> 7);
+    expectAdvertisement(f);
+    stop(f);
+
+    f = startWithScale(false, true);
+    receiveBytes(f, TCP_WND_UPDATE_THRESHOLD);
+    inject(f, f->peer_next + 512U, TCP_ACK, 256);
+    CHECK(f->pcb->ooseq != NULL);
+    before = f->outputs;
+    tcp_recved(f->pcb, TCP_WND_UPDATE_THRESHOLD);
+    expectAck(f, before + 1, f->peer_next, TCP_WND >> 7);
+    expectAdvertisement(f);
+    stop(f);
 }
 
 static void wideReceiveCredit(void)
@@ -823,6 +936,10 @@ int main(void)
     zeroWindow();
     testCaseSet("scaled window ACK batches and immediate zero-window reopening");
     scaledWindowBatches();
+    testCaseSet("standalone scaled/unscaled window updates, short transfers and output retry");
+    standaloneWindowUpdates();
+    testCaseSet("near-closed, unknown, pending ACK and recovery window updates");
+    guardedWindowUpdates();
     testCaseSet("wide receive credit preserves batching, zero-window reopening and output retry");
     wideReceiveCredit();
     testCaseSet("scaled quantized-zero windows and sequence wrap");

@@ -612,9 +612,9 @@ static err_t initCreditNetif(struct netif *netif)
     return ERR_OK;
 }
 
-static void caseReceiveCredit(uint32_t amount, bool fail_once)
+static void caseReceiveCredit(uint32_t amount, bool expect_update, bool fail_once)
 {
-    twfSetCase("CTP Resume returns full-width credit in one successful wire ACK");
+    twfSetCase("CTP Resume settles full-width credit and coalesces standalone window updates");
     ctp_fixture_t fixture;
     ctpFixtureSetup(&fixture);
     const uint32_t  baseline = ctpTcpPcbUsed();
@@ -648,10 +648,11 @@ static void caseReceiveCredit(uint32_t amount, bool fail_once)
     tcp_ack_now(pcb);
     twfRequire(tcp_output(pcb) == ERR_OK && output.acknowledgments == 1,
                "CTP credit fixture failed to advertise its initial window");
-    output              = (credit_output_t) {.fail_once = fail_once};
-    ls->rx_uncredited   = amount;
-    ls->read_paused_len = amount;
-    ls->read_paused     = true;
+    const uint32_t initial_advertised_edge = pcb->ww_rcv_advertised_edge;
+    output                                 = (credit_output_t) {.fail_once = fail_once};
+    ls->rx_uncredited                      = amount;
+    ls->read_paused_len                    = amount;
+    ls->read_paused                        = true;
     leaveEngine();
 
     ctpTunnelUpStreamResume(fixture.ctp, fixture.line);
@@ -659,14 +660,32 @@ static void caseReceiveCredit(uint32_t amount, bool fail_once)
                "CTP Resume lost or duplicated returned receive credit");
     twfRequireEqualU32(pcb->rcv_wnd, TCP_WND, "CTP Resume did not restore the full receive window");
     twfRequireEqualU32(output.acknowledgments,
-                       amount != 0 ? 1 : 0,
+                       expect_update ? 1 : 0,
                        "CTP Resume emitted artificial window updates for one returned amount");
     twfRequireEqualU32(output.attempts,
-                       amount != 0 ? 1U + fail_once : 0,
+                       expect_update ? 1U + fail_once : 0,
                        "CTP Resume did not retry a refused window update exactly once");
-    if (amount != 0)
+    if (expect_update)
         twfRequire(output.acknowledgment == pcb->rcv_nxt && output.window == (TCP_WND >> 7),
                    "CTP Resume advertised an incomplete or incorrect final window");
+    else
+    {
+        twfRequire(pcb->ww_rcv_advertised_edge == initial_advertised_edge,
+                   "CTP Resume published a wire advertisement without sending an ACK");
+        if (amount != 0)
+        {
+            /* Suppressed small credit is still available to the next ordinary
+             * ACK; no second credit return is needed to publish the full window. */
+            enterEngine();
+            tcp_ack_now(pcb);
+            twfRequire(tcp_output(pcb) == ERR_OK, "CTP credit refresh ACK output failed");
+            leaveEngine();
+            twfRequireEqualU32(output.acknowledgments, 1, "CTP credit refresh emitted duplicate ACKs");
+            twfRequireEqualU32(output.attempts, 1, "CTP credit refresh retried successful output");
+            twfRequire(output.acknowledgment == pcb->rcv_nxt && output.window == (TCP_WND >> 7),
+                       "CTP credit refresh omitted previously settled receive credit");
+        }
+    }
     ctpCloseFixtureLine(&fixture);
     enterEngine();
     netif_remove(&netif);
@@ -685,10 +704,14 @@ int main(void)
         casePendingBudgetAllowsOneReadOfHeadroom(headroom_pool_sizes[i]);
     for (unsigned mode = 0; mode < 3; ++mode)
         caseScaledSendCapacity(mode);
-    const uint32_t credit_amounts[] = {0, 16384, 131072, TCP_WND};
+    const struct
+    {
+        uint32_t amount;
+        bool     update;
+    } credit_amounts[] = {{0, false}, {16384, false}, {65535, false}, {65536, true}, {131072, true}, {TCP_WND, true}};
     for (size_t i = 0; i < ARRAY_SIZE(credit_amounts); ++i)
-        caseReceiveCredit(credit_amounts[i], false);
-    caseReceiveCredit(TCP_WND, true);
+        caseReceiveCredit(credit_amounts[i].amount, credit_amounts[i].update, false);
+    caseReceiveCredit(TCP_WND, true, true);
     caseTerminalPayloadReentry();
     caseStopOrdering(true);
     caseStopOrdering(false);
