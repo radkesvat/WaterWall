@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DomainResolver/interface.h"
+#include "TcpAdapterCommon/adapter_write_queue.h"
 #include "wwapi.h"
 
 typedef struct tcpconnector_socket_options_s
@@ -79,13 +80,7 @@ typedef struct tcpconnector_lstate_s
     line_t                       *line;        // reference to the line
     wio_t                        *io;          // IO handle for the connection (socket)
     local_idle_item_t            *idle_handle; // reference to the idle item for this connection
-    // These fields are used internally for the queue implementation for TCP
-    buffer_queue_t pause_queue;
-    // Combined adapter/WIO retention: active allocation remains charged until write completion.
-    buffer_budget_t             write_budget;
-    buffer_budget_reservation_t active_write;
-    bool                        queue_pause_sent;
-    bool           write_paused : 1;
+    adapter_write_queue_t         write_queue;
     bool           read_paused : 1;
 
 } tcpconnector_lstate_t;
@@ -100,12 +95,9 @@ enum
 {
     kTunnelStateSize    = sizeof(tcpconnector_tstate_t),
     kLineStateSize      = sizeof(tcpconnector_lstate_t),
-    kMaxPauseQueueSize  = (1U << 24), // 16MB
-    kMinPauseQueueSize  = (1U << 10), // 1KB
     kConnectTimeoutMs   = 60 * 1000,
     // Keep the idle cleanup limit aligned with TcpListener's active default.
-    kReadWriteTimeoutMs = 600 * 1000,
-    kPauseQueueCapacity = 2
+    kReadWriteTimeoutMs = 600 * 1000
 };
 
 static inline hash_t tcpconnectorIdleKey(const wio_t *io)
@@ -168,5 +160,3 @@ void tcpconnectorOnWriteComplete(wio_t *io);
 void tcpconnectorOnClose(wio_t *io);
 void tcpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_tcp);
 void tcpconnectorTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
-
-void tcpconnectorRefreshWriteBudget(tcpconnector_lstate_t *ls);

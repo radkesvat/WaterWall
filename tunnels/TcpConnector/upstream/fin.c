@@ -24,6 +24,7 @@ void tcpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         abortProgramNow(1);
     }
     weventSetUserData(ls->io, NULL);
+    wioSetCallBackWrite(ls->io, NULL);
 
     tcpconnectorFlushWriteQueue(ls);
 

@@ -41,11 +41,18 @@ static bool      nested_payload;
 static int      observed_write_fd = -1;
 static int      observed_send_flags[3];
 static unsigned observed_send_count;
+static int      short_write_fd = -1;
 ssize_t         __real_send(int fd, const void *buf, size_t len, int flags);
 ssize_t         __wrap_send(int fd, const void *buf, size_t len, int flags);
 
 ssize_t __wrap_send(int fd, const void *buf, size_t len, int flags)
 {
+    if (fd == short_write_fd)
+    {
+        twfRequire(len > 1, "short-write fixture needs more than one byte");
+        short_write_fd = -1;
+        return __real_send(fd, buf, 1, flags);
+    }
     if (fd == observed_write_fd)
     {
         twfRequire(observed_send_count < 3, "unexpected extra adapter drain send");
@@ -81,8 +88,8 @@ static void onPause(tunnel_t *t, line_t *line)
     twfRequire(t == neighbor && line == expected_line, "Pause used the wrong neighbor or line");
     ++pause_calls;
     adapter_lstate_t *ls = lineGetState(line, adapter);
-    twfRequire(bufferqueueGetBufCount(&ls->pause_queue) == 2, "Pause preceded incoming FIFO admission");
-    twfRequire(ls->queue_pause_sent, "Pause latch was not published before callback");
+    twfRequire(bufferqueueGetBufCount(&ls->write_queue.queue) == 2, "Pause preceded incoming FIFO admission");
+    twfRequire(ls->write_queue.pause_sent, "Pause latch was not published before callback");
     if (nested_payload)
     {
         nested_payload = false;
@@ -172,7 +179,7 @@ static void runPauseCase(bool splice_input, bool close_line)
     ts->idle_tables               = tables;
     ls->idle_handle               = localidletableCreateItem(table, wioGetID(io), ls, unexpectedExpiry, 60000);
     twfRequire(ls->idle_handle != NULL, "failed to register adapter idle item");
-    ls->write_paused = true;
+    ls->write_queue.blocked = true;
     weventSetUserData(io, ls);
 
 #if WW_HAVE_SPLICE
@@ -184,9 +191,9 @@ static void runPauseCase(bool splice_input, bool close_line)
 #endif
 #endif
     sbuf_t *queued = bufferpoolGetLargeBuffer(env.pool);
-    sbufSetLength(queued, kMinPauseQueueSize + 1);
+    sbufSetLength(queued, kAwqPauseThreshold + 1);
     memorySet(sbufGetMutablePtr(queued), 'Q', sbufGetLength(queued));
-    queued                         = bufferqueuePushBack(&ls->pause_queue, queued);
+    queued                         = bufferqueuePushBack(&ls->write_queue.queue, queued);
     sbuf_t        *input           = makeInput(env.pool, splice_input);
     const uint32_t recycled_before = twfRecycleCount();
     close_on_pause                 = close_line;
@@ -218,14 +225,14 @@ static void runPauseCase(bool splice_input, bool close_line)
     {
         twfRequire(! wioIsSpliceEnabled(io), "queued payload did not apply read preference");
         twfRequire(lineIsAlive(line) && twfLineRefCount(line) == 2, "surviving Pause leaked a line reference");
-        twfRequire(bufferqueueGetBufCount(&ls->pause_queue) == 3 &&
-                       bufferqueueGetBufLen(&ls->pause_queue) == kMinPauseQueueSize + 18,
+        twfRequire(bufferqueueGetBufCount(&ls->write_queue.queue) == 3 &&
+                       bufferqueueGetBufLen(&ls->write_queue.queue) == kAwqPauseThreshold + 18,
                    "surviving Pause lost queue entries or bytes");
-        sbuf_t *first = bufferqueuePopFront(&ls->pause_queue);
-        twfRequire(sbufGetLength(first) == kMinPauseQueueSize + 1 && memoryEqual(sbufGetRawPtr(first), "Q", 1),
+        sbuf_t *first = bufferqueuePopFront(&ls->write_queue.queue);
+        twfRequire(sbufGetLength(first) == kAwqPauseThreshold + 1 && memoryEqual(sbufGetRawPtr(first), "Q", 1),
                    "surviving Pause changed FIFO order");
         bufferpoolReuseBuffer(env.pool, first);
-        sbuf_t *received = bufferqueuePopFront(&ls->pause_queue);
+        sbuf_t *received = bufferqueuePopFront(&ls->write_queue.queue);
         if (splice_input)
         {
             twfRequire(received == input, "surviving Pause replaced a splice wrapper");
@@ -234,7 +241,7 @@ static void runPauseCase(bool splice_input, bool close_line)
         twfRequire(sbufGetLength(received) == 11 && memoryEqual(sbufGetRawPtr(received), "HDR:payload", 11),
                    "surviving Pause corrupted its input payload");
         bufferpoolReuseBuffer(env.pool, received);
-        sbuf_t *nested = bufferqueuePopFront(&ls->pause_queue);
+        sbuf_t *nested = bufferqueuePopFront(&ls->write_queue.queue);
         twfRequire(sbufGetLength(nested) == 6 && memoryEqual(sbufGetRawPtr(nested), "nested", 6),
                    "nested payload overtook older input");
         bufferpoolReuseBuffer(env.pool, nested);
@@ -309,7 +316,7 @@ static void runCapacityCase(void)
     ts->idle_tables               = tables;
     ls->idle_handle               = localidletableCreateItem(table, wioGetID(io), ls, unexpectedExpiry, 60000);
     twfRequire(ls->idle_handle != NULL, "failed to register adapter idle item");
-    ls->write_paused = true;
+    ls->write_queue.blocked = true;
     weventSetUserData(io, ls);
 
 #ifdef TCP_PAUSE_TEST_LISTENER
@@ -327,15 +334,15 @@ static void runCapacityCase(void)
         // Large capacity, zero logical length: byte-only admission never refuses this.
         sbuf_t      *buf    = sbufCreate(1024 * 1024);
         const size_t charge = sbufGetQueueCharge(buf);
-        const bool   fits   = accepted_charge <= kMaxPauseQueueSize - charge;
+        const bool   fits   = accepted_charge <= kAwqMaxRetained - charge;
         submit(line, buf);
         ++entries;
         if (fits)
         {
             accepted_charge += charge;
             twfRequire(lineIsAlive(line), "capacity refused before hard ceiling");
-            twfRequire(bufferqueueGetCharge(&ls->pause_queue) == accepted_charge, "incremental charge mismatch");
-            twfRequire(bufferqueueGetBufLen(&ls->pause_queue) == 0, "empty buffers acquired logical bytes");
+            twfRequire(bufferqueueGetCharge(&ls->write_queue.queue) == accepted_charge, "incremental charge mismatch");
+            twfRequire(bufferqueueGetBufLen(&ls->write_queue.queue) == 0, "empty buffers acquired logical bytes");
         }
         else
             twfRequire(! lineIsAlive(line), "capacity overflow did not settle line");
@@ -359,8 +366,8 @@ static void onDrainResume(tunnel_t *t, line_t *line)
 {
     twfRequire(t == neighbor, "drain resumed wrong neighbor");
     adapter_lstate_t *ls = lineGetState(line, adapter);
-    twfRequire(! ls->write_paused && ! ls->queue_pause_sent && ls->active_write.cost.charge == 0 &&
-                   bufferqueueGetCharge(&ls->pause_queue) == 0,
+    twfRequire(! ls->write_queue.blocked && ! ls->write_queue.pause_sent && ls->write_queue.active.cost.charge == 0 &&
+                   bufferqueueGetCharge(&ls->write_queue.queue) == 0,
                "Resume preceded drain/accounting settlement");
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(line));
     sbufSetLength(buf, 1);
@@ -410,7 +417,7 @@ static void runWriteCompletionCase(bool finish_queued)
     ts->idle_tables               = tables;
     ls->idle_handle               = localidletableCreateItem(table, wioGetID(io), ls, unexpectedExpiry, 60000);
     twfRequire(ls->idle_handle != NULL, "failed to register adapter idle item");
-    ls->write_paused = true;
+    ls->write_queue.blocked = true;
     weventSetUserData(io, ls);
 
 #ifdef TCP_PAUSE_TEST_LISTENER
@@ -504,8 +511,8 @@ static void progressResume(tunnel_t *t, line_t *line)
 {
     twfRequire(t == neighbor && lineIsAlive(line), "write progress resumed a dead/wrong line");
     adapter_lstate_t *ls = lineGetState(line, adapter);
-    twfRequire(! ls->write_paused && ! ls->queue_pause_sent && ls->active_write.cost.charge == 0 &&
-                   bufferqueueGetCharge(&ls->pause_queue) == 0,
+    twfRequire(! ls->write_queue.blocked && ! ls->write_queue.pause_sent && ls->write_queue.active.cost.charge == 0 &&
+                   bufferqueueGetCharge(&ls->write_queue.queue) == 0,
                "write progress resumed before all retained allocation charges were released");
     ++progress_fixture->resumes;
 }
@@ -588,6 +595,8 @@ static void progressSetup(tcp_progress_fixture_t *fixture, bool with_resolver)
     fixture->line             = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
     tcpconnector_lstate_t *ls = lineGetState(fixture->line, adapter);
     tcpconnectorLinestateInitialize(ls);
+    // The socketpair is connected already; connecting cases restore their initial hold explicitly.
+    ls->write_queue.blocked = false;
     ls->tunnel         = adapter;
     ls->line           = fixture->line;
     ls->io             = fixture->io;
@@ -784,37 +793,37 @@ static void runActiveWriteChargeCase(bool overflow)
     progressSetup(&fixture, false);
     adapter_lstate_t *ls         = lineGetState(fixture.line, adapter);
     const uint32_t    body_bytes = 256 * 1024;
-    sbuf_t           *active     = twfTrackAcquired(sbufCreate(kMaxPauseQueueSize / 2));
+    sbuf_t           *active     = twfTrackAcquired(sbufCreate(kAwqMaxRetained / 2));
     sbufSetLength(active, body_bytes);
     memorySet(sbufGetMutablePtr(active), 'A', body_bytes);
     const size_t active_charge = sbufGetQueueCharge(active);
     submit(fixture.line, active);
     size_t pending_bytes = wioGetWriteBufSize(fixture.io);
-    twfRequire(pending_bytes > 0 && pending_bytes < body_bytes && ls->write_paused &&
-                   ls->active_write.cost.charge == active_charge && bufferqueueGetCharge(&ls->pause_queue) == 0 &&
-                   pause_calls == 1,
+    twfRequire(pending_bytes > 0 && pending_bytes < body_bytes && ls->write_queue.blocked &&
+                   ls->write_queue.active.cost.charge == active_charge &&
+                   bufferqueueGetCharge(&ls->write_queue.queue) == 0 && pause_calls == 1,
                "real socket write did not retain the partial active allocation");
-    twfRequire(ls->active_write.budget == &ls->write_budget &&
-                   bufferbudgetGetUsage(&ls->write_budget).bytes == pending_bytes &&
-                   bufferbudgetGetUsage(&ls->write_budget).entries == 1,
+    twfRequire(ls->write_queue.active.budget == &ls->write_queue.budget &&
+                   bufferbudgetGetUsage(&ls->write_queue.budget).bytes == pending_bytes &&
+                   bufferbudgetGetUsage(&ls->write_queue.budget).entries == 1,
                "direct WIO return did not reconcile active logical bytes");
-    const size_t suffix_capacity = kMaxPauseQueueSize - active_charge - sizeof(sbuf_t) - kSbufAllocationAlignment;
+    const size_t suffix_capacity = kAwqMaxRetained - active_charge - sizeof(sbuf_t) - kSbufAllocationAlignment;
     sbuf_t      *suffix          = twfTrackAcquired(sbufCreate((uint32_t) suffix_capacity));
     sbufWrite(suffix, "BC", 2);
     sbufSetLength(suffix, 2);
     submit(fixture.line, suffix);
     twfRequire(lineIsAlive(fixture.line) &&
-                   ls->active_write.cost.charge + bufferqueueGetCharge(&ls->pause_queue) == kMaxPauseQueueSize,
+                   ls->write_queue.active.cost.charge + bufferqueueGetCharge(&ls->write_queue.queue) == kAwqMaxRetained,
                "exact combined active-plus-queue charge was refused or uncharged");
     size_t  received = progressReadPeer(&fixture, 0, body_bytes);
     discard wloopProcessEvents(fixture.env.loop, 0);
     twfRequire(wioGetWriteBufSize(fixture.io) < pending_bytes && wioGetWriteBufSize(fixture.io) > 0 &&
-                   ls->active_write.cost.charge == active_charge &&
-                   ls->active_write.cost.charge + bufferqueueGetCharge(&ls->pause_queue) == kMaxPauseQueueSize,
+                   ls->write_queue.active.cost.charge == active_charge &&
+                   ls->write_queue.active.cost.charge + bufferqueueGetCharge(&ls->write_queue.queue) == kAwqMaxRetained,
                "partial WIO progress released allocation charge before completion");
-    twfRequire(ls->active_write.cost.bytes == wioGetWriteBufSize(fixture.io) &&
-                   bufferbudgetGetUsage(&ls->write_budget).bytes == wioGetWriteBufSize(fixture.io) + 2 &&
-                   bufferbudgetGetUsage(&ls->write_budget).entries == 2,
+    twfRequire(ls->write_queue.active.cost.bytes == wioGetWriteBufSize(fixture.io) &&
+                   bufferbudgetGetUsage(&ls->write_queue.budget).bytes == wioGetWriteBufSize(fixture.io) + 2 &&
+                   bufferbudgetGetUsage(&ls->write_queue.budget).entries == 2,
                "partial callback did not release only consumed logical bytes");
     if (overflow)
     {
@@ -832,18 +841,47 @@ static void runActiveWriteChargeCase(bool overflow)
                "bounded partial-write fixture did not complete all surviving bytes");
     twfRequire(fixture.resumes == (overflow ? 0U : 1U), "partial-write drain repeated or omitted Resume");
     if (! overflow)
-        twfRequire(ls->active_write.budget == NULL && bufferbudgetGetUsage(&ls->write_budget).entries == 0 &&
-                       bufferqueueGetCharge(&ls->pause_queue) == 0,
+        twfRequire(ls->write_queue.active.budget == NULL &&
+                       bufferbudgetGetUsage(&ls->write_queue.budget).entries == 0 &&
+                       bufferqueueGetCharge(&ls->write_queue.queue) == 0,
                    "completed write leaked capacity charge");
     progressTeardown(&fixture);
 }
+
+static void runSmallPartialWriteCase(void)
+{
+    twfSetCase("small direct partial TCP write pauses below the queued admission threshold");
+    tcp_progress_fixture_t fixture;
+    progressSetup(&fixture, false);
+    adapter_lstate_t *ls  = lineGetState(fixture.line, adapter);
+    sbuf_t           *buf = twfTrackAcquired(sbufCreate(2));
+    sbufWrite(buf, "AB", 2);
+    sbufSetLength(buf, 2);
+    const size_t charge = sbufGetQueueCharge(buf);
+    twfRequire(charge < kAwqPauseThreshold, "small write exceeds the queued Pause threshold");
+    short_write_fd = wioGetFD(fixture.io);
+    submit(fixture.line, buf);
+    twfRequire(short_write_fd == -1 && wioGetWriteBufSize(fixture.io) == 1 && pause_calls == 1 &&
+                   ls->write_queue.blocked && ls->write_queue.pause_sent &&
+                   ls->write_queue.active.cost.charge == charge,
+               "small direct partial write did not publish retained ownership and Pause");
+    for (unsigned i = 0; i < 32 && ! wioCheckWriteComplete(fixture.io); ++i)
+        discard wloopProcessEvents(fixture.env.loop, 0);
+    char wire[2];
+    twfRequire(wioCheckWriteComplete(fixture.io) && fixture.resumes == 1 && pause_calls == 1 &&
+                   recv(fixture.peer, wire, sizeof(wire), MSG_DONTWAIT) == sizeof(wire) &&
+                   memoryEqual(wire, "AB", sizeof(wire)),
+               "small partial write did not drain in order with one Resume");
+    progressTeardown(&fixture);
+}
+
 static void runQueuedWriteFailureCase(void)
 {
     twfSetCase("failed WIO write during adapter FIFO drain closes once without Resume or queued-suffix reuse");
     tcp_progress_fixture_t fixture;
     progressSetup(&fixture, false);
     adapter_lstate_t *ls = lineGetState(fixture.line, adapter);
-    ls->write_paused     = true;
+    ls->write_queue.blocked = true;
     for (unsigned i = 0; i < 2; ++i)
     {
         sbuf_t *buf = bufferpoolGetLargeBuffer(fixture.env.pool);
@@ -860,11 +898,53 @@ static void runQueuedWriteFailureCase(void)
 #endif
     twfRequire(fixture.resumes == 0, "failed FIFO write incorrectly resumed its producer");
     if (lineIsAlive(fixture.line))
-        twfRequire(bufferqueueGetBufCount(&ls->pause_queue) == 1, "failed write continued into queued suffix");
+        twfRequire(bufferqueueGetBufCount(&ls->write_queue.queue) == 1, "failed write continued into queued suffix");
     for (unsigned i = 0; i < 8 && lineIsAlive(fixture.line); ++i)
         discard wloopProcessEvents(fixture.env.loop, 0);
     twfRequire(! lineIsAlive(fixture.line) && fixture.finishes == 1 && fixture.resumes == 0,
                "asynchronous write failure did not settle the owner once");
+    progressTeardown(&fixture);
+}
+
+static void runDirectWriteFailureReentryCase(void)
+{
+    twfSetCase("failed direct TCP write retains bounded later input until asynchronous close");
+    tcp_progress_fixture_t fixture;
+    progressSetup(&fixture, false);
+    adapter_lstate_t *ls = lineGetState(fixture.line, adapter);
+    close(fixture.peer);
+    fixture.peer  = -1;
+    sbuf_t *first = twfTrackAcquired(sbufCreate(1));
+    sbufWrite(first, "A", 1);
+    sbufSetLength(first, 1);
+    const size_t active_charge = sbufGetQueueCharge(first);
+    observed_write_fd          = wioGetFD(fixture.io);
+    observed_send_count        = 0;
+    submit(fixture.line, first);
+    twfRequire(lineIsAlive(fixture.line) && ! wioIsClosed(fixture.io) && observed_send_count == 1 &&
+                   ls->write_queue.active.cost.charge == active_charge &&
+                   bufferqueueGetBufCount(&ls->write_queue.queue) == 0,
+               "failed direct write did not preserve its reservation until asynchronous close");
+
+    // A caller can submit another admitted buffer before the queued close event runs.
+    sbuf_t *second = twfTrackAcquired(sbufCreate(1));
+    sbufWrite(second, "B", 1);
+    sbufSetLength(second, 1);
+    const size_t queued_charge = sbufGetQueueCharge(second);
+    submit(fixture.line, second);
+    twfRequire(lineIsAlive(fixture.line) && observed_send_count == 1 && ls->write_queue.blocked &&
+                   ls->write_queue.active.cost.charge == active_charge &&
+                   bufferqueueGetBufCount(&ls->write_queue.queue) == 1 &&
+                   bufferbudgetGetUsage(&ls->write_queue.budget).charge == active_charge + queued_charge &&
+                   bufferbudgetGetUsage(&ls->write_queue.budget).entries == 2 && pause_calls == 0 &&
+                   fixture.resumes == 0,
+               "input following a failed direct write retried I/O or replaced the active reservation");
+    for (unsigned i = 0; i < 8 && lineIsAlive(fixture.line); ++i)
+        discard wloopProcessEvents(fixture.env.loop, 0);
+    twfRequire(! lineIsAlive(fixture.line) && wioIsClosed(fixture.io) && fixture.finishes == 1 &&
+                   fixture.resumes == 0 && observed_send_count == 1,
+               "failed direct write did not close once and discard the retained suffix without Resume");
+    observed_write_fd = -1;
     progressTeardown(&fixture);
 }
 
@@ -894,6 +974,98 @@ static void connectorEst(tunnel_t *t, line_t *line)
     twfRequire(t == neighbor && line == progress_fixture->line, "connector Est used the wrong association");
     ++progress_fixture->est_calls;
 }
+
+static bool close_during_est;
+
+static void connectorReentrantEst(tunnel_t *t, line_t *line)
+{
+    connectorEst(t, line);
+    adapter_lstate_t *ls = lineGetState(line, adapter);
+    twfRequire(! ls->write_queue.blocked && ls->write_queue.pause_sent && ls->write_queue.active.cost.charge == 0 &&
+                   bufferqueueGetBufCount(&ls->write_queue.queue) == 0 && progress_fixture->resumes == 0,
+               "connect drain consumed its pending Resume before Est returned");
+    if (close_during_est)
+    {
+        finishLine(line);
+        return;
+    }
+    sbuf_t *buf = twfTrackAcquired(sbufCreate(2));
+    sbufWrite(buf, "BC", 2);
+    sbufSetLength(buf, 2);
+    short_write_fd = wioGetFD(progress_fixture->io);
+    submit(line, buf);
+}
+
+static void runEstReentryCase(bool close_line)
+{
+    twfSetCase(close_line ? "connector Est closes before a pending Resume"
+                          : "connector Est writes a partial buffer before a pending Resume");
+    tcp_progress_fixture_t fixture;
+    progressSetup(&fixture, false);
+    adapter_lstate_t *ls    = lineGetState(fixture.line, adapter);
+    ls->write_queue.blocked = true;
+    neighbor->fnEstD        = connectorReentrantEst;
+    close_during_est        = close_line;
+    sbuf_t *buf             = bufferpoolGetLargeBuffer(fixture.env.pool);
+    sbufWrite(buf, "A", 1);
+    sbufSetLength(buf, 1);
+    submit(fixture.line, buf);
+    twfRequire(pause_calls == 1 && ls->write_queue.pause_sent, "connecting input did not establish a pending Pause");
+    tcpconnectorOnOutBoundConnected(fixture.io);
+    twfRequire(fixture.est_calls == 1 && fixture.resumes == 0 && pause_calls == 1,
+               "Est reentry emitted a stale Resume or repeated Pause");
+    if (close_line)
+    {
+        twfRequire(! lineIsAlive(fixture.line), "Est Finish left its owned line alive");
+    }
+    else
+    {
+        twfRequire(lineIsAlive(fixture.line) && short_write_fd == -1 && wioGetWriteBufSize(fixture.io) == 1 &&
+                       ls->write_queue.blocked && ls->write_queue.pause_sent,
+                   "Est partial write lost the existing producer hold");
+        for (unsigned i = 0; i < 32 && ! wioCheckWriteComplete(fixture.io); ++i)
+            discard wloopProcessEvents(fixture.env.loop, 0);
+        twfRequire(wioCheckWriteComplete(fixture.io) && fixture.resumes == 1 && pause_calls == 1,
+                   "Est partial write did not release its producer once after draining");
+    }
+    char         wire[3];
+    const size_t bytes = close_line ? 1 : sizeof(wire);
+    twfRequire(recv(fixture.peer, wire, bytes, MSG_DONTWAIT) == (ssize_t) bytes && memoryEqual(wire, "ABC", bytes),
+               "Est reentry changed the accepted FIFO bytes");
+    progressTeardown(&fixture);
+}
+
+static void runConnectingSmallPartialCase(void)
+{
+    twfSetCase("small connecting FIFO partial drain does not invent Pause or Resume");
+    tcp_progress_fixture_t fixture;
+    progressSetup(&fixture, false);
+    adapter_lstate_t *ls    = lineGetState(fixture.line, adapter);
+    ls->write_queue.blocked = true;
+    neighbor->fnEstD        = connectorEst;
+    sbuf_t *buf             = twfTrackAcquired(sbufCreate(2));
+    sbufWrite(buf, "AB", 2);
+    sbufSetLength(buf, 2);
+    twfRequire(sbufGetQueueCharge(buf) < kAwqPauseThreshold,
+               "connecting small input exceeds the queued Pause threshold");
+    submit(fixture.line, buf);
+    twfRequire(pause_calls == 0 && ! ls->write_queue.pause_sent,
+               "small connecting input unexpectedly paused its producer");
+    short_write_fd = wioGetFD(fixture.io);
+    tcpconnectorOnOutBoundConnected(fixture.io);
+    twfRequire(short_write_fd == -1 && wioGetWriteBufSize(fixture.io) == 1 && fixture.est_calls == 1 &&
+                   fixture.resumes == 0 && pause_calls == 0 && ls->write_queue.blocked && ! ls->write_queue.pause_sent,
+               "partial connecting drain changed the below-threshold notification policy");
+    for (unsigned i = 0; i < 32 && ! wioCheckWriteComplete(fixture.io); ++i)
+        discard wloopProcessEvents(fixture.env.loop, 0);
+    char wire[2];
+    twfRequire(wioCheckWriteComplete(fixture.io) && fixture.resumes == 0 && pause_calls == 0 &&
+                   ! ls->write_queue.blocked && recv(fixture.peer, wire, sizeof(wire), MSG_DONTWAIT) == sizeof(wire) &&
+                   memoryEqual(wire, "AB", sizeof(wire)),
+               "small connecting drain emitted pressure without an earlier Pause or changed FIFO bytes");
+    progressTeardown(&fixture);
+}
+
 static void runResolverPreEstCase(bool literal)
 {
     twfSetCase(literal ? "literal resolver path admits real connector payload before transport Est"
@@ -901,7 +1073,7 @@ static void runResolverPreEstCase(bool literal)
     tcp_progress_fixture_t fixture;
     progressSetup(&fixture, true);
     adapter_lstate_t *ls    = lineGetState(fixture.line, adapter);
-    ls->write_paused        = true; // Mock only the pending socket connect; writes and completion use production paths.
+    ls->write_queue.blocked = true; // Mock only the pending socket connect; writes and completion use production paths.
     neighbor->fnEstD        = connectorEst;
     address_context_t *dest = lineGetDestinationAddressContext(fixture.line);
     if (literal)
@@ -919,7 +1091,7 @@ static void runResolverPreEstCase(bool literal)
     if (! literal)
     {
         twfRequire(fixture.init_calls == 0 && fixture.est_calls == 0 && connector_dns_callback != NULL &&
-                       bufferqueueGetBufCount(&ls->pause_queue) == 0,
+                       bufferqueueGetBufCount(&ls->write_queue.queue) == 0,
                    "DNS-pending payload reached a connector before adjacent Init");
         dns_resolved_addr_t answer = {.family = AF_INET, .addrlen = sizeof(struct sockaddr_in)};
         struct sockaddr_in *addr   = (struct sockaddr_in *) &answer.addr;
@@ -930,21 +1102,22 @@ static void runResolverPreEstCase(bool literal)
         lineUnref(connector_dns_line);
         connector_dns_callback = NULL;
     }
-    twfRequire(fixture.init_calls == 1 && fixture.est_calls == 0 && ls->write_paused &&
-                   bufferqueueGetBufCount(&ls->pause_queue) == 1 && bufferqueueGetCharge(&ls->pause_queue) > 0 &&
-                   pause_calls == 1,
+    twfRequire(fixture.init_calls == 1 && fixture.est_calls == 0 && ls->write_queue.blocked &&
+                   bufferqueueGetBufCount(&ls->write_queue.queue) == 1 &&
+                   bufferqueueGetCharge(&ls->write_queue.queue) > 0 && pause_calls == 1,
                "initialized connector did not admit DNS/literal payload before Est");
     sbuf_t *second = bufferpoolGetSmallBuffer(fixture.env.pool);
     sbufWrite(second, "B", 1);
     sbufSetLength(second, 1);
     tunnelUpStreamPayload(fixture.resolver, fixture.line, second);
-    twfRequire(bufferqueueGetBufCount(&ls->pause_queue) == 2, "admitted connecting payload was lost after Pause");
+    twfRequire(bufferqueueGetBufCount(&ls->write_queue.queue) == 2, "admitted connecting payload was lost after Pause");
     tcpconnectorOnOutBoundConnected(fixture.io);
     char received[2];
     twfRequire(recv(fixture.peer, received, sizeof(received), 0) == sizeof(received) &&
                    memoryEqual(received, "AB", 2) && fixture.est_calls == 1 && fixture.resumes == 1,
                "connect completion lost FIFO, Est or pressure release through resolver");
-    twfRequire(! ls->write_paused && bufferqueueGetCharge(&ls->pause_queue) == 0 && ls->active_write.cost.charge == 0,
+    twfRequire(! ls->write_queue.blocked && bufferqueueGetCharge(&ls->write_queue.queue) == 0 &&
+                   ls->write_queue.active.cost.charge == 0,
                "connector completion left pending accounting");
     progressTeardown(&fixture);
 }
@@ -1215,8 +1388,13 @@ int main(void)
     runWriteCompletionCase(true);
     runActiveWriteChargeCase(false);
     runActiveWriteChargeCase(true);
+    runSmallPartialWriteCase();
     runQueuedWriteFailureCase();
+    runDirectWriteFailureReentryCase();
 #ifndef TCP_PAUSE_TEST_LISTENER
+    runEstReentryCase(false);
+    runEstReentryCase(true);
+    runConnectingSmallPartialCase();
     runLateInitCase();
     runResolverPreEstCase(false);
     runResolverPreEstCase(true);

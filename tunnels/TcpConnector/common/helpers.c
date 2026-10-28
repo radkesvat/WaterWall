@@ -91,29 +91,22 @@ static bool resumeWriteQueue(tcpconnector_lstate_t *lstate)
     wio_t  *io   = lstate->io;
     // Suppress synchronous WIO completion reentry until this FIFO drain yields.
     wioSetCallBackWrite(io, NULL);
-    bufferbudgetReservationRelease(&lstate->active_write);
-    while (bufferqueueGetBufCount(&lstate->pause_queue) > 0)
+    awqReleaseCompleted(&lstate->write_queue);
+    sbuf_t *buf;
+    while ((buf = awqNextToWrite(&lstate->write_queue, lineGetBufferPool(line))) != NULL)
     {
-        sbuf_t   *buf         = bufferqueuePopFrontReserved(&lstate->pause_queue, &lstate->active_write);
-        const int bytes       = (int) sbufGetLength(buf);
-        if (UNLIKELY(bytes == 0))
-        {
-            lineReuseBuffer(line, buf);
-            bufferbudgetReservationRelease(&lstate->active_write);
-            continue;
-        }
-        const int nwrite = wioWriteWithHint(io, buf, bufferqueueGetBufLen(&lstate->pause_queue) != 0);
+        const uint32_t bytes  = sbufGetLength(buf);
+        const int      nwrite = wioWriteWithHint(io, buf, awqGetQueuedBytes(&lstate->write_queue) != 0);
         if (UNLIKELY(! lineIsAlive(line)))
             return false;
-        tcpconnectorRefreshWriteBudget(lstate);
-        if (UNLIKELY(nwrite < 0))
+        const awq_write_result_t result = awqAfterWrite(&lstate->write_queue, nwrite, bytes, wioGetWriteBufSize(io));
+        if (UNLIKELY(result == kAwqWriteFailed))
             return false;
-        if (nwrite < bytes)
+        if (result == kAwqWriteBlocked)
         {
             wioSetCallBackWrite(io, tcpconnectorOnWriteComplete);
             return false;
         }
-        bufferbudgetReservationRelease(&lstate->active_write);
     }
     return true;
 }
@@ -155,13 +148,10 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
     const bool drained = resumeWriteQueue(lstate);
     if (lineIsAlive(l))
     {
-        if (drained)
-            lstate->write_paused = false;
         // Transport readiness is independent of application write backpressure.
         tunnelPrevDownStreamEst(t, l);
-        if (lineIsAlive(l) && drained && ! lstate->write_paused && lstate->queue_pause_sent)
+        if (lineIsAlive(l) && drained && awqTakeResume(&lstate->write_queue))
         {
-            lstate->queue_pause_sent = false;
             tunnelPrevDownStreamResume(t, l);
         }
     }
@@ -172,15 +162,10 @@ void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate)
 {
     assert(lstate->io != NULL && ! wioIsClosed(lstate->io));
 
-    while (bufferqueueGetBufCount(&lstate->pause_queue) > 0)
+    sbuf_t *buf;
+    while ((buf = awqPopForFinish(&lstate->write_queue, lineGetBufferPool(lstate->line))) != NULL)
     {
-        sbuf_t *buf = bufferqueuePopFront(&lstate->pause_queue);
-        if (UNLIKELY(sbufGetLength(buf) == 0))
-        {
-            lineReuseBuffer(lstate->line, buf);
-            continue;
-        }
-        wioWriteWithHint(lstate->io, buf, bufferqueueGetBufLen(&lstate->pause_queue) != 0);
+        wioWriteWithHint(lstate->io, buf, awqGetQueuedBytes(&lstate->write_queue) != 0);
     }
 }
 
@@ -190,7 +175,7 @@ void tcpconnectorOnWriteComplete(wio_t *io)
     if (ls == NULL)
         return;
     tcpconnectorApplyReadPreference(ls);
-    tcpconnectorRefreshWriteBudget(ls);
+    awqRefreshPending(&ls->write_queue, wioGetWriteBufSize(io));
     if (! wioCheckWriteComplete(io))
         return;
     line_t   *line = ls->line;
@@ -198,10 +183,7 @@ void tcpconnectorOnWriteComplete(wio_t *io)
     lineRef(line);
     if (resumeWriteQueue(ls) && lineIsAlive(line))
     {
-        ls->write_paused     = false;
-        const bool notify    = ls->queue_pause_sent;
-        ls->queue_pause_sent = false;
-        if (notify)
+        if (awqTakeResume(&ls->write_queue))
             tunnelPrevDownStreamResume(t, line);
     }
     lineUnref(line);
@@ -221,17 +203,9 @@ void tcpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_tcp)
 
     LOGW("TcpConnector: expired 1 tcp connection on FD:%x ", wioGetFD(ls->io));
     weventSetUserData(ls->io, NULL);
+    wioSetCallBackWrite(ls->io, NULL);
     tcpconnectorFlushWriteQueue(ls);
     wioClose(ls->io);
     tcpconnectorLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
-}
-
-void tcpconnectorRefreshWriteBudget(tcpconnector_lstate_t *ls)
-{
-    if (ls->active_write.budget != NULL)
-    {
-        // WIO owns the buffer, possibly already freed; only inspect its byte counter.
-        bufferbudgetReservationSetBytes(&ls->active_write, wioGetWriteBufSize(ls->io));
-    }
 }
