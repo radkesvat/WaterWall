@@ -404,12 +404,17 @@ static bool tunReaderDrain(tun_worker_reader_t *lane, worker_t *worker)
     tun_device_t         *tdev   = lane->generation->device;
     tun_offload_reader_t *reader = &lane->offload;
     uint32_t              bytes  = 0;
-    for (unsigned attempts = 0; attempts < 256 && bytes < 256U * 1024U; ++attempts)
+    for (unsigned attempts = 0; attempts < kDeviceReaderWorkerPacketQuantum && bytes < kDeviceReaderWorkerByteQuantum;
+         ++attempts)
     {
         if (! tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)))
             return true;
         if (! tunReaderPostPackets(lane) || (reader->pending && ! tunReaderPostOffload(lane, worker)))
             return true;
+        /* Raw records cannot exceed the MTU. Keep collection within the
+         * delivery byte quantum instead of leaving one full packet queued. */
+        if (! tdev->checksum_offload_enabled && tdev->mtu > kDeviceReaderWorkerByteQuantum - bytes)
+            break;
         const uint32_t capacity = tdev->checksum_offload_enabled ? kTunOffloadPacketStorageCapacity : tdev->mtu;
         const uint16_t padding =
             max(bufferpoolGetLargeBufferPadding(worker->buffer_pool), (uint16_t) kTunVirtioHeaderSize);

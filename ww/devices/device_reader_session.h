@@ -37,6 +37,13 @@ typedef enum device_reader_post_result_e
     kDeviceReaderPostClosed
 } device_reader_post_result_e;
 
+/* Raw producers use the same limits to keep collection within one delivery quantum. */
+enum
+{
+    kDeviceReaderWorkerPacketQuantum = 256,
+    kDeviceReaderWorkerByteQuantum   = 256 * 1024
+};
+
 /* Remaining delivery work for this FIFO callback, shared across aggregates. */
 typedef struct device_reader_work_budget_s
 {

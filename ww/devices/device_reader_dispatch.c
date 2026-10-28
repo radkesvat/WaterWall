@@ -6,12 +6,6 @@
 #include "packet_batch.h"
 #include "worker_messages.h"
 
-enum
-{
-    kDeviceReaderWorkerPacketQuantum = 256,
-    kDeviceReaderWorkerByteQuantum   = 256 * 1024
-};
-
 bool deviceReaderSessionEnableWorkerQueue(device_reader_session_t *session)
 {
     assert(session != NULL);
