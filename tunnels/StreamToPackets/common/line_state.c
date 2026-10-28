@@ -15,10 +15,12 @@ void streamtopacketsLinestateInitialize(streamtopackets_lstate_t *ls, buffer_poo
                                       .tracked           = false,
                                       .active            = false,
                                       .write_paused      = false};
+    ipv4streamInputInit(&ls->read_input);
 }
 
 void streamtopacketsLinestateDestroy(streamtopackets_lstate_t *ls)
 {
+    ipv4streamInputDestroy(&ls->read_input);
     bufferstreamDestroy(&ls->read_stream);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(streamtopackets_lstate_t)));
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Ipv4StreamCodec/input.h"
 #include "wwapi.h"
 
 typedef enum streamtopackets_packet_validation_level_e
@@ -78,6 +79,7 @@ typedef struct streamtopackets_tstate_s
 typedef struct streamtopackets_lstate_s
 {
     buffer_stream_t read_stream;       // On stream lines: per-line framed-packet parser state
+    ipv4stream_input_t read_input;        // Serializes and bounds nested deliveries
     uint64_t        line_id;           // Registry identity of this line, unique per tunnel instance
     uint64_t        source_generation; // Source epoch this line was activated in; zero while a candidate
     bool            tracked;           // Whether a registry entry was published for this line
@@ -102,7 +104,6 @@ enum
 {
     kTunnelStateSize      = sizeof(streamtopackets_tstate_t),
     kLineStateSize        = sizeof(streamtopackets_lstate_t),
-    kMaxBufferSize        = 65536 * 2, // Maximum buffer size for reading data packets
     kSensitivePayloadSize = 5,
     kHeartbeatPacketSize  = IP_HLEN + kSensitivePayloadSize, // synthetic IPv4 heartbeat packet length
     kHeartbeatProtocol    = 0xFD, // RFC 3692 experimentation protocol used to tag heartbeat packets
@@ -136,7 +137,6 @@ void streamtopacketsTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void streamtopacketsLinestateInitialize(streamtopackets_lstate_t *ls, buffer_pool_t *pool);
 void streamtopacketsLinestateDestroy(streamtopackets_lstate_t *ls);
 
-bool streamtopacketsReadStreamIsOverflowed(buffer_stream_t *read_stream);
 bool streamtopacketsTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_out);
 bool streamtopacketsIsForwardableIpv4Packet(const sbuf_t *packet);
 bool streamtopacketsFrameMatchesFillByte(const sbuf_t *packet, uint8_t fill_byte);

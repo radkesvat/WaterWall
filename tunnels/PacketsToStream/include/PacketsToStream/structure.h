@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Ipv4StreamCodec/input.h"
 #include "wwapi.h"
 
 typedef enum packetstostream_packet_validation_level_e
@@ -23,6 +24,7 @@ typedef struct packetstostream_lstate_s
 {
     line_t         *line;             // Pointer to the line associated with this state
     buffer_stream_t read_stream;      // Stream for reading data packets
+    ipv4stream_input_t read_input;       // Serializes and bounds nested deliveries
     uint64_t        ping_sent_at_ms;  // On packet lines: timestamp of the last ping in flight
     uint64_t        pong_deadline_ms; // On packet lines: current pong deadline
     bool            paused;           // Indicates if the line is paused, dropping packets
@@ -35,7 +37,6 @@ enum
 {
     kTunnelStateSize             = sizeof(packetstostream_tstate_t),
     kLineStateSize               = sizeof(packetstostream_lstate_t),
-    kMaxBufferSize               = 65536 * 2, // Maximum buffer size for reading data packets
     kSensitivePayloadSize        = 5,
     kHeartbeatPacketSize         = IP_HLEN + kSensitivePayloadSize, // synthetic IPv4 heartbeat packet length
     kHeartbeatProtocol           = 0xFD, // RFC 3692 experimentation protocol used to tag heartbeat packets
@@ -71,7 +72,6 @@ void packetstostreamTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void packetstostreamLinestateInitialize(packetstostream_lstate_t *ls, buffer_pool_t *pool);
 void packetstostreamLinestateDestroy(packetstostream_lstate_t *ls);
 
-bool packetstostreamReadStreamIsOverflowed(buffer_stream_t *read_stream);
 bool packetstostreamTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_out);
 bool packetstostreamIsForwardableIpv4Packet(const sbuf_t *packet);
 bool packetstostreamFrameMatchesFillByte(const sbuf_t *packet, uint8_t fill_byte);

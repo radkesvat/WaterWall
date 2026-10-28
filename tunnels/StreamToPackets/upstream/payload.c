@@ -7,13 +7,18 @@ void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     streamtopackets_tstate_t *ts      = tunnelGetState(t);
     streamtopackets_lstate_t *line_ls = lineGetState(l, t);
 
-    bufferstreamPush(&(line_ls->read_stream), buf);
-
-    if (streamtopacketsReadStreamIsOverflowed(&(line_ls->read_stream)))
+    const ipv4stream_input_result_t admission = ipv4streamInputAdmit(&line_ls->read_input, &line_ls->read_stream, buf);
+    if (admission == kIpv4StreamInputRejected)
     {
-        bufferstreamEmpty(&(line_ls->read_stream));
+        lineReuseBuffer(l, buf);
+        LOGW("StreamToPackets: nested input limit exceeded, closing carrier");
+        streamtopacketsUnregisterLine(t, l);
+        streamtopacketsLinestateDestroy(line_ls);
+        tunnelPrevDownStreamFinish(t, l);
         return;
     }
+    if (admission != kIpv4StreamInputDrain)
+        return;
 
     lineRef(l);
 
@@ -23,6 +28,8 @@ void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (! streamtopacketsTryReadIPv4Packet(&(line_ls->read_stream), &packet_buffer))
         {
+            if (ipv4streamInputAdvance(&line_ls->read_input, &line_ls->read_stream))
+                continue;
             break;
         }
 
@@ -40,6 +47,10 @@ void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             if (streamtopacketsAuthorizeLine(t, l) == 0)
             {
                 LOGD("StreamToPackets: dropping a sensitive-mode ping from an unauthorized stream line");
+                /* This carrier is no longer authorized. Drop its pending input
+                 * while leaving retirement to its existing owner/eviction path. */
+                bufferstreamEmpty(&line_ls->read_stream);
+                ipv4streamInputReset(&line_ls->read_input);
                 lineUnref(l);
                 return;
             }
@@ -73,7 +84,7 @@ void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         // publication. Stateful packet consumers establish their own affinity.
         streamtopacketsForwardDecodedPacket(t, l, packet_buffer, generation);
 
-        if (! lineIsAlive(l))
+        if (! lineIsAlive(l) || line_ls->read_stream.pool == NULL)
         {
             lineUnref(l);
             return;

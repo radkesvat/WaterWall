@@ -711,6 +711,10 @@ if(INCLUDE_CONNECTION_TO_PACKETS)
 endif()
 
 #data as packet
+if(INCLUDE_STREAM_TO_PACKETS OR INCLUDE_PACKETS_TO_STREAM)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/Ipv4StreamCodec)
+endif()
+
 if(INCLUDE_STREAM_TO_PACKETS)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_STREAM_TO_PACKETS=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/StreamToPackets)

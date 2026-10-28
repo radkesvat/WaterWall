@@ -1,34 +1,10 @@
 /*
- * Covers: packetstostream parser; the explicit inputs, callbacks and expected results below define this
- * suite.
- * Setup: The included implementation/API and the deterministic inputs shown below; no integration
- * topology is implied.
- * Cases: testSinglePacket, testTwoConcatenated, testSplitPacket, testGarbagePrefixRecovers,
- * testAdversarialNoCrash, testLooksValidWorstCase, testFuzzRecovers, testIsForwardable
- * Checks: Assertion labels include: drain: extractor returned true with NULL packet; single: expected a
- * packet; single: wrong extracted length; single: payload mismatch
- * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
- * or application-throughput behavior.
- * CTest: waterwall.packetstostream_parser_unit
+ * Shared IPv4 stream codec: fragmented/coalesced extraction, resynchronization,
+ * boundary geometry, validation modes/checksums, and byte/ownership preservation.
+ * CTest: waterwall.ipv4_stream_codec_unit
+ * Node delivery admission and lifecycle are covered by the bridge fixtures.
  */
-// Unit tests for the IPv4-header-based framing parser used by PacketsToStream (and, with identical
-// code, StreamToPackets). The focus is the size-based extractor packetstostreamTryReadIPv4Packet and
-// the framing-side guard packetstostreamIsForwardableIpv4Packet:
-//
-//   * correct extraction of one/many/split IPv4 packets using the IPv4 total-length field
-//   * IPv4-only behavior (IPv6 and non-IPv4 heads are dropped / resynchronized past)
-//   * garbage resilience: no input pattern crashes, hangs, or reads out of bounds, and a clean
-//     garbage prefix is always re-synchronized so following valid packets are recovered intact
-//
-// The two tunnels share byte-for-byte identical parser logic, so exercising one is sufficient to
-// validate the algorithm.
-
-#include "PacketsToStream/structure.h"
-
-#ifdef TEST_STREAM_TO_PACKETS
-// The two private structure headers declare overlapping enum names.
-bool streamtopacketsIsForwardableIpv4Packet(const sbuf_t *packet);
-#endif
+#include "Ipv4StreamCodec/codec.h"
 
 static int  g_failures         = 0;
 static bool g_separate_entries = false;
@@ -67,7 +43,7 @@ static uint32_t buildIpv4(uint8_t *dst, uint16_t total_len, uint8_t proto, uint8
 static void pushBytes(buffer_stream_t *bs, buffer_pool_t *pool, const uint8_t *data, uint32_t len, uint32_t chunk)
 {
     uint32_t     off              = 0;
-    const size_t previous_entries = (size_t) bs_doublequeue_t_size(&bs->q);
+    const size_t previous_entries = bufferstreamGetEntryCount(bs);
     size_t       pushed           = 0;
     if (chunk == 0)
     {
@@ -102,7 +78,7 @@ static void pushBytes(buffer_stream_t *bs, buffer_pool_t *pool, const uint8_t *d
      * Starting empty proves the separate-entry geometry without constraining reads. */
     if (g_separate_entries && previous_entries == 0)
     {
-        require((size_t) bs_doublequeue_t_size(&bs->q) == previous_entries + pushed,
+        require(bufferstreamGetEntryCount(bs) == previous_entries + pushed,
                 "fragment fixture did not retain each separate entry");
     }
 }
@@ -112,7 +88,7 @@ static int drainCount(buffer_stream_t *bs, buffer_pool_t *pool)
 {
     int     n = 0;
     sbuf_t *p = NULL;
-    while (packetstostreamTryReadIPv4Packet(bs, &p))
+    while (ipv4streamTryReadPacket(bs, &p))
     {
         require(p != NULL, "drain: extractor returned true with NULL packet");
         n++;
@@ -129,7 +105,7 @@ static void testSinglePacket(buffer_stream_t *bs, buffer_pool_t *pool)
     pushBytes(bs, pool, raw, len, 0);
 
     sbuf_t *p = NULL;
-    require(packetstostreamTryReadIPv4Packet(bs, &p), "single: expected a packet");
+    require(ipv4streamTryReadPacket(bs, &p), "single: expected a packet");
     require(p != NULL && sbufGetLength(p) == 40, "single: wrong extracted length");
     if (p != NULL)
     {
@@ -137,7 +113,7 @@ static void testSinglePacket(buffer_stream_t *bs, buffer_pool_t *pool)
         require(d[IP_HLEN] == 0xAB && d[39] == 0xAB, "single: payload mismatch");
         bufferpoolReuseBuffer(pool, p);
     }
-    require(! packetstostreamTryReadIPv4Packet(bs, &p), "single: stream should be empty now");
+    require(! ipv4streamTryReadPacket(bs, &p), "single: stream should be empty now");
     require(bufferstreamGetBufLen(bs) == 0, "single: leftover bytes");
 }
 
@@ -150,17 +126,17 @@ static void testTwoConcatenated(buffer_stream_t *bs, buffer_pool_t *pool)
     pushBytes(bs, pool, raw, a + b, 16); // small fragments
 
     sbuf_t *p = NULL;
-    require(packetstostreamTryReadIPv4Packet(bs, &p), "concat: expected first packet");
+    require(ipv4streamTryReadPacket(bs, &p), "concat: expected first packet");
     require(p != NULL && sbufGetLength(p) == 40, "concat: first length wrong");
     if (p)
         bufferpoolReuseBuffer(pool, p);
 
-    require(packetstostreamTryReadIPv4Packet(bs, &p), "concat: expected second packet");
+    require(ipv4streamTryReadPacket(bs, &p), "concat: expected second packet");
     require(p != NULL && sbufGetLength(p) == 75, "concat: second length wrong");
     if (p)
         bufferpoolReuseBuffer(pool, p);
 
-    require(! packetstostreamTryReadIPv4Packet(bs, &p), "concat: stream should be empty");
+    require(! ipv4streamTryReadPacket(bs, &p), "concat: stream should be empty");
 }
 
 static void testSplitPacket(buffer_stream_t *bs, buffer_pool_t *pool)
@@ -171,15 +147,15 @@ static void testSplitPacket(buffer_stream_t *bs, buffer_pool_t *pool)
     // First only part of the header.
     pushBytes(bs, pool, raw, 8, 0);
     sbuf_t *p = NULL;
-    require(! packetstostreamTryReadIPv4Packet(bs, &p), "split: should wait for full header");
+    require(! ipv4streamTryReadPacket(bs, &p), "split: should wait for full header");
 
     // Rest of the header + part of the body.
     pushBytes(bs, pool, raw + 8, 50, 0);
-    require(! packetstostreamTryReadIPv4Packet(bs, &p), "split: should wait for full body");
+    require(! ipv4streamTryReadPacket(bs, &p), "split: should wait for full body");
 
     // Remainder.
     pushBytes(bs, pool, raw + 58, len - 58, 0);
-    require(packetstostreamTryReadIPv4Packet(bs, &p), "split: expected packet once complete");
+    require(ipv4streamTryReadPacket(bs, &p), "split: expected packet once complete");
     require(p != NULL && sbufGetLength(p) == 100, "split: wrong length");
     if (p)
         bufferpoolReuseBuffer(pool, p);
@@ -197,7 +173,7 @@ static void testGarbagePrefixRecovers(buffer_stream_t *bs, buffer_pool_t *pool)
 
     sbuf_t *p   = NULL;
     bool    got = false;
-    while (packetstostreamTryReadIPv4Packet(bs, &p))
+    while (ipv4streamTryReadPacket(bs, &p))
     {
         require(p != NULL, "garbage-prefix: NULL packet");
         if (p != NULL && sbufGetLength(p) == 60)
@@ -262,7 +238,7 @@ static void testLooksValidWorstCase(buffer_stream_t *bs, buffer_pool_t *pool)
     // Only the 20-byte header is present: parser must wait, not crash, not extract.
     pushBytes(bs, pool, head, IP_HLEN, 0);
     sbuf_t *p = NULL;
-    require(! packetstostreamTryReadIPv4Packet(bs, &p), "worst-case: must wait for claimed size");
+    require(! ipv4streamTryReadPacket(bs, &p), "worst-case: must wait for claimed size");
     require(bufferstreamGetBufLen(bs) == (size_t) IP_HLEN, "worst-case: must keep buffered head");
 
     // Provide the remaining claimed bytes: the parser forwards the garbage-sized packet (size 1000)
@@ -270,7 +246,7 @@ static void testLooksValidWorstCase(buffer_stream_t *bs, buffer_pool_t *pool)
     uint8_t filler[kWorstCasePacketLength - IP_HLEN];
     memorySet(filler, 0x99, sizeof(filler));
     pushBytes(bs, pool, filler, sizeof(filler), 128);
-    require(packetstostreamTryReadIPv4Packet(bs, &p), "worst-case: should forward the sized packet");
+    require(ipv4streamTryReadPacket(bs, &p), "worst-case: should forward the sized packet");
     require(p != NULL && sbufGetLength(p) == kWorstCasePacketLength, "worst-case: forwarded wrong size");
     if (p)
         bufferpoolReuseBuffer(pool, p);
@@ -302,7 +278,7 @@ static void testFuzzRecovers(buffer_stream_t *bs, buffer_pool_t *pool)
 
         sbuf_t *p     = NULL;
         int     guard = 0;
-        while (packetstostreamTryReadIPv4Packet(bs, &p)) // must always terminate
+        while (ipv4streamTryReadPacket(bs, &p)) // must always terminate
         {
             require(p != NULL, "fuzz: success with NULL packet");
             if (p)
@@ -320,7 +296,7 @@ static void testFuzzRecovers(buffer_stream_t *bs, buffer_pool_t *pool)
         pushBytes(bs, pool, pkt, plen, 9);
 
         bool got = false;
-        while (packetstostreamTryReadIPv4Packet(bs, &p))
+        while (ipv4streamTryReadPacket(bs, &p))
         {
             if (p != NULL && sbufGetLength(p) == 64)
             {
@@ -379,9 +355,215 @@ static void testIsForwardable(buffer_pool_t *pool, bool (*is_forwardable)(const 
     bufferpoolReuseBuffer(pool, big);
 }
 
+static void testFrameBoundaries(buffer_stream_t *bs, buffer_pool_t *pool)
+{
+    const uint16_t lengths[] = {IP_HLEN, 60, kMaxAllowedPacketLength};
+    uint8_t        raw[kMaxAllowedPacketLength + 1];
+    for (size_t i = 0; i < sizeof(lengths) / sizeof(lengths[0]); ++i)
+    {
+        const uint16_t len = lengths[i];
+        buildIpv4(raw, len, 253, 0xA7);
+        if (len == 60)
+            raw[0] = 0x4F; /* Maximum IPv4 options header, without a body. */
+        pushBytes(bs, pool, raw, len - 1, 7);
+        sbuf_t *packet = NULL;
+        require(! ipv4streamTryReadPacket(bs, &packet), "boundary: incomplete packet must wait");
+        require(packet == NULL, "boundary: waiting returned a buffer");
+        pushBytes(bs, pool, raw + len - 1, 1, 1);
+        require(ipv4streamTryReadPacket(bs, &packet), "boundary: complete packet was rejected");
+        if (packet != NULL)
+        {
+            require(sbufGetLength(packet) == len && memoryEqual(sbufGetRawPtr(packet), raw, len),
+                    "boundary: packet bytes changed");
+            require(ipv4streamIsForwardablePacket(packet), "boundary: complete packet not forwardable");
+            bufferpoolReuseBuffer(pool, packet);
+        }
+        require(bufferstreamGetBufLen(bs) == 0, "boundary: unexpected remainder");
+    }
+
+    buildIpv4(raw, sizeof(raw), 253, 0);
+    pushBytes(bs, pool, raw, sizeof(raw), 19);
+    sbuf_t *packet = NULL;
+    require(! ipv4streamTryReadPacket(bs, &packet), "boundary: oversized frame was accepted");
+    require(bufferstreamGetBufLen(bs) < IP_HLEN, "boundary: oversized header did not resynchronize");
+    bufferstreamEmpty(bs);
+}
+
+static void testResyncWindowBoundaries(buffer_stream_t *bs, buffer_pool_t *pool)
+{
+    const uint32_t offsets[] = {235, 236, 237, 255, 256, 257};
+    uint8_t        raw[320];
+    for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i)
+    {
+        const uint32_t offset = offsets[i];
+        memoryZero(raw, offset);
+        buildIpv4(raw + offset, 40, 253, 0xA5);
+        pushBytes(bs, pool, raw, offset + IP_HLEN - 1, 11);
+        sbuf_t *packet = NULL;
+        require(! ipv4streamTryReadPacket(bs, &packet), "window: partial candidate must wait");
+        require(bufferstreamGetBufLen(bs) == IP_HLEN - 1, "window: incomplete header was discarded");
+        pushBytes(bs, pool, raw + offset + IP_HLEN - 1, 40 - IP_HLEN + 1, 3);
+        require(ipv4streamTryReadPacket(bs, &packet), "window: candidate was not recovered");
+        if (packet != NULL)
+        {
+            require(sbufGetLength(packet) == 40 && memoryEqual(sbufGetRawPtr(packet), raw + offset, 40),
+                    "window: recovered bytes differ");
+            bufferpoolReuseBuffer(pool, packet);
+        }
+        require(bufferstreamGetBufLen(bs) == 0, "window: unexpected remainder");
+    }
+}
+
+static uint16_t testChecksum(const uint8_t *raw, size_t length, uint32_t seed)
+{
+    while (length >= 2)
+    {
+        seed += ((uint32_t) raw[0] << 8) | raw[1];
+        raw += 2;
+        length -= 2;
+    }
+    if (length != 0)
+        seed += (uint32_t) raw[0] << 8;
+    while ((seed >> 16) != 0)
+        seed = (seed & 0xFFFFU) + (seed >> 16);
+    return (uint16_t) ~seed;
+}
+
+static void testWrite16(uint8_t *dest, uint16_t value)
+{
+    dest[0] = (uint8_t) (value >> 8);
+    dest[1] = (uint8_t) value;
+}
+
+static void repairTestIpChecksum(uint8_t *raw)
+{
+    raw[10] = raw[11] = 0;
+    testWrite16(raw + 10, testChecksum(raw, (raw[0] & 15U) * 4U, 0));
+}
+
+static uint16_t buildChecksummedPacket(uint8_t *raw, uint8_t protocol)
+{
+    const uint16_t transport_length = protocol == IP_PROTO_TCP ? 33 : 13;
+    const uint16_t length           = IP_HLEN + transport_length;
+    buildIpv4(raw, length, protocol, 0xA5);
+    raw[12]                        = 192;
+    raw[13]                        = 0;
+    raw[14]                        = 2;
+    raw[15]                        = 1;
+    raw[16]                        = 198;
+    raw[17]                        = 51;
+    raw[18]                        = 100;
+    raw[19]                        = 2;
+    uint8_t       *transport       = raw + IP_HLEN;
+    const uint16_t checksum_offset = protocol == IP_PROTO_TCP ? 16 : protocol == IP_PROTO_UDP ? 6 : 2;
+    if (protocol == IP_PROTO_TCP)
+        transport[12] = 0x50;
+    if (protocol == IP_PROTO_UDP)
+        testWrite16(transport + 4, transport_length);
+    transport[checksum_offset] = transport[checksum_offset + 1] = 0;
+    uint32_t seed                                               = 0;
+    if (protocol == IP_PROTO_TCP || protocol == IP_PROTO_UDP)
+    {
+        for (size_t i = 12; i < 20; i += 2)
+            seed += ((uint32_t) raw[i] << 8) | raw[i + 1];
+        seed += protocol + transport_length;
+    }
+    uint16_t checksum = testChecksum(transport, transport_length, seed);
+    if (protocol == IP_PROTO_UDP && checksum == 0)
+        checksum = UINT16_MAX;
+    testWrite16(transport + checksum_offset, checksum);
+    repairTestIpChecksum(raw);
+    return length;
+}
+
+static void checkValidation(buffer_pool_t *pool, const uint8_t *raw, uint16_t length,
+                            ipv4stream_validation_level_t level, bool accepted, bool unaligned)
+{
+    sbuf_t *packet = bufferpoolGetBestFit(pool, length + 1U, bufferpoolGetSmallBufferPadding(pool));
+    sbufSetLength(packet, length + (unaligned ? 1U : 0U));
+    if (unaligned)
+        sbufShiftRight(packet, 1);
+    memoryCopy(sbufGetMutablePtr(packet), raw, length);
+    sbufSetRecalculateChecksum(packet, true);
+    const char *reason = ipv4streamValidatePacket(level, packet);
+    require((reason == NULL) == accepted, "validation: unexpected accept/reject result");
+    require(sbufGetLength(packet) == length && memoryEqual(sbufGetRawPtr(packet), raw, length),
+            "validation: inspection changed packet bytes");
+    require(sbufGetRecalculateChecksum(packet), "validation: inspection consumed checksum request");
+    bufferpoolReuseBuffer(pool, packet);
+}
+
+static void testValidationModes(buffer_pool_t *pool)
+{
+    uint8_t       raw[100];
+    const uint8_t protocols[] = {IP_PROTO_TCP, IP_PROTO_UDP, IP_PROTO_ICMP};
+    for (size_t i = 0; i < sizeof(protocols); ++i)
+    {
+        const uint8_t  protocol = protocols[i];
+        const uint16_t length   = buildChecksummedPacket(raw, protocol);
+        checkValidation(pool, raw, length, kIpv4StreamValidationHard, true, false);
+        checkValidation(pool, raw, length, kIpv4StreamValidationHard, true, true);
+        raw[length - 1] ^= 0x40;
+        checkValidation(pool, raw, length, kIpv4StreamValidationNone, true, false);
+        checkValidation(pool, raw, length, kIpv4StreamValidationLoose, true, false);
+        checkValidation(pool, raw, length, kIpv4StreamValidationHard, false, false);
+        /* An individual fragment cannot validate a whole transport checksum. */
+        raw[6] = 0x20;
+        repairTestIpChecksum(raw);
+        checkValidation(pool, raw, length, kIpv4StreamValidationHard, true, false);
+        raw[6] = 0;
+        raw[7] = 1;
+        repairTestIpChecksum(raw);
+        checkValidation(pool, raw, length, kIpv4StreamValidationHard, true, false);
+        raw[10] ^= 1;
+        checkValidation(pool, raw, length, kIpv4StreamValidationHard, false, false);
+    }
+
+    uint16_t length  = buildChecksummedPacket(raw, IP_PROTO_UDP);
+    raw[IP_HLEN + 6] = raw[IP_HLEN + 7] = 0;
+    raw[length - 1] ^= 0x80;
+    checkValidation(pool, raw, length, kIpv4StreamValidationHard, true, false);
+    testWrite16(raw + IP_HLEN + 4, 7);
+    checkValidation(pool, raw, length, kIpv4StreamValidationHard, false, false);
+    testWrite16(raw + IP_HLEN + 4, length);
+    checkValidation(pool, raw, length, kIpv4StreamValidationHard, false, false);
+    testWrite16(raw + IP_HLEN + 4, 8); /* UDP may cover less than the complete IP body. */
+    checkValidation(pool, raw, length, kIpv4StreamValidationHard, true, false);
+
+    length            = buildChecksummedPacket(raw, IP_PROTO_TCP);
+    raw[IP_HLEN + 12] = 0x40;
+    checkValidation(pool, raw, length, kIpv4StreamValidationHard, false, false);
+    raw[IP_HLEN + 12] = 0xF0;
+    checkValidation(pool, raw, length, kIpv4StreamValidationHard, false, false);
+
+    buildIpv4(raw, 60, 253, 0xA5);
+    raw[0] = 0x4F;
+    repairTestIpChecksum(raw);
+    checkValidation(pool, raw, 60, kIpv4StreamValidationHard, true, false);
+    raw[59] ^= 1;
+    checkValidation(pool, raw, 60, kIpv4StreamValidationLoose, true, false);
+    checkValidation(pool, raw, 60, kIpv4StreamValidationHard, false, false);
+    raw[0] = 0x65;
+    checkValidation(pool, raw, 60, kIpv4StreamValidationNone, true, false);
+    checkValidation(pool, raw, 60, kIpv4StreamValidationLoose, false, false);
+    raw[0] = 0x44;
+    checkValidation(pool, raw, 60, kIpv4StreamValidationLoose, false, false);
+    raw[0] = 0x4F;
+    checkValidation(pool, raw, 40, kIpv4StreamValidationLoose, false, false);
+    raw[0] = 0x46;
+    testWrite16(raw + 2, 20);
+    checkValidation(pool, raw, 60, kIpv4StreamValidationLoose, false, false);
+    raw[0] = 0x45;
+    testWrite16(raw + 2, 59);
+    checkValidation(pool, raw, 60, kIpv4StreamValidationLoose, false, false);
+    testWrite16(raw + 2, 61);
+    checkValidation(pool, raw, 60, kIpv4StreamValidationLoose, false, false);
+    checkValidation(pool, raw, IP_HLEN - 1, kIpv4StreamValidationLoose, false, false);
+}
+
 int main(void)
 {
-    testCaseSet("packetstostream_parser_test");
+    testCaseSet("ipv4_stream_codec_test");
     master_pool_t *mp_large  = masterpoolCreateWithCapacity(64);
     master_pool_t *mp_small  = masterpoolCreateWithCapacity(64);
     master_pool_t *mp_medium = masterpoolCreateWithCapacity(64);
@@ -400,22 +582,21 @@ int main(void)
         testAdversarialNoCrash(&bs, pool);
         testLooksValidWorstCase(&bs, pool);
         testFuzzRecovers(&bs, pool);
+        testFrameBoundaries(&bs, pool);
+        testResyncWindowBoundaries(&bs, pool);
         bufferstreamEmpty(&bs);
     }
-    testCaseSet("PacketsToStream outgoing IPv4 framing");
-    testIsForwardable(pool, packetstostreamIsForwardableIpv4Packet);
-#ifdef TEST_STREAM_TO_PACKETS
-    testCaseSet("StreamToPackets outgoing IPv4 framing");
-    testIsForwardable(pool, streamtopacketsIsForwardableIpv4Packet);
-#endif
+    testCaseSet("shared outgoing IPv4 framing");
+    testIsForwardable(pool, ipv4streamIsForwardablePacket);
+    testValidationModes(pool);
 
     bufferstreamDestroy(&bs);
 
     if (g_failures == 0)
     {
-        printf("packetstostream_parser_test: all checks passed\n");
+        printf("ipv4_stream_codec_test: all checks passed\n");
         return 0;
     }
-    fprintf(stderr, "packetstostream_parser_test: %d check(s) failed\n", g_failures);
+    fprintf(stderr, "ipv4_stream_codec_test: %d check(s) failed\n", g_failures);
     return 1;
 }

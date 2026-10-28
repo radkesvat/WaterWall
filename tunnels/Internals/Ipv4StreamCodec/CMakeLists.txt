@@ -1,0 +1,6 @@
+add_library(Ipv4StreamCodec STATIC src/codec.c src/input.c)
+target_include_directories(Ipv4StreamCodec PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(Ipv4StreamCodec PUBLIC ww)
+if(NOT APPLE)
+  target_precompile_headers(Ipv4StreamCodec REUSE_FROM ww)
+endif()

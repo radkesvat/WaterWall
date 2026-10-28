@@ -11,12 +11,14 @@ void packetstostreamLinestateInitialize(packetstostream_lstate_t *ls, buffer_poo
                                       .paused             = false,
                                       .awaiting_pong      = false,
                                       .recreate_scheduled = false};
+    ipv4streamInputInit(&ls->read_input);
 }
 
 void packetstostreamLinestateDestroy(packetstostream_lstate_t *ls)
 {
     if (ls->read_stream.pool != NULL)
     {
+        ipv4streamInputDestroy(&ls->read_input);
         bufferstreamDestroy(&ls->read_stream);
     }
 

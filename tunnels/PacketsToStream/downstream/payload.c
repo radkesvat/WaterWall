@@ -14,13 +14,16 @@ void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    bufferstreamPush(&(ls->read_stream), buf);
-
-    if (packetstostreamReadStreamIsOverflowed(&(ls->read_stream)))
+    const ipv4stream_input_result_t admission = ipv4streamInputAdmit(&ls->read_input, &ls->read_stream, buf);
+    if (admission == kIpv4StreamInputRejected)
     {
-        bufferstreamEmpty(&(ls->read_stream));
+        lineReuseBuffer(l, buf);
+        LOGW("PacketsToStream: nested input limit exceeded, resetting carrier");
+        packetstostreamCloseOutputLineAndScheduleRecreate(t, packet_line, ls);
         return;
     }
+    if (admission != kIpv4StreamInputDrain)
+        return;
 
     /*
      * Delivering a decoded packet runs an inter-tunnel callback that can close
@@ -37,6 +40,8 @@ void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (! packetstostreamTryReadIPv4Packet(&(ls->read_stream), &packet_buffer))
         {
+            if (ipv4streamInputAdvance(&ls->read_input, &ls->read_stream))
+                continue;
             break;
         }
 
