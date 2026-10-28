@@ -1,0 +1,6 @@
+add_library(TcpAdapterCommon STATIC src/adapter_write_queue.c)
+target_include_directories(TcpAdapterCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(TcpAdapterCommon PUBLIC ww)
+if(NOT APPLE)
+  target_precompile_headers(TcpAdapterCommon REUSE_FROM ww)
+endif()

@@ -408,6 +408,18 @@ if(TARGET TlsClient)
   endif()
 endif()
 
+if(LINUX AND TARGET TcpAdapterCommon)
+  waterwall_add_native_executable(adapter_write_queue_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcp/adapter_write_queue_test.c
+      ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_budget.c
+      ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue.c
+    LIBRARIES TcpAdapterCommon ww)
+  target_link_options(adapter_write_queue_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  add_dependencies(waterwall_unit_tests adapter_write_queue_test)
+  add_waterwall_unit_test(waterwall.adapter_write_queue_unit adapter_write_queue_test
+    "unit;tunnels;tcp;buffers;splice;lifetime")
+endif()
+
 if(LINUX)
   foreach(tcp_side Listener Connector)
     if(TARGET Tcp${tcp_side})
