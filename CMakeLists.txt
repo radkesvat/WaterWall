@@ -1219,6 +1219,10 @@ if(INCLUDE_OBFUSCATOR_SERVER)
 endif()
 
 #encryption client
+if(INCLUDE_ENCRYPTION_CLIENT OR INCLUDE_ENCRYPTION_SERVER)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/EncryptionCommon)
+endif()
+
 if(INCLUDE_ENCRYPTION_CLIENT)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_ENCRYPTION_CLIENT=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/EncryptionClient)
