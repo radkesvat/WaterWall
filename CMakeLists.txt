@@ -1056,6 +1056,10 @@ if(INCLUDE_TLS_SERVER)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} TlsServer)
 endif()
 
+if(INCLUDE_TROJAN_CLIENT OR INCLUDE_VLESS_CLIENT OR INCLUDE_VMESS_CLIENT)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/ProxyClientCommon)
+endif()
+
 #trojan client
 if(INCLUDE_TROJAN_CLIENT)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_TROJAN_CLIENT=1)

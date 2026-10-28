@@ -1,0 +1,6 @@
+add_library(ProxyClientCommon STATIC src/first_payload_window.c)
+target_include_directories(ProxyClientCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(ProxyClientCommon PUBLIC ww)
+if(NOT APPLE)
+  target_precompile_headers(ProxyClientCommon REUSE_FROM ww)
+endif()
