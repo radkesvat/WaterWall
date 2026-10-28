@@ -182,7 +182,15 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
         ls->frame_ready = true;
     }
     if (ls->input_bytes - ls->header_filled < ls->body_length)
+    {
+        if (! bufferRangeSettleRetained(lineGetBufferPool(l),
+                                        &ls->input_head,
+                                        &ls->pending_up,
+                                        kTrojanServerMaxInputCharge,
+                                        kTrojanServerMaxInputBuffers))
+            trojanserverCloseLineBidirectional(t, l);
         return false;
+    }
     if (! ls->frame_selected)
     {
         ls->frame_selected = true;

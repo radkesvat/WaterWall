@@ -507,6 +507,10 @@ Backend-local errors outside decoding retain their local scope.
 Initial assembly permits a partial request followed by a full 2 MiB delivery.
 Consumed headers are removed before applying the selected path's body budget.
 Input fragmentation and synchronously consumed output have no 1,024-record cap.
+Incomplete UDP bodies and nested UDP input compact when retained buffer charge
+exceeds 8 MiB or storage exceeds 1,024 entries, including the active head. This
+preserves legal fragmented datagrams and byte order without changing the body
+limit. Complete datagrams continue through the existing extraction path.
 Equality passes; retained-state overflow closes the affected association. Direct
 opaque paths have no queue merely to impose a byte limit. These logical limits
 are independent of RAM profile, buffer geometry and pipe capacity.

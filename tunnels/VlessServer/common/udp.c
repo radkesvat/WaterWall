@@ -100,7 +100,18 @@ bool vlessserverDrainUdpPackets(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls
             return true;
         uint16_t packet_size = ((uint16_t) ls->header[0] << 8U) | ls->header[1];
         if (ls->input_bytes - 2U < packet_size)
+        {
+            if (! bufferRangeSettleRetained(lineGetBufferPool(l),
+                                            &ls->input_head,
+                                            &ls->pending_up,
+                                            kVlessServerMaxInputCharge,
+                                            kVlessServerMaxInputBuffers))
+            {
+                vlessserverCloseLineBidirectional(t, l);
+                return false;
+            }
             return true;
+        }
         buffer_pool_t *pool   = lineGetBufferPool(l);
         sbuf_t        *packet = vlessserverExtractUdpBody(ls, packet_size);
 

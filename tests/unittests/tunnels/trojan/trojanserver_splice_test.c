@@ -213,6 +213,15 @@ static uint32_t frame(uint8_t *out, unsigned form, uint16_t port, const void *bo
         memoryCopy(out + n, body, len);
     return n + len;
 }
+static void requireUdpRetention(void)
+{
+    trojanserver_lstate_t *ls          = lineGetState(f.line, f.t);
+    const size_t           head_charge = ls->input_head == NULL ? 0 : sbufGetQueueCharge(ls->input_head);
+    twfRequire(lineIsAlive(f.line) && ls->pending_up.budget == NULL &&
+                   head_charge + bufferqueueGetCharge(&ls->pending_up) <= kTrojanServerMaxInputCharge &&
+                   (ls->input_head != NULL) + bufferqueueGetBufCount(&ls->pending_up) <= kTrojanServerMaxInputBuffers,
+               "UDP retained fragmented input beyond its storage compaction thresholds");
+}
 static void act(unsigned boundary, line_t *l)
 {
     if (boundary != f.boundary)
@@ -275,6 +284,18 @@ static void act(unsigned boundary, line_t *l)
             twfRequire(! lineIsAlive(f.line), "reentry retention overflow accepted");
         }
         memoryFree(data);
+    }
+    if (action == 15)
+    {
+        sbuf_t *nested      = f.nested;
+        f.nested            = NULL;
+        const uint8_t *wire = sbufGetRawPtr(nested);
+        for (uint32_t i = 0; i < sbufGetLength(nested); ++i)
+        {
+            tunnelUpStreamPayload(f.t, f.line, bytes(wire + i, 1, false, 320));
+            requireUdpRetention();
+        }
+        lineReuseBuffer(f.line, nested);
     }
     if (action == 13)
     {
@@ -963,7 +984,10 @@ static void testUdpFrames(void)
     startUdp();
     uint32_t n = frame(wire, 0, 443, payload, 1500);
     for (unsigned i = 0; i < n; ++i)
+    {
         tunnelUpStreamPayload(f.t, f.line, bytes(wire + i, 1, false, 320));
+        requireUdpRetention();
+    }
     twfRequire(f.calls_up == 1 && f.up_len == 1500, "input fragment count incorrectly limited");
     end();
     for (unsigned fault = 0; fault < 4; ++fault)
@@ -1592,6 +1616,28 @@ static void testReplyFormsAndRefusal(void)
     end();
 }
 
+static void testUdpNestedRetention(void)
+{
+    twfSetCase("nested UDP fragments compact behind the active suffix without losing FIFO");
+    begin(false, false, 128);
+    startUdp();
+    uint8_t body[1500], wire[1600];
+    for (unsigned i = 0; i < sizeof(body); ++i)
+        body[i] = (uint8_t) i;
+    const uint32_t first = frame(wire, 0, 443, "A", 1);
+    const uint32_t total = first + frame(wire + first, 0, 443, body, sizeof(body));
+    const uint32_t split = total - sizeof(body) + 1U;
+    f.boundary           = 3;
+    f.action             = 15;
+    f.nested             = bytes(wire + split, total - split, false, 320);
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, split, false, 320));
+    twfRequire(f.calls_up == 2 && f.up_len == sizeof(body) + 1U && f.up[0] == 'A' &&
+                   memoryEqual(f.up + 1, body, sizeof(body)),
+               "nested UDP compaction reordered the active suffix or fragmented body");
+    requireUdpRetention();
+    end();
+}
+
 static void testShutdownAdmission(void)
 {
     twfSetCase("shutdown refuses new protocol branches but preserves existing forwarding");
@@ -1653,6 +1699,7 @@ int main(void)
     testAuthentication();
     testReentrancy();
     testUdpFrames();
+    testUdpNestedRetention();
     testLargeUdpFramesAndReplies();
     testUdpPressure();
     testFallback();

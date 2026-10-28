@@ -4,7 +4,7 @@
  * pool, source pipes, payload checks and syscall fault probes.
  * Cases: all source splits, suffix ownership/accounting, zero-length no-op,
  * whole-head identity, padding repair, pipe exhaustion, partial fallback,
- * incremental cached prefixes and restoration of only the unread suffix.
+ * incremental cached prefixes, unread suffix restoration and retained-storage compaction.
  * CTest: waterwall.bufio_contract_unit; waterwall.bufio_contract_no_splice_unit.
  */
 #include "buffer_queue_range.h"
@@ -275,7 +275,102 @@ static void testBufferRangeRestoreSuffix(buffer_pool_t *pool)
     }
 }
 
+static void testBufferRangeRetainedStorage(buffer_pool_t *pool)
+{
+    buffer_queue_t queue;
+    bufferqueueInitEmpty(&queue);
+    sbuf_t *head   = streamTestBytes(pool, "ab", 2);
+    sbuf_t *tail   = bufferqueuePushBack(&queue, streamTestBytes(pool, "cd", 2));
+    sbuf_t *saved  = head;
+    size_t  charge = sbufGetQueueCharge(head) + bufferqueueGetCharge(&queue);
+    require(bufferRangeSettleRetained(pool, &head, &queue, charge, 2) && head == saved &&
+                bufferqueueFront(&queue) == tail,
+            "settling within the exact limits changed input ownership");
+    require(bufferRangeSettleRetained(pool, &head, &queue, charge, 1) && head == saved &&
+                bufferqueueGetBufCount(&queue) == 0 && sbufGetLength(head) == 4,
+            "entry pressure did not reuse existing head append room");
+    rangeCheckQueue(&queue);
+    streamCheckBytes(pool, head, "abcd", 4);
+    head = bufferpoolGetLargeBuffer(pool);
+    sbufSetLength(head, 4);
+    sbufWrite(head, "body", 4);
+    saved = head;
+    buffer_pool_fit_t fit;
+    require(bufferpoolQueryBestFit(pool, 4, bufferpoolGetLargeBufferPadding(pool), &fit),
+            "retained-storage fixture geometry failed");
+    require(! bufferRangeSettleRetained(pool, &head, &queue, fit.allocation_charge - 1U, 1) && head == saved &&
+                sbufGetLength(head) == 4,
+            "unrepresentable compact budget consumed input");
+    require(bufferRangeSettleRetained(pool, &head, &queue, fit.allocation_charge, 1) && head != saved &&
+                sbufGetQueueCharge(head) <= fit.allocation_charge,
+            "single oversized head did not compact to fitting storage");
+    streamCheckBytes(pool, head, "body", 4);
+
+    /* Pressure on each appended fragment must reuse assembly room instead of
+     * repeatedly copying the whole growing body. This is only a 12 KiB body. */
+    uint8_t expected[12 * 1024];
+    for (uint32_t i = 0; i < sizeof(expected); ++i)
+        expected[i] = (uint8_t) i;
+    head                  = NULL;
+    unsigned replacements = 0;
+    for (uint32_t offset = 0; offset < sizeof(expected); offset += 256)
+    {
+        bufferqueuePushBack(&queue, streamTestBytes(pool, expected + offset, 256));
+        saved = head;
+        require(bufferRangeSettleRetained(pool, &head, &queue, 128 * 1024, 1),
+                "bounded fragmented body could not compact");
+        if (head != NULL && saved != head)
+            ++replacements;
+        rangeCheckQueue(&queue);
+    }
+    require(replacements <= 3, "retained body repeatedly copied its accumulated prefix");
+    streamCheckBytes(pool, bufferRangeTakeExact(pool, &head, &queue, sizeof(expected)), expected, sizeof(expected));
+    rangeDestroyInput(pool, head, &queue);
+}
+
 #if WW_HAVE_SPLICE
+static void testBufferRangeRetainedSplice(buffer_pool_t *pool)
+{
+    for (unsigned mode = 1; mode <= 2; ++mode)
+        for (unsigned fault = 0; fault <= 1; ++fault)
+        {
+            buffer_queue_t queue;
+            bufferqueueInitEmpty(&queue);
+            sbuf_t *head = rangeTestInput(pool, (const uint8_t *) "abc", 3, mode);
+            bufferqueuePushBack(&queue, rangeTestInput(pool, (const uint8_t *) "def", 3, 1));
+            streamProbe         = true;
+            streamTransferFault = fault ? 3 : 0;
+            require(bufferRangeSettleRetained(pool, &head, &queue, 128 * 1024, 1),
+                    "splice retention could not compact");
+            streamProbe         = false;
+            streamTransferFault = 0;
+            require(sbufIsSplice(head) == ! fault && bufferqueueGetBufCount(&queue) == 0,
+                    "retained splice assembly did not preserve pipes or select complete fallback");
+            rangeCheckQueue(&queue);
+            streamCheckBytes(pool, head, "abcdef", 6);
+            rangeDestroyInput(pool, NULL, &queue);
+        }
+
+    /* A valid current pipe charge can exceed the cap after appending, even
+     * though ordinary storage fits: splice and ordinary padding may differ. */
+    pool_fixture_t fixture = poolFixtureCreate(256, 128, 0, 0);
+    buffer_queue_t queue;
+    bufferqueueInitEmpty(&queue);
+    uint8_t wire[80] = {0};
+    sbuf_t *head     = makeSpliceTestBuffer(fixture.pool, NULL, 0, wire, 48);
+    bufferqueuePushBack(&queue, streamTestBytes(fixture.pool, wire + 48, 32));
+    buffer_pool_fit_t fit;
+    require(bufferpoolQueryBestFit(fixture.pool, sizeof(wire), 0, &fit) &&
+                sbufGetQueueCharge(head) <= fit.allocation_charge,
+            "differing splice padding fixture does not fit its initial head");
+    require(bufferRangeSettleRetained(fixture.pool, &head, &queue, fit.allocation_charge, 1) && ! sbufIsSplice(head) &&
+                sbufGetQueueCharge(head) <= fit.allocation_charge,
+            "splice append bypassed the final retained charge limit");
+    streamCheckBytes(fixture.pool, head, wire, sizeof(wire));
+    rangeDestroyInput(fixture.pool, NULL, &queue);
+    poolFixtureDestroy(&fixture);
+}
+
 static void testBufferRangeSpliceFallback(buffer_pool_t *pool)
 {
     const unsigned faults[] = {1, 3, 5};
@@ -341,7 +436,9 @@ static void testBufferQueueRangeContracts(void)
     testBufferRangeGatherIncremental(fixture.pool);
     testBufferRangeGatherNoop(fixture.pool);
     testBufferRangeRestoreSuffix(fixture.pool);
+    testBufferRangeRetainedStorage(fixture.pool);
 #if WW_HAVE_SPLICE
+    testBufferRangeRetainedSplice(fixture.pool);
     testBufferRangeSpliceFallback(fixture.pool);
 #endif
     poolFixtureDestroy(&fixture);

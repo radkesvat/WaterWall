@@ -70,6 +70,10 @@ Empty retained output buffers consume entries; incomplete UDP fragments have no 
 accepted; overflow or queue refusal closes the affected association and releases locally owned data. These are retention
 limits, not RSS/kernel-pipe-memory limits or size limits on an already-ready synchronous TCP handoff.
 
+Incomplete UDP bodies and nested UDP input compact when retained buffer charge exceeds 8 MiB or storage exceeds
+1,024 entries, including the active head. Compaction preserves byte order and legal fragmented datagrams; it does not
+cap the number of fragments in a datagram. Complete datagrams keep their existing extraction path and body limit.
+
 ## Typical Placement
 
 Normal VLESS server:

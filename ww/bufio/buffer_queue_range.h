@@ -33,6 +33,23 @@ bool bufferRangeGatherPrefix(buffer_pool_t *pool, sbuf_t **active_head, buffer_q
  */
 void bufferRangeRestoreHead(sbuf_t **active_head, buffer_queue_t *tail);
 
+/** Settle retained storage on an owned active head and unbound queued tail.
+ * Leaves both owners untouched when their combined charge and entry count fit.
+ * Otherwise compacts unread bytes in FIFO order into the active head, emptying
+ * the tail. Cached protocol metadata and logical-byte accounting are unchanged.
+ * Call after incomplete parsing or nested admission, not before draining complete
+ * frames; the caller retains its separate logical-byte admission policy.
+ *
+ * Reuses an existing head's append room and grows ordinary assembly geometrically
+ * within max_charge, avoiding repeated copies of the accumulated prefix. A splice
+ * head can append in its pipe; a new assembly prefers splice when input contains
+ * one. Pipe refusal falls back to ordinary storage with full onward padding.
+ * Returns false without consuming input when even ordinary fallback geometry
+ * cannot fit max_charge. max_entries must be nonzero. No callbacks occur.
+ */
+bool bufferRangeSettleRetained(buffer_pool_t *pool, sbuf_t **active_head, buffer_queue_t *tail, size_t max_charge,
+                               size_t max_entries);
+
 /** Consume exactly bytes in FIFO order from an owned active head and unbound
  * queued tail. All storage and the pool belong to the current worker. The active
  * head may be NULL; otherwise it is exclusively owned and is not still queued.
