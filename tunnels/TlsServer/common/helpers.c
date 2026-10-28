@@ -707,6 +707,10 @@ bool tlsserverEncryptAndSendApplicationData(tunnel_t *t, line_t *l, tlsserver_ls
                 reuseBuffer(buf);
                 return false;
             }
+            if (ls->upstream_finished || ls->downstream_finishing)
+            {
+                break;
+            }
         }
 
         if (status == kSslstatusFail)
@@ -752,6 +756,10 @@ bool tlsserverFlushPendingDownQueue(tunnel_t *t, line_t *l, tlsserver_lstate_t *
 
     while (bufferqueueGetBufCount(&ls->pending_down) > 0)
     {
+        if (ls->upstream_finished || ls->downstream_finishing)
+        {
+            break;
+        }
         sbuf_t *buf = bufferqueuePopFront(&ls->pending_down);
         if (! tlsserverEncryptAndSendApplicationData(t, l, ls, buf))
         {
@@ -990,6 +998,70 @@ bool tlsserverSendCloseNotify(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
     return false;
 }
 
+void tlsserverFinishTlsOutput(tunnel_t *t, line_t *l)
+{
+    tlsserver_lstate_t *ls = lineGetState(l, t);
+    lineRef(l);
+
+    if (ls->verbose)
+    {
+        LOGD("TlsServer: worker %u finishing TLS output (upstream_finished=%d)",
+             (unsigned int) lineGetWID(l),
+             (int) ls->upstream_finished);
+    }
+
+    ls->upstream_finished    = true;
+    ls->downstream_finishing = true;
+
+    bool notified = tlsserverSendCloseNotify(t, l, ls);
+    if (! lineIsAlive(l))
+    {
+        lineUnref(l);
+        return;
+    }
+
+    ls = lineGetState(l, t);
+    if (ls->tunnel != t || ls->resources_released)
+    {
+        lineUnref(l);
+        return;
+    }
+    if (! notified)
+    {
+        LOGW("TlsServer: close_notify failed; forwarding downstream Finish without TLS shutdown alert");
+        tlsserverPrintSSLState(ls->ssl);
+        tlsserverLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        lineUnref(l);
+        return;
+    }
+
+    bool output_pending = ls->shaping_output.initialized && ! tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output);
+    if (ls->shaping_retired && ls->ssl != NULL)
+    {
+        output_pending = BIO_ctrl_pending(SSL_get_wbio(ls->ssl)) != 0;
+    }
+    if (output_pending)
+    {
+        ls->downstream_finish_deferred = true;
+        if (ls->verbose)
+        {
+            LOGD("TlsServer: deferring downstream Finish until queued TLS ciphertext drains");
+        }
+        lineUnref(l);
+        return;
+    }
+
+    if (ls->verbose)
+    {
+        LOGD("TlsServer: destroying TLS state and forwarding downstream Finish");
+    }
+    tlsserverLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
+
+    lineUnref(l);
+}
+
 void tlsserverCloseLineFatal(tunnel_t *t, line_t *l)
 {
     if (! lineIsAlive(l))
@@ -1007,11 +1079,8 @@ void tlsserverCloseLineFatal(tunnel_t *t, line_t *l)
     bool                fallback_branch = ls->fallback_mode && ls->fallback_init_sent;
     tunnel_t           *target     = fallback_branch ? ts->fallback_tunnel : (ls->protected_init_sent ? t->next : NULL);
     bool                close_next = target != NULL && (fallback_branch || ! ls->upstream_finished);
-    bool                close_prev = ! ls->downstream_finishing;
 
-    LOGW("TlsServer: closing line after fatal TLS failure (close_next=%d, close_prev=%d)",
-         (int) close_next,
-         (int) close_prev);
+    LOGW("TlsServer: closing line after fatal TLS failure (close_next=%d)", (int) close_next);
 
     lineRef(l);
     tlsserverLinestateDestroy(ls);
@@ -1028,7 +1097,9 @@ void tlsserverCloseLineFatal(tunnel_t *t, line_t *l)
         }
     }
 
-    if (lineIsAlive(l) && close_prev)
+    /* A pending graceful output close still has a live frontend. An actual
+     * frontend Finish destroys this TLS association before returning. */
+    if (lineIsAlive(l))
     {
         tunnelPrevDownStreamFinish(t, l);
     }

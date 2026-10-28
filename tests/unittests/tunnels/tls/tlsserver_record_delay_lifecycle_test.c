@@ -39,6 +39,14 @@ typedef struct server_delay_context_s
     uint32_t  next_finish;
     sbuf_t   *upstream_payload_on_prev_payload;
     sbuf_t   *downstream_payload_on_next_resume;
+    SSL      *capture_client;
+    uint8_t   captured_plaintext[128];
+    size_t    captured_length;
+    bool      captured_close_notify;
+    bool      finish_on_prev_payload;
+    bool      finish_on_next_finish;
+    bool      kill_on_close_callback;
+    bool      kill_on_prev_finish;
     bool      pause_on_prev_payload;
     bool      downstream_resume_payload_sent;
 } server_delay_context_t;
@@ -55,6 +63,7 @@ typedef struct server_delay_fixture_s
     wloop_t              **saved_loops;
     wloop_t               *loops[1];
     uint32_t               saved_workers_count;
+    wid_t                  saved_wid;
     SSL_CTX               *client_ctx;
     SSL_CTX               *server_ctx;
     SSL                   *client;
@@ -86,11 +95,62 @@ static server_delay_context_t *serverContext(tunnel_t *t)
     return *(server_delay_context_t **) tunnelGetState(t);
 }
 
+static void serverCaptureOutput(server_delay_context_t *context, const sbuf_t *buf)
+{
+    if (context->capture_client == NULL)
+    {
+        return;
+    }
+
+    const int length = (int) sbufGetLength(buf);
+    requireServer(BIO_write(SSL_get_rbio(context->capture_client), sbufGetRawPtr(buf), length) == length,
+                  "server lifecycle client rejected captured ciphertext");
+    while (true)
+    {
+        uint8_t plaintext[128];
+        int     read_length = SSL_read(context->capture_client, plaintext, sizeof(plaintext));
+        if (read_length > 0)
+        {
+            requireServer((size_t) read_length <= sizeof(context->captured_plaintext) - context->captured_length,
+                          "server lifecycle plaintext capture overflowed");
+            memoryCopy(context->captured_plaintext + context->captured_length, plaintext, (size_t) read_length);
+            context->captured_length += (size_t) read_length;
+            continue;
+        }
+        const int error = SSL_get_error(context->capture_client, read_length);
+        requireServer(error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE || error == SSL_ERROR_ZERO_RETURN,
+                      "server lifecycle client could not decrypt captured output");
+        if (error == SSL_ERROR_ZERO_RETURN)
+        {
+            context->captured_close_notify = true;
+        }
+        return;
+    }
+}
+
+static void serverCloseFromOwner(server_delay_context_t *context, line_t *l)
+{
+    tlsserverTunnelUpStreamFinish(context->tls, l);
+    if (context->kill_on_close_callback)
+    {
+        /* The fixture retains the allocation/reference while modeling owner death. */
+        l->alive = false;
+    }
+}
+
 static void serverPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     server_delay_context_t *context = serverContext(t);
+    requireServer(context->prev_finish == 0, "server sent ciphertext after frontend Finish");
     ++context->prev_payload;
+    serverCaptureOutput(context, buf);
     lineReuseBuffer(l, buf);
+    if (context->finish_on_prev_payload)
+    {
+        context->finish_on_prev_payload = false;
+        serverCloseFromOwner(context, l);
+        return;
+    }
     if (context->upstream_payload_on_prev_payload != NULL)
     {
         sbuf_t *upstream_payload                  = context->upstream_payload_on_prev_payload;
@@ -106,8 +166,18 @@ static void serverPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void serverPrevFinish(tunnel_t *t, line_t *l)
 {
-    discard l;
-    ++serverContext(t)->prev_finish;
+    server_delay_context_t *context = serverContext(t);
+    ++context->prev_finish;
+    requireServer(context->prev_finish == 1, "server finished the frontend more than once");
+    if (context->capture_client != NULL)
+    {
+        requireServer(context->captured_close_notify,
+                      "server finished the frontend before its reciprocal close_notify");
+    }
+    if (context->kill_on_prev_finish)
+    {
+        l->alive = false;
+    }
 }
 
 static void serverNextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -143,8 +213,14 @@ static void serverNextResume(tunnel_t *t, line_t *l)
 
 static void serverNextFinish(tunnel_t *t, line_t *l)
 {
-    discard l;
-    ++serverContext(t)->next_finish;
+    server_delay_context_t *context = serverContext(t);
+    ++context->next_finish;
+    requireServer(context->next_finish == 1, "server finished the backend more than once");
+    if (context->finish_on_next_finish)
+    {
+        context->finish_on_next_finish = false;
+        serverCloseFromOwner(context, l);
+    }
 }
 
 static tlsrecordshaping_config_t serverDelayConfig(void)
@@ -228,15 +304,17 @@ static void serverDriveHandshake(server_delay_fixture_t *fixture, tlsserver_lsta
     requireServer(false, "delay lifecycle TLS 1.3 handshake did not complete");
 }
 
-static void serverFixtureSetup(server_delay_fixture_t *fixture)
+static void serverFixtureSetupWithShaping(server_delay_fixture_t *fixture, bool shape_records)
 {
     memoryZero(fixture, sizeof(*fixture));
 
     fixture->saved_workers_count = GSTATE.workers_count;
+    fixture->saved_wid           = getWID();
     fixture->saved_buffer_pools  = GSTATE.shortcut_buffer_pools;
     fixture->saved_loops         = GSTATE.shortcut_loops;
     GSTATE.workers_count         = 1;
     testWorkerRegistryInstall(&g_test_worker_registry);
+    testWorkerBindWID(0);
 
     fixture->large_master  = masterpoolCreateWithCapacity(64);
     fixture->small_master  = masterpoolCreateWithCapacity(8);
@@ -279,6 +357,7 @@ static void serverFixtureSetup(server_delay_fixture_t *fixture)
     fixture->next->fnFinU                                      = serverNextFinish;
 
     tlsrecordshaping_config_t config                                      = serverDelayConfig();
+    config.enabled                                                        = shape_records;
     ((tlsserver_tstate_t *) tunnelGetState(fixture->tls))->record_shaping = config;
 
     fixture->client_ctx = SSL_CTX_new(TLS_client_method());
@@ -293,8 +372,11 @@ static void serverFixtureSetup(server_delay_fixture_t *fixture)
                       SSL_CTX_use_certificate_chain_file(fixture->server_ctx, TLSSERVER_TEST_CERT_FILE) == 1 &&
                       SSL_CTX_use_PrivateKey_file(fixture->server_ctx, TLSSERVER_TEST_KEY_FILE, SSL_FILETYPE_PEM) == 1,
                   "failed to configure server lifecycle SSL contexts");
-    SSL_CTX_set_record_padding_callback(fixture->server_ctx, tlsserverRecordPaddingCallback);
-    SSL_CTX_set_msg_callback(fixture->server_ctx, tlsserverRecordMessageCallback);
+    if (shape_records)
+    {
+        SSL_CTX_set_record_padding_callback(fixture->server_ctx, tlsserverRecordPaddingCallback);
+        SSL_CTX_set_msg_callback(fixture->server_ctx, tlsserverRecordMessageCallback);
+    }
 
     fixture->line = memoryAllocateCacheAlignedZero(sizeof(line_t) + fixture->tls->lstate_size);
     requireServer(fixture->line != NULL, "failed to allocate server lifecycle line");
@@ -322,6 +404,11 @@ static void serverFixtureSetup(server_delay_fixture_t *fixture)
     SSL_set_bio(fixture->client, client_rbio, client_wbio);
     SSL_set_connect_state(fixture->client);
     serverDriveHandshake(fixture, ls);
+}
+
+static void serverFixtureSetup(server_delay_fixture_t *fixture)
+{
+    serverFixtureSetupWithShaping(fixture, true);
 }
 
 static bool serverStateIsZero(const server_delay_fixture_t *fixture)
@@ -367,6 +454,7 @@ static void serverFixtureTeardown(server_delay_fixture_t *fixture)
 
     GSTATE.workers_count = fixture->saved_workers_count;
     testWorkerRegistryRestore(&g_test_worker_registry);
+    testWorkerBindWID(fixture->saved_wid);
     GSTATE.shortcut_buffer_pools = fixture->saved_buffer_pools;
     GSTATE.shortcut_loops        = fixture->saved_loops;
 }
@@ -715,6 +803,123 @@ static void testServerPeerFinishSuppressesBackpressureCallbacks(void)
     serverFixtureTeardown(&fixture);
 }
 
+static sbuf_t *serverMakePeerCloseNotify(server_delay_fixture_t *fixture)
+{
+    const int shutdown_result = SSL_shutdown(fixture->client);
+    requireServer(shutdown_result == 0 || shutdown_result == 1, "client could not emit close_notify");
+    return serverDrainBio(fixture, SSL_get_wbio(fixture->client));
+}
+
+static void testServerPeerCloseNotifyFinishes(bool shape_records, uint32_t delay_ms, bool pause_output,
+                                              bool kill_on_finish)
+{
+    static const uint8_t   plaintext[] = "accepted-before-peer-close-notify";
+    server_delay_fixture_t fixture;
+    serverFixtureSetupWithShaping(&fixture, shape_records);
+    serverUseSingleRecordScope(&fixture, delay_ms);
+    fixture.context.capture_client      = fixture.client;
+    fixture.context.kill_on_prev_finish = kill_on_finish;
+    tlsserver_lstate_t *ls              = lineGetState(fixture.line, fixture.tls);
+    requireServer(tlsserverEncryptAndSendApplicationData(
+                      fixture.tls, fixture.line, ls, serverMakeBytes(&fixture, plaintext, sizeof(plaintext))),
+                  "server could not accept response before peer close_notify");
+    if (shape_records && delay_ms == 0)
+    {
+        requireServer(ls->shaping_retired, "server peer-close fixture did not retire shaping");
+    }
+    if (pause_output)
+    {
+        tlsserverTunnelUpStreamPause(fixture.tls, fixture.line);
+        fixture.context.pause_on_prev_payload = true;
+    }
+    if (delay_ms != 0)
+    {
+        /* Retained pre-handshake plaintext must not restart writing once peer close begins. */
+        discard bufferqueuePushBack(&ls->pending_down, serverMakeBytes(&fixture, plaintext, sizeof(plaintext)));
+        discard bufferqueuePushBack(&ls->pending_down, serverMakeBytes(&fixture, plaintext, sizeof(plaintext)));
+    }
+
+    tlsserverTunnelUpStreamPayload(fixture.tls, fixture.line, serverMakePeerCloseNotify(&fixture));
+    requireServer(fixture.context.next_finish == 1, "peer close_notify did not retire the backend exactly once");
+    if (delay_ms != 0)
+    {
+        ls = lineGetState(fixture.line, fixture.tls);
+        requireServer(ls->downstream_finishing && ls->downstream_finish_deferred && ls->shaping_output_timer != NULL &&
+                          fixture.context.prev_payload == 0 && fixture.context.prev_finish == 0,
+                      "peer close_notify did not preserve delayed ciphertext before frontend Finish");
+        static const uint8_t late_plaintext[] = "discard-after-peer-close-notify";
+        tlsserverTunnelDownStreamPayload(
+            fixture.tls, fixture.line, serverMakeBytes(&fixture, late_plaintext, sizeof(late_plaintext)));
+        requireServer(ls->downstream_finish_deferred && fixture.context.prev_finish == 0,
+                      "late plaintext interrupted the already accepted peer-close drain");
+        requireServer(tlsserverFlushPendingDownQueue(fixture.tls, fixture.line, ls) &&
+                          bufferqueueGetBufCount(&ls->pending_down) == 2,
+                      "peer-close drain started encrypting retained pre-handshake plaintext");
+        tlsserverTunnelUpStreamResume(fixture.tls, fixture.line);
+        requireServer(fixture.context.next_resume == 0, "peer close_notify reflected Resume to its finished backend");
+        tlsserverCancelShapedOutputTimer(ls);
+        requireServer(tlsserverDrainShapedOutput(fixture.tls, fixture.line, ls, true),
+                      "peer close_notify could not drain accepted ciphertext");
+        requireServer(! tlsserverTryCompleteDeferredFinish(fixture.tls, fixture.line, ls),
+                      "peer close_notify left the frontend open after its ciphertext drained");
+    }
+    requireServer(fixture.context.prev_finish == 1 && fixture.context.next_finish == 1 &&
+                      fixture.context.captured_close_notify && fixture.context.captured_length == sizeof(plaintext) &&
+                      memcmp(fixture.context.captured_plaintext, plaintext, sizeof(plaintext)) == 0 &&
+                      fixture.context.next_resume == 0 && serverStateIsZero(&fixture),
+                  "peer close_notify lost response bytes, reciprocal alert, or final frontend Finish");
+    requireServer(lineIsAlive(fixture.line) != kill_on_finish, "server continued after frontend owner death");
+    serverFixtureTeardown(&fixture);
+}
+
+static void testServerPeerCloseNotifyWithoutProtectedBranch(void)
+{
+    server_delay_fixture_t fixture;
+    serverFixtureSetupWithShaping(&fixture, false);
+    fixture.context.capture_client = fixture.client;
+    tlsserver_lstate_t *ls         = lineGetState(fixture.line, fixture.tls);
+    ls->protected_init_sent        = false;
+    tlsserverTunnelUpStreamPayload(fixture.tls, fixture.line, serverMakePeerCloseNotify(&fixture));
+    requireServer(fixture.context.next_finish == 0 && fixture.context.prev_finish == 1 &&
+                      fixture.context.captured_close_notify && serverStateIsZero(&fixture),
+                  "peer close_notify finished an unopened protected branch or left its frontend open");
+    serverFixtureTeardown(&fixture);
+}
+
+static void testServerPeerCloseNotifySurvivesOwnerClose(bool close_from_next_finish, bool kill_owner)
+{
+    server_delay_fixture_t fixture;
+    serverFixtureSetupWithShaping(&fixture, false);
+    fixture.context.finish_on_next_finish  = close_from_next_finish;
+    fixture.context.finish_on_prev_payload = ! close_from_next_finish;
+    fixture.context.kill_on_close_callback = kill_owner;
+    tlsserverTunnelUpStreamPayload(fixture.tls, fixture.line, serverMakePeerCloseNotify(&fixture));
+    requireServer(fixture.context.next_finish == 1 && fixture.context.prev_finish == 0 &&
+                      fixture.context.prev_payload == (close_from_next_finish ? 0U : 1U) &&
+                      serverStateIsZero(&fixture) && lineIsAlive(fixture.line) != kill_owner,
+                  "peer close_notify continued through reentrant source Finish or reflected closure");
+    serverFixtureTeardown(&fixture);
+}
+
+static void testServerPeerCloseNotifyFatalWhileDeferred(void)
+{
+    static const uint8_t   plaintext[] = "accepted-before-terminal-failure";
+    server_delay_fixture_t fixture;
+    serverFixtureSetup(&fixture);
+    tlsserver_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
+    requireServer(tlsserverEncryptAndSendApplicationData(
+                      fixture.tls, fixture.line, ls, serverMakeBytes(&fixture, plaintext, sizeof(plaintext))),
+                  "server could not queue output before deferred peer-close failure");
+    tlsserverTunnelUpStreamPayload(fixture.tls, fixture.line, serverMakePeerCloseNotify(&fixture));
+    requireServer(ls->downstream_finish_deferred && ls->shaping_output_timer != NULL &&
+                      fixture.context.next_finish == 1 && fixture.context.prev_finish == 0,
+                  "server did not defer peer-close completion before terminal failure");
+    tlsserverCloseLineFatal(fixture.tls, fixture.line);
+    requireServer(fixture.context.next_finish == 1 && fixture.context.prev_finish == 1 && serverStateIsZero(&fixture),
+                  "terminal failure during peer close_notify stranded the frontend or finished the backend twice");
+    serverFixtureTeardown(&fixture);
+}
+
 static void testServerReentrantCloseNotifySuppressesDecryptedPayload(void)
 {
     static const uint8_t   client_plaintext[] = "outer-decrypted-payload";
@@ -742,13 +947,11 @@ static void testServerReentrantCloseNotifySuppressesDecryptedPayload(void)
                   "server could not prepare the output that triggers flush re-entry");
 
     tlsserverTunnelUpStreamPayload(fixture.tls, fixture.line, client_application);
-    ls = lineGetState(fixture.line, fixture.tls);
-    requireServer(ls->upstream_finished && fixture.context.upstream_payload_on_prev_payload == NULL &&
-                      fixture.context.prev_payload == 1 && fixture.context.next_finish == 1 &&
-                      fixture.context.next_payload == 0,
+    requireServer(serverStateIsZero(&fixture) && fixture.context.upstream_payload_on_prev_payload == NULL &&
+                      fixture.context.prev_payload >= 2 && fixture.context.prev_finish == 1 &&
+                      fixture.context.next_finish == 1 && fixture.context.next_payload == 0,
                   "server forwarded outer decrypted Payload after re-entrant close_notify Finish");
 
-    tlsserverLinestateDestroy(ls);
     serverFixtureTeardown(&fixture);
 }
 
@@ -778,13 +981,11 @@ static void testServerKeyUpdateFlushSurvivesReentrantCloseNotify(void)
     fixture.context.upstream_payload_on_prev_payload = serverDrainBio(&fixture, SSL_get_wbio(fixture.client));
 
     tlsserverTunnelUpStreamPayload(fixture.tls, fixture.line, key_update);
-    ls = lineGetState(fixture.line, fixture.tls);
-    requireServer(ls->upstream_finished && fixture.context.upstream_payload_on_prev_payload == NULL &&
-                      fixture.context.prev_payload == 1 && fixture.context.next_finish == 1 &&
-                      fixture.context.next_payload == 0,
+    requireServer(serverStateIsZero(&fixture) && fixture.context.upstream_payload_on_prev_payload == NULL &&
+                      fixture.context.prev_payload >= 2 && fixture.context.prev_finish == 1 &&
+                      fixture.context.next_finish == 1 && fixture.context.next_payload == 0,
                   "server misclassified KeyUpdate WANT_READ after re-entrant close_notify");
 
-    tlsserverLinestateDestroy(ls);
     serverFixtureTeardown(&fixture);
 }
 
@@ -805,6 +1006,15 @@ int main(void)
     testServerDeferredFinishSuppressesIncomingPayload();
     testServerReadyDrainContinuesThroughReentrantPause();
     testServerPeerFinishSuppressesBackpressureCallbacks();
+    testServerPeerCloseNotifyFinishes(false, 0, false, true);
+    testServerPeerCloseNotifyFinishes(true, 0, true, false);
+    testServerPeerCloseNotifyFinishes(true, 1000, true, false);
+    testServerPeerCloseNotifyWithoutProtectedBranch();
+    testServerPeerCloseNotifySurvivesOwnerClose(true, false);
+    testServerPeerCloseNotifySurvivesOwnerClose(true, true);
+    testServerPeerCloseNotifySurvivesOwnerClose(false, false);
+    testServerPeerCloseNotifySurvivesOwnerClose(false, true);
+    testServerPeerCloseNotifyFatalWhileDeferred();
     testServerReentrantCloseNotifySuppressesDecryptedPayload();
     testServerKeyUpdateFlushSurvivesReentrantCloseNotify();
     wCryptoGlobalCleanup();

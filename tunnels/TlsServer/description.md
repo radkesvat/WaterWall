@@ -276,8 +276,8 @@ Records stay in wire order with `release_at = max(now + delay, previous_release_
 MiB per line, with locally originated producer Pause at 6 MiB and Resume at 3 MiB. Incoming Pause and Resume
 are relayed transparently, including duplicates. Due ciphertext drains keep their existing timing and FIFO order without
 waiting for Resume; Pause does not cancel the release timer. After peer `close_notify` finishes the cleartext side, `TlsServer` sends no Payload, Pause, or Resume
-toward it; application bytes received later or already decrypted by an outer callback are discarded. If the cleartext
-side finishes, already accepted server ciphertext and an unpadded `close_notify` drain before downstream
+toward it; application bytes received later or already decrypted by an outer callback are discarded. On either peer
+`close_notify` or cleartext-side finish, already accepted server ciphertext and an unpadded `close_notify` drain before downstream
 `Finish`; a wire-side finish cancels and discards queued output and is propagated only toward cleartext. Timer allocation
 failure drains immediately in order.
 
@@ -452,9 +452,17 @@ In this architecture:
 
 ### Finish behavior
 
-For clean downstream closes, `TlsServer` sends a TLS `close_notify` alert, flushes it, and then propagates Waterwall finish downstream.
+For clean downstream closes, `TlsServer` sends a TLS `close_notify` alert when the handshake completed. Already
+accepted ciphertext drains before the alert, preserving any configured record delay even during advisory Pause.
+The node then destroys local TLS state and propagates WaterWall `Finish` downstream.
 
-If the peer sends a clean TLS shutdown, `TlsServer` treats that as a clean finish toward the next node.
+Peer `close_notify` starts the same local graceful termination: `TlsServer` first sends upstream `Finish` once to the
+initialized cleartext branch, then sends its own `close_notify` and completes downstream `Finish` after queued output
+drains. It does not wait for the client to close TCP or for an idle timeout after retiring the cleartext branch. No
+further callbacks go toward that branch, and new application bytes are discarded during closure.
+
+Raw upstream `Finish` instead cancels pending output and destroys TLS state without sending an alert or reflecting
+callbacks toward the finished wire side. Raw fallback continues to relay the selected service's bytes and closure.
 
 Fatal TLS failures still close the line in both directions.
 

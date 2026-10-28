@@ -169,6 +169,7 @@ bool   tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *
 void   tlsserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool   tlsserverArmHandshakeDeadline(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 void   tlsserverDisarmHandshakeDeadline(tlsserver_lstate_t *ls);
+void   tlsserverFinishTlsOutput(tunnel_t *t, line_t *l);
 void   tlsserverCloseLineFatal(tunnel_t *t, line_t *l);
 size_t tlsserverRecordPaddingCallback(SSL *ssl, int type, size_t len, void *arg);
 void   tlsserverRecordMessageCallback(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl,

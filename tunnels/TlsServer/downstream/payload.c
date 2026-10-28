@@ -6,7 +6,7 @@ void tlsserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tlsserver_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->fallback_close_draining)
+    if (ls->fallback_close_draining || ls->upstream_finished || ls->downstream_finishing)
     {
         lineReuseBuffer(l, buf);
         return;
@@ -47,13 +47,14 @@ void tlsserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (lineIsAlive(l))
         {
-            LOGW("TlsServer: failed to encrypt downstream payload; closing line");
-            lineUnref(l);
-            tlsserverPrintSSLState(ls->ssl);
-            tlsserverCloseLineFatal(t, l);
-            return;
+            ls = lineGetState(l, t);
+            if (ls->tunnel == t && ! ls->resources_released)
+            {
+                LOGW("TlsServer: failed to encrypt downstream payload; closing line");
+                tlsserverPrintSSLState(ls->ssl);
+                tlsserverCloseLineFatal(t, l);
+            }
         }
-        LOGW("TlsServer: line closed while encrypting downstream payload");
         lineUnref(l);
         return;
     }
