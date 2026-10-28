@@ -644,8 +644,12 @@ static void caseMtuConfigurationAndOutput(void)
     CORE_DEFAULT_MTU = saved_default;
 }
 
+#define TEST_RECEIVE_SERVER 0
+#include "receive_cases.h"
+
 int main(void)
 {
+    caseReceiveMessages();
     caseAutomaticSendBufferLimit();
     caseFecShardBounds();
     caseMtuConfigurationAndOutput();
