@@ -695,3 +695,17 @@ if(TARGET ReverseServer)
   add_waterwall_unit_test(waterwall.reverseserver_large_wait_unit reverseserver_large_wait_test "unit;tunnels;reverse;buffering")
 endif()
 
+
+if(TARGET HttpCommon)
+  foreach(component IN ITEMS chunk_decoder websocket_decoder receive)
+    waterwall_add_native_executable(http_${component}_test SUPPORT
+      SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/http/http_${component}_test.c)
+    target_link_libraries(http_${component}_test PRIVATE HttpCommon ww)
+    if(component STREQUAL "receive")
+      target_link_options(http_${component}_test PRIVATE "-Wl,--wrap=bufferpoolReuseBuffer")
+    endif()
+    add_dependencies(waterwall_unit_tests http_${component}_test)
+    add_waterwall_unit_test(waterwall.http_${component}_unit http_${component}_test
+      "unit;tunnels;http;framing;limits")
+  endforeach()
+endif()
