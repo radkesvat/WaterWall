@@ -13,7 +13,7 @@
         "method": "xor",
         "xor_key": 165,
         "skip": "none",
-        "tls_record_header": false
+        "tls_record_header": true
       },
       "next": "tcp-connector"
     },
@@ -44,7 +44,7 @@
         "method": "xor",
         "xor_key": 165,
         "skip": "none",
-        "tls_record_header": false
+        "tls_record_header": true
       },
       "next": "tester-server"
     },

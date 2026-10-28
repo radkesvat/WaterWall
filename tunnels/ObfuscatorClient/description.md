@@ -11,6 +11,11 @@ The option-off path is stateless. TLS-like stream framing keeps normal-line rece
 
 In practice, this node is used together with `ObfuscatorServer` configured with the same method and key.
 
+Choose the role by the encoded side of the node: `ObfuscatorClient` faces its
+transport at `next`; `ObfuscatorServer` faces its transport at the previous node.
+A `Bridge` reverses callback direction, so two legs whose `next` sides face a
+paired Bridge both use `ObfuscatorClient`.
+
 ## What It Does
 
 - Reads payload from the previous node.

@@ -41,7 +41,7 @@
     },
     {
       "name": "obfuscator-server",
-      "type": "ObfuscatorServer",
+      "type": "ObfuscatorClient",
       "settings": {
         "method": "xor",
         "xor_key": 60,

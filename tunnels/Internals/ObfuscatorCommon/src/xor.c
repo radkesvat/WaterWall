@@ -1,6 +1,6 @@
-#include "structure.h"
+#include "ObfuscatorCommon/codec.h"
 
-void obfuscatorclientXorByte(uint8_t *data, size_t size, uint8_t key)
+void obfuscatorXorByte(uint8_t *data, size_t size, uint8_t key)
 {
     // Strategy: peel the few unaligned leading bytes one at a time until the
     // pointer is aligned to the widest chunk, run the aligned wide loop over the

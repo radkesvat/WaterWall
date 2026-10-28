@@ -1,27 +1,25 @@
-#include "structure.h"
-
 #include "loggers/network_logger.h"
+#include "structure.h"
 
 void obfuscatorserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    obfuscatorserver_tstate_t *ts = tunnelGetState(t);
-    if (ts->tls_record_header && ! tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l))
+    obfuscatorserver_tstate_t *ts     = tunnelGetState(t);
+    const bool                 packet = tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l);
+    if (ts->tls_record_header && ! packet)
     {
-        obfuscatorserverEncodeStream(t, l, buf);
+        obfuscatorserverDecodeStream(t, l, buf);
         return;
     }
 
-    obfuscatorserverApplyXor(t, l, buf);
-
-    if (ts->tls_record_header && ! obfuscatorserverWrapTlsRecordHeader(l, &buf))
+    if (ts->tls_record_header && ! obfuscatorStripRecord(buf))
     {
+        LOGW("ObfuscatorServer: malformed TLS-like packet dropped");
+        lineReuseBuffer(l, buf);
         return;
     }
+    obfuscatorApplyXor(buf, ts->skip, ts->xor_key);
 
-    if (l == tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l)))
-    {
+    if (packet)
         sbufSetRecalculateChecksum(buf, true);
-    }
-
     tunnelNextUpStreamPayload(t, l, buf);
 }

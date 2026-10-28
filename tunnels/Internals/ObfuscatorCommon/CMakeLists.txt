@@ -1,0 +1,6 @@
+add_library(ObfuscatorCommon STATIC src/codec.c src/xor.c)
+target_include_directories(ObfuscatorCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(ObfuscatorCommon PUBLIC ww)
+if(NOT APPLE)
+    target_precompile_headers(ObfuscatorCommon REUSE_FROM ww)
+endif()

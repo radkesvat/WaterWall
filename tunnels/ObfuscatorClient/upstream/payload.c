@@ -1,27 +1,28 @@
-#include "structure.h"
-
 #include "loggers/network_logger.h"
+#include "structure.h"
 
 void obfuscatorclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    obfuscatorclient_tstate_t *ts = tunnelGetState(t);
-    if (ts->tls_record_header && ! tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l))
+    obfuscatorclient_tstate_t *ts     = tunnelGetState(t);
+    const bool                 packet = tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l);
+    if (ts->tls_record_header && ! packet)
     {
         obfuscatorclientEncodeStream(t, l, buf);
         return;
     }
 
-    obfuscatorclientApplyXor(t, l, buf);
-
-    if (ts->tls_record_header && ! obfuscatorclientWrapTlsRecordHeader(l, &buf))
+    obfuscatorApplyXor(buf, ts->skip, ts->xor_key);
+    if (ts->tls_record_header)
     {
-        return;
+        buf = obfuscatorWrapRecord(lineGetBufferPool(l), buf);
+        if (! buf)
+        {
+            LOGW("ObfuscatorClient: oversized TLS-like packet dropped");
+            return;
+        }
     }
 
-    if (l == tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l)))
-    {
+    if (packet)
         sbufSetRecalculateChecksum(buf, true);
-    }
-    
     tunnelNextUpStreamPayload(t, l, buf);
 }

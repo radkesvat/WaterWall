@@ -1199,6 +1199,10 @@ if(INCLUDE_HEADER_CLIENT)
 endif()
 
 #obfuscator client
+if(INCLUDE_OBFUSCATOR_CLIENT OR INCLUDE_OBFUSCATOR_SERVER)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/ObfuscatorCommon)
+endif()
+
 if(INCLUDE_OBFUSCATOR_CLIENT)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_OBFUSCATOR_CLIENT=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ObfuscatorClient)
