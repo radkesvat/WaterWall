@@ -8,6 +8,39 @@ static sbuf_t *rangeHead(sbuf_t **active_head, buffer_queue_t *tail)
     return *active_head;
 }
 
+bool bufferRangeGatherPrefix(buffer_pool_t *pool, sbuf_t **active_head, buffer_queue_t *tail, uint8_t *dst,
+                             uint16_t *filled, uint16_t needed)
+{
+    assert(pool != NULL && active_head != NULL && tail != NULL && dst != NULL && filled != NULL);
+    assert(tail->budget == NULL);
+    while (*filled < needed)
+    {
+        sbuf_t *head = rangeHead(active_head, tail);
+        if (head == NULL)
+            return false;
+        const uint32_t count = min(needed - *filled, sbufGetLength(head));
+        sbufReadRangeToMemory(head, dst + *filled, count);
+        *filled += count;
+        if (sbufGetLength(head) == 0)
+        {
+            bufferpoolReuseBuffer(pool, head);
+            *active_head = NULL;
+        }
+    }
+    return true;
+}
+
+void bufferRangeRestoreHead(sbuf_t **active_head, buffer_queue_t *tail)
+{
+    assert(active_head != NULL && tail != NULL);
+    assert(tail->budget == NULL);
+    if (*active_head != NULL)
+    {
+        bufferqueuePushFront(tail, *active_head);
+        *active_head = NULL;
+    }
+}
+
 sbuf_t *bufferRangeTakeExact(buffer_pool_t *pool, sbuf_t **active_head, buffer_queue_t *tail, uint32_t bytes)
 {
     assert(pool != NULL && active_head != NULL && tail != NULL);
