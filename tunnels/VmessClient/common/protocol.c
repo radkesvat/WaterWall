@@ -76,7 +76,7 @@ bool vmessclientCommitRequest(vmessclient_lstate_t *ls, uint8_t *out, size_t cap
     memorySecureZero(padding, sizeof(padding));
     if (! ok)
         return false;
-    vmessclientCancelFirstPayloadTimer(ls);
+    firstPayloadWindowCancel(&ls->first_payload);
     ls->request_sent = true;
     return true;
 }

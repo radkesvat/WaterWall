@@ -21,47 +21,27 @@ void vlessclientTryBypass(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls)
     tunnelBypassLine(t, l);
 }
 
-void vlessclientCancelFirstPayloadTimer(vlessclient_lstate_t *ls)
-{
-    if (ls->first_payload_timer != NULL)
-    {
-        wtimerDelete(ls->first_payload_timer);
-        ls->first_payload_timer = NULL;
-    }
-    ls->first_payload_due = false;
-}
-
 void vlessclientSendDueRequest(tunnel_t *t, line_t *l)
 {
     vlessclient_lstate_t *ls = lineGetState(l, t);
-    if (ls->phase == kVlessClientPhaseClosed || ls->request_sent || ! ls->first_payload_due || ls->carrier_paused ||
-        ls->est_notifying || ! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l))))
+    if (ls->phase == kVlessClientPhaseClosed || ls->request_sent || ! firstPayloadWindowIsDue(&ls->first_payload) ||
+        ls->carrier_paused || ls->est_notifying || ! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l))))
         return;
     /* Encoding consumes no caller input and performs its sole callback last. */
     if (UNLIKELY(! vlessclientSendInitialRequest(t, l, ls, NULL)))
         vlessclientCloseLine(t, l, kVlessClientCloseInternal);
 }
 
-static void firstPayloadExpired(wtimer_t *timer)
+static void firstPayloadWindowNotified(void *owner, first_payload_window_event_t event)
 {
-    vlessclient_lstate_t *ls = weventGetUserdata(timer);
-    assert(ls->first_payload_timer == timer);
-    tunnel_t *t   = ls->tunnel;
-    line_t   *l   = ls->line;
-    uint64_t  now = wloopNowLoopRunTime(weventGetLoop(timer));
-    /* One-shot reclamation belongs to the dispatch loop, even if close reenters. */
-    ls->first_payload_timer = NULL;
-    if (now < ls->first_payload_deadline_us)
+    vlessclient_lstate_t *ls = owner;
+    if (event == kFirstPayloadWindowDue)
+        vlessclientSendDueRequest(ls->tunnel, ls->line);
+    else
     {
-        uint32_t remaining = (uint32_t) ((ls->first_payload_deadline_us - now + 999) / 1000);
-        if (wtimerReset(timer, remaining))
-            ls->first_payload_timer = timer;
-        else
-            vlessclientCloseLine(t, l, kVlessClientCloseInternal);
-        return;
+        assert(event == kFirstPayloadWindowRearmFailed);
+        vlessclientCloseLine(ls->tunnel, ls->line, kVlessClientCloseInternal);
     }
-    ls->first_payload_due = true;
-    vlessclientSendDueRequest(t, l);
 }
 
 void vlessclientOnNextEstablished(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls)
@@ -82,9 +62,8 @@ void vlessclientOnNextEstablished(tunnel_t *t, line_t *l, vlessclient_lstate_t *
     ls->est_notifying    = true;
     if (! ls->request_sent)
     {
-        vlessclient_tstate_t *ts      = tunnelGetState(t);
-        ls->first_payload_deadline_us =
-            wloopNowLoopRunTime(getWorkerLoop(lineGetWID(l))) + (uint64_t) ts->first_payload_timeout_ms * 1000;
+        vlessclient_tstate_t *ts = tunnelGetState(t);
+        firstPayloadWindowStart(&ls->first_payload, getWorkerLoop(lineGetWID(l)), ts->first_payload_timeout_ms);
     }
     tunnelPrevDownStreamEst(t, application);
     if (vlessclientAssociationAlive(t, l, application))
@@ -92,20 +71,17 @@ void vlessclientOnNextEstablished(tunnel_t *t, line_t *l, vlessclient_lstate_t *
         ls->est_notifying = false;
         if (! ls->request_sent)
         {
-            uint64_t now = wloopNowLoopRunTime(getWorkerLoop(lineGetWID(l)));
-            if (now >= ls->first_payload_deadline_us)
+            switch (
+                firstPayloadWindowArm(&ls->first_payload, getWorkerLoop(lineGetWID(l)), firstPayloadWindowNotified, ls))
             {
-                ls->first_payload_due = true;
+            case kFirstPayloadWindowArmDue:
                 vlessclientSendDueRequest(t, l);
-            }
-            else
-            {
-                uint32_t remaining      = (uint32_t) ((ls->first_payload_deadline_us - now + 999) / 1000);
-                ls->first_payload_timer = wtimerAdd(getWorkerLoop(lineGetWID(l)), firstPayloadExpired, remaining, 1);
-                if (ls->first_payload_timer != NULL)
-                    weventSetUserData(ls->first_payload_timer, ls);
-                else
-                    vlessclientCloseLine(t, l, kVlessClientCloseInternal);
+                break;
+            case kFirstPayloadWindowArmFailed:
+                vlessclientCloseLine(t, l, kVlessClientCloseInternal);
+                break;
+            case kFirstPayloadWindowArmed:
+                break;
             }
         }
     }

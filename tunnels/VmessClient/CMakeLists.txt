@@ -26,7 +26,7 @@ add_library(VmessClient STATIC
 target_include_directories(VmessClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(VmessClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/VmessClient)
 
-target_link_libraries(VmessClient ww DomainResolver VmessCommon)
+target_link_libraries(VmessClient ww DomainResolver ProxyClientCommon VmessCommon)
 if(NOT APPLE)
     target_precompile_headers(VmessClient REUSE_FROM ww)
 endif()

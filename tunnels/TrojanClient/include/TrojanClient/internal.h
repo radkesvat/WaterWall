@@ -14,7 +14,6 @@ void trojanclientCloseLine(tunnel_t *t, line_t *l, trojanclient_close_origin_t o
 
 bool trojanclientAssociationAlive(tunnel_t *t, line_t *next_line, line_t *prev_line);
 void trojanclientSendDueRequest(tunnel_t *t, line_t *l);
-void trojanclientCancelFirstPayloadTimer(trojanclient_lstate_t *ls);
 void trojanclientSetNextPaused(tunnel_t *t, line_t *l, bool paused);
 
 /* Shared implementation helpers; callbacks retain their directional admission. */

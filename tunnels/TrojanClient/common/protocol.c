@@ -116,7 +116,7 @@ bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_
     }
     else
     {
-        trojanclientCancelFirstPayloadTimer(ls);
+        firstPayloadWindowCancel(&ls->first_payload);
         ls->request_sent = true;
     }
     tunnelNextUpStreamPayload(t, l, buf);

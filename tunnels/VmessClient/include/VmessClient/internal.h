@@ -10,7 +10,6 @@ void vmessclientOnNextEstablished(tunnel_t *t, line_t *l, vmessclient_lstate_t *
 void vmessclientCloseLine(tunnel_t *t, line_t *l, vmessclient_close_origin_t origin);
 bool vmessclientAssociationAlive(tunnel_t *t, line_t *next_line, line_t *prev_line);
 void vmessclientSendDueRequest(tunnel_t *t, line_t *l);
-void vmessclientCancelFirstPayloadTimer(vmessclient_lstate_t *ls);
 void vmessclientSetNextPaused(tunnel_t *t, line_t *l, bool paused);
 bool vmessclientCommitRequest(vmessclient_lstate_t *ls, uint8_t *out, size_t capacity, size_t *written);
 void vmessclientTransmit(tunnel_t *t, line_t *l);

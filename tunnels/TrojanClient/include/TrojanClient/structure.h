@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DomainResolver/interface.h"
+#include "ProxyClientCommon/first_payload_window.h"
 #include "address_codec.h"
 #include "wwapi.h"
 
@@ -85,16 +86,14 @@ typedef struct trojanclient_lstate_s
     bool request_sent : 1;
     bool est_notifying : 1;
     bool carrier_paused : 1; // UDP carrier-head permission for the independent idle-header producer.
-    bool first_payload_due : 1;
     bool receiving : 1;
     bool header_ready : 1;
 
     address_context_t target_addr;
 
     /* Transport context and the independent first-payload deadline. */
-    tunnel_t *tunnel;
-    wtimer_t *first_payload_timer;
-    uint64_t  first_payload_deadline_us;
+    tunnel_t              *tunnel;
+    first_payload_window_t first_payload;
 
     /* Each FIFO entry is one admitted nested input batch. The outer parser
      * completes these in order and retains only an incomplete wire suffix.

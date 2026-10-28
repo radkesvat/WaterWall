@@ -8,7 +8,7 @@ void vlessclientLinestateInitialize(vlessclient_lstate_t *ls, line_t *l)
 
 void vlessclientLinestateDestroy(vlessclient_lstate_t *ls)
 {
-    vlessclientCancelFirstPayloadTimer(ls);
+    firstPayloadWindowCancel(&ls->first_payload);
     addresscontextReset(&ls->target_addr);
     if (ls->receive_head != NULL)
         lineReuseBuffer(ls->line, ls->receive_head);

@@ -46,6 +46,14 @@ sbuf_t     *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, u
 }
 #include "wloop_internal.h"
 
+static bool refuse_first_payload_reset;
+bool        __real_wtimerReset(wtimer_t *, uint32_t);
+bool        __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms);
+bool        __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
+{
+    return ! refuse_first_payload_reset && __real_wtimerReset(timer, timeout_ms);
+}
+
 #if WW_HAVE_SPLICE
 #include <fcntl.h>
 #include <unistd.h>
@@ -1028,7 +1036,7 @@ static void testTimers(void)
         f.env.loop->cur_hrtime                                                    = cached_us;
         establish();
         trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-        twfRequire(ls->first_payload_deadline_us == cached_us + 400000,
+        twfRequire(ls->first_payload.deadline_us == cached_us + 400000,
                    "first-payload deadline sampled a fresh clock or lost microsecond precision");
         end();
     }
@@ -1045,43 +1053,52 @@ static void testTimers(void)
         end();
     }
     for (unsigned udp = 0; udp < 2; ++udp)
-        for (unsigned mode = 0; mode < 8; ++mode)
+        for (unsigned mode = 0; mode < 9; ++mode)
         {
             begin(udp, "127.0.0.1", 128, 0, false);
             ((trojanclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 400;
             establish();
             trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-            twfRequire(f.ests == (udp ? 1U : 2U) && f.requests == 0 && ls->first_payload_timer != NULL,
+            twfRequire(f.ests == (udp ? 1U : 2U) && f.requests == 0 && ls->first_payload.timer != NULL,
                        "idle deadline missing or header sent early");
-            uint64_t deadline = ls->first_payload_deadline_us;
+            uint64_t deadline = ls->first_payload.deadline_us;
             establish();
-            twfRequire(f.ests == (udp ? 1U : 4U) && ls->first_payload_deadline_us == deadline &&
+            twfRequire(f.ests == (udp ? 1U : 4U) && ls->first_payload.deadline_us == deadline &&
                            wloopNTimers(f.env.loop) == 1,
                        "duplicate Est reset deadline or changed mapping");
             if (mode == 0)
             {
                 tunnelUpStreamPayload(f.t, f.application, bytes("A", 1, true, 320));
-                twfRequire(ls->first_payload_timer == NULL && wloopNTimers(f.env.loop) == 0 &&
+                twfRequire(ls->first_payload.timer == NULL && wloopNTimers(f.env.loop) == 0 &&
                                f.up_len == 68 + (udp ? 11 + 1 : 1),
                            "data did not cancel timer");
             }
             else if (mode == 1)
             {
-                wtimerTestMakePendingOneShot(ls->first_payload_timer);
+                wtimerTestMakePendingOneShot(ls->first_payload.timer);
                 discard wloopProcessEvents(f.env.loop, 0);
-                twfRequire(f.requests == 0 && ls->first_payload_timer != NULL && wloopNTimers(f.env.loop) == 1,
+                twfRequire(f.requests == 0 && ls->first_payload.timer != NULL && wloopNTimers(f.env.loop) == 1,
                            "early rounded expiry violated absolute deadline");
+            }
+            else if (mode == 8)
+            {
+                refuse_first_payload_reset = true;
+                wtimerTestMakePendingOneShot(ls->first_payload.timer);
+                discard wloopProcessEvents(f.env.loop, 0);
+                refuse_first_payload_reset = false;
+                twfRequire(! lineIsAlive(f.application) && f.requests == 0 && wloopNTimers(f.env.loop) == 0,
+                           "first-payload rearm refusal stranded the association");
             }
             else if (mode == 2)
             {
                 wloopCloseNormalAdmission(f.env.loop);
                 wloopQuiesceNormalWork(f.env.loop);
-                twfRequire(ls->first_payload_timer->quiesced && f.requests == 0,
+                twfRequire(ls->first_payload.timer->quiesced && f.requests == 0,
                            "quiescence emitted header or reclaimed owner's timer handle");
             }
             else if (mode == 3)
             {
-                wtimerTestMakePendingOneShot(ls->first_payload_timer);
+                wtimerTestMakePendingOneShot(ls->first_payload.timer);
                 tunnelDownStreamFin(f.t, f.carrier);
                 discard wloopProcessEvents(f.env.loop, 0);
                 twfRequire(! lineIsAlive(f.application) && f.requests == 0, "canceled pending timer emitted header");
@@ -1090,8 +1107,8 @@ static void testTimers(void)
             {
                 if (mode != 4)
                     tunnelDownStreamPause(f.t, f.carrier);
-                ls->first_payload_deadline_us = getHRTimeUs() - 1;
-                wtimerTestMakePendingOneShot(ls->first_payload_timer);
+                ls->first_payload.deadline_us = getHRTimeUs() - 1;
+                wtimerTestMakePendingOneShot(ls->first_payload.timer);
                 if (mode == 4)
                 {
                     f.boundary = 2;
@@ -1102,8 +1119,9 @@ static void testTimers(void)
                     twfRequire(! lineIsAlive(f.application) && f.requests == 1, "timer callback Finish leaked line");
                 else
                 {
-                    twfRequire(f.requests == (udp ? 0U : 1U) && ls->first_payload_due == (udp != 0) &&
-                                   ls->first_payload_timer == NULL,
+                    twfRequire(f.requests == (udp ? 0U : 1U) &&
+                                   firstPayloadWindowIsDue(&ls->first_payload) == (udp != 0) &&
+                                   ls->first_payload.timer == NULL,
                                "due header ignored the exact-line role or retained executing one-shot");
                     if (mode == 5)
                         tunnelDownStreamResume(f.t, f.carrier);
@@ -1115,7 +1133,8 @@ static void testTimers(void)
                         f.action   = 5;
                         tunnelDownStreamResume(f.t, f.carrier);
                     }
-                    twfRequire(f.requests == 1 && ! ls->first_payload_due && wloopNTimers(f.env.loop) == 0 &&
+                    twfRequire(f.requests == 1 && ! firstPayloadWindowIsDue(&ls->first_payload) &&
+                                   wloopNTimers(f.env.loop) == 0 &&
                                    f.up_len == 68 + (mode == 5 ? 0
                                                      : udp     ? 11 + 1
                                                                : 1),
@@ -1190,8 +1209,8 @@ static void testTimerWorker(void)
     ((trojanclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 400;
     establish();
     trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-    twfRequire(lineGetWID(f.carrier) == 1 && ls->first_payload_timer != NULL &&
-                   ls->first_payload_timer->loop == f.env.loop && ls->first_payload_timer->loop->wid == 1,
+    twfRequire(lineGetWID(f.carrier) == 1 && ls->first_payload.timer != NULL &&
+                   ls->first_payload.timer->loop == f.env.loop && ls->first_payload.timer->loop->wid == 1,
                "timer used foreign worker loop");
     end();
     test_wid = 0;

@@ -9,6 +9,14 @@
 
 #include "vectors.h"
 
+static bool refuse_first_payload_reset;
+bool        __real_wtimerReset(wtimer_t *, uint32_t);
+bool        __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms);
+bool        __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
+{
+    return ! refuse_first_payload_reset && __real_wtimerReset(timer, timeout_ms);
+}
+
 enum
 {
     kCaptureSize = 5 * 1024 * 1024
@@ -478,9 +486,9 @@ static void timing(void)
         tunnelDownStreamPause(f.client, f.carrier);
         tunnelDownStreamEst(f.client, f.carrier);
         vmessclient_lstate_t *ls       = lineGetState(f.carrier, f.client);
-        uint64_t              deadline = ls->first_payload_deadline_us;
+        uint64_t              deadline = ls->first_payload.deadline_us;
         tunnelDownStreamEst(f.client, f.carrier);
-        twfRequire(ls->first_payload_deadline_us == deadline, "duplicate Est reset original deadline");
+        twfRequire(ls->first_payload.deadline_us == deadline, "duplicate Est reset original deadline");
         pump(25);
         twfRequire(udp ? f.up_size == 0 : f.up_size != 0, "idle header pressure semantics changed");
         tunnelDownStreamResume(f.client, f.carrier);
@@ -502,12 +510,27 @@ static void timing(void)
         twfRequire(f.up_calls == 1, "zero timeout split available first payload");
         end();
     }
+    for (unsigned udp = 0; udp < 2; ++udp)
+    {
+        twfSetCase("first-payload rearm refusal closes the association");
+        begin(configuration("aes-128-gcm", udp), udp);
+        tunnelDownStreamEst(f.client, f.carrier);
+        vmessclient_lstate_t *ls = lineGetState(f.carrier, f.client);
+        twfRequire(ls->first_payload.timer != NULL, "rearm refusal case did not arm a timer");
+        refuse_first_payload_reset = true;
+        wtimerTestMakePendingOneShot(ls->first_payload.timer);
+        discard wloopProcessEvents(f.env.loop, 0);
+        refuse_first_payload_reset = false;
+        twfRequire(! lineIsAlive(f.application) && f.up_calls == 0 && wloopNTimers(f.env.loop) == 0,
+                   "first-payload rearm refusal stranded the association");
+        end();
+    }
     fixture_wid = 1;
     begin(configuration("aes-128-gcm", true), true);
     tunnelDownStreamEst(f.client, f.carrier);
     vmessclient_lstate_t *ls = lineGetState(f.carrier, f.client);
-    twfRequire(ls->first_payload_timer != NULL && ls->first_payload_timer->loop == f.env.loop &&
-                   ls->first_payload_timer->loop->wid == 1,
+    twfRequire(ls->first_payload.timer != NULL && ls->first_payload.timer->loop == f.env.loop &&
+                   ls->first_payload.timer->loop->wid == 1,
                "timer uses wrong owner worker");
     end();
     fixture_wid = 0;

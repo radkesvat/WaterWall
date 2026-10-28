@@ -1,5 +1,6 @@
 #pragma once
 #include "DomainResolver/interface.h"
+#include "ProxyClientCommon/first_payload_window.h"
 #include "VmessCommon/crypto.h"
 #include "wwapi.h"
 
@@ -84,9 +85,8 @@ typedef struct vmessclient_lstate_s
     vmessclient_line_kind_t kind;
     vmessclient_phase_t     phase;
     address_context_t       target_addr;
-    wtimer_t               *first_payload_timer;
-    uint64_t                first_payload_deadline_us;
-    bool                    request_sent, est_notifying, carrier_paused, first_payload_due;
+    first_payload_window_t  first_payload;
+    bool                    request_sent, est_notifying, carrier_paused;
     bool                    response_complete, transmitting, receiving, closing;
     /* Storage belongs to the outer synchronous close frame. */
     struct vmessclient_close_context_s *close_context;
