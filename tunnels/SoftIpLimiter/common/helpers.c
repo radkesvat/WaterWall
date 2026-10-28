@@ -670,6 +670,12 @@ static void softiplimiterEnsureNextInitAndFlushAs(tunnel_t *t, line_t *l, softip
         {
             break;
         }
+        if (ls->pending_next_pause)
+        {
+            ls->pending_next_pause = false;
+            tunnelNextUpStreamPause(t, l);
+            continue; /* Pause can finish this borrowed line or admit nested input. */
+        }
         sbuf_t *out = first != NULL ? first : bufferqueuePopFront(&ls->initial_reentry);
         first       = NULL;
         if (out == NULL)
