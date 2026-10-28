@@ -8,31 +8,17 @@ static sbuf_t *receiveHead(vlessclient_lstate_t *ls)
     return ls->receive_head;
 }
 
-static void recycleEmptyHead(vlessclient_lstate_t *ls)
-{
-    assert(ls->receive_head != NULL);
-    if (sbufGetLength(ls->receive_head) == 0)
-    {
-        lineReuseBuffer(ls->line, ls->receive_head);
-        ls->receive_head = NULL;
-    }
-}
-
 /* Cached metadata remains charged until its complete header is consumed.
  * Only an owned popped head can change; queued entries stay immutable. */
 static bool gatherHeader(vlessclient_lstate_t *ls)
 {
-    while (ls->header_filled < ls->header_needed)
-    {
-        sbuf_t *head = receiveHead(ls);
-        if (head == NULL)
-            return false;
-        uint32_t count = min(ls->header_needed - ls->header_filled, sbufGetLength(head));
-        sbufReadRangeToMemory(head, ls->header + ls->header_filled, count);
-        ls->header_filled += count;
-        recycleEmptyHead(ls);
-    }
-    return true;
+    assert(ls->header_needed <= sizeof(ls->header));
+    return bufferRangeGatherPrefix(lineGetBufferPool(ls->line),
+                                   &ls->receive_head,
+                                   &ls->pending_down,
+                                   ls->header,
+                                   &ls->header_filled,
+                                   ls->header_needed);
 }
 
 /* 0 incomplete, -1 malformed, 1 ready. Never consume a byte of TCP body or

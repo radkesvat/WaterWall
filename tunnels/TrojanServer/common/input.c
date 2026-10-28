@@ -7,37 +7,12 @@ static bool trojanserverLineAuthenticated(const trojanserver_lstate_t *ls)
     return userHandleIsValid(&ls->user_handle) || ls->auth_password != NULL;
 }
 
-static sbuf_t *trojanserverInputHead(trojanserver_lstate_t *ls)
-{
-    if (ls->input_head == NULL)
-        ls->input_head = bufferqueuePopFront(&ls->pending_up);
-    return ls->input_head;
-}
-
-static void trojanserverRecycleInputHead(trojanserver_lstate_t *ls)
-{
-    if (ls->input_head != NULL && sbufGetLength(ls->input_head) == 0)
-    {
-        lineReuseBuffer(ls->line, ls->input_head);
-        ls->input_head = NULL;
-    }
-}
-
 static bool trojanserverGatherHeader(trojanserver_lstate_t *ls, uint16_t needed)
 {
     assert(needed <= sizeof(ls->header));
     ls->header_needed = needed;
-    while (ls->header_filled < needed)
-    {
-        sbuf_t *head = trojanserverInputHead(ls);
-        if (head == NULL)
-            return false;
-        uint32_t n = min(needed - ls->header_filled, sbufGetLength(head));
-        sbufReadRangeToMemory(head, ls->header + ls->header_filled, n);
-        ls->header_filled += n;
-        trojanserverRecycleInputHead(ls);
-    }
-    return true;
+    return bufferRangeGatherPrefix(
+        lineGetBufferPool(ls->line), &ls->input_head, &ls->pending_up, ls->header, &ls->header_filled, needed);
 }
 
 /* Incomplete (0) is separate from invalid (-1) and complete (1). */
@@ -82,14 +57,9 @@ void trojanserverResetHeader(trojanserver_lstate_t *ls)
 
 void trojanserverRetainActiveHead(trojanserver_lstate_t *ls)
 {
-    if (ls->input_head != NULL)
-    {
-        /* Initial parsing only consumes this admitted head; no callback or new
-         * admission intervenes before restoring it to the still-unbound queue. */
-        assert(ls->pending_up.budget == NULL);
-        bufferqueuePushFront(&ls->pending_up, ls->input_head);
-        ls->input_head = NULL;
-    }
+    /* Initial parsing only consumes this admitted head; no callback or new
+     * admission intervenes before restoring it to the still-unbound queue. */
+    bufferRangeRestoreHead(&ls->input_head, &ls->pending_up);
 }
 
 void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
