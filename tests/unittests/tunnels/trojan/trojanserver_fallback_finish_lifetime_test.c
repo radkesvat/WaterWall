@@ -64,7 +64,7 @@ static void injectTrojanPause(fallback_finish_fixture_t *fallback, line_t *line)
     trojanserverTunnelDownStreamPause(fallback->node, line);
 }
 
-static void fixtureSetup(trojanserver_fallback_fixture_t *fixture)
+static void fixtureSetupUnselected(trojanserver_fallback_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
     twfWorkerEnvSetup(&fixture->env, kTestLargeBufferSize, 0);
@@ -73,25 +73,31 @@ static void fixtureSetup(trojanserver_fallback_fixture_t *fixture)
     fixture->node = tunnelCreate(NULL, sizeof(trojanserver_tstate_t), sizeof(trojanserver_lstate_t));
     twfRequire(fixture->node != NULL, "failed to create the TrojanServer tunnel");
     tunnelBind(fixture->prev, fixture->node);
+    fixture->node->fnPauseU = trojanserverTunnelUpStreamPause;
 
     fixture->fallback.node                    = fixture->node;
     fixture->fallback.require_node_state_zero = requireTrojanStateZero;
     fallbackFinishCreateBranch(&fixture->fallback);
 
-    trojanserver_tstate_t *ts                = tunnelGetState(fixture->node);
-    ts->fallback_tunnel                      = fixture->fallback.fallback;
-    ts->fallback_intentional_delay_ms        = 7;
-    ts->fallback_intentional_delay_jitter_ms = 0;
+    trojanserver_tstate_t *ts                  = tunnelGetState(fixture->node);
+    ts->fallback_tunnel                        = fixture->fallback.fallback;
+    ts->fallback_replay_config.delay_ms        = 7;
+    ts->fallback_replay_config.jitter_ms       = 0;
+    ts->fallback_replay_config.max_batch_bytes = kTrojanServerMaxPendingBytes;
+    ts->fallback_replay_config.zero_delay_mode = kFallbackReplayCallerDriven;
 
     twfLinePoolSetup(&fixture->lines, fixture->node->lstate_size, kTestLinePoolItems);
     fixture->line = twfLinePoolCreateLine(&fixture->lines);
 
     trojanserver_lstate_t *ls = lineGetState(fixture->line, fixture->node);
     trojanserverLinestateInitialize(ls, fixture->node, fixture->line, kTrojanServerLineKindClient);
-    ls->branch = kTrojanServerBranchFallback;
-    ls->phase  = kTrojanServerPhaseFallback;
-    tunnelUpStreamInit(fixture->fallback.fallback, fixture->line);
     fallbackFinishResetScheduledTask();
+}
+
+static void fixtureSetup(trojanserver_fallback_fixture_t *fixture)
+{
+    fixtureSetupUnselected(fixture);
+    trojanserverStartFallback(fixture->node, fixture->line, lineGetState(fixture->line, fixture->node));
 }
 
 static void fixtureDestroyClosedLine(trojanserver_fallback_fixture_t *fixture)
@@ -273,8 +279,8 @@ static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
 
     trojanserver_fallback_fixture_t fixture;
     fixtureSetup(&fixture);
-    ((trojanserver_tstate_t *) tunnelGetState(fixture.node))->fallback_intentional_delay_ms = 0;
-    fixture.fallback.inject_during_payload                                                  = injectTrojanPause;
+    ((trojanserver_tstate_t *) tunnelGetState(fixture.node))->fallback_replay_config.delay_ms = 0;
+    fixture.fallback.inject_during_payload                                                    = injectTrojanPause;
     trojanserver_lstate_t *ls = lineGetState(fixture.line, fixture.node);
 
     twfRequire(trojanserverSendFallbackPayload(
@@ -307,6 +313,142 @@ static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
     twfRequireEqualU32(fixture.fallback.finish_calls, 1, "fallback was not finished after zero-delay test");
     releaseOwnerReference(&fixture);
     fixtureDestroyClosedLine(&fixture);
+}
+
+static void injectTrojanNestedInput(fallback_finish_fixture_t *fallback, line_t *line)
+{
+    if (fallback->payload_calls == 1)
+    {
+        trojanserverTunnelUpStreamPayload(
+            fallback->node, line, fallbackFinishMakePayload(lineGetBufferPool(line), "-two"));
+        trojanserverTunnelUpStreamPayload(
+            fallback->node, line, fallbackFinishMakePayload(lineGetBufferPool(line), "-three"));
+        twfRequireEqualU32(fallback->payload_calls, 1, "nested input recursively entered the active Payload");
+    }
+    else if (fallback->payload_calls == 2)
+    {
+        twfRequireEqualText((const char *) fallback->received, "one-two", "pump merged distinct nested entries");
+        trojanserverTunnelUpStreamPayload(
+            fallback->node, line, fallbackFinishMakePayload(lineGetBufferPool(line), "-four"));
+        twfRequireEqualU32(fallback->payload_calls, 2, "second nested input recursively entered the pump");
+    }
+    else if (fallback->payload_calls == 3)
+    {
+        twfRequireEqualText((const char *) fallback->received, "one-two-three", "later input overtook older input");
+    }
+}
+
+static void caseNestedZeroDelayInputDrainsSynchronously(void)
+{
+    twfSetCase("TrojanServer zero-delay nested input drains FIFO one entry at a time before return");
+    trojanserver_fallback_fixture_t fixture;
+    fixtureSetup(&fixture);
+    ((trojanserver_tstate_t *) tunnelGetState(fixture.node))->fallback_replay_config.delay_ms = 0;
+    fixture.fallback.inject_during_payload                                                    = injectTrojanNestedInput;
+
+    trojanserverTunnelUpStreamPayload(fixture.node, fixture.line, fallbackFinishMakePayload(fixture.env.pool, "one"));
+    twfRequireEqualU32(fixture.fallback.payload_calls, 4, "nested zero-delay input escaped the synchronous pump");
+    twfRequireEqualText((const char *) fixture.fallback.received, "one-two-three-four", "nested FIFO changed");
+    twfRequire(! g_fallback_finish_task.pending, "nested zero-delay input scheduled an asynchronous drain");
+    closeFromPreviousOwner(&fixture);
+    releaseOwnerReference(&fixture);
+    fixtureDestroyClosedLine(&fixture);
+}
+
+static void injectTrojanInitInput(fallback_finish_fixture_t *fallback, line_t *line)
+{
+    trojanserverTunnelUpStreamPayload(
+        fallback->node, line, fallbackFinishMakePayload(lineGetBufferPool(line), "-init"));
+}
+
+static void injectTrojanPauseInput(fallback_finish_fixture_t *fallback, line_t *line)
+{
+    trojanserverTunnelUpStreamPayload(
+        fallback->node, line, fallbackFinishMakePayload(lineGetBufferPool(line), "-pause"));
+}
+
+static void caseInitialZeroDelayBatchIncludesStartupInput(void)
+{
+    twfSetCase("TrojanServer initial zero-delay transcript includes Init and Pause input in one batch");
+    trojanserver_fallback_fixture_t fixture;
+    fixtureSetupUnselected(&fixture);
+    ((trojanserver_tstate_t *) tunnelGetState(fixture.node))->fallback_replay_config.delay_ms = 0;
+    fixture.fallback.inject_during_init                                                       = injectTrojanInitInput;
+    fixture.fallback.inject_during_pause                                                      = injectTrojanPauseInput;
+    trojanserverTunnelUpStreamPause(fixture.node, fixture.line);
+    trojanserverTunnelUpStreamPayload(fixture.node, fixture.line, fallbackFinishMakePayload(fixture.env.pool, "probe"));
+    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "startup input split the initial merged replay");
+    twfRequireEqualText((const char *) fixture.fallback.received, "probe-init-pause", "startup input overtook replay");
+    twfRequire(! g_fallback_finish_task.pending, "zero-delay startup scheduled a task");
+    closeFromPreviousOwner(&fixture);
+    releaseOwnerReference(&fixture);
+    fixtureDestroyClosedLine(&fixture);
+}
+
+static void injectTrojanSourceFinish(fallback_finish_fixture_t *fallback, line_t *line)
+{
+    trojanserverTunnelUpStreamFinish(fallback->node, line);
+}
+
+static void caseSourceCloseDuringStartup(void)
+{
+    for (unsigned during_pause = 0; during_pause < 2; ++during_pause)
+    {
+        twfSetCase(during_pause ? "TrojanServer source close during Pause flushes completed Init transcript"
+                                : "TrojanServer source close during Init discards unfinished transcript");
+        trojanserver_fallback_fixture_t fixture;
+        fixtureSetupUnselected(&fixture);
+        if (during_pause)
+        {
+            trojanserverTunnelUpStreamPause(fixture.node, fixture.line);
+            fixture.fallback.inject_during_pause = injectTrojanSourceFinish;
+        }
+        else
+            fixture.fallback.inject_during_init = injectTrojanSourceFinish;
+
+        /* Leave the borrowed allocation alive until the initiating dispatch
+         * returns: a surviving line must not let the pump revive wiped state. */
+        trojanserverTunnelUpStreamPayload(
+            fixture.node, fixture.line, fallbackFinishMakePayload(fixture.env.pool, "probe"));
+        twfRequire(lineIsAlive(fixture.line), "borrower destroyed the source-owned line");
+        twfRequireEqualU32(fixture.fallback.init_calls, 1, "fallback Init count changed");
+        twfRequireEqualU32(fixture.fallback.payload_calls, during_pause, "startup close used the wrong Init barrier");
+        if (during_pause)
+            twfRequireEqualText((const char *) fixture.fallback.received, "probe", "Pause close lost transcript");
+        twfRequireEqualU32(fixture.fallback.finish_calls, 1, "startup close did not finish exactly once");
+        twfRequireLineStateZeroed(fixture.line, fixture.node, "outer pump revived closed fallback state");
+        twfRequire(! g_fallback_finish_task.pending, "closed startup admitted a delayed task");
+        twfRequireEqualText(fixture.trace.seq, "", "source startup close reflected a callback");
+        lineRef(fixture.line);
+        lineDestroy(fixture.line);
+        releaseOwnerReference(&fixture);
+        fixtureDestroyClosedLine(&fixture);
+    }
+}
+
+static void caseSourceCloseDuringPayloadLeavesStateRetired(void)
+{
+    for (unsigned delayed = 0; delayed < 2; ++delayed)
+    {
+        twfSetCase("TrojanServer fallback dispatch stops after nested source close while borrowed line survives");
+        trojanserver_fallback_fixture_t fixture;
+        fixtureSetup(&fixture);
+        ((trojanserver_tstate_t *) tunnelGetState(fixture.node))->fallback_replay_config.delay_ms = delayed ? 7 : 0;
+        fixture.fallback.inject_during_payload = injectTrojanSourceFinish;
+        trojanserverTunnelUpStreamPayload(
+            fixture.node, fixture.line, fallbackFinishMakePayload(fixture.env.pool, "final"));
+        if (delayed)
+            fallbackFinishDriveDelayedTask();
+        twfRequire(lineIsAlive(fixture.line), "borrower destroyed the source-owned line during Payload");
+        twfRequireEqualU32(fixture.fallback.payload_calls, 1, "nested close replayed a transferred buffer");
+        twfRequireEqualU32(fixture.fallback.finish_calls, 1, "nested close did not settle branch Finish");
+        twfRequireLineStateZeroed(fixture.line, fixture.node, "dispatch resumed a destroyed fallback state");
+        twfRequire(! g_fallback_finish_task.pending, "closed dispatch left a pending task");
+        lineRef(fixture.line);
+        lineDestroy(fixture.line);
+        releaseOwnerReference(&fixture);
+        fixtureDestroyClosedLine(&fixture);
+    }
 }
 
 static void caseAlreadyPausedCloseFlushesLocalBatch(void)
@@ -385,6 +527,30 @@ static void caseMixedSpliceFinalBatch(void)
 }
 #endif
 
+static void driveTrojanTaskDuringFinalReplay(fallback_finish_fixture_t *fallback, line_t *line)
+{
+    discard fallback;
+    discard line;
+    fallbackFinishDriveDelayedTask();
+}
+
+static void casePendingTaskDuringFinalReplayIsHarmless(void)
+{
+    twfSetCase("TrojanServer old timer reentry during final replay does not restart the fallback pump");
+    trojanserver_fallback_fixture_t fixture;
+    fixtureSetup(&fixture);
+    fixture.fallback.inject_during_payload = driveTrojanTaskDuringFinalReplay;
+    trojanserverTunnelUpStreamPayload(fixture.node, fixture.line, fallbackFinishMakePayload(fixture.env.pool, "final"));
+    twfRequire(g_fallback_finish_task.pending, "final replay did not begin with a pending timer");
+    closeFromPreviousOwner(&fixture);
+    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "old timer duplicated final replay");
+    twfRequireEqualU32(fixture.fallback.finish_calls, 1, "old timer disrupted final Finish");
+    twfRequireEqualText(fixture.trace.seq, "", "old timer reflected a callback toward source");
+    twfRequire(! g_fallback_finish_task.pending, "final replay timer reentry rescheduled work");
+    releaseOwnerReference(&fixture);
+    fixtureDestroyClosedLine(&fixture);
+}
+
 static void caseCanceledTaskLeavesCleanupWithOwner(void)
 {
     twfSetCase("TrojanServer quiesced fallback task leaves its represented FIFO for owner cleanup");
@@ -415,8 +581,13 @@ int main(void)
     caseReentrantBranchFinishIsAbsorbed();
     caseOrdinaryDelayedBatchIgnoresAdvisoryPause();
     caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake();
+    caseNestedZeroDelayInputDrainsSynchronously();
+    caseSourceCloseDuringStartup();
+    caseInitialZeroDelayBatchIncludesStartupInput();
+    caseSourceCloseDuringPayloadLeavesStateRetired();
     caseAlreadyPausedCloseFlushesLocalBatch();
     caseCanceledTaskLeavesCleanupWithOwner();
+    casePendingTaskDuringFinalReplayIsHarmless();
 #if WW_HAVE_SPLICE
     caseMixedSpliceFinalBatch();
 #endif

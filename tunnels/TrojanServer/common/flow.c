@@ -4,7 +4,8 @@
 typedef enum pump_step_result_e
 {
     kPumpStepFallThrough, // No callback ran; the next step may inspect state.
-    kPumpStepRecheck      // Restart liveness and permission checks before another step.
+    kPumpStepRecheck,     // Restart liveness and permission checks before another step.
+    kPumpStepStop         // Replay retired state; release the pump reference and return.
 } pump_step_result_t;
 
 bool trojanserverIsUdp(const trojanserver_lstate_t *ls)
@@ -44,20 +45,14 @@ static pump_step_result_t processPendingInput(tunnel_t *t, line_t *l, trojanserv
     }
     if (ls->branch == kTrojanServerBranchFallback)
     {
-        trojanserver_tstate_t *ts = tunnelGetState(t);
-        if (ts->fallback_intentional_delay_ms == 0 && ls->fallback_pending_up != NULL &&
-            bufferqueueGetBufCount(ls->fallback_pending_up) != 0)
-        {
-            /* Only branch Init/reentry input can remain at zero delay. */
-            sbuf_t *buf = bufferqueuePopFront(ls->fallback_pending_up);
-            tunnelUpStreamPayload(trojanserverSelectedUpstream(t, ls), l, buf);
-            return kPumpStepRecheck;
-        }
-        if (UNLIKELY(! trojanserverScheduleFallbackPayloadDrain(t, l, ls)))
-        {
+        bool                           dispatched;
+        const fallback_replay_result_e result = trojanserverDrainFallbackPayload(t, l, ls, &dispatched);
+        if (result == kFallbackReplayRefused)
             trojanserverCloseLineBidirectional(t, l);
+        if (result != kFallbackReplayOk)
+            return kPumpStepStop;
+        if (dispatched)
             return kPumpStepRecheck;
-        }
     }
     /* A scheduled fallback task runs later; this dispatch has no more ready input. */
     return kPumpStepFallThrough;
@@ -81,8 +76,9 @@ void trojanserverPump(tunnel_t *t, line_t *l)
         return;
     lineRef(l);
     ls->pumping = true;
-    /* Entry gates teardown reentrancy; completed callbacks report closure through logical death. */
-    while (lineIsAlive(l))
+    /* A source Finish can retire this borrowed state before its owner destroys
+     * the line. Recheck both lifetimes after every pump callback. */
+    while (lineIsAlive(l) && ls->line == l)
     {
         bool udp = trojanserverIsUdp(ls);
         if (udp && notifyPausedProducers(t, l, ls) == kPumpStepRecheck)
@@ -94,20 +90,26 @@ void trojanserverPump(tunnel_t *t, line_t *l)
             if (! ls->first_payload_seen)
                 break;
             trojanserverParseInitial(t, l, ls);
-            if (! lineIsAlive(l))
+            if (! lineIsAlive(l) || ls->line != l)
                 break;
             if (ls->phase == kTrojanServerPhaseWaitInitial)
                 break;
             continue;
         }
-        if (processPendingInput(t, l, ls, udp) == kPumpStepRecheck)
+        const pump_step_result_t input_result = processPendingInput(t, l, ls, udp);
+        if (input_result == kPumpStepStop)
+        {
+            lineUnref(l);
+            return;
+        }
+        if (input_result == kPumpStepRecheck)
             continue;
         /* Drain ready work before Resume, but let incomplete UDP frames receive more input. */
         if (udp && notifyResumedProducers(t, l, ls) == kPumpStepRecheck)
             continue;
         break;
     }
-    if (lineIsAlive(l))
+    if (lineIsAlive(l) && ls->line == l)
     {
         ls->pumping = false;
         if (ls->line_kind == kTrojanServerLineKindClient && ls->branch == kTrojanServerBranchTrojan &&

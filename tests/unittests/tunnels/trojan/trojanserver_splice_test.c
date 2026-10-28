@@ -485,7 +485,7 @@ static void begin(bool fallback, bool database, uint32_t pool)
     f.database                                                    = database;
     trojanserver_tstate_t *ts                                     = tunnelGetState(f.t);
     ts->fallback_tunnel                                           = fallback ? f.fallback : NULL;
-    ts->fallback_intentional_delay_ms = ts->fallback_intentional_delay_jitter_ms = 0;
+    ts->fallback_replay_config.delay_ms = ts->fallback_replay_config.jitter_ms = 0;
     if (database)
         ts->auth_client_tunnel = f.next;
     twfLinePoolSetup(&f.lines, f.t->lstate_size, 8);
@@ -1094,8 +1094,8 @@ static void testFallback(void)
     {
         begin(true, false, 128);
         trojanserver_tstate_t *ts                = tunnelGetState(f.t);
-        ts->fallback_intentional_delay_ms        = 7;
-        ts->fallback_intentional_delay_jitter_ms = 1;
+        ts->fallback_replay_config.delay_ms      = 7;
+        ts->fallback_replay_config.jitter_ms     = 1;
         uint8_t probe[2048];
         memset(probe, 'x', sizeof(probe));
         tunnelUpStreamPayload(f.t, f.line, bytes(probe, sizeof(probe), true, 320));
@@ -1116,7 +1116,7 @@ static void testFallback(void)
         end();
     }
     begin(true, false, 128);
-    ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+    ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
     g_fallback_finish_task.refuse                                                  = true;
     tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
     twfRequire(! lineIsAlive(f.line), "task refusal did not close fallback");
@@ -1145,7 +1145,7 @@ static void testFallbackLocalReplies(void)
                 f.auto_est             = established != 0;
                 local_reply_pipe       = pipe != 0;
                 f.fallback->fnPayloadU = localFallbackReplyAndFinish;
-                ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = delayed ? 7 : 0;
+                ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = delayed ? 7 : 0;
                 tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, pipe != 0, 320));
                 if (delayed)
                     fallbackFinishDriveDelayedTask();
@@ -1199,7 +1199,7 @@ static void testLimitsAndFailures(void)
         for (unsigned entries = 0; entries < 2; ++entries)
         {
             begin(true, false, pool ? 131072 : 128);
-            ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+            ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
             tunnelUpStreamPayload(f.t, f.line, bytes("", 0, false, 320));
             /* The empty first replay occupies one retained entry. */
             uint32_t count = entries ? 1023 : 1;
@@ -1207,7 +1207,7 @@ static void testLimitsAndFailures(void)
                 tunnelUpStreamPayload(f.t, f.line, bytes(data, entries ? 0 : kTrojanServerMaxPendingBytes, false, 320));
             twfRequire(lineIsAlive(f.line), "exact delayed backlog limit rejected");
             trojanserver_lstate_t *ls = lineGetState(f.line, f.t);
-            twfRequire(ls->pending_up.budget == NULL && ls->fallback_pending_up->budget == &ls->output_budget &&
+            twfRequire(ls->pending_up.budget == NULL && ls->fallback.pending.budget == &ls->output_budget &&
                            bufferbudgetGetUsage(&ls->output_budget).entries == count + 1 &&
                            bufferbudgetGetUsage(&ls->output_budget).bytes ==
                                (entries ? 0 : kTrojanServerMaxPendingBytes),
@@ -1477,7 +1477,7 @@ static void testRetentionAndIndependentDelay(void)
 
     twfSetCase("delayed fallback honors its delay and FIFO without waiting for Resume");
     begin(true, false, 128);
-    ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+    ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
     tunnelUpStreamPayload(f.t, f.line, bytes("A", 1, true, 320));
     tunnelDownStreamPause(f.t, f.line);
     tunnelUpStreamPayload(f.t, f.line, bytes("B", 1, true, 320));

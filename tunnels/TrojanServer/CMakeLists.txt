@@ -41,7 +41,7 @@ target_include_directories(TrojanServer PRIVATE
 target_include_directories(TrojanServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(TrojanServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TrojanServer)
 
-target_link_libraries(TrojanServer PRIVATE ww AuthenticationClient UserController)
+target_link_libraries(TrojanServer PUBLIC FallbackReplay PRIVATE ww AuthenticationClient UserController)
 if(NOT APPLE)
     target_precompile_headers(TrojanServer REUSE_FROM ww)
 endif()

@@ -15,7 +15,8 @@ void trojanserverCloseLineBidirectional(tunnel_t *t, line_t *l);
 void trojanserverOnNextEstablished(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);
 bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io);
 bool trojanserverSendFallbackPayload(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, sbuf_t *buf);
-bool trojanserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);
+fallback_replay_result_e trojanserverDrainFallbackPayload(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls,
+                                                          bool *dispatched);
 
 bool trojanserverIsUdp(const trojanserver_lstate_t *ls);
 /* On success the queue owns *buf; on refusal the caller still owns it. */
