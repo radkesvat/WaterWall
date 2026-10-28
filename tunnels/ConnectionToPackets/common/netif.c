@@ -168,8 +168,11 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     size_t         charge;
     const bool     fits =
         sbufTryComputeCapacity(p->tot_len, padding, &capacity) && sbufTryComputeQueueCharge(capacity, &charge);
-    assert(fits);
-    discard fits;
+    if (UNLIKELY(! fits))
+    {
+        LOGF("ConnectionToPackets: output packet buffer geometry is unrepresentable");
+        abortProgramNow(1);
+    }
     if (! ctpHandoffReserve(ts->handoff_budget, charge, false))
         return ERR_MEM;
     /* Size detached output to the packet: a pooled small buffer would retain
