@@ -487,6 +487,20 @@ static bool splitPipeCurrentLineToWorker(tunnel_t *t, line_t *l, httpserver_lsta
         return false;
     }
 
+    /* Header detection may finish in the first receive slice of a larger
+     * delivery. Detach every later byte before destroying this worker's state.
+     * Keep the outer suffix separate from the bounded nested FIFO so their
+     * combined size need not fit one sbuf or queue counter on 32-bit targets. */
+    buffer_pool_t *pool   = lineGetBufferPool(l);
+    sbuf_t        *active = ls->receive.active;
+    ls->receive.active    = NULL;
+    bufferbudgetReservationRelease(&ls->receive.reservation);
+    buffer_queue_t pending;
+    bufferqueueInitEmpty(&pending);
+    sbuf_t *queued;
+    while ((queued = bufferqueuePopFront(&ls->receive.pending)) != NULL)
+        bufferqueuePushBack(&pending, queued);
+
     splitRemoveFromMaps(t, ls);
     httpserverLinestateDestroy(ls);
 
@@ -494,10 +508,24 @@ static bool splitPipeCurrentLineToWorker(tunnel_t *t, line_t *l, httpserver_lsta
     {
         tunnel_t *prev_tunnel = t->prev;
         tunnelUpStreamPayload(prev_tunnel, l, raw);
+        if (active != NULL && lineIsAlive(l))
+        {
+            sbuf_t *suffix = active;
+            active         = NULL;
+            tunnelUpStreamPayload(prev_tunnel, l, suffix);
+        }
+        while (lineIsAlive(l) && (queued = bufferqueuePopFront(&pending)) != NULL)
+            tunnelUpStreamPayload(prev_tunnel, l, queued);
+        if (active != NULL)
+            bufferpoolReuseBuffer(pool, active);
+        bufferqueueDestroy(&pending);
         return true;
     }
 
-    lineReuseBuffer(l, raw);
+    bufferpoolReuseBuffer(pool, raw);
+    if (active != NULL)
+        bufferpoolReuseBuffer(pool, active);
+    bufferqueueDestroy(&pending);
     tunnelPrevDownStreamFinish(t, l);
     return true;
 }
@@ -673,6 +701,12 @@ static bool splitPair(tunnel_t *t, line_t *upload_line, line_t *download_line)
     dls->split_upload_line   = upload_line;
     dls->split_download_line = download_line;
 
+    /* Pairing may run from the download while the upload has buffered bytes.
+     * Init and the first body output can inject more upload input, which must
+     * queue behind that retained prefix rather than start a recursive drain. */
+    const bool own_receive_guard = ! uls->receive.draining;
+    uls->receive.draining        = true;
+
     if (! lineCallWithRef(main_line, tunnelNextUpStreamInit, t))
     {
         return false;
@@ -680,12 +714,14 @@ static bool splitPair(tunnel_t *t, line_t *upload_line, line_t *download_line)
 
     // Init can re-enter and close both transports. Callers hold a reference to the waiting peer, so
     // both allocations remain present here, but their line states may already have been destroyed.
-    if (! lineIsAlive(upload_line) || ! lineIsAlive(download_line))
+    if (! lineIsAlive(upload_line) || ! lineIsAlive(download_line) || uls->line != upload_line ||
+        dls->line != download_line)
     {
         return false;
     }
 
-    return httpserverTransportDrainHttp1RequestBody(t, upload_line, uls);
+    return own_receive_guard ? httpserverDrainSplitInput(t, upload_line)
+                             : httpserverTransportDrainHttp1RequestBody(t, upload_line, uls);
 }
 
 static void splitApplyParsedHeader(line_t *l, httpserver_lstate_t *ls, size_t header_end,
@@ -705,7 +741,7 @@ static void splitApplyParsedHeader(line_t *l, httpserver_lstate_t *ls, size_t he
         if (info->transfer_chunked)
         {
             ls->h1_body_mode      = kHttpServerH1BodyChunked;
-            ls->h1_chunk_expected = -1;
+            ls->chunk_decoder     = (http_chunk_decoder_t) {0};
         }
         else if (info->has_content_length)
         {
@@ -908,7 +944,7 @@ void httpserverSplitUpStreamInit(tunnel_t *t, line_t *l)
     ls->split_role    = kHttpServerSplitRoleUnknown;
 }
 
-void httpserverSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+void httpserverSplitProcessUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     httpserver_lstate_t *ls = lineGetState(l, t);
     lineRef(l);
@@ -1094,4 +1130,14 @@ void httpserverSplitDownStreamFinish(tunnel_t *t, line_t *l)
         splitCloseMain(t, l, false);
     }
     lineUnref(l);
+}
+
+void httpserverSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    httpserverTunnelUpStreamPayload(t, l, buf);
+}
+
+void httpserverSplitRejectInput(tunnel_t *t, line_t *l)
+{
+    splitCloseFromTransport(t, l, true);
 }

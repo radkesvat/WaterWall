@@ -54,7 +54,6 @@ static void fixtureSetup(httpclient_chunked_fixture_t *fixture)
     ls->runtime_proto     = kHttpClientRuntimeHttp1;
     ls->h1_headers_parsed = true;
     ls->h1_body_mode      = kHttpClientH1BodyChunked;
-    ls->h1_chunk_expected = -1;
 }
 
 static void fixtureFeed(httpclient_chunked_fixture_t *fixture, const char *bytes)

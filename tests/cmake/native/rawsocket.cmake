@@ -106,7 +106,7 @@ if(TARGET HttpServer)
   waterwall_add_native_executable(httpserver_split_callback_boundary_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/http/httpserver_split_callback_boundary_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   waterwall_line_failure_test_use_tunnel(httpserver_split_callback_boundary_test HttpServer)
-  target_link_options(httpserver_split_callback_boundary_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_options(httpserver_split_callback_boundary_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=pipeTo" "-Wl,--wrap=sbufAppendMerge")
   target_link_libraries(httpserver_split_callback_boundary_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests httpserver_split_callback_boundary_test)
 
@@ -709,3 +709,21 @@ if(TARGET HttpCommon)
       "unit;tunnels;http;framing;limits")
   endforeach()
 endif()
+foreach(node IN ITEMS HttpClient HttpServer)
+  if(TARGET ${node})
+    string(TOLOWER ${node} lower)
+    waterwall_add_native_executable(${lower}_receive_streaming_test SUPPORT
+      SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/http/http_receive_streaming_test.c
+      ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+    if(node STREQUAL "HttpClient")
+      target_compile_definitions(${lower}_receive_streaming_test PRIVATE TEST_HTTP_CLIENT=1)
+    endif()
+    waterwall_line_failure_test_use_tunnel(${lower}_receive_streaming_test ${node})
+    target_link_options(${lower}_receive_streaming_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=sbufAppendMerge")
+    target_link_libraries(${lower}_receive_streaming_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests ${lower}_receive_streaming_test)
+    add_waterwall_unit_test(waterwall.${lower}_receive_streaming_unit ${lower}_receive_streaming_test
+      "unit;tunnels;http;framing;limits;reentrant" 60)
+  endif()
+endforeach()

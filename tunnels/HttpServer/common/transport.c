@@ -520,7 +520,10 @@ static bool httpserverForwardUpstreamPayload(tunnel_t *t, line_t *l, httpserver_
         lineReuseBuffer(l, buf);
         return false;
     }
-    return lineCallWithRefWithBuf(target, tunnelNextUpStreamPayload, t, buf);
+    if (! lineCallWithRefWithBuf(target, tunnelNextUpStreamPayload, t, buf))
+        return false;
+    return lineIsAlive(l) && httpserverLinestateIsActive(ls) && httpserverUpstreamTargetLine(ls, l) == target &&
+           ! ls->next_finished;
 }
 
 static void httpserverForwardUpstreamFinish(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
@@ -1754,180 +1757,48 @@ bool httpserverTransportSendWebSocketClose(tunnel_t *t, line_t *l, httpserver_ls
 
 bool httpserverTransportDrainWebSocketUp(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
-    while (true)
+    while (! ls->websocket_close_received)
     {
-        size_t available = bufferstreamGetBufLen(&ls->in_stream);
-        if (available < 2)
-        {
+        sbuf_t                       *payload = NULL;
+        const http_websocket_result_t result =
+            httpWebSocketDecoderStep(&ls->websocket_decoder, &ls->in_stream, true, &payload);
+        if (result == kHttpWebSocketNeedMore)
             return true;
-        }
-
-        uint8_t head[14];
-        bufferstreamViewBytesAt(&ls->in_stream, 0, head, 2);
-
-        bool     fin         = (head[0] & 0x80U) != 0;
-        uint8_t  opcode      = (uint8_t) (head[0] & 0x0FU);
-        bool     masked      = (head[1] & 0x80U) != 0;
-        uint64_t payload_len = (uint64_t) (head[1] & 0x7FU);
-        size_t   header_len  = 2;
-        uint8_t  mask_key[4] = {0};
-
-        if (! masked)
+        if (result == kHttpWebSocketError)
         {
-            LOGE("HttpServer: client websocket frames must be masked opcode=%s payload_len=%" PRIu64,
-                 httpserverWebSocketOpcodeName(opcode),
-                 payload_len);
+            LOGW("HttpServer: invalid websocket frame");
             return false;
         }
-
-        if (payload_len == 126U)
+        if (result == kHttpWebSocketData)
         {
-            if (available < 4)
-            {
-                return true;
-            }
-            bufferstreamViewBytesAt(&ls->in_stream, 2, head + 2, 2);
-            payload_len = ((uint64_t) head[2] << 8) | (uint64_t) head[3];
-            header_len  = 4;
-        }
-        else if (payload_len == 127U)
-        {
-            if (available < 10)
-            {
-                return true;
-            }
-            bufferstreamViewBytesAt(&ls->in_stream, 2, head + 2, 8);
-            payload_len = 0;
-            for (size_t i = 0; i < 8; ++i)
-            {
-                payload_len = (payload_len << 8) | (uint64_t) head[2 + i];
-            }
-            header_len = 10;
-        }
-
-        if (available < header_len + 4 + (size_t) payload_len)
-        {
-            return true;
-        }
-
-        if ((opcode & 0x08U) != 0 && (! fin || payload_len > 125U))
-        {
-            LOGE("HttpServer: invalid websocket control frame opcode=%s fin=%s payload_len=%" PRIu64,
-                 httpserverWebSocketOpcodeName(opcode),
-                 boolToTrueFalse(fin),
-                 payload_len);
-            return false;
-        }
-
-        if (payload_len > UINT32_MAX)
-        {
-            LOGE("HttpServer: websocket frame exceeds buffer limits opcode=%s payload_len=%" PRIu64,
-                 httpserverWebSocketOpcodeName(opcode),
-                 payload_len);
-            return false;
-        }
-
-        sbuf_t *discard_header = bufferstreamReadExact(&ls->in_stream, header_len);
-        lineReuseBuffer(l, discard_header);
-        sbuf_t *mask_buf = bufferstreamReadExact(&ls->in_stream, 4);
-        memoryCopy(mask_key, sbufGetRawPtr(mask_buf), 4);
-        lineReuseBuffer(l, mask_buf);
-
-        sbuf_t *payload = NULL;
-        if (payload_len > 0)
-        {
-            payload      = bufferstreamReadExact(&ls->in_stream, (size_t) payload_len);
-            uint8_t *ptr = (uint8_t *) sbufGetMutablePtr(payload);
-            for (uint32_t i = 0; i < sbufGetLength(payload); ++i)
-            {
-                ptr[i] ^= mask_key[i & 3U];
-            }
-        }
-
-        if (opcode == kWebSocketOpcodePing)
-        {
-            if (httpserverVerboseEnabled(t))
-            {
-                LOGD("HttpServer: received websocket ping payload_len=%u",
-                     payload == NULL ? 0U : sbufGetLength(payload));
-            }
-            const void *pong_data = (payload == NULL) ? NULL : sbufGetRawPtr(payload);
-            uint32_t    pong_len  = (payload == NULL) ? 0U : sbufGetLength(payload);
-            bool        ok = httpserverSendWebSocketControlFrame(t, l, ls, kWebSocketOpcodePong, pong_data, pong_len);
-            if (payload != NULL)
-            {
-                lineReuseBuffer(l, payload);
-            }
-            if (! ok)
-            {
+            if (! httpserverForwardUpstreamPayload(t, l, ls, payload))
                 return false;
-            }
             continue;
         }
-
-        if (opcode == kWebSocketOpcodePong)
+        const bool close = result == kHttpWebSocketClose;
+        const bool reply = result == kHttpWebSocketPing || (close && ! ls->websocket_close_sent);
+        if (close)
         {
-            if (httpserverVerboseEnabled(t))
-            {
-                LOGD("HttpServer: received websocket pong payload_len=%u",
-                     payload == NULL ? 0U : sbufGetLength(payload));
-            }
-            if (payload != NULL)
-            {
-                lineReuseBuffer(l, payload);
-            }
-            continue;
-        }
-
-        if (opcode == kWebSocketOpcodeClose)
-        {
-            if (httpserverVerboseEnabled(t))
-            {
-                LOGD("HttpServer: received websocket close payload_len=%u close_sent=%s",
-                     payload == NULL ? 0U : sbufGetLength(payload),
-                     boolToTrueFalse(ls->websocket_close_sent));
-            }
-
-            if (! ls->websocket_close_sent)
-            {
-                const void *close_data = (payload == NULL) ? NULL : sbufGetRawPtr(payload);
-                uint32_t    close_len  = (payload == NULL) ? 0U : sbufGetLength(payload);
-                if (! httpserverSendWebSocketControlFrame(t, l, ls, kWebSocketOpcodeClose, close_data, close_len))
-                {
-                    if (payload != NULL)
-                    {
-                        lineReuseBuffer(l, payload);
-                    }
-                    LOGE("HttpServer: failed to send websocket close reply");
-                    return false;
-                }
-                ls->websocket_close_sent = true;
-            }
-
-            if (payload != NULL)
-            {
-                lineReuseBuffer(l, payload);
-            }
+            /* Publish terminal state before the reply can reenter. */
             ls->websocket_close_received = true;
+            ls->websocket_close_sent     = true;
+        }
+        bool ok = true;
+        if (reply)
+            ok = httpserverSendWebSocketControlFrame(t,
+                                                     l,
+                                                     ls,
+                                                     close ? kWebSocketOpcodeClose : kWebSocketOpcodePong,
+                                                     payload == NULL ? NULL : sbufGetRawPtr(payload),
+                                                     payload == NULL ? 0 : sbufGetLength(payload));
+        if (payload != NULL)
+            lineReuseBuffer(l, payload);
+        if (! ok || ! lineIsAlive(l) || ! httpserverLinestateIsActive(ls))
+            return false;
+        if (close)
             return true;
-        }
-
-        if (opcode != kWebSocketOpcodeBinary && opcode != kWebSocketOpcodeText &&
-            opcode != kWebSocketOpcodeContinuation)
-        {
-            if (payload != NULL)
-            {
-                lineReuseBuffer(l, payload);
-            }
-            LOGE("HttpServer: unsupported websocket opcode=%u", opcode);
-            return false;
-        }
-
-        if (payload != NULL && ! httpserverForwardUpstreamPayload(t, l, ls, payload))
-        {
-            return false;
-        }
     }
+    return true;
 }
 
 bool httpserverTransportFlushPendingDown(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
@@ -2052,6 +1923,23 @@ static bool httpserverTransportDrainRawUp(tunnel_t *t, line_t *l, httpserver_lst
     return true;
 }
 
+bool httpserverTransportFinishCustomUpgrade(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+{
+    assert(ls->runtime_proto == kHttpServerRuntimeUpgradedRaw);
+    do
+    {
+        if (! httpserverTransportDrainRawUp(t, l, ls) || ! httpserverTransportFlushPendingDown(t, l, ls))
+            return false;
+    } while (bufferqueueGetBufCount(&ls->split_pending_up) != 0);
+    if (ls->receive.draining)
+        return true;
+    assert(ls->split_role == kHttpServerSplitRoleNone);
+    assert(! ls->prev_finished && ! ls->next_finished);
+    httpserverLinestateDestroy(ls);
+    tunnelBypassLine(t, l);
+    return true;
+}
+
 static bool drainUpEvents(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
     while (contextqueueLen(&ls->events_up) > 0)
@@ -2062,7 +1950,7 @@ static bool drainUpEvents(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
         contextApplyOnNextTunnelU(ctx, t);
         contextDestroy(ctx);
 
-        if (! lineIsAlive(l))
+        if (! lineIsAlive(l) || ! httpserverLinestateIsActive(ls))
         {
             lineUnref(l);
             return false;
@@ -2073,42 +1961,8 @@ static bool drainUpEvents(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
     return true;
 }
 
-bool httpserverTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *buf)
+static bool httpserverTransportDrainHttp2Received(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
-    uint32_t       len = sbufGetLength(buf);
-    const uint8_t *ptr = (const uint8_t *) sbufGetRawPtr(buf);
-
-    while (len > 0)
-    {
-        size_t        feed_len = min((size_t) len, (size_t) kHttpServerNghttp2RecvChunkBytes);
-        nghttp2_ssize ret      = nghttp2_session_mem_recv2(ls->session, ptr, feed_len);
-        if (ret < 0)
-        {
-            LOGE("HttpServer: nghttp2_session_mem_recv2 failed (%zd)", ret);
-            lineReuseBuffer(l, buf);
-            return false;
-        }
-
-        if (ret == 0)
-        {
-            LOGE("HttpServer: nghttp2_session_mem_recv2 consumed 0 bytes");
-            lineReuseBuffer(l, buf);
-            return false;
-        }
-
-        if ((size_t) ret > feed_len)
-        {
-            LOGE("HttpServer: nghttp2_session_mem_recv2 consumed beyond feed size (%zd > %zu)", ret, feed_len);
-            lineReuseBuffer(l, buf);
-            return false;
-        }
-
-        ptr += (size_t) ret;
-        len -= (uint32_t) ret;
-    }
-
-    lineReuseBuffer(l, buf);
-
     httpserver_tstate_t *ts = tunnelGetState(t);
 
     if (! sendNghttp2Outbound(t, l, ls))
@@ -2158,6 +2012,53 @@ bool httpserverTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpserver_lstate
         return false;
     }
 
+    return true;
+}
+
+bool httpserverTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *buf)
+{
+    uint32_t       len = sbufGetLength(buf);
+    const uint8_t *ptr = (const uint8_t *) sbufGetRawPtr(buf);
+
+    while (len > 0)
+    {
+        size_t        feed_len = min((size_t) len, (size_t) kHttpServerNghttp2RecvChunkBytes);
+        nghttp2_ssize ret      = nghttp2_session_mem_recv2(ls->session, ptr, feed_len);
+        if (ret < 0)
+        {
+            LOGE("HttpServer: nghttp2_session_mem_recv2 failed (%zd)", ret);
+            lineReuseBuffer(l, buf);
+            return false;
+        }
+
+        if (ret == 0)
+        {
+            LOGE("HttpServer: nghttp2_session_mem_recv2 consumed 0 bytes");
+            lineReuseBuffer(l, buf);
+            return false;
+        }
+
+        if ((size_t) ret > feed_len)
+        {
+            LOGE("HttpServer: nghttp2_session_mem_recv2 consumed beyond feed size (%zd > %zu)", ret, feed_len);
+            lineReuseBuffer(l, buf);
+            return false;
+        }
+
+        ptr += (size_t) ret;
+        len -= (uint32_t) ret;
+        /* Neighbor callbacks run only after nghttp2 has returned. A callback
+         * can retire the session, so validate before feeding another slice. */
+        if (! httpserverTransportDrainHttp2Received(t, l, ls) || ! lineIsAlive(l) || ! httpserverLinestateIsActive(ls))
+        {
+            lineReuseBuffer(l, buf);
+            return false;
+        }
+        if (ls->websocket_close_received)
+            break;
+    }
+
+    lineReuseBuffer(l, buf);
     return true;
 }
 
@@ -2348,19 +2249,7 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
 
                 memoryFree(header_text);
 
-                do
-                {
-                    if (! httpserverTransportDrainRawUp(t, l, ls) || ! httpserverTransportFlushPendingDown(t, l, ls))
-                    {
-                        return false;
-                    }
-                } while (bufferqueueGetBufCount(&ls->split_pending_up) != 0);
-
-                assert(ls->split_role == kHttpServerSplitRoleNone);
-                assert(! ls->prev_finished && ! ls->next_finished);
-                httpserverLinestateDestroy(ls);
-                tunnelBypassLine(t, l);
-                return true;
+                return httpserverTransportFinishCustomUpgrade(t, l, ls);
             }
         }
 
@@ -2413,7 +2302,7 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
     if (info.transfer_chunked)
     {
         ls->h1_body_mode      = kHttpServerH1BodyChunked;
-        ls->h1_chunk_expected = -1;
+        ls->chunk_decoder     = (http_chunk_decoder_t) {0};
     }
     else if (info.has_content_length)
     {
@@ -2446,137 +2335,27 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
     return httpserverTransportFlushPendingDown(t, l, ls);
 }
 
-static bool parseChunkSizeLine(sbuf_t *line_buf, uint64_t *chunk_len)
-{
-    size_t raw_len = sbufGetLength(line_buf);
-    if (raw_len < 2)
-    {
-        return false;
-    }
-
-    size_t line_len = raw_len - 2;
-    char  *line     = memoryAllocate(line_len + 1);
-    memoryCopy(line, sbufGetRawPtr(line_buf), line_len);
-    line[line_len] = '\0';
-
-    char *semi = strchr(line, ';');
-    if (semi != NULL)
-    {
-        *semi = '\0';
-    }
-
-    char              *endp   = NULL;
-    unsigned long long parsed = strtoull(line, &endp, 16);
-    while (endp != NULL && (*endp == ' ' || *endp == '\t'))
-    {
-        ++endp;
-    }
-
-    bool ok = (endp != NULL && endp != line && *endp == '\0');
-
-    memoryFree(line);
-
-    if (! ok)
-    {
-        return false;
-    }
-
-    *chunk_len = (uint64_t) parsed;
-    return true;
-}
-
 bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
     while (true)
     {
-        if (ls->h1_chunk_expected < 0)
+        sbuf_t *body = NULL;
+        switch (httpChunkDecoderStep(&ls->chunk_decoder, &ls->in_stream, &body))
         {
-            size_t line_end = 0;
-            if (! bufferstreamFindCRLF(&ls->in_stream, &line_end))
-            {
-                return true;
-            }
-
-            sbuf_t *line_buf = bufferstreamReadExact(&ls->in_stream, line_end + 2);
-
-            uint64_t chunk_len = 0;
-            bool     ok        = parseChunkSizeLine(line_buf, &chunk_len);
-            lineReuseBuffer(l, line_buf);
-
-            if (! ok || chunk_len > (uint64_t) INT64_MAX)
-            {
-                LOGE("HttpServer: invalid chunked size line");
+        case kHttpChunkNeedMore:
+            return true;
+        case kHttpChunkError:
+            LOGW("HttpServer: invalid or oversized chunk framing");
+            return false;
+        case kHttpChunkDone:
+            ls->h1_request_finished = true;
+            if (httpserverRequestEndReflectsFinish(ls))
+                httpserverForwardUpstreamFinish(t, l, ls);
+            return true;
+        case kHttpChunkData:
+            if (! httpserverForwardUpstreamPayload(t, l, ls, body))
                 return false;
-            }
-
-            ls->h1_chunk_expected = (int64_t) chunk_len;
-        }
-
-        if (ls->h1_chunk_expected == 0)
-        {
-            /*
-             * The terminating chunk may be split from its trailer block. Zero
-             * is the durable trailer-scan state, so the next payload resumes
-             * here instead of spinning without consuming input.
-             */
-            while (true)
-            {
-                size_t trailer_line_end = 0;
-                if (! bufferstreamFindCRLF(&ls->in_stream, &trailer_line_end))
-                {
-                    return true;
-                }
-
-                sbuf_t *trailer_line = bufferstreamReadExact(&ls->in_stream, trailer_line_end + 2);
-                bool    done         = (trailer_line_end == 0);
-                lineReuseBuffer(l, trailer_line);
-
-                if (done)
-                {
-                    ls->h1_request_finished = true;
-                    if (httpserverRequestEndReflectsFinish(ls))
-                    {
-                        httpserverForwardUpstreamFinish(t, l, ls);
-                    }
-                    return true;
-                }
-            }
-        }
-
-        if (ls->h1_chunk_expected > 0)
-        {
-            uint64_t required = (uint64_t) ls->h1_chunk_expected + 2ULL;
-            if (bufferstreamGetBufLen(&ls->in_stream) < required)
-            {
-                return true;
-            }
-
-            sbuf_t *chunk_with_tail = bufferstreamReadExact(&ls->in_stream, (size_t) required);
-
-            uint32_t full_len = sbufGetLength(chunk_with_tail);
-            if (full_len < 2)
-            {
-                lineReuseBuffer(l, chunk_with_tail);
-                return false;
-            }
-
-            uint8_t *ptr = (uint8_t *) sbufGetMutablePtr(chunk_with_tail);
-            if (ptr[full_len - 2] != '\r' || ptr[full_len - 1] != '\n')
-            {
-                lineReuseBuffer(l, chunk_with_tail);
-                LOGE("HttpServer: invalid chunked frame tail");
-                return false;
-            }
-
-            sbufSetLength(chunk_with_tail, (uint32_t) ls->h1_chunk_expected);
-
-            if (! httpserverForwardUpstreamPayload(t, l, ls, chunk_with_tail))
-            {
-                return false;
-            }
-
-            ls->h1_chunk_expected = -1;
-            continue;
+            break;
         }
     }
 }

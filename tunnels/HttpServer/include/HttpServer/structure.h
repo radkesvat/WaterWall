@@ -1,5 +1,8 @@
 #pragma once
 
+#include "HttpCommon/chunk_decoder.h"
+#include "HttpCommon/receive.h"
+#include "HttpCommon/websocket_decoder.h"
 #include "wwapi.h"
 
 #include <HttpCommon/h2_data.h>
@@ -74,7 +77,9 @@ typedef struct httpserver_lstate_s
 
     int32_t h2_stream_id;
 
-    int64_t h1_chunk_expected;
+    http_chunk_decoder_t     chunk_decoder;
+    http_websocket_decoder_t websocket_decoder;
+    http_receive_t           receive;
     int64_t h1_body_remaining;
 
     bool                      h1_headers_parsed;
@@ -247,3 +252,11 @@ static inline uint64_t httpserverSplitWaitingLimit(line_t *line)
     const uint64_t basis = bufferpoolGetWaitingBudgetBasis(lineGetBufferPool(line));
     return (uint64_t) kHttpServerSplitMaxBuffering * max(UINT64_C(1), (basis + 32767) / 32768);
 }
+
+/* Internal receive dispatch; public split input uses the serialized Payload entry. */
+void httpserverSplitProcessUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+bool httpserverTransportFinishCustomUpgrade(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
+
+void httpserverSplitRejectInput(tunnel_t *t, line_t *l);
+
+bool httpserverDrainSplitInput(tunnel_t *t, line_t *l);
