@@ -230,7 +230,7 @@ bool socks5clientQueueReplyInput(tunnel_t *t, line_t *l, sbuf_t *buf)
     socks5client_lstate_t *ls      = lineGetState(l, t);
     const size_t           length  = sbufGetLength(buf);
     const size_t           active  = bufferstreamGetBufLen(&ls->in_stream);
-    const size_t           entries = (size_t) bs_doublequeue_t_size(&ls->in_stream.q);
+    const size_t           entries = bufferstreamGetEntryCount(&ls->in_stream);
     if (length > kSocks5ClientMaxPendingDownBytes || active > kSocks5ClientMaxPendingDownBytes - length ||
         bufferqueueGetBufLen(&ls->pending_down) > kSocks5ClientMaxPendingDownBytes - length - active ||
         entries >= kSocks5ClientMaxPendingBuffers ||

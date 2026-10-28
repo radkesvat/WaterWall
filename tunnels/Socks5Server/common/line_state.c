@@ -8,26 +8,27 @@ void socks5serverLinestateInitialize(socks5server_lstate_t *ls, tunnel_t *t, lin
     {
         linePreferOrdinaryReadBoth(l);
     }
-    *ls = (socks5server_lstate_t) {
-        .tunnel           = t,
-        .line             = l,
-        .in_stream        = kind == kSocks5ServerLineKindControlTcp
-                                ? bufferstreamCreate(lineGetBufferPool(l), 0)
-                                : (buffer_stream_t) {.pool = lineGetBufferPool(l), .q = bs_doublequeue_t_init()},
-        .udp_remote_lines = socks5server_remote_map_t_init(),
-        .client_line      = NULL,
-        .user_handle      = userHandleEmpty(),
-        .auth_username    = NULL,
-        .auth_password    = NULL,
-        .remote_key       = NULL,
-        .dynamic_handle   = (udplistener_dynamic_endpoint_handle_t) {0},
-        .phase = kind == kSocks5ServerLineKindControlTcp ? kSocks5ServerPhaseWaitMethod : kSocks5ServerPhaseIdle,
-        .kind  = kind,
-        .connect_reply_sent          = false,
-        .client_line_ref_held        = false,
-        .udp_first_payload_validated = false,
-        .prev_finished               = false,
-        .next_finished               = false};
+    *ls = (socks5server_lstate_t) {.tunnel           = t,
+                                   .line             = l,
+                                   .udp_remote_lines = socks5server_remote_map_t_init(),
+                                   .client_line      = NULL,
+                                   .user_handle      = userHandleEmpty(),
+                                   .auth_username    = NULL,
+                                   .auth_password    = NULL,
+                                   .remote_key       = NULL,
+                                   .dynamic_handle   = (udplistener_dynamic_endpoint_handle_t) {0},
+                                   .phase = kind == kSocks5ServerLineKindControlTcp ? kSocks5ServerPhaseWaitMethod
+                                                                                    : kSocks5ServerPhaseIdle,
+                                   .kind  = kind,
+                                   .connect_reply_sent          = false,
+                                   .client_line_ref_held        = false,
+                                   .udp_first_payload_validated = false,
+                                   .prev_finished               = false,
+                                   .next_finished               = false};
+    if (kind == kSocks5ServerLineKindControlTcp)
+        ls->in_stream = bufferstreamCreate(lineGetBufferPool(l), 0);
+    else
+        bufferstreamInitEmpty(&ls->in_stream, lineGetBufferPool(l), 0);
     bufferqueueInitEmpty(&ls->pending_up);
     bufferqueueInitEmpty(&ls->pending_down);
 }

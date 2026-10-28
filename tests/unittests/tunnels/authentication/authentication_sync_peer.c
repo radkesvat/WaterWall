@@ -42,9 +42,8 @@ void authTestPeerInputRetention(tunnel_t *server, line_t *line, size_t *bytes, s
 {
     authenticationserver_lstate_t *ls = lineGetState(line, server);
     *bytes                            = bufferstreamGetBufLen(&ls->read_stream);
-    *charge                           = 0;
-    *entries                          = bs_doublequeue_t_size(&ls->read_stream.q);
-    c_foreach(entry, bs_doublequeue_t, ls->read_stream.q) *charge += sbufGetAllocationCharge(*entry.ref);
+    *charge                           = bufferstreamGetCharge(&ls->read_stream);
+    *entries                          = bufferstreamGetEntryCount(&ls->read_stream);
 }
 void authTestPeerDestroy(tunnel_t *t)
 {

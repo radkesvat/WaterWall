@@ -2417,17 +2417,9 @@ bool httpclientTransportQueueRawInput(tunnel_t *t, line_t *l, sbuf_t *buf, bool 
         return true;
     }
     size_t charge = sbufGetAllocationCharge(buf);
-    size_t count =
-        upstream ? bufferqueueGetBufCount(&ls->pending_up) : (size_t) bs_doublequeue_t_size(&ls->in_stream.q);
+    size_t count  = upstream ? bufferqueueGetBufCount(&ls->pending_up) : bufferstreamGetEntryCount(&ls->in_stream);
     size_t pending_bytes  = upstream ? bufferqueueGetBufLen(&ls->pending_up) : bufferstreamGetBufLen(&ls->in_stream);
-    size_t pending_charge = upstream ? bufferqueueGetCharge(&ls->pending_up) : 0;
-    if (! upstream)
-    {
-        for (size_t i = 0; i < count; ++i)
-        {
-            pending_charge += sbufGetAllocationCharge(*bs_doublequeue_t_at(&ls->in_stream.q, i));
-        }
-    }
+    size_t pending_charge = upstream ? bufferqueueGetCharge(&ls->pending_up) : bufferstreamGetCharge(&ls->in_stream);
     if (bytes > kHttpClientHttp1NestedMaxBytes || charge > kHttpClientHttp1NestedMaxCharge ||
         count >= kHttpClientHttp1NestedMaxBuffers || pending_bytes > kHttpClientHttp1NestedMaxBytes - bytes ||
         pending_charge > kHttpClientHttp1NestedMaxCharge - charge)

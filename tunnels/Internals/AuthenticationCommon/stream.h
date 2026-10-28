@@ -11,19 +11,6 @@ enum
     kAuthenticationStreamReentryHeadroom = 2U * 1024U * 1024U
 };
 
-static inline size_t authenticationStreamCharge(const buffer_stream_t *stream)
-{
-    size_t charge = 0;
-    c_foreach(entry, bs_doublequeue_t, stream->q)
-    {
-        const size_t next = sbufGetAllocationCharge(*entry.ref);
-        if (next > kAuthenticationStreamChargeLimit - charge)
-            return kAuthenticationStreamChargeLimit + 1U;
-        charge += next;
-    }
-    return charge;
-}
-
 /* Copy once instead of repeatedly growing/merging a fragmented large message.
  * The caller has bounded bytes by the authentication wire/retention limits. */
 static inline sbuf_t *authenticationStreamCopyExact(buffer_stream_t *stream, uint32_t bytes)
@@ -36,7 +23,7 @@ static inline sbuf_t *authenticationStreamCopyExact(buffer_stream_t *stream, uin
 static inline sbuf_t *authenticationStreamReadExact(buffer_stream_t *stream, uint32_t bytes)
 {
     assert(bytes != 0 && bytes <= bufferstreamGetBufLen(stream));
-    if (sbufGetLength(*bs_doublequeue_t_front(&stream->q)) >= bytes)
+    if (bufferstreamGetHeadLength(stream) >= bytes)
         return bufferstreamReadExact(stream, bytes);
     return authenticationStreamCopyExact(stream, bytes);
 }
@@ -52,9 +39,9 @@ static inline bool authenticationStreamPushNestedBounded(buffer_stream_t *stream
     if (buffered > limit || incoming > limit - buffered)
         return false;
 
-    const size_t charge = authenticationStreamCharge(stream);
+    const size_t charge = bufferstreamGetCharge(stream);
     if (charge <= charge_limit && sbufGetAllocationCharge(input) <= charge_limit - charge &&
-        (size_t) bs_doublequeue_t_size(&stream->q) < entry_limit)
+        bufferstreamGetEntryCount(stream) < entry_limit)
     {
         bufferstreamPush(stream, input);
         return true;
@@ -66,7 +53,7 @@ static inline bool authenticationStreamPushNestedBounded(buffer_stream_t *stream
     sbufConcatNoCheck(compact, input);
     bufferpoolReuseBuffer(stream->pool, input);
     bufferstreamPush(stream, compact);
-    assert(authenticationStreamCharge(stream) <= charge_limit);
+    assert(bufferstreamGetCharge(stream) <= charge_limit);
     return true;
 }
 
@@ -87,13 +74,12 @@ static inline void authenticationStreamCompactIncompleteBounded(buffer_stream_t 
     const size_t bytes = bufferstreamGetBufLen(stream);
     assert(bytes < max_message);
     discard max_message;
-    if (bytes != 0 &&
-        (authenticationStreamCharge(stream) > charge_limit || (size_t) bs_doublequeue_t_size(&stream->q) > entry_limit))
+    if (bytes != 0 && (bufferstreamGetCharge(stream) > charge_limit || bufferstreamGetEntryCount(stream) > entry_limit))
     {
         sbuf_t *compact = authenticationStreamCopyExact(stream, (uint32_t) bytes);
         bufferstreamPush(stream, compact);
     }
-    assert(authenticationStreamCharge(stream) <= charge_limit);
+    assert(bufferstreamGetCharge(stream) <= charge_limit);
 }
 
 static inline void authenticationStreamCompactIncomplete(buffer_stream_t *stream, uint32_t max_message)

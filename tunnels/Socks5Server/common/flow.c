@@ -8,7 +8,7 @@ bool socks5serverQueueControl(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream
     buffer_queue_t        *queue   = upstream ? &ls->pending_up : &ls->pending_down;
     const size_t           prefix  = upstream ? bufferstreamGetBufLen(&ls->in_stream) : 0;
     const size_t           length  = sbufGetLength(buf);
-    const size_t           entries = upstream ? (size_t) bs_doublequeue_t_size(&ls->in_stream.q) : 0;
+    const size_t           entries = upstream ? bufferstreamGetEntryCount(&ls->in_stream) : 0;
     if (UNLIKELY(length > kSocks5ServerMaxPendingBytes || prefix > kSocks5ServerMaxPendingBytes - length ||
                  bufferqueueGetBufLen(queue) > kSocks5ServerMaxPendingBytes - length - prefix ||
                  entries >= kSocks5ServerMaxPendingBuffers ||

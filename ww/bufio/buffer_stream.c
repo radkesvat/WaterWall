@@ -26,6 +26,7 @@ static inline void bufferstreamCheckSbufByteCount(size_t bytes, const char *oper
 static uint32_t bufferstreamValidatePush(buffer_stream_t *self, sbuf_t *buf)
 {
     assert(self != NULL && buf != NULL);
+    assert(! sbufIsSplice(buf));
 
     const uint32_t buf_len = sbufGetLength(buf);
     bufferstreamCheckSbufByteCount(buf_len, "push");
@@ -75,6 +76,26 @@ static sbuf_t *bufferstreamAllocExactReadBuffer(buffer_stream_t *self, uint32_t 
     }
 
     return sbufReserveSpace(slice, bytes);
+}
+
+void bufferstreamInitEmpty(buffer_stream_t *self, buffer_pool_t *pool, uint16_t use_left_padding)
+{
+    assert(self != NULL && pool != NULL);
+    *self = (buffer_stream_t) {.pool = pool, .q = bs_doublequeue_t_init(), .use_left_padding = use_left_padding};
+}
+
+size_t bufferstreamGetCharge(const buffer_stream_t *self)
+{
+    assert(self != NULL);
+    size_t charge = 0;
+    c_foreach(entry, bs_doublequeue_t, self->q)
+    {
+        const size_t next = sbufGetAllocationCharge(*entry.ref);
+        if (next > SIZE_MAX - charge)
+            return SIZE_MAX;
+        charge += next;
+    }
+    return charge;
 }
 
 buffer_stream_t bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_padding)

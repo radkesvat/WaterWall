@@ -1501,6 +1501,7 @@ static void testTryEnsureOrdinaryRefusalPreservesSource(void)
 
 /* Uses the preceding splice source and syscall-probe fixtures. */
 #include "buffer_queue_range_cases.h"
+#include "buffer_stream_accessor_cases.h"
 #include "sbuf_left_capacity_cases.h"
 
 /* Context payload ownership must be cleared in both Debug and NDEBUG builds,
@@ -1538,6 +1539,10 @@ static void testContextPayloadOwnership(void)
 int main(void)
 {
     testCaseSet("bufio_contract_test");
+    testBufferStreamAccessors();
+#ifndef NDEBUG
+    testBufferStreamRejectsSplice();
+#endif
     testContextPayloadOwnership();
     const ensure_ordinary_fn_t ensure_ordinary[] = {sbufEnsureOrdinary, sbufTryEnsureOrdinary};
     for (size_t i = 0; i < ARRAY_SIZE(ensure_ordinary); ++i)
