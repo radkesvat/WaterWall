@@ -1,5 +1,7 @@
 #include "internal.h"
 
+#include "loggers/network_logger.h"
+
 static sbuf_t *receiveHead(vmessserver_lstate_t *ls)
 {
     if (ls->input_head == NULL)
@@ -39,9 +41,11 @@ void vmessserverRetainActiveHead(vmessserver_lstate_t *ls)
     if (ls->input_head != NULL)
     {
         bool restored = bufferqueueTryPushFrontReserved(&ls->pending_up, &ls->input_head, &ls->input_reservation);
-        assert(restored);
         if (! restored)
+        {
+            LOGF("VmessServer: failed to restore the reserved active input head");
             abortProgramNow(1);
+        }
         ls->input_head = NULL;
     }
 }
