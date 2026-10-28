@@ -11,6 +11,7 @@
  */
 #include "config_policy.h"
 #include "core_settings.h"
+#include "lwip/engine.h"
 #include "startup.h"
 #include "startup_options.h"
 #include "wlibc.h"
@@ -141,12 +142,69 @@ static int testVerboseLogging(void)
     return 0;
 }
 
+static int testTcpStackReceiveBudget(void)
+{
+    const struct
+    {
+        const char *json;
+        uint32_t    budget;
+    } valid[] = {
+        {"{\"configs\":[\"nodes.json\"]}", WW_LWIP_DEFAULT_RECEIVE_BUDGET},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{}}", WW_LWIP_DEFAULT_RECEIVE_BUDGET},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":1}}", WW_LWIP_DEFAULT_RECEIVE_BUDGET},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-stack-receive-budget\":0}}", 0},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-stack-receive-budget\":65536}}", 65536},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-stack-receive-budget\":524288}}", 524288},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-stack-receive-budget\":16777216}}", 16777216},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-stack-receive-budget\":1073741824}}", 1073741824},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(valid); ++i)
+    {
+        CHECK(testParse(valid[i].json));
+        CHECK(getCoreSettings()->tcp_stack_receive_budget == valid[i].budget);
+        destroyCoreSettings();
+    }
+
+    const char *invalid[] = {"null",
+                             "true",
+                             "false",
+                             "\"0\"",
+                             "\"65536\"",
+                             "[]",
+                             "{}",
+                             "-1",
+                             "-65536",
+                             "1",
+                             "65535",
+                             "65536.5",
+                             "1073741824.5",
+                             "1073741825",
+                             "4294967295",
+                             "4294967296",
+                             "1e100",
+                             "1e999"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        char      json[160];
+        const int length = snprintf(json,
+                                    sizeof(json),
+                                    "{\"configs\":[\"nodes.json\"],\"misc\":{\"tcp-stack-receive-budget\":%s}}",
+                                    invalid[i]);
+        CHECK(length > 0 && (size_t) length < sizeof(json));
+        CHECK(! testParse(json));
+        destroyCoreSettings();
+        CHECK(getCoreSettings() == NULL);
+    }
+    return 0;
+}
+
 int main(void)
 {
     testCaseSet("core_configuration_test");
     initWLibc();
     CHECK(testStartupOptions() == 0);
     CHECK(testVerboseLogging() == 0);
+    CHECK(testTcpStackReceiveBudget() == 0);
 
     const char *valid = "{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":2},"
                         "\"dns\":{\"domains\":[\"example.test\"],\"servers\":\"127.0.0.1\"}}";

@@ -11,6 +11,16 @@ struct tcp_pcb;
 typedef struct ww_lwip_engine_s ww_lwip_engine_t;
 typedef void (*ww_lwip_wake_fn)(ww_lwip_engine_t *engine, void *argument);
 
+#define WW_LWIP_DEFAULT_RECEIVE_BUDGET (32U * 1024U * 1024U)
+#define WW_LWIP_MIN_RECEIVE_WINDOW     (64U * 1024U)
+
+/* Exclusive startup, before shared initialization. Zero disables the adaptive
+ * advertised-window target. Otherwise accepts 64 KiB through 1 GiB; each owner
+ * engine shares this byte target
+ * across network TCP connections, with a 64-KiB per-flow floor. Outstanding
+ * advertisements and accepted data remain valid, so this is not a memory cap. */
+void wwLwipEngineSetDefaultReceiveBudget(uint32_t budget);
+
 /* Startup and finalization are exclusive; no worker may use shared storage then. */
 void wwLwipEngineSharedInit(void);
 void wwLwipEngineSharedCleanup(void);

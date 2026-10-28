@@ -1,4 +1,5 @@
 #include "core_settings.h"
+#include "lwip/engine.h"
 #include "node_builder/config_policy.h"
 #include "wplatform.h"
 #include "wwapi.h"
@@ -41,6 +42,9 @@
 #define MIN_MTU_PROFILE 68
 #define MAX_MTU_PROFILE 65535
 
+#define MIN_TCP_STACK_RECEIVE_BUDGET (64U * 1024U)
+#define MAX_TCP_STACK_RECEIVE_BUDGET (1024U * 1024U * 1024U)
+
 /*
  * Legacy numeric ram-profile aliases. 0 and 1 both mean the smallest profile,
  * which predates the named forms and is kept working deliberately.
@@ -80,6 +84,9 @@ static void initCoreSettings(void)
      */
     settings->mtu_size    = DEFAULT_MTU_PROFILE;
     settings->ram_profile = DEFAULT_RAM_PROFILE;
+
+    /* Per-owner target, not a memory reservation; zero disables adaptation. */
+    settings->tcp_stack_receive_budget = WW_LWIP_DEFAULT_RECEIVE_BUDGET;
 
     settings->config_paths = vec_config_path_t_with_capacity(2);
 }
@@ -947,6 +954,24 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         return;
     }
     getBoolFromJsonObjectOrDefault(&settings->tcp_tune_enabled, misc_obj, "tcp-tune", DEFAULT_TCP_TUNE);
+
+    int64_t                   receive_budget        = 0;
+    const json_value_status_t receive_budget_status = jsonGetObjectIntegerInRange(
+        misc_obj, "tcp-stack-receive-budget", 0, MAX_TCP_STACK_RECEIVE_BUDGET, &receive_budget);
+    if (receive_budget_status == kJsonValueInvalid ||
+        (receive_budget_status == kJsonValuePresent && receive_budget != 0 &&
+         receive_budget < MIN_TCP_STACK_RECEIVE_BUDGET))
+    {
+        printError("CoreSettings: \"misc.tcp-stack-receive-budget\" must be 0 or a whole number in range [%u, %u]\n",
+                   MIN_TCP_STACK_RECEIVE_BUDGET,
+                   MAX_TCP_STACK_RECEIVE_BUDGET);
+        startupFailureRecord(1);
+        return;
+    }
+    if (receive_budget_status == kJsonValuePresent)
+    {
+        settings->tcp_stack_receive_budget = (uint32_t) receive_budget;
+    }
 
     if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
     {
