@@ -26,6 +26,15 @@ enum
 void socks5serverLinestateInitialize(socks5server_lstate_t *ls, tunnel_t *t, line_t *l, socks5server_line_kind_t kind);
 void socks5serverLinestateDestroy(socks5server_lstate_t *ls);
 
+/* Call only while the line allocation is protected or known alive. Finish can
+ * destroy this borrowed state before its owner destroys the line. */
+static inline bool socks5serverHasControlState(tunnel_t *t, line_t *l)
+{
+    const socks5server_lstate_t *ls = lineGetState(l, t);
+    return ls->tunnel == t && ls->line == l && ls->kind == kSocks5ServerLineKindControlTcp &&
+           ls->phase != kSocks5ServerPhaseClosing;
+}
+
 void socks5serverTunnelstateDestroy(socks5server_tstate_t *ts);
 bool socks5serverResolveDynamicProvider(tunnel_t *t);
 bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t *ls);

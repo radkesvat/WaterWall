@@ -15,7 +15,7 @@ sbuf_t *socks5clientAllocHandshakeBuffer(line_t *l, uint32_t len)
 
 static bool sendBufferUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf);
+    return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf) && socks5clientHasLineState(t, l);
 }
 
 static size_t addressEncodedLength(const address_context_t *ctx)

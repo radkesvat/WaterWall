@@ -280,13 +280,13 @@ bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate
     while (! bufferstreamIsEmpty(&ls->in_stream))
     {
         sbuf_t *tail = bufferstreamIdealRead(&ls->in_stream);
-        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, tail))
+        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, tail) || ! socks5clientHasLineState(t, l))
             return false;
     }
     while (bufferqueueGetBufCount(&ls->pending_down) != 0)
     {
         sbuf_t *tail = bufferqueuePopFront(&ls->pending_down);
-        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, tail))
+        if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, tail) || ! socks5clientHasLineState(t, l))
             return false;
     }
     ls->input_draining = false;

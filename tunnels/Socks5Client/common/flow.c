@@ -4,7 +4,7 @@
 
 static void tryBypass(tunnel_t *t, line_t *l)
 {
-    if (! tunnelIsActiveForLine(t, l))
+    if (! tunnelIsActiveForLine(t, l) || ! socks5clientHasLineState(t, l))
         return;
     socks5client_lstate_t *ls = lineGetState(l, t);
     if (ls->kind != kSocks5ClientLineKindDirect || ls->phase != kSocks5ClientPhaseEstablished || ls->input_draining ||
@@ -33,8 +33,9 @@ static bool updateSourcePressure(tunnel_t *t, line_t *l)
     if (ls->source_pause_sent == paused)
         return true;
     ls->source_pause_sent = paused;
-    return paused ? lineCallWithRef(l, tunnelPrevDownStreamPause, t)
-                  : lineCallWithRef(l, tunnelPrevDownStreamResume, t);
+    const bool alive =
+        paused ? lineCallWithRef(l, tunnelPrevDownStreamPause, t) : lineCallWithRef(l, tunnelPrevDownStreamResume, t);
+    return alive && socks5clientHasLineState(t, l);
 }
 
 bool socks5clientQueuePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -54,12 +55,15 @@ bool socks5clientDrainPending(tunnel_t *t, line_t *l)
     /* Source pressure callbacks can complete negotiation and retire this state. */
     if (! tunnelIsActiveForLine(t, l))
         return true;
+    if (! socks5clientHasLineState(t, l))
+        return false;
     socks5client_lstate_t *ls = lineGetState(l, t);
     if (ls->draining_up || ls->phase != kSocks5ClientPhaseEstablished)
         return true;
     lineRef(l);
     ls->draining_up = true;
-    while (lineIsAlive(l) && (ls->kind == kSocks5ClientLineKindDirect || ! ls->next_paused) &&
+    while (lineIsAlive(l) && socks5clientHasLineState(t, l) &&
+           (ls->kind == kSocks5ClientLineKindDirect || ! ls->next_paused) &&
            bufferqueueGetBufCount(&ls->pending_up) != 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&ls->pending_up);
@@ -71,7 +75,7 @@ bool socks5clientDrainPending(tunnel_t *t, line_t *l)
         else
             tunnelNextUpStreamPayload(t, l, buf);
     }
-    bool alive = lineIsAlive(l);
+    bool alive = lineIsAlive(l) && socks5clientHasLineState(t, l);
     if (alive)
     {
         ls->draining_up = false;

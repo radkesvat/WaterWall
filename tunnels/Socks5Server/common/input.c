@@ -81,7 +81,8 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
                 ls->user_handle = userHandleEmpty();
                 lineAddUser(l, &ls->user_handle, ls->auth_username, ls->auth_password);
             }
-            if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
+            if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply) ||
+                ! socks5serverHasControlState(t, l))
                 return false;
             continue;
         }
@@ -133,7 +134,8 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
             ls->user_handle = user_handle;
             ls->phase       = kSocks5ServerPhaseWaitRequest;
             lineAddUser(l, &ls->user_handle, ls->auth_username, ls->auth_password);
-            if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
+            if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply) ||
+                ! socks5serverHasControlState(t, l))
                 return false;
             continue;
         }
@@ -201,7 +203,7 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
                 ls->phase             = kSocks5ServerPhaseConnectWaitEst;
                 ls->next_initializing = true;
                 ls->next_initialized  = true;
-                if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
+                if (! lineCallWithRef(l, tunnelNextUpStreamInit, t) || ! socks5serverHasControlState(t, l))
                 {
                     return false;
                 }
@@ -209,7 +211,8 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
                 if (ls->pending_read_pause)
                 {
                     ls->pending_read_pause = false;
-                    if (UNLIKELY(! lineCallWithRef(l, tunnelNextUpStreamPause, t)))
+                    if (UNLIKELY(! lineCallWithRef(l, tunnelNextUpStreamPause, t)) ||
+                        ! socks5serverHasControlState(t, l))
                         return false;
                 }
                 return socks5serverDrainControl(t, l);
@@ -246,7 +249,8 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
                 ls->connect_reply_sent = true;
                 bufferstreamEmpty(&ls->in_stream);
                 bufferqueueDestroy(&ls->pending_up);
-                return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply);
+                return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply) &&
+                       socks5serverHasControlState(t, l);
             }
 
             addresscontextReset(&target);
