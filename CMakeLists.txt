@@ -1045,6 +1045,10 @@ if(INCLUDE_TLS_CLIENT)
 endif()
 
 #tls server
+if(INCLUDE_TLS_SERVER OR INCLUDE_TROJAN_SERVER OR INCLUDE_VLESS_SERVER OR INCLUDE_VMESS_SERVER)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/FallbackReplay)
+endif()
+
 if(INCLUDE_TLS_SERVER)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_TLS_SERVER=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TlsServer)
