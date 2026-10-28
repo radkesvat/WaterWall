@@ -540,6 +540,16 @@ static void testMalformedPacketsAndSingleWorker(void)
 
     require(affinityOf(single_a) == 0 && affinityOf(single_b) == 0, "a single worker must select worker zero");
     require(single_hash_a != single_hash_b, "the single-worker path collapsed distinct flows to one hash");
+    device_reader_session_t single_reader = {.batch_capacity = 1};
+    require(deviceReaderSelectWID(&single_reader, 0, 1, single_a) == 0 &&
+                deviceReaderSelectWID(&single_reader, 0, 1, single_b) == 0,
+            "single-worker receive selection changed a visible flow's worker");
+    sbuf_t *opaque = sbufCreate(sizeof(garbage));
+    memoryCopy(sbufGetMutablePtr(opaque), garbage, sizeof(garbage));
+    sbufSetLength(opaque, sizeof(garbage));
+    require(deviceReaderSelectWID(&single_reader, 0, 1, opaque) == 0,
+            "single-worker receive selection changed an opaque packet's worker");
+    sbufDestroy(opaque);
     sbufDestroy(single_b);
     sbufDestroy(single_a);
 

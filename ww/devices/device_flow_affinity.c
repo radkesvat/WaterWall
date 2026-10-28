@@ -54,7 +54,7 @@ wid_t deviceReaderSelectWID(device_reader_session_t *session, wid_t reader_wid, 
     assert(session != NULL && buf != NULL);
     assert(reader_count > 0 && reader_count <= getWorkersCount());
     assert(reader_wid < reader_count);
-    if (reader_count > 1)
+    if (getWorkersCount() == 1 || reader_count > 1)
         return reader_wid;
 
     /* Keep this receive locality even though consumers select their own flow owner.
