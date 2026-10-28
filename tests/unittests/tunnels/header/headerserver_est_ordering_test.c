@@ -128,6 +128,129 @@ static void testInitialOrder(bool close)
     estFixtureDestroy(&f);
 }
 
+typedef enum header_startup_case_e
+{
+    kHeaderStartupPause,
+    kHeaderStartupResumeBeforeInit,
+    kHeaderStartupResumeInInit,
+    kHeaderStartupPauseInInit,
+    kHeaderStartupNestedPayload,
+    kHeaderStartupCloseInPause,
+    kHeaderStartupBorrowedFinishInPause,
+    kHeaderStartupCloseInInit,
+    kHeaderStartupBorrowedFinishInInit,
+    kHeaderStartupHeaderOnly
+} header_startup_case_t;
+
+static header_startup_case_t header_startup_case;
+static char                  header_startup_trace[16];
+static size_t                header_startup_trace_length;
+
+static void headerStartupEvent(char event)
+{
+    twfRequire(header_startup_trace_length + 1 < sizeof(header_startup_trace), "HeaderServer startup trace overflow");
+    header_startup_trace[header_startup_trace_length++] = event;
+    header_startup_trace[header_startup_trace_length]   = '\0';
+}
+
+static void headerStartupInit(est_fixture_t *f, line_t *l)
+{
+    headerStartupEvent('I');
+    if (header_startup_case == kHeaderStartupResumeInInit)
+        tunnelUpStreamResume(f->node, l);
+    else if (header_startup_case == kHeaderStartupPauseInInit)
+        tunnelUpStreamPause(f->node, l);
+    else if (header_startup_case == kHeaderStartupNestedPayload)
+        tunnelUpStreamPayload(f->node, l, estBytes(l, "B", 1));
+    else if (header_startup_case == kHeaderStartupCloseInInit)
+        tunnelDownStreamFin(f->node, l);
+    else if (header_startup_case == kHeaderStartupBorrowedFinishInInit)
+        tunnelUpStreamFin(f->node, l);
+}
+
+static void headerStartupPause(tunnel_t *t, line_t *l)
+{
+    est_fixture_t *f = estContext(t);
+    twfRequire(f->init_count == 1 && tunnelIsActiveForLine(f->node, l),
+               "HeaderServer replayed Pause before Init or after bypass");
+    headerPause(t, l);
+    headerStartupEvent('U');
+    if (header_startup_case == kHeaderStartupNestedPayload)
+        tunnelUpStreamPayload(f->node, l, estBytes(l, "C", 1));
+    else if (header_startup_case == kHeaderStartupCloseInPause)
+        tunnelDownStreamFin(f->node, l);
+    else if (header_startup_case == kHeaderStartupBorrowedFinishInPause)
+        tunnelUpStreamFin(f->node, l);
+}
+
+static void headerStartupResume(tunnel_t *t, line_t *l)
+{
+    headerResume(t, l);
+    headerStartupEvent('R');
+}
+
+static void headerStartupPayload(est_fixture_t *f, line_t *l)
+{
+    headerStartupEvent('P');
+    if (header_startup_case == kHeaderStartupNestedPayload && f->up_len == 1)
+        tunnelUpStreamPayload(f->node, l, estBytes(l, "D", 1));
+}
+
+static void testStartupPause(void)
+{
+    const char *traces[] = {"IUP", "IP", "IRP", "IUP", "IUPPPP", "IU", "IU", "I", "I", "IU"};
+    for (unsigned scenario = 0; scenario <= kHeaderStartupHeaderOnly; ++scenario)
+    {
+        est_fixture_t f;
+        headerSetup(&f);
+        header_startup_case                                               = (header_startup_case_t) scenario;
+        header_startup_trace_length                                       = 0;
+        header_startup_trace[0]                                           = '\0';
+        ((headerserver_tstate_t *) tunnelGetState(f.node))->override_mode = kHeaderServerOverrideModeHeaderPort;
+        f.on_init                                                         = headerStartupInit;
+        f.on_up                                                           = headerStartupPayload;
+        f.next->fnPauseU                                                  = headerStartupPause;
+        f.next->fnResumeU                                                 = headerStartupResume;
+        tunnelUpStreamInit(f.node, f.line);
+        const uint8_t input[] = {0x01, 0xbb, 'A'};
+        tunnelUpStreamPayload(f.node, f.line, estBytes(f.line, input, 1));
+        tunnelUpStreamPause(f.node, f.line);
+        tunnelUpStreamPause(f.node, f.line);
+        if (scenario == kHeaderStartupResumeBeforeInit)
+            tunnelUpStreamResume(f.node, f.line);
+        twfRequire(f.init_count == 0 && header_pauses[1] == 0 && header_resumes[1] == 0,
+                   "HeaderServer sent pressure to an uninitialized next");
+        tunnelUpStreamPayload(
+            f.node, f.line, estBytes(f.line, input + 1, scenario == kHeaderStartupHeaderOnly ? 1 : 2));
+        twfRequire(stringCompare(header_startup_trace, traces[scenario]) == 0,
+                   "HeaderServer lost, duplicated or reordered startup pressure");
+        const bool owner_closed = scenario == kHeaderStartupCloseInPause || scenario == kHeaderStartupCloseInInit;
+        const bool borrowed_finish =
+            scenario == kHeaderStartupBorrowedFinishInPause || scenario == kHeaderStartupBorrowedFinishInInit;
+        twfRequire(lineIsAlive(f.line) == ! owner_closed, "HeaderServer startup close changed line ownership");
+        if (owner_closed || borrowed_finish)
+        {
+            twfRequire(f.up_len == 0 && f.up_finish_count == (unsigned) borrowed_finish &&
+                           f.down_finish_count == (unsigned) owner_closed,
+                       "HeaderServer sent payload or reflected Finish after startup close");
+            twfRequireLineStateZeroed(f.line, f.node, "HeaderServer startup close retained state");
+        }
+        else
+        {
+            const size_t expected_length = scenario == kHeaderStartupHeaderOnly      ? 0
+                                           : scenario == kHeaderStartupNestedPayload ? 4
+                                                                                     : 1;
+            twfRequire(f.up_len == expected_length && memoryCompare(f.up, "ABCD", expected_length) == 0,
+                       "HeaderServer startup pressure changed payload FIFO");
+            headerRequireBypassed(&f);
+            tunnelUpStreamFin(f.node, f.line);
+        }
+        if (lineIsAlive(f.line))
+            lineDestroy(f.line);
+        estFixtureDestroy(&f);
+    }
+}
+
 static void overflowReentryBytes(est_fixture_t *f, line_t *l)
 {
     sbuf_t *large = bufferpoolGetBestFit(lineGetBufferPool(l), kHeaderServerMaxReentryBytes, 16);
@@ -457,6 +580,7 @@ static void testHeaderProtocol(void)
 
 int main(void)
 {
+    TEST_RUN_CASE(testStartupPause);
     TEST_RUN_CASE(testHeaderProtocol);
     twfSetCase("reentry byte limit");
     testReentryLimit(overflowReentryBytes);
