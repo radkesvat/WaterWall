@@ -2,7 +2,7 @@
 
 #include "DomainResolver/interface.h"
 #include "ProxyClientCommon/first_payload_window.h"
-#include "address_codec.h"
+#include "SocksAddress/address_codec.h"
 #include "wwapi.h"
 
 /* Wire command and address tags shared by encoding and parsing. */

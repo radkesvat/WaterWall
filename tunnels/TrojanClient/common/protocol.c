@@ -1,23 +1,23 @@
 #include "internal.h"
 
-static bool trojanclientAddressFromContext(const address_context_t *ctx, trojanclient_address_t *out)
+static bool trojanclientAddressFromContext(const address_context_t *ctx, socks_address_t *out)
 {
-    trojanclient_address_t value = {.port = ctx->port};
+    socks_address_t value = {.port = ctx->port};
     if (addresscontextIsIpv4(ctx))
     {
-        value.kind   = kTrojanClientAddressIpv4;
+        value.kind   = kSocksAddressIpv4;
         value.length = 4;
         memoryCopy(value.bytes, &ctx->ip_address.u_addr.ip4.addr, value.length);
     }
     else if (addresscontextIsIpv6(ctx))
     {
-        value.kind   = kTrojanClientAddressIpv6;
+        value.kind   = kSocksAddressIpv6;
         value.length = 16;
         memoryCopy(value.bytes, &ctx->ip_address.u_addr.ip6, value.length);
     }
     else if (addresscontextIsDomain(ctx))
     {
-        value.kind   = kTrojanClientAddressDomain;
+        value.kind   = kSocksAddressDomain;
         value.length = ctx->domain_len;
         memoryCopy(value.bytes, ctx->domain, value.length);
     }
@@ -28,12 +28,11 @@ static bool trojanclientAddressFromContext(const address_context_t *ctx, trojanc
 }
 
 /* The caller has validated the address and reserved its complete encoded length. */
-static void trojanclientWriteAddress(uint8_t *ptr, size_t capacity, const trojanclient_address_t *address,
-                                     size_t *offset)
+static void trojanclientWriteAddress(uint8_t *ptr, size_t capacity, const socks_address_t *address, size_t *offset)
 {
     assert(*offset <= capacity);
     size_t written = 0;
-    bool   encoded = trojanclientAddressEncode(address, ptr + *offset, capacity - *offset, &written);
+    bool   encoded = socksAddressEncode(address, ptr + *offset, capacity - *offset, &written);
     assert(encoded);
     discard encoded;
     *offset += written;
@@ -52,8 +51,8 @@ bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_
     trojanclient_tstate_t *ts  = tunnelGetState(t);
     bool                   udp = ls->protocol == kTrojanClientProtocolUdp;
     /* UDP association requests use 0.0.0.0:0; datagrams carry the real target. */
-    trojanclient_address_t request_target = {.kind = kTrojanClientAddressIpv4, .length = 4};
-    trojanclient_address_t udp_target     = {0};
+    socks_address_t request_target = {.kind = kSocksAddressIpv4, .length = 4};
+    socks_address_t udp_target     = {0};
     if (UNLIKELY((! udp && ! trojanclientAddressFromContext(&ls->target_addr, &request_target)) ||
                  (udp && body != NULL && ! trojanclientAddressFromContext(&ls->target_addr, &udp_target))))
     {
@@ -61,8 +60,8 @@ bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_
             lineReuseBuffer(l, body);
         return false;
     }
-    uint32_t       addr_len       = (uint32_t) trojanclientAddressEncodedLength(&request_target);
-    uint32_t       udp_addr_len   = udp && body != NULL ? (uint32_t) trojanclientAddressEncodedLength(&udp_target) : 0;
+    uint32_t       addr_len       = (uint32_t) socksAddressEncodedLength(&request_target);
+    uint32_t       udp_addr_len   = udp && body != NULL ? (uint32_t) socksAddressEncodedLength(&udp_target) : 0;
     uint32_t       body_len       = body == NULL ? 0 : sbufGetLength(body);
     uint32_t       header_len     = kTrojanClientPasswordHexLen + 5U + addr_len;
     uint32_t       udp_header_len = udp_addr_len == 0 ? 0 : udp_addr_len + 4U;
@@ -129,13 +128,13 @@ bool trojanclientWrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_contex
     uint32_t payload = sbufGetLength(buf);
     assert(payload <= kTrojanClientUdpMaxPacket);
 
-    trojanclient_address_t address;
+    socks_address_t address;
     if (UNLIKELY(! trojanclientAddressFromContext(target, &address)))
     {
         return false;
     }
 
-    uint32_t header_len = (uint32_t) trojanclientAddressEncodedLength(&address) + 2U + kTrojanClientCrlfLen;
+    uint32_t header_len = (uint32_t) socksAddressEncodedLength(&address) + 2U + kTrojanClientCrlfLen;
 
     if (sbufGetLeftCapacity(buf) < header_len)
     {

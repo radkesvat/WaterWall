@@ -487,7 +487,7 @@ static void addressBoundaries(void)
     {
         address_context_t context  = {0};
         size_t            consumed = 0;
-        twfRequire(socks5serverParseAddressBytes(wire[i], lengths[i], &context, &consumed) == kSocks5AddressComplete,
+        twfRequire(socks5serverParseAddressBytes(wire[i], lengths[i], &context, &consumed) == kSocksAddressComplete,
                    "real node address conversion failed");
         sbuf_t *command = socks5serverCreateCommandReply(control, 0, &context);
         twfRequire(command && sbufGetLength(command) == 3 + lengths[i] &&

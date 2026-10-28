@@ -25,7 +25,7 @@ bool trojanserverQueuePayload(buffer_queue_t *queue, sbuf_t **buf);
 void trojanserverSetNextPaused(tunnel_t *t, line_t *l, bool paused);
 
 /* Shared implementation helpers; callbacks retain their directional admission. */
-void trojanserverApplyDestinationContext(line_t *l, const trojanserver_address_t *target, bool udp);
+void                       trojanserverApplyDestinationContext(line_t *l, const socks_address_t *target, bool udp);
 trojanserver_auth_result_t trojanserverAuthenticateHash(tunnel_t *t, line_t *l,
                                                         const uint8_t  sha224[SHA224_DIGEST_SIZE],
                                                         user_handle_t *user_handle_out);
@@ -40,7 +40,7 @@ void      trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstate_
 void      trojanserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l, bool close_next);
 void      trojanserverCloseUdpRemoteLines(tunnel_t *t, trojanserver_lstate_t *client);
 line_t   *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, trojanserver_lstate_t *client,
-                                               const trojanserver_address_t *target);
+                                               const socks_address_t *target);
 bool      trojanserverNotifyRemotePermission(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);
 
 void trojanserverSetCredentialSnapshot(trojanserver_lstate_t *ls, const char *username, const char *password);

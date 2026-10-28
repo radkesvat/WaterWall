@@ -1,13 +1,13 @@
 #include "internal.h"
 
-static bool trojanserverAddressFromContext(const address_context_t *ctx, trojanserver_address_t *out)
+static bool trojanserverAddressFromContext(const address_context_t *ctx, socks_address_t *out)
 {
-    trojanserver_address_t value = {.port = ctx->port};
+    socks_address_t value = {.port = ctx->port};
     if (addresscontextIsIpType(ctx))
     {
         if (! addresscontextIsIpv4(ctx) && ! addresscontextIsIpv6(ctx))
             return false;
-        value.kind   = addresscontextIsIpv4(ctx) ? kTrojanServerAddressIpv4 : kTrojanServerAddressIpv6;
+        value.kind   = addresscontextIsIpv4(ctx) ? kSocksAddressIpv4 : kSocksAddressIpv6;
         value.length = addresscontextIsIpv4(ctx) ? 4 : 16;
         memoryCopy(value.bytes,
                    addresscontextIsIpv4(ctx) ? (const void *) &ctx->ip_address.u_addr.ip4.addr
@@ -16,7 +16,7 @@ static bool trojanserverAddressFromContext(const address_context_t *ctx, trojans
     }
     else if (addresscontextIsDomain(ctx))
     {
-        value.kind   = kTrojanServerAddressDomain;
+        value.kind   = kSocksAddressDomain;
         value.length = ctx->domain_len;
         memoryCopy(value.bytes, ctx->domain, value.length);
     }
@@ -73,10 +73,10 @@ bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
     address_context_t     *addr_ctx = lineGetDestinationAddressContext(l);
     sbuf_t                *buf      = *buf_io;
     uint32_t               payload  = sbufGetLength(buf);
-    trojanserver_address_t address;
+    socks_address_t        address;
     if (UNLIKELY(payload > kTrojanServerUdpMaxPacket || ! trojanserverAddressFromContext(addr_ctx, &address)))
         return false;
-    size_t addr_len = trojanserverAddressEncodedLength(&address);
+    size_t addr_len = socksAddressEncodedLength(&address);
 
     size_t header_len = addr_len + 2U + kTrojanServerCrlfLen;
     if (UNLIKELY(sbufGetLeftCapacity(buf) < header_len))
@@ -89,7 +89,7 @@ bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
 
     uint8_t *ptr = sbufGetMutablePtr(buf);
     size_t   off = 0;
-    if (UNLIKELY(! trojanserverAddressEncode(&address, ptr, header_len, &off)))
+    if (UNLIKELY(! socksAddressEncode(&address, ptr, header_len, &off)))
     {
         return false;
     }
@@ -104,11 +104,11 @@ bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
 }
 
 line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, trojanserver_lstate_t *client,
-                                             const trojanserver_address_t *target)
+                                             const socks_address_t *target)
 {
-    uint8_t wire[kTrojanServerAddressMaxEncoded];
+    uint8_t wire[kSocksAddressMaxEncoded];
     size_t  written = 0;
-    bool    encoded = trojanserverAddressEncode(target, wire, sizeof(wire), &written);
+    bool    encoded = socksAddressEncode(target, wire, sizeof(wire), &written);
     assert(encoded);
     discard                        encoded;
     trojanserver_remote_key_t      lookup = {.address = *target, .hash = calcHashBytes(wire, written)};

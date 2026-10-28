@@ -4,7 +4,6 @@ add_library(TrojanClient STATIC
                     instance/api.c
                     instance/node.c
                     instance/chain.c
-                    common/address_codec.c
                     common/destination.c
                     common/protocol.c
                     common/input.c
@@ -27,7 +26,7 @@ add_library(TrojanClient STATIC
 target_include_directories(TrojanClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(TrojanClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TrojanClient)
 
-target_link_libraries(TrojanClient ww DomainResolver ProxyClientCommon)
+target_link_libraries(TrojanClient ww DomainResolver ProxyClientCommon SocksAddress)
 if(NOT APPLE)
     target_precompile_headers(TrojanClient REUSE_FROM ww)
 endif()

@@ -6,7 +6,6 @@ add_library(Socks5Server STATIC
                     instance/prepair.c
                     instance/chain.c
                     common/protocol.c
-                    common/address_codec.c
                     common/auth.c
                     common/association.c
                     common/udp.c
@@ -50,7 +49,7 @@ target_include_directories(Socks5Server PRIVATE
 target_include_directories(Socks5Server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(Socks5Server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Socks5Server)
 
-target_link_libraries(Socks5Server PRIVATE ww AuthenticationClient UserController UdpListener TcpUdpListener)
+target_link_libraries(Socks5Server PUBLIC SocksAddress PRIVATE ww AuthenticationClient UserController UdpListener TcpUdpListener)
 if(NOT APPLE)
     target_precompile_headers(Socks5Server REUSE_FROM ww)
 endif()

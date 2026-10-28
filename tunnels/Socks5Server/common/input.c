@@ -159,14 +159,14 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
             size_t            consumed  = 0;
 
             bufferstreamViewBytesAt(&ls->in_stream, 0, request_buf, copy_len);
-            socks5_address_result_t parse_res =
+            socks_address_result_t parse_res =
                 socks5serverParseAddressBytes(request_buf + 3, copy_len - 3, &target, &consumed);
-            if (parse_res == kSocks5AddressNeedMore)
+            if (parse_res == kSocksAddressNeedMore)
             {
                 return true;
             }
 
-            if (parse_res == kSocks5AddressInvalid)
+            if (parse_res == kSocksAddressInvalid)
             {
                 return socks5serverSendReplyAndClose(t, l, kSocks5ReplyAddrNotSupported);
             }

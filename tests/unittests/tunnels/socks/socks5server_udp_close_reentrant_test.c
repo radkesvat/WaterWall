@@ -63,7 +63,7 @@ static socks5server_remote_key_t *fixtureKey(hash_t tag)
 {
     socks5server_remote_key_t *key = memoryAllocate(sizeof(*key));
     *key                           = (socks5server_remote_key_t) {
-                                  .address = {.kind = kSocks5AddressIpv4, .length = 4, .bytes = {127, 0, 0, 1}, .port = (uint16_t) tag},
+                                  .address = {.kind = kSocksAddressIpv4, .length = 4, .bytes = {127, 0, 0, 1}, .port = (uint16_t) tag},
                                   .hash    = tag};
     return key;
 }

@@ -3,12 +3,12 @@
 #include "loggers/network_logger.h"
 
 static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, socks5server_lstate_t *client_ls,
-                                                    const socks5_address_t *identity, const user_handle_t *user_handle)
+                                                    const socks_address_t *identity, const user_handle_t *user_handle)
 {
     assert(client_ls->kind == kSocks5ServerLineKindUdpClient);
-    uint8_t wire[kSocks5AddressMaxEncoded];
+    uint8_t wire[kSocksAddressMaxEncoded];
     size_t  written;
-    if (! socks5AddressEncode(identity, wire, sizeof(wire), &written))
+    if (! socksAddressEncode(identity, wire, sizeof(wire), &written))
     {
         LOGF("Socks5Server: validated UDP identity cannot be encoded");
         abortProgramNow(1);
@@ -114,15 +114,15 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
         return true;
     }
 
-    socks5_address_t        identity;
-    socks5_address_result_t parse_res = socks5AddressDecode(raw + 3, len - 3, &identity);
-    if (parse_res != kSocks5AddressComplete)
+    socks_address_t        identity;
+    socks_address_result_t parse_res = socksAddressDecode(raw + 3, len - 3, &identity);
+    if (parse_res != kSocksAddressComplete)
     {
-        const bool empty_domain = len >= 5 && raw[3] == kSocks5AddressDomain && raw[4] == 0;
+        const bool empty_domain = len >= 5 && raw[3] == kSocksAddressDomain && raw[4] == 0;
         bufferpoolReuseBuffer(client_pool, buf);
         /* An empty domain is a malformed datagram, not an association failure.
          * Other unsupported address types retain their existing close policy. */
-        if (parse_res == kSocks5AddressInvalid && ! empty_domain)
+        if (parse_res == kSocksAddressInvalid && ! empty_domain)
         {
             socks5serverCloseUdpClientLine(t, l);
             lineUnref(l);

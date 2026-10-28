@@ -17,7 +17,7 @@ static bool trojanserverGatherHeader(trojanserver_lstate_t *ls, uint16_t needed)
 
 /* Incomplete (0) is separate from invalid (-1) and complete (1). */
 static int trojanserverGatherAddress(trojanserver_lstate_t *ls, uint16_t base, uint16_t trailer,
-                                     trojanserver_address_t *target)
+                                     socks_address_t *target)
 {
     if (! trojanserverGatherHeader(ls, base + 1))
         return 0;
@@ -42,7 +42,7 @@ static int trojanserverGatherAddress(trojanserver_lstate_t *ls, uint16_t base, u
     }
     if (! trojanserverGatherHeader(ls, base + length + trailer))
         return 0;
-    return trojanserverAddressDecode(ls->header + base, length, target);
+    return socksAddressDecode(ls->header + base, length, target);
 }
 
 void trojanserverResetHeader(trojanserver_lstate_t *ls)
@@ -112,7 +112,7 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
         trojanserverCloseLineBidirectional(t, l);
         return;
     }
-    trojanserver_address_t target;
+    socks_address_t        target;
     int                    parsed = trojanserverGatherAddress(ls, 59, 2, &target);
     if (parsed == 0)
         return;
@@ -167,7 +167,7 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
 {
     if (! ls->frame_ready)
     {
-        trojanserver_address_t target;
+        socks_address_t        target;
         int                    parsed = trojanserverGatherAddress(ls, 0, 4, &target);
         if (parsed == 0)
             return false;
@@ -187,9 +187,9 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     {
         ls->frame_selected = true;
         /* Cached wire metadata outlives partial-body input without owning a domain. */
-        trojanserver_address_t        target;
-        trojanserver_address_result_t decoded = trojanserverAddressDecode(ls->header, ls->header_filled, &target);
-        assert(decoded == kTrojanServerAddressComplete);
+        socks_address_t        target;
+        socks_address_result_t decoded = socksAddressDecode(ls->header, ls->header_filled, &target);
+        assert(decoded == kSocksAddressComplete);
         discard decoded;
         line_t *remote = trojanserverGetOrCreateUdpRemoteLine(t, l, ls, &target);
         if (UNLIKELY(! lineIsAlive(l)))
@@ -224,10 +224,10 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     return true;
 }
 
-void trojanserverApplyDestinationContext(line_t *l, const trojanserver_address_t *target, bool udp)
+void trojanserverApplyDestinationContext(line_t *l, const socks_address_t *target, bool udp)
 {
     address_context_t *dest = lineGetDestinationAddressContext(l);
-    if (target->kind == kTrojanServerAddressDomain)
+    if (target->kind == kSocksAddressDomain)
     {
         char *domain = memoryAllocate((size_t) target->length + 1);
         memoryCopy(domain, target->bytes, target->length);
@@ -241,7 +241,7 @@ void trojanserverApplyDestinationContext(line_t *l, const trojanserver_address_t
     else
     {
         ip_addr_t ip = {0};
-        ip.type      = target->kind == kTrojanServerAddressIpv4 ? IPADDR_TYPE_V4 : IPADDR_TYPE_V6;
+        ip.type      = target->kind == kSocksAddressIpv4 ? IPADDR_TYPE_V4 : IPADDR_TYPE_V6;
         if (ip.type == IPADDR_TYPE_V4)
             memoryCopy(&ip.u_addr.ip4.addr, target->bytes, 4);
         else

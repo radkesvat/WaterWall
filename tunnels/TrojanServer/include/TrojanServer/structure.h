@@ -1,21 +1,21 @@
 #pragma once
 
 #include "FallbackReplay/fallback_replay.h"
-#include "address_codec.h"
+#include "SocksAddress/address_codec.h"
 #include "wwapi.h"
 
 /* Each remote owns its immutable key; the client map borrows it until detach.
  * Routing context rewrites must never change lookup or removal identity. */
 typedef struct trojanserver_remote_key_s
 {
-    trojanserver_address_t address;
+    socks_address_t        address;
     hash_t                 hash;
 } trojanserver_remote_key_t;
 
 static inline bool trojanserverRemoteKeyEqual(trojanserver_remote_key_t *const *left,
                                               trojanserver_remote_key_t *const *right)
 {
-    const trojanserver_address_t *a = &(*left)->address, *b = &(*right)->address;
+    const socks_address_t *a = &(*left)->address, *b = &(*right)->address;
     return a->kind == b->kind && a->port == b->port && a->length == b->length &&
            memoryEqual(a->bytes, b->bytes, a->length);
 }
