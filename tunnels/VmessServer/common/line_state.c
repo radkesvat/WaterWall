@@ -44,11 +44,7 @@ void vmessserverLinestateDestroy(vmessserver_lstate_t *ls)
         lineReuseBuffer(ls->line, ls->input_head);
     bufferqueueDestroy(&ls->pending_up);
     bufferqueueDestroy(&ls->pending_down);
-    if (ls->fallback_pending_up != NULL)
-    {
-        bufferqueueDestroy(ls->fallback_pending_up);
-        memoryFree(ls->fallback_pending_up);
-    }
+    fallbackReplayDestroy(&ls->fallback, lineGetBufferPool(ls->line));
     bufferbudgetAssertEmpty(&ls->upstream_budget);
     bufferbudgetAssertEmpty(&ls->response_budget);
     if (ls->auth_username != NULL)

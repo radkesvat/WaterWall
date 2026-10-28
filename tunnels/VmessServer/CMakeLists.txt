@@ -47,3 +47,5 @@ target_link_libraries(VmessServer PUBLIC VmessCommon)
 if(NOT APPLE)
     target_precompile_headers(VmessServer REUSE_FROM ww)
 endif()
+
+target_link_libraries(VmessServer PUBLIC FallbackReplay)

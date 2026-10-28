@@ -408,7 +408,8 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
         vlessserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
-    ts->fallback_intentional_delay_ms = (uint32_t) fallback_intentional_delay_ms;
+    ts->fallback_replay_config.delay_ms        = (uint32_t) fallback_intentional_delay_ms;
+    ts->fallback_replay_config.max_batch_bytes = kVlessServerMaxPendingBytes;
 
     if (fallback_intentional_delay_jitter_ms < 0)
     {
@@ -417,9 +418,9 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
         vlessserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
-    ts->fallback_intentional_delay_jitter_ms = (uint32_t) fallback_intentional_delay_jitter_ms;
+    ts->fallback_replay_config.jitter_ms = (uint32_t) fallback_intentional_delay_jitter_ms;
 
-    if (ts->fallback_intentional_delay_ms == 0 && ts->fallback_intentional_delay_jitter_ms > 0)
+    if (ts->fallback_replay_config.delay_ms == 0 && ts->fallback_replay_config.jitter_ms > 0)
     {
         LOGD("VlessServer: fallback-intentional-delay-jitter-ms is ignored because fallback-intentional-delay-ms is 0");
     }

@@ -445,10 +445,11 @@ static void fallbackSourceFinish(void)
 {
     est_fixture_t f;
     setup(&f, 1000);
-    vmessserver_tstate_t *ts          = tunnelGetState(f.node);
-    ts->fallback_tunnel               = f.next;
-    ts->fallback_intentional_delay_ms = 50;
-    const uint8_t probe[]             = "invalid-vmess-authentication-prefix-and-body";
+    vmessserver_tstate_t *ts = tunnelGetState(f.node);
+    ts->fallback_tunnel      = f.next;
+    ts->fallback_replay_config =
+        (fallback_replay_config_t) {.delay_ms = 50, .max_batch_bytes = kVmessServerMaxPendingBytes};
+    const uint8_t probe[] = "invalid-vmess-authentication-prefix-and-body";
     sendBytes(&f, probe, sizeof(probe) - 1);
     waitInitialized(&f);
     twfRequire(((vmessserver_lstate_t *) lineGetState(f.line, f.node))->phase == kVmessServerPhaseFallback,

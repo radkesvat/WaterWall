@@ -18,7 +18,6 @@ void vlessserverTryBypassTcp(tunnel_t *t, line_t *l);
 void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);
 bool vlessserverWrapUdpPayload(line_t *l, sbuf_t **buf_io);
 bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, sbuf_t *buf);
-bool vlessserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);
 
 bool    vlessserverGatherHeader(vlessserver_lstate_t *ls, uint16_t needed);
 void    vlessserverRetainActiveHead(vlessserver_lstate_t *ls);

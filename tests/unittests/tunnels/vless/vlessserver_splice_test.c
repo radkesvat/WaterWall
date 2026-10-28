@@ -453,7 +453,7 @@ static void begin(bool fallback, bool database, uint32_t pool)
     f.database                                                    = database;
     vlessserver_tstate_t *ts                                      = tunnelGetState(f.t);
     ts->fallback_tunnel                                           = fallback ? f.fallback : NULL;
-    ts->fallback_intentional_delay_ms = ts->fallback_intentional_delay_jitter_ms = 0;
+    ts->fallback_replay_config.delay_ms = ts->fallback_replay_config.jitter_ms = 0;
     if (database)
         ts->auth_client_tunnel = f.next;
     twfLinePoolSetup(&f.lines, f.t->lstate_size, 8);
@@ -818,8 +818,8 @@ static void testFallback(void)
     {
         begin(true, false, 128);
         vlessserver_tstate_t *ts                 = tunnelGetState(f.t);
-        ts->fallback_intentional_delay_ms        = 7;
-        ts->fallback_intentional_delay_jitter_ms = 1;
+        ts->fallback_replay_config.delay_ms      = 7;
+        ts->fallback_replay_config.jitter_ms     = 1;
         uint8_t probe[2048];
         memset(probe, 'x', sizeof(probe));
         tunnelUpStreamPayload(f.t, f.line, bytes(probe, sizeof(probe), true, 320));
@@ -844,7 +844,7 @@ static void testFallback(void)
         end();
     }
     begin(true, false, 128);
-    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
     g_fallback_finish_task.refuse                                                 = true;
     tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
     twfRequire(! lineIsAlive(f.line), "task refusal did not close fallback");
@@ -873,7 +873,7 @@ static void testFallbackLocalReplies(void)
                 f.auto_est             = established != 0;
                 local_reply_pipe       = pipe != 0;
                 f.fallback->fnPayloadU = localFallbackReplyAndFinish;
-                ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = delayed ? 7 : 0;
+                ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = delayed ? 7 : 0;
                 tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, pipe != 0, 320));
                 if (delayed)
                     fallbackFinishDriveDelayedTask();
@@ -1206,7 +1206,7 @@ static void testReentry(void)
             end();
         }
     begin(true, false, 128);
-    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
     f.boundary                                                                    = 1;
     f.action                                                                      = 7;
     tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
@@ -1287,8 +1287,8 @@ static void testLimits(void)
             vlessserver_lstate_t *ls = lineGetState(f.line, f.t);
             if (direction == 0)
             {
+                ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
                 tunnelUpStreamPayload(f.t, f.line, bytes("", 0, false, 320));
-                ls->input_dispatching = true;
             }
             else
             {
@@ -1400,7 +1400,7 @@ static void testRepresentationsAndPipePressure(void)
         end();
     }
     begin(true, false, 128);
-    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
     tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
     tunnelDownStreamPause(f.t, f.line);
     tunnelUpStreamPayload(f.t, f.line, bytes("-tail", 5, false, 320));
@@ -1413,7 +1413,7 @@ static void testRepresentationsAndPipePressure(void)
                "Resume rescheduled an already-drained fallback batch");
     end();
     begin(true, false, 128);
-    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
     tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
     tunnelDownStreamPause(f.t, f.line);
     end();

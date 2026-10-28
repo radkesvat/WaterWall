@@ -161,8 +161,6 @@ void vmessserverProcessInput(tunnel_t *t, line_t *l)
         if (ls->tunnel == t)
         {
             ls->input_dispatching = false;
-            if (ls->phase == kVmessServerPhaseFallback && ! vmessserverScheduleFallbackPayloadDrain(t, l, ls))
-                vmessserverCloseLineBidirectional(t, l);
         }
     }
     lineUnref(l);

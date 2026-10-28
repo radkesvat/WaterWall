@@ -44,3 +44,5 @@ target_link_libraries(VlessServer PRIVATE ww AuthenticationClient UserController
 if(NOT APPLE)
     target_precompile_headers(VlessServer REUSE_FROM ww)
 endif()
+
+target_link_libraries(VlessServer PUBLIC FallbackReplay)

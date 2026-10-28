@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AuthenticationClient/interface.h"
+#include "FallbackReplay/fallback_replay.h"
 #include "VmessCommon/crypto.h"
 #include "replay.h"
 #include "wwapi.h"
@@ -104,18 +105,17 @@ typedef struct vmessserver_tstate_s
     node_t   *fallback_node;
     tunnel_t *fallback_tunnel;
 
-    vmessserver_user_t    *users;
-    uint32_t               user_count;
-    uint32_t               fallback_intentional_delay_ms;
-    uint32_t               fallback_intentional_delay_jitter_ms;
-    bool                   allow_connect;
-    bool                   allow_udp;
-    bool                   verbose;
-    bool                   send_termination, packetaddr;
-    uint8_t                allowed_security;
-    uint16_t               packetaddr_max_destinations;
-    vmess_counter_policy_t counter_policy;
-    vmessserver_stats_t    stats;
+    vmessserver_user_t      *users;
+    uint32_t                 user_count;
+    fallback_replay_config_t fallback_replay_config;
+    bool                     allow_connect;
+    bool                     allow_udp;
+    bool                     verbose;
+    bool                     send_termination, packetaddr;
+    uint8_t                  allowed_security;
+    uint16_t                 packetaddr_max_destinations;
+    vmess_counter_policy_t   counter_policy;
+    vmessserver_stats_t      stats;
     /* Owner-worker inventories drain internally created backends independently
      * of borrowed carrier/source shutdown order. */
     vmessserver_lstate_t **owned_backends;
@@ -166,7 +166,7 @@ struct vmessserver_lstate_s
     buffer_budget_t       response_budget;
     /* Response-header/reentry ordering only; direct ready replies are forwarded. */
     buffer_queue_t          pending_down;
-    buffer_queue_t         *fallback_pending_up;
+    fallback_replay_t       fallback;
     user_handle_t           user_handle;
     char                   *auth_username; // resolved account name, owned (NULL if none)
     char                   *auth_password; // resolved raw password / UUID, owned (NULL if none)
@@ -185,9 +185,6 @@ struct vmessserver_lstate_s
     /* Client-side upstream permission: current backend contribution and emitted hold. */
     bool udp_backend_paused : 1;
     bool udp_source_pause_sent : 1;
-    bool fallback_close_draining : 1;
-    bool fallback_branch_finished_during_drain : 1;
-    bool fallback_delay_scheduled : 1;
 };
 
 enum
