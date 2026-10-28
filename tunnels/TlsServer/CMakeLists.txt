@@ -75,7 +75,7 @@ if(NOT WW_OPENSSL_HAS_RECORD_PADDING_CALLBACK)
   message(FATAL_ERROR "TlsServer tls13-record-shaping requires OpenSSL with SSL_CTX_set_record_padding_callback (OpenSSL 1.1.1 or newer)")
 endif()
 
-target_link_libraries(TlsServer ww TlsRecordShapingCommon)
+target_link_libraries(TlsServer PUBLIC ww TlsRecordShapingCommon FallbackReplay)
 if(NOT APPLE)
     target_precompile_headers(TlsServer REUSE_FROM ww)
 endif()

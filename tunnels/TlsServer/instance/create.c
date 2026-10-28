@@ -443,7 +443,7 @@ static bool parseTlsDefaults(tlsserver_tstate_t *ts, const cJSON *settings, tunn
         tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
-    ts->fallback_intentional_delay_ms = (uint32_t) fallback_intentional_delay_ms;
+    ts->fallback_replay_config.delay_ms = (uint32_t) fallback_intentional_delay_ms;
 
     if (fallback_intentional_delay_jitter_ms < 0)
     {
@@ -452,9 +452,11 @@ static bool parseTlsDefaults(tlsserver_tstate_t *ts, const cJSON *settings, tunn
         tlsserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return false;
     }
-    ts->fallback_intentional_delay_jitter_ms = (uint32_t) fallback_intentional_delay_jitter_ms;
+    ts->fallback_replay_config.jitter_ms       = (uint32_t) fallback_intentional_delay_jitter_ms;
+    ts->fallback_replay_config.max_batch_bytes = kTlsServerMaxFallbackPendingBytes;
+    ts->fallback_replay_config.zero_delay_mode = kFallbackReplayInlineNested;
 
-    if (ts->fallback_intentional_delay_ms == 0 && ts->fallback_intentional_delay_jitter_ms > 0)
+    if (ts->fallback_replay_config.delay_ms == 0 && ts->fallback_replay_config.jitter_ms > 0)
     {
         LOGD("TlsServer: fallback-intentional-delay-jitter-ms is ignored because fallback-intentional-delay-ms is 0");
     }
@@ -657,8 +659,8 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
             ts->session_cache_size,
             (int) ts->session_tickets,
             (unsigned int) ts->handshake_timeout_ms,
-            (unsigned int) ts->fallback_intentional_delay_ms,
-            (unsigned int) ts->fallback_intentional_delay_jitter_ms,
+            (unsigned int) ts->fallback_replay_config.delay_ms,
+            (unsigned int) ts->fallback_replay_config.jitter_ms,
             ts->alpns_length,
             ts->select_alpns_length,
             tlsrecordshapingConfigModeName(&ts->record_shaping),

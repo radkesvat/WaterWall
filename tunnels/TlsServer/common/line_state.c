@@ -6,17 +6,17 @@ bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buff
                                   const tlsrecordshaping_config_t *record_shaping, bool verbose)
 {
     *ls = (tlsserver_lstate_t) {
-        .pending_down                          = bufferqueueCreate(2),
-        .fallback_pending_up                   = NULL,
-        .fallback_probe                        = bufferstreamCreate(pool, 0),
-        .fallback_close_draining               = false,
-        .fallback_branch_finished_during_drain = false,
-        .shaping_retired                       = false,
-        .verbose                               = verbose,
+        .pending_down            = bufferqueueCreate(2),
+        .fallback_probe          = bufferstreamCreate(pool, 0),
+        .fallback_close_draining = false,
+        .shaping_retired         = false,
+        .verbose                 = verbose,
     };
     bufferbudgetInit(
         &ls->pending_down_budget,
         (buffer_budget_cost_t) {kTlsServerPendingPlaintextBytes, SIZE_MAX, kTlsServerPendingPlaintextBuffers});
+    bufferbudgetInit(&ls->fallback_budget,
+                     (buffer_budget_cost_t) {kTlsServerMaxFallbackPendingBytes, SIZE_MAX, SIZE_MAX});
     const bool attached = bufferqueueTryAttachBudget(&ls->pending_down, &ls->pending_down_budget);
     assert(attached);
     discard attached;
@@ -121,11 +121,7 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls)
 void tlsserverLinestateDestroy(tlsserver_lstate_t *ls)
 {
     tlsserverLinestateRelease(ls);
-    if (ls->fallback_pending_up != NULL)
-    {
-        bufferqueueDestroy(ls->fallback_pending_up);
-        memoryFree(ls->fallback_pending_up);
-        ls->fallback_pending_up = NULL;
-    }
+    fallbackReplayDestroy(&ls->fallback, ls->line != NULL ? lineGetBufferPool(ls->line) : NULL);
+    bufferbudgetAssertEmpty(&ls->fallback_budget);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsserver_lstate_t)));
 }
