@@ -179,6 +179,7 @@ enum
     kTrojanServerUdpMaxPacket     = UINT16_MAX,
     kTrojanServerBufferQueueCap   = 8,
     kTrojanServerMaxPendingBytes  = 2 * 1024 * 1024,
+    kTrojanServerMaxFallbackCharge = 8 * 1024 * 1024,
     kTrojanServerUdpHeaderMaxLen  = 1 + 1 + UINT8_MAX + 2 + 2 + 2,
     kTrojanServerMaxQueuedBuffers = 1024,
     kTrojanServerMaxWireBytes = kTrojanServerMaxPendingBytes + kTrojanServerUdpHeaderMaxLen + kTrojanServerUdpMaxPacket

@@ -101,8 +101,9 @@ static void setup(fixture_t *f, const char *sni, int version, bool fallback)
     ts->expected_sni             = expected_sni;
     ts->fallback_tunnel          = fallback ? f->cover : NULL;
     ts->fallback_replay_config   = (fallback_replay_config_t) {
-          .max_batch_bytes = kTlsServerMaxFallbackPendingBytes,
-          .zero_delay_mode = kFallbackReplayInlineNested,
+          .max_batch_bytes  = kTlsServerMaxFallbackPendingBytes,
+          .zero_delay_mode  = kFallbackReplayInlineNested,
+          .compact_ordinary = true,
     };
     SSL_CTX_set_tlsext_servername_callback(f->ctx, tlsserverOnServername);
     SSL_CTX_set_tlsext_servername_arg(f->ctx, ts);
@@ -340,6 +341,11 @@ static void reentrantInitCase(uint32_t delay_ms, int action, bool plaintext)
     }
     else
     {
+        const buffer_budget_cost_t limits =
+            bufferbudgetGetLimits(&((tlsserver_lstate_t *) lineGetState(f.line, f.tls))->fallback_budget);
+        twfRequire(limits.charge == (delay_ms != 0 ? kTlsServerMaxFallbackCharge : SIZE_MAX) &&
+                       limits.entries == (delay_ms != 0 ? kTlsServerMaxFallbackBuffers : SIZE_MAX),
+                   "TLS fallback retention policy changed outside delayed replay");
         if (g_fallback_finish_task.pending)
         {
             fallbackFinishDriveDelayedTask();

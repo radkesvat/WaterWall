@@ -210,7 +210,8 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
   Set to `0` to disable the intentional delay. At delay zero, an initialized fallback with no older queued bytes or
   scheduled drain receives payload inline, including during Pause. Retained bytes drain without waiting for Resume;
   later input cannot overtake an older FIFO batch. Delayed fallback payloads are delivered in
-  FIFO order and are bounded to 1 MiB per line; close-time behavior is described in [Fallback behavior](#fallback-behavior).
+  FIFO order and are bounded to 1 MiB logical bytes, 8 MiB buffer allocation charge and 1,024 retained buffers per line;
+  close-time behavior is described in [Fallback behavior](#fallback-behavior).
 
   This value must be calibrated against the public behavior the fallback should resemble. The important question is
   whether the fallback branch would answer faster or slower than that behavior, not whether it is co-located or remote.
@@ -340,7 +341,9 @@ payloads in both directions are passed through the fallback branch without TLS e
 If the first bytes look like a TLS handshake record (`16 03`), OpenSSL parses the ClientHello. With `sni` configured, mismatched or absent SNI suspends the handshake and selects fallback before TLS output. Malformed ClientHello/SNI input rejected before routing stays on the TLS error path. After an SNI fallback selection, the fallback server owns TLS negotiation and its errors.
 
 The fallback delay is applied only to upstream payloads during normal live operation, and delayed bytes stay in a FIFO
-bounded to 1 MiB per line. Downstream responses from fallback are not intentionally delayed. An upstream `Finish` does not
+bounded to 1 MiB logical bytes, 8 MiB buffer allocation charge and 1,024 retained buffers per line. On charge or entry
+pressure, the delayed batch first coalesces into best-fit storage if that fits the limits, keeping byte order and its
+scheduled delay. Downstream responses from fallback are not intentionally delayed. An upstream `Finish` does not
 keep the remaining intentional delay alive: accepted queued bytes are synchronously flushed in FIFO order before fallback
 `Finish`, including during advisory Pause. A close while fallback Init is still running discards the batch.
 Fallback routing remains active because it selects a branch outside the ordinary `next` path. Before selecting a branch,

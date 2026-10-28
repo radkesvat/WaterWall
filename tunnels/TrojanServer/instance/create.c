@@ -376,6 +376,7 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
     }
 
     ts->fallback_replay_config.max_batch_bytes = kTrojanServerMaxPendingBytes;
+    ts->fallback_replay_config.compact_ordinary = true;
     ts->fallback_replay_config.zero_delay_mode = kFallbackReplayCallerDriven;
     ts->allow_connect                          = true;
     ts->allow_udp                              = true;

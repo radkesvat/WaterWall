@@ -39,6 +39,16 @@ bool vlessserverStartFallback(tunnel_t *t, line_t *l)
             goto failed;
         }
     }
+    if (ts->fallback_replay_config.delay_ms != 0)
+    {
+        /* Fallback selection precedes TCP budget attachment. The independent
+         * response budget and authenticated TCP retention keep their policy. */
+        bufferbudgetAssertEmpty(&ls->upstream_budget);
+        bufferbudgetInit(&ls->upstream_budget,
+                         (buffer_budget_cost_t) {kVlessServerMaxPendingBytes,
+                                                 kVlessServerMaxFallbackCharge,
+                                                 kVlessServerMaxPendingBuffers});
+    }
     if (fallbackReplayBegin(&ls->fallback,
                             l,
                             ts->fallback_tunnel,

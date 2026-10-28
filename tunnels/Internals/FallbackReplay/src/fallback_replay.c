@@ -24,6 +24,60 @@ static void fallbackReplayDiscardPending(fallback_replay_t *replay, buffer_pool_
         bufferpoolReuseBuffer(pool, bufferqueuePopFront(&replay->pending));
 }
 
+/* Retry only rejected retention, not each fragment. The node supplies the
+ * budget; its other owners must still fit after replacing this FIFO. All
+ * refusal checks precede mutation, and no callbacks run during replacement. */
+static bool fallbackReplayTryCompact(fallback_replay_t *replay, buffer_pool_t *pool, buffer_budget_t *budget,
+                                     sbuf_t **additional)
+{
+    if (! replay->config->compact_ordinary || replay->config->delay_ms == 0 ||
+        (additional != NULL && sbufIsSplice(*additional)))
+        return false;
+    c_foreach(item, ww_sbuffer_queue_t, replay->pending.q)
+    {
+        if (sbufIsSplice(*item.ref))
+            return false;
+    }
+
+    const size_t extra = additional != NULL ? sbufGetLength(*additional) : 0;
+    assert(fallbackReplayBatchFits(replay, pool, extra));
+    const uint32_t    total   = (uint32_t) (bufferqueueGetBufLen(&replay->pending) + extra);
+    const uint16_t    padding = bufferpoolGetLargeBufferPadding(pool);
+    buffer_pool_fit_t fit;
+    if (! bufferpoolQueryBestFit(pool, total, padding, &fit))
+        return false;
+
+    buffer_budget_t available = {.limits = bufferbudgetGetLimits(budget), .used = bufferbudgetGetUsage(budget)};
+    if (replay->pending.budget == budget)
+        bufferbudgetRelease(&available,
+                            (buffer_budget_cost_t) {bufferqueueGetBufLen(&replay->pending),
+                                                    bufferqueueGetCharge(&replay->pending),
+                                                    bufferqueueGetBufCount(&replay->pending)});
+    if (! bufferbudgetTryAcquire(&available, (buffer_budget_cost_t) {total, fit.allocation_charge, 1}) ||
+        ! bufferqueueReserveExtra(&replay->pending, 1))
+        return false;
+
+    sbuf_t *merged = bufferpoolGetBestFit(pool, total, padding);
+    while (bufferqueueGetBufCount(&replay->pending) != 0)
+    {
+        sbuf_t *part = bufferqueuePopFront(&replay->pending);
+        merged       = sbufMoveRangeTo(pool, part, merged, sbufGetLength(part), total, padding);
+        bufferpoolReuseBuffer(pool, part);
+    }
+    if (additional != NULL)
+    {
+        merged = sbufMoveRangeTo(pool, *additional, merged, sbufGetLength(*additional), total, padding);
+        bufferpoolReuseBuffer(pool, *additional);
+        *additional = NULL;
+    }
+    const bool attached = replay->pending.budget == NULL ? bufferqueueTryAttachBudget(&replay->pending, budget)
+                                                         : bufferqueueTryRebindBudget(&replay->pending, budget);
+    assert(attached);
+    discard attached;
+    bufferqueuePushBack(&replay->pending, merged);
+    return true;
+}
+
 /* Admission already proved complete merge geometry against fixed pool/config
  * bounds. Keep the empty queue bound for subsequent reentrant admission. */
 static sbuf_t *fallbackReplayTakeBatch(fallback_replay_t *replay, buffer_pool_t *pool)
@@ -114,10 +168,15 @@ fallback_replay_result_e fallbackReplayBegin(fallback_replay_t *replay, line_t *
     replay->initializing = true;
     replay->startup      = true;
 
-    buffer_pool_t *pool     = lineGetBufferPool(line);
-    const bool     attached = replay->pending.budget == NULL ? bufferqueueTryAttachBudget(&replay->pending, budget)
-                                                             : bufferqueueTryRebindBudget(&replay->pending, budget);
-    if (! attached || ! fallbackReplayBatchFits(replay, pool, 0))
+    buffer_pool_t *pool = lineGetBufferPool(line);
+    if (! fallbackReplayBatchFits(replay, pool, 0))
+    {
+        fallbackReplayDestroy(replay, pool);
+        return kFallbackReplayRefused;
+    }
+    const bool attached = replay->pending.budget == NULL ? bufferqueueTryAttachBudget(&replay->pending, budget)
+                                                         : bufferqueueTryRebindBudget(&replay->pending, budget);
+    if (! attached && ! fallbackReplayTryCompact(replay, pool, budget, NULL))
     {
         fallbackReplayDestroy(replay, pool);
         return kFallbackReplayRefused;
@@ -167,7 +226,8 @@ fallback_replay_result_e fallbackReplaySubmit(fallback_replay_t *replay, tunnel_
         return fallbackReplayDispatch(replay, owner, line, payload, task);
 
     if (! fallbackReplayBatchFits(replay, lineGetBufferPool(line), sbufGetLength(payload)) ||
-        ! bufferqueueTryPushBack(&replay->pending, &payload))
+        (! bufferqueueTryPushBack(&replay->pending, &payload) &&
+         ! fallbackReplayTryCompact(replay, lineGetBufferPool(line), replay->pending.budget, &payload)))
     {
         lineReuseBuffer(line, payload);
         return kFallbackReplayRefused;

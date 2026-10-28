@@ -111,9 +111,10 @@ static void fixtureSetupWithDelay(tlsserver_fallback_fixture_t *fixture, uint32_
     tlsserver_tstate_t *ts     = tunnelGetState(fixture->node);
     ts->fallback_tunnel        = fixture->fallback.fallback;
     ts->fallback_replay_config = (fallback_replay_config_t) {
-        .delay_ms        = delay_ms,
-        .max_batch_bytes = kTlsServerMaxFallbackPendingBytes,
-        .zero_delay_mode = kFallbackReplayInlineNested,
+        .delay_ms         = delay_ms,
+        .max_batch_bytes  = kTlsServerMaxFallbackPendingBytes,
+        .zero_delay_mode  = kFallbackReplayInlineNested,
+        .compact_ordinary = true,
     };
 
     twfLinePoolSetup(&fixture->lines, fixture->node->lstate_size, kTestLinePoolItems);

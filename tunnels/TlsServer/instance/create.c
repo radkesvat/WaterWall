@@ -454,6 +454,7 @@ static bool parseTlsDefaults(tlsserver_tstate_t *ts, const cJSON *settings, tunn
     }
     ts->fallback_replay_config.jitter_ms       = (uint32_t) fallback_intentional_delay_jitter_ms;
     ts->fallback_replay_config.max_batch_bytes = kTlsServerMaxFallbackPendingBytes;
+    ts->fallback_replay_config.compact_ordinary = true;
     ts->fallback_replay_config.zero_delay_mode = kFallbackReplayInlineNested;
 
     if (ts->fallback_replay_config.delay_ms == 0 && ts->fallback_replay_config.jitter_ms > 0)

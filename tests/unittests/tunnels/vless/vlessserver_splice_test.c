@@ -1305,6 +1305,8 @@ static void testLimits(void)
                     tunnelUpStreamPayload(f.t, f.line, b);
             }
             buffer_budget_t *budget = direction ? &ls->response_budget : &ls->upstream_budget;
+            twfRequire(bufferbudgetGetLimits(budget).charge == (direction ? SIZE_MAX : kVlessServerMaxFallbackCharge),
+                       "fallback charge policy affected the wrong budget");
             twfRequire(lineIsAlive(f.line) && bufferbudgetGetUsage(budget).entries == (entries ? 1024 : 1),
                        "exact budget rejected or accounting lost");
             sbuf_t *extra = bytes(data, entries ? 0 : 1, false, 320);
@@ -1312,7 +1314,11 @@ static void testLimits(void)
                 tunnelDownStreamPayload(f.t, f.line, extra);
             else
                 tunnelUpStreamPayload(f.t, f.line, extra);
-            twfRequire(! lineIsAlive(f.line), "output budget overflow accepted");
+            if (direction == 0 && entries)
+                twfRequire(lineIsAlive(f.line) && bufferbudgetGetUsage(budget).entries == 1,
+                           "delayed entry pressure did not compact ordinary replay");
+            else
+                twfRequire(! lineIsAlive(f.line), "output budget overflow accepted");
             end();
         }
     begin(false, false, 128);

@@ -61,7 +61,8 @@ not every frame is guaranteed zero-copy.
 
 | Retained obligation | Inclusive limit |
 | --- | --- |
-| Upstream Init/reentry and fallback backlog, shared | 2,097,152 logical bytes and 1,024 buffers |
+| Upstream Init/reentry and zero-delay fallback backlog | 2,097,152 logical bytes and 1,024 buffers |
+| Delayed fallback backlog | 2,097,152 logical bytes, 8 MiB buffer charge and 1,024 buffers |
 | Downstream response-header/reentry backlog | 2,097,152 logical bytes and 1,024 buffers |
 | Request/UDP parser, including cached metadata and active input | 2,162,689 logical bytes (2 MiB + 65,537) |
 
@@ -381,8 +382,10 @@ doing this.
 The fallback branch receives `Init` immediately. During normal live operation, nonzero delay uses the configured delay
 and jitter. At delay zero, an active fallback with no older FIFO batch or scheduled drain completes admitted payload
 inline, including through Pause; independently retained bytes remain FIFO and their scheduled drain runs when due
-without requiring Resume. The delayed FIFO is bounded to the shared upstream 2 MiB / 1,024-buffer budget. Downstream
-responses from fallback are not intentionally delayed.
+without requiring Resume. The delayed FIFO is bounded to 2 MiB logical bytes, 8 MiB buffer allocation charge and
+1,024 retained buffers. Before refusing ordinary input on charge or entry pressure, it coalesces the batch into best-fit
+storage when that fits the limits, preserving byte order and the scheduled delay. Downstream responses from fallback
+are not intentionally delayed.
 
 An upstream `Finish` does not keep the remaining intentional delay alive. Outside branch Init, accepted queued bytes
 are synchronously flushed in one FIFO batch before fallback `Finish`, including during advisory Pause. During branch

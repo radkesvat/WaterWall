@@ -17,6 +17,7 @@ typedef struct fallback_replay_config_s
     uint32_t                          jitter_ms;
     size_t                            max_batch_bytes;
     fallback_replay_zero_delay_mode_e zero_delay_mode;
+    bool                              compact_ordinary; /* Positive-delay admission may compact ordinary batches. */
 } fallback_replay_config_t;
 
 typedef enum fallback_replay_result_e
@@ -44,7 +45,8 @@ typedef struct fallback_replay_s
 
 /* Consumes transcript on every result, leaving it empty and unbound. Preserves
  * its existing budget accounting, rebinding to budget if necessary. Refusal
- * recycles the entire transcript. Publish the node's fallback phase before
+ * recycles the entire transcript. When enabled, positive-delay ordinary batches
+ * retry charge/entry admission in best-fit storage. Publish the node's fallback phase before
  * calling branch Init after Begin succeeds. No callbacks run in Begin. */
 fallback_replay_result_e fallbackReplayBegin(fallback_replay_t *replay, line_t *line, tunnel_t *branch,
                                              const fallback_replay_config_t *config, buffer_budget_t *budget,
@@ -60,7 +62,9 @@ void fallbackReplayMarkInitialized(fallback_replay_t *replay);
 fallback_replay_result_e fallbackReplayInitDone(fallback_replay_t *replay, tunnel_t *owner, line_t *line,
                                                 LineTaskFnNoBuf task);
 
-/* Always consumes payload. Admission refusal recycles the input; scheduling
+/* Always consumes payload. Optional compaction preserves bytes and the pending
+ * deadline; zero-delay queues and batches containing splice buffers keep their
+ * existing admission/representation. Admission refusal recycles the input; scheduling
  * refusal leaves retained input owned by replay until the caller closes/destroys
  * it. Gone means line/state retirement or an already-running close; stop using
  * the state even when the borrowed line remains alive. */

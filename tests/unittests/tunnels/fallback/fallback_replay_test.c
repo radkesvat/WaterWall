@@ -2,7 +2,8 @@
  * Covers: shared fallback replay ownership, bounded admission, FIFO scheduling and representation-aware batches.
  * Setup: Real FallbackReplay with the existing worker, normal-line, buffer ledger and delayed-task fixtures.
  * The fixture owns the normal line; FallbackReplay borrows it. No real timer or network endpoint is required.
- * Cases: moved unbound/bound transcripts; byte/charge/entry refusal; initial inline and reentrant async replay;
+ * Cases: moved unbound/bound transcripts; pressure compaction with shared budgets; byte/charge/entry refusal;
+ * initial inline and reentrant async replay;
  * scheduler refusal; retired/dead queued tasks; mixed ordinary/private-pipe inputs and ordinary merge fallback.
  * Checks: exact replay bytes, callback counts, budget settlement, line-reference settlement and buffer ownership.
  * Limits: Component tests do not establish server authentication, host-network behavior or performance.
@@ -50,6 +51,15 @@ static sbuf_t *ordinary(replay_fixture_t *fixture, const char *text)
     const uint32_t length = (uint32_t) stringLength(text);
     sbuf_t        *buffer =
         bufferpoolGetBestFit(fixture->env.pool, length, bufferpoolGetLargeBufferPadding(fixture->env.pool));
+    sbufWrite(buffer, text, length);
+    sbufSetLength(buffer, length);
+    return buffer;
+}
+
+static sbuf_t *largeOrdinary(replay_fixture_t *fixture, const char *text)
+{
+    const uint32_t length = (uint32_t) stringLength(text);
+    sbuf_t        *buffer = bufferpoolGetLargeBuffer(fixture->env.pool);
     sbufWrite(buffer, text, length);
     sbufSetLength(buffer, length);
     return buffer;
@@ -211,6 +221,7 @@ static void caseBeginRefusal(unsigned limit)
                             : "Begin consumes rejected transcript bound to another budget");
     replay_fixture_t fixture;
     setup(&fixture);
+    fixture.config.compact_ordinary = true;
     replay_test_state_t *state = replayState(&fixture);
     buffer_queue_t       transcript;
     bufferqueueInitEmpty(&transcript);
@@ -234,13 +245,16 @@ static void caseBeginRefusal(unsigned limit)
     teardown(&fixture);
 }
 
-static void caseSubmitRefusal(unsigned limit)
+static void caseSubmitRefusal(unsigned limit, bool zero_delay)
 {
     twfSetCase(limit == 0   ? "Submit refuses byte limit plus one"
                : limit == 1 ? "Submit refuses charge limit plus one buffer"
                             : "Submit refuses entry limit plus one");
     replay_fixture_t fixture;
     setup(&fixture);
+    fixture.config.compact_ordinary = zero_delay;
+    if (zero_delay)
+        fixture.config.delay_ms = 0;
     replay_test_state_t *state  = replayState(&fixture);
     sbuf_t              *first  = ordinary(&fixture, "1234");
     buffer_budget_cost_t limits = {.bytes = 1024, .charge = SIZE_MAX, .entries = 1024};
@@ -263,6 +277,100 @@ static void caseSubmitRefusal(unsigned limit)
     const buffer_budget_cost_t usage = bufferbudgetGetUsage(&state->budget);
     twfRequire(usage.bytes == 4 && usage.entries == 1, "refusal changed earlier retained input accounting");
     twfRequire(! g_fallback_finish_task.pending, "input scheduled before Init completed");
+    teardown(&fixture);
+}
+
+static void caseCompactTranscript(bool bound, bool entry_pressure, bool refuse)
+{
+    twfSetCase(entry_pressure ? "compact transcript at entry pressure" : "compact transcript at charge pressure");
+    replay_fixture_t fixture;
+    setup(&fixture);
+    fixture.config.compact_ordinary = true;
+    replay_test_state_t *state      = replayState(&fixture);
+    buffer_queue_t       transcript;
+    bufferqueueInitEmpty(&transcript);
+    bufferqueuePushBack(&transcript, largeOrdinary(&fixture, "one"));
+    bufferqueuePushBack(&transcript, largeOrdinary(&fixture, "-two"));
+    if (bound)
+        twfRequire(bufferqueueTryAttachBudget(&transcript, &state->original_budget), "transcript bind failed");
+
+    buffer_pool_fit_t fit;
+    twfRequire(bufferpoolQueryBestFit(fixture.env.pool, 7, bufferpoolGetLargeBufferPadding(fixture.env.pool), &fit),
+               "compact geometry query failed");
+    const buffer_budget_cost_t other = {11, 17, 2};
+    bufferbudgetInit(
+        &state->budget,
+        (buffer_budget_cost_t) {7 + other.bytes,
+                                entry_pressure ? SIZE_MAX : fit.allocation_charge + other.charge - (refuse ? 1 : 0),
+                                entry_pressure ? 1 + other.entries : 1024});
+    twfRequire(bufferbudgetTryAcquire(&state->budget, other), "other budget owner could not reserve");
+
+    const fallback_replay_result_e result = begin(&fixture, &transcript);
+    twfRequire(result == (refuse ? kFallbackReplayRefused : kFallbackReplayOk), "compact transcript admission wrong");
+    requireMoved(&transcript);
+    bufferbudgetAssertEmpty(&state->original_budget);
+    const buffer_budget_cost_t usage = bufferbudgetGetUsage(&state->budget);
+    if (refuse)
+    {
+        twfRequire(usage.bytes == other.bytes && usage.charge == other.charge && usage.entries == other.entries,
+                   "refused compaction consumed another owner's allowance");
+        bufferbudgetRelease(&state->budget, other);
+        teardown(&fixture);
+        return;
+    }
+    twfRequire(usage.bytes == 7 + other.bytes && usage.charge == fit.allocation_charge + other.charge &&
+                   usage.entries == 1 + other.entries,
+               "compaction lost shared budget accounting");
+    twfRequire(sbufGetLeftCapacity(bufferqueueFront(&state->replay.pending)) >=
+                   bufferpoolGetLargeBufferPadding(fixture.env.pool),
+               "compaction lost onward padding");
+    twfRequire(initialized(&fixture) == kFallbackReplayOk, "compact transcript scheduling failed");
+    fallbackFinishDriveDelayedTask();
+    twfRequireEqualText((const char *) fixture.branch.received, "one-two", "compaction changed transcript FIFO");
+    bufferbudgetRelease(&state->budget, other);
+    teardown(&fixture);
+}
+
+static void caseCompactSubmit(unsigned pressure)
+{
+    twfSetCase(pressure == 0   ? "compact pending plus incoming at charge pressure"
+               : pressure == 1 ? "compact pending plus incoming at entry pressure"
+                               : "compact sole oversized incoming allocation");
+    replay_fixture_t fixture;
+    setup(&fixture);
+    fixture.config.compact_ordinary = true;
+    replay_test_state_t *state      = replayState(&fixture);
+    sbuf_t              *first      = largeOrdinary(&fixture, "one");
+    buffer_pool_fit_t    fit;
+    twfRequire(bufferpoolQueryBestFit(fixture.env.pool, 7, bufferpoolGetLargeBufferPadding(fixture.env.pool), &fit),
+               "compact geometry query failed");
+    bufferbudgetInit(&state->budget,
+                     (buffer_budget_cost_t) {1024,
+                                             pressure == 0   ? sbufGetQueueCharge(first)
+                                             : pressure == 1 ? SIZE_MAX
+                                                             : fit.allocation_charge,
+                                             pressure == 1 ? 1 : 1024});
+    buffer_queue_t transcript;
+    bufferqueueInitEmpty(&transcript);
+    twfRequire(begin(&fixture, &transcript) == kFallbackReplayOk, "empty transcript failed");
+    requireMoved(&transcript);
+    twfRequire(initialized(&fixture) == kFallbackReplayOk, "empty replay initialization failed");
+    twfRequire(fallbackReplaySubmit(&state->replay, fixture.node, fixture.line, first, replayTask) == kFallbackReplayOk,
+               "first compactable input was refused");
+    const uint32_t delay = g_fallback_finish_task.delay_ms;
+    twfRequire(g_fallback_finish_task.pending, "first input did not schedule");
+    twfRequire(
+        fallbackReplaySubmit(&state->replay, fixture.node, fixture.line, largeOrdinary(&fixture, "-two"), replayTask) ==
+            kFallbackReplayOk,
+        "compactable new input was refused");
+    twfRequire(g_fallback_finish_task.pending && g_fallback_finish_task.delay_ms == delay,
+               "compaction changed the existing deadline");
+    const buffer_budget_cost_t usage = bufferbudgetGetUsage(&state->budget);
+    twfRequire(usage.bytes == 7 && usage.charge == fit.allocation_charge && usage.entries == 1,
+               "compaction did not replace retained allocations");
+    fallbackFinishDriveDelayedTask();
+    twfRequireEqualText((const char *) fixture.branch.received, "one-two", "submit compaction changed FIFO");
+    twfRequireEqualU32(fixture.branch.payload_calls, 1, "compaction dispatched before its scheduled batch");
     teardown(&fixture);
 }
 
@@ -529,6 +637,31 @@ static void caseSpliceBatch(bool force_ordinary, bool sole)
     testSpliceInventoryReleaseHeld(&held);
     teardown(&fixture);
 }
+
+static void caseSplicePressure(void)
+{
+    twfSetCase("ordinary compaction never materializes a retained splice batch");
+    replay_fixture_t fixture;
+    setup(&fixture);
+    fixture.config.compact_ordinary = true;
+    replay_test_state_t *state      = replayState(&fixture);
+    bufferbudgetInit(&state->budget, (buffer_budget_cost_t) {1024, SIZE_MAX, 1});
+    buffer_queue_t transcript;
+    bufferqueueInitEmpty(&transcript);
+    sbuf_t *pipe = pipePayload(&fixture);
+    bufferqueuePushBack(&transcript, pipe);
+    twfRequire(begin(&fixture, &transcript) == kFallbackReplayOk, "splice transcript failed");
+    requireMoved(&transcript);
+    twfRequire(
+        fallbackReplaySubmit(&state->replay, fixture.node, fixture.line, ordinary(&fixture, "-tail"), replayTask) ==
+            kFallbackReplayRefused,
+        "entry pressure converted a splice batch");
+    twfRequire(bufferqueueFront(&state->replay.pending) == pipe, "refusal replaced the retained pipe");
+    twfRequire(initialized(&fixture) == kFallbackReplayOk, "splice batch scheduling failed");
+    fallbackFinishDriveDelayedTask();
+    twfRequireEqualText((const char *) fixture.branch.received, "pipe-body", "refusal consumed retained pipe bytes");
+    teardown(&fixture);
+}
 #endif
 
 int main(void)
@@ -538,7 +671,15 @@ int main(void)
     for (unsigned limit = 0; limit < 4; ++limit)
         caseBeginRefusal(limit);
     for (unsigned limit = 0; limit < 3; ++limit)
-        caseSubmitRefusal(limit);
+    {
+        caseSubmitRefusal(limit, false);
+        caseSubmitRefusal(limit, true);
+        caseCompactSubmit(limit);
+    }
+    for (unsigned bound = 0; bound < 2; ++bound)
+        for (unsigned entries = 0; entries < 2; ++entries)
+            caseCompactTranscript(bound != 0, entries != 0, false);
+    caseCompactTranscript(true, false, true);
     caseInitialAndReentrantZeroDelay();
     caseCallerDrivenZeroDelay();
     caseNestedInlineZeroDelay();
@@ -552,6 +693,7 @@ int main(void)
     caseSpliceBatch(false, true);
     caseSpliceBatch(false, false);
     caseSpliceBatch(true, false);
+    caseSplicePressure();
 #endif
     printf("fallback_replay_test: all cases passed\n");
     return 0;

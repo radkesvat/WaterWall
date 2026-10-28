@@ -410,6 +410,7 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
     }
     ts->fallback_replay_config.delay_ms        = (uint32_t) fallback_intentional_delay_ms;
     ts->fallback_replay_config.max_batch_bytes = kVlessServerMaxPendingBytes;
+    ts->fallback_replay_config.compact_ordinary = true;
 
     if (fallback_intentional_delay_jitter_ms < 0)
     {

@@ -1207,13 +1207,19 @@ static void testLimitsAndFailures(void)
                 tunnelUpStreamPayload(f.t, f.line, bytes(data, entries ? 0 : kTrojanServerMaxPendingBytes, false, 320));
             twfRequire(lineIsAlive(f.line), "exact delayed backlog limit rejected");
             trojanserver_lstate_t *ls = lineGetState(f.line, f.t);
+            twfRequire(bufferbudgetGetLimits(&ls->output_budget).charge == kTrojanServerMaxFallbackCharge,
+                       "delayed fallback did not apply its charge limit");
             twfRequire(ls->pending_up.budget == NULL && ls->fallback.pending.budget == &ls->output_budget &&
                            bufferbudgetGetUsage(&ls->output_budget).entries == count + 1 &&
                            bufferbudgetGetUsage(&ls->output_budget).bytes ==
                                (entries ? 0 : kTrojanServerMaxPendingBytes),
                        "fallback transition did not account the complete replay FIFO");
             tunnelUpStreamPayload(f.t, f.line, bytes(data, entries ? 0 : 1, false, 320));
-            twfRequire(! lineIsAlive(f.line), "delayed backlog overflow accepted");
+            if (entries)
+                twfRequire(lineIsAlive(f.line) && bufferbudgetGetUsage(&ls->output_budget).entries == 1,
+                           "delayed entry pressure did not compact ordinary replay");
+            else
+                twfRequire(! lineIsAlive(f.line), "delayed byte backlog overflow accepted");
             end();
         }
     }

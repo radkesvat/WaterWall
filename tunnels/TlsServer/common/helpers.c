@@ -872,6 +872,15 @@ bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
     tlsserver_tstate_t *ts = tunnelGetState(t);
     assert(ts->fallback_tunnel != NULL && ! ls->fallback_mode);
 
+    if (ts->fallback_replay_config.delay_ms != 0)
+    {
+        bufferbudgetAssertEmpty(&ls->fallback_budget);
+        bufferbudgetInit(&ls->fallback_budget,
+                         (buffer_budget_cost_t) {kTlsServerMaxFallbackPendingBytes,
+                                                 kTlsServerMaxFallbackCharge,
+                                                 kTlsServerMaxFallbackBuffers});
+    }
+
     buffer_queue_t transcript = {0};
     sbuf_t        *first      = bufferstreamFullRead(&ls->fallback_probe);
     if (first != NULL)

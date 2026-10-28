@@ -88,6 +88,8 @@ enum
     kLineStateSize   = sizeof(tlsserver_lstate_t),
 
     kTlsServerMaxFallbackPendingBytes = 1024 * 1024,
+    kTlsServerMaxFallbackCharge       = 8 * 1024 * 1024,
+    kTlsServerMaxFallbackBuffers      = 1024,
     kTlsServerPendingPlaintextBytes   = 2 * 1024 * 1024,
     kTlsServerPendingPlaintextBuffers = 1024
 };

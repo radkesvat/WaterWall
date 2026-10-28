@@ -89,6 +89,16 @@ void trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls
             goto failed;
         }
     }
+    if (ts->fallback_replay_config.delay_ms != 0)
+    {
+        /* The parser has not attached the authenticated TCP output budget.
+         * Reuse its empty storage for the selected delayed-fallback policy. */
+        bufferbudgetAssertEmpty(&ls->output_budget);
+        bufferbudgetInit(&ls->output_budget,
+                         (buffer_budget_cost_t) {kTrojanServerMaxPendingBytes,
+                                                 kTrojanServerMaxFallbackCharge,
+                                                 kTrojanServerMaxQueuedBuffers});
+    }
     if (fallbackReplayBegin(
             &ls->fallback, l, ts->fallback_tunnel, &ts->fallback_replay_config, &ls->output_budget, &ls->pending_up) !=
         kFallbackReplayOk)
