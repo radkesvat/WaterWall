@@ -932,13 +932,9 @@ void speedtestclientProcessIncoming(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     /* Only an incomplete frame remains. A byte bound alone would allow many
      * almost-empty private pipes to retain excessive capacity and descriptors. */
-    if (splicestreamCharge(ls->recv_stream) > kSpeedTestClientMaxRetainedCharge)
+    if (! splicestreamSettleCharge(ls->recv_stream, kSpeedTestClientMaxRetainedCharge))
     {
-        discard splicestreamCompact(ls->recv_stream);
-        if (splicestreamCharge(ls->recv_stream) > kSpeedTestClientMaxRetainedCharge)
-        {
-            speedtestclientFailLine(t, l, "receive stream exceeds retained storage limit");
-        }
+        speedtestclientFailLine(t, l, "receive stream exceeds retained storage limit");
     }
 }
 

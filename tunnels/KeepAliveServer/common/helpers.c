@@ -126,9 +126,7 @@ void keepaliveserverConsumeUpstreamFrames(tunnel_t *t, line_t *l)
     }
     /* Draining leaves an incomplete validated frame; retained capacity still needs a bound. */
     assert(splicestreamLength(ls->read_stream) < kKeepAliveServerMaxPayloadChunkSize + kKeepAliveServerFramePrefixSize);
-    if (splicestreamCharge(ls->read_stream) > kKeepAliveServerReadChargeLimit)
-        discard splicestreamCompact(ls->read_stream);
-    if (splicestreamCharge(ls->read_stream) > kKeepAliveServerReadChargeLimit)
+    if (! splicestreamSettleCharge(ls->read_stream, kKeepAliveServerReadChargeLimit))
     {
         LOGW("KeepAliveServer: incomplete frame storage limit exceeded");
         keepaliveserverCloseLineFromProtocolError(t, l);

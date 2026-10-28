@@ -21,9 +21,7 @@ void keepaliveclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     if (ls->read_draining)
     {
-        if (splicestreamCharge(ls->read_stream) > kKeepAliveReadChargeLimit)
-            discard splicestreamCompact(ls->read_stream);
-        if (splicestreamCharge(ls->read_stream) > kKeepAliveReadChargeLimit)
+        if (! splicestreamSettleCharge(ls->read_stream, kKeepAliveReadChargeLimit))
             keepaliveclientCloseLineFromProtocolError(t, l);
         return;
     }

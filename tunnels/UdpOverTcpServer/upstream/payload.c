@@ -13,10 +13,7 @@ void udpovertcpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     if (ls->read_draining)
     {
-        const size_t bytes  = splicestreamLength(ls->read_stream);
-        const size_t charge = splicestreamCharge(ls->read_stream);
-        if (bytes > kMaxReentryBytes || sbufGetLength(buf) > kMaxReentryBytes - bytes || charge > kReadChargeLimit ||
-            sbufGetQueueCharge(buf) > kReadChargeLimit - charge)
+        if (! splicestreamCanAdmit(ls->read_stream, buf, kMaxReentryBytes, kReadChargeLimit))
         {
             lineReuseBuffer(l, buf);
             LOGW("UdpOverTcpServer: decoder reentry limit exceeded");
@@ -62,9 +59,7 @@ void udpovertcpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     /* Draining leaves at most 65,536 bytes in an incomplete frame, including its two-byte header. */
     assert(splicestreamLength(ls->read_stream) < kHeaderSize + UINT16_MAX);
-    if (splicestreamCharge(ls->read_stream) > kReadChargeLimit)
-        discard splicestreamCompact(ls->read_stream);
-    if (splicestreamCharge(ls->read_stream) > kReadChargeLimit)
+    if (! splicestreamSettleCharge(ls->read_stream, kReadChargeLimit))
     {
         LOGW("UdpOverTcpServer: incomplete frame storage limit exceeded");
         udpovertcpserverCloseLine(t, l);

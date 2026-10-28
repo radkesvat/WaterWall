@@ -93,6 +93,73 @@ static void streamCheckCharge(const splice_stream_t *s)
     require(charge == splicestreamCharge(s), "active-head mutation left stale stream charge");
 }
 
+static void testSpliceStreamLimits(buffer_pool_t *pool)
+{
+    splice_stream_t *s = splicestreamCreate(pool, 8);
+    require(splicestreamPush(s, streamTestBytes(pool, "HEADER01body", 12)), "admission fixture push failed");
+    for (unsigned mode = 0; mode < (WW_HAVE_SPLICE ? 2U : 1U); ++mode)
+    {
+        sbuf_t *input;
+#if WW_HAVE_SPLICE
+        if (mode != 0)
+            input = makeSpliceTestBuffer(pool, NULL, 0, (const uint8_t *) "new", 3);
+        else
+#endif
+            input = streamTestBytes(pool, "new", 3);
+        const size_t bytes  = splicestreamLength(s) + 3;
+        const size_t charge = splicestreamCharge(s) + sbufGetQueueCharge(input);
+        require(splicestreamCanAdmit(s, input, bytes, charge), "exact stream admission limits were rejected");
+        require(! splicestreamCanAdmit(s, input, bytes - 1, charge), "stream byte overflow was admitted");
+        require(! splicestreamCanAdmit(s, input, bytes, charge - 1), "stream charge overflow was admitted");
+        require(! splicestreamCanAdmit(s, input, splicestreamLength(s) - 1, charge),
+                "existing byte excess underflowed admission");
+        require(! splicestreamCanAdmit(s, input, bytes, splicestreamCharge(s) - 1),
+                "existing charge excess underflowed admission");
+        splice_stream_t near_limit = {.total = SIZE_MAX - 2, .charge = 0};
+        require(! splicestreamCanAdmit(&near_limit, input, SIZE_MAX, SIZE_MAX), "stream byte addition wrapped");
+        near_limit.total  = 0;
+        near_limit.charge = SIZE_MAX - sbufGetQueueCharge(input) + 1;
+        require(! splicestreamCanAdmit(&near_limit, input, SIZE_MAX, SIZE_MAX), "stream charge addition wrapped");
+        require(splicestreamLength(s) == 12 && memoryEqual(splicestreamPeekHeader(s), "HEADER01", 8),
+                "admission check mutated retained input");
+        streamCheckCharge(s);
+        streamCheckBytes(pool, input, "new", 3);
+    }
+    sbuf_t *empty = streamTestBytes(pool, "", 0);
+    require(splicestreamCanAdmit(s, empty, splicestreamLength(s), splicestreamCharge(s)),
+            "empty input added a retained allocation charge");
+    bufferpoolReuseBuffer(pool, empty);
+    streamCheckBytes(pool, splicestreamMoveFrame(s, NULL, 4), "body", 4);
+    require(splicestreamSettleCharge(s, 0), "empty stream failed a zero charge bound");
+    splicestreamDestroy(s);
+
+    for (unsigned insufficient = 0; insufficient < 2; ++insufficient)
+    {
+        s                 = splicestreamCreate(pool, 8);
+        sbuf_t *oversized = bufferpoolGetBestFit(pool, 128U * 1024U, bufferpoolGetLargeBufferPadding(pool));
+        sbufSetLength(oversized, 12);
+        memoryCopy(sbufGetMutablePtr(oversized), "HEADER01body", 12);
+        require(splicestreamPush(s, oversized), "settlement fixture push failed");
+        const size_t before = splicestreamCharge(s);
+        require(splicestreamSettleCharge(s, before) && s->head == oversized,
+                "charge equality compacted or replaced retained storage");
+        buffer_pool_fit_t fit;
+        require(bufferpoolQueryBestFit(pool, 4, bufferpoolGetLargeBufferPadding(pool), &fit),
+                "settlement destination geometry was invalid");
+        require(splicestreamSettleCharge(s, fit.allocation_charge - insufficient) == ! insufficient,
+                "settlement did not report its resulting charge");
+        require(splicestreamCharge(s) == fit.allocation_charge && splicestreamCharge(s) < before &&
+                    splicestreamLength(s) == 12 && memoryEqual(splicestreamPeekHeader(s), "HEADER01", 8),
+                "settlement changed cached header, byte length or charge");
+        sbuf_t *compacted = s->head;
+        require(! splicestreamSettleCharge(s, 0) && s->head == compacted,
+                "non-beneficial compaction changed storage or ignored a zero bound");
+        streamCheckCharge(s);
+        streamCheckBytes(pool, splicestreamMoveFrame(s, NULL, 4), "body", 4);
+        splicestreamDestroy(s);
+    }
+}
+
 static void testSpliceStreamChunks(buffer_pool_t *pool)
 {
     for (unsigned mode = 0; mode < (WW_HAVE_SPLICE ? 2U : 1U); ++mode)
@@ -311,6 +378,7 @@ static void testSpliceStreamContracts(void)
     testSpliceStreamResidentRanges();
 #endif
     pool_fixture_t f = poolFixtureCreate(32768, 4096, 64, 64);
+    testSpliceStreamLimits(f.pool);
     testSpliceStreamChunks(f.pool);
     testSpliceStreamDiscard(f.pool);
 
@@ -458,7 +526,9 @@ static void testSpliceStreamContracts(void)
     size_t before   = splicestreamCharge(s);
     streamProbe     = true;
     streamReadBytes = 0;
-    require(splicestreamCompact(s) && splicestreamCharge(s) < before && streamReadBytes == 160,
+    require(splicestreamSettleCharge(s, before) && streamReadBytes == 0,
+            "charge equality materialized retained pipe bytes");
+    require(splicestreamSettleCharge(s, before - 1) && splicestreamCharge(s) < before && streamReadBytes == 160,
             "beneficial explicit compaction failed");
     streamProbe = false;
     a           = splicestreamMoveFrame(s, NULL, 160);
