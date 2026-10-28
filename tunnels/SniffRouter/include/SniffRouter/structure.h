@@ -78,6 +78,7 @@ typedef struct sniffrouter_lstate_s
     uint8_t        decided;        // enum sniffrouter_route_e
     bool           replaying;      // selected Init and initial FIFO replay are on the stack
     bool           datagram_input; // incoming transport, preserved across branch context rewrites
+    bool           pending_pause;  // receiver Pause waiting for the selected branch's Init
 } sniffrouter_lstate_t;
 
 enum

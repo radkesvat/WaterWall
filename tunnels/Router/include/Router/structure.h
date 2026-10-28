@@ -76,6 +76,7 @@ typedef struct router_lstate_s
     uint32_t       sniffed_attributes;
     bool           replaying;      // selected Init and its initial FIFO are still running
     bool           datagram_input; // exact incoming transport, retained across branch context rewrites
+    bool           pending_pause;  // receiver Pause waiting for the selected branch's Init
 } router_lstate_t;
 
 // Connection facts handed to matcher modules. Carries the line (for routing

@@ -95,6 +95,12 @@ void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *ta
         tunnelNextUpStreamInit(t, l);
     }
 
+    if (lineIsAlive(l) && ls->replaying && ls->pending_pause)
+    {
+        // Keep startup input queued until this notification returns, including reentry.
+        routerTunnelUpStreamPause(t, l);
+    }
+
     // Keep the accepted first delivery ahead of input submitted from Init/Est.
     // Reentry joins the pending FIFO until Init and every startup handoff return.
     while (lineIsAlive(l) && ls->replaying)

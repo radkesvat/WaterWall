@@ -95,6 +95,12 @@ static void initializeSelectedRoute(tunnel_t *t, line_t *l, sniffrouter_lstate_t
         tunnelNextUpStreamInit(t, l);
     }
 
+    if (lineIsAlive(l) && ls->replaying && ls->pending_pause)
+    {
+        // Keep startup input queued until this notification returns, including reentry.
+        sniffrouterTunnelUpStreamPause(t, l);
+    }
+
     while (lineIsAlive(l) && ls->replaying)
     {
         if (first == NULL)
