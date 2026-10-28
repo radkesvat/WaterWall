@@ -1501,6 +1501,7 @@ static void testTryEnsureOrdinaryRefusalPreservesSource(void)
 
 /* Uses the preceding splice source and syscall-probe fixtures. */
 #include "buffer_queue_range_cases.h"
+#include "sbuf_left_capacity_cases.h"
 
 /* Context payload ownership must be cleared in both Debug and NDEBUG builds,
  * including when a stream push immediately recycles a coalesced input. These
@@ -1552,6 +1553,7 @@ int main(void)
 #endif
     testSpliceStreamContracts();
     testBufferQueueRangeContracts();
+    testSbufLeftCapacityContracts();
     testMoveExactBytesTo();
     testMoveExactPreflight(true);
     testMoveExactPreflight(false);

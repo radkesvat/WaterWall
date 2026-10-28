@@ -81,17 +81,7 @@ bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
     size_t header_len = addr_len + 2U + kTrojanServerCrlfLen;
     if (UNLIKELY(sbufGetLeftCapacity(buf) < header_len))
     {
-        buffer_pool_t *pool    = lineGetBufferPool(l);
-        uint16_t       padding = max(bufferpoolGetLargeBufferPadding(pool), kTrojanServerUdpHeaderMaxLen);
-        sbuf_t        *wrapped = sbufIsSplice(buf) ? bufferpoolGetSpliceBuffer(pool) : NULL;
-        if (wrapped != NULL && sbufGetLeftCapacity(wrapped) < padding)
-        {
-            bufferpoolReuseBuffer(pool, wrapped);
-            wrapped = NULL;
-        }
-        wrapped = sbufMoveRangeTo(pool, buf, wrapped, payload, payload, padding);
-        lineReuseBuffer(l, buf);
-        buf = wrapped;
+        buf = sbufEnsureLeftCapacity(lineGetBufferPool(l), buf, kTrojanServerUdpHeaderMaxLen);
     }
     sbufShiftLeft(buf, (uint32_t) header_len);
 

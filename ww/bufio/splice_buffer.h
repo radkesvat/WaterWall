@@ -59,6 +59,17 @@ sbuf_t *sbufEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf);
  * source. Allocation otherwise follows the pool's fail-fast contract. */
 sbuf_t *sbufTryEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf);
 
+/** Return buf unchanged when it has at least need bytes of left capacity;
+ * otherwise move its complete payload into storage with at least both need and
+ * the pool's large-buffer padding. The caller exclusively owns buf and retains
+ * only the returned buffer; a replaced source is recycled through pool.
+ * Ordinary input stays ordinary. Splice input attempts a padded splice
+ * destination, with complete ordinary fallback on pipe checkout/transfer refusal.
+ * Payload bytes are preserved, not their resident/private-pipe split. The caller
+ * establishes representable replacement geometry and owns the pool's worker
+ * context. No callbacks occur. Allocation follows the pool's fail-fast contract. */
+sbuf_t *sbufEnsureLeftCapacity(buffer_pool_t *pool, sbuf_t *buf, uint16_t need);
+
 /**
  * Replace an ordinary destination payload with the complete resident contents
  * of a splice wrapper. Real prefix bytes are copied before the private-pipe body.

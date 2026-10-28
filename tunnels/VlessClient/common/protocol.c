@@ -116,20 +116,7 @@ void vlessclientWrapUdpPayload(line_t *l, sbuf_t **buf_io)
     sbuf_t  *buf     = *buf_io;
     uint32_t payload = sbufGetLength(buf);
     assert(payload <= kVlessClientUdpMaxPacket);
-    if (UNLIKELY(sbufGetLeftCapacity(buf) < kVlessClientUdpHeaderLen))
-    {
-        buffer_pool_t *pool    = lineGetBufferPool(l);
-        uint16_t       padding = max(bufferpoolGetLargeBufferPadding(pool), kVlessClientUdpHeaderLen);
-        sbuf_t        *wrapped = sbufIsSplice(buf) ? bufferpoolGetSpliceBuffer(pool) : NULL;
-        if (wrapped != NULL && sbufGetLeftCapacity(wrapped) < padding)
-        {
-            bufferpoolReuseBuffer(pool, wrapped);
-            wrapped = NULL;
-        }
-        wrapped = sbufMoveRangeTo(pool, buf, wrapped, payload, payload, padding);
-        lineReuseBuffer(l, buf);
-        buf = wrapped;
-    }
+    buf = sbufEnsureLeftCapacity(lineGetBufferPool(l), buf, kVlessClientUdpHeaderLen);
     sbufShiftLeft(buf, kVlessClientUdpHeaderLen);
     uint16_t length = htobe16((uint16_t) payload);
     memoryCopy(sbufGetMutablePtr(buf), &length, sizeof(length));
