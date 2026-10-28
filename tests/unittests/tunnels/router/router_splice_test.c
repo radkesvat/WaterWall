@@ -19,7 +19,6 @@
 #include "Router/structure.h"
 #include "SniffRouter/interface.h"
 #include "SniffRouter/structure.h"
-#include "fixtures/failure/buffer_disposal_probe.h"
 
 #if WW_HAVE_SPLICE
 #include <unistd.h>
@@ -29,6 +28,48 @@ enum
 {
     kOnwardPadding = 192
 };
+
+static _Atomic(sbuf_t *) disposal_buffer;
+static atomic_uint      *disposal_counter;
+static bool              check_datagram_sniff_disposal;
+static unsigned          sniff_view_destroys;
+
+void __real_sbufDestroy(sbuf_t *buf);
+void __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
+void __wrap_sbufDestroy(sbuf_t *buf);
+void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
+
+static void watchBufferDisposal(sbuf_t *buf, atomic_uint *counter)
+{
+    assert(atomic_load_explicit(&disposal_buffer, memory_order_acquire) == NULL);
+    disposal_counter = counter;
+    atomic_store_explicit(&disposal_buffer, buf, memory_order_release);
+}
+
+static void observeBufferDisposal(sbuf_t *buf)
+{
+    sbuf_t *expected = buf;
+    if (atomic_compare_exchange_strong_explicit(
+            &disposal_buffer, &expected, NULL, memory_order_acq_rel, memory_order_acquire))
+        atomicAddExplicit(disposal_counter, 1, memory_order_release);
+}
+
+void __wrap_sbufDestroy(sbuf_t *buf)
+{
+    if (check_datagram_sniff_disposal && sbufGetLeftPadding(buf) == 0)
+        ++sniff_view_destroys;
+    observeBufferDisposal(buf);
+    __real_sbufDestroy(buf);
+}
+
+void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
+{
+    // Every fixture datagram has onward padding; the detached inspection copy has none.
+    require(! check_datagram_sniff_disposal || sbufGetLeftPadding(buf) != 0,
+            "detached UDP sniff view was returned to the buffer pool");
+    observeBufferDisposal(buf);
+    __real_bufferpoolReuseBuffer(pool, buf);
+}
 
 typedef struct router_fixture_s
 {
@@ -285,6 +326,9 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void setupBeforeInit(router_fixture_t *f, bool sniffrouter, bool target, bool sniffing, bool resolve_domains)
 {
+    check_datagram_sniff_disposal = false;
+    sniff_view_destroys           = 0;
+
     memoryZero(f, sizeof(*f));
     fixture                    = f;
     f->node                    = sniffrouter ? nodeSniffRouterGet() : nodeRouterGet();
@@ -363,7 +407,8 @@ static void teardown(router_fixture_t *f)
     tunnelDestroy(f->target);
     memoryFree(f->node.type);
     cJSON_Delete(f->node.node_settings_json);
-    fixture = NULL;
+    check_datagram_sniff_disposal = false;
+    fixture                       = NULL;
 }
 
 static sbuf_t *payload(const void *data, uint32_t length, bool splice, uint32_t prefix)
@@ -753,6 +798,8 @@ static void testSniffRouterUdpReplay(bool target, bool empty_first, unsigned clo
 {
     router_fixture_t f;
     setupBeforeInit(&f, true, target, true, false);
+    check_datagram_sniff_disposal = true;
+
     f.line->routing_context.dest_ctx.proto_tcp = false;
     f.line->routing_context.dest_ctx.proto_udp = true;
     static const uint8_t request[]             = "GET / HTTP/1.1\r\nHost: route.test\r\n\r\n";
@@ -795,6 +842,7 @@ static void testSniffRouterUdpReplay(bool target, bool empty_first, unsigned clo
         require(f.payloads == f.datagram_count && f.inits == 1, "SniffRouter UDP replay lost a datagram");
         requireRouteState(&f, ! target);
     }
+    require(sniff_view_destroys != 0, "SniffRouter did not destroy its detached inspection view");
     teardown(&f);
 }
 
@@ -804,6 +852,8 @@ static void testSniffRouterUdpLimits(void)
     {
         router_fixture_t f;
         setupBeforeInit(&f, true, false, true, false);
+        check_datagram_sniff_disposal = true;
+
         f.line->routing_context.dest_ctx.proto_tcp = false;
         f.line->routing_context.dest_ctx.proto_udp = true;
         tunnelUpStreamInit(f.router, f.line);
@@ -832,6 +882,8 @@ static void testSniffRouterUdpLimits(void)
         const uint8_t *state = lineGetState(line, f.router);
         for (uint32_t i = 0; i < f.router->lstate_size; ++i)
             require(state[i] == 0, "SniffRouter UDP overflow retained line state");
+        require(sniff_view_destroys == (mode == 1 ? 0U : 1U),
+                "SniffRouter UDP refusal did not destroy its inspection view exactly once");
         lineUnref(line);
         teardown(&f);
     }
@@ -855,6 +907,8 @@ static void testUdpReplay(bool target, bool metadata, unsigned close_mode)
 {
     router_fixture_t f;
     setupBeforeInit(&f, false, target, ! metadata, false);
+    check_datagram_sniff_disposal = true;
+
     f.line->routing_context.dest_ctx.proto_tcp = false;
     f.line->routing_context.dest_ctx.proto_udp = true;
     router_tstate_t *ts                        = tunnelGetState(f.router);
@@ -897,6 +951,7 @@ static void testUdpReplay(bool target, bool metadata, unsigned close_mode)
         require(f.payloads == f.datagram_count && f.inits == 1, "UDP replay lost a datagram");
         requireRouteState(&f, ! target);
     }
+    require((sniff_view_destroys != 0) == ! metadata, "Router did not settle its detached inspection view");
     teardown(&f);
 }
 
@@ -906,6 +961,8 @@ static void testUdpRetentionLimits(void)
     {
         router_fixture_t f;
         setupBeforeInit(&f, false, false, true, false);
+        check_datagram_sniff_disposal = true;
+
         f.line->routing_context.dest_ctx.proto_tcp                     = false;
         f.line->routing_context.dest_ctx.proto_udp                     = true;
         ((router_tstate_t *) tunnelGetState(f.router))->sniffing_modes = kRouterSniffQuic;
@@ -940,6 +997,8 @@ static void testUdpRetentionLimits(void)
         const uint8_t *state = lineGetState(line, f.router);
         for (uint32_t i = 0; i < f.router->lstate_size; ++i)
             require(state[i] == 0, "pending UDP retention left line state after Finish");
+        require(sniff_view_destroys == (mode == 1 ? 0U : 1U),
+                "Router UDP refusal or Finish did not destroy its inspection view exactly once");
         lineUnref(line);
         teardown(&f);
     }
