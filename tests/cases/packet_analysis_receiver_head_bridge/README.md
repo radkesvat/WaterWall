@@ -5,7 +5,7 @@ Exercises the packet analysis receiver head bridge scenario with the topology in
 
 Configured nodes and onward edges (`next`; listeners/connectors form the OS transport boundaries):
 
-- `receiver`: `PacketReceiver` → `receiver-bridge`
+- `receiver`: `PacketCounter` → `receiver-bridge`
 - `receiver-bridge`: `Bridge` paired with `sender-bridge`
 - `sender`: `TesterClient` → `sender-bridge`
 - `sender-bridge`: `Bridge` paired with `receiver-bridge`

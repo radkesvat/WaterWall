@@ -17,7 +17,7 @@ usage() {
 usage: $0 [--dry-run]
 
 Deletes generated test-runner artifacts ignored by git:
-  - tests/cases/*/{core.json,stdout.log,log/,packet-receiver-report.txt,users.json.backup}
+  - tests/cases/*/{core.json,stdout.log,log/,packet-counter-report.txt,users.json.backup}
   - generated probe cert/key copies in probe case directories
   - tests/speedtests/*/{core.json,stdout.log,log/,server.crt,server.key}, excluding _shared
   - build/*/test-runs/<configuration>/ (retained native runs; use only in idle trees)
@@ -72,7 +72,7 @@ for case_dir in "$script_dir"/cases/*; do
   remove_path "$case_dir/core.json"
   remove_path "$case_dir/stdout.log"
   remove_path "$case_dir/log"
-  remove_path "$case_dir/packet-receiver-report.txt"
+  remove_path "$case_dir/packet-counter-report.txt"
   remove_path "$case_dir/users.json.backup"
 done
 

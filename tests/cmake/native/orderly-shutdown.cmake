@@ -4,7 +4,7 @@ foreach(orderly_case IN ITEMS
   "SpeedTestClient|speedtestclient_orderly_shutdown_test|speedtestclient|OFF|${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/speedtest/speedtestclient_orderly_shutdown_test.c"
   "TesterServer|testerserver_orderly_shutdown_test|testerserver|OFF|${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tester/testerserver_orderly_shutdown_test.c"
   "PacketsToStream|packetstostream_orderly_shutdown_test|packetstostream|ON|${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_bridges/packetstostream_orderly_shutdown_test.c"
-  "PacketSender|packetsender_orderly_shutdown_test|packetsender|ON|${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_io/packetsender_orderly_shutdown_test.c"
+  "PacketGenerator|packetgenerator_orderly_shutdown_test|packetgenerator|ON|${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_io/packetgenerator_orderly_shutdown_test.c"
   "AuthenticationClient|authenticationclient_orderly_shutdown_test|authenticationclient|ON|${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationclient_orderly_shutdown_test.c"
   "KeepAliveClient|keepaliveclient_orderly_shutdown_test|keepaliveclient|ON|${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/keepalive/keepaliveclient_orderly_shutdown_test.c"
   "UserController|usercontroller_orderly_shutdown_test|usercontroller|ON|${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/usercontroller/usercontroller_orderly_shutdown_test.c"
@@ -25,7 +25,7 @@ foreach(orderly_case IN ITEMS
     if(orderly_wraps_timer)
       target_link_options(${orderly_test} PRIVATE "-Wl,--wrap=wtimerAdd")
     endif()
-    if(orderly_tunnel STREQUAL "PacketsToStream" OR orderly_tunnel STREQUAL "PacketSender")
+    if(orderly_tunnel STREQUAL "PacketsToStream" OR orderly_tunnel STREQUAL "PacketGenerator")
       target_link_options(${orderly_test} PRIVATE "-Wl,--wrap=wtimerReset")
     endif()
     if(orderly_tunnel STREQUAL "PacketsToStream")

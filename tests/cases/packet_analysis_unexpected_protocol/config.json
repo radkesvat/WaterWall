@@ -3,13 +3,13 @@
   "nodes": [
     {
       "name": "receiver",
-      "type": "PacketReceiver",
+      "type": "PacketCounter",
       "settings": {
         "source-ipv4-range": "198.51.101.10/32",
         "protocol-number": "TCP",
         "expected-packets-per-ip": 10,
         "report-after-ms": 700,
-        "output-file": "packet-receiver-report.txt"
+        "output-file": "packet-counter-report.txt"
       },
       "next": "receiver-bridge"
     },

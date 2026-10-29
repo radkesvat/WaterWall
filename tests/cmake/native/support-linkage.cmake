@@ -38,7 +38,7 @@ foreach(fixture_target IN ITEMS
   obfuscator_large_stream_test
   owned_line_finish_muxserver_test
   owned_line_finish_udpstatelesssocket_test
-  packetsender_orderly_shutdown_test
+  packetgenerator_orderly_shutdown_test
   packetstoconnection_receive_batch_test
   packetstoconnection_schedule_rejection_test
   packetstostream_bridge_affinity_test

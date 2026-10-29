@@ -5,9 +5,9 @@ Exercises the packet analysis ping roundtrip scenario with the topology in this 
 
 Configured nodes and onward edges (`next`; listeners/connectors form the OS transport boundaries):
 
-- `sender`: `PacketSender` → `ping-client`
+- `sender`: `PacketGenerator` → `ping-client`
 - `ping-client`: `PingClient` → `receiver`
-- `receiver`: `PacketReceiver` (terminal or independently bound endpoint)
+- `receiver`: `PacketCounter` (terminal or independently bound endpoint)
 
 Scenario choices: `sender.duration-ms=100`. These values define the workload/edge case and are not tuning advice.
 

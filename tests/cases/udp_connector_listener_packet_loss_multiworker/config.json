@@ -2,8 +2,8 @@
   "name": "udp-connector-listener-packet-loss-multiworker",
   "nodes": [
     {
-      "name": "packet-sender",
-      "type": "PacketSender",
+      "name": "packet-generator",
+      "type": "PacketGenerator",
       "settings": {
         "source-ipv4-range": "198.51.110.0/29",
         "dest-ipv4": "203.0.113.30",
@@ -40,17 +40,17 @@
     {
       "name": "stream-to-packets",
       "type": "StreamToPackets",
-      "next": "packet-receiver"
+      "next": "packet-counter"
     },
     {
-      "name": "packet-receiver",
-      "type": "PacketReceiver",
+      "name": "packet-counter",
+      "type": "PacketCounter",
       "settings": {
         "source-ipv4-range": "198.51.110.0/29",
         "protocol-number": "UDP",
         "expected-packets-per-ip": 8,
         "report-after-ms": 1200,
-        "output-file": "packet-receiver-report.txt"
+        "output-file": "packet-counter-report.txt"
       }
     }
   ]

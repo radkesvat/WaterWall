@@ -281,8 +281,8 @@ option(INCLUDE_BGP4_CLIENT              "link Bgp4Client staticly to the core"  
 option(INCLUDE_MUX_SERVER               "link MuxServer staticly to the core"                                       TRUE)
 option(INCLUDE_MUX_CLIENT               "link MuxClient staticly to the core"                                       TRUE)
 option(INCLUDE_TUN_DEVICE               "link TunDevice staticly to the core"                                       ${TUNDEVICE_SUPPORTED})
-option(INCLUDE_PACKET_SENDER            "link PacketSender staticly to the core"                                    TRUE)
-option(INCLUDE_PACKET_RECEIVER          "link PacketReceiver staticly to the core"                                  TRUE)
+option(INCLUDE_PACKET_GENERATOR        "link PacketGenerator staticly to the core"                                 TRUE)
+option(INCLUDE_PACKET_COUNTER          "link PacketCounter staticly to the core"                                   TRUE)
 option(INCLUDE_RAWSOCKET                "link RawSocket staticly to the core"                                       ${RAWSOCKET_SUPPORTED})
 option(INCLUDE_DISTURBER                "link Disturber staticly to the core"                                       TRUE)
 option(INCLUDE_JUNK_DATAGRAM_SENDER     "link JunkDatagramSender staticly to the core"                              TRUE)
@@ -678,20 +678,20 @@ if(INCLUDE_TUN_DEVICE)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} TunDevice)
 endif()
 
-#packet sender
-if(INCLUDE_PACKET_SENDER)
-  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_PACKET_SENDER=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketSender)
-  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketSender)
-  target_link_libraries(${WATERWALL_APPLICATION_TARGET} PacketSender)
+#packet generator
+if(INCLUDE_PACKET_GENERATOR)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_PACKET_GENERATOR=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketGenerator)
+  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketGenerator)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} PacketGenerator)
 endif()
 
-#packet receiver
-if(INCLUDE_PACKET_RECEIVER)
-  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_PACKET_RECEIVER=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketReceiver)
-  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketReceiver)
-  target_link_libraries(${WATERWALL_APPLICATION_TARGET} PacketReceiver)
+#packet counter
+if(INCLUDE_PACKET_COUNTER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_PACKET_COUNTER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketCounter)
+  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketCounter)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} PacketCounter)
 endif()
 
 #packet to connection

@@ -5,8 +5,8 @@ Exercises the packet analysis all protocols scenario with the topology in this d
 
 Configured nodes and onward edges (`next`; listeners/connectors form the OS transport boundaries):
 
-- `sender`: `PacketSender` → `receiver`
-- `receiver`: `PacketReceiver` (terminal or independently bound endpoint)
+- `sender`: `PacketGenerator` → `receiver`
+- `receiver`: `PacketCounter` (terminal or independently bound endpoint)
 
 Scenario choices: `sender.duration-ms=100`. These values define the workload/edge case and are not tuning advice.
 

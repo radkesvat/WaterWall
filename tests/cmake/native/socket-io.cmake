@@ -97,12 +97,12 @@ if(TARGET UdpConnector)
   )
 endif()
 
-if(TARGET UdpConnector AND TARGET PacketsToStream AND TARGET PacketSender)
+if(TARGET UdpConnector AND TARGET PacketsToStream AND TARGET PacketGenerator)
   waterwall_add_native_executable(udpconnector_layer_metadata_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/udp/udpconnector_layer_metadata_test.c)
   target_link_libraries(udpconnector_layer_metadata_test PRIVATE
     UdpConnector
     PacketsToStream
-    PacketSender
+    PacketGenerator
     ww
   )
   add_dependencies(waterwall_unit_tests udpconnector_layer_metadata_test)
@@ -114,14 +114,14 @@ if(TARGET UdpConnector AND TARGET PacketsToStream AND TARGET PacketSender)
   )
 endif()
 
-if(TARGET PacketReceiver)
-  waterwall_add_native_executable(packetreceiver_protocol_settings_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_io/packetreceiver_protocol_settings_test.c)
-  target_link_libraries(packetreceiver_protocol_settings_test PRIVATE PacketReceiver ww)
-  add_dependencies(waterwall_unit_tests packetreceiver_protocol_settings_test)
+if(TARGET PacketCounter)
+  waterwall_add_native_executable(packetcounter_protocol_settings_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_io/packetcounter_protocol_settings_test.c)
+  target_link_libraries(packetcounter_protocol_settings_test PRIVATE PacketCounter ww)
+  add_dependencies(waterwall_unit_tests packetcounter_protocol_settings_test)
   add_waterwall_unit_test(
-    waterwall.packetreceiver_protocol_settings_unit
-    packetreceiver_protocol_settings_test
-    "unit;tunnels;packetreceiver;packet-analysis;configuration"
+    waterwall.packetcounter_protocol_settings_unit
+    packetcounter_protocol_settings_test
+    "unit;tunnels;packetcounter;packet-analysis;configuration"
   )
 endif()
 
