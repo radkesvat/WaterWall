@@ -360,7 +360,9 @@
     target_link_options(capture_linux_reader_test PRIVATE
       "-Wl,--wrap=pthread_create"
       "-Wl,--wrap=recvmsg"
+      "-Wl,--wrap=recvmmsg"
       "-Wl,--wrap=sendto"
+      "-Wl,--wrap=sendmmsg"
       "-Wl,--wrap=wioGet"
       "-Wl,--wrap=wioAdd"
       "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
@@ -507,6 +509,7 @@
       "-Wl,--wrap=sbufDestroy"
       "-Wl,--wrap=socket" "-Wl,--wrap=bind" "-Wl,--wrap=setsockopt" "-Wl,--wrap=getsockopt" "-Wl,--wrap=close"
       "-Wl,--wrap=sendto" "-Wl,--wrap=recvmsg" "-Wl,--wrap=poll" "-Wl,--wrap=fastRand64"
+      "-Wl,--wrap=recvmmsg" "-Wl,--wrap=sendmmsg"
     )
     target_link_libraries(capture_linux_message_lifetime_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests capture_linux_message_lifetime_test)

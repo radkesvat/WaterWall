@@ -252,7 +252,16 @@ During `onStart`, `RawSocket`:
 With no configured capture range, no capture device, NFQUEUE socket, capture reader, or capture rule is created. Only the raw output device is started.
 
 Linux assigns each receive queue to exactly one worker and performs bounded,
-nonblocking reads on that worker's event loop. Queue count, steering and the
+nonblocking reads on that worker's event loop. Reads collect up to 256 available
+packets with `recvmmsg()`, using reusable buffers and no timer to fill a batch.
+Prepared buffer storage is bounded across the device, so a large receive queue
+count can reduce this maximum. Supported kernels receive one cumulative verdict
+for each same-verdict prefix with consecutive packet IDs; an acknowledged startup
+probe selects explicit per-packet `sendmmsg()` verdicts when cumulative verdicts
+are unavailable. Packet-ID gaps also select explicit verdicts.
+Only packets whose DROP verdict was sent enter the tunnel chain. Partial sends,
+FIFO pressure and processing limits retain the remaining packets in order and
+resume them on the owning worker. Queue count, steering and the
 resolved opaque mode stay fixed while capture is active. Native IPv4 TCP/UDP
 uses the same symmetric 32-bit address/port/protocol worker hash as TUN and
 consumer affinity. Opaque IPv4 follows `opaque-flow-mode`, defaulting to `prefix`.

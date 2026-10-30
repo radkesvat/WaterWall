@@ -17,6 +17,7 @@
 #include "wwapi.h"
 
 #include <arpa/inet.h>
+#include <linux/netfilter.h>
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_queue.h>
 #include <linux/netlink.h>
@@ -54,6 +55,7 @@ typedef struct fake_queue_s
     uint32_t queue_limit;
     int      receive_buffer;
     int      receive_actual;
+    bool     batch_probe_seen;
 } fake_queue_t;
 
 typedef struct fake_rule_s
@@ -87,6 +89,8 @@ static int                      initial_receive_actual, receive_cap, queue_lengt
 static bool                     refuse_receive_buffer, fail_receive_query, delay_length_ack, timeout_next_poll;
 static bool                     refuse_copy_params;
 static unsigned                 stale_acks_received;
+static int                      batch_probe_error;
+static unsigned                 batch_probe_count;
 static bool                     fail_probe_open, refuse_probe_buffer, fail_probe_query;
 static char                     log_capture[64 * 1024];
 static size_t                   log_capture_length;
@@ -102,6 +106,8 @@ int      __real_close(int fd);
 ssize_t  __wrap_sendto(int fd, const void *data, size_t length, int flags, const struct sockaddr *address,
                        socklen_t address_length);
 ssize_t  __wrap_recvmsg(int fd, struct msghdr *message, int flags);
+int      __wrap_recvmmsg(int fd, struct mmsghdr *datagrams, unsigned int count, int flags, struct timespec *timeout);
+int      __wrap_sendmmsg(int fd, struct mmsghdr *datagrams, unsigned int count, int flags);
 int      __wrap_poll(struct pollfd *fds, nfds_t count, int timeout);
 uint64_t __wrap_fastRand64(void);
 bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], const proc_command_options_t *options,
@@ -227,8 +233,9 @@ ssize_t __wrap_sendto(int fd, const void *data, size_t length, int flags, const 
     require(queue != NULL && (flags & MSG_DONTWAIT) != 0, "configuration used an invalid or blocking queue send");
     require(address_length == sizeof(struct sockaddr_nl) && address->sa_family == AF_NETLINK,
             "configuration targeted an invalid Netlink address");
-    const struct nlmsghdr *header = data;
-    require(header->nlmsg_type == ((NFNL_SUBSYS_QUEUE << 8) | NFQNL_MSG_CONFIG) &&
+    const struct nlmsghdr *header      = data;
+    const bool             batch_probe = header->nlmsg_type == ((NFNL_SUBSYS_QUEUE << 8) | NFQNL_MSG_VERDICT_BATCH);
+    require((batch_probe || header->nlmsg_type == ((NFNL_SUBSYS_QUEUE << 8) | NFQNL_MSG_CONFIG)) &&
                 (header->nlmsg_flags & NLM_F_ACK) != 0,
             "fixture expected an acknowledged queue configuration message");
     const struct nfgenmsg *generic   = NLMSG_DATA(header);
@@ -240,10 +247,23 @@ ssize_t __wrap_sendto(int fd, const void *data, size_t length, int flags, const 
         queue->stale_ack_sequence = queue->ack_sequence;
         queue->stale_ack_error    = queue->ack_error;
     }
-    queue->ack_pending               = true;
-    queue->ack_sequence              = header->nlmsg_seq;
-    queue->ack_error                 = 0;
-    if (attribute->nfa_type == NFQA_CFG_CMD)
+    queue->ack_pending  = true;
+    queue->ack_sequence = header->nlmsg_seq;
+    queue->ack_error    = 0;
+    if (batch_probe)
+    {
+        require(! queue->batch_probe_seen && attribute->nfa_type == NFQA_VERDICT_HDR &&
+                    NFA_PAYLOAD(attribute) == sizeof(struct nfqnl_msg_verdict_hdr),
+                "queue capability probe repeated or used invalid verdict storage");
+        struct nfqnl_msg_verdict_hdr verdict;
+        memoryCopy(&verdict, NFA_DATA(attribute), sizeof(verdict));
+        require(verdict.id == 0 && ntohl(verdict.verdict) == NF_DROP,
+                "queue capability probe changed its empty-queue boundary");
+        queue->batch_probe_seen = true;
+        queue->ack_error        = batch_probe_error;
+        ++batch_probe_count;
+    }
+    else if (attribute->nfa_type == NFQA_CFG_CMD)
     {
         struct nfqnl_msg_config_cmd command;
         memoryCopy(&command, NFA_DATA(attribute), sizeof(command));
@@ -301,6 +321,29 @@ ssize_t __wrap_recvmsg(int fd, struct msghdr *message, int flags)
     else
         queue->ack_pending = false;
     return header->nlmsg_len;
+}
+
+int __wrap_recvmmsg(int fd, struct mmsghdr *datagrams, unsigned int count, int flags, struct timespec *timeout)
+{
+    fake_queue_t *queue = findSocket(fd);
+    require(queue != NULL && ! queue->ack_pending && datagrams != NULL && count > 0 &&
+                count <= kNetfilterBatchCapacity && timeout == NULL &&
+                (flags & (MSG_DONTWAIT | MSG_TRUNC)) == (MSG_DONTWAIT | MSG_TRUNC),
+            "batch receive used an invalid, blocking or unconfigured queue");
+    ++receive_count;
+    errno = EAGAIN;
+    return -1;
+}
+
+int __wrap_sendmmsg(int fd, struct mmsghdr *datagrams, unsigned int count, int flags)
+{
+    discard fd;
+    discard datagrams;
+    discard count;
+    discard flags;
+    require(false, "packet-free lifecycle fixture unexpectedly sent runtime verdicts");
+    errno = EIO;
+    return -1;
 }
 
 int __wrap_poll(struct pollfd *fds, nfds_t count, int timeout)
@@ -436,10 +479,12 @@ static void resetCase(void)
     queue_length_error                                                  = 0;
     refuse_receive_buffer = fail_receive_query = delay_length_ack = timeout_next_poll = refuse_copy_params = false;
     stale_acks_received                                                                                    = 0;
-    fail_probe_open = refuse_probe_buffer = fail_probe_query            = false;
-    log_capture_length                                                  = 0;
-    log_capture[0]                                                      = '\0';
-    GSTATE.capturedevice_queue_start_number                             = 77;
+    batch_probe_error                                                                                      = -ENOENT;
+    batch_probe_count                                                                                      = 0;
+    fail_probe_open = refuse_probe_buffer = fail_probe_query = false;
+    log_capture_length                                       = 0;
+    log_capture[0]                                           = '\0';
+    GSTATE.capturedevice_queue_start_number                  = 77;
 }
 
 static void cancelMessages(void)
@@ -512,6 +557,9 @@ static void requireStartedQueues(capture_device_t *device, unsigned count)
         require(queue != NULL && queue->queue_limit == kNetfilterQueueLen / count &&
                     queue->receive_buffer == kNetfilterSocketRecvBuffer / (int) count,
                 "active queue set did not share the device-wide kernel budgets");
+        require(queue->batch_probe_seen &&
+                    device->queues[i].batch_verdicts == (batch_probe_error == 0 || batch_probe_error == -ENOENT),
+                "active queue lost its acknowledged cumulative-verdict capability");
     }
 }
 
@@ -579,6 +627,31 @@ static void testQueueSetupAndFallback(void)
                 captureLifecycleLoad(&device->lifecycle) == kCaptureLifecycleDown && installed_rules == 0 &&
                 socket_count == 1 && close_count == 1 && message_count == 0,
             "first queue failure did not return to a fully settled Down state");
+    finishDevice(device);
+}
+
+static void testVerdictBatchCapabilitySetup(void)
+{
+    const int errors[] = {0, -ENOENT, -EINVAL, -EOPNOTSUPP};
+    for (size_t i = 0; i < sizeof(errors) / sizeof(errors[0]); ++i)
+    {
+        resetCase();
+        batch_probe_error        = errors[i];
+        capture_device_t *device = createDevice();
+        require(caputredeviceBringUp(device), "supported or unsupported batch verdict capability prevented startup");
+        requireStartedQueues(device, kTestWorkers);
+        require(batch_probe_count == kTestWorkers,
+                "Capture did not probe every newly bound queue before installing rules");
+        finishDevice(device);
+    }
+    resetCase();
+    batch_probe_error        = -EPERM;
+    capture_device_t *device = createDevice();
+    require(! caputredeviceBringUp(device), "fatal verdict capability probe error activated capture");
+    require(! capturedeviceIsUp(device) && device->reader == NULL && device->queue_count == 0 &&
+                captureLifecycleLoad(&device->lifecycle) == kCaptureLifecycleDown && batch_probe_count == 1 &&
+                installed_rules == 0 && socket_count == close_count && message_count == 0,
+            "failed capability probe retained queue, rule or reader ownership");
     finishDevice(device);
 }
 
@@ -901,6 +974,7 @@ int main(void)
     envSetup(&env);
     testQueuedCancellationAfterDeviceDestruction();
     testQueueSetupAndFallback();
+    testVerdictBatchCapabilitySetup();
     testResolvedModesSurviveFallbackAndRestart();
     testKernelQueueTuning();
     testKernelQueueTuningFailures();

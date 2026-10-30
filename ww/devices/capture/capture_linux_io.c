@@ -19,12 +19,15 @@ typedef struct capture_worker_reader_s
     wtimer_t                    *verdict_timer;
     atomic_bool                  scheduled;
     atomic_bool                  waiting;
-    sbuf_t                      *scratch;
+    netfilter_batch_workspace_t *workspace;
+    netfilter_packet_record_t   *records;
+    uint16_t                     capacity;
+    uint16_t                     record_count;
+    uint16_t                     record_first;
+    uint16_t                     verdict_first;
     bool                         verdict_pending;
-    uint32_t                     packet_id;
-    uint32_t                     verdict;
     uint64_t                     verdict_deadline_us;
-    netfilter_packet_result_t    packet_result;
+    int                          receive_error;
     sbuf_t                      *pending_bufs[kDeviceFragAffinityMaxStagedPerEntry + 1];
     wid_t                        pending_wids[kDeviceFragAffinityMaxStagedPerEntry + 1];
     unsigned                     pending_first;
@@ -174,54 +177,121 @@ static void captureReaderDiscard(capture_worker_reader_t *lane)
              LLU(report.total));
 }
 
-/* One syscall primitive at a time. A read record stays in scratch until its
- * verdict succeeds. Stop can convert an unsent DROP to ACCEPT without exposing
- * the packet through both the host stack and WaterWall. */
+static bool captureReaderRecordNeedsVerdict(const netfilter_packet_record_t *record)
+{
+    return record->result == kNetfilterPacketReady || record->result == kNetfilterPacketDiscarded ||
+           record->result == kNetfilterPacketMalformedDiscarded;
+}
+
+/* Records retain their exact receive order until verdict and publication have
+ * both settled. Stop changes only unsent verdicts to ACCEPT; sent DROP records
+ * can be discarded, but must never be accepted a second time. */
 static netfilter_verdict_result_t captureReaderVerdict(capture_worker_reader_t *lane, bool active)
 {
     capture_linux_queue_t *queue = &lane->generation->device->queues[lane->wid];
-    if (! active)
-        lane->verdict = NF_ACCEPT;
+    while (lane->verdict_first < lane->record_count &&
+           ! captureReaderRecordNeedsVerdict(&lane->records[lane->verdict_first]))
+        ++lane->verdict_first;
+    if (lane->verdict_first == lane->record_count)
+    {
+        lane->verdict_pending = false;
+        return kNetfilterVerdictSent;
+    }
     if ((uint64_t) getHRTimeUs() >= lane->verdict_deadline_us)
     {
         errno = ETIMEDOUT;
         return kNetfilterVerdictError;
     }
-    const netfilter_verdict_result_t result =
-        netfilterTrySendVerdict(queue->fd, queue->number, lane->packet_id, lane->verdict);
+    netfilter_packet_record_t *records     = &lane->records[lane->verdict_first];
+    const uint32_t             verdict     = active ? records[0].verdict : NF_ACCEPT;
+    uint16_t                   count       = 0;
+    bool                       consecutive = true;
+    while (lane->verdict_first + count < lane->record_count && captureReaderRecordNeedsVerdict(&records[count]) &&
+           (! active || records[count].verdict == verdict))
+    {
+        if (count != 0 && ntohl(records[count].packet_id) != (uint32_t) (ntohl(records[count - 1].packet_id) + 1U))
+            consecutive = false;
+        records[count].verdict = verdict;
+        ++count;
+    }
+    uint16_t                   sent = 0;
+    netfilter_verdict_result_t result;
+    if (queue->batch_verdicts && consecutive && lane->receive_error == 0 && count > 1)
+    {
+        /* The sole reader has consumed this FIFO prefix, and no newer batch is
+         * read until it retires. Consecutive IDs keep the prefix inside the
+         * kernel's signed sequence window even after notification loss. Use
+         * the last wire ID, including across wrap. */
+        result = netfilterTrySendCumulativeVerdict(queue->fd, queue->number, records[count - 1].packet_id, verdict);
+        if (result == kNetfilterVerdictSent)
+            sent = count;
+    }
+    else
+        result = netfilterTrySendVerdictBatch(queue->fd, queue->number, lane->workspace, records, count, &sent);
     if (result != kNetfilterVerdictSent)
         return result;
-    lane->verdict_pending = false;
-    if (active && lane->verdict == NF_DROP && lane->packet_result == kNetfilterPacketReady)
-    {
-        sbuf_t *buffer = lane->scratch;
-        lane->scratch  = NULL;
-        captureReaderPrepare(lane, buffer);
-    }
-    else if (active && lane->verdict == NF_DROP)
-        captureReaderDiscard(lane);
+    lane->verdict_first += sent;
+    lane->verdict_pending = lane->verdict_first < lane->record_count;
     return result;
 }
 
-static netfilter_packet_result_t captureReaderReceive(capture_worker_reader_t *lane, buffer_pool_t *pool, bool active)
+static void captureReaderConsume(capture_worker_reader_t *lane, bool active)
 {
-    if (lane->scratch == NULL)
-        lane->scratch =
-            pool != NULL
-                ? bufferpoolGetBestFit(pool, kNetfilterReadBufferSize, 0)
-                : sbufCreateWithPadding(kNetfilterReadBufferSize,
-                                        bufferpoolGetSmallBufferPadding(lane->generation->device->reader_buffer_pool));
-    sbufReset(lane->scratch);
-    const netfilter_packet_result_t result =
-        netfilterReceivePacket(lane->generation->device->queues[lane->wid].fd, lane->scratch, &lane->packet_id);
-    if (result == kNetfilterPacketReady || result == kNetfilterPacketDiscarded ||
-        result == kNetfilterPacketMalformedDiscarded)
+    assert(lane->record_first < lane->verdict_first);
+    netfilter_packet_record_t *record = &lane->records[lane->record_first++];
+    if (active && record->verdict == NF_DROP && record->result == kNetfilterPacketReady)
     {
-        lane->packet_result       = result;
-        lane->verdict             = active ? NF_DROP : NF_ACCEPT;
+        sbuf_t *buffer = record->buffer;
+        record->buffer = NULL;
+        captureReaderPrepare(lane, buffer);
+    }
+    else if (active && record->verdict == NF_DROP && captureReaderRecordNeedsVerdict(record))
+        captureReaderDiscard(lane);
+}
+
+static netfilter_packet_result_t captureReaderReceive(capture_worker_reader_t *lane, buffer_pool_t *pool, bool active,
+                                                      bool batch)
+{
+    assert(lane->record_first == lane->record_count && ! lane->verdict_pending);
+    lane->record_first = lane->record_count = lane->verdict_first = 0;
+    assert(lane->receive_error == 0);
+    const uint16_t capacity = batch ? lane->capacity : 1;
+    for (uint16_t i = 0; i < capacity; ++i)
+    {
+        netfilter_packet_record_t *record = &lane->records[i];
+        if (record->buffer == NULL)
+            record->buffer = pool != NULL ? bufferpoolGetBestFit(pool, kNetfilterReadBufferSize, 0)
+                                          : sbufCreateWithPadding(kNetfilterReadBufferSize,
+                                                                  bufferpoolGetSmallBufferPadding(
+                                                                      lane->generation->device->reader_buffer_pool));
+        sbufReset(record->buffer);
+    }
+    const int                 fd = lane->generation->device->queues[lane->wid].fd;
+    netfilter_packet_result_t result;
+    if (batch)
+        result = netfilterReceiveBatch(fd, lane->workspace, lane->records, capacity, &lane->record_count);
+    else
+    {
+        netfilter_packet_record_t *record = &lane->records[0];
+        result = record->result = netfilterReceivePacket(fd, record->buffer, &record->packet_id);
+        if (captureReaderRecordNeedsVerdict(record))
+            lane->record_count = 1;
+    }
+    if (lane->record_count != 0)
+    {
+        for (uint16_t i = 0; i < lane->record_count; ++i)
+        {
+            netfilter_packet_record_t *record = &lane->records[i];
+            record->verdict                   = active ? NF_DROP : NF_ACCEPT;
+            if (record->result == kNetfilterPacketError || record->result == kNetfilterPacketEof)
+            {
+                if (lane->receive_error == 0)
+                    lane->receive_error = record->result == kNetfilterPacketEof ? EIO : record->error;
+            }
+        }
         lane->verdict_pending     = true;
         lane->verdict_deadline_us = (uint64_t) getHRTimeUs() + (uint64_t) kNetfilterIoDeadlineMs * 1000;
-        ++lane->received;
+        lane->received += lane->record_count;
     }
     return result;
 }
@@ -243,37 +313,68 @@ static void captureReaderTimeout(wtimer_t *timer)
 
 static bool captureReaderRead(capture_worker_reader_t *lane, worker_t *worker)
 {
-    capture_device_t *device = lane->generation->device;
-    unsigned          bytes  = 0;
-    for (unsigned attempts = 0; attempts < 256 && bytes < 256U * 1024U; ++attempts)
+    capture_device_t *device          = lane->generation->device;
+    unsigned          bytes           = 0;
+    unsigned          packets         = 0;
+    unsigned          calls           = 0;
+    bool              verdict_blocked = false;
+    while (calls < 256 && packets < kDeviceReaderWorkerPacketQuantum && bytes < kDeviceReaderWorkerByteQuantum)
     {
         if (! captureLifecycleIsActive(captureLifecycleLoad(&device->lifecycle)))
             return true;
-        if (! captureReaderPost(lane))
-            return true;
-        if (lane->verdict_pending)
+        /* Try pending verdicts before any admission that may wait for FIFO
+         * credits. Native refusal can still leave its committed prefix ready. */
+        if (lane->verdict_pending && ! verdict_blocked)
         {
+            ++calls;
             const netfilter_verdict_result_t result =
                 captureReaderVerdict(lane, atomicLoadRelaxed(&device->capture_active));
             if (result == kNetfilterVerdictError)
                 return false;
             if (result == kNetfilterVerdictYield)
                 discard captureReaderSchedule(lane, true);
-            if (result != kNetfilterVerdictSent)
-                return true;
+            verdict_blocked = result != kNetfilterVerdictSent;
             continue;
         }
+        if (! captureReaderPost(lane))
+            return true;
+        if (lane->record_first < lane->verdict_first)
+        {
+            bytes += sbufGetLength(lane->records[lane->record_first].buffer);
+            ++packets;
+            captureReaderConsume(lane, atomicLoadRelaxed(&device->capture_active));
+            continue;
+        }
+        /* After EAGAIN/Yield, the committed prefix may still publish. Retry
+         * unsent verdicts only through writable readiness or the continuation. */
+        if (lane->verdict_pending)
+            return true;
+        if (lane->receive_error != 0)
+        {
+            errno = lane->receive_error;
+            return false;
+        }
+        ++calls;
         const netfilter_packet_result_t result =
-            captureReaderReceive(lane, worker->buffer_pool, atomicLoadRelaxed(&device->capture_active));
+            captureReaderReceive(lane, worker->buffer_pool, atomicLoadRelaxed(&device->capture_active), true);
         if (result == kNetfilterPacketError || result == kNetfilterPacketEof)
             return false;
         if (result == kNetfilterPacketYield)
             discard captureReaderSchedule(lane, true);
         if (result == kNetfilterPacketWouldBlock || result == kNetfilterPacketYield)
             return true;
-        bytes += sbufGetLength(lane->scratch);
     }
     discard captureReaderPost(lane);
+    if (lane->receive_error != 0 && lane->record_first == lane->record_count)
+    {
+        errno = lane->receive_error;
+        return false;
+    }
+    /* A byte/packet-limited turn can leave already-read records while the
+     * native descriptor is empty. Readiness alone cannot resume those records. */
+    if ((lane->verdict_pending && ! verdict_blocked) ||
+        (lane->record_first < lane->verdict_first && ! atomicLoadExplicit(&lane->waiting, memory_order_acquire)))
+        discard captureReaderSchedule(lane, true);
     return true;
 }
 
@@ -313,12 +414,15 @@ static void captureReaderRun(capture_worker_reader_t *lane, worker_t *worker)
         failed                      = ! captureReaderRead(lane, worker);
         if (local)
             deviceReaderSessionEndBurst(&burst);
-        if (! lane->verdict_pending && lane->verdict_timer != NULL)
+        const bool verdict_active = lane->verdict_pending && ! failed &&
+                                    captureLifecycleIsActive(captureLifecycleLoad(&device->lifecycle)) &&
+                                    quiescenceGateIsActive(&generation->gate);
+        if (! verdict_active && lane->verdict_timer != NULL)
         {
             wtimerDelete(lane->verdict_timer);
             lane->verdict_timer = NULL;
         }
-        if (lane->verdict_pending && lane->verdict_timer == NULL && ! failed)
+        if (verdict_active && lane->verdict_timer == NULL)
         {
             const uint64_t now = (uint64_t) getHRTimeUs();
             const uint32_t delay =
@@ -330,10 +434,15 @@ static void captureReaderRun(capture_worker_reader_t *lane, worker_t *worker)
                 weventSetUserData(lane->verdict_timer, lane);
         }
         wioDel(lane->io, WW_READ | WW_WRITE);
-        if (! failed && ! atomicLoadExplicit(&lane->waiting, memory_order_acquire) &&
+        if (! failed && (lane->verdict_pending || ! atomicLoadExplicit(&lane->waiting, memory_order_acquire)) &&
             captureLifecycleIsActive(captureLifecycleLoad(&device->lifecycle)) &&
             quiescenceGateIsActive(&generation->gate))
             failed = wioAdd(lane->io, captureReaderOnReady, lane->verdict_pending ? WW_WRITE : WW_READ) != 0;
+        if (failed && lane->verdict_timer != NULL)
+        {
+            wtimerDelete(lane->verdict_timer);
+            lane->verdict_timer = NULL;
+        }
     }
     capture_lifecycle_state_t from;
     const bool                transitioned = failed && captureLifecycleTransitionToFailed(&device->lifecycle, &from);
@@ -367,6 +476,16 @@ static void captureReaderMessage(worker_t *worker, void *arg1, void *arg2, void 
 void captureReaderOpen(capture_device_t *device)
 {
     assert(device->reader == NULL && device->queue_count > 0);
+    buffer_pool_fit_t fit;
+    const bool        fits = bufferpoolQueryBestFit(device->reader_buffer_pool, kNetfilterReadBufferSize, 0, &fit);
+    assert(fits);
+    discard fits;
+    /* Bound prepared packet storage across the device, rather than multiplying
+     * a 256-buffer allowance by every configured worker. Preserve at least the
+     * existing one-buffer-per-queue baseline even for unusually large padding. */
+    const uint16_t capacity = (uint16_t) min(
+        (size_t) kNetfilterBatchCapacity,
+        max((size_t) 1, (size_t) kCaptureReaderChargeLimit / device->queue_count / fit.allocation_charge));
     capture_reader_generation_t *generation =
         memoryAllocateZero(sizeof(*generation) + device->queue_count * sizeof(generation->lanes[0]));
     generation->device            = device;
@@ -381,6 +500,9 @@ void captureReaderOpen(capture_device_t *device)
     {
         generation->lanes[i].generation = generation;
         generation->lanes[i].wid        = (wid_t) i;
+        generation->lanes[i].capacity   = capacity;
+        generation->lanes[i].records    = memoryAllocateZero((size_t) capacity * sizeof(netfilter_packet_record_t));
+        generation->lanes[i].workspace  = netfilterBatchWorkspaceCreate(capacity);
     }
     atomicStoreExplicit(&device->reader_notify, (uintptr_t) generation, memory_order_release);
     generation->command_progress = (proc_command_progress_t) {.callback = captureReaderService, .context = device};
@@ -474,24 +596,33 @@ static bool captureReaderServicePass(capture_device_t *device)
          * run. Detached buffers enter the session FIFO; no tunnel callback runs
          * until its worker starts. Inactive and stopped devices accept instead. */
         const bool active = atomicLoadRelaxed(&device->capture_active);
-        if (active && ! captureReaderPost(lane))
-        {
-            quiet = false;
-            continue;
-        }
-        bool failed = false;
+        bool       failed = false;
         if (lane->verdict_pending)
         {
             quiet  = false;
             failed = captureReaderVerdict(lane, active) == kNetfilterVerdictError;
         }
+        else if (active && ! captureReaderPost(lane))
+        {
+            quiet = false;
+            continue;
+        }
+        else if (lane->record_first < lane->verdict_first)
+        {
+            quiet = false;
+            bytes += sbufGetLength(lane->records[lane->record_first].buffer);
+            captureReaderConsume(lane, active);
+        }
+        else if (lane->receive_error != 0)
+        {
+            errno  = lane->receive_error;
+            failed = true;
+        }
         else
         {
-            const netfilter_packet_result_t result = captureReaderReceive(lane, NULL, active);
+            const netfilter_packet_result_t result = captureReaderReceive(lane, NULL, active, false);
             quiet &= result == kNetfilterPacketWouldBlock;
             failed = result == kNetfilterPacketError || result == kNetfilterPacketEof;
-            if (lane->verdict_pending)
-                bytes += sbufGetLength(lane->scratch);
         }
         if (failed)
         {
@@ -571,8 +702,11 @@ void captureReaderDestroy(capture_device_t *device)
     for (uint16_t i = 0; i < generation->count; ++i)
     {
         capture_worker_reader_t *lane = &generation->lanes[i];
-        if (lane->scratch != NULL)
-            sbufDestroy(lane->scratch);
+        for (uint16_t j = 0; j < lane->capacity; ++j)
+            if (lane->records[j].buffer != NULL)
+                sbufDestroy(lane->records[j].buffer);
+        netfilterBatchWorkspaceDestroy(lane->workspace);
+        memoryFree(lane->records);
         for (unsigned j = lane->pending_first; j < lane->pending_count; ++j)
             sbufDestroy(lane->pending_bufs[j]);
     }

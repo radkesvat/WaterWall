@@ -170,6 +170,12 @@ static bool captureOpenQueue(capture_device_t *cdev, capture_linux_queue_t *queu
     if (! netfilterSetConfig(fd, NFQNL_CFG_CMD_BIND, queue->number, 0) ||
         ! captureConfigureQueueLimits(cdev, queue, count))
         goto failed;
+    /* No capture rules reference this freshly bound queue yet. An acknowledged
+     * empty-queue probe avoids silently using an unsupported batch command. */
+    const int batch_support = netfilterProbeVerdictBatch(fd, queue->number);
+    if (batch_support < 0)
+        goto failed;
+    queue->batch_verdicts = batch_support != 0;
     return true;
 failed:
     close(fd);
