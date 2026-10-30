@@ -13,54 +13,51 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-/* Packet loads preserve R6..R9 and return network fields in host byte order.
- * R6 holds the skb until the final load. Ordinary IPv4 TCP/UDP uses the same
- * symmetric endpoint hash as deviceFlowAffinityHash(), aligning receive queues
- * with initial processing workers. All fragments use the address/protocol fallback:
- * later fragments have no ports. Fragmented and ordinary packets of one flow
- * can therefore have different readers. The shared table retains fragment locality
- * or reassembles input; stateful consumers establish their own flow ownership.
- * Complete opaque IPv4 packets use approximate round robin
- * with an interface-local cursor per CPU. Unsupported IP versions use queue zero.
- * Explicit steering bypasses kernel write-learned queue migration. */
+/* Packet loads preserve R6..R9 and decode network fields to host byte order.
+ * R6 retains the skb until the final load. Native fields, opaque prefix fields,
+ * and address/protocol fallback use deviceFlowWorkerHashTuple()'s uint32
+ * calculation. All fragments exclude ports, prefix fields and identification.
+ * Only spread owns an approximate interface-local per-CPU cursor. Unsupported
+ * packet formats retain queue zero; write-learned migration stays bypassed. */
 #define TUN_BPF_INSN(op, dst, src, offset, value)                                                                      \
     {.code = (op), .dst_reg = (dst), .src_reg = (src), .off = (offset), .imm = (value)}
 
-#define TUN_BPF_CONST64(dst, value)                                                                                    \
-    TUN_BPF_INSN(BPF_LD | BPF_DW | BPF_IMM, dst, 0, 0, (int32_t) (uint32_t) UINT64_C(value)),                          \
-        TUN_BPF_INSN(0, 0, 0, 0, (int32_t) (UINT64_C(value) >> 32U))
+/* Mix one encoded endpoint, using R1 as scratch. All operations wrap at 32 bits. */
+#define TUN_BPF_ENDPOINT_MIX32(reg)                                                                                    \
+    TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_1, reg, 0, 0),                                                     \
+        TUN_BPF_INSN(BPF_ALU | BPF_RSH | BPF_K, BPF_REG_1, 0, 0, 16),                                                  \
+        TUN_BPF_INSN(BPF_ALU | BPF_XOR | BPF_X, reg, BPF_REG_1, 0, 0),                                                 \
+        TUN_BPF_INSN(BPF_ALU | BPF_MUL | BPF_K, reg, 0, 0, (int32_t) UINT32_C(0x85EBCA6B)),                            \
+        TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_1, reg, 0, 0),                                                 \
+        TUN_BPF_INSN(BPF_ALU | BPF_RSH | BPF_K, BPF_REG_1, 0, 0, 13),                                                  \
+        TUN_BPF_INSN(BPF_ALU | BPF_XOR | BPF_X, reg, BPF_REG_1, 0, 0)
 
-/* Mix R0 using R1 and R6 as scratch, matching deviceFlowAffinityMix64(). */
-#define TUN_BPF_MIX64                                                                                                  \
-    TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_X, BPF_REG_1, BPF_REG_0, 0, 0),                                             \
-        TUN_BPF_INSN(BPF_ALU64 | BPF_RSH | BPF_K, BPF_REG_1, 0, 0, 30),                                                \
-        TUN_BPF_INSN(BPF_ALU64 | BPF_XOR | BPF_X, BPF_REG_0, BPF_REG_1, 0, 0),                                         \
-        TUN_BPF_CONST64(BPF_REG_6, 0xBF58476D1CE4E5B9),                                                                \
-        TUN_BPF_INSN(BPF_ALU64 | BPF_MUL | BPF_X, BPF_REG_0, BPF_REG_6, 0, 0),                                         \
-        TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_X, BPF_REG_1, BPF_REG_0, 0, 0),                                         \
-        TUN_BPF_INSN(BPF_ALU64 | BPF_RSH | BPF_K, BPF_REG_1, 0, 0, 27),                                                \
-        TUN_BPF_INSN(BPF_ALU64 | BPF_XOR | BPF_X, BPF_REG_0, BPF_REG_1, 0, 0),                                         \
-        TUN_BPF_CONST64(BPF_REG_6, 0x94D049BB133111EB),                                                                \
-        TUN_BPF_INSN(BPF_ALU64 | BPF_MUL | BPF_X, BPF_REG_0, BPF_REG_6, 0, 0),                                         \
-        TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_X, BPF_REG_1, BPF_REG_0, 0, 0),                                         \
-        TUN_BPF_INSN(BPF_ALU64 | BPF_RSH | BPF_K, BPF_REG_1, 0, 0, 31),                                                \
-        TUN_BPF_INSN(BPF_ALU64 | BPF_XOR | BPF_X, BPF_REG_0, BPF_REG_1, 0, 0)
+/* Finalize R0, using R1 as scratch. */
+#define TUN_BPF_MIX32                                                                                                  \
+    TUN_BPF_INSN(BPF_ALU | BPF_MUL | BPF_K, BPF_REG_0, 0, 0, (int32_t) UINT32_C(0x9E3779B1)),                          \
+        TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_1, BPF_REG_0, 0, 0),                                           \
+        TUN_BPF_INSN(BPF_ALU | BPF_RSH | BPF_K, BPF_REG_1, 0, 0, 16),                                                  \
+        TUN_BPF_INSN(BPF_ALU | BPF_XOR | BPF_X, BPF_REG_0, BPF_REG_1, 0, 0)
 
-static int tunLinuxSteeringLoad(uint16_t count)
+static int tunLinuxSteeringLoad(uint16_t count, device_opaque_flow_mode_t opaque_flow_mode)
 {
 #if defined(SYS_bpf) && defined(TUNSETSTEERINGEBPF)
-    union bpf_attr map_attr = {0};
-    map_attr.map_type       = BPF_MAP_TYPE_PERCPU_ARRAY;
-    map_attr.key_size       = sizeof(uint32_t);
-    map_attr.value_size     = sizeof(uint32_t);
-    map_attr.max_entries    = 1;
-    const int counter_fd    = (int) syscall(SYS_bpf, BPF_MAP_CREATE, &map_attr, sizeof(map_attr));
-    if (counter_fd < 0)
+    int counter_fd = -1;
+    if (opaque_flow_mode == kDeviceOpaqueFlowSpread)
     {
-        return -1;
+        union bpf_attr map_attr = {0};
+        map_attr.map_type       = BPF_MAP_TYPE_PERCPU_ARRAY;
+        map_attr.key_size       = sizeof(uint32_t);
+        map_attr.value_size     = sizeof(uint32_t);
+        map_attr.max_entries    = 1;
+        counter_fd              = (int) syscall(SYS_bpf, BPF_MAP_CREATE, &map_attr, sizeof(map_attr));
+        if (counter_fd < 0)
+        {
+            return -1;
+        }
     }
 
-    /* Named sections keep forward jumps independent of hash instruction count. */
+    /* Named sections keep jumps independent of hash instruction count. */
     typedef struct tun_linux_steering_program_s
     {
         struct bpf_insn entry[8];
@@ -68,16 +65,17 @@ static int tunLinuxSteeringLoad(uint16_t count)
         struct bpf_insn fragments[2];
         struct bpf_insn transport[7];
         struct bpf_insn endpoints[9];
-        struct bpf_insn protocol[2];
-        struct bpf_insn flow_hash[82];
-        struct bpf_insn fallback[20];
-        struct bpf_insn opaque[16];
+        struct bpf_insn protocol[3];
+        struct bpf_insn fallback[6];
+        struct bpf_insn flow_hash[23];
         struct bpf_insn invalid[2];
+        struct bpf_insn opaque[16];
     } tun_linux_steering_program_t;
 #define TUN_BPF_SKIP(from, target)                                                                                     \
-    ((int16_t) ((offsetof(tun_linux_steering_program_t, target) - offsetof(tun_linux_steering_program_t, from)) /      \
-                    sizeof(struct bpf_insn) -                                                                          \
-                1U))
+    ((int16_t) (((ptrdiff_t) offsetof(tun_linux_steering_program_t, target) -                                          \
+                 (ptrdiff_t) offsetof(tun_linux_steering_program_t, from)) /                                           \
+                    (ptrdiff_t) sizeof(struct bpf_insn) -                                                              \
+                1))
     const tun_linux_steering_program_t program = {
         .entry =
             {
@@ -111,7 +109,13 @@ static int tunLinuxSteeringLoad(uint16_t count)
             {
                 TUN_BPF_INSN(BPF_LD | BPF_ABS | BPF_B, 0, 0, 0, 9),
                 TUN_BPF_INSN(BPF_JMP | BPF_JEQ | BPF_K, BPF_REG_0, 0, 1, 6),
-                TUN_BPF_INSN(BPF_JMP | BPF_JNE | BPF_K, BPF_REG_0, 0, TUN_BPF_SKIP(transport[2], opaque), 17),
+                TUN_BPF_INSN(BPF_JMP | BPF_JNE | BPF_K,
+                             BPF_REG_0,
+                             0,
+                             opaque_flow_mode == kDeviceOpaqueFlowPrefix ? 0
+                             : opaque_flow_mode == kDeviceOpaqueFlowPeer ? TUN_BPF_SKIP(transport[2], fallback)
+                                                                         : TUN_BPF_SKIP(transport[2], opaque),
+                             17),
                 TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_0, BPF_REG_9, 0, 0),
                 TUN_BPF_INSN(BPF_ALU | BPF_ADD | BPF_K, BPF_REG_0, 0, 0, 4),
                 TUN_BPF_INSN(BPF_JMP | BPF_JLT | BPF_X, BPF_REG_8, BPF_REG_0, TUN_BPF_SKIP(transport[5], fallback), 0),
@@ -120,67 +124,38 @@ static int tunLinuxSteeringLoad(uint16_t count)
         .endpoints =
             {
                 TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_7, BPF_REG_0, 0, 0),
+                TUN_BPF_INSN(BPF_ALU | BPF_MUL | BPF_K, BPF_REG_7, 0, 0, (int32_t) UINT32_C(0x9E3779B1)),
                 TUN_BPF_INSN(BPF_LD | BPF_ABS | BPF_W, 0, 0, 0, 12),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_LSH | BPF_K, BPF_REG_0, 0, 0, 16),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_OR | BPF_X, BPF_REG_7, BPF_REG_0, 0, 0),
+                TUN_BPF_INSN(BPF_ALU | BPF_XOR | BPF_X, BPF_REG_7, BPF_REG_0, 0, 0),
                 TUN_BPF_INSN(BPF_LD | BPF_IND | BPF_H, 0, BPF_REG_9, 0, 2),
                 TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_8, BPF_REG_0, 0, 0),
+                TUN_BPF_INSN(BPF_ALU | BPF_MUL | BPF_K, BPF_REG_8, 0, 0, (int32_t) UINT32_C(0x9E3779B1)),
                 TUN_BPF_INSN(BPF_LD | BPF_ABS | BPF_W, 0, 0, 0, 16),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_LSH | BPF_K, BPF_REG_0, 0, 0, 16),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_OR | BPF_X, BPF_REG_8, BPF_REG_0, 0, 0),
+                TUN_BPF_INSN(BPF_ALU | BPF_XOR | BPF_X, BPF_REG_8, BPF_REG_0, 0, 0),
             },
         .protocol =
             {
                 TUN_BPF_INSN(BPF_LD | BPF_ABS | BPF_B, 0, 0, 0, 9),
                 TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_9, BPF_REG_0, 0, 0),
-            },
-        .flow_hash =
-            {
-                /* Canonicalize the packed (address << 16) | port endpoints. */
-                TUN_BPF_INSN(BPF_JMP | BPF_JLE | BPF_X, BPF_REG_7, BPF_REG_8, 3, 0),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_X, BPF_REG_0, BPF_REG_7, 0, 0),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_X, BPF_REG_7, BPF_REG_8, 0, 0),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_X, BPF_REG_8, BPF_REG_0, 0, 0),
-                TUN_BPF_CONST64(BPF_REG_6, 0x9E3779B97F4A7C15),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_X, BPF_REG_0, BPF_REG_7, 0, 0),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_ADD | BPF_X, BPF_REG_0, BPF_REG_6, 0, 0),
-                TUN_BPF_MIX64,
-                TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_X, BPF_REG_7, BPF_REG_0, 0, 0),
-                TUN_BPF_CONST64(BPF_REG_6, 0xD1B54A32D192ED03),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_X, BPF_REG_0, BPF_REG_8, 0, 0),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_ADD | BPF_X, BPF_REG_0, BPF_REG_6, 0, 0),
-                TUN_BPF_MIX64,
-                TUN_BPF_INSN(BPF_ALU64 | BPF_XOR | BPF_X, BPF_REG_7, BPF_REG_0, 0, 0),
-                TUN_BPF_CONST64(BPF_REG_6, 0x94D049BB133111EB),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_X, BPF_REG_0, BPF_REG_9, 0, 0),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_ADD | BPF_X, BPF_REG_0, BPF_REG_6, 0, 0),
-                TUN_BPF_MIX64,
-                TUN_BPF_INSN(BPF_ALU64 | BPF_XOR | BPF_X, BPF_REG_7, BPF_REG_0, 0, 0),
-                TUN_BPF_INSN(BPF_ALU64 | BPF_MOV | BPF_X, BPF_REG_0, BPF_REG_7, 0, 0),
-                TUN_BPF_MIX64,
-                TUN_BPF_INSN(BPF_ALU64 | BPF_MOD | BPF_K, BPF_REG_0, 0, 0, count),
-                TUN_BPF_INSN(BPF_JMP | BPF_EXIT, 0, 0, 0, 0),
+                TUN_BPF_INSN(BPF_JMP | BPF_JA, 0, 0, TUN_BPF_SKIP(protocol[2], flow_hash), 0),
             },
         .fallback =
             {
                 TUN_BPF_INSN(BPF_LD | BPF_ABS | BPF_W, 0, 0, 0, 12),
                 TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_7, BPF_REG_0, 0, 0),
                 TUN_BPF_INSN(BPF_LD | BPF_ABS | BPF_W, 0, 0, 0, 16),
-                TUN_BPF_INSN(BPF_ALU | BPF_XOR | BPF_X, BPF_REG_7, BPF_REG_0, 0, 0),
+                TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_8, BPF_REG_0, 0, 0),
                 TUN_BPF_INSN(BPF_LD | BPF_ABS | BPF_B, 0, 0, 0, 9),
-                TUN_BPF_INSN(BPF_ALU | BPF_MUL | BPF_K, BPF_REG_0, 0, 0, (int32_t) UINT32_C(0x9E3779B1)),
-                TUN_BPF_INSN(BPF_ALU | BPF_XOR | BPF_X, BPF_REG_0, BPF_REG_7, 0, 0),
-                TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_7, BPF_REG_0, 0, 0),
-                TUN_BPF_INSN(BPF_ALU | BPF_RSH | BPF_K, BPF_REG_7, 0, 0, 16),
-                TUN_BPF_INSN(BPF_ALU | BPF_XOR | BPF_X, BPF_REG_0, BPF_REG_7, 0, 0),
-                TUN_BPF_INSN(BPF_ALU | BPF_MUL | BPF_K, BPF_REG_0, 0, 0, (int32_t) UINT32_C(0x7FEB352D)),
-                TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_7, BPF_REG_0, 0, 0),
-                TUN_BPF_INSN(BPF_ALU | BPF_RSH | BPF_K, BPF_REG_7, 0, 0, 15),
-                TUN_BPF_INSN(BPF_ALU | BPF_XOR | BPF_X, BPF_REG_0, BPF_REG_7, 0, 0),
-                TUN_BPF_INSN(BPF_ALU | BPF_MUL | BPF_K, BPF_REG_0, 0, 0, (int32_t) UINT32_C(0x846CA68B)),
-                TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_7, BPF_REG_0, 0, 0),
-                TUN_BPF_INSN(BPF_ALU | BPF_RSH | BPF_K, BPF_REG_7, 0, 0, 16),
-                TUN_BPF_INSN(BPF_ALU | BPF_XOR | BPF_X, BPF_REG_0, BPF_REG_7, 0, 0),
+                TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_9, BPF_REG_0, 0, 0),
+            },
+        .flow_hash =
+            {
+                TUN_BPF_ENDPOINT_MIX32(BPF_REG_7),
+                TUN_BPF_ENDPOINT_MIX32(BPF_REG_8),
+                TUN_BPF_INSN(BPF_ALU | BPF_MOV | BPF_X, BPF_REG_0, BPF_REG_7, 0, 0),
+                TUN_BPF_INSN(BPF_ALU | BPF_ADD | BPF_X, BPF_REG_0, BPF_REG_8, 0, 0),
+                TUN_BPF_INSN(BPF_ALU | BPF_XOR | BPF_X, BPF_REG_0, BPF_REG_9, 0, 0),
+                TUN_BPF_MIX32,
                 TUN_BPF_INSN(BPF_ALU | BPF_MOD | BPF_K, BPF_REG_0, 0, 0, count),
                 TUN_BPF_INSN(BPF_JMP | BPF_EXIT, 0, 0, 0, 0),
             },
@@ -217,29 +192,36 @@ static int tunLinuxSteeringLoad(uint16_t count)
     static const char license[] = "GPL";
     union bpf_attr    attr      = {0};
     attr.prog_type              = BPF_PROG_TYPE_SOCKET_FILTER;
-    attr.insn_cnt               = (uint32_t) (sizeof(program) / sizeof(struct bpf_insn));
-    attr.insns                  = (uint64_t) (uintptr_t) &program;
-    attr.license                = (uint64_t) (uintptr_t) license;
-    const int program_fd        = (int) syscall(SYS_bpf, BPF_PROG_LOAD, &attr, sizeof(attr));
-    const int load_errno        = errno;
+    attr.insn_cnt =
+        (uint32_t) ((opaque_flow_mode == kDeviceOpaqueFlowSpread ? sizeof(program)
+                                                                 : offsetof(tun_linux_steering_program_t, opaque)) /
+                    sizeof(struct bpf_insn));
+    attr.insns           = (uint64_t) (uintptr_t) &program;
+    attr.license         = (uint64_t) (uintptr_t) license;
+    const int program_fd = (int) syscall(SYS_bpf, BPF_PROG_LOAD, &attr, sizeof(attr));
+    const int load_errno = errno;
     /* A loaded program owns its per-CPU map until interface teardown. */
-    close(counter_fd);
+    if (counter_fd >= 0)
+        close(counter_fd);
     errno = load_errno;
     return program_fd;
 #else
     (void) count;
+    (void) opaque_flow_mode;
     errno = ENOSYS;
     return -1;
 #endif
 }
 
-#undef TUN_BPF_MIX64
-#undef TUN_BPF_CONST64
+#undef TUN_BPF_MIX32
+#undef TUN_BPF_ENDPOINT_MIX32
 #undef TUN_BPF_INSN
 
 uint16_t tunLinuxQueuesOpen(int first_fd, const char *name, bool checksum_setup, uint16_t requested_count, int *out_fds,
-                            const char **out_reason)
+                            const char **out_reason, device_opaque_flow_mode_t opaque_flow_mode)
 {
+    assert(opaque_flow_mode == kDeviceOpaqueFlowPrefix || opaque_flow_mode == kDeviceOpaqueFlowPeer ||
+           opaque_flow_mode == kDeviceOpaqueFlowSpread);
     assert(first_fd >= 0);
     assert(name != NULL);
     assert(requested_count > 0);
@@ -269,7 +251,7 @@ uint16_t tunLinuxQueuesOpen(int first_fd, const char *name, bool checksum_setup,
         return 1;
     }
 
-    int steering_fd = tunLinuxSteeringLoad(requested_count);
+    int steering_fd = tunLinuxSteeringLoad(requested_count, opaque_flow_mode);
     if (steering_fd < 0)
     {
         *out_reason = "loading stable multiqueue steering";

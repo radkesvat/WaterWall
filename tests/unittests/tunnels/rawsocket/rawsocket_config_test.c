@@ -176,6 +176,69 @@ static void testMultiQueueSetting(void)
     }
 }
 
+static void testOpaqueFlowModeSetting(void)
+{
+    const char *const               values[] = {NULL, "\"prefix\"", "\"peer\"", "\"spread\"", "\"auto\""};
+    const device_opaque_flow_mode_t modes[]  = {kDeviceOpaqueFlowPrefix,
+                                                kDeviceOpaqueFlowPrefix,
+                                                kDeviceOpaqueFlowPeer,
+                                                kDeviceOpaqueFlowSpread,
+                                                kDeviceOpaqueFlowAuto};
+    for (size_t i = 0; i < ARRAY_SIZE(values); ++i)
+    {
+        for (unsigned multi_queue = 0; multi_queue < 2; ++multi_queue)
+        {
+            char json[192];
+            snprintf(json,
+                     sizeof(json),
+                     "{\"multi-queue\":%s%s%s}",
+                     multi_queue ? "true" : "false",
+                     values[i] != NULL ? ",\"opaque-flow-mode\":" : "",
+                     values[i] != NULL ? values[i] : "");
+            cJSON    *settings;
+            tunnel_t *t = createRawSocket(json, &settings);
+            require(t != NULL, "write-only RawSocket rejected a valid opaque mode");
+            rawsocket_tstate_t *state = tunnelGetState(t);
+            require(state->opaque_flow_mode_requested == modes[i] && state->capture_range_count == 0 &&
+                        state->multi_queue_requested == (multi_queue != 0),
+                    "RawSocket lost requested opaque mode or made it depend on capture/queue configuration");
+            destroyRawSocket(t, settings);
+        }
+    }
+    const char *const invalid[] = {"null",
+                                   "false",
+                                   "0",
+                                   "1",
+                                   "[]",
+                                   "{}",
+                                   "\"\"",
+                                   "\"PREFIX\"",
+                                   "\"unknown\"",
+                                   "\"prefix\\u0000suffix\"",
+                                   "\"peer\\u0000suffix\"",
+                                   "\"spread\\u0000suffix\"",
+                                   "\"auto\\u0000suffix\""};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        char json[96];
+        snprintf(json, sizeof(json), "{\"opaque-flow-mode\":%s}", invalid[i]);
+        cJSON    *settings;
+        tunnel_t *t = createRawSocket(json, &settings);
+        require(t == NULL, "write-only RawSocket accepted an invalid opaque mode");
+        destroyRawSocket(t, settings);
+    }
+
+    const char *const invalid_keys[] = {"{\"opaque-flow-mode\\u0000suffix\":\"peer\"}",
+                                        "{\"opaque-flow-mode\":\"prefix\",\"opaque-flow-mode\\u0000suffix\":\"peer\"}"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_keys); ++i)
+    {
+        cJSON    *settings;
+        tunnel_t *t = createRawSocket(invalid_keys[i], &settings);
+        require(t == NULL, "write-only RawSocket accepted an embedded-NUL opaque mode key suffix");
+        destroyRawSocket(t, settings);
+    }
+}
+
 static void testConntrackSetting(void)
 {
     static const char *enabled[] = {"{}", "{\"bypass-conntrack\":true}"};
@@ -302,6 +365,7 @@ int main(void)
     testMissingOrEmptyCaptureListEnablesWriteOnlyMode();
     testSkipSysctlSetting();
     testMultiQueueSetting();
+    testOpaqueFlowModeSetting();
     testKernelQueueSettings();
     testInvalidCaptureElementIsRejected();
     testConntrackSetting();

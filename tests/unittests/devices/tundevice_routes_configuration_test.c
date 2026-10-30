@@ -8,15 +8,17 @@
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
-static unsigned device_creates, route_adds, default_probes;
+static unsigned                  device_creates, route_adds, default_probes;
+static device_opaque_flow_mode_t constructed_mode;
 
 tun_device_t *__wrap_tundeviceCreate(const char *, bool, bool, uint16_t, void *, TunReadEventHandle,
-                                     device_fragment_policy_t);
+                                     device_fragment_policy_t, device_opaque_flow_mode_t);
 bool          __wrap_tundeviceAddRoute(tun_device_t *, const char *, const char *);
 bool          __wrap_tundeviceDetectDefaultInterface(tun_default_route_t *);
 
 tun_device_t *__wrap_tundeviceCreate(const char *name, bool gso, bool multi_queue, uint16_t mtu, void *userdata,
-                                     TunReadEventHandle callback, device_fragment_policy_t policy)
+                                     TunReadEventHandle callback, device_fragment_policy_t policy,
+                                     device_opaque_flow_mode_t opaque_flow_mode)
 {
     discard name;
     discard gso;
@@ -25,6 +27,8 @@ tun_device_t *__wrap_tundeviceCreate(const char *name, bool gso, bool multi_queu
     discard userdata;
     discard callback;
     discard policy;
+    constructed_mode = opaque_flow_mode;
+    require(opaque_flow_mode != kDeviceOpaqueFlowAuto, "TUN constructor received unresolved auto");
     ++device_creates;
     return NULL;
 }
@@ -77,6 +81,41 @@ static void settingsCase(const char *name, const char *extra, bool valid, const 
     cJSON_Delete(settings);
 }
 
+static void startupModeCase(const char *value, bool upstream, const char *peer_type, device_opaque_flow_mode_t expected)
+{
+    testCaseSet("opaque mode resolves before native TUN construction");
+    cJSON *settings = cJSON_Parse("{\"device-name\":\"ww-mode-fixture\",\"device-ip\":\"192.0.2.1/24\","
+                                  "\"device-mtu\":1500,\"loop-protection\":false}");
+    require(settings != NULL, "cannot create startup mode fixture");
+    if (value != NULL)
+        require(cJSON_AddStringToObject(settings, "opaque-flow-mode", value) != NULL,
+                "cannot configure startup mode fixture");
+    node_t    node      = {.node_settings_json = settings, .hash_next = upstream ? 1 : 0};
+    node_t    peer_node = {.type = (char *) peer_type};
+    tunnel_t *device    = tundeviceTunnelCreate(&node);
+    tunnel_t *peer      = packettunnelCreate(&peer_node, 0, 0);
+    require(device != NULL && peer != NULL, "cannot create startup mode topology");
+    if (upstream)
+        tunnelBind(device, peer);
+    else
+        tunnelBind(peer, device);
+    device_creates               = 0;
+    constructed_mode             = kDeviceOpaqueFlowAuto;
+    ww_startup_context_t context = {0};
+    wwStartupContextBegin(&context);
+    tundeviceTunnelOnStart(device);
+    require(! wwStartupSucceeded(wwStartupContextEnd(&context)), "inert failed constructor did not stop startup");
+    const tundevice_tstate_t *state = tunnelGetState(device);
+    require(device_creates == 1 && constructed_mode == expected && state->opaque_flow_mode_effective == expected,
+            "startup did not pass resolved opaque mode to TUN constructor");
+    require(state->opaque_flow_mode_requested ==
+                (value != NULL && strcmp(value, "auto") == 0 ? kDeviceOpaqueFlowAuto : expected),
+            "startup overwrote requested opaque mode");
+    tundeviceTunnelDestroy(device, wwLifecycleStartupRollback());
+    tunnelDestroy(peer);
+    cJSON_Delete(settings);
+}
+
 int main(void)
 {
     logger_t *logger = loggerCreate();
@@ -126,6 +165,12 @@ int main(void)
                  false,
                  NULL,
                  0);
+    startupModeCase("auto", true, "PingServer", kDeviceOpaqueFlowPeer);
+    startupModeCase("auto", false, "PingClient", kDeviceOpaqueFlowPeer);
+    startupModeCase("auto", true, "PingClient", kDeviceOpaqueFlowPrefix);
+    startupModeCase("auto", false, "PingServer", kDeviceOpaqueFlowPrefix);
+    startupModeCase(NULL, true, "PingServer", kDeviceOpaqueFlowPrefix);
+    startupModeCase("spread", true, "PingServer", kDeviceOpaqueFlowSpread);
     networkloggerDestroy();
     puts("TunDevice capture route constructor settings passed");
     return 0;

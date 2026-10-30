@@ -1,5 +1,6 @@
 #pragma once
 
+#include "devices/device_opaque_flow_mode.h"
 #include <stdint.h>
 
 enum
@@ -8,18 +9,15 @@ enum
     kCaptureLinuxSteeringFilterSize      = kCaptureLinuxSteeringMaxInstructions * 32 + 8
 };
 
-/* Build one iptables bpf --bytecode predicate. queue_count is positive and
- * lane_index is below it. Together all lane predicates select exactly one lane
- * for TCP/UDP and fragmented IPv4; complete opaque protocols select no flow lane.
- * malformed/unsupported packets select lane zero for ordinary reader validation.
- *
- * Symmetric IPv4 address/protocol and TCP/UDP port steering distributes receive
- * work and initial processing. Stateful consumers independently establish flow
- * ownership after any preceding packet transformations.
- * Every fragment uses the address/protocol fallback, including fragment zero.
- * Protocol exclusions remain a separate match shared with the NOTRACK rules.
- * Evaluation is linear in the number of queue predicates visited. */
-void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index,
+/* Build one complete iptables bpf --bytecode predicate. Positive queue_count
+ * and lane_index below it are required. mode is resolved prefix/peer/spread.
+ * Every deterministic valid IPv4 packet selects exactly one lane; spread sends
+ * ordinary opaque packets to the separate random class. Every fragment uses
+ * address/protocol fallback, including fragment zero. Invalid/unsupported input
+ * selects lane zero for ordinary reader validation. Protocol exclusions remain
+ * a separate match shared with NOTRACK. Stateful consumers establish ownership
+ * independently after preceding packet transformations. */
+void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index, device_opaque_flow_mode_t mode,
                                      char output[kCaptureLinuxSteeringFilterSize]);
 
 /* Match complete non-TCP/UDP IPv4 for the independent statistic random cascade. */

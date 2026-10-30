@@ -912,6 +912,7 @@
       )
       target_link_options(rawsocket_startup_failure_test PRIVATE
         "-Wl,--wrap=caputredeviceCreate"
+        "-Wl,--wrap=capturedeviceSetOpaqueFlowMode"
         "-Wl,--wrap=caputredeviceBringUp"
         "-Wl,--wrap=caputredeviceBringDown"
         "-Wl,--wrap=capturedeviceDestroy"

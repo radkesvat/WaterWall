@@ -1,4 +1,5 @@
 #include "devices/capture/capture_linux_steering.h"
+#include "devices/device_flow_hash.h"
 
 #include <errno.h>
 #include <linux/filter.h>
@@ -18,8 +19,9 @@ enum
 
 typedef struct steering_test_s
 {
-    uint16_t count;
-    int      sockets[kMaximumTestLanes + 1][2];
+    uint16_t                  count;
+    device_opaque_flow_mode_t mode;
+    int                       sockets[kMaximumTestLanes + 1][2];
 } steering_test_t;
 
 static void require(bool condition, const char *message)
@@ -52,10 +54,11 @@ static void parseProgram(const char *text, struct sock_fprog *program)
     require(*end == '\0', "serialized program contains exactly its declared instructions");
 }
 
-static void openLanes(steering_test_t *test, uint16_t count)
+static void openLanes(steering_test_t *test, uint16_t count, device_opaque_flow_mode_t mode)
 {
     require(count > 0 && count <= kMaximumTestLanes, "test lane count is supported");
     test->count = count;
+    test->mode  = mode;
     for (uint16_t lane = 0; lane <= count; ++lane)
     {
         struct
@@ -65,9 +68,14 @@ static void openLanes(steering_test_t *test, uint16_t count)
         } serialized;
         memset(&serialized, 0xa5, sizeof(serialized));
         if (lane == count)
-            captureLinuxBuildOpaqueFilter(serialized.text);
+        {
+            if (mode == kDeviceOpaqueFlowSpread)
+                captureLinuxBuildOpaqueFilter(serialized.text);
+            else
+                strcpy(serialized.text, "1,6 0 0 0");
+        }
         else
-            captureLinuxBuildSteeringFilter(count, lane, serialized.text);
+            captureLinuxBuildSteeringFilter(count, lane, mode, serialized.text);
         require(memchr(serialized.text, '\0', sizeof(serialized.text)) != NULL, "serialized program is terminated");
         for (unsigned int i = 0; i < sizeof(serialized.guard); ++i)
             require(serialized.guard[i] == 0xa5, "serialization respects its fixed buffer");
@@ -75,6 +83,9 @@ static void openLanes(steering_test_t *test, uint16_t count)
         struct sock_filter instructions[XT_BPF_MAX_NUM_INSTR];
         struct sock_fprog  program = {.filter = instructions};
         parseProgram(serialized.text, &program);
+        if (lane < count)
+            require(program.len == (mode == kDeviceOpaqueFlowPrefix ? 61U : 64U),
+                    "complete steering predicate retains its qualified instruction count");
         require(socketpair(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, test->sockets[lane]) == 0,
                 "create local datagram pair");
         /* The kernel executes the actual serialized cBPF. AF_UNIX exposes the
@@ -122,6 +133,11 @@ static uint16_t selectLane(const steering_test_t *test, const uint8_t *packet, s
             require(errno == EAGAIN || errno == EWOULDBLOCK, "unmatched lane has no packet");
     }
     require(matched == 1, "every packet selects exactly one flow lane or the opaque random-distribution class");
+    uint32_t hash = UINT32_C(0xa5a5a5a5);
+    if (deviceReceiveWorkerHash(packet, (uint32_t) length, test->mode, &hash))
+        require(selected == hash % test->count, "actual kernel cBPF matches common C worker hash");
+    else
+        require(hash == UINT32_C(0xa5a5a5a5), "declined receive classification preserves output hash");
     return selected;
 }
 
@@ -212,6 +228,13 @@ static void testPortDistributionAndSymmetry(steering_test_t *test)
     }
 }
 
+static uint16_t expectedOpaque(const steering_test_t *test, const uint8_t *packet, size_t length)
+{
+    uint32_t hash;
+    return deviceReceiveWorkerHash(packet, (uint32_t) length, test->mode, &hash) ? (uint16_t) (hash % test->count)
+                                                                                 : test->count;
+}
+
 static void testFragmentsAndOpaqueProtocols(steering_test_t *test)
 {
     uint8_t packet[kPacketCapacity];
@@ -236,11 +259,11 @@ static void testFragmentsAndOpaqueProtocols(steering_test_t *test)
         if (protocol != 6 && protocol != 17)
         {
             put16(packet + 6, 0);
-            require(selectLane(test, packet, sizeof(packet)) == test->count,
-                    "opaque complete packets must bypass every flow lane");
+            require(selectLane(test, packet, sizeof(packet)) == expectedOpaque(test, packet, sizeof(packet)),
+                    "opaque complete packets follow the selected receive policy");
             memset(packet + 20, 0xa5, sizeof(packet) - 20);
-            require(selectLane(test, packet, sizeof(packet)) == test->count,
-                    "opaque protocol payload never supplies ports");
+            require(selectLane(test, packet, sizeof(packet)) == expectedOpaque(test, packet, sizeof(packet)),
+                    "opaque payload follows the selected prefix or peer policy");
         }
     }
     bool seen[kMaximumTestLanes] = {0};
@@ -310,8 +333,8 @@ static void testHeaderBoundsAndCompatibility(steering_test_t *test)
     for (unsigned header = 20; header <= 60; header += 4)
     {
         makePacket(packet, 50, header);
-        require(selectLane(test, packet, sizeof(packet)) == test->count,
-                "opaque IPv4 options retain random-distribution classification");
+        require(selectLane(test, packet, sizeof(packet)) == expectedOpaque(test, packet, sizeof(packet)),
+                "opaque IPv4 options follow the selected receive policy");
         put16(packet + 2, (uint16_t) (header - 1));
         require(selectLane(test, packet, sizeof(packet)) == 0,
                 "opaque malformed declared length must reach reader validation exactly once");
@@ -328,30 +351,256 @@ static void testHeaderBoundsAndCompatibility(steering_test_t *test)
     require(selectLane(test, packet, sizeof(packet)) == 0, "opaque invalid IHL must not be classified");
 }
 
+/* Frozen before candidate execution: all twelve corpora contain 65,536 tuples,
+ * hence at least 258 expected entries per worker. Every bucket must remain
+ * between one half and three halves of its expectation, for counts 3,7,16,254.
+ * The original seven corpora are followed by the old public port-443 collapse,
+ * equal/complementary/high-bit endpoint words, and a zero endpoint word.
+ * device_flow_affinity_test separately retains its existing 4,096 correlated
+ * address/port corpus and its unchanged four-worker balance thresholds.
+ * These are finite placement checks, not a throughput benchmark. */
+static void qualifyWorkerHash(void)
+{
+    /* The old endpoint product maps this public IPv4 server on port 443 to
+     * zero: 0xC9FF954B == 443 * 0x9E3779B1 modulo 2^32. Its other endpoint
+     * must still distinguish client flows instead of collapsing every port. */
+    require(deviceFlowWorkerHashTuple(0x0a000001, 10000, 0xc9ff954b, 443, 6, 0) !=
+                deviceFlowWorkerHashTuple(0x0a000001, 10001, 0xc9ff954b, 443, 6, 0),
+            "a public port-443 server must not erase the client endpoint");
+    const struct
+    {
+        uint32_t src;
+        uint16_t sp;
+        uint32_t dst;
+        uint16_t dp;
+        uint8_t  proto;
+        uint32_t expected;
+    } vectors[] = {
+        {0x0a000001, 40000, 0x0a000002, 443, 6, 0xc4d8d18a},
+        {0x0a000101, 40000, 0x0a000102, 443, 6, 0x2dd3fcf0},
+        {0x0a000001, 10000, 0x0a000002, 46539, 6, 0x79464f88},
+        {0x0a000001, 42768, 0x0a000002, 46539, 6, 0xad16e4d0},
+        {0xc0000201, 12000, 0xc6336402, 443, 17, 0x0af11122},
+        {0xc0000201, 0, 0xc6336402, 0, 1, 0xab7cc5f9},
+        {0xc0000201, 12000, 0xc6336402, 443, 132, 0xad52e624},
+        {0x0a000001, 443, 0x0a000001, 443, 6, 0x7150af28},
+        {0x0a000001, 10000, 0xc9ff954b, 443, 6, 0xbdb9365e},
+        {0x0a000001, 10001, 0xc9ff954b, 443, 6, 0x89e8530b},
+        {0x0a000001, 10000, 0x000001bb, 443, 6, 0xb6878f90},
+        {0x0a000001, 10001, 0x000001bb, 443, 6, 0x82b60aa5},
+    };
+    for (unsigned i = 0; i < sizeof(vectors) / sizeof(vectors[0]); ++i)
+    {
+        require(deviceFlowWorkerHashTuple(
+                    vectors[i].src, vectors[i].sp, vectors[i].dst, vectors[i].dp, vectors[i].proto, 0) ==
+                    vectors[i].expected,
+                "worker hash matches an independently calculated fixed H32 vector");
+        require(deviceFlowWorkerHashTuple(
+                    vectors[i].dst, vectors[i].dp, vectors[i].src, vectors[i].sp, vectors[i].proto, 0) ==
+                    vectors[i].expected,
+                "fixed H32 vector is symmetric even for equal endpoint fields");
+    }
+    const uint16_t counts[]       = {3, 7, 16, 254};
+    const uint16_t destinations[] = {53, 80, 443, 46539};
+    for (unsigned corpus = 0; corpus < 12; ++corpus)
+        for (unsigned ci = 0; ci < sizeof(counts) / sizeof(counts[0]); ++ci)
+        {
+            uint32_t buckets[kMaximumTestLanes] = {0};
+            for (uint32_t i = 0; i < 65536; ++i)
+            {
+                uint32_t src = UINT32_C(0x0a000001), dst = UINT32_C(0x0a000002);
+                uint16_t sp = (uint16_t) i, dp = 443;
+                uint8_t  proto = 6;
+                if (corpus >= 1 && corpus <= 4)
+                {
+                    sp = (uint16_t) (i * 257U);
+                    dp = destinations[corpus - 1];
+                }
+                else if (corpus == 5)
+                {
+                    src = UINT32_C(0x0a000000) + i;
+                    dst = src ^ UINT32_C(0x01010101);
+                    sp  = 40000;
+                }
+                else if (corpus == 6)
+                {
+                    sp    = (uint16_t) (i * 251U);
+                    dp    = (uint16_t) (i * 509U + 71U);
+                    proto = 132;
+                }
+                else if (corpus == 7)
+                    dst = UINT32_C(0xc9ff954b);
+                else if (corpus >= 8)
+                {
+                    /* With zero ports the tuple API accepts the exact
+                     * encoded values used by the arithmetic qualification. */
+                    src = corpus == 10 ? i << 16U : i;
+                    dst = corpus == 8 ? i : corpus == 9 ? ~i : 0;
+                    sp = dp = 0;
+                }
+                ++buckets[deviceFlowWorkerHashTuple(src, sp, dst, dp, proto, 0) % counts[ci]];
+            }
+            for (unsigned lane = 0; lane < counts[ci]; ++lane)
+                require(buckets[lane] * counts[ci] >= 32768U && buckets[lane] * counts[ci] <= 98304U,
+                        "frozen structured corpus stays within 50%-150% per-bucket distribution bounds");
+        }
+    const uint32_t a = deviceFlowWorkerHashTuple(0x0a000001, 40000, 0x0a000002, 443, 6, 0);
+    require(a != deviceFlowWorkerHashTuple(0x0a000101, 40000, 0x0a000102, 443, 6, 0),
+            "same address XOR does not force the old RawSocket structural collision");
+    require(deviceFlowWorkerHashTuple(0x0a000001, 10000, 0x0a000002, 46539, 6, 0) !=
+                deviceFlowWorkerHashTuple(0x0a000001, 42768, 0x0a000002, 46539, 6, 0),
+            "ports separated by 32768 avoid the old fixed-destination structural collision");
+    require(a != deviceFlowWorkerHashTuple(0x0a000001, 443, 0x0a000002, 40000, 6, 0),
+            "ports retain their endpoint address association");
+}
+
+static void testFixedZeroEndpointVectors(const steering_test_t *test)
+{
+    static const struct
+    {
+        uint32_t destination, hash;
+        uint16_t source_port;
+    } vectors[] = {{UINT32_C(0xc9ff954b), UINT32_C(0xbdb9365e), 10000},
+                   {UINT32_C(0xc9ff954b), UINT32_C(0x89e8530b), 10001},
+                   {UINT32_C(0x000001bb), UINT32_C(0xb6878f90), 10000},
+                   {UINT32_C(0x000001bb), UINT32_C(0x82b60aa5), 10001}};
+    for (unsigned i = 0; i < sizeof(vectors) / sizeof(vectors[0]); ++i)
+    {
+        uint8_t packet[kPacketCapacity];
+        makePacket(packet, 6, 20);
+        put32(packet + 12, UINT32_C(0x0a000001));
+        put32(packet + 16, vectors[i].destination);
+        put16(packet + 20, vectors[i].source_port);
+        put16(packet + 22, 443);
+        require(selectLane(test, packet, sizeof(packet)) == vectors[i].hash % test->count,
+                "actual cBPF matches fixed zero-endpoint and endpoint-encoding vectors");
+        reverseEndpoints(packet);
+        require(selectLane(test, packet, sizeof(packet)) == vectors[i].hash % test->count,
+                "actual cBPF zero-endpoint vectors retain reverse symmetry");
+    }
+}
+
+static void testOpaqueModeKeys(steering_test_t *test)
+{
+    uint8_t  storage[kPacketCapacity + 1];
+    uint8_t *packet = storage + 1; /* Explicitly unaligned packet bytes. */
+    for (unsigned header = 20; header <= 60; header += 4)
+    {
+        makePacket(packet, 132, header);
+        const uint16_t lane = selectLane(test, packet, kPacketCapacity);
+        uint32_t       prefix_hash;
+        const bool     deterministic = deviceReceiveWorkerHash(packet, kPacketCapacity, test->mode, &prefix_hash);
+        for (unsigned byte = header + 4; byte < kPacketCapacity; ++byte)
+        {
+            packet[byte] ^= 0xa5;
+            require(selectLane(test, packet, kPacketCapacity) == lane,
+                    "later opaque payload bytes do not alter receive classification");
+        }
+        if (test->mode == kDeviceOpaqueFlowPeer)
+        {
+            for (unsigned byte = header; byte < kPacketCapacity; ++byte)
+            {
+                packet[byte] ^= 0x5a;
+                require(selectLane(test, packet, kPacketCapacity) == lane, "peer ignores every payload byte");
+            }
+        }
+        if (deterministic)
+        {
+            uint32_t unaligned_hash;
+            require(deviceReceiveWorkerHash(packet, kPacketCapacity, test->mode, &unaligned_hash),
+                    "unaligned input is supported");
+            require(unaligned_hash == prefix_hash, "fixed masks after the prefix retain stable opaque identity");
+        }
+        for (unsigned payload = 0; payload <= 4; ++payload)
+        {
+            put16(packet + 2, (uint16_t) (header + payload));
+            require(selectLane(test, packet, header + payload) == expectedOpaque(test, packet, header + payload),
+                    "opaque zero-through-four-byte payload follows selected fallback policy");
+            require(selectLane(test, packet, kPacketCapacity) == expectedOpaque(test, packet, header + payload),
+                    "trailing buffer bytes never supply an opaque prefix");
+        }
+    }
+}
+
+static void testWorkerHashApiBoundaries(void)
+{
+    uint8_t  storage[49] = {0};
+    uint8_t *packet      = storage + 1;
+    packet[0]            = 0x60;
+    packet[6]            = 6;
+    put16(packet + 4, 4);
+    const uint32_t source[]      = {0x20010db8, 0x00010002, 0x00030004, 0x00050006};
+    const uint32_t destination[] = {0x20010db8, 0x00070008, 0x0009000a, 0x000b000c};
+    for (unsigned word = 0; word < 4; ++word)
+    {
+        put32(packet + 8 + word * 4, source[word]);
+        put32(packet + 24 + word * 4, destination[word]);
+    }
+    put16(packet + 40, 23456);
+    put16(packet + 42, 443);
+    uint32_t hash = 0;
+    require(deviceFlowWorkerHash(packet, 44, &hash) && hash == UINT32_C(0x23f6d8c9),
+            "unaligned generic IPv6 worker hash retains existing address folding");
+    for (device_opaque_flow_mode_t mode = kDeviceOpaqueFlowPrefix; mode <= kDeviceOpaqueFlowSpread; ++mode)
+    {
+        require(deviceReceiveWorkerHash(packet, 44, mode, &hash) && hash == UINT32_C(0x23f6d8c9),
+                "all receive modes share plain IPv6 native worker hash");
+        require(! deviceReceiveWorkerHash(packet, 48, mode, &hash), "IPv6 receive rejects trailing buffer bytes");
+        packet[6] = 0;
+        require(! deviceReceiveWorkerHash(packet, 44, mode, &hash), "IPv6 receive does not walk extension headers");
+        packet[6] = 6;
+        put16(packet + 4, 3);
+        require(! deviceReceiveWorkerHash(packet, 43, mode, &hash), "IPv6 receive retains four-byte native boundary");
+        put16(packet + 4, 4);
+        require(! deviceReceiveWorkerHash(NULL, 44, mode, &hash) && ! deviceReceiveWorkerHash(packet, 0, mode, &hash) &&
+                    ! deviceReceiveWorkerHash(packet, 44, mode, NULL),
+                "receive hash handles valid null and zero-length input");
+    }
+    hash = UINT32_C(0xa5a5a5a5);
+    require(! deviceFlowWorkerHash(NULL, 44, &hash) && ! deviceFlowWorkerHash(packet, 0, &hash) &&
+                ! deviceFlowWorkerHash(packet, 44, NULL),
+            "generic worker hash handles null and zero-length input");
+    require(hash == UINT32_C(0xa5a5a5a5), "generic hash refusal leaves the output untouched");
+    put16(packet + 4, 0);
+    require(! deviceFlowWorkerHash(packet, 44, &hash), "generic worker hash rejects IPv6 jumbogram marker");
+    put16(packet + 4, 9);
+    require(! deviceFlowWorkerHash(packet, 44, &hash), "generic worker hash rejects truncated declared IPv6 length");
+}
+
 int main(void)
 {
+    qualifyWorkerHash();
+    testWorkerHashApiBoundaries();
     steering_test_t test;
-    const uint16_t  counts[] = {1, 3, 16};
-    for (unsigned int i = 0; i < sizeof(counts) / sizeof(counts[0]); ++i)
+    const uint16_t  counts[] = {1, 3, 7, 16};
+    for (device_opaque_flow_mode_t mode = kDeviceOpaqueFlowPrefix; mode <= kDeviceOpaqueFlowSpread; ++mode)
+        for (unsigned int i = 0; i < sizeof(counts) / sizeof(counts[0]); ++i)
+        {
+            openLanes(&test, counts[i], mode);
+            testFixedZeroEndpointVectors(&test);
+            testPortDistributionAndSymmetry(&test);
+            testFragmentsAndOpaqueProtocols(&test);
+            testHeaderBoundsAndCompatibility(&test);
+            testOpaqueModeKeys(&test);
+            closeLanes(&test);
+        }
+
+    for (device_opaque_flow_mode_t mode = kDeviceOpaqueFlowPrefix; mode <= kDeviceOpaqueFlowSpread; ++mode)
     {
-        openLanes(&test, counts[i]);
-        testPortDistributionAndSymmetry(&test);
-        testFragmentsAndOpaqueProtocols(&test);
-        testHeaderBoundsAndCompatibility(&test);
+        openLanes(&test, kMaximumTestLanes, mode);
+        testFixedZeroEndpointVectors(&test);
+        uint8_t packet[kPacketCapacity];
+        makePacket(packet, 6, 20);
+        for (unsigned int port = 0; port < 64; ++port)
+        {
+            put16(packet + 20, (uint16_t) port);
+            const uint16_t lane = selectLane(&test, packet, sizeof(packet));
+            reverseEndpoints(packet);
+            require(selectLane(&test, packet, sizeof(packet)) == lane,
+                    "maximum worker count retains symmetric coverage");
+            reverseEndpoints(packet);
+        }
         closeLanes(&test);
     }
-
-    openLanes(&test, kMaximumTestLanes);
-    uint8_t packet[kPacketCapacity];
-    makePacket(packet, 6, 20);
-    for (unsigned int port = 0; port < 64; ++port)
-    {
-        put16(packet + 20, (uint16_t) port);
-        const uint16_t lane = selectLane(&test, packet, sizeof(packet));
-        reverseEndpoints(packet);
-        require(selectLane(&test, packet, sizeof(packet)) == lane, "maximum worker count retains symmetric coverage");
-        reverseEndpoints(packet);
-    }
-    closeLanes(&test);
     return 0;
 }

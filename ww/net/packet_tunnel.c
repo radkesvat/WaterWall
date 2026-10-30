@@ -8,6 +8,7 @@
 #include "line.h"
 #include "loggers/internal_logger.h"
 #include "objects/node.h"
+#include "utils/json_helpers.h"
 #include "wchecksum.h"
 
 bool packettunnelTrustedChecksumPairEligible(const tunnel_t *source, const tunnel_t *consumer)
@@ -265,4 +266,61 @@ bool packettunnelReadFragmentPolicy(const cJSON *settings, device_fragment_polic
     }
     LOGF("Device source fragment-policy must be reassemble or preserve-fragments");
     return false;
+}
+
+bool packettunnelReadOpaqueFlowMode(const cJSON *settings, device_opaque_flow_mode_t *mode)
+{
+    assert(mode != NULL);
+    if (! jsonObjectFieldStringsAreExact(settings, "opaque-flow-mode"))
+    {
+        LOGF("Device source opaque-flow-mode must use exact strings without embedded NUL bytes");
+        return false;
+    }
+    const cJSON *value = cJSON_GetObjectItemCaseSensitive(settings, "opaque-flow-mode");
+    if (value == NULL)
+    {
+        *mode = kDeviceOpaqueFlowPrefix;
+        return true;
+    }
+    if (cJSON_IsString(value) && value->valuestring != NULL)
+    {
+        static const device_opaque_flow_mode_t modes[] = {
+            kDeviceOpaqueFlowPrefix, kDeviceOpaqueFlowPeer, kDeviceOpaqueFlowSpread, kDeviceOpaqueFlowAuto};
+        for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i)
+        {
+            if (stringCompare(value->valuestring, deviceOpaqueFlowModeName(modes[i])) == 0)
+            {
+                *mode = modes[i];
+                return true;
+            }
+        }
+    }
+    LOGF("Device source opaque-flow-mode must be prefix, peer, spread or auto");
+    return false;
+}
+
+device_opaque_flow_mode_t packettunnelResolveOpaqueFlowMode(tunnel_t *t, device_opaque_flow_mode_t requested,
+                                                            const char **reason)
+{
+    assert(t != NULL && reason != NULL);
+    assert(requested >= kDeviceOpaqueFlowPrefix && requested <= kDeviceOpaqueFlowAuto);
+    if (requested != kDeviceOpaqueFlowAuto)
+    {
+        *reason = "configured mode";
+        return requested;
+    }
+
+    const packet_lifecycle_anchor_t *anchor    = packettunnelGetLifecycleAnchor(t);
+    const bool                       upstream  = anchor->direction == kPacketLifecycleAnchorPublishUpstream;
+    const tunnel_t                  *neighbour = upstream ? t->next : t->prev;
+    assert(neighbour != NULL && anchor->publication_tunnel == neighbour);
+    const char *decoder_type = upstream ? "PingServer" : "PingClient";
+    if (neighbour->node != NULL && neighbour->node->type != NULL &&
+        stringCompare(neighbour->node->type, decoder_type) == 0)
+    {
+        *reason = upstream ? "direct upstream PingServer decoder" : "direct downstream PingClient decoder";
+        return kDeviceOpaqueFlowPeer;
+    }
+    *reason = "no direct Ping decoder in receive direction";
+    return kDeviceOpaqueFlowPrefix;
 }

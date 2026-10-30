@@ -179,3 +179,76 @@ bool deviceFlowAffinityHash(const uint8_t *packet, uint32_t length, uint64_t *ou
         tuple.src, tuple.src_port, tuple.dst, tuple.dst_port, tuple.proto, tuple.fragment_key);
     return true;
 }
+
+static uint32_t deviceFlowWorkerMixEndpoint(uint32_t endpoint)
+{
+    endpoint ^= endpoint >> 16U;
+    endpoint *= UINT32_C(0x85EBCA6B);
+    endpoint ^= endpoint >> 13U;
+    return endpoint;
+}
+
+uint32_t deviceFlowWorkerHashTuple(uint32_t src, uint16_t src_word, uint32_t dst, uint16_t dst_word, uint8_t protocol,
+                                   uint32_t fragment_key)
+{
+    /* Mix whole endpoints before the symmetric sum. Both mixers are invertible,
+     * so no fixed encoded endpoint can erase variation in the other endpoint.
+     * Keep this calculation identical in the C, cBPF and eBPF selectors. */
+    const uint32_t a    = deviceFlowWorkerMixEndpoint(src ^ ((uint32_t) src_word * UINT32_C(0x9E3779B1)));
+    const uint32_t b    = deviceFlowWorkerMixEndpoint(dst ^ ((uint32_t) dst_word * UINT32_C(0x9E3779B1)));
+    uint32_t       hash = (a + b) ^ (uint32_t) protocol ^ fragment_key;
+    hash *= UINT32_C(0x9E3779B1);
+    return hash ^ (hash >> 16U);
+}
+
+bool deviceFlowWorkerHash(const uint8_t *packet, uint32_t length, uint32_t *out_hash)
+{
+    if (packet == NULL || out_hash == NULL || length == 0)
+        return false;
+    device_flow_affinity_tuple_t tuple   = {0};
+    const uint8_t                version = packet[0] >> 4U;
+    if (version == 4 ? ! deviceFlowAffinityParseIpv4(packet, length, &tuple)
+                     : version != 6 || ! deviceFlowAffinityParseIpv6(packet, length, &tuple))
+        return false;
+    *out_hash = deviceFlowWorkerHashTuple(
+        tuple.src, tuple.src_port, tuple.dst, tuple.dst_port, tuple.proto, tuple.fragment_key);
+    return true;
+}
+
+bool deviceReceiveWorkerHash(const uint8_t *packet, uint32_t length, device_opaque_flow_mode_t mode, uint32_t *out_hash)
+{
+    assert(mode >= kDeviceOpaqueFlowPrefix && mode <= kDeviceOpaqueFlowSpread);
+    if (packet == NULL || out_hash == NULL || length == 0)
+        return false;
+    device_flow_affinity_tuple_t tuple = {0};
+    if ((packet[0] >> 4U) == 6)
+    {
+        if (! deviceFlowAffinityParseIpv6(packet, length, &tuple) || GET_BE16(packet + 4) + 40U != length ||
+            (tuple.proto != 6 && tuple.proto != 17) || GET_BE16(packet + 4) < 4)
+            return false;
+    }
+    else if ((packet[0] >> 4U) == 4)
+    {
+        if (! deviceFlowAffinityParseIpv4(packet, length, &tuple))
+            return false;
+        if (tuple.fragment_key != 0)
+            tuple.fragment_key = 0;
+        else
+        {
+            const bool native = tuple.proto == 6 || tuple.proto == 17;
+            if (! native && mode == kDeviceOpaqueFlowSpread)
+                return false;
+            tuple.src_port = tuple.dst_port = 0;
+            const uint32_t header           = (uint32_t) (packet[0] & 15U) * 4U;
+            if ((native || mode == kDeviceOpaqueFlowPrefix) && GET_BE16(packet + 2) >= header + 4U)
+            {
+                tuple.src_port = GET_BE16(packet + header);
+                tuple.dst_port = GET_BE16(packet + header + 2);
+            }
+        }
+    }
+    else
+        return false;
+    *out_hash = deviceFlowWorkerHashTuple(tuple.src, tuple.src_port, tuple.dst, tuple.dst_port, tuple.proto, 0);
+    return true;
+}

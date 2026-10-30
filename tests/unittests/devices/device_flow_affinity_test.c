@@ -357,14 +357,25 @@ static uint64_t fullHashOf(const sbuf_t *buf)
     return hash;
 }
 
-/*
- * The worker index must be nothing more than the full hash reduced modulo the
- * worker count: line selection reads the same hash, so a second reduction path
- * would silently split the two decisions.
- */
+static uint32_t workerHashOf(const sbuf_t *buf)
+{
+    uint32_t hash = 0;
+    require(deviceFlowWorkerHash(sbufGetRawPtr(buf), sbufGetLength(buf), &hash), "expected a worker-hashable packet");
+    return hash;
+}
+
+static wid_t receiveOf(const sbuf_t *buf, device_opaque_flow_mode_t mode)
+{
+    uint32_t hash;
+    require(deviceReceiveWorkerHash(sbufGetRawPtr(buf), sbufGetLength(buf), mode, &hash),
+            "expected a deterministic device receive key");
+    return (wid_t) (hash % getWorkersCount());
+}
+
+/* Worker reduction is independent of the full64 carrier/fingerprint identity. */
 static void requireWidIsHashModWorkers(const sbuf_t *buf, const char *message)
 {
-    require((uint64_t) affinityOf(buf) == fullHashOf(buf) % getWorkersCount(), message);
+    require((uint32_t) affinityOf(buf) == workerHashOf(buf) % getWorkersCount(), message);
 }
 
 #ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
@@ -710,7 +721,7 @@ static void testPortlessProtocolsAreStableAndSymmetric(void)
  */
 static void testWidIsHashModuloWorkerCount(void)
 {
-    static const wid_t worker_counts[] = {1, 2, 4, 5};
+    static const wid_t worker_counts[] = {1, 3, 7, 16, 254};
 
     sbuf_t *tcp      = makeIpv4Packet(0x0A00000A, 40000, 0xC0A80001, 80, 6, 0);
     sbuf_t *udp      = makeIpv4Packet(0x0A00000B, 5353, 0xC6336401, 53, 17, 0);
@@ -724,21 +735,24 @@ static void testWidIsHashModuloWorkerCount(void)
     require(tcp_hash == UINT64_C(0xBAA6D71CF72B3817) && udp_hash == UINT64_C(0xAA33EE0BE20E2A1F) &&
                 fragment_hash == UINT64_C(0xDD5DA16A06B78649),
             "flow hash vectors changed");
-    const wid_t expected[][3] = {{0, 0, 0}, {1, 1, 1}, {3, 3, 1}, {4, 3, 2}};
+    require(workerHashOf(tcp) == UINT32_C(0x54ED6784) && workerHashOf(udp) == UINT32_C(0x66DC1920) &&
+                workerHashOf(fragment) == UINT32_C(0xC2189D4E),
+            "worker hash vectors changed");
+    const wid_t expected[][3] = {{0, 0, 0}, {1, 1, 0}, {3, 2, 3}, {4, 0, 14}, {180, 0, 8}};
 
     for (unsigned int i = 0; i < sizeof(worker_counts) / sizeof(worker_counts[0]); ++i)
     {
         GSTATE.workers_count = (uint32_t) worker_counts[i];
-        testWorkerRegistryInstall(&g_test_worker_registry);
+        /* These pure selectors do not access worker-local storage. The small
+         * fake registry remains unused while exercising the largest counts. */
         require(getWorkersCount() == worker_counts[i], "the fixture published the wrong worker count");
         require(affinityOf(tcp) == expected[i][0] && affinityOf(udp) == expected[i][1] &&
                     affinityOf(fragment) == expected[i][2],
                 "fixed worker mapping changed");
 
-        requireWidIsHashModWorkers(tcp, "IPv4 TCP worker selection is not the full hash modulo the worker count");
-        requireWidIsHashModWorkers(udp, "IPv4 UDP worker selection is not the full hash modulo the worker count");
-        requireWidIsHashModWorkers(fragment,
-                                   "IPv4 fragment worker selection is not the full hash modulo the worker count");
+        requireWidIsHashModWorkers(tcp, "IPv4 TCP worker selection is not H32 modulo the worker count");
+        requireWidIsHashModWorkers(udp, "IPv4 UDP worker selection is not H32 modulo the worker count");
+        requireWidIsHashModWorkers(fragment, "IPv4 fragment worker selection is not H32 modulo the worker count");
 
         require(fullHashOf(tcp) == tcp_hash && fullHashOf(udp) == udp_hash && fullHashOf(fragment) == fragment_hash,
                 "the full flow hash changed with the worker count");
@@ -782,7 +796,7 @@ static void requireSingleReaderTarget(device_reader_session_t *session, sbuf_t *
 
 static void testSingleReaderNativeLocalityAndOpaqueRotation(void)
 {
-    device_reader_session_t session      = {.batch_capacity = 1};
+    device_reader_session_t session      = {.batch_capacity = 1, .opaque_flow_mode = kDeviceOpaqueFlowSpread};
     unsigned                opaque_index = 0;
     const uint8_t           protocols[]  = {6, 17};
     for (unsigned protocol = 0; protocol < ARRAY_SIZE(protocols); ++protocol)
@@ -815,15 +829,15 @@ static void testSingleReaderNativeLocalityAndOpaqueRotation(void)
                                       version == 0 ? makeIpv4Packet(0x0A000001U, 12345, 0xC0000201U, 443, 50, 0)
                                                    : makeIpv6Packet(src, 12345, dst, 443, 50),
                                       (wid_t) (opaque_index++ % getWorkersCount()));
-    // Declared lengths, fragment headers and extension headers must not expose
-    // incidental bytes as a native transport tuple or fall back to coarse hashing.
+    // Short native IPv4 packets use the address/protocol fallback. Declared
+    // lengths exclude incidental trailing bytes from transport fields.
     sbuf_t *short_v4 = makeIpv4Packet(0x0A000001U, 12345, 0xC0000201U, 443, 6, 0);
     PUT_BE16(sbufGetMutablePtr(short_v4) + 2, 20);
     sbufSetLength(short_v4, 20);
-    requireSingleReaderTarget(&session, short_v4, (wid_t) (opaque_index++ % getWorkersCount()));
+    requireSingleReaderTarget(&session, short_v4, receiveOf(short_v4, kDeviceOpaqueFlowSpread));
     sbuf_t *trailing_v4 = makeIpv4Packet(0x0A000001U, 12345, 0xC0000201U, 443, 17, 0);
     PUT_BE16(sbufGetMutablePtr(trailing_v4) + 2, 20);
-    requireSingleReaderTarget(&session, trailing_v4, (wid_t) (opaque_index++ % getWorkersCount()));
+    requireSingleReaderTarget(&session, trailing_v4, receiveOf(trailing_v4, kDeviceOpaqueFlowSpread));
     sbuf_t *short_v6 = makeIpv6Packet(src, 12345, dst, 443, 6);
     PUT_BE16(sbufGetMutablePtr(short_v6) + 4, 2);
     sbufSetLength(short_v6, 42);
@@ -831,7 +845,7 @@ static void testSingleReaderNativeLocalityAndOpaqueRotation(void)
     // Production fragments use their separate association table. Exercise the
     // selector alone to prove it cannot mistake a first fragment for a tuple.
     sbuf_t *first_fragment = makeIpv4Packet(0x0A000001U, 12345, 0xC0000201U, 443, 6, 0x2000);
-    require(deviceReaderSelectWID(&session, 0, 1, first_fragment) == (wid_t) (opaque_index++ % getWorkersCount()),
+    require(deviceReaderSelectWID(&session, 0, 1, first_fragment) == receiveOf(first_fragment, kDeviceOpaqueFlowSpread),
             "receive selector used fragment payload bytes as a native tuple");
     sbufDestroy(first_fragment);
     requireSingleReaderTarget(
@@ -839,6 +853,54 @@ static void testSingleReaderNativeLocalityAndOpaqueRotation(void)
     requireSingleReaderTarget(&session,
                               makeIpv4Packet(0x0A000001U, 12345, 0xC0000201U, 443, 132, 0),
                               (wid_t) (opaque_index++ % getWorkersCount()));
+}
+
+static void testSingleReaderOpaqueModes(void)
+{
+    /* Omission is the zero-initialized prefix policy. Independent device
+     * sessions retain different policies for the very same received packets. */
+    device_reader_session_t prefix         = {.batch_capacity = 1};
+    device_reader_session_t peer           = {.batch_capacity = 1, .opaque_flow_mode = kDeviceOpaqueFlowPeer};
+    device_reader_session_t spread         = {.batch_capacity = 1, .opaque_flow_mode = kDeviceOpaqueFlowSpread};
+    unsigned                prefix_workers = 0;
+    wid_t                   peer_worker    = kInvalidWID;
+    for (uint16_t flow = 0; flow < 64; ++flow)
+    {
+        sbuf_t *base   = makeIpv4Packet(0x0A000001U, (uint16_t) (10000 + flow), 0xC0000201U, 443, 50, 0);
+        sbuf_t *packet = sbufCreate(32);
+        sbufSetLength(packet, 32);
+        memoryCopy(sbufGetMutablePtr(packet), sbufGetRawPtr(base), 24);
+        sbufDestroy(base);
+        uint8_t *raw = sbufGetMutablePtr(packet);
+        PUT_BE16(raw + 2, 32);
+        const wid_t expected_prefix = receiveOf(packet, kDeviceOpaqueFlowPrefix);
+        const wid_t expected_peer   = receiveOf(packet, kDeviceOpaqueFlowPeer);
+        prefix_workers |= 1U << expected_prefix;
+        if (peer_worker == kInvalidWID)
+            peer_worker = expected_peer;
+        require(peer_worker == expected_peer, "peer policy consumed opaque payload bytes");
+        for (unsigned sequence = 0; sequence < 3; ++sequence)
+        {
+            /* Length, ID, checksum and bytes after the four-byte prefix are
+             * deliberately changed while the visible flow key stays fixed. */
+            PUT_BE16(raw + 4, sequence);
+            PUT_BE16(raw + 10, (uint16_t) (flow + sequence));
+            memorySet(raw + 24, (uint8_t) sequence, 8);
+            requireSingleReaderTarget(&prefix, sbufDuplicate(packet), expected_prefix);
+            requireSingleReaderTarget(&peer, sbufDuplicate(packet), expected_peer);
+            requireSingleReaderTarget(
+                &spread, sbufDuplicate(packet), (wid_t) ((flow * 3U + sequence) % getWorkersCount()));
+        }
+        for (wid_t reader = 0; reader < getWorkersCount(); ++reader)
+            require(deviceReaderSelectWID(&prefix, reader, getWorkersCount(), packet) == reader &&
+                        deviceReaderSelectWID(&peer, reader, getWorkersCount(), packet) == reader &&
+                        deviceReaderSelectWID(&spread, reader, getWorkersCount(), packet) == reader,
+                    "multiple readers migrated an ordinary packet from its receiving worker");
+        sbufDestroy(packet);
+    }
+    require(prefix_workers == 15, "varied opaque prefixes did not use all processing workers");
+    require(atomicLoadRelaxed(&prefix.distribution_next) == 0 && atomicLoadRelaxed(&peer.distribution_next) == 0,
+            "deterministic modes consumed the software spreading cursor");
 }
 
 static void testBucketedDispatch(void)
@@ -874,6 +936,7 @@ static void testBucketedDispatch(void)
     device_reader_session_t session;
     memoryZero(&session, sizeof(session));
     session.batch_capacity = kMaxCapturedBuffers;
+    session.opaque_flow_mode = kDeviceOpaqueFlowSpread;
 
     deviceReaderDistributeBatch(&session, packets, kPacketCount);
 
@@ -1322,6 +1385,7 @@ int main(void)
     testEmptyAndSingletonDispatch();
     testBucketedDispatch();
     testSingleReaderNativeLocalityAndOpaqueRotation();
+    testSingleReaderOpaqueModes();
     testGsoDispatchPreservesLocalityAndReservations();
     testGsoRefusalSettlesEveryUnpostedReservation();
     testDispatchBucketsAreSplitAtSessionCapacity();

@@ -1,5 +1,6 @@
 #pragma once
 #include "devices/device_fragment_policy.h"
+#include "devices/device_opaque_flow_mode.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -37,9 +38,12 @@ typedef struct tun_default_route_s
  * multi_queue_requested independently allows Linux to open one queue per event
  * worker, falling back to one when unavailable. False forces one queue owned by
  * worker 0 without reducing the processing worker count. Other platforms ignore
- * both requests and retain their ordinary framing and queue arrangement. */
+ * both requests and retain their ordinary framing and queue arrangement.
+ * opaque_flow_mode is a resolved prefix, peer, or spread receive policy; it is
+ * copied before steering and reader admission and survives fallback/restart. */
 tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_queue_requested, uint16_t mtu,
-                              void *userdata, TunReadEventHandle cb, device_fragment_policy_t fragment_policy);
+                              void *userdata, TunReadEventHandle cb, device_fragment_policy_t fragment_policy,
+                              device_opaque_flow_mode_t opaque_flow_mode);
 void          tundeviceDestroy(tun_device_t *tdev);
 bool          tundeviceBringUp(tun_device_t *tdev);
 bool          tundeviceRequestStop(tun_device_t *tdev);
@@ -104,7 +108,7 @@ bool tundeviceDisableReversePathFiltering(const char *ifname);
  * caller retains any non-null lease and releases it during constructor rollback. */
 tun_device_t *tundeviceCreateOwned(const char *name, bool gso_requested, bool multi_queue_requested, uint16_t mtu,
                                    void *userdata, TunReadEventHandle cb, device_fragment_policy_t fragment_policy,
-                                   tun_windows_ownership_t *ownership);
+                                   device_opaque_flow_mode_t opaque_flow_mode, tun_windows_ownership_t *ownership);
 /* Releases the process-wide Wintun module after every device has stopped. */
 void tundevicePlatformShutdown(void);
 #endif

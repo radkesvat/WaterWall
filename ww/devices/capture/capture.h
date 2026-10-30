@@ -2,6 +2,7 @@
 
 #include "devices/capture/capture_protocol_filter.h"
 #include "devices/device_fragment_policy.h"
+#include "devices/device_opaque_flow_mode.h"
 #include "shiftbuffer.h"
 #include "wlibc.h"
 #include "worker.h"
@@ -26,6 +27,8 @@ bool caputredeviceBringDown(capture_device_t *cdev);
 /* Exclusive inactive configuration. Linux defaults to one receive queue per
  * event worker, falling back to worker 0. Other platforms retain their reader. */
 void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled);
+/* Exclusive inactive configuration; pass a resolved prefix/peer/spread mode. */
+void capturedeviceSetOpaqueFlowMode(capture_device_t *cdev, device_opaque_flow_mode_t mode);
 /* Exclusive inactive configuration; zero totals select profile defaults.
  * Linux applies best-effort receive sizing before activation. Other platforms
  * retain their existing native queue configuration. */

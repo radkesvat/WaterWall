@@ -67,6 +67,7 @@ device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint1
         .refcount           = 1,
         .generation         = 0,
         .producer_admission = false,
+        .opaque_flow_mode   = kDeviceOpaqueFlowPrefix,
         .message_pool       = message_pool,
         .batch_capacity     = batch_capacity,
         .device             = device,
@@ -84,6 +85,15 @@ device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint1
     quiescenceGateInit(&session->capacity_notify_gate);
     masterpoolInstallCallBacks(session->message_pool, deviceReaderMessageCreate, deviceReaderMessageDestroy);
     return session;
+}
+
+void deviceReaderSessionSetOpaqueFlowMode(device_reader_session_t *session, device_opaque_flow_mode_t mode)
+{
+    assert(session != NULL);
+    assert(mode == kDeviceOpaqueFlowPrefix || mode == kDeviceOpaqueFlowPeer || mode == kDeviceOpaqueFlowSpread);
+    assert(! atomicLoadExplicit(&session->producer_admission, memory_order_acquire));
+    assert(quiescenceGateIsClosedAndQuiesced(&session->delivery_gate));
+    session->opaque_flow_mode = mode;
 }
 
 void deviceReaderSessionRef(device_reader_session_t *session)

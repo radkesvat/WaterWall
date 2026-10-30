@@ -374,8 +374,11 @@ static void feedGarbage(line_t *stream_line)
 // Delivers one return packet to the packet line of its own flow worker.
 static void feedReturnPacket(uint32_t src, uint16_t src_port, uint32_t dst, uint16_t dst_port)
 {
-    const uint64_t hash        = flowHashOf(src, src_port, dst, dst_port);
-    const wid_t    wid         = (wid_t) (hash % kTestWorkers);
+    uint8_t  packet[kTestPacketLength];
+    uint32_t worker_hash;
+    buildIpv4(packet, src, src_port, dst, dst_port);
+    twfRequire(deviceFlowWorkerHash(packet, sizeof(packet), &worker_hash), "return packet was not worker-hashable");
+    const wid_t    wid         = (wid_t) (worker_hash % kTestWorkers);
     line_t        *packet_line = g_fixture.packet_lines[wid];
     const wid_t    previous    = tosSetCurrentWorker(wid);
     sbuf_t        *buf         = bufferpoolGetSmallBuffer(lineGetBufferPool(packet_line));
@@ -501,7 +504,11 @@ static void validateLine(line_t *l, uint16_t src_port)
 // of the stateful consumer's later affinity decision.
 static wid_t flowWorkerOf(uint32_t src, uint16_t src_port, uint32_t dst, uint16_t dst_port)
 {
-    return (wid_t) (flowHashOf(src, src_port, dst, dst_port) % kTestWorkers);
+    uint8_t  packet[kTestPacketLength];
+    uint32_t worker_hash;
+    buildIpv4(packet, src, src_port, dst, dst_port);
+    twfRequire(deviceFlowWorkerHash(packet, sizeof(packet), &worker_hash), "inner packet was not worker-hashable");
+    return (wid_t) (worker_hash % kTestWorkers);
 }
 
 /*

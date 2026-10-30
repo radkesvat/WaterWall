@@ -39,6 +39,7 @@
 #include "fixtures/worker_registry_fixture.h"
 #include "iowatcher.h"
 #include "tricks/echsnitrick/trick.h"
+#include "tricks/protoswap/trick.h"
 
 /*
  * Fake worker table for the stubbed GSTATE below. Without it the identity
@@ -856,16 +857,42 @@ static void consumeReaderPacket(tunnel_t *t, line_t *line, sbuf_t *buf)
         ipmanipulatorSendUpstreamFinal(t, line, buf);
 }
 
+typedef struct reader_delivery_context_s
+{
+    test_fixture_t *fixture;
+    bool            restore_protocol;
+    wid_t           receive_worker;
+    unsigned        delivered;
+    uint32_t        next_sequence;
+} reader_delivery_context_t;
+
 static void deliverReaderPacket(void *context, sbuf_t *buf, wid_t wid)
 {
-    test_fixture_t         *fixture = context;
+    reader_delivery_context_t *delivery = context;
+    test_fixture_t            *fixture  = delivery->fixture;
     ipmanipulator_tstate_t *state   = tunnelGetState(fixture->t);
     line_t                 *line    = tunnelchainGetWorkerPacketLine(tunnelGetChain(fixture->t), wid);
-    require(lineIsOnCurrentWorker(line), "reader delivered outside its selected worker");
+    require(lineIsOnCurrentWorker(line) && wid == delivery->receive_worker,
+            "reader delivered outside its stable receive worker");
+    if (delivery->restore_protocol)
+    {
+        require(((const uint8_t *) sbufGetRawPtr(buf))[9] == 253 && protoswapApply(fixture->t, line, buf),
+                "stateless protocol restore did not run before consumer affinity");
+    }
+    ipv4_packet_view_t packet;
+    require(ipv4packetviewParse(sbufGetRawPtr(buf), sbufGetLength(buf), &packet) &&
+                ipv4packetviewParseTcp(sbufGetRawPtr(buf), sbufGetLength(buf), &packet) &&
+                packet.tcp_sequence == delivery->next_sequence,
+            "stable receive key reordered the ClientHello before consumer admission");
+    delivery->next_sequence += packet.payload_length;
+    ++delivery->delivered;
+    wid_t owner;
+    require(deviceFlowAffineWID(sbufGetRawPtr(buf), sbufGetLength(buf), &owner) && owner == 0,
+            "restored native tuple did not select the stateful consumer's owner");
     packetAffinityForward(state->upstream_affinity, line, buf);
 }
 
-static void testReaderSkewPreservesClientHello(test_env_t *env)
+static void testReaderSkewPreservesClientHello(test_env_t *env, bool opaque_prefix)
 {
     resetCaptures();
     test_fixture_t fixture = fixtureCreate(env);
@@ -874,9 +901,12 @@ static void testReaderSkewPreservesClientHello(test_env_t *env)
     fixture.t->chain              = &chain;
     ipmanipulator_tstate_t *state = tunnelGetState(fixture.t);
     state->upstream_affinity      = packetAffinityCreate(fixture.t, consumeReaderPacket);
+    state->trick_proto_swap_tcp_number = 253;
+    state->trick_proto_swap_udp_number = -1;
     require(state->upstream_affinity != NULL, "consumer affinity creation failed");
 
-    /* Choose a real tuple owned by worker 0, independently of hash details. */
+    /* Native ownership is worker 0. For protocol-swapped input choose a stable
+     * opaque prefix received on worker 1, proving the restored tuple hands off. */
     bool owner_found = false;
     for (uint32_t port = 1024; port <= UINT16_MAX; ++port)
     {
@@ -885,18 +915,29 @@ static void testReaderSkewPreservesClientHello(test_env_t *env)
         wid_t   owner;
         require(deviceFlowAffineWID(sbufGetRawPtr(probe), sbufGetLength(probe), &owner),
                 "SYN fixture lacks a transport tuple");
+        uint32_t   receive_hash = 0;
+        const bool receive_matches =
+            ! opaque_prefix ||
+            (protoswapApply(fixture.t, fixture.line, probe) &&
+             deviceReceiveWorkerHash(
+                 sbufGetRawPtr(probe), sbufGetLength(probe), kDeviceOpaqueFlowPrefix, &receive_hash) &&
+             receive_hash % getWorkersCount() == 1);
         lineReuseBuffer(fixture.line, probe);
-        if (owner == 0)
+        if (owner == 0 && receive_matches)
         {
             owner_found = true;
             break;
         }
     }
-    require(owner_found, "no ClientHello tuple selects worker 0");
+    require(owner_found, "no ClientHello tuple has the required native/opaque worker placement");
     openFlow(&fixture, TCP_SYN);
 
-    device_reader_session_t *session =
-        deviceReaderSessionCreate(4, 3, &fixture, deliverReaderPacket, env->buffer_pools[0], kDeviceFragmentReassemble);
+    reader_delivery_context_t delivery = {.fixture          = &fixture,
+                                          .restore_protocol = opaque_prefix,
+                                          .receive_worker   = opaque_prefix ? 1 : 0,
+                                          .next_sequence    = kClientHelloSeq};
+    device_reader_session_t  *session  = deviceReaderSessionCreate(
+        4, 3, &delivery, deliverReaderPacket, env->buffer_pools[0], kDeviceFragmentReassemble);
     require(session != NULL && deviceReaderSessionConfigureOutputBudget(session, 8U * 1024U * 1024U, 512) &&
                 deviceReaderSessionEnableWorkerQueue(session) && deviceReaderSessionBegin(session) != 0,
             "reader session setup failed");
@@ -914,6 +955,9 @@ static void testReaderSkewPreservesClientHello(test_env_t *env)
         require(calcFullPacketChecksum(sbufGetMutablePtr(packets[i]), sbufGetLength(packets[i])),
                 "ClientHello packet checksum construction failed");
         memoryCopy(headers[i], sbufGetRawPtr(packets[i]), sizeof(headers[i]));
+        if (opaque_prefix)
+            require(protoswapApply(fixture.t, fixture.line, packets[i]),
+                    "ClientHello stateless protocol encoding failed");
         offset = (uint16_t) (offset + length);
     }
     deviceReaderDistributeBatchDroppingOverflow(session, packets, ARRAY_SIZE(packets));
@@ -923,11 +967,20 @@ static void testReaderSkewPreservesClientHello(test_env_t *env)
      * the real consumer FIFO cannot repair that already-changed arrival order. */
     testWorkerBindWID(0);
     wloopProcessEvents(env->loops[0], 0);
+    if (opaque_prefix)
+        require(delivery.delivered == 0 && forwarded_count == 0,
+                "delayed opaque receive worker leaked partial ClientHello input");
     testWorkerBindWID(1);
     wloopProcessEvents(env->loops[1], 0);
+    if (opaque_prefix)
+        require(delivery.delivered == ARRAY_SIZE(packets) && forwarded_count == 0 && timed_message_count == 0,
+                "restored packets touched stateful input before their native worker resumed");
     testWorkerBindWID(0);
     wloopProcessEvents(env->loops[0], 0);
 
+    require(delivery.delivered == ARRAY_SIZE(packets) &&
+                delivery.next_sequence == (uint32_t) kClientHelloSeq + hello_len,
+            "reader delivery lost or reordered the ClientHello segments");
     ipmanipulator_echsni_flow_t flow = {0};
     require(findClientFlow(&fixture, &flow), "reader skew lost the ECH flow");
     require(flow.phase == kIpManipulatorEchSniFlowPhaseReleasing,
@@ -2126,7 +2179,8 @@ int main(void)
     testSeventeenthSegmentFailsOpen(&env);
     testSequenceGapFailsOpen(&env);
     testCaptureOutOfOrderAndPartialOverlapFailOpen(&env);
-    testReaderSkewPreservesClientHello(&env);
+    testReaderSkewPreservesClientHello(&env, false);
+    testReaderSkewPreservesClientHello(&env, true);
     testSynClassification(&env);
     testInnerSniMatchingMatrix(&env);
     testForeignWorkerReleaseDrainForwardsOnOwner(&env);

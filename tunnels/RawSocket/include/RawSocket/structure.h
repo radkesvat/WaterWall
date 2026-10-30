@@ -20,6 +20,8 @@ typedef struct rawsocket_tstate_s
 
     packet_lifecycle_anchor_t lifecycle_anchor;
     device_fragment_policy_t  fragment_policy;
+    device_opaque_flow_mode_t opaque_flow_mode_requested;
+    device_opaque_flow_mode_t opaque_flow_mode_effective;
 
     capture_device_t         *capture_device;
     ipmask_t                 *capture_ranges;

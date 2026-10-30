@@ -304,6 +304,48 @@ static void testRaw(void)
     bufferpoolReuseBuffer(g_pool, zero);
     deviceFragAffinityDestroy(table);
 }
+
+static void testWholeFingerprintAndWorkerAreIndependent(void)
+{
+    const uint8_t  protocols[] = {6, 17, 132, 50};
+    const unsigned counts[]    = {1, 3, 7, 16, 254};
+    for (unsigned p = 0; p < ARRAY_SIZE(protocols); ++p)
+    {
+        sbuf_t  *buf    = makeFragment(42, 0, true);
+        uint8_t *packet = sbufGetMutablePtr(buf);
+        packet[9]       = protocols[p];
+        PUT_BE16(packet + 20, 40000);
+        PUT_BE16(packet + 22, 443);
+        const uint16_t fragments = GET_BE16(packet + 6);
+        PUT_BE16(packet + 6, 0);
+        uint64_t fingerprint;
+        uint32_t worker_hash;
+        require(deviceFlowAffinityHash(packet, sbufGetLength(buf), &fingerprint) &&
+                    deviceFlowWorkerHash(packet, sbufGetLength(buf), &worker_hash),
+                "whole fragment tuple could not be hashed");
+        PUT_BE16(packet + 6, fragments);
+        for (unsigned c = 0; c < ARRAY_SIZE(counts); ++c)
+        {
+            GSTATE.workers_count = counts[c];
+            uint64_t actual_fingerprint;
+            wid_t    actual_worker;
+            require(deviceFragAffinityHashAsWhole(packet, sbufGetLength(buf), &actual_fingerprint, &actual_worker),
+                    "fragment-zero fingerprint/worker calculation failed");
+            require(actual_fingerprint == fingerprint && actual_worker == worker_hash % counts[c],
+                    "fragment-zero worker used its full64 consistency fingerprint");
+            require(GET_BE16(packet + 6) == fragments, "fragment-zero hashing did not restore fragment bits");
+        }
+        PUT_BE16(packet + 2, 19);
+        uint64_t ignored_hash;
+        wid_t    ignored_wid;
+        require(! deviceFragAffinityHashAsWhole(packet, sbufGetLength(buf), &ignored_hash, &ignored_wid) &&
+                    GET_BE16(packet + 6) == fragments,
+                "failed fragment-zero parsing did not restore fragment bits");
+        bufferpoolReuseBuffer(g_pool, buf);
+    }
+    GSTATE.workers_count = 4;
+}
+
 static void testIsolationAndGrowthPeak(void)
 {
     device_frag_affinity_table_t *a = deviceFragAffinityCreate(g_pool, kDeviceFragmentReassemble);
@@ -320,8 +362,8 @@ static void testIsolationAndGrowthPeak(void)
         require(offer(session ? b : a, makeFragment(123, 8, false), &result, 0) == kDeviceFragAffinityComplete,
                 "isolated completion failed");
         require(sbufGetMutablePtr(result.completed)[20] == (session ? 0x22 : 0x11), "sessions mixed fragments");
-        uint64_t hash;
-        require(deviceFlowAffinityHash(sbufGetRawPtr(result.completed), 148, &hash), "complete hash failed");
+        uint32_t hash;
+        require(deviceFlowWorkerHash(sbufGetRawPtr(result.completed), 148, &hash), "complete worker hash failed");
         sbuf_t *equivalent = sbufDuplicate(result.completed);
         wid_t   wid;
         require(deviceFlowAffineWID(sbufGetRawPtr(equivalent), 148, &wid) && wid == hash % getWorkersCount(),
@@ -531,6 +573,7 @@ int main(void)
     testRejectionAndRetirement();
     testBounds();
     testRaw();
+    testWholeFingerprintAndWorkerAreIndependent();
     testIsolationAndGrowthPeak();
     testSharedReadersAndGlobalBudget();
     testSharedRawResultsSurviveOtherReaders();

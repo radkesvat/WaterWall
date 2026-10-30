@@ -2,7 +2,6 @@
 
 #include "devices/device_frag_affinity.h"
 #include "global_state.h"
-#include "ipv4_packet_view.h"
 
 enum
 {
@@ -19,33 +18,15 @@ enum
 
 bool deviceFlowAffineWID(const uint8_t *packet, uint32_t length, wid_t *out_wid)
 {
-    uint64_t hash;
+    uint32_t hash;
 
-    if (out_wid == NULL || ! deviceFlowAffinityHash(packet, length, &hash))
+    if (out_wid == NULL || ! deviceFlowWorkerHash(packet, length, &hash))
     {
         return false;
     }
 
     *out_wid = (wid_t) (hash % getWorkersCount());
     return true;
-}
-
-static bool deviceReaderHasVisibleTransportTuple(const sbuf_t *buf)
-{
-    const uint8_t *packet = sbufGetRawPtr(buf);
-    const uint32_t length = sbufGetLength(buf);
-    if (length == 0)
-        return false;
-    if ((packet[0] >> 4U) == 4)
-    {
-        ipv4_packet_view_t view;
-        return ipv4packetviewParse(packet, length, &view) && view.ip_total_length == length && ! view.fragmented &&
-               view.transport_length >= 4 && (view.protocol == IPPROTO_TCP || view.protocol == IPPROTO_UDP);
-    }
-    /* IPv6 extension headers are opaque here; only an immediately visible
-     * TCP/UDP header exposes transport ports to the existing flow hash. */
-    return (packet[0] >> 4U) == 6 && length >= 44 && GET_BE16(packet + 4) >= 4 &&
-           (uint32_t) GET_BE16(packet + 4) + 40U == length && (packet[6] == IPPROTO_TCP || packet[6] == IPPROTO_UDP);
 }
 
 wid_t deviceReaderSelectWID(device_reader_session_t *session, wid_t reader_wid, uint16_t reader_count,
@@ -61,15 +42,13 @@ wid_t deviceReaderSelectWID(device_reader_session_t *session, wid_t reader_wid, 
      * Round-robin can assign ordered segments 1,2,3 to workers 0,1,0; a delayed
      * worker 1 then makes ECH-SNI see 1,3,2 and mark this flow generation passthrough.
      * Consumer affinity orders admission only: segment 2 is still in another
-     * receive queue. Opaque traffic must retain the parallel rotation below.
+     * receive queue. Stable opaque keys use the session's resolved policy;
+     * spread and unsupported input retain the independent cursor below.
      * Regression: testReaderSkewPreservesClientHello in the ECH-SNI unit suite. */
-    if (deviceReaderHasVisibleTransportTuple(buf))
+    uint32_t hash;
+    if (deviceReceiveWorkerHash(sbufGetRawPtr(buf), sbufGetLength(buf), session->opaque_flow_mode, &hash))
     {
-        wid_t      wid        = 0;
-        const bool identified = deviceFlowAffineWID(sbufGetRawPtr(buf), sbufGetLength(buf), &wid);
-        assert(identified);
-        discard identified;
-        return wid;
+        return (wid_t) (hash % getWorkersCount());
     }
     return (wid_t) (atomicIncExplicit(&session->distribution_next, memory_order_relaxed) % getWorkersCount());
 }

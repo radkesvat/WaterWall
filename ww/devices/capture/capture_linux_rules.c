@@ -827,5 +827,6 @@ bool capturedeviceInstallRuleKind(capture_device_t *cdev, bool notrack)
     if (notrack)
         return capturedeviceInstallOwnedRuleKind(cdev, kCaptureOwnedNotrack);
     return capturedeviceInstallOwnedRuleKind(cdev, kCaptureOwnedFlow) &&
-           capturedeviceInstallOwnedRuleKind(cdev, kCaptureOwnedOpaque);
+           (cdev->opaque_flow_mode != kDeviceOpaqueFlowSpread ||
+            capturedeviceInstallOwnedRuleKind(cdev, kCaptureOwnedOpaque));
 }

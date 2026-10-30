@@ -135,7 +135,8 @@ static void fakeRecordFailure(int code, application_shutdown_reason_e reason)
 }
 
 static tun_device_t *fakeCreate(const char *name, bool offload, bool multi_queue_requested, uint16_t mtu,
-                                void *userdata, TunReadEventHandle cb, device_fragment_policy_t fragment_policy)
+                                void *userdata, TunReadEventHandle cb, device_fragment_policy_t fragment_policy,
+                                device_opaque_flow_mode_t opaque_flow_mode)
 {
     (void) name;
     last_offload_requested     = offload;
@@ -144,6 +145,7 @@ static tun_device_t *fakeCreate(const char *name, bool offload, bool multi_queue
     (void) userdata;
     (void) cb;
     (void) fragment_policy;
+    (void) opaque_flow_mode;
     return (tun_device_t *) (uintptr_t) 1;
 }
 
@@ -208,8 +210,8 @@ void tundeviceOnIPPacketReceived(tun_device_t *device, void *userdata, sbuf_t *b
 #define tundeviceBringDown                 fakeBringDown
 #define applicationShutdownRecordFailure   fakeRecordFailure
 #define tundeviceCreate                    fakeCreate
-#define tundeviceCreateOwned(name, offload, multi_queue_requested, mtu, userdata, cb, policy, ownership)               \
-    fakeCreate(name, offload, multi_queue_requested, mtu, userdata, cb, policy)
+#define tundeviceCreateOwned(name, offload, multi_queue_requested, mtu, userdata, cb, policy, opaque_mode, ownership)  \
+    fakeCreate(name, offload, multi_queue_requested, mtu, userdata, cb, policy, opaque_mode)
 #define tundeviceAssignIP                    fakeAssignIp
 #define tundeviceConfigureKernelQueue        fakeConfigureKernelQueue
 #define tundeviceBringUp                     fakeDeviceSuccess

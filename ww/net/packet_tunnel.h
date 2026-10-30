@@ -6,6 +6,7 @@
 
 #include "cJSON.h"
 #include "devices/device_fragment_policy.h"
+#include "devices/device_opaque_flow_mode.h"
 #include "tunnel.h"
 
 /**
@@ -96,3 +97,14 @@ bool packettunnelFinalizeChecksumRequest(bool requested, uint8_t *packet, uint32
 
 /* Defaults to reassemble when omitted; explicit invalid values are rejected. */
 bool packettunnelReadFragmentPolicy(const cJSON *settings, device_fragment_policy_t *policy);
+
+/* Defaults to prefix when omitted; explicit null and all values other than the
+ * exact strings prefix, peer, spread and auto are rejected. */
+bool packettunnelReadOpaqueFlowMode(const cJSON *settings, device_opaque_flow_mode_t *mode);
+
+/* Exclusive startup, after lifecycle-anchor binding. Inspect only the physical
+ * publication neighbour: upstream PingServer and downstream PingClient decode.
+ * Explicit modes are unchanged. The returned mode is always effective, never auto.
+ * The reason points to static diagnostic text. */
+device_opaque_flow_mode_t packettunnelResolveOpaqueFlowMode(tunnel_t *t, device_opaque_flow_mode_t requested,
+                                                            const char **reason);

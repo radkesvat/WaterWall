@@ -158,8 +158,11 @@ static void testInterfaceLifecycle(void)
     testCaseSet("BSD interface control socket lifecycle");
     const short original_flags = IFF_POINTOPOINT | IFF_DEBUG;
     interface_flags            = original_flags;
-    tun_device_t *device = tundeviceCreate("ww-bsd-fixture", false, false, 1500, NULL, NULL, kDeviceFragmentPreserve);
+    tun_device_t *device       = tundeviceCreate(
+        "ww-bsd-fixture", false, false, 1500, NULL, NULL, kDeviceFragmentPreserve, kDeviceOpaqueFlowPeer);
     require(device != NULL, "BSD constructor failed with unsupported packet-device ioctls rejected");
+    require(device->reader_session->opaque_flow_mode == kDeviceOpaqueFlowPeer,
+            "BSD constructor retained the effective opaque receive mode");
     require(mtu_updates == 1 && flags_reads == 0 && flags_writes == 0 && packet_ioctls == 0 &&
                 interface_flags == original_flags,
             "BSD constructor activated the interface or used a packet descriptor for configuration");
@@ -208,14 +211,21 @@ int main(void)
     {
         fail_budget = failure == 0;
         fail_queue  = failure == 1;
-        require(tundeviceCreate("ww-bsd-fixture", false, false, 1500, NULL, receive, kDeviceFragmentPreserve) == NULL,
+        require(tundeviceCreate("ww-bsd-fixture",
+                                false,
+                                false,
+                                1500,
+                                NULL,
+                                receive,
+                                kDeviceFragmentPreserve,
+                                kDeviceOpaqueFlowSpread) == NULL,
                 "BSD dispatch setup refusal published a device");
         require(fcntl(opened_handle, F_GETFD) == -1 && errno == EBADF,
                 "BSD dispatch setup refusal leaked native handle");
     }
     fail_budget = fail_queue = false;
-    tun_device_t *device =
-        tundeviceCreate("ww-bsd-fixture", false, false, 1500, NULL, receive, kDeviceFragmentPreserve);
+    tun_device_t *device     = tundeviceCreate(
+        "ww-bsd-fixture", false, false, 1500, NULL, receive, kDeviceFragmentPreserve, kDeviceOpaqueFlowSpread);
     require(device != NULL, "actual BSD constructor failed");
     device_reader_session_t *session = device->reader_session;
     require(session->output_charge_limit == 8U * 1024U * 1024U && session->output_packet_limit == 1024 &&

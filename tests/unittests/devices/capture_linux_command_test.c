@@ -449,6 +449,7 @@ static void prepareRuleFixture(capture_rule_fixture_t *fixture)
     fixture->cidrs[0] = (char *) "192.0.2.0/24";
     fixture->cidrs[1] = (char *) "198.51.100.0/24";
     fixture->device   = (capture_device_t) {.queue_count         = kRuleTestQueues,
+                                            .opaque_flow_mode    = kDeviceOpaqueFlowSpread,
                                             .queues              = fixture->queues,
                                             .capture_cidrs       = fixture->cidrs,
                                             .capture_range_count = kRuleTestRanges,
@@ -458,7 +459,8 @@ static void prepareRuleFixture(capture_rule_fixture_t *fixture)
     {
         fixture->queues[lane].fd     = -1;
         fixture->queues[lane].number = 70 + lane;
-        captureLinuxBuildSteeringFilter(kRuleTestQueues, lane, fixture->queues[lane].steering_filter);
+        captureLinuxBuildSteeringFilter(
+            kRuleTestQueues, lane, fixture->device.opaque_flow_mode, fixture->queues[lane].steering_filter);
     }
     capture_protocol_filter_t protocol_filter = {0};
     captureProtocolFilterExclude(&protocol_filter, 6);
@@ -481,6 +483,30 @@ static void requireMatchingDelete(const recorded_call_t *insert, const recorded_
         {
             requireEqStr(insert->argv[arg], remove->argv[arg], "rule deletion changed its owned identity or predicate");
         }
+    }
+}
+
+static void testDeterministicModesInstallOnlyOwnedFlowRules(void)
+{
+    for (device_opaque_flow_mode_t mode = kDeviceOpaqueFlowPrefix; mode <= kDeviceOpaqueFlowPeer; ++mode)
+    {
+        capture_rule_fixture_t fixture;
+        prepareRuleFixture(&fixture);
+        fixture.device.opaque_flow_mode = mode;
+        for (uint16_t lane = 0; lane < kRuleTestQueues; ++lane)
+            captureLinuxBuildSteeringFilter(kRuleTestQueues, lane, mode, fixture.queues[lane].steering_filter);
+        resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
+        require(capturedeviceInstallRuleKind(&fixture.device, false), "deterministic mode installation failed");
+        require(recorded_call_count == kRuleTestRanges * kRuleTestQueues,
+                "deterministic mode installed random opaque rules");
+        for (size_t i = 0; i < recorded_call_count; ++i)
+        {
+            require(fixture.states[i].queue == kCaptureRuleInstalled && fixture.states[i].opaque == kCaptureRuleAbsent,
+                    "deterministic mode published the wrong rule inventory");
+            require(recorded_calls[i].argc == 24, "deterministic rule acquired statistic matcher arguments");
+        }
+        require(capturedeviceRemoveInstalledRules(&fixture.device), "deterministic mode cleanup failed");
+        require(capturedevicePendingRangeCount(&fixture.device) == 0, "deterministic mode retained rule ownership");
     }
 }
 
@@ -932,6 +958,7 @@ int main(void)
     testInputInspectionRejectsEmptySnapshot();
     testQueueSelectionAvoidsReferencedNumbers();
     testQueueRangeSelection();
+    testDeterministicModesInstallOnlyOwnedFlowRules();
     testMultiqueueRulesRetainExactLifecycle();
     testMultiqueuePartialInstallReconciliation();
     testOpaqueUnknownInstallCleanup();

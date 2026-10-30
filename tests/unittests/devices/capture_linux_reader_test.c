@@ -388,7 +388,8 @@ static void fixtureTeardown(void)
     masterpoolDestroy(fixture.wio_master);
 }
 
-static capture_device_t *createReaderAt(unsigned first_queue, unsigned queues, unsigned packet_budget)
+static capture_device_t *createReaderAt(unsigned first_queue, unsigned queues, unsigned packet_budget,
+                                        device_opaque_flow_mode_t mode)
 {
     require(first_queue + queues <= kWorkers, "reader fixture queue inventory exceeded");
     capture_device_t *device   = memoryAllocateZero(sizeof(*device));
@@ -417,6 +418,7 @@ static capture_device_t *createReaderAt(unsigned first_queue, unsigned queues, u
         fixture.queues[first_queue + i].owner                     = (wid_t) i;
         device->queues[i].number                                  = kFirstQueue + first_queue + i;
     }
+    deviceReaderSessionSetOpaqueFlowMode(device->reader_session, mode);
     atomicStoreRelaxed(&device->lifecycle, kCaptureLifecycleStarting);
     require(deviceReaderSessionBegin(device->reader_session) != 0, "reader session open failed");
     captureReaderOpen(device);
@@ -425,7 +427,7 @@ static capture_device_t *createReaderAt(unsigned first_queue, unsigned queues, u
 
 static capture_device_t *createReader(unsigned queues, unsigned packet_budget)
 {
-    return createReaderAt(0, queues, packet_budget);
+    return createReaderAt(0, queues, packet_budget, kDeviceOpaqueFlowPrefix);
 }
 
 static bool startReader(capture_device_t *device)
@@ -520,7 +522,7 @@ static void sendPacket(unsigned queue, unsigned id, wid_t destination)
 static void testReceiveProcessing(unsigned queues)
 {
     fixtureSetup();
-    capture_device_t *device = createReader(queues, 512);
+    capture_device_t *device = createReaderAt(0, queues, 512, kDeviceOpaqueFlowSpread);
     require(startReader(device), "opaque reader startup failed");
     runMessages();
     const uint8_t protocols[] = {1, 6, 17, 49, 50, 132};
@@ -903,8 +905,8 @@ typedef enum coordinator_wait_case_e
 static void testOtherDeviceDuringSequentialCleanup(coordinator_wait_case_t wait_case)
 {
     fixtureSetup();
-    capture_device_t *first  = createReaderAt(0, 1, 512);
-    capture_device_t *second = createReaderAt(1, 1, 512);
+    capture_device_t *first  = createReaderAt(0, 1, 512, kDeviceOpaqueFlowPrefix);
+    capture_device_t *second = createReaderAt(1, 1, 512, kDeviceOpaqueFlowPrefix);
     require(startReader(first) && startReader(second), "two-device activation failed");
     runMessages();
 

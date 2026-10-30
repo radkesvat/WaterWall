@@ -528,7 +528,9 @@ bool caputredeviceBringUp(capture_device_t *cdev)
         return false;
     }
 
-    LOGI("CaptureDevice: device %s is now up", cdev->name);
+    LOGI("CaptureDevice: device %s is now up with 1 receive queue, opaque-flow-mode=%s",
+         cdev->name,
+         deviceOpaqueFlowModeName(cdev->opaque_flow_mode));
     return true;
 }
 
@@ -656,6 +658,15 @@ void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled)
 {
     discard cdev;
     discard enabled;
+}
+
+void capturedeviceSetOpaqueFlowMode(capture_device_t *cdev, device_opaque_flow_mode_t mode)
+{
+    assert(cdev != NULL);
+    assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown && cdev->read_thread == NULL);
+    assert(mode >= kDeviceOpaqueFlowPrefix && mode <= kDeviceOpaqueFlowSpread);
+    cdev->opaque_flow_mode = mode;
+    deviceReaderSessionSetOpaqueFlowMode(cdev->reader_session, mode);
 }
 
 void capturedeviceConfigureKernelQueue(capture_device_t *cdev, bool enabled, uint32_t packet_total,

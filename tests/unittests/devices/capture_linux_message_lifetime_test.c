@@ -470,7 +470,9 @@ static capture_device_t *createDeviceWithPolicy(device_fragment_policy_t policy)
 
 static capture_device_t *createDevice(void)
 {
-    return createDeviceWithPolicy(kDeviceFragmentPreserve);
+    capture_device_t *device = createDeviceWithPolicy(kDeviceFragmentPreserve);
+    capturedeviceSetOpaqueFlowMode(device, kDeviceOpaqueFlowSpread);
+    return device;
 }
 
 static void testQueuedCancellationAfterDeviceDestruction(void)
@@ -499,7 +501,8 @@ static void testQueuedCancellationAfterDeviceDestruction(void)
 static void requireStartedQueues(capture_device_t *device, unsigned count)
 {
     require(capturedeviceIsUp(device) && device->queue_count == count &&
-                installed_rules == (count > 1 ? count * 2 : count),
+                installed_rules ==
+                    (count > 1 && device->opaque_flow_mode == kDeviceOpaqueFlowSpread ? count * 2 : count),
             "Capture activated the wrong queue/rule count");
     require(message_count == count, "Capture scheduled the wrong number of worker readers");
     for (unsigned i = 0; i < count; ++i)
@@ -577,6 +580,31 @@ static void testQueueSetupAndFallback(void)
                 socket_count == 1 && close_count == 1 && message_count == 0,
             "first queue failure did not return to a fully settled Down state");
     finishDevice(device);
+}
+
+static void testResolvedModesSurviveFallbackAndRestart(void)
+{
+    for (device_opaque_flow_mode_t mode = kDeviceOpaqueFlowPrefix; mode <= kDeviceOpaqueFlowSpread; ++mode)
+    {
+        resetCase();
+        capture_device_t *device = createDeviceWithPolicy(kDeviceFragmentPreserve);
+        require(device->opaque_flow_mode == kDeviceOpaqueFlowPrefix &&
+                    device->reader_session->opaque_flow_mode == kDeviceOpaqueFlowPrefix,
+                "omitted receive mode did not default to prefix");
+        capturedeviceSetOpaqueFlowMode(device, mode);
+        require(caputredeviceBringUp(device), "resolved mode startup failed");
+        requireStartedQueues(device, kTestWorkers);
+        require(device->reader_session->opaque_flow_mode == mode, "reader session lost effective mode");
+        require(caputredeviceBringDown(device), "resolved mode stop failed");
+        cancelMessages();
+        message_count = 0;
+        failed_bind   = bind_count + 2;
+        require(caputredeviceBringUp(device), "resolved mode fallback restart failed");
+        requireStartedQueues(device, 1);
+        require(device->opaque_flow_mode == mode && device->reader_session->opaque_flow_mode == mode,
+                "single-reader fallback changed effective mode");
+        finishDevice(device);
+    }
 }
 
 static void testKernelQueueTuning(void)
@@ -873,6 +901,7 @@ int main(void)
     envSetup(&env);
     testQueuedCancellationAfterDeviceDestruction();
     testQueueSetupAndFallback();
+    testResolvedModesSurviveFallbackAndRestart();
     testKernelQueueTuning();
     testKernelQueueTuningFailures();
     testFullRestartRejectsStaleActivation(&env);

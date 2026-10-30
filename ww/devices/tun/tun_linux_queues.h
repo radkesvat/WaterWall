@@ -1,5 +1,7 @@
 #pragma once
 
+#include "devices/device_opaque_flow_mode.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -9,13 +11,14 @@
  * every result. Extra descriptors are owned by the caller only on success.
  *
  * Returns requested_count after installing fixed steering and attaching every
- * queue. TCP/UDP uses flow affinity; complete opaque IPv4 uses an interface-local
- * per-CPU cursor for approximate round robin, without atomic updates; fragments
- * retain address/protocol affinity.
+ * queue. TCP/UDP uses the common worker hash. Complete opaque IPv4 uses its
+ * resolved prefix/peer policy, or an interface-local per-CPU cursor for spread.
+ * Only spread creates a cursor map; fragments always use address/protocol
+ * affinity. The mode must already be resolved before this call.
  * Returns 1 after closing all extra descriptors on fallback, including when the
  * kernel refuses the per-CPU map or steering program. A fallback sets out_reason
  * and errno; requesting one queue sets out_reason to NULL. No live reconfiguration
  * is supported. The fixed queue set must survive until all readers and writers
  * have quiesced. */
 uint16_t tunLinuxQueuesOpen(int first_fd, const char *name, bool checksum_setup, uint16_t requested_count, int *out_fds,
-                            const char **out_reason);
+                            const char **out_reason, device_opaque_flow_mode_t opaque_flow_mode);

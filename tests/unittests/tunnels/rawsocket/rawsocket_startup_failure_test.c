@@ -25,12 +25,14 @@ static int notify_fd = -1;
 static capture_device_t fake_capture_device;
 static raw_device_t     fake_raw_device;
 static bool             fake_raw_device_up;
+static bool             fake_capture_mode_applied;
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
                                              uint32_t capture_range_count, bool skip_sysctl, bool bypass_conntrack,
                                              const capture_protocol_filter_t *protocol_filter, void *userdata,
                                              CaptureReadEventHandle cb, device_fragment_policy_t fragment_policy);
 raw_device_t     *__wrap_rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata);
+void              __wrap_capturedeviceSetOpaqueFlowMode(capture_device_t *cdev, device_opaque_flow_mode_t mode);
 bool              __wrap_caputredeviceBringUp(capture_device_t *cdev);
 bool              __wrap_rawdeviceBringUp(raw_device_t *rdev);
 bool              __wrap_caputredeviceBringDown(capture_device_t *cdev);
@@ -78,10 +80,24 @@ capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *c
     require(userdata != NULL, "RawSocket did not pass tunnel userdata to capture device");
     require(fragment_policy == kDeviceFragmentPreserve, "lost capture policy");
     require(cb == rawsocketOnIPPacketReceived, "RawSocket passed the wrong capture callback");
+    const rawsocket_tstate_t *state = tunnelGetState(userdata);
+    require(state->opaque_flow_mode_requested == kDeviceOpaqueFlowAuto &&
+                state->opaque_flow_mode_effective == kDeviceOpaqueFlowPeer,
+            "RawSocket did not resolve auto at its downstream PingClient before capture construction");
 
-    fake_capture_device = (capture_device_t) {0};
+    fake_capture_device       = (capture_device_t) {0};
+    fake_capture_mode_applied = false;
     atomic_store(&fake_capture_device.up, false);
     return &fake_capture_device;
+}
+
+void __wrap_capturedeviceSetOpaqueFlowMode(capture_device_t *cdev, device_opaque_flow_mode_t mode)
+{
+    require(cdev == &fake_capture_device && ! fake_capture_mode_applied && ! atomic_load(&cdev->up),
+            "RawSocket configured an unexpected or already activated capture device");
+    require(mode == kDeviceOpaqueFlowPeer, "RawSocket passed unresolved or incorrect opaque mode to capture");
+    cdev->opaque_flow_mode    = mode;
+    fake_capture_mode_applied = true;
 }
 
 raw_device_t *__wrap_rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata)
@@ -99,6 +115,8 @@ raw_device_t *__wrap_rawdeviceCreate(const char *name, uint32_t mark, bool bypas
 bool __wrap_caputredeviceBringUp(capture_device_t *cdev)
 {
     require(cdev == &fake_capture_device, "RawSocket brought up an unexpected capture device");
+    require(fake_capture_mode_applied && cdev->opaque_flow_mode == kDeviceOpaqueFlowPeer,
+            "RawSocket did not apply its effective opaque mode before capture activation");
     require(cdev->multi_queue, "RawSocket did not apply its multi-queue setting before capture activation");
     require(cdev->kernel_queue_tune && cdev->kernel_queue_packets == 131072 && cdev->kernel_receive_buffer == 134217728,
             "RawSocket did not apply queue tuning before capture activation");
@@ -158,7 +176,7 @@ static void runRawSocketStartWithCaptureBringupFailure(int write_fd)
     require(packettunnelConfigureLifecycleAnchor(t, "RawSocket", noopPayload, kPacketLifecycleAnchorPublishDownstream),
             "failed to configure RawSocket packet anchor");
 
-    node_t   sink_node = {.type = (char[]) {"TunDevice"}};
+    node_t   sink_node = {.type = (char[]) {"PingClient"}};
     tunnel_t prev      = {.fnPayloadD = noopPayload, .node = &sink_node};
     t->prev            = &prev;
 
@@ -168,18 +186,19 @@ static void runRawSocketStartWithCaptureBringupFailure(int write_fd)
     char capture_name[] = "capture-test";
     char raw_name[]     = "raw-test";
 
-    rawsocket_tstate_t *state    = tunnelGetState(t);
-    state->capture_device_name   = capture_name;
-    state->raw_device_name       = raw_name;
-    state->capture_ranges        = &capture_range;
-    state->capture_range_count   = 1;
-    state->fragment_policy       = kDeviceFragmentPreserve;
-    state->skip_sysctl           = true;
-    state->multi_queue_requested = true;
-    state->kernel_queue_tune     = true;
-    state->kernel_queue_packets  = 131072;
-    state->kernel_receive_buffer = 134217728;
-    state->firewall_mark         = 7;
+    rawsocket_tstate_t *state         = tunnelGetState(t);
+    state->capture_device_name        = capture_name;
+    state->raw_device_name            = raw_name;
+    state->capture_ranges             = &capture_range;
+    state->capture_range_count        = 1;
+    state->fragment_policy            = kDeviceFragmentPreserve;
+    state->opaque_flow_mode_requested = kDeviceOpaqueFlowAuto;
+    state->skip_sysctl                = true;
+    state->multi_queue_requested      = true;
+    state->kernel_queue_tune          = true;
+    state->kernel_queue_packets       = 131072;
+    state->kernel_receive_buffer      = 134217728;
+    state->firewall_mark              = 7;
     captureProtocolFilterExclude(&state->capture_protocol_filter, 1);
     captureProtocolFilterExclude(&state->capture_protocol_filter, 6);
 
@@ -189,6 +208,9 @@ static void runRawSocketStartWithCaptureBringupFailure(int write_fd)
     const ww_startup_result_t result = wwStartupContextEnd(&startup);
     require(! wwStartupSucceeded(result), "RawSocket startup failure did not propagate to its owner");
     require(result.exit_code == 1, "RawSocket startup failure used the wrong status");
+    require(state->opaque_flow_mode_requested == kDeviceOpaqueFlowAuto &&
+                state->opaque_flow_mode_effective == kDeviceOpaqueFlowPeer,
+            "RawSocket startup overwrote its requested mode or changed effective mode during rollback");
     tunnelDestroy(t);
 }
 

@@ -212,13 +212,15 @@ static device_frag_account_result_t deviceFragAffinityAccount(device_frag_affini
 static bool deviceFragAffinityHashAsWhole(uint8_t *packet, uint32_t length, uint64_t *out_hash, wid_t *out_wid)
 {
     const uint16_t saved = GET_BE16(packet + 6);
+    uint32_t       worker_hash;
 
     PUT_BE16(packet + 6, 0);
-    const bool ok = deviceFlowAffinityHash(packet, length, out_hash);
+    const bool ok =
+        deviceFlowAffinityHash(packet, length, out_hash) && deviceFlowWorkerHash(packet, length, &worker_hash);
     PUT_BE16(packet + 6, saved);
     if (ok)
     {
-        *out_wid = (wid_t) (*out_hash % getWorkersCount());
+        *out_wid = (wid_t) (worker_hash % getWorkersCount());
     }
     return ok;
 }

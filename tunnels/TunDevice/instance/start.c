@@ -16,6 +16,15 @@ void tundeviceTunnelOnStart(tunnel_t *t)
         return;
     }
 
+    const char *mode_reason;
+    state->opaque_flow_mode_effective =
+        packettunnelResolveOpaqueFlowMode(t, state->opaque_flow_mode_requested, &mode_reason);
+    LOGI("TunDevice: %s opaque-flow-mode requested=%s effective=%s reason=%s",
+         state->name,
+         deviceOpaqueFlowModeName(state->opaque_flow_mode_requested),
+         deviceOpaqueFlowModeName(state->opaque_flow_mode_effective),
+         mode_reason);
+
 #ifdef OS_WIN
     if (state->gso_requested)
     {
@@ -28,6 +37,7 @@ void tundeviceTunnelOnStart(tunnel_t *t)
                                        t,
                                        tundeviceOnIPPacketReceived,
                                        state->fragment_policy,
+                                       state->opaque_flow_mode_effective,
                                        &state->windows_ownership);
 #elif defined(OS_LINUX)
     state->tdev = tundeviceCreate(state->name,
@@ -36,7 +46,8 @@ void tundeviceTunnelOnStart(tunnel_t *t)
                                   state->mtu,
                                   t,
                                   tundeviceOnIPPacketReceived,
-                                  state->fragment_policy);
+                                  state->fragment_policy,
+                                  state->opaque_flow_mode_effective);
 #else
     if (state->gso_requested)
     {
@@ -48,7 +59,8 @@ void tundeviceTunnelOnStart(tunnel_t *t)
                                   state->mtu,
                                   t,
                                   tundeviceOnIPPacketReceived,
-                                  state->fragment_policy);
+                                  state->fragment_policy,
+                                  state->opaque_flow_mode_effective);
 #endif
 
     if (state->tdev == NULL)

@@ -179,10 +179,10 @@ static void buildIpv4(uint8_t *raw, uint32_t src, uint16_t src_port, uint32_t ds
 static wid_t affinityWidOf(uint32_t src, uint16_t src_port, uint32_t dst, uint16_t dst_port)
 {
     uint8_t  raw[kTestPacketLength];
-    uint64_t hash = 0;
+    uint32_t hash = 0;
 
     buildIpv4(raw, src, src_port, dst, dst_port);
-    twfRequire(deviceFlowAffinityHash(raw, sizeof(raw), &hash), "the test packet was not hashable");
+    twfRequire(deviceFlowWorkerHash(raw, sizeof(raw), &hash), "the test packet was not worker-hashable");
     return (wid_t) (hash % kTestWorkers);
 }
 

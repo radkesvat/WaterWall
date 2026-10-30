@@ -60,7 +60,8 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 
     const cJSON *settings = node->node_settings_json;
 
-    if (! packettunnelReadFragmentPolicy(settings, &state->fragment_policy))
+    if (! packettunnelReadFragmentPolicy(settings, &state->fragment_policy) ||
+        ! packettunnelReadOpaqueFlowMode(settings, &state->opaque_flow_mode_requested))
     {
         return tundeviceTunnelCreateFail(t);
     }

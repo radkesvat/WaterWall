@@ -337,7 +337,8 @@ static void testPlainDecodedTuplesStayLocal(void)
     {
         for (unsigned transport = 0; transport < 2; ++transport)
         {
-            unsigned workers_seen = 0;
+            unsigned workers_seen     = 0;
+            unsigned foreign_arrivals = 0;
             for (uint16_t port = 10000; port < 10016; ++port)
             {
                 const uint8_t protocol = transport ? IPPROTO_UDP : IPPROTO_TCP;
@@ -346,8 +347,11 @@ static void testPlainDecodedTuplesStayLocal(void)
                 sbuf_t       *reverse  = makePacket(protocol, port, true);
                 require(flowWorker(reverse) == target, "endpoint reversal changed decoded flow affinity");
                 sbufDestroy(reverse);
-                const wid_t source = (wid_t) ((target + 1) % kWorkers);
-                uint8_t     original[kPacketSize];
+                /* Exercise every arrival worker explicitly. A small set of
+                 * native tuples need not hash to every worker. */
+                const wid_t source = (wid_t) ((port - 10000) % kWorkers);
+                foreign_arrivals += source != target;
+                uint8_t original[kPacketSize];
                 memoryCopy(original, sbufGetRawPtr(buf), sizeof(original));
                 encodePacket(&buf, source, false);
                 fixture.capture_count = 0;
@@ -360,7 +364,8 @@ static void testPlainDecodedTuplesStayLocal(void)
                         "plain decoding repeated a transform or changed the native packet");
                 workers_seen |= 1U << source;
             }
-            require(workers_seen == (1U << kWorkers) - 1U, "same-address native ports did not use all workers");
+            require(workers_seen == (1U << kWorkers) - 1U && foreign_arrivals != 0,
+                    "plain decoding did not exercise every arrival worker and a foreign native owner");
         }
     }
     fixtureTeardown();

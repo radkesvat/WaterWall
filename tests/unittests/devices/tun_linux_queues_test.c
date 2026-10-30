@@ -1,4 +1,4 @@
-/* Startup rollback and real-kernel transport/round-robin steering invariants.
+/* Startup rollback and real-kernel common32, prefix/peer/spread steering invariants.
  * CTest: waterwall.tun_linux_queues_unit, waterwall.tun_linux_steering_kernel */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -34,23 +34,25 @@ enum
     kRequestedQueues = 7
 };
 
-static bool     multiqueue;
-static bool     checksum;
-static bool     run_kernel;
-static int      kernel_fd = -1;
-static int      get_error;
-static int      map_error;
-static int      load_error;
-static int      steering_error;
-static unsigned open_fail_at;
-static unsigned attach_fail_at;
-static unsigned open_calls;
-static unsigned attach_calls;
-static unsigned map_calls;
-static unsigned load_calls;
-static unsigned steering_calls;
-static unsigned close_calls;
-static int      closed[16];
+static device_opaque_flow_mode_t opaque_mode;
+static uint16_t                  queue_count;
+static bool                      multiqueue;
+static bool                      checksum;
+static bool                      run_kernel;
+static int                       kernel_fd = -1;
+static int                       get_error;
+static int                       map_error;
+static int                       load_error;
+static int                       steering_error;
+static unsigned                  open_fail_at;
+static unsigned                  attach_fail_at;
+static unsigned                  open_calls;
+static unsigned                  attach_calls;
+static unsigned                  map_calls;
+static unsigned                  load_calls;
+static unsigned                  steering_calls;
+static unsigned                  close_calls;
+static int                       closed[16];
 
 int  __wrap_open(const char *path, int flags, ...);
 int  __wrap_ioctl(int fd, unsigned long request, ...);
@@ -61,6 +63,7 @@ int  __real_close(int fd);
 
 static void reset(void)
 {
+    opaque_mode    = kDeviceOpaqueFlowSpread;
     multiqueue     = true;
     checksum       = false;
     get_error      = 0;
@@ -180,7 +183,15 @@ long __wrap_syscall(long number, ...)
         }
         return run_kernel ? __real_syscall(number, command, attr, size) : kMapFd;
     }
-    require(command == BPF_PROG_LOAD && map_calls == 1, "loads one steering program after creating its counter");
+    require(command == BPF_PROG_LOAD && map_calls == (opaque_mode == kDeviceOpaqueFlowSpread ? 1U : 0U),
+            "only spread steering creates a counter before loading its program");
+    const struct bpf_insn *program        = (const struct bpf_insn *) (uintptr_t) attr->insns;
+    unsigned               map_references = 0;
+    for (uint32_t i = 0; i < attr->insn_cnt; ++i)
+        if (program[i].code == (BPF_LD | BPF_DW | BPF_IMM) && program[i].src_reg == BPF_PSEUDO_MAP_FD)
+            ++map_references;
+    require(map_references == (opaque_mode == kDeviceOpaqueFlowSpread ? 1U : 0U),
+            "deterministic steering never refers to an opaque cursor map");
     require(attr->prog_type == BPF_PROG_TYPE_SOCKET_FILTER, "TUN steering accepts socket-filter programs");
     require(attr->insn_cnt > 0 && attr->insn_cnt <= 192, "steering is a bounded fixed program");
     ++load_calls;
@@ -207,7 +218,8 @@ long __wrap_syscall(long number, ...)
 
 static uint16_t openQueues(uint16_t count, int *fds, const char **reason)
 {
-    return tunLinuxQueuesOpen(kFirstFd, "wwqueues", checksum, count, fds, reason);
+    queue_count = count;
+    return tunLinuxQueuesOpen(kFirstFd, "wwqueues", checksum, count, fds, reason, opaque_mode);
 }
 
 static void testSetup(void)
@@ -293,6 +305,17 @@ static void testSetup(void)
             require(fds[i] == kQueueFdBase + (int) i, "queue-index order matches descriptor order");
         }
     }
+    const device_opaque_flow_mode_t deterministic_modes[] = {kDeviceOpaqueFlowPrefix, kDeviceOpaqueFlowPeer};
+    for (unsigned i = 0; i < sizeof(deterministic_modes) / sizeof(deterministic_modes[0]); ++i)
+    {
+        reset();
+        opaque_mode = deterministic_modes[i];
+        map_error   = EPERM;
+        require(openQueues(kRequestedQueues, fds, &reason) == kRequestedQueues && reason == NULL,
+                "deterministic mode does not require counter-map privileges");
+        require(map_calls == 0 && load_calls == 1 && close_calls == 1 && closed[0] == kProgramFd,
+                "prefix and peer load no spreading resources");
+    }
 }
 
 static uint32_t runPacket(const uint8_t *packet, uint32_t length)
@@ -321,7 +344,7 @@ static uint32_t runPacket(const uint8_t *packet, uint32_t length)
         fprintf(stderr, "BPF packet test failed for %u IP bytes: %s\n", length, strerror(errno));
     }
     require(result == 0, "kernel executes the installed production steering program");
-    require(attr.test.retval < kRequestedQueues, "all packets select an attached queue");
+    require(attr.test.retval < queue_count, "all packets select an attached queue");
     return attr.test.retval;
 }
 
@@ -361,18 +384,11 @@ static void reverseEndpoints(uint8_t *packet, unsigned header_length)
 
 static uint32_t addressQueue(const uint8_t *packet)
 {
-    uint32_t hash = 0;
-    for (unsigned i = 0; i < 4; ++i)
-    {
-        hash = (hash << 8) | (packet[12 + i] ^ packet[16 + i]);
-    }
-    hash ^= (uint32_t) packet[9] * UINT32_C(0x9E3779B1);
-    hash ^= hash >> 16;
-    hash *= UINT32_C(0x7FEB352D);
-    hash ^= hash >> 15;
-    hash *= UINT32_C(0x846CA68B);
-    hash ^= hash >> 16;
-    return hash % kRequestedQueues;
+    const uint32_t src =
+        ((uint32_t) packet[12] << 24) | ((uint32_t) packet[13] << 16) | ((uint32_t) packet[14] << 8) | packet[15];
+    const uint32_t dst =
+        ((uint32_t) packet[16] << 24) | ((uint32_t) packet[17] << 16) | ((uint32_t) packet[18] << 8) | packet[19];
+    return deviceFlowWorkerHashTuple(src, 0, dst, 0, packet[9], 0) % queue_count;
 }
 
 static void requireAllQueues(const bool *observed, const char *message)
@@ -385,9 +401,9 @@ static void requireAllQueues(const bool *observed, const char *message)
 
 static uint32_t processingQueue(const uint8_t *packet, uint32_t length)
 {
-    uint64_t hash;
-    require(deviceFlowAffinityHash(packet, length, &hash), "transport fixture has a valid processing-worker hash");
-    return (uint32_t) (hash % kRequestedQueues);
+    uint32_t hash;
+    require(deviceFlowWorkerHash(packet, length, &hash), "transport fixture has a valid processing-worker hash");
+    return hash % queue_count;
 }
 
 static void testTransportSteering(void)
@@ -423,7 +439,7 @@ static void testTransportSteering(void)
         requireAllQueues(destination_queues,
                          "destination ports distribute same-address transport connections across queues");
 
-        /* Endpoint sorting also includes the port when both addresses match. */
+        /* Same-address endpoints still associate their corresponding words. */
         memcpy(packet + 16, packet + 12, 4);
         const uint32_t same_address_queue = runPacket(packet, sizeof(packet));
         require(same_address_queue == processingQueue(packet, sizeof(packet)),
@@ -529,6 +545,119 @@ static void testHeaderBounds(void)
     require(runPacket(packet, sizeof(packet)) == 0, "unsupported IPv6 retains the single designated reader");
     packet[0] = 0x30;
     require(runPacket(packet, sizeof(packet)) == 0, "unknown IP versions retain the single designated reader");
+}
+
+static void testOpaqueDeterministic(void)
+{
+    const uint8_t protocols[]                = {0, 1, 50, 132, 253, 255};
+    bool          observed[kRequestedQueues] = {0};
+    for (unsigned p = 0; p < sizeof(protocols); ++p)
+    {
+        uint8_t packet[80];
+        makePacket(packet, sizeof(packet), protocols[p]);
+        uint32_t hash = 0;
+        require(deviceReceiveWorkerHash(packet, sizeof(packet), opaque_mode, &hash),
+                "deterministic opaque packet has a software receive key");
+        const uint32_t stable_queue = hash % queue_count;
+        require(runPacket(packet, sizeof(packet)) == stable_queue,
+                "opaque kernel steering agrees with the effective software mode");
+        for (unsigned repeat = 0; repeat < 256; ++repeat)
+        {
+            packet[4]  = (uint8_t) repeat;
+            packet[10] = (uint8_t) (repeat * 7);
+            memset(packet + 24, (int) repeat, sizeof(packet) - 24);
+            if (opaque_mode == kDeviceOpaqueFlowPeer)
+                memset(packet + 20, (int) repeat, 4);
+            require(runPacket(packet, sizeof(packet)) == stable_queue,
+                    "stable prefix ignores later bytes and peer ignores every payload byte");
+        }
+        reverseEndpoints(packet, 20);
+        require(runPacket(packet, sizeof(packet)) == stable_queue,
+                "opaque receive key is symmetric in associated endpoint words");
+        reverseEndpoints(packet, 20);
+
+        /* Options move the prefix; bytes from the IP header never become words. */
+        makePacket(packet, sizeof(packet), protocols[p]);
+        memmove(packet + 24, packet + 20, sizeof(packet) - 24);
+        memset(packet + 20, 0xA5, 4);
+        packet[0] = 0x46;
+        require(runPacket(packet, sizeof(packet)) == stable_queue,
+                "opaque prefix follows the actual IPv4 header length");
+        for (unsigned length = 0; length <= 4; ++length)
+        {
+            put16(packet + 2, (uint16_t) (24 + length));
+            const uint32_t expected =
+                length < 4 || opaque_mode == kDeviceOpaqueFlowPeer ? addressQueue(packet) : stable_queue;
+            require(runPacket(packet, sizeof(packet)) == expected && runPacket(packet, 24 + length) == expected,
+                    "opaque short payload uses fallback and trailing buffer bytes are never a prefix");
+        }
+
+        makePacket(packet, sizeof(packet), protocols[p]);
+        for (unsigned prefix = 0; prefix < 512; ++prefix)
+        {
+            put16(packet + 20, (uint16_t) (prefix ^ 0x5AA5));
+            put16(packet + 22, (uint16_t) ((prefix * 17U) ^ 0x5AA5));
+            require(deviceReceiveWorkerHash(packet, sizeof(packet), opaque_mode, &hash),
+                    "fixed-XOR opaque prefix has a software receive key");
+            const uint32_t queue = runPacket(packet, sizeof(packet));
+            require(queue == hash % queue_count, "opaque prefix/XOR placement agrees with software");
+            observed[queue] = true;
+            memset(packet + 24, (int) prefix, sizeof(packet) - 24);
+            require(runPacket(packet, sizeof(packet)) == queue,
+                    "a fixed-XOR prefix remains stable as later payload bytes change");
+        }
+    }
+    if (opaque_mode == kDeviceOpaqueFlowPrefix)
+        requireAllQueues(observed, "varied opaque prefixes distribute across every queue");
+}
+
+/* Independent frozen expected values, also exercised at non-power-of-two counts. */
+static void testFixedWorkerVectors(void)
+{
+    static const struct
+    {
+        uint32_t src, dst, hash;
+        uint16_t src_word, dst_word;
+        uint8_t  protocol;
+        bool     fragmented;
+    } vectors[] = {
+        {UINT32_C(0x0A000001), UINT32_C(0x0A000002), UINT32_C(0xC4D8D18A), 40000, 443, 6, false},
+        {UINT32_C(0x0A000101), UINT32_C(0x0A000102), UINT32_C(0x2DD3FCF0), 40000, 443, 6, false},
+        {UINT32_C(0x0A000001), UINT32_C(0x0A000002), UINT32_C(0x45A834C1), 10000, 46539, 17, false},
+        {UINT32_C(0x0A000001), UINT32_C(0x0A000002), UINT32_C(0x7978FD19), 42768, 46539, 17, false},
+        {UINT32_C(0x0A000001), UINT32_C(0xC000022A), UINT32_C(0xBF156EC4), 12345, 443, 1, true},
+        {UINT32_C(0x0A000001), UINT32_C(0xC9FF954B), UINT32_C(0xBDB9365E), 10000, 443, 6, false},
+        {UINT32_C(0x0A000001), UINT32_C(0xC9FF954B), UINT32_C(0x89E8530B), 10001, 443, 6, false},
+        {UINT32_C(0x0A000001), UINT32_C(0x000001BB), UINT32_C(0xB6878F90), 10000, 443, 6, false},
+        {UINT32_C(0x0A000001), UINT32_C(0x000001BB), UINT32_C(0x82B60AA5), 10001, 443, 6, false},
+    };
+    for (unsigned i = 0; i < sizeof(vectors) / sizeof(vectors[0]); ++i)
+    {
+        uint8_t packet[80];
+        makePacket(packet, sizeof(packet), vectors[i].protocol);
+        for (unsigned byte = 0; byte < 4; ++byte)
+        {
+            packet[12 + byte] = (uint8_t) (vectors[i].src >> (24U - 8U * byte));
+            packet[16 + byte] = (uint8_t) (vectors[i].dst >> (24U - 8U * byte));
+        }
+        if (vectors[i].fragmented)
+            put16(packet + 6, 0x2000);
+        put16(packet + 20, vectors[i].src_word);
+        put16(packet + 22, vectors[i].dst_word);
+        require(runPacket(packet, sizeof(packet)) == vectors[i].hash % queue_count,
+                "actual eBPF uses the frozen common32 worker vectors");
+        reverseEndpoints(packet, 20);
+        require(runPacket(packet, sizeof(packet)) == vectors[i].hash % queue_count,
+                "frozen eBPF worker vectors retain bidirectional affinity");
+    }
+    if (opaque_mode != kDeviceOpaqueFlowSpread)
+    {
+        uint8_t packet[80];
+        makePacket(packet, sizeof(packet), 253);
+        const uint32_t expected = opaque_mode == kDeviceOpaqueFlowPrefix ? UINT32_C(0xA6F6867F) : UINT32_C(0xEFD3C01E);
+        require(runPacket(packet, sizeof(packet)) == expected % queue_count,
+                "opaque kernel policy matches its independent frozen expected vector");
+    }
 }
 
 static void pinCpu(unsigned cpu)
@@ -639,21 +768,59 @@ static void testIndependentCounters(unsigned cpu)
             "creating and destroying another interface does not reset or advance the first counter");
 }
 
-static int testKernel(void)
+static bool openKernelProgram(device_opaque_flow_mode_t mode, uint16_t count)
 {
     reset();
-    run_kernel = true;
-    int         fds[kRequestedQueues];
+    run_kernel  = true;
+    opaque_mode = mode;
+    int         fds[254];
     const char *reason;
-    if (openQueues(kRequestedQueues, fds, &reason) != kRequestedQueues)
+    if (openQueues(count, fds, &reason) != count)
     {
         if (errno == EPERM || errno == EACCES || errno == ENOSYS)
         {
-            fprintf(stderr, "SKIP: kernel BPF program load unavailable: %s (%s)\n", reason, strerror(errno));
-            return 77;
+            fprintf(stderr,
+                    "SKIP: kernel BPF %s program unavailable: %s (%s)\n",
+                    deviceOpaqueFlowModeName(mode),
+                    reason,
+                    strerror(errno));
+            return false;
         }
         require(false, "production steering passes the actual kernel verifier");
     }
+    return true;
+}
+
+static bool testIndependentModes(void)
+{
+    require(opaque_mode == kDeviceOpaqueFlowPrefix, "first independent interface uses prefix mode");
+    uint8_t packet[80];
+    makePacket(packet, sizeof(packet), 253);
+    uint32_t prefix_queue = runPacket(packet, sizeof(packet));
+    for (unsigned word = 1; word <= 512 && prefix_queue == addressQueue(packet); ++word)
+    {
+        put16(packet + 20, (uint16_t) word);
+        prefix_queue = runPacket(packet, sizeof(packet));
+    }
+    require(prefix_queue != addressQueue(packet), "mode-isolation packet distinguishes prefix from peer");
+    const int prefix_program = kernel_fd;
+    if (! openKernelProgram(kDeviceOpaqueFlowPeer, kRequestedQueues))
+    {
+        __real_close(prefix_program);
+        return false;
+    }
+    require(runPacket(packet, sizeof(packet)) == addressQueue(packet),
+            "a separate peer interface ignores the prefix used by the first interface");
+    __real_close(kernel_fd);
+    kernel_fd   = prefix_program;
+    opaque_mode = kDeviceOpaqueFlowPrefix;
+    require(runPacket(packet, sizeof(packet)) == prefix_queue,
+            "another interface's mode does not change the first interface's policy");
+    return true;
+}
+
+static int testKernel(void)
+{
     cpu_set_t original_affinity;
     require(sched_getaffinity(0, sizeof(original_affinity), &original_affinity) == 0,
             "discovers the CPUs available to this test");
@@ -676,15 +843,41 @@ static int testKernel(void)
     }
     require(first_cpu >= 0, "the test has an available CPU");
     pinCpu((unsigned) first_cpu);
-    testOpaqueRoundRobin((unsigned) first_cpu);
-    if (second_cpu >= 0)
+    const device_opaque_flow_mode_t modes[] = {kDeviceOpaqueFlowPrefix, kDeviceOpaqueFlowPeer, kDeviceOpaqueFlowSpread};
+    const uint16_t                  counts[] = {3, 7, 16, 254};
+    for (unsigned m = 0; m < sizeof(modes) / sizeof(modes[0]); ++m)
     {
-        testPerCpuCounters((unsigned) first_cpu, (unsigned) second_cpu);
+        for (unsigned c = 0; c < sizeof(counts) / sizeof(counts[0]); ++c)
+        {
+            if (! openKernelProgram(modes[m], counts[c]))
+                return 77;
+            testFixedWorkerVectors();
+            __real_close(kernel_fd);
+            kernel_fd = -1;
+        }
+        if (! openKernelProgram(modes[m], kRequestedQueues))
+            return 77;
+        if (modes[m] == kDeviceOpaqueFlowSpread)
+        {
+            testOpaqueRoundRobin((unsigned) first_cpu);
+            if (second_cpu >= 0)
+                testPerCpuCounters((unsigned) first_cpu, (unsigned) second_cpu);
+            testIndependentCounters((unsigned) first_cpu);
+        }
+        else
+        {
+            testTransportSteering();
+            testFragmentFallback();
+            testHeaderBounds();
+            testOpaqueDeterministic();
+            if (modes[m] == kDeviceOpaqueFlowPrefix && ! testIndependentModes())
+                return 77;
+        }
+        __real_close(kernel_fd);
+        kernel_fd = -1;
     }
-    testIndependentCounters((unsigned) first_cpu);
     require(sched_setaffinity(0, sizeof(original_affinity), &original_affinity) == 0,
             "restores the original CPU affinity after steering tests");
-    __real_close(kernel_fd);
     if (second_cpu < 0)
     {
         fprintf(stderr, "SKIP: local cycling passed, but per-CPU independence requires two available CPUs\n");

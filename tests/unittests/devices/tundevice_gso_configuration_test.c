@@ -81,6 +81,78 @@ static void testKernelQueueSettings(const char *tune_value, const char *length_v
     cJSON_Delete(settings);
 }
 
+static void testOpaqueFlowModeSettings(void)
+{
+    const char *const               values[] = {NULL,
+                                                "\"prefix\"",
+                                                "\"peer\"",
+                                                "\"spread\"",
+                                                "\"auto\"",
+                                                "null",
+                                                "false",
+                                                "0",
+                                                "[]",
+                                                "{}",
+                                                "\"\"",
+                                                "\"PREFIX\"",
+                                                "\"unknown\"",
+                                                "\"prefix\\u0000suffix\"",
+                                                "\"peer\\u0000suffix\"",
+                                                "\"spread\\u0000suffix\"",
+                                                "\"auto\\u0000suffix\""};
+    const device_opaque_flow_mode_t modes[]  = {kDeviceOpaqueFlowPrefix,
+                                                kDeviceOpaqueFlowPrefix,
+                                                kDeviceOpaqueFlowPeer,
+                                                kDeviceOpaqueFlowSpread,
+                                                kDeviceOpaqueFlowAuto};
+    for (size_t i = 0; i < ARRAY_SIZE(values); ++i)
+    {
+        for (unsigned queue = 0; queue < 2; ++queue)
+        {
+            cJSON *settings = cJSON_Parse("{\"device-name\":\"ww-fixture\",\"device-ip\":\"192.0.2.1/24\","
+                                          "\"device-mtu\":1500,\"fragment-policy\":\"preserve-fragments\"}");
+            require(settings != NULL, "cannot create opaque mode fixture");
+            if (values[i] != NULL)
+            {
+                require(cJSON_AddItemToObject(settings, "opaque-flow-mode", cJSON_Parse(values[i])),
+                        "cannot add opaque mode fixture");
+            }
+            require(cJSON_AddBoolToObject(settings, "gso", queue == 0) != NULL &&
+                        cJSON_AddBoolToObject(settings, "multi-queue", queue != 0) != NULL,
+                    "cannot configure opaque mode independence fixture");
+            node_t    node = {.node_settings_json = settings};
+            tunnel_t *t    = tundeviceTunnelCreate(&node);
+            require((t != NULL) == (i < ARRAY_SIZE(modes)), "TunDevice accepted or rejected opaque mode incorrectly");
+            if (t != NULL)
+            {
+                tundevice_tstate_t *state = tunnelGetState(t);
+                require(state->opaque_flow_mode_requested == modes[i] &&
+                            state->fragment_policy == kDeviceFragmentPreserve && state->gso_requested == (queue == 0) &&
+                            state->multi_queue_requested == (queue != 0),
+                        "opaque mode depended on fragment, GSO or queue settings");
+                tundeviceTunnelDestroy(t, wwLifecycleStartupRollback());
+            }
+            cJSON_Delete(settings);
+        }
+    }
+
+    const char *const invalid_keys[] = {"\"opaque-flow-mode\\u0000suffix\":\"peer\"",
+                                        "\"opaque-flow-mode\":\"prefix\",\"opaque-flow-mode\\u0000suffix\":\"peer\""};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_keys); ++i)
+    {
+        char json[256];
+        snprintf(json,
+                 sizeof(json),
+                 "{\"device-name\":\"ww-fixture\",\"device-ip\":\"192.0.2.1/24\",\"device-mtu\":1500,%s}",
+                 invalid_keys[i]);
+        cJSON *settings = cJSON_Parse(json);
+        require(settings != NULL, "cannot parse embedded-NUL opaque mode key");
+        node_t node = {.node_settings_json = settings};
+        require(tundeviceTunnelCreate(&node) == NULL, "TunDevice accepted an embedded-NUL opaque mode key suffix");
+        cJSON_Delete(settings);
+    }
+}
+
 int main(void)
 {
     testCaseSet("tundevice_gso_configuration_test");
@@ -136,6 +208,7 @@ int main(void)
     memoryFree(metadata.type);
 
     testSettings(NULL, NULL, true, true, true);
+    testOpaqueFlowModeSettings();
     testSettings("true", NULL, true, true, true);
     testSettings("false", NULL, true, false, true);
     testSettings(NULL, "true", true, true, true);

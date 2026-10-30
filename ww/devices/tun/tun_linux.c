@@ -609,8 +609,11 @@ static tun_linux_open_result_t tunLinuxOpenAttempt(const char *name, bool checks
 #endif
 
 tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_queue_requested, uint16_t mtu,
-                              void *userdata, TunReadEventHandle cb, device_fragment_policy_t fragment_policy)
+                              void *userdata, TunReadEventHandle cb, device_fragment_policy_t fragment_policy,
+                              device_opaque_flow_mode_t opaque_flow_mode)
 {
+    assert(opaque_flow_mode == kDeviceOpaqueFlowPrefix || opaque_flow_mode == kDeviceOpaqueFlowPeer ||
+           opaque_flow_mode == kDeviceOpaqueFlowSpread);
     if (mtu <= 16)
     {
         LOGE("TunDevice: Invalid MTU size: %u", mtu);
@@ -768,6 +771,8 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_q
         return NULL;
     }
 
+    deviceReaderSessionSetOpaqueFlowMode(tdev->reader_session, opaque_flow_mode);
+
 #ifdef OS_LINUX
     bool offload_fallback = false;
     if (tdev->checksum_offload_enabled)
@@ -897,11 +902,16 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_q
                                                                          tdev->checksum_offload_enabled,
                                                                          multi_queue_requested ? getWorkersCount() : 1,
                                                                          tdev->queue_fds,
-                                                                         &queue_reason);
+                                                                         &queue_reason,
+                                                                         opaque_flow_mode);
     tdev->queue_fds[0]       = tdev->handle;
     if (queue_reason != NULL)
         LOGW("TunDevice: %s using one receive queue: %s (%s)", tdev->name, queue_reason, strerror(errno));
-    LOGI("TunDevice: %s uses %u worker-owned receive queue(s)", tdev->name, (unsigned) tdev->queue_count);
+    LOGI("TunDevice: %s uses %u worker-owned receive queue(s) (requested %u; effective opaque mode %s)",
+         tdev->name,
+         (unsigned) tdev->queue_count,
+         (unsigned) (multi_queue_requested ? getWorkersCount() : 1),
+         deviceOpaqueFlowModeName(opaque_flow_mode));
     if (tdev->reader_session->output_charge_limit == 0 &&
         ! deviceReaderSessionConfigureOutputBudget(
             tdev->reader_session, kTunOffloadPendingChargeLimit, kTunOffloadPendingPacketLimit))
@@ -913,6 +923,9 @@ tun_device_t *tundeviceCreate(const char *name, bool gso_requested, bool multi_q
     deviceFragAffinityEnableShared(tdev->reader_session->frag_affinity,
                                    bufferpoolGetLargeBufferPadding(tdev->reader_buffer_pool));
 #else
+    LOGI("TunDevice: %s uses 1 receive queue (effective opaque mode %s)",
+         tdev->name,
+         deviceOpaqueFlowModeName(opaque_flow_mode));
     if (! deviceReaderSessionConfigureOutputBudget(tdev->reader_session, 8U * 1024U * 1024U, 1024) ||
         ! deviceReaderSessionEnableWorkerQueue(tdev->reader_session))
     {

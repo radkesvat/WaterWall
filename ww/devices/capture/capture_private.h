@@ -55,8 +55,9 @@ struct capture_device_s
     bool                                queue_restartable;
     atomic_bool                         capture_active;
 #endif
-    bool  drop_captured_packet;
-    void *userdata;
+    device_opaque_flow_mode_t opaque_flow_mode;
+    bool                      drop_captured_packet;
+    void                     *userdata;
 #ifdef OS_WIN
     wthread_t       read_thread;
     wthread_routine routine_reader;

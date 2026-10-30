@@ -1317,15 +1317,19 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 // }
 
 tun_device_t *tundeviceCreate(const char *name, bool offload, bool multi_queue_requested, uint16_t mtu, void *userdata,
-                              TunReadEventHandle cb, device_fragment_policy_t fragment_policy)
+                              TunReadEventHandle cb, device_fragment_policy_t fragment_policy,
+                              device_opaque_flow_mode_t opaque_flow_mode)
 {
-    return tundeviceCreateOwned(name, offload, multi_queue_requested, mtu, userdata, cb, fragment_policy, NULL);
+    return tundeviceCreateOwned(
+        name, offload, multi_queue_requested, mtu, userdata, cb, fragment_policy, opaque_flow_mode, NULL);
 }
 
 tun_device_t *tundeviceCreateOwned(const char *name, bool offload, bool multi_queue_requested, uint16_t mtu,
                                    void *userdata, TunReadEventHandle cb, device_fragment_policy_t fragment_policy,
-                                   tun_windows_ownership_t *ownership)
+                                   device_opaque_flow_mode_t opaque_flow_mode, tun_windows_ownership_t *ownership)
 {
+    assert(opaque_flow_mode == kDeviceOpaqueFlowPrefix || opaque_flow_mode == kDeviceOpaqueFlowPeer ||
+           opaque_flow_mode == kDeviceOpaqueFlowSpread);
     discard offload;
     discard multi_queue_requested;
     if (mtu <= 16)
@@ -1397,6 +1401,11 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, bool multi_qu
         memoryFree(tdev);
         return NULL;
     }
+
+    deviceReaderSessionSetOpaqueFlowMode(tdev->reader_session, opaque_flow_mode);
+    LOGI("TunDevice: %s uses 1 receive queue (effective opaque mode %s)",
+         tdev->name,
+         deviceOpaqueFlowModeName(opaque_flow_mode));
 
     if (! deviceReaderSessionConfigureOutputBudget(
             tdev->reader_session, kTunReaderQueueBytes, kTunReaderQueuePackets) ||

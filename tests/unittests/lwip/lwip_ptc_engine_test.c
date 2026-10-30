@@ -178,15 +178,15 @@ static void inject(fixture_t *f, line_t *line, sbuf_t *buf)
         return;
     }
     uint8_t *raw = sbufGetMutablePtr(buf);
-    uint64_t hash;
-    CHECK(deviceFlowAffinityHash(raw, sbufGetLength(buf), &hash));
+    uint32_t hash;
+    CHECK(deviceFlowWorkerHash(raw, sbufGetLength(buf), &hash));
     if (hash % 2 != lineGetWID(line))
         ++probes[lineGetWID(line)].rewritten_hash_mismatches;
     unsigned candidate;
     for (candidate = 3; candidate < 255; ++candidate)
     {
         raw[15] = (uint8_t) candidate;
-        CHECK(deviceFlowAffinityHash(raw, sbufGetLength(buf), &hash));
+        CHECK(deviceFlowWorkerHash(raw, sbufGetLength(buf), &hash));
         if (hash % 2 == lineGetWID(line))
             break;
     }

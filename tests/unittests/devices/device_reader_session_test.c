@@ -387,6 +387,29 @@ static device_reader_session_t *createSession(test_env_t *env, reader_probe_t *p
         4, batch_capacity, probe, deliverPacket, env->worker_buffer_pool, kDeviceFragmentReassemble);
 }
 
+static void testOpaqueModePersistsAcrossGenerations(test_env_t *env)
+{
+    reader_probe_t           probe = {0};
+    device_reader_session_t *first = createSession(env, &probe, 1);
+    device_reader_session_t *other = createSession(env, &probe, 1);
+    require(first->opaque_flow_mode == kDeviceOpaqueFlowPrefix && other->opaque_flow_mode == kDeviceOpaqueFlowPrefix,
+            "new reader sessions did not default to prefix");
+    const device_opaque_flow_mode_t modes[] = {kDeviceOpaqueFlowPeer, kDeviceOpaqueFlowSpread, kDeviceOpaqueFlowPrefix};
+    for (unsigned i = 0; i < ARRAY_SIZE(modes); ++i)
+    {
+        deviceReaderSessionSetOpaqueFlowMode(first, modes[i]);
+        for (unsigned generation = 0; generation < 2; ++generation)
+        {
+            require(deviceReaderSessionBegin(first) != 0, "mode fixture failed to start a generation");
+            require(first->opaque_flow_mode == modes[i] && other->opaque_flow_mode == kDeviceOpaqueFlowPrefix,
+                    "reader generation changed its mode or another device's mode");
+            deviceReaderSessionEnd(first);
+        }
+    }
+    deviceReaderSessionUnref(other);
+    deviceReaderSessionUnref(first);
+}
+
 static void resetCapturedMessages(void)
 {
     memoryZero(captured_messages, sizeof(captured_messages));
@@ -1730,6 +1753,7 @@ int main(void)
     testCaseSet("device_reader_session_test");
     test_env_t env;
     envSetup(&env);
+    testOpaqueModePersistsAcrossGenerations(&env);
     testQueuedCleanupOutlivesDeviceReference(&env);
     testClosedAndStaleDeliveriesAreDropped(&env);
     testSingleAndBatchedMessagesRoundTrip(&env);

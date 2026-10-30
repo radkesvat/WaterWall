@@ -239,6 +239,7 @@ tunnel_t *rawsocketCreate(node_t *node)
     const cJSON        *settings = node->node_settings_json;
 
     if (! packettunnelReadFragmentPolicy(settings, &state->fragment_policy) ||
+        ! packettunnelReadOpaqueFlowMode(settings, &state->opaque_flow_mode_requested) ||
         ! rawsocketLoadKernelQueueSettings(state, settings))
     {
         rawsocketDestroy(t, wwLifecycleStartupRollback());

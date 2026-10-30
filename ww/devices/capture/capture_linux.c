@@ -229,7 +229,7 @@ static bool captureOpenQueues(capture_device_t *cdev)
             break;
         }
         if (count > 1)
-            captureLinuxBuildSteeringFilter(count, i, cdev->queues[i].steering_filter);
+            captureLinuxBuildSteeringFilter(count, i, cdev->opaque_flow_mode, cdev->queues[i].steering_filter);
     }
     GSTATE.capturedevice_queue_start_number = (uint16_t) (first + cdev->queue_count);
     return true;
@@ -256,6 +256,15 @@ void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled)
 {
     assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown && cdev->reader == NULL);
     cdev->multi_queue = enabled;
+}
+
+void capturedeviceSetOpaqueFlowMode(capture_device_t *cdev, device_opaque_flow_mode_t mode)
+{
+    assert(cdev != NULL);
+    assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown && cdev->reader == NULL);
+    assert(mode >= kDeviceOpaqueFlowPrefix && mode <= kDeviceOpaqueFlowSpread);
+    cdev->opaque_flow_mode = mode;
+    deviceReaderSessionSetOpaqueFlowMode(cdev->reader_session, mode);
 }
 
 void capturedeviceConfigureKernelQueue(capture_device_t *cdev, bool enabled, uint32_t packet_total,
@@ -306,11 +315,11 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     atomicStoreRelaxed(&cdev->up, true);
     if (! captureReaderStart(cdev))
         goto failed;
-    LOGI("CaptureDevice: %s up with %u worker-owned receive queue(s), %s",
+    LOGI("CaptureDevice: %s up with %u worker-owned receive queue(s), opaque-flow-mode=%s; %s",
          cdev->name,
          cdev->queue_count,
-         cdev->queue_count > 1 ? "TCP/UDP flow steering; opaque random distribution"
-                               : "worker 0 reads; all workers process");
+         deviceOpaqueFlowModeName(cdev->opaque_flow_mode),
+         cdev->queue_count > 1 ? "kernel receive steering" : "worker 0 reads; all workers process");
     return true;
 failed:
     discard caputredeviceBringDown(cdev);

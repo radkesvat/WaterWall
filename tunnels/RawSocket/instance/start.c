@@ -42,6 +42,14 @@ void rawsocketOnStart(tunnel_t *t)
 
     if (state->capture_range_count > 0)
     {
+        const char *mode_reason;
+        state->opaque_flow_mode_effective =
+            packettunnelResolveOpaqueFlowMode(t, state->opaque_flow_mode_requested, &mode_reason);
+        LOGI("RawSocket: %s opaque-flow-mode requested=%s effective=%s reason=%s",
+             state->capture_device_name,
+             deviceOpaqueFlowModeName(state->opaque_flow_mode_requested),
+             deviceOpaqueFlowModeName(state->opaque_flow_mode_effective),
+             mode_reason);
         state->capture_device = caputredeviceCreate(state->capture_device_name,
                                                     state->capture_ranges,
                                                     state->capture_range_count,
@@ -59,6 +67,7 @@ void rawsocketOnStart(tunnel_t *t)
             return;
         }
         capturedeviceSetMultiQueue(state->capture_device, state->multi_queue_requested);
+        capturedeviceSetOpaqueFlowMode(state->capture_device, state->opaque_flow_mode_effective);
         capturedeviceConfigureKernelQueue(
             state->capture_device, state->kernel_queue_tune, state->kernel_queue_packets, state->kernel_receive_buffer);
     }
