@@ -211,8 +211,8 @@ static device_frag_account_result_t deviceFragAffinityAccount(device_frag_affini
 
 static bool deviceFragAffinityHashAsWhole(uint8_t *packet, uint32_t length, uint64_t *out_hash, wid_t *out_wid)
 {
-    const uint16_t saved = GET_BE16(packet + 6);
-    uint32_t       worker_hash;
+    const uint16_t saved       = GET_BE16(packet + 6);
+    uint32_t       worker_hash = 0;
 
     PUT_BE16(packet + 6, 0);
     const bool ok =
