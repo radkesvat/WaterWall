@@ -5,7 +5,6 @@
  */
 
 #include "cJSON.h"
-#include "devices/device_flow_hash.h"
 #include "devices/device_fragment_policy.h"
 #include "tunnel.h"
 
@@ -95,18 +94,5 @@ bool packettunnelTakeChecksumRequest(sbuf_t *buf);
  */
 bool packettunnelFinalizeChecksumRequest(bool requested, uint8_t *packet, uint32_t length);
 
-/* Flow-locator declaration. A node that rewrites the IP protocol number of TCP/UDP packets and leaves their port pair
- * at the start of the IP payload (IpManipulator's protocol swap) declares that number here, once, while it is
- * created. A packet-device node of the same chain (RawSocket's capture) reads the chain's declarations before it
- * brings its device up and steers those protocols by their inner ports. The declaration holds only inside the
- * declaring node's chain: a protocol number names a header layout nowhere else, so other chains, and traffic this
- * chain merely forwards, keep treating it as opaque. Declare only before the chain starts; withdraw when the node is
- * destroyed. A node declares at most kDeviceFlowPortedProtocolMax numbers; a further one returns false with a warning.
- */
-bool packettunnelDeclarePortedProtocol(tunnel_t *declarer, uint8_t protocol);
-void packettunnelWithdrawPortedProtocols(tunnel_t *declarer);
-/* The distinct protocols declared by the nodes of the chain the tunnel belongs to. A chain that declares more than
- * kDeviceFlowPortedProtocolMax keeps the lowest and logs each refused number. */
-void packettunnelGetChainPortedProtocols(const tunnel_t *t, device_flow_ported_set_t *out);
 /* Defaults to reassemble when omitted; explicit invalid values are rejected. */
 bool packettunnelReadFragmentPolicy(const cJSON *settings, device_fragment_policy_t *policy);

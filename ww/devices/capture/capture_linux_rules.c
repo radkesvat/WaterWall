@@ -617,10 +617,7 @@ uint32_t capturedevicePendingRangeCount(const capture_device_t *cdev)
 
 static size_t capturedeviceRuleCount(const capture_device_t *cdev, capture_owned_rule_kind_t kind)
 {
-    /* Opaque flow affinity steers opaque packets through the flow lanes, which
-     * leaves the random cascade nothing to select. */
-    if (cdev->queue_count == 0 ||
-        (kind == kCaptureOwnedOpaque && (cdev->queue_count == 1 || cdev->opaque_flow_affinity)))
+    if (cdev->queue_count == 0 || (kind == kCaptureOwnedOpaque && cdev->queue_count == 1))
     {
         return 0;
     }
@@ -653,7 +650,7 @@ static capturedevice_command_status_t capturedeviceRunOwnedRule(capture_device_t
     const struct capture_linux_queue_s *queue = &cdev->queues[index % cdev->queue_count];
     char                                opaque_filter[kCaptureLinuxSteeringFilterSize];
     if (kind == kCaptureOwnedOpaque)
-        captureLinuxBuildOpaqueFilter(cdev->ported.protocols, cdev->ported.count, opaque_filter);
+        captureLinuxBuildOpaqueFilter(opaque_filter);
     /* INSERT reverses ascending lane order. Conditional probabilities 1/N,
      * 1/(N-1), ... give each opaque queue the same expected share, with lane
      * zero's unconditional tail ensuring every eligible packet is selected. */

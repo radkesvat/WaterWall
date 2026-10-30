@@ -42,10 +42,6 @@ void              __wrap_rawdeviceRequestStop(raw_device_t *rdev);
 bool              __wrap_rawdeviceBringDown(raw_device_t *rdev);
 void              __wrap_rawdeviceDestroy(raw_device_t *rdev);
 
-static unsigned ported_set_call_count;
-
-void __wrap_capturedeviceSetPortedProtocols(capture_device_t *cdev, const device_flow_ported_set_t *ported);
-
 
 static void noopPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -83,8 +79,6 @@ capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *c
 bool __wrap_caputredeviceBringUp(capture_device_t *cdev)
 {
     discard cdev;
-    require(ported_set_call_count == 1,
-            "RawSocket did not hand the chain's ported protocols to capture before activation");
     ++capture_call_count;
     return true;
 }
@@ -101,13 +95,6 @@ bool __wrap_caputredeviceBringDown(capture_device_t *cdev)
     discard cdev;
     ++capture_call_count;
     return true;
-}
-
-void __wrap_capturedeviceSetPortedProtocols(capture_device_t *cdev, const device_flow_ported_set_t *ported)
-{
-    discard cdev;
-    ++ported_set_call_count;
-    require(ported != NULL && ported->count == 0, "a chain without IpManipulator declared ported protocols");
 }
 
 void __wrap_capturedeviceDestroy(capture_device_t *cdev)

@@ -38,10 +38,6 @@ bool              __wrap_rawdeviceBringDown(raw_device_t *rdev);
 void              __wrap_capturedeviceDestroy(capture_device_t *cdev);
 void              __wrap_rawdeviceDestroy(raw_device_t *rdev);
 
-static unsigned ported_set_call_count;
-
-void __wrap_capturedeviceSetPortedProtocols(capture_device_t *cdev, const device_flow_ported_set_t *ported);
-
 static void notifyCleanup(char marker)
 {
     if (notify_fd >= 0)
@@ -106,8 +102,6 @@ bool __wrap_caputredeviceBringUp(capture_device_t *cdev)
     require(cdev->multi_queue, "RawSocket did not apply its multi-queue setting before capture activation");
     require(cdev->kernel_queue_tune && cdev->kernel_queue_packets == 131072 && cdev->kernel_receive_buffer == 134217728,
             "RawSocket did not apply queue tuning before capture activation");
-    require(ported_set_call_count == 1,
-            "RawSocket did not hand the chain's ported protocols to capture before activation");
     require(fake_raw_device_up, "RawSocket activated capture before the raw writer was ready");
     notifyCleanup('c');
     return false;
@@ -136,13 +130,6 @@ bool __wrap_rawdeviceBringDown(raw_device_t *rdev)
     fake_raw_device_up = false;
     notifyCleanup('d');
     return true;
-}
-
-void __wrap_capturedeviceSetPortedProtocols(capture_device_t *cdev, const device_flow_ported_set_t *ported)
-{
-    discard cdev;
-    ++ported_set_call_count;
-    require(ported != NULL && ported->count == 0, "a chain without IpManipulator declared ported protocols");
 }
 
 void __wrap_capturedeviceDestroy(capture_device_t *cdev)

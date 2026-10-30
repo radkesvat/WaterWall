@@ -30,7 +30,7 @@ bool deviceFlowAffineWID(const uint8_t *packet, uint32_t length, wid_t *out_wid)
     return true;
 }
 
-static bool deviceReaderHasVisibleTransportTuple(const device_reader_session_t *session, const sbuf_t *buf)
+static bool deviceReaderHasVisibleTransportTuple(const sbuf_t *buf)
 {
     const uint8_t *packet = sbufGetRawPtr(buf);
     const uint32_t length = sbufGetLength(buf);
@@ -40,7 +40,7 @@ static bool deviceReaderHasVisibleTransportTuple(const device_reader_session_t *
     {
         ipv4_packet_view_t view;
         return ipv4packetviewParse(packet, length, &view) && view.ip_total_length == length && ! view.fragmented &&
-               view.transport_length >= 4 && deviceFlowPortedSetContains(&session->ported, view.protocol);
+               view.transport_length >= 4 && (view.protocol == IPPROTO_TCP || view.protocol == IPPROTO_UDP);
     }
     /* IPv6 extension headers are opaque here; only an immediately visible
      * TCP/UDP header exposes transport ports to the existing flow hash. */
@@ -63,21 +63,14 @@ wid_t deviceReaderSelectWID(device_reader_session_t *session, wid_t reader_wid, 
      * Consumer affinity orders admission only: segment 2 is still in another
      * receive queue. Opaque traffic must retain the parallel rotation below.
      * Regression: testReaderSkewPreservesClientHello in the ECH-SNI unit suite. */
-    if (deviceReaderHasVisibleTransportTuple(session, buf))
+    if (deviceReaderHasVisibleTransportTuple(buf))
     {
-        uint64_t   hash = 0;
-        const bool identified =
-            deviceFlowAffinityHashWithPorts(sbufGetRawPtr(buf), sbufGetLength(buf), &session->ported, &hash);
+        wid_t      wid        = 0;
+        const bool identified = deviceFlowAffineWID(sbufGetRawPtr(buf), sbufGetLength(buf), &wid);
         assert(identified);
         discard identified;
-        return (wid_t) (hash % getWorkersCount());
-    }
-    /* An encapsulating tunnel is one opaque stream whose payload carries ordered
-     * TCP. Rotating it hands consecutive segments to different workers, and the
-     * consumer that writes them out (a TUN) then reorders the inner flow. */
-    wid_t wid = 0;
-    if (session->opaque_flow_affinity && deviceFlowAffineWID(sbufGetRawPtr(buf), sbufGetLength(buf), &wid))
         return wid;
+    }
     return (wid_t) (atomicIncExplicit(&session->distribution_next, memory_order_relaxed) % getWorkersCount());
 }
 

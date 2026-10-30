@@ -229,8 +229,7 @@ static void fixtureSetup(wid_t workers)
 static void fixtureTeardown(void)
 {
     cancelMessages();
-    if (fixture.tunnel != NULL)
-        ipmanipulatorDestroy(fixture.tunnel, wwLifecycleStartupRollback());
+    ipmanipulatorDestroy(fixture.tunnel, wwLifecycleStartupRollback());
     tunnelDestroy(fixture.next);
     tunnelDestroy(fixture.prev);
     tunnelchainDestroy(fixture.chain);
@@ -610,51 +609,6 @@ static void testCancelledHandoff(void)
     fixtureTeardown();
 }
 
-static device_flow_ported_set_t chainPortedProtocols(const tunnel_t *member)
-{
-    device_flow_ported_set_t set;
-    packettunnelGetChainPortedProtocols(member, &set);
-    return set;
-}
-
-static void testSwapNumbersAreDeclaredToTheirChain(void)
-{
-    fixtureSetup(kWorkers);
-    const device_flow_ported_set_t set = chainPortedProtocols(fixture.next);
-    require(set.count == 2 && set.protocols[0] == 143 && set.protocols[1] == 144,
-            "both swap numbers must be declared to every member of the chain");
-    require(deviceFlowPortedSetContains(&set, 143) && ! deviceFlowPortedSetContains(&set, 145),
-            "only the configured swap numbers are declared");
-
-    /* A tunnel of another chain neither sees nor is changed by this chain's declaration. */
-    tunnel_chain_t *other_chain = tunnelchainCreate(kWorkers);
-    tunnel_t       *other       = tunnelCreate(NULL, 0, 0);
-    require(other_chain != NULL && other != NULL, "second chain creation failed");
-    other_chain->contains_packet_node = true;
-    tunnelchainFinalize(other_chain);
-    other->chain = other_chain;
-    require(chainPortedProtocols(other).count == 0, "a declaration leaked into another chain");
-    tunnelDestroy(other);
-    tunnelchainDestroy(other_chain);
-    fixtureTeardown();
-}
-
-static void testDeclarationFollowsTheTunnelLifetime(void)
-{
-    fixtureSetupConfigured(kWorkers, "{\"protoswap\":143}");
-    const device_flow_ported_set_t set = chainPortedProtocols(fixture.next);
-    require(set.count == 1 && set.protocols[0] == 143, "only the configured swap is declared");
-    cancelMessages();
-    ipmanipulatorDestroy(fixture.tunnel, wwLifecycleStartupRollback());
-    fixture.tunnel = NULL;
-    require(chainPortedProtocols(fixture.next).count == 0, "destroying the tunnel must withdraw its declaration");
-    fixtureTeardown();
-
-    fixtureSetupConfigured(kWorkers, "{\"first-sni\":\"example.test\"}");
-    require(chainPortedProtocols(fixture.next).count == 0, "a tunnel without protocol swap declares nothing");
-    fixtureTeardown();
-}
-
 int main(void)
 {
     testCaseSet("ipmanipulator_affinity_test");
@@ -672,8 +626,6 @@ int main(void)
     testEncodingStaysLocal();
     testPlainFragmentsStayLocal();
     testCancelledHandoff();
-    testSwapNumbersAreDeclaredToTheirChain();
-    testDeclarationFollowsTheTunnelLifetime();
     frandThreadCleanup();
     frandGlobalCleanup();
     globalstateDestroySecureRandom();

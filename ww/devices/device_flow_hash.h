@@ -33,41 +33,6 @@
  *
  * Protocols without ports (ICMP, ESP, anything else) are hashed on the address
  * pair and protocol number, so every packet between two hosts for one such
- * protocol shares a flow. The exception is a ported protocol, below.
+ * protocol shares a flow.
  */
 bool deviceFlowAffinityHash(const uint8_t *packet, uint32_t length, uint64_t *out_hash);
-
-/*
- * Ported protocols. A transform such as IpManipulator's protocol swap replaces
- * the IP protocol number of a TCP/UDP packet but leaves its transport header at
- * the start of the IP payload. A device that is told such a protocol by the
- * chain it belongs to reads those two 16-bit values as ports: the hash below and
- * the Linux capture steering both use them. They may be obfuscated byte-wise
- * with a constant key because both hashes are symmetric, so the packets of one
- * inner flow keep one worker and one receive queue in either direction while
- * different flows spread. Every other protocol keeps hashing on the address pair
- * and protocol only.
- *
- * The set belongs to one device session, never to the process: a protocol number
- * names a header layout only inside the chain that declared it. TCP and UDP are
- * always ported and are not stored. A full set refuses further protocols.
- */
-enum
-{
-    kDeviceFlowPortedProtocolMax = 2
-};
-
-typedef struct device_flow_ported_set_s
-{
-    uint8_t protocols[kDeviceFlowPortedProtocolMax]; /* ascending */
-    uint8_t count;
-} device_flow_ported_set_t;
-
-/* Adds a protocol (a duplicate, TCP and UDP succeed without storing anything); false when the set is full. */
-bool deviceFlowPortedSetAdd(device_flow_ported_set_t *set, uint8_t protocol);
-/* TCP and UDP are always contained; a NULL set holds nothing else. */
-bool deviceFlowPortedSetContains(const device_flow_ported_set_t *set, uint8_t protocol);
-
-/* deviceFlowAffinityHash() that also reads the ports of the protocols in `ported` (NULL: native ports only). */
-bool deviceFlowAffinityHashWithPorts(const uint8_t *packet, uint32_t length, const device_flow_ported_set_t *ported,
-                                     uint64_t *out_hash);

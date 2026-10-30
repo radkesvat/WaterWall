@@ -4,7 +4,6 @@
 
 #include "buffer_pool.h"
 #include "devices/capture/capture_lifecycle.h"
-#include "devices/device_flow_hash.h"
 #include "devices/device_reader_session.h"
 #include "loggers/log_rate_limiter.h"
 #include "wmutex.h"
@@ -45,9 +44,7 @@ struct capture_device_s
     uint32_t                            capture_range_count;
     bool                                bypass_conntrack;
     bool                                multi_queue;
-//     device_flow_ported_set_t            ported;
-//     bool                                opaque_flow_affinity;
-//     bool                                kernel_queue_tune;
+    bool                                kernel_queue_tune;
     uint32_t                            kernel_queue_packets;
     uint32_t                            kernel_receive_buffer;
     uint32_t                            kernel_queue_profile;

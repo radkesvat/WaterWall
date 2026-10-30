@@ -270,15 +270,6 @@ tunnel_t *rawsocketCreate(node_t *node)
     }
     state->multi_queue_requested = multi_queue == NULL || cJSON_IsTrue(multi_queue);
 
-    const cJSON *opaque_flow_affinity = cJSON_GetObjectItemCaseSensitive(settings, "opaque-flow-affinity");
-    if (opaque_flow_affinity != NULL && ! cJSON_IsBool(opaque_flow_affinity))
-    {
-        LOGF("JSON Error: RawSocket->settings->opaque-flow-affinity (boolean field) : expected true or false");
-        rawsocketDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
-    state->opaque_flow_affinity = cJSON_IsTrue(opaque_flow_affinity);
-
     const cJSON *bypass_conntrack = cJSON_GetObjectItemCaseSensitive(settings, "bypass-conntrack");
     if (bypass_conntrack != NULL && ! cJSON_IsBool(bypass_conntrack))
     {

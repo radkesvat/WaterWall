@@ -120,17 +120,6 @@ numbers, even when only one family is configured, because genuine traffic using
 the reused number could not be distinguished from mapped traffic. When both
 families are enabled, their configured replacement values must also be distinct.
 
-While the tunnel exists its replacement numbers are declared to its chain as
-ported protocols (at most two distinct numbers per chain): a swapped packet still
-begins with its TCP/UDP header, so a Linux `RawSocket` capture in the same chain
-steers it by that port pair. One inner flow then keeps one worker and one receive
-queue, also when the header bytes are obfuscated with a constant key, and different
-flows spread across them. The declaration holds only inside this chain; it does not
-apply to a transparent relay that merely forwards swapped traffic, to the
-`TunDevice` reader, or to the `PingClient`/`PingServer` ICMP carrier, whose inner
-header sits elsewhere. Use at least as many mux parents as capture queues so that
-the flows can spread; one heavy inner flow stays on one queue, as native TCP does.
-
 `protoswap-tcp-2` has been removed. Configurations that still contain it fail
 at startup instead of silently changing behavior. Migrate to the single,
 reversible `protoswap-tcp` mapping; all fragments of an IPv4 datagram then use

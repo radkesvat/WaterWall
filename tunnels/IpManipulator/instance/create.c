@@ -1021,14 +1021,5 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         }
     }
 
-    /* A swapped protocol keeps the TCP/UDP header at the start of its payload. Declaring the number to the chain lets
-     * a capture device of that chain steer one inner flow to one worker and one receive queue while different flows
-     * spread. Keep this the last step: no failure path may follow it, because destroy withdraws it. */
-    if (tcp_swap_enabled && state->trick_proto_swap_tcp_number >= 0 && state->trick_proto_swap_tcp_number <= UINT8_MAX)
-        packettunnelDeclarePortedProtocol(t, (uint8_t) state->trick_proto_swap_tcp_number);
-    if (has_proto_swap_udp && state->trick_proto_swap_udp_number >= 0 &&
-        state->trick_proto_swap_udp_number <= UINT8_MAX)
-        packettunnelDeclarePortedProtocol(t, (uint8_t) state->trick_proto_swap_udp_number);
-
     return t;
 }

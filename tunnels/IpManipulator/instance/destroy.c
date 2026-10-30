@@ -38,8 +38,6 @@ void ipmanipulatorDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
     discard                 context;
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    packettunnelWithdrawPortedProtocols(t);
-
     if (state->upstream_affinity != NULL)
     {
         packetAffinityDestroy(state->upstream_affinity);
