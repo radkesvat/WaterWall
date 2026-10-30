@@ -59,6 +59,7 @@ void rawsocketOnStart(tunnel_t *t)
             return;
         }
         capturedeviceSetMultiQueue(state->capture_device, state->multi_queue_requested);
+        capturedeviceSetOpaqueFlowAffinity(state->capture_device, state->opaque_flow_affinity);
         capturedeviceConfigureKernelQueue(
             state->capture_device, state->kernel_queue_tune, state->kernel_queue_packets, state->kernel_receive_buffer);
     }

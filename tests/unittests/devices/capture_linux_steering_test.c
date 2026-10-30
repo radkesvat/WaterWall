@@ -52,7 +52,7 @@ static void parseProgram(const char *text, struct sock_fprog *program)
     require(*end == '\0', "serialized program contains exactly its declared instructions");
 }
 
-static void openLanes(steering_test_t *test, uint16_t count)
+static void openLanes(steering_test_t *test, uint16_t count, bool opaque_lanes)
 {
     require(count > 0 && count <= kMaximumTestLanes, "test lane count is supported");
     test->count = count;
@@ -64,10 +64,14 @@ static void openLanes(steering_test_t *test, uint16_t count)
             uint8_t guard[16];
         } serialized;
         memset(&serialized, 0xa5, sizeof(serialized));
-        if (lane == count)
+        /* With opaque lanes the random cascade is never installed; the extra
+         * slot then matches nothing, so selectLane still demands one match. */
+        if (lane == count && opaque_lanes)
+            snprintf(serialized.text, sizeof(serialized.text), "1,%u 0 0 0", (unsigned) (BPF_RET | BPF_K));
+        else if (lane == count)
             captureLinuxBuildOpaqueFilter(serialized.text);
         else
-            captureLinuxBuildSteeringFilter(count, lane, serialized.text);
+            captureLinuxBuildSteeringFilter(count, lane, opaque_lanes, serialized.text);
         require(memchr(serialized.text, '\0', sizeof(serialized.text)) != NULL, "serialized program is terminated");
         for (unsigned int i = 0; i < sizeof(serialized.guard); ++i)
             require(serialized.guard[i] == 0xa5, "serialization respects its fixed buffer");
@@ -328,20 +332,54 @@ static void testHeaderBoundsAndCompatibility(steering_test_t *test)
     require(selectLane(test, packet, sizeof(packet)) == 0, "opaque invalid IHL must not be classified");
 }
 
+static void testOpaqueLanes(steering_test_t *test)
+{
+    uint8_t packet[kPacketCapacity];
+    for (unsigned int protocol = 0; protocol <= UINT8_MAX; ++protocol)
+    {
+        if (protocol == 6 || protocol == 17)
+            continue;
+        makePacket(packet, (uint8_t) protocol, 20);
+        const uint16_t lane = selectLane(test, packet, sizeof(packet));
+        require(lane < test->count, "opaque complete packets take a flow lane with opaque lanes enabled");
+        put16(packet + 6, 0x2000);
+        require(selectLane(test, packet, sizeof(packet)) == lane,
+                "an opaque flow and its fragments share the address/protocol lane");
+        put16(packet + 6, 0);
+        memset(packet + 20, 0xa5, sizeof(packet) - 20);
+        require(selectLane(test, packet, sizeof(packet)) == lane, "opaque payload bytes never move the flow lane");
+        reverseEndpoints(packet);
+        require(selectLane(test, packet, sizeof(packet)) == lane, "opaque lane steering is symmetric");
+    }
+    bool seen[kMaximumTestLanes] = {0};
+    makePacket(packet, 1, 20);
+    for (unsigned int address = 0; address < 512; ++address)
+    {
+        put32(packet + 12, UINT32_C(0xc0000200) + address);
+        seen[selectLane(test, packet, sizeof(packet))] = true;
+    }
+    requireAllLanes(seen, test->count, "opaque flows between different hosts still spread across all lanes");
+}
+
 int main(void)
 {
     steering_test_t test;
     const uint16_t  counts[] = {1, 3, 16};
     for (unsigned int i = 0; i < sizeof(counts) / sizeof(counts[0]); ++i)
     {
-        openLanes(&test, counts[i]);
+        openLanes(&test, counts[i], false);
         testPortDistributionAndSymmetry(&test);
         testFragmentsAndOpaqueProtocols(&test);
         testHeaderBoundsAndCompatibility(&test);
         closeLanes(&test);
+
+        openLanes(&test, counts[i], true);
+        testPortDistributionAndSymmetry(&test);
+        testOpaqueLanes(&test);
+        closeLanes(&test);
     }
 
-    openLanes(&test, kMaximumTestLanes);
+    openLanes(&test, kMaximumTestLanes, false);
     uint8_t packet[kPacketCapacity];
     makePacket(packet, 6, 20);
     for (unsigned int port = 0; port < 64; ++port)

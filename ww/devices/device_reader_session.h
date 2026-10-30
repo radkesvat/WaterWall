@@ -77,6 +77,9 @@ struct device_reader_session_s
     atomic_bool           producer_admission;
     /* Per-device receive distribution; independent of consumer flow ownership. */
     atomic_uint           distribution_next;
+    /* Set before readers start: opaque input keeps one worker per address pair
+     * and protocol instead of rotating. */
+    bool                  opaque_flow_affinity;
     quiescence_gate_t     delivery_gate;
     master_pool_t        *message_pool;
     uint16_t              batch_capacity;

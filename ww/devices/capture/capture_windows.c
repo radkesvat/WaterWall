@@ -658,6 +658,11 @@ void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled)
     discard enabled;
 }
 
+void capturedeviceSetOpaqueFlowAffinity(capture_device_t *cdev, bool enabled)
+{
+    cdev->reader_session->opaque_flow_affinity = enabled;
+}
+
 void capturedeviceConfigureKernelQueue(capture_device_t *cdev, bool enabled, uint32_t packet_total,
                                        uint32_t receive_bytes_total)
 {
