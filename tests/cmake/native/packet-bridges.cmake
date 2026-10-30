@@ -254,3 +254,26 @@ if(LINUX AND TARGET PacketsToConnection)
   )
 endif()
 
+
+if(LINUX AND TARGET Ipv4StreamCodec)
+  foreach(bridge IN ITEMS PacketsToStream StreamToPackets)
+    if(TARGET ${bridge})
+      string(TOLOWER "${bridge}" bridge_lower)
+      set(input_test "${bridge_lower}_input_test")
+      waterwall_add_native_executable(${input_test} SUPPORT SOURCES
+        ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_bridges/ipv4_stream_input_test.c
+        ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+        ${CMAKE_SOURCE_DIR}/tunnels/Internals/Ipv4StreamCodec/src/codec.c
+        ${CMAKE_SOURCE_DIR}/tunnels/Internals/Ipv4StreamCodec/src/input.c)
+      waterwall_line_failure_test_use_tunnel(${input_test} ${bridge})
+      if(bridge STREQUAL "PacketsToStream")
+        target_compile_definitions(${input_test} PRIVATE TEST_PACKETS_TO_STREAM=1)
+      endif()
+      target_link_options(${input_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=sbufAppendMerge")
+      target_link_libraries(${input_test} PRIVATE Ipv4StreamCodec ww)
+      add_dependencies(waterwall_unit_tests ${input_test})
+      add_waterwall_unit_test(waterwall.${bridge_lower}_input_unit ${input_test}
+        "unit;tunnels;ipv4;framing;reentrant;lifetime;ownership")
+    endif()
+  endforeach()
+endif()

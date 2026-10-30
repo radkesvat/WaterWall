@@ -37,7 +37,16 @@ void vlessserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             ls->input_bytes += bytes;
     }
     if (ls->input_dispatching)
+    {
+        if ((ls->phase == kVlessServerPhaseUdpConnecting || ls->phase == kVlessServerPhaseUdpEstablished) &&
+            ! bufferRangeSettleRetained(lineGetBufferPool(l),
+                                        &ls->input_head,
+                                        &ls->pending_up,
+                                        kVlessServerMaxInputCharge,
+                                        kVlessServerMaxInputBuffers))
+            vlessserverCloseLineBidirectional(t, l);
         return;
+    }
     lineRef(l);
     ls->input_dispatching = true;
     bool ok               = vlessserverDrainInput(t, l, ls, short_uuid);
@@ -47,10 +56,7 @@ void vlessserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (ls->tunnel == t && ls->phase != kVlessServerPhaseClosing)
         {
             ls->input_dispatching = false;
-            if (ls->phase == kVlessServerPhaseFallback && ! vlessserverScheduleFallbackPayloadDrain(t, l, ls))
-                vlessserverCloseLineBidirectional(t, l);
-            else
-                vlessserverTryBypassTcp(t, l);
+            vlessserverTryBypassTcp(t, l);
         }
     }
     lineUnref(l);

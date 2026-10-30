@@ -3,7 +3,7 @@
   "nodes": [
     {
       "name": "sender",
-      "type": "PacketSender",
+      "type": "PacketGenerator",
       "settings": {
         "source-ipv4-range": "198.51.100.0/31",
         "dest-ipv4": "203.0.113.10",
@@ -25,13 +25,13 @@
     },
     {
       "name": "receiver",
-      "type": "PacketReceiver",
+      "type": "PacketCounter",
       "settings": {
         "source-ipv4-range": "198.51.100.0/31",
         "protocol-number": "ICMP",
         "expected-packets-per-ip": 3,
         "report-after-ms": 700,
-        "output-file": "packet-receiver-report.txt"
+        "output-file": "packet-counter-report.txt"
       }
     }
   ]

@@ -22,7 +22,7 @@ void vmessclientLinestateDestroy(vmessclient_lstate_t *ls)
         atomicDecU64Relaxed(ls->kind == kVmessClientLineKindUdpCarrier ? &ts->stats.active_carriers
                                                                        : &ts->stats.active_applications);
     }
-    vmessclientCancelFirstPayloadTimer(ls);
+    firstPayloadWindowCancel(&ls->first_payload);
     addresscontextReset(&ls->target_addr);
     vmessBodyDestroy(&ls->output_crypto);
     vmessBodyDestroy(&ls->input_crypto);

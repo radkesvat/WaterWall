@@ -34,6 +34,8 @@ struct fallback_finish_fixture_s
 {
     tunnel_t                     *node;
     tunnel_t                     *fallback;
+    fallback_finish_inject_fn     inject_during_init;
+    fallback_finish_inject_fn     inject_during_pause;
     fallback_finish_inject_fn     inject_during_payload;
     fallback_finish_zero_state_fn require_node_state_zero;
     uint8_t                       received[256];
@@ -44,6 +46,7 @@ struct fallback_finish_fixture_s
     uint8_t                       received_suffix[kFallbackFinishCaptureSpan];
     uint32_t                      received_suffix_len;
     uint32_t                      init_calls;
+    uint32_t                      pause_calls;
     uint32_t                      payload_calls;
     uint32_t                      finish_calls;
 };
@@ -68,8 +71,22 @@ static fallback_finish_fixture_t *fallbackFinishFixture(tunnel_t *t)
 
 static void fallbackFinishFallbackInit(tunnel_t *t, line_t *line)
 {
-    discard line;
-    ++fallbackFinishFixture(t)->init_calls;
+    fallback_finish_fixture_t *fixture = fallbackFinishFixture(t);
+    ++fixture->init_calls;
+    if (fixture->inject_during_init != NULL)
+    {
+        fixture->inject_during_init(fixture, line);
+    }
+}
+
+static void fallbackFinishFallbackPause(tunnel_t *t, line_t *line)
+{
+    fallback_finish_fixture_t *fixture = fallbackFinishFixture(t);
+    ++fixture->pause_calls;
+    if (fixture->inject_during_pause != NULL)
+    {
+        fixture->inject_during_pause(fixture, line);
+    }
 }
 
 static void fallbackFinishCapturePayload(fallback_finish_fixture_t *fixture, const sbuf_t *buf)
@@ -146,6 +163,7 @@ static tunnel_t *fallbackFinishCreateBranch(fallback_finish_fixture_t *fixture)
 
     *(fallback_finish_fixture_t **) tunnelGetState(fallback) = fixture;
     fallback->fnInitU                                        = fallbackFinishFallbackInit;
+    fallback->fnPauseU                                       = fallbackFinishFallbackPause;
     fallback->fnPayloadU                                     = fallbackFinishFallbackPayload;
     fallback->fnFinU                                         = fallbackFinishFallbackFinish;
     fixture->fallback                                        = fallback;

@@ -87,10 +87,11 @@ static void fixtureSetup(muxserver_vless_fixture_t *fixture)
     fixture->fallback.require_node_state_zero = requireVlessStateZero;
     fallbackFinishCreateBranch(&fixture->fallback);
 
-    vlessserver_tstate_t *vless_ts                 = tunnelGetState(fixture->vless);
-    vless_ts->fallback_tunnel                      = fixture->fallback.fallback;
-    vless_ts->fallback_intentional_delay_ms        = 7;
-    vless_ts->fallback_intentional_delay_jitter_ms = 0;
+    vlessserver_tstate_t *vless_ts                   = tunnelGetState(fixture->vless);
+    vless_ts->fallback_tunnel                        = fixture->fallback.fallback;
+    vless_ts->fallback_replay_config.delay_ms        = 7;
+    vless_ts->fallback_replay_config.jitter_ms       = 0;
+    vless_ts->fallback_replay_config.max_batch_bytes = kVlessServerMaxPendingBytes;
 
     twfLinePoolSetup(&fixture->lines, fixture->mux->lstate_size + fixture->vless->lstate_size, kTestLinePoolItems);
     fixture->parent = twfLinePoolCreateLine(&fixture->lines);
@@ -109,8 +110,7 @@ static void fixtureSetup(muxserver_vless_fixture_t *fixture)
 
     vlessserver_lstate_t *vless_ls = lineGetState(fixture->child, fixture->vless);
     vlessserverLinestateInitialize(vless_ls, fixture->vless, fixture->child, kVlessServerLineKindClient);
-    vless_ls->phase = kVlessServerPhaseFallback;
-    tunnelUpStreamInit(fixture->fallback.fallback, fixture->child);
+    twfRequire(vlessserverStartFallback(fixture->vless, fixture->child), "fallback initialization failed");
     fallbackFinishResetScheduledTask();
 }
 

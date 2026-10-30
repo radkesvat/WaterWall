@@ -2,7 +2,7 @@
  * Covers: socks est flow; the explicit inputs, callbacks and expected results below define this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: pendingBoundary, run
+ * Cases: pendingBoundary, run, borrowedFinish
  * Checks: Transparent repeated TCP signals, ready output through Pause, handshake/FIFO ordering,
  * TCP retirement after setup, UDP boundary pressure, pending limits and callback-driven closure.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -518,8 +518,183 @@ static void pendingBoundary(bool entries)
     twfWorkerEnvTeardown(&env);
 }
 
+static unsigned borrowed_finishes, borrowed_payloads;
+
+static void finishBorrowed(tunnel_t *t, line_t *l)
+{
+    discard t;
+    twfRequire(borrowed_finishes++ == 0, "SOCKS dispatched after borrowed state was destroyed");
+    tunnelUpStreamFin(node, l);
+    twfRequire(lineIsAlive(l), "borrowed SOCKS node destroyed the owner's line");
+    twfRequireLineStateZeroed(l, node, "source Finish retained SOCKS state");
+}
+
+static void finishBorrowedPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    ++borrowed_payloads;
+    lineReuseBuffer(l, buf);
+    finishBorrowed(t, l);
+}
+
+typedef enum borrowed_finish_point_e
+{
+    kBorrowedEst,
+    kBorrowedHandshake,
+    kBorrowedUpstream,
+    kBorrowedDownstream,
+#ifdef SOCKS_EST_SERVER
+    kBorrowedInit,
+    kBorrowedCommandReply,
+#else
+    kBorrowedGreeting,
+    kBorrowedPause,
+    kBorrowedResume,
+#endif
+    kBorrowedFinishPointCount
+} borrowed_finish_point_t;
+
+/* The source has sent Finish, but returns to its older callback before finally
+ * destroying its line. A live line must not revive the destroyed SOCKS state. */
+static void borrowedFinish(borrowed_finish_point_t point)
+{
+    twfSetCase("SOCKS stops continuation after source Finish on a still-alive borrowed line");
+    twf_worker_env_t env;
+    twfWorkerEnvSetup(&env, 4096, 300);
+    createTunnels();
+    prev->fnEstD = prev->fnPauseD = prev->fnResumeD = noop;
+    prev->fnFinD                                    = ownerFinish;
+    prev->fnPayloadD                                = discardPayload;
+    next->fnInitU = next->fnPauseU = noop;
+    next->fnFinU                   = nextFinish;
+    next->fnPayloadU               = discardPayload;
+    borrowed_finishes = borrowed_payloads = next_finishes = 0;
+    twf_line_pool_t lines;
+    twfLinePoolSetup(&lines, node->lstate_size, 1);
+    application = twfLinePoolCreateLine(&lines);
+    lineRef(application);
+    socksLstate *ls = lineGetState(application, node);
+#ifdef SOCKS_EST_SERVER
+    socks5serverLinestateInitialize(ls, node, application, kSocks5ServerLineKindControlTcp);
+    ((socksTstate *) tunnelGetState(node))->no_auth       = true;
+    ((socksTstate *) tunnelGetState(node))->allow_connect = true;
+    ls->phase                                             = kSocks5ServerPhaseTcpEstablished;
+    ls->next_initialized = ls->connect_reply_sent = true;
+#else
+    socks5clientLinestateInitialize(ls, node, application, kSocks5ClientLineKindDirect);
+    ls->phase = kSocks5ClientPhaseEstablished;
+    ip_addr_t ip;
+    twfRequire(ipaddr_aton("127.0.0.1", &ip), "fixture address");
+    addresscontextSetIpPort(&ls->target_addr, &ip, 80);
+#endif
+    bool continued = false;
+    switch (point)
+    {
+    case kBorrowedEst:
+        prev->fnEstD = finishBorrowed;
+        tunnelDownStreamEst(node, application);
+        break;
+    case kBorrowedHandshake:
+#ifdef SOCKS_EST_SERVER
+        ls->phase            = kSocks5ServerPhaseWaitMethod;
+        ls->next_initialized = ls->connect_reply_sent = false;
+        prev->fnPayloadD                              = finishBorrowedPayload;
+        const uint8_t method[]                        = {5, 1, 0};
+        bufferstreamPush(&ls->in_stream, bytes(application, method, sizeof(method)));
+        continued = socks5serverControlDrainInput(node, application, ls);
+#else
+        ls->phase              = kSocks5ClientPhaseWaitMethod;
+        next->fnPayloadU       = finishBorrowedPayload;
+        const uint8_t method[] = {5, 0};
+        bufferstreamPush(&ls->in_stream, bytes(application, method, sizeof(method)));
+        continued = socks5clientDrainHandshakeInput(node, application, ls);
+#endif
+        break;
+    case kBorrowedUpstream:
+        next->fnPayloadU = finishBorrowedPayload;
+        bufferqueuePushBack(&ls->pending_up, bytes(application, "A", 1));
+        bufferqueuePushBack(&ls->pending_up, bytes(application, "B", 1));
+#ifdef SOCKS_EST_SERVER
+        continued = socks5serverDrainControl(node, application);
+#else
+        continued = socks5clientDrainPending(node, application);
+#endif
+        break;
+    case kBorrowedDownstream:
+        prev->fnPayloadD = finishBorrowedPayload;
+#ifdef SOCKS_EST_SERVER
+        bufferqueuePushBack(&ls->pending_down, bytes(application, "A", 1));
+        bufferqueuePushBack(&ls->pending_down, bytes(application, "B", 1));
+        continued = socks5serverDrainControl(node, application);
+#else
+        bufferstreamPush(&ls->in_stream, bytes(application, "A", 1));
+        bufferqueuePushBack(&ls->pending_down, bytes(application, "B", 1));
+        continued = socks5clientDrainHandshakeInput(node, application, ls);
+#endif
+        break;
+#ifdef SOCKS_EST_SERVER
+    case kBorrowedInit:
+        ls->phase            = kSocks5ServerPhaseWaitRequest;
+        ls->next_initialized = ls->connect_reply_sent = false;
+        ls->pending_read_pause                        = true;
+        next->fnInitU                                 = finishBorrowed;
+        const uint8_t request[]                       = {5, 1, 0, 1, 127, 0, 0, 1, 0, 80, 'A'};
+        bufferstreamPush(&ls->in_stream, bytes(application, request, sizeof(request)));
+        continued = socks5serverControlDrainInput(node, application, ls);
+        break;
+    case kBorrowedCommandReply:
+        ls->phase                   = kSocks5ServerPhaseConnectWaitEst;
+        ls->connect_reply_sent      = false;
+        ls->transport_est_forwarded = true;
+        prev->fnPayloadD            = finishBorrowedPayload;
+        bufferqueuePushBack(&ls->pending_up, bytes(application, "A", 1));
+        continued = socks5serverDrainControl(node, application);
+        break;
+#else
+    case kBorrowedGreeting:
+        ls->phase        = kSocks5ClientPhaseIdle;
+        next->fnPayloadU = finishBorrowedPayload;
+        tunnelDownStreamEst(node, application);
+        break;
+    case kBorrowedPause:
+        ls->phase      = kSocks5ClientPhaseWaitCommand;
+        prev->fnPauseD = finishBorrowed;
+        continued      = socks5clientQueuePayload(node, application, bytes(application, "A", 1));
+        break;
+    case kBorrowedResume:
+        ls->source_pause_sent = true;
+        prev->fnResumeD       = finishBorrowed;
+        continued             = socks5clientDrainPending(node, application);
+        break;
+#endif
+    case kBorrowedFinishPointCount:
+        twfRequire(false, "invalid fixture point");
+        break;
+    }
+    twfRequire(! continued && borrowed_finishes == 1 && borrowed_payloads <= 1,
+               "SOCKS continued protocol work after borrowed-state destruction");
+    twfRequire(lineIsAlive(application), "SOCKS destroyed its borrowed line");
+    twfRequireLineStateZeroed(application, node, "SOCKS continuation revived destroyed state");
+    twfRequire(twfLineRefCount(application) == 2, "borrowed SOCKS continuation leaked a line reference");
+    unsigned expected_finish = 1;
+#ifdef SOCKS_EST_SERVER
+    if (point == kBorrowedHandshake)
+        expected_finish = 0;
+#endif
+    twfRequire(next_finishes == expected_finish, "source Finish escaped to an uninitialized or duplicate peer");
+    lineDestroy(application);
+    lineUnref(application);
+    twfRequireNoLeakedBuffers();
+    twfLinePoolTeardown(&lines);
+    tunnelDestroy(next);
+    tunnelDestroy(prev);
+    tunnelDestroy(node);
+    twfWorkerEnvTeardown(&env);
+}
+
 int main(void)
 {
+    for (borrowed_finish_point_t point = 0; point < kBorrowedFinishPointCount; ++point)
+        borrowedFinish(point);
     pendingBoundary(false);
     pendingBoundary(true);
     run(false, false);

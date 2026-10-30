@@ -3,6 +3,7 @@
 
 #include "imported_tunnels.h"
 #include "loggers/core_logger.h"
+#include "lwip/engine.h"
 #include "node_builder/config_policy.h"
 #include "os_helpers.h"
 #include "startup_options.h"
@@ -190,6 +191,9 @@ int waterwallInnerMain(int argc, char **argv)
                                                          .log_console   = getCoreSettings()->dns_log_console},
         .application_finalizer = waterwallApplicationFinalize,
     };
+
+    /* Set the owner-engine receive target before shared runtime initialization. */
+    wwLwipEngineSetDefaultReceiveBudget(getCoreSettings()->tcp_stack_receive_budget);
 
     // core logger is available after ww setup
     startup_result = createGlobalState(runtime_data);

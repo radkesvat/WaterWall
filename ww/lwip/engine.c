@@ -40,6 +40,11 @@ struct ww_lwip_engine_s
     bool                       quiesced;
     bool                       ack_batch;
     struct tcp_pcb            *ack_pending;
+    struct tcp_pcb            *receive_members;
+    uint32_t                   receive_budget;
+    uint32_t                   receive_connections;
+    uint32_t                   receive_share;
+    bool                       receive_rebalance;
     packet_batch_participant_t receive_batch;
     ww_lwip_wake_fn            wake;
     void                      *wake_argument;
@@ -56,6 +61,16 @@ static size_t                                 module_offsets[kWwLwipStateCount];
 static size_t                                 control_size;
 static bool                                   shared_initialized;
 static unsigned                               live_engines;
+static uint32_t                               default_receive_budget = WW_LWIP_DEFAULT_RECEIVE_BUDGET;
+
+static void engineFlushAcks(ww_lwip_engine_t *engine);
+
+void wwLwipEngineSetDefaultReceiveBudget(uint32_t budget)
+{
+    assert(! shared_initialized && current_engine == NULL && live_engines == 0);
+    assert(budget == 0 || (budget >= WW_LWIP_MIN_RECEIVE_WINDOW && budget <= 1024U * 1024U * 1024U));
+    default_receive_budget = budget;
+}
 
 static const struct
 {
@@ -190,6 +205,9 @@ bool wwLwipEngineEnter(ww_lwip_engine_t *engine, ww_lwip_engine_t **previous)
 static void engineLeave(ww_lwip_engine_t *engine, ww_lwip_engine_t *previous, bool notify)
 {
     LWIP_ASSERT("balanced engine scope", current_engine == engine && engine->depth != 0);
+    if (engine->depth == 1 && engine->receive_rebalance && ! engine->ack_batch && ! engine->dispatching &&
+        ! engine->quiesced && ! engine->releasing)
+        engineFlushAcks(engine);
     --engine->depth;
     current_engine = previous;
     if (notify && engine->depth == 0 && ! engine->releasing && ! engine->quiesced && engine->wake != NULL)
@@ -275,6 +293,129 @@ void wwLwipEngineCancelAck(struct tcp_pcb *pcb)
     }
 }
 
+static void engineUpdateReceiveShare(ww_lwip_engine_t *engine)
+{
+    const uint32_t previous = engine->receive_share;
+    engine->receive_share =
+        engine->receive_connections == 0
+            ? TCP_WND
+            : LWIP_MIN(TCP_WND,
+                       LWIP_MAX(WW_LWIP_MIN_RECEIVE_WINDOW, engine->receive_budget / engine->receive_connections));
+    /* Joining never enlarges a share. Retiring members at either clamp also
+     * leaves every advertised target unchanged, so no member scan is needed. */
+    if (engine->receive_connections == 0)
+        engine->receive_rebalance = false;
+    else if (engine->receive_share > previous)
+        engine->receive_rebalance = true;
+}
+
+uint32_t wwLwipTcpReceiveWindow(struct tcp_pcb *pcb)
+{
+    assert(current_engine != NULL && pcb->ww_engine == current_engine && pcb->state != LISTEN);
+    if (current_engine->receive_budget == 0 || pcb->state == CLOSED || pcb->state == TIME_WAIT)
+        return pcb->rcv_wnd;
+    if (pcb->ww_receive_previous == NULL)
+    {
+        pcb->ww_receive_next     = current_engine->receive_members;
+        pcb->ww_receive_previous = &current_engine->receive_members;
+        if (pcb->ww_receive_next != NULL)
+            pcb->ww_receive_next->ww_receive_previous = &pcb->ww_receive_next;
+        current_engine->receive_members = pcb;
+        ++current_engine->receive_connections;
+        engineUpdateReceiveShare(current_engine);
+    }
+    assert(current_engine->receive_connections > 0 && pcb->rcv_wnd <= TCP_WND_MAX(pcb));
+    const uint32_t share = LWIP_MIN((uint32_t) TCP_WND_MAX(pcb), current_engine->receive_share);
+    const uint32_t held  = TCP_WND_MAX(pcb) - pcb->rcv_wnd;
+    if (share < TCP_WND_MAX(pcb) && ! pcb->ww_receive_limited)
+    {
+        pcb->ww_receive_limited = 1;
+        /* Earlier unbounded output may have advanced the speculative edge
+         * before failing. Start from the successful wire promise once; later
+         * output commits its logical edge to avoid cumulative scale rounding. */
+        pcb->rcv_ann_right_edge = pcb->ww_rcv_advertised_valid ? pcb->ww_rcv_advertised_edge : pcb->rcv_nxt;
+    }
+    return held < share ? LWIP_MIN((uint32_t) pcb->rcv_wnd, share - held) : 0;
+}
+
+void wwLwipTcpPrepareReceiveWindow(struct tcp_pcb *pcb)
+{
+    if (! pcb->ww_receive_limited)
+        discard wwLwipTcpReceiveWindow(pcb);
+    if (pcb->ww_receive_limited)
+        tcp_update_rcv_ann_wnd(pcb);
+}
+
+void wwLwipEngineForgetReceive(struct tcp_pcb *pcb)
+{
+    assert(current_engine != NULL && pcb->ww_engine == current_engine);
+    if (pcb->ww_receive_previous != NULL)
+    {
+        *pcb->ww_receive_previous = pcb->ww_receive_next;
+        if (pcb->ww_receive_next != NULL)
+            pcb->ww_receive_next->ww_receive_previous = pcb->ww_receive_previous;
+        pcb->ww_receive_previous = NULL;
+        pcb->ww_receive_next     = NULL;
+        assert(current_engine->receive_connections > 0);
+        --current_engine->receive_connections;
+        engineUpdateReceiveShare(current_engine);
+    }
+}
+
+static void engineQueueAck(struct tcp_pcb *pcb)
+{
+    if (pcb->ww_ack_previous == NULL)
+    {
+        pcb->ww_ack_next     = current_engine->ack_pending;
+        pcb->ww_ack_previous = &current_engine->ack_pending;
+        if (pcb->ww_ack_next != NULL)
+            pcb->ww_ack_next->ww_ack_previous = &pcb->ww_ack_next;
+        current_engine->ack_pending = pcb;
+    }
+}
+
+static void engineRebalanceReceiveWindows(ww_lwip_engine_t *engine)
+{
+    engine->receive_rebalance = false;
+    /* Recalculation cannot call a neighbour or free a PCB. Collect ACK intent
+     * first; the existing pop-before-output queue handles callback retirement. */
+    for (struct tcp_pcb *pcb = engine->receive_members; pcb != NULL; pcb = pcb->ww_receive_next)
+    {
+        if (pcb->state == ESTABLISHED && pcb->ww_rcv_advertised_valid &&
+            TCP_SEQ_LEQ(pcb->ww_rcv_advertised_edge, pcb->rcv_nxt))
+        {
+            tcp_update_rcv_ann_wnd(pcb);
+            if (RCV_WND_SCALE(pcb, pcb->rcv_ann_wnd) != 0)
+            {
+                tcp_ack_now(pcb);
+                engineQueueAck(pcb);
+            }
+        }
+    }
+}
+
+static void engineFlushAcks(ww_lwip_engine_t *engine)
+{
+    assert(current_engine == engine && ! engine->ack_batch && ! engine->dispatching);
+    engine->dispatching = true;
+    do
+    {
+        if (engine->receive_rebalance)
+            engineRebalanceReceiveWindows(engine);
+        while (engine->ack_pending != NULL)
+        {
+            struct tcp_pcb *pcb = engine->ack_pending;
+            wwLwipEngineCancelAck(pcb);
+            if ((pcb->flags & (TF_ACK_DELAY | TF_ACK_NOW)) != 0)
+            {
+                tcp_ack_now(pcb);
+                tcp_output(pcb);
+            }
+        }
+    } while (engine->receive_rebalance);
+    engine->dispatching = false;
+}
+
 int wwLwipEngineDeferAck(struct tcp_pcb *pcb)
 {
     assert(current_engine != NULL && pcb->ww_engine == current_engine);
@@ -290,14 +431,7 @@ int wwLwipEngineDeferAck(struct tcp_pcb *pcb)
     if (LWIP_TCP_SACK_VALID(pcb, 0))
         return 0;
 #endif
-    if (pcb->ww_ack_previous == NULL)
-    {
-        pcb->ww_ack_next     = current_engine->ack_pending;
-        pcb->ww_ack_previous = &current_engine->ack_pending;
-        if (pcb->ww_ack_next != NULL)
-            pcb->ww_ack_next->ww_ack_previous = &pcb->ww_ack_next;
-        current_engine->ack_pending = pcb;
-    }
+    engineQueueAck(pcb);
     tcp_set_flags(pcb, TF_ACK_DELAY);
     return 1;
 }
@@ -308,22 +442,8 @@ void wwLwipEngineEndAckBatch(ww_lwip_engine_t *engine)
     ww_lwip_engine_t *previous;
     if (! wwLwipEngineEnter(engine, &previous))
         LWIP_PLATFORM_ASSERT("ACK batch requires its owner event worker");
-    engine->ack_batch   = false;
-    engine->dispatching = true;
-    while (engine->ack_pending != NULL)
-    {
-        struct tcp_pcb *pcb = engine->ack_pending;
-        wwLwipEngineCancelAck(pcb);
-        /* Piggybacked or urgent output may already have acknowledged the data.
-         * Unlink first: output callbacks may retire other queued connections.
-         * Failed output retains lwIP's ordinary ACK retry flags and timer. */
-        if ((pcb->flags & (TF_ACK_DELAY | TF_ACK_NOW)) != 0)
-        {
-            tcp_ack_now(pcb);
-            tcp_output(pcb);
-        }
-    }
-    engine->dispatching = false;
+    engine->ack_batch = false;
+    engineFlushAcks(engine);
     wwLwipEngineLeave(engine, previous);
 }
 
@@ -336,6 +456,8 @@ ww_lwip_engine_t *wwLwipEngineCreate(uint8_t owner, struct wloop_s *loop)
     ww_lwip_engine_t *engine = memoryAllocateZero(control_size);
     engine->owner            = owner;
     engine->loop             = loop;
+    engine->receive_budget   = default_receive_budget;
+    engine->receive_share    = TCP_WND;
     engine->receive_batch    = (packet_batch_participant_t) {
            .begin = engineReceiveBatchBegin, .end = engineReceiveBatchEnd, .context = engine};
     wwLwipPoolCacheInitialize(&engine->pool_cache);
@@ -459,6 +581,8 @@ void wwLwipEngineDestroy(ww_lwip_engine_t *engine)
         LWIP_ASSERT("listener cleanup", result == ERR_OK);
         (void) result;
     }
+    LWIP_ASSERT("receive-window membership fully released",
+                engine->receive_members == NULL && engine->receive_connections == 0);
     for (struct netif *netif = netif_list; netif != NULL; netif = netif->next)
         wwLwipNetifProtocolCleanup(netif);
     while (udp_pcbs != NULL)

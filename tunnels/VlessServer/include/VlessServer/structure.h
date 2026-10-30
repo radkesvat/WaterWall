@@ -1,5 +1,6 @@
 #pragma once
 
+#include "FallbackReplay/fallback_replay.h"
 #include "wwapi.h"
 
 enum
@@ -62,13 +63,12 @@ typedef struct vlessserver_tstate_s
     node_t   *fallback_node;
     tunnel_t *fallback_tunnel;
 
-    vlessserver_user_t *users;
-    uint32_t            user_count;
-    uint32_t            fallback_intentional_delay_ms;
-    uint32_t            fallback_intentional_delay_jitter_ms;
-    bool                allow_connect;
-    bool                allow_udp;
-    bool                verbose;
+    vlessserver_user_t      *users;
+    uint32_t                 user_count;
+    fallback_replay_config_t fallback_replay_config;
+    bool                     allow_connect;
+    bool                     allow_udp;
+    bool                     verbose;
 } vlessserver_tstate_t;
 
 typedef struct vlessserver_lstate_s
@@ -87,7 +87,7 @@ typedef struct vlessserver_lstate_s
     buffer_budget_t   response_budget;
     /* Response-header/reentry ordering only; direct ready replies are forwarded. */
     buffer_queue_t          pending_down;
-    buffer_queue_t         *fallback_pending_up;
+    fallback_replay_t       fallback;
     user_handle_t           user_handle;
     char                   *auth_username; // resolved account name, owned (NULL if none)
     char                   *auth_password; // resolved raw password / UUID, owned (NULL if none)
@@ -107,9 +107,6 @@ typedef struct vlessserver_lstate_s
     /* Client-side upstream permission: current backend contribution and emitted hold. */
     bool udp_backend_paused : 1;
     bool udp_source_pause_sent : 1;
-    bool fallback_close_draining : 1;
-    bool fallback_branch_finished_during_drain : 1;
-    bool fallback_delay_scheduled : 1;
 } vlessserver_lstate_t;
 
 enum
@@ -125,5 +122,8 @@ enum
     kVlessServerBufferQueueCap         = 8,
     kVlessServerMaxBufferedBytes       = 2 * 1024 * 1024 + 65537,
     kVlessServerMaxPendingBytes        = 2 * 1024 * 1024,
+    kVlessServerMaxInputCharge         = 8 * 1024 * 1024,
+    kVlessServerMaxInputBuffers        = 1024,
+    kVlessServerMaxFallbackCharge      = 8 * 1024 * 1024,
     kVlessServerMaxPendingBuffers      = 1024
 };

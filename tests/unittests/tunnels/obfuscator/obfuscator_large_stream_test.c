@@ -18,6 +18,7 @@ extern tunnel_t *obfuscatorserverTunnelCreate(node_t *node);
 static unsigned  interruption;
 static uint32_t  pool_size = SPLICE_PAYLOAD_LIMIT;
 static tunnel_t *decoder;
+static tunnel_t *encoder;
 static bool      decoder_receives_upstream;
 static void      recordFinish(tunnel_t *t, line_t *l)
 {
@@ -53,7 +54,7 @@ static void captureWire(tunnel_t *t, line_t *l, sbuf_t *buf)
     discard t;
     discard l;
     twfRequire(wire == NULL, "encoder emitted more than one callback");
-    if (! tunnelchainIsWorkerPacketLine(tunnelGetChain(t->prev), l))
+    if (! tunnelchainIsWorkerPacketLine(tunnelGetChain(encoder), l))
         twfRequire(! sbufGetRecalculateChecksum(buf), "stream transform acquired a packet checksum request");
     wire = buf;
 }
@@ -66,6 +67,17 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
     received += sbufGetLength(buf);
     ++calls;
     lineReuseBuffer(l, buf);
+    if (interruption == 5 && calls == 1)
+    {
+        const uint8_t nested_record[] = {23, 3, 3, 0, 1, (uint8_t) (pattern(received) ^ 90)};
+        sbuf_t       *nested          = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
+        sbufSetLength(nested, sizeof(nested_record));
+        sbufWrite(nested, nested_record, sizeof(nested_record));
+        if (decoder_receives_upstream)
+            decoder->fnPayloadU(decoder, l, nested);
+        else
+            decoder->fnPayloadD(decoder, l, nested);
+    }
     if (interruption == 1)
     {
         if (decoder_receives_upstream)
@@ -87,7 +99,7 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t headroom)
 {
-    twf_worker_env_t  env;
+    twf_worker_env_t env;
     twfWorkerEnvSetupWithBufferSizes(
         &env, min(pool_size, (uint32_t) LARGE_BUFFER_SIZE_RAM_HIGH), 4096, 128, pool_size, pool_size);
     cJSON *settings =
@@ -110,13 +122,14 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
     cp->fnFinD                = ownerFinish;
     sp->fnFinD                = ownerFinish;
     decoder                   = reverse ? client : server;
-    decoder_receives_upstream = false;
+    decoder_receives_upstream = ! reverse;
+    encoder                   = reverse ? server : client;
     client->fnInitU(client, cl);
     server->fnInitU(server, sl);
     cn->fnPayloadU = captureWire;
-    sn->fnPayloadU = captureWire;
+    sp->fnPayloadD = captureWire;
     cp->fnPayloadD = receive;
-    sp->fnPayloadD = receive;
+    sn->fnPayloadU = receive;
     for (unsigned delivery = 0; delivery < 2; ++delivery)
     {
         sbuf_t *input = bufferpoolGetLargeBuffer(env.pool);
@@ -128,7 +141,7 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
             sbufGetMutablePtr(input)[i] = pattern(i);
         const uintptr_t input_identity = (uintptr_t) input;
         if (reverse)
-            server->fnPayloadU(server, sl, input);
+            server->fnPayloadD(server, sl, input);
         else
             client->fnPayloadU(client, cl, input);
         twfRequire(wire != NULL, "encoder dropped input");
@@ -179,7 +192,10 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
 
                 sbuf_t *partial = sbufCreateWithPadding(6, 128);
                 sbufMoveTo(partial, encoded, 6);
-                tunnelDownStreamPayload(decoder, line, partial);
+                if (decoder_receives_upstream)
+                    tunnelUpStreamPayload(decoder, line, partial);
+                else
+                    tunnelDownStreamPayload(decoder, line, partial);
                 twfRequire(calls == 0, "decoder forwarded an incomplete record");
                 tunnelUpStreamResume(decoder, line);
                 tunnelUpStreamResume(decoder, line);
@@ -196,11 +212,17 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
             if (reverse)
                 client->fnPayloadD(client, cl, encoded);
             else
-                server->fnPayloadD(server, sl, encoded);
+                server->fnPayloadU(server, sl, encoded);
             if (interruption == 1 || interruption == 2)
             {
                 twfRequire(! lineIsAlive(reverse ? cl : sl), "decoder interruption did not close through owner");
                 twfRequire(calls == (interruption == 1), "malformed frame escaped or close repeated delivery");
+                break;
+            }
+            if (interruption == 5)
+            {
+                twfRequire(calls == 2 && received == length + 1,
+                           "nested decoder input lost FIFO or retained stale state");
                 break;
             }
             if (interruption == 3)
@@ -211,7 +233,7 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
                 tunnelUpStreamResume(decoder, line);
                 tunnelDownStreamResume(decoder, line);
                 tunnelDownStreamResume(decoder, line);
-                twfRequire(strcmp(trace.seq, "UUuuRRrrUUuuURRrr") == 0,
+                twfRequire(strcmp(trace.seq, reverse ? "UUuuRRrrUUuuURRrr" : "UUuuRRrrUUuuuRRrr") == 0,
                            "decoder suppressed or reordered repeated advisory signals");
             }
             twfRequire(calls == 1, "decoder did not deliver one complete batch through Pause");
@@ -226,7 +248,7 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
                 if (reverse)
                     client->fnPayloadD(client, cl, part);
                 else
-                    server->fnPayloadD(server, sl, part);
+                    server->fnPayloadU(server, sl, part);
             }
             lineReuseBuffer(cl, encoded);
         }
@@ -308,25 +330,37 @@ static void testFixedRetention(bool server, uint32_t ordinary_size, uint32_t spl
     sbuf_t        *input = bufferpoolGetBestFit(env.pool, limit, 128);
     sbufSetLength(input, limit);
     const uint32_t records = fillRecords(input, 0);
-    t->fnPayloadD(t, line, input);
-    twfRequire(lineIsAlive(line) && trace.prev_payload == 1 && trace.prev_payload_bytes == limit - 5U * records,
+    if (server)
+        t->fnPayloadU(t, line, input);
+    else
+        t->fnPayloadD(t, line, input);
+    twfRequire(lineIsAlive(line) && (server ? trace.next_payload : trace.prev_payload) == 1 &&
+                   (server ? trace.next_payload_bytes : trace.prev_payload_bytes) == limit - 5U * records,
                "Obfuscator refused its exact fixed retention boundary or waited for Resume");
     // An incomplete header remains part of the same fixed admission budget.
     input                          = bufferpoolGetSmallBuffer(env.pool);
     const uint8_t partial_header[] = {23, 3, 3, 0};
     sbufSetLength(input, sizeof(partial_header));
     sbufWrite(input, partial_header, sizeof(partial_header));
-    t->fnPayloadD(t, line, input);
-    twfRequire(lineIsAlive(line) && trace.prev_payload == 1, "incomplete record was not retained");
+    if (server)
+        t->fnPayloadU(t, line, input);
+    else
+        t->fnPayloadD(t, line, input);
+    twfRequire(lineIsAlive(line) && (server ? trace.next_payload : trace.prev_payload) == 1,
+               "incomplete record was not retained");
     input = bufferpoolGetBestFit(env.pool, limit - sizeof(partial_header) + 1U, 128);
     sbufSetLength(input, limit - sizeof(partial_header) + 1U);
     // Complete that empty record and fill the rest with valid frames: only the admission limit should refuse it.
     fillRecords(input, 1);
-    t->fnPayloadD(t, line, input);
+    if (server)
+        t->fnPayloadU(t, line, input);
+    else
+        t->fnPayloadD(t, line, input);
     twfRequire(! lineIsAlive(line), "Obfuscator retention limit grew with pool geometry");
-    twfRequire(trace.prev_finish == 1 && trace.next_finish == 1 &&
-                   strcmp(trace.seq, owner_at_next ? "iUpfF" : "IUpFf") == 0,
-               "Obfuscator did not finish the borrower before the owner exactly once");
+    twfRequire(
+        trace.prev_finish == 1 && trace.next_finish == 1 &&
+            strcmp(trace.seq, server ? (owner_at_next ? "iUPfF" : "IUPFf") : (owner_at_next ? "iUpfF" : "IUpFf")) == 0,
+        "Obfuscator did not finish the borrower before the owner exactly once");
     twfRequireLineStateZeroed(line, t, "Obfuscator overflow retained stream state");
     twfRequire(twfLineRefCount(line) == 1, "Obfuscator overflow did not settle its line references");
     lineUnref(line);
@@ -351,8 +385,12 @@ static void testPacketClonePadding(bool server)
     twfRequire(t != NULL, "packet Obfuscator construction failed");
     twf_trace_t trace = {0};
     tunnel_t   *next  = twfCreateNextTunnel(&trace);
+    tunnel_t   *prev  = twfCreatePrevTunnel(&trace);
+    tunnelBind(prev, t);
     tunnelBind(t, next);
     next->fnPayloadU            = captureWire;
+    prev->fnPayloadD            = captureWire;
+    encoder                     = t;
     tunnel_chain_t *chain       = tunnelchainCreate(1);
     chain->sum_line_state_size  = t->lstate_size;
     chain->sum_padding_left     = 128;
@@ -369,7 +407,10 @@ static void testPacketClonePadding(bool server)
     for (uint32_t i = 0; i < length; ++i)
         sbufGetMutablePtr(input)[i] = pattern(i);
     wire = NULL;
-    tunnelUpStreamPayload(t, line, input);
+    if (server)
+        tunnelDownStreamPayload(t, line, input);
+    else
+        tunnelUpStreamPayload(t, line, input);
     twfRequire(wire != NULL && sbufGetLength(wire) == length + 5, "packet record framing changed");
     twfRequire(sbufGetLeftCapacity(wire) >= 123, "packet clone discarded onward padding");
     const uint8_t *bytes = sbufGetRawPtr(wire);
@@ -379,13 +420,48 @@ static void testPacketClonePadding(bool server)
         twfRequire(bytes[i + 5] == (uint8_t) (pattern(i) ^ 90), "packet clone changed transformed bytes");
     twfRequire(lineIsAlive(line) && sbufGetRecalculateChecksum(wire),
                "packet transform changed lifecycle/checksum request");
+    sbuf_t *encoded = wire;
+    wire            = NULL;
+    if (server)
+        tunnelUpStreamPayload(t, line, encoded);
+    else
+        tunnelDownStreamPayload(t, line, encoded);
+    twfRequire(wire != NULL && sbufGetLength(wire) == length, "packet decoder did not remove the wire header");
+    bytes = sbufGetRawPtr(wire);
+    for (uint32_t i = 0; i < length; ++i)
+        twfRequire(bytes[i] == pattern(i), "packet roundtrip changed plaintext");
+    twfRequire(sbufGetRecalculateChecksum(wire), "packet decode lost the checksum request");
     lineReuseBuffer(line, wire);
-    wire = NULL;
+    wire                               = NULL;
+    const uint8_t invalid_records[][6] = {
+        {22, 3, 3, 0, 1, 0}, /* Wrong record type. */
+        {23, 3, 3, 0, 2, 0}, /* Incomplete body. */
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_records); ++i)
+    {
+        sbuf_t *invalid = bufferpoolGetSmallBuffer(env.pool);
+        sbufSetLength(invalid, sizeof(invalid_records[i]));
+        sbufWrite(invalid, invalid_records[i], sizeof(invalid_records[i]));
+        if (server)
+            tunnelUpStreamPayload(t, line, invalid);
+        else
+            tunnelDownStreamPayload(t, line, invalid);
+        twfRequire(wire == NULL && lineIsAlive(line), "malformed packet escaped or destroyed its packet line");
+    }
+    sbuf_t *oversized = bufferpoolGetBestFit(env.pool, UINT16_MAX + 1U, 128);
+    sbufSetLength(oversized, UINT16_MAX + 1U);
+    memoryZero(sbufGetMutablePtr(oversized), UINT16_MAX + 1U);
+    if (server)
+        tunnelDownStreamPayload(t, line, oversized);
+    else
+        tunnelUpStreamPayload(t, line, oversized);
+    twfRequire(wire == NULL && lineIsAlive(line), "oversized packet escaped or destroyed its packet line");
     tunnelUpStreamFin(t, line);
     twfRequire(lineIsAlive(line) && trace.next_init == 1 && trace.next_finish == 1,
                "packet lifecycle was not forwarded without destroying its line");
     tunnelchainDestroy(chain);
     tunnelDestroy(next);
+    tunnelDestroy(prev);
     tunnelDestroy(t);
     cJSON_Delete(settings);
     twfWorkerEnvTeardown(&env);
@@ -413,7 +489,7 @@ int main(void)
             runCase(direction != 0, short_lengths[i], 0, 4);
         }
         runCase(direction != 0, 128, 1, 128);
-        for (interruption = 1; interruption <= 4; ++interruption)
+        for (interruption = 1; interruption <= 5; ++interruption)
             runCase(direction != 0, SPLICE_PAYLOAD_LIMIT, 0, 128);
         interruption = 0;
     }

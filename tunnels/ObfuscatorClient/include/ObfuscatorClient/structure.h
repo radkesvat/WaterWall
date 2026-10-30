@@ -2,17 +2,7 @@
 
 #include "wwapi.h"
 
-enum obfuscator_methods_e
-{
-    kObfuscatorMethodXor = kDvsFirstOption,
-};
-
-enum obfuscator_skip_parts_e
-{
-    kObfuscatorSkipNone = kDvsFirstOption,
-    kObfuscatorSkipIpv4,
-    kObfuscatorSkipTransport
-};
+#include "ObfuscatorCommon/codec.h"
 
 typedef struct obfuscatorclient_tstate_s
 {
@@ -30,11 +20,8 @@ typedef struct obfuscatorclient_lstate_s
 
 enum
 {
-    kTunnelStateSize               = sizeof(obfuscatorclient_tstate_t),
-    kLineStateSize                 = sizeof(obfuscatorclient_lstate_t),
-    kObfuscatorTlsRecordHeaderSize = 5,
-    // Fixed stream admission budget, independent of pool geometry and splice targets.
-    kObfuscatorMaxBufferedStreamBytes = 2U * 1024U * 1024U + UINT16_MAX + kObfuscatorTlsRecordHeaderSize
+    kTunnelStateSize = sizeof(obfuscatorclient_tstate_t),
+    kLineStateSize   = sizeof(obfuscatorclient_lstate_t)
 };
 
 WW_EXPORT tunnel_t    *obfuscatorclientTunnelCreate(node_t *node);
@@ -46,11 +33,6 @@ void obfuscatorclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
 void obfuscatorclientLinestateInitialize(obfuscatorclient_lstate_t *ls, line_t *l, bool from_downstream);
 void obfuscatorclientLinestateDestroy(obfuscatorclient_lstate_t *ls);
-
-void obfuscatorclientXorByte(uint8_t *data, size_t size, uint8_t key);
-void obfuscatorclientApplyXor(tunnel_t *t, line_t *l, sbuf_t *buf);
-bool obfuscatorclientWrapTlsRecordHeader(line_t *l, sbuf_t **buf_io);
-bool obfuscatorclientStripTlsRecordHeader(line_t *l, sbuf_t *buf);
 
 void obfuscatorclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void obfuscatorclientTunnelDownStreamInit(tunnel_t *t, line_t *l);

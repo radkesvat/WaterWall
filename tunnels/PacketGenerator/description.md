@@ -1,0 +1,89 @@
+<!--
+Documentation version: 154
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketGenerator.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketGenerator.mdx, and all files must keep the same documentation version.
+-->
+
+# PacketGenerator Node
+
+`PacketGenerator` is a layer-3 IPv4 packet generator. It pre-builds packets at startup and sends them across the worker
+packet lines during the configured duration.
+
+## Core Behavior
+
+- chain head only
+- accepts one or more IPv4 source ranges and one destination IPv4 address
+- `packets-per-ip` repeats each source IP `N` times, default `1`
+- `ALL` mode still emits `255` protocol variants per repeat
+- source ranges are processed in order and are not interleaved
+- prebuilt packet storage is capped at `8 GiB` and also must fit in the platform `size_t` address space
+- does not close or finish worker packet lines after sending
+- stops a worker's timer and send loop if the downstream side finishes that worker packet line
+
+## WireGuard Placement
+
+To send generated packets through a WireGuard packet path, connect separate
+chain-head branches with paired `Bridge` nodes:
+
+```text
+PacketGenerator -> Bridge A
+UdpStatelessSocket -> WireGuardDevice -> Bridge B
+```
+
+Pair `Bridge A` and `Bridge B`. Both `PacketGenerator` and
+`UdpStatelessSocket` are chain-head-only, so neither can follow
+`WireGuardDevice` in one linear chain.
+
+## Example
+
+```json
+{
+  "name": "packet-generator",
+  "type": "PacketGenerator",
+  "settings": {
+    "source-ipv4-range": [
+      "8.8.8.0/24",
+      "1.1.1.0/24"
+    ],
+    "dest-ipv4": "203.0.113.20",
+    "protocol-number": "ICMP",
+    "duration-ms": 5000,
+    "packets-per-ip": 100
+  },
+  "next": "raw-ip"
+}
+```
+
+## Settings
+
+- `source-ipv4-range`: required IPv4 CIDR range or list of ranges
+- `packets-per-ip`: optional positive integer, default `1`
+- `dest-ipv4`: required destination IPv4 address
+- `protocol-number`: `TCP`, `UDP`, `ICMP`, or `ALL`
+- `duration-ms`: required positive duration in milliseconds
+- `dest-port`: required for `TCP`, `UDP`, or `ALL`
+- `src-port`: required for `TCP`, `UDP`, or `ALL`
+
+## Note
+
+When `protocol-number` is `ALL`, the total packets per source IP become `packets-per-ip * 255`.
+PacketGenerator materializes its packet store before sending, so large ranges and high repeat counts must fit under the
+`8 GiB` safety cap.
+
+For a matching PacketCounter, set `protocol-number` to the expected protocol selection and
+`expected-packets-per-ip` to sender `packets-per-ip`, including in `ALL` mode. PacketCounter
+calculates its per-IP total and reports each protocol separately. Its protocol selection also
+accepts arrays such as `[6, 17]` or `["TCP", "UDP"]`.
+
+## Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagSingleton` |
+| `can_have_prev` | `false` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` |
+| `layer_group_prev_node` | `kNodeLayerNone` |
+| `layer_group_next_node` | `kNodeLayer3` |
+| `required_padding_left` | `0` bytes |

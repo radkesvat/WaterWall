@@ -100,6 +100,11 @@ static void setup(fixture_t *f, const char *sni, int version, bool fallback)
     tlsserver_tstate_t *ts       = tunnelGetState(f->tls);
     ts->expected_sni             = expected_sni;
     ts->fallback_tunnel          = fallback ? f->cover : NULL;
+    ts->fallback_replay_config   = (fallback_replay_config_t) {
+          .max_batch_bytes  = kTlsServerMaxFallbackPendingBytes,
+          .zero_delay_mode  = kFallbackReplayInlineNested,
+          .compact_ordinary = true,
+    };
     SSL_CTX_set_tlsext_servername_callback(f->ctx, tlsserverOnServername);
     SSL_CTX_set_tlsext_servername_arg(f->ctx, ts);
     if (fallback)
@@ -212,15 +217,17 @@ static void receiverPauseClosesOwner(tunnel_t *t, line_t *l)
     lineDestroy(l);
 }
 
-static void receiverPressureCase(bool fallback, bool paused, enum receiver_pressure_action action, bool close)
+static void receiverPressureCase(bool fallback, bool paused, enum receiver_pressure_action action, bool close,
+                                 uint32_t delay_ms)
 {
     twfSetCase("receiver pressure follows TLS branch selection and Init reentry");
     fixture_t f;
     setup(&f, fallback ? "cover.integration.test" : expected_sni, TLS1_3_VERSION, true);
-    receiver_action     = action;
-    tunnel_t    *branch = fallback ? f.cover : f.next;
-    twf_trace_t *trace  = fallback ? &f.fallback : &f.protected;
-    branch->fnInitU     = receiverPressureInit;
+    ((tlsserver_tstate_t *) tunnelGetState(f.tls))->fallback_replay_config.delay_ms = delay_ms;
+    receiver_action                                                                 = action;
+    tunnel_t    *branch                                                             = fallback ? f.cover : f.next;
+    twf_trace_t *trace = fallback ? &f.fallback : &f.protected;
+    branch->fnInitU    = receiverPressureInit;
     if (close)
         branch->fnPauseU = receiverPauseClosesOwner;
     if (paused)
@@ -232,8 +239,17 @@ static void receiverPressureCase(bool fallback, bool paused, enum receiver_press
     twfRequire(trace->next_init == 1, "receiver pressure prevented branch selection");
     if (close)
     {
-        twfRequire(! lineIsAlive(f.line) && trace->next_finish == 1 && trace->next_payload == 0,
+        twfRequire(! lineIsAlive(f.line) && trace->next_finish == 1,
                    "branch continued after replayed receiver Pause closed its owner");
+        if (fallback)
+        {
+            twfRequire(trace->next_payload == 1 && trace->capture_len == n && memcmp(f.captured, bytes, n) == 0,
+                       "close during replayed Pause lost the initialized fallback transcript");
+        }
+        else
+        {
+            twfRequire(trace->next_payload == 0, "protected branch received application data before TLS completed");
+        }
     }
     else
     {
@@ -304,7 +320,7 @@ static void reentrantInitCase(uint32_t delay_ms, int action, bool plaintext)
     init_action = action;
     fixture_t f;
     setup(&f, "cover.integration.test", TLS1_3_VERSION, true);
-    ((tlsserver_tstate_t *) tunnelGetState(f.tls))->fallback_intentional_delay_ms = delay_ms;
+    ((tlsserver_tstate_t *) tunnelGetState(f.tls))->fallback_replay_config.delay_ms = delay_ms;
     uint8_t bytes[8192];
     size_t  n;
     if (plaintext)
@@ -325,6 +341,11 @@ static void reentrantInitCase(uint32_t delay_ms, int action, bool plaintext)
     }
     else
     {
+        const buffer_budget_cost_t limits =
+            bufferbudgetGetLimits(&((tlsserver_lstate_t *) lineGetState(f.line, f.tls))->fallback_budget);
+        twfRequire(limits.charge == (delay_ms != 0 ? kTlsServerMaxFallbackCharge : SIZE_MAX) &&
+                       limits.entries == (delay_ms != 0 ? kTlsServerMaxFallbackBuffers : SIZE_MAX),
+                   "TLS fallback retention policy changed outside delayed replay");
         if (g_fallback_finish_task.pending)
         {
             fallbackFinishDriveDelayedTask();
@@ -478,9 +499,10 @@ int main(void)
     {
         for (unsigned paused = 0; paused < 2; ++paused)
             for (int action = kReceiverUnchanged; action <= kReceiverResumePause; ++action)
-                receiverPressureCase(fallback, paused, action, false);
-        receiverPressureCase(fallback, true, kReceiverUnchanged, true);
+                receiverPressureCase(fallback, paused, action, false, 0);
+        receiverPressureCase(fallback, true, kReceiverUnchanged, true, 0);
     }
+    receiverPressureCase(true, true, kReceiverUnchanged, true, 7);
     compactTranscriptCase();
     for (uint32_t delay = 0; delay <= 7; delay += 7)
     {

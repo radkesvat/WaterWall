@@ -22,7 +22,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET VmessServer)
     "${CMAKE_SOURCE_DIR}/tunnels/VmessServer/common/replay.c"
     INCLUDES "${CMAKE_SOURCE_DIR}/tunnels/VmessServer/include"
       "${CMAKE_SOURCE_DIR}/tunnels/VmessServer/include/VmessServer"
-    LIBRARIES ww)
+    LIBRARIES ww FallbackReplay)
   add_dependencies(waterwall_unit_tests vmess_replay_test)
   add_waterwall_unit_test(waterwall.vmess_replay_unit vmess_replay_test
     "unit;tunnels;vmess;authentication;replay;concurrency")
@@ -37,6 +37,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET VmessServer)
   add_dependencies(waterwall_unit_tests vmess_runtime_test)
   add_waterwall_unit_test(waterwall.vmess_runtime_unit vmess_runtime_test
     "unit;tunnels;vmess;authentication;framing;lifetime;reentry;ownership")
+
+  waterwall_add_native_executable(vmessserver_fallback_finish_lifetime_test SUPPORT SOURCES
+    "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/vmess/vmessserver_fallback_finish_lifetime_test.c"
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES})
+  waterwall_line_failure_test_use_tunnel(vmessserver_fallback_finish_lifetime_test VmessServer)
+  target_link_options(vmessserver_fallback_finish_lifetime_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=lineScheduleDelayedTask")
+  target_link_libraries(vmessserver_fallback_finish_lifetime_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests vmessserver_fallback_finish_lifetime_test)
+  add_waterwall_unit_test(waterwall.vmessserver_fallback_finish_lifetime_unit
+    vmessserver_fallback_finish_lifetime_test
+    "unit;tunnels;vmessserver;fallback;finish;lifetime;reentrant;ownership;sanitizer")
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET VmessClient)
@@ -47,6 +59,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET VmessClient)
       ${WATERWALL_LINE_FAILURE_WW_SOURCES})
     waterwall_line_failure_test_use_tunnel(${target} VmessClient)
     target_link_options(${target} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+    if(kind STREQUAL "runtime")
+      target_link_options(${target} PRIVATE "-Wl,--wrap=wtimerReset")
+    endif()
     target_link_libraries(${target} PRIVATE ww VmessCommon)
     add_dependencies(waterwall_unit_tests ${target})
     add_waterwall_unit_test(waterwall.vmess_client_${kind}_unit ${target}

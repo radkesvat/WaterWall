@@ -15,7 +15,6 @@ void vlessclientCloseLine(tunnel_t *t, line_t *l, vlessclient_close_origin_t ori
 bool vlessclientAssociationAlive(tunnel_t *t, line_t *next_line, line_t *prev_line);
 void vlessclientTryBypass(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls);
 void vlessclientSendDueRequest(tunnel_t *t, line_t *l);
-void vlessclientCancelFirstPayloadTimer(vlessclient_lstate_t *ls);
 void vlessclientSetNextPaused(tunnel_t *t, line_t *l, bool paused);
 
 /* Shared implementation helpers; callbacks retain their directional admission. */

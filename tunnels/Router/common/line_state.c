@@ -16,7 +16,12 @@ void routerLinestateDestroy(line_t *l, router_lstate_t *ls)
     bufferqueueDestroy(&ls->datagrams);
     if (ls->pending != NULL)
     {
-        lineReuseBuffer(l, ls->pending);
+        // UDP sniff views were allocated directly, without a pool checkout.
+        // Recycling them would incorrectly decrement the pool's debug in-use count.
+        if (ls->datagram_input)
+            sbufDestroy(ls->pending);
+        else
+            lineReuseBuffer(l, ls->pending);
         ls->pending = NULL;
     }
 

@@ -193,8 +193,8 @@ jobs:
         arch: [x86_64]
         include:
           - preset: freebsd
-            version: "14.2"
-            install: sudo pkg install -y cmake perl5 git ninja ccache python3
+            version: "14.5"
+            install: sudo pkg install -y cmake-core perl5 git ninja ccache python3
           # - preset: netbsd
           #   version: "10.1"
           #   install: sudo pkgin -y install cmake perl git ninja ccache

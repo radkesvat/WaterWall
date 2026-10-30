@@ -873,13 +873,7 @@ static bool speedtestserverProcessFrameBuffer(tunnel_t *t, line_t *l, sbuf_t *fr
 
 static void speedtestserverBoundReceiveStorage(tunnel_t *t, line_t *l, speedtestserver_lstate_t *ls)
 {
-    if (splicestreamCharge(ls->recv_stream) <= kSpeedTestServerMaxRecvCharge)
-    {
-        return;
-    }
-
-    discard splicestreamCompact(ls->recv_stream);
-    if (splicestreamCharge(ls->recv_stream) > kSpeedTestServerMaxRecvCharge)
+    if (! splicestreamSettleCharge(ls->recv_stream, kSpeedTestServerMaxRecvCharge))
     {
         speedtestserverFailLine(t, l, "receive storage limit exceeded");
     }

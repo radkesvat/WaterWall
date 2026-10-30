@@ -3,9 +3,9 @@
  * this suite.
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
- * Cases: testDirectPacketSenderPlacementIsRejected, testPacketsToStreamPlacementIsAccepted
+ * Cases: testDirectPacketGeneratorPlacementIsRejected, testPacketsToStreamPlacementIsAccepted
  * Checks: Assertion labels include: UdpConnector does not advertise Layer 4; UdpConnector does not require
- * a Layer-4 previous node; UdpConnector unexpectedly permits a following node; PacketSender ->
+ * a Layer-4 previous node; UdpConnector unexpectedly permits a following node; PacketGenerator ->
  * UdpConnector unexpectedly solved without a packet/stream bridge
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
@@ -19,7 +19,7 @@
  * Layer-3 to Layer-4 boundary.
  */
 
-#include "PacketSender/interface.h"
+#include "PacketGenerator/interface.h"
 
 #include "test_assert.h"
 
@@ -46,12 +46,12 @@ static void releaseNodeTypes(node_t *sender, node_t *bridge, node_t *connector)
     memoryFree(connector->type);
 }
 
-static void testDirectPacketSenderPlacementIsRejected(void)
+static void testDirectPacketGeneratorPlacementIsRejected(void)
 {
-    node_t sender    = nodePacketSenderGet();
+    node_t sender    = nodePacketGeneratorGet();
     node_t connector = nodeUdpConnectorGet();
 
-    sender.name    = (char *) "packet-sender";
+    sender.name    = (char *) "packet-generator";
     connector.name = (char *) "udp-connector";
 
     require(connector.layer_group == kNodeLayer4, "UdpConnector does not advertise Layer 4");
@@ -68,20 +68,20 @@ static void testDirectPacketSenderPlacementIsRejected(void)
 
     node_layer_solver_status_t status = {0};
     require(! nodeLayerSolveChain(&chain, &status),
-            "PacketSender -> UdpConnector unexpectedly solved without a packet/stream bridge");
+            "PacketGenerator -> UdpConnector unexpectedly solved without a packet/stream bridge");
     require(status.code == kNodeLayerSolverErrConflict,
-            "direct PacketSender -> UdpConnector failed for an unexpected reason");
+            "direct PacketGenerator -> UdpConnector failed for an unexpected reason");
 
     releaseNodeTypes(&sender, NULL, &connector);
 }
 
 static void testPacketsToStreamPlacementIsAccepted(void)
 {
-    node_t sender    = nodePacketSenderGet();
+    node_t sender    = nodePacketGeneratorGet();
     node_t bridge    = nodePacketsToStreamGet();
     node_t connector = nodeUdpConnectorGet();
 
-    sender.name    = (char *) "packet-sender";
+    sender.name    = (char *) "packet-generator";
     bridge.name    = (char *) "packets-to-stream";
     connector.name = (char *) "udp-connector";
 
@@ -97,9 +97,9 @@ static void testPacketsToStreamPlacementIsAccepted(void)
     tunnelarrayInsert(&chain.tunnels, &connector_tunnel);
 
     node_layer_solver_status_t status = {0};
-    require(nodeLayerSolveChain(&chain, &status), "PacketSender -> PacketsToStream -> UdpConnector was rejected");
+    require(nodeLayerSolveChain(&chain, &status), "PacketGenerator -> PacketsToStream -> UdpConnector was rejected");
     require(chain.contains_packet_node, "bridged chain was not classified as containing a packet side");
-    require(chain.resolved_next_layer[0] == kLayerDomainL3, "PacketSender output did not resolve to Layer 3");
+    require(chain.resolved_next_layer[0] == kLayerDomainL3, "PacketGenerator output did not resolve to Layer 3");
     require(chain.resolved_prev_layer[1] == kLayerDomainL3, "PacketsToStream input did not resolve to Layer 3");
     require(chain.resolved_next_layer[1] == kLayerDomainL4, "PacketsToStream output did not resolve to Layer 4");
     require(chain.resolved_prev_layer[2] == kLayerDomainL4, "UdpConnector input did not resolve to Layer 4");
@@ -110,7 +110,7 @@ static void testPacketsToStreamPlacementIsAccepted(void)
 int main(void)
 {
     testCaseSet("udpconnector_layer_metadata_test");
-    testDirectPacketSenderPlacementIsRejected();
+    testDirectPacketGeneratorPlacementIsRejected();
     testPacketsToStreamPlacementIsAccepted();
 
     printf("UDP CONNECTOR LAYER METADATA TESTS PASSED\n");

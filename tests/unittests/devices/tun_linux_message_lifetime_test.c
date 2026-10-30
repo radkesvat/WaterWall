@@ -256,7 +256,7 @@ static bool hard_abort_is_expected;
  */
 enum
 {
-    kMaxInjectedIoResults = 8
+    kMaxInjectedIoResults = 176
 };
 
 typedef struct injected_io_result_s
@@ -4460,7 +4460,7 @@ static err_t receiveTcpData(void *argument, struct tcp_pcb *pcb, struct pbuf *pa
 
 static void buildTcpInput(tcp_ack_probe_t *probe, uint8_t *bytes, uint32_t sequence, uint8_t flags, uint16_t payload)
 {
-    uint8_t pseudo[32 + 1000] = {0};
+    uint8_t pseudo[32 + 1460] = {0};
     memoryZero(bytes, (size_t) 40 + payload);
     bytes[0]  = 0x45;
     bytes[8]  = 64;
@@ -4506,7 +4506,9 @@ static void deliverTcpInput(tun_device_t *device, void *userdata, sbuf_t *buf, u
 static void readTcpBurst(void *context)
 {
     discard context;
-    runReaderUntilIdle();
+    inside_reader_callback = true;
+    reader_ready_callback(&reader_io);
+    inside_reader_callback = false;
 }
 
 static void testSameWorkerTunBurstCoalescesTcpAcks(test_env_t *env)
@@ -4577,6 +4579,47 @@ static void testSameWorkerTunBurstCoalescesTcpAcks(test_env_t *env)
     require(atomicLoadRelaxed(&tunLinuxReaderSession(tdev)->output_packets) == 0,
             "TCP receive-burst fixture retained packet reservations");
     active_ack_probe = NULL;
+    probe.peer_next += 6000;
+    probe.received = probe.outputs = probe.batches = 0;
+    /* One extra full record must remain unread for the next callback. Reading
+     * 175 records would exceed the delivery quantum and leave a queued tail. */
+    enum
+    {
+        kBoundaryPackets = 175,
+        kBoundaryPayload = 1460
+    };
+    uint8_t(*boundary_packets)[1500] = memoryAllocate(kBoundaryPackets * sizeof(*boundary_packets));
+    injected_io_result_t boundary_reads[kBoundaryPackets + 1];
+    for (unsigned i = 0; i < kBoundaryPackets; ++i)
+    {
+        buildTcpInput(&probe, boundary_packets[i], probe.peer_next + i * kBoundaryPayload, TCP_ACK, kBoundaryPayload);
+        boundary_reads[i] =
+            (injected_io_result_t) {.result = sizeof(boundary_packets[i]), .bytes = boundary_packets[i]};
+    }
+    boundary_reads[kBoundaryPackets] = (injected_io_result_t) {.result = -1, .error = EAGAIN};
+    armDeviceReads(boundary_reads, ARRAY_SIZE(boundary_reads));
+    active_ack_probe = &probe;
+    require(wloopInvokeNormalCallback(loop, readTcpBurst, NULL), "TCP byte-boundary callback admission failed");
+    require(observed_read_calls == kBoundaryPackets - 1 && captured_message_count == 0,
+            "raw receive collection exceeded its byte quantum or queued a tail");
+    require(probe.received == (kBoundaryPackets - 1) * kBoundaryPayload && probe.outputs > 0 && probe.batches == 1 &&
+                probe.last_ack == probe.peer_next + (kBoundaryPackets - 1) * kBoundaryPayload,
+            "bounded full-MTU receive burst did not flush its cumulative ACK");
+    require(atomicLoadRelaxed(&tunLinuxReaderSession(tdev)->output_packets) == 0 &&
+                atomicLoadRelaxed(&tunLinuxReaderSession(tdev)->output_charge) == 0 &&
+                (reader_io.events & WW_READ) != 0,
+            "raw byte-boundary yield retained packet credit or disabled readiness");
+    active_ack_probe             = NULL;
+    const unsigned first_outputs = probe.outputs;
+    require(wloopInvokeNormalCallback(loop, readTcpBurst, NULL), "TCP byte-boundary continuation admission failed");
+    require(observed_read_calls == ARRAY_SIZE(boundary_reads) && captured_message_count == 0 &&
+                probe.received == kBoundaryPackets * kBoundaryPayload && probe.outputs > first_outputs &&
+                probe.batches == 2 && probe.last_ack == probe.peer_next + kBoundaryPackets * kBoundaryPayload,
+            "raw byte-boundary continuation lost, duplicated or reordered TCP data");
+    require(atomicLoadRelaxed(&tunLinuxReaderSession(tdev)->output_packets) == 0 &&
+                atomicLoadRelaxed(&tunLinuxReaderSession(tdev)->output_charge) == 0,
+            "raw byte-boundary continuation retained packet reservations");
+    memoryFree(boundary_packets);
     resetIoInjection();
     destroyDevice(tdev);
     resetCapturedMessages();

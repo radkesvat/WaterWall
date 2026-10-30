@@ -431,7 +431,7 @@ void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l)
     lineUnref(l);
 }
 
-void httpclientSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+void httpclientSplitProcessDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     httpclient_lstate_t *ls = lineGetState(l, t);
 
@@ -516,4 +516,14 @@ void httpclientSplitDownStreamFinish(tunnel_t *t, line_t *l)
 
     // Entered because this transport's next finished us, so do not re-finish that next side.
     httpclientSplitCloseFromTransport(t, l, true, false);
+}
+
+void httpclientSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    httpclientTunnelDownStreamPayload(t, l, buf);
+}
+
+void httpclientSplitRejectInput(tunnel_t *t, line_t *l)
+{
+    httpclientSplitCloseFromTransport(t, l, true, true);
 }

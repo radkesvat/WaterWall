@@ -59,8 +59,8 @@ static void initNext(tunnel_t *t, line_t *l)
     remotes[created++] = l;
     lineRef(l);
     socks5server_lstate_t *ls = lineGetState(l, server);
-    socks5_address_t       original;
-    twfRequire(socks5AddressDecode(active_wire, active_length, &original) == kSocks5AddressComplete, "fixture vector");
+    socks_address_t        original;
+    twfRequire(socksAddressDecode(active_wire, active_length, &original) == kSocksAddressComplete, "fixture vector");
     twfRequire(ls->client_line == client && ls->client_line_ref_held, "remote parent was not published before Init");
     const address_context_t *source        = lineGetSourceAddressContext(l);
     const address_context_t *client_source = lineGetSourceAddressContext(client);
@@ -68,14 +68,14 @@ static void initNext(tunnel_t *t, line_t *l)
                    source->port == client_source->port && source->proto_udp && ! source->proto_tcp,
                "UDP backend source identity missing before Init");
     const address_context_t *destination = lineGetDestinationAddressContext(l);
-    const void *destination_bytes        = original.kind == kSocks5AddressDomain ? (const void *) destination->domain
-                                           : original.kind == kSocks5AddressIpv4
+    const void *destination_bytes        = original.kind == kSocksAddressDomain ? (const void *) destination->domain
+                                           : original.kind == kSocksAddressIpv4
                                                ? (const void *) &destination->ip_address.u_addr.ip4.addr
                                                : (const void *) &destination->ip_address.u_addr.ip6;
-    twfRequire((original.kind == kSocks5AddressDomain
+    twfRequire((original.kind == kSocksAddressDomain
                     ? addresscontextIsDomain(destination) && destination->domain_len == original.length
-                : original.kind == kSocks5AddressIpv4 ? addresscontextIsIpv4(destination)
-                                                      : addresscontextIsIpv6(destination)) &&
+                : original.kind == kSocksAddressIpv4 ? addresscontextIsIpv4(destination)
+                                                     : addresscontextIsIpv6(destination)) &&
                    memoryEqual(destination_bytes, original.bytes, original.length) &&
                    destination->port == original.port && destination->proto_udp && ! destination->proto_tcp,
                "UDP backend destination or protocol changed before Init");

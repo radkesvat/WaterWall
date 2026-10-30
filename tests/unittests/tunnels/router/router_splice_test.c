@@ -2,8 +2,8 @@
  * Covers: router splice; the explicit inputs, callbacks and expected results below define this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: testRouting, testMetadataRouting, testStartupReplay, testBorrowedFinish,
- * testStartupOverflow, testExplicitNextTarget, testClose, testLargeCompleteHeader, testCapabilities
+ * Cases: testRouting, testMetadataRouting, testStartupReplay, testPendingPause, testPendingPauseBoundary,
+ * testBorrowedFinish, testStartupOverflow, testExplicitNextTarget, testClose, testLargeCompleteHeader, testCapabilities
  * Checks: Assertion labels include: initialized the wrong route; payload reached the wrong route/direction;
  * incorrect payload representation; opaque forwarding replaced the buffer
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -19,7 +19,6 @@
 #include "Router/structure.h"
 #include "SniffRouter/interface.h"
 #include "SniffRouter/structure.h"
-#include "fixtures/failure/buffer_disposal_probe.h"
 
 #if WW_HAVE_SPLICE
 #include <unistd.h>
@@ -29,6 +28,48 @@ enum
 {
     kOnwardPadding = 192
 };
+
+static _Atomic(sbuf_t *) disposal_buffer;
+static atomic_uint      *disposal_counter;
+static bool              check_datagram_sniff_disposal;
+static unsigned          sniff_view_destroys;
+
+void __real_sbufDestroy(sbuf_t *buf);
+void __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
+void __wrap_sbufDestroy(sbuf_t *buf);
+void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
+
+static void watchBufferDisposal(sbuf_t *buf, atomic_uint *counter)
+{
+    assert(atomic_load_explicit(&disposal_buffer, memory_order_acquire) == NULL);
+    disposal_counter = counter;
+    atomic_store_explicit(&disposal_buffer, buf, memory_order_release);
+}
+
+static void observeBufferDisposal(sbuf_t *buf)
+{
+    sbuf_t *expected = buf;
+    if (atomic_compare_exchange_strong_explicit(
+            &disposal_buffer, &expected, NULL, memory_order_acq_rel, memory_order_acquire))
+        atomicAddExplicit(disposal_counter, 1, memory_order_release);
+}
+
+void __wrap_sbufDestroy(sbuf_t *buf)
+{
+    if (check_datagram_sniff_disposal && sbufGetLeftPadding(buf) == 0)
+        ++sniff_view_destroys;
+    observeBufferDisposal(buf);
+    __real_sbufDestroy(buf);
+}
+
+void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
+{
+    // Every fixture datagram has onward padding; the detached inspection copy has none.
+    require(! check_datagram_sniff_disposal || sbufGetLeftPadding(buf) != 0,
+            "detached UDP sniff view was returned to the buffer pool");
+    observeBufferDisposal(buf);
+    __real_bufferpoolReuseBuffer(pool, buf);
+}
 
 typedef struct router_fixture_s
 {
@@ -49,13 +90,20 @@ typedef struct router_fixture_s
     bool            expect_splice;
     bool            close_on_init;
     bool            close_on_payload;
+    bool            close_on_pause;
     bool            borrowed_close;
     bool            reenter_init;
     bool            reenter_empty;
     bool            reenter_payload;
+    bool            reenter_pause;
     bool            overflow_init;
     bool            init_running;
+    bool            pause_running;
     bool            record_startup;
+    bool            record_callbacks;
+    const char     *init_signals;
+    char            callback_trace[64];
+    unsigned        callback_count;
     char            startup_bytes[256];
     uint32_t        startup_length;
     unsigned        upstream_pauses;
@@ -73,15 +121,51 @@ static router_fixture_t *fixture;
 
 static sbuf_t *payload(const void *data, uint32_t length, bool splice, uint32_t prefix);
 
+static void recordCallback(char event)
+{
+    if (! fixture->record_callbacks)
+        return;
+    require(fixture->callback_count + 1 < sizeof(fixture->callback_trace), "callback trace overflow");
+    fixture->callback_trace[fixture->callback_count++] = event;
+    fixture->callback_trace[fixture->callback_count]   = '\0';
+}
+
+static void sendUpstreamSignals(tunnel_t *t, line_t *l, const char *signals)
+{
+    for (; signals != NULL && *signals != '\0'; ++signals)
+    {
+        if (*signals == 'U')
+            tunnelUpStreamPause(t, l);
+        else
+        {
+            require(*signals == 'R', "invalid fixture pressure signal");
+            tunnelUpStreamResume(t, l);
+        }
+    }
+}
+
 static void pauseSignal(tunnel_t *t, line_t *l)
 {
-    discard l;
     if (t == fixture->prev)
         ++fixture->downstream_pauses;
     else
     {
         require(t == fixture->expected_receiver, "Pause reached the wrong route");
         ++fixture->upstream_pauses;
+        recordCallback('U');
+        if (fixture->reenter_pause)
+        {
+            fixture->reenter_pause = false;
+            fixture->pause_running = true;
+            tunnelUpStreamPayload(fixture->router, l, payload("Q", 1, false, 0));
+            fixture->pause_running = false;
+        }
+        if (fixture->close_on_pause)
+        {
+            tunnelDownStreamFin(fixture->router, l);
+            return;
+        }
+        recordCallback('u');
     }
 }
 
@@ -94,6 +178,7 @@ static void resumeSignal(tunnel_t *t, line_t *l)
     {
         require(t == fixture->expected_receiver, "Resume reached the wrong route");
         ++fixture->upstream_resumes;
+        recordCallback('R');
     }
 }
 
@@ -121,6 +206,9 @@ static void repeatSignals(router_fixture_t *f)
 {
     const unsigned up_pauses   = f->upstream_pauses;
     const unsigned down_pauses = f->downstream_pauses;
+    const unsigned up_resumes   = f->upstream_resumes;
+    const unsigned down_resumes = f->downstream_resumes;
+    const unsigned down_ests    = f->downstream_ests;
     for (unsigned i = 0; i < 2; ++i)
     {
         tunnelUpStreamPause(f->router, f->line);
@@ -134,12 +222,14 @@ static void repeatSignals(router_fixture_t *f)
     }
     require(f->upstream_pauses == up_pauses + 2 && f->downstream_pauses == down_pauses + 2,
             "repeat Pause did not reach the selected path");
-    require(f->upstream_resumes == 2 && f->downstream_resumes == 2, "repeat Resume did not reach the selected path");
-    require(f->downstream_ests == 2, "repeat Est did not reach the previous side");
+    require(f->upstream_resumes == up_resumes + 2 && f->downstream_resumes == down_resumes + 2,
+            "repeat Resume did not reach the selected path");
+    require(f->downstream_ests == down_ests + 2, "repeat Est did not reach the previous side");
 }
 
 static void finish(tunnel_t *t, line_t *l)
 {
+    recordCallback('F');
     ++fixture->finishes;
     if (t == fixture->prev && ! fixture->borrowed_close)
     {
@@ -151,8 +241,10 @@ static void finish(tunnel_t *t, line_t *l)
 static void init(tunnel_t *t, line_t *l)
 {
     require(t == fixture->expected_receiver, "initialized the wrong route");
+    recordCallback('I');
     ++fixture->inits;
     fixture->init_running = true;
+    sendUpstreamSignals(fixture->router, l, fixture->init_signals);
     if (fixture->overflow_init)
     {
         sbuf_t *buf = sbufCreateWithPadding(2U * 1024U * 1024U + 1U, kOnwardPadding);
@@ -166,6 +258,7 @@ static void init(tunnel_t *t, line_t *l)
             tunnelUpStreamPayload(fixture->router, l, payload("", 0, false, 0));
     }
     fixture->init_running = false;
+    recordCallback('i');
     if (fixture->close_on_init)
         tunnelDownStreamFin(fixture->router, l);
 }
@@ -174,6 +267,8 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     require(t == fixture->expected_receiver, "payload reached the wrong route/direction");
     require(! fixture->init_running, "startup payload escaped before the selected Init returned");
+    require(! fixture->pause_running, "startup payload escaped before pending Pause returned");
+    recordCallback('P');
     if (fixture->datagram_count != 0)
     {
         require(fixture->payloads < fixture->datagram_count, "unexpected UDP replay delivery");
@@ -231,6 +326,9 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void setupBeforeInit(router_fixture_t *f, bool sniffrouter, bool target, bool sniffing, bool resolve_domains)
 {
+    check_datagram_sniff_disposal = false;
+    sniff_view_destroys           = 0;
+
     memoryZero(f, sizeof(*f));
     fixture                    = f;
     f->node                    = sniffrouter ? nodeSniffRouterGet() : nodeRouterGet();
@@ -309,7 +407,8 @@ static void teardown(router_fixture_t *f)
     tunnelDestroy(f->target);
     memoryFree(f->node.type);
     cJSON_Delete(f->node.node_settings_json);
-    fixture = NULL;
+    check_datagram_sniff_disposal = false;
+    fixture                       = NULL;
 }
 
 static sbuf_t *payload(const void *data, uint32_t length, bool splice, uint32_t prefix)
@@ -470,6 +569,103 @@ static void testStartupReplay(bool sniffrouter, bool target, bool metadata)
     teardown(&f);
 }
 
+static void testPendingPause(bool sniffrouter, bool target)
+{
+    static const struct
+    {
+        const char *early_signals;
+        const char *init_signals;
+        const char *trace;
+        unsigned    pauses;
+        unsigned    resumes;
+        bool        nested_payload;
+    } cases[] = {
+        {"U", "", "IiUuP", 1, 0, false},
+        {"UU", "", "IiUuP", 1, 0, false},
+        {"UR", "", "IiP", 0, 0, false},
+        {"URU", "", "IiUuP", 1, 0, false},
+        {"R", "", "IiP", 0, 0, false},
+        {"U", "R", "IRiP", 0, 1, false},
+        {"U", "U", "IUuiP", 1, 0, false},
+        {"U", "UU", "IUuUuiP", 2, 0, false},
+        {"U", "UR", "IUuRiP", 1, 1, false},
+        {"U", "RU", "IRUuiP", 1, 1, false},
+        {"U", "", "IiUuPP", 1, 0, true},
+    };
+    static const char request[] = "GET / HTTP/1.1\r\nHost: route.test\r\n\r\n";
+    const uint32_t    length    = sizeof(request) - 1;
+    const uint32_t    split     = 12;
+
+    for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        router_fixture_t f;
+        setup(&f, sniffrouter, target, true, false);
+        f.record_startup   = true;
+        f.record_callbacks = true;
+        f.init_signals     = cases[i].init_signals;
+        f.reenter_init     = cases[i].nested_payload;
+        f.reenter_pause    = cases[i].nested_payload;
+        tunnelUpStreamPayload(f.router, f.line, payload(request, split, false, 0));
+        sendUpstreamSignals(f.router, f.line, cases[i].early_signals);
+        require(f.inits == 0 && f.callback_count == 0, "pressure reached a branch before Init");
+        tunnelUpStreamPayload(f.router, f.line, payload(request + split, length - split, false, 0));
+
+        require(strcmp(f.callback_trace, cases[i].trace) == 0, "pending Pause callback order changed");
+        require(f.upstream_pauses == cases[i].pauses && f.upstream_resumes == cases[i].resumes,
+                "pending Pause was lost, duplicated or replayed after Resume");
+        require(f.startup_length == length + (cases[i].nested_payload ? 2U : 0U), "pending Pause lost startup payload");
+        require(memcmp(f.startup_bytes, request, length) == 0, "pending Pause reordered the classified input");
+        if (cases[i].nested_payload)
+            require(memcmp(f.startup_bytes + length, "IQ", 2) == 0, "pending Pause reordered nested startup input");
+        requireRouteState(&f, ! target);
+        f.record_callbacks = false;
+        repeatSignals(&f);
+        teardown(&f);
+    }
+}
+
+static void testPendingPauseBoundary(bool sniffrouter, bool target, bool during_init, bool borrowed_close)
+{
+    router_fixture_t f;
+    setup(&f, sniffrouter, target, true, false);
+    f.record_startup   = true;
+    f.record_callbacks = true;
+    f.borrowed_close   = borrowed_close;
+    f.reenter_init     = true;
+    f.reenter_pause    = true;
+    f.close_on_init    = during_init;
+    f.close_on_pause   = ! during_init;
+    tunnelUpStreamPause(f.router, f.line);
+    static const char request[] = "GET / HTTP/1.1\r\nHost: route.test\r\n\r\n";
+    sbuf_t           *buf       = payload(request, sizeof(request) - 1, false, 0);
+    atomic_uint       disposed  = 0;
+    watchBufferDisposal(buf, &disposed);
+    line_t *line = f.line;
+    lineRef(line);
+    tunnelUpStreamPayload(f.router, f.line, buf);
+
+    require(strcmp(f.callback_trace, during_init ? "IiF" : "IiUF") == 0,
+            "pending Pause continued after a terminal callback");
+    require(f.inits == 1 && f.finishes == 1 && f.payloads == 0, "pending Pause leaked payload after Finish");
+    require(atomic_load(&disposed) == 1, "pending Pause did not settle the classified input exactly once");
+    require(atomicLoadU32Relaxed(&line->refc) == (borrowed_close ? 2U : 1U), "pending Pause leaked a line reference");
+    if (borrowed_close)
+    {
+        require(f.line != NULL && lineIsAlive(f.line), "pending Pause destroyed a borrowed line");
+        require(tunnelIsActiveForLine(f.router, f.line), "pending Pause bypassed a finished router");
+    }
+    else
+    {
+        require(f.line == NULL, "pending Pause did not reach the source owner Finish");
+        require(! lineIsAlive(line), "pending Pause left the source owner line alive");
+    }
+    const uint8_t *state = lineGetState(line, f.router);
+    for (uint32_t i = 0; i < f.router->lstate_size; ++i)
+        require(state[i] == 0, "pending Pause retained state after Finish");
+    lineUnref(line);
+    teardown(&f);
+}
+
 static void testBorrowedFinish(bool sniffrouter, bool target, bool during_init)
 {
     router_fixture_t f;
@@ -512,9 +708,11 @@ static void testExplicitNextTarget(bool sniffrouter)
     else
         ((router_tstate_t *) tunnelGetState(f.router))->rules[0].target_tunnel = f.next;
     tunnelUpStreamInit(f.router, f.line);
+    tunnelUpStreamPause(f.router, f.line);
     static const char request[] = "GET / HTTP/1.1\r\nHost: route.test\r\n\r\n";
     expect(&f, request, sizeof(request) - 1, false, NULL);
     tunnelUpStreamPayload(f.router, f.line, payload(request, sizeof(request) - 1, false, 0));
+    require(f.upstream_pauses == 1, "explicit next target lost pending Pause");
     requireRouteState(&f, ! sniffrouter);
     repeatSignals(&f);
     if (sniffrouter)
@@ -600,6 +798,8 @@ static void testSniffRouterUdpReplay(bool target, bool empty_first, unsigned clo
 {
     router_fixture_t f;
     setupBeforeInit(&f, true, target, true, false);
+    check_datagram_sniff_disposal = true;
+
     f.line->routing_context.dest_ctx.proto_tcp = false;
     f.line->routing_context.dest_ctx.proto_udp = true;
     static const uint8_t request[]             = "GET / HTTP/1.1\r\nHost: route.test\r\n\r\n";
@@ -642,6 +842,7 @@ static void testSniffRouterUdpReplay(bool target, bool empty_first, unsigned clo
         require(f.payloads == f.datagram_count && f.inits == 1, "SniffRouter UDP replay lost a datagram");
         requireRouteState(&f, ! target);
     }
+    require(sniff_view_destroys != 0, "SniffRouter did not destroy its detached inspection view");
     teardown(&f);
 }
 
@@ -651,6 +852,8 @@ static void testSniffRouterUdpLimits(void)
     {
         router_fixture_t f;
         setupBeforeInit(&f, true, false, true, false);
+        check_datagram_sniff_disposal = true;
+
         f.line->routing_context.dest_ctx.proto_tcp = false;
         f.line->routing_context.dest_ctx.proto_udp = true;
         tunnelUpStreamInit(f.router, f.line);
@@ -679,6 +882,8 @@ static void testSniffRouterUdpLimits(void)
         const uint8_t *state = lineGetState(line, f.router);
         for (uint32_t i = 0; i < f.router->lstate_size; ++i)
             require(state[i] == 0, "SniffRouter UDP overflow retained line state");
+        require(sniff_view_destroys == (mode == 1 ? 0U : 1U),
+                "SniffRouter UDP refusal did not destroy its inspection view exactly once");
         lineUnref(line);
         teardown(&f);
     }
@@ -702,6 +907,8 @@ static void testUdpReplay(bool target, bool metadata, unsigned close_mode)
 {
     router_fixture_t f;
     setupBeforeInit(&f, false, target, ! metadata, false);
+    check_datagram_sniff_disposal = true;
+
     f.line->routing_context.dest_ctx.proto_tcp = false;
     f.line->routing_context.dest_ctx.proto_udp = true;
     router_tstate_t *ts                        = tunnelGetState(f.router);
@@ -744,6 +951,7 @@ static void testUdpReplay(bool target, bool metadata, unsigned close_mode)
         require(f.payloads == f.datagram_count && f.inits == 1, "UDP replay lost a datagram");
         requireRouteState(&f, ! target);
     }
+    require((sniff_view_destroys != 0) == ! metadata, "Router did not settle its detached inspection view");
     teardown(&f);
 }
 
@@ -753,6 +961,8 @@ static void testUdpRetentionLimits(void)
     {
         router_fixture_t f;
         setupBeforeInit(&f, false, false, true, false);
+        check_datagram_sniff_disposal = true;
+
         f.line->routing_context.dest_ctx.proto_tcp                     = false;
         f.line->routing_context.dest_ctx.proto_udp                     = true;
         ((router_tstate_t *) tunnelGetState(f.router))->sniffing_modes = kRouterSniffQuic;
@@ -787,6 +997,8 @@ static void testUdpRetentionLimits(void)
         const uint8_t *state = lineGetState(line, f.router);
         for (uint32_t i = 0; i < f.router->lstate_size; ++i)
             require(state[i] == 0, "pending UDP retention left line state after Finish");
+        require(sniff_view_destroys == (mode == 1 ? 0U : 1U),
+                "Router UDP refusal or Finish did not destroy its inspection view exactly once");
         lineUnref(line);
         teardown(&f);
     }
@@ -829,6 +1041,12 @@ int main(void)
         testStartupOverflow(sniffrouter != 0);
         for (unsigned target = 0; target < 2; ++target)
         {
+            testPendingPause(sniffrouter != 0, target != 0);
+            for (unsigned borrowed = 0; borrowed < 2; ++borrowed)
+            {
+                testPendingPauseBoundary(sniffrouter != 0, target != 0, false, borrowed != 0);
+                testPendingPauseBoundary(sniffrouter != 0, target != 0, true, borrowed != 0);
+            }
             testStartupReplay(sniffrouter != 0, target != 0, false);
             if (! sniffrouter)
                 testStartupReplay(false, target != 0, true);

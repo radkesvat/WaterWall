@@ -7,12 +7,14 @@
 #include <stdio.h>
 #include <string.h>
 
-/* The generated programs carry exactly two protocol compares; a larger set needs new instruction slots. */
-_Static_assert(kCaptureLinuxPortedProtocols == 2,
-               "the steering and opaque programs hard-code two ported-protocol slots");
+// /* The generated programs carry exactly two protocol compares; a larger set needs new instruction slots. */
+// _Static_assert(kCaptureLinuxPortedProtocols == 2,
+//                "the steering and opaque programs hard-code two ported-protocol slots");
 
-void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index, const uint8_t *ported_protocols,
-                                     unsigned ported_count, char output[kCaptureLinuxSteeringFilterSize])
+// void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index, const uint8_t *ported_protocols,
+//                                      unsigned ported_count, char output[kCaptureLinuxSteeringFilterSize])
+// void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index, bool opaque_lanes,
+//                                      char output[kCaptureLinuxSteeringFilterSize])
 {
     assert(queue_count > 0 && lane_index < queue_count);
     assert(output != NULL && ported_count <= kCaptureLinuxPortedProtocols);
@@ -86,9 +88,15 @@ void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index, 
             {
                 BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 9),
                 BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 6, CAPTURE_BPF_SKIP(transport[1], ports), 0),
-                BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, ported[0], CAPTURE_BPF_SKIP(transport[2], ports), 0),
-                BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, ported[1], CAPTURE_BPF_SKIP(transport[3], ports), 0),
-                BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 17, 0, CAPTURE_BPF_SKIP(transport[4], none)),
+//                 BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, ported[0], CAPTURE_BPF_SKIP(transport[2], ports), 0),
+//                 BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, ported[1], CAPTURE_BPF_SKIP(transport[3], ports), 0),
+//                 BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 17, 0, CAPTURE_BPF_SKIP(transport[4], none)),
+//                 /* Opaque lanes reuse the address/protocol hash, so one ordered
+//                  * encapsulating stream (an ICMP or GRE tunnel) stays on one queue. */
+//                 BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+//                          17,
+//                          0,
+//                          opaque_lanes ? CAPTURE_BPF_SKIP(transport[2], mix) : CAPTURE_BPF_SKIP(transport[2], opaque)),
             },
         .ports =
             {

@@ -1,4 +1,4 @@
-add_library(HttpCommon STATIC src/h2_data.c)
+add_library(HttpCommon STATIC src/h2_data.c src/chunk_decoder.c src/websocket_decoder.c src/receive.c)
 target_include_directories(HttpCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(HttpCommon PUBLIC ww nghttp2_static)
 if(NOT APPLE)

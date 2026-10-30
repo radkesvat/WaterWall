@@ -375,10 +375,13 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    ts->allow_connect                        = true;
-    ts->allow_udp                            = true;
-    int fallback_intentional_delay_ms        = kTrojanServerDefaultFallbackIntentionalDelayMs;
-    int fallback_intentional_delay_jitter_ms = kTrojanServerDefaultFallbackIntentionalDelayJitterMs;
+    ts->fallback_replay_config.max_batch_bytes = kTrojanServerMaxPendingBytes;
+    ts->fallback_replay_config.compact_ordinary = true;
+    ts->fallback_replay_config.zero_delay_mode = kFallbackReplayCallerDriven;
+    ts->allow_connect                          = true;
+    ts->allow_udp                              = true;
+    int fallback_intentional_delay_ms          = kTrojanServerDefaultFallbackIntentionalDelayMs;
+    int fallback_intentional_delay_jitter_ms   = kTrojanServerDefaultFallbackIntentionalDelayJitterMs;
     getBoolFromJsonObjectOrDefault(&ts->allow_connect, settings, "connect", true);
     getBoolFromJsonObjectOrDefault(&ts->allow_udp, settings, "udp", true);
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
@@ -405,7 +408,7 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
         trojanserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
-    ts->fallback_intentional_delay_ms = (uint32_t) fallback_intentional_delay_ms;
+    ts->fallback_replay_config.delay_ms = (uint32_t) fallback_intentional_delay_ms;
 
     if (fallback_intentional_delay_jitter_ms < 0)
     {
@@ -414,9 +417,9 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
         trojanserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
-    ts->fallback_intentional_delay_jitter_ms = (uint32_t) fallback_intentional_delay_jitter_ms;
+    ts->fallback_replay_config.jitter_ms = (uint32_t) fallback_intentional_delay_jitter_ms;
 
-    if (ts->fallback_intentional_delay_ms == 0 && ts->fallback_intentional_delay_jitter_ms > 0)
+    if (ts->fallback_replay_config.delay_ms == 0 && ts->fallback_replay_config.jitter_ms > 0)
     {
         LOGD(
             "TrojanServer: fallback-intentional-delay-jitter-ms is ignored because fallback-intentional-delay-ms is 0");

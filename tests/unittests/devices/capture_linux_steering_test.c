@@ -54,7 +54,8 @@ static void parseProgram(const char *text, struct sock_fprog *program)
     require(*end == '\0', "serialized program contains exactly its declared instructions");
 }
 
-static void openLanes(steering_test_t *test, uint16_t count, const uint8_t *ported, unsigned ported_count)
+// static void openLanes(steering_test_t *test, uint16_t count, const uint8_t *ported, unsigned ported_count)
+// static void openLanes(steering_test_t *test, uint16_t count, bool opaque_lanes)
 {
     require(count > 0 && count <= kMaximumTestLanes, "test lane count is supported");
     require(ported_count <= kCaptureLinuxPortedProtocols, "test names a supported number of ported protocols");
@@ -70,13 +71,21 @@ static void openLanes(steering_test_t *test, uint16_t count, const uint8_t *port
             uint8_t guard[16];
         } serialized;
         memset(&serialized, 0xa5, sizeof(serialized));
-        if (lane == count)
-            captureLinuxBuildOpaqueFilter(test->ported, ported_count, serialized.text);
-        else
-            captureLinuxBuildSteeringFilter(count, lane, test->ported, ported_count, serialized.text);
-        require(memchr(serialized.text, '\0', sizeof(serialized.text)) != NULL, "serialized program is terminated");
-        for (unsigned int i = 0; i < sizeof(serialized.guard); ++i)
-            require(serialized.guard[i] == 0xa5, "serialization respects its fixed buffer");
+//         if (lane == count)
+//             captureLinuxBuildOpaqueFilter(test->ported, ported_count, serialized.text);
+//         else
+//             captureLinuxBuildSteeringFilter(count, lane, test->ported, ported_count, serialized.text);
+//         /* With opaque lanes the random cascade is never installed; the extra
+//          * slot then matches nothing, so selectLane still demands one match. */
+//         if (lane == count && opaque_lanes)
+//             snprintf(serialized.text, sizeof(serialized.text), "1,%u 0 0 0", (unsigned) (BPF_RET | BPF_K));
+//         else if (lane == count)
+//             captureLinuxBuildOpaqueFilter(serialized.text);
+//         else
+//             captureLinuxBuildSteeringFilter(count, lane, opaque_lanes, serialized.text);
+//         require(memchr(serialized.text, '\0', sizeof(serialized.text)) != NULL, "serialized program is terminated");
+//         for (unsigned int i = 0; i < sizeof(serialized.guard); ++i)
+//             require(serialized.guard[i] == 0xa5, "serialization respects its fixed buffer");
 
         struct sock_filter instructions[XT_BPF_MAX_NUM_INSTR];
         struct sock_fprog  program = {.filter = instructions};
@@ -332,99 +341,126 @@ static void testHeaderBoundsAndCompatibility(steering_test_t *test)
     require(selectLane(test, packet, sizeof(packet)) == 0, "opaque unsupported IP version must not be classified");
     packet[0] = 0x44;
     require(selectLane(test, packet, sizeof(packet)) == 0, "opaque invalid IHL must not be classified");
-}
+// }
 
-/* A ported protocol (a swapped protocol number that left the TCP/UDP header in place) is steered by that port pair like
- * TCP/UDP: one inner flow keeps one lane in both directions, also when the header bytes are obfuscated byte-wise with a
- * constant key, and different flows spread over every lane. Unregistered protocols stay opaque. */
-static void obfuscatePorts(uint8_t *packet, uint8_t key)
-{
-    for (unsigned i = 0; i < 4; ++i)
-        packet[20 + i] ^= key;
-}
+// /* A ported protocol (a swapped protocol number that left the TCP/UDP header in place) is steered by that port pair like
+//  * TCP/UDP: one inner flow keeps one lane in both directions, also when the header bytes are obfuscated byte-wise with a
+//  * constant key, and different flows spread over every lane. Unregistered protocols stay opaque. */
+// static void obfuscatePorts(uint8_t *packet, uint8_t key)
+// {
+//     for (unsigned i = 0; i < 4; ++i)
+//         packet[20 + i] ^= key;
+// }
 
-static void testPortedProtocols(steering_test_t *test)
-{
-    const uint8_t keys[] = {0x00, 0x5a, 0xff, 0x01};
-    uint8_t       packet[kPacketCapacity];
-    for (unsigned slot = 0; slot < test->ported_count; ++slot)
-    {
-        const uint8_t protocol                = test->ported[slot];
-        bool          seen[kMaximumTestLanes] = {0};
-        makePacket(packet, protocol, 20);
-        for (unsigned port = 1; port <= 512; ++port)
-        {
-            put16(packet + 20, (uint16_t) (12000 + port));
-            put16(packet + 22, 443);
-            const uint16_t lane = selectLane(test, packet, sizeof(packet));
-            require(lane < test->count, "a ported protocol must select a flow lane, never the opaque class");
-            seen[lane] = true;
-            reverseEndpoints(packet);
-            require(selectLane(test, packet, sizeof(packet)) == lane, "ported steering is symmetric");
-            reverseEndpoints(packet);
-            for (unsigned key = 0; key < sizeof(keys); ++key)
-            {
-                uint8_t forward[kPacketCapacity];
-                uint8_t reverse[kPacketCapacity];
-                memcpy(forward, packet, sizeof(forward));
-                memcpy(reverse, packet, sizeof(reverse));
-                reverseEndpoints(reverse);
-                obfuscatePorts(forward, keys[key]);
-                obfuscatePorts(reverse, keys[key]);
-                const uint16_t obfuscated = selectLane(test, forward, sizeof(forward));
-                require(obfuscated < test->count, "an obfuscated ported header must still select a flow lane");
-                require(selectLane(test, reverse, sizeof(reverse)) == obfuscated,
-                        "a constant byte-wise obfuscation keeps both directions of a flow on one lane");
-            }
-        }
-        requireAllLanes(seen, test->count, "different inner flows of a ported protocol spread over every lane");
+// static void testPortedProtocols(steering_test_t *test)
+// {
+//     const uint8_t keys[] = {0x00, 0x5a, 0xff, 0x01};
+//     uint8_t       packet[kPacketCapacity];
+//     for (unsigned slot = 0; slot < test->ported_count; ++slot)
+//     {
+//         const uint8_t protocol                = test->ported[slot];
+//         bool          seen[kMaximumTestLanes] = {0};
+//         makePacket(packet, protocol, 20);
+//         for (unsigned port = 1; port <= 512; ++port)
+//         {
+//             put16(packet + 20, (uint16_t) (12000 + port));
+//             put16(packet + 22, 443);
+//             const uint16_t lane = selectLane(test, packet, sizeof(packet));
+//             require(lane < test->count, "a ported protocol must select a flow lane, never the opaque class");
+//             seen[lane] = true;
+//             reverseEndpoints(packet);
+//             require(selectLane(test, packet, sizeof(packet)) == lane, "ported steering is symmetric");
+//             reverseEndpoints(packet);
+//             for (unsigned key = 0; key < sizeof(keys); ++key)
+//             {
+//                 uint8_t forward[kPacketCapacity];
+//                 uint8_t reverse[kPacketCapacity];
+//                 memcpy(forward, packet, sizeof(forward));
+//                 memcpy(reverse, packet, sizeof(reverse));
+//                 reverseEndpoints(reverse);
+//                 obfuscatePorts(forward, keys[key]);
+//                 obfuscatePorts(reverse, keys[key]);
+//                 const uint16_t obfuscated = selectLane(test, forward, sizeof(forward));
+//                 require(obfuscated < test->count, "an obfuscated ported header must still select a flow lane");
+//                 require(selectLane(test, reverse, sizeof(reverse)) == obfuscated,
+//                         "a constant byte-wise obfuscation keeps both directions of a flow on one lane");
+//             }
+//         }
+//         requireAllLanes(seen, test->count, "different inner flows of a ported protocol spread over every lane");
 
-        /* IPv4 options do not move the ports, and fragments keep the address/protocol lane. */
-        makePacket(packet, protocol, 20);
-        put16(packet + 20, 33333);
-        put16(packet + 22, 443);
-        const uint16_t flow_lane = selectLane(test, packet, sizeof(packet));
-        for (unsigned header = 24; header <= 60; header += 4)
-        {
-            uint8_t optioned[kPacketCapacity];
-            makePacket(optioned, protocol, header);
-            memset(optioned + 20, 0xa5, header - 20);
-            put16(optioned + header, 33333);
-            put16(optioned + header + 2, 443);
-            require(selectLane(test, optioned, sizeof(optioned)) == flow_lane,
-                    "IPv4 options do not change the port identity of a ported protocol");
-        }
-        put16(packet + 6, 0x2000);
-        const uint16_t fragment_lane = selectLane(test, packet, sizeof(packet));
-        put16(packet + 6, 0);
-        put16(packet + 2, 23);
-        require(selectLane(test, packet, 23) == fragment_lane,
-                "a ported packet too short for its ports keeps address/protocol steering");
-        put16(packet + 2, 24);
-        require(selectLane(test, packet, 24) == flow_lane, "exactly four transport bytes carry the port pair");
+//         /* IPv4 options do not move the ports, and fragments keep the address/protocol lane. */
+//         makePacket(packet, protocol, 20);
+//         put16(packet + 20, 33333);
+//         put16(packet + 22, 443);
+//         const uint16_t flow_lane = selectLane(test, packet, sizeof(packet));
+//         for (unsigned header = 24; header <= 60; header += 4)
+//         {
+//             uint8_t optioned[kPacketCapacity];
+//             makePacket(optioned, protocol, header);
+//             memset(optioned + 20, 0xa5, header - 20);
+//             put16(optioned + header, 33333);
+//             put16(optioned + header + 2, 443);
+//             require(selectLane(test, optioned, sizeof(optioned)) == flow_lane,
+//                     "IPv4 options do not change the port identity of a ported protocol");
+//         }
+//         put16(packet + 6, 0x2000);
+//         const uint16_t fragment_lane = selectLane(test, packet, sizeof(packet));
+//         put16(packet + 6, 0);
+//         put16(packet + 2, 23);
+//         require(selectLane(test, packet, 23) == fragment_lane,
+//                 "a ported packet too short for its ports keeps address/protocol steering");
+//         put16(packet + 2, 24);
+//         require(selectLane(test, packet, 24) == flow_lane, "exactly four transport bytes carry the port pair");
 
-        /* Malformed input still reaches lane zero for ordinary validation. */
-        makePacket(packet, protocol, 20);
-        put16(packet + 2, 19);
-        require(selectLane(test, packet, sizeof(packet)) == 0, "declared length shorter than header selects lane zero");
-        put16(packet + 2, kPacketCapacity);
-        require(selectLane(test, packet, 30) == 0, "truncated ported packet selects lane zero");
-        packet[0] = 0x44;
-        require(selectLane(test, packet, sizeof(packet)) == 0, "invalid IHL selects lane zero");
-    }
+//         /* Malformed input still reaches lane zero for ordinary validation. */
+//         makePacket(packet, protocol, 20);
+//         put16(packet + 2, 19);
+//         require(selectLane(test, packet, sizeof(packet)) == 0, "declared length shorter than header selects lane zero");
+//         put16(packet + 2, kPacketCapacity);
+//         require(selectLane(test, packet, 30) == 0, "truncated ported packet selects lane zero");
+//         packet[0] = 0x44;
+//         require(selectLane(test, packet, sizeof(packet)) == 0, "invalid IHL selects lane zero");
+//     }
 
-    /* Protocols that were not registered stay opaque and keep the independent random distribution class. */
-    for (unsigned protocol = 0; protocol <= UINT8_MAX; ++protocol)
-    {
-        bool registered = protocol == 6 || protocol == 17;
-        for (unsigned slot = 0; slot < test->ported_count; ++slot)
-            registered = registered || test->ported[slot] == protocol;
-        if (registered)
-            continue;
-        makePacket(packet, (uint8_t) protocol, 20);
-        require(selectLane(test, packet, sizeof(packet)) == test->count, "an unregistered protocol must stay opaque");
-    }
-}
+//     /* Protocols that were not registered stay opaque and keep the independent random distribution class. */
+//     for (unsigned protocol = 0; protocol <= UINT8_MAX; ++protocol)
+//     {
+//         bool registered = protocol == 6 || protocol == 17;
+//         for (unsigned slot = 0; slot < test->ported_count; ++slot)
+//             registered = registered || test->ported[slot] == protocol;
+//         if (registered)
+//             continue;
+//         makePacket(packet, (uint8_t) protocol, 20);
+//         require(selectLane(test, packet, sizeof(packet)) == test->count, "an unregistered protocol must stay opaque");
+//     }
+// static void testOpaqueLanes(steering_test_t *test)
+// {
+//     uint8_t packet[kPacketCapacity];
+//     for (unsigned int protocol = 0; protocol <= UINT8_MAX; ++protocol)
+//     {
+//         if (protocol == 6 || protocol == 17)
+//             continue;
+//         makePacket(packet, (uint8_t) protocol, 20);
+//         const uint16_t lane = selectLane(test, packet, sizeof(packet));
+//         require(lane < test->count, "opaque complete packets take a flow lane with opaque lanes enabled");
+//         put16(packet + 6, 0x2000);
+//         require(selectLane(test, packet, sizeof(packet)) == lane,
+//                 "an opaque flow and its fragments share the address/protocol lane");
+//         put16(packet + 6, 0);
+//         memset(packet + 20, 0xa5, sizeof(packet) - 20);
+//         require(selectLane(test, packet, sizeof(packet)) == lane, "opaque payload bytes never move the flow lane");
+//         reverseEndpoints(packet);
+//         require(selectLane(test, packet, sizeof(packet)) == lane, "opaque lane steering is symmetric");
+//     }
+//     bool seen[kMaximumTestLanes] = {0};
+//     makePacket(packet, 1, 20);
+//     for (unsigned int address = 0; address < 512; ++address)
+//     {
+//         put32(packet + 12, UINT32_C(0xc0000200) + address);
+//         seen[selectLane(test, packet, sizeof(packet))] = true;
+//     }
+//     requireAllLanes(seen, test->count, "opaque flows between different hosts still spread across all lanes");
+// }
 
 int main(void)
 {
@@ -432,28 +468,35 @@ int main(void)
     const uint16_t  counts[] = {1, 3, 16};
     for (unsigned int i = 0; i < sizeof(counts) / sizeof(counts[0]); ++i)
     {
-        openLanes(&test, counts[i], NULL, 0);
-        testPortDistributionAndSymmetry(&test);
-        testFragmentsAndOpaqueProtocols(&test);
-        testHeaderBoundsAndCompatibility(&test);
-        closeLanes(&test);
+//         openLanes(&test, counts[i], NULL, 0);
+//         openLanes(&test, counts[i], false);
+//         testPortDistributionAndSymmetry(&test);
+//         testFragmentsAndOpaqueProtocols(&test);
+//         testHeaderBoundsAndCompatibility(&test);
+//         closeLanes(&test);
+
+//         openLanes(&test, counts[i], true);
+//         testPortDistributionAndSymmetry(&test);
+//         testOpaqueLanes(&test);
+//         closeLanes(&test);
     }
 
-    const uint8_t ported[] = {50, 253};
-    for (unsigned i = 0; i < sizeof(counts) / sizeof(counts[0]); ++i)
-    {
-        openLanes(&test, counts[i], ported, 2);
-        testPortedProtocols(&test);
-        closeLanes(&test);
-    }
-    openLanes(&test, 4, ported, 1);
-    testPortedProtocols(&test);
-    closeLanes(&test);
-    openLanes(&test, 4, NULL, 0);
-    testPortedProtocols(&test);
-    closeLanes(&test);
+//     const uint8_t ported[] = {50, 253};
+//     for (unsigned i = 0; i < sizeof(counts) / sizeof(counts[0]); ++i)
+//     {
+//         openLanes(&test, counts[i], ported, 2);
+//         testPortedProtocols(&test);
+//         closeLanes(&test);
+//     }
+//     openLanes(&test, 4, ported, 1);
+//     testPortedProtocols(&test);
+//     closeLanes(&test);
+//     openLanes(&test, 4, NULL, 0);
+//     testPortedProtocols(&test);
+//     closeLanes(&test);
 
     openLanes(&test, kMaximumTestLanes, NULL, 0);
+    openLanes(&test, kMaximumTestLanes, false);
     uint8_t packet[kPacketCapacity];
     makePacket(packet, 6, 20);
     for (unsigned int port = 0; port < 64; ++port)

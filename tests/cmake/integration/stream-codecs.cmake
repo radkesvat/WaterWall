@@ -38,3 +38,5 @@ if(TARGET StreamFragmenter AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_
   endforeach()
 endif()
 include("${CMAKE_SOURCE_DIR}/tests/cmake/integration/tls-reality.cmake")
+
+add_waterwall_integration_test(waterwall.obfuscator_tcp_loopback obfuscator_tcp_loopback)

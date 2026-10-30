@@ -35,14 +35,12 @@ if(LINUX AND TARGET Socks5Server)
   add_waterwall_unit_test(waterwall.socks5server_control_input_unit socks5server_control_input_test "unit;tunnels;socks5server;reentrant;input")
 endif()
 
-if(TARGET Socks5Server)
-  waterwall_add_native_executable(socks5server_address_codec_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/socks/socks5server_address_codec_test.c
-    ${CMAKE_SOURCE_DIR}/tunnels/Socks5Server/common/address_codec.c)
-  target_include_directories(socks5server_address_codec_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/tunnels/Socks5Server/include
-    ${CMAKE_SOURCE_DIR}/tunnels/Socks5Server/include/Socks5Server)
-  add_dependencies(waterwall_unit_tests socks5server_address_codec_test)
-  add_waterwall_unit_test(waterwall.socks5server_address_codec_unit socks5server_address_codec_test "unit;socks5server;codec")
+if(TARGET SocksAddress)
+  waterwall_add_native_executable(socks_address_codec_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/socks/socks_address_codec_test.c)
+  target_link_libraries(socks_address_codec_test PRIVATE SocksAddress)
+  add_dependencies(waterwall_unit_tests socks_address_codec_test)
+  add_waterwall_unit_test(waterwall.socks_address_codec_unit socks_address_codec_test "unit;socks;trojan;codec")
 endif()
 
 if(LINUX AND TARGET Socks5Server)
@@ -83,21 +81,3 @@ if(LINUX AND TARGET Socks5Client)
   add_dependencies(waterwall_unit_tests socks5client_resources_test)
   add_waterwall_unit_test(waterwall.socks5client_resources_unit socks5client_resources_test "unit;socks5client;allocation;ownership")
 endif()
-
-foreach(side IN ITEMS Client Server)
-  if(TARGET Trojan${side})
-    string(TOLOWER "Trojan${side}" trojan_codec_prefix)
-    set(trojan_codec_test ${trojan_codec_prefix}_address_codec_test)
-    waterwall_add_native_executable(${trojan_codec_test} SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/trojan/trojan_address_codec_test.c
-      ${CMAKE_SOURCE_DIR}/tunnels/Trojan${side}/common/address_codec.c)
-    target_include_directories(${trojan_codec_test} PRIVATE
-      ${CMAKE_SOURCE_DIR}/tunnels/Trojan${side}/include
-      ${CMAKE_SOURCE_DIR}/tunnels/Trojan${side}/include/Trojan${side})
-    if(side STREQUAL "Server")
-      target_compile_definitions(${trojan_codec_test} PRIVATE TROJAN_ADDRESS_SERVER=1)
-    endif()
-    add_dependencies(waterwall_unit_tests ${trojan_codec_test})
-    add_waterwall_unit_test(waterwall.${trojan_codec_prefix}_address_codec_unit ${trojan_codec_test} "unit;trojan;codec")
-  endif()
-endforeach()
-

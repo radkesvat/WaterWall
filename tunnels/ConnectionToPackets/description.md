@@ -150,8 +150,9 @@ policy. Return input that exceeds the budget is dropped, allowing TCP retransmis
 this never discards already accepted application stream bytes. Dispatch remains
 queued even on the same worker. Cancellation, stale flow, shutdown and delivery
 release each charge once; injected custom pbufs keep their charge until actual free,
-using budget storage that can outlive the tunnel. Egress temporarily copies into one
-line-pool buffer per executing worker; after the neighbor takes ownership, that
+using budget storage that can outlive the tunnel. Egress copies into one padded
+buffer sized to the packet with the engine owner's chain padding and charges its
+complete allocation. The queued message transfers that same buffer; after the neighbor takes ownership, that
 receiver enforces its own retention budget. The first refusal in each direction logs
 a warning, and destruction logs accumulated return/output refusal counters.
 

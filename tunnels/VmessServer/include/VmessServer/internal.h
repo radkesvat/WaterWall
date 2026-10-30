@@ -15,7 +15,6 @@ bool vmessserverForwardResponse(tunnel_t *t, line_t *l, sbuf_t *buf);
 bool vmessserverDrainResponse(tunnel_t *t, line_t *l, bool admitted);
 void vmessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vmessserver_lstate_t *ls);
 bool vmessserverSendFallbackPayload(tunnel_t *t, line_t *l, vmessserver_lstate_t *ls, sbuf_t *buf);
-bool vmessserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, vmessserver_lstate_t *ls);
 
 bool vmessserverGatherHeader(vmessserver_lstate_t *ls, uint16_t needed);
 void vmessserverRetainActiveHead(vmessserver_lstate_t *ls);

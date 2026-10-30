@@ -263,13 +263,16 @@ When `sensitive-mode` is enabled:
 
 ### Buffering limits
 
-The frame parser uses a fixed-size read stream.
+Complete packets in the current delivery are extracted before incomplete-input
+retention is checked, including deliveries larger than 128 KiB. The parser leaves
+fewer than 1,500 logical bytes when it needs more input. Oversized backing storage
+for that suffix is compacted; its allocation allowance is the larger of 128 KiB
+and one best-fit allocation for the suffix with the required padding.
 
-Current limit:
-
-- `65536 * 2` bytes
-
-If buffered data exceeds that size, the read stream is emptied.
+Input received during a packet callback waits behind the current delivery in a
+FIFO limited to 128 KiB of logical bytes, 2 MiB of accounted storage and 1,024
+entries, including the active nested delivery. Empty input retains nothing.
+Exceeding nested admission closes the affected borrowed stream through its owner.
 
 ## Notes And Caveats
 

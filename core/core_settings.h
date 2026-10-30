@@ -43,6 +43,7 @@ struct core_settings_s
     bool              tcp_tune_enabled;
     bool              splice_enabled;
     uint16_t          mtu_size;
+    uint32_t          tcp_stack_receive_budget;
     vec_config_path_t config_paths;
 };
 

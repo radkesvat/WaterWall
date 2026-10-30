@@ -1,9 +1,10 @@
 /*
- * Covers: exact extraction from an owned head and unbound mixed-buffer queue.
+ * Covers: exact extraction and prefix gathering from an owned head and unbound queue.
  * Setup: Included after splice_stream_cases.h by bufio_contract_test.c; reuses its
  * pool, source pipes, payload checks and syscall fault probes.
  * Cases: all source splits, suffix ownership/accounting, zero-length no-op,
- * whole-head identity, padding repair, pipe exhaustion and partial fallback.
+ * whole-head identity, padding repair, pipe exhaustion, partial fallback,
+ * incremental cached prefixes, unread suffix restoration and retained-storage compaction.
  * CTest: waterwall.bufio_contract_unit; waterwall.bufio_contract_no_splice_unit.
  */
 #include "buffer_queue_range.h"
@@ -140,7 +141,236 @@ static void testBufferRangePaddingAndQueuedSuffix(buffer_pool_t *pool)
     rangeDestroyInput(pool, head, &queue);
 }
 
+static void testBufferRangeGatherSplits(buffer_pool_t *pool)
+{
+    const uint8_t  wire[] = "abcdBODY";
+    const unsigned modes  = WW_HAVE_SPLICE ? 3U : 1U;
+    for (unsigned first = 0; first < modes; ++first)
+        for (unsigned second = 0; second < modes; ++second)
+            for (uint32_t split = 0; split < sizeof(wire); ++split)
+            {
+                buffer_queue_t queue;
+                bufferqueueInitEmpty(&queue);
+                sbuf_t *head = rangeTestInput(pool, wire, split, first);
+                bufferqueuePushBack(&queue, streamTestBytes(pool, "", 0));
+                bufferqueuePushBack(&queue, rangeTestInput(pool, wire + split, sizeof(wire) - 1U - split, second));
+                uint8_t  prefix[5] = {0, 0, 0, 0, 0xA5};
+                uint16_t filled    = 0;
 #if WW_HAVE_SPLICE
+                streamProbe       = true;
+                streamReadBytes   = 0;
+                streamSpliceBytes = 0;
+#endif
+                require(bufferRangeGatherPrefix(pool, &head, &queue, prefix, &filled, 4),
+                        "gather rejected an available prefix");
+#if WW_HAVE_SPLICE
+                streamProbe                 = false;
+                const uint32_t first_bytes  = min(split, 4U);
+                const uint32_t second_bytes = 4U - first_bytes;
+                const uint32_t first_pipe   = first == 0 ? 0 : first_bytes - (first == 2 ? min(first_bytes, 3U) : 0);
+                const uint32_t second_pipe = second == 0 ? 0 : second_bytes - (second == 2 ? min(second_bytes, 3U) : 0);
+                require(streamReadBytes == first_pipe + second_pipe && streamSpliceBytes == 0,
+                        "prefix gather materialized bytes outside the requested metadata");
+#endif
+                require(filled == 4 && memoryEqual(prefix, wire, 4) && prefix[4] == 0xA5,
+                        "prefix gather lost bytes or overran the requested extent");
+                require((head == NULL ? 0 : sbufGetLength(head)) + queue.total_len == 4,
+                        "prefix gather consumed following body bytes");
+                rangeCheckQueue(&queue);
+                streamCheckBytes(pool, bufferRangeTakeExact(pool, &head, &queue, 4), wire + 4, 4);
+                rangeDestroyInput(pool, head, &queue);
+            }
+}
+
+static void testBufferRangeGatherIncremental(buffer_pool_t *pool)
+{
+    const uint8_t wire[] = "abcdef";
+    for (unsigned mode = 0; mode < (WW_HAVE_SPLICE ? 3U : 1U); ++mode)
+    {
+        buffer_queue_t queue;
+        bufferqueueInitEmpty(&queue);
+        sbuf_t  *head      = NULL;
+        uint8_t  prefix[7] = {0};
+        uint16_t filled    = 0;
+        require(! bufferRangeGatherPrefix(pool, &head, &queue, prefix, &filled, 4) && filled == 0,
+                "empty input completed a missing prefix");
+        for (uint16_t i = 0; i < sizeof(wire) - 1U; ++i)
+        {
+            bufferqueuePushBack(&queue, streamTestBytes(pool, "", 0));
+            bufferqueuePushBack(&queue, rangeTestInput(pool, wire + i, 1, mode));
+            const uint16_t needed = i < 4 ? 4 : 6;
+            require(bufferRangeGatherPrefix(pool, &head, &queue, prefix, &filled, needed) == (i + 1U == needed),
+                    "incremental gather returned the wrong completion state");
+            require(filled == i + 1U && memoryEqual(prefix, wire, filled) && prefix[filled] == 0 && head == NULL &&
+                        bufferqueueGetBufCount(&queue) == 0,
+                    "incremental gather lost cached progress or retained exhausted input");
+            rangeCheckQueue(&queue);
+        }
+        rangeDestroyInput(pool, head, &queue);
+    }
+}
+
+static void testBufferRangeGatherNoop(buffer_pool_t *pool)
+{
+    for (unsigned active = 0; active < 3; ++active)
+    {
+        buffer_queue_t queue;
+        bufferqueueInitEmpty(&queue);
+        sbuf_t *head       = active ? streamTestBytes(pool, "head", active == 1 ? 4 : 0) : NULL;
+        sbuf_t *saved_head = head;
+        sbuf_t *empty      = bufferqueuePushBack(&queue, streamTestBytes(pool, "", 0));
+        bufferqueuePushBack(&queue, streamTestBytes(pool, "tail", 4));
+        const size_t charge    = bufferqueueGetCharge(&queue);
+        uint8_t      prefix[5] = "abcd";
+        uint16_t     filled    = 0;
+        require(bufferRangeGatherPrefix(pool, &head, &queue, prefix, &filled, 0) && filled == 0,
+                "zero prefix request did not succeed");
+        filled = 4;
+        require(bufferRangeGatherPrefix(pool, &head, &queue, prefix, &filled, 4) &&
+                    bufferRangeGatherPrefix(pool, &head, &queue, prefix, &filled, 1),
+                "cached prefix did not satisfy an equal or earlier parser checkpoint");
+        require(filled == 4 && memoryEqual(prefix, "abcd", sizeof(prefix)) && head == saved_head &&
+                    (head == NULL || sbufGetLength(head) == (active == 1 ? 4U : 0U)) &&
+                    bufferqueueFront(&queue) == empty && bufferqueueGetBufCount(&queue) == 2 &&
+                    bufferqueueGetBufLen(&queue) == 4 && bufferqueueGetCharge(&queue) == charge,
+                "satisfied gather changed cached bytes or input ownership");
+        rangeCheckQueue(&queue);
+        rangeDestroyInput(pool, head, &queue);
+    }
+}
+
+static void testBufferRangeRestoreSuffix(buffer_pool_t *pool)
+{
+    for (unsigned mode = 0; mode < (WW_HAVE_SPLICE ? 3U : 1U); ++mode)
+    {
+        buffer_queue_t queue;
+        bufferqueueInitEmpty(&queue);
+        bufferqueuePushBack(&queue, rangeTestInput(pool, (const uint8_t *) "abcdBODY", 8, mode));
+        sbuf_t      *tail        = bufferqueuePushBack(&queue, streamTestBytes(pool, "NEXT", 4));
+        const size_t tail_charge = sbufGetQueueCharge(tail);
+        sbuf_t      *head        = bufferqueuePopFront(&queue);
+        uint8_t      prefix[4];
+        uint16_t     filled = 0;
+        require(bufferRangeGatherPrefix(pool, &head, &queue, prefix, &filled, 4) && filled == 4 &&
+                    memoryEqual(prefix, "abcd", 4),
+                "restore fixture did not consume its cached prefix");
+        require(head != NULL && sbufGetLength(head) == 4 && bufferqueueFront(&queue) == tail &&
+                    bufferqueueGetBufLen(&queue) == 4 && bufferqueueGetCharge(&queue) == tail_charge,
+                "gather mutated a still-queued suffix");
+        const size_t head_charge = sbufGetQueueCharge(head);
+        bufferRangeRestoreHead(&head, &queue);
+        require(head == NULL && bufferqueueGetBufCount(&queue) == 2 && bufferqueueGetBufLen(&queue) == 8 &&
+                    bufferqueueGetCharge(&queue) == head_charge + tail_charge,
+                "head restoration lost ownership or miscounted the unread suffix");
+        const sbuf_t *restored = bufferqueueFront(&queue);
+        bufferRangeRestoreHead(&head, &queue);
+        require(head == NULL && bufferqueueFront(&queue) == restored && bufferqueueGetBufCount(&queue) == 2 &&
+                    bufferqueueGetBufLen(&queue) == 8 && bufferqueueGetCharge(&queue) == head_charge + tail_charge,
+                "null head restoration changed queued ownership");
+        rangeCheckQueue(&queue);
+        /* Ordinary Debug insertion may replace the restored allocation. Consume
+         * through the queue's current owner, never through the former head. */
+        streamCheckBytes(pool, bufferRangeTakeExact(pool, &head, &queue, 8), "BODYNEXT", 8);
+        rangeDestroyInput(pool, head, &queue);
+    }
+}
+
+static void testBufferRangeRetainedStorage(buffer_pool_t *pool)
+{
+    buffer_queue_t queue;
+    bufferqueueInitEmpty(&queue);
+    sbuf_t *head   = streamTestBytes(pool, "ab", 2);
+    sbuf_t *tail   = bufferqueuePushBack(&queue, streamTestBytes(pool, "cd", 2));
+    sbuf_t *saved  = head;
+    size_t  charge = sbufGetQueueCharge(head) + bufferqueueGetCharge(&queue);
+    require(bufferRangeSettleRetained(pool, &head, &queue, charge, 2) && head == saved &&
+                bufferqueueFront(&queue) == tail,
+            "settling within the exact limits changed input ownership");
+    require(bufferRangeSettleRetained(pool, &head, &queue, charge, 1) && head == saved &&
+                bufferqueueGetBufCount(&queue) == 0 && sbufGetLength(head) == 4,
+            "entry pressure did not reuse existing head append room");
+    rangeCheckQueue(&queue);
+    streamCheckBytes(pool, head, "abcd", 4);
+    head = bufferpoolGetLargeBuffer(pool);
+    sbufSetLength(head, 4);
+    sbufWrite(head, "body", 4);
+    saved = head;
+    buffer_pool_fit_t fit;
+    require(bufferpoolQueryBestFit(pool, 4, bufferpoolGetLargeBufferPadding(pool), &fit),
+            "retained-storage fixture geometry failed");
+    require(! bufferRangeSettleRetained(pool, &head, &queue, fit.allocation_charge - 1U, 1) && head == saved &&
+                sbufGetLength(head) == 4,
+            "unrepresentable compact budget consumed input");
+    require(bufferRangeSettleRetained(pool, &head, &queue, fit.allocation_charge, 1) && head != saved &&
+                sbufGetQueueCharge(head) <= fit.allocation_charge,
+            "single oversized head did not compact to fitting storage");
+    streamCheckBytes(pool, head, "body", 4);
+
+    /* Pressure on each appended fragment must reuse assembly room instead of
+     * repeatedly copying the whole growing body. This is only a 12 KiB body. */
+    uint8_t expected[12 * 1024];
+    for (uint32_t i = 0; i < sizeof(expected); ++i)
+        expected[i] = (uint8_t) i;
+    head                  = NULL;
+    unsigned replacements = 0;
+    for (uint32_t offset = 0; offset < sizeof(expected); offset += 256)
+    {
+        bufferqueuePushBack(&queue, streamTestBytes(pool, expected + offset, 256));
+        saved = head;
+        require(bufferRangeSettleRetained(pool, &head, &queue, 128 * 1024, 1),
+                "bounded fragmented body could not compact");
+        if (head != NULL && saved != head)
+            ++replacements;
+        rangeCheckQueue(&queue);
+    }
+    require(replacements <= 3, "retained body repeatedly copied its accumulated prefix");
+    streamCheckBytes(pool, bufferRangeTakeExact(pool, &head, &queue, sizeof(expected)), expected, sizeof(expected));
+    rangeDestroyInput(pool, head, &queue);
+}
+
+#if WW_HAVE_SPLICE
+static void testBufferRangeRetainedSplice(buffer_pool_t *pool)
+{
+    for (unsigned mode = 1; mode <= 2; ++mode)
+        for (unsigned fault = 0; fault <= 1; ++fault)
+        {
+            buffer_queue_t queue;
+            bufferqueueInitEmpty(&queue);
+            sbuf_t *head = rangeTestInput(pool, (const uint8_t *) "abc", 3, mode);
+            bufferqueuePushBack(&queue, rangeTestInput(pool, (const uint8_t *) "def", 3, 1));
+            streamProbe         = true;
+            streamTransferFault = fault ? 3 : 0;
+            require(bufferRangeSettleRetained(pool, &head, &queue, 128 * 1024, 1),
+                    "splice retention could not compact");
+            streamProbe         = false;
+            streamTransferFault = 0;
+            require(sbufIsSplice(head) == ! fault && bufferqueueGetBufCount(&queue) == 0,
+                    "retained splice assembly did not preserve pipes or select complete fallback");
+            rangeCheckQueue(&queue);
+            streamCheckBytes(pool, head, "abcdef", 6);
+            rangeDestroyInput(pool, NULL, &queue);
+        }
+
+    /* A valid current pipe charge can exceed the cap after appending, even
+     * though ordinary storage fits: splice and ordinary padding may differ. */
+    pool_fixture_t fixture = poolFixtureCreate(256, 128, 0, 0);
+    buffer_queue_t queue;
+    bufferqueueInitEmpty(&queue);
+    uint8_t wire[80] = {0};
+    sbuf_t *head     = makeSpliceTestBuffer(fixture.pool, NULL, 0, wire, 48);
+    bufferqueuePushBack(&queue, streamTestBytes(fixture.pool, wire + 48, 32));
+    buffer_pool_fit_t fit;
+    require(bufferpoolQueryBestFit(fixture.pool, sizeof(wire), 0, &fit) &&
+                sbufGetQueueCharge(head) <= fit.allocation_charge,
+            "differing splice padding fixture does not fit its initial head");
+    require(bufferRangeSettleRetained(fixture.pool, &head, &queue, fit.allocation_charge, 1) && ! sbufIsSplice(head) &&
+                sbufGetQueueCharge(head) <= fit.allocation_charge,
+            "splice append bypassed the final retained charge limit");
+    streamCheckBytes(fixture.pool, head, wire, sizeof(wire));
+    rangeDestroyInput(fixture.pool, NULL, &queue);
+    poolFixtureDestroy(&fixture);
+}
+
 static void testBufferRangeSpliceFallback(buffer_pool_t *pool)
 {
     const unsigned faults[] = {1, 3, 5};
@@ -202,7 +432,13 @@ static void testBufferQueueRangeContracts(void)
     testBufferRangeSplits(fixture.pool);
     testBufferRangeZeroAndIdentity(fixture.pool);
     testBufferRangePaddingAndQueuedSuffix(fixture.pool);
+    testBufferRangeGatherSplits(fixture.pool);
+    testBufferRangeGatherIncremental(fixture.pool);
+    testBufferRangeGatherNoop(fixture.pool);
+    testBufferRangeRestoreSuffix(fixture.pool);
+    testBufferRangeRetainedStorage(fixture.pool);
 #if WW_HAVE_SPLICE
+    testBufferRangeRetainedSplice(fixture.pool);
     testBufferRangeSpliceFallback(fixture.pool);
 #endif
     poolFixtureDestroy(&fixture);

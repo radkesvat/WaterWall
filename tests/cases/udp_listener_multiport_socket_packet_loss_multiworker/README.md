@@ -5,14 +5,14 @@ Exercises the udp listener multiport socket packet loss multiworker scenario wit
 
 Configured nodes and onward edges (`next`; listeners/connectors form the OS transport boundaries):
 
-- `packet-sender`: `PacketSender` → `packets-to-stream`
+- `packet-generator`: `PacketGenerator` → `packets-to-stream`
 - `packets-to-stream`: `PacketsToStream` → `udp-connector`
 - `udp-connector`: `UdpConnector` (terminal or independently bound endpoint)
 - `udp-listener`: `UdpListener` → `stream-to-packets`
-- `stream-to-packets`: `StreamToPackets` → `packet-receiver`
-- `packet-receiver`: `PacketReceiver` (terminal or independently bound endpoint)
+- `stream-to-packets`: `StreamToPackets` → `packet-counter`
+- `packet-counter`: `PacketCounter` (terminal or independently bound endpoint)
 
-Scenario choices: `packet-sender.duration-ms=200`. These values define the workload/edge case and are not tuning advice.
+Scenario choices: `packet-generator.duration-ms=200`. These values define the workload/edge case and are not tuning advice.
 
 CTest selections and overrides:
 

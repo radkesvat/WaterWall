@@ -19,7 +19,9 @@ bool deviceFlowAffineWID(const uint8_t *packet, uint32_t length, wid_t *out_wid)
  * Select a processing worker independently of transport ownership. Multiple
  * native readers keep their own worker. A single reader keeps visible TCP/UDP
  * tuples on a stable worker; opaque input rotates through this session's event
- * workers. This is receive locality, not proof of consumer flow ownership.
+ * workers unless the session sets opaque_flow_affinity, when it keeps the
+ * worker of its address pair and protocol. This is receive locality, not proof
+ * of consumer flow ownership.
  * Call once per admitted native record,
  * retaining the result across capacity retries and all segments of that record.
  */

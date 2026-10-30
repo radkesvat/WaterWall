@@ -95,6 +95,12 @@ static void initializeSelectedRoute(tunnel_t *t, line_t *l, sniffrouter_lstate_t
         tunnelNextUpStreamInit(t, l);
     }
 
+    if (lineIsAlive(l) && ls->replaying && ls->pending_pause)
+    {
+        // Keep startup input queued until this notification returns, including reentry.
+        sniffrouterTunnelUpStreamPause(t, l);
+    }
+
     while (lineIsAlive(l) && ls->replaying)
     {
         if (first == NULL)
@@ -183,7 +189,9 @@ void sniffrouterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     ls->pending   = NULL;
     if (ls->datagram_input)
     {
-        lineReuseBuffer(l, first);
+        // This UDP sniff view was allocated directly, without a pool checkout.
+        // Recycling it would incorrectly decrement the pool's debug in-use count.
+        sbufDestroy(first);
         first = NULL;
     }
 

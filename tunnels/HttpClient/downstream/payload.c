@@ -10,14 +10,14 @@ static void failAndCloseD(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
     }
 }
 
-void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+static void processPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     httpclient_lstate_t *ls = lineGetState(l, t);
     httpclient_tstate_t *ts = tunnelGetState(t);
 
     if (ls->split_role == kHttpClientSplitRoleUpload || ls->split_role == kHttpClientSplitRoleDownload)
     {
-        httpclientSplitDownStreamPayload(t, l, buf);
+        httpclientSplitProcessDownStreamPayload(t, l, buf);
         return;
     }
 
@@ -106,9 +106,9 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->runtime_proto == kHttpClientRuntimeHttp2)
     {
-        while (! bufferstreamIsEmpty(&ls->in_stream))
+        if (! bufferstreamIsEmpty(&ls->in_stream))
         {
-            sbuf_t *leftover = bufferstreamIdealRead(&ls->in_stream);
+            sbuf_t *leftover = bufferstreamFullRead(&ls->in_stream);
             if (! httpclientTransportFeedHttp2Input(t, l, ls, leftover))
             {
                 failAndCloseD(t, l, ls);
@@ -155,5 +155,54 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    lineUnref(l);
+}
+
+static void rejectInput(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
+{
+    if (ls->split_role == kHttpClientSplitRoleUpload || ls->split_role == kHttpClientSplitRoleDownload)
+        httpclientSplitRejectInput(t, l);
+    else
+        httpclientTransportCloseBothDirections(t, l, ls);
+}
+
+void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    httpclient_lstate_t *ls = lineGetState(l, t);
+    lineRef(l);
+    const http_receive_result_t admitted = httpReceiveAdmit(&ls->receive, lineGetBufferPool(l), buf);
+    if (admitted == kHttpReceiveRejected)
+    {
+        lineReuseBuffer(l, buf);
+        LOGW("HttpClient: nested receive limit exceeded");
+        rejectInput(t, l, ls);
+    }
+    if (admitted != kHttpReceiveDrain)
+    {
+        lineUnref(l);
+        return;
+    }
+
+    sbuf_t *slice;
+    while ((slice = httpReceiveNext(&ls->receive, lineGetBufferPool(l))) != NULL)
+    {
+        processPayload(t, l, slice);
+        if (! lineIsAlive(l) || ls->line == NULL || ! tunnelIsActiveForLine(t, l))
+        {
+            lineUnref(l);
+            return;
+        }
+        size_t limit = kHttpReceiveStreamBytes;
+        if (! httpReceiveSettle(&ls->in_stream, limit))
+        {
+            LOGW("HttpClient: retained receive limit exceeded");
+            rejectInput(t, l, ls);
+            lineUnref(l);
+            return;
+        }
+    }
+    if (ls->runtime_proto == kHttpClientRuntimeUpgradedRaw && ! httpclientTransportFinishCustomUpgrade(t, l, ls) &&
+        lineIsAlive(l) && ls->line != NULL)
+        rejectInput(t, l, ls);
     lineUnref(l);
 }

@@ -186,6 +186,15 @@ static uint32_t frame(uint8_t *out, const void *body, uint32_t len)
         memcpy(out + 2, body, len);
     return 2 + len;
 }
+static void requireUdpRetention(void)
+{
+    vlessserver_lstate_t *ls          = lineGetState(f.line, f.t);
+    const size_t          head_charge = ls->input_head == NULL ? 0 : sbufGetQueueCharge(ls->input_head);
+    twfRequire(lineIsAlive(f.line) && ls->pending_up.budget == NULL &&
+                   head_charge + bufferqueueGetCharge(&ls->pending_up) <= kVlessServerMaxInputCharge &&
+                   (ls->input_head != NULL) + bufferqueueGetBufCount(&ls->pending_up) <= kVlessServerMaxInputBuffers,
+               "UDP retained fragmented input beyond its storage compaction thresholds");
+}
 static void act(unsigned boundary, line_t *l)
 {
     if (boundary != f.boundary)
@@ -248,6 +257,18 @@ static void act(unsigned boundary, line_t *l)
             twfRequire(! lineIsAlive(f.line), "reentry retention overflow accepted");
         }
         memoryFree(data);
+    }
+    if (action == 15)
+    {
+        sbuf_t *nested      = f.nested;
+        f.nested            = NULL;
+        const uint8_t *wire = sbufGetRawPtr(nested);
+        for (uint32_t i = 0; i < sbufGetLength(nested); ++i)
+        {
+            tunnelUpStreamPayload(f.t, f.line, bytes(wire + i, 1, false, 320));
+            requireUdpRetention();
+        }
+        lineReuseBuffer(f.line, nested);
     }
     if (action == 13)
     {
@@ -453,7 +474,7 @@ static void begin(bool fallback, bool database, uint32_t pool)
     f.database                                                    = database;
     vlessserver_tstate_t *ts                                      = tunnelGetState(f.t);
     ts->fallback_tunnel                                           = fallback ? f.fallback : NULL;
-    ts->fallback_intentional_delay_ms = ts->fallback_intentional_delay_jitter_ms = 0;
+    ts->fallback_replay_config.delay_ms = ts->fallback_replay_config.jitter_ms = 0;
     if (database)
         ts->auth_client_tunnel = f.next;
     twfLinePoolSetup(&f.lines, f.t->lstate_size, 8);
@@ -818,8 +839,8 @@ static void testFallback(void)
     {
         begin(true, false, 128);
         vlessserver_tstate_t *ts                 = tunnelGetState(f.t);
-        ts->fallback_intentional_delay_ms        = 7;
-        ts->fallback_intentional_delay_jitter_ms = 1;
+        ts->fallback_replay_config.delay_ms      = 7;
+        ts->fallback_replay_config.jitter_ms     = 1;
         uint8_t probe[2048];
         memset(probe, 'x', sizeof(probe));
         tunnelUpStreamPayload(f.t, f.line, bytes(probe, sizeof(probe), true, 320));
@@ -844,7 +865,7 @@ static void testFallback(void)
         end();
     }
     begin(true, false, 128);
-    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
     g_fallback_finish_task.refuse                                                 = true;
     tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
     twfRequire(! lineIsAlive(f.line), "task refusal did not close fallback");
@@ -873,7 +894,7 @@ static void testFallbackLocalReplies(void)
                 f.auto_est             = established != 0;
                 local_reply_pipe       = pipe != 0;
                 f.fallback->fnPayloadU = localFallbackReplyAndFinish;
-                ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = delayed ? 7 : 0;
+                ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = delayed ? 7 : 0;
                 tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, pipe != 0, 320));
                 if (delayed)
                     fallbackFinishDriveDelayedTask();
@@ -1035,6 +1056,7 @@ static void testUdp(void)
         {
             unsigned count = min(n == 1500 ? 1U : 2048U, total - off);
             tunnelUpStreamPayload(f.t, f.line, bytes(wire + off, count, n != 1500, 320));
+            requireUdpRetention();
             off += count;
         }
         twfRequire(f.calls_up == 1 && f.up_len == n && ! memcmp(f.up, body, n), "UDP fragment or maximum body lost");
@@ -1206,7 +1228,7 @@ static void testReentry(void)
             end();
         }
     begin(true, false, 128);
-    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
     f.boundary                                                                    = 1;
     f.action                                                                      = 7;
     tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
@@ -1287,8 +1309,8 @@ static void testLimits(void)
             vlessserver_lstate_t *ls = lineGetState(f.line, f.t);
             if (direction == 0)
             {
+                ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
                 tunnelUpStreamPayload(f.t, f.line, bytes("", 0, false, 320));
-                ls->input_dispatching = true;
             }
             else
             {
@@ -1305,6 +1327,8 @@ static void testLimits(void)
                     tunnelUpStreamPayload(f.t, f.line, b);
             }
             buffer_budget_t *budget = direction ? &ls->response_budget : &ls->upstream_budget;
+            twfRequire(bufferbudgetGetLimits(budget).charge == (direction ? SIZE_MAX : kVlessServerMaxFallbackCharge),
+                       "fallback charge policy affected the wrong budget");
             twfRequire(lineIsAlive(f.line) && bufferbudgetGetUsage(budget).entries == (entries ? 1024 : 1),
                        "exact budget rejected or accounting lost");
             sbuf_t *extra = bytes(data, entries ? 0 : 1, false, 320);
@@ -1312,7 +1336,11 @@ static void testLimits(void)
                 tunnelDownStreamPayload(f.t, f.line, extra);
             else
                 tunnelUpStreamPayload(f.t, f.line, extra);
-            twfRequire(! lineIsAlive(f.line), "output budget overflow accepted");
+            if (direction == 0 && entries)
+                twfRequire(lineIsAlive(f.line) && bufferbudgetGetUsage(budget).entries == 1,
+                           "delayed entry pressure did not compact ordinary replay");
+            else
+                twfRequire(! lineIsAlive(f.line), "output budget overflow accepted");
             end();
         }
     begin(false, false, 128);
@@ -1400,7 +1428,7 @@ static void testRepresentationsAndPipePressure(void)
         end();
     }
     begin(true, false, 128);
-    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
     tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
     tunnelDownStreamPause(f.t, f.line);
     tunnelUpStreamPayload(f.t, f.line, bytes("-tail", 5, false, 320));
@@ -1413,13 +1441,35 @@ static void testRepresentationsAndPipePressure(void)
                "Resume rescheduled an already-drained fallback batch");
     end();
     begin(true, false, 128);
-    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+    ((vlessserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
     tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
     tunnelDownStreamPause(f.t, f.line);
     end();
     twfRequire(f.calls_fallback == 1 && f.replay_len == 5 && ! memcmp(f.replay, "probe", 5) &&
                    f.last_splice == (WW_HAVE_SPLICE != 0),
                "source Finish lost the accepted paused fallback batch or its representation");
+}
+
+static void testUdpNestedRetention(void)
+{
+    twfSetCase("nested UDP fragments compact behind the active suffix without losing FIFO");
+    begin(false, false, 128);
+    startUdp();
+    uint8_t body[1500], wire[1600];
+    for (unsigned i = 0; i < sizeof(body); ++i)
+        body[i] = (uint8_t) i;
+    const uint32_t first = frame(wire, "A", 1);
+    const uint32_t total = first + frame(wire + first, body, sizeof(body));
+    const uint32_t split = total - sizeof(body) + 1U;
+    f.boundary           = 3;
+    f.action             = 15;
+    f.nested             = bytes(wire + split, total - split, false, 320);
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, split, false, 320));
+    twfRequire(f.calls_up == 2 && f.up_len == sizeof(body) + 1U && f.up[0] == 'A' &&
+                   memoryEqual(f.up + 1, body, sizeof(body)),
+               "nested UDP compaction reordered the active suffix or fragmented body");
+    requireUdpRetention();
+    end();
 }
 
 static void testShutdownAdmission(void)
@@ -1484,6 +1534,7 @@ int main(void)
     testCredentialSnapshots();
     testAuthentication();
     testUdp();
+    testUdpNestedRetention();
     testUdpEmptyFrames();
     testEmptyUdpReplies();
     testReentry();

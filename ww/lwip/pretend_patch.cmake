@@ -21,6 +21,24 @@ function(ww_lwip_replace_once file before after)
 endfunction()
 
 function(ww_apply_lwip_pretend_patch lwip_dir)
+    # A bounded segment-pool refusal retains no initial out-of-order packet.
+    # Do not advertise its bytes as a retained SACK range.
+    ww_lwip_replace_once("${lwip_dir}/src/core/tcp_in.c"
+[=[          pcb->ooseq = tcp_seg_copy(&inseg);
+#if LWIP_TCP_SACK_OUT
+          if (pcb->flags & TF_SACK) {]=]
+[=[          pcb->ooseq = tcp_seg_copy(&inseg);
+#if LWIP_TCP_SACK_OUT
+          if ((pcb->ooseq != NULL) && (pcb->flags & TF_SACK)) {]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/tcp_in.c"
+[=[              /* The new segment is at the beginning. sackbeg should already be set properly.
+                 We need to find the right edge. */
+              next = pcb->ooseq;]=]
+[=[              /* A prepend may have failed to retain the incoming segment.
+                 Find both edges from the actual retained queue. */
+              next = pcb->ooseq;
+              sackbeg = next->tcphdr->seqno;]=])
+
     # Bound ordinary UDP before checksum work, PCB selection or pretend admission.
     # UDP-Lite uses this field for checksum coverage, not datagram length.
     ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"

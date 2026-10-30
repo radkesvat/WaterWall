@@ -9,7 +9,7 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 - `obfuscator-client`: `ObfuscatorClient` → `obfuscator-client-bridge`
 - `obfuscator-client-bridge`: `Bridge` paired with `obfuscator-server-bridge`
 - `tester-server`: `TesterServer` → `obfuscator-server`
-- `obfuscator-server`: `ObfuscatorServer` → `obfuscator-server-bridge`
+- `obfuscator-server`: `ObfuscatorClient` → `obfuscator-server-bridge`
 - `obfuscator-server-bridge`: `Bridge` paired with `obfuscator-client-bridge`
 
 Scenario choices: `tester-client.packet-mode=true`, `tester-server.packet-mode=true`. These values define the workload/edge case and are not tuning advice.
@@ -27,3 +27,5 @@ Discover properties with `ctest --preset linux -N -V -R '^waterwall\.obfuscator_
 Generated core settings, logs and mutable inputs belong to the private run directory. Failures/skips retain initialized artifacts; `WATERWALL_TEST_KEEP_RUN_DIR=1` also retains success. See the [test workflow](../../README.md).
 
 Contract exercised: Verifies the same obfuscation pair while also exercising TLS-like record wrapping and stripping.
+
+The paired Bridge reverses callback direction. Both Obfuscator nodes therefore use the Client role, with their encoded side facing their respective Bridge. The TCP loopback case separately covers the ordinary Client/Server deployment.

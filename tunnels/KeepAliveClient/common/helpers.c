@@ -181,9 +181,7 @@ void keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
     }
     /* Draining leaves an incomplete validated frame; retained capacity still needs a bound. */
     assert(splicestreamLength(ls->read_stream) < kKeepAliveMaxPayloadChunkSize + kKeepAliveFramePrefixSize);
-    if (splicestreamCharge(ls->read_stream) > kKeepAliveReadChargeLimit)
-        discard splicestreamCompact(ls->read_stream);
-    if (splicestreamCharge(ls->read_stream) > kKeepAliveReadChargeLimit)
+    if (! splicestreamSettleCharge(ls->read_stream, kKeepAliveReadChargeLimit))
     {
         LOGW("KeepAliveClient: incomplete frame storage limit exceeded");
         keepaliveclientCloseLineFromProtocolError(t, l);

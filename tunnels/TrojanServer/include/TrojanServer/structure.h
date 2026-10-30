@@ -1,20 +1,21 @@
 #pragma once
 
-#include "address_codec.h"
+#include "FallbackReplay/fallback_replay.h"
+#include "SocksAddress/address_codec.h"
 #include "wwapi.h"
 
 /* Each remote owns its immutable key; the client map borrows it until detach.
  * Routing context rewrites must never change lookup or removal identity. */
 typedef struct trojanserver_remote_key_s
 {
-    trojanserver_address_t address;
+    socks_address_t        address;
     hash_t                 hash;
 } trojanserver_remote_key_t;
 
 static inline bool trojanserverRemoteKeyEqual(trojanserver_remote_key_t *const *left,
                                               trojanserver_remote_key_t *const *right)
 {
-    const trojanserver_address_t *a = &(*left)->address, *b = &(*right)->address;
+    const socks_address_t *a = &(*left)->address, *b = &(*right)->address;
     return a->kind == b->kind && a->port == b->port && a->length == b->length &&
            memoryEqual(a->bytes, b->bytes, a->length);
 }
@@ -99,8 +100,7 @@ typedef struct trojanserver_tstate_s
 
     trojanserver_user_t *users;
     uint32_t             user_count;
-    uint32_t             fallback_intentional_delay_ms;
-    uint32_t             fallback_intentional_delay_jitter_ms;
+    fallback_replay_config_t fallback_replay_config;
     bool                 allow_connect;
     bool                 allow_udp;
     bool                 verbose;
@@ -130,14 +130,11 @@ typedef struct trojanserver_lstate_s
     bool prev_pause_sent : 1; // Association pressure was sent toward the carrier source.
     bool next_pause_sent : 1; // Current client pressure was delivered to this producer.
 
-    /* Parser, authentication and delayed-fallback flags use the same group. */
+    /* Parser and authentication flags use the same group. */
     bool first_payload_seen : 1;
     bool short_password : 1;
     bool frame_ready : 1;
     bool frame_selected : 1;
-    bool fallback_delay_scheduled : 1;
-    bool fallback_close_draining : 1;
-    bool fallback_branch_finished_during_drain : 1;
 
     /* Client input: pending_up owns initial/UDP wire bytes, then opaque bytes
      * after CONNECT. The popped head remains owned here; input_bytes includes
@@ -169,7 +166,7 @@ typedef struct trojanserver_lstate_s
     /* Intentional delay owns a real producer backlog. At zero delay this queue
      * only preserves branch-Init/reentry order within the active dispatch.
      * Source Finish admits at most one final upstream batch. */
-    buffer_queue_t *fallback_pending_up;
+    fallback_replay_t fallback;
 } trojanserver_lstate_t;
 
 enum
@@ -182,7 +179,10 @@ enum
     kTrojanServerUdpMaxPacket     = UINT16_MAX,
     kTrojanServerBufferQueueCap   = 8,
     kTrojanServerMaxPendingBytes  = 2 * 1024 * 1024,
+    kTrojanServerMaxFallbackCharge = 8 * 1024 * 1024,
     kTrojanServerUdpHeaderMaxLen  = 1 + 1 + UINT8_MAX + 2 + 2 + 2,
     kTrojanServerMaxQueuedBuffers = 1024,
+    kTrojanServerMaxInputCharge    = 8 * 1024 * 1024,
+    kTrojanServerMaxInputBuffers   = 1024,
     kTrojanServerMaxWireBytes = kTrojanServerMaxPendingBytes + kTrojanServerUdpHeaderMaxLen + kTrojanServerUdpMaxPacket
 };

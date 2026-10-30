@@ -2,6 +2,7 @@
 
 #include "wwapi.h"
 
+#include "FallbackReplay/fallback_replay.h"
 #include "TlsBufferBio/buffer_bio.h"
 #include "TlsRecordShapingCommon/record_shaping.h"
 
@@ -34,8 +35,7 @@ typedef struct tlsserver_tstate_s
     int                       session_cache_mode;
     int                       session_cache_size;
     uint32_t                  handshake_timeout_ms;
-    uint32_t                  fallback_intentional_delay_ms;
-    uint32_t                  fallback_intentional_delay_jitter_ms;
+    fallback_replay_config_t  fallback_replay_config;
     tlsrecordshaping_config_t record_shaping;
     bool                      prefer_server_ciphers;
     bool                      session_tickets;
@@ -53,7 +53,8 @@ typedef struct tlsserver_lstate_s
     wtimer_t                       *shaping_output_timer;
     buffer_queue_t                  pending_down;
     buffer_budget_t                 pending_down_budget;
-    buffer_queue_t                 *fallback_pending_up;
+    fallback_replay_t               fallback;
+    buffer_budget_t                 fallback_budget;
     buffer_stream_t                 fallback_probe;
     tlsrecordshaping_output_queue_t shaping_output;
     tlsrecordshaping_state_t        shaping_state;
@@ -65,11 +66,8 @@ typedef struct tlsserver_lstate_s
     bool protected_init_sent;
     bool fallback_mode;
     bool fallback_init_sent;
-    bool fallback_initializing; /* Payload admission barrier until fallback Init returns. */
     bool fallback_close_draining;
-    bool fallback_branch_finished_during_drain;
     bool prev_est_sent;
-    bool fallback_delay_scheduled;
     bool upstream_finished;
     bool downstream_finishing;
     bool downstream_finish_deferred;
@@ -89,8 +87,9 @@ enum
     kTunnelStateSize = sizeof(tlsserver_tstate_t),
     kLineStateSize   = sizeof(tlsserver_lstate_t),
 
-    kTlsServerFallbackBufferQueueCap  = 8,
     kTlsServerMaxFallbackPendingBytes = 1024 * 1024,
+    kTlsServerMaxFallbackCharge       = 8 * 1024 * 1024,
+    kTlsServerMaxFallbackBuffers      = 1024,
     kTlsServerPendingPlaintextBytes   = 2 * 1024 * 1024,
     kTlsServerPendingPlaintextBuffers = 1024
 };
@@ -167,10 +166,10 @@ bool   tlsserverTryCompleteDeferredFinish(tunnel_t *t, line_t *l, tlsserver_lsta
 bool   tlsserverStartProtectedBranch(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool   tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool   tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, sbuf_t *buf);
-bool   tlsserverScheduleFallbackPayloadDrain(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 void   tlsserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool   tlsserverArmHandshakeDeadline(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 void   tlsserverDisarmHandshakeDeadline(tlsserver_lstate_t *ls);
+void   tlsserverFinishTlsOutput(tunnel_t *t, line_t *l);
 void   tlsserverCloseLineFatal(tunnel_t *t, line_t *l);
 size_t tlsserverRecordPaddingCallback(SSL *ssl, int type, size_t len, void *arg);
 void   tlsserverRecordMessageCallback(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl,

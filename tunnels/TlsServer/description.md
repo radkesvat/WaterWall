@@ -210,7 +210,8 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
   Set to `0` to disable the intentional delay. At delay zero, an initialized fallback with no older queued bytes or
   scheduled drain receives payload inline, including during Pause. Retained bytes drain without waiting for Resume;
   later input cannot overtake an older FIFO batch. Delayed fallback payloads are delivered in
-  FIFO order and are bounded to 1 MiB per line; close-time behavior is described in [Fallback behavior](#fallback-behavior).
+  FIFO order and are bounded to 1 MiB logical bytes, 8 MiB buffer allocation charge and 1,024 retained buffers per line;
+  close-time behavior is described in [Fallback behavior](#fallback-behavior).
 
   This value must be calibrated against the public behavior the fallback should resemble. The important question is
   whether the fallback branch would answer faster or slower than that behavior, not whether it is co-located or remote.
@@ -275,8 +276,8 @@ Records stay in wire order with `release_at = max(now + delay, previous_release_
 MiB per line, with locally originated producer Pause at 6 MiB and Resume at 3 MiB. Incoming Pause and Resume
 are relayed transparently, including duplicates. Due ciphertext drains keep their existing timing and FIFO order without
 waiting for Resume; Pause does not cancel the release timer. After peer `close_notify` finishes the cleartext side, `TlsServer` sends no Payload, Pause, or Resume
-toward it; application bytes received later or already decrypted by an outer callback are discarded. If the cleartext
-side finishes, already accepted server ciphertext and an unpadded `close_notify` drain before downstream
+toward it; application bytes received later or already decrypted by an outer callback are discarded. On either peer
+`close_notify` or cleartext-side finish, already accepted server ciphertext and an unpadded `close_notify` drain before downstream
 `Finish`; a wire-side finish cancels and discards queued output and is propagated only toward cleartext. Timer allocation
 failure drains immediately in order.
 
@@ -340,7 +341,9 @@ payloads in both directions are passed through the fallback branch without TLS e
 If the first bytes look like a TLS handshake record (`16 03`), OpenSSL parses the ClientHello. With `sni` configured, mismatched or absent SNI suspends the handshake and selects fallback before TLS output. Malformed ClientHello/SNI input rejected before routing stays on the TLS error path. After an SNI fallback selection, the fallback server owns TLS negotiation and its errors.
 
 The fallback delay is applied only to upstream payloads during normal live operation, and delayed bytes stay in a FIFO
-bounded to 1 MiB per line. Downstream responses from fallback are not intentionally delayed. An upstream `Finish` does not
+bounded to 1 MiB logical bytes, 8 MiB buffer allocation charge and 1,024 retained buffers per line. On charge or entry
+pressure, the delayed batch first coalesces into best-fit storage if that fits the limits, keeping byte order and its
+scheduled delay. Downstream responses from fallback are not intentionally delayed. An upstream `Finish` does not
 keep the remaining intentional delay alive: accepted queued bytes are synchronously flushed in FIFO order before fallback
 `Finish`, including during advisory Pause. A close while fallback Init is still running discards the batch.
 Fallback routing remains active because it selects a branch outside the ordinary `next` path. Before selecting a branch,
@@ -449,9 +452,17 @@ In this architecture:
 
 ### Finish behavior
 
-For clean downstream closes, `TlsServer` sends a TLS `close_notify` alert, flushes it, and then propagates Waterwall finish downstream.
+For clean downstream closes, `TlsServer` sends a TLS `close_notify` alert when the handshake completed. Already
+accepted ciphertext drains before the alert, preserving any configured record delay even during advisory Pause.
+The node then destroys local TLS state and propagates WaterWall `Finish` downstream.
 
-If the peer sends a clean TLS shutdown, `TlsServer` treats that as a clean finish toward the next node.
+Peer `close_notify` starts the same local graceful termination: `TlsServer` first sends upstream `Finish` once to the
+initialized cleartext branch, then sends its own `close_notify` and completes downstream `Finish` after queued output
+drains. It does not wait for the client to close TCP or for an idle timeout after retiring the cleartext branch. No
+further callbacks go toward that branch, and new application bytes are discarded during closure.
+
+Raw upstream `Finish` instead cancels pending output and destroys TLS state without sending an alert or reflecting
+callbacks toward the finished wire side. Raw fallback continues to relay the selected service's bytes and closure.
 
 Fatal TLS failures still close the line in both directions.
 

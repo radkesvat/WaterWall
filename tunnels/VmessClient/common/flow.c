@@ -11,46 +11,27 @@ bool vmessclientAssociationAlive(tunnel_t *t, line_t *next_line, line_t *prev_li
            (next_line == prev_line || (ls->application_line == prev_line && prev_ls->carrier_line == next_line));
 }
 
-void vmessclientCancelFirstPayloadTimer(vmessclient_lstate_t *ls)
-{
-    if (ls->first_payload_timer != NULL)
-    {
-        wtimerDelete(ls->first_payload_timer);
-        ls->first_payload_timer = NULL;
-    }
-    ls->first_payload_due = false;
-}
-
 void vmessclientSendDueRequest(tunnel_t *t, line_t *l)
 {
     vmessclient_lstate_t *ls = lineGetState(l, t);
-    if (ls->phase == kVmessClientPhaseClosed || ls->closing || ls->request_sent || ! ls->first_payload_due ||
+    if (ls->phase == kVmessClientPhaseClosed || ls->closing || ls->request_sent ||
+        ! firstPayloadWindowIsDue(&ls->first_payload) ||
         (ls->kind == kVmessClientLineKindUdpCarrier && ls->carrier_paused) || ls->est_notifying ||
         ! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l))))
         return;
     vmessclientTransmit(t, l);
 }
 
-static void firstPayloadExpired(wtimer_t *timer)
+static void firstPayloadWindowNotified(void *owner, first_payload_window_event_t event)
 {
-    vmessclient_lstate_t *ls = weventGetUserdata(timer);
-    assert(ls->first_payload_timer == timer);
-    tunnel_t *t   = ls->tunnel;
-    line_t   *l   = ls->line;
-    uint64_t  now = wloopNowLoopRunTime(weventGetLoop(timer));
-    /* One-shot reclamation belongs to the dispatch loop, even if close reenters. */
-    ls->first_payload_timer = NULL;
-    if (now < ls->first_payload_deadline_us)
+    vmessclient_lstate_t *ls = owner;
+    if (event == kFirstPayloadWindowDue)
+        vmessclientSendDueRequest(ls->tunnel, ls->line);
+    else
     {
-        uint32_t remaining = (uint32_t) ((ls->first_payload_deadline_us - now + 999) / 1000);
-        if (wtimerReset(timer, remaining))
-            ls->first_payload_timer = timer;
-        else
-            vmessclientCloseLine(t, l, kVmessClientCloseInternal);
-        return;
+        assert(event == kFirstPayloadWindowRearmFailed);
+        vmessclientCloseLine(ls->tunnel, ls->line, kVmessClientCloseInternal);
     }
-    ls->first_payload_due = true;
-    vmessclientSendDueRequest(t, l);
 }
 
 void vmessclientOnNextEstablished(tunnel_t *t, line_t *l, vmessclient_lstate_t *ls)
@@ -72,8 +53,7 @@ void vmessclientOnNextEstablished(tunnel_t *t, line_t *l, vmessclient_lstate_t *
     if (! ls->request_sent)
     {
         vmessclient_tstate_t *ts = tunnelGetState(t);
-        ls->first_payload_deadline_us =
-            wloopNowLoopRunTime(getWorkerLoop(lineGetWID(l))) + (uint64_t) ts->first_payload_timeout_ms * 1000;
+        firstPayloadWindowStart(&ls->first_payload, getWorkerLoop(lineGetWID(l)), ts->first_payload_timeout_ms);
     }
     tunnelPrevDownStreamEst(t, application);
     if (vmessclientAssociationAlive(t, l, application))
@@ -81,20 +61,17 @@ void vmessclientOnNextEstablished(tunnel_t *t, line_t *l, vmessclient_lstate_t *
         ls->est_notifying = false;
         if (! ls->request_sent)
         {
-            uint64_t now = wloopNowLoopRunTime(getWorkerLoop(lineGetWID(l)));
-            if (now >= ls->first_payload_deadline_us)
+            switch (
+                firstPayloadWindowArm(&ls->first_payload, getWorkerLoop(lineGetWID(l)), firstPayloadWindowNotified, ls))
             {
-                ls->first_payload_due = true;
+            case kFirstPayloadWindowArmDue:
                 vmessclientSendDueRequest(t, l);
-            }
-            else
-            {
-                uint32_t remaining      = (uint32_t) ((ls->first_payload_deadline_us - now + 999) / 1000);
-                ls->first_payload_timer = wtimerAdd(getWorkerLoop(lineGetWID(l)), firstPayloadExpired, remaining, 1);
-                if (ls->first_payload_timer != NULL)
-                    weventSetUserData(ls->first_payload_timer, ls);
-                else
-                    vmessclientCloseLine(t, l, kVmessClientCloseInternal);
+                break;
+            case kFirstPayloadWindowArmFailed:
+                vmessclientCloseLine(t, l, kVmessClientCloseInternal);
+                break;
+            case kFirstPayloadWindowArmed:
+                break;
             }
         }
     }
@@ -151,7 +128,7 @@ void vmessclientTransmit(tunnel_t *t, line_t *l)
         if (ls->transmit_head == NULL)
             ls->transmit_head = bufferqueuePopFrontReserved(&ls->pending_up, &ls->transmit_reservation);
         bool header_only = ls->transmit_head == NULL;
-        if (header_only && (ls->request_sent || ! ls->first_payload_due))
+        if (header_only && (ls->request_sent || ! firstPayloadWindowIsDue(&ls->first_payload)))
             break;
         size_t available = header_only ? 0 : sbufGetLength(ls->transmit_head);
         size_t take =

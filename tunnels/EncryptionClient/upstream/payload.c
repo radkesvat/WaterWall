@@ -2,70 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static sbuf_t *encryptionclientAllocFrameBuffer(buffer_pool_t *pool, uint32_t frame_len)
-{
-    uint32_t small_size = bufferpoolGetSmallBufferSize(pool);
-    uint32_t large_size = bufferpoolGetLargeBufferSize(pool);
-
-    if (frame_len <= small_size)
-    {
-        return bufferpoolGetSmallBuffer(pool);
-    }
-
-    if (frame_len <= large_size)
-    {
-        return bufferpoolGetLargeBuffer(pool);
-    }
-
-    return sbufCreateWithPadding(frame_len, bufferpoolGetLargeBufferPadding(pool));
-}
-
-static bool encryptionclientEncryptFrame(encryptionclient_tstate_t *ts, sbuf_t **buf, uint32_t plaintext_len)
-{
-    assert(plaintext_len <= kEncryptionHardMaxFramePayload);
-    uint32_t ciphertext_len = plaintext_len + kEncryptionTagSize;
-    uint32_t body_len       = kEncryptionNonceSize + ciphertext_len;
-    uint32_t frame_len      = kEncryptionTlsHeaderSize + body_len;
-
-    if (sbufGetMaximumWriteableSize(*buf) < ciphertext_len)
-    {
-        *buf = sbufReserveSpace(*buf, ciphertext_len);
-    }
-
-    assert(sbufGetLeftCapacity(*buf) >= kEncryptionFramePrefixSize);
-
-    sbufShiftLeft(*buf, kEncryptionFramePrefixSize);
-
-    uint8_t *frame = sbufGetMutablePtr(*buf);
-    frame[0]       = kEncryptionTlsApplicationData;
-    frame[1]       = kEncryptionTlsVersionMajor;
-    frame[2]       = kEncryptionTlsVersionMinor;
-    frame[3]       = (uint8_t) (body_len >> 8);
-    frame[4]       = (uint8_t) body_len;
-
-    uint8_t *nonce = frame + kEncryptionTlsHeaderSize;
-    getRandomBytes(nonce, kEncryptionNonceSize);
-
-    uint8_t *ciphertext = frame + kEncryptionFramePrefixSize;
-
-    size_t ciphertext_capacity = sbufGetMaximumWriteableSize(*buf) - kEncryptionFramePrefixSize;
-    if (encryptionclientEncryptAead(ts->algorithm,
-                                    ciphertext,
-                                    ciphertext_capacity,
-                                    ciphertext,
-                                    plaintext_len,
-                                    frame,
-                                    kEncryptionTlsHeaderSize,
-                                    nonce,
-                                    ts->key) != kWCryptoOk)
-    {
-        return false;
-    }
-
-    sbufSetLength(*buf, frame_len);
-    return true;
-}
-
 void encryptionclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     encryptionclient_tstate_t *ts            = tunnelGetState(t);
@@ -87,12 +23,12 @@ void encryptionclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             uint32_t chunk_len = min(remaining, ts->max_frame_payload);
             uint32_t frame_len = kEncryptionFramePrefixSize + chunk_len + kEncryptionTagSize;
-            sbuf_t  *frame_buf = encryptionclientAllocFrameBuffer(pool, frame_len);
+            sbuf_t  *frame_buf = encryptionAllocFrameBuffer(pool, frame_len);
 
             sbufSetLength(frame_buf, chunk_len);
             memoryCopyLarge(sbufGetMutablePtr(frame_buf), src, chunk_len);
 
-            if (! encryptionclientEncryptFrame(ts, &frame_buf, chunk_len))
+            if (encryptionEncodeFrame(ts->algorithm, ts->key, &frame_buf) != kWCryptoOk)
             {
                 LOGW("EncryptionClient: failed to encrypt payload chunk, closing line");
                 bufferpoolReuseBuffer(pool, frame_buf);
@@ -115,7 +51,7 @@ void encryptionclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (! encryptionclientEncryptFrame(ts, &buf, plaintext_len))
+    if (encryptionEncodeFrame(ts->algorithm, ts->key, &buf) != kWCryptoOk)
     {
         LOGW("EncryptionClient: failed to encrypt payload, closing line");
         lineReuseBuffer(l, buf);

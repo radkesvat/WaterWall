@@ -12,20 +12,20 @@ sbuf_t *socks5serverAllocBuffer(line_t *l, uint32_t len)
     return buf;
 }
 
-static bool socks5serverAddressFromContext(const address_context_t *ctx, socks5_address_t *out)
+static bool socks5serverAddressFromContext(const address_context_t *ctx, socks_address_t *out)
 {
-    socks5_address_t value = {.port = ctx->port};
+    socks_address_t value = {.port = ctx->port};
     if (addresscontextIsIpType(ctx))
     {
         if (addresscontextIsIpv4(ctx))
         {
-            value.kind   = kSocks5AddressIpv4;
+            value.kind   = kSocksAddressIpv4;
             value.length = 4;
             memoryCopy(value.bytes, &ctx->ip_address.u_addr.ip4.addr, value.length);
         }
         else if (addresscontextIsIpv6(ctx))
         {
-            value.kind   = kSocks5AddressIpv6;
+            value.kind   = kSocksAddressIpv6;
             value.length = 16;
             memoryCopy(value.bytes, &ctx->ip_address.u_addr.ip6, value.length);
         }
@@ -34,7 +34,7 @@ static bool socks5serverAddressFromContext(const address_context_t *ctx, socks5_
     }
     else if (addresscontextIsDomain(ctx))
     {
-        value.kind   = kSocks5AddressDomain;
+        value.kind   = kSocksAddressDomain;
         value.length = ctx->domain_len;
         memoryCopy(value.bytes, ctx->domain, value.length);
     }
@@ -64,18 +64,18 @@ sbuf_t *socks5serverCreateAuthReply(line_t *l, uint8_t status)
 
 sbuf_t *socks5serverCreateCommandReply(line_t *l, uint8_t rep, const address_context_t *ctx)
 {
-    socks5_address_t address = {.kind = kSocks5AddressIpv4, .length = 4};
+    socks_address_t address = {.kind = kSocksAddressIpv4, .length = 4};
     if (ctx != NULL)
     {
         bool converted = socks5serverAddressFromContext(ctx, &address);
         assert(converted);
         discard converted;
     }
-    const size_t addr_len = socks5AddressEncodedLength(&address);
+    const size_t addr_len = socksAddressEncodedLength(&address);
     sbuf_t      *buf      = socks5serverAllocBuffer(l, (uint32_t) (3 + addr_len));
     uint8_t     *ptr      = sbufGetMutablePtr(buf);
     size_t       written;
-    bool         encoded = socks5AddressEncode(&address, ptr + 3, addr_len, &written);
+    bool         encoded = socksAddressEncode(&address, ptr + 3, addr_len, &written);
     assert(encoded);
     discard encoded;
     ptr[0] = kSocks5Version;
@@ -84,10 +84,10 @@ sbuf_t *socks5serverCreateCommandReply(line_t *l, uint8_t rep, const address_con
     return buf;
 }
 
-void socks5serverAddressToContext(const socks5_address_t *value, address_context_t *out)
+void socks5serverAddressToContext(const socks_address_t *value, address_context_t *out)
 {
-    assert(socks5AddressEncodedLength(value) != 0);
-    if (value->kind == kSocks5AddressDomain)
+    assert(socksAddressEncodedLength(value) != 0);
+    if (value->kind == kSocksAddressDomain)
     {
         addresscontextDomainSet(out, (const char *) value->bytes, (uint8_t) value->length);
         out->port = value->port;
@@ -95,8 +95,8 @@ void socks5serverAddressToContext(const socks5_address_t *value, address_context
     else
     {
         ip_addr_t ip = {0};
-        ip.type      = value->kind == kSocks5AddressIpv4 ? IPADDR_TYPE_V4 : IPADDR_TYPE_V6;
-        if (value->kind == kSocks5AddressIpv4)
+        ip.type      = value->kind == kSocksAddressIpv4 ? IPADDR_TYPE_V4 : IPADDR_TYPE_V6;
+        if (value->kind == kSocksAddressIpv4)
             memoryCopy(&ip.u_addr.ip4.addr, value->bytes, 4);
         else
             memoryCopy(&ip.u_addr.ip6, value->bytes, 16);
@@ -104,16 +104,16 @@ void socks5serverAddressToContext(const socks5_address_t *value, address_context
     }
 }
 
-socks5_address_result_t socks5serverParseAddressBytes(const uint8_t *buf, size_t len, address_context_t *out,
-                                                      size_t *consumed)
+socks_address_result_t socks5serverParseAddressBytes(const uint8_t *buf, size_t len, address_context_t *out,
+                                                     size_t *consumed)
 {
-    socks5_address_t              value;
-    const socks5_address_result_t result = socks5AddressDecode(buf, len, &value);
-    if (result != kSocks5AddressComplete)
+    socks_address_t              value;
+    const socks_address_result_t result = socksAddressDecode(buf, len, &value);
+    if (result != kSocksAddressComplete)
         return result;
     socks5serverAddressToContext(&value, out);
     *consumed = value.consumed;
-    return kSocks5AddressComplete;
+    return kSocksAddressComplete;
 }
 
 void socks5serverApplyDestinationContext(line_t *l, const address_context_t *target, bool udp)
@@ -128,10 +128,10 @@ bool socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const addre
 {
     sbuf_t          *buf     = *buf_io;
     uint32_t         payload = sbufGetLength(buf);
-    socks5_address_t address;
+    socks_address_t  address;
     if (! socks5serverAddressFromContext(addr_ctx, &address))
         return false;
-    const size_t addr_len   = socks5AddressEncodedLength(&address);
+    const size_t addr_len   = socksAddressEncodedLength(&address);
     const size_t header_len = 3 + addr_len;
     if (payload > UINT32_MAX - header_len)
         return false;
@@ -155,7 +155,7 @@ bool socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const addre
 
     uint8_t *ptr = sbufGetMutablePtr(buf);
     size_t   written;
-    bool     encoded = socks5AddressEncode(&address, ptr + 3, addr_len, &written);
+    bool     encoded = socksAddressEncode(&address, ptr + 3, addr_len, &written);
     assert(encoded);
     discard encoded;
     ptr[0] = ptr[1] = ptr[2] = 0;

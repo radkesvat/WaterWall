@@ -274,9 +274,15 @@ static void receiveCapacity(bool scale)
         credited += length;
         CHECK(f.pcb->rcv_wnd == credited && f.last_window != 0);
     }
-    CHECK(f.last_window == (scale ? 32768 : UINT16_MAX));
+    /* The final 32 KiB credit is coalesced while the scaled peer still has
+     * ample advertised space. Internal capacity is already fully restored. */
+    CHECK(f.pcb->rcv_wnd == capacity);
+    CHECK(f.last_window == (scale ? (capacity - 32768U) >> 7 : UINT16_MAX));
     inject(&f, TCP_ACK, TCP_MSS, false);
+    f.peer_next += TCP_MSS;
     CHECK(f.received == capacity + TCP_MSS && f.pcb->rcv_wnd == capacity - TCP_MSS);
+    tcp_fasttmr();
+    CHECK(f.last_ack == f.peer_next && f.last_window == (uint16_t) ((capacity - TCP_MSS) >> (scale ? 7 : 0)));
     stop(&f);
 }
 

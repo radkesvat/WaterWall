@@ -5,9 +5,9 @@
 static void handleQueueOverflow(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts, tcplistener_lstate_t *ls)
 {
     LOGE("TcpListener: write retention overflow, queued bytes: %zu, capacity charge: %zu, limit: %u",
-         bufferqueueGetBufLen(&ls->pause_queue),
-         bufferbudgetGetUsage(&ls->write_budget).charge,
-         (unsigned) kMaxPauseQueueSize);
+         awqGetQueuedBytes(&ls->write_queue),
+         awqGetUsage(&ls->write_queue).charge,
+         (unsigned) kAwqMaxRetained);
 
     local_idle_item_t *idle_item = ls->idle_handle;
     ls->idle_handle              = NULL;
@@ -24,42 +24,29 @@ static void handleQueueOverflow(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts
     lineDestroy(l);
 }
 
-static void handlePausedWrite(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts, tcplistener_lstate_t *ls, sbuf_t *buf)
+void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    tcplistenerRefreshWriteBudget(ls);
-    if (UNLIKELY(! bufferqueueTryPushBack(&ls->pause_queue, &buf)))
+    tcplistener_tstate_t *ts = tunnelGetState(t);
+    tcplistener_lstate_t *ls = lineGetState(l, t);
+
+    tcplistenerApplyReadPreference(ls);
+    awqRefreshPending(&ls->write_queue, wioGetWriteBufSize(ls->io));
+    switch (awqAdmit(&ls->write_queue, lineGetBufferPool(l), &buf))
     {
-        lineReuseBuffer(l, buf);
+    case kAwqOverflow:
         handleQueueOverflow(t, l, ts, ls);
         return;
-    }
-
-    // Publish FIFO ownership, accounting and the latch before a nested Payload or Finish.
-    if (! ls->queue_pause_sent && (bufferbudgetGetUsage(&ls->write_budget).bytes >= kMinPauseQueueSize ||
-                                   bufferbudgetGetUsage(&ls->write_budget).charge >= kMinPauseQueueSize))
-    {
-        ls->queue_pause_sent = true;
+    case kAwqQueuedPause:
         tunnelNextUpStreamPause(t, l);
+        return;
+    case kAwqQueued:
+    case kAwqConsumed:
+        return;
+    case kAwqWriteNow:
+        break;
     }
-}
 
-static void handleNormalWrite(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts, tcplistener_lstate_t *ls, sbuf_t *buf)
-{
-    tcplistenerRefreshWriteBudget(ls);
-    if (UNLIKELY(! bufferbudgetTryReserve(&ls->write_budget, buf, &ls->active_write)))
-    {
-        lineReuseBuffer(l, buf);
-        handleQueueOverflow(t, l, ts, ls);
-        return;
-    }
-    const int bytes = (int) sbufGetLength(buf);
-    // Empty stream input owns no wire work and must not become a WIO disconnect.
-    if (UNLIKELY(bytes == 0))
-    {
-        bufferbudgetReservationRelease(&ls->active_write);
-        lineReuseBuffer(l, buf);
-        return;
-    }
+    const uint32_t bytes = sbufGetLength(buf);
     lineRef(l);
     const int nwrite = wioWrite(ls->io, buf);
     if (UNLIKELY(! lineIsAlive(l)))
@@ -67,40 +54,18 @@ static void handleNormalWrite(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts, 
         lineUnref(l);
         return;
     }
-    tcplistenerRefreshWriteBudget(ls);
-    if (LIKELY(nwrite >= 0))
+    const awq_write_result_t result = awqAfterWrite(&ls->write_queue, nwrite, bytes, wioGetWriteBufSize(ls->io));
+    if (LIKELY(result != kAwqWriteFailed))
     {
         localidletableKeepIdleItemForAtleast(
             tcplistenerGetLineIdleTable(ts, l), ls->idle_handle, ts->active_idle_timeout_ms);
-        if (nwrite < bytes)
+        if (result == kAwqWriteBlocked)
         {
-            ls->write_paused     = true;
-            const bool notify    = ! ls->queue_pause_sent;
-            ls->queue_pause_sent = true;
+            const bool notify = awqTakePause(&ls->write_queue);
             wioSetCallBackWrite(ls->io, tcplistenerOnWriteComplete);
             if (notify)
                 tunnelNextUpStreamPause(t, l);
         }
-        else
-        {
-            bufferbudgetReservationRelease(&ls->active_write);
-        }
     }
     lineUnref(l);
-}
-
-void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
-{
-    tcplistener_tstate_t *ts = tunnelGetState(t);
-    tcplistener_lstate_t *ls = lineGetState(l, t);
-
-    tcplistenerApplyReadPreference(ls);
-    if (ls->write_paused)
-    {
-        handlePausedWrite(t, l, ts, ls, buf);
-    }
-    else
-    {
-        handleNormalWrite(t, l, ts, ls, buf);
-    }
 }

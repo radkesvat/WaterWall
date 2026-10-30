@@ -213,6 +213,15 @@ static uint32_t frame(uint8_t *out, unsigned form, uint16_t port, const void *bo
         memoryCopy(out + n, body, len);
     return n + len;
 }
+static void requireUdpRetention(void)
+{
+    trojanserver_lstate_t *ls          = lineGetState(f.line, f.t);
+    const size_t           head_charge = ls->input_head == NULL ? 0 : sbufGetQueueCharge(ls->input_head);
+    twfRequire(lineIsAlive(f.line) && ls->pending_up.budget == NULL &&
+                   head_charge + bufferqueueGetCharge(&ls->pending_up) <= kTrojanServerMaxInputCharge &&
+                   (ls->input_head != NULL) + bufferqueueGetBufCount(&ls->pending_up) <= kTrojanServerMaxInputBuffers,
+               "UDP retained fragmented input beyond its storage compaction thresholds");
+}
 static void act(unsigned boundary, line_t *l)
 {
     if (boundary != f.boundary)
@@ -275,6 +284,18 @@ static void act(unsigned boundary, line_t *l)
             twfRequire(! lineIsAlive(f.line), "reentry retention overflow accepted");
         }
         memoryFree(data);
+    }
+    if (action == 15)
+    {
+        sbuf_t *nested      = f.nested;
+        f.nested            = NULL;
+        const uint8_t *wire = sbufGetRawPtr(nested);
+        for (uint32_t i = 0; i < sbufGetLength(nested); ++i)
+        {
+            tunnelUpStreamPayload(f.t, f.line, bytes(wire + i, 1, false, 320));
+            requireUdpRetention();
+        }
+        lineReuseBuffer(f.line, nested);
     }
     if (action == 13)
     {
@@ -485,7 +506,7 @@ static void begin(bool fallback, bool database, uint32_t pool)
     f.database                                                    = database;
     trojanserver_tstate_t *ts                                     = tunnelGetState(f.t);
     ts->fallback_tunnel                                           = fallback ? f.fallback : NULL;
-    ts->fallback_intentional_delay_ms = ts->fallback_intentional_delay_jitter_ms = 0;
+    ts->fallback_replay_config.delay_ms = ts->fallback_replay_config.jitter_ms = 0;
     if (database)
         ts->auth_client_tunnel = f.next;
     twfLinePoolSetup(&f.lines, f.t->lstate_size, 8);
@@ -963,7 +984,10 @@ static void testUdpFrames(void)
     startUdp();
     uint32_t n = frame(wire, 0, 443, payload, 1500);
     for (unsigned i = 0; i < n; ++i)
+    {
         tunnelUpStreamPayload(f.t, f.line, bytes(wire + i, 1, false, 320));
+        requireUdpRetention();
+    }
     twfRequire(f.calls_up == 1 && f.up_len == 1500, "input fragment count incorrectly limited");
     end();
     for (unsigned fault = 0; fault < 4; ++fault)
@@ -1094,8 +1118,8 @@ static void testFallback(void)
     {
         begin(true, false, 128);
         trojanserver_tstate_t *ts                = tunnelGetState(f.t);
-        ts->fallback_intentional_delay_ms        = 7;
-        ts->fallback_intentional_delay_jitter_ms = 1;
+        ts->fallback_replay_config.delay_ms      = 7;
+        ts->fallback_replay_config.jitter_ms     = 1;
         uint8_t probe[2048];
         memset(probe, 'x', sizeof(probe));
         tunnelUpStreamPayload(f.t, f.line, bytes(probe, sizeof(probe), true, 320));
@@ -1116,7 +1140,7 @@ static void testFallback(void)
         end();
     }
     begin(true, false, 128);
-    ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+    ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
     g_fallback_finish_task.refuse                                                  = true;
     tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, true, 320));
     twfRequire(! lineIsAlive(f.line), "task refusal did not close fallback");
@@ -1145,7 +1169,7 @@ static void testFallbackLocalReplies(void)
                 f.auto_est             = established != 0;
                 local_reply_pipe       = pipe != 0;
                 f.fallback->fnPayloadU = localFallbackReplyAndFinish;
-                ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = delayed ? 7 : 0;
+                ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = delayed ? 7 : 0;
                 tunnelUpStreamPayload(f.t, f.line, bytes("probe", 5, pipe != 0, 320));
                 if (delayed)
                     fallbackFinishDriveDelayedTask();
@@ -1199,7 +1223,7 @@ static void testLimitsAndFailures(void)
         for (unsigned entries = 0; entries < 2; ++entries)
         {
             begin(true, false, pool ? 131072 : 128);
-            ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+            ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
             tunnelUpStreamPayload(f.t, f.line, bytes("", 0, false, 320));
             /* The empty first replay occupies one retained entry. */
             uint32_t count = entries ? 1023 : 1;
@@ -1207,13 +1231,19 @@ static void testLimitsAndFailures(void)
                 tunnelUpStreamPayload(f.t, f.line, bytes(data, entries ? 0 : kTrojanServerMaxPendingBytes, false, 320));
             twfRequire(lineIsAlive(f.line), "exact delayed backlog limit rejected");
             trojanserver_lstate_t *ls = lineGetState(f.line, f.t);
-            twfRequire(ls->pending_up.budget == NULL && ls->fallback_pending_up->budget == &ls->output_budget &&
+            twfRequire(bufferbudgetGetLimits(&ls->output_budget).charge == kTrojanServerMaxFallbackCharge,
+                       "delayed fallback did not apply its charge limit");
+            twfRequire(ls->pending_up.budget == NULL && ls->fallback.pending.budget == &ls->output_budget &&
                            bufferbudgetGetUsage(&ls->output_budget).entries == count + 1 &&
                            bufferbudgetGetUsage(&ls->output_budget).bytes ==
                                (entries ? 0 : kTrojanServerMaxPendingBytes),
                        "fallback transition did not account the complete replay FIFO");
             tunnelUpStreamPayload(f.t, f.line, bytes(data, entries ? 0 : 1, false, 320));
-            twfRequire(! lineIsAlive(f.line), "delayed backlog overflow accepted");
+            if (entries)
+                twfRequire(lineIsAlive(f.line) && bufferbudgetGetUsage(&ls->output_budget).entries == 1,
+                           "delayed entry pressure did not compact ordinary replay");
+            else
+                twfRequire(! lineIsAlive(f.line), "delayed byte backlog overflow accepted");
             end();
         }
     }
@@ -1477,7 +1507,7 @@ static void testRetentionAndIndependentDelay(void)
 
     twfSetCase("delayed fallback honors its delay and FIFO without waiting for Resume");
     begin(true, false, 128);
-    ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_intentional_delay_ms = 7;
+    ((trojanserver_tstate_t *) tunnelGetState(f.t))->fallback_replay_config.delay_ms = 7;
     tunnelUpStreamPayload(f.t, f.line, bytes("A", 1, true, 320));
     tunnelDownStreamPause(f.t, f.line);
     tunnelUpStreamPayload(f.t, f.line, bytes("B", 1, true, 320));
@@ -1586,6 +1616,28 @@ static void testReplyFormsAndRefusal(void)
     end();
 }
 
+static void testUdpNestedRetention(void)
+{
+    twfSetCase("nested UDP fragments compact behind the active suffix without losing FIFO");
+    begin(false, false, 128);
+    startUdp();
+    uint8_t body[1500], wire[1600];
+    for (unsigned i = 0; i < sizeof(body); ++i)
+        body[i] = (uint8_t) i;
+    const uint32_t first = frame(wire, 0, 443, "A", 1);
+    const uint32_t total = first + frame(wire + first, 0, 443, body, sizeof(body));
+    const uint32_t split = total - sizeof(body) + 1U;
+    f.boundary           = 3;
+    f.action             = 15;
+    f.nested             = bytes(wire + split, total - split, false, 320);
+    tunnelUpStreamPayload(f.t, f.line, bytes(wire, split, false, 320));
+    twfRequire(f.calls_up == 2 && f.up_len == sizeof(body) + 1U && f.up[0] == 'A' &&
+                   memoryEqual(f.up + 1, body, sizeof(body)),
+               "nested UDP compaction reordered the active suffix or fragmented body");
+    requireUdpRetention();
+    end();
+}
+
 static void testShutdownAdmission(void)
 {
     twfSetCase("shutdown refuses new protocol branches but preserves existing forwarding");
@@ -1647,6 +1699,7 @@ int main(void)
     testAuthentication();
     testReentrancy();
     testUdpFrames();
+    testUdpNestedRetention();
     testLargeUdpFramesAndReplies();
     testUdpPressure();
     testFallback();

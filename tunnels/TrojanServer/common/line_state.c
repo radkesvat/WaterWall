@@ -17,12 +17,7 @@ void trojanserverReleaseBuffers(trojanserver_lstate_t *ls)
     ls->input_bytes = 0;
     bufferqueueDestroy(&ls->pending_up);
     bufferqueueInitEmpty(&ls->pending_up);
-    if (ls->fallback_pending_up != NULL)
-    {
-        bufferqueueDestroy(ls->fallback_pending_up);
-        memoryFree(ls->fallback_pending_up);
-        ls->fallback_pending_up = NULL;
-    }
+    fallbackReplayDestroy(&ls->fallback, lineGetBufferPool(ls->line));
     bufferbudgetAssertEmpty(&ls->output_budget);
     ls->selected_remote = NULL;
     ls->header_filled   = 0;

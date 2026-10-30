@@ -59,7 +59,7 @@ trap cleanup EXIT
 
 # The run directory is a fresh copy, so no stale packet report can satisfy this
 # run; drop one only if the case directory itself carries a checked-in leftover.
-rm -f "$run_dir/packet-receiver-report.txt"
+rm -f "$run_dir/packet-counter-report.txt"
 
 workers=2
 if [[ -f "$run_dir/workers.txt" ]]; then
@@ -102,9 +102,9 @@ if [[ $status -ne 0 ]]; then
   exit 1
 fi
 
-report_file="$run_dir/packet-receiver-report.txt"
+report_file="$run_dir/packet-counter-report.txt"
 if [[ ! -f "$report_file" ]]; then
-  echo "Missing packet receiver report file" >&2
+  echo "Missing PacketCounter report file" >&2
   dump_logs
   exit 1
 fi
@@ -123,8 +123,8 @@ while IFS= read -r expected_line || [[ -n "$expected_line" ]]; do
   fi
 done < "$run_dir/expected-report.txt"
 
-if grep -qF "PacketReceiver report" "$run_dir/stdout.log"; then
-  echo "PacketReceiver report leaked to stdout" >&2
+if grep -qF "PacketCounter report" "$run_dir/stdout.log"; then
+  echo "PacketCounter report leaked to stdout" >&2
   cat "$run_dir/stdout.log" >&2
   exit 1
 fi

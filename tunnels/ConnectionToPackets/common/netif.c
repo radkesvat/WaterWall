@@ -6,23 +6,15 @@
  * One emitted IPv4 packet on its way from lwIP to the chain's packet side.
  *
  * The netif output callback runs inside the owner engine, so it may
- * never call a neighboring tunnel. It copies the packet into this message and
+ * never call a neighboring tunnel. It copies the packet into an owned sbuf and
  * force-queues it to the selected packet worker instead - including when that
- * worker is the caller, so the boundary holds unconditionally.
+ * worker is the caller, so the boundary holds unconditionally. The same buffer
+ * transfers onward; no lwIP storage escapes, and cancellation needs no pool.
  */
-typedef struct ctp_packet_emit_msg_s
+static void ctpEmitPacketDestroy(sbuf_t *buf, ctp_handoff_budget_t *budget)
 {
-    ctp_handoff_budget_t *budget;
-    size_t                charge;
-    uint32_t              len;
-    uint8_t               data[];
-} ctp_packet_emit_msg_t;
-
-static void ctpEmitPacketDestroy(ctp_packet_emit_msg_t *msg)
-{
-    ctp_handoff_budget_t *budget = msg->budget;
-    const size_t          charge = msg->charge;
-    memoryFree(msg);
+    const size_t charge = sbufGetAllocationCharge(buf);
+    sbufDestroy(buf);
     ctpHandoffRelease(budget, charge);
 }
 
@@ -30,16 +22,14 @@ static void ctpEmitPacketCleanup(void *arg1, void *arg2, void *arg3, worker_mess
 {
     discard reason;
     discard arg1;
-    discard arg3;
-    ctpEmitPacketDestroy(arg2);
+    ctpEmitPacketDestroy(arg2, arg3);
 }
 
 static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
-    discard arg3;
-
-    tunnel_t              *t          = arg1;
-    ctp_packet_emit_msg_t *packet_msg = arg2;
+    tunnel_t             *t      = arg1;
+    sbuf_t               *buf    = arg2;
+    ctp_handoff_budget_t *budget = arg3;
 
     // The message was delivered to exactly one worker; take the packet line from
     // that worker instead of re-reading thread-local state.
@@ -49,24 +39,19 @@ static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
     // admission has closed. Do not extend it into a neighbouring callback.
     if (UNLIKELY(packet_line == NULL || ctpTunnelIsStopping(t)))
     {
-        ctpEmitPacketDestroy(packet_msg);
+        ctpEmitPacketDestroy(buf, budget);
         return;
     }
 
-    buffer_pool_t *pool = lineGetBufferPool(packet_line);
-    sbuf_t        *buf  = bufferpoolGetBestFit(pool, packet_msg->len, bufferpoolGetLargeBufferPadding(pool));
-
-    sbufSetLength(buf, packet_msg->len);
-    memoryCopy(sbufGetMutablePtr(buf), packet_msg->data, packet_msg->len);
-    ctpEmitPacketDestroy(packet_msg);
+    ctpHandoffRelease(budget, sbufGetAllocationCharge(buf));
 
     /*
-     * Enter after allocation and hold admission across the callback. Shutdown
+     * Hold admission across the callback. Shutdown
      * closes this gate and waits for admitted callbacks before stopping next.
      */
     if (UNLIKELY(! ctpNextGateEnter(t)))
     {
-        bufferpoolReuseBuffer(pool, buf);
+        bufferpoolReuseBuffer(lineGetBufferPool(packet_line), buf);
         return;
     }
 
@@ -176,23 +161,37 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
         return ERR_VAL;
     }
 
-    const size_t charge = sizeof(ctp_packet_emit_msg_t) + (size_t) p->tot_len;
+    line_t *owner_packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), ctx->wid);
+    assert(owner_packet_line != NULL && lineIsOnCurrentWorker(owner_packet_line));
+    /* Initialize both outputs for MSVC's whole-program definite-assignment analysis. */
+    const uint16_t padding  = bufferpoolGetLargeBufferPadding(lineGetBufferPool(owner_packet_line));
+    uint32_t       capacity = 0;
+    size_t         charge   = 0;
+    const bool     fits =
+        sbufTryComputeCapacity(p->tot_len, padding, &capacity) && sbufTryComputeQueueCharge(capacity, &charge);
+    if (UNLIKELY(! fits))
+    {
+        LOGF("ConnectionToPackets: output packet buffer geometry is unrepresentable");
+        abortProgramNow(1);
+    }
     if (! ctpHandoffReserve(ts->handoff_budget, charge, false))
         return ERR_MEM;
-    ctp_packet_emit_msg_t *packet_msg = memoryAllocate(charge);
-    packet_msg->budget                = ts->handoff_budget;
-    packet_msg->charge                = charge;
-    packet_msg->len                   = p->tot_len;
-    pbufLargeCopyToPtr(p, packet_msg->data);
+    /* Size detached output to the packet: a pooled small buffer would retain
+     * several KiB even for a queued ACK. This replaces the old message allocation
+     * while keeping all onward padding and avoiding a second payload copy. */
+    sbuf_t *buf = sbufCreateWithPadding(p->tot_len, padding);
+    assert(sbufGetAllocationCharge(buf) == charge);
+    sbufSetLength(buf, p->tot_len);
+    pbufLargeCopyToPtr(p, sbufGetMutablePtr(buf));
 
-    const wid_t packet_wid = ctpSelectPacketWorkerLocked(ctx, packet_msg->data, packet_msg->len);
+    const wid_t packet_wid = ctpSelectPacketWorkerLocked(ctx, sbufGetMutablePtr(buf), sbufGetLength(buf));
 
     if (sendWorkerMessageForceQueueWithCleanup(packet_wid,
                                                (WorkerMessageCallback) ctpEmitPacketOnWorker,
                                                ctpEmitPacketCleanup,
                                                ctx->tunnel,
-                                               packet_msg,
-                                               NULL) != kWorkerMessageSubmitAccepted)
+                                               buf,
+                                               ts->handoff_budget) != kWorkerMessageSubmitAccepted)
     {
         return ERR_MEM;
     }

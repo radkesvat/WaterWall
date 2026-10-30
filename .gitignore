@@ -52,7 +52,7 @@ __pycache__/
 /tests/cases/*/core.json
 /tests/cases/*/stdout.log
 /tests/cases/*/log/
-/tests/cases/*/packet-receiver-report.txt
+/tests/cases/*/packet-counter-report.txt
 /tests/cases/*/users.json.backup
 /tests/cases/tls_handshake_timeout_slow_drip/server.crt
 /tests/cases/tls_handshake_timeout_slow_drip/server.key

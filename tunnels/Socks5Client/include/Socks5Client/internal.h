@@ -20,6 +20,14 @@ enum
 void socks5clientLinestateInitialize(socks5client_lstate_t *ls, tunnel_t *t, line_t *l, socks5client_line_kind_t kind);
 void socks5clientLinestateDestroy(socks5client_lstate_t *ls);
 
+/* Call only while the line allocation is protected or known alive. Finish can
+ * destroy this borrowed state before its owner destroys the line. */
+static inline bool socks5clientHasLineState(tunnel_t *t, line_t *l)
+{
+    const socks5client_lstate_t *ls = lineGetState(l, t);
+    return ls->tunnel == t && ls->line == l;
+}
+
 void socks5clientTunnelstateDestroy(socks5client_tstate_t *ts);
 bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l);
 bool socks5clientSendGreeting(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);

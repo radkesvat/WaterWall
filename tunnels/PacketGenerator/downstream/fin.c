@@ -1,0 +1,34 @@
+#include "structure.h"
+
+#include "loggers/network_logger.h"
+
+void packetgeneratorTunnelDownStreamFinish(tunnel_t *t, line_t *l)
+{
+    packetgenerator_tstate_t *state = tunnelGetState(t);
+    tunnel_chain_t        *chain = tunnelGetChain(t);
+    const wid_t            wid   = lineGetWID(l);
+
+    if (! tunnelchainIsWorkerPacketLine(chain, l) || state->workers == NULL || wid >= state->workers_count)
+    {
+        LOGF("PacketGenerator: downstream Finish did not target a configured worker packet line");
+        abortProgramNow(1);
+    }
+
+    packetgenerator_worker_state_t *slot = &state->workers[wid];
+    if (slot->line != NULL && slot->line != l)
+    {
+        LOGF("PacketGenerator: downstream Finish targeted the wrong packet line for worker %u", (unsigned int) wid);
+        abortProgramNow(1);
+    }
+
+    /*
+     * A downstream node may legitimately finish its borrowed packet-line side.
+     * Mark this producer stopped before deleting its timer: Finish permanently
+     * closes the upstream direction, including when it is emitted re-entrantly
+     * from a payload send.
+     *
+     * PacketGenerator has no prev to notify and does not own the packet line, so
+     * the Finish is absorbed after local producer teardown.
+     */
+    packetgeneratorStopWorker(slot);
+}

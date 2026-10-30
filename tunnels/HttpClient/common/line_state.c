@@ -12,7 +12,6 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
                                  .events_down                    = contextqueueCreate(),
                                  .runtime_proto                  = kHttpClientRuntimeUnknown,
                                  .h2_stream_id                   = 0,
-                                 .h1_chunk_expected              = -1,
                                  .h1_body_remaining              = 0,
                                  .h1_headers_parsed              = false,
                                  .h1_trailing_bytes_logged       = false,
@@ -38,6 +37,7 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
                                  .split_download_line            = NULL,
                                  .h1_write_in_progress           = false,
                                  .h2_request_headers_sent        = false};
+    httpReceiveInit(&ls->receive);
     h2DataInit(&ls->h2_data, lineGetBufferPool(l), kHttpClientHttp2DataBytes);
 }
 
@@ -50,6 +50,7 @@ void httpclientLinestateDestroy(httpclient_lstate_t *ls)
     }
 
     h2DataDestroyAfterSession(&ls->h2_data);
+    httpReceiveDestroy(&ls->receive, ls->in_stream.pool);
     bufferstreamDestroy(&ls->in_stream);
     bufferqueueDestroy(&ls->pending_up);
     contextqueueDestroy(&ls->events_down);

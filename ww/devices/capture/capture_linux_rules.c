@@ -617,7 +617,10 @@ uint32_t capturedevicePendingRangeCount(const capture_device_t *cdev)
 
 static size_t capturedeviceRuleCount(const capture_device_t *cdev, capture_owned_rule_kind_t kind)
 {
-    if (cdev->queue_count == 0 || (kind == kCaptureOwnedOpaque && cdev->queue_count == 1))
+    /* Opaque flow affinity steers opaque packets through the flow lanes, which
+     * leaves the random cascade nothing to select. */
+    if (cdev->queue_count == 0 ||
+        (kind == kCaptureOwnedOpaque && (cdev->queue_count == 1 || cdev->opaque_flow_affinity)))
     {
         return 0;
     }

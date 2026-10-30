@@ -24,5 +24,10 @@ void  wwLwipTimeoutFree(void *timeout);
 
 bool wwLwipEngineIsReleasing(void);
 
+/* Owner-only protocol bookkeeping. Does not consume or return receive credit. */
+uint32_t wwLwipTcpReceiveWindow(struct tcp_pcb *pcb);
+void     wwLwipTcpPrepareReceiveWindow(struct tcp_pcb *pcb);
+void     wwLwipEngineForgetReceive(struct tcp_pcb *pcb);
+
 void wwLwipNetifProtocolCleanup(struct netif *netif);
 void wwLwipLowpanCleanup(void);

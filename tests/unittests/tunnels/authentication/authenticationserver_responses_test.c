@@ -296,7 +296,7 @@ static void testPreauthBounds(void)
             memoryCopy(sbufGetMutablePtr(b), header + (part == 0 ? 0 : split), n);
             tunnelUpStreamPayload(server, line, b);
             if (part == 0 && split < 68)
-                twfRequire(lineIsAlive(line) && authenticationStreamCharge(&ls->read_stream) <= 128U * 1024U,
+                twfRequire(lineIsAlive(line) && bufferstreamGetCharge(&ls->read_stream) <= 128U * 1024U,
                            "unvalidated prefix retained oversized carrier allocation");
         }
         twfRequire(! lineIsAlive(line) && closes == 1 && callbacks == 0,
@@ -313,8 +313,8 @@ static void testPreauthBounds(void)
         sbufSetLength(b, 1);
         *sbufGetMutablePtr(b) = header[i];
         tunnelUpStreamPayload(server, line, b);
-        twfRequire(lineIsAlive(line) && authenticationStreamCharge(&ls->read_stream) <= 128U * 1024U &&
-                       bs_doublequeue_t_size(&ls->read_stream.q) <= 64,
+        twfRequire(lineIsAlive(line) && bufferstreamGetCharge(&ls->read_stream) <= 128U * 1024U &&
+                       bufferstreamGetEntryCount(&ls->read_stream) <= 64,
                    "tiny unauthenticated fragments exceeded retained bounds");
     }
     teardown();

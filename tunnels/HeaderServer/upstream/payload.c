@@ -388,6 +388,12 @@ void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     ls->phase            = kHeaderServerPhaseEstablished;
     lineRef(l);
     tunnelNextUpStreamInit(t, l);
+    if (lineIsAlive(l) && ls->phase == kHeaderServerPhaseEstablished && ls->pending_next_pause)
+    {
+        /* Init reentry may already have replaced the remembered receiver signal. */
+        ls->pending_next_pause = false;
+        tunnelNextUpStreamPause(t, l);
+    }
     while (lineIsAlive(l))
     {
         ls = lineGetState(l, t);

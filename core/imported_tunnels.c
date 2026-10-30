@@ -56,12 +56,12 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "TunDevice/interface.h"
 #endif
 
-#ifdef INCLUDE_PACKET_SENDER
-#include "PacketSender/interface.h"
+#ifdef INCLUDE_PACKET_GENERATOR
+#include "PacketGenerator/interface.h"
 #endif
 
-#ifdef INCLUDE_PACKET_RECEIVER
-#include "PacketReceiver/interface.h"
+#ifdef INCLUDE_PACKET_COUNTER
+#include "PacketCounter/interface.h"
 #endif
 
 #ifdef INCLUDE_PACKET_TO_CONNECTION
@@ -429,12 +429,12 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
     USING(TunDevice);
 #endif
 
-#ifdef INCLUDE_PACKET_SENDER
-    USING(PacketSender);
+#ifdef INCLUDE_PACKET_GENERATOR
+    USING(PacketGenerator);
 #endif
 
-#ifdef INCLUDE_PACKET_RECEIVER
-    USING(PacketReceiver);
+#ifdef INCLUDE_PACKET_COUNTER
+    USING(PacketCounter);
 #endif
 
 #ifdef INCLUDE_PACKET_TO_CONNECTION

@@ -5,7 +5,7 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseNoPendingPayload, casePendingFifoFlushAndDeadTask,
  * caseReentrantNonterminalCallbacksAreAbsorbed, caseReentrantBranchFinishIsAbsorbed,
- * caseOrdinaryDelayedBatchIgnoresAdvisoryPause, caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake,
+ * caseOrdinaryDelayedBatchIgnoresAdvisoryPause, caseZeroDelayIsInlineThroughPause,
  * caseAlreadyPausedCloseFlushesLocalBatch, caseExactFallbackPendingCeilingFlushesCleanly; the driver
  * lists the remaining cases
  * Checks: Assertion labels include: TlsServer state survived fallback Finish; TlsServer close retained an
@@ -90,7 +90,7 @@ static void requirePatternSpan(const uint8_t *data, uint32_t start, uint32_t len
     }
 }
 
-static void fixtureSetup(tlsserver_fallback_fixture_t *fixture)
+static void fixtureSetupWithDelay(tlsserver_fallback_fixture_t *fixture, uint32_t delay_ms, bool select_fallback)
 {
     memoryZero(fixture, sizeof(*fixture));
     twfWorkerEnvSetup(&fixture->env, kTestLargeBufferSize, 0);
@@ -108,8 +108,14 @@ static void fixtureSetup(tlsserver_fallback_fixture_t *fixture)
     fixture->fallback.node                    = fixture->node;
     fixture->fallback.require_node_state_zero = requireTlsStateZero;
     fallbackFinishCreateBranch(&fixture->fallback);
-    ((tlsserver_tstate_t *) tunnelGetState(fixture->node))->fallback_tunnel               = fixture->fallback.fallback;
-    ((tlsserver_tstate_t *) tunnelGetState(fixture->node))->fallback_intentional_delay_ms = 7;
+    tlsserver_tstate_t *ts     = tunnelGetState(fixture->node);
+    ts->fallback_tunnel        = fixture->fallback.fallback;
+    ts->fallback_replay_config = (fallback_replay_config_t) {
+        .delay_ms         = delay_ms,
+        .max_batch_bytes  = kTlsServerMaxFallbackPendingBytes,
+        .zero_delay_mode  = kFallbackReplayInlineNested,
+        .compact_ordinary = true,
+    };
 
     twfLinePoolSetup(&fixture->lines, fixture->node->lstate_size, kTestLinePoolItems);
     fixture->line = twfLinePoolCreateLine(&fixture->lines);
@@ -118,13 +124,18 @@ static void fixtureSetup(tlsserver_fallback_fixture_t *fixture)
     tlsserver_lstate_t       *ls             = lineGetState(fixture->line, fixture->node);
     twfRequire(tlsserverLinestateInitialize(ls, fixture->ssl_ctx, fixture->env.pool, &record_shaping, false),
                "failed to initialize the TlsServer fallback line");
-    ls->tunnel             = fixture->node;
-    ls->line               = fixture->line;
-    ls->fallback_mode      = true;
-    ls->fallback_init_sent = true;
-    tlsserverLinestateRelease(ls);
-    tunnelUpStreamInit(fixture->fallback.fallback, fixture->line);
+    ls->tunnel = fixture->node;
+    ls->line   = fixture->line;
+    if (select_fallback)
+    {
+        twfRequire(tlsserverStartFallback(fixture->node, fixture->line, ls), "failed to select TLS fallback");
+    }
     fallbackFinishResetScheduledTask();
+}
+
+static void fixtureSetup(tlsserver_fallback_fixture_t *fixture)
+{
+    fixtureSetupWithDelay(fixture, 7, true);
 }
 
 static void fixtureDestroyClosedLine(tlsserver_fallback_fixture_t *fixture)
@@ -305,15 +316,85 @@ static void caseOrdinaryDelayedBatchIgnoresAdvisoryPause(void)
     fixtureDestroyClosedLine(&fixture);
 }
 
-static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
+static void injectTlsInitPayload(fallback_finish_fixture_t *fallback, line_t *line)
+{
+    tlsserverTunnelUpStreamPayload(fallback->node, line, fallbackFinishMakePayload(lineGetBufferPool(line), "-init"));
+    twfRequireEqualU32(fallback->payload_calls, 0, "fallback drained before Init returned");
+    twfRequire(! g_fallback_finish_task.pending, "Init scheduled a fallback drain");
+}
+
+static void injectTlsPausePayload(fallback_finish_fixture_t *fallback, line_t *line)
+{
+    tlsserverTunnelUpStreamPayload(fallback->node, line, fallbackFinishMakePayload(lineGetBufferPool(line), "-pause"));
+    twfRequireEqualU32(fallback->payload_calls, 0, "Pause replay released the startup FIFO too early");
+    twfRequire(! g_fallback_finish_task.pending, "Pause replay scheduled a fallback drain");
+}
+
+static void injectTlsNestedPayload(fallback_finish_fixture_t *fallback, line_t *line)
+{
+    fallback->inject_during_payload = NULL;
+    const uint32_t calls            = fallback->payload_calls;
+    tlsserverTunnelUpStreamPayload(fallback->node, line, fallbackFinishMakePayload(lineGetBufferPool(line), "-nested"));
+    twfRequireEqualU32(fallback->payload_calls, calls + 1, "zero-delay nested fallback Payload was deferred");
+    twfRequire(! g_fallback_finish_task.pending, "zero-delay nested fallback Payload scheduled a task");
+}
+
+static void caseZeroDelayStartupPreservesFifo(void)
+{
+    twfSetCase("TlsServer zero-delay startup queues Init and Pause input behind its transcript");
+    tlsserver_fallback_fixture_t fixture;
+    fixtureSetupWithDelay(&fixture, 0, false);
+    tlsserver_lstate_t *ls = lineGetState(fixture.line, fixture.node);
+    bufferstreamPush(&ls->fallback_probe, fallbackFinishMakePayload(fixture.env.pool, "first"));
+    ls->pending_branch_pause             = true;
+    fixture.fallback.inject_during_init  = injectTlsInitPayload;
+    fixture.fallback.inject_during_pause = injectTlsPausePayload;
+
+    twfRequire(tlsserverStartFallback(fixture.node, fixture.line, ls), "TLS fallback selection failed");
+    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "startup transcript was not delivered as one batch");
+    twfRequireEqualText((const char *) fixture.fallback.received,
+                        "first-init-pause",
+                        "startup callbacks overtook the original TLS fallback transcript");
+    twfRequire(! g_fallback_finish_task.pending, "zero-delay startup left a scheduled drain");
+
+    closeFromPreviousOwner(&fixture);
+    releaseOwnerReference(&fixture);
+    fixtureDestroyClosedLine(&fixture);
+}
+
+static void caseZeroDelayNestedPayloadIsInline(bool initial_batch)
+{
+    twfSetCase("TlsServer zero-delay nested fallback Payload stays inline");
+    tlsserver_fallback_fixture_t fixture;
+    fixtureSetupWithDelay(&fixture, 0, ! initial_batch);
+    tlsserver_lstate_t *ls                 = lineGetState(fixture.line, fixture.node);
+    fixture.fallback.inject_during_payload = injectTlsNestedPayload;
+    if (initial_batch)
+    {
+        bufferstreamPush(&ls->fallback_probe, fallbackFinishMakePayload(fixture.env.pool, "first"));
+        twfRequire(tlsserverStartFallback(fixture.node, fixture.line, ls), "TLS fallback selection failed");
+    }
+    else
+    {
+        twfRequire(tlsserverSendFallbackPayload(
+                       fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "first")),
+                   "live zero-delay fallback payload failed");
+    }
+    twfRequireEqualText((const char *) fixture.fallback.received, "first-nested", "nested fallback FIFO changed");
+    twfRequireEqualU32(fixture.fallback.payload_calls, 2, "nested fallback was not delivered exactly once");
+    closeFromPreviousOwner(&fixture);
+    releaseOwnerReference(&fixture);
+    fixtureDestroyClosedLine(&fixture);
+}
+
+static void caseZeroDelayIsInlineThroughPause(void)
 {
     twfSetCase("TlsServer zero-delay fallback is inline without FIFO overtaking");
 
     tlsserver_fallback_fixture_t fixture;
-    fixtureSetup(&fixture);
-    ((tlsserver_tstate_t *) tunnelGetState(fixture.node))->fallback_intentional_delay_ms = 0;
-    fixture.fallback.inject_during_payload                                               = injectTlsPause;
-    tlsserver_lstate_t *ls = lineGetState(fixture.line, fixture.node);
+    fixtureSetupWithDelay(&fixture, 0, true);
+    fixture.fallback.inject_during_payload = injectTlsPause;
+    tlsserver_lstate_t *ls                 = lineGetState(fixture.line, fixture.node);
 
     twfRequire(tlsserverSendFallbackPayload(
                    fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "inline")),
@@ -329,24 +410,6 @@ static void caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake(void)
                "zero-delay fallback rejected bytes during Pause");
     twfRequireEqualU32(fixture.fallback.payload_calls, 2, "zero-delay fallback waited for Resume");
     twfRequire(! g_fallback_finish_task.pending, "zero-delay fallback scheduled an unnecessary task");
-
-    /* A genuine Init admission barrier still keeps later bytes behind the oldest batch. */
-    ls->fallback_initializing = true;
-    twfRequire(tlsserverSendFallbackPayload(
-                   fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "-held")),
-               "Init-time fallback bytes were rejected");
-    ls->fallback_initializing = false;
-    twfRequire(tlsserverScheduleFallbackPayloadDrain(fixture.node, fixture.line, ls) &&
-                   g_fallback_finish_task.pending && g_fallback_finish_task.delay_ms == 0,
-               "zero-delay retained drain was not scheduled");
-    twfRequire(tlsserverSendFallbackPayload(
-                   fixture.node, fixture.line, ls, fallbackFinishMakePayload(fixture.env.pool, "-later")),
-               "new zero-delay fallback payload was rejected");
-    twfRequireEqualU32(fixture.fallback.payload_calls, 2, "new zero-delay payload overtook retained bytes");
-    fallbackFinishDriveDelayedTask();
-    twfRequireEqualU32(fixture.fallback.payload_calls, 3, "retained zero-delay FIFO was not delivered once");
-    twfRequireEqualText(
-        (const char *) fixture.fallback.received, "inline-ready-held-later", "zero-delay retained FIFO order changed");
 
     closeFromPreviousOwner(&fixture);
     twfRequireEqualU32(fixture.fallback.finish_calls, 1, "fallback was not finished after zero-delay test");
@@ -412,6 +475,29 @@ static void caseExactFallbackPendingCeilingFlushesCleanly(void)
     twfRequireLineStateZeroed(fixture.line, fixture.node, "exact one MiB fallback close retained TlsServer state");
     twfRequireEqualText(fixture.protected_trace.seq, "", "exact one MiB fallback close touched protected next");
 
+    fallbackFinishDriveDelayedTask();
+    releaseOwnerReference(&fixture);
+    fixtureDestroyClosedLine(&fixture);
+}
+
+static void caseFallbackLimitCountsBytesOnly(void)
+{
+    twfSetCase("TlsServer fallback byte allowance does not add an entry or allocation ceiling");
+    tlsserver_fallback_fixture_t fixture;
+    fixtureSetup(&fixture);
+    tlsserver_lstate_t *ls = lineGetState(fixture.line, fixture.node);
+    for (unsigned i = 0; i < 1025; ++i)
+    {
+        sbuf_t *payload = bufferpoolGetSmallBuffer(fixture.env.pool);
+        sbufSetLength(payload, 1);
+        sbufWrite(payload, "x", 1);
+        twfRequire(tlsserverSendFallbackPayload(fixture.node, fixture.line, ls, payload),
+                   "byte-only fallback limit rejected a legal small fragment");
+    }
+    closeFromPreviousOwner(&fixture);
+    twfRequireEqualU32(fixture.fallback.payload_calls, 1, "small fallback fragments did not form one final batch");
+    twfRequireEqualU32((uint32_t) fixture.fallback.received_total_len, 1025, "fallback fragment count changed bytes");
+    twfRequireEqualU32(fixture.fallback.finish_calls, 1, "fragmented fallback did not finish exactly once");
     fallbackFinishDriveDelayedTask();
     releaseOwnerReference(&fixture);
     fixtureDestroyClosedLine(&fixture);
@@ -492,9 +578,13 @@ int main(void)
     caseReentrantNonterminalCallbacksAreAbsorbed();
     caseReentrantBranchFinishIsAbsorbed();
     caseOrdinaryDelayedBatchIgnoresAdvisoryPause();
-    caseZeroDelayIsInlineAndRetainedBytesDoNotOvertake();
+    caseZeroDelayIsInlineThroughPause();
+    caseZeroDelayStartupPreservesFifo();
+    caseZeroDelayNestedPayloadIsInline(true);
+    caseZeroDelayNestedPayloadIsInline(false);
     caseAlreadyPausedCloseFlushesLocalBatch();
     caseExactFallbackPendingCeilingFlushesCleanly();
+    caseFallbackLimitCountsBytesOnly();
     caseSchedulingFailureClosesInitializedFallback();
     caseFallbackPendingCeilingClosesLine();
 

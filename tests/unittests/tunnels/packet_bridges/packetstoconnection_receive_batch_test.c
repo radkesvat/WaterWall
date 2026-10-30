@@ -3,12 +3,13 @@
  * define this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: caseBatchAndPause, caseReentryAndFin, caseCloseDuringDelivery, caseBoundAndCancellation,
+ * Cases: caseBatchAndPause, caseDeferredReceiveCreditAcks, caseReentryAndFin, caseCloseDuringDelivery,
+ * caseBoundAndCancellation,
  * caseRefusalThenRetry, caseReusePadding, caseReuseFallback, caseReuseRefusal; the driver lists the
  * remaining cases
  * Checks: Assertion labels include: RX wrapping lost its owner engine; RX wrapping overwrote an unclaimed
  * packet; receive scheduling installed an owner-unsafe cancellation callback; receive task queue
- * overflow
+ * overflow; complete wide receive-credit window advertisements after deferred delivery and Resume
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.packetstoconnection_receive_batch_unit
@@ -37,6 +38,10 @@ typedef struct fixture_s
     bool                      pause_on_payload;
     uint16_t                  prepend;
     sbuf_t                   *expected_buffer;
+    unsigned                  window_acks;
+    uint16_t                  last_window;
+    uint32_t                  last_ack;
+    bool                      record_credit_output;
 } fixture_t;
 
 typedef struct queued_task_s
@@ -158,10 +163,78 @@ static void submit(uint16_t length)
     ptc_lstate_t     *ls = lineGetState(fixture->line, fixture->ptc);
     ww_lwip_engine_t *previous;
     twfRequire(wwLwipEngineEnter(fixture->engine, &previous), "receive fixture cannot enter engine");
+    if (fixture->record_credit_output)
+    {
+        /* The receive callback sees these fields after TCP accepts the input. */
+        twfRequire(ls->tcp_pcb->rcv_wnd >= length, "credit fixture exceeded its receive window");
+        ls->tcp_pcb->rcv_wnd -= length;
+        ls->tcp_pcb->rcv_nxt += length;
+        tcp_update_rcv_ann_wnd(ls->tcp_pcb);
+    }
     struct pbuf *p = makeInput(length);
     twfRequire(lwipThreadPtcTcpRecvCallback(ls, ls->tcp_pcb, p, ERR_OK) == ERR_OK, "receive callback refused data");
     fixture->submitted += length;
     wwLwipEngineLeave(fixture->engine, previous);
+}
+
+static err_t recordCreditOutput(struct netif *netif, struct pbuf *packet, const ip4_addr_t *destination)
+{
+    discard    destination;
+    fixture_t *f = netif->state;
+    uint8_t    header[40];
+    twfRequire(wwLwipEngineCurrent() == f->engine, "credit output escaped its owner engine");
+    twfRequire(pbuf_copy_partial(packet, header, sizeof(header), 0) == sizeof(header),
+               "credit output omitted its IPv4/TCP headers");
+    if (header[33] == TCP_ACK)
+    {
+        ++f->window_acks;
+        f->last_ack    = GET_BE32(header + 28);
+        f->last_window = GET_BE16(header + 34);
+    }
+    return ERR_OK;
+}
+
+static err_t initCreditNetif(struct netif *netif)
+{
+    netif->name[0] = 'r';
+    netif->name[1] = 'c';
+    netif->mtu     = 1500;
+    netif->output  = recordCreditOutput;
+    return ERR_OK;
+}
+
+static void enableCreditOutput(fixture_t *f)
+{
+    ww_lwip_engine_t *previous;
+    twfRequire(wwLwipEngineEnter(f->engine, &previous), "credit fixture engine entry failed");
+    ip4_addr_t local, mask, gateway;
+    IP4_ADDR(&local, 192, 0, 2, 1);
+    IP4_ADDR(&mask, 255, 255, 255, 0);
+    IP4_ADDR(&gateway, 0, 0, 0, 0);
+    twfRequire(netif_add(&f->route.netif, &local, &mask, &gateway, f, initCreditNetif, ip_input) != NULL,
+               "credit fixture netif allocation failed");
+    netif_set_up(&f->route.netif);
+    netif_set_link_up(&f->route.netif);
+    ptc_lstate_t   *ls  = lineGetState(f->line, f->ptc);
+    struct tcp_pcb *pcb = ls->tcp_pcb;
+    twfRequire(tcp_bind_netif(pcb, &f->route.netif) == ERR_OK, "credit fixture netif binding failed");
+    IP_ADDR4(&pcb->local_ip, 192, 0, 2, 1);
+    IP_ADDR4(&pcb->remote_ip, 192, 0, 2, 2);
+    pcb->local_port              = 8000;
+    pcb->remote_port             = 40000;
+    pcb->state                   = ESTABLISHED;
+    pcb->mss                     = 1460;
+    pcb->rcv_nxt                 = 1234;
+    pcb->rcv_wnd                 = TCP_WND;
+    pcb->rcv_ann_wnd             = TCP_WND;
+    pcb->rcv_ann_right_edge      = pcb->rcv_nxt + TCP_WND;
+    pcb->ww_rcv_advertised_edge  = pcb->rcv_ann_right_edge;
+    pcb->ww_rcv_advertised_valid = 1;
+    pcb->rcv_scale               = 7;
+    tcp_set_flags(pcb, TF_WND_SCALE);
+    TCP_REG_ACTIVE(pcb);
+    f->record_credit_output = true;
+    wwLwipEngineLeave(f->engine, previous);
 }
 
 static void onInit(tunnel_t *t, line_t *l)
@@ -281,6 +354,13 @@ static void teardown(fixture_t *f)
     tunnelchainDestroy(f->chain);
     tunnelDestroy(f->next);
     tunnelDestroy(f->ptc);
+    if (f->record_credit_output)
+    {
+        ww_lwip_engine_t *previous;
+        twfRequire(wwLwipEngineEnter(f->engine, &previous), "credit teardown engine entry failed");
+        netif_remove(&f->route.netif);
+        wwLwipEngineLeave(f->engine, previous);
+    }
     wwLwipEngineDestroy(f->engine);
     twfWorkerEnvTeardown(&f->env);
     fixture = NULL;
@@ -304,6 +384,37 @@ static void caseBatchAndPause(void)
     twfRequireEqualU32(ls->rx_uncredited, f.submitted, "PTC returned paused credit early");
     ptcTunnelDownStreamResume(f.ptc, f.line);
     twfRequire(ls->rx_uncredited == 0 && ls->read_paused_len == 0, "PTC failed to return credit beyond uint16");
+    teardown(&f);
+}
+
+static void caseDeferredReceiveCreditAcks(bool paused, bool closed_window)
+{
+    twfSetCase("PTC returns one deferred receive delivery without intermediate window ACKs");
+    fixture_t f;
+    setup(&f);
+    enableCreditOutput(&f);
+    for (uint32_t remaining = closed_window ? TCP_WND : 90U * 1460U; remaining != 0;)
+    {
+        const uint16_t length = (uint16_t) min(remaining, 1460U);
+        submit(length);
+        remaining -= length;
+    }
+    twfRequireEqualU32(task_count, 1, "credit fixture did not aggregate deferred receive delivery");
+    if (paused)
+        ptcTunnelDownStreamPause(f.ptc, f.line);
+    ptc_lstate_t *ls = lineGetState(f.line, f.ptc);
+    twfRequire((ls->tcp_pcb->rcv_wnd == 0) == closed_window, "credit fixture has the wrong wire-window state");
+    runTask();
+    if (paused)
+    {
+        twfRequireEqualU32(f.window_acks, 0, "paused delivery returned receive credit");
+        ptcTunnelDownStreamResume(f.ptc, f.line);
+    }
+    twfRequire(ls->rx_uncredited == 0 && ls->read_paused_len == 0 && ls->tcp_pcb->rcv_wnd == TCP_WND,
+               "deferred credit return lost receive capacity");
+    twfRequireEqualU32(f.window_acks, 1, "one deferred receive delivery emitted intermediate window ACKs");
+    twfRequire(f.last_ack == ls->tcp_pcb->rcv_nxt && f.last_window == TCP_WND >> 7,
+               "deferred credit return did not advertise its complete final window");
     teardown(&f);
 }
 
@@ -597,6 +708,10 @@ int main(void)
     wwLwipEngineSharedInit();
     ptcRxWrapperPoolInitializeOnce();
     caseBatchAndPause();
+    caseDeferredReceiveCreditAcks(false, false);
+    caseDeferredReceiveCreditAcks(true, false);
+    caseDeferredReceiveCreditAcks(false, true);
+    caseDeferredReceiveCreditAcks(true, true);
     caseReentryAndFin();
     caseDetachedReceiveCredit(false);
     caseDetachedReceiveCredit(true);

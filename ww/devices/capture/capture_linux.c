@@ -228,10 +228,11 @@ static bool captureOpenQueues(capture_device_t *cdev)
             LOGW("CaptureDevice: extra receive queues unavailable; using worker 0");
             break;
         }
-        if (count > 1)
-            captureLinuxBuildSteeringFilter(
-                count, i, cdev->ported.protocols, cdev->ported.count, cdev->queues[i].steering_filter);
-    }
+//         if (count > 1)
+//             captureLinuxBuildSteeringFilter(
+//                 count, i, cdev->ported.protocols, cdev->ported.count, cdev->queues[i].steering_filter);
+//             captureLinuxBuildSteeringFilter(count, i, cdev->opaque_flow_affinity, cdev->queues[i].steering_filter);
+//     }
     GSTATE.capturedevice_queue_start_number = (uint16_t) (first + cdev->queue_count);
     return true;
 }
@@ -259,19 +260,24 @@ void capturedeviceSetMultiQueue(capture_device_t *cdev, bool enabled)
     cdev->multi_queue = enabled;
 }
 
-void capturedeviceSetPortedProtocols(capture_device_t *cdev, const device_flow_ported_set_t *ported)
-{
-    assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown && cdev->reader == NULL);
-    cdev->ported = *ported;
-    deviceReaderSessionSetPortedProtocols(cdev->reader_session, ported);
-    if (ported->count == 1)
-        LOGI("CaptureDevice: steering protocol %u by inner ports, other opaque protocols per packet",
-             ported->protocols[0]);
-    else if (ported->count == 2)
-        LOGI("CaptureDevice: steering protocols %u and %u by inner ports, other opaque protocols per packet",
-             ported->protocols[0],
-             ported->protocols[1]);
-}
+// void capturedeviceSetPortedProtocols(capture_device_t *cdev, const device_flow_ported_set_t *ported)
+// {
+//     assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown && cdev->reader == NULL);
+//     cdev->ported = *ported;
+//     deviceReaderSessionSetPortedProtocols(cdev->reader_session, ported);
+//     if (ported->count == 1)
+//         LOGI("CaptureDevice: steering protocol %u by inner ports, other opaque protocols per packet",
+//              ported->protocols[0]);
+//     else if (ported->count == 2)
+//         LOGI("CaptureDevice: steering protocols %u and %u by inner ports, other opaque protocols per packet",
+//              ported->protocols[0],
+//              ported->protocols[1]);
+// void capturedeviceSetOpaqueFlowAffinity(capture_device_t *cdev, bool enabled)
+// {
+//     assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown && cdev->reader == NULL);
+//     cdev->opaque_flow_affinity                 = enabled;
+//     cdev->reader_session->opaque_flow_affinity = enabled;
+// }
 
 void capturedeviceConfigureKernelQueue(capture_device_t *cdev, bool enabled, uint32_t packet_total,
                                        uint32_t receive_bytes_total)
@@ -324,8 +330,11 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     LOGI("CaptureDevice: %s up with %u worker-owned receive queue(s), %s",
          cdev->name,
          cdev->queue_count,
-         cdev->queue_count > 1 ? "TCP/UDP flow steering; opaque random distribution"
-                               : "worker 0 reads; all workers process");
+         cdev->queue_count > 1
+             ? (cdev->opaque_flow_affinity ? "TCP/UDP flow steering; opaque address/protocol steering"
+                                           : "TCP/UDP flow steering; opaque random distribution")
+             : (cdev->opaque_flow_affinity ? "worker 0 reads; all workers process; opaque flows keep one worker"
+                                           : "worker 0 reads; all workers process"));
     return true;
 failed:
     discard caputredeviceBringDown(cdev);

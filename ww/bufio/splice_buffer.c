@@ -70,6 +70,29 @@ sbuf_t *sbufTryEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf)
     return ordinary;
 }
 
+sbuf_t *sbufEnsureLeftCapacity(buffer_pool_t *pool, sbuf_t *buf, uint16_t need)
+{
+    assert(pool != NULL && buf != NULL);
+    if (sbufGetLeftCapacity(buf) >= need)
+        return buf;
+
+    const uint32_t length  = sbufGetLength(buf);
+    const uint16_t padding = max(bufferpoolGetLargeBufferPadding(pool), need);
+#ifndef NDEBUG
+    buffer_pool_fit_t fit;
+    assert(bufferpoolQueryBestFit(pool, length, padding, &fit));
+#endif
+    sbuf_t *wrapped = sbufIsSplice(buf) ? bufferpoolGetSpliceBuffer(pool) : NULL;
+    if (wrapped != NULL && sbufGetLeftCapacity(wrapped) < padding)
+    {
+        bufferpoolReuseBuffer(pool, wrapped);
+        wrapped = NULL;
+    }
+    wrapped = sbufMoveRangeTo(pool, buf, wrapped, length, length, padding);
+    bufferpoolReuseBuffer(pool, buf);
+    return wrapped;
+}
+
 sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *pool)
 {
     if (UNLIKELY(buf == NULL || ! sbufIsSplice(buf)))

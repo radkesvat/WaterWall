@@ -27,7 +27,7 @@ add_library(StreamToPackets STATIC
 target_include_directories(StreamToPackets PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(StreamToPackets PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/StreamToPackets)
 
-target_link_libraries(StreamToPackets ww)
+target_link_libraries(StreamToPackets PUBLIC Ipv4StreamCodec ww)
 if(NOT APPLE)
     target_precompile_headers(StreamToPackets REUSE_FROM ww)
 endif()

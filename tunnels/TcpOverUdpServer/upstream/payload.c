@@ -37,28 +37,32 @@ void tcpoverudpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     lineRef(l);
-    while (true)
+    bool close_line = false;
+    // A close-frame flush can reenter receive after its application side finished.
+    while (ls->can_upstream)
     {
         sbuf_t *large_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
 
         int read = ikcp_recv(
             ls->k_handle, (void *) sbufGetMutablePtr(large_buf), (int) sbufGetMaximumWriteableSize(large_buf));
 
-        if (read <= 0)
+        if (read == -1 || read == -2)
         {
             lineReuseBuffer(l, large_buf);
-            break; // No more data available
+            break; // No complete message is available yet.
+        }
+        if (read <= 0)
+        {
+            // -3 leaves an oversized complete message queued; zero consumed a message without a flag.
+            LOGE("TcpOverUdpServer: invalid or oversized KCP message (receive result %d)", read);
+            lineReuseBuffer(l, large_buf);
+            close_line = true;
+            break;
         }
 
         sbufSetLength(large_buf, (uint32_t) read);
         uint8_t frame_flag = sbufReadUI8(large_buf);
         sbufShiftRight(large_buf, kFrameHeaderLength);
-
-        if (! ls->can_upstream)
-        {
-            lineReuseBuffer(l, large_buf);
-            break;
-        }
 
         if (frame_flag == kFrameFlagData)
         {
@@ -74,12 +78,7 @@ void tcpoverudpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             lineReuseBuffer(l, large_buf);
 
-            tcpoverudpserverLinestateDestroy(ls);
-            tunnelNextUpStreamFinish(t, l);
-            if (lineIsAlive(l))
-            {
-                tunnelPrevDownStreamFinish(t, l);
-            }
+            close_line = true;
             break;
         }
         else if (frame_flag == kFrameFlagPing)
@@ -91,7 +90,7 @@ void tcpoverudpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             LOGE("TcpOverUdpServer: Unknown frame flag: %02X", frame_flag);
             lineReuseBuffer(l, large_buf);
-
+            close_line = true;
             break;
         }
 
@@ -101,5 +100,14 @@ void tcpoverudpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
+    if (close_line)
+    {
+        tcpoverudpserverLinestateDestroy(ls);
+        tunnelNextUpStreamFinish(t, l);
+        if (lineIsAlive(l))
+        {
+            tunnelPrevDownStreamFinish(t, l);
+        }
+    }
     lineUnref(l);
 }

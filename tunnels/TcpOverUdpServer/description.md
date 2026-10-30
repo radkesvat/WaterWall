@@ -143,6 +143,11 @@ Inside the KCP payload, this tunnel uses:
 
 Data frames carry stream bytes after the flag byte.
 
+Data frames containing only the flag are discarded. An empty KCP message has no
+flag and closes the affected connection, as does an unknown flag or a completed
+KCP message larger than the local receive buffer. Incomplete KCP messages wait
+for their remaining fragments.
+
 ### Default KCP settings
 
 The implementation exposes KCP tuning in JSON. The higher-throughput defaults are:

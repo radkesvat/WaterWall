@@ -8,7 +8,7 @@ bool socks5serverQueueControl(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream
     buffer_queue_t        *queue   = upstream ? &ls->pending_up : &ls->pending_down;
     const size_t           prefix  = upstream ? bufferstreamGetBufLen(&ls->in_stream) : 0;
     const size_t           length  = sbufGetLength(buf);
-    const size_t           entries = upstream ? (size_t) bs_doublequeue_t_size(&ls->in_stream.q) : 0;
+    const size_t           entries = upstream ? bufferstreamGetEntryCount(&ls->in_stream) : 0;
     if (UNLIKELY(length > kSocks5ServerMaxPendingBytes || prefix > kSocks5ServerMaxPendingBytes - length ||
                  bufferqueueGetBufLen(queue) > kSocks5ServerMaxPendingBytes - length - prefix ||
                  entries >= kSocks5ServerMaxPendingBuffers ||
@@ -27,6 +27,8 @@ bool socks5serverDrainControl(tunnel_t *t, line_t *l)
     // An Est callback may have completed setup and bypassed us before returning.
     if (! tunnelIsActiveForLine(t, l))
         return true;
+    if (! socks5serverHasControlState(t, l))
+        return false;
     socks5server_lstate_t *ls = lineGetState(l, t);
     if (ls->control_draining)
         return true;
@@ -36,7 +38,8 @@ bool socks5serverDrainControl(tunnel_t *t, line_t *l)
         sbuf_t *reply          = socks5serverCreateCommandReply(l, kSocks5ReplySucceeded, NULL);
         ls->phase              = kSocks5ServerPhaseTcpEstablished;
         ls->connect_reply_sent = true;
-        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply)))
+        if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, reply)) ||
+            ! socks5serverHasControlState(t, l))
             return false;
     }
     // Either direction can admit work for the other while this drain owns ordering.
@@ -48,13 +51,15 @@ bool socks5serverDrainControl(tunnel_t *t, line_t *l)
         {
             sbuf_t *buf = ! bufferstreamIsEmpty(&ls->in_stream) ? bufferstreamIdealRead(&ls->in_stream)
                                                                 : bufferqueuePopFront(&ls->pending_up);
-            if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf)))
+            if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf)) ||
+                ! socks5serverHasControlState(t, l))
                 return false;
         }
         while (ls->connect_reply_sent && bufferqueueGetBufCount(&ls->pending_down))
         {
             sbuf_t *buf = bufferqueuePopFront(&ls->pending_down);
-            if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf)))
+            if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf)) ||
+                ! socks5serverHasControlState(t, l))
                 return false;
         }
     } while (! ls->input_draining && ! ls->next_initializing &&

@@ -54,7 +54,7 @@ wid_t deviceReaderSelectWID(device_reader_session_t *session, wid_t reader_wid, 
     assert(session != NULL && buf != NULL);
     assert(reader_count > 0 && reader_count <= getWorkersCount());
     assert(reader_wid < reader_count);
-    if (reader_count > 1)
+    if (getWorkersCount() == 1 || reader_count > 1)
         return reader_wid;
 
     /* Keep this receive locality even though consumers select their own flow owner.
@@ -72,6 +72,12 @@ wid_t deviceReaderSelectWID(device_reader_session_t *session, wid_t reader_wid, 
         discard identified;
         return (wid_t) (hash % getWorkersCount());
     }
+    /* An encapsulating tunnel is one opaque stream whose payload carries ordered
+     * TCP. Rotating it hands consecutive segments to different workers, and the
+     * consumer that writes them out (a TUN) then reorders the inner flow. */
+    wid_t wid = 0;
+    if (session->opaque_flow_affinity && deviceFlowAffineWID(sbufGetRawPtr(buf), sbufGetLength(buf), &wid))
+        return wid;
     return (wid_t) (atomicIncExplicit(&session->distribution_next, memory_order_relaxed) % getWorkersCount());
 }
 

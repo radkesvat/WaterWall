@@ -382,6 +382,8 @@ The implementation uses `required_padding_left = 16` so HTTP/1.1 chunks and smal
 
 ### WebSocket behavior
 
+Incoming WebSocket data frames are decoded progressively in both HTTP/1.1 and HTTP/2. Ping, Pong and Close bodies remain complete control events with a maximum of 125 bytes. Unsupported frame lengths are rejected from the header before waiting for body bytes.
+
 When `websocket` mode is enabled:
 
 - HTTP/1.1 expects `101 Switching Protocols`
@@ -442,6 +444,8 @@ Unexpected `101` replies are treated as errors.
 Ordinary same-line connections relay repeated `Pause`/`Resume` notifications transparently and do not wait for Resume to send ready output. Split connections retain the main/upload/download signal mapping. HTTP/1 body framing, HTTP/2, WebSocket and split connections remain active; they still require protocol handling or line ownership cleanup.
 
 ### Downstream response handling
+
+Incoming chunk bodies are forwarded as bytes arrive, without waiting for the complete chunk. Chunk-size lines are limited to 1 KiB including extensions and CRLF; trailers are limited to 16 KiB in total including their terminators. Initial HTTP headers remain limited to 64 KiB. Invalid framing or an exceeded limit closes the affected connection. A body prefix may already have been forwarded when a malformed later chunk terminator is detected.
 
 For HTTP/1.1 responses, `HttpClient` parses headers internally and then forwards only the response body.
 

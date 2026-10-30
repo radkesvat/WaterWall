@@ -340,7 +340,10 @@ doing this.
 
 The fallback branch receives `Init` immediately. During normal live operation, nonzero delay uses the configured delay
 and jitter. At delay zero, accepted payload forwards synchronously, including completion under Pause. Branch Init and reentry preserve
-FIFO before newer input. The delayed FIFO is bounded to 2 MiB and 1,024 buffers per line. Downstream responses from fallback are not intentionally delayed.
+FIFO before newer input. The delayed FIFO is bounded to 2 MiB of logical bytes, 8 MiB of buffer allocation charge and
+1,024 retained buffers per line. Before refusing ordinary input on charge or entry pressure, it coalesces the batch into
+best-fit storage when that fits the limits, preserving byte order and the scheduled delay. Downstream responses from
+fallback are not intentionally delayed.
 
 Pause/Resume are forwarded transparently on the selected fallback path, including repeats. A due delayed batch does not
 wait for Resume. An upstream `Finish` flushes accepted queued bytes synchronously in FIFO order before fallback `Finish`,
@@ -495,7 +498,8 @@ Backend-local errors outside decoding retain their local scope.
 | --- | --- |
 | Initial/UDP wire input, including active head and cached headers | 2,162,950 bytes (2 MiB plus a 65,798-byte maximum frame) |
 | Temporary TCP Init/reentry ordering | 2 MiB and 1,024 buffers |
-| Delayed fallback backlog and temporary replay ordering | 2 MiB and 1,024 buffers |
+| Delayed fallback backlog | 2 MiB logical bytes, 8 MiB buffer charge and 1,024 buffers |
+| Zero-delay temporary replay ordering | 2 MiB and 1,024 buffers |
 | Initial header cache | 320 actual bytes |
 | Incoming UDP body | 65,535 bytes |
 | Backend reply body | 65,535 bytes |
@@ -503,6 +507,10 @@ Backend-local errors outside decoding retain their local scope.
 Initial assembly permits a partial request followed by a full 2 MiB delivery.
 Consumed headers are removed before applying the selected path's body budget.
 Input fragmentation and synchronously consumed output have no 1,024-record cap.
+Incomplete UDP bodies and nested UDP input compact when retained buffer charge
+exceeds 8 MiB or storage exceeds 1,024 entries, including the active head. This
+preserves legal fragmented datagrams and byte order without changing the body
+limit. Complete datagrams continue through the existing extraction path.
 Equality passes; retained-state overflow closes the affected association. Direct
 opaque paths have no queue merely to impose a byte limit. These logical limits
 are independent of RAM profile, buffer geometry and pipe capacity.

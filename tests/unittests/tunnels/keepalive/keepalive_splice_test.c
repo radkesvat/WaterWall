@@ -23,6 +23,7 @@
 #define nodeState       keepaliveserver_lstate_t
 #define framePrefix     kKeepAliveServerFramePrefixSize
 #define reentryBytes    kKeepAliveServerMaxReentryBytes
+#define readChargeLimit kKeepAliveServerReadChargeLimit
 #define encode(t, l, b) keepaliveserverTunnelDownStreamPayload(t, l, b)
 #define decode(t, l, b) keepaliveserverTunnelUpStreamPayload(t, l, b)
 #else
@@ -33,6 +34,7 @@
 #define nodeState       keepaliveclient_lstate_t
 #define framePrefix     kKeepAliveFramePrefixSize
 #define reentryBytes    kKeepAliveMaxReentryBytes
+#define readChargeLimit kKeepAliveReadChargeLimit
 #define encode(t, l, b) keepaliveclientTunnelUpStreamPayload(t, l, b)
 #define decode(t, l, b) keepaliveclientTunnelDownStreamPayload(t, l, b)
 #endif
@@ -57,6 +59,7 @@ static bool             measuring, fail_queue, inject_encode, inject_decode, clo
 static sbuf_t          *expected_identity;
 static bool             pause_output;
 static unsigned         encode_overflow;
+static bool             inject_large_decode;
 static bool             inject_ping;
 static unsigned         up_pauses, up_resumes, down_pauses, down_resumes;
 static unsigned         pause_wire_at;
@@ -267,6 +270,19 @@ static void capturePlain(tunnel_t *t, line_t *l, sbuf_t *buf)
         const uint8_t nested[] = {0, 0, 0, 2, 1, 'B'};
         decode(node, l, ordinary(nested, sizeof(nested)));
     }
+    if (inject_large_decode)
+    {
+        inject_large_decode     = false;
+        const uint8_t nested[]  = {0, 0, 0, 2, 1, 'B'};
+        sbuf_t       *oversized = bufferpoolGetBestFit(env.pool, readChargeLimit + 1, 128);
+        sbufSetLength(oversized, sizeof(nested));
+        memoryCopy(sbufGetMutablePtr(oversized), nested, sizeof(nested));
+        decode(node, l, oversized);
+        twfRequire(lineIsAlive(l), "nested input was refused before beneficial charge settlement");
+        nodeState *ls = lineGetState(l, node);
+        twfRequire(plain_calls == 1 && splicestreamCharge(ls->read_stream) <= readChargeLimit,
+                   "nested input reentered delivery or retained oversized storage");
+    }
     if (close_output)
         closeFromOutput(l);
 }
@@ -280,6 +296,7 @@ static void setupWithSettings(const char *settings)
     pause_output                                                              = false;
     encode_overflow                                                           = 0;
     inject_ping                                                               = false;
+    inject_large_decode                                                       = false;
     up_pauses = up_resumes = down_pauses = down_resumes                       = 0;
     pause_wire_at                                                             = 0;
     expected_identity                                                         = NULL;
@@ -698,6 +715,17 @@ static void testEncodeCloseAndLimits(void)
     }
 }
 
+static void testNestedChargeSettlement(void)
+{
+    setup();
+    inject_large_decode   = true;
+    const uint8_t first[] = {0, 0, 0, 2, 1, 'A'};
+    decode(node, line, ordinary(first, sizeof(first)));
+    twfRequire(lineIsAlive(line) && plain_calls == 2 && plain_length == 2 && memoryCompare(plain, "AB", 2) == 0,
+               "nested charge settlement changed ordered delivery");
+    teardown();
+}
+
 static void testAdvisoryControlReplies(void)
 {
     const uint8_t pings[] = {0, 0, 0, 1, 2, 0, 0, 0, 1, 2};
@@ -887,6 +915,7 @@ int main(void)
     testOrdinaryAndLarge();
     testControlAndRejection();
     testEncodeCloseAndLimits();
+    testNestedChargeSettlement();
 #if WW_HAVE_SPLICE
     testPipes();
     testLargePipeFrame();

@@ -1,0 +1,325 @@
+#include "structure.h"
+
+#include "loggers/network_logger.h"
+
+static bool packetcounterParseSourceRange(packetcounter_source_range_t *range, const char *cidr, const char *json_path)
+{
+    ip_addr_t ip;
+    ip_addr_t subnet_mask;
+    uint8_t   prefix_length = 0;
+
+    if (cidr == NULL || cidr[0] == '\0')
+    {
+        LOGF("JSON Error: %s (string field) : expected an IPv4 CIDR range", json_path);
+        return false;
+    }
+
+    if (! verifyIPCdir(cidr))
+    {
+        LOGF("JSON Error: %s (string field) : invalid IPv4 CIDR range", json_path);
+        return false;
+    }
+
+    if (parseIPWithSubnetMaskAndPrefix(cidr, &ip, &subnet_mask, &prefix_length) != 4)
+    {
+        LOGF("JSON Error: %s (string field) : expected an IPv4 CIDR range", json_path);
+        return false;
+    }
+
+    range->base_host     = lwip_ntohl(ip.u_addr.ip4.addr) & lwip_ntohl(subnet_mask.u_addr.ip4.addr);
+    range->prefix_length = prefix_length;
+    range->count         = 1ULL << (32U - prefix_length);
+    return true;
+}
+
+static bool packetcounterLoadSourceRanges(packetcounter_tstate_t *state, const cJSON *settings)
+{
+    const char  *field_name = "source-ipv4-range";
+    const cJSON *range_json = cJSON_GetObjectItemCaseSensitive(settings, field_name);
+    if (range_json == NULL)
+    {
+        range_json = cJSON_GetObjectItemCaseSensitive(settings, "source-ip4-range");
+    }
+
+    if (range_json == NULL)
+    {
+        LOGF("JSON Error: PacketCounter->settings->source-ipv4-range (string or array field) : expected one or more "
+             "IPv4 CIDR ranges");
+        return false;
+    }
+
+    const cJSON *items       = range_json;
+    int          range_count = 0;
+
+    if (cJSON_IsString(range_json) && range_json->valuestring != NULL)
+    {
+        range_count = 1;
+    }
+    else if (cJSON_IsArray(range_json))
+    {
+        range_count = cJSON_GetArraySize(range_json);
+    }
+
+    if (range_count <= 0)
+    {
+        LOGF("JSON Error: PacketCounter->settings->source-ipv4-range (string or array field) : expected one or more "
+             "IPv4 CIDR ranges");
+        return false;
+    }
+
+    size_t source_ranges_size;
+    if (! memoryTryComputeArraySize((size_t) range_count, sizeof(*(state->source_ranges)), &source_ranges_size))
+    {
+        LOGF("PacketCounter: source range metadata size is not representable");
+        return false;
+    }
+
+    state->source_ranges      = memoryAllocateZero(source_ranges_size);
+    state->source_range_count = (uint32_t) range_count;
+
+    uint64_t total_source_count = 0;
+
+    for (int i = 0; i < range_count; ++i)
+    {
+        const cJSON *item = NULL;
+        char         json_path[128];
+        char        *cidr = NULL;
+
+        if (cJSON_IsArray(items))
+        {
+            item = cJSON_GetArrayItem(items, i);
+            stringNPrintf(json_path, sizeof(json_path), "PacketCounter->settings->source-ipv4-range[%d]", i);
+            if (! cJSON_IsString(item) || item->valuestring == NULL)
+            {
+                LOGF("JSON Error: %s (string field) : expected an IPv4 CIDR range", json_path);
+                return false;
+            }
+            cidr = item->valuestring;
+        }
+        else
+        {
+            item = items;
+            cidr = item->valuestring;
+            stringCopy(json_path, "PacketCounter->settings->source-ipv4-range");
+        }
+
+        if (! packetcounterParseSourceRange(&state->source_ranges[i], cidr, json_path))
+        {
+            return false;
+        }
+
+        if (state->source_ranges[i].count > (UINT64_MAX - total_source_count))
+        {
+            LOGF("PacketCounter: total source range size overflow");
+            return false;
+        }
+
+        total_source_count += state->source_ranges[i].count;
+    }
+
+    state->source_count = total_source_count;
+    if (state->source_count == 0)
+    {
+        LOGF("PacketCounter: source-ipv4-range resolved to zero source IPs");
+        return false;
+    }
+
+    return true;
+}
+
+static bool packetcounterLoadExpectedPacketsPerIp(packetcounter_tstate_t *state, const cJSON *settings)
+{
+    int packets_per_ip = 1;
+
+    getIntFromJsonObjectOrDefault(&packets_per_ip, settings, "expected-packets-per-ip", 1);
+
+    if (packets_per_ip <= 0)
+    {
+        LOGF("JSON Error: PacketCounter->settings->expected-packets-per-ip (int field) : expected a positive packet "
+             "count");
+        return false;
+    }
+
+    state->expected_packets_per_ip = (uint32_t) packets_per_ip;
+    return true;
+}
+
+static bool packetcounterAddProtocol(packetcounter_tstate_t *state, const cJSON *item, const char *path)
+{
+    uint8_t protocol;
+
+    if (cJSON_IsNumber(item) && item->valuedouble >= 0 && item->valuedouble <= 255 &&
+        item->valuedouble == (double) item->valueint)
+    {
+        protocol = (uint8_t) item->valueint;
+    }
+    else if (cJSON_IsString(item) && item->valuestring != NULL)
+    {
+        if (stricmp(item->valuestring, "TCP") == 0)
+        {
+            protocol = IP_PROTO_TCP;
+        }
+        else if (stricmp(item->valuestring, "UDP") == 0)
+        {
+            protocol = IP_PROTO_UDP;
+        }
+        else if (stricmp(item->valuestring, "ICMP") == 0)
+        {
+            protocol = IP_PROTO_ICMP;
+        }
+        else
+        {
+            LOGF("JSON Error: %s : expected TCP, UDP, ICMP, or an integer from 0 to 255", path);
+            return false;
+        }
+    }
+    else
+    {
+        LOGF("JSON Error: %s : expected TCP, UDP, ICMP, or an integer from 0 to 255", path);
+        return false;
+    }
+
+    if (state->protocol_slots[protocol] != 0)
+    {
+        LOGF("JSON Error: %s : duplicate protocol number %u", path, (unsigned int) protocol);
+        return false;
+    }
+
+    state->protocol_numbers[state->protocol_count] = protocol;
+    state->protocol_slots[protocol]                = state->protocol_count + 1U;
+    state->protocol_count += 1U;
+    return true;
+}
+
+static bool packetcounterLoadProtocols(packetcounter_tstate_t *state, const cJSON *settings)
+{
+    const cJSON *setting = cJSON_GetObjectItemCaseSensitive(settings, "protocol-number");
+    const char  *path    = "PacketCounter->settings->protocol-number";
+
+    if (cJSON_IsString(setting) && setting->valuestring != NULL && stricmp(setting->valuestring, "ALL") == 0)
+    {
+        for (uint16_t protocol = 0; protocol < 255; ++protocol)
+        {
+            state->protocol_numbers[protocol] = (uint8_t) protocol;
+            state->protocol_slots[protocol]   = protocol + 1U;
+        }
+        state->protocol_count = 255;
+        return true;
+    }
+
+    if (cJSON_IsArray(setting))
+    {
+        const int count = cJSON_GetArraySize(setting);
+        if (count <= 0 || count > 256)
+        {
+            LOGF("JSON Error: %s : expected 1 to 256 distinct protocols", path);
+            return false;
+        }
+
+        for (int index = 0; index < count; ++index)
+        {
+            char item_path[128];
+            stringNPrintf(item_path, sizeof(item_path), "%s[%d]", path, index);
+            if (! packetcounterAddProtocol(state, cJSON_GetArrayItem(setting, index), item_path))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    if (setting == NULL)
+    {
+        LOGF("JSON Error: %s : required protocol selection is missing", path);
+        return false;
+    }
+
+    return packetcounterAddProtocol(state, setting, path);
+}
+
+static bool packetcounterLoadOutputFile(packetcounter_tstate_t *state, const cJSON *settings)
+{
+    getStringFromJsonObjectOrDefault(&state->output_file, settings, "output-file", "packet-counter-report.txt");
+
+    if (state->output_file == NULL || state->output_file[0] == '\0')
+    {
+        LOGF("JSON Error: PacketCounter->settings->output-file (string field) : expected a non-empty file path");
+        return false;
+    }
+
+    return true;
+}
+
+static bool packetcounterLoadReportAfterMs(packetcounter_tstate_t *state, const cJSON *settings)
+{
+    int report_after_ms = 1000;
+
+    getIntFromJsonObjectOrDefault(&report_after_ms, settings, "report-after-ms", report_after_ms);
+
+    if (report_after_ms <= 0)
+    {
+        LOGF("JSON Error: PacketCounter->settings->report-after-ms (int field) : expected a positive millisecond "
+             "value");
+        return false;
+    }
+
+    state->report_after_ms = (uint32_t) report_after_ms;
+    return true;
+}
+
+tunnel_t *packetcounterTunnelCreate(node_t *node)
+{
+    tunnel_t *t = packettunnelCreate(node, sizeof(packetcounter_tstate_t), 0);
+
+    if (! t)
+    {
+        return NULL;
+    }
+
+    t->fnInitU    = &packetcounterTunnelUpStreamInit;
+    t->fnEstU     = &packetcounterTunnelUpStreamEst;
+    t->fnFinU     = &packetcounterTunnelUpStreamFinish;
+    t->fnPayloadU = &packetcounterTunnelUpStreamPayload;
+    t->fnPauseU   = &packetcounterTunnelUpStreamPause;
+    t->fnResumeU  = &packetcounterTunnelUpStreamResume;
+
+    t->fnInitD    = &packetcounterTunnelDownStreamInit;
+    t->fnEstD     = &packetcounterTunnelDownStreamEst;
+    t->fnFinD     = &packetcounterTunnelDownStreamFinish;
+    t->fnPayloadD = &packetcounterTunnelDownStreamPayload;
+    t->fnPauseD   = &packetcounterTunnelDownStreamPause;
+    t->fnResumeD  = &packetcounterTunnelDownStreamResume;
+
+    t->onPrepare = &packetcounterTunnelOnPrepair;
+    t->onStart   = &packetcounterTunnelOnStart;
+
+    t->onDestroy = &packetcounterTunnelDestroy;
+
+    packetcounter_tstate_t  *state    = tunnelGetState(t);
+    const cJSON             *settings = node->node_settings_json;
+
+    if (UNLIKELY(! mutexTryInit(&state->state_mutex)))
+    {
+        LOGF("PacketCounter: failed to initialize state mutex");
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    if (! checkJsonIsObjectAndHasChild(settings))
+    {
+        LOGF("JSON Error: PacketCounter->settings (object field) : The object was empty or invalid");
+        packetcounterTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+    state->expected_packets_per_ip = 1;
+
+    if (! packetcounterLoadSourceRanges(state, settings) || ! packetcounterLoadProtocols(state, settings) ||
+        ! packetcounterLoadExpectedPacketsPerIp(state, settings) || ! packetcounterLoadOutputFile(state, settings) ||
+        ! packetcounterLoadReportAfterMs(state, settings))
+    {
+        packetcounterTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+
+    return t;
+}

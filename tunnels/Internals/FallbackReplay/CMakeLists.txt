@@ -1,0 +1,6 @@
+add_library(FallbackReplay STATIC src/fallback_replay.c)
+target_include_directories(FallbackReplay PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(FallbackReplay PUBLIC ww)
+if(NOT APPLE)
+  target_precompile_headers(FallbackReplay REUSE_FROM ww)
+endif()

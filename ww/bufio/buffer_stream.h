@@ -46,6 +46,30 @@ typedef struct buffer_stream_s buffer_stream_t;
  */
 buffer_stream_t bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_padding);
 
+/** Initialize an empty stream without reserving deque storage. The pool and
+ * exact-read padding contract match Create. Previous contents are not freed. */
+void bufferstreamInitEmpty(buffer_stream_t *self, buffer_pool_t *pool, uint16_t use_left_padding);
+
+/** O(n) sum of retained sbufGetAllocationCharge(), including empty entries.
+ * Saturates at SIZE_MAX on overflow. Excludes deque/pool storage; this is not
+ * logical byte length or RSS. No allocation, mutation or callbacks. */
+size_t bufferstreamGetCharge(const buffer_stream_t *self);
+
+/** Current storage entries after coalescing, including empty entries. */
+static inline size_t bufferstreamGetEntryCount(const buffer_stream_t *self)
+{
+    assert(self != NULL);
+    return (size_t) bs_doublequeue_t_size(&self->q);
+}
+
+/** Bytes in the first storage entry, or zero when absent/empty. This is not a
+ * protocol boundary and does not skip retained empty entries. */
+static inline uint32_t bufferstreamGetHeadLength(const buffer_stream_t *self)
+{
+    assert(self != NULL);
+    return bs_doublequeue_t_is_empty(&self->q) ? 0 : sbufGetLength(*bs_doublequeue_t_front(&self->q));
+}
+
 /**
  * Empties the buffer stream, returning all buffers to the pool.
  * @param self The buffer stream to empty.

@@ -368,7 +368,6 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     ls->tunnel       = t;
     ls->line         = l;
-    ls->write_paused = true;
 
     if (! addresscontextCanConvertToSockAddr(dest_ctx) || ! addresscontextHasPort(dest_ctx))
     {

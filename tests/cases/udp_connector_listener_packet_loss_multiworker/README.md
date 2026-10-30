@@ -5,14 +5,14 @@ Exercises the udp connector listener packet loss multiworker scenario with the t
 
 Configured nodes and onward edges (`next`; listeners/connectors form the OS transport boundaries):
 
-- `packet-sender`: `PacketSender` → `packets-to-stream`
+- `packet-generator`: `PacketGenerator` → `packets-to-stream`
 - `packets-to-stream`: `PacketsToStream` → `udp-connector`
 - `udp-connector`: `UdpConnector` (terminal or independently bound endpoint)
 - `udp-listener`: `UdpListener` → `stream-to-packets`
-- `stream-to-packets`: `StreamToPackets` → `packet-receiver`
-- `packet-receiver`: `PacketReceiver` (terminal or independently bound endpoint)
+- `stream-to-packets`: `StreamToPackets` → `packet-counter`
+- `packet-counter`: `PacketCounter` (terminal or independently bound endpoint)
 
-Scenario choices: `packet-sender.duration-ms=200`. These values define the workload/edge case and are not tuning advice.
+Scenario choices: `packet-generator.duration-ms=200`. These values define the workload/edge case and are not tuning advice.
 
 CTest selections and overrides:
 
@@ -27,6 +27,6 @@ Discover properties with `ctest --preset linux -N -V -R '^waterwall\.udp_connect
 Generated core settings, logs and mutable inputs belong to the private run directory. Failures/skips retain initialized artifacts; `WATERWALL_TEST_KEEP_RUN_DIR=1` also retains success. See the [test workflow](../../README.md).
 
 Contract exercised: Verifies a real UDP loopback hop across four workers using
-  `PacketSender -> PacketsToStream -> UdpConnector` on the sender side and
-  `UdpListener -> StreamToPackets -> PacketReceiver` on the receiver side, with the packet-analysis report requiring
+  `PacketGenerator -> PacketsToStream -> UdpConnector` on the sender side and
+  `UdpListener -> StreamToPackets -> PacketCounter` on the receiver side, with the packet-analysis report requiring
   zero loss.

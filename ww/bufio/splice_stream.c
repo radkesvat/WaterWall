@@ -102,6 +102,15 @@ bool splicestreamPush(splice_stream_t *s, sbuf_t *input)
     return true;
 }
 
+bool splicestreamCanAdmit(const splice_stream_t *s, const sbuf_t *input, size_t max_bytes, size_t max_charge)
+{
+    const uint32_t length = sbufGetLength(input);
+    if (s->total > max_bytes || length > max_bytes - s->total || s->charge > max_charge)
+        return false;
+    size_t charge = 0;
+    return (length == 0 || sbufTryGetQueueCharge(input, &charge)) && charge <= max_charge - s->charge;
+}
+
 const uint8_t *splicestreamPeekHeader(const splice_stream_t *s)
 {
     return s->header_filled == s->header_size ? s->header : NULL;
@@ -148,6 +157,13 @@ bool splicestreamCompact(splice_stream_t *s)
     s->charge      = s->head_charge;
     assert(s->charge == fit.allocation_charge);
     return true;
+}
+
+bool splicestreamSettleCharge(splice_stream_t *s, size_t max_charge)
+{
+    if (s->charge > max_charge)
+        discard splicestreamCompact(s);
+    return s->charge <= max_charge;
 }
 
 static inline void streamAssertFrame(const splice_stream_t *s, const sbuf_t *destination, uint32_t bytes)

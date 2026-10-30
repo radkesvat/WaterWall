@@ -1,37 +1,16 @@
 #include "internal.h"
 
-static sbuf_t *receiveHead(trojanclient_lstate_t *ls)
-{
-    if (ls->receive_head == NULL)
-        ls->receive_head = bufferqueuePopFront(&ls->pending_down);
-    return ls->receive_head;
-}
-
-static void recycleEmptyHead(trojanclient_lstate_t *ls)
-{
-    if (ls->receive_head != NULL && sbufGetLength(ls->receive_head) == 0)
-    {
-        lineReuseBuffer(ls->line, ls->receive_head);
-        ls->receive_head = NULL;
-    }
-}
-
 /* 0: incomplete, 1: header validated, -1: malformed. Only required header
  * bytes leave their representation; waiting bodies remain in their pipes. */
 int trojanclientReadUdpHeader(trojanclient_lstate_t *ls)
 {
+    buffer_pool_t *pool = lineGetBufferPool(ls->line);
     while (! ls->header_ready)
     {
-        while (ls->header_filled < ls->header_needed)
-        {
-            sbuf_t *head = receiveHead(ls);
-            if (head == NULL)
-                return 0;
-            uint32_t count = min(ls->header_needed - ls->header_filled, sbufGetLength(head));
-            sbufReadRangeToMemory(head, ls->header + ls->header_filled, count);
-            ls->header_filled += count;
-            recycleEmptyHead(ls);
-        }
+        assert(ls->header_needed <= sizeof(ls->header));
+        if (! bufferRangeGatherPrefix(
+                pool, &ls->receive_head, &ls->pending_down, ls->header, &ls->header_filled, ls->header_needed))
+            return 0;
         if (ls->header_needed == 1)
         {
             switch (ls->header[0])

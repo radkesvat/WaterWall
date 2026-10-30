@@ -1,0 +1,6 @@
+add_library(EncryptionCommon STATIC src/record.c)
+target_include_directories(EncryptionCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(EncryptionCommon PUBLIC ww)
+if(NOT APPLE)
+  target_precompile_headers(EncryptionCommon REUSE_FROM ww)
+endif()

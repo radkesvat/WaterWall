@@ -1,7 +1,7 @@
 #pragma once
 
 /* Implementation-only helpers; the node interface remains interface.h. */
-#include "address_codec.h"
+#include "SocksAddress/address_codec.h"
 #include "structure.h"
 
 enum
@@ -25,6 +25,15 @@ enum
 
 void socks5serverLinestateInitialize(socks5server_lstate_t *ls, tunnel_t *t, line_t *l, socks5server_line_kind_t kind);
 void socks5serverLinestateDestroy(socks5server_lstate_t *ls);
+
+/* Call only while the line allocation is protected or known alive. Finish can
+ * destroy this borrowed state before its owner destroys the line. */
+static inline bool socks5serverHasControlState(tunnel_t *t, line_t *l)
+{
+    const socks5server_lstate_t *ls = lineGetState(l, t);
+    return ls->tunnel == t && ls->line == l && ls->kind == kSocks5ServerLineKindControlTcp &&
+           ls->phase != kSocks5ServerPhaseClosing;
+}
 
 void socks5serverTunnelstateDestroy(socks5server_tstate_t *ts);
 bool socks5serverResolveDynamicProvider(tunnel_t *t);
@@ -57,7 +66,7 @@ bool socks5serverQueueControl(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream
 sbuf_t                 *socks5serverAllocBuffer(line_t *l, uint32_t len);
 sbuf_t                 *socks5serverCreateMethodReply(line_t *l, uint8_t method);
 sbuf_t                 *socks5serverCreateAuthReply(line_t *l, uint8_t status);
-socks5_address_result_t socks5serverParseAddressBytes(const uint8_t *buf, size_t len, address_context_t *out,
+socks_address_result_t  socks5serverParseAddressBytes(const uint8_t *buf, size_t len, address_context_t *out,
                                                       size_t *consumed);
 void                    socks5serverApplyDestinationContext(line_t *l, const address_context_t *target, bool udp);
 void     socks5serverLogAuthRejected(tunnel_t *t, line_t *l, const uint8_t *username, uint8_t username_len,
@@ -72,4 +81,4 @@ bool     socks5serverRegisterUdpAssociation(tunnel_t *t, line_t *l, const user_h
 void     socks5serverCloseControlLine(tunnel_t *t, line_t *l, socks5server_close_origin_t origin, int reply_code,
                                       sbuf_t *final_reply);
 
-void socks5serverAddressToContext(const socks5_address_t *value, address_context_t *out);
+void socks5serverAddressToContext(const socks_address_t *value, address_context_t *out);

@@ -269,12 +269,20 @@ static bool tlsserverReadDecryptedData(tunnel_t *t, line_t *l, tlsserver_lstate_
             {
                 LOGD("TlsServer: worker %u received TLS close_notify from peer", (unsigned int) lineGetWID(l));
             }
-            ls->upstream_finished = true;
-            if (ls->verbose)
+            /* A TLS alert arrives as Payload, not the frontend's Finish. The
+             * branch retired here cannot later finish the frontend for us. */
+            ls->upstream_finished    = true;
+            ls->downstream_finishing = true;
+            if (ls->protected_init_sent && ! lineCallWithRef(l, tunnelNextUpStreamFinish, t))
             {
-                LOGD("TlsServer: forwarding upstream Finish after peer close_notify");
+                return true;
             }
-            return lineCallWithRef(l, tunnelNextUpStreamFinish, t);
+            ls = lineGetState(l, t);
+            if (ls->tunnel == t && ! ls->resources_released)
+            {
+                tlsserverFinishTlsOutput(t, l);
+            }
+            return true;
         default:
             LOGW("TlsServer: SSL_read failed while decrypting upstream TLS bytes (ssl_error=%d)", ssl_error);
             tlsserverPrintSSLError();
