@@ -1,7 +1,7 @@
 /*
  * Covers: Verifies the Linux NFQUEUE netlink parser with synthetic messages, including capture-length
  * byte order, malformed attributes, payload cursor exposure, truncated-prefix packet-id recovery,
- * and nonblocking receive/verdict ownership across syscall refusal and interruption.
+ * and scalar/batched nonblocking receive/verdict ownership across syscall refusal and interruption.
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
  * Cases: testValidPayload, testExposePayloadView, testCaptureLengthDiscard,
@@ -50,8 +50,19 @@ typedef struct nfqueue_io_fixture_s
     unsigned int                 poll_calls;
     unsigned int                 receive_failures;
     unsigned int                 verdict_failures;
+    uint16_t                     batch_receive_count;
+    uint16_t                     batch_send_limit;
+    uint16_t                     batch_offered_count;
+    uint16_t                     batch_bad_datagram;
+    uint16_t                     batch_truncated_datagram;
+    uint32_t                     batch_packet_ids[kNetfilterBatchCapacity];
+    uint32_t                     batch_verdicts[kNetfilterBatchCapacity];
     int                          receive_errno;
     int                          verdict_errno;
+    int                          probe_ack_error;
+    uint32_t                     last_sequence;
+    uint16_t                     expected_verdict_type;
+    bool                         probe;
     bool                         short_verdict;
     struct nfqnl_msg_verdict_hdr last_verdict;
     uint16_t                     last_queue;
@@ -60,11 +71,24 @@ typedef struct nfqueue_io_fixture_s
 static nfqueue_io_fixture_t io_fixture;
 
 ssize_t __wrap_recvmsg(int fd, struct msghdr *message, int flags);
+int     __wrap_recvmmsg(int fd, struct mmsghdr *messages, unsigned int count, int flags, struct timespec *timeout);
+int     __wrap_sendmmsg(int fd, struct mmsghdr *messages, unsigned int count, int flags);
 ssize_t __wrap_sendto(int fd, const void *data, size_t length, int flags, const struct sockaddr *destination,
                       socklen_t address_length);
 int     __wrap_poll(struct pollfd *fds, nfds_t count, int timeout);
 
-ssize_t __wrap_recvmsg(int fd, struct msghdr *message, int flags)
+static void copyReceivedMessage(struct msghdr *message)
+{
+    require(message->msg_iovlen == 1, "receive changed packet storage shape");
+    require(message->msg_namelen == sizeof(struct sockaddr_nl), "receive did not provide Netlink address storage");
+    struct sockaddr_nl *address = message->msg_name;
+    *address                    = (struct sockaddr_nl) {.nl_family = AF_NETLINK};
+    const size_t copied         = min(io_fixture.message_length, message->msg_iov[0].iov_len);
+    memoryCopy(message->msg_iov[0].iov_base, io_fixture.message, copied);
+    message->msg_flags = io_fixture.datagram_length > message->msg_iov[0].iov_len ? MSG_TRUNC : 0;
+}
+
+static bool refuseReceive(int fd, int flags)
 {
     require(fd == kTestSocket, "receive used the wrong NFQUEUE socket");
     require((flags & (MSG_DONTWAIT | MSG_TRUNC)) == (MSG_DONTWAIT | MSG_TRUNC),
@@ -74,23 +98,59 @@ ssize_t __wrap_recvmsg(int fd, struct msghdr *message, int flags)
     {
         --io_fixture.receive_failures;
         errno = io_fixture.receive_errno;
+        return true;
+    }
+    return false;
+}
+
+ssize_t __wrap_recvmsg(int fd, struct msghdr *message, int flags)
+{
+    if (refuseReceive(fd, flags))
+    {
         return -1;
     }
-    require(message->msg_iovlen == 1, "receive changed packet storage shape");
-    require(message->msg_namelen == sizeof(struct sockaddr_nl), "receive did not provide Netlink address storage");
-    struct sockaddr_nl *address = message->msg_name;
-    *address                    = (struct sockaddr_nl) {.nl_family = AF_NETLINK};
-    const size_t copied         = min(io_fixture.message_length, message->msg_iov[0].iov_len);
-    memoryCopy(message->msg_iov[0].iov_base, io_fixture.message, copied);
-    message->msg_flags = io_fixture.datagram_length > message->msg_iov[0].iov_len ? MSG_TRUNC : 0;
+    copyReceivedMessage(message);
     return (ssize_t) io_fixture.datagram_length;
 }
 
-ssize_t __wrap_sendto(int fd, const void *data, size_t length, int flags, const struct sockaddr *destination,
-                      socklen_t address_length)
+int __wrap_recvmmsg(int fd, struct mmsghdr *messages, unsigned int count, int flags, struct timespec *timeout)
 {
-    require(fd == kTestSocket, "verdict used the wrong NFQUEUE socket");
-    require((flags & MSG_DONTWAIT) != 0, "verdict send can block");
+    require(timeout == NULL, "batch receive supplied a timeout");
+    require(count != 0 && count <= kNetfilterBatchCapacity, "batch receive capacity exceeds its bound");
+    if (refuseReceive(fd, flags))
+    {
+        return -1;
+    }
+    const unsigned int received = min(count, (unsigned int) io_fixture.batch_receive_count);
+    if (received == 0)
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+    for (unsigned int i = 0; i < received; ++i)
+    {
+        copyReceivedMessage(&messages[i].msg_hdr);
+        messages[i].msg_len                    = (unsigned int) io_fixture.datagram_length;
+        struct nlmsghdr             *header    = messages[i].msg_hdr.msg_iov[0].iov_base;
+        struct nfattr               *attribute = NFM_NFA(NLMSG_DATA(header));
+        struct nfqnl_msg_packet_hdr *packet    = NFA_DATA(attribute);
+        packet->packet_id                      = htonl(kTestPacketId + i);
+        if (io_fixture.batch_bad_datagram == i + 1U)
+        {
+            header->nlmsg_type = NLMSG_NOOP;
+        }
+        if (io_fixture.batch_truncated_datagram == i + 1U)
+        {
+            messages[i].msg_hdr.msg_flags |= MSG_TRUNC;
+            messages[i].msg_len = kCaptureLinuxNetfilterReadBufferSize + 1U;
+        }
+    }
+    return (int) received;
+}
+
+static void inspectVerdict(const void *data, size_t length, const struct sockaddr *destination,
+                           socklen_t address_length)
+{
     require(address_length == sizeof(struct sockaddr_nl), "verdict Netlink address has wrong length");
     const struct sockaddr_nl *address = (const struct sockaddr_nl *) destination;
     require(address->nl_family == AF_NETLINK && address->nl_pid == 0 && address->nl_groups == 0,
@@ -98,30 +158,92 @@ ssize_t __wrap_sendto(int fd, const void *data, size_t length, int flags, const 
 
     const struct nlmsghdr *header = data;
     require(header->nlmsg_len == length, "verdict message length mismatch");
-    require(header->nlmsg_type == ((NFNL_SUBSYS_QUEUE << 8) | NFQNL_MSG_VERDICT), "wrong verdict message type");
-    require(header->nlmsg_flags == NLM_F_REQUEST, "verdict unexpectedly requests an ACK");
+    const uint16_t expected_type =
+        io_fixture.expected_verdict_type != 0 ? io_fixture.expected_verdict_type : NFQNL_MSG_VERDICT;
+    require(header->nlmsg_type == ((NFNL_SUBSYS_QUEUE << 8) | expected_type), "wrong verdict message type");
+    require(header->nlmsg_flags == (NLM_F_REQUEST | (io_fixture.probe ? NLM_F_ACK : 0)),
+            "verdict has the wrong ACK request flags");
+    io_fixture.last_sequence       = header->nlmsg_seq;
     const struct nfgenmsg *generic = NLMSG_DATA(header);
     io_fixture.last_queue          = ntohs(generic->res_id);
     const struct nfattr *attribute = NFM_NFA(generic);
     require(attribute->nfa_type == NFQA_VERDICT_HDR && NFA_PAYLOAD(attribute) == sizeof(io_fixture.last_verdict),
             "verdict attribute geometry mismatch");
     memoryCopy(&io_fixture.last_verdict, NFA_DATA(attribute), sizeof(io_fixture.last_verdict));
+}
+
+static bool refuseVerdict(int fd, int flags)
+{
+    require(fd == kTestSocket, "verdict used the wrong NFQUEUE socket");
+    require((flags & MSG_DONTWAIT) != 0, "verdict send can block");
     ++io_fixture.verdict_calls;
     if (io_fixture.verdict_failures != 0)
     {
         --io_fixture.verdict_failures;
         errno = io_fixture.verdict_errno;
+        return true;
+    }
+    return false;
+}
+
+ssize_t __wrap_sendto(int fd, const void *data, size_t length, int flags, const struct sockaddr *destination,
+                      socklen_t address_length)
+{
+    inspectVerdict(data, length, destination, address_length);
+    if (refuseVerdict(fd, flags))
+    {
         return -1;
+    }
+    if (io_fixture.probe)
+    {
+        memoryZero(io_fixture.message, sizeof(io_fixture.message));
+        struct nlmsghdr *ack       = (struct nlmsghdr *) io_fixture.message;
+        ack->nlmsg_type            = NLMSG_ERROR;
+        ack->nlmsg_len             = NLMSG_LENGTH(sizeof(struct nlmsgerr));
+        ack->nlmsg_seq             = io_fixture.last_sequence;
+        struct nlmsgerr *error     = NLMSG_DATA(ack);
+        error->error               = -io_fixture.probe_ack_error;
+        io_fixture.message_length  = ack->nlmsg_len;
+        io_fixture.datagram_length = ack->nlmsg_len;
     }
     return (ssize_t) length - (io_fixture.short_verdict ? 1 : 0);
 }
 
+int __wrap_sendmmsg(int fd, struct mmsghdr *messages, unsigned int count, int flags)
+{
+    require(count != 0 && count <= kNetfilterBatchCapacity, "batch verdict capacity exceeds its bound");
+    io_fixture.batch_offered_count = (uint16_t) count;
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        const struct msghdr *message = &messages[i].msg_hdr;
+        require(message->msg_iovlen == 1, "batch verdict storage shape changed");
+        inspectVerdict(
+            message->msg_iov[0].iov_base, message->msg_iov[0].iov_len, message->msg_name, message->msg_namelen);
+        io_fixture.batch_packet_ids[i] = io_fixture.last_verdict.id;
+        io_fixture.batch_verdicts[i]   = ntohl(io_fixture.last_verdict.verdict);
+    }
+    if (refuseVerdict(fd, flags))
+    {
+        return -1;
+    }
+    const unsigned int sent = io_fixture.batch_send_limit != 0 ? min(count, io_fixture.batch_send_limit) : count;
+    for (unsigned int i = 0; i < sent; ++i)
+    {
+        messages[i].msg_len =
+            (unsigned int) messages[i].msg_hdr.msg_iov[0].iov_len - (io_fixture.short_verdict ? 1U : 0U);
+    }
+    return (int) sent;
+}
+
 int __wrap_poll(struct pollfd *fds, nfds_t count, int timeout)
 {
-    discard fds;
-    discard count;
-    discard timeout;
     ++io_fixture.poll_calls;
+    if (io_fixture.probe)
+    {
+        require(count == 1 && fds[0].fd == kTestSocket && timeout > 0, "capability probe polled invalid storage");
+        fds[0].revents = fds[0].events;
+        return 1;
+    }
     errno = EIO;
     return -1;
 }
@@ -678,6 +800,299 @@ static void testVerdictFailuresAndInterruption(void)
     require(io_fixture.poll_calls == 0, "verdict failure path waited for I/O");
 }
 
+static void makeBatchRecords(netfilter_packet_record_t *records, uint16_t capacity)
+{
+    memoryZero(records, (size_t) capacity * sizeof(*records));
+    for (uint16_t i = 0; i < capacity; ++i)
+    {
+        records[i].buffer    = sbufCreate(kCaptureLinuxNetfilterReadBufferSize);
+        records[i].packet_id = htonl(kTestPacketId + i);
+        records[i].verdict   = NF_DROP;
+    }
+}
+
+static void destroyBatchRecords(netfilter_packet_record_t *records, uint16_t capacity)
+{
+    for (uint16_t i = 0; i < capacity; ++i)
+    {
+        sbufDestroy(records[i].buffer);
+    }
+}
+
+static void testBatchReceiveMaximumAndShortAvailability(void)
+{
+    netfilter_packet_record_t    records[kNetfilterBatchCapacity];
+    netfilter_batch_workspace_t *workspace = netfilterBatchWorkspaceCreate(kNetfilterBatchCapacity);
+    makeBatchRecords(records, kNetfilterBatchCapacity);
+    prepareReceivedPacket();
+    io_fixture.batch_receive_count = kNetfilterBatchCapacity;
+    uint16_t received              = 0;
+    require(netfilterReceiveBatch(kTestSocket, workspace, records, kNetfilterBatchCapacity, &received) ==
+                    kNetfilterPacketReady &&
+                received == kNetfilterBatchCapacity,
+            "full receive batch did not consume 256 independent datagrams");
+    for (uint16_t i = 0; i < received; ++i)
+    {
+        require(records[i].result == kNetfilterPacketReady && records[i].error == 0 &&
+                    records[i].packet_id == htonl(kTestPacketId + i),
+                "receive batch lost a packet result or its exact id");
+        require(sbufGetLength(records[i].buffer) == 64 &&
+                    ((const uint8_t *) sbufGetRawPtr(records[i].buffer))[0] == 0x45,
+                "receive batch did not expose independent IPv4 payloads");
+        sbufReset(records[i].buffer);
+    }
+    require(io_fixture.receive_calls == 1 && io_fixture.verdict_calls == 0 && io_fixture.poll_calls == 0,
+            "full receive batch used per-packet syscalls or sent verdicts");
+
+    prepareReceivedPacket();
+    io_fixture.batch_receive_count = 3;
+    records[3].packet_id           = 77;
+    require(netfilterReceiveBatch(kTestSocket, workspace, records, kNetfilterBatchCapacity, &received) ==
+                    kNetfilterPacketReady &&
+                received == 3,
+            "short receive availability waited for a full batch");
+    require(records[3].packet_id == 77 && sbufGetLength(records[3].buffer) == 0,
+            "short receive modified an unconsumed slot");
+    require(io_fixture.receive_calls == 1 && io_fixture.poll_calls == 0,
+            "short receive availability retried or waited");
+    destroyBatchRecords(records, kNetfilterBatchCapacity);
+    netfilterBatchWorkspaceDestroy(workspace);
+}
+
+static void testBatchReceiveRetainsEveryVerdictObligation(void)
+{
+    enum
+    {
+        capacity = 4
+    };
+    netfilter_packet_record_t    records[capacity];
+    netfilter_batch_workspace_t *workspace = netfilterBatchWorkspaceCreate(capacity);
+    makeBatchRecords(records, capacity);
+    prepareReceivedPacket();
+    io_fixture.batch_receive_count      = capacity;
+    io_fixture.batch_bad_datagram       = 2;
+    io_fixture.batch_truncated_datagram = 3;
+    uint16_t received                   = 0;
+    require(netfilterReceiveBatch(kTestSocket, workspace, records, capacity, &received) == kNetfilterPacketReady &&
+                received == capacity,
+            "malformed datagram hid other consumed batch records");
+    require(records[0].result == kNetfilterPacketReady && records[0].packet_id == htonl(kTestPacketId),
+            "bad later datagram lost an earlier verdict obligation");
+    require(records[1].result == kNetfilterPacketError && records[1].error == EBADMSG,
+            "unidentifiable batch datagram did not retain its fatal error");
+    require(records[2].result == kNetfilterPacketDiscarded && records[2].packet_id == htonl(kTestPacketId + 2U),
+            "truncated batch datagram lost its exact verdict id");
+    require(records[3].result == kNetfilterPacketReady && records[3].packet_id == htonl(kTestPacketId + 3U),
+            "bad earlier datagram lost a later verdict obligation");
+    destroyBatchRecords(records, capacity);
+    netfilterBatchWorkspaceDestroy(workspace);
+}
+
+static void testBatchReceiveRefusalAndInterruption(void)
+{
+    enum
+    {
+        capacity = 3
+    };
+    netfilter_packet_record_t    records[capacity];
+    netfilter_batch_workspace_t *workspace = netfilterBatchWorkspaceCreate(capacity);
+    makeBatchRecords(records, capacity);
+    const int failures[] = {EAGAIN, EIO, EINTR};
+    for (size_t i = 0; i < sizeof(failures) / sizeof(failures[0]); ++i)
+    {
+        prepareReceivedPacket();
+        io_fixture.batch_receive_count           = capacity;
+        io_fixture.receive_failures              = failures[i] == EINTR ? kCaptureInterruptedRetryBudget : 1;
+        io_fixture.receive_errno                 = failures[i];
+        uint16_t                        received = 77;
+        const netfilter_packet_result_t expected = failures[i] == EINTR    ? kNetfilterPacketYield
+                                                   : failures[i] == EAGAIN ? kNetfilterPacketWouldBlock
+                                                                           : kNetfilterPacketError;
+        require(netfilterReceiveBatch(kTestSocket, workspace, records, capacity, &received) == expected &&
+                    received == 0,
+                "batch receive refusal changed consumed-record ownership");
+        require(io_fixture.receive_calls == (failures[i] == EINTR ? kCaptureInterruptedRetryBudget : 1) &&
+                    io_fixture.poll_calls == 0,
+                "batch receive refusal exceeded its syscall bound or waited");
+    }
+    prepareReceivedPacket();
+    io_fixture.batch_receive_count = capacity;
+    io_fixture.receive_failures    = 1;
+    io_fixture.receive_errno       = EINTR;
+    uint16_t received              = 0;
+    require(netfilterReceiveBatch(kTestSocket, workspace, records, capacity, &received) == kNetfilterPacketReady &&
+                received == capacity && io_fixture.receive_calls == 2,
+            "batch receive could not resume after a transient interruption");
+    destroyBatchRecords(records, capacity);
+    netfilterBatchWorkspaceDestroy(workspace);
+}
+
+static void testBatchVerdictsCommitOnlySentPrefix(void)
+{
+    enum
+    {
+        capacity = 5
+    };
+    netfilter_packet_record_t    records[capacity];
+    netfilter_batch_workspace_t *workspace = netfilterBatchWorkspaceCreate(capacity);
+    makeBatchRecords(records, capacity);
+    prepareReceivedPacket();
+    io_fixture.batch_send_limit = 2;
+    uint16_t sent               = 0;
+    require(netfilterTrySendVerdictBatch(kTestSocket, kTestQueue, workspace, records, capacity, &sent) ==
+                    kNetfilterVerdictSent &&
+                sent == 2,
+            "partial batch verdict did not report only the committed prefix");
+    require(io_fixture.verdict_calls == 1 && io_fixture.batch_offered_count == capacity,
+            "batch verdict used individual sends or omitted unsent records");
+    for (uint16_t i = 0; i < capacity; ++i)
+    {
+        require(io_fixture.batch_packet_ids[i] == htonl(kTestPacketId + i) && io_fixture.batch_verdicts[i] == NF_DROP,
+                "batch verdict changed an explicit packet id or verdict");
+    }
+    /* Stop can replace only the unsent suffix's decisions. */
+    for (uint16_t i = sent; i < capacity; ++i)
+    {
+        records[i].verdict = NF_ACCEPT;
+    }
+    io_fixture.batch_send_limit = 0;
+    require(netfilterTrySendVerdictBatch(
+                kTestSocket, kTestQueue, workspace, records + sent, (uint16_t) (capacity - sent), &sent) ==
+                    kNetfilterVerdictSent &&
+                sent == 3,
+            "unsent verdict suffix did not resume independently");
+    require(io_fixture.batch_packet_ids[0] == htonl(kTestPacketId + 2U) &&
+                io_fixture.batch_packet_ids[2] == htonl(kTestPacketId + 4U) &&
+                io_fixture.batch_verdicts[0] == NF_ACCEPT && io_fixture.batch_verdicts[2] == NF_ACCEPT,
+            "resumed verdict suffix lost order or stop disposition");
+    require(io_fixture.poll_calls == 0 && io_fixture.last_queue == kTestQueue,
+            "batch verdict waited or changed its queue");
+    destroyBatchRecords(records, capacity);
+    netfilterBatchWorkspaceDestroy(workspace);
+}
+
+static void testBatchVerdictRefusalAndInterruption(void)
+{
+    enum
+    {
+        capacity = 3
+    };
+    netfilter_packet_record_t    records[capacity];
+    netfilter_batch_workspace_t *workspace = netfilterBatchWorkspaceCreate(capacity);
+    makeBatchRecords(records, capacity);
+    const int failures[] = {EAGAIN, EIO, EINTR};
+    for (size_t i = 0; i < sizeof(failures) / sizeof(failures[0]); ++i)
+    {
+        prepareReceivedPacket();
+        io_fixture.verdict_failures               = failures[i] == EINTR ? kCaptureInterruptedRetryBudget : 1;
+        io_fixture.verdict_errno                  = failures[i];
+        uint16_t                         sent     = 77;
+        const netfilter_verdict_result_t expected = failures[i] == EINTR    ? kNetfilterVerdictYield
+                                                    : failures[i] == EAGAIN ? kNetfilterVerdictWouldBlock
+                                                                            : kNetfilterVerdictError;
+        require(netfilterTrySendVerdictBatch(kTestSocket, kTestQueue, workspace, records, capacity, &sent) ==
+                        expected &&
+                    sent == 0,
+                "batch verdict refusal fabricated a committed prefix");
+        require(io_fixture.poll_calls == 0 &&
+                    io_fixture.verdict_calls == (failures[i] == EINTR ? kCaptureInterruptedRetryBudget : 1),
+                "batch verdict refusal exceeded its syscall bound or waited");
+    }
+    prepareReceivedPacket();
+    io_fixture.verdict_failures = 1;
+    io_fixture.verdict_errno    = EINTR;
+    uint16_t sent               = 0;
+    require(netfilterTrySendVerdictBatch(kTestSocket, kTestQueue, workspace, records, capacity, &sent) ==
+                    kNetfilterVerdictSent &&
+                sent == capacity && io_fixture.verdict_calls == 2,
+            "batch verdict could not resume after a transient interruption");
+    io_fixture.short_verdict = true;
+    require(netfilterTrySendVerdictBatch(kTestSocket, kTestQueue, workspace, records, capacity, &sent) ==
+                    kNetfilterVerdictError &&
+                errno == EIO,
+            "short batch Netlink send was accepted as committed");
+    destroyBatchRecords(records, capacity);
+    netfilterBatchWorkspaceDestroy(workspace);
+}
+
+static void prepareVerdictBatchProbe(int ack_error)
+{
+    prepareReceivedPacket();
+    io_fixture.probe                 = true;
+    io_fixture.expected_verdict_type = NFQNL_MSG_VERDICT_BATCH;
+    io_fixture.probe_ack_error       = ack_error;
+}
+
+static void testVerdictBatchCapabilityProbe(void)
+{
+    const int ack_errors[] = {0, ENOENT, EINVAL, EOPNOTSUPP, EPERM, ENODEV};
+    const int expected[]   = {1, 1, 0, 0, -1, -1};
+    for (size_t i = 0; i < sizeof(ack_errors) / sizeof(ack_errors[0]); ++i)
+    {
+        prepareVerdictBatchProbe(ack_errors[i]);
+        require(netfilterProbeVerdictBatch(kTestSocket, kTestQueue) == expected[i],
+                "capability probe misclassified the kernel ACK");
+        require(io_fixture.last_queue == kTestQueue && io_fixture.last_verdict.id == 0 &&
+                    ntohl(io_fixture.last_verdict.verdict) == NF_DROP && io_fixture.last_sequence != 0,
+                "capability probe changed its empty-queue boundary or verdict");
+        require(io_fixture.verdict_calls == 1 && io_fixture.receive_calls == 1 && io_fixture.poll_calls == 1,
+                "capability probe did not use one bounded matching-ACK transaction");
+    }
+    /* Native-send failure is not a capability ACK, even if its errno happens
+     * to match the empty-queue response. */
+    prepareVerdictBatchProbe(0);
+    io_fixture.verdict_failures = 1;
+    io_fixture.verdict_errno    = ENOENT;
+    require(netfilterProbeVerdictBatch(kTestSocket, kTestQueue) == -1 && io_fixture.receive_calls == 0,
+            "capability probe mistook a send failure for a supported message type");
+    prepareVerdictBatchProbe(0);
+    io_fixture.receive_failures = 1;
+    io_fixture.receive_errno    = EOPNOTSUPP;
+    require(netfilterProbeVerdictBatch(kTestSocket, kTestQueue) == -1,
+            "capability probe mistook a receive failure for an unsupported-message ACK");
+}
+
+static void testCumulativeVerdictBoundaryAndInterruption(void)
+{
+    const uint32_t boundaries[] = {UINT32_MAX - 1U, UINT32_MAX, 0, 1};
+    for (size_t i = 0; i < sizeof(boundaries) / sizeof(boundaries[0]); ++i)
+    {
+        prepareReceivedPacket();
+        io_fixture.expected_verdict_type = NFQNL_MSG_VERDICT_BATCH;
+        require(netfilterTrySendCumulativeVerdict(kTestSocket, kTestQueue, htonl(boundaries[i]), NF_DROP) ==
+                    kNetfilterVerdictSent,
+                "cumulative verdict could not send a boundary around id wrap");
+        require(io_fixture.last_queue == kTestQueue && io_fixture.last_verdict.id == htonl(boundaries[i]) &&
+                    ntohl(io_fixture.last_verdict.verdict) == NF_DROP,
+                "cumulative verdict changed its network-order boundary id");
+        require(io_fixture.poll_calls == 0 && io_fixture.verdict_calls == 1,
+                "cumulative verdict waited for I/O or sent individual decisions");
+    }
+    const int failures[] = {EAGAIN, EIO, EINTR};
+    for (size_t i = 0; i < sizeof(failures) / sizeof(failures[0]); ++i)
+    {
+        prepareReceivedPacket();
+        io_fixture.expected_verdict_type          = NFQNL_MSG_VERDICT_BATCH;
+        io_fixture.verdict_failures               = failures[i] == EINTR ? kCaptureInterruptedRetryBudget : 1;
+        io_fixture.verdict_errno                  = failures[i];
+        const netfilter_verdict_result_t expected = failures[i] == EINTR    ? kNetfilterVerdictYield
+                                                    : failures[i] == EAGAIN ? kNetfilterVerdictWouldBlock
+                                                                            : kNetfilterVerdictError;
+        require(netfilterTrySendCumulativeVerdict(kTestSocket, kTestQueue, 0, NF_ACCEPT) == expected &&
+                    io_fixture.poll_calls == 0,
+                "cumulative verdict refusal did not preserve nonblocking retry semantics");
+        require(netfilterTrySendCumulativeVerdict(kTestSocket, kTestQueue, 0, NF_ACCEPT) == kNetfilterVerdictSent &&
+                    io_fixture.last_verdict.id == 0 && ntohl(io_fixture.last_verdict.verdict) == NF_ACCEPT,
+                "cumulative verdict retry changed its boundary or stop decision");
+    }
+    prepareReceivedPacket();
+    io_fixture.expected_verdict_type = NFQNL_MSG_VERDICT_BATCH;
+    io_fixture.short_verdict         = true;
+    require(netfilterTrySendCumulativeVerdict(kTestSocket, kTestQueue, htonl(1), NF_DROP) == kNetfilterVerdictError &&
+                errno == EIO,
+            "short cumulative Netlink send was accepted as committed");
+}
+
 int main(void)
 {
     testCaseSet("capture_linux_nfqueue_test");
@@ -701,6 +1116,13 @@ int main(void)
     testReceiveDiscardRetainsVerdictId();
     testReceiveRefusalAndInterruption();
     testVerdictFailuresAndInterruption();
+    testBatchReceiveMaximumAndShortAvailability();
+    testBatchReceiveRetainsEveryVerdictObligation();
+    testBatchReceiveRefusalAndInterruption();
+    testBatchVerdictsCommitOnlySentPrefix();
+    testBatchVerdictRefusalAndInterruption();
+    testVerdictBatchCapabilityProbe();
+    testCumulativeVerdictBoundaryAndInterruption();
 
     return 0;
 }

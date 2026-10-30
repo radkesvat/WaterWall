@@ -38,7 +38,7 @@ static_assert(SMALL_BUFFER_SIZE >= kNetfilterReadBufferSize, "Linux capture requ
 static_assert(kCaptureCommandTimeoutMs > kCaptureIptablesLockWaitSeconds * 1000,
               "the parent command deadline must stay strictly longer than the numeric xtables lock wait");
 static_assert(kMaxAllowedPacketLength <= kNetfilterReadBufferSize, "packet policy must fit in netlink read buffer");
-static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "capture read batch count must fit in the reader session");
+static_assert(kNetfilterBatchCapacity <= UINT16_MAX, "capture batch count must fit in the reader's record count");
 static_assert(sizeof(struct nfqnl_msg_config_cmd) <= NETFILTER_MAX_PAYLOAD_SIZE,
               "NFQUEUE command payload must fit in message storage");
 static_assert(sizeof(struct nfqnl_msg_config_params) <= NETFILTER_MAX_PAYLOAD_SIZE,
@@ -55,6 +55,45 @@ static_assert(NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct nfgenmsg))) % _Alignof(stru
               "nfattr geometry must preserve alignment");
 
 static atomic_uint netfilter_sequence = ATOMIC_VAR_INIT(0);
+
+typedef struct netfilter_batch_slot_s
+{
+    struct iovec       iov;
+    struct sockaddr_nl address;
+    _Alignas(ww_max_align_t) uint8_t verdict_message[NETFILTER_MESSAGE_BUFFER_SIZE];
+} netfilter_batch_slot_t;
+
+struct netfilter_batch_workspace_s
+{
+    struct mmsghdr        *messages;
+    uint16_t               capacity;
+    netfilter_batch_slot_t slots[];
+};
+
+static_assert(_Alignof(netfilter_batch_slot_t) >= _Alignof(struct mmsghdr),
+              "batch descriptor storage must preserve mmsghdr alignment");
+
+netfilter_batch_workspace_t *netfilterBatchWorkspaceCreate(uint16_t capacity)
+{
+    assert(capacity != 0 && capacity <= kNetfilterBatchCapacity);
+    const size_t size = sizeof(netfilter_batch_workspace_t) +
+                        (size_t) capacity * (sizeof(netfilter_batch_slot_t) + sizeof(struct mmsghdr));
+    netfilter_batch_workspace_t *workspace = memoryAllocateZero(size);
+    workspace->capacity                    = capacity;
+    workspace->messages                    = (struct mmsghdr *) (workspace->slots + capacity);
+    for (uint16_t i = 0; i < capacity; ++i)
+    {
+        workspace->messages[i].msg_hdr.msg_name   = &workspace->slots[i].address;
+        workspace->messages[i].msg_hdr.msg_iov    = &workspace->slots[i].iov;
+        workspace->messages[i].msg_hdr.msg_iovlen = 1;
+    }
+    return workspace;
+}
+
+void netfilterBatchWorkspaceDestroy(netfilter_batch_workspace_t *workspace)
+{
+    memoryFree(workspace);
+}
 
 static bool netfilterPollUntil(int netfilter_socket, short events, uint64_t deadline_us)
 {
@@ -146,10 +185,14 @@ static bool netfilterSendBounded(int netfilter_socket, const void *message, size
     }
 }
 
-static bool netfilterWaitForAck(int netfilter_socket, uint32_t sequence, uint64_t deadline_us)
+static bool netfilterWaitForAck(int netfilter_socket, uint32_t sequence, uint64_t deadline_us, bool *matched_ack)
 {
     _Alignas(ww_max_align_t) uint8_t ack_buff[kNetfilterAckBufferSize];
     uint32_t                         interruptions = 0;
+    if (matched_ack != NULL)
+    {
+        *matched_ack = false;
+    }
 
     for (;;)
     {
@@ -259,6 +302,10 @@ static bool netfilterWaitForAck(int netfilter_socket, uint32_t sequence, uint64_
 
         if (matching_ack_seen)
         {
+            if (matched_ack != NULL)
+            {
+                *matched_ack = true;
+            }
             if (matching_ack_error == 0)
             {
                 return true;
@@ -331,7 +378,7 @@ static bool netfilterSendMessageUntil(int netfilter_socket, uint16_t nl_type, in
         return true;
     }
 
-    return netfilterWaitForAck(netfilter_socket, ((const struct nlmsghdr *) buff)->nlmsg_seq, deadline_us);
+    return netfilterWaitForAck(netfilter_socket, ((const struct nlmsghdr *) buff)->nlmsg_seq, deadline_us, NULL);
 }
 
 /* Send one independently bounded message on the normal configuration/reader path. */
@@ -340,6 +387,35 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
 {
     const uint64_t deadline_us = (uint64_t) getHRTimeUs() + (uint64_t) kNetfilterIoDeadlineMs * 1000U;
     return netfilterSendMessageUntil(netfilter_socket, nl_type, nfa_type, res_id, ack, msg, size, deadline_us);
+}
+
+int netfilterProbeVerdictBatch(int netfilter_socket, uint16_t qnumber)
+{
+    /* No capture rule may feed this newly bound queue yet. The request therefore
+     * tests the message type without deciding any packet's fate. */
+    const struct nfqnl_msg_verdict_hdr verdict = {.verdict = htonl(NF_DROP), .id = 0};
+    _Alignas(ww_max_align_t) uint8_t   message[NETFILTER_MESSAGE_BUFFER_SIZE];
+    const size_t                       length = netfilterBuildMessage(
+        message, NFQNL_MSG_VERDICT_BATCH, NFQA_VERDICT_HDR, qnumber, true, &verdict, sizeof(verdict));
+    assert(length != 0);
+    const struct sockaddr_nl address     = {.nl_family = AF_NETLINK};
+    const uint64_t           deadline_us = (uint64_t) getHRTimeUs() + (uint64_t) kNetfilterIoDeadlineMs * 1000U;
+    if (! netfilterSendBounded(netfilter_socket, message, length, &address, deadline_us))
+    {
+        return -1;
+    }
+    bool matched_ack = false;
+    if (netfilterWaitForAck(
+            netfilter_socket, ((const struct nlmsghdr *) message)->nlmsg_seq, deadline_us, &matched_ack) ||
+        (matched_ack && errno == ENOENT))
+    {
+        return 1;
+    }
+    if (matched_ack && (errno == EINVAL || errno == EOPNOTSUPP))
+    {
+        return 0;
+    }
+    return -1;
 }
 
 /*
@@ -621,13 +697,13 @@ static bool netfilterSendVerdictUntil(int netfilter_socket, uint16_t qnumber, ui
                                      deadline_us);
 }
 
-netfilter_verdict_result_t netfilterTrySendVerdict(int netfilter_socket, uint16_t qnumber, uint32_t packet_id,
-                                                   uint32_t verdict)
+static netfilter_verdict_result_t netfilterTrySendVerdictType(int netfilter_socket, uint16_t qnumber,
+                                                              uint32_t packet_id, uint32_t verdict, uint16_t type)
 {
     const struct nfqnl_msg_verdict_hdr nl_verdict = {.verdict = htonl(verdict), .id = packet_id};
     _Alignas(ww_max_align_t) uint8_t   buff[NETFILTER_MESSAGE_BUFFER_SIZE];
-    const size_t                       nl_size = netfilterBuildMessage(
-        buff, NFQNL_MSG_VERDICT, NFQA_VERDICT_HDR, qnumber, false, &nl_verdict, sizeof(nl_verdict));
+    const size_t                       nl_size =
+        netfilterBuildMessage(buff, type, NFQA_VERDICT_HDR, qnumber, false, &nl_verdict, sizeof(nl_verdict));
     assert(nl_size != 0);
     const struct sockaddr_nl nl_addr = {.nl_family = AF_NETLINK};
 
@@ -654,6 +730,138 @@ netfilter_verdict_result_t netfilterTrySendVerdict(int netfilter_socket, uint16_
         }
     }
     return kNetfilterVerdictYield;
+}
+
+netfilter_verdict_result_t netfilterTrySendVerdict(int netfilter_socket, uint16_t qnumber, uint32_t packet_id,
+                                                   uint32_t verdict)
+{
+    return netfilterTrySendVerdictType(netfilter_socket, qnumber, packet_id, verdict, NFQNL_MSG_VERDICT);
+}
+
+netfilter_verdict_result_t netfilterTrySendCumulativeVerdict(int netfilter_socket, uint16_t qnumber,
+                                                             uint32_t last_packet_id, uint32_t verdict)
+{
+    return netfilterTrySendVerdictType(netfilter_socket, qnumber, last_packet_id, verdict, NFQNL_MSG_VERDICT_BATCH);
+}
+
+netfilter_verdict_result_t netfilterTrySendVerdictBatch(int netfilter_socket, uint16_t qnumber,
+                                                        netfilter_batch_workspace_t     *workspace,
+                                                        const netfilter_packet_record_t *records, uint16_t count,
+                                                        uint16_t *sent)
+{
+    assert(workspace != NULL && records != NULL && sent != NULL);
+    assert(count != 0 && count <= workspace->capacity);
+    *sent = 0;
+    for (uint16_t i = 0; i < count; ++i)
+    {
+        netfilter_batch_slot_t            *slot    = &workspace->slots[i];
+        struct mmsghdr                    *message = &workspace->messages[i];
+        const struct nfqnl_msg_verdict_hdr verdict = {
+            .verdict = htonl(records[i].verdict),
+            .id      = records[i].packet_id,
+        };
+        const size_t length = netfilterBuildMessage(
+            slot->verdict_message, NFQNL_MSG_VERDICT, NFQA_VERDICT_HDR, qnumber, false, &verdict, sizeof(verdict));
+        assert(length != 0);
+        slot->address                = (struct sockaddr_nl) {.nl_family = AF_NETLINK};
+        slot->iov                    = (struct iovec) {.iov_base = slot->verdict_message, .iov_len = length};
+        message->msg_hdr.msg_namelen = sizeof(slot->address);
+        message->msg_hdr.msg_flags   = 0;
+        message->msg_len             = 0;
+    }
+
+    for (uint32_t attempts = 0; attempts < kCaptureInterruptedRetryBudget; ++attempts)
+    {
+        const int result = sendmmsg(netfilter_socket, workspace->messages, count, MSG_DONTWAIT);
+        if (result > 0)
+        {
+            for (int i = 0; i < result; ++i)
+            {
+                if (workspace->messages[i].msg_len != workspace->slots[i].iov.iov_len)
+                {
+                    errno = EIO;
+                    return kNetfilterVerdictError;
+                }
+            }
+            *sent = (uint16_t) result;
+            return kNetfilterVerdictSent;
+        }
+        if (result == 0)
+        {
+            errno = EIO;
+            return kNetfilterVerdictError;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return kNetfilterVerdictWouldBlock;
+        }
+        if (errno != EINTR)
+        {
+            return kNetfilterVerdictError;
+        }
+    }
+    return kNetfilterVerdictYield;
+}
+
+static netfilter_packet_result_t netfilterDecodeDatagram(sbuf_t *buff, const struct msghdr *msg, size_t datagram_length,
+                                                         uint32_t *packet_id)
+{
+    const struct sockaddr_nl *nl_addr = msg->msg_name;
+    uint8_t                  *message = sbufGetMutablePtr(buff);
+    if (datagram_length == 0)
+    {
+        return kNetfilterPacketEof;
+    }
+
+    if (msg->msg_namelen != sizeof(*nl_addr) || nl_addr->nl_pid != 0)
+    {
+        errno = EINVAL;
+        return kNetfilterPacketError;
+    }
+
+    size_t copied_len = min(datagram_length, (size_t) kNetfilterReadBufferSize);
+    if ((msg->msg_flags & MSG_TRUNC) != 0 || datagram_length > (size_t) kNetfilterReadBufferSize)
+    {
+        uint32_t truncated_packet_id = 0;
+        if (! captureLinuxNetfilterTryReadPacketIdFromPrefix(message, copied_len, &truncated_packet_id))
+        {
+            LOGW("CaptureDevice: oversized netfilter datagram did not contain a complete packet id");
+            errno = EBADMSG;
+            return kNetfilterPacketError;
+        }
+        *packet_id = truncated_packet_id;
+        return kNetfilterPacketDiscarded;
+    }
+
+    sbufSetLength(buff, (uint32_t) copied_len);
+
+    netfilter_packet_view_t         packet_view;
+    netfilter_packet_parse_result_t parse_result = captureLinuxNetfilterParsePacket(message, copied_len, &packet_view);
+    if (parse_result == kNetfilterPacketParseMalformed)
+    {
+        if (! packet_view.has_packet_id)
+        {
+            errno = EBADMSG;
+            return kNetfilterPacketError;
+        }
+        *packet_id = packet_view.packet_id;
+        return kNetfilterPacketMalformedDiscarded;
+    }
+
+    *packet_id = packet_view.packet_id;
+    if (parse_result == kNetfilterPacketParseDiscarded)
+    {
+        return kNetfilterPacketDiscarded;
+    }
+
+    captureLinuxNetfilterExposePacket(buff, message, &packet_view);
+
+    if (! captureLinuxPreparePacket(
+            sbufGetMutablePtr(buff), sbufGetLength(buff), packet_view.has_skb_info, packet_view.skb_info))
+    {
+        return kNetfilterPacketMalformedDiscarded;
+    }
+    return kNetfilterPacketReady;
 }
 
 netfilter_packet_result_t netfilterReceivePacket(int netfilter_socket, sbuf_t *buff, uint32_t *packet_id)
@@ -698,61 +906,60 @@ netfilter_packet_result_t netfilterReceivePacket(int netfilter_socket, sbuf_t *b
         return kNetfilterPacketError;
     }
 
-    if (result == 0)
+    return netfilterDecodeDatagram(buff, &msg, (size_t) result, packet_id);
+}
+
+netfilter_packet_result_t netfilterReceiveBatch(int netfilter_socket, netfilter_batch_workspace_t *workspace,
+                                                netfilter_packet_record_t *records, uint16_t capacity,
+                                                uint16_t *received)
+{
+    assert(workspace != NULL && records != NULL && received != NULL);
+    assert(capacity != 0 && capacity <= workspace->capacity);
+    *received = 0;
+    for (uint16_t i = 0; i < capacity; ++i)
     {
-        return kNetfilterPacketEof;
+        assert(records[i].buffer != NULL);
+        assert(sbufGetMaximumWriteableSize(records[i].buffer) >= kNetfilterReadBufferSize);
+        netfilter_batch_slot_t *slot    = &workspace->slots[i];
+        struct mmsghdr         *message = &workspace->messages[i];
+        slot->address                   = (struct sockaddr_nl) {0};
+        slot->iov =
+            (struct iovec) {.iov_base = sbufGetMutablePtr(records[i].buffer), .iov_len = kNetfilterReadBufferSize};
+        message->msg_hdr.msg_namelen = sizeof(slot->address);
+        message->msg_hdr.msg_flags   = 0;
+        message->msg_len             = 0;
     }
 
-    if (msg.msg_namelen != sizeof(nl_addr) || nl_addr.nl_pid != 0)
+    for (uint32_t attempts = 0; attempts < kCaptureInterruptedRetryBudget; ++attempts)
     {
-        errno = EINVAL;
-        return kNetfilterPacketError;
-    }
-
-    size_t copied_len =
-        result > (ssize_t) kNetfilterReadBufferSize ? (size_t) kNetfilterReadBufferSize : (size_t) result;
-    if ((msg.msg_flags & MSG_TRUNC) != 0 || result > (ssize_t) kNetfilterReadBufferSize)
-    {
-        uint32_t truncated_packet_id = 0;
-        if (! captureLinuxNetfilterTryReadPacketIdFromPrefix(message, copied_len, &truncated_packet_id))
+        const int result = recvmmsg(netfilter_socket, workspace->messages, capacity, MSG_DONTWAIT | MSG_TRUNC, NULL);
+        if (result > 0)
         {
-            LOGW("CaptureDevice: oversized netfilter datagram did not contain a complete packet id");
-            errno = EBADMSG;
+            *received = (uint16_t) result;
+            for (int i = 0; i < result; ++i)
+            {
+                netfilter_packet_record_t *record  = &records[i];
+                const struct mmsghdr      *message = &workspace->messages[i];
+                record->result =
+                    netfilterDecodeDatagram(record->buffer, &message->msg_hdr, message->msg_len, &record->packet_id);
+                record->error = record->result == kNetfilterPacketError ? errno : 0;
+            }
+            return kNetfilterPacketReady;
+        }
+        if (result == 0)
+        {
+            return kNetfilterPacketEof;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return kNetfilterPacketWouldBlock;
+        }
+        if (errno != EINTR)
+        {
             return kNetfilterPacketError;
         }
-        *packet_id = truncated_packet_id;
-        return kNetfilterPacketDiscarded;
     }
-
-    sbufSetLength(buff, (uint32_t) copied_len);
-
-    netfilter_packet_view_t         packet_view;
-    netfilter_packet_parse_result_t parse_result = captureLinuxNetfilterParsePacket(message, copied_len, &packet_view);
-    if (parse_result == kNetfilterPacketParseMalformed)
-    {
-        if (! packet_view.has_packet_id)
-        {
-            errno = EBADMSG;
-            return kNetfilterPacketError;
-        }
-        *packet_id = packet_view.packet_id;
-        return kNetfilterPacketMalformedDiscarded;
-    }
-
-    *packet_id = packet_view.packet_id;
-    if (parse_result == kNetfilterPacketParseDiscarded)
-    {
-        return kNetfilterPacketDiscarded;
-    }
-
-    captureLinuxNetfilterExposePacket(buff, message, &packet_view);
-
-    if (! captureLinuxPreparePacket(
-            sbufGetMutablePtr(buff), sbufGetLength(buff), packet_view.has_skb_info, packet_view.skb_info))
-    {
-        return kNetfilterPacketMalformedDiscarded;
-    }
-    return kNetfilterPacketReady;
+    return kNetfilterPacketYield;
 }
 
 netfilter_packet_result_t netfilterGetPacketUntil(capture_device_t *cdev, int netfilter_socket, uint16_t qnumber,

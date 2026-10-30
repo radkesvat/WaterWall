@@ -12,16 +12,17 @@ typedef struct capture_linux_queue_s
     uint16_t number;
     uint32_t requested_queue_limit;
     bool     queue_limit_known;
+    bool     batch_verdicts;
     uint32_t requested_receive_bytes;
     char     steering_filter[kCaptureLinuxSteeringFilterSize];
 } capture_linux_queue_t;
 
 enum
 {
-    kNetfilterReadBufferSize    = kCaptureLinuxNetfilterReadBufferSize,
-    kMaxReadDistributeQueueSize = 512,
-    kNetfilterQueueLen          = 64 * 1024,
-    kNetfilterSocketRecvBuffer  = 64 * 1024 * 1024,
+    kNetfilterReadBufferSize   = kCaptureLinuxNetfilterReadBufferSize,
+    kNetfilterBatchCapacity    = 256,
+    kNetfilterQueueLen         = 64 * 1024,
+    kNetfilterSocketRecvBuffer = 64 * 1024 * 1024,
 
     // Two independent timeout layers guard every Capture iptables command. The
     // numeric xtables lock wait only bounds lock acquisition inside iptables; the

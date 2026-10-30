@@ -252,7 +252,8 @@
   target_link_libraries(capture_linux_nfqueue_test PRIVATE ww_test_support)
     target_link_libraries(capture_linux_nfqueue_test PRIVATE ww)
     target_link_options(capture_linux_nfqueue_test PRIVATE
-      "-Wl,--wrap=recvmsg" "-Wl,--wrap=sendto" "-Wl,--wrap=poll")
+      "-Wl,--wrap=recvmsg" "-Wl,--wrap=sendto" "-Wl,--wrap=poll"
+      "-Wl,--wrap=recvmmsg" "-Wl,--wrap=sendmmsg")
     add_dependencies(waterwall_unit_tests capture_linux_nfqueue_test)
 
     add_waterwall_unit_test(
