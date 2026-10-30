@@ -90,7 +90,7 @@ if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
       LABELS "integration;linux;privileged;capture;nfqueue;conntrack;network-isolated"
     )
   endforeach()
-  if(TARGET PacketsToStream AND TARGET TcpConnector)
+  if(TARGET RawSocket AND TARGET PingServer AND TARGET PacketsToStream AND TARGET TcpConnector)
     foreach(queue_mode IN ITEMS multi single)
       add_test(
         NAME waterwall.capture_linux_queues_${queue_mode}
@@ -99,7 +99,7 @@ if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
           "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" --queue-mode ${queue_mode}
       )
       set_tests_properties(waterwall.capture_linux_queues_${queue_mode} PROPERTIES
-        TIMEOUT 60
+        TIMEOUT 180
         LABELS "integration;linux;privileged;capture;nfqueue;multiqueue;network-isolated"
       )
     endforeach()

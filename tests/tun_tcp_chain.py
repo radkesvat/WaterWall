@@ -111,23 +111,27 @@ def main():
         directory = run_directory.create()
         print(f"Artifacts: {directory}", flush=True)
         results = []
-        workloads = [(None, None, state, queues) for queues in (None, False) for state in (False, True)]
+        workloads = [(None, None, state, queues, mode) for queues in (None, False)
+                     for state in (False, True) for mode in (None, "peer", "spread", "auto")]
         if args.mode == "speed":
-            workloads = [(streams, pair, state, None) for streams in (1, 4) for pair in (1, 2, 3)
+            workloads = [(streams, pair, state, None, None) for streams in (1, 4) for pair in (1, 2, 3)
                          for state in ((False, True) if (pair + (streams == 4)) % 2 else (True, False))]
             print("Fixed workload: 4 workers, MTU1500, server RAM profile, 1/4 streams, 3 paired runs, "
                   "2s warm-up +10s measured; fixed data-flow ports; no throughput pass/fail threshold.", flush=True)
-        for streams, pair, enabled, multi_queue in workloads:
+        for streams, pair, enabled, multi_queue, opaque_mode in workloads:
             name = f"p{streams}-pair{pair}-" if streams else ""
             if multi_queue is False:
                 name += "single-queue-"
+            if opaque_mode is not None:
+                name += opaque_mode + "-"
             name += "on" if enabled else "off"
-            with Fixture(binary, directory / name, enabled, multi_queue=multi_queue) as fixture:
+            with Fixture(binary, directory / name, enabled, multi_queue=multi_queue, opaque_mode=opaque_mode) as fixture:
                 result = speed(fixture, streams) if streams else integration(fixture)
                 result.update({"sample": name, "gso": enabled, "pair": pair,
                                "gso_counters": fixture.finish()})
                 if multi_queue is not None:
                     result["multi_queue"] = multi_queue
+                result["opaque_flow_mode"] = opaque_mode or "prefix"
             results.append(result)
             (directory / "results.json").write_text(json.dumps(results, indent=2) + "\n")
             print(json.dumps(result), flush=True)

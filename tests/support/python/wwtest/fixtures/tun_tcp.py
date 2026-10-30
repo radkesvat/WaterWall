@@ -72,9 +72,10 @@ def preflight(mode):
 class Fixture:
     """One fresh runtime/server namespace pair, shared by both test modes."""
 
-    def __init__(self, binary, directory, gso, multi_queue=None):
+    def __init__(self, binary, directory, gso, multi_queue=None, opaque_mode=None):
         self.binary, self.directory, self.gso = binary, directory, gso
         self.multi_queue = multi_queue
+        self.opaque_mode = opaque_mode
         self.processes, self.logs = [], []
         self.waterwall = None
 
@@ -99,6 +100,8 @@ class Fixture:
         config["nodes"][0]["settings"]["gso"] = self.gso
         if self.multi_queue is not None:
             config["nodes"][0]["settings"]["multi-queue"] = self.multi_queue
+        if self.opaque_mode is not None:
+            config["nodes"][0]["settings"]["opaque-flow-mode"] = self.opaque_mode
 
     def __enter__(self):
         self.directory.mkdir()
@@ -140,6 +143,16 @@ class Fixture:
                 link = subprocess.run([*self.runtime, "ip", "-d", "link", "show", TUN],
                                       text=True, capture_output=True, timeout=5)
                 if match and link.returncode == 0 and "UP" in link.stdout:
+                    requested_mode = self.opaque_mode or "prefix"
+                    effective_mode = "prefix" if requested_mode == "auto" else requested_mode
+                    selection_reason = ("no direct Ping decoder in receive direction"
+                                        if requested_mode == "auto" else "configured mode")
+                    require((f"opaque-flow-mode requested={requested_mode} effective={effective_mode} "
+                             f"reason={selection_reason}") in log,
+                            "TUN did not resolve and log its requested opaque receive policy")
+                    queue_match = re.search(rf"{TUN} uses (\d+) worker-owned receive queue\(s\).*"
+                                            rf"effective opaque mode {effective_mode}\)", log)
+                    require(queue_match is not None, "TUN did not log its queue count and effective opaque mode")
                     require(match[2] == ("yes" if self.gso else "no"), "wrong requested GSO setting")
                     self.checksum_enabled = match[1] != "raw IP"
                     self.gso_enabled = match[1] == "TCPv4 GSO with checksum offload"

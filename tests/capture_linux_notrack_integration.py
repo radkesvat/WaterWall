@@ -2,7 +2,9 @@
 """Exercise real capture/conntrack rules inside run_in_network_namespace.sh. CTest:
 waterwall.capture_linux_conntrack_enabled, waterwall.capture_linux_notrack,
 waterwall.capture_linux_protocols_bypass, waterwall.capture_linux_protocols_tracked,
-waterwall.capture_linux_queues_multi, waterwall.capture_linux_queues_single."""
+waterwall.capture_linux_queues_multi, waterwall.capture_linux_queues_single.
+Queue cases cover the default and all four requested opaque modes, fixed H32
+native/prefix/peer placement, stable-key FIFO, exact bytes and owned-rule cleanup."""
 
 import argparse
 import contextlib
@@ -252,6 +254,27 @@ def queue_statistics():
     return rows
 
 
+def receive_worker(protocol, source_word, destination_word, mode, workers):
+    # Independent transcription of the frozen common32 contract for this
+    # fixture's 127.0.0.2 -> 127.0.0.1 pair. Unsigned operations wrap at 32 bits.
+    if protocol not in (socket.IPPROTO_TCP, socket.IPPROTO_UDP) and mode == "peer":
+        source_word = destination_word = 0
+    constant, mask = 0x9E3779B1, 0xFFFFFFFF
+    source = int.from_bytes(socket.inet_aton("127.0.0.2"), "big")
+    destination = int.from_bytes(socket.inet_aton("127.0.0.1"), "big")
+
+    def endpoint_mix(value):
+        value ^= value >> 16
+        value = (value * 0x85EBCA6B) & mask
+        return value ^ (value >> 13)
+
+    first = endpoint_mix(source ^ ((source_word * constant) & mask))
+    second = endpoint_mix(destination ^ ((destination_word * constant) & mask))
+    value = (((first + second) & mask) ^ protocol) * constant & mask
+    value ^= value >> 16
+    return value % workers
+
+
 class PacketCollector:
     """Read the ordinary IPv4 framing on every real worker-owned TCP carrier."""
 
@@ -265,6 +288,7 @@ class PacketCollector:
         self.selector.register(self.listener, selectors.EVENT_READ)
         self.buffers = {}
         self.packets = {}
+        self.packet_streams = {}
         self.delivered = {}
 
     def wait(self, process, predicate, deadline):
@@ -296,10 +320,11 @@ class PacketCollector:
                     ident = struct.unpack_from("!H", packet, 4)[0]
                     assert ident not in self.packets, ("duplicate captured packet", ident)
                     self.packets[ident] = packet
+                    self.packet_streams[ident] = stream
                     self.delivered[stream] += 1
 
 
-def run_queue_receive(binary, directory, single_queue):
+def run_queue_receive(binary, directory, single_queue, opaque_mode):
     command("sysctl", "-qw", "net.ipv4.conf.all.rp_filter=0", "net.ipv4.conf.lo.rp_filter=0",
             "net.ipv4.conf.lo.accept_local=1", "net.ipv4.conf.lo.route_localnet=1")
     workers = 4
@@ -313,11 +338,18 @@ def run_queue_receive(binary, directory, single_queue):
             collector = PacketCollector(stack)
             settings = {"raw-device-name": "queue-writer", "capture-device-name": "queue-test",
                         "fragment-policy": "preserve-fragments", "skip-sysctl": True}
+            if opaque_mode is not None:
+                settings["opaque-flow-mode"] = opaque_mode
             if capture:
                 settings.update({"capture-ips": ["127.0.0.2"], "capture-filter-mode": "source-ip",
                                  "multi-queue": not single_queue, "dont-capture-protocols": [253]})
             nodes = [
-                {"name": "capture", "type": "RawSocket", "next": "packets", "settings": settings},
+                {"name": "capture", "type": "RawSocket", "next": "decoder", "settings": settings},
+                # All injected traffic is unrelated to this Ping peer and is
+                # passed through unchanged. Auto still selects one peer mode
+                # for the whole device; omission stays prefix at this decoder.
+                {"name": "decoder", "type": "PingServer", "next": "packets", "settings": {
+                    "local-ipv4": "127.0.0.1", "peer-ipv4": "127.0.0.3", "identifier": 4661}},
                 {"name": "packets", "type": "PacketsToStream", "next": "output"},
                 {"name": "output", "type": "TcpConnector", "settings": {
                     "address": "127.0.0.1", "port": collector.listener.getsockname()[1]}},
@@ -341,13 +373,22 @@ def run_queue_receive(binary, directory, single_queue):
                     assert "WWCAP_" not in iptables("-S", "INPUT")
                 else:
                     assert task_count == baseline_tasks, ("capture added a reader thread", baseline_tasks, task_count)
+                    requested_mode = opaque_mode or "prefix"
+                    effective_mode = "peer" if requested_mode == "auto" else requested_mode
+                    selection_reason = "direct upstream PingServer decoder" if requested_mode == "auto" else "configured mode"
+                    startup_log = (case / "stdout.log").read_text()
+                    assert (f"opaque-flow-mode requested={requested_mode} effective={effective_mode} "
+                            f"reason={selection_reason}") in startup_log
                     rules = [line for line in iptables("-S", "INPUT").splitlines() if "WWCAP_" in line]
                     queue_numbers = {int(re.search(r"--queue-num (\d+)", line)[1]) for line in rules}
                     assert len(queue_numbers) == (1 if single_queue else workers), rules
-                    assert len(rules) == (1 if single_queue else workers * 2), rules
+                    assert f"up with {len(queue_numbers)} worker-owned receive queue(s), opaque-flow-mode={effective_mode}" in startup_log
+                    spread = opaque_mode == "spread"
+                    assert len(rules) == (1 if single_queue else workers * (2 if spread else 1)), rules
                     if not single_queue:
                         opaque_rules = [line for line in rules if "WWCAP_OPAQUE_" in line]
-                        assert len(opaque_rules) == workers and sum("--mode random" in line for line in opaque_rules) == workers - 1, rules
+                        assert len(opaque_rules) == (workers if spread else 0), rules
+                        assert sum("--mode random" in line for line in opaque_rules) == (workers - 1 if spread else 0), rules
                         assert all("--mode nth" not in line for line in opaque_rules), rules
                     before = queue_statistics()
                     assert queue_numbers == set(before), before
@@ -360,14 +401,20 @@ def run_queue_receive(binary, directory, single_queue):
                     # change within each protocol's 128 independent flows.
                     for protocol in (socket.IPPROTO_UDP, socket.IPPROTO_TCP):
                         protocol_before = queue_statistics()
+                        delivery_before = collector.delivered.copy()
+                        expected_lanes = [0] * workers
                         for number in range(128):
                             ident = 1000 + protocol * 128 + number
                             payload = struct.pack("!I", ident) + b"worker-owned-capture"
+                            source_port = (20000 if protocol == socket.IPPROTO_UDP else 22000) + number
+                            destination_port = 49000 if protocol == socket.IPPROTO_UDP else 49001
                             if protocol == socket.IPPROTO_UDP:
-                                body = struct.pack("!HHHH", 20000 + number, 49000, len(payload) + 8, 0) + payload
+                                body = struct.pack("!HHHH", source_port, destination_port, len(payload) + 8, 0) + payload
                             else:
-                                body = struct.pack("!HHIIBBHHH", 22000 + number, 49001,
+                                body = struct.pack("!HHIIBBHHH", source_port, destination_port,
                                                    ident, 0, 0x50, 2, 32768, 0, 0) + payload
+                            expected_lanes[receive_worker(protocol, source_port, destination_port,
+                                                          effective_mode, workers)] += 1
                             expected[ident] = send_ipv4(sender, "127.0.0.2", "127.0.0.1",
                                                         protocol, body, ident)[0]
                             if (number + 1) % 16 == 0:
@@ -378,30 +425,70 @@ def run_queue_receive(binary, directory, single_queue):
                                            - protocol_before[queue]["sequence"] for queue in queue_numbers}
                         assert all(delta > 0 for delta in protocol_deltas.values()), \
                             ("protocol ports did not spread receive work", protocol, protocol_deltas)
-                        assert sum(protocol_deltas.values()) == 128, (protocol, protocol_deltas)
-                    # Opaque traffic uses random receive queues and retains its
-                    # receiving worker. Check spread and exact delivery/count
-                    # correspondence, without requiring exact random balance.
+                        expected_queue_counts = [128] if single_queue else expected_lanes
+                        assert [protocol_deltas[queue] for queue in sorted(queue_numbers)] == expected_queue_counts, \
+                            ("native kernel queue placement differs from H32", protocol, protocol_deltas, expected_lanes)
+                        processing_deltas = [count - delivery_before[stream]
+                                             for stream, count in collector.delivered.items()]
+                        assert sorted(processing_deltas) == sorted(expected_lanes), \
+                            ("native processing placement differs from H32", protocol, processing_deltas, expected_lanes)
+                    # Stable prefixes ignore later bytes. Changing prefixes
+                    # select H32 lanes in prefix mode; peer ignores those words.
+                    # Spread retains its random queue/software cursor contract.
                     opaque_packets = 128
                     for protocol in (1, 49, 50, 132):
-                        protocol_before = queue_statistics()
-                        delivery_before = collector.delivered.copy()
-                        for number in range(opaque_packets):
-                            ident = 10000 + protocol * opaque_packets + number
-                            body = struct.pack("!HHI", 12000, 443, ident) + b"opaque-distribution"
-                            expected[ident] = send_ipv4(sender, "127.0.0.2", "127.0.0.1", protocol, body, ident)[0]
-                            if (number + 1) % 16 == 0:
-                                collector.wait(process, lambda: len(collector.packets) == len(expected), time.monotonic() + 5)
-                        protocol_after = queue_statistics()
-                        queue_deltas = {queue: protocol_after[queue]["sequence"] - protocol_before[queue]["sequence"]
-                                        for queue in queue_numbers}
-                        assert sum(queue_deltas.values()) == opaque_packets and all(queue_deltas.values()), \
-                            ("opaque receive lost packets or did not spread across queues", protocol, queue_deltas)
-                        processing_deltas = [count - delivery_before[stream] for stream, count in collector.delivered.items()]
-                        expected_processing = ([opaque_packets // workers] * workers if single_queue
-                                               else sorted(queue_deltas.values()))
-                        assert sorted(processing_deltas) == expected_processing, \
-                            ("opaque processing collapsed onto a coarse flow owner", protocol, processing_deltas)
+                        for varied_prefix in (False, True):
+                            protocol_before = queue_statistics()
+                            delivery_before = collector.delivered.copy()
+                            expected_lanes = [0] * workers
+                            batch_ids = []
+                            for number in range(opaque_packets):
+                                ident = (30000 if varied_prefix else 10000) + protocol * opaque_packets + number
+                                source_word = 12000 + (number if varied_prefix else 0)
+                                body = struct.pack("!HHI", source_word, 443, ident) + b"opaque-distribution"
+                                expected[ident] = send_ipv4(sender, "127.0.0.2", "127.0.0.1", protocol, body, ident)[0]
+                                batch_ids.append(ident)
+                                if not spread:
+                                    expected_lanes[receive_worker(protocol, source_word, 443,
+                                                                  effective_mode, workers)] += 1
+                                if (number + 1) % 16 == 0:
+                                    collector.wait(process, lambda: len(collector.packets) == len(expected),
+                                                   time.monotonic() + 5)
+                            protocol_after = queue_statistics()
+                            queue_deltas = {queue: protocol_after[queue]["sequence"] - protocol_before[queue]["sequence"]
+                                            for queue in queue_numbers}
+                            assert sum(queue_deltas.values()) == opaque_packets, (protocol, queue_deltas)
+                            if spread:
+                                assert all(queue_deltas.values()), ("opaque receive did not spread", protocol, queue_deltas)
+                                if single_queue:
+                                    expected_processing = [opaque_packets // workers] * workers
+                                else:
+                                    # Frozen broad gate for 128 packets on four
+                                    # random lanes: each gets 8..64 packets.
+                                    # Exact random/per-CPU sequences are not compared.
+                                    assert all(8 <= count <= 64 for count in queue_deltas.values()), \
+                                        ("opaque random queue distribution clustered", protocol, queue_deltas)
+                                    expected_processing = sorted(queue_deltas.values())
+                            else:
+                                expected_queue_counts = [opaque_packets] if single_queue else expected_lanes
+                                assert [queue_deltas[queue] for queue in sorted(queue_numbers)] == expected_queue_counts, \
+                                    ("opaque kernel placement differs from H32", effective_mode, protocol,
+                                     varied_prefix, queue_deltas, expected_lanes)
+                                expected_processing = sorted(expected_lanes)
+                                if not varied_prefix or effective_mode == "peer":
+                                    assert sum(delta > 0 for delta in expected_lanes) == 1, expected_lanes
+                                    streams = {collector.packet_streams[ident] for ident in batch_ids}
+                                    batch_id_set = set(batch_ids)
+                                    received_ids = [ident for ident in collector.packets if ident in batch_id_set]
+                                    assert len(streams) == 1 and received_ids == batch_ids, \
+                                        ("stable receive key lost FIFO order", effective_mode, protocol, received_ids)
+                                else:
+                                    assert all(expected_lanes), ("varied prefixes did not use every worker", expected_lanes)
+                            processing_deltas = [count - delivery_before[stream]
+                                                 for stream, count in collector.delivered.items()]
+                            assert sorted(processing_deltas) == expected_processing, \
+                                ("opaque processing did not follow mode/H32", opaque_mode, protocol,
+                                 varied_prefix, processing_deltas, expected_processing)
                     assert collector.packets == expected, "captured payload changed or was lost"
                     assert len(collector.delivered) == workers and all(collector.delivered.values()), \
                         ("packet processing did not use every configured worker", collector.delivered)
@@ -412,7 +499,8 @@ def run_queue_receive(binary, directory, single_queue):
                     assert sum(deltas.values()) == len(expected), ("unexpected capture count", deltas, len(expected))
                     assert all(after[queue]["pending"] == 0 and after[queue]["dropped"] == 0
                                and after[queue]["user_dropped"] == 0 for queue in queue_numbers), after
-                    print(f"receive queues={len(queue_numbers)} packets={deltas} processing workers={workers} "
+                    print(f"opaque mode={requested_mode}/{effective_mode} receive queues={len(queue_numbers)} "
+                          f"packets={deltas} processing workers={workers} "
                           f"threads={task_count} (write-only={baseline_tasks})")
                 process.terminate()
                 assert process.wait(timeout=15) in (0, 143)
@@ -435,7 +523,10 @@ def main():
         directory = Path(temporary)
         try:
             if args.queue_mode:
-                run_queue_receive(binary, directory, args.queue_mode == "single")
+                for mode in (None, "prefix", "peer", "spread", "auto"):
+                    mode_directory = directory / (mode or "default")
+                    mode_directory.mkdir()
+                    run_queue_receive(binary, mode_directory, args.queue_mode == "single", mode)
             else:
                 run(binary, directory, not args.tracked, args.exclude_protocols)
         except Exception:
@@ -443,7 +534,7 @@ def main():
                 print(f"{log}:\n{log.read_text()[-20000:]}", file=sys.stderr)
             raise
     if args.queue_mode:
-        print(f"Capture {args.queue_mode} queues, port steering, exact delivery, processing workers and cleanup passed")
+        print(f"Capture {args.queue_mode} queues, all opaque modes, H32 placement, FIFO, exact bytes and cleanup passed")
     else:
         print(f"Capture with bypass-conntrack={not args.tracked}, exclusions={args.exclude_protocols}, fragments, scope, and cleanup passed")
 

@@ -54,7 +54,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
       COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tun_tcp_chain.py"
         --binary "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" --mode integration)
     set_tests_properties(waterwall.tundevice_tcp_chain PROPERTIES
-      TIMEOUT 90
+      TIMEOUT 240
       SKIP_RETURN_CODE 77)
     add_waterwall_case_resource_lock(waterwall.tundevice_tcp_chain tun_tcp_chain)
   else()
