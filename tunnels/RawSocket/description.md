@@ -90,6 +90,10 @@ For write-only packet injection, omit all capture-range keys:
 
 ## Optional `settings` Fields
 
+- `opaque-flow-mode` `(string)`
+  Opaque IPv4 receive policy: `prefix` (default), `peer`, `spread`, or `auto`.
+  See the detailed `opaque-flow-mode` section below for selection and limitations.
+
 - `capture-ips` or `capture-ip` `(string or array of strings)`
   Equivalent names for the IPv4 addresses or IPv4 CIDR ranges used by the capture device filter. Either key accepts one string or an array, and every array element becomes a capture range. `listen-ips` remains accepted as a compatibility alias with the same input shapes.
 
@@ -248,29 +252,30 @@ During `onStart`, `RawSocket`:
 With no configured capture range, no capture device, NFQUEUE socket, capture reader, or capture rule is created. Only the raw output device is started.
 
 Linux assigns each receive queue to exactly one worker and performs bounded,
-nonblocking reads on that worker's event loop. Queue count and steering stay fixed
-while capture is active. Complete TCP/UDP packets use symmetric IPv4 address,
-protocol, and port receive steering. With multiple queues, complete packets
-continue on the receiving worker; consumers establish any required flow ownership
-after transformations rather than relying on capture to select their owner.
-Other complete IPv4 protocols use random kernel queue selection
-(`statistic --mode random`) and continue on the receiving worker. Cascading
-conditional probabilities give each queue approximately the same share; exact
-counts and packet order are not guaranteed. This removes the shared nth-selection
-counter without claiming that every kernel RNG implementation is lock-free.
-With one receive queue, complete native TCP/UDP packets with visible ports use
-the symmetric flow hash, keeping ordered packets of one flow on one worker FIFO.
-Opaque or unclassifiable packets use a session-local round-robin sequence across
-workers. Windows capture uses the same policy. Protocol-50 traffic between one
-IP pair therefore remains parallel; no transport ports are guessed for it.
+nonblocking reads on that worker's event loop. Queue count, steering and the
+resolved opaque mode stay fixed while capture is active. Native IPv4 TCP/UDP
+uses the same symmetric 32-bit address/port/protocol worker hash as TUN and
+consumer affinity. Opaque IPv4 follows `opaque-flow-mode`, defaulting to `prefix`.
+With multiple queues, complete packets continue on the receiving worker. With one
+queue, software applies the effective mode before worker FIFO admission. Windows
+capture uses the same software policy. Consumers still establish ownership after
+decoding or rewriting their tuple.
 
-Every IPv4 fragment, including fragment zero, retains address/protocol receive
-steering and the shared fragment table's existing staging and ownership rules.
-Completed reassembly follows the ordinary complete-packet distribution policy.
-Protocol exclusions apply equally to both rule sets. Queue predicates use the
-iptables `bpf` match; opaque multiqueue routing also requires `statistic`. If
-multiqueue setup fails, capture falls back to one receive queue. The number of
-predicates examined grows with queue count.
+Only `spread` installs random opaque NFQUEUE rules (`statistic --mode random`).
+Cascading probabilities give queues approximately the same share; exact counts
+and packet order are not guaranteed. Its single-reader software path retains the
+session-local cursor. Deterministic modes route opaque packets through the flow
+predicates and install no random opaque rules.
+
+All IPv4 fragments, including fragment zero, retain address/protocol kernel
+steering. The shared fragment table keeps its existing staging and fragment-zero
+classification, using the common worker hash separately from the retained full64
+consistency fingerprint. Reassembly stays on its reader worker with multiple
+queues and follows the effective complete-packet policy with one reader.
+Fragmented and ordinary packets from the same flow may have different workers.
+Protocol exclusions apply equally to every rule family. Queue predicates require
+the iptables `bpf` match; only spread's opaque rules require `statistic`. Failed
+multiqueue setup falls back to one receive queue after complete owned-rule cleanup.
 
 When a packet is captured:
 
@@ -367,7 +372,7 @@ The capture device is configured from the ranges supplied through either `captur
 Current implementation behavior:
 
 - on Windows, the capture filter combines `ip.SrcAddr` equality or inclusive range checks with exclusions on `ip.Protocol`
-- on Linux, multiqueue capture creates a flow rule and an opaque-protocol rule per receive queue for each configured IPv4 address or CIDR range; single-queue capture creates one queue rule per range
+- on Linux, multiqueue capture creates a flow rule per queue and range; only `spread` adds random opaque rules. Single-queue capture creates one queue rule per range
 - `capture-filter-mode` is parsed, but only the `source-ip` path is currently implemented
 
 On Linux, a nonempty `dont-capture-protocols` list requires the iptables `bpf`
@@ -482,6 +487,61 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer3` |
 | `layer_group_next_node` | `kNodeLayer3` |
 | `required_padding_left` | `0` bytes |
+
+### `opaque-flow-mode` (optional, default: `prefix`)
+
+Accepts only the exact strings `prefix`, `peer`, `spread` and `auto`. Empty or
+unknown strings, `null` and other JSON types fail construction on every platform,
+including write-only RawSocket. Omission always selects `prefix`, even beside Ping.
+The setting is independent of `multi-queue`, `gso` and `fragment-policy`; a single
+receive queue still dispatches over the configured processing workers.
+
+For structurally valid, unfragmented IPv4 with Protocol other than TCP (6) or
+UDP (17):
+
+| Value | Receive worker selection |
+| --- | --- |
+| `prefix` | Symmetric hash of addresses, protocol and the first four IP-payload bytes as two big-endian 16-bit endpoint fields. |
+| `peer` | Hash addresses and protocol only; ignore every payload byte. |
+| `spread` | Spread packets using the backend's existing mechanism. |
+| `auto` | Resolve once at startup using the exact direct Ping decoding neighbour below; otherwise use `prefix`. |
+
+The prefix begins after the actual IPv4 header, including options, and must fit
+inside the declared total length. Fewer than four payload bytes use the same
+address/protocol fallback as `peer`. Native TCP/UDP always uses the shared 32-bit
+address/port/protocol worker hash when four transport bytes are present, and the
+address/protocol fallback otherwise; opaque mode never validates transport flags,
+length fields or checksums. IPv6 parsing boundaries and fragment policy are unchanged.
+
+`prefix` keeps a visible flow together only while those four bytes stay stable.
+A fixed XOR can preserve that property; arbitrary encryption or changing masks
+need not. `peer` deliberately groups every opaque packet with the same address
+pair and protocol, concentrating unrelated hidden flows on one worker. `spread`
+can process those flows in parallel but can reorder packets before a consumer
+sees them. A downstream stateful consumer still chooses its owner from the tuple
+it actually consumes after decoding or rewriting.
+
+Only requested `auto` inspects finalized topology before device construction or
+capture activation. Upstream receive publication toward `next` selects `peer`
+only for the immediate physical node of exact type `PingServer`; downstream
+publication toward `prev` selects `peer` only for exact type `PingClient`.
+Encoding directions, intervening nodes, wrappers and all other layouts select
+`prefix`. Instance names do not participate. Explicit modes always take precedence;
+an opposite RawSocket never implies `spread`. With both devices using `auto`:
+
+```text
+TunDevice -> PingClient -> RawSocket
+  prefix                     peer
+
+RawSocket -> PingServer -> TunDevice
+   peer                     prefix
+```
+
+The resolved mode is fixed per device generation, including single-queue fallback
+and restart; readers do not inspect traffic or reevaluate topology per packet.
+Ping passes unrelated packets through, so automatic `peer` groups unrelated
+opaque traffic as well; mixed traffic may require an explicit setting. Startup
+logs requested mode, effective mode, selection reason and effective queue count.
 
 ### `fragment-policy` (optional, default: `reassemble`)
 
