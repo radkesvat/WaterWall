@@ -852,7 +852,9 @@ static void testProtocolFilterUsesTheSamePredicateForEveryRule(void)
     captureLinuxBuildProtocolFilter(&filter, bytecode);
     require(bytecode[0] == '\0', "empty exclusions unnecessarily enabled a BPF match");
     captureProtocolFilterExclude(&filter, 0);
-    captureProtocolFilterExclude(&filter, 6);
+    captureProtocolFilterExclude(&filter, 17);
+    filter.tcp_source_port      = 12345;
+    filter.tcp_destination_port = 443;
     captureLinuxBuildProtocolFilter(&filter, bytecode);
 
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
@@ -881,6 +883,44 @@ static void testProtocolFilterUsesTheSamePredicateForEveryRule(void)
     requireNoShellInvocation();
 }
 
+static void openProtocolFilterSockets(const capture_protocol_filter_t *filter, int sockets[2])
+{
+    char bytecode[kCaptureLinuxProtocolFilterSize];
+    captureLinuxBuildProtocolFilter(filter, bytecode);
+    char               *cursor;
+    const unsigned long count = strtoul(bytecode, &cursor, 10);
+    struct sock_filter  instructions[64];
+    require(count > 0 && count <= ARRAY_SIZE(instructions), "protocol program exceeds xt_bpf's limit");
+    for (unsigned long i = 0; i < count; ++i)
+    {
+        int consumed = 0;
+        require(sscanf(cursor,
+                       ",%hu %hhu %hhu %u%n",
+                       &instructions[i].code,
+                       &instructions[i].jt,
+                       &instructions[i].jf,
+                       &instructions[i].k,
+                       &consumed) == 4 &&
+                    consumed > 0,
+                "invalid generated cBPF instruction");
+        cursor += consumed;
+    }
+    require(*cursor == '\0', "trailing bytes in generated cBPF program");
+    struct sock_fprog program = {.len = (unsigned short) count, .filter = instructions};
+    require(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets) == 0, "unable to create protocol-filter sockets");
+    require(setsockopt(sockets[1], SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof(program)) == 0,
+            "the kernel rejected the generated protocol filter");
+}
+
+static void requireProtocolFilterResult(const int sockets[2], const uint8_t *packet, size_t length, bool expected,
+                                        const char *message)
+{
+    require(send(sockets[0], packet, length, 0) == (ssize_t) length, "filter test send failed");
+    uint8_t       received_byte;
+    const ssize_t received = recv(sockets[1], &received_byte, sizeof(received_byte), MSG_DONTWAIT);
+    require(expected ? received == 1 : received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK), message);
+}
+
 static void testProtocolFilterInTheKernel(void)
 {
     /* Execute the actual generated cBPF on an unprivileged datagram socket.
@@ -897,32 +937,8 @@ static void testProtocolFilterInTheKernel(void)
                 captureProtocolFilterExclude(&filter, (uint8_t) protocol);
             }
         }
-        char bytecode[kCaptureLinuxProtocolFilterSize];
-        captureLinuxBuildProtocolFilter(&filter, bytecode);
-        char               *cursor;
-        const unsigned long count = strtoul(bytecode, &cursor, 10);
-        struct sock_filter  instructions[64];
-        require(count > 0 && count <= ARRAY_SIZE(instructions), "protocol program exceeds xt_bpf's limit");
-        for (unsigned long i = 0; i < count; ++i)
-        {
-            int consumed = 0;
-            require(sscanf(cursor,
-                           ",%hu %hhu %hhu %u%n",
-                           &instructions[i].code,
-                           &instructions[i].jt,
-                           &instructions[i].jf,
-                           &instructions[i].k,
-                           &consumed) == 4 &&
-                        consumed > 0,
-                    "invalid generated cBPF instruction");
-            cursor += consumed;
-        }
-        require(*cursor == '\0', "trailing bytes in generated cBPF program");
-        struct sock_fprog program = {.len = (unsigned short) count, .filter = instructions};
-        int               sockets[2];
-        require(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets) == 0, "unable to create protocol-filter sockets");
-        require(setsockopt(sockets[1], SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof(program)) == 0,
-                "the kernel rejected the generated protocol filter");
+        int sockets[2];
+        openProtocolFilterSockets(&filter, sockets);
         for (unsigned int protocol = 0; protocol < kCaptureIpProtocolCount; ++protocol)
         {
             uint8_t packet[20] = {0x45};
@@ -941,6 +957,89 @@ static void testProtocolFilterInTheKernel(void)
                 require(received == 1, "the protocol filter rejected a non-excluded byte");
             }
         }
+        close(sockets[0]);
+        close(sockets[1]);
+    }
+}
+
+static size_t makeTcpPortFilterPacket(uint8_t packet[80], uint8_t ihl)
+{
+    memset(packet, 0, 80);
+    const size_t header_length = (size_t) ihl * 4;
+    const size_t length        = header_length + 20;
+    packet[0]                  = (uint8_t) (0x40 | ihl);
+    packet[2]                  = (uint8_t) (length >> 8);
+    packet[3]                  = (uint8_t) length;
+    packet[9]                  = IPPROTO_TCP;
+    packet[header_length]      = 0x30;
+    packet[header_length + 1]  = 0x39; // source port 12345
+    packet[header_length + 2]  = 0x01;
+    packet[header_length + 3]  = 0xbb; // destination port 443
+    packet[header_length + 12] = 0x50;
+    return length;
+}
+
+static void testTcpPortFilterInTheKernel(void)
+{
+    for (unsigned scenario = 0; scenario < 3; ++scenario)
+    {
+        capture_protocol_filter_t filter = {.tcp_source_port      = scenario == 1 ? 0 : 12345,
+                                            .tcp_destination_port = scenario == 0 ? 0 : 443};
+        int                       sockets[2];
+        openProtocolFilterSockets(&filter, sockets);
+        uint8_t       packet[80];
+        const uint8_t ihls[] = {5, 6, 15};
+        for (size_t i = 0; i < ARRAY_SIZE(ihls); ++i)
+        {
+            const size_t length = makeTcpPortFilterPacket(packet, ihls[i]);
+            requireProtocolFilterResult(
+                sockets, packet, length, true, "TCP port filter rejected matching IPv4 options");
+            packet[(size_t) ihls[i] * 4 + 1] ^= 1;
+            requireProtocolFilterResult(
+                sockets, packet, length, filter.tcp_source_port == 0, "TCP source port filter matched the wrong tuple");
+            packet[(size_t) ihls[i] * 4 + 1] ^= 1;
+            packet[(size_t) ihls[i] * 4 + 3] ^= 1;
+            requireProtocolFilterResult(sockets,
+                                        packet,
+                                        length,
+                                        filter.tcp_destination_port == 0,
+                                        "TCP destination port filter matched the wrong tuple");
+        }
+
+        const size_t length = makeTcpPortFilterPacket(packet, 5);
+        packet[9]           = IPPROTO_UDP;
+        requireProtocolFilterResult(sockets, packet, length, false, "TCP port filter admitted a UDP packet");
+        makeTcpPortFilterPacket(packet, 5);
+        packet[0] = 0x44;
+        requireProtocolFilterResult(sockets, packet, length, false, "TCP port filter admitted an invalid IPv4 IHL");
+        makeTcpPortFilterPacket(packet, 5);
+        packet[3] = 23;
+        requireProtocolFilterResult(
+            sockets, packet, length, false, "TCP port filter read matching ports beyond the IPv4 total length");
+        makeTcpPortFilterPacket(packet, 5);
+        packet[3] = (uint8_t) (length + 1);
+        requireProtocolFilterResult(
+            sockets, packet, length, false, "TCP port filter admitted a truncated declared IPv4 packet");
+        makeTcpPortFilterPacket(packet, 5);
+        requireProtocolFilterResult(sockets, packet, 23, false, "TCP port filter admitted truncated port bytes");
+        makeTcpPortFilterPacket(packet, 5);
+        packet[6] = 0x20;
+        requireProtocolFilterResult(sockets, packet, length, false, "TCP port filter admitted an MF fragment");
+        packet[6] = 0;
+        packet[7] = 1;
+        requireProtocolFilterResult(sockets, packet, length, false, "TCP port filter read ports from a later fragment");
+        packet[6] = 0x40;
+        packet[7] = 0;
+        requireProtocolFilterResult(
+            sockets, packet, length, true, "TCP port filter rejected an unfragmented DF packet");
+        close(sockets[0]);
+        close(sockets[1]);
+
+        captureProtocolFilterExclude(&filter, IPPROTO_TCP);
+        openProtocolFilterSockets(&filter, sockets);
+        makeTcpPortFilterPacket(packet, 5);
+        requireProtocolFilterResult(
+            sockets, packet, length, false, "TCP port filter overrode the configured protocol 6 exclusion");
         close(sockets[0]);
         close(sockets[1]);
     }
@@ -973,6 +1072,7 @@ int main(void)
     testSysctlSkipRunsNoCommands();
     testProtocolFilterUsesTheSamePredicateForEveryRule();
     testProtocolFilterInTheKernel();
+    testTcpPortFilterInTheKernel();
 
     printf("capture_linux_command_test: all tests passed\n");
     return 0;

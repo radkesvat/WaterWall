@@ -1,0 +1,63 @@
+{
+  "name": "fake-tcp-udp-server",
+  "nodes": [
+    {
+      "name": "raw",
+      "type": "RawSocket",
+      "next": "tcp-flags",
+      "settings": {
+        "capture-filter-mode": "source-ip",
+        "capture-ips": [
+          "192.0.2.10"
+        ],
+        "capture-protocols": [
+          6
+        ],
+        "fragment-policy": "reassemble",
+        "capture-tcp-source-port": 40001,
+        "capture-tcp-dest-port": 40000
+      }
+    },
+    {
+      "name": "tcp-flags",
+      "type": "IpManipulator",
+      "next": "fake-tcp-header",
+      "settings": {
+        "mtu": 1500,
+        "dw-tcp-bit-ack": "on",
+        "dw-tcp-bit-psh": "on"
+      }
+    },
+    {
+      "name": "fake-tcp-header",
+      "type": "FakeTcpHeader",
+      "next": "flows",
+      "settings": {
+        "role": "server",
+        "protocol-number": 6,
+        "sequence": 67890,
+        "acknowledgment": 12345,
+        "window": 65535,
+        "local-ipv4": "198.51.100.10",
+        "peer-ipv4": "192.0.2.10",
+        "local-port": 40000,
+        "peer-port": 40001,
+        "mtu": 1500
+      }
+    },
+    {
+      "name": "flows",
+      "type": "PacketsToConnection",
+      "next": "udp-destination",
+      "settings": {}
+    },
+    {
+      "name": "udp-destination",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 5300
+      }
+    }
+  ]
+}

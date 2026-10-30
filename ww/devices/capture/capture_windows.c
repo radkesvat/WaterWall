@@ -63,7 +63,8 @@ static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t 
                                                const capture_protocol_filter_t *protocol_filter)
 {
     size_t ranges_size;
-    const size_t protocol_extra = captureProtocolFilterIsEmpty(protocol_filter) ? 0 : kCaptureIpProtocolCount * 32U;
+    const size_t protocol_extra =
+        captureProtocolFilterIsEmpty(protocol_filter) ? 0 : kCaptureIpProtocolCount * 32U + 128U;
     if (! memoryTryComputeArraySize(range_count, 80U, &ranges_size) || ranges_size > SIZE_MAX - 10U - protocol_extra)
     {
         return NULL;
@@ -157,6 +158,24 @@ static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t 
         }
     }
 
+    if (captureProtocolFilterHasTcpPorts(protocol_filter))
+    {
+        bool appended = capturedeviceAppendFilter(filter, filter_len, &offset, " and tcp and not fragment");
+        if (appended && protocol_filter->tcp_source_port != 0)
+            appended = capturedeviceAppendFilter(
+                filter, filter_len, &offset, " and tcp.SrcPort == %u", (unsigned int) protocol_filter->tcp_source_port);
+        if (appended && protocol_filter->tcp_destination_port != 0)
+            appended = capturedeviceAppendFilter(filter,
+                                                 filter_len,
+                                                 &offset,
+                                                 " and tcp.DstPort == %u",
+                                                 (unsigned int) protocol_filter->tcp_destination_port);
+        if (! appended)
+        {
+            memoryFree(filter);
+            return NULL;
+        }
+    }
     return filter;
 }
 

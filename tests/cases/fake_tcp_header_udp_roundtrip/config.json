@@ -1,0 +1,154 @@
+{
+  "name": "fake-tcp-header-udp-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "max-payload-size": 1024,
+        "chunk-count": 9,
+        "split-payload-burst": 1,
+        "dest-context": {
+          "address": "10.90.0.2",
+          "port": 9021,
+          "protocol": "udp"
+        }
+      },
+      "next": "socks5-client"
+    },
+    {
+      "name": "socks5-client",
+      "type": "Socks5Client",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "protocol": "dest_context->protocol"
+      },
+      "next": "proxy-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9020,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpUdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9020,
+        "nodelay": true
+      },
+      "next": "socks5-server"
+    },
+    {
+      "name": "socks5-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": false,
+        "udp": true,
+        "ipv4": "127.0.0.1"
+      },
+      "next": "connection-to-packets"
+    },
+    {
+      "name": "connection-to-packets",
+      "type": "ConnectionToPackets",
+      "settings": {
+        "source-ipv4": "10.90.0.1",
+        "mtu": 1400,
+        "domain-strategy": "only-ipv4"
+      },
+      "next": "fake-client"
+    },
+    {
+      "name": "fake-client",
+      "type": "FakeTcpHeader",
+      "next": "client-flags",
+      "settings": {
+        "role": "client",
+        "protocol-number": 6,
+        "sequence": 12345,
+        "acknowledgment": 67890,
+        "options": "01010101",
+        "local-ipv4": "192.0.2.10",
+        "peer-ipv4": "198.51.100.10",
+        "local-port": 40001,
+        "peer-port": 40000
+      }
+    },
+    {
+      "name": "client-flags",
+      "type": "IpManipulator",
+      "next": "server-flags",
+      "settings": {
+        "mtu": 1500,
+        "up-tcp-bit-ack": "on",
+        "up-tcp-bit-psh": "on"
+      }
+    },
+    {
+      "name": "server-flags",
+      "type": "IpManipulator",
+      "next": "fake-server",
+      "settings": {
+        "mtu": 1500,
+        "dw-tcp-bit-ack": "on",
+        "dw-tcp-bit-syn": "on"
+      }
+    },
+    {
+      "name": "fake-server",
+      "type": "FakeTcpHeader",
+      "next": "packets-to-connection",
+      "settings": {
+        "role": "server",
+        "protocol-number": 6,
+        "sequence": 67890,
+        "acknowledgment": 12345,
+        "options": "0101010101010101",
+        "local-ipv4": "198.51.100.10",
+        "peer-ipv4": "192.0.2.10",
+        "local-port": 40000,
+        "peer-port": 40001
+      }
+    },
+    {
+      "name": "packets-to-connection",
+      "type": "PacketsToConnection",
+      "next": "target-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": "dest_context->port"
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9021
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "max-payload-size": 1024,
+        "chunk-count": 9,
+        "split-payload-burst": 1
+      }
+    }
+  ]
+}

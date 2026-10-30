@@ -8,6 +8,9 @@ add_waterwall_integration_test(waterwall.udp_connector_packet_balance_mode_round
 add_waterwall_integration_test(waterwall.connection_to_packets_tcp_bridge_roundtrip connection_to_packets_tcp_bridge_roundtrip)
 add_waterwall_integration_test(waterwall.connection_to_packets_tcp_bridge_multiworker_roundtrip connection_to_packets_tcp_bridge_multiworker_roundtrip)
 add_waterwall_integration_test(waterwall.connection_to_packets_udp_bridge_roundtrip connection_to_packets_udp_bridge_roundtrip)
+if(TARGET FakeTcpHeader AND TARGET IpManipulator)
+  add_waterwall_integration_test(waterwall.fake_tcp_header_udp_roundtrip fake_tcp_header_udp_roundtrip)
+endif()
 # Unsupported fragments are bounded drops; both input directions and cleanup
 # are covered by the local_stack_fragment_input native fixtures.
 add_waterwall_integration_test(waterwall.ping_server_packets_to_connection_alignment_roundtrip ping_server_packets_to_connection_alignment_roundtrip)
@@ -52,6 +55,24 @@ if(LINUX AND NOT CMAKE_CROSSCOMPILING AND TARGET TcpListener AND TARGET TcpConne
 endif()
 
 if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
+  if(TARGET RawSocket AND TARGET FakeTcpHeader AND TARGET IpManipulator
+     AND TARGET ConnectionToPackets AND TARGET PacketsToConnection
+     AND TARGET UdpListener AND TARGET UdpConnector)
+    add_test(NAME waterwall.fake_tcp_header_raw_roundtrip
+      COMMAND "${BASH_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"
+        "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/fake_tcp_header_raw_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
+    set_tests_properties(waterwall.fake_tcp_header_raw_roundtrip PROPERTIES
+      TIMEOUT 90 LABELS "integration;linux;privileged;capture;fake-tcp;network-isolated")
+    if(TARGET TunDevice)
+      add_test(NAME waterwall.fake_tcp_header_tun_roundtrip
+        COMMAND "${BASH_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"
+          "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/fake_tcp_header_raw_integration.py"
+          "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" --tun)
+      set_tests_properties(waterwall.fake_tcp_header_tun_roundtrip PROPERTIES
+        TIMEOUT 90 LABELS "integration;linux;privileged;tun;capture;fake-tcp;network-isolated")
+    endif()
+  endif()
   # This test mutates firewall rules, so always isolate it even when ordinary
   # integration tests have explicitly selected host-serial mode.
   add_test(
