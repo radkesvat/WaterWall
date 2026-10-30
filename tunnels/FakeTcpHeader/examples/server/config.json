@@ -4,7 +4,7 @@
     {
       "name": "raw",
       "type": "RawSocket",
-      "next": "tcp-flags",
+      "next": "fake-tcp-header",
       "settings": {
         "capture-filter-mode": "source-ip",
         "capture-ips": [
@@ -16,16 +16,6 @@
         "fragment-policy": "reassemble",
         "capture-tcp-source-port": 40001,
         "capture-tcp-dest-port": 40000
-      }
-    },
-    {
-      "name": "tcp-flags",
-      "type": "IpManipulator",
-      "next": "fake-tcp-header",
-      "settings": {
-        "mtu": 1500,
-        "dw-tcp-bit-ack": "on",
-        "dw-tcp-bit-psh": "on"
       }
     },
     {
@@ -42,7 +32,8 @@
         "peer-ipv4": "192.0.2.10",
         "local-port": 40000,
         "peer-port": 40001,
-        "mtu": 1500
+        "mtu": 1500,
+        "flags": 24
       }
     },
     {

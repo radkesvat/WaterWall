@@ -70,7 +70,7 @@
     {
       "name": "fake-client",
       "type": "FakeTcpHeader",
-      "next": "client-flags",
+      "next": "fake-server",
       "settings": {
         "role": "client",
         "protocol-number": 6,
@@ -80,27 +80,8 @@
         "local-ipv4": "192.0.2.10",
         "peer-ipv4": "198.51.100.10",
         "local-port": 40001,
-        "peer-port": 40000
-      }
-    },
-    {
-      "name": "client-flags",
-      "type": "IpManipulator",
-      "next": "server-flags",
-      "settings": {
-        "mtu": 1500,
-        "up-tcp-bit-ack": "on",
-        "up-tcp-bit-psh": "on"
-      }
-    },
-    {
-      "name": "server-flags",
-      "type": "IpManipulator",
-      "next": "fake-server",
-      "settings": {
-        "mtu": 1500,
-        "dw-tcp-bit-ack": "on",
-        "dw-tcp-bit-syn": "on"
+        "peer-port": 40000,
+        "flags": 24
       }
     },
     {
@@ -116,7 +97,8 @@
         "local-ipv4": "198.51.100.10",
         "peer-ipv4": "192.0.2.10",
         "local-port": 40000,
-        "peer-port": 40001
+        "peer-port": 40001,
+        "flags": 18
       }
     },
     {

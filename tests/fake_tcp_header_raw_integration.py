@@ -186,7 +186,7 @@ def run(binary, directory, tun):
             pseudo = packet[12:20] + struct.pack("!BBH", 0, 6, len(tcp))
             assert checksum(pseudo + tcp) == 0, "invalid TCP wire checksum"
             assert tcp[12] == 0x60 and tcp[13] == 0x18 and tcp[20:24] == bytes((1, 1, 1, 1)), \
-                "configured TCP header/options or reused flag setters did not reach wire"
+                "configured TCP header/options or native flag setting did not reach wire"
             inner = tcp[24:]
             inner_ihl = (inner[0] & 15) * 4
             assert checksum(inner[:inner_ihl]) == 0 and inner[9] == 17, "invalid inner IPv4 UDP packet"

@@ -31,10 +31,11 @@ connectors. Do not connect this node directly to a UDP listener or connector.
     "sequence": 12345,
     "acknowledgment": 67890,
     "window": 65535,
+    "flags": 24,
     "urgent-pointer": 0,
     "options": "01010101"
   },
-  "next": "tcp-flags"
+  "next": "raw"
 }
 ```
 
@@ -47,6 +48,7 @@ connectors. Do not connect this node directly to a UDP listener or connector.
 | `role` | `"client"` | `client` encodes upstream and decodes downstream. `server` decodes upstream and encodes downstream. |
 | `protocol-number` | `6` | Literal outer IPv4 protocol byte, integer `0..255`. Set `6` for TCP. Other numbers still carry the same TCP-shaped bytes, with a pseudoheader checksum using that number. |
 | `mtu` | `1500` | Maximum complete carrier packet length, including outer headers; integer from `68 + 40 + options bytes` through `1500`. |
+| `flags` | `0` | Outgoing TCP flags mask, integer `0..255`; see TCP flags below. |
 | `sequence` | `0` | TCP sequence field, integer `0..4294967295`, constant for every outgoing carrier. |
 | `acknowledgment` | `0` | TCP acknowledgment field, same range and constant behavior. |
 | `window` | `65535` | TCP window field, integer `0..65535`. |
@@ -70,39 +72,33 @@ ports.
 
 ## TCP flags
 
-TCP flags start at zero. Reuse **IpManipulator**, which implements all eight
-flag setters:
+Set `flags` directly on each `FakeTcpHeader` node. It is an integer mask from
+`0` through `255`, default `0`, applied to every outgoing carrier before its
+checksum is calculated. Client encoding uses it upstream; server encoding uses
+it downstream. Receive accepts the peer's flags independently of this template.
 
-```json
-{
-  "name": "tcp-flags",
-  "type": "IpManipulator",
-  "settings": {
-    "mtu": 1500,
-    "up-tcp-bit-ack": "on",
-    "up-tcp-bit-psh": "on"
-  },
-  "next": "raw"
-}
-```
+| Flag | Value |
+| --- | --- |
+| FIN | 1 |
+| SYN | 2 |
+| RST | 4 |
+| PSH | 8 |
+| ACK | 16 |
+| URG | 32 |
+| ECE | 64 |
+| CWR | 128 |
 
-Keep this node on the carrier side. For a server, put it before
-`FakeTcpHeader` and use `dw-tcp-bit-*` for outgoing replies. Use protocol 6:
-the flag editor recognizes native TCP packets. Leave `preserve-tcp-bitflags`
-disabled; an appended flags trailer would become trailing bytes after the inner
-IPv4 packet and fail exact inner-length validation.
-
-Set `IpManipulator.mtu` explicitly to the carrier MTU. Inheriting the smaller
-inner/core MTU can make its normal TCP segmentation split a carrier into pieces
-that no longer contain a complete inner packet.
+Add values to combine flags: `flags: 24` emits ACK + PSH, and `flags: 18`
+emits SYN + ACK. No separate flag-editing node is required. Explicit nulls,
+wrong types, fractions and values outside `0..255` fail node creation.
 
 ## UDP listener client and server
 
 ```text
 client: UdpListener -> ConnectionToPackets -> FakeTcpHeader(role=client)
-                   -> IpManipulator(up-tcp-bit-*) -> RawSocket
+                   -> RawSocket
 
-server: RawSocket -> IpManipulator(dw-tcp-bit-*) -> FakeTcpHeader(role=server)
+server: RawSocket -> FakeTcpHeader(role=server)
                  -> PacketsToConnection -> UdpConnector -> UDP destination
 ```
 
@@ -117,7 +113,7 @@ inner tuple for replies.
 
 ```text
 client: TunDevice -> FakeTcpHeader(role=client)
-                 -> IpManipulator(up-tcp-bit-*) -> RawSocket
+                 -> RawSocket
 ```
 
 Kernel UDP traffic routed into TUN becomes the inner IPv4 packet. Return
@@ -189,8 +185,7 @@ option bytes give inner MTU **1456** and UDP payload **1428 bytes**. Subtract
 any inner IPv4 option bytes too.
 
 Set core `misc.mtu`, `ConnectionToPackets.mtu` or `TunDevice.device-mtu` to the
-appropriate inner MTU, and set `FakeTcpHeader.mtu` and carrier-side
-`IpManipulator.mtu` to the carrier MTU. Configure both ends consistently for
+appropriate inner MTU, and set `FakeTcpHeader.mtu` to the carrier MTU. Configure both ends consistently for
 traffic in both directions. Keep UDP datagrams within the inner MTU when the
 receiver uses `PacketsToConnection`; bridge-generated fragments cannot enter
 that stack consumer. A lower path MTU requires smaller configured limits.

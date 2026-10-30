@@ -89,6 +89,7 @@ tunnel_t *faketcpheaderCreate(node_t *node)
     cJSON_ArrayForEach(item, settings)
     {
         static const char *const supported[] = {"role",
+                                                "flags",
                                                 "protocol-number",
                                                 "sequence",
                                                 "acknowledgment",
@@ -105,7 +106,7 @@ tunnel_t *faketcpheaderCreate(node_t *node)
             known |= item->string != NULL && stringCompare(item->string, supported[i]) == 0;
         if (! known || ! jsonObjectFieldStringsAreExact(settings, item->string))
         {
-            LOGF("JSON Error: FakeTcpHeader->settings->%s : unknown setting; use IpManipulator for TCP flags",
+            LOGF("JSON Error: FakeTcpHeader->settings->%s : unknown setting",
                  item->string != NULL ? item->string : "<unnamed>");
             goto invalid;
         }
@@ -124,8 +125,9 @@ tunnel_t *faketcpheaderCreate(node_t *node)
     if (! faketcpheaderLoadAddress(&state->local_ipv4, settings, "local-ipv4") ||
         ! faketcpheaderLoadAddress(&state->peer_ipv4, settings, "peer-ipv4"))
         goto invalid;
-    uint32_t protocol, window, urgent, local_port, peer_port, mtu;
+    uint32_t protocol, flags, window, urgent, local_port, peer_port, mtu;
     if (! faketcpheaderLoadNumber(settings, "protocol-number", UINT8_MAX, IPPROTO_TCP, &protocol) ||
+        ! faketcpheaderLoadNumber(settings, "flags", UINT8_MAX, 0, &flags) ||
         ! faketcpheaderLoadNumber(settings, "sequence", UINT32_MAX, 0, &state->sequence) ||
         ! faketcpheaderLoadNumber(settings, "acknowledgment", UINT32_MAX, 0, &state->acknowledgment) ||
         ! faketcpheaderLoadNumber(settings, "window", UINT16_MAX, UINT16_MAX, &window) ||
@@ -135,6 +137,7 @@ tunnel_t *faketcpheaderCreate(node_t *node)
         ! faketcpheaderLoadNumber(settings, "mtu", kMaxAllowedPacketLength, kMaxAllowedPacketLength, &mtu))
         goto invalid;
     state->protocol       = (uint8_t) protocol;
+    state->flags          = (uint8_t) flags;
     state->window         = (uint16_t) window;
     state->urgent_pointer = (uint16_t) urgent;
     state->local_port     = (uint16_t) local_port;

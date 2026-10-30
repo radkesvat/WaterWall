@@ -8,7 +8,7 @@ add_waterwall_integration_test(waterwall.udp_connector_packet_balance_mode_round
 add_waterwall_integration_test(waterwall.connection_to_packets_tcp_bridge_roundtrip connection_to_packets_tcp_bridge_roundtrip)
 add_waterwall_integration_test(waterwall.connection_to_packets_tcp_bridge_multiworker_roundtrip connection_to_packets_tcp_bridge_multiworker_roundtrip)
 add_waterwall_integration_test(waterwall.connection_to_packets_udp_bridge_roundtrip connection_to_packets_udp_bridge_roundtrip)
-if(TARGET FakeTcpHeader AND TARGET IpManipulator)
+if(TARGET FakeTcpHeader)
   add_waterwall_integration_test(waterwall.fake_tcp_header_udp_roundtrip fake_tcp_header_udp_roundtrip)
 endif()
 # Unsupported fragments are bounded drops; both input directions and cleanup
@@ -55,7 +55,7 @@ if(LINUX AND NOT CMAKE_CROSSCOMPILING AND TARGET TcpListener AND TARGET TcpConne
 endif()
 
 if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
-  if(TARGET RawSocket AND TARGET FakeTcpHeader AND TARGET IpManipulator
+  if(TARGET RawSocket AND TARGET FakeTcpHeader
      AND TARGET ConnectionToPackets AND TARGET PacketsToConnection
      AND TARGET UdpListener AND TARGET UdpConnector)
     add_test(NAME waterwall.fake_tcp_header_raw_roundtrip

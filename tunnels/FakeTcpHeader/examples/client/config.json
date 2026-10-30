@@ -24,7 +24,7 @@
     {
       "name": "fake-tcp-header",
       "type": "FakeTcpHeader",
-      "next": "tcp-flags",
+      "next": "raw",
       "settings": {
         "role": "client",
         "protocol-number": 6,
@@ -35,17 +35,8 @@
         "peer-ipv4": "198.51.100.10",
         "local-port": 40001,
         "peer-port": 40000,
-        "mtu": 1500
-      }
-    },
-    {
-      "name": "tcp-flags",
-      "type": "IpManipulator",
-      "next": "raw",
-      "settings": {
         "mtu": 1500,
-        "up-tcp-bit-ack": "on",
-        "up-tcp-bit-psh": "on"
+        "flags": 24
       }
     },
     {

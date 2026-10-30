@@ -20,6 +20,7 @@ typedef struct faketcpheader_tstate_s
     uint16_t                  window;
     uint16_t                  urgent_pointer;
     uint8_t                   protocol;
+    uint8_t                   flags;
     uint8_t                   options_length;
     uint8_t                   options[kFakeTcpHeaderMaxOptions];
     bool                      server;

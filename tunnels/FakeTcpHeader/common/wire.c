@@ -91,6 +91,7 @@ bool faketcpheaderEncode(const faketcpheader_tstate_t *config, sbuf_t *buf)
     faketcpheaderWrite32(tcp + 4, config->sequence);
     faketcpheaderWrite32(tcp + 8, config->acknowledgment);
     tcp[12] = (uint8_t) (((TCP_HLEN + config->options_length) / 4U) << 4);
+    tcp[13] = config->flags;
     faketcpheaderWrite16(tcp + 14, config->window);
     faketcpheaderWrite16(tcp + 18, config->urgent_pointer);
     memoryCopy(tcp + TCP_HLEN, config->options, config->options_length);

@@ -1,17 +1,12 @@
 /*
  * Covers: UDP/fake-TCP byte conversion, independent checksum oracle, custom
- * headers, bounds/refusal, configuration and existing IpManipulator flag reuse.
+ * headers, bounds/refusal, configuration and all TCP flag combinations.
  * CTest: waterwall.fake_tcp_header_unit
  * No OS raw socket or throughput behavior is implied by this component fixture.
  */
 #include "FakeTcpHeader/structure.h"
 #include "test_assert.h"
 #include "wchecksum.h"
-
-#ifdef TEST_FAKE_TCP_FLAGS
-#include "IpManipulator/structure.h"
-#include "tricks/tcpbitchange/trick.h"
-#endif
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
@@ -273,7 +268,12 @@ static void testConfiguration(void)
                                    "{\"options\":null}",
                                    "{\"options\":\"00\"}",
                                    "{\"options\":\"zzzzzzzz\"}",
-                                   "{\"flags\":2}",
+                                   "{\"flags\":256}",
+                                   "{\"flags\":-1}",
+                                   "{\"flags\":1.5}",
+                                   "{\"flags\":true}",
+                                   "{\"flags\":null}",
+                                   "{\"flags\":\"24\"}",
                                    "{\"local-port\":0}",
                                    "{\"peer-port\":65536}",
                                    "{\"mtu\":107}",
@@ -297,7 +297,8 @@ static void testConfiguration(void)
         {
             const faketcpheader_tstate_t *state = tunnelGetState(t);
             if (i == 0)
-                require(state->protocol == 6 && ! state->server && state->window == 65535 && state->options_length == 0,
+                require(state->flags == 0 && state->protocol == 6 && ! state->server && state->window == 65535 &&
+                            state->options_length == 0,
                         "default configuration changed");
             if (i == 1)
                 require(state->server && state->options_length == 4, "server role or options not loaded");
@@ -364,30 +365,31 @@ static void testInnerPackets(void)
     requireRefused(&receiver, buf, false);
 }
 
-#ifdef TEST_FAKE_TCP_FLAGS
-static void testExistingFlags(void)
+static void testFlags(void)
 {
-    faketcpheader_tstate_t config = configuration();
-    sbuf_t                *buf    = udpPacket(9, 0, kFakeTcpHeaderPadding, false);
-    require(faketcpheaderEncode(&config, buf), "flag fixture encoding failed");
-    tunnel_t *flags = memoryAllocateAlignedZero(sizeof(tunnel_t) + sizeof(ipmanipulator_tstate_t), kCpuLineCacheSize);
-    ipmanipulator_tstate_t *state  = tunnelGetState(flags);
-    state->up_tcp_bit_syn_action   = kDvsOn;
-    state->up_tcp_bit_ack_action   = kDvsOn;
-    state->down_tcp_bit_fin_action = kDvsOn;
-    line_t line                    = {0};
-    tcpbitchangetrickUpStreamPayload(flags, &line, &buf);
-    require(buf != NULL && sbufGetMutablePtr(buf)[33] == (TCP_SYN | TCP_ACK), "existing upstream flags did not apply");
-    tcpbitchangetrickDownStreamPayload(flags, &line, &buf);
-    require(buf != NULL && sbufGetMutablePtr(buf)[33] == (TCP_SYN | TCP_ACK | TCP_FIN),
-            "existing downstream flags did not apply");
-    require(oracleValid(sbufGetRawPtr(buf), sbufGetLength(buf), true), "existing flag edit broke carrier checksum");
-    faketcpheader_tstate_t receiver = reverseConfiguration(config);
-    require(faketcpheaderDecode(&receiver, buf), "custom flags prevented UDP restoration");
-    sbufDestroy(buf);
-    memoryFreeAligned(flags);
+    for (unsigned int flags = 0; flags <= UINT8_MAX; ++flags)
+    {
+        char json[128];
+        snprintf(
+            json, sizeof(json), "{\"local-ipv4\":\"192.0.2.10\",\"peer-ipv4\":\"198.51.100.10\",\"flags\":%u}", flags);
+        cJSON    *settings = cJSON_Parse(json);
+        node_t    node     = {.node_settings_json = settings};
+        tunnel_t *t        = faketcpheaderCreate(&node);
+        require(t != NULL, "valid TCP flags configuration rejected");
+        const faketcpheader_tstate_t *config = tunnelGetState(t);
+        sbuf_t                       *buf    = udpPacket(9, 0, kFakeTcpHeaderPadding, false);
+        require(faketcpheaderEncode(config, buf), "flag fixture encoding failed");
+        const uint8_t *packet = sbufGetRawPtr(buf);
+        require(packet[33] == flags, "configured TCP flags changed");
+        require(oracleValid(sbufGetRawPtr(buf), sbufGetLength(buf), true), "TCP flags broke carrier checksum");
+        faketcpheader_tstate_t receiver = reverseConfiguration(*config);
+        receiver.flags                  = (uint8_t) ~flags;
+        require(faketcpheaderDecode(&receiver, buf), "receive incorrectly required local flags template");
+        sbufDestroy(buf);
+        faketcpheaderDestroy(t, wwLifecycleStartupRollback());
+        cJSON_Delete(settings);
+    }
 }
-#endif
 
 int main(void)
 {
@@ -404,8 +406,6 @@ int main(void)
     testChecksumIntent();
     testConfiguration();
     testInnerPackets();
-#ifdef TEST_FAKE_TCP_FLAGS
-    testExistingFlags();
-#endif
+    testFlags();
     return 0;
 }
