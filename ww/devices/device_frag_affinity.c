@@ -38,6 +38,7 @@ struct device_frag_affinity_table_s
     wmutex_t                     lock;
     bool                         generation_open;
     bool                         trusted_ipv4_header;
+    device_flow_ported_set_t     ported;
     device_fragment_policy_t     policy;
     size_t                       retained_bytes;
     uint32_t                     staged_total;
@@ -209,12 +210,13 @@ static device_frag_account_result_t deviceFragAffinityAccount(device_frag_affini
     return kDeviceFragAccountOk;
 }
 
-static bool deviceFragAffinityHashAsWhole(uint8_t *packet, uint32_t length, uint64_t *out_hash, wid_t *out_wid)
+static bool deviceFragAffinityHashAsWhole(const device_frag_affinity_table_t *table, uint8_t *packet, uint32_t length,
+                                          uint64_t *out_hash, wid_t *out_wid)
 {
     const uint16_t saved = GET_BE16(packet + 6);
 
     PUT_BE16(packet + 6, 0);
-    const bool ok = deviceFlowAffinityHash(packet, length, out_hash);
+    const bool ok = deviceFlowAffinityHashWithPorts(packet, length, &table->ported, out_hash);
     PUT_BE16(packet + 6, saved);
     if (ok)
     {
@@ -313,6 +315,12 @@ void deviceFragAffinityEnableShared(device_frag_affinity_table_t *table, uint16_
     assert(table != NULL && table->retained_bytes == 0);
     table->shared         = true;
     table->shared_padding = padding;
+}
+
+void deviceFragAffinitySetPortedProtocols(device_frag_affinity_table_t *table, const device_flow_ported_set_t *ported)
+{
+    assert(table != NULL && ported != NULL && table->retained_bytes == 0);
+    table->ported = *ported;
 }
 
 void deviceFragAffinityTrustIpv4HeaderChecksum(device_frag_affinity_table_t *table)
@@ -426,7 +434,7 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
     wid_t    zero_wid  = 0;
     if (table->policy == kDeviceFragmentPreserve && view->offset == 0)
     {
-        if (! deviceFragAffinityHashAsWhole(sbufGetMutablePtr(buf), sbufGetLength(buf), &zero_hash, &zero_wid) ||
+        if (! deviceFragAffinityHashAsWhole(table, sbufGetMutablePtr(buf), sbufGetLength(buf), &zero_hash, &zero_wid) ||
             (entry->wid_known && entry->zero_flow_hash != zero_hash))
             goto poison;
     }

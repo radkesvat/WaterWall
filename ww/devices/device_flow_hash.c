@@ -7,6 +7,38 @@ enum
     kDeviceFlowAffinityIpv4OffsetMask    = 0x1FFF
 };
 
+bool deviceFlowPortedSetAdd(device_flow_ported_set_t *set, uint8_t protocol)
+{
+    assert(set != NULL && set->count <= kDeviceFlowPortedProtocolMax);
+    if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP)
+        return true;
+    for (unsigned i = 0; i < set->count; ++i)
+        if (set->protocols[i] == protocol)
+            return true;
+    if (set->count == kDeviceFlowPortedProtocolMax)
+        return false;
+    set->protocols[set->count++] = protocol;
+    if (set->count == 2 && set->protocols[0] > set->protocols[1])
+    {
+        const uint8_t swap = set->protocols[0];
+        set->protocols[0]  = set->protocols[1];
+        set->protocols[1]  = swap;
+    }
+    return true;
+}
+
+bool deviceFlowPortedSetContains(const device_flow_ported_set_t *set, uint8_t protocol)
+{
+    if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP)
+        return true;
+    if (set == NULL)
+        return false;
+    for (unsigned i = 0; i < set->count; ++i)
+        if (set->protocols[i] == protocol)
+            return true;
+    return false;
+}
+
 static uint64_t deviceFlowAffinityMix64(uint64_t value)
 {
     value ^= value >> 30U;
@@ -52,7 +84,8 @@ typedef struct device_flow_affinity_tuple_s
     uint8_t  proto;
 } device_flow_affinity_tuple_t;
 
-static bool deviceFlowAffinityParseIpv4(const uint8_t *packet, uint32_t length, device_flow_affinity_tuple_t *out)
+static bool deviceFlowAffinityParseIpv4(const uint8_t *packet, uint32_t length, const device_flow_ported_set_t *ported,
+                                        device_flow_affinity_tuple_t *out)
 {
     if (length < 20)
     {
@@ -95,7 +128,8 @@ static bool deviceFlowAffinityParseIpv4(const uint8_t *packet, uint32_t length, 
         return true;
     }
 
-    const bool has_ports = out->proto == 6 || out->proto == 17 || out->proto == 132;
+    const bool has_ports =
+        out->proto == 6 || out->proto == 17 || out->proto == 132 || deviceFlowPortedSetContains(ported, out->proto);
     if (has_ports && ip_total_len >= ip_header_len + 4U)
     {
         out->src_port = GET_BE16(packet + ip_header_len);
@@ -142,6 +176,12 @@ static bool deviceFlowAffinityParseIpv6(const uint8_t *packet, uint32_t length, 
 
 bool deviceFlowAffinityHash(const uint8_t *packet, uint32_t length, uint64_t *out_hash)
 {
+    return deviceFlowAffinityHashWithPorts(packet, length, NULL, out_hash);
+}
+
+bool deviceFlowAffinityHashWithPorts(const uint8_t *packet, uint32_t length, const device_flow_ported_set_t *ported,
+                                     uint64_t *out_hash)
+{
     if (packet == NULL || out_hash == NULL || length == 0)
     {
         return false;
@@ -159,7 +199,7 @@ bool deviceFlowAffinityHash(const uint8_t *packet, uint32_t length, uint64_t *ou
 
     if (version == 4)
     {
-        parsed = deviceFlowAffinityParseIpv4(packet, length, &tuple);
+        parsed = deviceFlowAffinityParseIpv4(packet, length, ported, &tuple);
     }
     else if (version == 6)
     {

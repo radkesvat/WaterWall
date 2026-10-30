@@ -1,5 +1,6 @@
 #pragma once
 #include "buffer_pool.h"
+#include "devices/device_flow_hash.h"
 #include "devices/device_fragment_policy.h"
 #include "worker.h"
 
@@ -36,6 +37,9 @@ device_frag_affinity_table_t *deviceFragAffinityCreateShared(device_fragment_pol
 /* Exclusive startup: use detached allocations under the table mutex so several
  * worker readers can share the existing device-wide fragment limits. */
 void deviceFragAffinityEnableShared(device_frag_affinity_table_t *table, uint16_t padding);
+/* Only while the table is empty. A preserved fragment zero is hashed as the whole datagram; the set names
+ * the protocols whose ports that hash reads, so it agrees with the reader's complete packets. */
+void deviceFragAffinitySetPortedProtocols(device_frag_affinity_table_t *table, const device_flow_ported_set_t *ported);
 /* Only before publishing a fresh table to its reader. Trust is fixed for its
  * lifetime; fragment shape/bounds and reconstructed header sums remain intact. */
 void deviceFragAffinityTrustIpv4HeaderChecksum(device_frag_affinity_table_t *table);

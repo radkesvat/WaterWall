@@ -1725,6 +1725,23 @@ static void testBoundedAffinityDispatch(test_env_t *env)
     }
 }
 
+static void testPortedProtocolsAreHeldBySession(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t           probe   = {0};
+    device_reader_session_t *session = createSession(env, &probe, 1);
+    require(session->ported.count == 0 && ! deviceFlowPortedSetContains(&session->ported, 50),
+            "a fresh session must steer native TCP/UDP only");
+    device_flow_ported_set_t ported = {0};
+    require(deviceFlowPortedSetAdd(&ported, 50) && deviceFlowPortedSetAdd(&ported, 253), "ported set refused");
+    deviceReaderSessionSetPortedProtocols(session, &ported);
+    require(session->ported.count == 2 && deviceFlowPortedSetContains(&session->ported, 50) &&
+                deviceFlowPortedSetContains(&session->ported, 253) &&
+                ! deviceFlowPortedSetContains(&session->ported, 99),
+            "the session did not keep the protocols its device was given");
+    deviceReaderSessionUnref(session);
+}
+
 int main(void)
 {
     testCaseSet("device_reader_session_test");
@@ -1757,6 +1774,7 @@ int main(void)
     testReceiveBurstCapacityAndClosedGeneration(&env);
     testGenericPacketBatchParticipants(&env);
     testConcurrentProducerBudget(&env);
+    testPortedProtocolsAreHeldBySession(&env);
     envTeardown(&env);
     puts("device reader session tests passed");
     return 0;

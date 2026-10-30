@@ -287,6 +287,55 @@ static void testBounds(void)
     bufferpoolReuseBuffer(g_pool, result.completed);
     deviceFragAffinityDestroy(table);
 }
+static sbuf_t *makePortedFragmentZero(uint16_t identification, uint16_t source_port)
+{
+    sbuf_t  *zero   = makeFragment(identification, 0, true);
+    uint8_t *packet = sbufGetMutablePtr(zero);
+    packet[9]       = 50;
+    PUT_BE16(packet + 20, source_port);
+    writeIpv4Checksum(packet);
+    return zero;
+}
+
+static wid_t preservedZeroWorker(const device_flow_ported_set_t *ported, uint16_t source_port)
+{
+    device_frag_affinity_table_t *table = deviceFragAffinityCreate(g_pool, kDeviceFragmentPreserve);
+    if (ported != NULL)
+        deviceFragAffinitySetPortedProtocols(table, ported);
+    device_frag_affinity_result_t result;
+    sbuf_t                       *zero = makePortedFragmentZero(77, source_port);
+    require(offer(table, zero, &result, 100) == kDeviceFragAffinityDispatch, "ported fragment zero not dispatched");
+    const wid_t wid = result.wid;
+    bufferpoolReuseBuffer(g_pool, zero);
+    deviceFragAffinityDestroy(table);
+    return wid;
+}
+
+static void testPreservedFragmentZeroReadsDeclaredPorts(void)
+{
+    device_flow_ported_set_t ported = {0};
+    require(deviceFlowPortedSetAdd(&ported, 50), "ported protocol set refused a protocol");
+    unsigned differing = 0;
+    for (uint16_t port = 5000; port < 5032; ++port)
+    {
+        /* The whole datagram's hash, exactly as the reader hashes the complete packets of the same flow. */
+        sbuf_t *whole = makePortedFragmentZero(77, port);
+        PUT_BE16(sbufGetMutablePtr(whole) + 6, 0);
+        uint64_t with_ports = 0;
+        uint64_t native     = 0;
+        require(deviceFlowAffinityHashWithPorts(sbufGetRawPtr(whole), sbufGetLength(whole), &ported, &with_ports) &&
+                    deviceFlowAffinityHash(sbufGetRawPtr(whole), sbufGetLength(whole), &native),
+                "whole datagram not hashable");
+        bufferpoolReuseBuffer(g_pool, whole);
+        require(preservedZeroWorker(&ported, port) == (wid_t) (with_ports % getWorkersCount()),
+                "a preserved fragment zero ignored the declared ports");
+        require(preservedZeroWorker(NULL, port) == (wid_t) (native % getWorkersCount()),
+                "a table without the declaration must hash by address and protocol only");
+        differing += (with_ports % getWorkersCount()) != (native % getWorkersCount());
+    }
+    require(differing > 0, "the declared ports never changed a worker, so the check proves nothing");
+}
+
 static void testRaw(void)
 {
     device_frag_affinity_table_t *table = deviceFragAffinityCreate(g_pool, kDeviceFragmentPreserve);
@@ -531,6 +580,7 @@ int main(void)
     testRejectionAndRetirement();
     testBounds();
     testRaw();
+    testPreservedFragmentZeroReadsDeclaredPorts();
     testIsolationAndGrowthPeak();
     testSharedReadersAndGlobalBudget();
     testSharedRawResultsSurviveOtherReaders();
