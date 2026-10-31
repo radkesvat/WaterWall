@@ -64,6 +64,12 @@ if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
         "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
     set_tests_properties(waterwall.fake_tcp_header_raw_roundtrip PROPERTIES
       TIMEOUT 90 LABELS "integration;linux;privileged;capture;fake-tcp;network-isolated")
+    add_test(NAME waterwall.fake_tcp_header_raw_multiqueue_roundtrip
+      COMMAND "${BASH_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"
+        "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/fake_tcp_header_raw_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" --multi-queue)
+    set_tests_properties(waterwall.fake_tcp_header_raw_multiqueue_roundtrip PROPERTIES
+      TIMEOUT 90 LABELS "integration;linux;privileged;capture;fake-tcp;network-isolated")
     if(TARGET TunDevice)
       add_test(NAME waterwall.fake_tcp_header_tun_roundtrip
         COMMAND "${BASH_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"
