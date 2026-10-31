@@ -223,12 +223,80 @@ void capturedeviceApplySysctls(bool skip_sysctl)
     }
 }
 
+static void capturedeviceSerializeFilter(const struct sock_filter *program, unsigned int count,
+                                         char output[kCaptureLinuxProtocolFilterSize])
+{
+    assert(count * 32U + 8U <= kCaptureLinuxProtocolFilterSize);
+    size_t used = stringNPrintf(output, kCaptureLinuxProtocolFilterSize, "%u", count);
+    for (unsigned int i = 0; i < count; ++i)
+        used += stringNPrintf(output + used,
+                              kCaptureLinuxProtocolFilterSize - used,
+                              ",%u %u %u %u",
+                              (unsigned int) program[i].code,
+                              (unsigned int) program[i].jt,
+                              (unsigned int) program[i].jf,
+                              program[i].k);
+}
+
+static void capturedeviceBuildTcpPortFilter(const capture_protocol_filter_t *filter,
+                                            char                             output[kCaptureLinuxProtocolFilterSize])
+{
+    /* Port reads use the actual IPv4 IHL. Reject fragments, invalid geometry and
+     * truncated headers before reading TCP. Both capture and NOTRACK use this
+     * exact predicate; the no-port path retains its original fragment policy. */
+    struct sock_filter program[24] = {
+        BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 9),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, IPPROTO_TCP, 0, 0),
+        BPF_STMT(BPF_LD | BPF_H | BPF_ABS, 6),
+        BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K, 0x3fff, 0, 0),
+        BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 0),
+        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x45, 0, 0),
+        BPF_JUMP(BPF_JMP | BPF_JGT | BPF_K, 0x4f, 0, 0),
+        BPF_STMT(BPF_LDX | BPF_B | BPF_MSH, 0),
+        BPF_STMT(BPF_LD | BPF_H | BPF_ABS, 2),
+        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_X, 0, 0, 0),
+        BPF_STMT(BPF_ALU | BPF_SUB | BPF_X, 0),
+        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, TCP_HLEN, 0, 0),
+        BPF_STMT(BPF_LD | BPF_H | BPF_ABS, 2),
+        BPF_STMT(BPF_MISC | BPF_TAX, 0),
+        BPF_STMT(BPF_LD | BPF_W | BPF_LEN, 0),
+        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_X, 0, 0, 0),
+        BPF_STMT(BPF_LDX | BPF_B | BPF_MSH, 0),
+    };
+    unsigned int   count   = 17;
+    const uint16_t ports[] = {filter->tcp_source_port, filter->tcp_destination_port};
+    for (unsigned int i = 0; i < ARRAY_SIZE(ports); ++i)
+        if (ports[i] != 0)
+        {
+            program[count++] = (struct sock_filter) BPF_STMT(BPF_LD | BPF_H | BPF_IND, i * 2U);
+            program[count++] = (struct sock_filter) BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, ports[i], 0, 0);
+        }
+    program[count++] =
+        (struct sock_filter) BPF_STMT(BPF_RET | BPF_K, captureProtocolFilterExcludes(filter, IPPROTO_TCP) ? 0 : 1);
+    const unsigned int reject = count;
+    program[count++]          = (struct sock_filter) BPF_STMT(BPF_RET | BPF_K, 0);
+    for (unsigned int i = 0; i < reject; ++i)
+        if (BPF_CLASS(program[i].code) == BPF_JMP)
+        {
+            if (BPF_OP(program[i].code) == BPF_JSET || BPF_OP(program[i].code) == BPF_JGT)
+                program[i].jt = (uint8_t) (reject - i - 1);
+            else
+                program[i].jf = (uint8_t) (reject - i - 1);
+        }
+    capturedeviceSerializeFilter(program, count, output);
+}
+
 void captureLinuxBuildProtocolFilter(const capture_protocol_filter_t *filter,
                                      char                             output[kCaptureLinuxProtocolFilterSize])
 {
     output[0] = '\0';
     if (captureProtocolFilterIsEmpty(filter))
     {
+        return;
+    }
+    if (captureProtocolFilterHasTcpPorts(filter))
+    {
+        capturedeviceBuildTcpPortFilter(filter, output);
         return;
     }
 
@@ -266,17 +334,7 @@ void captureLinuxBuildProtocolFilter(const capture_protocol_filter_t *filter,
     program[at++] = (struct sock_filter) BPF_STMT(BPF_RET | BPF_A, 0);
     assert(at == kInstructionCount);
 
-    size_t used = stringNPrintf(output, kCaptureLinuxProtocolFilterSize, "%u", (unsigned int) kInstructionCount);
-    for (unsigned int i = 0; i < kInstructionCount; ++i)
-    {
-        used += stringNPrintf(output + used,
-                              kCaptureLinuxProtocolFilterSize - used,
-                              ",%u %u %u %u",
-                              (unsigned int) program[i].code,
-                              (unsigned int) program[i].jt,
-                              (unsigned int) program[i].jf,
-                              program[i].k);
-    }
+    capturedeviceSerializeFilter(program, kInstructionCount, output);
 }
 
 /* Callers reserve four extra argv entries per filter plus the NULL terminator. */

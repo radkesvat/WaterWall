@@ -1,4 +1,5 @@
 # Root/platform registrations, including standalone archive and Windows seams.
+include("${CMAKE_CURRENT_LIST_DIR}/fake-tcp-header.cmake")
 if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND CMAKE_SYSTEM_NAME MATCHES "^(FreeBSD|OpenBSD|NetBSD)$")
   waterwall_add_native_executable(tun_bsd_reader_test SUPPORT SOURCES tests/unittests/devices/tun_bsd_reader_test.c)
   target_include_directories(tun_bsd_reader_test PRIVATE "${PROJECT_SOURCE_DIR}/ww/devices/tun")

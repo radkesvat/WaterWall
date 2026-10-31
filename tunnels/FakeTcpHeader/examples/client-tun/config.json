@@ -1,0 +1,51 @@
+{
+  "name": "fake-tcp-tun-client",
+  "nodes": [
+    {
+      "name": "user-tun",
+      "type": "TunDevice",
+      "next": "fake-tcp-header",
+      "settings": {
+        "device-name": "wwfake0",
+        "device-ip": "10.90.0.1/24",
+        "device-mtu": 1460,
+        "gso": false,
+        "route-table": "off"
+      }
+    },
+    {
+      "name": "fake-tcp-header",
+      "type": "FakeTcpHeader",
+      "next": "raw",
+      "settings": {
+        "role": "client",
+        "protocol-number": 6,
+        "sequence": 12345,
+        "acknowledgment": 67890,
+        "window": 65535,
+        "local-ipv4": "192.0.2.10",
+        "peer-ipv4": "198.51.100.10",
+        "local-port": 40001,
+        "peer-port": 40000,
+        "mtu": 1500,
+        "flags": 24
+      }
+    },
+    {
+      "name": "raw",
+      "type": "RawSocket",
+      "settings": {
+        "capture-filter-mode": "source-ip",
+        "capture-ips": [
+          "198.51.100.10"
+        ],
+        "capture-protocols": [
+          6
+        ],
+        "fragment-policy": "reassemble",
+        "capture-tcp-source-port": 40000,
+        "capture-tcp-dest-port": 40001
+      }
+    }
+  ]
+}

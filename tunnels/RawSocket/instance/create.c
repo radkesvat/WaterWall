@@ -151,14 +151,18 @@ static bool rawsocketLoadCaptureRanges(rawsocket_tstate_t *state, const cJSON *s
 
 static bool rawsocketLoadProtocolFilter(capture_protocol_filter_t *filter, const cJSON *settings)
 {
-    const cJSON *protocols = cJSON_GetObjectItemCaseSensitive(settings, "dont-capture-protocols");
-    if (protocols == NULL)
+    const cJSON *allow = cJSON_GetObjectItemCaseSensitive(settings, "capture-protocols");
+    const cJSON *deny  = cJSON_GetObjectItemCaseSensitive(settings, "dont-capture-protocols");
+    if (allow != NULL && deny != NULL)
     {
-        return true;
+        LOGF("JSON Error: RawSocket->settings : capture-protocols and dont-capture-protocols are mutually exclusive");
+        return false;
     }
-    if (! cJSON_IsArray(protocols))
+    const char  *key       = allow != NULL ? "capture-protocols" : "dont-capture-protocols";
+    const cJSON *protocols = allow != NULL ? allow : deny;
+    if (protocols != NULL && ! cJSON_IsArray(protocols))
     {
-        LOGF("JSON Error: RawSocket->settings->dont-capture-protocols : expected an array of integers from 0 to 255");
+        LOGF("JSON Error: RawSocket->settings->%s : expected an array of integers from 0 to 255", key);
         return false;
     }
     const cJSON *protocol;
@@ -167,11 +171,36 @@ static bool rawsocketLoadProtocolFilter(capture_protocol_filter_t *filter, const
         if (! cJSON_IsNumber(protocol) || protocol->valuedouble < 0 || protocol->valuedouble > 255 ||
             protocol->valuedouble != protocol->valueint)
         {
-            LOGF("JSON Error: RawSocket->settings->dont-capture-protocols : each entry must be an integer from 0 to "
-                 "255");
+            LOGF("JSON Error: RawSocket->settings->%s : each entry must be an integer from 0 to 255", key);
             return false;
         }
         captureProtocolFilterExclude(filter, (uint8_t) protocol->valueint);
+    }
+    if (allow != NULL)
+    {
+        /* Compile the allowlist once into the existing kernel predicate. This
+         * also applies to NOTRACK; no packet crosses userspace just to reject it. */
+        for (size_t i = 0; i < kCaptureProtocolWordCount; ++i)
+            filter->excluded[i] = ~filter->excluded[i];
+    }
+    const char *const port_keys[]   = {"capture-tcp-source-port", "capture-tcp-dest-port"};
+    uint16_t *const   port_values[] = {&filter->tcp_source_port, &filter->tcp_destination_port};
+    for (size_t i = 0; i < ARRAY_SIZE(port_keys); ++i)
+    {
+        int64_t                   value;
+        const json_value_status_t status = jsonGetObjectIntegerInRange(settings, port_keys[i], 1, UINT16_MAX, &value);
+        if (status == kJsonValueInvalid)
+        {
+            LOGF("JSON Error: RawSocket->settings->%s : expected an integer from 1 to 65535", port_keys[i]);
+            return false;
+        }
+        if (status == kJsonValuePresent)
+            *port_values[i] = (uint16_t) value;
+    }
+    if (captureProtocolFilterHasTcpPorts(filter) && captureProtocolFilterExcludes(filter, IPPROTO_TCP))
+    {
+        LOGF("JSON Error: RawSocket TCP port filters require protocol 6 to be allowed");
+        return false;
     }
     return true;
 }
