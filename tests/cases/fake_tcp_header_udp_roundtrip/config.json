@@ -69,36 +69,45 @@
     },
     {
       "name": "fake-client",
-      "type": "FakeTcpHeader",
-      "next": "fake-server",
+      "type": "FakeTcpHeaderClient",
+      "next": "carrier-addresses",
       "settings": {
-        "role": "client",
-        "protocol-number": 6,
         "sequence": 12345,
         "acknowledgment": 67890,
-        "options": "01010101",
-        "local-ipv4": "192.0.2.10",
-        "peer-ipv4": "198.51.100.10",
-        "local-port": 40001,
-        "peer-port": 40000,
-        "flags": 24
+        "options": "01010101"
+      }
+    },
+    {
+      "name": "carrier-addresses",
+      "type": "IpOverrider",
+      "next": "fake-server",
+      "settings": {
+        "up": {
+          "source-ip": {
+            "ipv4": "192.0.2.10"
+          },
+          "dest-ip": {
+            "ipv4": "198.51.100.10"
+          }
+        },
+        "down": {
+          "source-ip": {
+            "ipv4": "198.51.100.10"
+          },
+          "dest-ip": {
+            "ipv4": "192.0.2.10"
+          }
+        }
       }
     },
     {
       "name": "fake-server",
-      "type": "FakeTcpHeader",
+      "type": "FakeTcpHeaderServer",
       "next": "packets-to-connection",
       "settings": {
-        "role": "server",
-        "protocol-number": 6,
         "sequence": 67890,
         "acknowledgment": 12345,
-        "options": "0101010101010101",
-        "local-ipv4": "198.51.100.10",
-        "peer-ipv4": "192.0.2.10",
-        "local-port": 40000,
-        "peer-port": 40001,
-        "flags": 18
+        "options": "0101010101010101"
       }
     },
     {

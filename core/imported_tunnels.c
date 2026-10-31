@@ -100,8 +100,12 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "IpManipulator/interface.h"
 #endif
 
-#ifdef INCLUDE_FAKE_TCP_HEADER
-#include "FakeTcpHeader/interface.h"
+#ifdef INCLUDE_FAKE_TCP_HEADER_CLIENT
+#include "FakeTcpHeaderClient/interface.h"
+#endif
+
+#ifdef INCLUDE_FAKE_TCP_HEADER_SERVER
+#include "FakeTcpHeaderServer/interface.h"
 #endif
 
 #ifdef INCLUDE_PING_CLIENT
@@ -477,8 +481,12 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
     USING(IpManipulator);
 #endif
 
-#ifdef INCLUDE_FAKE_TCP_HEADER
-    USING(FakeTcpHeader);
+#ifdef INCLUDE_FAKE_TCP_HEADER_CLIENT
+    USING(FakeTcpHeaderClient);
+#endif
+
+#ifdef INCLUDE_FAKE_TCP_HEADER_SERVER
+    USING(FakeTcpHeaderServer);
 #endif
 
 #ifdef INCLUDE_PING_CLIENT

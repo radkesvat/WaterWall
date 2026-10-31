@@ -34,7 +34,8 @@ def checksum(data):
 
 def prepare(directory, role, listener_port, target_port, tun):
     example_role = "client-tun" if tun and role == "client" else role
-    examples = Path(__file__).resolve().parent.parent / "tunnels" / "FakeTcpHeader" / "examples" / example_role
+    node_directory = "FakeTcpHeaderClient" if role == "client" else "FakeTcpHeaderServer"
+    examples = Path(__file__).resolve().parent.parent / "tunnels" / node_directory / "examples" / example_role
     config = json.loads((examples / "config.json").read_text())
     core = json.loads((examples / "core.json").read_text())
     core["misc"].update(workers=2, mtu=1456)
@@ -45,7 +46,7 @@ def prepare(directory, role, listener_port, target_port, tun):
         if node["type"] == "RawSocket":
             settings.update({"capture-device-name": "fake-tcp-" + role, "skip-sysctl": True,
                              "multi-queue": False})
-        elif node["type"] == "FakeTcpHeader":
+        elif node["type"] in ("FakeTcpHeaderClient", "FakeTcpHeaderServer"):
             settings["options"] = "01010101"
         elif node["type"] == "ConnectionToPackets":
             settings["mtu"] = 1456

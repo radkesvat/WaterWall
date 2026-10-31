@@ -207,12 +207,11 @@
     add_waterwall_unit_test(waterwall.fake_tcp_header_wire_unit fake_tcp_header_wire_test "unit;fake-tcp;wire")
   endif()
 
-  if(TARGET FakeTcpHeader)
-    waterwall_add_native_executable(fake_tcp_header_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/fake_tcp_header/fake_tcp_header_test.c)
-    target_link_libraries(fake_tcp_header_test PRIVATE FakeTcpHeader ww)
-    set_target_properties(fake_tcp_header_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
-    add_dependencies(waterwall_unit_tests fake_tcp_header_test)
-    add_waterwall_unit_test(waterwall.fake_tcp_header_unit fake_tcp_header_test "unit;tunnels;fake-tcp;udp;packet;configuration")
+  if(TARGET FakeTcpHeaderClient AND TARGET FakeTcpHeaderServer)
+    waterwall_add_native_executable(fake_tcp_header_nodes_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/fake_tcp_header/fake_tcp_header_nodes_test.c)
+    target_link_libraries(fake_tcp_header_nodes_test PRIVATE FakeTcpHeaderClient FakeTcpHeaderServer FakeTcpHeaderCommon ww)
+    add_dependencies(waterwall_unit_tests fake_tcp_header_nodes_test)
+    add_waterwall_unit_test(waterwall.fake_tcp_header_nodes_unit fake_tcp_header_nodes_test "unit;tunnels;fake-tcp;configuration")
   endif()
 
   waterwall_add_native_executable(wfrand_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/base/wfrand_test.c)
