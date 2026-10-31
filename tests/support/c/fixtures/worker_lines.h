@@ -84,6 +84,8 @@ static void twfWorkerEnvSetupWithBufferSizes(twf_worker_env_t *env, uint32_t lar
 
     env->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, env->pool, 0);
     twfRequire(env->loop != NULL, "failed to create the test event loop");
+    /* Scenarios drive this loop directly instead of entering wloopRun(). */
+    atomicStoreExplicit(&env->loop->status, WLOOP_STATUS_RUNNING, memory_order_release);
 
     env->loop_shortcut[0] = env->loop;
     GSTATE.shortcut_loops = env->loop_shortcut;

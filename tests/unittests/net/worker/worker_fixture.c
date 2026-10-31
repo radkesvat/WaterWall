@@ -43,6 +43,8 @@ void initTestGlobalState(void)
     init_data.dns_logger_data.log_level      = log_off;
 
     require(wwStartupSucceeded(createGlobalState(init_data)), "failed to create worker-context fixture");
+    /* This thread pumps worker 0 directly instead of entering wloopRun(). */
+    atomicStoreExplicit(&getWorkerLoop(0)->status, WLOOP_STATUS_RUNNING, memory_order_release);
     require(getWorkersCount() == init_data.workers_count, "runtime did not preserve the configured worker count");
 #if WW_HAVE_SPLICE
     require(sbufSplicePoolInitialize(UINT64_C(32) * SPLICE_PAYLOAD_LIMIT, SPLICE_PAYLOAD_LIMIT, 32, 0),

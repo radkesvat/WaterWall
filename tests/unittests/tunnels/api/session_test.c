@@ -1496,6 +1496,8 @@ int main(void)
     init.network_logger_data.log_level  = off;
     init.dns_logger_data.log_level      = off;
     require(wwStartupSucceeded(createGlobalState(init)), "runtime init");
+    /* pump() drives worker 0 directly instead of entering wloopRun(). */
+    atomicStoreExplicit(&getWorkerLoop(0)->status, WLOOP_STATUS_RUNNING, memory_order_release);
     timer_baseline = getWorkerLoop(0)->ntimers;
     TEST_RUN_CASE(framing);
     TEST_RUN_CASE(receivedAllocation);

@@ -438,9 +438,9 @@ int wloopProcessEvents(wloop_t *loop, int timeout_ms)
             uint64_t min_timeout = TIMER_ENTRY(loop->realtimers.root)->next_timeout - wloopNowUS(loop);
             blocktime_us         = min(blocktime_us, (int64_t) min_timeout);
         }
-        if (blocktime_us < 0)
-            goto process_timers;
-        blocktime_ms = (int32_t) ((blocktime_us / 1000) + 1);
+        // Due timers must still give I/O and worker wakes a nonblocking poll.
+        // Keep zero separate from the positive-duration rounding below.
+        blocktime_ms = blocktime_us <= 0 ? 0 : (int32_t) ((blocktime_us / 1000) + 1);
         blocktime_ms = min(blocktime_ms, timeout_ms);
     }
 
@@ -463,7 +463,6 @@ int wloopProcessEvents(wloop_t *loop, int timeout_ms)
         return 0;
     }
 
-process_timers:
     if (loop->ntimers && LIKELY(wloopNormalDispatchAllowed(loop)))
     {
         ntimers = wloopProcessTimers(loop);

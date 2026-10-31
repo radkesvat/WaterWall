@@ -115,6 +115,8 @@ static void initTestGlobalState(void)
     init_data.dns_logger_data.log_level      = log_off;
 
     require(wwStartupSucceeded(createGlobalState(init_data)), "failed to create line-task fixture global state");
+    /* This thread pumps worker 0 directly instead of entering wloopRun(). */
+    atomicStoreExplicit(&getWorkerLoop(0)->status, WLOOP_STATUS_RUNNING, memory_order_release);
 }
 
 static void shutdownTestGlobalState(void)

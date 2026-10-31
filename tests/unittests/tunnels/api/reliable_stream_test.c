@@ -207,6 +207,8 @@ int main(void)
     init.network_logger_data.log_level  = log_off;
     init.dns_logger_data.log_level      = log_off;
     require(wwStartupSucceeded(createGlobalState(init)), "Real worker runtime construction failed");
+    /* The wire driver pumps worker 0 directly instead of entering wloopRun(). */
+    atomicStoreExplicit(&getWorkerLoop(0)->status, WLOOP_STATUS_RUNNING, memory_order_release);
     require(nodeApiRegister(&target, &operation, 1), "Private operation registration failed");
     node_t nodes[5]             = {{.type = stringDuplicate("PrivateSource"), .flags = kNodeFlagChainHead},
                                    nodeTcpOverUdpClientGet(),
