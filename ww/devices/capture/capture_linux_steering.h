@@ -22,3 +22,8 @@ void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index, 
 
 /* Match complete non-TCP/UDP IPv4 for the independent statistic random cascade. */
 void captureLinuxBuildOpaqueFilter(char output[kCaptureLinuxSteeringFilterSize]);
+
+/* Match whole IPv4 TCP with the given ports; zero leaves that port unrestricted
+ * and at least one port is required. A separate match from protocol exclusions. */
+void captureLinuxBuildTcpPortFilter(uint16_t source_port, uint16_t destination_port,
+                                    char output[kCaptureLinuxSteeringFilterSize]);

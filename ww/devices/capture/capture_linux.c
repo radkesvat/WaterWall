@@ -409,6 +409,9 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     cdev->userdata            = userdata;
     atomic_init(&cdev->lifecycle, kCaptureLifecycleDown);
     captureLinuxBuildProtocolFilter(protocol_filter, cdev->protocol_filter);
+    if (captureProtocolFilterHasTcpPorts(protocol_filter))
+        captureLinuxBuildTcpPortFilter(
+            protocol_filter->tcp_source_port, protocol_filter->tcp_destination_port, cdev->tcp_port_filter);
     cdev->reader_session =
         deviceReaderSessionCreate(RAM_PROFILE * 2, 1, cdev, captureDeliverPacket, pool, fragment_policy);
     if (cdev->reader_session == NULL)

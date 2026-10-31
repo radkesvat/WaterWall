@@ -223,80 +223,12 @@ void capturedeviceApplySysctls(bool skip_sysctl)
     }
 }
 
-static void capturedeviceSerializeFilter(const struct sock_filter *program, unsigned int count,
-                                         char output[kCaptureLinuxProtocolFilterSize])
-{
-    assert(count * 32U + 8U <= kCaptureLinuxProtocolFilterSize);
-    size_t used = stringNPrintf(output, kCaptureLinuxProtocolFilterSize, "%u", count);
-    for (unsigned int i = 0; i < count; ++i)
-        used += stringNPrintf(output + used,
-                              kCaptureLinuxProtocolFilterSize - used,
-                              ",%u %u %u %u",
-                              (unsigned int) program[i].code,
-                              (unsigned int) program[i].jt,
-                              (unsigned int) program[i].jf,
-                              program[i].k);
-}
-
-static void capturedeviceBuildTcpPortFilter(const capture_protocol_filter_t *filter,
-                                            char                             output[kCaptureLinuxProtocolFilterSize])
-{
-    /* Port reads use the actual IPv4 IHL. Reject fragments, invalid geometry and
-     * truncated headers before reading TCP. Both capture and NOTRACK use this
-     * exact predicate; the no-port path retains its original fragment policy. */
-    struct sock_filter program[24] = {
-        BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 9),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, IPPROTO_TCP, 0, 0),
-        BPF_STMT(BPF_LD | BPF_H | BPF_ABS, 6),
-        BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K, 0x3fff, 0, 0),
-        BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 0),
-        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x45, 0, 0),
-        BPF_JUMP(BPF_JMP | BPF_JGT | BPF_K, 0x4f, 0, 0),
-        BPF_STMT(BPF_LDX | BPF_B | BPF_MSH, 0),
-        BPF_STMT(BPF_LD | BPF_H | BPF_ABS, 2),
-        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_X, 0, 0, 0),
-        BPF_STMT(BPF_ALU | BPF_SUB | BPF_X, 0),
-        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, TCP_HLEN, 0, 0),
-        BPF_STMT(BPF_LD | BPF_H | BPF_ABS, 2),
-        BPF_STMT(BPF_MISC | BPF_TAX, 0),
-        BPF_STMT(BPF_LD | BPF_W | BPF_LEN, 0),
-        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_X, 0, 0, 0),
-        BPF_STMT(BPF_LDX | BPF_B | BPF_MSH, 0),
-    };
-    unsigned int   count   = 17;
-    const uint16_t ports[] = {filter->tcp_source_port, filter->tcp_destination_port};
-    for (unsigned int i = 0; i < ARRAY_SIZE(ports); ++i)
-        if (ports[i] != 0)
-        {
-            program[count++] = (struct sock_filter) BPF_STMT(BPF_LD | BPF_H | BPF_IND, i * 2U);
-            program[count++] = (struct sock_filter) BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, ports[i], 0, 0);
-        }
-    program[count++] =
-        (struct sock_filter) BPF_STMT(BPF_RET | BPF_K, captureProtocolFilterExcludes(filter, IPPROTO_TCP) ? 0 : 1);
-    const unsigned int reject = count;
-    program[count++]          = (struct sock_filter) BPF_STMT(BPF_RET | BPF_K, 0);
-    for (unsigned int i = 0; i < reject; ++i)
-        if (BPF_CLASS(program[i].code) == BPF_JMP)
-        {
-            if (BPF_OP(program[i].code) == BPF_JSET || BPF_OP(program[i].code) == BPF_JGT)
-                program[i].jt = (uint8_t) (reject - i - 1);
-            else
-                program[i].jf = (uint8_t) (reject - i - 1);
-        }
-    capturedeviceSerializeFilter(program, count, output);
-}
-
 void captureLinuxBuildProtocolFilter(const capture_protocol_filter_t *filter,
                                      char                             output[kCaptureLinuxProtocolFilterSize])
 {
     output[0] = '\0';
     if (captureProtocolFilterIsEmpty(filter))
     {
-        return;
-    }
-    if (captureProtocolFilterHasTcpPorts(filter))
-    {
-        capturedeviceBuildTcpPortFilter(filter, output);
         return;
     }
 
@@ -334,11 +266,21 @@ void captureLinuxBuildProtocolFilter(const capture_protocol_filter_t *filter,
     program[at++] = (struct sock_filter) BPF_STMT(BPF_RET | BPF_A, 0);
     assert(at == kInstructionCount);
 
-    capturedeviceSerializeFilter(program, kInstructionCount, output);
+    size_t used = stringNPrintf(output, kCaptureLinuxProtocolFilterSize, "%u", (unsigned int) kInstructionCount);
+    for (unsigned int i = 0; i < kInstructionCount; ++i)
+    {
+        used += stringNPrintf(output + used,
+                              kCaptureLinuxProtocolFilterSize - used,
+                              ",%u %u %u %u",
+                              (unsigned int) program[i].code,
+                              (unsigned int) program[i].jt,
+                              (unsigned int) program[i].jf,
+                              program[i].k);
+    }
 }
 
 /* Callers reserve four extra argv entries per filter plus the NULL terminator. */
-static void capturedeviceAppendProtocolFilter(const char **argv, const char *protocol_filter)
+static void capturedeviceAppendProtocolFilter(const char **argv, size_t capacity, const char *protocol_filter)
 {
     if (protocol_filter[0] == '\0')
     {
@@ -349,6 +291,8 @@ static void capturedeviceAppendProtocolFilter(const char **argv, const char *pro
     {
         ++count;
     }
+    assert(count + 5 <= capacity);
+    discard capacity;
     argv[count++] = "-m";
     argv[count++] = "bpf";
     argv[count++] = "--bytecode";
@@ -358,7 +302,7 @@ static void capturedeviceAppendProtocolFilter(const char **argv, const char *pro
 
 static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithContext(
     capture_device_t *cdev, const char *operation, const char *cidr, uint32_t queue_number, const char *rule_comment,
-    const char *protocol_filter, const char *steering_filter, unsigned remaining_queues)
+    const char *protocol_filter, const char *tcp_port_filter, const char *steering_filter, unsigned remaining_queues)
 {
     char queue_number_arg[16];
     stringNPrintf(queue_number_arg, sizeof(queue_number_arg), "%u", queue_number);
@@ -366,9 +310,9 @@ static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithConte
     char lock_wait_arg[16];
     stringNPrintf(lock_wait_arg, sizeof(lock_wait_arg), "%d", kCaptureIptablesLockWaitSeconds);
 
-    /* Sixteen base arguments, two four-argument BPF matches, six statistic
+    /* Sixteen base arguments, three four-argument BPF matches, six statistic
      * arguments and the terminating NULL. */
-    const char *argv[31] = {"iptables",
+    const char *argv[35] = {"iptables",
                             "-w",
                             lock_wait_arg,
                             operation,
@@ -385,8 +329,9 @@ static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithConte
                             queue_number_arg,
                             "--queue-bypass",
                             NULL};
-    capturedeviceAppendProtocolFilter(argv, protocol_filter);
-    capturedeviceAppendProtocolFilter(argv, steering_filter);
+    capturedeviceAppendProtocolFilter(argv, ARRAY_SIZE(argv), protocol_filter);
+    capturedeviceAppendProtocolFilter(argv, ARRAY_SIZE(argv), tcp_port_filter);
+    capturedeviceAppendProtocolFilter(argv, ARRAY_SIZE(argv), steering_filter);
     char probability_arg[16];
     if (remaining_queues > 1)
     {
@@ -397,6 +342,7 @@ static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithConte
         size_t count = 0;
         while (argv[count] != NULL)
             ++count;
+        assert(count + 7 <= ARRAY_SIZE(argv));
         argv[count++] = "-m";
         argv[count++] = "statistic";
         argv[count++] = "--mode";
@@ -413,14 +359,12 @@ capturedevice_command_status_t capturedeviceRunIptablesQueueRule(const char *ope
                                                                  const char *protocol_filter)
 {
     return capturedeviceRunIptablesQueueRuleWithContext(
-        NULL, operation, cidr, queue_number, rule_comment, protocol_filter, "", 0);
+        NULL, operation, cidr, queue_number, rule_comment, protocol_filter, "", "", 0);
 }
 
-static capturedevice_command_status_t capturedeviceRunIptablesNotrackRuleWithContext(capture_device_t *cdev,
-                                                                                     const char       *operation,
-                                                                                     const char       *cidr,
-                                                                                     const char       *rule_comment,
-                                                                                     const char       *protocol_filter)
+static capturedevice_command_status_t capturedeviceRunIptablesNotrackRuleWithContext(
+    capture_device_t *cdev, const char *operation, const char *cidr, const char *rule_comment,
+    const char *protocol_filter, const char *tcp_port_filter)
 {
     char lock_wait_arg[16];
     stringNPrintf(lock_wait_arg, sizeof(lock_wait_arg), "%d", kCaptureIptablesLockWaitSeconds);
@@ -428,10 +372,12 @@ static capturedevice_command_status_t capturedeviceRunIptablesNotrackRuleWithCon
     // INPUT captures local delivery. Do not exempt transit traffic from
     // conntrack merely because it shares a captured source range. Keep the
     // ordinary raw priority: fragment reassembly still precedes this rule.
-    const char *argv[25] = {"iptables", "-w",        lock_wait_arg, "-t",       "raw",        operation,   "PREROUTING",
+    /* Twenty base arguments, two four-argument BPF matches and the terminating NULL. */
+    const char *argv[29] = {"iptables", "-w",        lock_wait_arg, "-t",       "raw",        operation,   "PREROUTING",
                             "-s",       cidr,        "-m",          "addrtype", "--dst-type", "LOCAL",     "-m",
                             "comment",  "--comment", rule_comment,  "-j",       "CT",         "--notrack", NULL};
-    capturedeviceAppendProtocolFilter(argv, protocol_filter);
+    capturedeviceAppendProtocolFilter(argv, ARRAY_SIZE(argv), protocol_filter);
+    capturedeviceAppendProtocolFilter(argv, ARRAY_SIZE(argv), tcp_port_filter);
     return capturedeviceRunCommand(cdev, "iptables", argv);
 }
 
@@ -439,7 +385,7 @@ capturedevice_command_status_t capturedeviceRunIptablesNotrackRule(const char *o
                                                                    const char *rule_comment,
                                                                    const char *protocol_filter)
 {
-    return capturedeviceRunIptablesNotrackRuleWithContext(NULL, operation, cidr, rule_comment, protocol_filter);
+    return capturedeviceRunIptablesNotrackRuleWithContext(NULL, operation, cidr, rule_comment, protocol_filter, "");
 }
 
 static capturedevice_command_status_t capturedeviceReadIptablesRules(capture_device_t *cdev, bool notrack, char **rules)
@@ -703,7 +649,8 @@ static capturedevice_command_status_t capturedeviceRunOwnedRule(capture_device_t
     const char *cidr = capturedeviceRuleCidr(cdev, index, kind);
     if (kind == kCaptureOwnedNotrack)
     {
-        return capturedeviceRunIptablesNotrackRuleWithContext(cdev, operation, cidr, comment, cdev->protocol_filter);
+        return capturedeviceRunIptablesNotrackRuleWithContext(
+            cdev, operation, cidr, comment, cdev->protocol_filter, cdev->tcp_port_filter);
     }
     const struct capture_linux_queue_s *queue = &cdev->queues[index % cdev->queue_count];
     char                                opaque_filter[kCaptureLinuxSteeringFilterSize];
@@ -719,6 +666,7 @@ static capturedevice_command_status_t capturedeviceRunOwnedRule(capture_device_t
         queue->number,
         comment,
         cdev->protocol_filter,
+        cdev->tcp_port_filter,
         kind == kCaptureOwnedOpaque ? opaque_filter : queue->steering_filter,
         kind == kCaptureOwnedOpaque ? (unsigned) (index % cdev->queue_count) + 1 : 0);
 }

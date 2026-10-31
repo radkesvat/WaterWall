@@ -5,6 +5,38 @@
 #include <linux/netfilter/xt_bpf.h>
 #include <stdio.h>
 
+/* Builders name their array `program`, cursor `at` and bound `kMaximumInstructions`. */
+#define EMIT(code, value)                                                                                              \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        assert(at < kMaximumInstructions);                                                                             \
+        program[at++] = (struct sock_filter) BPF_STMT(code, value);                                                    \
+    } while (0)
+#define JUMP(code, value, yes, no)                                                                                     \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        assert(at < kMaximumInstructions);                                                                             \
+        program[at++] = (struct sock_filter) BPF_JUMP(code, value, yes, no);                                           \
+    } while (0)
+
+static void captureLinuxSerializeFilter(const struct sock_filter *program, unsigned count,
+                                        char output[kCaptureLinuxSteeringFilterSize])
+{
+    size_t used = (size_t) snprintf(output, kCaptureLinuxSteeringFilterSize, "%u", count);
+    for (unsigned i = 0; i < count; ++i)
+    {
+        const int written = snprintf(output + used,
+                                     kCaptureLinuxSteeringFilterSize - used,
+                                     ",%u %u %u %u",
+                                     program[i].code,
+                                     program[i].jt,
+                                     program[i].jf,
+                                     program[i].k);
+        assert(written > 0 && (size_t) written < kCaptureLinuxSteeringFilterSize - used);
+        used += (size_t) written;
+    }
+}
+
 void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index, device_opaque_flow_mode_t mode,
                                      char output[kCaptureLinuxSteeringFilterSize])
 {
@@ -24,20 +56,8 @@ void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index, 
                    "decimal cBPF instructions must fit their fixed text buffer");
     struct sock_filter program[kMaximumInstructions];
     unsigned           at = 0;
-#define EMIT(code, value)                                                                                              \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        assert(at < kMaximumInstructions);                                                                             \
-        program[at++] = (struct sock_filter) BPF_STMT(code, value);                                                    \
-    } while (0)
-#define JUMP(code, value, yes, no)                                                                                     \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        assert(at < kMaximumInstructions);                                                                             \
-        program[at++] = (struct sock_filter) BPF_JUMP(code, value, yes, no);                                           \
-    } while (0)
-    unsigned invalid_jumps[5];
-    unsigned invalid_count = 0;
+    unsigned           invalid_jumps[5];
+    unsigned           invalid_count = 0;
     EMIT(BPF_LD | BPF_W | BPF_LEN, 0);
     invalid_jumps[invalid_count++] = at;
     JUMP(BPF_JMP | BPF_JGE | BPF_K, 20, 0, 0);
@@ -128,8 +148,6 @@ void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index, 
     const unsigned miss = at;
     EMIT(BPF_RET | BPF_K, 0);
     const unsigned invalid = lane_index == 0 ? match : miss;
-#undef EMIT
-#undef JUMP
     for (unsigned i = 0; i < invalid_count; ++i)
         program[invalid_jumps[i]].jf = (uint8_t) (invalid - invalid_jumps[i] - 1);
     program[bad_version].jt   = (uint8_t) (invalid - bad_version - 1);
@@ -141,19 +159,7 @@ void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index, 
         program[opaque].jf = (uint8_t) ((mode == kDeviceOpaqueFlowPeer ? fallback : miss) - opaque - 1);
     }
     assert(at == (mode == kDeviceOpaqueFlowPrefix ? 61U : 64U));
-    size_t used = (size_t) snprintf(output, kCaptureLinuxSteeringFilterSize, "%u", at);
-    for (unsigned i = 0; i < at; ++i)
-    {
-        const int written = snprintf(output + used,
-                                     kCaptureLinuxSteeringFilterSize - used,
-                                     ",%u %u %u %u",
-                                     program[i].code,
-                                     program[i].jt,
-                                     program[i].jf,
-                                     program[i].k);
-        assert(written > 0 && (size_t) written < kCaptureLinuxSteeringFilterSize - used);
-        used += (size_t) written;
-    }
+    captureLinuxSerializeFilter(program, at, output);
 }
 
 void captureLinuxBuildOpaqueFilter(char output[kCaptureLinuxSteeringFilterSize])
@@ -192,4 +198,66 @@ void captureLinuxBuildOpaqueFilter(char output[kCaptureLinuxSteeringFilterSize])
                                   program[i].jt,
                                   program[i].jf,
                                   program[i].k);
+}
+
+void captureLinuxBuildTcpPortFilter(uint16_t source_port, uint16_t destination_port,
+                                    char output[kCaptureLinuxSteeringFilterSize])
+{
+    assert(source_port != 0 || destination_port != 0);
+    assert(output != NULL);
+    /* Read ports only from whole IPv4 TCP: unfragmented, IHL 5..15, a total
+     * length covering the IPv4 header plus 20 TCP bytes and present in the skb.
+     * Ports follow the actual IHL; every failed check shares one reject. */
+    enum
+    {
+        kMaximumInstructions = 23
+    };
+    _Static_assert(kMaximumInstructions <= XT_BPF_MAX_NUM_INSTR, "TCP port filter must fit xt_bpf");
+    _Static_assert(kMaximumInstructions * 32 + 8 <= kCaptureLinuxSteeringFilterSize,
+                   "decimal cBPF instructions must fit their fixed text buffer");
+    struct sock_filter program[kMaximumInstructions];
+    unsigned           at = 0;
+    unsigned           reject_jumps[7];
+    unsigned           reject_count = 0;
+    EMIT(BPF_LD | BPF_B | BPF_ABS, 9);
+    reject_jumps[reject_count++] = at;
+    JUMP(BPF_JMP | BPF_JEQ | BPF_K, 6, 0, 0);
+    EMIT(BPF_LD | BPF_H | BPF_ABS, 6);
+    const unsigned fragment = at;
+    JUMP(BPF_JMP | BPF_JSET | BPF_K, 0x3fff, 0, 0);
+    EMIT(BPF_LD | BPF_B | BPF_ABS, 0);
+    reject_jumps[reject_count++] = at;
+    JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x45, 0, 0);
+    const unsigned bad_version = at;
+    JUMP(BPF_JMP | BPF_JGT | BPF_K, 0x4f, 0, 0);
+    EMIT(BPF_LDX | BPF_B | BPF_MSH, 0);
+    EMIT(BPF_LD | BPF_H | BPF_ABS, 2);
+    reject_jumps[reject_count++] = at;
+    JUMP(BPF_JMP | BPF_JGE | BPF_X, 0, 0, 0);
+    EMIT(BPF_ALU | BPF_SUB | BPF_X, 0);
+    reject_jumps[reject_count++] = at;
+    JUMP(BPF_JMP | BPF_JGE | BPF_K, 20, 0, 0);
+    EMIT(BPF_LD | BPF_H | BPF_ABS, 2);
+    EMIT(BPF_MISC | BPF_TAX, 0);
+    EMIT(BPF_LD | BPF_W | BPF_LEN, 0);
+    reject_jumps[reject_count++] = at;
+    JUMP(BPF_JMP | BPF_JGE | BPF_X, 0, 0, 0);
+    EMIT(BPF_LDX | BPF_B | BPF_MSH, 0);
+    const uint16_t ports[] = {source_port, destination_port};
+    for (unsigned i = 0; i < sizeof(ports) / sizeof(ports[0]); ++i)
+    {
+        if (ports[i] == 0)
+            continue;
+        EMIT(BPF_LD | BPF_H | BPF_IND, i * 2U);
+        reject_jumps[reject_count++] = at;
+        JUMP(BPF_JMP | BPF_JEQ | BPF_K, ports[i], 0, 0);
+    }
+    EMIT(BPF_RET | BPF_K, 1);
+    const unsigned reject = at;
+    EMIT(BPF_RET | BPF_K, 0);
+    for (unsigned i = 0; i < reject_count; ++i)
+        program[reject_jumps[i]].jf = (uint8_t) (reject - reject_jumps[i] - 1);
+    program[fragment].jt    = (uint8_t) (reject - fragment - 1);
+    program[bad_version].jt = (uint8_t) (reject - bad_version - 1);
+    captureLinuxSerializeFilter(program, at, output);
 }

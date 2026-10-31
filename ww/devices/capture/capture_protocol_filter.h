@@ -13,7 +13,8 @@ enum
 typedef struct capture_protocol_filter_s
 {
     uint32_t excluded[kCaptureProtocolWordCount];
-    /* Host-order TCP qualifiers; zero means unspecified. */
+    /* Host-order TCP port qualifiers, zero when unspecified. They form a separate
+     * predicate and never change the protocol exclusions above. */
     uint16_t tcp_source_port;
     uint16_t tcp_destination_port;
 } capture_protocol_filter_t;
@@ -35,8 +36,6 @@ static inline bool captureProtocolFilterExcludes(const capture_protocol_filter_t
 
 static inline bool captureProtocolFilterIsEmpty(const capture_protocol_filter_t *filter)
 {
-    if (captureProtocolFilterHasTcpPorts(filter))
-        return false;
     for (size_t i = 0; i < kCaptureProtocolWordCount; ++i)
     {
         if (filter->excluded[i] != 0)
