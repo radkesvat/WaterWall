@@ -403,11 +403,10 @@ static void testTcpPortFilters(void)
         uint16_t    destination;
     } valid[] = {
         {"{}", 0, 0},
-        {"{\"capture-tcp-source-port\":1}", 1, 0},
-        {"{\"capture-tcp-dest-port\":65535}", 0, 65535},
-        {"{\"capture-tcp-source-port\":12345,\"capture-tcp-dest-port\":443}", 12345, 443},
-        {"{\"capture-protocols\":[6],\"capture-tcp-source-port\":65535,\"capture-tcp-dest-port\":1}", 65535, 1},
-        {"{\"dont-capture-protocols\":[17],\"capture-tcp-dest-port\":443}", 0, 443},
+        {"{\"capture-protocols\":[6],\"capture-tcp-source-port\":1}", 1, 0},
+        {"{\"capture-protocols\":[6],\"capture-tcp-dest-port\":65535}", 0, 65535},
+        {"{\"capture-protocols\":[6],\"capture-tcp-source-port\":12345,\"capture-tcp-dest-port\":443}", 12345, 443},
+        {"{\"capture-protocols\":[6,6],\"capture-tcp-source-port\":65535,\"capture-tcp-dest-port\":1}", 65535, 1},
     };
     for (size_t i = 0; i < ARRAY_SIZE(valid); ++i)
     {
@@ -419,6 +418,13 @@ static void testTcpPortFilters(void)
                 "RawSocket lost a TCP capture port or changed its omitted default");
         require(captureProtocolFilterHasTcpPorts(filter) == (valid[i].source != 0 || valid[i].destination != 0),
                 "RawSocket did not activate its configured TCP tuple filter");
+        for (unsigned int protocol = 0; protocol < kCaptureIpProtocolCount; ++protocol)
+        {
+            require(captureProtocolFilterExcludes(filter, (uint8_t) protocol) == (i != 0 && protocol != 6),
+                    "TCP port qualifiers changed the protocol selection");
+        }
+        require(captureProtocolFilterIsEmpty(filter) == (i == 0),
+                "TCP port qualifiers changed the protocol exclusion predicate");
         destroyRawSocket(t, settings);
     }
 
@@ -429,25 +435,47 @@ static void testTcpPortFilters(void)
         for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
         {
             char json[128];
-            snprintf(json, sizeof(json), "{\"%s\":%s}", names[field], invalid[i]);
+            snprintf(json, sizeof(json), "{\"capture-protocols\":[6],\"%s\":%s}", names[field], invalid[i]);
             cJSON    *settings;
             tunnel_t *t = createRawSocket(json, &settings);
             require(t == NULL, "RawSocket accepted an invalid TCP capture port");
             destroyRawSocket(t, settings);
         }
 
-        const char *const conflicts[] = {
-            "\"capture-protocols\":[17]", "\"capture-protocols\":[]", "\"dont-capture-protocols\":[6]"};
+        /* Port qualifiers require the protocol selection to be exactly TCP. */
+        const char *const conflicts[] = {"",
+                                         ",\"capture-protocols\":[6,17]",
+                                         ",\"capture-protocols\":[17]",
+                                         ",\"capture-protocols\":[]",
+                                         ",\"capture-protocols\":[0,6]",
+                                         ",\"dont-capture-protocols\":[]",
+                                         ",\"dont-capture-protocols\":[17]",
+                                         ",\"dont-capture-protocols\":[6]"};
         for (size_t i = 0; i < ARRAY_SIZE(conflicts); ++i)
         {
             char json[160];
-            snprintf(json, sizeof(json), "{\"%s\":443,%s}", names[field], conflicts[i]);
+            snprintf(json, sizeof(json), "{\"%s\":443%s}", names[field], conflicts[i]);
             cJSON    *settings;
             tunnel_t *t = createRawSocket(json, &settings);
-            require(t == NULL, "RawSocket accepted a TCP capture port while excluding protocol 6");
+            require(t == NULL, "RawSocket accepted a TCP capture port without capture-protocols [6]");
             destroyRawSocket(t, settings);
         }
     }
+
+    /* Every protocol allowed is the unrestricted selection: no exclusion predicate. */
+    char json[1200] = "{\"capture-protocols\":[0";
+    for (unsigned int protocol = 1; protocol < kCaptureIpProtocolCount; ++protocol)
+    {
+        const size_t used = strlen(json);
+        snprintf(json + used, sizeof(json) - used, ",%u", protocol);
+    }
+    strcat(json, "]}");
+    cJSON    *settings;
+    tunnel_t *t = createRawSocket(json, &settings);
+    require(t != NULL &&
+                captureProtocolFilterIsEmpty(&((rawsocket_tstate_t *) tunnelGetState(t))->capture_protocol_filter),
+            "an all-protocol allowlist added a protocol exclusion predicate");
+    destroyRawSocket(t, settings);
 }
 
 int main(void)

@@ -155,7 +155,7 @@ static bool rawsocketLoadProtocolFilter(capture_protocol_filter_t *filter, const
     const cJSON *deny  = cJSON_GetObjectItemCaseSensitive(settings, "dont-capture-protocols");
     if (allow != NULL && deny != NULL)
     {
-        LOGF("JSON Error: RawSocket->settings : capture-protocols and dont-capture-protocols are mutually exclusive");
+        LOGF("JSON Error: RawSocket->settings->capture-protocols : cannot be combined with dont-capture-protocols");
         return false;
     }
     const char  *key       = allow != NULL ? "capture-protocols" : "dont-capture-protocols";
@@ -183,6 +183,11 @@ static bool rawsocketLoadProtocolFilter(capture_protocol_filter_t *filter, const
         for (size_t i = 0; i < kCaptureProtocolWordCount; ++i)
             filter->excluded[i] = ~filter->excluded[i];
     }
+    /* Port qualifiers apply only to a TCP-only selection, so they never
+     * silently override another selected protocol. */
+    bool tcp_only = allow != NULL;
+    for (unsigned int byte = 0; byte < kCaptureIpProtocolCount; ++byte)
+        tcp_only = tcp_only && captureProtocolFilterExcludes(filter, (uint8_t) byte) == (byte != IPPROTO_TCP);
     const char *const port_keys[]   = {"capture-tcp-source-port", "capture-tcp-dest-port"};
     uint16_t *const   port_values[] = {&filter->tcp_source_port, &filter->tcp_destination_port};
     for (size_t i = 0; i < ARRAY_SIZE(port_keys); ++i)
@@ -194,13 +199,13 @@ static bool rawsocketLoadProtocolFilter(capture_protocol_filter_t *filter, const
             LOGF("JSON Error: RawSocket->settings->%s : expected an integer from 1 to 65535", port_keys[i]);
             return false;
         }
+        if (status == kJsonValuePresent && ! tcp_only)
+        {
+            LOGF("JSON Error: RawSocket->settings->%s : requires \"capture-protocols\": [6]", port_keys[i]);
+            return false;
+        }
         if (status == kJsonValuePresent)
             *port_values[i] = (uint16_t) value;
-    }
-    if (captureProtocolFilterHasTcpPorts(filter) && captureProtocolFilterExcludes(filter, IPPROTO_TCP))
-    {
-        LOGF("JSON Error: RawSocket TCP port filters require protocol 6 to be allowed");
-        return false;
     }
     return true;
 }
