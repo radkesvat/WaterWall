@@ -52,7 +52,6 @@
         "capture-protocols": [
           6
         ],
-        "fragment-policy": "reassemble",
         "capture-tcp-source-port": 40000
       }
     }
