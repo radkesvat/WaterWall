@@ -200,6 +200,14 @@
     endif()
   endif()
 
+  if(TARGET FakeTcpHeader)
+    waterwall_add_native_executable(fake_tcp_header_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/fake_tcp_header/fake_tcp_header_test.c)
+    target_link_libraries(fake_tcp_header_test PRIVATE FakeTcpHeader ww)
+    set_target_properties(fake_tcp_header_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+    add_dependencies(waterwall_unit_tests fake_tcp_header_test)
+    add_waterwall_unit_test(waterwall.fake_tcp_header_unit fake_tcp_header_test "unit;tunnels;fake-tcp;udp;packet;configuration")
+  endif()
+
   waterwall_add_native_executable(wfrand_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/base/wfrand_test.c)
   target_link_libraries(wfrand_test PRIVATE ww_test_support)
   target_link_libraries(wfrand_test PRIVATE ww)
