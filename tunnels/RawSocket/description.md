@@ -119,7 +119,7 @@ For write-only packet injection, omit all capture-range keys:
 
 - `capture-protocols` `(array of integers)`
   Capture only the literal IPv4 Protocol bytes listed here, for example `[6]`
-  for TCP-shaped packets on both fake-TCP peers. Entries must be whole numbers
+  for fake-TCP carriers on both peers. Entries must be whole numbers
   from `0` through `255`; duplicates are ignored. Omission preserves the default
   of all protocols. An explicit empty array captures none. This setting and
   `dont-capture-protocols` are mutually exclusive, even for empty lists.
@@ -131,42 +131,53 @@ For write-only packet injection, omit all capture-range keys:
   including those produced from this allowlist, require Linux's iptables `bpf`
   match. Source-IP capture ranges still apply. Protocol `[6]` alone also
   captures ordinary TCP from matching peers; narrow a fake-TCP carrier to its
-  reserved port pair with the settings below.
+  reserved server port with the settings below.
 
 - `capture-tcp-source-port` / `capture-tcp-dest-port` `(integer)`
   Optional exact TCP source and destination port qualifiers, each in
   `1..65535`. Omission leaves that port unrestricted; zero, null, fractions,
-  wrong types and out-of-range values are rejected. Either qualifier implies
-  TCP-only capture and is combined with the existing source-IP and protocol
-  predicates. If both ports are present, both must match. Configurations that
-  exclude TCP through `capture-protocols` or `dont-capture-protocols` are rejected
-  when a port qualifier is set.
+  wrong types and out-of-range values are rejected. A port qualifier requires
+  `"capture-protocols": [6]`: startup fails when it is combined with
+  `dont-capture-protocols`, with no protocol key, or with any other
+  `capture-protocols` selection. If both ports are present, both must match.
+  The qualifiers are combined with the source-IP ranges and the protocol
+  selection.
 
-  Port-qualified capture excludes all IPv4 fragments, including fragment zero,
-  before NFQUEUE and incoming NOTRACK. Other ports and non-TCP traffic continue
-  through the host stack and normal conntrack/firewall processing. Raw output
-  is unaffected. Linux compiles a fixed-size cBPF predicate at startup and uses
-  it in both rules; this requires the iptables `bpf` match. Windows uses
-  WinDivert's TCP port and fragment predicates.
+  Ports are read only from whole TCP packets: unfragmented IPv4 with a header
+  length of 20 to 60 bytes, a total length that covers the IPv4 header and a
+  20-byte TCP header, and no fewer packet bytes than that total length. Ports are read after
+  the actual IPv4 header, including options. Other ports and non-TCP traffic
+  continue through the host stack and normal conntrack/firewall processing. Raw
+  output is unaffected. Linux compiles a fixed-size cBPF port predicate at
+  startup and adds it as a separate `bpf` match, next to the protocol
+  predicate, to every capture INPUT rule and the incoming NOTRACK rule. Windows
+  adds `tcp and not fragment` with the port comparisons to its WinDivert filter.
 
-  For a fake-TCP client whose local carrier port is `40001` and peer port is
-  `40000`, capture replies with:
+  For local delivery, the kernel reassembles IPv4 fragments before the INPUT
+  and NOTRACK rules, and WinDivert, which is opened without
+  `WINDIVERT_FLAG_FRAGMENTS`, sees reassembled packets. A fragmented carrier is
+  therefore captured as one reassembled datagram within the 1,500-byte capture
+  limit; the port predicate never reads ports from a fragment.
+
+  A fake-TCP client with the default carrier `server-port` `40000` captures
+  replies from the server with:
 
   ```json
   {
     "capture-filter-mode": "source-ip",
     "capture-ips": ["198.51.100.10"],
     "capture-protocols": [6],
-    "capture-tcp-source-port": 40000,
-    "capture-tcp-dest-port": 40001
+    "capture-tcp-source-port": 40000
   }
   ```
 
-  At the server, use the client's source IP and reverse the port values.
-  Reserve this carrier port pair so ordinary applications do not use the same
-  peer tuple. Port matching separates unrelated TCP traffic but does not
-  authenticate packets. See [FakeTcpHeader](../FakeTcpHeader/description.md)
-  for the packet-envelope and MTU configuration.
+  At the server, capture from the client's address with
+  `"capture-tcp-dest-port": 40000` instead. Reserve the carrier ports so
+  ordinary applications do not use them with the same peer. Port matching
+  separates unrelated TCP traffic but does not authenticate packets. See
+  [FakeTcpHeaderClient](../FakeTcpHeaderClient/description.md) and
+  [FakeTcpHeaderServer](../FakeTcpHeaderServer/description.md) for the carrier
+  ports and envelope.
 
 - `capture-filter-mode` `(string)`
   Filter mode for captured traffic. This field is required when at least one capture range is configured and is ignored in write-only mode.
@@ -436,14 +447,15 @@ Current implementation behavior:
 - `capture-filter-mode` is parsed, but only the `source-ip` path is currently implemented
 
 On Linux, protocol exclusions or TCP port qualifiers require the iptables `bpf`
-match (`xt_bpf`). One fixed-size classic BPF predicate is used in both the
-NFQUEUE and incoming NOTRACK rules. Without port qualifiers it checks the
-literal IPv4 Protocol byte, including fragments and protocol zero, without
-interpreting transport headers. With port qualifiers it admits only whole TCP
-packets with the selected ports, using the actual IPv4 header length. Missing
-matcher support fails startup and rolls back installed rules. An unrestricted
-protocol selection with no port qualifiers adds no matcher. Windows applies
-the same protocol and port selection in its WinDivert filter.
+match (`xt_bpf`). One fixed-size classic BPF predicate checks the IPv4 Protocol
+byte in both the NFQUEUE and incoming NOTRACK rules. It also handles fragments
+and protocol zero without interpreting transport headers. TCP port qualifiers
+add a second, separate predicate to the same rules, which reads ports only from
+whole TCP packets at the actual IPv4 header length. Insertion, rollback and
+deletion use identical predicates. Missing matcher support fails startup and
+rolls back installed rules. An unrestricted protocol selection adds no protocol
+matcher. Windows applies the same protocol and port selection in its WinDivert
+filter.
 
 By default the Linux capture backend applies best-effort `sysctl` tuning for
 backlogs and other TCP parameters before creating NFQUEUE resources. The core
@@ -613,8 +625,9 @@ publication into the chain. `preserve-fragments` keeps their bytes and boundarie
 The policy does not impose a node-name or topology allowlist; ordinary layer and
 chain validation still applies. Invalid values (including `null`) fail startup.
 
-TCP port qualifiers reject fragments before capture, so neither fragment policy
-can publish fragmented carrier packets when a TCP port qualifier is enabled.
+TCP port qualifiers never read ports from a fragment. Locally delivered
+fragments are reassembled before the capture and NOTRACK rules, so a fragmented
+carrier reaches the reader as one reassembled datagram within the capture limit.
 
 `PacketsToConnection` upstream packet input and `ConnectionToPackets` downstream
 packet input require complete IPv4 datagrams. Any fragment reaching either input
