@@ -782,6 +782,11 @@ if(INCLUDE_IP_MANIPULATOR)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} IpManipulator)
 endif()
 
+# FakeTcpHeader wire codec is shared by the carrier node pair.
+if(INCLUDE_FAKE_TCP_HEADER)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/FakeTcpHeaderCommon)
+endif()
+
 if(INCLUDE_FAKE_TCP_HEADER)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_FAKE_TCP_HEADER=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/FakeTcpHeader)

@@ -200,6 +200,13 @@
     endif()
   endif()
 
+  if(TARGET FakeTcpHeaderCommon)
+    waterwall_add_native_executable(fake_tcp_header_wire_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/fake_tcp_header/fake_tcp_header_wire_test.c)
+    target_link_libraries(fake_tcp_header_wire_test PRIVATE FakeTcpHeaderCommon ww)
+    add_dependencies(waterwall_unit_tests fake_tcp_header_wire_test)
+    add_waterwall_unit_test(waterwall.fake_tcp_header_wire_unit fake_tcp_header_wire_test "unit;fake-tcp;wire")
+  endif()
+
   if(TARGET FakeTcpHeader)
     waterwall_add_native_executable(fake_tcp_header_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/fake_tcp_header/fake_tcp_header_test.c)
     target_link_libraries(fake_tcp_header_test PRIVATE FakeTcpHeader ww)
