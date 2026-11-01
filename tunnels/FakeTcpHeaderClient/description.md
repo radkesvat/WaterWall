@@ -69,8 +69,11 @@ every key has a default.
 
 Unknown keys, explicit `null`, wrong types, fractions and out-of-range values
 fail node creation with `JSON Error: FakeTcpHeaderClient->settings-><key> :
-<expectation>`. There are no settings for addresses, the outer protocol, TCP
-flags or an MTU.
+<expectation>`, and a non-object `settings` fails it with
+`JSON Error: FakeTcpHeaderClient->settings : expected an object`. An `options`
+string of odd length, with non-hex characters, not a multiple of 4 bytes or
+longer than 40 bytes also fails creation. There are no settings for addresses,
+the outer protocol, TCP flags or an MTU.
 
 Both peers must use the same `server-port`, `client-port` and
 `client-port-count`. The other fields may differ between the peers: receive

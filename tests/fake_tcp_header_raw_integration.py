@@ -82,7 +82,8 @@ def prepare(directory, role, listener_port, target_port, tun, multi_queue):
                              "multi-queue": multi_queue})
         elif node["type"] in ("FakeTcpHeaderClient", "FakeTcpHeaderServer"):
             settings["options"] = "01010101"
-            carrier_ports = tuple(settings[key] for key in ("server-port", "client-port", "client-port-count"))
+            carrier_ports = tuple(settings.get(key, default) for key, default in
+                                  (("server-port", 40000), ("client-port", 40001), ("client-port-count", 16)))
         elif node["type"] == "ConnectionToPackets":
             settings["mtu"] = 1456
         elif node["type"] == "TunDevice":

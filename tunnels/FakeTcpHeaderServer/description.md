@@ -70,9 +70,12 @@ The `settings` object is optional; every key has a default.
 
 Unknown keys, explicit `null`, wrong types, fractions and out-of-range values
 fail node creation with `JSON Error: FakeTcpHeaderServer->settings-><key> :
-<expectation>`. `server-port`, `client-port` and `client-port-count` must
-match the client; the other fields may differ, because receive does not
-compare them with the local template.
+<expectation>`, and a non-object `settings` fails it with
+`JSON Error: FakeTcpHeaderServer->settings : expected an object`. An `options`
+string of odd length, with non-hex characters, not a multiple of 4 bytes or
+longer than 40 bytes also fails creation. `server-port`, `client-port` and
+`client-port-count` must match the client; the other fields may differ,
+because receive does not compare them with the local template.
 
 ## Wire Rules
 

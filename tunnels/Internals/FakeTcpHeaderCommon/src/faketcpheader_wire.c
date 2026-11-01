@@ -70,6 +70,7 @@ static uint32_t faketcpheaderWirePseudoHeaderSum(const uint8_t *ipv4, uint16_t s
 faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_config_t *config,
                                                     faketcpheader_wire_side_t side, sbuf_t *buf)
 {
+    assert(side == kFakeTcpHeaderWireClient || side == kFakeTcpHeaderWireServer);
     assert(! sbufIsSplice(buf));
 
     const uint32_t inner_length = sbufGetLength(buf);
@@ -147,6 +148,7 @@ static bool faketcpheaderWirePortsMatch(const faketcpheader_wire_config_t *confi
 faketcpheader_wire_result_t faketcpheaderWireDecode(const faketcpheader_wire_config_t *config,
                                                     faketcpheader_wire_side_t side, sbuf_t *buf)
 {
+    assert(side == kFakeTcpHeaderWireClient || side == kFakeTcpHeaderWireServer);
     assert(! sbufIsSplice(buf));
 
     const uint32_t     length = sbufGetLength(buf);

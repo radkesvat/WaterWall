@@ -18,27 +18,38 @@ static const faketcpheader_settings_integer_t kSettingsAcknowledgment = {"acknow
 static const faketcpheader_settings_integer_t kSettingsWindow         = {"window", 0, UINT16_MAX};
 static const faketcpheader_settings_integer_t kSettingsUrgentPointer  = {"urgent-pointer", 0, UINT16_MAX};
 
+static const faketcpheader_settings_integer_t *const kSettingsIntegers[] = {&kSettingsServerPort,
+                                                                            &kSettingsClientPort,
+                                                                            &kSettingsClientPortCount,
+                                                                            &kSettingsSequence,
+                                                                            &kSettingsAcknowledgment,
+                                                                            &kSettingsWindow,
+                                                                            &kSettingsUrgentPointer};
+
 static const char *const kSettingsOptions = "options";
+
+static bool faketcpheaderSettingsKeyIsKnown(const char *key)
+{
+    if (key == NULL)
+    {
+        return false;
+    }
+    for (size_t i = 0; i < ARRAY_SIZE(kSettingsIntegers); ++i)
+    {
+        if (stringCompare(key, kSettingsIntegers[i]->key) == 0)
+        {
+            return true;
+        }
+    }
+    return stringCompare(key, kSettingsOptions) == 0;
+}
 
 static bool faketcpheaderSettingsKeysAreKnown(const cJSON *settings, const char *node_name)
 {
-    static const char *const known[] = {"server-port",
-                                        "client-port",
-                                        "client-port-count",
-                                        "sequence",
-                                        "acknowledgment",
-                                        "window",
-                                        "urgent-pointer",
-                                        "options"};
-    const cJSON             *item    = NULL;
+    const cJSON *item = NULL;
     cJSON_ArrayForEach(item, settings)
     {
-        bool is_known = false;
-        for (size_t i = 0; i < ARRAY_SIZE(known) && item->string != NULL; ++i)
-        {
-            is_known = is_known || stringCompare(item->string, known[i]) == 0;
-        }
-        if (! is_known)
+        if (! faketcpheaderSettingsKeyIsKnown(item->string))
         {
             LOGF("JSON Error: %s->settings->%s : unknown setting",
                  node_name,

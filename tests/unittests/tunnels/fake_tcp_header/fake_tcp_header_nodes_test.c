@@ -178,8 +178,11 @@ static void testRejections(const node_case_t *c)
     requireRejected(c, "{\"server-port\":40001}", "server-port");
     requireRejected(c, "{\"options\":\"010101\"}", "options");
 
+    char expected[128];
+    snprintf(expected, sizeof(expected), "JSON Error: %s->settings : expected an object", c->type_name);
     tunnel_t *t = createWithSettings(c, "[]");
     require(t == NULL, "constructor accepted a non-object settings value");
+    require(strstr(log_capture, expected) != NULL, "non-object rejection did not name the node");
 }
 
 int main(void)
