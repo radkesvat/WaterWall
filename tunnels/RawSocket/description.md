@@ -145,13 +145,14 @@ For write-only packet injection, omit all capture-range keys:
 
   Ports are read only from whole TCP packets: unfragmented IPv4 with a header
   length of 20 to 60 bytes, a total length that covers the IPv4 header and a
-  20-byte TCP header, and no fewer packet bytes than that total length. Ports are read after
-  the actual IPv4 header, including options. Other ports and non-TCP traffic
-  continue through the host stack and normal conntrack/firewall processing. Raw
-  output is unaffected. Linux compiles a fixed-size cBPF port predicate at
-  startup and adds it as a separate `bpf` match, next to the protocol
-  predicate, to every capture INPUT rule and the incoming NOTRACK rule. Windows
-  adds `tcp and not fragment` with the port comparisons to its WinDivert filter.
+  20-byte TCP header, and no fewer packet bytes than that total length. Ports
+  are read after the actual IPv4 header, including options. Other ports and
+  non-TCP traffic continue through the host stack and normal conntrack/firewall
+  processing. Raw output is unaffected. Linux compiles a fixed-size cBPF port
+  predicate at startup and adds it as a separate `bpf` match, next to the
+  protocol predicate, to every capture INPUT rule and the incoming NOTRACK rule.
+  Windows adds `tcp and not fragment` with the port comparisons to its WinDivert
+  filter.
 
   For local delivery, the kernel reassembles IPv4 fragments before the INPUT
   and NOTRACK rules, and WinDivert, which is opened without

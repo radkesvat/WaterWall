@@ -255,6 +255,9 @@ void captureLinuxBuildTcpPortFilter(uint16_t source_port, uint16_t destination_p
     EMIT(BPF_RET | BPF_K, 1);
     const unsigned reject = at;
     EMIT(BPF_RET | BPF_K, 0);
+    assert(reject_count <= sizeof(reject_jumps) / sizeof(reject_jumps[0]));
+    assert(at <= kMaximumInstructions);
+    assert(at == (source_port != 0 && destination_port != 0 ? 23U : 21U));
     for (unsigned i = 0; i < reject_count; ++i)
         program[reject_jumps[i]].jf = (uint8_t) (reject - reject_jumps[i] - 1);
     program[fragment].jt    = (uint8_t) (reject - fragment - 1);
