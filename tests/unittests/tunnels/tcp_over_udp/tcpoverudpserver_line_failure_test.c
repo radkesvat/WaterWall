@@ -4,9 +4,10 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseInitializationFails, caseAdvisoryPressure,
- * caseMtuConfigurationAndOutput
+ * caseMtuConfigurationAndOutput, caseServiceCloseWaitsForDelivery
  * Checks: KCP resource settlement, repeated advisory notifications, complete payload ordering,
- * ACK-only pressure release, and reentrant Finish from locally generated Pause/Resume.
+ * ACK-only pressure release, reentrant Finish from locally generated Pause/Resume, and a service-side
+ * close that sends its close frame only after delivery, or ends on a peer close or peer silence.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.tcpoverudpserver_line_failure_test_unit
@@ -293,6 +294,7 @@ static uint32_t              g_source_pauses;
 static uint32_t              g_source_resumes;
 static uint32_t              g_pressure_packets;
 static char                  g_pressure_data[8];
+static uint32_t              g_pressure_closes;
 static uint32_t              g_pressure_data_len;
 
 static uint32_t readKcpU32(const uint8_t *p)
@@ -324,6 +326,10 @@ static void serverCapturePressureOutput(tunnel_t *prev, line_t *line, sbuf_t *bu
             twfRequire(g_pressure_data_len + length - 1 < sizeof(g_pressure_data), "pressure capture overflow");
             memoryCopy(g_pressure_data + g_pressure_data_len, p + 25, length - 1);
             g_pressure_data_len += length - 1;
+        }
+        else if (p[4] == 81 && length > 0 && p[24] == kFrameFlagClose)
+        {
+            ++g_pressure_closes;
         }
         p += 24 + length;
         remaining -= 24 + length;
@@ -669,6 +675,105 @@ static void caseMtuConfigurationAndOutput(void)
 #define TEST_RECEIVE_SERVER 1
 #include "receive_cases.h"
 
+enum
+{
+    kCloseEndsByDelivery,
+    kCloseEndsByPeerClose,
+    kCloseEndsByPeerSilence
+};
+
+// A service-side close with queued data keeps KCP until the peer acknowledges that data; the KCP timer then
+// sends the close frame and finishes. A close frame from the peer ends the wait at once, and peer silence
+// ends it on the timer without a close frame.
+static void caseServiceCloseWaitsForDelivery(unsigned ending)
+{
+    twfSetCase("TcpOverUdpServer service close waits for KCP delivery");
+    tcpoverudp_fixture_t fixture;
+    fixtureSetup(&fixture, false);
+    master_pool_t  *context_master = masterpoolCreateWithCapacity(8);
+    generic_pool_t *contexts = genericpoolCreateWithDefaultAllocatorAndCapacity(context_master, sizeof(context_t), 8);
+    GSTATE.shortcut_context_pools = &contexts;
+    twf_line_pool_t line_pool;
+    twfLinePoolSetup(&line_pool, fixture.kcp->lstate_size, 1);
+    line_t *line = twfLinePoolCreateLine(&line_pool);
+    lineRef(line); // Inspect state after the owner closes.
+    tunnelUpStreamInit(fixture.kcp, line);
+    tcpoverudpserver_lstate_t *ls = lineGetState(line, fixture.kcp);
+
+    g_pressure_fixture  = &fixture;
+    g_pressure_line     = line;
+    g_pressure_packets  = 0;
+    g_pressure_data_len = 0;
+    g_pressure_closes   = 0;
+    memoryZero(g_pressure_data, sizeof(g_pressure_data));
+    fixture.prev->fnPayloadD = serverCapturePressureOutput;
+    fixture.prev->fnFinD     = serverOwnerFinishesPressureClose;
+    sbuf_t *input            = bufferpoolGetSmallBuffer(fixture.env.pool);
+    sbufSetLength(input, 2);
+    sbufWrite(input, "AB", 2);
+    tunnelDownStreamPayload(fixture.kcp, line, input);
+    tunnelDownStreamFin(fixture.kcp, line);
+    twfRequire(lineIsAlive(line) && ls->closing && ikcp_waitsnd(ls->k_handle) > 0,
+               "service close discarded queued KCP data");
+    twfRequireEqualText(g_pressure_data, "AB", "service close did not send the queued data");
+    tcpoverudpserverKcpLoopIntervalCallback(ls->k_timer);
+    twfRequireEqualU32(fixture.trace.prev_finish, 0, "service close finished the owner before delivery");
+    twfRequireEqualU32(g_pressure_closes, 0, "service close sent its close frame before delivery");
+
+    if (ending == kCloseEndsByPeerSilence)
+    {
+        ls->last_recv -= ((tcpoverudpserver_tstate_t *) tunnelGetState(fixture.kcp))->no_recv_timeout_ms + 1;
+        tcpoverudpserverKcpLoopIntervalCallback(ls->k_timer);
+    }
+    else
+    {
+        sbuf_t *reply = bufferpoolGetLargeBuffer(fixture.env.pool);
+        sbufSetLength(reply, 0);
+        if (ending == kCloseEndsByDelivery)
+        {
+            sbufSetLength(reply, 24);
+            sbufWriteZeros(reply, 24);
+            uint8_t *p = sbufGetMutablePtr(reply);
+            p[4]       = 82;
+            p[6]       = 128;
+            writeKcpU32(p + 12, ls->k_handle->snd_nxt - 1);
+            writeKcpU32(p + 16, ls->k_handle->snd_nxt);
+        }
+        else
+        {
+            receiveAppendPush(reply, 0, 0, 1, kFrameFlagClose);
+        }
+        tunnelUpStreamPayload(fixture.kcp, line, reply);
+        if (ending == kCloseEndsByDelivery)
+        {
+            twfRequire(lineIsAlive(line) && ikcp_waitsnd(ls->k_handle) == 0,
+                       "acknowledged close finished before the KCP timer");
+            tcpoverudpserverKcpLoopIntervalCallback(ls->k_timer);
+        }
+    }
+
+    twfRequire(! lineIsAlive(line), "service close never finished the owner");
+    twfRequireEqualU32(fixture.trace.prev_finish, 1, "service close did not finish the owner exactly once");
+    twfRequireEqualU32(g_pressure_closes,
+                       ending == kCloseEndsByDelivery ? 1 : 0,
+                       "service close sent its close frame at the wrong time");
+    twfRequireEqualU32(fixture.trace.next_finish, 0, "service close reflected Finish to the service side");
+    twfRequireLineStateZeroed(line, fixture.kcp, "service close left KCP state alive");
+    twfRequireEqualU32(twfLineRefCount(line), 1, "service close leaked a line reference");
+    lineUnref(line);
+    requireNoLiveKcpResources();
+    twfRequireNoLeakedBuffers();
+    g_pressure_fixture = NULL;
+    g_pressure_line    = NULL;
+    twfLinePoolTeardown(&line_pool);
+    GSTATE.shortcut_context_pools = NULL;
+    genericpoolDestroy(contexts);
+    masterpoolMakeEmpty(context_master);
+    masterpoolDestroy(context_master);
+    twfWorkerEnvTeardown(&fixture.env);
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseReceiveMessages();
@@ -681,6 +786,9 @@ int main(void)
     caseAdvisoryPressure(0);
     caseAdvisoryPressure(1);
     caseAdvisoryPressure(2);
+    caseServiceCloseWaitsForDelivery(kCloseEndsByDelivery);
+    caseServiceCloseWaitsForDelivery(kCloseEndsByPeerClose);
+    caseServiceCloseWaitsForDelivery(kCloseEndsByPeerSilence);
 
     printf("tcpoverudpserver_line_failure_test: all cases passed\n");
     return 0;

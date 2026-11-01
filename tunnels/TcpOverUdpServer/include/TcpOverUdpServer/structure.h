@@ -39,6 +39,7 @@ typedef struct tcpoverudpserver_lstate_s
     bool                      source_paused; // our KCP send-queue pressure
     bool                      can_upstream; // can upstream data
     bool                      ping_sent;    // ping sent state
+    bool                      closing;      // service side finished; the close frame waits for KCP delivery
 
 } tcpoverudpserver_lstate_t;
 
@@ -127,3 +128,4 @@ bool tcpoverudpserverInputKcpPacket(void *ctx, const uint8_t *packet, size_t pac
 
 void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer);
 bool tcpoverudpserverUpdateKcp(tcpoverudpserver_lstate_t *ls, bool flush);
+void tcpoverudpserverSendCloseAndFinish(tcpoverudpserver_lstate_t *ls);

@@ -21,17 +21,16 @@ void tcpoverudpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     ls->can_upstream = false;
 
-    uint8_t close_buf[kFrameHeaderLength] = {kFrameFlagClose};
-    ikcp_send(ls->k_handle, (const char *) close_buf, (int) sizeof(close_buf));
-
-    if (! tcpoverudpserverUpdateKcp(ls, true))
+    if (ikcp_waitsnd(ls->k_handle) > 0)
     {
+        // Destroying the KCP state now would discard queued data that one flush cannot send, such as the
+        // end of a large response; the KCP timer closes once the peer has acknowledged all of it.
+        ls->closing = true;
         lineUnref(l);
         return;
     }
 
-    tcpoverudpserverLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
+    tcpoverudpserverSendCloseAndFinish(ls);
 
     lineUnref(l);
 }
