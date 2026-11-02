@@ -29,7 +29,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 197
+EXPECTED_TOTAL_ABORTS = 196
 
 
 # ---------------------------------------------------------------------------
@@ -249,12 +249,9 @@ MANIFEST = [
     ("tunnels/IpManipulator/common/tricks/smugglefin/trick.c", "smugglefintrickUpStreamPayload", 1,
      ("IpManipulator: worker packet line died during smuggle-fin send",),
      "helper/line-state invariant: IpManipulator trick packet line died 2"),
-    ("tunnels/MuxClient/common/helpers.c", "muxclientRemoveLocalHold", 1,
-     ("MuxClient: local hold count underflow",),
-     "helper invariant: MuxClient local hold registry count integrity"),
-    ("tunnels/MuxServer/common/helpers.c", "muxserverRemoveLocalHold", 1,
-     ("MuxServer: local hold count underflow",),
-     "helper invariant: MuxServer local hold registry count integrity"),
+    ("tunnels/Internals/MuxCommon/src/mux_child_flow.c", "muxHoldRemove", 1,
+     ("Mux: local hold count underflow",),
+     "shared helper invariant: Mux local hold registry count integrity"),
     ("tunnels/MuxClient/common/line_state.c", "muxclientLinestateDestroy", 10,
      ("MuxClient: destroying state with local source holds still linked",
       "MuxClient: destroying a published owned parent",
