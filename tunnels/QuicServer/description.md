@@ -122,14 +122,18 @@ ACK ingress. A finite pause can recover; a sufficiently long pause may expire
 QUIC deadlines. Both nodes block splice and do not implement connection pooling,
 migration across carrier lines, NAT-rebinding reassociation, resumption or 0-RTT.
 
-Receiving `Finish` retires local protocol state and cancels timers before
-forwarding only away from the sender. Application-side Finish makes one bounded
-synchronous attempt to hand already queued ready packets to the still-open
-carrier, respecting congestion control and pacing. A borrowed line cannot remain
-alive while waiting asynchronously for final QUIC acknowledgments. Final delivery
-after local teardown is not guaranteed; lost final packets resolve through the
-peer's finite timeout. QUIC stream FIN/reset closes the whole association after
-already-decoded bytes; application half-close is not provided.
+`Finish` from the carrier side retires local protocol state and cancels timers before
+forwarding only away from the sender. `Finish` from the application side stops new
+application input. `QuicClient` then makes one bounded synchronous attempt to hand
+already queued ready packets to the still-open carrier, respecting congestion control
+and pacing; final delivery after local teardown is not guaranteed. On `QuicServer` the
+line and carrier stay available while ACK processing and loss recovery continue, and
+the stream gets a FIN after the last queued byte. The carrier side receives `Finish`
+when the peer acknowledges the FIN or closes the connection, one second after all data
+is acknowledged, or after 30 seconds with the data still unacknowledged, which is logged
+as a failure. QUIC stream FIN/reset closes the whole association after already-decoded
+bytes; application half-close is not provided. The side that reads a FIN sends a
+CONNECTION_CLOSE; if that packet is lost, it resolves through the peer's finite timeout.
 
 ## Node Metadata
 

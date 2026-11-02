@@ -4,6 +4,10 @@
 
 void quicPressure(quic_context_t *context)
 {
+    if (quicApplicationFinished(context))
+    {
+        return;
+    }
     quic_tstate_t    *state = tunnelGetState(context->tunnel);
     ww_quic_storage_t storage;
     ww_quic_engine_storage(context->engine, &storage);
@@ -59,6 +63,12 @@ static bool quicDeliverEvent(quic_context_t *context)
     }
     quic_tstate_t *state  = tunnelGetState(context->tunnel);
     bool           wire   = event.type == WW_QUIC_EVENT_DATAGRAM;
+    if (wire ? quicCarrierFinished(context) : quicApplicationFinished(context))
+    {
+        /* Output toward a side that already finished has no reader. */
+        ww_quic_engine_consume(context->engine);
+        return true;
+    }
     uint32_t       prefix = wire && state->stream_carrier ? 4 : 0;
     assert(event.length <= WW_QUIC_WRITE_CHUNK);
     /* Retire staging before allocating the onward buffer, so their heap
@@ -193,6 +203,10 @@ void quicPump(quic_context_t *context)
     }
     if (quicSurvived(context))
     {
+        quicReconcileFinal(context);
+    }
+    if (quicSurvived(context))
+    {
         quicArm(context, work == kQuicPumpWork || generation != context->input_generation);
     }
 }
@@ -232,5 +246,49 @@ void quicFinalWire(quic_context_t *context)
             continue;
         }
         break;
+    }
+}
+
+void quicReconcileFinal(quic_context_t *context)
+{
+    if (! context->final_flush)
+    {
+        return;
+    }
+    if (! context->fin_sent && context->active_application == NULL && bufferqueueGetBufCount(&context->application) == 0)
+    {
+        /* A peer on a datagram carrier otherwise learns of the end only from its idle timeout,
+         * and the packets it sends until then open new associations. */
+        context->fin_sent = ww_quic_engine_finish(context->engine);
+        if (context->fin_sent)
+        {
+            quicFinalWire(context);
+            if (! quicSurvived(context))
+            {
+                return;
+            }
+        }
+    }
+    ww_quic_storage_t storage;
+    ww_quic_engine_storage(context->engine, &storage);
+    const uint64_t now          = ww_quic_now_us();
+    const bool     acknowledged = context->fin_sent && storage.send_bytes == 0;
+    /* A peer that closes on the FIN may never acknowledge it. */
+    if (acknowledged && now + kQuicFinAcknowledgeWaitUs < context->final_deadline_us)
+    {
+        context->final_deadline_us = now + kQuicFinAcknowledgeWaitUs;
+    }
+    if (now < context->final_deadline_us)
+    {
+        return;
+    }
+    context->final_flush = false;
+    if (acknowledged)
+    {
+        quicRetire(context);
+    }
+    else
+    {
+        quicFail(context, "final data was not acknowledged in time");
     }
 }

@@ -8,6 +8,7 @@ The speed case runs the exact VLESS/QUIC chain in speedtests/quic_vless_udp and
 reports verified upload/download Mbit/s from the fixed measured byte interval.
 CTest: waterwall.quic_direct, waterwall.quic_udp, waterwall.quic_stream,
 waterwall.quic_udp_impaired, waterwall.quic_shutdown, waterwall.quic_failures,
+waterwall.quic_service_close_udp, waterwall.quic_service_close_stream,
 waterwall.quic_speedtest_vless_udp. No internet, timing performance gate or HTTP/3.
 """
 
@@ -279,6 +280,37 @@ def roundtrip(binary, mode):
     print(f"QUIC {mode}: server-first, verified bidirectional binary bytes and owner shutdown passed")
 
 
+def service_close(binary, mode):
+    # More than one final wire drain carries, so most of it is still queued when the service closes.
+    response = bytes(range(256)) * 65536
+    with RunDirectory("waterwall-quic-service-close-" + mode + "-") as root:
+        nodes = roundtrip_nodes(mode)
+        next(node for node in nodes if node["name"] == "carrier-out")["settings"]["port"] = CARRIER_PORT
+        write_inputs(root, nodes, workers=1)
+        with socket.socket() as backend:
+            configure_listener(backend, (HOST, BACKEND_PORT), timeout=15)
+            with Process([binary], cwd=root, log_path=root / "stdout.log") as process:
+                for round_number in range(1, 4):
+                    client = connect_when_ready(process, (HOST, APP_PORT), deadline=time.monotonic() + 10,
+                        failure=lambda: AssertionError("QUIC runtime exited before application connection"))
+
+                    def service():
+                        with backend.accept()[0] as connection:
+                            connection.settimeout(15)
+                            assert exact(connection, 7) == b"request", "QUIC changed the request"
+                            connection.sendall(response)
+
+                    with client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        client.settimeout(15)
+                        task = executor.submit(service)
+                        client.sendall(b"request")
+                        assert exact(client, len(response), max_chunk=1 << 20) == response, "QUIC changed the response"
+                        assert client.recv(1) == b"", "missing EOF after the response"
+                        task.result(timeout=20)
+                orderly_stop(process)
+    print(f"QUIC service close {mode}: every byte and then EOF passed")
+
+
 def direct(binary):
     nodes = [
         {"name": "test-client", "type": "TesterClient", "next": "quic-client",
@@ -395,6 +427,8 @@ if __name__ == "__main__":
         speed(binary)
     elif mode == "failures":
         failures(binary)
+    elif mode in ("service-close-udp", "service-close-stream"):
+        service_close(binary, mode.rsplit("-", 1)[1])
     else:
         assert mode in ("udp", "stream", "udp-impaired"), mode
         roundtrip(binary, mode)

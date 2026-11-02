@@ -105,6 +105,11 @@ extern "C"
     bool        ww_quic_engine_ready(const ww_quic_engine_t *engine);
     bool        ww_quic_engine_closed(const ww_quic_engine_t *engine);
     const char *ww_quic_engine_error(const ww_quic_engine_t *engine);
+    /* The engine's error once the application stream has ended normally on either side. */
+#define WW_QUIC_CLOSE_FINISHED "application finished"
+    /* Ends the application stream after the bytes already written. False while the
+     * stream cannot take the FIN yet. CLOSED follows when the peer acknowledges it. */
+    bool ww_quic_engine_finish(ww_quic_engine_t *engine);
     /* Silent immediate retirement. No final packet/event is generated; all alarms,
      * retained bytes and library state are discarded synchronously. */
     void ww_quic_engine_close(ww_quic_engine_t *engine);

@@ -107,14 +107,15 @@ static void quicSubmit(tunnel_t *t, line_t *l, sbuf_t *buffer, quic_input_kind_t
 {
     quic_context_t *context = quicGetContext(t, l);
     assert(context != NULL);
-    if (context->finish_up || context->finish_down)
+    const bool application = kind == kQuicInputApplication;
+    /* While the end of a response drains, the carrier still brings its acknowledgements. */
+    if ((application || ! context->final_flush) && (context->finish_up || context->finish_down))
     {
         bufferpoolReuseBuffer(context->pool, buffer);
         return;
     }
     bool           entered     = quicEnter(context);
     quic_tstate_t *state       = tunnelGetState(t);
-    bool           application = kind == kQuicInputApplication;
     bool           admitted;
     if (application)
     {

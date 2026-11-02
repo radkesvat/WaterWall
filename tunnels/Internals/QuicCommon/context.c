@@ -100,13 +100,27 @@ static void quicDetach(quic_context_t *context)
 void quicFail(quic_context_t *context, const char *reason)
 {
     assert(context->attached && context->driving);
-    tunnel_t      *t                = context->tunnel;
-    line_t        *l                = context->line;
-    bool           next_initialized = context->next_init_sent;
-    bool           finish_up        = context->finish_up;
-    bool           finish_down      = context->finish_down;
-    quic_tstate_t *state            = tunnelGetState(t);
-    LOGW("%s: closing association: %s", state->client ? "QuicClient" : "QuicServer", reason);
+    quic_tstate_t *state = tunnelGetState(context->tunnel);
+    if (strcmp(reason, WW_QUIC_CLOSE_FINISHED) == 0)
+    {
+        LOGD("%s: the peer closed the association", state->client ? "QuicClient" : "QuicServer");
+    }
+    else
+    {
+        LOGW("%s: closing association: %s", state->client ? "QuicClient" : "QuicServer", reason);
+    }
+    quicRetire(context);
+}
+
+/* Detaches, then finishes each side that has not finished. */
+void quicRetire(quic_context_t *context)
+{
+    assert(context->attached);
+    tunnel_t *t                = context->tunnel;
+    line_t   *l                = context->line;
+    bool      next_initialized = context->next_init_sent;
+    bool      finish_up        = context->finish_up;
+    bool      finish_down      = context->finish_down;
     quicDetach(context);
     if (next_initialized && ! finish_down)
     {
@@ -214,6 +228,16 @@ quic_finish_scope_t quicBeginFinish(tunnel_t *t, line_t *l, quic_finish_side_t s
         }
         if (quicSurvived(context))
         {
+            if (sender == kQuicFinishFromNext && mode == kQuicFinishFlushApplication &&
+                ww_quic_engine_ready(context->engine))
+            {
+                /* The end of the service's response may still be queued. Finish toward the
+                 * carrier side, which owns this line, once the peer has acknowledged it. */
+                context->final_flush       = true;
+                context->final_deadline_us = ww_quic_now_us() + kQuicFinalFlushTimeoutUs;
+                quicArm(context, true);
+                return scope;
+            }
             scope.forward = sender == kQuicFinishFromNext || context->next_init_sent;
             quicDetach(context);
         }

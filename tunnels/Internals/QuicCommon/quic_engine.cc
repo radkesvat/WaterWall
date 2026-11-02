@@ -544,7 +544,7 @@ struct ww_quic_engine final : webtransport::SessionVisitor
         {
             owner_->Fail("Application stream stopped");
         }
-        void OnWriteSideInDataRecvdState() override { owner_->Fail("Application stream closed"); }
+        void OnWriteSideInDataRecvdState() override { owner_->Fail(WW_QUIC_CLOSE_FINISHED); }
 
       private:
         ww_quic_engine *owner_;
@@ -659,7 +659,9 @@ struct ww_quic_engine final : webtransport::SessionVisitor
                 return;
             if (result.fin)
             {
-                Fail("QUIC application stream FIN");
+                // Everything is read, so the peer can stop waiting for the acknowledgement of its FIN.
+                session->connection()->CloseConnection(quic::QUIC_NO_ERROR, WW_QUIC_CLOSE_FINISHED,
+                                                       quic::ConnectionCloseBehavior::SEND_CONNECTION_CLOSE_PACKET);
                 return;
             }
             if (result.bytes_read == 0)
@@ -1264,6 +1266,24 @@ extern "C" bool ww_quic_engine_closed(const ww_quic_engine_t *engine)
 extern "C" const char *ww_quic_engine_error(const ww_quic_engine_t *engine)
 {
     return engine->error;
+}
+extern "C" bool ww_quic_engine_finish(ww_quic_engine_t *engine)
+try
+{
+    assert(engine);
+    auto *stream = engine->Stream();
+    if (engine->closed || stream == nullptr)
+        return true;
+    webtransport::StreamWriteOptions options;
+    options.set_send_fin(true);
+    if (! stream->CanWrite() || ! stream->Writev({}, options).ok())
+        return false;
+    engine->AfterDrive();
+    return true;
+}
+catch (...)
+{
+    Fatal(engine->config->settings);
 }
 extern "C" void ww_quic_engine_close(ww_quic_engine_t *engine)
 {

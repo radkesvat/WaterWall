@@ -5,7 +5,9 @@
 
 enum
 {
-    kQuicPumpWork = 256
+    kQuicPumpWork            = 256,
+    kQuicFinalFlushTimeoutUs  = 30 * 1000 * 1000,
+    kQuicFinAcknowledgeWaitUs = 1000 * 1000
 };
 
 /* A detached context may outlive its lstate only until the synchronous driver
@@ -31,6 +33,9 @@ struct quic_context
     ww_quic_carrier_t           carrier;
     size_t                      carrier_allocations;
     uint64_t                    input_generation;
+    uint64_t                    final_deadline_us;
+    bool                        final_flush : 1;
+    bool                        fin_sent : 1;
     bool                        attached : 1;
     bool                        driving : 1;
     bool                        started : 1;
@@ -57,10 +62,26 @@ bool            quicEnter(quic_context_t *context);
 void            quicLeave(quic_context_t *context);
 bool            quicSurvived(const quic_context_t *context);
 void            quicFail(quic_context_t *context, const char *reason);
+void            quicRetire(quic_context_t *context);
 void            quicReleaseActive(quic_context_t *context, bool application);
 bool            quicFeedInput(quic_context_t *context);
 void            quicPressure(quic_context_t *context);
 void            quicPump(quic_context_t *context);
 void            quicFinalWire(quic_context_t *context);
+void            quicReconcileFinal(quic_context_t *context);
 void            quicCancelTimer(quic_context_t *context);
 void            quicArm(quic_context_t *context, bool more_work);
+
+/* The client's application is prev and the server's is next. Once it has
+ * finished, it accepts no further payload, pause, or resume on this line. */
+static inline bool quicApplicationFinished(const quic_context_t *context)
+{
+    const quic_tstate_t *state = tunnelGetState(context->tunnel);
+    return state->client ? context->finish_up : context->finish_down;
+}
+
+static inline bool quicCarrierFinished(const quic_context_t *context)
+{
+    const quic_tstate_t *state = tunnelGetState(context->tunnel);
+    return state->client ? context->finish_down : context->finish_up;
+}

@@ -40,6 +40,10 @@ void quicArm(quic_context_t *context, bool more_work)
     }
     uint64_t now      = ww_quic_now_us();
     uint64_t deadline = ww_quic_engine_deadline(context->engine);
+    if (context->final_flush && context->final_deadline_us < deadline)
+    {
+        deadline = context->final_deadline_us;
+    }
     if (deadline == UINT64_MAX && ! more_work)
     {
         quicCancelTimer(context);
