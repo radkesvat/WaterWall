@@ -45,6 +45,7 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
                    .prefer_ordinary_read_d     = false,
                    .fallback_mode              = false,
                    .fallback_peer_write_closed = false,
+                   .close_linger               = false,
                    // to set a port we need to know the AF family, default v4
                    .routing_context =
                        (routing_context_t) {.dest_ctx = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
@@ -388,9 +389,26 @@ static inline void lineMarkFallbackPeerWriteClosed(line_t *line)
     line->fallback_peer_write_closed = true;
 }
 
+/**
+ * The peer may still be sending when this line closes, as an HTTP/2 client's
+ * WINDOW_UPDATE frames do. Closing a socket with unread input makes the kernel
+ * reset it and drop what it has not delivered yet, so a socket owner half-closes
+ * and drains instead.
+ */
+static inline void lineRequestCloseLinger(line_t *line)
+{
+    assert(lineIsAlive(line) && lineIsOnCurrentWorker(line));
+    line->close_linger = true;
+}
+
 static inline bool lineFallbackShouldLinger(const line_t *line)
 {
     return line->fallback_mode && line->fallback_peer_write_closed;
+}
+
+static inline bool lineShouldLingerOnClose(const line_t *line)
+{
+    return line->close_linger || lineFallbackShouldLinger(line);
 }
 
 /**

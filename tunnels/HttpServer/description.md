@@ -379,6 +379,11 @@ Incoming HTTP/2 bytes are fed to nghttp2 in 16 KiB slices. This is intentionally
 buffers cannot trigger old nghttp2 receive-side stalls observed with oversized `nghttp2_session_mem_recv2()` calls.
 
 Response payload from the next tunnel is turned into HTTP/2 DATA frames on the same stream.
+Flow control can hold those frames back, so more than 1 MiB of queued response data pauses the next tunnel until it
+falls below 256 KiB. After `Finish` from the next tunnel the line stays open until the queued data and `END_STREAM`
+have been written, and only then finishes toward the previous tunnel. The client's WINDOW_UPDATE frames may still be
+on their way then, so the line asks `TcpListener` to half-close its socket and drain it: closing a socket with unread
+input makes the kernel reset it and drop what it has not delivered yet.
 Response headers are generated internally from the configured `status`, `content-type`, and `headers`.
 
 Extra streams can be rejected with `RST_STREAM REFUSED_STREAM`.

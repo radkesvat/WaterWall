@@ -21,7 +21,7 @@ void tcplistenerTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     wioSetCallBackWrite(ls->io, NULL);
 
     tcplistenerFlushWriteQueue(ls);
-    if (! lineFallbackShouldLinger(l) || ! tcplistenerBeginFallbackLinger(t, ls->io))
+    if (! lineShouldLingerOnClose(l) || ! tcplistenerBeginFallbackLinger(t, ls->io))
         wioClose(ls->io);
     tcplistenerLinestateDestroy(ls);
     lineDestroy(l);

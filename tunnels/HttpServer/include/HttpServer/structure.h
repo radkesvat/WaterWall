@@ -95,6 +95,9 @@ typedef struct httpserver_lstate_s
     bool h2_request_rejected;
 
     bool fin_sent;
+    bool h2_end_stream_emitted;
+    bool h2_source_paused; // our DATA backlog paused next
+    bool prev_paused;      // prev paused next through us
     bool prev_finished;
     bool next_finished;
 
@@ -189,6 +192,8 @@ enum
     kHttpServerPendingCharge           = 8 * 1024 * 1024,
     kHttpServerMaxHeaderBytes    = 64 * 1024,
     kHttpServerHttp2FrameBytes   = 32 * 1024,
+    kHttpServerHttp2PauseDataBytes     = 1024 * 1024,
+    kHttpServerHttp2ResumeDataBytes    = 256 * 1024,
     kHttpServerUpgradeQueueChargeLimit = 2 * 1024 * 1024,
     kHttpServerSplitMaxBuffering = 65535 * 2,
     kHttpServerDefaultHttp1Port  = 80,

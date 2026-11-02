@@ -52,6 +52,7 @@ add_waterwall_integration_test(waterwall.tcp_over_udp_fec_roundtrip tcp_over_udp
 add_waterwall_integration_test(waterwall.tcp_over_udp_disturber_roundtrip tcp_over_udp_disturber_roundtrip)
 add_waterwall_integration_test(waterwall.tcp_over_udp_fec_disturber_roundtrip tcp_over_udp_fec_disturber_roundtrip)
 add_waterwall_probe_integration_test(waterwall.tcp_over_udp_service_close_probe tcp_over_udp_service_close_probe 30)
+add_waterwall_probe_integration_test(waterwall.http2_service_close_probe http2_service_close_probe 60)
 
 # Short independent-peer checks use the same pinned sing-box executable as
 # VMess, including builds that omit both VMess nodes.

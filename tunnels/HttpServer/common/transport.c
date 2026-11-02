@@ -1082,6 +1082,28 @@ static bool validateWebSocketHttp1Request(const httpserver_tstate_t *ts, const h
     return true;
 }
 
+/* Flow control can hold queued response DATA indefinitely, and releasing it all at once overruns the write queue of
+ * the transport below, so bound that backlog at its producer. False when the callback closed this direction. */
+static bool httpserverRefreshHttp2SourcePressure(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+{
+    const size_t pending = h2DataPendingBytes(&ls->h2_data);
+    const bool   pause   = ! ls->h2_source_paused && pending > kHttpServerHttp2PauseDataBytes;
+    const bool   resume  = ls->h2_source_paused && pending < kHttpServerHttp2ResumeDataBytes;
+    if ((! pause && ! resume) || ls->next_finished)
+    {
+        return true;
+    }
+    ls->h2_source_paused = pause;
+    if (ls->prev_paused)
+    {
+        // Prev's own Pause already holds next; its Resume checks this backlog first.
+        return true;
+    }
+    const bool alive =
+        pause ? lineCallWithRef(l, tunnelNextUpStreamPause, t) : lineCallWithRef(l, tunnelNextUpStreamResume, t);
+    return alive && httpserverCanSendDownstream(ls);
+}
+
 static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
     if (UNLIKELY(! httpserverCanSendDownstream(ls)))
@@ -1162,7 +1184,7 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
         }
     }
 
-    return true;
+    return httpserverRefreshHttp2SourcePressure(t, l, ls);
 }
 
 static h2_data_result_t httpserverSubmitNextHttp2Data(httpserver_lstate_t *ls)
@@ -1522,16 +1544,20 @@ static int httpserverOnFrameSendCallback(nghttp2_session *session, const nghttp2
 {
     discard session;
 
-    if (userdata == NULL || frame == NULL || frame->hd.type != NGHTTP2_DATA)
+    if (userdata == NULL || frame == NULL || (frame->hd.type != NGHTTP2_DATA && frame->hd.type != NGHTTP2_HEADERS))
     {
         return 0;
     }
 
     httpserver_lstate_t *ls = (httpserver_lstate_t *) userdata;
-    if (h2DataOnFrameSent(&ls->h2_data, frame, ls->h2_stream_id) &&
+    if (frame->hd.type == NGHTTP2_DATA && h2DataOnFrameSent(&ls->h2_data, frame, ls->h2_stream_id) &&
         httpserverSubmitNextHttp2Data(ls).status == H2_DATA_FAILED)
     {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    if ((frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0 && frame->hd.stream_id == ls->h2_stream_id)
+    {
+        ls->h2_end_stream_emitted = true;
     }
 
     return 0;

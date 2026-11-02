@@ -13,6 +13,7 @@ typedef struct h2_data_queue_s
 {
     h2_data_item_t *head, *tail, *active;
     buffer_pool_t  *pool;
+    size_t          pending_bytes;
     uint32_t        max_read;
 } h2_data_queue_t;
 
@@ -45,6 +46,10 @@ h2_data_result_t h2DataTrySubmit(h2_data_queue_t *queue, nghttp2_session *sessio
 /* Call from nghttp2's frame-send callback. Retires only the matching DATA
  * provider whose read reached EOF. True permits submission of the next item. */
 bool h2DataOnFrameSent(h2_data_queue_t *queue, const nghttp2_frame *frame, int32_t stream_id);
+
+/* Payload bytes not yet copied into DATA frames; flow control can hold them
+ * indefinitely, so callers bound this backlog by pausing their producer. */
+size_t h2DataPendingBytes(const h2_data_queue_t *queue);
 
 /* PRECONDITION: the session is absent/deleted and no library callback can use
  * this queue. Releases active and pending payloads on the pool's owner worker.

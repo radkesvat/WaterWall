@@ -53,6 +53,16 @@ static void processPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
+        if (ls->next_finished)
+        {
+            if (ls->session == NULL || ! nghttp2_session_want_write(ls->session))
+            {
+                httpserverTunnelDownStreamFinish(t, l);
+            }
+            lineUnref(l);
+            return;
+        }
+
         if (ts->websocket_enabled && ls->websocket_active &&
             (ls->websocket_close_received || ls->h2_request_finished))
         {
@@ -149,6 +159,15 @@ static void processPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             lineUnref(l);
             return;
         }
+        if (ls->next_finished)
+        {
+            if (ls->session == NULL || ! nghttp2_session_want_write(ls->session))
+            {
+                httpserverTunnelDownStreamFinish(t, l);
+            }
+            lineUnref(l);
+            return;
+        }
         lineUnref(l);
         return;
     }
@@ -200,6 +219,15 @@ static void processPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! httpserverTransportFlushPendingDown(t, l, ls))
         {
             failAndCloseU(t, l, ls);
+            lineUnref(l);
+            return;
+        }
+        if (ls->next_finished)
+        {
+            if (ls->session == NULL || ! nghttp2_session_want_write(ls->session))
+            {
+                httpserverTunnelDownStreamFinish(t, l);
+            }
             lineUnref(l);
             return;
         }

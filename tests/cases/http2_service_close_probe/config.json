@@ -1,0 +1,52 @@
+{
+  "name": "http2-service-close-probe",
+  "nodes": [
+    {
+      "name": "application",
+      "type": "TcpListener",
+      "settings": { "address": "127.0.0.1", "port": 26700, "nodelay": true },
+      "next": "http-client"
+    },
+    {
+      "name": "http-client",
+      "type": "HttpClient",
+      "settings": {
+        "host": "h2.example.test",
+        "path": "/ww/h2",
+        "scheme": "http",
+        "port": 26701,
+        "method": "POST",
+        "http-version": "2"
+      },
+      "next": "carrier-out"
+    },
+    {
+      "name": "carrier-out",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26701, "nodelay": true, "fastopen": false }
+    },
+    {
+      "name": "carrier-in",
+      "type": "TcpListener",
+      "settings": { "address": "127.0.0.1", "port": 26701, "nodelay": true },
+      "next": "http-server"
+    },
+    {
+      "name": "http-server",
+      "type": "HttpServer",
+      "settings": {
+        "http-version": "2",
+        "host": "h2.example.test",
+        "path": "/ww/h2",
+        "method": "POST",
+        "status": 200
+      },
+      "next": "service"
+    },
+    {
+      "name": "service",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26702, "fastopen": false }
+    }
+  ]
+}

@@ -17,6 +17,7 @@ static void h2DataItemDestroy(h2_data_queue_t *queue, h2_data_item_t *item)
     }
     if (item->payload != NULL)
     {
+        queue->pending_bytes -= sbufGetLength(item->payload) - item->offset;
         bufferpoolReuseBuffer(queue->pool, item->payload);
     }
     memoryFree(item);
@@ -35,6 +36,7 @@ void h2DataAppend(h2_data_queue_t *queue, sbuf_t *payload, bool end_stream)
 
     h2_data_item_t *item = memoryAllocate(sizeof(*item));
     *item                = (h2_data_item_t) {.payload = payload, .end_stream = end_stream};
+    queue->pending_bytes += payload == NULL ? 0 : sbufGetLength(payload);
     if (queue->tail == NULL)
     {
         queue->head = item;
@@ -67,6 +69,7 @@ static ssize_t h2DataReadCallback(nghttp2_session *session, int32_t stream_id, u
     {
         memoryCopy(buf, (const uint8_t *) sbufGetRawPtr(item->payload) + item->offset, to_copy);
         item->offset += to_copy;
+        queue->pending_bytes -= to_copy;
     }
     if (item->offset == payload_len)
     {
@@ -127,6 +130,12 @@ bool h2DataOnFrameSent(h2_data_queue_t *queue, const nghttp2_frame *frame, int32
     h2DataItemDestroy(queue, queue->active);
     queue->active = NULL;
     return true;
+}
+
+size_t h2DataPendingBytes(const h2_data_queue_t *queue)
+{
+    assert(queue != NULL);
+    return queue->pending_bytes;
 }
 
 void h2DataDestroyAfterSession(h2_data_queue_t *queue)
