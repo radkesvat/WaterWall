@@ -132,6 +132,16 @@ static void envTeardown(env_t *env)
     masterpoolDestroy(env->splice_master);
 }
 
+static wloop_t *createRunningTestLoop(env_t *env, long wid)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, wid);
+    require(loop != NULL, "test loop create failed");
+    // These tests drive individual event turns instead of entering wloopRun().
+    // Publish the same running state so timer callbacks are eligible to run.
+    atomicStoreExplicit(&loop->status, WLOOP_STATUS_RUNNING, memory_order_release);
+    return loop;
+}
+
 // Drive the loop until loop-wide live operations settle to `target` (or give up).
 static bool pumpUntilLiveOperations(wloop_t *loop, uint32_t target, int max_iterations)
 {
@@ -271,7 +281,7 @@ static void directWriteAccept(wio_t *connio)
 
 static void testDirectStreamWriteAdmission(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "direct stream-write loop create failed");
 
     direct_write_state_t state  = {0};
@@ -340,7 +350,7 @@ static SOCKET createBoundUdpReceiver(sockaddr_u *address)
 
 static void testDirectDatagramWriteAdmission(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "direct datagram-write loop create failed");
 
     direct_write_state_t state  = {0};
@@ -390,8 +400,8 @@ static void crossLoopWriteEvent(wevent_t *event)
 
 static void testCrossLoopNestedWriteAdmission(env_t *env)
 {
-    wloop_t *loop_a = wloopCreate(0, env->buffer_pool, 0);
-    wloop_t *loop_b = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop_a = createRunningTestLoop(env, 0);
+    wloop_t *loop_b = createRunningTestLoop(env, 0);
     require(loop_a != NULL && loop_b != NULL, "cross-loop IOCP fixture creation failed");
 
     direct_write_state_t accept_state = {0};
@@ -454,8 +464,8 @@ static void acceptedCrossLoopWriteEvent(wevent_t *event)
 
 static void testAcceptedCrossLoopWriteCallbackAuthority(env_t *env)
 {
-    wloop_t *loop_a = wloopCreate(0, env->buffer_pool, 0);
-    wloop_t *loop_b = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop_a = createRunningTestLoop(env, 0);
+    wloop_t *loop_b = createRunningTestLoop(env, 0);
     require(loop_a != NULL && loop_b != NULL, "accepted cross-loop IOCP fixture creation failed");
 
     direct_write_state_t accept_state = {0};
@@ -532,8 +542,8 @@ static void crossLoopZeroLengthWriteEvent(wevent_t *event)
 
 static void testCrossLoopCloseSettlement(env_t *env, bool immediate_error)
 {
-    wloop_t *loop_a = wloopCreate(0, env->buffer_pool, 0);
-    wloop_t *loop_b = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop_a = createRunningTestLoop(env, 0);
+    wloop_t *loop_b = createRunningTestLoop(env, 0);
     require(loop_a != NULL && loop_b != NULL, "cross-loop close IOCP fixture creation failed");
 
     direct_write_state_t accept_state = {0};
@@ -634,9 +644,9 @@ static void nestedCrossLoopOuterEvent(wevent_t *event)
 
 static void testNestedCrossLoopCloseUsesOwnerThread(env_t *env)
 {
-    wloop_t *loop_a = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop_a = createRunningTestLoop(env, 0);
     testWorkerBindWID(1);
-    wloop_t *loop_b = wloopCreate(0, env->buffer_pool, 1);
+    wloop_t *loop_b = createRunningTestLoop(env, 1);
     require(loop_a != NULL && loop_b != NULL, "nested close IOCP fixture creation failed");
 
     direct_write_state_t accept_state = {0};
@@ -727,7 +737,7 @@ static void echoAccept(wio_t *connio)
 
 static void testEchoRoundTrip(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "loop create failed");
 
     echo_state_t st     = {0};
@@ -799,7 +809,7 @@ static void closingAccept(wio_t *connio)
 
 static void testCloseListenerFromAccept(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "loop create failed");
 
     closer_state_t st     = {0};
@@ -854,7 +864,7 @@ static void readCloseAccept(wio_t *connio)
 
 static void testReadCallbackCloses(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "loop create failed");
 
     rclose_state_t st     = {0};
@@ -913,7 +923,7 @@ static void readStopAccept(wio_t *connio)
 
 static void testReadStopAfterDequeue(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "loop create failed");
 
     read_stop_state_t st     = {0};
@@ -987,7 +997,7 @@ static void closeThenFree(wio_t *io)
 
 static void testPendingFreeAndDescriptorReuse(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "pending-free loop create failed");
 
     wio_t *old_io = wioCreateSocket(loop, "127.0.0.1", 0, WIO_TYPE_TCP, WIO_CLIENT_SIDE);
@@ -1103,7 +1113,7 @@ static void connectThenFree(wio_t *io)
 
 static bool testConnectFreeFamily(env_t *env, const char *host, bool optional)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "loop create failed");
 
     connect_free_state_t st     = {.loop = loop, .host = host};
@@ -1178,7 +1188,7 @@ static void preboundConnectClosed(wio_t *io)
 
 static void testConnectWithPreBoundSocket(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "pre-bound connect loop create failed");
 
     prebound_connect_state_t st     = {0};
@@ -1344,7 +1354,7 @@ static uint16_t fakeDnsReply(SOCKET server, const unsigned char *request, size_t
 
 static void testAsyncDnsResolvesUnderIocp(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "async DNS loop create failed");
 
     SOCKET dns_server = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -1622,7 +1632,7 @@ static int WSAAPI providerRestrictedSelect(int nfds, fd_set *readfds, fd_set *wr
 
 static void testAsyncDnsTcpConnectWaitsForReadiness(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "TCP async DNS loop create failed");
 
     SOCKET udp_server = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -1716,7 +1726,7 @@ static void testAsyncDnsTcpConnectWaitsForReadiness(env_t *env)
 
 static void testAsyncDnsPollsEveryWatchedSocket(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "many-watch async DNS loop create failed");
 
     asyncdns_options_t options;
@@ -1867,7 +1877,7 @@ static size_t forceQueuedSend(wio_t *conn, buffer_pool_t *pool, char value, size
 
 static void testPartialSendPublishesBeforeAdmissionClosure(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "partial-send admission loop create failed");
 
     direct_write_state_t state  = {0};
@@ -1920,7 +1930,7 @@ static void testPartialSendPublishesBeforeAdmissionClosure(env_t *env)
 
 static void testClosedAdmissionRejectsExistingActiveQueue(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "active-queue admission loop create failed");
 
     send_queue_state_t state  = {.pool = env->buffer_pool};
@@ -1957,7 +1967,7 @@ static void testClosedAdmissionRejectsExistingActiveQueue(env_t *env)
 
 static void testSerializedSendQueue(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "loop create failed");
 
     send_queue_state_t st     = {.pool = env->buffer_pool};
@@ -2087,7 +2097,7 @@ static void closeDrainAccept(wio_t *connio)
 
 static void testCloseDrainsWriteQueue(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "close-drain loop create failed");
 
     close_drain_state_t st     = {.pool = env->buffer_pool};
@@ -2167,7 +2177,7 @@ static void testCloseDrainsWriteQueue(env_t *env)
 
 static void testCloseTimeoutForcesClose(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "close-timeout loop create failed");
 
     close_drain_state_t st     = {0};
@@ -2239,7 +2249,7 @@ static void timerCloseAccept(wio_t *connio)
 
 static void testCloseDeletesTimers(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "timer-close loop create failed");
 
     timer_close_state_t st     = {0};
@@ -2294,7 +2304,7 @@ static void testCloseDeletesTimers(env_t *env)
 
 static void testFreeDuringDeferredClose(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "deferred-free loop create failed");
 
     close_drain_state_t st     = {0};
@@ -2371,7 +2381,7 @@ static void sendFreeAccept(wio_t *connio)
 
 static void testWriteCallbackFree(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "loop create failed");
 
     send_free_state_t st     = {0};
@@ -2452,7 +2462,7 @@ static void connectTimerClosed(wio_t *io)
 
 static void testConnectTimerLifecycle(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "connect-timer loop create failed");
 
     connect_timer_state_t st     = {0};
@@ -2562,7 +2572,7 @@ static void readRestartAccept(wio_t *connio)
 
 static void testReadRestartFromCallback(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "read-restart loop create failed");
 
     read_restart_state_t st     = {0};
@@ -2652,7 +2662,7 @@ static void acceptRecoveryListenerClose(wio_t *io)
 
 static void testAcceptExSlotRecovery(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "accept-recovery loop create failed");
 
     accept_recovery_state_t st     = {0};
@@ -2703,7 +2713,7 @@ static void testAcceptExSlotRecovery(env_t *env)
 
 static void testAcceptExRetryCancellation(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "retry-cancel loop create failed");
 
     accept_recovery_state_t st     = {0};
@@ -2748,7 +2758,7 @@ static void testAcceptExRetryCancellation(env_t *env)
 
 static void testAcceptExPersistentFailureCloses(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "zero-slot loop create failed");
 
     accept_recovery_state_t st     = {0};
@@ -2807,7 +2817,7 @@ static void neverAccept(wio_t *connio)
 
 static void testDestroyWithPending(env_t *env)
 {
-    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    wloop_t *loop = createRunningTestLoop(env, 0);
     require(loop != NULL, "loop create failed");
 
     wio_t *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, neverAccept);
