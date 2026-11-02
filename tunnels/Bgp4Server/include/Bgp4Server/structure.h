@@ -27,5 +27,5 @@ void bgp4serverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void bgp4serverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void bgp4serverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void    bgp4serverLinestateInitialize(bgp4server_lstate_t *ls, line_t *l);
-void    bgp4serverLinestateDestroy(bgp4server_lstate_t *ls);
+void bgp4serverLinestateInitialize(bgp4server_lstate_t *ls, line_t *l, bool splice_output);
+void bgp4serverLinestateDestroy(bgp4server_lstate_t *ls);

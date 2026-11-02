@@ -210,6 +210,7 @@ static bool   pipe_refusal;
 static size_t first_pipe_move_limit = 257;
 #endif
 static uint32_t fixture_splice_limit = 4096;
+static bool     fixture_splice_output = WW_HAVE_SPLICE;
 static int      fixed_random         = -1;
 static unsigned pipe_moves;
 static size_t   pipe_read_bytes;
@@ -279,6 +280,7 @@ static bgp_fixture_t *active;
 static void           fixtureSubmit(bgp_fixture_t *, sbuf_t *);
 static void           fixtureSignal(bgp_fixture_t *, bool);
 static void           fixtureFillAdmission(bgp_fixture_t *);
+static void           fixtureNestedStorage(bgp_fixture_t *, bool);
 static uint32_t       makeWire(uint8_t *, uint32_t, bool, unsigned);
 
 static sbuf_t *fixtureBytes(bgp_fixture_t *f, const void *bytes, uint32_t length, bool splice_input)
@@ -373,6 +375,14 @@ static void fixtureReceive(tunnel_t *t, line_t *l, sbuf_t *b)
     }
     if (action == 10)
         fixtureFillAdmission(f);
+    if (action == 11 || action == 12)
+        fixtureNestedStorage(f, action == 12);
+    if (action == 13)
+    {
+        fixtureSubmit(f, fixtureBytes(f, "x", f->admission_mode, false));
+        twfRequire(! lineIsAlive(l) && f->finishes == 1,
+                   "nested admission returned before rejecting the malformed head");
+    }
 }
 static void fixtureBegin(bgp_fixture_t *f, bool client, bool encode, uint32_t large)
 {
@@ -394,7 +404,7 @@ static void fixtureBegin(bgp_fixture_t *f, bool client, bool encode, uint32_t la
     f->t->chain_index         = 1;
     f->next->chain_index      = 2;
     f->chain                  = memoryAllocateZero(sizeof(tunnel_chain_t));
-    f->chain->supports_splice = WW_HAVE_SPLICE;
+    f->chain->supports_splice = fixture_splice_output;
     f->t->chain               = f->chain;
     twfLinePoolSetup(&f->lines, f->t->lstate_size, 8);
     f->line = twfLinePoolCreateLine(&f->lines);
@@ -501,8 +511,8 @@ static void testDecodeIdentity(void)
         for (unsigned enabled = 0; enabled < 2; ++enabled)
         {
             bgp_fixture_t f;
+            fixture_splice_output = enabled && WW_HAVE_SPLICE;
             fixtureBegin(&f, client, false, 8192);
-            f.chain->supports_splice = enabled && WW_HAVE_SPLICE;
             uint8_t  bytes[1100];
             uint32_t n      = makeWire(bytes, 1000, ! client, 3);
             sbuf_t  *input  = fixtureBytes(&f, bytes, n, WW_HAVE_SPLICE);
@@ -521,6 +531,7 @@ static void testDecodeIdentity(void)
 #endif
             fixtureEnd(&f);
         }
+    fixture_splice_output = WW_HAVE_SPLICE;
     bgp_fixture_t f;
     fixtureBegin(&f, false, true, 8192);
     fixtureSubmit(&f, fixtureBytes(&f, "x", 1, false));
@@ -710,6 +721,148 @@ static void testDecoderReentry(void)
     }
 }
 
+static void testDecodeLargeBatch(void)
+{
+    enum
+    {
+        kFrames = 40,
+        kBody   = 60000
+    };
+    uint8_t *bytes = memoryAllocate(kFrames * (kBody + kBgpFramePrefix) + 13);
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        bgp_fixture_t f;
+        fixtureBegin(&f, client, false, 8192);
+        uint32_t length = 0;
+        for (unsigned frame = 0; frame < kFrames; ++frame)
+        {
+            const uint32_t start = length;
+            length += makeWire(bytes + length, kBody, ! client && frame == 0, 3);
+            bytes[start + kBgpFramePrefix + (! client && frame == 0 ? 13 : 0)] = (uint8_t) frame;
+        }
+        twfRequire(length > kBgpPendingBytes, "large batch did not exceed the nested-byte limit");
+        f.action = 1;
+        fixtureSubmit(&f, fixtureBytes(&f, bytes, length, false));
+        twfRequire(lineIsAlive(f.line) && f.deliveries == kFrames && f.length == kFrames * kBody && f.pauses == 1,
+                   "large complete batch was refused or stopped on advisory Pause");
+        for (unsigned frame = 0; frame < kFrames; ++frame)
+            for (unsigned i = 0; i < kBody; ++i)
+                twfRequire(f.bytes[frame * kBody + i] == (i == 0 ? (uint8_t) frame : pattern(i)),
+                           "large complete batch changed frame bytes or order");
+        const bgp_stream_t *s = lineGetState(f.line, f.t);
+        twfRequire(spliceframereaderLength(&s->reader) == 0 && spliceframereaderCharge(&s->reader) == 0,
+                   "large complete batch retained input after delivery");
+        fixtureEnd(&f);
+    }
+    memoryFree(bytes);
+}
+
+/* Called inside the first payload delivery, with an older complete frame still
+ * pending. A 6 KiB input cannot coalesce into that frame's 4 KiB source tail. */
+static void fixtureNestedStorage(bgp_fixture_t *f, bool refusal)
+{
+    uint8_t *bytes  = memoryAllocate(refusal ? 100038 : 6019);
+    uint32_t length = makeWire(bytes, refusal ? 50000 : 6000, false, 0);
+    if (refusal)
+        length += makeWire(bytes + length, 50000, false, 0);
+    sbuf_t *input = refusal ? bufferpoolGetLargeBuffer(f->env.pool)
+                            : twfTrackAcquired(sbufCreateWithPadding(kBgpReadChargeLimit + 4096, 128));
+    sbufWrite(input, bytes, length);
+    sbufSetLength(input, length);
+    memoryFree(bytes);
+    twfRequire(sbufGetQueueCharge(input) > kBgpReadChargeLimit, "nested storage case did not exceed the charge limit");
+    fixtureSubmit(f, input);
+    if (refusal)
+    {
+        twfRequire(! lineIsAlive(f->line) && f->finishes == 1 && f->deliveries == 1,
+                   "unsettleable nested charge escaped refusal or delivered queued input");
+        return;
+    }
+    twfRequire(lineIsAlive(f->line) && f->deliveries == 1,
+               "nested compaction closed the line or recursively delivered frames");
+    const bgp_stream_t *s = lineGetState(f->line, f->t);
+    twfRequire(spliceframereaderCharge(&s->reader) <= kBgpReadChargeLimit &&
+                   spliceframereaderLength(&s->reader) == 99 + kBgpFramePrefix + length,
+               "nested input returned before settling charge or lost older bytes");
+}
+
+static void testDecodeStorage(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+        for (unsigned refusal = 0; refusal < 2; ++refusal)
+        {
+            bgp_fixture_t f;
+            fixtureBegin(&f, client, false, refusal ? 2 * kBgpReadChargeLimit : 8192);
+            uint8_t  bytes[256];
+            uint32_t length = makeWire(bytes, 100, ! client, 3);
+            length += makeWire(bytes + length, 99, false, 0);
+            f.action = refusal ? 12 : 11;
+            fixtureSubmit(&f, fixtureBytes(&f, bytes, length, false));
+            if (! refusal)
+            {
+                twfRequire(lineIsAlive(f.line) && f.deliveries == 3 && f.length == 6199,
+                           "compacted nested frame was refused or lost");
+                for (unsigned i = 0; i < 100; ++i)
+                    twfRequire(f.bytes[i] == pattern(i), "first frame changed during nested compaction");
+                for (unsigned i = 0; i < 99; ++i)
+                    twfRequire(f.bytes[100 + i] == pattern(i), "nested compaction overtook the older frame");
+                for (unsigned i = 0; i < 6000; ++i)
+                    twfRequire(f.bytes[199 + i] == pattern(i), "nested compaction changed incoming bytes");
+            }
+            fixtureEnd(&f);
+        }
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        bgp_fixture_t f;
+        fixtureBegin(&f, client, false, 8192);
+        uint8_t        bytes[256];
+        const uint32_t length = makeWire(bytes, 100, ! client, 3);
+        sbuf_t        *input  = twfTrackAcquired(sbufCreateWithPadding(kBgpReadChargeLimit + 4096, 128));
+        sbufWrite(input, bytes, 20);
+        sbufSetLength(input, 20);
+        twfRequire(sbufGetQueueCharge(input) > kBgpReadChargeLimit,
+                   "incomplete storage case did not exceed the charge limit");
+        fixtureSubmit(&f, input);
+        twfRequire(lineIsAlive(f.line) && f.deliveries == 0, "incomplete frame escaped or was refused");
+        const bgp_stream_t *s = lineGetState(f.line, f.t);
+        twfRequire(spliceframereaderCharge(&s->reader) <= kBgpReadChargeLimit &&
+                       spliceframereaderLength(&s->reader) == 20,
+                   "incomplete top-level input returned without settling retained storage");
+        fixtureSubmit(&f, fixtureBytes(&f, bytes + 20, length - 20, false));
+        twfRequire(lineIsAlive(f.line) && f.deliveries == 1 && f.length == 100,
+                   "compacted incomplete frame did not complete");
+        for (unsigned i = 0; i < 100; ++i)
+            twfRequire(f.bytes[i] == pattern(i), "incomplete compaction changed application bytes");
+        fixtureEnd(&f);
+    }
+}
+
+static void testNestedMalformed(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+        for (unsigned empty = 0; empty < 2; ++empty)
+            for (unsigned kind = 0; kind < 4; ++kind)
+            {
+                bgp_fixture_t f;
+                fixtureBegin(&f, client, false, 8192);
+                uint8_t  bytes[64];
+                uint32_t first  = makeWire(bytes, 1, ! client, 3);
+                uint32_t length = first + makeWire(bytes + first, 1, false, 0);
+                if (kind == 0)
+                    bytes[first] = 0;
+                else if (kind == 1)
+                    bytes[first + 17] = 1;
+                else
+                    bytes[first + 18] = kind == 2 ? 6 : 1;
+                f.action         = 13;
+                f.admission_mode = ! empty;
+                fixtureSubmit(&f, fixtureBytes(&f, bytes, length, false));
+                twfRequire(! lineIsAlive(f.line) && f.deliveries == 1 && f.finishes == 1,
+                           "nested malformed head escaped or closed more than once");
+                fixtureEnd(&f);
+            }
+}
+
 static void testEncoderPipeFallback(void)
 {
 #if WW_HAVE_SPLICE
@@ -875,7 +1028,7 @@ static void fixtureFillAdmission(bgp_fixture_t *f)
         fixtureSubmit(f, fixtureBytes(f, bytes, used, false));
         memoryFree(bytes);
         twfRequire(lineIsAlive(f->line) &&
-                       splicestreamLength(((bgp_stream_t *) lineGetState(f->line, f->t))->read_stream) ==
+                       spliceframereaderLength(&((bgp_stream_t *) lineGetState(f->line, f->t))->reader) ==
                            kBgpPendingBytes,
                    "exact decoder byte boundary refused");
         fixtureSubmit(f, fixtureBytes(f, "x", 1, false));
@@ -953,6 +1106,9 @@ int main(void)
     testDecodeFragments();
     testDecodeAdvisoryAndFallback();
     testDecoderReentry();
+    testDecodeLargeBatch();
+    testDecodeStorage();
+    testNestedMalformed();
     testEncoderPipeFallback();
     testNotificationReentry();
     testMalformed();

@@ -19,11 +19,11 @@ On the first upstream payload, the client prepends a synthetic BGP OPEN body bef
 16-byte marker | 2-byte body length | 1-byte BGP type | body
 ```
 
-Later upstream payloads are wrapped with a random non-OPEN BGP type. Downstream payloads are parsed from a `splice_stream_t`, validated for marker and length, stripped of marker, length, and type, then forwarded toward the previous tunnel.
+Later upstream payloads are wrapped with a random non-OPEN BGP type. Downstream payloads are parsed by the shared `splice_frame_reader_t` over a `splice_stream_t`, validated for marker and length, stripped of marker, length, and type, then forwarded toward the previous tunnel.
 
 The body length is encoded in network byte order and covers the BGP type byte plus body bytes. `settings.password` is accepted but ignored; it provides neither encryption nor authentication.
 
-`Bgp4Client` initializes line state during `UpStreamInit`, creates its receive stream before forwarding `Init`, and destroys local line state before forwarding directional `Finish`. It advertises enough left padding for the largest first OPEN prefix. It is a normal layer-4 stream tunnel, not a packet-line tunnel.
+`Bgp4Client` initializes line state during `UpStreamInit`, initializes its receive frame reader before forwarding `Init`, and destroys local line state before forwarding directional `Finish`. It advertises enough left padding for the largest first OPEN prefix. It is a normal layer-4 stream tunnel, not a packet-line tunnel.
 
 ## Node Metadata
 
@@ -42,8 +42,8 @@ Source-backed metadata:
 Both directions accept ordinary buffers, private-pipe splice buffers, and mixed
 fragments. A fitting delivery is framed in place using reserved left padding
 (39 bytes for the client, 19 for the server), including any existing resident
-prefix. Larger deliveries are prepared as complete batches of separate frame
-buffers before any callback; pipe creation or transfer pressure selects complete
+prefix. Larger outgoing deliveries are prepared as complete batches of separate
+frame buffers before any callback; pipe creation or transfer pressure selects complete
 ordinary best-fit fallback for the affected frame. There is no whole-delivery
 ordinary aggregate.
 
@@ -54,22 +54,34 @@ client generates 3–10 optional bytes and subtracts the actual OPEN overhead fr
 its first frame's payload room. Empty deliveries emit nothing and do not consume
 OPEN state. Exactly one OPEN is admitted per client line.
 
-The fixed logical retention limit is **2,162,705 bytes per direction**
-(`2 MiB + 65,553`), independent of RAM profile, pools, pipe capacity, platform and
-`misc.splice`. Decoders count retained wire bytes, including the cached header;
-encoders count queued encoded bytes including generated headers. Encoded output
-also has a **1,024-frame FIFO cap**. Incoming fragments have no entry-count cap.
-The maximum complete wire frame is 65,553 bytes, and a non-OPEN frame carries at
-most 65,534 application bytes.
+The shared fixed-header frame reader drains complete frames from a top-level
+receive batch before checking the incomplete remainder. That batch can exceed
+**2,162,705 bytes** (`2 MiB + 65,553`). During a delivery callback, nested input
+must fit that logical-byte limit together with older retained wire bytes,
+including the cached header. It then joins the FIFO, and retained buffer charge
+must fit **4,325,410 bytes** before nested admission returns. The same charge
+limit applies to the incomplete remainder when the outer drain ends. Coalescing
+or one beneficial compaction may release oversized backing storage before
+refusal. Compaction may copy pipe-backed bytes into ordinary memory; the charge
+limit bounds retained storage accounting, not process memory or transient peaks.
+Incoming fragments have no entry-count cap. After complete frames drain, the
+incomplete remainder is smaller than 65,553 logical bytes.
+
+Encoded output keeps its independent **2,162,705-byte limit**, including generated
+headers, and **1,024-frame FIFO cap**. These limits are independent of RAM profile,
+pools, pipe capacity, platform and `misc.splice`. The maximum complete wire frame
+is 65,553 bytes, and a non-OPEN frame carries at most 65,534 application bytes.
 
 Each decoded frame produces its own callback. Both nodes borrow the normal line
 and transform every payload, so neither can permanently bypass itself. Pause and
 Resume use transparent default forwarding in both directions, including repeated
 notifications. Complete admitted frames drain immediately without waiting for
 Resume. A pump guard per direction preserves FIFO during reentrant callbacks;
-the receive stream retains incomplete input, and the bounded output FIFO keeps
-complete encoded batches ahead of reentrant input. Each input is checked against
-the fixed retention limits before any callback for that input.
+the frame reader retains incomplete input, and the bounded output FIFO keeps
+complete encoded batches ahead of reentrant input. The decoder validates any
+complete FIFO-head header immediately after admission, including nested input;
+only the outer drain delivers frames. Encoded batches pass their byte and frame
+checks before their first callback.
 Malformed data, retention-limit overflow or queue-capacity refusal closes only
 the borrowed connection through its owner. Finish releases queued buffers and
 pipes before forwarding away from the sender. These behaviors do not guarantee

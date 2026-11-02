@@ -3,6 +3,6 @@
 void bgp4serverTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     bgp4server_lstate_t *ls = lineGetState(l, t);
-    bgp4serverLinestateInitialize(ls, l);
+    bgp4serverLinestateInitialize(ls, l, tunnelGetChain(t)->supports_splice);
     tunnelNextUpStreamInit(t, l);
 }
