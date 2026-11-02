@@ -120,6 +120,7 @@ struct muxserver_lstate_s
     bool                      is_child : 1;         // immutable line role: this line is a Mux child
     bool                      paused : 1;           // child: local child write side is paused
     bool                      flow_paused_sent : 1; // child: FlowPause was sent to the peer for this cid
+    bool                      first_data_delivered : 1; // child: its first DATA frame has been delivered
     bool parent_finishing : 1;                      // parent: main FIN is being handled, suppress parent writes
     bool detached_registered : 1;                   // child: present in its worker's detached owner registry
     bool child_slot_reserved : 1;                   // child: aggregate reservation is owned until state destruction
